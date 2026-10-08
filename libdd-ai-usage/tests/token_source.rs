@@ -1,3 +1,6 @@
+// Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
 //! Estimated token counts (`PORTABLE-METRICS.md#token-source`).
 //! The expected values come from the contract text, not from the projectors.
 

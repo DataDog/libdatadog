@@ -324,12 +324,19 @@ mod tests {
             (9_007_199_254_740_994.0, (1 << 53) + 2),
             (18_446_744_073_709_551_616.0, 1 << 64),
             (1e20, 100_000_000_000_000_000_000),
-            (2.0_f64.powi(127), 1 << 127),
+            (f64::from_bits(1150 << 52), 1 << 127),
         ] {
             assert_eq!(exact_integer(double), Some(integer), "{double}");
             assert_eq!(integer_to_f64(integer), double, "{integer}");
         }
-        for not_integer in [0.5, -1.0, 2.0_f64.powi(128), f64::INFINITY, f64::NAN, 1e300] {
+        for not_integer in [
+            0.5,
+            -1.0,
+            f64::from_bits(1151 << 52),
+            f64::INFINITY,
+            f64::NAN,
+            1e300,
+        ] {
             assert_eq!(exact_integer(not_integer), None, "{not_integer}");
         }
         assert_eq!(exact_integer(-0.0), Some(0));
