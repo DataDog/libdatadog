@@ -3,7 +3,7 @@
 
 //! Runtime metadata that the host tracer may update after startup.
 //!
-//! `runtime_id` and `process_tags` are the two tracer metadata values that may change
+//! Runtime identity, instrumentation session ancestry, and process tags may change
 //! while exporters and workers are already running. They live in a single
 //! [`MutableMetadata`] struct shared through an [`ArcSwap`]; every component holds a
 //! [`MutableMetadataHandle`] and reads the values through it at use time, so an update
@@ -34,6 +34,16 @@ pub struct MutableMetadata {
     pub runtime_id: String,
     /// Comma-separated `key:value` process tags of the instrumented application.
     pub process_tags: String,
+    /// Instrumentation session headers. `None` uses the worker's static configuration.
+    pub session: Option<InstrumentationSession>,
+}
+
+/// Instrumentation session ancestry, published together with the runtime ID.
+#[derive(Clone, Default, Debug, PartialEq, Eq)]
+pub struct InstrumentationSession {
+    pub id: String,
+    pub root_id: String,
+    pub parent_id: String,
 }
 
 /// A shared handle to a [`MutableMetadata`].
@@ -45,6 +55,18 @@ pub struct MutableMetadata {
 pub struct MutableMetadataHandle(Arc<ArcSwap<MutableMetadata>>);
 
 impl MutableMetadataHandle {
+    /// Publish a coherent runtime and session identity, preserving process tags.
+    ///
+    /// After a fork, call while workers are paused, before the child runtime restarts.
+    /// This does not discard pending observations or reset worker sequence counters.
+    pub fn set_identity(&self, runtime_id: String, session: InstrumentationSession) {
+        self.update(|mut metadata| {
+            metadata.runtime_id = runtime_id.clone();
+            metadata.session = Some(session.clone());
+            metadata
+        });
+    }
+
     /// Load the value of the handle
     pub fn load(&self) -> arc_swap::Guard<Arc<MutableMetadata>> {
         self.0.load()
@@ -201,5 +223,24 @@ mod tests {
         let snapshot = handle.load_full();
         assert_eq!(snapshot.runtime_id, "rt-1");
         assert_eq!(snapshot.process_tags, "k1:v1");
+    }
+
+    #[test]
+    fn identity_is_published_as_one_snapshot() {
+        let handle = initial_handle();
+        let parent = handle.load_full();
+        let clone = handle.clone();
+        let session = InstrumentationSession {
+            id: "child".into(),
+            root_id: "root".into(),
+            parent_id: "parent".into(),
+        };
+        handle.set_identity("child".into(), session.clone());
+        let child = clone.load();
+        assert_eq!(child.runtime_id, "child");
+        assert_eq!(child.session, Some(session));
+        assert_eq!(child.process_tags, "k1:v1");
+        assert_eq!(parent.runtime_id, "rt-1");
+        assert_eq!(parent.session, None);
     }
 }
