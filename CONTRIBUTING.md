@@ -91,8 +91,22 @@ If you'd like CI to automatically format your code and commit the changes to you
 label to your pull request. This will trigger a one-time formatting commit if any changes are needed. If you push
 additional commits after labeling, remove and re-add the label to re-run formatting.
 
-Optionally, you can install [pre-commit](https://pre-commit.com/) hooks to run formatting and clippy checks locally
-before they hit CI. See `.pre-commit-config.yaml` for setup instructions.
+Optionally, you can install [pre-commit](https://pre-commit.com/) hooks to run formatting, ast-grep, and clippy checks
+locally before they hit CI. See `.pre-commit-config.yaml` for setup instructions.
+
+Structural lint rules (ast-grep) live in `.sg/rules/` and are a blocking job on the Lint workflow. Run the same
+command CI uses; the first invocation downloads a pinned binary into `~/.cache` (no global install):
+
+```bash
+./scripts/run-ast-grep.sh
+```
+
+New `pub extern "C"` entry points must wrap panics (`wrap_with_ffi_result!`, `catch_panic!`,
+`std::panic::catch_unwind`, …) or carry `// allow(ffi-panic-boundary): <justification>` on a line
+directly above the function. Existing accessors are grandfathered; only signatures added on the
+branch fail CI. ast-grep does not expand macros, so containment belongs in the `macro_rules`
+template (or the allow above it). Adding a setter to `c_setters!` is a new export. See AGENTS.md
+"Reliability & integrability".
 
 ## Commit Message Guidelines
 

@@ -1,0 +1,47 @@
+id: ffi-macro-emits-extern-c
+language: rust
+severity: warning
+message: >-
+  This macro_rules template emits pub extern "C" functions without panic
+  containment. Wrap the generated bodies with wrap_with_ffi_result!,
+  wrap_with_void_ffi_result!, catch_panic!, or std::panic::catch_unwind,
+  or add `// allow(ffi-panic-boundary): <justification>` above the
+  macro_rules. ast-grep does not expand macros; containment must be in
+  the template (or the allow) so every expansion is covered.
+note: |
+  A panic that reaches an extern "C" boundary aborts the host process.
+  Clippy cannot see panics from callees, and ast-grep cannot see
+  functions that exist only after macro expansion. See AGENTS.md
+  "Reliability & integrability".
+
+  Accepted in-template markers: catch_unwind, catch_panic!,
+  wrap_with_ffi_result!, wrap_with_void_ffi_result!, and the *_no_catch!
+  variants. Empty `// allow(ffi-panic-boundary):` is not enough.
+files:
+  - "**/*.rs"
+ignores:
+  - "**/tests/**"
+  - "**/examples/**"
+  - "symbolizer-ffi/**"
+rule:
+  all:
+    - kind: macro_definition
+    - has:
+        stopBy: end
+        regex: 'extern\s+"C"\s+fn'
+    # Token trees are not parsed as function_item / call_expression.
+    # Containment shows up as identifier nodes, not comments.
+    - not:
+        has:
+          stopBy: end
+          kind: identifier
+          regex: "^(catch_unwind|wrap_with_ffi_result|wrap_with_void_ffi_result|wrap_with_ffi_result_no_catch|wrap_with_void_ffi_result_no_catch|catch_panic)$"
+    - not:
+        follows:
+          stopBy:
+            not:
+              any:
+                - kind: attribute_item
+                - kind: line_comment
+          kind: line_comment
+          regex: "allow\\(ffi-panic-boundary\\):\\s+\\S"

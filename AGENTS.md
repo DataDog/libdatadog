@@ -18,8 +18,9 @@ Iterate fastest with `cargo check -p <crate>` while editing; validate each affec
    ```bash
    cargo +nightly-2026-07-26 fmt --all -- --check
    cargo +stable clippy -p <crate> --all-targets -- -D warnings
+   ./scripts/run-ast-grep.sh
    ```
-   Add the feature flags affected by the change. Use `--all-features` only when the crate supports enabling all features together.
+   Add the feature flags affected by the change. Use `--all-features` only when the crate supports enabling all features together. `run-ast-grep.sh` downloads a pinned ast-grep binary on first use (no extra install). Structural rules live in `.sg/rules/`; see the `add-lint-rule` skill to add one.
 
 3. **Run tests** for every crate that was touched:
    ```bash
@@ -91,6 +92,7 @@ libdatadog is integrated into many runtimes and languages via FFI, and runs in D
 - Stay free of global effects unless a feature requires them: no spawning threads, no globals, no reading environment variables behind the caller's back.
 - Care about performance, especially memory allocations on hot paths.
 - A panic that reaches an `extern "C"` boundary aborts the host process. FFI entry points must catch unwinds (e.g. `std::panic::catch_unwind`) and convert them into error returns rather than letting them propagate into the caller's runtime. Whether a release artifact gets panic containment is decided by `builder` alone, through its `catch_panic` feature (a default), which propagates to the `catch_panic` feature in `libdd-profiling-ffi/Cargo.toml`. Projects building their own flavor with `builder`'s default features off ask for `catch_panic` explicitly; leaving it out yields abort-on-panic semantics. The FFI examples are what verify containment is on for our own release process. Never catch_unwind for datadog-sidecar-ffi, which always uses panic=abort.
+  New `pub extern "C"` entry points are checked against the branch diff by `./scripts/run-ast-grep.sh` (rules `ffi-extern-c-panic-containment` and `ffi-macro-emits-extern-c`). Use `wrap_with_ffi_result!` / `wrap_with_void_ffi_result!` / `catch_panic!` / `std::panic::catch_unwind`, or `// allow(ffi-panic-boundary): <justification>` on a line directly above a genuinely panic-free (or abort-on-purpose) accessor. The justification is required. ast-grep does not expand macros: containment belongs in the `macro_rules` template (or the allow above it). Adding a setter to `c_setters!` (or any other uncontained FFI-generating macro) is a new export.
 - The C FFI does **not** offer C ABI backward-compatibility guarantees: callers (Datadog SDKs) pin to specific libdatadog versions, so `#[repr(C)]` layouts, function signatures, and enum variants may change between releases.
 
 ### Dependency declarations

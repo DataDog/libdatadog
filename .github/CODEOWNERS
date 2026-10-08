@@ -7,6 +7,8 @@ AGENTS.md                            @DataDog/apm-common-components-core
 CLAUDE.md                            @DataDog/apm-common-components-core
 .clang-format                        @DataDog/libdatadog
 .pre-commit-config.yaml              @DataDog/libdatadog-core
+.sg/                                 @DataDog/apm-common-components-core
+sgconfig.yml                         @DataDog/apm-common-components-core
 .cargo/*                             @DataDog/libdatadog-core
 .config/nextest.toml                 @DataDog/apm-common-components-core
 .config/commitlint.config.js         @DataDog/apm-common-components-core
@@ -90,6 +92,8 @@ scripts/release-excluded-crates-hints.sh  @DataDog/apm-common-components-core
 scripts/release-generate-changelogs.sh  @DataDog/apm-common-components-core
 scripts/release-version-bumps.sh     @DataDog/apm-common-components-core
 scripts/release-version-major-bumps.sh  @DataDog/apm-common-components-core
+scripts/run-ast-grep.sh              @DataDog/apm-common-components-core
+scripts/run-ffi-panic-lint.sh        @DataDog/apm-common-components-core
 scripts/semver-level.sh              @DataDog/apm-common-components-core
 scripts/update_license_3rdparty.sh   @DataDog/apm-common-components-core
 scripts/Dockerfile.license           @DataDog/libdatadog-core

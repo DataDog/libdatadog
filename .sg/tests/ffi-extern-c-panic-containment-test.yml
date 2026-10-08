@@ -1,0 +1,78 @@
+id: ffi-extern-c-panic-containment
+valid:
+  - |
+    pub extern "C" fn contained() {
+        let _ = std::panic::catch_unwind(|| risky());
+    }
+  - |
+    pub unsafe extern "C" fn wrapped() -> VoidResult {
+        wrap_with_void_ffi_result!({
+            risky();
+        })
+    }
+  - |
+    pub extern "C" fn wrapped_result() -> AnyResult {
+        wrap_with_ffi_result!({ ok() })
+    }
+  - |
+    pub extern "C" fn no_catch_is_explicit() {
+        wrap_with_ffi_result_no_catch!({ ok() })
+    }
+  - |
+    pub extern "C" fn void_no_catch() {
+        wrap_with_void_ffi_result_no_catch!({ risky(); })
+    }
+  - |
+    pub extern "C" fn crate_macro() {
+        catch_panic!(risky(), err)
+    }
+  - |
+    // allow(ffi-panic-boundary): reads a plain integer only
+    #[no_mangle]
+    pub extern "C" fn justified_accessor() -> i32 {
+        42
+    }
+  - |
+    pub(crate) extern "C" fn crate_visible() {
+        risky();
+    }
+  - |
+    extern "C" fn not_exported() {
+        risky();
+    }
+  - |
+    pub fn not_abi() {
+        risky();
+    }
+invalid:
+  - |
+    pub extern "C" fn exposed() {
+        risky();
+    }
+  - |
+    pub unsafe extern "C" fn unsafe_exposed() {
+        risky();
+    }
+  - |
+    #[no_mangle]
+    pub unsafe extern "C" fn multiline(
+        handle: *mut u8,
+    ) {
+        risky();
+    }
+  - |
+    pub extern "C" fn comment_is_not_containment() {
+        // catch_unwind is intentionally absent
+        // wrap_with_ffi_result! is also absent
+        risky();
+    }
+  - |
+    // allow(ffi-panic-boundary):
+    pub extern "C" fn empty_justification() {
+        42;
+    }
+  - |
+    // allow(ffi-panic-boundary)
+    pub extern "C" fn marker_without_colon() {
+        42;
+    }
