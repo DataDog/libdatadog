@@ -31,7 +31,7 @@ pub trait ExampleInterface {
     async fn echo_len(payload: Vec<u8>) -> u32;
 }
 
-/// Shared server state. Cloned into a per-connection [`ExampleConnectionHandler`] on accept.
+/// Shared server state. Cloned into a per-connection `ExampleConnectionHandler` on accept.
 #[derive(Default, Clone)]
 pub struct ExampleServer {
     req_cnt: Arc<AtomicU64>,

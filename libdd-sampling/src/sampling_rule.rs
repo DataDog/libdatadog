@@ -5,8 +5,10 @@ use crate::constants::pattern::NO_RULE;
 use crate::glob_matcher::GlobMatcher;
 use crate::rate_sampler::RateSampler;
 use crate::sampling_rule_config::SamplingRuleConfig;
+use crate::stack_str::StackStr;
 use crate::types::{AttributeLike, SpanProperties, TraceIdLike, ValueLike};
 use std::collections::HashMap;
+use std::fmt::Write as _;
 
 // HTTP status code attribute constants
 const HTTP_RESPONSE_STATUS_CODE: &str = "http.response.status_code";
@@ -207,8 +209,14 @@ impl SamplingRule {
                 return Some(matcher.pattern().chars().all(|c| c == '*'));
             }
 
-            // For integer floats, convert to string for matching
-            return Some(matcher.matches(&float_val.to_string()));
+            // For integer floats, format into a stack buffer to avoid allocating on
+            // every matched attribute. Values whose rendering overflows the buffer
+            // fall back to the heap.
+            let mut buf = [0u8; 24];
+            return Some(match integer_to_stack_str(&mut buf, float_val) {
+                Some(s) => matcher.matches(s),
+                None => matcher.matches(&float_val.to_string()),
+            });
         }
 
         // For non-float values, use normal matching
@@ -247,6 +255,15 @@ impl From<&str> for RuleProvenance {
     }
 }
 
+/// Formats an integral `f64` via `Display` into a stack buffer, matching the
+/// output of `to_string()`. Returns `None` when the rendered form doesn't fit
+/// (integral values beyond ~1e23), so the caller can fall back to the heap.
+fn integer_to_stack_str(buf: &mut [u8; 24], float_val: f64) -> Option<&str> {
+    let mut s = StackStr::new(buf);
+    write!(s, "{float_val}").ok()?;
+    Some(s.into_str())
+}
+
 /// Helper struct for representing i64 values as ValueLike
 struct ValueI64(i64);
 
@@ -265,6 +282,16 @@ mod tests {
     use super::*;
     use crate::sampling_rule_config::SamplingRuleConfig;
     use std::borrow::Cow;
+
+    #[test]
+    fn integer_to_stack_str_formats_and_falls_back() {
+        let mut buf = [0u8; 24];
+        assert_eq!(integer_to_stack_str(&mut buf, 200.0), Some("200"));
+        assert_eq!(integer_to_stack_str(&mut buf, -4.0), Some("-4"));
+        assert_eq!(integer_to_stack_str(&mut buf, 0.0), Some("0"));
+        // 1e30 renders as 31 characters and overflows the 24-byte buffer.
+        assert_eq!(integer_to_stack_str(&mut buf, 1e30), None);
+    }
 
     // Minimal SpanProperties impl for unit testing sampling_rule logic.
     struct TestSpan {

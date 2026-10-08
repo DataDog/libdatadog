@@ -145,7 +145,7 @@ impl DDSketch {
 /// at index `offset` and end at index `offset + bins.len()`
 ///
 /// The range of stored bins is updated when accessing the index of a bin out of the range
-/// with [`Self::bin_idx_to_bin_idx()`]. If the `max_size` is reached the lower bins are
+/// with [`Self::bin_idx_to_store_idx()`]. If the `max_size` is reached the lower bins are
 /// collapsed together to free space.
 #[derive(Debug, Clone)]
 struct LowCollapsingDenseStore {
