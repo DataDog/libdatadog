@@ -10,6 +10,7 @@
       "start": 1,
       "duration": 5,
       "meta": {
+        "_dd.sdk.otlp_export": "false",
         "env": "test-env",
         "service": "test-service",
         "runtime-id": "test-runtime-id-value"
