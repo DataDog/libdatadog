@@ -11,19 +11,19 @@
 //! validation currently rejects only empty tags and likely colon-related mistakes. Compile-time
 //! validation by the [`tag!`] macro is intentionally stricter.
 
-#[cfg(feature = "alloc")]
-use alloc::{
-    borrow::{Cow, ToOwned},
-    format,
-    string::{String, ToString},
-    vec,
-    vec::Vec,
-};
-#[cfg(feature = "alloc")]
-use core::fmt::Debug;
 use core::fmt::{Display, Formatter};
 #[cfg(feature = "alloc")]
-use serde::{Deserialize, Serialize};
+use {
+    alloc::{
+        borrow::{Cow, ToOwned},
+        format,
+        string::{String, ToString},
+        vec,
+        vec::Vec,
+    },
+    core::fmt::Debug,
+    serde::{Deserialize, Serialize},
+};
 
 #[cfg(feature = "alloc")]
 pub use static_assertions::{const_assert, const_assert_ne};

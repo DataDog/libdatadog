@@ -134,9 +134,10 @@ impl<C: hyper_util::client::legacy::connect::Connect + Clone + Send + Sync + 'st
 }
 
 #[cfg(feature = "std")]
-pub use endpoint::{Endpoint, decode_uri_path_in_authority, parse_uri};
-#[cfg(feature = "std")]
-pub use lock_ext::{MutexExt, RwLockExt};
+pub use {
+    endpoint::{Endpoint, decode_uri_path_in_authority, parse_uri},
+    lock_ext::{MutexExt, RwLockExt},
+};
 
 // Used by tag! macro
 #[cfg(feature = "alloc")]
