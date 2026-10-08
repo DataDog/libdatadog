@@ -66,6 +66,7 @@ pub(crate) struct StatsContext<
     pub additional_metric_tag_keys: &'a [String],
     /// Configuration option to pass to [SharedRuntime::spawn_worker]
     pub restart_after_fork: bool,
+    pub observations: Option<Arc<super::CollapsedSpansObservations>>,
     /// Optional DogStatsD client forwarded to the [`StatsExporter`].
     pub dogstatsd: Option<libdd_dogstatsd_client::DogStatsDClient>,
     /// Optional telemetry handle forwarded to the [`StatsExporter`].
@@ -196,6 +197,10 @@ fn create_and_start_stats_worker<
         ctx.telemetry.clone(),
         ctx.dogstatsd.clone(),
     );
+    let stats_exporter = match &ctx.observations {
+        Some(observations) => stats_exporter.with_observations(observations.clone()),
+        None => stats_exporter,
+    };
     let (shared, weak) = SharedStatsExporter::wrap(stats_exporter);
     let worker_handle = ctx
         .shared_runtime
@@ -370,6 +375,7 @@ pub(crate) fn process_traces_for_stats<
     client_computed_top_level: bool,
     trace_filterer: &TraceFilterer,
     #[cfg(feature = "telemetry")] telemetry: Option<&crate::telemetry::TelemetryClient<C>>,
+    report: super::observations::Report<'_>,
 ) -> bool {
     let status = client_side_stats.load();
     if let StatsComputationStatus::Enabled {
@@ -394,7 +400,7 @@ pub(crate) fn process_traces_for_stats<
 
         // Send dropped P0 stats directly to telemetry if available
         #[cfg(feature = "telemetry")]
-        if let Some(telemetry_client) = telemetry {
+        if let Some(telemetry_client) = telemetry.filter(|_| report.is_none()) {
             if let Err(e) = telemetry_client.send_client_side_stats_drops(
                 dropped_p0_stats.dropped_p0_traces,
                 dropped_by_trace_filter,
@@ -402,6 +408,12 @@ pub(crate) fn process_traces_for_stats<
                 tracing::error!(?e, "Error sending dropped P0 stats to telemetry");
             }
         }
+        super::observations::record(report, |r| {
+            r.chunks_dropped_p0 =
+                u64::try_from(dropped_p0_stats.dropped_p0_traces).unwrap_or(u64::MAX);
+            r.chunks_dropped_by_trace_filter =
+                u64::try_from(dropped_by_trace_filter).unwrap_or(u64::MAX);
+        });
         true
     } else {
         false

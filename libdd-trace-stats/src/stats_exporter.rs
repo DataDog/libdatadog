@@ -400,6 +400,9 @@ pub struct StatsExporter<
     flush_interval: time::Duration,
     concentrator: Arc<Mutex<Con>>,
     sender: StatsSender<Cap>,
+    observations: Option<
+        Arc<crate::span_concentrator::cardinality_limit_telemetry::CollapsedSpansObservations>,
+    >,
     /// Optional telemetry handle and context key.
     #[cfg(feature = "telemetry")]
     telemetry: Option<(
@@ -416,6 +419,21 @@ impl<
     Con: FlushableConcentrator,
 > StatsExporter<Cap, Con>
 {
+    /// Select externally drained cardinality observations instead of native telemetry.
+    pub fn with_observations(
+        mut self,
+        observations: Arc<
+            crate::span_concentrator::cardinality_limit_telemetry::CollapsedSpansObservations,
+        >,
+    ) -> Self {
+        self.observations = Some(observations);
+        #[cfg(feature = "telemetry")]
+        {
+            self.telemetry = None;
+        }
+        self
+    }
+
     /// Return a new StatsExporter targeting the Datadog Agent's `/v0.6/stats`.
     ///
     /// - `flush_interval` the interval on which the concentrator is flushed
@@ -512,6 +530,7 @@ impl<
         Self {
             flush_interval,
             concentrator,
+            observations: None,
             sender: StatsSender::new(
                 destination,
                 meta,
@@ -548,6 +567,9 @@ impl<
             concentrator.flush_buckets(force_flush)
         };
 
+        if let Some(observations) = &self.observations {
+            observations.record(flush.collapsed_spans, &flush.collapsed_fields_metrics);
+        }
         #[cfg(feature = "telemetry")]
         if let Some((handle, key)) = &self.telemetry {
             if flush.collapsed_spans > 0 {
@@ -1645,6 +1667,41 @@ mod tests {
             "datadog.tracer.stats.collapsed_spans:2|c|#collapsed:resource,collapsed:http_endpoint",
             "DogStatsD datagram must match the expected format"
         );
+    }
+
+    #[cfg(any(feature = "telemetry", feature = "dogstatsd"))]
+    #[cfg_attr(miri, ignore = "httpmock retains detached server threads")]
+    #[tokio::test]
+    async fn external_observations_include_collapses_even_when_stats_send_fails() {
+        use crate::span_concentrator::cardinality_limit_telemetry::CollapsedSpansObservations;
+        let server = MockServer::start_async().await;
+        server
+            .mock_async(|_, then| {
+                then.status(500);
+            })
+            .await;
+        let observations = Arc::new(CollapsedSpansObservations::default());
+        let exporter = StatsExporter::<NativeCapabilities>::new(
+            BUCKETS_DURATION,
+            Arc::new(Mutex::new(get_collapsed_concentrator(true))),
+            get_test_metadata(),
+            Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
+            NativeCapabilities::new_client(),
+            #[cfg(feature = "stats-obfuscation")]
+            "1",
+            #[cfg(feature = "telemetry")]
+            None,
+            #[cfg(feature = "dogstatsd")]
+            None,
+        )
+        .with_observations(observations.clone());
+        assert!(exporter.send(true).await.is_err());
+        let counts = observations.take();
+        assert_eq!(counts[0], 2);
+        assert_eq!(counts[1], 1);
+        assert_eq!(counts[3], 2);
+        assert_eq!(counts.iter().sum::<u64>(), 5);
+        assert_eq!(observations.take(), [0; 16]);
     }
 
     /// Verify that `COLLAPSED_SPANS_METRIC` is enqueued to the telemetry worker when spans

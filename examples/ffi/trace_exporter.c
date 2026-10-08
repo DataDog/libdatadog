@@ -153,6 +153,21 @@ int verify_structured_value_encoder_rejects_invalid(void) {
 
 int main(int argc, char** argv)
 {
+    ddog_TraceExporterObservations observations;
+    memset(&observations, 0xff, sizeof(observations));
+    ddog_TraceExporterResponse *unused_response = NULL;
+    ddog_TraceExporterError *invalid = ddog_trace_exporter_send_trace_chunks_observed(
+        NULL, NULL, &unused_response, &observations, NULL);
+    if (invalid == NULL || unused_response != NULL || observations.requests_count != 0 ||
+        observations.bytes_sent != 0 || observations.status_code != 0) return 1;
+    ddog_trace_exporter_error_free(invalid);
+    ddog_TraceExporterStatsObservations stats;
+    memset(&stats, 0xff, sizeof(stats));
+    invalid = ddog_trace_exporter_take_stats_observations(NULL, &stats);
+    if (invalid == NULL) return 1;
+    ddog_trace_exporter_error_free(invalid);
+    for (size_t i = 0; i < 16; i++) if (stats.collapsed_spans[i] != 0) return 1;
+
     if (verify_structured_value_encoder() != 0) return 1;
     if (verify_structured_value_encoder_rejects_invalid() != 0) return 1;
 
