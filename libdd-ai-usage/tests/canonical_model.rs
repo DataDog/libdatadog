@@ -1,3 +1,6 @@
+// Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
 //! The model's canonical name on cost points
 //! (PORTABLE-METRICS.md#canonical-model). The expected values come from that
 //! text, not from the projectors. Every rejection is compared by code.

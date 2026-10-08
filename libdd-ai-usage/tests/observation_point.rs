@@ -1,3 +1,6 @@
+// Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
 //! Where a point was observed (`PORTABLE-METRICS.md#observation-point`).
 //! The expected values come from the contract text, not from the projectors.
 
