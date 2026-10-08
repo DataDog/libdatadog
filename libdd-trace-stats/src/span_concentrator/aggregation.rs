@@ -50,7 +50,7 @@ const GRPC_STATUS_CODE_FIELD: &[&str] = &[
 /// **except** peer tags.
 ///
 /// `T` is the string representation:
-/// * `&'a str`   — borrowed references used in [`BorrowedAggregationKey`]
+/// * `&'a str`   — borrowed references used in `BorrowedAggregationKey`
 /// * `String`    — owned values used in `OwnedAggregationKey`
 #[derive(
     Clone, Default, Hash, Eq, PartialEq, Debug, PartialOrd, serde::Serialize, serde::Deserialize,
