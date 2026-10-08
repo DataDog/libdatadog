@@ -233,33 +233,34 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Wor
 
     /// Reset the worker state in the child process after a fork.
     ///
-    /// Discards inherited pending telemetry state and dedupe history without sending anything, and
-    /// drains the mailbox so that actions queued before the fork are not processed by the
-    /// child. The child's sequence starts at one; the host must install its new identity
-    /// before restarting the worker.
+    /// Discards inherited observations and dedupe history without sending anything. Metrics/logs
+    /// workers preserve the final requested lifecycle state from staged and queued control actions.
+    /// The child's sequence starts at one; the host must install its new identity before restarting
+    /// the worker.
     fn reset(&mut self) {
         self.seq_id.store(1, Ordering::Relaxed);
-        let mut start_pending = matches!(
-            self.next_action,
-            Some(TelemetryActions::Lifecycle(LifecycleAction::Start))
-        );
-        // Drain all actions queued in the mailbox before the fork.
-        while let Ok(action) = self.mailbox.try_recv() {
-            start_pending |= matches!(action, TelemetryActions::Lifecycle(LifecycleAction::Start));
+        let mut started = self.data.started;
+        // Apply staged control before queued control, without flushing inherited data on Stop.
+        let staged = self.next_action.take();
+        let queued = std::iter::from_fn(|| self.mailbox.try_recv().ok());
+        for action in staged.into_iter().chain(queued) {
+            match action {
+                TelemetryActions::Lifecycle(LifecycleAction::Start) => started = true,
+                TelemetryActions::Lifecycle(LifecycleAction::Stop) => started = false,
+                _ => {}
+            }
         }
 
-        // Discard any action that was staged by the last trigger() call.
-        self.next_action = None;
-
         // A queued Start or staged flush must not leave the child's metrics worker dormant.
-        if matches!(self.flavor, TelemetryWorkerFlavor::MetricsLogs)
-            && (self.data.started || start_pending)
-        {
-            self.data.started = true;
-            let _ = self
-                .deadlines
-                .schedule_event(LifecycleAction::FlushMetricAggr);
-            let _ = self.deadlines.schedule_event(LifecycleAction::FlushData);
+        if matches!(self.flavor, TelemetryWorkerFlavor::MetricsLogs) {
+            self.data.started = started;
+            self.deadlines.clear_pending();
+            if started {
+                let _ = self
+                    .deadlines
+                    .schedule_event(LifecycleAction::FlushMetricAggr);
+                let _ = self.deadlines.schedule_event(LifecycleAction::FlushData);
+            }
         }
 
         // Clear all unbuffered telemetry data; the child must not send pre-fork data.
@@ -2317,6 +2318,67 @@ mod tests {
                             .iter()
                             .any(|(_, action)| *action == expected)
                     );
+                }
+            }
+        }
+
+        #[cfg_attr(miri, ignore)]
+        #[tokio::test]
+        async fn metrics_reset_preserves_ordered_lifecycle_state() {
+            use LifecycleAction::*;
+
+            for restartable in [false, true] {
+                for (initial, staged, queued, expected) in [
+                    (false, None, &[Start, Stop][..], false),
+                    (true, None, &[Stop][..], false),
+                    (true, Some(Stop), &[][..], false),
+                    (false, Some(Start), &[Stop][..], false),
+                    (true, Some(Stop), &[Start][..], true),
+                    (false, None, &[Stop, Start][..], true),
+                    (false, Some(Stop), &[Start, Stop][..], false),
+                    (true, Some(FlushData), &[Stop][..], false),
+                    (true, Some(FlushMetricAggr), &[Stop][..], false),
+                    (false, None, &[Start, Stop, Start][..], true),
+                    (false, None, &[][..], false),
+                    (true, None, &[][..], true),
+                ] {
+                    let (handle, mut worker) = build_test_worker();
+                    worker.flavor = TelemetryWorkerFlavor::MetricsLogs;
+                    worker.config.restartable = restartable;
+                    if initial {
+                        handle.send_start().unwrap();
+                        worker.trigger().await;
+                        worker.run().await;
+                    }
+                    worker.next_action = staged.map(TelemetryActions::Lifecycle);
+                    handle
+                        .try_send_msg(TelemetryActions::AddLog(make_log(1, "parent")))
+                        .unwrap();
+                    for action in queued {
+                        handle
+                            .try_send_msg(TelemetryActions::Lifecycle(*action))
+                            .unwrap();
+                    }
+
+                    worker.reset();
+
+                    assert_eq!(
+                        worker.data.started, expected,
+                        "restartable={restartable}, initial={initial}, staged={staged:?}, queued={queued:?}"
+                    );
+                    assert_eq!(
+                        worker.deadlines.deadlines.len(),
+                        if expected { 2 } else { 0 }
+                    );
+                    assert!(worker.mailbox.try_recv().is_err());
+                    assert!(worker.next_action.is_none());
+                    assert_eq!(worker.stats().logs, 0);
+
+                    handle.send_start().unwrap();
+                    worker.trigger().await;
+                    worker.run().await;
+                    assert!(worker.data.started);
+                    assert_eq!(worker.deadlines.deadlines.len(), 2);
                 }
             }
         }
