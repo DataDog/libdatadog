@@ -69,12 +69,34 @@ for point in &projection.points {
 (for example `user.id` or `trajectory.team.id`) after projection; resource
 attributes such as `service.name` are returned separately.
 
+## Export
+
+A `MetricBatch` collects the projections of one export window. Counters are
+summed exactly as they are added, and Histogram samples are kept. At a flush the
+caller encodes the batch and starts a new one; the batch is a plain value the
+caller owns.
+
+- **OTLP** (feature `otlp`): `MetricBatch::encode_otlp` returns an
+  `ExportMetricsServiceRequest` in protobuf for an OTLP/HTTP metrics endpoint.
+  There is one scope per profile, carrying the attribute `trajectory.profile`. Counters are monotonic
+  delta sums, and Histograms are delta explicit-bucket histograms using the
+  OpenTelemetry GenAI advisory bucket bounds where the conventions give them.
+- **DogStatsD**: `MetricBatch::dogstatsd_lines` returns one line per series
+  point under the Datadog binding. Names are unchanged. Counters are Counts. Histograms are
+  Distributions, each with `{name}.sum` and `{name}.count` Counts. `{nanoUSD}`
+  Counters are summed exactly and sent in USD. Every series carries
+  `trajectory.profile:{id}/{version}`. Tag values are normalized
+  the way Datadog stores them.
+
+Sending the bytes or lines is the caller's job.
+
 ## Conformance
 
 The rules are those of the Open Trajectory portable metric profiles. This crate
 is a port of their Rust reference implementation. `tests/data` holds the shared
-conformance cases and the metric registry; `cargo nextest run -p libdd-ai-usage`
-runs every case and checks every projected point against the registry.
+conformance cases, the metric registry, and the Datadog binding cases;
+`cargo nextest run -p libdd-ai-usage --features otlp` runs every case and checks
+every projected point against the registry.
 
 `examples/vector_driver.rs` is a driver for the conformance tool:
 

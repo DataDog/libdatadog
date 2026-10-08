@@ -375,19 +375,19 @@ pub fn sort_metric_points(mut points: Vec<MetricPoint>) -> Vec<MetricPoint> {
 }
 
 /// The sum of one series.
-#[derive(Clone, Copy)]
-enum Sum {
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum Sum {
     /// Every increment so far was a whole number: the sum is exact.
     Integer(u128),
     Double(f64),
 }
 
 impl Sum {
-    fn of(point: &MetricPoint) -> Self {
+    pub(crate) fn of(point: &MetricPoint) -> Self {
         point.exact().map_or(Sum::Double(point.value), Sum::Integer)
     }
 
-    fn value(self) -> f64 {
+    pub(crate) fn value(self) -> f64 {
         match self {
             Sum::Integer(total) => integer_to_f64(total),
             Sum::Double(total) => total,
@@ -397,7 +397,7 @@ impl Sum {
     /// Integers are added exactly, so the order of increments does not
     /// matter. An increment at most 2^128 cannot overflow the sum in
     /// practice; if it did, the sum would continue as a double.
-    fn add(self, other: Sum) -> Sum {
+    pub(crate) fn add(self, other: Sum) -> Sum {
         match (self, other) {
             (Sum::Integer(a), Sum::Integer(b)) => match a.checked_add(b) {
                 Some(total) => Sum::Integer(total),

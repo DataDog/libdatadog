@@ -15,5 +15,11 @@ description = "Usage and cost metric points for LLM provider calls and gateway r
 bench = false
 
 [dependencies]
+prost = { workspace = true, features = ["derive", "std"], optional = true }
 serde = { workspace = true, features = ["derive", "std"] }
 serde_json = { workspace = true, features = ["std"] }
+
+[features]
+default = []
+# Encode a MetricBatch as an OTLP ExportMetricsServiceRequest.
+otlp = ["dep:prost"]

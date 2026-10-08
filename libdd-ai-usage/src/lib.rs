@@ -48,15 +48,21 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
+mod batch;
+mod datadog;
 mod deployment;
 mod json;
 mod number;
 mod observation;
+#[cfg(feature = "otlp")]
+mod otlp;
 mod point;
 mod project;
 mod registry;
 mod usage;
 
+pub use batch::MetricBatch;
+pub use datadog::{DatadogSeries, SeriesType, datadog_series, datadog_tag_value};
 pub use deployment::{
     Carrier, DEPLOYMENT_ATTRIBUTES, deployment_attribute_carrier, is_deployment_value,
     with_deployment_attributes, with_deployment_attributes_json,
@@ -68,6 +74,8 @@ pub use observation::{
     ProviderStreamingObservation, TOKEN_SOURCES, TokenBreakdownObservation, is_context_band,
     is_identifier, is_rate_card,
 };
+#[cfg(feature = "otlp")]
+pub use otlp::{OtlpScope, OtlpWindow};
 pub use point::{
     Attributes, ErrorCode, Instrument, IssueCode, Issues, MetricError, MetricPoint, Projection,
     compare_metric_points, merge_counter_points, sort_metric_points,
@@ -109,6 +117,39 @@ impl Profile {
             Profile::ProviderStreaming => "gen_ai.client.provider_streaming@0.1.0",
             Profile::TokenBreakdown => "trajectory.gen_ai.client.token_breakdown@0.1.0",
             Profile::GatewayRequest => "trajectory.gen_ai.gateway.request@0.1.0",
+        }
+    }
+
+    /// The metrics the profile defines, as the registry lists them.
+    pub fn metric_names(self) -> &'static [&'static str] {
+        match self {
+            Profile::ProviderAttempt => &[
+                "gen_ai.client.inference.duration",
+                "gen_ai.client.inference.operation.input_tokens",
+                "gen_ai.client.inference.operation.output_tokens",
+                "gen_ai.client.inference.usage.input_tokens",
+                "gen_ai.client.inference.usage.output_tokens",
+                "gen_ai.client.inference.time_to_first_chunk",
+                "gen_ai.client.operation.duration",
+                "trajectory.gen_ai.client.inference.usage.server_tool.requests",
+                "trajectory.gen_ai.client.inference.usage.cost",
+                "trajectory.gen_ai.client.operation.cost",
+            ],
+            Profile::ProviderStreaming => &["gen_ai.client.inference.time_per_output_chunk"],
+            Profile::TokenBreakdown => &[
+                "gen_ai.client.inference.usage.cache_read.input_tokens",
+                "gen_ai.client.inference.usage.cache_write.input_tokens",
+                "gen_ai.client.inference.usage.reasoning.output_tokens",
+                "trajectory.gen_ai.client.inference.usage.uncached.input_tokens",
+            ],
+            Profile::GatewayRequest => &[
+                "trajectory.gen_ai.gateway.request.duration",
+                "trajectory.gen_ai.gateway.request.provider_operations",
+                "trajectory.gen_ai.gateway.request.retries",
+                "trajectory.gen_ai.gateway.request.fallbacks",
+                "trajectory.gen_ai.gateway.cache.operations",
+                "trajectory.gen_ai.gateway.request.estimated_cost",
+            ],
         }
     }
 
