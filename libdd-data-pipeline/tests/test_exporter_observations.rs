@@ -8,6 +8,7 @@ use libdd_shared_runtime::ForkSafeRuntime;
 use libdd_trace_utils::span::{span_pool::PooledChunks, v04::SpanBytes};
 use tokio_util::sync::CancellationToken;
 
+#[cfg_attr(miri, ignore = "httpmock retains detached server threads")]
 #[test]
 fn reports_terminal_results_without_native_delivery() {
     for format in [
@@ -74,6 +75,7 @@ fn reports_terminal_results_without_native_delivery() {
     }
 }
 
+#[cfg_attr(miri, ignore = "httpmock retains detached server threads")]
 #[test]
 fn cancellation_has_no_invented_terminal_result() {
     let server = MockServer::start();
@@ -91,6 +93,7 @@ fn cancellation_has_no_invented_terminal_result() {
     exporter.shutdown(None).unwrap();
 }
 
+#[cfg_attr(miri, ignore = "httpmock retains detached server threads")]
 #[test]
 fn failed_build_and_timeout_reports_do_not_depend_on_response_bodies() {
     for build_error in [true, false] {
@@ -135,6 +138,10 @@ fn failed_build_and_timeout_reports_do_not_depend_on_response_bodies() {
     }
 }
 
+#[cfg_attr(
+    miri,
+    ignore = "wall-clock network deadlines are unreliable under Miri"
+)]
 #[test]
 fn retry_success_counts_attempts_but_only_the_final_response() {
     use std::io::{BufRead, BufReader, Read, Write};
@@ -194,6 +201,7 @@ fn retry_success_counts_attempts_but_only_the_final_response() {
 }
 
 #[cfg(unix)]
+#[cfg_attr(miri, ignore = "Miri does not support AF_UNIX sockets")]
 #[test]
 fn unavailable_socket_produces_a_network_report() {
     let dir = tempfile::tempdir().unwrap();
@@ -217,6 +225,7 @@ fn unavailable_socket_produces_a_network_report() {
     exporter.shutdown(None).unwrap();
 }
 
+#[cfg_attr(miri, ignore = "httpmock retains detached server threads")]
 #[test]
 fn decoding_failure_and_empty_input_have_distinct_reports() {
     let server = MockServer::start();
@@ -243,6 +252,7 @@ fn decoding_failure_and_empty_input_have_distinct_reports() {
 }
 
 #[cfg(feature = "test-utils")]
+#[cfg_attr(miri, ignore = "httpmock retains detached server threads")]
 #[tokio::test]
 async fn css_filtering_reports_counts_before_the_empty_payload_send() {
     use std::time::Duration;
@@ -296,6 +306,7 @@ async fn css_filtering_reports_counts_before_the_empty_payload_send() {
 }
 
 #[cfg(feature = "telemetry")]
+#[cfg_attr(miri, ignore = "httpmock retains detached server threads")]
 #[test]
 fn native_delivery_and_external_reports_describe_the_same_send() {
     use std::sync::{Arc, Mutex};

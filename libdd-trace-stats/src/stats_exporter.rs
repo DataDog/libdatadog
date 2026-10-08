@@ -1670,6 +1670,7 @@ mod tests {
     }
 
     #[cfg(any(feature = "telemetry", feature = "dogstatsd"))]
+    #[cfg_attr(miri, ignore = "httpmock retains detached server threads")]
     #[tokio::test]
     async fn external_observations_include_collapses_even_when_stats_send_fails() {
         use crate::span_concentrator::cardinality_limit_telemetry::CollapsedSpansObservations;
