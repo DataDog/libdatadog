@@ -2,7 +2,22 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::data::*;
+use alloc::vec::Vec;
 use serde::Serialize;
+
+#[derive(Serialize, Debug)]
+pub struct Telemetry<'a> {
+    pub api_version: ApiVersion,
+    pub tracer_time: u64,
+    pub runtime_id: &'a str,
+    pub seq_id: u64,
+    pub application: &'a Application,
+    pub host: &'a Host,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<&'a str>,
+    #[serde(flatten)]
+    pub payload: &'a Payload,
+}
 
 #[derive(Serialize, Debug)]
 #[serde(tag = "request_type", content = "payload")]
@@ -47,6 +62,10 @@ impl Payload {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::{
+        string::{String, ToString},
+        vec,
+    };
     use serde_json::json;
 
     #[test]
@@ -500,15 +519,14 @@ mod tests {
 
     #[test]
     fn test_app_product_change_serialization() {
-        let mut products = std::collections::HashMap::new();
-        products.insert(
+        let products = Products::new(vec![(
             "appsec".to_string(),
             ProductState {
                 enabled: true,
                 version: Some("1.2.3".to_string()),
                 error: None,
             },
-        );
+        )]);
         let payload = Payload::AppProductChange(AppProductChange { products });
 
         let serialized = serde_json::to_value(&payload).unwrap();

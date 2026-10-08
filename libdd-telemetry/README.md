@@ -13,6 +13,7 @@ Internal telemetry library for reporting Datadog library metrics and events.
 - **Error Tracking**: Track and report library errors
 - **Host Information**: Automatic host and container metadata
 - **HTTP Transport**: Send telemetry data to Datadog intake
+- **Alloc-only Data Model**: Build telemetry metrics and metadata without `std`
 - **Worker Pattern**: Async background telemetry worker
 - **Dependency Tracking**: Report library dependencies
 - **Application Metadata**: Track application information
@@ -50,6 +51,25 @@ let app = data::Application {
     // ...
 };
 ```
+
+## Alloc-only data model
+
+The `alloc` feature exposes the whole `data` module (request envelopes and
+payloads, application and host metadata, metric series, and allocation-backed
+tags) in a `no_std` build. Configuration, host discovery, aggregation, and the
+worker remain behind the default `std` feature.
+
+```bash
+cargo check -p libdd-telemetry --lib --no-default-features --features alloc
+```
+
+With no features at all, the metric namespace and type enums
+(`data::metrics::{MetricNamespace, MetricType}`) remain available without
+`alloc`.
+
+The metric `Tag` is defined by the alloc-compatible `libdd-common` crate, so
+existing `libdd_common::tag::Tag` callers continue to use the same concrete
+type.
 
 ## Host Information
 
