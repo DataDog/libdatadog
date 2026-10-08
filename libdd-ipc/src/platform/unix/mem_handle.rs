@@ -199,8 +199,9 @@ const MAPPING_RESERVED_SIZE: usize = 1 << 27;
 pub(crate) fn mmap_handle<T: FileBackedHandle>(handle: T) -> io::Result<MappedMem<T>> {
     let fd = handle.get_shm().handle.as_owned_fd()?.as_fd();
     let Some(size) = NonZeroUsize::new(handle.get_shm().size) else {
-        return Err(io::Error::other(
-            "Size of handle used for mmap() is zero. When used for shared memory this may originate from race conditions between creation and truncation of the shared memory file.",
+        return Err(io::Error::new(
+            io::ErrorKind::WouldBlock,
+            "shared memory size not yet initialized",
         ));
     };
     // A segment that already exceeds the standard reservation keeps its own size as one: it
@@ -344,7 +345,11 @@ impl NamedShmHandle {
     pub fn open(path: &CStr) -> io::Result<NamedShmHandle> {
         let file: File = sys_open_existing(path)?.into();
         let size = file.metadata()?.size() as usize;
-        Ok(Self::new(file.into(), None, size))
+        let path = ShmPath {
+            name: path.to_owned(),
+            ownership: None,
+        };
+        Ok(Self::new(file.into(), Some(path), size))
     }
 
     fn new(fd: OwnedFd, path: Option<ShmPath>, size: usize) -> NamedShmHandle {
@@ -359,6 +364,37 @@ impl NamedShmHandle {
 }
 
 impl<T: FileBackedHandle> MappedMem<T> {
+    /// Detach this view before retiring it, without moving existing references.
+    /// Call under `lock_shm`, and do not remap an already retired view.
+    pub(crate) fn make_private(&self) -> io::Result<()> {
+        let fd = self.mem.get_shm().handle.as_owned_fd()?.as_fd();
+        let length = NonZeroUsize::new(self.mapped_len)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "empty mapping"))?;
+        let flags = MapFlags::MAP_PRIVATE | MapFlags::MAP_FIXED;
+        // Only touched pages need private storage, not the entire reservation.
+        #[cfg(target_os = "linux")]
+        let flags = flags | MapFlags::MAP_NORESERVE;
+        // SAFETY: this mapping owns the entire reserved range. The same file, offset,
+        // length and permissions preserve its contents and all existing addresses.
+        let result = unsafe {
+            mmap(
+                NonZeroUsize::new(self.ptr.as_ptr() as usize),
+                length,
+                ProtFlags::PROT_READ | ProtFlags::PROT_WRITE,
+                flags,
+                fd,
+                0,
+            )
+        };
+        if let Err(error) = result {
+            // MAP_FIXED can discard the old mapping before failing. References into
+            // that range may still be in use, so returning would not be safe.
+            tracing::error!("Failed to privately remap shared memory: {error}");
+            std::process::abort();
+        }
+        Ok(())
+    }
+
     /// Pick up backing that somebody else committed, without committing any.
     ///
     /// `usable` is per-process: only this handle's own [`Self::ensure_space`] raises it, so a

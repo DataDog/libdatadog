@@ -8,9 +8,15 @@ use core::hash::{Hash, Hasher};
 use core::marker::PhantomData;
 use core::slice;
 use core::str::Utf8Error;
-use libdd_common::error::FfiSafeErrorMessage;
-use serde::Serializer;
-use serde::ser::Error;
+
+#[cfg(not(feature = "std"))]
+use alloc::{
+    string::{String, ToString},
+    vec::Vec,
+};
+
+#[cfg(feature = "std")]
+use {libdd_common::error::FfiSafeErrorMessage, serde::Serializer, serde::ser::Error};
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
@@ -18,6 +24,34 @@ pub enum SliceConversionError {
     LargeLength,
     NullPointer,
     MisalignedPointer,
+}
+
+impl SliceConversionError {
+    fn message(&self) -> &'static core::ffi::CStr {
+        match self {
+            SliceConversionError::LargeLength => c"length was too large",
+            SliceConversionError::NullPointer => c"null pointer with non-zero length",
+            SliceConversionError::MisalignedPointer => c"pointer was not aligned for the type",
+        }
+    }
+}
+
+impl core::fmt::Display for SliceConversionError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(self.message().to_str().unwrap_or_default())
+    }
+}
+
+impl core::error::Error for SliceConversionError {}
+
+// Gated on `std` because `FfiSafeErrorMessage` lives in `libdd-common`, which is std-only.
+#[cfg(feature = "std")]
+/// # Safety
+/// All strings are valid UTF-8 (enforced by using c-str literals in Rust).
+unsafe impl FfiSafeErrorMessage for SliceConversionError {
+    fn as_ffi_str(&self) -> &'static core::ffi::CStr {
+        self.message()
+    }
 }
 
 #[repr(C)]
@@ -33,25 +67,6 @@ pub struct Slice<'a, T: 'a> {
     len: usize,
     _marker: PhantomData<&'a [T]>,
 }
-
-/// # Safety
-/// All strings are valid UTF-8 (enforced by using c-str literals in Rust).
-unsafe impl FfiSafeErrorMessage for SliceConversionError {
-    fn as_ffi_str(&self) -> &'static core::ffi::CStr {
-        match self {
-            SliceConversionError::LargeLength => c"length was too large",
-            SliceConversionError::NullPointer => c"null pointer with non-zero length",
-            SliceConversionError::MisalignedPointer => c"pointer was not aligned for the type",
-        }
-    }
-}
-impl Display for SliceConversionError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-        Display::fmt(self.as_rust_str(), f)
-    }
-}
-
-impl core::error::Error for SliceConversionError {}
 
 impl<'a, T: 'a> core::ops::Deref for Slice<'a, T> {
     type Target = [T];
@@ -184,7 +199,7 @@ impl<'a, T: 'a> Slice<'a, T> {
     }
 
     /// # Safety
-    /// Uphold the same safety requirements as [std::str::from_raw_parts].
+    /// Uphold the same safety requirements as [`core::slice::from_raw_parts`].
     /// However, it is allowed but not recommended to provide a null pointer
     /// when the len is 0.
     pub const unsafe fn from_raw_parts(ptr: *const T, len: usize) -> Self {
@@ -267,6 +282,7 @@ where
     }
 }
 
+#[cfg(feature = "std")]
 impl<'a, T> serde::Serialize for Slice<'a, T>
 where
     Slice<'a, T>: AsBytes<'a>,
@@ -329,8 +345,8 @@ impl<'a> CharSlice<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::ffi::c_char;
     use core::ptr;
-    use std::os::raw::c_char;
 
     #[test]
     fn slice_from_into_slice() {

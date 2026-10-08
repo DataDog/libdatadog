@@ -1,6 +1,5 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
-use core::default::Default;
 use libdd_trace_protobuf::opentelemetry::proto as otel_proto;
 
 /// Thread-level context metadata the tracer wants to publish as part of the OTel process context.
@@ -476,5 +475,61 @@ mod tests {
             find_extra_attr(&ctx, "threadlocal.runtime.name").and_then(|v| v.value.clone()),
             Some(any_value::Value::StringValue("nodejs".to_owned()))
         );
+    }
+
+    #[cfg(feature = "otel-thread-ctx")]
+    #[test]
+    fn default_threadlocal_metadata_preserves_legacy_metadata() {
+        let mut metadata = TracerMetadata {
+            service_name: Some("checkout".to_owned()),
+            ..Default::default()
+        };
+
+        let legacy_before = rmp_serde::to_vec_named(&metadata).expect("metadata should serialize");
+
+        metadata.threadlocal_metadata = Some(ThreadLocalMetadata::default());
+
+        let ctx = metadata.to_otel_process_ctx();
+
+        for key in [
+            "threadlocal.schema_version",
+            "threadlocal.attribute_key_map",
+        ] {
+            let count = ctx
+                .extra_attributes
+                .iter()
+                .filter(|attribute| attribute.key == key)
+                .count();
+
+            assert_eq!(count, 1, "expected exactly one {key}");
+        }
+
+        let schema = find_extra_attr(&ctx, "threadlocal.schema_version")
+            .expect("schema version should be present");
+
+        assert_eq!(
+            schema.value,
+            Some(any_value::Value::StringValue("tlsdesc_v1_dev".to_owned()))
+        );
+
+        let key_map = find_extra_attr(&ctx, "threadlocal.attribute_key_map")
+            .expect("attribute key map should be present");
+
+        let array = match &key_map.value {
+            Some(any_value::Value::ArrayValue(array)) => array,
+            other => panic!("expected ArrayValue, got {other:?}"),
+        };
+
+        assert_eq!(array.values.len(), 1);
+        assert_eq!(
+            array.values[0].value,
+            Some(any_value::Value::StringValue(
+                "datadog.local_root_span_id".to_owned()
+            ))
+        );
+
+        let legacy_after = rmp_serde::to_vec_named(&metadata).expect("metadata should serialize");
+
+        assert_eq!(legacy_before, legacy_after);
     }
 }

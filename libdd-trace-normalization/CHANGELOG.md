@@ -2,6 +2,14 @@
 
 
 
+## [4.2.0](https://github.com/datadog/libdatadog/compare/libdd-trace-normalization-v4.1.0..libdd-trace-normalization-v4.2.0) - 2026-10-02
+
+### Changed
+
+- Update workspace to Rust 2024 edition ([#2575](https://github.com/datadog/libdatadog/issues/2575)) - ([620a212](https://github.com/datadog/libdatadog/commit/620a212fc91e128234f48b29d657c71d6ad5caed))
+
+
+
 ## [4.1.0](https://github.com/datadog/libdatadog/compare/libdd-trace-normalization-v4.0.0..libdd-trace-normalization-v4.1.0) - 2026-09-24
 
 ### Changed

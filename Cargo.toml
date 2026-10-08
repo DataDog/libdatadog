@@ -213,6 +213,7 @@ itoa = { version = "1.0", default-features = false }
 # and that this possibility will be gone in future versions). We enable it by
 # default for everyone.
 libc = { version = "0.2", default-features = true }
+libc_alloc = { version = "1.0", default-features = false }
 libdd-libunwind-sys = { version = "1.0.3", default-features = false }
 log = { version = "0.4.21", default-features = false }
 lru = { version = "0.16.3", default-features = false }
@@ -267,12 +268,14 @@ semver = { version = "1.0", default-features = false }
 serde = { version = "1.0", default-features = false }
 serde-transcode = { version = "1.1", default-features = false }
 serde_bytes = { version = "0.11.9", default-features = false }
+serde_ignored = { version = "0.1.14", default-features = false }
 # allow(workspace-deps-features): serde_json requires at least one of `std` or
 # `alloc`. We set `alloc` here as the minimal working baseline, and to avoid
 # repeating alloc everywhere. Enabling `std` on top of it is fine.
 serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
 serde_with = { version = "3.11.0", default-features = false }
 serde_yaml = { version = "0.9.34", default-features = false }
+yaml_serde = { version = "0.10.7", default-features = false }
 serial_test = { version = "3.2", default-features = false }
 sha2 = { version = "0.10", default-features = false }
 simd-json = { version = "=0.14", default-features = false }

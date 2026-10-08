@@ -103,9 +103,11 @@ impl MasterListener {
     /// Counterpart of the Unix entry point, and a no-op here.
     pub fn reap_bound_files_at_exit() {}
 
-    /// Clear inherited listener state.
-    /// Kept for API compatibility with Unix version.
-    pub fn clear_inherited_state() -> io::Result<()> {
+    /// No-op on Windows; kept for API compatibility with Unix.
+    ///
+    /// # Safety
+    /// No requirements on Windows, which does not support fork.
+    pub unsafe fn clear_inherited_state() -> io::Result<()> {
         Ok(())
     }
 }

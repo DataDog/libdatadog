@@ -3,7 +3,7 @@
 
 #[rustfmt::skip]
 include!("_includes.rs");
-mod deserializers;
+pub mod deserializers;
 mod serde;
 
 #[cfg(test)]

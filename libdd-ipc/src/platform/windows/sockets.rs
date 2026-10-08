@@ -27,6 +27,7 @@ mod writer;
 use reader::PipeReader;
 use writer::PipeWriter;
 
+use crate::platform::ProcessIdentityGuard;
 use crate::platform::message::MAX_FDS;
 use std::task::{Context, Poll};
 use std::{
@@ -92,12 +93,14 @@ pub fn set_pipe_buffer_size(size: usize) {
 pub use crate::platform::peer_credentials::PeerCredentials;
 
 /// Append `handles` (duplicated into `peer_pid`) followed by the 4-byte count to `data`.
+/// `peer` caches the peer process handle for the connection, opened on first use.
 ///
 /// The returned guard rolls duplicates back only before their values can reach the peer.
 fn append_handle_suffix(
     data: &mut Vec<u8>,
     handles: &[RawHandle],
     peer_pid: u32,
+    peer: &mut Option<Arc<OwnedHandle>>,
 ) -> io::Result<PendingHandleTransfers> {
     let count = handles.len();
     let count_u32 = u32::try_from(count)
@@ -109,11 +112,21 @@ fn append_handle_suffix(
     };
 
     if count > 0 {
-        let peer_proc = unsafe { OpenProcess(PROCESS_DUP_HANDLE, 0, peer_pid) };
-        if peer_proc == 0 {
-            return Err(io::Error::last_os_error());
-        }
-        pending.peer = Some(unsafe { OwnedHandle::from_raw_handle(peer_proc as RawHandle) });
+        let peer = match peer {
+            Some(peer) => peer,
+            None => {
+                let _identity = ProcessIdentityGuard::enter();
+                let peer_proc = unsafe { OpenProcess(PROCESS_DUP_HANDLE, 0, peer_pid) };
+                if peer_proc == 0 {
+                    return Err(io::Error::last_os_error());
+                }
+                peer.insert(Arc::new(unsafe {
+                    OwnedHandle::from_raw_handle(peer_proc as RawHandle)
+                }))
+            }
+        };
+        let peer_proc = peer.as_raw_handle() as HANDLE;
+        pending.peer = Some(Arc::clone(peer));
         for &h in handles {
             let mut dup: HANDLE = 0;
             let ok = unsafe {
@@ -144,7 +157,7 @@ fn append_handle_suffix(
 /// Tracks handles duplicated into the peer so they can be rolled back until
 /// their numeric values may have been transmitted.
 struct PendingHandleTransfers {
-    peer: Option<OwnedHandle>,
+    peer: Option<Arc<OwnedHandle>>,
     handles: Vec<HANDLE>,
     exposed: bool,
 }
@@ -223,6 +236,8 @@ fn create_pipe_server(name: &[u8], first_instance: bool) -> io::Result<OwnedHand
             0
         };
 
+    // Created as the process identity so that pipes are not owned by an impersonated user.
+    let _identity = ProcessIdentityGuard::enter();
     let h = unsafe {
         let buf_size = PIPE_BUFFER_SIZE.load(Ordering::Relaxed) as u32;
         let sec_attributes = SECURITY_ATTRIBUTES {
@@ -448,6 +463,7 @@ impl SeqpacketConn {
         use windows_sys::Win32::Storage::FileSystem::{CreateFileA, OPEN_EXISTING};
 
         let name = path_to_null_terminated(path.as_ref());
+        let _identity = ProcessIdentityGuard::enter();
         let h = unsafe {
             CreateFileA(
                 name.as_ptr(),

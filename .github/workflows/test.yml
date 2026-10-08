@@ -158,6 +158,12 @@ jobs:
             cargo check -p libdd-trace-utils --no-default-features \
               --features test-utils
           fi
+      - name: "[${{ steps.rust-version.outputs.version}}] cargo check no_std (library-config)"
+        if: runner.os == 'Linux' && (env.PACKAGES == '' || contains(env.PACKAGES, 'libdd-library-config'))
+        shell: bash
+        run: |
+          cargo check -p libdd-library-config --no-default-features
+          cargo check -p libdd-library-config-ffi --no-default-features --features standalone --profile panic-abort
       - name: "[${{ steps.rust-version.outputs.version}}] cargo test (doc) and cargo nextest run"
         shell: bash
         # Run doc tests with cargo test and run tests with nextest and generate junit.xml
