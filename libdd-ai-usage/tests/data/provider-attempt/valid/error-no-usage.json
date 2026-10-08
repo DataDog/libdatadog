@@ -1,0 +1,29 @@
+{
+  "$schema": "../../../../schema/provider-attempt-metric-fixture.schema.json",
+  "profile": "gen_ai.client.provider_attempt@0.1.0",
+  "case": "error-no-usage",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "openai",
+    "request_model": "gpt-4o-mini",
+    "duration_seconds": 0.12,
+    "streaming": false,
+    "error_type": "timeout",
+    "observation_point": "gateway"
+  },
+  "expected_metrics": [
+    {
+      "name": "gen_ai.client.inference.duration",
+      "instrument": "histogram",
+      "unit": "s",
+      "value": 0.12,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "openai",
+        "gen_ai.request.model": "gpt-4o-mini",
+        "error.type": "timeout",
+        "trajectory.observation.point": "gateway"
+      }
+    }
+  ]
+}

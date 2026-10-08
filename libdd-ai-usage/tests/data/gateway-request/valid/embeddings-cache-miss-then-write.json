@@ -1,0 +1,66 @@
+{
+  "$schema": "../../../../schema/gateway-request-metric-fixture.schema.json",
+  "profile": "trajectory.gen_ai.gateway.request@0.1.0",
+  "case": "embeddings-cache-miss-then-write",
+  "description": "An embeddings request that missed the gateway's cache, called the provider once, and wrote the result: one miss and one write, each its own Counter point.",
+  "observation": {
+    "operation_name": "embeddings",
+    "request_model": "embed-default",
+    "duration_seconds": 0.2,
+    "provider_operations": 1,
+    "provider_operation_coverage": "complete",
+    "cache_outcomes": [
+      "miss",
+      "write"
+    ]
+  },
+  "expected_metrics": [
+    {
+      "name": "trajectory.gen_ai.gateway.cache.operations",
+      "instrument": "counter",
+      "unit": "{operation}",
+      "value": 1,
+      "attributes": {
+        "gen_ai.operation.name": "embeddings",
+        "gen_ai.request.model": "embed-default",
+        "trajectory.observation.point": "gateway",
+        "trajectory.cache.outcome": "miss"
+      }
+    },
+    {
+      "name": "trajectory.gen_ai.gateway.cache.operations",
+      "instrument": "counter",
+      "unit": "{operation}",
+      "value": 1,
+      "attributes": {
+        "gen_ai.operation.name": "embeddings",
+        "gen_ai.request.model": "embed-default",
+        "trajectory.observation.point": "gateway",
+        "trajectory.cache.outcome": "write"
+      }
+    },
+    {
+      "name": "trajectory.gen_ai.gateway.request.duration",
+      "instrument": "histogram",
+      "unit": "s",
+      "value": 0.2,
+      "attributes": {
+        "gen_ai.operation.name": "embeddings",
+        "gen_ai.request.model": "embed-default",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "trajectory.gen_ai.gateway.request.provider_operations",
+      "instrument": "histogram",
+      "unit": "{operation}",
+      "value": 1,
+      "attributes": {
+        "gen_ai.operation.name": "embeddings",
+        "gen_ai.request.model": "embed-default",
+        "trajectory.observation.point": "gateway",
+        "trajectory.provider.operation.coverage": "complete"
+      }
+    }
+  ]
+}

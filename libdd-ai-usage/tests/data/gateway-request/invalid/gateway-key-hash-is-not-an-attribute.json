@@ -1,0 +1,15 @@
+{
+  "$schema": "../../../../schema/gateway-request-metric-fixture.schema.json",
+  "profile": "trajectory.gen_ai.gateway.request@0.1.0",
+  "case": "gateway-key-hash-is-not-an-attribute",
+  "description": "There is no deployment attribute for a key hash: a value derived from a key is never recorded. A name outside the registry's list is a configuration error.",
+  "deployment_attributes": {
+    "trajectory.gateway.key.hash": "9f86d081884c7d65"
+  },
+  "observation": {
+    "operation_name": "chat",
+    "duration_seconds": 0.2
+  },
+  "expected_error_code": "deployment_attribute_unknown",
+  "expected_error": "is not a deployment attribute"
+}

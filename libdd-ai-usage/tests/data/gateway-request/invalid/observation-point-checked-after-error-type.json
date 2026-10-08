@@ -1,0 +1,15 @@
+{
+  "$schema": "../../../../schema/gateway-request-metric-fixture.schema.json",
+  "profile": "trajectory.gen_ai.gateway.request@0.1.0",
+  "case": "observation-point-checked-after-error-type",
+  "description": "Order of checks: error_type is checked before observation_point.",
+  "observation": {
+    "operation_name": "chat",
+    "request_model": "routed-model",
+    "duration_seconds": 0.4,
+    "error_type": "Bad Type",
+    "observation_point": "provider"
+  },
+  "expected_error_code": "identifier_invalid",
+  "expected_error": "error_type must be"
+}

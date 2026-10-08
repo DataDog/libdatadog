@@ -1,0 +1,25 @@
+{
+  "$schema": "../../../../schema/provider-token-breakdown-metric-fixture.schema.json",
+  "profile": "trajectory.gen_ai.client.token_breakdown@0.1.0",
+  "case": "null-element-in-a-member-it-does-not-define",
+  "description": "A modality member and a made-up list each hold a null array element. The token-breakdown observation defines neither, so it reads neither, and a null inside them is not an error. This is the no-breakdown case.",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "exampleai",
+    "input_tokens": 100,
+    "output_tokens": 5,
+    "input_tokens_by_modality": [
+      null
+    ],
+    "annotations": [
+      1,
+      null
+    ],
+    "observation_point": "gateway"
+  },
+  "expected_metrics": [],
+  "expected_issues": [
+    "cache_read_missing",
+    "cache_write_missing"
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "$schema": "../../../../schema/gateway-request-metric-fixture.schema.json",
+  "profile": "trajectory.gen_ai.gateway.request@0.1.0",
+  "case": "observation-point-not-gateway",
+  "description": "Only a gateway observes a logical gateway request, so another observation point is rejected, though it is one of the seven.",
+  "observation": {
+    "operation_name": "chat",
+    "request_model": "routed-model",
+    "duration_seconds": 0.4,
+    "observation_point": "network_proxy"
+  },
+  "expected_error_code": "value_not_allowed",
+  "expected_error": "observation_point must be gateway"
+}

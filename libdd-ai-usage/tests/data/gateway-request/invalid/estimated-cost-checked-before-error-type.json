@@ -1,0 +1,16 @@
+{
+  "$schema": "../../../../schema/gateway-request-metric-fixture.schema.json",
+  "profile": "trajectory.gen_ai.gateway.request@0.1.0",
+  "case": "estimated-cost-checked-before-error-type",
+  "description": "Order of checks: two estimated cost amounts that differ are checked after the cache outcomes and before error_type.",
+  "observation": {
+    "operation_name": "chat",
+    "request_model": "support-model",
+    "duration_seconds": 0.5,
+    "estimated_cost_usd": 0.001,
+    "estimated_cost_nano_usd": 2000000,
+    "error_type": "Bad Type"
+  },
+  "expected_error_code": "fields_contradict",
+  "expected_error": "estimated_cost_usd and estimated_cost_nano_usd disagree"
+}

@@ -1,0 +1,105 @@
+{
+  "$schema": "../../../../schema/provider-attempt-metric-fixture.schema.json",
+  "profile": "gen_ai.client.provider_attempt@0.1.0",
+  "case": "deployment-attribute-values",
+  "description": "Seven values. A user id with a provider prefix and an email address, a 128-character identifier, a URL-shaped account identifier, and a service name with a colon all fit the grammar and are kept. A value with a character outside ASCII and a value with a space do not, and are dropped. The host and service names are resource attributes.",
+  "deployment_attributes": {
+    "user.id": "auth0|ada@example.com",
+    "trajectory.team.id": "tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt",
+    "trajectory.request.project_id": "caf\u00e9",
+    "trajectory.request.provider_account_id": "https://example.com/acct",
+    "trajectory.request.api_key_id": "key with space",
+    "host.name": "build-17",
+    "service.name": "unknown_service:node"
+  },
+  "observation": {
+    "observation_point": "gateway",
+    "operation_name": "chat",
+    "provider_name": "exampleai",
+    "duration_seconds": 0.5,
+    "streaming": false,
+    "input_tokens": 12,
+    "output_tokens": 2
+  },
+  "expected_metrics": [
+    {
+      "name": "gen_ai.client.inference.duration",
+      "instrument": "histogram",
+      "unit": "s",
+      "value": 0.5,
+      "attributes": {
+        "trajectory.observation.point": "gateway",
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "user.id": "auth0|ada@example.com",
+        "trajectory.team.id": "tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt",
+        "trajectory.request.provider_account_id": "https://example.com/acct"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.operation.input_tokens",
+      "instrument": "histogram",
+      "unit": "{token}",
+      "value": 12,
+      "attributes": {
+        "trajectory.observation.point": "gateway",
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "user.id": "auth0|ada@example.com",
+        "trajectory.team.id": "tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt",
+        "trajectory.request.provider_account_id": "https://example.com/acct"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.operation.output_tokens",
+      "instrument": "histogram",
+      "unit": "{token}",
+      "value": 2,
+      "attributes": {
+        "trajectory.observation.point": "gateway",
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "user.id": "auth0|ada@example.com",
+        "trajectory.team.id": "tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt",
+        "trajectory.request.provider_account_id": "https://example.com/acct"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.usage.input_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 12,
+      "attributes": {
+        "trajectory.observation.point": "gateway",
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "user.id": "auth0|ada@example.com",
+        "trajectory.team.id": "tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt",
+        "gen_ai.token.modality": "unknown",
+        "trajectory.request.provider_account_id": "https://example.com/acct"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.usage.output_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 2,
+      "attributes": {
+        "trajectory.observation.point": "gateway",
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "user.id": "auth0|ada@example.com",
+        "trajectory.team.id": "tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt",
+        "gen_ai.token.modality": "unknown",
+        "trajectory.request.provider_account_id": "https://example.com/acct"
+      }
+    }
+  ],
+  "expected_resource_attributes": {
+    "host.name": "build-17",
+    "service.name": "unknown_service:node"
+  },
+  "expected_issues": [
+    "deployment_attribute_dropped"
+  ]
+}

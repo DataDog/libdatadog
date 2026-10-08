@@ -1,0 +1,66 @@
+{
+  "$schema": "../../../../schema/provider-attempt-metric-fixture.schema.json",
+  "profile": "gen_ai.client.provider_attempt@0.1.0",
+  "case": "modality-zero-part",
+  "description": "A reported part of zero is a point. The parts cover the total, so there is no unknown increment.",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "exampleai",
+    "duration_seconds": 1,
+    "streaming": false,
+    "input_tokens": 10,
+    "input_tokens_by_modality": {
+      "text": 10,
+      "image": 0
+    },
+    "observation_point": "gateway"
+  },
+  "expected_metrics": [
+    {
+      "name": "gen_ai.client.inference.duration",
+      "instrument": "histogram",
+      "unit": "s",
+      "value": 1,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.operation.input_tokens",
+      "instrument": "histogram",
+      "unit": "{token}",
+      "value": 10,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.usage.input_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 0,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.token.modality": "image",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.usage.input_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 10,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.token.modality": "text",
+        "trajectory.observation.point": "gateway"
+      }
+    }
+  ]
+}

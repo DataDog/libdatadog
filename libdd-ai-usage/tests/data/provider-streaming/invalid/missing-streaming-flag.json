@@ -1,0 +1,15 @@
+{
+  "$schema": "../../../../schema/provider-streaming-metric-fixture.schema.json",
+  "profile": "gen_ai.client.provider_streaming@0.1.0",
+  "case": "missing-streaming-flag",
+  "description": "The streaming flag is absent. That is a missing required field, not a contradiction.",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "exampleai",
+    "output_chunk_intervals_seconds": [
+      0.1
+    ],
+    "observation_point": "gateway"
+  },
+  "expected_error_code": "required_field_missing"
+}

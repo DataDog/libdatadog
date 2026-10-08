@@ -1,0 +1,24 @@
+{
+  "$schema": "../../../../schema/gateway-request-metric-fixture.schema.json",
+  "profile": "trajectory.gen_ai.gateway.request@0.1.0",
+  "case": "embeddings-terminal-error",
+  "description": "A failed embeddings request records its duration with error.type, and nothing it did not observe.",
+  "observation": {
+    "operation_name": "embeddings",
+    "duration_seconds": 30,
+    "error_type": "timeout"
+  },
+  "expected_metrics": [
+    {
+      "name": "trajectory.gen_ai.gateway.request.duration",
+      "instrument": "histogram",
+      "unit": "s",
+      "value": 30,
+      "attributes": {
+        "gen_ai.operation.name": "embeddings",
+        "trajectory.observation.point": "gateway",
+        "error.type": "timeout"
+      }
+    }
+  ]
+}

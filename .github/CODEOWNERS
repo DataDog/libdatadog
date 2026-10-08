@@ -29,6 +29,7 @@ clippy.toml                          @DataDog/libdatadog
 cmake/                               @DataDog/apm-common-components-core
 CONTRIBUTING.md                      @DataDog/libdatadog-core
 Cross.toml                           @DataDog/apm-common-components-core
+libdd-ai-usage                       @DataDog/ccm @DataDog/apm-python-guild @DataDog/agent-console
 libdd-ffe                            @DataDog/feature-flagging-and-experimentation-sdk
 libdd-ffe-test-suite                 @DataDog/feature-flagging-and-experimentation-sdk
 libdd-ffe-ffi                        @DataDog/feature-flagging-and-experimentation-sdk
@@ -129,6 +130,7 @@ datadog-sidecar/src/service/ffe_metrics_flusher.rs      @DataDog/libdatadog-php 
 # owner for Green CI / test-failure reporting.
 
 libdd-agent-client/Cargo.toml                @DataDog/apm-common-components-core @DataDog/libdatadog-release
+libdd-ai-usage/Cargo.toml                    @DataDog/ccm @DataDog/apm-python-guild @DataDog/agent-console @DataDog/libdatadog-release
 libdd-capabilities-impl/CHANGELOG.md         @DataDog/apm-common-components-core @DataDog/libdatadog-release
 libdd-capabilities-impl/Cargo.toml           @DataDog/apm-common-components-core @DataDog/libdatadog-release
 libdd-capabilities/CHANGELOG.md              @DataDog/apm-common-components-core @DataDog/libdatadog-release

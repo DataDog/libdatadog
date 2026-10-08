@@ -1,0 +1,15 @@
+{
+  "$schema": "../../../../schema/provider-attempt-metric-fixture.schema.json",
+  "profile": "gen_ai.client.provider_attempt@0.1.0",
+  "case": "observation-point-null",
+  "description": "A null observation_point is a missing one, and every point must say where it was observed, so the observation is rejected.",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "exampleai",
+    "duration_seconds": 1,
+    "streaming": false,
+    "observation_point": null
+  },
+  "expected_error_code": "required_field_missing",
+  "expected_error": "observation_point is required"
+}

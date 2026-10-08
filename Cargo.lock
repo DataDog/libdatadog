@@ -2725,6 +2725,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "libdd-ai-usage"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "libdd-alloc"
 version = "1.0.0"
 dependencies = [

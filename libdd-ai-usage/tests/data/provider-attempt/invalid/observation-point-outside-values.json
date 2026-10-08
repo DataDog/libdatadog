@@ -1,0 +1,15 @@
+{
+  "$schema": "../../../../schema/provider-attempt-metric-fixture.schema.json",
+  "profile": "gen_ai.client.provider_attempt@0.1.0",
+  "case": "observation-point-outside-values",
+  "description": "observation_point is one of the seven observation points.",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "exampleai",
+    "duration_seconds": 1,
+    "streaming": false,
+    "observation_point": "sidecar"
+  },
+  "expected_error_code": "value_not_allowed",
+  "expected_error": "observation_point must be"
+}

@@ -1,0 +1,14 @@
+{
+  "$schema": "../../../../schema/gateway-request-metric-fixture.schema.json",
+  "profile": "trajectory.gen_ai.gateway.request@0.1.0",
+  "case": "observation-point-wrong-type",
+  "description": "observation_point is a string.",
+  "observation": {
+    "operation_name": "chat",
+    "request_model": "routed-model",
+    "duration_seconds": 0.4,
+    "observation_point": 1
+  },
+  "expected_error_code": "field_type_invalid",
+  "expected_error": "observation_point"
+}

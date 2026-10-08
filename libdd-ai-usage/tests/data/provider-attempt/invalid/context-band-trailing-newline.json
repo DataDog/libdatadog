@@ -1,0 +1,16 @@
+{
+  "$schema": "../../../../schema/provider-attempt-metric-fixture.schema.json",
+  "profile": "gen_ai.client.provider_attempt@0.1.0",
+  "case": "context-band-trailing-newline",
+  "description": "A context band with a trailing newline is not a band identifier.",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "exampleai",
+    "duration_seconds": 1,
+    "streaming": false,
+    "input_tokens": 1,
+    "context_band": "0-200k\n",
+    "observation_point": "gateway"
+  },
+  "expected_error_code": "identifier_invalid"
+}

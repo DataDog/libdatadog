@@ -1,0 +1,19 @@
+# Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "libdd-ai-usage"
+version = "0.1.0"
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-ai-usage"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-ai-usage"
+description = "Usage and cost metric points for LLM provider calls and gateway requests, following the OpenTelemetry GenAI conventions"
+
+[lib]
+bench = false
+
+[dependencies]
+serde = { workspace = true, features = ["derive", "std"] }
+serde_json = { workspace = true, features = ["std"] }
