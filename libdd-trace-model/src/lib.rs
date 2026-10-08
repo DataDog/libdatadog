@@ -366,8 +366,12 @@ mod tests {
         assert_eq!(f64_to_exact_i64(3.5), None);
         assert_eq!(f64_to_exact_i64(f64::NAN), None);
         assert_eq!(f64_to_exact_i64(f64::INFINITY), None);
-        assert_eq!(f64_to_exact_i64(-(2f64.powi(63))), Some(i64::MIN));
-        assert_eq!(f64_to_exact_i64(2f64.powi(63)), None);
+        // ±2^63 as literals: `powi` is not exact under Miri.
+        assert_eq!(
+            f64_to_exact_i64(-9_223_372_036_854_775_808.0),
+            Some(i64::MIN)
+        );
+        assert_eq!(f64_to_exact_i64(9_223_372_036_854_775_808.0), None);
         assert_eq!(V::Int(i64::MAX).as_i64(), Some(i64::MAX));
         assert_eq!(V::Float(2.0).as_i64(), Some(2));
         assert_eq!(str_value("2").as_i64(), None);
