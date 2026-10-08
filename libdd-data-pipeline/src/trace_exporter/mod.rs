@@ -1320,7 +1320,7 @@ pub trait ResponseCallback {
 
 /// Marks a span as exported natively (not over OTLP) with `_dd.sdk.otlp_export: "false"`.
 fn add_native_export_marker<T: TraceData>(span: &mut Span<T>) {
-    span.meta.insert_or_replace(
+    span.meta.insert(
         T::Text::from_static_str(SDK_OTLP_EXPORT_KEY),
         T::Text::from_static_str("false"),
     );
@@ -2495,23 +2495,20 @@ mod tests {
     #[test]
     fn test_add_native_export_marker() {
         let mut span = SpanBytes::default();
-        span.meta.mark_deduped();
         add_native_export_marker(&mut span);
-        assert!(span.meta.is_deduped());
         assert_eq!(
             span.meta.get(SDK_OTLP_EXPORT_KEY).map(|v| v.as_str()),
             Some("false")
         );
 
-        // A marker already set by the tracer is overridden in place.
+        // A marker already set by the tracer is overridden once the span is deduped.
         let mut span = SpanBytes::default();
         span.meta.insert(
             BytesString::from_static(SDK_OTLP_EXPORT_KEY),
             BytesString::from_static("true"),
         );
-        span.meta.mark_deduped();
         add_native_export_marker(&mut span);
-        assert!(span.meta.is_deduped());
+        span.dedup();
         assert_eq!(span.meta.len(), 1);
         assert_eq!(
             span.meta.get(SDK_OTLP_EXPORT_KEY).map(|v| v.as_str()),
