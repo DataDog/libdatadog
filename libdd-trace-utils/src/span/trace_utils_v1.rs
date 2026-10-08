@@ -4,7 +4,8 @@
 //! Trace-utils functionalities implementation for V1 spans.
 
 use crate::span::trace_utils::DroppedP0Stats;
-use crate::span::v1::{AttributeValue, Span, TraceChunk};
+use crate::span::v1::chunk_pool::PooledTraceChunks;
+use crate::span::v1::{AttributeValue, Span};
 use crate::span::{SpanText, TraceData};
 use std::collections::{HashMap, HashSet};
 use tracing::debug;
@@ -139,7 +140,7 @@ pub fn is_partial_snapshot<T: TraceData>(span: &Span<T>) -> bool {
 /// # Returns
 ///
 /// The number of P0 traces and spans that were dropped.
-pub fn drop_chunks<T: TraceData>(traces: &mut Vec<TraceChunk<T>>) -> DroppedP0Stats {
+pub fn drop_chunks<T: TraceData>(traces: &mut PooledTraceChunks<'_, T>) -> DroppedP0Stats {
     let mut dropped_p0_traces = 0;
     let mut dropped_p0_spans = 0;
 
@@ -443,7 +444,7 @@ mod tests {
         ];
 
         for (chunk, expected_count) in chunks_and_expected_sampled_spans.into_iter() {
-            let mut traces = vec![chunk];
+            let mut traces = PooledTraceChunks::unpooled(vec![chunk]);
             drop_chunks(&mut traces);
 
             if expected_count == 0 {
@@ -477,7 +478,7 @@ mod tests {
         dropped_with_positive_priority.dropped_trace = true;
 
         for chunk in [dropped_without_priority, dropped_with_positive_priority] {
-            let mut traces = vec![chunk];
+            let mut traces = PooledTraceChunks::unpooled(vec![chunk]);
             drop_chunks(&mut traces);
             assert!(
                 traces.is_empty(),
@@ -499,7 +500,7 @@ mod tests {
         );
         chunk.dropped_trace = true;
 
-        let mut traces = vec![chunk];
+        let mut traces = PooledTraceChunks::unpooled(vec![chunk]);
         drop_chunks(&mut traces);
         assert!(traces.is_empty());
     }
