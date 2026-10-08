@@ -14,7 +14,8 @@ use std::{
 };
 use tracing::warn;
 
-use crate::span_concentrator::{StatSpan, cardinality_limit_telemetry::CollapsedFieldSet};
+use crate::span_concentrator::cardinality_limit_telemetry::CollapsedFieldSet;
+use libdd_trace_model::Span;
 
 use super::{
     CardinalityLimitConfig,
@@ -36,7 +37,6 @@ const TAG_STATUS_CODE_OTEL: &str = "http.response.status_code";
 const TAG_METHOD_OTEL: &str = "http.request.method";
 const ADDITIONAL_METRIC_TAG_VALUE_MAX_LEN: usize = 200;
 const TAG_SYNTHETICS: &str = "synthetics";
-const TAG_SPANKIND: &str = "span.kind";
 const TAG_ORIGIN: &str = "_dd.origin";
 const TAG_SVC_SRC: &str = "_dd.svc_src";
 const GRPC_STATUS_CODE_FIELD: &[&str] = &[
@@ -181,9 +181,9 @@ fn is_valid_http_status_code(code: &u32) -> bool {
 ///
 /// The Datadog name is canonical in the Agent semantic registry and is preferred when both names
 /// are present.
-fn get_http_method<'a>(span: &'a impl StatSpan<'a>) -> &'a str {
+fn get_http_method(span: &impl Span) -> &str {
     for key in [TAG_METHOD, TAG_METHOD_OTEL] {
-        if let Some(value) = span.get_meta(key) {
+        if let Some(value) = span.attribute_str(key) {
             if !value.is_empty() {
                 return value;
             }
@@ -198,9 +198,9 @@ fn get_http_method<'a>(span: &'a impl StatSpan<'a>) -> &'a str {
 /// `metrics` is checked before `meta` for each name because a numeric attribute is routed there
 /// by the tracer's own setter, and OTel types `http.response.status_code` as an int. The Datadog
 /// key retains its existing conversion and precedence behavior. Invalid OTel values are ignored.
-fn get_http_status_code<'a>(span: &'a impl StatSpan<'a>) -> u32 {
+fn get_http_status_code(span: &impl Span) -> u32 {
     for key in [TAG_STATUS_CODE, TAG_STATUS_CODE_OTEL] {
-        if let Some(value) = span.get_metrics(key) {
+        if let Some(value) = span.attribute_f64(key) {
             if key == TAG_STATUS_CODE {
                 // Preserve the existing Datadog-key conversion behavior.
                 return value as u32;
@@ -210,7 +210,7 @@ fn get_http_status_code<'a>(span: &'a impl StatSpan<'a>) -> u32 {
             }
         }
 
-        if let Some(value) = span.get_meta(key) {
+        if let Some(value) = span.attribute_str(key) {
             if key == TAG_STATUS_CODE {
                 // Preserve the existing Datadog-key parse-or-zero behavior.
                 return value.parse().unwrap_or_default();
@@ -224,9 +224,9 @@ fn get_http_status_code<'a>(span: &'a impl StatSpan<'a>) -> u32 {
     0
 }
 
-fn get_grpc_status_code<'a>(span: &'a impl StatSpan<'a>) -> Option<u8> {
+fn get_grpc_status_code(span: &impl Span) -> Option<u8> {
     for key in GRPC_STATUS_CODE_FIELD {
-        if let Some(val) = span.get_meta(key) {
+        if let Some(val) = span.attribute_str(key) {
             if let Some(code) = grpc_status_str_to_int_value(val) {
                 return Some(code);
             }
@@ -234,7 +234,7 @@ fn get_grpc_status_code<'a>(span: &'a impl StatSpan<'a>) -> Option<u8> {
     }
 
     for key in GRPC_STATUS_CODE_FIELD {
-        if let Some(val) = span.get_metrics(key) {
+        if let Some(val) = span.attribute_f64(key) {
             if let Some(code) = float_to_int(val) {
                 return Some(code);
             }
@@ -296,7 +296,7 @@ impl<'a> BorrowedAggregationKey<'a> {
     /// key.
     /// If `additional_metric_tags` is not empty then matching span tags keys are included in the
     /// key.
-    pub(super) fn from_span<T: StatSpan<'a>>(
+    pub(super) fn from_span<T: Span>(
         span: &'a T,
         peer_tag_keys: &'a [String],
         additional_metric_tag_keys: &'a [String],
@@ -316,22 +316,22 @@ impl<'a> BorrowedAggregationKey<'a> {
         additional_metric_tag_keys: &'b [String],
     ) -> BorrowedAggregationKey<'a>
     where
-        T: StatSpan<'b>,
+        T: Span,
         // resource_name is a temporary string on the stack the span will outlive it
         'b: 'a,
     {
-        let span_kind = span.get_meta(TAG_SPANKIND).unwrap_or_default();
+        let span_kind = span.span_kind().unwrap_or_default();
         let peer_tags = if should_track_peer_tags(span_kind) {
             // Parse the meta tags of the span and return a list of the peer tags based on the list
             // of `peer_tag_keys`. IP address values are quantized to reduce cardinality.
             peer_tag_keys
                 .iter()
                 .filter_map(|key| {
-                    let value = span.get_meta(key.as_str())?;
+                    let value = span.tag_str(key.as_str())?;
                     Some((key.as_str(), quantize_peer_ip_addresses(value)))
                 })
                 .collect()
-        } else if let Some(base_service) = span.get_meta("_dd.base_service") {
+        } else if let Some(base_service) = span.attribute_str("_dd.base_service") {
             // Internal spans with a base service override use only _dd.base_service as peer tag
             vec![("_dd.base_service", Cow::Borrowed(base_service))]
         } else {
@@ -344,10 +344,10 @@ impl<'a> BorrowedAggregationKey<'a> {
         let http_method = get_http_method(span);
 
         let http_endpoint = span
-            .get_meta("http.endpoint")
+            .attribute_str("http.endpoint")
             .filter(|value| !value.is_empty())
             .or_else(|| {
-                span.get_meta("http.route")
+                span.attribute_str("http.route")
                     .filter(|value| !value.is_empty())
             })
             .unwrap_or_default();
@@ -355,11 +355,11 @@ impl<'a> BorrowedAggregationKey<'a> {
         let status_code = get_http_status_code(span);
 
         let grpc_status_code = get_grpc_status_code(span);
-        let service_source = span.get_meta(TAG_SVC_SRC).unwrap_or_default();
+        let service_source = span.attribute_str(TAG_SVC_SRC).unwrap_or_default();
 
         let additional_metric_tags: Vec<(&'a str, &'a str)> = additional_metric_tag_keys
             .iter()
-            .filter_map(|key| match span.get_meta(key.as_str()) {
+            .filter_map(|key| match span.tag_str(key.as_str()) {
                 Some(v) if !v.is_empty() => {
                     // Byte length >= char count, so skip the char walk when byte length alone
                     // is within the max character length, otherwise stop as soon as we pass the max character length.
@@ -384,7 +384,7 @@ impl<'a> BorrowedAggregationKey<'a> {
                 resource_name,
                 service_name: span.service(),
                 operation_name: span.name(),
-                span_type: span.r#type(),
+                span_type: span.typ(),
                 span_kind,
                 http_method,
                 http_endpoint,
@@ -392,7 +392,7 @@ impl<'a> BorrowedAggregationKey<'a> {
                 http_status_code: status_code,
                 grpc_status_code,
                 is_synthetics_request: span
-                    .get_meta(TAG_ORIGIN)
+                    .tag_str(TAG_ORIGIN)
                     .is_some_and(|origin| origin.starts_with(TAG_SYNTHETICS)),
                 is_trace_root: if span.is_trace_root() {
                     pb::Trilean::True

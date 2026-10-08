@@ -3,7 +3,6 @@
 //! This module implements the SpanConcentrator used to aggregate spans into stats
 mod aggregation;
 pub mod cardinality_limit_telemetry;
-pub mod stat_span;
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -11,6 +10,7 @@ use tracing::{debug, warn};
 // std::time::SystemTime panics on wasm32.
 use web_time::{SystemTime, UNIX_EPOCH};
 
+use libdd_trace_model::Span;
 use libdd_trace_protobuf::pb;
 use libdd_trace_utils::span::v1::SpanKind;
 
@@ -22,7 +22,7 @@ use cardinality_limit_telemetry::CollapsedFieldsMetrics;
 #[cfg(feature = "stats-obfuscation")]
 use libdd_trace_obfuscation::obfuscation_config::SqlConfig;
 
-pub use stat_span::{ChunkSpanView, StatSpan};
+pub use libdd_trace_model::ChunkSpanView;
 
 const ADDITIONAL_METRIC_TAGS_MAX_KEYS: usize = 4;
 
@@ -112,12 +112,9 @@ fn align_timestamp(t: u64, bucket_size: u64) -> u64 {
 }
 
 /// Return true if the span is eligible for stats computation
-pub fn is_span_eligible<'a, T>(span: &'a T, span_kinds_stats_computed: &[String]) -> bool
-where
-    T: StatSpan<'a>,
-{
+pub fn is_span_eligible<T: Span>(span: &T, span_kinds_stats_computed: &[String]) -> bool {
     (span.has_top_level() || span.is_measured() || {
-        span.get_meta("span.kind")
+        span.span_kind()
             .is_some_and(|span_kind| span_kinds_stats_computed.contains(&span_kind.to_lowercase()))
     }) && !span.is_partial_snapshot()
 }
@@ -323,7 +320,7 @@ impl SpanConcentrator {
 
     /// Add a span into the concentrator, by computing stats if the span is eligible for stats
     /// computation.
-    pub fn add_span<'a>(&'a mut self, span: &'a impl StatSpan<'a>) {
+    pub fn add_span(&mut self, span: &impl Span) {
         if !is_span_eligible(span, self.span_kinds_stats_computed.as_slice()) {
             return;
         }
@@ -380,13 +377,10 @@ impl SpanConcentrator {
     }
 
     #[cfg(feature = "stats-obfuscation")]
-    fn compute_obfuscated_span<'a>(
-        obfuscation_config: &SqlConfig,
-        span: &'a impl StatSpan<'a>,
-    ) -> Option<String> {
-        let dbms_hint: Option<&str> = span.get_meta("db.type");
+    fn compute_obfuscated_span(obfuscation_config: &SqlConfig, span: &impl Span) -> Option<String> {
+        let dbms_hint: Option<&str> = span.attribute_str("db.type");
         libdd_trace_obfuscation::obfuscate::obfuscate_resource_for_stats(
-            span.r#type(),
+            span.typ(),
             span.resource(),
             dbms_hint,
             obfuscation_config,
