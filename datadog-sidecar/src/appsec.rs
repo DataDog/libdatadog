@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::config::AppSecConfig;
+use crate::service::ConnectionSessionHandle;
 use crate::service::telemetry::InProcessTelemetryClientFactory;
 use crossbeam_utils::atomic::AtomicCell;
+use std::any::Any;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::OnceLock;
@@ -21,6 +23,25 @@ static APPSEC_BACKEND_FACTORY: OnceLock<AppSecBackendFactory> = OnceLock::new();
 /// the dependency between sidecar and appsec helper-rust.
 pub fn register_backend_factory(factory: AppSecBackendFactory) {
     _ = APPSEC_BACKEND_FACTORY.set(factory);
+}
+
+/// The AppSec side of one sidecar connection. A connection serves one extension thread, which
+/// processes one request at a time, so it talks to one backend client at a time: the connection
+/// identifies the client.
+pub struct AppSecConnection {
+    /// The session of the connection, for the client to submit telemetry with.
+    pub session: ConnectionSessionHandle,
+    /// The backend's client of this connection. Only the backend sets and reads it.
+    pub client: Option<Box<dyn Any + Send + Sync>>,
+}
+
+impl AppSecConnection {
+    pub fn new(session: ConnectionSessionHandle) -> Self {
+        AppSecConnection {
+            session,
+            client: None,
+        }
+    }
 }
 
 /// Publishes one AppSec backend and coordinates its one-way lifecycle.
@@ -78,21 +99,20 @@ impl AppSecManager {
 
     pub(crate) async fn send_message(
         &self,
-        session_id: &str,
-        client_id: u64,
+        connection: &mut AppSecConnection,
         data: Vec<u8>,
     ) -> Option<AppSecMessageResponse> {
         let AppSecBackendState::Running(backend) = self.backend.get()? else {
             return None;
         };
-        Some((backend.send_message)(session_id, client_id, data).await)
+        Some((backend.send_message)(connection, data).await)
     }
 
-    pub(crate) fn disconnect(&self, session_id: &str, client_id: u64) {
+    pub(crate) fn disconnect(&self, connection: &mut AppSecConnection) {
         let Some(AppSecBackendState::Running(backend)) = self.backend.get() else {
             return;
         };
-        (backend.disconnect)(session_id, client_id);
+        (backend.disconnect)(connection);
     }
 
     pub(crate) async fn shutdown(&self) {
@@ -109,20 +129,22 @@ impl AppSecManager {
     }
 }
 
+/// Forwards one message of a connection to the connection's client.
 type AppSecSendMessage =
-    for<'a> fn(&'a str, u64, Vec<u8>) -> AppSecFuture<'a, AppSecMessageResponse>;
+    for<'a> fn(&'a mut AppSecConnection, Vec<u8>) -> AppSecFuture<'a, AppSecMessageResponse>;
 
 pub type AppSecFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 pub type AppSecShutdownFuture = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
 
 pub struct AppSecMessageResponse {
-    pub client_id: u64,
     pub data: Vec<u8>,
+    /// The client is gone: the extension has to start over with client_init.
     pub disconnect: bool,
 }
 
-type AppSecDisconnect = fn(&str, u64);
+/// The connection is closed; its client is no longer needed.
+type AppSecDisconnect = fn(&mut AppSecConnection);
 
 /// A slot initialized with one value that may be taken at most once.
 struct TakeSlot<T>(AtomicCell<Option<T>>);

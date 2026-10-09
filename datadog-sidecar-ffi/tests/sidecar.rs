@@ -11,6 +11,7 @@ macro_rules! assert_maybe_no_error {
     };
 }
 
+use datadog_sidecar::service::DynamicInstrumentationConfigState;
 use libdd_common::Endpoint;
 use std::ptr::{null, null_mut};
 use std::time::Duration;
@@ -93,9 +94,11 @@ fn test_ddog_sidecar_register_app() {
             url: http::Uri::from_static("http://localhost:4318/v1/metrics"),
             ..Default::default()
         };
-        ddog_sidecar_session_set_config(
+        let instance_id = ddog_sidecar_instanceId_build("session_id".into(), "runtime_id".into());
+
+        ddog_sidecar_set_connection_config(
             &mut transport,
-            "session_id".into(),
+            &instance_id,
             &agent_endpoint,
             &Endpoint::default(),
             &otlp_metrics_endpoint,
@@ -117,8 +120,8 @@ fn test_ddog_sidecar_register_app() {
             null(),
             0,
             false,
-            false,
             &process_tags,
+            "".into(),
             "".into(),
             "".into(),
             "".into(),
@@ -132,25 +135,31 @@ fn test_ddog_sidecar_register_app() {
             "tracer_version".into(),
         );
 
-        let instance_id = ddog_sidecar_instanceId_build("session_id".into(), "runtime_id".into());
-        let queue_id = ddog_sidecar_queueId_generate();
+        ddog_sidecar_set_application(
+            &mut transport,
+            "service".into(),
+            "env".into(),
+            "version".into(),
+            &libdd_common_ffi::Vec::default(),
+            DynamicInstrumentationConfigState::NotSet,
+            0,
+        )
+        .unwrap_none();
 
         ddog_sidecar_telemetry_addDependency(
             &mut transport,
-            &instance_id,
-            &queue_id,
             "dependency_name".into(),
             "dependency_version".into(),
         )
         .unwrap_none();
 
-        // ddog_sidecar_telemetry_addIntegration(&mut transport, instance_id, &queue_id,
-        // integration_name, integration_version) TODO add ability to add configuration
+        // ddog_sidecar_telemetry_addIntegration(&mut transport, integration_name,
+        // integration_version) TODO add ability to add configuration
 
-        // reset session config - and cause shutdown of all existing instances
-        ddog_sidecar_session_set_config(
+        // reconfigure the connection
+        ddog_sidecar_set_connection_config(
             &mut transport,
-            "session_id".into(),
+            &instance_id,
             &Endpoint {
                 url: http::Uri::from_static("http://localhost:8083/"),
                 ..Default::default()
@@ -175,8 +184,8 @@ fn test_ddog_sidecar_register_app() {
             null(),
             0,
             false,
-            false,
             &process_tags,
+            "".into(),
             "".into(),
             "".into(),
             "".into(),

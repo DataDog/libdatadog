@@ -31,7 +31,7 @@ struct MetricData<'a> {
     server: &'a SidecarServer,
     submitted_payloads: ContextKey,
     last_submitted_payloads: AtomicU64,
-    active_sessions: ContextKey,
+    active_connections: ContextKey,
     memory_usage: ContextKey,
     logs_created: ContextKey,
     trace_api_requests: ContextKey,
@@ -82,8 +82,8 @@ impl MetricData<'_> {
                 vec![],
             ),
             self.send(
-                self.active_sessions,
-                self.server.active_session_count() as f64,
+                self.active_connections,
+                self.server.active_connection_count() as f64,
                 vec![],
             ),
             self.send(
@@ -292,8 +292,8 @@ impl SelfTelemetry {
                 true,
                 MetricNamespace::Sidecar,
             ),
-            active_sessions: worker.register_metric_context(
-                "server.active_sessions".to_string(),
+            active_connections: worker.register_metric_context(
+                "server.active_connections".to_string(),
                 vec![],
                 MetricType::Gauge,
                 true,

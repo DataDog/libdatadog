@@ -40,6 +40,7 @@ impl Sidecar {
                 external_shutdown_rx: None,
                 init_shm_eagerly: true,
                 authorizer: ConnectionAuthorizer::new(policy),
+                drain_only_own_process: false,
             };
             let acquire = move || {
                 let async_listener = listener.into_async_listener()?;

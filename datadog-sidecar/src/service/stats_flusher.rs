@@ -9,7 +9,7 @@
 //! automatically once idle: an empty drain sets the `please_reload` bit (telling PHP workers
 //! to stop writing), and the subsequent flush performs a final drain before removal.
 
-use crate::service::RuntimeMetadata;
+use crate::service::InstanceId;
 use base64::Engine;
 use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use futures::{TryFutureExt, future::join_all};
@@ -19,7 +19,6 @@ use libdd_common::{Endpoint, MutexExt};
 use libdd_ipc::shm_stats::{
     DEFAULT_SLOT_COUNT, DEFAULT_STRING_POOL_BYTES, RELOAD_FILL_RATIO, ShmSpanConcentrator,
 };
-use libdd_telemetry::config::Config;
 /// Sidecar's telemetry worker is native-only, so its handle is pinned to
 /// [`NativeCapabilities`].
 type TelemetryWorkerHandle = libdd_telemetry::worker::TelemetryWorkerHandle<NativeCapabilities>;
@@ -210,7 +209,7 @@ pub async fn run_stats_flush_loop(
 ///
 /// Called lazily from `add_span_to_concentrator` when the PHP worker could not write to SHM
 /// directly (SHM not yet available).  Creating on first IPC span — rather than eagerly in
-/// `set_universal_service_tags` — lets the concentrator key track the actual span env/version
+/// `set_application` — lets the concentrator key track the actual span env/version
 /// rather than the root-span-only values reported at request start.
 ///
 /// Returns `None` when stats config is not available (agentless or not yet configured).
@@ -220,13 +219,9 @@ pub(crate) fn get_or_create_concentrator(
     env: &str,
     version: &str,
     runtime_id: &str,
-    session: &crate::service::session_info::SessionInfo,
+    session: &crate::service::connection_session::ConnectionSession,
 ) -> Option<Arc<SpanConcentratorState>> {
-    let config = session
-        .stats_config
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .clone()?;
+    let config = session.stats_config.clone()?;
 
     if config.endpoint.api_key.is_some() {
         return None; // agentless — no stats
@@ -251,6 +246,7 @@ pub(crate) fn get_or_create_concentrator(
     let path = env_stats_shm_path(env, version, &service_name);
 
     let mut metadata = MutableMetadata::default();
+    // This is the session id, not a per-process runtime id; see add_span_to_concentrator.
     metadata.runtime_id = runtime_id.to_string();
     metadata.process_tags = config.process_tags.clone();
     let meta = StatsMetadata {
@@ -272,28 +268,13 @@ pub(crate) fn get_or_create_concentrator(
         DEFAULT_STRING_POOL_BYTES,
     ) {
         Ok(concentrator) => {
-            let runtime_metadata = {
-                let trace_config = session.get_trace_config();
-                RuntimeMetadata::new(
-                    trace_config.language.clone(),
-                    trace_config.language_version.clone(),
-                    trace_config.tracer_version.clone(),
-                )
-            };
-
-            let process_tags = session.process_tags.lock_or_panic().clone();
-            let instance_id = session.get_runtime(&runtime_id.to_string()).instance_id;
-            let session_config_closure = || {
-                session
-                .session_config
-                .lock_or_panic()
-                .as_ref()
-                .cloned()
-                .unwrap_or_else(|| {
-                    warn!("Session telemetry config unavailable for env={env} version={version} service={service_name}; telemetry disabled in stats");
-                    Config::default()
-                })
-            };
+            let runtime_metadata = session.runtime_metadata();
+            let process_tags = session.process_tags.clone();
+            let instance_id = InstanceId::new(
+                session.instance_id.session_id.clone(),
+                runtime_id.to_string(),
+            );
+            let session_config_closure = || session.telemetry_config.clone();
             let telemetry = {
                 let telemetry_mutex = telemetry_clients.get_or_create(
                     &service_name,

@@ -42,6 +42,10 @@ pub struct MainLoopConfig {
     /// spawned by a PHP process; in-process listeners must supply
     /// [`ConnectionAuthorizer::for_in_process_listener`] instead.
     pub authorizer: ConnectionAuthorizer,
+    /// Whether shutdown waits only for the connections of this process. An in-process listener
+    /// must not hold up the exit of its host for the connections of other processes, like forked
+    /// children: these lose their connection and reconnect to a listener of their own.
+    pub drain_only_own_process: bool,
 }
 
 impl Default for MainLoopConfig {
@@ -51,6 +55,7 @@ impl Default for MainLoopConfig {
             external_shutdown_rx: None,
             init_shm_eagerly: true,
             authorizer: ConnectionAuthorizer::for_spawned_sidecar(),
+            drain_only_own_process: false,
         }
     }
 }
@@ -136,6 +141,7 @@ where
     let telemetry_handle = self_telemetry(server.clone(), watchdog_handle);
 
     let authorizer = loop_config.authorizer;
+    let drain_only_own_process = loop_config.drain_only_own_process;
     #[cfg(unix)]
     let defer_shm_init = !loop_config.init_shm_eagerly;
     let listener_result = listener(Box::new({
@@ -166,7 +172,10 @@ where
             tracing::info!("connection accepted");
 
             let server = server.clone();
-            let shutdown_complete_tx = shutdown_complete_tx.clone();
+            // Connections not holding a sender are dropped with the runtime, once the drained
+            // ones are done.
+            let shutdown_complete_tx = (!drain_only_own_process || peer.pid == std::process::id())
+                .then(|| shutdown_complete_tx.clone());
             tokio::spawn(async move {
                 server.accept_connection(socket).await;
                 drop(connection);
