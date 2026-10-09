@@ -151,8 +151,8 @@ int verify_structured_value_encoder_rejects_invalid(void) {
     return 0;
 }
 
-int main(int argc, char** argv)
-{
+#ifdef DDOG_TRACE_EXPORTER_EXTERNAL_OBSERVATIONS
+int verify_external_observations_reject_invalid(void) {
     ddog_TraceExporterObservations observations;
     memset(&observations, 0xff, sizeof(observations));
     ddog_TraceExporterResponse *unused_response = NULL;
@@ -167,7 +167,15 @@ int main(int argc, char** argv)
     if (invalid == NULL) return 1;
     ddog_trace_exporter_error_free(invalid);
     for (size_t i = 0; i < 16; i++) if (stats.collapsed_spans[i] != 0) return 1;
+    return 0;
+}
+#endif
 
+int main(int argc, char** argv)
+{
+#ifdef DDOG_TRACE_EXPORTER_EXTERNAL_OBSERVATIONS
+    if (verify_external_observations_reject_invalid() != 0) return 1;
+#endif
     if (verify_structured_value_encoder() != 0) return 1;
     if (verify_structured_value_encoder_rejects_invalid() != 0) return 1;
 

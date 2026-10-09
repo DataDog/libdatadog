@@ -49,9 +49,11 @@ pub struct CollapsedFieldsMetrics([usize; COLLAPSED_FIELD_METRIC_SIZE]);
 /// Slot zero counts whole-key collapse; slots 1..16 are the collapsed-field bitmask.
 /// Counters saturate at `u64::MAX`, rather than wrapping. Call `take` in a forked
 /// child before restarting producers to discard inherited observations.
+#[cfg(feature = "external-observations")]
 #[derive(Debug, Default)]
 pub struct CollapsedSpansObservations(std::sync::Mutex<[u64; COLLAPSED_FIELD_METRIC_SIZE]>);
 
+#[cfg(feature = "external-observations")]
 impl CollapsedSpansObservations {
     pub fn record(&self, whole_key: u64, fields: &CollapsedFieldsMetrics) {
         let mut counts = self.0.lock().unwrap_or_else(|e| e.into_inner());
@@ -157,7 +159,7 @@ impl std::ops::AddAssign for CollapsedFieldsMetrics {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "external-observations"))]
 mod observation_tests {
     use super::*;
 

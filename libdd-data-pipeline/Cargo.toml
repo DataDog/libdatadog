@@ -122,6 +122,10 @@ https = [
     "libdd-trace-utils/https",
     "libdd-dogstatsd-client/https",
 ]
+# Temporary: lets hosts that run their own telemetry client collect exporter observations
+# instead of the native telemetry worker. To be removed once the native client no longer needs
+# to be bypassed.
+external-observations = ["libdd-trace-stats/external-observations"]
 stats-obfuscation = [
     "libdd-data-pipeline-core/stats-obfuscation",
     "libdd-trace-stats/stats-obfuscation",

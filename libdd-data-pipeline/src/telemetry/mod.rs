@@ -6,7 +6,7 @@ pub mod error;
 pub mod metrics;
 use crate::telemetry::error::TelemetryError;
 use crate::telemetry::metrics::Metrics;
-pub use crate::trace_exporter::observations::SendPayloadTelemetry;
+pub use crate::trace_exporter::payload_telemetry::SendPayloadTelemetry;
 use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
 use libdd_common::mutable_metadata::MutableMetadataHandle;
 use libdd_common::tag::Tag;

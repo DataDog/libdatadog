@@ -94,6 +94,7 @@ pub struct TraceExporterBuilder<R: SharedRuntime> {
     span_obfuscation_config: ObfuscationConfig,
     #[cfg(feature = "telemetry")]
     telemetry: Option<TelemetryConfig>,
+    #[cfg(feature = "external-observations")]
     observations: bool,
     #[cfg(feature = "telemetry")]
     telemetry_instrumentation_sessions: TelemetryInstrumentationSessions,
@@ -171,6 +172,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             span_obfuscation_config: ObfuscationConfig::default(),
             #[cfg(feature = "telemetry")]
             telemetry: None,
+            #[cfg(feature = "external-observations")]
             observations: false,
             #[cfg(feature = "telemetry")]
             telemetry_instrumentation_sessions: TelemetryInstrumentationSessions::default(),
@@ -424,6 +426,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
     /// Select external observation delivery. Native telemetry workers are not constructed,
     /// including when `enable_telemetry` was also called. Consume send reports with
     /// `send_trace_chunks_observed` and background deltas with `take_stats_observations`.
+    #[cfg(feature = "external-observations")]
     pub fn enable_observations(&mut self) -> &mut Self {
         self.observations = true;
         self
@@ -792,10 +795,15 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
         #[cfg(feature = "telemetry")]
         let (telemetry_client, telemetry_handle) = {
             let sessions = self.telemetry_instrumentation_sessions;
-            // Telemetry talks to the agent; disable it in agentless and log-export modes.
+            // Telemetry talks to the agent; disable it in agentless and log-export modes, and
+            // when the caller collects observations for its own telemetry client.
+            #[cfg(feature = "external-observations")]
+            let observations_enabled = self.observations;
+            #[cfg(not(feature = "external-observations"))]
+            let observations_enabled = false;
             let telemetry = self
                 .telemetry
-                .filter(|_| !(agentless_enabled || self.output_to_log || self.observations))
+                .filter(|_| !(agentless_enabled || self.output_to_log || observations_enabled))
                 .map(|telemetry_config| -> Result<_, TraceExporterError> {
                     let mut tb = TelemetryClientBuilder::default()
                         .set_language(&self.language)
@@ -1099,6 +1107,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             .then(|| self.log_max_line_size.unwrap_or(DEFAULT_LOG_MAX_LINE_SIZE));
 
         Ok(TraceExporter {
+            #[cfg(feature = "external-observations")]
             observations: self
                 .observations
                 .then(|| Arc::new(super::CollapsedSpansObservations::default())),
