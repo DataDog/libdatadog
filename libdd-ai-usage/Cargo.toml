@@ -1,0 +1,30 @@
+# Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "libdd-ai-usage"
+version = "0.1.0"
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-ai-usage"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-ai-usage"
+description = "Usage and cost metric points for LLM provider calls and gateway requests, following the OpenTelemetry GenAI conventions"
+
+[lib]
+bench = false
+
+[dependencies]
+prost = { workspace = true, features = ["derive", "std"], optional = true }
+serde = { workspace = true, features = ["derive", "std"] }
+serde_json = { workspace = true, features = ["std"] }
+
+[dev-dependencies]
+# Decodes the encoder's output with the upstream OTLP message definitions.
+opentelemetry-proto = { workspace = true, features = ["gen-tonic-messages", "metrics"] }
+prost = { workspace = true, features = ["derive", "std"] }
+
+[features]
+default = ["otlp"]
+# Encode a MetricBatch as an OTLP ExportMetricsServiceRequest.
+otlp = ["dep:prost"]
