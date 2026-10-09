@@ -1,0 +1,37 @@
+# Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "libdd-http-client-lite"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Blocking TCP transport for allocation-free HTTP clients"
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-http-client-lite"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-http-client-lite"
+readme = "README.md"
+
+[lib]
+bench = false
+
+[lints]
+workspace = true
+
+[features]
+default = []
+rustix-tcp = ["dep:rustix"]
+std = ["embedded-io/std", "embedded-io-async/std", "rustix?/std"]
+
+[dependencies]
+embedded-io.workspace = true
+embedded-io-async.workspace = true
+embedded-nal-async.workspace = true
+# `event` and `time` provide `poll` and `clock_gettime` for connect timeouts.
+# `time` is also required by rustix 1.1.5's `net` socket-timeout code.
+rustix = { workspace = true, features = ["event", "net", "time"], optional = true }
+
+[[example]]
+name = "rustix_sync_client"
+required-features = ["rustix-tcp", "std"]
