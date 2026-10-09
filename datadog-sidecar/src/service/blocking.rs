@@ -106,8 +106,18 @@ impl SidecarTransport {
                     return false;
                 }
                 let registrations = std::mem::take(&mut transport.metric_registrations);
+                let evp_transports = std::mem::take(&mut transport.evp_transports);
 
                 *transport = new.unwrap();
+
+                // The factory re-establishes session setup. Replay routing after it,
+                // before any events, without replacing fresher factory configuration.
+                // These are idempotent settings, not previously sent telemetry batches.
+                for (target, config) in evp_transports {
+                    if !transport.evp_transports.contains_key(&target) {
+                        transport.set_session_evp_transport(config);
+                    }
+                }
 
                 // Replay all registered metrics after a reconnect
                 for metric in registrations.into_values() {
@@ -302,6 +312,19 @@ pub fn set_session_config(
         config.clone(),
         is_fork,
     );
+    Ok(())
+}
+
+/// Sets the explicit EVP transport for one intake target in this session.
+///
+/// Call after setting the session configuration. Updates replace only this
+/// target; identical configuration preserves its route and deduplication state.
+/// The transport retains the latest configuration per target across reconnects.
+pub fn set_session_evp_transport(
+    transport: &mut SidecarTransport,
+    config: crate::service::EvpTransportConfigWithIdentity,
+) -> anyhow::Result<()> {
+    lock_sender(transport)?.set_session_evp_transport(config);
     Ok(())
 }
 
@@ -616,10 +639,207 @@ pub fn ping(transport: &mut SidecarTransport) -> io::Result<Duration> {
 mod tests {
     use crate::service::blocking::{SidecarTransport, add_span_to_concentrator};
     use crate::service::sidecar_interface::SidecarInterfaceRequest;
+    use crate::service::{EvpProducerIdentity, EvpTransportConfig, EvpTransportConfigWithIdentity};
+    use libdd_common::Endpoint;
     use libdd_ipc::{SeqpacketConn, SeqpacketListener};
     use std::time::Duration;
 
     use tempfile::tempdir;
+
+    fn evp_config(target: &str, version: &str) -> EvpTransportConfigWithIdentity {
+        EvpTransportConfigWithIdentity::new(
+            EvpTransportConfig::prefer_local_then_direct(
+                Endpoint::default(),
+                Some(Endpoint {
+                    url: format!("https://{target}.datadoghq.com").parse().unwrap(),
+                    api_key: Some("test-api-key".into()),
+                    ..Endpoint::default()
+                }),
+                target,
+            ),
+            EvpProducerIdentity::new("dd-trace-rb", version).unwrap(),
+        )
+        .unwrap()
+    }
+
+    fn receive_packet(peer: &SeqpacketConn) -> Vec<u8> {
+        let mut buf = [0; 8192];
+        let (len, _) = peer.try_recv_raw(&mut buf).unwrap();
+        buf[..len].to_vec()
+    }
+
+    fn assert_evp_configs(peer: &SeqpacketConn, expected: &[EvpTransportConfigWithIdentity]) {
+        match libdd_ipc::codec::decode::<SidecarInterfaceRequest>(&receive_packet(peer)).unwrap() {
+            SidecarInterfaceRequest::AddSessionEvpTransports { configs } => {
+                assert_eq!(configs, expected)
+            }
+            request => panic!("expected EVP configuration, got {request:?}"),
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn coalesced_evp_updates_follow_session_setup_before_data() {
+        let (conn, peer) = SeqpacketConn::socketpair().unwrap();
+        let mut transport = SidecarTransport::from(conn);
+        let sender = transport.inner.get_mut().unwrap();
+        sender.max_outstanding = 0;
+        let config = super::SessionConfig {
+            endpoint: Endpoint::default(),
+            dogstatsd_endpoint: Endpoint::default(),
+            language: "php".into(),
+            language_version: "8.2".into(),
+            tracer_version: "1.0.0".into(),
+            flush_interval: Duration::from_secs(1),
+            remote_config_poll_interval: Duration::from_secs(1),
+            telemetry_heartbeat_interval: Duration::from_secs(1),
+            telemetry_extended_heartbeat_interval: Duration::from_secs(1),
+            force_flush_size: 1,
+            force_drop_size: 2,
+            retry_interval: Duration::from_secs(1),
+            log_level: "warn".into(),
+            log_file: crate::config::LogMethod::Disabled,
+            remote_config_products: vec![],
+            remote_config_capabilities: vec![],
+            remote_config_enabled: false,
+            process_tags: vec![],
+            peer_tag_keys: vec![],
+            span_kinds_stats_computed: vec![],
+            hostname: String::new(),
+            root_service: String::new(),
+            root_session_id: None,
+            parent_session_id: None,
+            otlp_metrics_endpoint: None,
+        };
+        sender.set_session_config("test-session".into(), config, false);
+        let event_platform = evp_config("event-platform-intake", "2.0.0");
+        let errors = evp_config("errors-intake", "1.0.0");
+        sender.set_session_evp_transport(evp_config("event-platform-intake", "1.0.0"));
+        sender.set_session_evp_transport(errors.clone());
+        sender.set_session_evp_transport(event_platform.clone());
+
+        // Release backpressure through the ordinary nonblocking drain.
+        sender.max_outstanding = 100;
+        sender.set_session_process_tags(vec![]);
+        sender.drain_and_send_raw_blocking(b"DATA").unwrap();
+        assert!(matches!(
+            libdd_ipc::codec::decode::<SidecarInterfaceRequest>(&receive_packet(&peer)).unwrap(),
+            SidecarInterfaceRequest::SetSessionConfig { session_id, .. }
+                if session_id == "test-session"
+        ));
+        assert_evp_configs(&peer, &[event_platform, errors]);
+        assert!(matches!(
+            libdd_ipc::codec::decode::<SidecarInterfaceRequest>(&receive_packet(&peer)).unwrap(),
+            SidecarInterfaceRequest::SetSessionProcessTags { .. }
+        ));
+        assert_eq!(receive_packet(&peer), b"DATA");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn failed_blocking_drain_retains_evp_configuration() {
+        let (conn, peer) = SeqpacketConn::socketpair().unwrap();
+        let mut transport = SidecarTransport::from(conn);
+        let sender = transport.inner.get_mut().unwrap();
+        sender.max_outstanding = 0;
+        let config = evp_config("event-platform-intake", "1.0.0");
+        let other = evp_config("errors-intake", "1.0.0");
+        sender.set_session_evp_transport(config.clone());
+        sender.set_session_evp_transport(other.clone());
+        drop(peer);
+        assert!(sender.drain_and_send_raw_blocking(b"DATA").is_err());
+
+        // Keep the sender to isolate failed-drain retention from reconnect replay.
+        let (conn, peer) = SeqpacketConn::socketpair().unwrap();
+        sender.channel = super::SidecarInterfaceChannel::new(conn);
+        sender.drain_and_send_raw_blocking(b"DATA").unwrap();
+        assert_evp_configs(&peer, &[config, other]);
+        assert_eq!(receive_packet(&peer), b"DATA");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn reconnect_replays_latest_evp_configuration_before_data() {
+        for pending in [false, true] {
+            let (conn, peer) = SeqpacketConn::socketpair().unwrap();
+            let mut transport = SidecarTransport::from(conn);
+            let config = evp_config("event-platform-intake", "2.0.0");
+            let other = evp_config("errors-intake", "1.0.0");
+            let sender = transport.inner.get_mut().unwrap();
+            sender.max_outstanding = if pending { 0 } else { 100 };
+            sender.set_session_evp_transport(evp_config("event-platform-intake", "1.0.0"));
+            sender.set_session_evp_transport(other.clone());
+            sender.set_session_evp_transport(config.clone());
+            if !pending {
+                for _ in 0..3 {
+                    receive_packet(&peer);
+                }
+            }
+            drop(peer);
+            // A failed factory must not discard state needed by the next attempt.
+            assert!(!SidecarTransport::do_reconnect(
+                &mut transport.inner,
+                || None,
+                true
+            ));
+            let (conn, peer) = SeqpacketConn::socketpair().unwrap();
+            assert!(SidecarTransport::do_reconnect(
+                &mut transport.inner,
+                || Some(Box::new(SidecarTransport::from(conn))),
+                true,
+            ));
+            transport
+                .inner
+                .get_mut()
+                .unwrap()
+                .drain_and_send_raw_blocking(b"DATA")
+                .unwrap();
+            assert_evp_configs(&peer, &[other]);
+            assert_evp_configs(&peer, &[config]);
+            assert_eq!(receive_packet(&peer), b"DATA");
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn reconnect_keeps_new_factory_configuration_and_forgets_shutdown_session() {
+        for shutdown in [false, true] {
+            let (conn, _peer) = SeqpacketConn::socketpair().unwrap();
+            let mut transport = SidecarTransport::from(conn);
+            let sender = transport.inner.get_mut().unwrap();
+            sender.max_outstanding = 0;
+            sender.set_session_evp_transport(evp_config("event-platform-intake", "old"));
+            sender.set_session_evp_transport(evp_config("errors-intake", "old"));
+            if shutdown {
+                sender.shutdown_session();
+            }
+            let (conn, peer) = SeqpacketConn::socketpair().unwrap();
+            let fresh = evp_config("event-platform-intake", "new");
+            assert!(SidecarTransport::do_reconnect(
+                &mut transport.inner,
+                || {
+                    let mut new = SidecarTransport::from(conn);
+                    new.inner
+                        .get_mut()
+                        .unwrap()
+                        .set_session_evp_transport(fresh.clone());
+                    Some(Box::new(new))
+                },
+                true
+            ));
+            transport
+                .inner
+                .get_mut()
+                .unwrap()
+                .drain_and_send_raw_blocking(b"DATA")
+                .unwrap();
+            assert_evp_configs(&peer, &[fresh]);
+            if !shutdown {
+                assert_evp_configs(&peer, &[evp_config("errors-intake", "old")]);
+            }
+            assert_eq!(receive_packet(&peer), b"DATA");
+        }
+    }
 
     #[test]
     #[cfg_attr(miri, ignore)]

@@ -1,8 +1,8 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Aggregates, serializes, and forwards FFE (Feature Flag Evaluation) metric
-//! events to a user-configured OTLP HTTP metrics intake.
+//! Aggregates, serializes, and forwards Feature Flags evaluation metric events
+//! to a user-configured OTLP HTTP metrics intake.
 
 use crate::service::{FfeEvaluationMetric, FfeTelemetryContext};
 use http::Method;
@@ -14,7 +14,7 @@ use tracing::{debug, warn};
 
 const USER_AGENT: &str = concat!("ddtrace-sidecar/", env!("CARGO_PKG_VERSION"));
 
-/// POST structured FFE metric events as OTLP/protobuf to the configured intake.
+/// POST structured Feature Flags metric events as OTLP/protobuf to the configured intake.
 /// Fire-and-forget: non-2xx responses and network errors are logged and
 /// dropped (matches dd-trace-go/py OTLP exporter behavior).
 pub(crate) async fn send_metrics<C: HttpClientCapability + SleepCapability>(

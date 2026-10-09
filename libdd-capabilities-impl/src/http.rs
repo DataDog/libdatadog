@@ -3,7 +3,17 @@
 
 //! Native HTTP client implementation backed by hyper.
 
+/// Opt-in request extension limiting response bytes buffered by the native client.
+///
+/// Insert into `http::Request::extensions_mut()` to reject an oversized body
+/// during collection, including chunked bodies with no declared length. Requests
+/// without this extension retain their existing behavior. This is local client
+/// policy, never an HTTP header sent to the receiver.
+#[derive(Clone, Copy, Debug)]
+pub struct ResponseBodyLimit(pub usize);
+
 mod native {
+    use super::ResponseBodyLimit;
     use std::fs::OpenOptions;
     use std::future::Future;
     use std::io::Write;
@@ -20,7 +30,7 @@ mod native {
         Body, GenericHttpClient, new_client_periodic, new_default_client,
     };
 
-    use http_body_util::BodyExt;
+    use http_body_util::{BodyExt, Limited};
 
     #[derive(Clone)]
     pub struct NativeHttpClient {
@@ -159,6 +169,7 @@ mod native {
         {
             let periodic = self.periodic;
             let client_lock = self.client.clone();
+            let response_limit = req.extensions().get::<ResponseBodyLimit>().copied();
             async move {
                 // file:// URIs short-circuit to the on-disk recorder used by tests.
                 if req.uri().scheme_str() == Some("file") {
@@ -183,11 +194,18 @@ mod native {
                     .map_err(|e| HttpError::Network(e.into()))?;
 
                 let (parts, body) = response.into_parts();
-                let collected = body
-                    .collect()
-                    .await
-                    .map_err(|e| HttpError::ResponseBody(e.into()))?
-                    .to_bytes();
+                let collected = match response_limit {
+                    Some(ResponseBodyLimit(limit)) => Limited::new(body, limit)
+                        .collect()
+                        .await
+                        .map_err(|e| HttpError::ResponseBody(anyhow::Error::from_boxed(e)))?
+                        .to_bytes(),
+                    None => body
+                        .collect()
+                        .await
+                        .map_err(|e| HttpError::ResponseBody(e.into()))?
+                        .to_bytes(),
+                };
 
                 Ok(http::Response::from_parts(parts, collected))
             }
@@ -195,6 +213,7 @@ mod native {
 
         fn request_streamed(&self, req: http::Request<()>) -> (BodySender, ResponseFuture) {
             let client = self.client.get_or_init(new_default_client).clone();
+            let response_limit = req.extensions().get::<ResponseBodyLimit>().copied();
             let (sender, body) = Body::channel();
             let hyper_req = req.map(|()| body);
             let fut = async move {
@@ -204,11 +223,18 @@ mod native {
                     .map_err(|e| HttpError::Network(e.into()))?;
 
                 let (parts, body) = response.into_parts();
-                let collected = body
-                    .collect()
-                    .await
-                    .map_err(|e| HttpError::ResponseBody(e.into()))?
-                    .to_bytes();
+                let collected = match response_limit {
+                    Some(ResponseBodyLimit(limit)) => Limited::new(body, limit)
+                        .collect()
+                        .await
+                        .map_err(|e| HttpError::ResponseBody(anyhow::Error::from_boxed(e)))?
+                        .to_bytes(),
+                    None => body
+                        .collect()
+                        .await
+                        .map_err(|e| HttpError::ResponseBody(e.into()))?
+                        .to_bytes(),
+                };
 
                 Ok(http::Response::from_parts(parts, collected))
             };

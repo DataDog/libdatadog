@@ -4,7 +4,8 @@
 #![allow(clippy::too_many_arguments)]
 
 use crate::service::{
-    InstanceId, QueueId, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
+    EvpTransportConfigWithIdentity, InstanceId, QueueId, SerializedTracerHeaderTags, SessionConfig,
+    SidecarAction,
 };
 use libdd_common::tag::Tag;
 use libdd_dogstatsd_client::DogStatsDActionOwned;
@@ -342,11 +343,26 @@ pub trait SidecarInterface {
     ///
     /// The connection must right after that start emitting crashtracker messages.
     async fn enter_crashtracker_receiver();
+
+    /// Adds a batch of explicit per-target EVP transport updates to this session.
+    ///
+    /// This is separate from `SessionConfig` so consumers can opt in or update
+    /// their target without replacing the session's other transports. Repeated
+    /// identical configuration preserves routing and deduplication state.
+    /// Targets absent from the batch are unchanged; this is not a full snapshot.
+    ///
+    /// Keep this method last: request variants cross the bincode IPC boundary,
+    /// so appending preserves the ordinals of all existing messages.
+    async fn add_session_evp_transports(configs: Vec<EvpTransportConfigWithIdentity>);
 }
 
 #[cfg(test)]
 mod tests {
     use super::{SidecarInterfaceClientRequest, SidecarInterfaceRequest};
+    use crate::service::{
+        EvpProducerIdentity, EvpTransportConfig, EvpTransportConfigWithIdentity, EvpTransportMode,
+    };
+    use libdd_common::Endpoint;
 
     #[test]
     fn appsec_client_request_decodes_as_server_request() {
@@ -365,6 +381,52 @@ mod tests {
                 assert_eq!(data, b"payload");
             }
             _ => panic!("decoded the wrong request variant"),
+        }
+    }
+
+    #[test]
+    fn evp_transport_config_decodes_across_the_ipc_boundary() {
+        let agent_endpoint = Endpoint {
+            url: "http://localhost:8126/".parse().unwrap(),
+            ..Endpoint::default()
+        };
+        let direct_endpoint = Endpoint {
+            url: "https://event-platform-intake.datadoghq.com/"
+                .parse()
+                .unwrap(),
+            api_key: Some("test-api-key".into()),
+            ..Endpoint::default()
+        };
+
+        let agentless_config = EvpTransportConfigWithIdentity::new(
+            EvpTransportConfig {
+                mode: EvpTransportMode::PreferLocalThenDirect,
+                agent_endpoint,
+                direct_endpoint: Some(direct_endpoint),
+                intake_subdomain: "event-platform-intake".to_owned(),
+            },
+            EvpProducerIdentity::new("dd-trace-rb", "3.0.0").unwrap(),
+        )
+        .unwrap();
+        let configs = vec![
+            agentless_config,
+            EvpTransportConfigWithIdentity::new(
+                EvpTransportConfig::agent_only(Endpoint::default(), "errors-intake"),
+                EvpProducerIdentity::new("dd-trace-rb", "3.0.0").unwrap(),
+            )
+            .unwrap(),
+        ];
+        let encoded =
+            libdd_ipc::codec::encode(&SidecarInterfaceClientRequest::AddSessionEvpTransports {
+                configs: configs.clone(),
+            });
+        let decoded: SidecarInterfaceRequest = libdd_ipc::codec::decode(&encoded)
+            .expect("identity-bearing Agentless config request should decode");
+        match decoded {
+            SidecarInterfaceRequest::AddSessionEvpTransports { configs: decoded } => {
+                assert_eq!(decoded, configs);
+            }
+            _ => panic!("decoded the wrong Agentless config request variant"),
         }
     }
 }
