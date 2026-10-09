@@ -11,7 +11,7 @@
 use std::collections::BTreeMap;
 
 use crate::Profile;
-use crate::datadog::{DatadogSeries, datadog_series};
+use crate::datadog::{DatadogSeries, SeriesBuilder};
 use crate::point::{
     Attributes, ErrorCode, Instrument, MetricError, MetricPoint, Projection, Sum, reject,
 };
@@ -96,7 +96,12 @@ impl MetricBatch {
             .entry((projection.resource.clone(), profile))
             .or_default();
         for point in &projection.points {
-            let key = (point.name.clone(), point.attributes.clone());
+            // The profile is stated once per group, as the OTLP scope
+            // attribute; a point that also states it is the same series as
+            // one that does not.
+            let mut attributes = point.attributes.clone();
+            attributes.remove(PROFILE_ATTRIBUTE);
+            let key = (point.name.clone(), attributes);
             match point.instrument {
                 Instrument::Counter => {
                     let entry = group
@@ -133,18 +138,14 @@ impl MetricBatch {
             .collect()
     }
 
-    /// The Datadog series of the batch, as one submission.
+    /// The Datadog series of the batch, as one submission. Resources whose
+    /// tags normalize to the same series share its Counts.
     pub fn datadog_series(&self, historical: bool) -> Result<Vec<DatadogSeries>, MetricError> {
-        let mut series = Vec::new();
+        let mut builder = SeriesBuilder::default();
         for ((resource, profile), group) in &self.groups {
-            series.extend(datadog_series(
-                *profile,
-                &group.points(),
-                resource,
-                historical,
-            )?);
+            builder.add(*profile, &group.points(), resource, historical)?;
         }
-        Ok(series)
+        Ok(builder.finish())
     }
 
     /// The batch as DogStatsD lines, one per series point, without trailing
@@ -232,6 +233,28 @@ mod tests {
             .filter(|line| line.starts_with("gen_ai.client.inference.duration:1.5|d|#"))
             .count();
         assert_eq!(samples, 2);
+    }
+
+    #[test]
+    fn resources_with_the_same_datadog_tags_share_their_counts() {
+        let mut upper = attempt(CALL);
+        upper.resource.insert("service.name".into(), "API".into());
+        let mut lower = attempt(&CALL.replace("0.1,", "0.2,"));
+        lower.resource.insert("service.name".into(), "api".into());
+        let mut batch = MetricBatch::new();
+        batch.add(Profile::ProviderAttempt, &upper).unwrap();
+        batch.add(Profile::ProviderAttempt, &lower).unwrap();
+        let lines = batch.dogstatsd_lines().unwrap();
+        let cost: Vec<&String> = lines
+            .iter()
+            .filter(|line| line.starts_with("trajectory.gen_ai.client.inference.usage.cost:"))
+            .collect();
+        assert_eq!(cost.len(), 1, "{lines:?}");
+        assert!(
+            cost[0].starts_with("trajectory.gen_ai.client.inference.usage.cost:0.3|c|#"),
+            "{cost:?}"
+        );
+        assert!(cost[0].contains("service:api"), "{cost:?}");
     }
 
     #[test]

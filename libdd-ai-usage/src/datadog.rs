@@ -186,78 +186,110 @@ pub fn datadog_series(
     resource: &Attributes,
     historical: bool,
 ) -> Result<Vec<DatadogSeries>, MetricError> {
-    let mut counts: BTreeMap<(String, Vec<String>), (Sum, bool)> = BTreeMap::new();
-    let mut series = Vec::new();
-    let mut count = |name: String, tags: Vec<String>, increment: Sum, scaled| {
-        let entry = counts
+    let mut builder = SeriesBuilder::default();
+    builder.add(profile, points, resource, historical)?;
+    Ok(builder.finish())
+}
+
+/// Series of one submission, built from the points of any number of profiles
+/// and resources. Counts are summed by their final name and tag set, so
+/// carriers whose tags normalize to the same series give one Count, added
+/// exactly before it is scaled.
+#[derive(Debug, Default)]
+pub(crate) struct SeriesBuilder {
+    counts: BTreeMap<(String, Vec<String>), (Sum, bool)>,
+    series: Vec<DatadogSeries>,
+}
+
+impl SeriesBuilder {
+    pub(crate) fn add(
+        &mut self,
+        profile: Profile,
+        points: &[MetricPoint],
+        resource: &Attributes,
+        historical: bool,
+    ) -> Result<(), MetricError> {
+        // Check every point first, so that a refused submission adds nothing.
+        let mut tagged = Vec::with_capacity(points.len());
+        for point in points {
+            if !profile.metric_names().contains(&point.name.as_str()) {
+                return reject(
+                    ErrorCode::MetricProfileMismatch,
+                    format!("{} is not a metric of {}", point.name, profile.id()),
+                );
+            }
+            tagged.push((point, series_tags(profile, point, resource)?));
+        }
+        for (point, tags) in tagged {
+            match point.instrument {
+                Instrument::Counter => {
+                    self.count(
+                        point.name.clone(),
+                        tags,
+                        Sum::of(point),
+                        point.unit == NANO_USD,
+                    );
+                }
+                Instrument::Histogram => {
+                    if !historical {
+                        self.series.push(DatadogSeries {
+                            name: point.name.clone(),
+                            series_type: SeriesType::Distribution,
+                            value: point.value,
+                            tags: tags.clone(),
+                        });
+                    }
+                    // The sum adds doubles in recording order, like any Count
+                    // of a fractional value.
+                    self.count(
+                        format!("{}.sum", point.name),
+                        tags.clone(),
+                        Sum::Double(point.value),
+                        false,
+                    );
+                    self.count(
+                        format!("{}.count", point.name),
+                        tags,
+                        Sum::Integer(1),
+                        false,
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn count(&mut self, name: String, tags: Vec<String>, increment: Sum, scaled: bool) {
+        let entry = self
+            .counts
             .entry((name, tags))
             .or_insert((Sum::Integer(0), scaled));
         entry.0 = entry.0.add(increment);
-    };
-    for point in points {
-        if !profile.metric_names().contains(&point.name.as_str()) {
-            return reject(
-                ErrorCode::MetricProfileMismatch,
-                format!("{} is not a metric of {}", point.name, profile.id()),
-            );
-        }
-        let tags = series_tags(profile, point, resource)?;
-        match point.instrument {
-            Instrument::Counter => {
-                count(
-                    point.name.clone(),
-                    tags,
-                    Sum::of(point),
-                    point.unit == NANO_USD,
-                );
-            }
-            Instrument::Histogram => {
-                if !historical {
-                    series.push(DatadogSeries {
-                        name: point.name.clone(),
-                        series_type: SeriesType::Distribution,
-                        value: point.value,
-                        tags: tags.clone(),
-                    });
-                }
-                // The sum adds doubles in recording order, like any Count of
-                // a fractional value.
-                count(
-                    format!("{}.sum", point.name),
-                    tags.clone(),
-                    Sum::Double(point.value),
-                    false,
-                );
-                count(
-                    format!("{}.count", point.name),
-                    tags,
-                    Sum::Integer(1),
-                    false,
-                );
-            }
-        }
     }
-    for ((name, tags), (total, scaled)) in counts {
-        let value = if scaled {
-            // One division of the exact sum, converted to a double once.
-            total.value() / NANO_USD_PER_USD
-        } else {
-            total.value()
-        };
-        series.push(DatadogSeries {
-            name,
-            series_type: SeriesType::Count,
-            value,
-            tags,
+
+    pub(crate) fn finish(mut self) -> Vec<DatadogSeries> {
+        for ((name, tags), (total, scaled)) in self.counts {
+            let value = if scaled {
+                // One division of the exact sum, converted to a double once.
+                total.value() / NANO_USD_PER_USD
+            } else {
+                total.value()
+            };
+            self.series.push(DatadogSeries {
+                name,
+                series_type: SeriesType::Count,
+                value,
+                tags,
+            });
+        }
+        self.series.sort_by(|a, b| {
+            a.name
+                .cmp(&b.name)
+                .then_with(|| a.tags.cmp(&b.tags))
+                .then_with(|| a.value.total_cmp(&b.value))
         });
+        self.series
     }
-    series.sort_by(|a, b| {
-        a.name
-            .cmp(&b.name)
-            .then_with(|| a.tags.cmp(&b.tags))
-            .then_with(|| a.value.total_cmp(&b.value))
-    });
-    Ok(series)
 }
 
 #[cfg(test)]

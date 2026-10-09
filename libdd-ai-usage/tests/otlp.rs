@@ -214,6 +214,68 @@ fn the_export_decodes_with_the_upstream_definitions_and_carries_every_point() {
 }
 
 #[test]
+fn a_point_that_states_its_profile_is_exported_once_under_the_scope() {
+    let projection = |cost: &str| {
+        let observation = Json::parse(&format!(
+            r#"{{"operation_name": "chat", "provider_name": "openai", "duration_seconds": 1.5,
+                "streaming": false, "input_tokens": 300, "output_tokens": 20,
+                "cost_usd": {cost}, "cost_source": "estimated", "observation_point": "gateway"}}"#
+        ))
+        .unwrap();
+        libdd_ai_usage::project_result(Profile::ProviderAttempt, &observation).unwrap()
+    };
+    let mut stated = projection("0.2");
+    for point in &mut stated.points {
+        point.attributes.insert(
+            PROFILE_ATTRIBUTE.to_string(),
+            Profile::ProviderAttempt.id().to_string(),
+        );
+    }
+    let mut batch = MetricBatch::new();
+    batch
+        .add(Profile::ProviderAttempt, &projection("0.1"))
+        .unwrap();
+    batch.add(Profile::ProviderAttempt, &stated).unwrap();
+    let request =
+        ExportMetricsServiceRequest::decode(batch.encode_otlp(SCOPE, WINDOW).as_slice()).unwrap();
+    let scope_metrics = &request.resource_metrics[0].scope_metrics[0];
+    let scope = attributes(&scope_metrics.scope.as_ref().unwrap().attributes);
+    assert_eq!(
+        scope.get(PROFILE_ATTRIBUTE).map(String::as_str),
+        Some(Profile::ProviderAttempt.id())
+    );
+    for metric in &scope_metrics.metrics {
+        let points: Vec<&Vec<KeyValue>> = match &metric.data {
+            Some(Data::Sum(sum)) => sum.data_points.iter().map(|p| &p.attributes).collect(),
+            Some(Data::Histogram(h)) => h.data_points.iter().map(|p| &p.attributes).collect(),
+            other => panic!("{}: {other:?}", metric.name),
+        };
+        for point in points {
+            assert!(
+                !attributes(point).contains_key(PROFILE_ATTRIBUTE),
+                "{}",
+                metric.name
+            );
+        }
+    }
+    let cost = scope_metrics
+        .metrics
+        .iter()
+        .find(|m| m.name == "trajectory.gen_ai.client.inference.usage.cost")
+        .unwrap();
+    match &cost.data {
+        Some(Data::Sum(sum)) => {
+            assert_eq!(sum.data_points.len(), 1, "the two points are one series");
+            assert_eq!(
+                sum.data_points[0].value,
+                Some(number_data_point::Value::AsInt(300_000_000))
+            );
+        }
+        other => panic!("the cost is not a sum: {other:?}"),
+    }
+}
+
+#[test]
 fn bucket_bounds_follow_the_upstream_advice() {
     let mut batch = MetricBatch::new();
     let observation = Json::parse(
