@@ -1,10 +1,10 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::collections::HashMap;
-use std::hash::Hasher;
+use alloc::{string::String, vec::Vec};
+use core::hash::{Hash, Hasher};
 
-use crate::data::metrics;
+use crate::data::{ListMap, metrics};
 
 use serde::{Deserialize, Serialize};
 
@@ -21,19 +21,9 @@ pub struct Dependency {
 /// being stored (and re-sent) as a second entry for the same package/version.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct DependencyKey {
-    name: String,
-    version: Option<String>,
-    hash: Option<String>,
-}
-
-impl crate::worker::store::Keyed<DependencyKey> for Dependency {
-    fn key(&self) -> DependencyKey {
-        DependencyKey {
-            name: self.name.clone(),
-            version: self.version.clone(),
-            hash: self.hash.clone(),
-        }
-    }
+    pub(crate) name: String,
+    pub(crate) version: Option<String>,
+    pub(crate) hash: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, Clone, Default)]
@@ -105,8 +95,8 @@ pub struct AppStarted {
     pub integrations: Vec<Integration>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub install_signature: Option<InstallSignature>,
-    #[serde(skip_serializing_if = "HashMap::is_empty")]
-    pub products: HashMap<String, ProductState>,
+    #[serde(skip_serializing_if = "ListMap::is_empty")]
+    pub products: Products,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<Error>,
 }
@@ -130,9 +120,12 @@ pub struct ProductState {
     pub error: Option<Error>,
 }
 
+/// Product states keyed by product name.
+pub type Products = ListMap<String, ProductState, Vec<(String, ProductState)>>;
+
 #[derive(Serialize, Debug)]
 pub struct AppProductChange {
-    pub products: HashMap<String, ProductState>,
+    pub products: Products,
 }
 
 #[derive(Serialize, Debug)]
@@ -249,7 +242,7 @@ impl PartialEq for Endpoint {
 
 impl Eq for Endpoint {}
 
-impl std::hash::Hash for Endpoint {
+impl Hash for Endpoint {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.resource_name.hash(state);
     }

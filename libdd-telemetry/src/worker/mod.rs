@@ -137,7 +137,7 @@ struct TelemetryWorkerData {
     integrations: store::Store<data::Integration>,
     endpoints: store::Store<data::Endpoint>,
     endpoints_is_first: bool,
-    products: std::collections::HashMap<String, ProductState>,
+    products: data::Products,
     products_pending: HashSet<String>,
     logs: store::QueueHashMap<LogIdentifier, Log>,
     metric_contexts: MetricContexts,
@@ -551,7 +551,8 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
             AddDependency(dep) => self.data.dependencies.insert(dep),
             AddIntegration(integration) => self.data.integrations.insert(integration),
             AddProductChange((name, state)) => {
-                self.data.products.insert(name.clone(), state);
+                // `Vec` storage never runs out of capacity.
+                let _ = self.data.products.insert(name.clone(), state);
                 self.data.products_pending.insert(name);
             }
             AddConfig(cfg) => self.data.configurations.insert(cfg),
@@ -1484,7 +1485,7 @@ impl TelemetryWorkerBuilder {
                 configurations: self.configurations,
                 endpoints: self.endpoints,
                 endpoints_is_first: true,
-                products: std::collections::HashMap::new(),
+                products: data::Products::default(),
                 products_pending: HashSet::new(),
                 logs: store::QueueHashMap::default(),
                 metric_contexts: contexts.clone(),
