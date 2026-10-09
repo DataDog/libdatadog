@@ -31,6 +31,10 @@ data-pipeline = []
 data-pipeline-compression = ["data-pipeline"]
 # Enable client-side stats obfuscation in the data-pipeline crate.
 data-pipeline-stats-obfuscation = ["data-pipeline"]
+# Temporary: expose exporter observations for hosts that run their own telemetry client. To be
+# removed once the native telemetry client no longer needs to be bypassed. Consumers of the
+# generated header must define DDOG_TRACE_EXPORTER_EXTERNAL_OBSERVATIONS to see the API.
+data-pipeline-external-observations = ["data-pipeline"]
 symbolizer = []
 library-config = []
 log = []

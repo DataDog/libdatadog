@@ -14,6 +14,7 @@ pub struct Selection {
     pub data_pipeline: bool,
     pub data_pipeline_compression: bool,
     pub data_pipeline_stats_obfuscation: bool,
+    pub data_pipeline_external_observations: bool,
     pub crashtracker: bool,
     pub symbolizer: bool,
     pub library_config: bool,
@@ -35,6 +36,9 @@ impl Selection {
             data_pipeline: cfg!(feature = "data-pipeline"),
             data_pipeline_compression: cfg!(feature = "data-pipeline-compression"),
             data_pipeline_stats_obfuscation: cfg!(feature = "data-pipeline-stats-obfuscation"),
+            data_pipeline_external_observations: cfg!(
+                feature = "data-pipeline-external-observations"
+            ),
             crashtracker: cfg!(feature = "crashtracker"),
             symbolizer: cfg!(feature = "symbolizer"),
             library_config: cfg!(feature = "library-config"),
@@ -75,6 +79,9 @@ pub fn profiling_features(selection: &Selection) -> Vec<String> {
     }
     if selection.data_pipeline_stats_obfuscation {
         features.push("data-pipeline-stats-obfuscation");
+    }
+    if selection.data_pipeline_external_observations {
+        features.push("data-pipeline-external-observations");
     }
     if selection.crashtracker {
         features.extend([
@@ -123,6 +130,7 @@ mod tests {
         |s| s.data_pipeline = true,
         |s| s.data_pipeline_compression = true,
         |s| s.data_pipeline_stats_obfuscation = true,
+        |s| s.data_pipeline_external_observations = true,
         |s| s.crashtracker = true,
         |s| s.symbolizer = true,
         |s| s.library_config = true,
@@ -180,6 +188,7 @@ mod tests {
             data_pipeline: true,
             data_pipeline_compression: true,
             data_pipeline_stats_obfuscation: true,
+            data_pipeline_external_observations: true,
             crashtracker: true,
             symbolizer: true,
             library_config: true,
@@ -201,6 +210,7 @@ mod tests {
                 "data-pipeline-ffi",
                 "data-pipeline-compression",
                 "data-pipeline-stats-obfuscation",
+                "data-pipeline-external-observations",
                 "crashtracker-ffi",
                 "crashtracker-collector",
                 "crashtracker-receiver",
