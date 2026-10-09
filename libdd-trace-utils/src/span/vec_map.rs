@@ -99,7 +99,6 @@ impl<T: ValueTypes> ValueMapMut<T> for VecMap<T::Text, AttributeValue<T>> {
     }
 
     fn retain(&mut self, mut f: impl FnMut(&str, &mut AttributeValue<T>) -> bool) {
-        self.dedup_in_place();
         self.retain_mut(|k, v| f(k.as_str(), v));
     }
 
@@ -223,15 +222,14 @@ impl<K, V> VecMap<K, V> {
         K: Borrow<Q>,
         Q: ?Sized + PartialEq,
     {
-        let mut removed = None;
-        // Walk backwards so the first match found is the last (shadowing) entry.
-        for i in (0..self.data.len()).rev() {
-            if self.data[i].0.borrow() == key {
-                let (_, v) = self.data.remove(i);
-                removed.get_or_insert(v);
-            }
+        // The last match is the shadowing entry, the one `get` returns.
+        let index = self.data.iter().rposition(|(k, _)| k.borrow() == key)?;
+        let (_, removed) = self.data.remove(index);
+        if !self.deduped {
+            // Drop the shadowed duplicates in a single pass.
+            self.data.retain(|(k, _)| k.borrow() != key);
         }
-        removed
+        Some(removed)
     }
 
     /// Iterate over the element, including duplicate entries.
@@ -295,14 +293,6 @@ impl<K, V> VecMap<K, V> {
     ) -> std::vec::Drain<'_, (K, V)> {
         self.data.drain(range)
     }
-
-    /// Retains only the entries for which `f` returns `true`, allowing values to be mutated
-    /// in place. Keys are borrowed immutably, so this cannot introduce duplicates and the
-    /// `deduped` flag is preserved.
-    #[inline]
-    pub fn retain_mut(&mut self, mut f: impl FnMut(&K, &mut V) -> bool) {
-        self.data.retain_mut(|(k, v)| f(k, v));
-    }
 }
 
 impl<K: PartialEq, V> VecMap<K, V> {
@@ -352,6 +342,15 @@ impl<K: PartialEq, V> VecMap<K, V> {
             }
         }
         self.deduped = true;
+    }
+
+    /// Retains only the entries for which `f` returns `true`, allowing values to be mutated.
+    /// Shadowed entries are dropped first (see [VecMap::dedup_in_place]), so `f` sees each key
+    /// once with the value [VecMap::get] returns, and dropping that value can't expose a shadowed
+    /// one. Keys are borrowed immutably, so the map stays deduped.
+    pub fn retain_mut(&mut self, mut f: impl FnMut(&K, &mut V) -> bool) {
+        self.dedup_in_place();
+        self.data.retain_mut(|(k, v)| f(k, v));
     }
 
     /// Set the value for `key`, overwriting the existing entry rather than appending a
