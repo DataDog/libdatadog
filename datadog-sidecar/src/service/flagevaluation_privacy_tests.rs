@@ -255,7 +255,7 @@ fn oversized_ipc_warning_does_not_log_evaluation_data() {
     let sent = tracing::subscriber::with_default(subscriber, || {
         channel.try_send_request(&request(vec![row]))
     });
-    assert!(!sent);
+    assert!(sent.is_err());
     let logs = String::from_utf8(logs.0.lock().unwrap().clone()).unwrap();
     assert!(logs.contains("IPC message too large"));
     for canary in [
@@ -264,6 +264,179 @@ fn oversized_ipc_warning_does_not_log_evaluation_data() {
         "private-error-canary",
     ] {
         assert!(!logs.contains(canary));
+    }
+}
+
+#[tokio::test]
+#[cfg_attr(miri, ignore = "requires native IPC sockets")]
+async fn bounded_ffe_submission_preserves_http_privacy_and_survives_rejection() {
+    use crate::service::blocking::{SidecarTransport, try_submit_ffe};
+    use crate::service::ffe_submission::FfeSubmissionStatus;
+
+    let http = MockServer::start_async().await;
+    let output = http
+        .mock_async(|when, then| {
+            when.method(POST)
+                .path(EVP_FLAGEVALUATION_PATH)
+                .body_includes(
+                    "sha256_b4698f9b6d186781fa8dc59e533578fa2d8379a46b1cf6db85cda6aa9c99e51b",
+                )
+                .body_includes("consented-identity-canary")
+                .body_includes("consented-context-canary")
+                .body_includes("\"evaluation_count\":1")
+                .body_includes("\"message\":\"GENERAL\"")
+                .body_excludes("jane.doe@datadoghq.com")
+                .body_excludes("protected-context-canary")
+                .body_excludes("private-error-canary")
+                .body_excludes("oversize-canary")
+                .body_excludes("rejected-flag-canary")
+                .body_excludes("observe_full_evaluation_data")
+                .is_true(|request| {
+                    let payload: serde_json::Value =
+                        serde_json::from_slice(request.body_ref()).unwrap();
+                    let rows = payload["flagEvaluations"].as_array().unwrap();
+                    rows.len() == 3
+                        && rows.iter().any(|row| {
+                            row["flag"]["key"] == "ipc-degraded"
+                                && row["evaluation_count"] == 2
+                                && row.get("targeting_key").is_none()
+                                && row.get("context").is_none()
+                        })
+                });
+            then.status(202);
+        })
+        .await;
+    let server = SidecarServer::default();
+    server.get_session("privacy").modify_trace_config(|cfg| {
+        cfg.set_endpoint(Endpoint {
+            url: http.url("/").parse().unwrap(),
+            ..Endpoint::default()
+        })
+        .unwrap();
+        cfg.language = "php".into();
+    });
+    let logs = LogBuffer(Arc::new(Mutex::new(Vec::new())));
+    let log_writer = logs.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .without_time()
+        .with_ansi(false)
+        .with_max_level(tracing::Level::TRACE)
+        .with_writer(move || log_writer.clone())
+        .finish();
+    let (local, client) = SeqpacketConn::socketpair().unwrap();
+    let handler = Arc::new(ConnectionSidecarHandler::new(
+        server,
+        OwnedServerConn::new(local).unwrap(),
+    ));
+    let task = tokio::spawn(
+        serve_sidecar_interface_connection(handler.clone()).with_subscriber(subscriber),
+    );
+    let transport = SidecarTransport::from(client);
+    // Ordinary traffic remains on its existing API and connection.
+    assert!(
+        transport
+            .inner
+            .lock()
+            .unwrap()
+            .channel
+            .try_send_enqueue_actions(
+                InstanceId::new("privacy", "runtime"),
+                QueueId::from(42),
+                vec![SidecarAction::AddTelemetryMetricPoint((
+                    "ffe.healthy".into(),
+                    1.0,
+                    vec![]
+                ))],
+            )
+    );
+    let single = |mut row: FfeFlagEvaluationEvent| {
+        row.evaluation_count = 1;
+        row.last_evaluation = row.first_evaluation;
+        row.normalize();
+        let mut req = request(vec![row]);
+        if let SidecarInterfaceRequest::EnqueueActions { actions, .. } = &mut req {
+            actions.retain(|action| matches!(action, SidecarAction::FfeFlagEvaluationBatch(_)));
+        }
+        req
+    };
+    assert_eq!(
+        try_submit_ffe(&transport, &mut single(event())),
+        FfeSubmissionStatus::Accepted
+    );
+    let mut oversized = event();
+    oversized.flag.key = "ipc-degraded".into();
+    oversized.targeting_key =
+        Some("oversize-canary".repeat(libdd_ipc::max_message_size() / 14 + 1));
+    for consent in [false, true] {
+        oversized.observe_full_evaluation_data = consent;
+        assert_eq!(
+            try_submit_ffe(&transport, &mut single(oversized.clone())),
+            FfeSubmissionStatus::Accepted
+        );
+    }
+    // Removing identity/context cannot rescue oversized retained dimensions.
+    let mut rejected = event();
+    rejected.flag.key = "rejected-flag-canary".repeat(libdd_ipc::max_message_size() / 20 + 1);
+    assert_eq!(
+        try_submit_ffe(&transport, &mut single(rejected)),
+        FfeSubmissionStatus::PayloadTooLarge
+    );
+    let mut consented = event();
+    consented.flag.key = "consented".into();
+    consented.observe_full_evaluation_data = true;
+    consented.targeting_key = Some("consented-identity-canary".into());
+    consented.context.as_mut().unwrap().evaluation =
+        Some(r#"{"email":"consented-context-canary"}"#.into());
+    assert_eq!(
+        try_submit_ffe(&transport, &mut single(consented)),
+        FfeSubmissionStatus::Accepted
+    );
+    for req in [
+        SidecarInterfaceRequest::Flush {
+            options: SidecarFlushOptions {
+                flag_evaluations: true,
+                ..Default::default()
+            },
+        },
+        SidecarInterfaceRequest::Ping {},
+    ] {
+        assert!(
+            transport
+                .inner
+                .lock()
+                .unwrap()
+                .channel
+                .try_send_request(&req)
+                .is_ok()
+        );
+    }
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while handler.submitted_payloads.load(Ordering::Relaxed) < 7 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("healthy follow-up traffic must finish after rejection");
+    output.assert_calls_async(1).await;
+    let captured = String::from_utf8(logs.0.lock().unwrap().clone()).unwrap();
+    assert!(captured.contains("IPC recv"));
+    for canary in [
+        "jane.doe@datadoghq.com",
+        "protected-context-canary",
+        "consented-identity-canary",
+        "consented-context-canary",
+        "private-error-canary",
+        "oversize-canary",
+    ] {
+        assert!(!captured.contains(canary));
+    }
+    drop(transport);
+    task.abort();
+    if let Err(error) = tokio::time::timeout(Duration::from_secs(2), task)
+        .await
+        .unwrap()
+    {
+        assert!(error.is_cancelled());
     }
 }
 
@@ -302,7 +475,7 @@ fn oversized_ipc_warning_does_not_log_exposure_data() {
         })],
     };
     let sent = tracing::subscriber::with_default(subscriber, || channel.try_send_request(&request));
-    assert!(!sent);
+    assert!(sent.is_err());
     let logs = String::from_utf8(logs.0.lock().unwrap().clone()).unwrap();
     assert!(logs.contains("IPC message too large"));
     for canary in [
@@ -311,4 +484,77 @@ fn oversized_ipc_warning_does_not_log_exposure_data() {
     ] {
         assert!(!logs.contains(canary));
     }
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+#[cfg_attr(miri, ignore = "requires native IPC sockets")]
+fn kernel_size_rejection_retries_one_reduced_observation_without_reshedding() {
+    use crate::service::blocking::{SidecarTransport, try_submit_ffe};
+    use crate::service::ffe_submission::FfeSubmissionStatus;
+
+    let (conn, peer) = SeqpacketConn::socketpair().unwrap();
+    let size: libc::c_int = 4096;
+    // SAFETY: a live socket and valid integer storage; leave the global limit unchanged.
+    assert_eq!(
+        unsafe {
+            libc::setsockopt(
+                conn.as_raw_fd(),
+                libc::SOL_SOCKET,
+                libc::SO_SNDBUF,
+                (&size as *const libc::c_int).cast(),
+                std::mem::size_of_val(&size).try_into().unwrap(),
+            )
+        },
+        0
+    );
+    let transport = SidecarTransport::from(conn);
+    let empty = request(vec![]);
+    let mut bytes = vec![0; libdd_ipc::max_message_size()];
+    {
+        let mut sender = transport.inner.lock().unwrap();
+        sender.max_outstanding = 21;
+        for _ in 0..11 {
+            sender.channel.try_send_request(&empty).unwrap();
+            peer.try_recv_raw(&mut bytes).unwrap();
+        }
+        for _ in 0..9 {
+            assert_eq!(
+                sender.enqueue_actions(&empty).unwrap_err().kind(),
+                std::io::ErrorKind::WouldBlock
+            );
+        }
+    }
+    let mut row = event();
+    row.evaluation_count = 1;
+    row.last_evaluation = row.first_evaluation;
+    row.targeting_key = Some("x".repeat(16 * 1024));
+    row.normalize();
+    let mut observation = request(vec![row]);
+    if let SidecarInterfaceRequest::EnqueueActions { actions, .. } = &mut observation {
+        actions.retain(|action| matches!(action, SidecarAction::FfeFlagEvaluationBatch(_)));
+    }
+    assert_eq!(
+        try_submit_ffe(&transport, &mut observation),
+        FfeSubmissionStatus::Accepted
+    );
+    let (len, _) = peer.try_recv_raw(&mut bytes).unwrap();
+    let decoded: SidecarInterfaceRequest = decode(&bytes[..len]).unwrap();
+    let SidecarInterfaceRequest::EnqueueActions { actions, .. } = decoded else {
+        panic!("wrong request")
+    };
+    let [SidecarAction::FfeFlagEvaluationBatch(batch)] = actions.as_slice() else {
+        panic!("wrong actions")
+    };
+    let [row] = batch.flag_evaluations.as_slice() else {
+        panic!("wrong row count")
+    };
+    assert!(row.is_degraded);
+    assert!(row.targeting_key.is_none() && row.context.is_none());
+    assert_eq!(row.evaluation_count, 1);
+    assert_eq!(transport.inner.lock().unwrap().channel.0.outstanding(), 12);
+    assert_eq!(
+        peer.try_recv_raw(&mut bytes).unwrap_err().kind(),
+        std::io::ErrorKind::WouldBlock
+    );
 }

@@ -12,7 +12,7 @@
 //! `SidecarSender` takes `&mut self`; the caller is responsible for exclusive access.
 
 use crate::service::{
-    InstanceId, QueueId, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
+    InstanceId, QueueId, SerializedTracerHeaderTags, SessionConfig,
     sidecar_interface::{
         DynamicInstrumentationConfigState, SidecarFlushOptions, SidecarInterfaceChannel,
         SidecarInterfaceClientRequest, SidecarInterfaceRequest,
@@ -191,7 +191,7 @@ impl SidecarSender {
                 if self.channel.0.outstanding() >= self.max_outstanding {
                     return false;
                 }
-                if !self.channel.try_send_request(msg) {
+                if self.channel.try_send_request(msg).is_err() {
                     return false;
                 }
                 *slot = None;
@@ -352,19 +352,19 @@ impl SidecarSender {
         self.try_drain_outbox();
     }
 
-    /// Enqueue telemetry actions.
+    /// Send an already-built `EnqueueActions` request after pending configuration.
     ///
-    /// When `outstanding > max_outstanding / 2`, 90% of calls are dropped to shed load.
-    pub fn enqueue_actions(
-        &mut self,
-        instance_id: InstanceId,
-        queue_id: QueueId,
-        actions: Vec<SidecarAction>,
-    ) {
+    /// When `outstanding > max_outstanding / 2`, 90% of calls are dropped.
+    /// Outbox backpressure and load shedding return `WouldBlock`; nothing is
+    /// retained. Callers needing only best-effort delivery may ignore the result.
+    pub fn enqueue_actions(&mut self, request: &SidecarInterfaceRequest) -> io::Result<()> {
         if !self.try_drain_outbox() {
-            return;
+            return Err(io::Error::from(if self.channel.0.is_closed() {
+                io::ErrorKind::NotConnected
+            } else {
+                io::ErrorKind::WouldBlock
+            }));
         }
-        // Load-shed: drop 90% when buffer is more than half full.
         let outstanding = self.channel.0.outstanding();
         if outstanding > self.max_outstanding / 2 {
             self.enqueue_actions_counter = self.enqueue_actions_counter.wrapping_add(1) % 10;
@@ -373,12 +373,10 @@ impl SidecarSender {
                     "enqueue_actions dropped: load-shedding (buffer more than half full) - outstanding: {}/{}",
                     outstanding, self.max_outstanding,
                 );
-                return;
+                return Err(io::Error::from(io::ErrorKind::WouldBlock));
             }
-            // The 10% that passes through falls to the try_send below.
         }
-        self.channel
-            .try_send_enqueue_actions(instance_id, queue_id, actions);
+        self.channel.try_send_request(request)
     }
 
     pub fn send_trace_v04_shm(
@@ -564,5 +562,81 @@ impl SidecarSender {
     pub fn stats(&mut self) -> Result<String, libdd_ipc::codec::DecodeError> {
         self.drain_outbox_blocking();
         self.channel.call_stats()
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use libdd_ipc::{SeqpacketConn, codec};
+
+    fn request() -> SidecarInterfaceRequest {
+        SidecarInterfaceRequest::EnqueueActions {
+            instance_id: InstanceId::new("session", "runtime"),
+            queue_id: QueueId::from(1),
+            actions: vec![],
+        }
+    }
+
+    fn receive(peer: &SeqpacketConn) -> SidecarInterfaceRequest {
+        let mut bytes = [0; 1024];
+        let (len, _) = peer.try_recv_raw(&mut bytes).unwrap();
+        codec::decode(&bytes[..len]).unwrap()
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn pending_configuration_precedes_actions_after_acks_restore_capacity() {
+        let (conn, peer) = SeqpacketConn::socketpair().unwrap();
+        let mut sender = SidecarSender::new(SidecarInterfaceChannel::new(conn));
+        sender.max_outstanding = 21;
+        for _ in 0..21 {
+            sender.channel.try_send_request(&request()).unwrap();
+            receive(&peer);
+        }
+        sender.set_session_default_service_name(Some("configured-service".into()));
+        assert_eq!(
+            sender.enqueue_actions(&request()).unwrap_err().kind(),
+            io::ErrorKind::WouldBlock
+        );
+        for _ in 0..21 {
+            peer.try_send_raw(vec![0], &[]).unwrap();
+        }
+        sender.enqueue_actions(&request()).unwrap();
+        assert!(
+            matches!(receive(&peer), SidecarInterfaceRequest::SetSessionDefaultServiceName {
+            name: Some(name),
+        } if name == "configured-service")
+        );
+        assert!(matches!(
+            receive(&peer),
+            SidecarInterfaceRequest::EnqueueActions { .. }
+        ));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn actions_use_the_existing_shared_load_shedding_policy() {
+        let (conn, peer) = SeqpacketConn::socketpair().unwrap();
+        let mut sender = SidecarSender::new(SidecarInterfaceChannel::new(conn));
+        sender.max_outstanding = 21;
+        for _ in 0..11 {
+            sender.channel.try_send_request(&request()).unwrap();
+            receive(&peer);
+        }
+        let mut accepted = 0;
+        for _ in 0..20 {
+            match sender.enqueue_actions(&request()) {
+                Ok(()) => {
+                    accepted += 1;
+                    assert!(matches!(
+                        receive(&peer),
+                        SidecarInterfaceRequest::EnqueueActions { .. }
+                    ));
+                }
+                Err(error) => assert_eq!(error.kind(), io::ErrorKind::WouldBlock),
+            }
+        }
+        assert_eq!(accepted, 2);
     }
 }

@@ -7,8 +7,10 @@
 #![cfg_attr(not(test), deny(clippy::todo))]
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
+mod ffe_submission;
 #[cfg(windows)]
 pub mod remote_config_notification;
+pub use ffe_submission::*;
 #[cfg(target_os = "linux")]
 pub mod signal_flush;
 pub mod span;

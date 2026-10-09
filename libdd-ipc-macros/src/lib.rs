@@ -604,7 +604,7 @@ fn gen_channel(
                 quote! {
                     pub fn #method_name(&mut self, #(#params),*) -> bool {
                         #build_req_and_fds
-                        self.0.try_send(__data, &__fds)
+                        self.0.try_send(__data, &__fds).is_ok()
                     }
                 }
             }
@@ -622,7 +622,7 @@ fn gen_channel(
             #(#channel_methods)*
 
             /// Generic fire-and-forget send (used by SidecarSender outbox drain).
-            pub fn try_send_request(&mut self, req: &#enum_name) -> bool {
+            pub fn try_send_request(&mut self, req: &#enum_name) -> ::std::io::Result<()> {
                 let mut __sink = libdd_ipc::handles::FdSink::new();
                 libdd_ipc::handles::TransferHandles::copy_handles(req, &mut __sink).ok();
                 let __fds = __sink.into_fds();
@@ -634,11 +634,12 @@ fn gen_channel(
                 let __max = libdd_ipc::max_message_size();
                 if __data.len() > __max {
                     ::tracing::warn!(?req, len = __data.len(), max = __max, "IPC message too large");
+                    return Err(::std::io::Error::from(::std::io::ErrorKind::FileTooLarge));
                 }
                 if req.expects_response() {
                     self.0.try_send(__data, &__fds)
                 } else {
-                    self.0.conn.try_send_raw(__data, &__fds).is_ok()
+                    self.0.conn.try_send_raw(__data, &__fds)
                 }
             }
 

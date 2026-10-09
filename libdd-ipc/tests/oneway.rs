@@ -47,7 +47,9 @@ async fn oneway_packets_preserve_order_without_consuming_reply_slots() {
     tokio::task::spawn_blocking(move || {
         let mut client = OnewayChannel::new(client);
         assert!(client.try_send_post(1));
-        assert!(client.try_send_request(&OnewayRequest::Post { value: 2 }));
+        client
+            .try_send_request(&OnewayRequest::Post { value: 2 })
+            .unwrap();
         client
             .send_request_blocking(&OnewayRequest::Post { value: 4 })
             .unwrap();
