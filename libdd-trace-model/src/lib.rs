@@ -215,9 +215,6 @@ pub trait ValueTypes: Sized {
 
 /// [`ValueTypes`] whose containers implement [`PartialEq`], making [`AttributeValue`] comparable
 /// with `==`.
-///
-/// The bounds live on a subtrait rather than on the `PartialEq` impl: a `where T::Map: PartialEq`
-/// clause is recursive (the map holds `AttributeValue<T>`s) and overflows the trait solver.
 pub trait ValueTypesEq: ValueTypes<Array: PartialEq, Map: PartialEq> {}
 
 /// The value in a map of attributes
