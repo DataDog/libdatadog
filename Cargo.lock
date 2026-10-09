@@ -3572,6 +3572,7 @@ dependencies = [
  "libdd-dogstatsd-client",
  "libdd-shared-runtime",
  "libdd-telemetry",
+ "libdd-trace-model",
  "libdd-trace-obfuscation",
  "libdd-trace-protobuf",
  "libdd-trace-utils",
