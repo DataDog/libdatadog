@@ -1,6 +1,8 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+#![cfg(feature = "external-observations")]
+
 use httpmock::MockServer;
 use libdd_capabilities_impl::NativeCapabilities;
 use libdd_data_pipeline::trace_exporter::{TraceExporter, TraceExporterOutputFormat};
@@ -44,9 +46,9 @@ fn reports_terminal_results_without_native_delivery() {
                 ];
                 let (result, report) =
                     exporter.send_trace_chunks_observed(PooledChunks::unpooled(chunks), None);
-                let payload = report.payload.unwrap();
+                let payload = &report;
                 assert_eq!(result.is_ok(), status == 200);
-                assert_eq!(payload.responses_count_per_code, [(status, 1)].into());
+                assert_eq!((payload.status_code, payload.responses_count), (status, 1));
                 assert_eq!(payload.spans_enqueued_for_serialization, 3);
                 assert_eq!(payload.errors_status_code, u64::from(status == 503));
                 assert_eq!(payload.chunks_sent, if status == 200 { 2 } else { 0 });
@@ -89,7 +91,9 @@ fn cancellation_has_no_invented_terminal_result() {
         Some(&token),
     );
     assert!(result.is_err());
-    assert!(report.payload.is_none());
+    assert_eq!(report.requests_count, 0);
+    assert_eq!(report.bytes_sent, 0);
+    assert_eq!(report.spans_enqueued_for_serialization, 0);
     exporter.shutdown(None).unwrap();
 }
 
@@ -118,9 +122,8 @@ fn failed_build_and_timeout_reports_do_not_depend_on_response_bodies() {
             None,
         );
         assert!(result.is_err());
-        let report = report.payload.unwrap();
         assert_eq!(report.spans_enqueued_for_serialization, 1);
-        assert!(report.responses_count_per_code.is_empty());
+        assert_eq!((report.status_code, report.responses_count), (0, 0));
         assert_eq!(report.bytes_sent, 0);
         assert_eq!(report.errors_network, 0);
         if build_error {
@@ -189,12 +192,12 @@ fn retry_success_counts_attempts_but_only_the_final_response() {
     let mut builder = TraceExporter::<NativeCapabilities, ForkSafeRuntime>::builder();
     builder.set_url(&url).enable_observations();
     let exporter = builder.build::<NativeCapabilities>().unwrap();
-    let (result, report) = exporter.send_observed(&[0x90]);
+    let (result, report) = exporter
+        .send_trace_chunks_observed(PooledChunks::unpooled(Vec::<Vec<SpanBytes>>::new()), None);
     result.unwrap();
-    let report = report.payload.unwrap();
     assert_eq!(report.requests_count, 2);
     assert_eq!(report.errors_status_code, 0);
-    assert_eq!(report.responses_count_per_code, [(200, 1)].into());
+    assert_eq!((report.status_code, report.responses_count), (200, 1));
     assert_eq!(report.bytes_sent, 1);
     exporter.shutdown(None).unwrap();
     assert_eq!(server.join().unwrap(), 2);
@@ -215,19 +218,18 @@ fn unavailable_socket_produces_a_network_report() {
         None,
     );
     assert!(result.is_err());
-    let report = report.payload.unwrap();
     assert!(report.requests_count > 1);
     assert_eq!(report.errors_network, 1);
     assert_eq!(report.errors_timeout, 0);
     assert_eq!(report.chunks_dropped_send_failure, 1);
     assert_eq!(report.spans_dropped_api_error, 1);
-    assert!(report.responses_count_per_code.is_empty());
+    assert_eq!((report.status_code, report.responses_count), (0, 0));
     exporter.shutdown(None).unwrap();
 }
 
 #[cfg_attr(miri, ignore = "httpmock retains detached server threads")]
 #[test]
-fn decoding_failure_and_empty_input_have_distinct_reports() {
+fn empty_input_reports_an_empty_payload() {
     let server = MockServer::start();
     let request = server.mock(|when, then| {
         when.path("/v0.4/traces");
@@ -236,13 +238,9 @@ fn decoding_failure_and_empty_input_have_distinct_reports() {
     let mut builder = TraceExporter::<NativeCapabilities, ForkSafeRuntime>::builder();
     builder.set_url(&server.base_url()).enable_observations();
     let exporter = builder.build::<NativeCapabilities>().unwrap();
-    let (result, report) = exporter.send_observed(b"invalid");
-    assert!(result.is_err());
-    assert!(report.payload.is_none());
-    request.assert_calls(0);
-    let (result, report) = exporter.send_observed(&[0x90]);
+    let (result, report) = exporter
+        .send_trace_chunks_observed(PooledChunks::unpooled(Vec::<Vec<SpanBytes>>::new()), None);
     result.unwrap();
-    let report = report.payload.unwrap();
     assert_eq!(report.requests_count, 1);
     assert_eq!(report.bytes_sent, 1);
     assert_eq!(report.chunks_sent, 0);
@@ -287,18 +285,26 @@ async fn css_filtering_reports_counts_before_the_empty_payload_send() {
     rejected.meta.insert("drop".into(), "true".into());
     let mut p0 = SpanBytes::default();
     p0.metrics.insert("_sampling_priority_v1".into(), 0.0);
-    let (result, report) = exporter
-        .send_trace_chunks_observed_async(PooledChunks::unpooled(vec![vec![rejected], vec![p0]]))
-        .await;
+    let exporter = std::sync::Arc::new(exporter);
+    let sender = exporter.clone();
+    let (result, report) = tokio::task::spawn_blocking(move || {
+        sender.send_trace_chunks_observed(
+            PooledChunks::unpooled(vec![vec![rejected], vec![p0]]),
+            None,
+        )
+    })
+    .await
+    .unwrap();
     result.unwrap();
     assert_eq!(report.chunks_dropped_by_trace_filter, 1);
     assert_eq!(report.chunks_dropped_p0, 1);
-    let payload = report.payload.unwrap();
+    let payload = &report;
     assert_eq!(payload.chunks_sent, 0);
     assert_eq!(payload.spans_enqueued_for_serialization, 0);
     assert_eq!(payload.bytes_sent, 1);
     assert!(exporter.flush_client_side_stats_async().await);
     assert_eq!(exporter.take_stats_observations(), [0; 16]);
+    let exporter = std::sync::Arc::into_inner(exporter).unwrap();
     tokio::task::spawn_blocking(move || exporter.shutdown(None))
         .await
         .unwrap()
@@ -356,12 +362,11 @@ fn native_delivery_and_external_reports_describe_the_same_send() {
         external.send_trace_chunks_observed(PooledChunks::unpooled(chunks), None);
     result.unwrap();
     external.shutdown(None).unwrap();
-    let report = report.payload.unwrap();
     let bodies = bodies.lock().unwrap();
     let text = serde_json::to_string(&*bodies).unwrap();
     for (name, value) in [
         ("trace_api.requests", report.requests_count),
-        ("trace_api.responses", report.responses_count_per_code[&200]),
+        ("trace_api.responses", report.responses_count),
         ("trace_chunks_sent", report.chunks_sent),
         (
             "spans_enqueued_for_serialization",

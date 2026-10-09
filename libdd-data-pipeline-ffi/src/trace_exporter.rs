@@ -77,7 +77,8 @@ pub struct TraceExporterConfig {
     client_computed_stats: bool,
     client_computed_top_level: bool,
     telemetry_cfg: Option<TelemetryConfig>,
-    observations: bool,
+    #[cfg(feature = "external-observations")]
+    pub(crate) observations: bool,
     telemetry_instrumentation_sessions: TelemetryInstrumentationSessions,
     health_metrics_enabled: bool,
     process_tags: Option<String>,
@@ -313,25 +314,6 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_enable_health_metrics(
     catch_panic!(
         if let Option::Some(config) = config {
             config.health_metrics_enabled = is_enabled;
-            None
-        } else {
-            gen_error!(ErrorCode::InvalidArgument)
-        },
-        gen_error!(ErrorCode::Panic)
-    )
-}
-
-/// Select external observation delivery and disable native telemetry delivery.
-///
-/// # Safety
-/// `config`, when non-null, must be a live, exclusively borrowed configuration.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_trace_exporter_config_enable_observations(
-    config: Option<&mut TraceExporterConfig>,
-) -> Option<Box<ExporterError>> {
-    catch_panic!(
-        if let Some(config) = config {
-            config.observations = true;
             None
         } else {
             gen_error!(ErrorCode::InvalidArgument)
@@ -898,6 +880,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
                 if let Some(cfg) = &config.telemetry_cfg {
                     builder.enable_telemetry(cfg.clone());
                 }
+                #[cfg(feature = "external-observations")]
                 if config.observations {
                     builder.enable_observations();
                 }

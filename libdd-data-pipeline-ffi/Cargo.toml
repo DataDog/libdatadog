@@ -22,6 +22,8 @@ cbindgen = ["build_common/cbindgen", "libdd-common-ffi/cbindgen"]
 regex-lite = ["libdd-data-pipeline/regex-lite"]
 # Enable zstd compression for the agentless trace intake sender.
 compression = ["libdd-data-pipeline/compression"]
+# Expose exporter observations to hosts that run their own telemetry client.
+external-observations = ["libdd-data-pipeline/external-observations"]
 # Forward `stats-obfuscation` to the underlying crate. This has no FFI surface of
 # its own yet (client-side stats obfuscation is not configurable over the C API);
 # it only compiles the capability into the linked data-pipeline crate.

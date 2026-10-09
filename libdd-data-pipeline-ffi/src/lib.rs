@@ -7,6 +7,8 @@
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
 mod error;
+#[cfg(feature = "external-observations")]
+mod observations;
 mod response;
 mod structured_value;
 mod trace_exporter;
