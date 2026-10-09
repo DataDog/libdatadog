@@ -1,0 +1,14 @@
+{
+  "$schema": "../../../../schema/provider-attempt-metric-fixture.schema.json",
+  "profile": "gen_ai.client.provider_attempt@0.1.0",
+  "case": "observation-point-missing",
+  "description": "An observation that does not say where it was made is rejected: every point carries trajectory.observation.point.",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "exampleai",
+    "duration_seconds": 1,
+    "streaming": false
+  },
+  "expected_error_code": "required_field_missing",
+  "expected_error": "observation_point is required"
+}

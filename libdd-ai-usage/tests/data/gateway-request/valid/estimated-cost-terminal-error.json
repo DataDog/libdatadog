@@ -1,0 +1,38 @@
+{
+  "$schema": "../../../../schema/gateway-request-metric-fixture.schema.json",
+  "profile": "trajectory.gen_ai.gateway.request@0.1.0",
+  "case": "estimated-cost-terminal-error",
+  "description": "A request whose stream broke partway. The gateway charged 0.0003 USD for what was produced. The duration sample carries error.type; the estimated cost point does not, and adds 300000 nano-USD to the same series as any other request.",
+  "observation": {
+    "operation_name": "chat",
+    "request_model": "support-model",
+    "duration_seconds": 3.2,
+    "error_type": "stream_interrupted",
+    "estimated_cost_usd": 0.0003
+  },
+  "expected_metrics": [
+    {
+      "name": "trajectory.gen_ai.gateway.request.duration",
+      "instrument": "histogram",
+      "unit": "s",
+      "value": 3.2,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.request.model": "support-model",
+        "trajectory.observation.point": "gateway",
+        "error.type": "stream_interrupted"
+      }
+    },
+    {
+      "name": "trajectory.gen_ai.gateway.request.estimated_cost",
+      "instrument": "counter",
+      "unit": "{nanoUSD}",
+      "value": 300000,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.request.model": "support-model",
+        "trajectory.observation.point": "gateway"
+      }
+    }
+  ]
+}

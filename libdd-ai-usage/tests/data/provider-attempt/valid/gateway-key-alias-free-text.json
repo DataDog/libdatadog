@@ -1,0 +1,34 @@
+{
+  "$schema": "../../../../schema/provider-attempt-metric-fixture.schema.json",
+  "profile": "gen_ai.client.provider_attempt@0.1.0",
+  "case": "gateway-key-alias-free-text",
+  "description": "A key alias with a space is free text, not an identifier. The alias is dropped with the issue; the points and the route are kept.",
+  "deployment_attributes": {
+    "trajectory.gateway.route": "chat-default",
+    "trajectory.gateway.key.alias": "Search team (prod)"
+  },
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "exampleai",
+    "duration_seconds": 0.5,
+    "streaming": false,
+    "observation_point": "gateway"
+  },
+  "expected_metrics": [
+    {
+      "name": "gen_ai.client.inference.duration",
+      "instrument": "histogram",
+      "unit": "s",
+      "value": 0.5,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "trajectory.observation.point": "gateway",
+        "trajectory.gateway.route": "chat-default"
+      }
+    }
+  ],
+  "expected_issues": [
+    "deployment_attribute_dropped"
+  ]
+}

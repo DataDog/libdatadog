@@ -1,0 +1,79 @@
+{
+  "$schema": "../../../../schema/provider-token-breakdown-metric-fixture.schema.json",
+  "profile": "trajectory.gen_ai.client.token_breakdown@0.1.0",
+  "case": "batch",
+  "description": "A batch request with cached input and reasoning output. Every breakdown Counter carries trajectory.request.batch: the input-side Counters and the reasoning Counter alike. Uncached input is 2,000 less 1,024 read and 0 written: 976.",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "exampleai",
+    "request_model": "ex-fast-1",
+    "input_tokens": 2000,
+    "input_basis": "includes_cache",
+    "output_tokens": 800,
+    "output_basis": "includes_reasoning",
+    "cache_read_input_tokens": 1024,
+    "cache_write_input_tokens": 0,
+    "reasoning_output_tokens": 300,
+    "batch": true,
+    "observation_point": "gateway"
+  },
+  "expected_metrics": [
+    {
+      "name": "gen_ai.client.inference.usage.cache_read.input_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 1024,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.request.model": "ex-fast-1",
+        "gen_ai.token.modality": "unknown",
+        "trajectory.request.batch": "true",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.usage.cache_write.input_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 0,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.request.model": "ex-fast-1",
+        "gen_ai.token.modality": "unknown",
+        "trajectory.request.batch": "true",
+        "trajectory.cache.lifetime": "unspecified",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.usage.reasoning.output_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 300,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.request.model": "ex-fast-1",
+        "gen_ai.token.modality": "unknown",
+        "trajectory.request.batch": "true",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "trajectory.gen_ai.client.inference.usage.uncached.input_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 976,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.request.model": "ex-fast-1",
+        "gen_ai.token.modality": "unknown",
+        "trajectory.request.batch": "true",
+        "trajectory.observation.point": "gateway"
+      }
+    }
+  ]
+}

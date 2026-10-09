@@ -1,0 +1,115 @@
+{
+  "$schema": "../../../../schema/provider-attempt-metric-fixture.schema.json",
+  "profile": "gen_ai.client.provider_attempt@0.1.0",
+  "case": "success-openai",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "openai",
+    "request_model": "gpt-4o-mini",
+    "response_model": "gpt-4o-mini-2024-07-18",
+    "duration_seconds": 0.42,
+    "streaming": false,
+    "input_tokens": 12,
+    "output_tokens": 2,
+    "cost_usd": 2.1e-06,
+    "cost_source": "calculated",
+    "observation_point": "gateway"
+  },
+  "expected_metrics": [
+    {
+      "name": "gen_ai.client.inference.duration",
+      "instrument": "histogram",
+      "unit": "s",
+      "value": 0.42,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "openai",
+        "gen_ai.request.model": "gpt-4o-mini",
+        "gen_ai.response.model": "gpt-4o-mini-2024-07-18",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.operation.input_tokens",
+      "instrument": "histogram",
+      "unit": "{token}",
+      "value": 12,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "openai",
+        "gen_ai.request.model": "gpt-4o-mini",
+        "gen_ai.response.model": "gpt-4o-mini-2024-07-18",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.operation.output_tokens",
+      "instrument": "histogram",
+      "unit": "{token}",
+      "value": 2,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "openai",
+        "gen_ai.request.model": "gpt-4o-mini",
+        "gen_ai.response.model": "gpt-4o-mini-2024-07-18",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.usage.input_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 12,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "openai",
+        "gen_ai.request.model": "gpt-4o-mini",
+        "gen_ai.response.model": "gpt-4o-mini-2024-07-18",
+        "gen_ai.token.modality": "unknown",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.usage.output_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 2,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "openai",
+        "gen_ai.request.model": "gpt-4o-mini",
+        "gen_ai.response.model": "gpt-4o-mini-2024-07-18",
+        "gen_ai.token.modality": "unknown",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "trajectory.gen_ai.client.inference.usage.cost",
+      "instrument": "counter",
+      "unit": "{nanoUSD}",
+      "value": 2100,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "openai",
+        "gen_ai.request.model": "gpt-4o-mini",
+        "gen_ai.response.model": "gpt-4o-mini-2024-07-18",
+        "trajectory.cost.source": "calculated",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "trajectory.gen_ai.client.operation.cost",
+      "instrument": "histogram",
+      "unit": "{USD}",
+      "value": 2.1e-06,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "openai",
+        "gen_ai.request.model": "gpt-4o-mini",
+        "gen_ai.response.model": "gpt-4o-mini-2024-07-18",
+        "trajectory.cost.source": "calculated",
+        "trajectory.observation.point": "gateway"
+      }
+    }
+  ]
+}

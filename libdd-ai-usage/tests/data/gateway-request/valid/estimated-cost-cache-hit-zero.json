@@ -1,0 +1,51 @@
+{
+  "$schema": "../../../../schema/gateway-request-metric-fixture.schema.json",
+  "profile": "trajectory.gen_ai.gateway.request@0.1.0",
+  "case": "estimated-cost-cache-hit-zero",
+  "description": "A request the gateway answered from its cache and charged nothing. The gateway's figure of 0 is recorded: that is what its budgets saw. No provider operation happened, so no provider cost exists for it.",
+  "observation": {
+    "operation_name": "chat",
+    "request_model": "support-model",
+    "duration_seconds": 0.05,
+    "cache_outcomes": [
+      "hit"
+    ],
+    "estimated_cost_usd": 0
+  },
+  "expected_metrics": [
+    {
+      "name": "trajectory.gen_ai.gateway.cache.operations",
+      "instrument": "counter",
+      "unit": "{operation}",
+      "value": 1,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.request.model": "support-model",
+        "trajectory.observation.point": "gateway",
+        "trajectory.cache.outcome": "hit"
+      }
+    },
+    {
+      "name": "trajectory.gen_ai.gateway.request.duration",
+      "instrument": "histogram",
+      "unit": "s",
+      "value": 0.05,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.request.model": "support-model",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "trajectory.gen_ai.gateway.request.estimated_cost",
+      "instrument": "counter",
+      "unit": "{nanoUSD}",
+      "value": 0,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.request.model": "support-model",
+        "trajectory.observation.point": "gateway"
+      }
+    }
+  ]
+}

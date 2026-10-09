@@ -1,0 +1,22 @@
+{
+  "$schema": "../../../../schema/provider-token-breakdown-metric-fixture.schema.json",
+  "profile": "trajectory.gen_ai.client.token_breakdown@0.1.0",
+  "case": "input-basis-missing-lifetimes-exceed",
+  "description": "No input basis, and lifetime parts (15 and 10) above cache writes (20). The lifetime check does not depend on the basis and still runs: the input group is inconsistent and records nothing.",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "exampleai",
+    "input_tokens": 100,
+    "output_tokens": 1,
+    "cache_write_input_tokens": 20,
+    "cache_write_5m_input_tokens": 15,
+    "cache_write_1h_input_tokens": 10,
+    "observation_point": "gateway"
+  },
+  "expected_metrics": [],
+  "expected_issues": [
+    "cache_read_missing",
+    "input_basis_missing",
+    "usage_inconsistent"
+  ]
+}

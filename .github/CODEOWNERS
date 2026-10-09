@@ -43,6 +43,7 @@ deny.toml                            @DataDog/libdatadog
 docs                                 @DataDog/libdatadog
 examples                             @DataDog/libdatadog
 libdd-agent-client                   @DataDog/apm-common-components-core
+libdd-ai-usage                       @DataDog/ccm @DataDog/apm-python-guild @DataDog/agent-console
 libdd-alloc/                         @DataDog/libdatadog-profiling
 libdd-capabilities*/                 @DataDog/apm-common-components-core
 libdd-common*/                       @DataDog/libdatadog

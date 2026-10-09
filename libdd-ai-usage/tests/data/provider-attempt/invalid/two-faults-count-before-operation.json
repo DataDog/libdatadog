@@ -1,0 +1,15 @@
+{
+  "$schema": "../../../../schema/provider-attempt-metric-fixture.schema.json",
+  "profile": "gen_ai.client.provider_attempt@0.1.0",
+  "case": "two-faults-count-before-operation",
+  "description": "Two faults: a fractional count and an operation outside the profile. Counts are checked before the operation.",
+  "observation": {
+    "operation_name": "summarize",
+    "provider_name": "exampleai",
+    "duration_seconds": 1,
+    "streaming": false,
+    "output_tokens": 1.5,
+    "observation_point": "gateway"
+  },
+  "expected_error_code": "count_invalid"
+}

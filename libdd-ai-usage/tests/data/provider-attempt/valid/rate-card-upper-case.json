@@ -1,0 +1,56 @@
+{
+  "$schema": "../../../../schema/provider-attempt-metric-fixture.schema.json",
+  "profile": "gen_ai.client.provider_attempt@0.1.0",
+  "case": "rate-card-upper-case",
+  "description": "A rate card with an upper-case letter is outside the identifier grammar of the pricing contract, which allows lower-case ASCII letters, digits, '.', '_' and '-'. No valid card has that name, and a binding that lower-cases tag values would merge it with another card. The cost is recorded in both instruments, the rate card attribute is left off, and the issue is raised.",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "exampleai",
+    "duration_seconds": 0.5,
+    "streaming": false,
+    "cost_nano_usd": 250000000,
+    "cost_source": "calculated",
+    "cost_rate_card": "Synthetic-Basic@1",
+    "observation_point": "gateway"
+  },
+  "expected_metrics": [
+    {
+      "name": "gen_ai.client.inference.duration",
+      "instrument": "histogram",
+      "unit": "s",
+      "value": 0.5,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "trajectory.gen_ai.client.inference.usage.cost",
+      "instrument": "counter",
+      "unit": "{nanoUSD}",
+      "value": 250000000,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "trajectory.cost.source": "calculated",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "trajectory.gen_ai.client.operation.cost",
+      "instrument": "histogram",
+      "unit": "{USD}",
+      "value": 0.25,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "trajectory.cost.source": "calculated",
+        "trajectory.observation.point": "gateway"
+      }
+    }
+  ],
+  "expected_issues": [
+    "cost_rate_card_dropped"
+  ]
+}

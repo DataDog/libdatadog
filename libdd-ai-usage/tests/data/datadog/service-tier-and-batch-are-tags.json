@@ -1,0 +1,140 @@
+{
+  "binding": "0.1.0",
+  "case": "service-tier-and-batch-are-tags",
+  "description": "The service tier and the batch flag are tags like any other attribute, under the attribute's name. Increments with the same tier and batch state are one Count of their sum; increments that differ in either are separate series, and a point that states neither has neither tag. Nothing is merged across them, so each series can be priced at its own price.",
+  "profile": "gen_ai.client.provider_attempt@0.1.0",
+  "historical": false,
+  "points": [
+    {
+      "name": "gen_ai.client.inference.usage.input_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 500,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.request.model": "ex-fast-1",
+        "trajectory.observation.point": "gateway",
+        "gen_ai.token.modality": "unknown"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.usage.input_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 1000,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.request.model": "ex-fast-1",
+        "trajectory.observation.point": "gateway",
+        "gen_ai.token.modality": "unknown",
+        "trajectory.request.service_tier": "priority",
+        "trajectory.request.batch": "true"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.usage.input_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 250,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.request.model": "ex-fast-1",
+        "trajectory.observation.point": "gateway",
+        "gen_ai.token.modality": "unknown",
+        "trajectory.request.service_tier": "priority",
+        "trajectory.request.batch": "true"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.usage.input_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 300,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.request.model": "ex-fast-1",
+        "trajectory.observation.point": "gateway",
+        "gen_ai.token.modality": "unknown",
+        "trajectory.request.service_tier": "flex"
+      }
+    },
+    {
+      "name": "trajectory.gen_ai.client.inference.usage.cost",
+      "instrument": "counter",
+      "unit": "{nanoUSD}",
+      "value": 11500000,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.request.model": "ex-fast-1",
+        "trajectory.observation.point": "gateway",
+        "trajectory.cost.source": "calculated",
+        "trajectory.cost.rate_card": "synthetic-multipliers@1",
+        "trajectory.request.service_tier": "priority"
+      }
+    }
+  ],
+  "expected_series": [
+    {
+      "name": "gen_ai.client.inference.usage.input_tokens",
+      "type": "count",
+      "value": 500,
+      "tags": [
+        "gen_ai.operation.name:chat",
+        "gen_ai.provider.name:exampleai",
+        "gen_ai.request.model:ex-fast-1",
+        "gen_ai.token.modality:unknown",
+        "trajectory.observation.point:gateway",
+        "trajectory.profile:gen_ai.client.provider_attempt/0.1.0"
+      ]
+    },
+    {
+      "name": "gen_ai.client.inference.usage.input_tokens",
+      "type": "count",
+      "value": 1250,
+      "tags": [
+        "gen_ai.operation.name:chat",
+        "gen_ai.provider.name:exampleai",
+        "gen_ai.request.model:ex-fast-1",
+        "gen_ai.token.modality:unknown",
+        "trajectory.observation.point:gateway",
+        "trajectory.profile:gen_ai.client.provider_attempt/0.1.0",
+        "trajectory.request.batch:true",
+        "trajectory.request.service_tier:priority"
+      ]
+    },
+    {
+      "name": "gen_ai.client.inference.usage.input_tokens",
+      "type": "count",
+      "value": 300,
+      "tags": [
+        "gen_ai.operation.name:chat",
+        "gen_ai.provider.name:exampleai",
+        "gen_ai.request.model:ex-fast-1",
+        "gen_ai.token.modality:unknown",
+        "trajectory.observation.point:gateway",
+        "trajectory.profile:gen_ai.client.provider_attempt/0.1.0",
+        "trajectory.request.service_tier:flex"
+      ]
+    },
+    {
+      "name": "trajectory.gen_ai.client.inference.usage.cost",
+      "type": "count",
+      "value": 0.0115,
+      "tags": [
+        "gen_ai.operation.name:chat",
+        "gen_ai.provider.name:exampleai",
+        "gen_ai.request.model:ex-fast-1",
+        "trajectory.cost.rate_card:synthetic-multipliers/1",
+        "trajectory.cost.source:calculated",
+        "trajectory.observation.point:gateway",
+        "trajectory.profile:gen_ai.client.provider_attempt/0.1.0",
+        "trajectory.request.service_tier:priority"
+      ]
+    }
+  ]
+}

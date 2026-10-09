@@ -1,0 +1,17 @@
+{
+  "$schema": "../../../../schema/provider-attempt-metric-fixture.schema.json",
+  "profile": "gen_ai.client.provider_attempt@0.1.0",
+  "case": "token-source-outside-values",
+  "description": "input_token_source is reported or estimated.",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "exampleai",
+    "duration_seconds": 1,
+    "streaming": false,
+    "input_tokens": 10,
+    "input_token_source": "guessed",
+    "observation_point": "gateway"
+  },
+  "expected_error_code": "value_not_allowed",
+  "expected_error": "input_token_source must be"
+}
