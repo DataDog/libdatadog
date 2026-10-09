@@ -5,9 +5,9 @@
 //! delivered by the native telemetry client.
 //!
 //! This whole module is the `external-observations` feature, for hosts that run their own
-//! telemetry client. The only other places that know about it are the hook calls in
-//! [`super::observation_hooks`], the builder switch, and the FFI crate's `observations`
-//! module.
+//! telemetry client. The only other places that know about it are the gated calls in
+//! `emit_retry_result` and `process_traces_for_stats`, the builder switch, and the FFI
+//! crate's `observations` module.
 //!
 //! A report is scoped to one observed call through a task-local, so the send path needs no
 //! extra parameters and concurrent callers cannot consume each other's observations.
@@ -161,5 +161,61 @@ impl<
                 self.send_trace_chunks_cancellable(trace_chunks, cancellation_token),
             ))
             .unwrap_or_else(|e| (Err(e.into()), TraceExporterObservations::default()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use libdd_trace_utils::send_with_retry::SendWithRetryError;
+
+    fn timeout_payload() -> SendPayloadTelemetry {
+        SendPayloadTelemetry::from_retry_result_with_spans(
+            &Err(SendWithRetryError::Timeout(3)),
+            10,
+            1,
+            1,
+        )
+    }
+
+    #[test]
+    fn hooks_report_no_scope_outside_observe() {
+        assert!(!record_payload(timeout_payload));
+        assert!(!record_dropped(1, 1));
+    }
+
+    #[tokio::test]
+    async fn observe_collects_hooks_and_starts_clean_each_time() {
+        let (recorded, first) = observe(async { record_dropped(2, 3) }).await;
+        assert!(recorded);
+        assert_eq!(first.chunks_dropped_p0, 2);
+        assert_eq!(first.chunks_dropped_by_trace_filter, 3);
+
+        let (_, second) = observe(async {}).await;
+        assert_eq!(second.chunks_dropped_p0, 0);
+        assert_eq!(second.chunks_dropped_by_trace_filter, 0);
+        // The scope ends with the call: nothing records afterwards.
+        assert!(!record_dropped(1, 1));
+    }
+
+    #[tokio::test]
+    async fn spawned_tasks_do_not_see_the_report() {
+        // Reports are task-local: a measurement emitted from a spawned task is not recorded.
+        let (recorded, report) =
+            observe(async { tokio::spawn(async { record_dropped(5, 5) }).await.unwrap() }).await;
+        assert!(!recorded);
+        assert_eq!(report.chunks_dropped_p0, 0);
+        assert_eq!(report.chunks_dropped_by_trace_filter, 0);
+    }
+
+    #[tokio::test]
+    async fn recording_a_payload_keeps_the_filtering_counts() {
+        let ((payload, dropped), report) =
+            observe(async { (record_payload(timeout_payload), record_dropped(2, 3)) }).await;
+        assert!(payload && dropped);
+        assert_eq!(report.requests_count, 3);
+        assert_eq!(report.errors_timeout, 1);
+        assert_eq!(report.chunks_dropped_p0, 2);
+        assert_eq!(report.chunks_dropped_by_trace_filter, 3);
     }
 }

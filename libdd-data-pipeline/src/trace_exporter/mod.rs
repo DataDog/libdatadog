@@ -5,7 +5,6 @@ pub mod builder;
 pub mod error;
 mod log_writer;
 pub mod metrics;
-mod observation_hooks;
 #[cfg(feature = "external-observations")]
 pub mod observations;
 pub mod stats;
@@ -358,7 +357,8 @@ impl<
             )
         };
         // Observations collected for the caller's own telemetry client replace native delivery.
-        if observation_hooks::record_payload(payload) {
+        #[cfg(feature = "external-observations")]
+        if observations::record_payload(payload) {
             return;
         }
         if let Some(telemetry) = self.telemetry.load_full().as_deref() {

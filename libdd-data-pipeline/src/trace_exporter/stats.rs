@@ -399,14 +399,18 @@ pub(crate) fn process_traces_for_stats<
         header_tags.generic.dropped_p0_traces = dropped_p0_stats.dropped_p0_traces;
         header_tags.generic.dropped_p0_spans = dropped_p0_stats.dropped_p0_spans;
 
-        // Send dropped P0 stats directly to telemetry if available, unless the caller is
-        // collecting observations for its own telemetry client.
-        let observed = super::observation_hooks::record_dropped(
+        // Observations collected for the caller's own telemetry client replace native delivery.
+        #[cfg(feature = "external-observations")]
+        if super::observations::record_dropped(
             dropped_p0_stats.dropped_p0_traces,
             dropped_by_trace_filter,
-        );
+        ) {
+            return true;
+        }
+
+        // Send dropped P0 stats directly to telemetry if available
         #[cfg(feature = "telemetry")]
-        if let Some(telemetry_client) = telemetry.filter(|_| !observed) {
+        if let Some(telemetry_client) = telemetry {
             if let Err(e) = telemetry_client.send_client_side_stats_drops(
                 dropped_p0_stats.dropped_p0_traces,
                 dropped_by_trace_filter,
@@ -414,8 +418,6 @@ pub(crate) fn process_traces_for_stats<
                 tracing::error!(?e, "Error sending dropped P0 stats to telemetry");
             }
         }
-        #[cfg(not(feature = "telemetry"))]
-        let _ = observed;
         true
     } else {
         false

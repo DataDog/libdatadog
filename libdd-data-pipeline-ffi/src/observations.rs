@@ -169,7 +169,168 @@ pub unsafe extern "C" fn ddog_trace_exporter_shutdown_observed(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::trace_exporter::{
+        ddog_trace_exporter_config_free, ddog_trace_exporter_config_new,
+        ddog_trace_exporter_config_set_url, ddog_trace_exporter_free, ddog_trace_exporter_new,
+    };
+    use httpmock::prelude::*;
+    use libdd_common_ffi::CharSlice;
+    use libdd_trace_utils::span::v04::SpanBytes;
     use std::mem::MaybeUninit;
+
+    /// Build an exporter with observations enabled, pointing at `url`.
+    unsafe fn observed_exporter(url: &str) -> Box<TraceExporter> {
+        unsafe {
+            let mut config: MaybeUninit<Box<TraceExporterConfig>> = MaybeUninit::uninit();
+            ddog_trace_exporter_config_new(NonNull::new_unchecked(&mut config).cast());
+            let mut config = config.assume_init();
+            assert!(
+                ddog_trace_exporter_config_set_url(Some(config.as_mut()), CharSlice::from(url))
+                    .is_none()
+            );
+            assert!(
+                ddog_trace_exporter_config_enable_observations(Some(config.as_mut())).is_none()
+            );
+            let mut exporter: MaybeUninit<Box<TraceExporter>> = MaybeUninit::uninit();
+            let error = ddog_trace_exporter_new(
+                NonNull::new_unchecked(&mut exporter).cast(),
+                Some(config.as_ref()),
+            );
+            assert!(error.is_none());
+            ddog_trace_exporter_config_free(config);
+            exporter.assume_init()
+        }
+    }
+
+    fn one_span_chunks() -> Option<Box<TracerTraceChunks>> {
+        Some(Box::new(TracerTraceChunks(vec![
+            vec![SpanBytes::default()],
+        ])))
+    }
+
+    #[test]
+    fn enable_observations_requires_a_config_and_sets_the_flag() {
+        unsafe {
+            let error = ddog_trace_exporter_config_enable_observations(None);
+            assert_eq!(error.unwrap().code, ErrorCode::InvalidArgument);
+
+            let mut config = TraceExporterConfig::default();
+            assert!(!config.observations);
+            assert!(ddog_trace_exporter_config_enable_observations(Some(&mut config)).is_none());
+            assert!(config.observations);
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn observed_send_fills_the_report_and_response_on_success() {
+        unsafe {
+            let server = MockServer::start();
+            let traces = server.mock(|when, then| {
+                when.method(POST).path("/v0.4/traces");
+                then.status(200).body("{}");
+            });
+            let exporter = observed_exporter(&server.base_url());
+
+            let mut response = MaybeUninit::<Option<Box<ExporterResponse>>>::uninit();
+            let mut report = MaybeUninit::<TraceExporterObservations>::uninit();
+            let error = ddog_trace_exporter_send_trace_chunks_observed(
+                Some(exporter.as_ref()),
+                one_span_chunks(),
+                NonNull::new(response.as_mut_ptr()),
+                NonNull::new(report.as_mut_ptr()),
+                None,
+            );
+            assert!(error.is_none());
+            assert!(response.assume_init().is_some());
+            let report = report.assume_init();
+            traces.assert_calls(1);
+            assert_eq!((report.status_code, report.responses_count), (200, 1));
+            assert_eq!(report.requests_count, 1);
+            assert_eq!(report.chunks_sent, 1);
+            assert_eq!(report.spans_enqueued_for_serialization, 1);
+            assert!(report.bytes_sent > 0);
+            assert_eq!(report.errors_status_code, 0);
+            assert_eq!(report.chunks_dropped_send_failure, 0);
+
+            ddog_trace_exporter_free(exporter);
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn observed_send_fills_the_report_when_the_send_fails() {
+        unsafe {
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(POST).path("/v0.4/traces");
+                then.status(503).body("{}");
+            });
+            let exporter = observed_exporter(&server.base_url());
+
+            let mut response = MaybeUninit::<Option<Box<ExporterResponse>>>::uninit();
+            let mut report = MaybeUninit::<TraceExporterObservations>::uninit();
+            let error = ddog_trace_exporter_send_trace_chunks_observed(
+                Some(exporter.as_ref()),
+                one_span_chunks(),
+                NonNull::new(response.as_mut_ptr()),
+                NonNull::new(report.as_mut_ptr()),
+                None,
+            );
+            assert!(error.is_some());
+            assert!(response.assume_init().is_none());
+            let report = report.assume_init();
+            assert_eq!((report.status_code, report.responses_count), (503, 1));
+            assert!(report.requests_count > 1);
+            assert_eq!(report.errors_status_code, 1);
+            assert_eq!(report.chunks_sent, 0);
+            assert_eq!(report.chunks_dropped_send_failure, 1);
+            assert_eq!(report.spans_dropped_api_error, 1);
+            assert_eq!(report.bytes_sent, 0);
+
+            ddog_trace_exporter_free(exporter);
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn stats_drain_and_shutdown_write_their_outputs_for_a_live_exporter() {
+        unsafe {
+            let server = MockServer::start();
+            let exporter = observed_exporter(&server.base_url());
+
+            let mut stats = MaybeUninit::<TraceExporterStatsObservations>::uninit();
+            let error = ddog_trace_exporter_take_stats_observations(
+                Some(exporter.as_ref()),
+                NonNull::new(stats.as_mut_ptr()),
+            );
+            assert!(error.is_none());
+            assert_eq!(stats.assume_init().collapsed_spans, [0; 16]);
+
+            let mut final_stats = MaybeUninit::<TraceExporterStatsObservations>::uninit();
+            let error = ddog_trace_exporter_shutdown_observed(
+                Some(exporter),
+                NonNull::new(final_stats.as_mut_ptr()),
+            );
+            assert!(error.is_none());
+            assert_eq!(final_stats.assume_init().collapsed_spans, [0; 16]);
+
+            // A null output discards the final drain but still shuts the exporter down.
+            let exporter = observed_exporter(&server.base_url());
+            assert!(ddog_trace_exporter_shutdown_observed(Some(exporter), None).is_none());
+        }
+    }
+
+    #[test]
+    fn shutdown_observed_rejects_a_missing_exporter_and_initialises_its_output() {
+        unsafe {
+            let mut stats = MaybeUninit::<TraceExporterStatsObservations>::uninit();
+            let error =
+                ddog_trace_exporter_shutdown_observed(None, NonNull::new(stats.as_mut_ptr()));
+            assert_eq!(error.unwrap().code, ErrorCode::InvalidArgument);
+            assert_eq!(stats.assume_init().collapsed_spans, [0; 16]);
+        }
+    }
 
     #[test]
     fn observation_outputs_are_initialised_on_invalid_arguments() {
