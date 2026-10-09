@@ -23,10 +23,7 @@ impl SignalFlush {
         template: &mut SidecarTransport,
         options: SidecarFlushOptions,
     ) -> io::Result<Self> {
-        let sender = template
-            .inner
-            .get_mut()
-            .map_err(|_| io::Error::other("poisoned sidecar transport"))?;
+        let sender = &template.inner;
         let (receiver, completion) = io::pipe()?;
         let completion = PlatformHandle::from(completion);
         let message = SidecarInterfaceRequest::FlushSignal {

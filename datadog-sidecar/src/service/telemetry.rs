@@ -1,9 +1,10 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::service::{InstanceId, RuntimeMetadata, SidecarAction, SidecarServer};
-use anyhow::{Result, anyhow};
-use arc_swap::ArcSwapOption;
+use crate::service::{
+    ConnectionSessionHandle, InstanceId, RuntimeMetadata, SidecarAction, SidecarServer,
+};
+use anyhow::Result;
 use libdd_common::MutexExt;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
@@ -43,7 +44,8 @@ use tokio::time::{Instant as TokioInstant, sleep, sleep_until};
 
 #[derive(Debug)]
 pub struct InternalTelemetryActions {
-    pub instance_id: InstanceId,
+    /// The connection whose session configuration the actions are submitted with.
+    pub session: ConnectionSessionHandle,
     pub service_name: String,
     pub env_name: String,
     pub actions: Vec<InternalTelemetryAction>,
@@ -69,13 +71,13 @@ impl InProcessTelemetryClientFactory {
 
     pub fn create_client(
         &self,
-        instance_id: InstanceId,
+        session: ConnectionSessionHandle,
         service_name: String,
         env_name: String,
     ) -> InProcessTelemetryClient {
         InProcessTelemetryClient {
             sender: self.sender.clone(),
-            instance_id,
+            session,
             service_name,
             env_name,
         }
@@ -85,11 +87,11 @@ impl InProcessTelemetryClientFactory {
 /// A telemetry submission route bound to one logical client and application.
 ///
 /// The cached telemetry worker is deliberately resolved by the receiver for every batch so this
-/// handle remains valid across cache eviction, worker replacement, and delayed session setup.
+/// handle remains valid across cache eviction, worker replacement, and delayed connection setup.
 #[derive(Clone)]
 pub struct InProcessTelemetryClient {
     sender: mpsc::Sender<InternalTelemetryActions>,
-    instance_id: InstanceId,
+    session: ConnectionSessionHandle,
     service_name: String,
     env_name: String,
 }
@@ -98,7 +100,7 @@ impl InProcessTelemetryClient {
     pub fn with_new_service_env(&self, service_name: String, env_name: String) -> Self {
         Self {
             sender: self.sender.clone(),
-            instance_id: self.instance_id.clone(),
+            session: self.session.clone(),
             service_name,
             env_name,
         }
@@ -107,7 +109,7 @@ impl InProcessTelemetryClient {
     pub fn submit(&self, action: InternalTelemetryAction) -> Result<(), String> {
         self.sender
             .try_send(InternalTelemetryActions {
-                instance_id: self.instance_id.clone(),
+                session: self.session.clone(),
                 service_name: self.service_name.clone(),
                 env_name: self.env_name.clone(),
                 actions: vec![action],
@@ -272,16 +274,17 @@ impl TelemetryBatch {
     ) -> Option<Arc<Mutex<Option<TelemetryCachedClient>>>> {
         match self {
             TelemetryBatch::Fresh(a) => {
-                get_telemetry_client(sidecar, &a.instance_id, &a.service_name, &a.env_name)
+                get_telemetry_client(sidecar, &a.session, &a.service_name, &a.env_name)
             }
             TelemetryBatch::Deferred(d) => {
                 let (service_name, env_name) = &d.key;
-                let mut tried_sessions = HashSet::new();
+                let mut tried_sessions: Vec<&ConnectionSessionHandle> = vec![];
                 for b in &d.actions {
-                    if tried_sessions.insert(b.instance_id.session_id.as_str()) {
+                    if !tried_sessions.iter().any(|s| s.ptr_eq(&b.session)) {
+                        tried_sessions.push(&b.session);
                         // repeated calls to get_existing_client could be avoided
                         if let Some(client) =
-                            get_telemetry_client(sidecar, &b.instance_id, service_name, env_name)
+                            get_telemetry_client(sidecar, &b.session, service_name, env_name)
                         {
                             return Some(client);
                         }
@@ -376,9 +379,6 @@ static mut COMPOSER_CACHE: LazyLock<tokio::sync::Mutex<ComposerCache>> =
 
 static LAST_CACHE_CLEAN: AtomicU64 = AtomicU64::new(0);
 
-static TELEMETRY_ACTION_SENDER: ArcSwapOption<mpsc::Sender<InternalTelemetryActions>> =
-    ArcSwapOption::const_empty();
-
 #[cfg(unix)]
 pub(crate) unsafe fn clear_inherited_state() {
     // SAFETY: Abandon the old mutex: it may be locked by a thread that did not survive fork.
@@ -388,8 +388,6 @@ pub(crate) unsafe fn clear_inherited_state() {
         }));
     }
     LAST_CACHE_CLEAN.store(0, Ordering::Relaxed);
-    // An inherited sender must not wake the parent's Tokio reactor.
-    std::mem::forget(TELEMETRY_ACTION_SENDER.swap(None));
 }
 
 #[serde_as]
@@ -794,26 +792,17 @@ pub fn path_for_telemetry(service: &str, env: &str) -> CString {
     CString::new(path).unwrap()
 }
 
-pub fn get_telemetry_action_sender() -> Result<mpsc::Sender<InternalTelemetryActions>> {
-    TELEMETRY_ACTION_SENDER
-        .load()
-        .as_ref()
-        .map(|sender| (**sender).clone())
-        .ok_or_else(|| anyhow!("Telemetry action sender not initialized"))
-}
-
 pub(crate) fn init_telemetry_sender() -> (
     InProcessTelemetryClientFactory,
     mpsc::Receiver<InternalTelemetryActions>,
 ) {
     let (tx, rx) = mpsc::channel(1000);
-    TELEMETRY_ACTION_SENDER.store(Some(Arc::new(tx.clone())));
     (InProcessTelemetryClientFactory::new(tx), rx)
 }
 
 fn get_telemetry_client(
     sidecar: &SidecarServer,
-    instance_id: &InstanceId,
+    session: &ConnectionSessionHandle,
     service_name: &str,
     env_name: &str,
 ) -> Option<Arc<Mutex<Option<TelemetryCachedClient>>>> {
@@ -824,29 +813,16 @@ fn get_telemetry_client(
         return Some(existing);
     }
 
-    let session = sidecar.get_session(&instance_id.session_id);
-    let trace_config = session.get_trace_config();
-    let runtime_meta = RuntimeMetadata::new(
-        trace_config.language.as_str(),
-        trace_config.language_version.as_str(),
-        trace_config.tracer_version.as_str(),
-    );
-
-    let session_config = session.session_config.lock_or_panic().as_ref().cloned();
-    let Some(session_config) = session_config else {
-        // Session config not yet available (need to wait for set_session_config IPC)
-        return None;
-    };
-
-    let process_tags = session.process_tags_with_svc_source();
-
+    // Not yet available if the connection has not been configured yet.
+    let session = session.load()?;
+    let session_config = session.telemetry_config.clone();
     Some(sidecar.telemetry_clients.get_or_create(
         service_name,
         env_name,
-        instance_id,
-        &runtime_meta,
+        &session.instance_id,
+        &session.runtime_metadata(),
         move || session_config,
-        process_tags,
+        session.process_tags_with_svc_source(),
     ))
 }
 
@@ -1080,8 +1056,9 @@ mod tests {
     fn in_process_client_keeps_instance_and_rebinds_application() {
         let (sender, mut receiver) = mpsc::channel(2);
         let submitter = InProcessTelemetryClientFactory::new(sender);
+        let session = ConnectionSessionHandle::default();
         let client = submitter.create_client(
-            InstanceId::new("session", "runtime"),
+            session.clone(),
             "service-a".to_string(),
             "env-a".to_string(),
         );
@@ -1094,7 +1071,7 @@ mod tests {
         let first = receiver
             .try_recv()
             .expect("first action should be available");
-        assert_eq!(first.instance_id, InstanceId::new("session", "runtime"));
+        assert!(first.session.ptr_eq(&session));
         assert_eq!(first.service_name, "service-a");
         assert_eq!(first.env_name, "env-a");
 
@@ -1107,7 +1084,7 @@ mod tests {
         let second = receiver
             .try_recv()
             .expect("second action should be available");
-        assert_eq!(second.instance_id, InstanceId::new("session", "runtime"));
+        assert!(second.session.ptr_eq(&session));
         assert_eq!(second.service_name, "service-b");
         assert_eq!(second.env_name, "env-b");
     }

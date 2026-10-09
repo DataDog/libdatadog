@@ -2,12 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::{
-    DynamicInstrumentationConfigState, InstanceId, QueueId, SerializedTracerHeaderTags,
+    ApplicationConfig, DynamicInstrumentationConfigState, InstanceId, SerializedTracerHeaderTags,
     SessionConfig, SidecarAction, SidecarFlushOptions,
 };
 use crate::service::sender::SidecarSender;
-use crate::service::sidecar_interface::{SidecarInterfaceChannel, SidecarInterfaceClientRequest};
-use libdd_common::MutexExt;
+use crate::service::sidecar_interface::{
+    SidecarInterfaceChannel, SidecarInterfaceClientRequest, SidecarInterfaceRequest,
+};
 use libdd_common::tag::Tag;
 use libdd_dogstatsd_client::DogStatsDActionOwned;
 use libdd_ipc::SeqpacketConn;
@@ -19,7 +20,6 @@ use libdd_telemetry::metrics::MetricContext;
 use libdd_trace_utils::trace_utils::TracerGenericTags;
 use serde::Serialize;
 use std::cell::Cell;
-use std::sync::Mutex;
 use std::{
     io,
     time::{Duration, Instant},
@@ -29,12 +29,17 @@ use tracing::warn;
 /// `SidecarTransport` wraps a [`SidecarSender`] with transparent reconnection support.
 ///
 /// This transport is used for communication between different parts of the sidecar service.
-/// It is a blocking transport (all operations block the current thread).
+/// It is a blocking transport (all operations block the current thread). It is owned by a
+/// single client thread: the sidecar binds the connection state to the connection, so it must
+/// not be shared between threads which process requests concurrently.
 pub struct SidecarTransport {
-    pub inner: Mutex<SidecarSender>,
+    pub inner: SidecarSender,
     /// If provided, whenever a connection error is encountered, the connection will be
-    /// attempted to be re-established by calling this function.
+    /// attempted to be re-established by calling this function. The connection state is carried
+    /// over to the new connection.
     pub reconnect_fn: Option<Box<dyn Fn() -> Option<Box<SidecarTransport>>>>,
+    /// Backpressure limits, applied to every new connection as well.
+    backpressure: Option<(usize, u64)>,
 }
 
 impl SidecarTransport {
@@ -43,167 +48,153 @@ impl SidecarTransport {
     /// Uses the platform's peer credential mechanism (SO_PEERCRED on Linux,
     /// LOCAL_PEERPID on macOS) on the underlying IPC socket.
     pub fn peer_pid(&self) -> io::Result<u32> {
-        let sender = self
-            .inner
-            .lock()
-            .map_err(|e| io::Error::other(format!("Failed to lock transport: {e}")))?;
-        let creds = sender.channel.0.conn.peer_credentials()?;
+        let creds = self.inner.channel.0.conn.peer_credentials()?;
         Ok(creds.pid)
     }
 
     #[cfg(unix)]
-    pub fn as_raw_fd(&mut self) -> std::os::fd::RawFd {
-        let sender = match self.inner.get_mut() {
-            Ok(s) => s,
-            Err(poisoned) => poisoned.into_inner(),
-        };
-        sender.channel.0.conn.as_raw_fd()
+    pub fn as_raw_fd(&self) -> std::os::fd::RawFd {
+        self.inner.channel.0.conn.as_raw_fd()
+    }
+
+    /// See [`libdd_ipc::SeqpacketConn::release_inherited_fds`].
+    #[cfg(unix)]
+    pub fn release_inherited_fds(&self) {
+        self.inner.channel.0.conn.release_inherited_fds()
     }
 
     pub fn reconnect<F>(&mut self, factory: F) -> bool
     where
         F: FnOnce() -> Option<Box<SidecarTransport>>,
     {
-        let was_closed = self.is_closed();
-        was_closed && Self::do_reconnect(&mut self.inner, factory, false)
+        self.is_closed() && self.do_reconnect(factory)
     }
 
-    pub fn do_reconnect<F>(
-        transport: &mut Mutex<SidecarSender>,
-        factory: F,
-        force_reconnect: bool,
-    ) -> bool
+    fn do_reconnect<F>(&mut self, factory: F) -> bool
     where
         F: FnOnce() -> Option<Box<SidecarTransport>>,
     {
-        let transport = match transport.get_mut() {
-            Ok(t) => t,
-            Err(_) => return false,
-        };
-
-        #[allow(clippy::unwrap_used)]
-        if force_reconnect || transport.channel.0.is_closed() {
-            // Avoid recursive reconnect, just to make sure we don't loop.
-            thread_local! {
-                static RECONNECT_IN_PROGRESS: Cell<bool> = const { Cell::new(false) };
-            }
-            if RECONNECT_IN_PROGRESS.with(Cell::get) {
-                warn!(
-                    "Reconnect already in progress on this thread; not attempting a nested reconnect."
-                );
-                return false;
-            }
-            RECONNECT_IN_PROGRESS.with(|in_progress| in_progress.set(true));
-            let reconnected = (|| {
-                warn!(
-                    "The sidecar transport is closed. Reconnecting... This generally indicates a problem with the sidecar, most likely a crash. Check the logs / core dump locations and possibly report a bug."
-                );
-                let new = match factory() {
-                    None => return false,
-                    Some(n) => n.inner.into_inner(),
-                };
-                if new.is_err() {
-                    return false;
-                }
-                let registrations = std::mem::take(&mut transport.metric_registrations);
-
-                *transport = new.unwrap();
-
-                // Replay all registered metrics after a reconnect
-                for metric in registrations.into_values() {
-                    transport.register_telemetry_metric(metric);
-                }
-                true
-            })();
-            RECONNECT_IN_PROGRESS.with(|in_progress| in_progress.set(false));
-            return reconnected;
+        if !self.inner.channel.0.is_closed() {
+            return true;
         }
+
+        // Avoid recursive reconnect, just to make sure we don't loop.
+        thread_local! {
+            static RECONNECT_IN_PROGRESS: Cell<bool> = const { Cell::new(false) };
+        }
+        if RECONNECT_IN_PROGRESS.with(Cell::get) {
+            warn!(
+                "Reconnect already in progress on this thread; not attempting a nested reconnect."
+            );
+            return false;
+        }
+        RECONNECT_IN_PROGRESS.with(|in_progress| in_progress.set(true));
+        warn!(
+            "The sidecar transport is closed. Reconnecting... This generally indicates a problem with the sidecar, most likely a crash. Check the logs / core dump locations and possibly report a bug."
+        );
+        let new = factory();
+        RECONNECT_IN_PROGRESS.with(|in_progress| in_progress.set(false));
+        let Some(new) = new else {
+            return false;
+        };
+        self.replace_connection(new);
         true
     }
 
+    /// Continues on the connection of `new`, replaying the state of the previous connection.
+    fn replace_connection(&mut self, new: Box<SidecarTransport>) {
+        let previous = std::mem::replace(&mut self.inner, new.inner);
+        if let Some((max_bytes, max_queue)) = self.backpressure {
+            _ = self.apply_backpressure(max_bytes, max_queue);
+        }
+        self.inner.adopt_state(previous);
+    }
+
+    /// Continues on the connection of `new` as another instance, as a fork child does: its
+    /// inherited connection belongs to the parent, so nothing is sent on that one anymore.
+    pub fn replace_connection_as(
+        &mut self,
+        new: Box<SidecarTransport>,
+        instance_id: InstanceId,
+        remote_config_generation: u64,
+    ) {
+        self.replace_connection(new);
+        self.inner
+            .set_instance_id(instance_id, remote_config_generation);
+    }
+
     pub fn set_read_timeout(&mut self, d: Option<Duration>) -> io::Result<()> {
-        lock_sender(self)?.set_read_timeout(d)
+        self.inner.set_read_timeout(d)
     }
 
     pub fn set_write_timeout(&mut self, d: Option<Duration>) -> io::Result<()> {
-        lock_sender(self)?.set_write_timeout(d)
+        self.inner.set_write_timeout(d)
     }
 
     pub fn set_backpressure(&mut self, max_bytes: usize, max_queue: u64) -> io::Result<()> {
-        let mut sender = lock_sender(self)?;
-        sender.max_outstanding = max_queue.max(21);
+        self.backpressure = Some((max_bytes, max_queue));
+        self.apply_backpressure(max_bytes, max_queue)
+    }
+
+    fn apply_backpressure(&mut self, max_bytes: usize, max_queue: u64) -> io::Result<()> {
+        self.inner.max_outstanding = max_queue.max(21);
         #[cfg(unix)]
-        sender.channel.0.conn.set_sndbuf_size(max_bytes)?;
+        self.inner.channel.0.conn.set_sndbuf_size(max_bytes)?;
         #[cfg(not(unix))]
         let _ = max_bytes; // handled on pipe creation
         Ok(())
     }
 
     pub fn ensure_alive(&mut self) {
-        if let Some(ref reconnect) = self.reconnect_fn {
-            Self::do_reconnect(&mut self.inner, reconnect, false);
+        if let Some(reconnect) = self.reconnect_fn.take() {
+            self.do_reconnect(&reconnect);
+            self.reconnect_fn = Some(reconnect);
         }
     }
 
     pub fn is_closed(&self) -> bool {
-        match self.inner.lock() {
-            Ok(t) => t.channel.0.is_closed(),
-            // Should happen only during the "reconnection" phase. During this phase the transport
-            // is always considered closed.
-            Err(_) => true,
-        }
+        self.inner.channel.0.is_closed()
     }
 
-    fn with_retry<F, V>(&mut self, f: F) -> io::Result<V>
-    where
-        F: Fn(&mut SidecarSender) -> io::Result<V>,
-    {
-        let e = {
-            let mut inner = match self.inner.lock() {
-                Ok(t) => t,
-                Err(e) => return Err(io::Error::other(e.to_string())),
-            };
-            match f(&mut inner) {
-                Ok(ret) => return Ok(ret),
-                Err(e) => e,
-            }
-        };
-        if e.kind() == io::ErrorKind::BrokenPipe
-            || e.kind() == io::ErrorKind::ConnectionReset
-            || e.kind() == io::ErrorKind::NotConnected
-        {
-            warn!(
-                "with_retry ({}): The sidecar transport is closed. Reconnecting... This generally indicates a problem with the sidecar, most likely a crash. Check the logs / core dump locations and possibly report a bug",
-                e.kind()
-            );
-            if let Some(ref reconnect) = self.reconnect_fn {
-                if Self::do_reconnect(&mut self.inner, reconnect, true) {
-                    return f(&mut self.inner.lock_or_panic());
-                }
-            }
-        } else {
-            warn!(
-                "with_retry: non-connection error ({:?}), not reconnecting",
-                e.kind()
-            );
+    /// Runs `f` on the connection, reconnecting first if it is known to be broken. A broken
+    /// connection may only be noticed by `f` itself: then `f` runs once more on a new
+    /// connection, which carries the state of this one over. So `f` sends requests it was given
+    /// by reference, instead of consuming their payload.
+    fn with_retry<V>(&mut self, f: impl Fn(&mut SidecarSender) -> V) -> V {
+        let result = f(self.sender());
+        if !self.is_closed() {
+            return result;
         }
-        Err(e)
+        self.ensure_alive();
+        if self.is_closed() {
+            return result;
+        }
+        f(&mut self.inner)
     }
 
     /// Send garbage data (used in tests to verify error handling).
     pub fn send_garbage(&mut self) -> io::Result<()> {
-        match self.inner.lock() {
-            Ok(mut c) => c.channel.0.send_blocking(vec![0xDE, 0xAD, 0xBE, 0xEF], &[]),
-            Err(e) => Err(io::Error::other(e.to_string())),
-        }
+        self.inner
+            .channel
+            .0
+            .send_blocking(vec![0xDE, 0xAD, 0xBE, 0xEF], &[])
+    }
+
+    pub fn sender(&mut self) -> &mut SidecarSender {
+        // Drain accumulated acks first so that EOF is detected (closing the connection)
+        // before ensure_alive checks is_closed() and decides whether to reconnect.
+        self.inner.channel.0.drain_acks();
+        self.ensure_alive();
+        &mut self.inner
     }
 }
 
 impl From<SeqpacketConn> for SidecarTransport {
     fn from(conn: SeqpacketConn) -> Self {
         SidecarTransport {
-            inner: Mutex::new(SidecarSender::new(SidecarInterfaceChannel::new(conn))),
+            inner: SidecarSender::new(SidecarInterfaceChannel::new(conn)),
             reconnect_fn: None,
+            backpressure: None,
         }
     }
 }
@@ -219,58 +210,29 @@ fn decode_error_to_io(e: DecodeError) -> io::Error {
     }
 }
 
-fn lock_sender(
-    transport: &mut SidecarTransport,
-) -> io::Result<std::sync::MutexGuard<'_, SidecarSender>> {
-    // Drain accumulated acks first so that EOF is detected (closing the connection)
-    // before ensure_alive checks is_closed() and decides whether to reconnect.
-    if let Ok(sender) = transport.inner.get_mut() {
-        sender.channel.0.drain_acks();
-    }
-    transport.ensure_alive();
-    transport
-        .inner
-        .lock()
-        .map_err(|e| io::Error::other(e.to_string()))
-}
-
-/// Shuts down a runtime.
-pub fn shutdown_runtime(
-    transport: &mut SidecarTransport,
-    instance_id: &InstanceId,
-) -> io::Result<()> {
-    lock_sender(transport)?.shutdown_runtime(instance_id.clone());
-    Ok(())
-}
-
-/// Shuts down a session.
-pub fn shutdown_session(transport: &mut SidecarTransport) -> io::Result<()> {
-    lock_sender(transport)?.shutdown_session();
-    Ok(())
-}
-
-/// Enqueues a list of actions to be performed.
-///
-/// Uses `with_retry`: if the connection is broken the transport reconnects and the actions
-/// are retried once on the new connection, so that telemetry/lifecycle events are not lost
-/// when the sidecar crashes and restarts.
+/// Enqueues a list of actions for the application of the current request.
 pub fn enqueue_actions(
     transport: &mut SidecarTransport,
-    instance_id: &InstanceId,
-    queue_id: &QueueId,
     actions: Vec<SidecarAction>,
 ) -> io::Result<()> {
-    lock_sender(transport)?.enqueue_actions(instance_id.clone(), *queue_id, actions);
+    let request = SidecarInterfaceRequest::EnqueueActions { actions };
+    transport.with_retry(|s| s.send_actions(&request));
     Ok(())
 }
 
-/// Removes the application entry for the given queue ID from the instance.
-pub fn clear_queue_id(
+/// Enqueues a list of actions for an explicitly given service and env.
+pub fn enqueue_actions_for_service(
     transport: &mut SidecarTransport,
-    instance_id: &InstanceId,
-    queue_id: &QueueId,
+    service_name: String,
+    env_name: String,
+    actions: Vec<SidecarAction>,
 ) -> io::Result<()> {
-    lock_sender(transport)?.clear_queue_id(instance_id.clone(), *queue_id);
+    let request = SidecarInterfaceRequest::EnqueueActionsForService {
+        service_name,
+        env_name,
+        actions,
+    };
+    transport.with_retry(|s| s.send_actions(&request));
     Ok(())
 }
 
@@ -281,75 +243,88 @@ pub fn register_telemetry_metric(
     transport: &mut SidecarTransport,
     metric: MetricContext,
 ) -> io::Result<()> {
-    lock_sender(transport)?.register_telemetry_metric(metric);
+    transport.sender().register_telemetry_metric(metric);
     Ok(())
 }
 
-/// Sets the configuration for a session.
-pub fn set_session_config(
+/// Sets the identity and configuration of the connection. Kept and replayed after reconnects.
+pub fn set_connection_config(
     transport: &mut SidecarTransport,
-    session_id: String,
+    instance_id: InstanceId,
     #[cfg(windows)] remote_config_notify_target: Option<
         crate::service::remote_configs::RemoteConfigNotifyTarget,
     >,
-    config: &SessionConfig,
-    is_fork: bool,
+    config: SessionConfig,
 ) -> io::Result<()> {
-    lock_sender(transport)?.set_session_config(
-        session_id,
+    transport.sender().set_connection_config(
+        instance_id,
         #[cfg(windows)]
         remote_config_notify_target,
-        config.clone(),
-        is_fork,
+        config,
     );
     Ok(())
 }
 
-/// Updates the process tags for an existing session.
-pub fn set_session_process_tags(
+/// Updates the process tags of the connection.
+pub fn set_process_tags(
     transport: &mut SidecarTransport,
     process_tags: Vec<Tag>,
 ) -> io::Result<()> {
-    lock_sender(transport)?.set_session_process_tags(process_tags);
+    transport.sender().set_process_tags(process_tags);
     Ok(())
 }
 
-pub fn set_session_default_service_name(
-    transport: &mut SidecarTransport,
-    name: Option<String>,
-) -> io::Result<()> {
-    lock_sender(transport)?.set_session_default_service_name(name);
-    Ok(())
-}
-
-pub fn set_session_user_service_defined(
+pub fn set_user_service_defined(
     transport: &mut SidecarTransport,
     is_defined: bool,
 ) -> io::Result<()> {
-    lock_sender(transport)?.set_session_user_service_defined(is_defined);
+    transport.sender().set_user_service_defined(is_defined);
+    Ok(())
+}
+
+/// Sets the application of the current request, or clears it (`None`) at request end.
+pub fn set_application(
+    transport: &mut SidecarTransport,
+    application: Option<ApplicationConfig>,
+    remote_config_generation: u64,
+) -> io::Result<()> {
+    transport.sender().set_application(application, remote_config_generation);
+    Ok(())
+}
+
+/// Updates the dynamic instrumentation state of the current application.
+pub fn set_dynamic_instrumentation_state(
+    transport: &mut SidecarTransport,
+    state: DynamicInstrumentationConfigState,
+) -> io::Result<()> {
+    transport.sender().set_dynamic_instrumentation_state(state);
     Ok(())
 }
 
 /// Sends a trace as bytes.
 pub fn send_trace_v04_bytes(
     transport: &mut SidecarTransport,
-    instance_id: &InstanceId,
     data: Vec<u8>,
     headers: SerializedTracerHeaderTags,
 ) -> io::Result<()> {
-    lock_sender(transport)?.send_trace_v04_bytes(instance_id.clone(), data, headers);
+    let request = SidecarInterfaceRequest::SendTraceV04Bytes { data, headers };
+    transport.with_retry(|s| s.send(&request));
     Ok(())
 }
 
 /// Sends a trace via shared memory.
 pub fn send_trace_v04_shm(
     transport: &mut SidecarTransport,
-    instance_id: &InstanceId,
     handle: ShmHandle,
     len: usize,
     headers: SerializedTracerHeaderTags,
 ) -> io::Result<()> {
-    lock_sender(transport)?.send_trace_v04_shm(instance_id.clone(), handle, len, headers);
+    let request = SidecarInterfaceRequest::SendTraceV04Shm {
+        handle,
+        len,
+        headers,
+    };
+    transport.with_retry(|s| s.send(&request));
     Ok(())
 }
 
@@ -357,19 +332,18 @@ pub fn send_trace_v04_shm(
 /// re-encodes it as V1 msgpack on the way to the agent's `/v1.0/traces` endpoint.
 pub fn send_trace_v1_bytes(
     transport: &mut SidecarTransport,
-    instance_id: &InstanceId,
     data: Vec<u8>,
     generic: TracerGenericTags,
     lang_interpreter: String,
     lang_vendor: String,
 ) -> io::Result<()> {
-    lock_sender(transport)?.send_trace_v1_bytes(
-        instance_id.clone(),
+    let request = SidecarInterfaceRequest::SendTraceV1Bytes {
         data,
         generic,
         lang_interpreter,
         lang_vendor,
-    );
+    };
+    transport.with_retry(|s| s.send(&request));
     Ok(())
 }
 
@@ -377,46 +351,40 @@ pub fn send_trace_v1_bytes(
 /// it, and re-encodes it as V1 msgpack on the way to the agent's `/v1.0/traces` endpoint.
 pub fn send_trace_v1_shm(
     transport: &mut SidecarTransport,
-    instance_id: &InstanceId,
     handle: ShmHandle,
     len: usize,
     generic: TracerGenericTags,
     lang_interpreter: String,
     lang_vendor: String,
 ) -> io::Result<()> {
-    lock_sender(transport)?.send_trace_v1_shm(
-        instance_id.clone(),
+    let request = SidecarInterfaceRequest::SendTraceV1Shm {
         handle,
         len,
         generic,
         lang_interpreter,
         lang_vendor,
-    );
+    };
+    transport.with_retry(|s| s.send(&request));
     Ok(())
 }
 
 /// Sends raw data from shared memory to the debugger endpoint.
 pub fn send_debugger_data_shm(
     transport: &mut SidecarTransport,
-    instance_id: &InstanceId,
-    queue_id: QueueId,
     handle: ShmHandle,
     debugger_type: DebuggerType,
 ) -> io::Result<()> {
-    lock_sender(transport)?.send_debugger_data_shm(
-        instance_id.clone(),
-        queue_id,
+    let request = SidecarInterfaceRequest::SendDebuggerDataShm {
         handle,
         debugger_type,
-    );
+    };
+    transport.with_retry(|s| s.send(&request));
     Ok(())
 }
 
 /// Sends a collection of debugger payloads to the debugger endpoint via shared memory.
 pub fn send_debugger_data_shm_vec(
     transport: &mut SidecarTransport,
-    instance_id: &InstanceId,
-    queue_id: QueueId,
     payloads: Vec<DebuggerPayload>,
 ) -> anyhow::Result<()> {
     if payloads.is_empty() {
@@ -446,8 +414,6 @@ pub fn send_debugger_data_shm_vec(
 
     Ok(send_debugger_data_shm(
         transport,
-        instance_id,
-        queue_id,
         mapped.into(),
         debugger_type,
     )?)
@@ -456,15 +422,12 @@ pub fn send_debugger_data_shm_vec(
 /// Submits debugger diagnostics.
 pub fn send_debugger_diagnostics(
     transport: &mut SidecarTransport,
-    instance_id: &InstanceId,
-    queue_id: QueueId,
     diagnostics_payload: DebuggerPayload,
 ) -> io::Result<()> {
-    lock_sender(transport)?.send_debugger_diagnostics(
-        instance_id.clone(),
-        queue_id,
-        serde_json::to_vec(&diagnostics_payload)?,
-    );
+    let request = SidecarInterfaceRequest::SendDebuggerDiagnostics {
+        diagnostics_payload: serde_json::to_vec(&diagnostics_payload)?,
+    };
+    transport.with_retry(|s| s.send(&request));
     Ok(())
 }
 
@@ -474,64 +437,27 @@ pub fn acquire_exception_hash_rate_limiter(
     exception_hash: u64,
     granularity: Duration,
 ) -> io::Result<()> {
-    lock_sender(transport)?.acquire_exception_hash_rate_limiter(exception_hash, granularity);
-    Ok(())
-}
-
-/// Sets the state of the current remote config operation.
-#[allow(clippy::too_many_arguments)]
-pub fn set_universal_service_tags(
-    transport: &mut SidecarTransport,
-    instance_id: &InstanceId,
-    queue_id: &QueueId,
-    service_name: String,
-    env_name: String,
-    app_version: String,
-    global_tags: Vec<Tag>,
-    dynamic_instrumentation_state: DynamicInstrumentationConfigState,
-    remote_config_generation: u64,
-) -> io::Result<()> {
-    lock_sender(transport)?.set_universal_service_tags(
-        instance_id.clone(),
-        *queue_id,
-        service_name,
-        env_name,
-        app_version,
-        global_tags,
-        dynamic_instrumentation_state,
-        remote_config_generation,
-    );
-    Ok(())
-}
-
-/// Sets request state which do not directly affect the RC connection.
-pub fn set_request_config(
-    transport: &mut SidecarTransport,
-    instance_id: &InstanceId,
-    queue_id: &QueueId,
-    dynamic_instrumentation_state: DynamicInstrumentationConfigState,
-) -> io::Result<()> {
-    lock_sender(transport)?.set_request_config(
-        instance_id.clone(),
-        *queue_id,
-        dynamic_instrumentation_state,
-    );
+    let request = SidecarInterfaceRequest::AcquireExceptionHashRateLimiter {
+        exception_hash,
+        granularity,
+    };
+    transport.with_retry(|s| s.send(&request));
     Ok(())
 }
 
 /// Sends DogStatsD actions.
 pub fn send_dogstatsd_actions(
     transport: &mut SidecarTransport,
-    instance_id: &InstanceId,
     actions: Vec<DogStatsDActionOwned>,
 ) -> io::Result<()> {
-    lock_sender(transport)?.send_dogstatsd_actions(instance_id.clone(), actions);
+    let request = SidecarInterfaceRequest::SendDogstatsdActions { actions };
+    transport.with_retry(|s| s.send(&request));
     Ok(())
 }
 
-/// Sets x-datadog-test-session-token on all requests for the given session.
+/// Sets x-datadog-test-session-token on all requests of this connection.
 pub fn set_test_session_token(transport: &mut SidecarTransport, token: String) -> io::Result<()> {
-    lock_sender(transport)?.set_test_session_token(token);
+    transport.sender().set_test_session_token(token);
     Ok(())
 }
 
@@ -542,7 +468,8 @@ pub fn add_span_to_concentrator(
     version: String,
     span: libdd_ipc::shm_stats::OwnedShmSpanInput,
 ) -> io::Result<bool> {
-    Ok(lock_sender(transport)?.add_span_to_concentrator(env, version, span))
+    let request = SidecarInterfaceRequest::AddSpanToConcentrator { env, version, span };
+    Ok(transport.with_retry(|s| s.send(&request)))
 }
 
 /// Starts the AppSec backend in the sidecar and waits for initialization to
@@ -552,9 +479,12 @@ pub fn ensure_appsec_started(
     log_file_path: Vec<u8>,
     log_level: String,
 ) -> io::Result<bool> {
-    transport.with_retry(|sender| {
-        sender
-            .ensure_appsec_started(log_file_path.clone(), log_level.clone())
+    let request = SidecarInterfaceRequest::EnsureAppsecStarted {
+        log_file_path,
+        log_level,
+    };
+    transport.with_retry(|s| {
+        s.ensure_appsec_started(&request)
             .map_err(decode_error_to_io)
     })
 }
@@ -574,10 +504,9 @@ pub fn stats(transport: &mut SidecarTransport) -> io::Result<String> {
 /// Returns the response bytes from the helper and a disconnect flag.
 pub fn send_appsec_message(
     transport: &mut SidecarTransport,
-    client_id: u64,
     data: &[u8],
 ) -> io::Result<(Vec<u8>, bool)> {
-    let request = SidecarInterfaceClientRequest::SendAppsecMessage { client_id, data };
+    let request = SidecarInterfaceClientRequest::SendAppsecMessage { data };
     transport.with_retry(|s| s.send_appsec_message(&request).map_err(decode_error_to_io))
 }
 
@@ -586,15 +515,11 @@ pub fn send_appsec_message(
 /// Returns the response bytes from the helper and a disconnect flag.
 pub fn send_appsec_message_without_reconnect(
     transport: &mut SidecarTransport,
-    client_id: u64,
     data: &[u8],
 ) -> io::Result<(Vec<u8>, bool)> {
-    let request = SidecarInterfaceClientRequest::SendAppsecMessage { client_id, data };
-    let mut sender = transport
+    let request = SidecarInterfaceClientRequest::SendAppsecMessage { data };
+    transport
         .inner
-        .lock()
-        .map_err(|error| io::Error::other(error.to_string()))?;
-    sender
         .send_appsec_message(&request)
         .map_err(decode_error_to_io)
 }
@@ -614,9 +539,15 @@ pub fn ping(transport: &mut SidecarTransport) -> io::Result<Duration> {
 #[cfg(test)]
 #[cfg(unix)]
 mod tests {
-    use crate::service::blocking::{SidecarTransport, add_span_to_concentrator};
-    use crate::service::sidecar_interface::SidecarInterfaceRequest;
+    use crate::service::ApplicationConfig;
+    use crate::service::blocking::{
+        SidecarTransport, add_span_to_concentrator, send_dogstatsd_actions,
+    };
+    use crate::service::sidecar_interface::{
+        DynamicInstrumentationConfigState, SidecarInterfaceRequest,
+    };
     use libdd_ipc::{SeqpacketConn, SeqpacketListener};
+    use std::cell::RefCell;
     use std::time::Duration;
 
     use tempfile::tempdir;
@@ -659,6 +590,83 @@ mod tests {
 
         drop(peer);
         assert!(!send(&mut transport));
+    }
+
+    /// Decodes all requests sent to `peer` so far.
+    fn received(peer: &SeqpacketConn) -> Vec<SidecarInterfaceRequest> {
+        let mut buf = vec![0; libdd_ipc::max_message_size()];
+        let mut requests = vec![];
+        while let Ok((len, _)) = peer.try_recv_raw(&mut buf) {
+            requests.push(libdd_ipc::codec::decode(&buf[..len]).unwrap());
+        }
+        requests
+    }
+
+    fn application() -> ApplicationConfig {
+        ApplicationConfig {
+            service_name: "svc".to_owned(),
+            env_name: "env".to_owned(),
+            app_version: "1.0".to_owned(),
+            global_tags: vec![],
+            dynamic_instrumentation_state: DynamicInstrumentationConfigState::NotSet,
+        }
+    }
+
+    /// A transport whose connection broke while nothing awaits an acknowledgement, so only the
+    /// next send notices it. It reconnects to the returned peer, if `reconnect`.
+    fn broken_transport(reconnect: bool) -> (SidecarTransport, SeqpacketConn) {
+        let (conn, peer) = SeqpacketConn::socketpair().unwrap();
+        let mut transport = SidecarTransport::from(conn);
+        transport.inner.set_application(Some(application()), 3);
+        assert_eq!(received(&peer).len(), 1);
+        // Acknowledged like the sidecar does, so draining the acks finds nothing to read.
+        peer.try_send_raw(vec![0], &[]).unwrap();
+        transport.inner.channel.0.drain_acks();
+        assert_eq!(transport.inner.channel.0.outstanding(), 0);
+        drop(peer);
+
+        let (new_conn, new_peer) = SeqpacketConn::socketpair().unwrap();
+        if reconnect {
+            let new_conn = RefCell::new(Some(new_conn));
+            transport.reconnect_fn = Some(Box::new(move || {
+                new_conn
+                    .borrow_mut()
+                    .take()
+                    .map(|conn| Box::new(SidecarTransport::from(conn)))
+            }));
+        }
+        (transport, new_peer)
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn a_request_finding_the_connection_broken_is_sent_on_a_new_one() {
+        let (mut transport, new_peer) = broken_transport(true);
+        send_dogstatsd_actions(&mut transport, vec![]).unwrap();
+
+        match received(&new_peer).as_slice() {
+            [
+                SidecarInterfaceRequest::SetApplication {
+                    application: replayed,
+                    remote_config_generation: 0,
+                },
+                SidecarInterfaceRequest::SendDogstatsdActions { actions },
+            ] => {
+                assert_eq!(replayed.as_ref(), Some(&application()));
+                assert!(actions.is_empty());
+            }
+            other => panic!("unexpected requests on the new connection: {other:?}"),
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn without_reconnect_a_request_finding_the_connection_broken_is_dropped() {
+        let (mut transport, new_peer) = broken_transport(false);
+        send_dogstatsd_actions(&mut transport, vec![]).unwrap();
+
+        assert!(transport.is_closed());
+        assert!(received(&new_peer).is_empty());
     }
 
     #[test]

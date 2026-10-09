@@ -67,7 +67,7 @@ extern "C" fn unlink_shm_limiters() {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Config {
     /// Endpoint for the V0.4 trace path: agentful sessions are normalized to `/v0.4/traces`;
     /// agentless sessions point at the intake URL, which is encoding-agnostic.

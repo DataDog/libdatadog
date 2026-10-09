@@ -4,7 +4,7 @@
 #![allow(clippy::too_many_arguments)]
 
 use crate::service::{
-    InstanceId, QueueId, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
+    ApplicationConfig, InstanceId, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
 };
 use libdd_common::tag::Tag;
 use libdd_dogstatsd_client::DogStatsDActionOwned;
@@ -33,66 +33,72 @@ pub struct SidecarFlushOptions {
 
 /// The `SidecarInterface` trait defines the necessary methods for the sidecar service.
 ///
-/// These methods include operations such as enqueueing actions, registering services, setting
-/// session configurations, and sending traces.
+/// A connection serves a single client thread, which processes one request at a time. All
+/// session and application state is therefore bound to the connection: it is set by the
+/// `set_*` methods (which the client replays after a reconnect) and implicitly applies to every
+/// other message on the same connection.
 #[libdd_ipc_macros::service]
 pub trait SidecarInterface {
-    /// Enqueues a list of actions to be performed.
+    /// Enqueues a list of actions for the application of the current request.
     ///
     /// # Arguments
     ///
-    /// * `instance_id` - The ID of the instance.
-    /// * `queue_id` - The unique identifier for the action in the queue.
     /// * `actions` - The action type being enqueued.
-    async fn enqueue_actions(
-        instance_id: InstanceId,
-        queue_id: QueueId,
+    async fn enqueue_actions(actions: Vec<SidecarAction>);
+
+    /// Enqueues a list of actions for an explicitly given service and env, independently of the
+    /// application of the current request.
+    ///
+    /// # Arguments
+    ///
+    /// * `service_name` - The service the actions are attributed to.
+    /// * `env_name` - The env the actions are attributed to.
+    /// * `actions` - The action type being enqueued.
+    async fn enqueue_actions_for_service(
+        service_name: String,
+        env_name: String,
         actions: Vec<SidecarAction>,
     );
 
-    /// Sets the configuration for a session.
+    /// Binds the identity and configuration to this connection. Must be the first message sent
+    /// on a connection.
     ///
     /// # Arguments
     ///
-    /// * `session_id` - The ID of the session.
+    /// * `instance_id` - The session and runtime ID of the client.
     /// * `remote_config_notify_target` - The client's notification event (Windows only).
     /// * `config` - The configuration to be set.
-    async fn set_session_config(
-        session_id: String,
+    async fn set_connection_config(
+        instance_id: InstanceId,
         #[cfg(windows)]
         #[SerializedHandle]
         remote_config_notify_target: Option<
             crate::service::remote_configs::RemoteConfigNotifyTarget,
         >,
         config: SessionConfig,
-        is_fork: bool,
     );
 
-    /// Updates the process tags for an existing session.
+    /// Updates the process tags of this connection.
     ///
     /// # Arguments
     ///
     /// * `process_tags` - The process tags.
-    async fn set_session_process_tags(process_tags: Vec<Tag>);
+    async fn set_process_tags(process_tags: Vec<Tag>);
 
-    /// Records the auto-resolved default service name for the session
-    /// (thread-bound; the tracer's fallback when `DD_SERVICE` is unset).
-    /// Pass `None` to clear it.
-    async fn set_session_default_service_name(name: Option<String>);
+    /// Records whether `DD_SERVICE` is currently set (per-request mutable; tracer should refresh
+    /// on RINIT).
+    async fn set_user_service_defined(is_defined: bool);
 
-    /// Records whether `DD_SERVICE` is currently set for the session
-    /// (per-request mutable; tracer should refresh on RINIT).
-    async fn set_session_user_service_defined(is_defined: bool);
-
-    /// Removes the application entry for the given queue ID from the instance.
+    /// Sets the application of the current request, or clears it (`None`) at request end.
     ///
     /// # Arguments
     ///
-    /// * `instance_id` - The ID of the instance.
-    /// * `queue_id` - The queue ID to clear.
-    async fn clear_queue_id(instance_id: InstanceId, queue_id: QueueId);
+    /// * `application` - The metadata of the application.
+    /// * `remote_config_generation` - The SHM reader generation last read by the client (0 if
+    ///   unread, `u64::MAX` to never request a notification).
+    async fn set_application(application: Option<ApplicationConfig>, remote_config_generation: u64);
 
-    /// Registers a telemetry metric context for a specific instance and queue.
+    /// Registers a telemetry metric context on this connection.
     ///
     /// Registrations are connection-bound: tracked per connection, never dropped,
     /// and automatically replayed after a reconnect.
@@ -102,30 +108,14 @@ pub trait SidecarInterface {
     /// * `metric` - The metric context to register on this connection.
     async fn register_telemetry_metric(metric: MetricContext);
 
-    /// Shuts down a runtime.
-    ///
-    /// # Arguments
-    ///
-    /// * `instance_id` - The ID of the instance.
-    async fn shutdown_runtime(instance_id: InstanceId);
-
-    /// Shuts down a session.
-    ///
-    /// # Arguments
-    ///
-    /// * `session_id` - The ID of the session.
-    async fn shutdown_session();
-
     /// Sends a trace via shared memory.
     ///
     /// # Arguments
     ///
-    /// * `instance_id` - The ID of the instance.
     /// * `handle` - The handle to the shared memory.
     /// * `len` - The size of the shared memory data.
     /// * `headers` - The serialized headers from the tracer.
     async fn send_trace_v04_shm(
-        instance_id: InstanceId,
         #[SerializedHandle] handle: ShmHandle,
         len: usize,
         headers: SerializedTracerHeaderTags,
@@ -135,14 +125,9 @@ pub trait SidecarInterface {
     ///
     /// # Arguments
     ///
-    /// * `instance_id` - The ID of the instance.
     /// * `data` - The trace data serialized as bytes.
     /// * `headers` - The serialized headers from the tracer.
-    async fn send_trace_v04_bytes(
-        instance_id: InstanceId,
-        data: Vec<u8>,
-        headers: SerializedTracerHeaderTags,
-    );
+    async fn send_trace_v04_bytes(data: Vec<u8>, headers: SerializedTracerHeaderTags);
 
     /// Sends a V1-encoded trace via shared memory. The sidecar decodes the V1 `TracerPayload`,
     /// can inspect it, and re-encodes it as V1 msgpack on the way to the agent's
@@ -155,14 +140,12 @@ pub trait SidecarInterface {
     ///
     /// # Arguments
     ///
-    /// * `instance_id` - The ID of the instance.
     /// * `handle` - The handle to the shared memory.
     /// * `len` - The size of the shared memory data.
     /// * `generic` - The generic tracer header flags (stats/top-level computed, dropped counts).
     /// * `lang_interpreter` - The tracer's language interpreter, absent from the V1 payload.
     /// * `lang_vendor` - The tracer's language interpreter vendor, absent from the V1 payload.
     async fn send_trace_v1_shm(
-        instance_id: InstanceId,
         #[SerializedHandle] handle: ShmHandle,
         len: usize,
         generic: TracerGenericTags,
@@ -181,48 +164,36 @@ pub trait SidecarInterface {
     ///
     /// # Arguments
     ///
-    /// * `instance_id` - The ID of the instance.
     /// * `data` - The V1 trace data serialized as bytes.
     /// * `generic` - The generic tracer header flags (stats/top-level computed, dropped counts).
     /// * `lang_interpreter` - The tracer's language interpreter, absent from the V1 payload.
     /// * `lang_vendor` - The tracer's language interpreter vendor, absent from the V1 payload.
     async fn send_trace_v1_bytes(
-        instance_id: InstanceId,
         data: Vec<u8>,
         generic: TracerGenericTags,
         lang_interpreter: String,
         lang_vendor: String,
     );
 
-    /// Transfers raw data to a live-debugger endpoint.
+    /// Transfers raw data to a live-debugger endpoint, on behalf of the current application.
     ///
     /// # Arguments
-    /// * `instance_id` - The ID of the instance.
-    /// * `queue_id` - The unique identifier for the trace context.
     /// * `handle` - The data to send.
     /// * `debugger_type` - Whether it's log or diagnostic data.
     async fn send_debugger_data_shm(
-        instance_id: InstanceId,
-        queue_id: QueueId,
         #[SerializedHandle] handle: ShmHandle,
         debugger_type: DebuggerType,
     );
 
-    /// Submits debugger diagnostics.
+    /// Submits debugger diagnostics, on behalf of the current application.
     /// They are small and bounded in size, hence it's fine to send them without shm.
     /// Also, the sidecar server deserializes them to inspect and filter and avoid sending redundant
     /// diagnostics payloads.
     ///
     /// # Arguments
-    /// * `instance_id` - The ID of the instance.
-    /// * `queue_id` - The unique identifier for the trace context.
     /// * `diagnostics_payload` - The diagnostics data to send. (Sent as u8 json due to bincode
     ///   limitations)
-    async fn send_debugger_diagnostics(
-        instance_id: InstanceId,
-        queue_id: QueueId,
-        diagnostics_payload: Vec<u8>,
-    );
+    async fn send_debugger_diagnostics(diagnostics_payload: Vec<u8>);
 
     /// Acquire an exception hash rate limiter
     ///
@@ -231,50 +202,12 @@ pub trait SidecarInterface {
     /// * `granularity` - how much time needs to pass between two exceptions
     async fn acquire_exception_hash_rate_limiter(exception_hash: u64, granularity: Duration);
 
-    /// Sets contextual data
-    ///
-    /// # Arguments
-    /// * `instance_id` - The ID of the instance.
-    /// * `queue_id` - The unique identifier for the trace context.
-    /// * `service_name` - The name of the service.
-    /// * `env_name` - The name of the environment.
-    /// * `app_version` - The application version.
-    /// * `global_tags` - Global tags which need to be propagated.
-    /// * `dynamic_instrumentation_state` - Whether dynamic instrumentation is enabled, disabled or
-    ///   not set.
-    /// * `remote_config_generation` - The SHM reader generation last read by the client (0 if
-    ///   unread).
-    async fn set_universal_service_tags(
-        instance_id: InstanceId,
-        queue_id: QueueId,
-        service_name: String,
-        env_name: String,
-        app_version: String,
-        global_tags: Vec<Tag>,
-        dynamic_instrumentation_state: DynamicInstrumentationConfigState,
-        remote_config_generation: u64,
-    );
-
-    /// Sets request state which does not directly affect the RC connection.
-    ///
-    /// # Arguments
-    /// * `instance_id` - The ID of the instance.
-    /// * `queue_id` - The unique identifier for the trace context.
-    /// * `dynamic_instrumentation_state` - Whether dynamic instrumentation is enabled, disabled or
-    ///   not set.
-    async fn set_request_config(
-        instance_id: InstanceId,
-        queue_id: QueueId,
-        dynamic_instrumentation_state: DynamicInstrumentationConfigState,
-    );
-
     /// Sends DogStatsD actions.
     ///
     /// # Arguments
     ///
-    /// * `instance_id` - The ID of the instance.
     /// * `actions` - The DogStatsD actions to send.
-    async fn send_dogstatsd_actions(instance_id: InstanceId, actions: Vec<DogStatsDActionOwned>);
+    async fn send_dogstatsd_actions(actions: Vec<DogStatsDActionOwned>);
 
     /// Flushes outstanding traces/stats, flag evaluations, and/or telemetry, as specified by
     /// options.
@@ -289,11 +222,10 @@ pub trait SidecarInterface {
         #[SerializedHandle] completion: libdd_ipc::platform::PlatformHandle<std::io::PipeWriter>,
     );
 
-    /// Sets x-datadog-test-session-token on all requests for the given session.
+    /// Sets x-datadog-test-session-token on all requests of this connection.
     ///
     /// # Arguments
     ///
-    /// * `session_id` - The ID of the session.
     /// * `token` - The session token.
     async fn set_test_session_token(token: String);
 
@@ -311,14 +243,12 @@ pub trait SidecarInterface {
     /// cannot overtake initialization.
     async fn ensure_appsec_started(log_file_path: Vec<u8>, log_level: String) -> bool;
 
-    /// Forwards an AppSec message from the PHP extension to the registered helper.
+    /// Forwards an AppSec message from the PHP extension to the helper's client of this
+    /// connection. A client_init message starts a new client.
     ///
-    /// Returns the response bytes from the helper and a flag indicating whether
-    /// the extension session should be disconnected.
-    async fn send_appsec_message(
-        client_id: u64,
-        #[ClientType(&'request [u8])] data: Vec<u8>,
-    ) -> (Vec<u8>, bool);
+    /// Returns the response bytes from the helper and a flag indicating whether the client is
+    /// gone, and the extension has to start over with client_init.
+    async fn send_appsec_message(#[ClientType(&'request [u8])] data: Vec<u8>) -> (Vec<u8>, bool);
 
     /// Sends a ping to the service.
     #[blocking]
@@ -350,18 +280,14 @@ mod tests {
 
     #[test]
     fn appsec_client_request_decodes_as_server_request() {
-        let request = SidecarInterfaceClientRequest::SendAppsecMessage {
-            client_id: 42,
-            data: b"payload",
-        };
+        let request = SidecarInterfaceClientRequest::SendAppsecMessage { data: b"payload" };
 
         let encoded = libdd_ipc::codec::encode(&request);
         let decoded: SidecarInterfaceRequest =
             libdd_ipc::codec::decode(&encoded).expect("client request should decode");
 
         match decoded {
-            SidecarInterfaceRequest::SendAppsecMessage { client_id, data } => {
-                assert_eq!(client_id, 42);
+            SidecarInterfaceRequest::SendAppsecMessage { data } => {
                 assert_eq!(data, b"payload");
             }
             _ => panic!("decoded the wrong request variant"),
