@@ -4,7 +4,7 @@
 //! Workspace-wide regex engine re-exports.
 //!
 //! By default this module re-exports from the full [`regex`] crate.
-//! Enable the **`regex-lite`** feature to switch to [`regex_lite`] instead,
+//! Enable the **`regex-lite`** feature to switch to `regex_lite` instead,
 //! which trades advanced features (Unicode classes, look-around, etc.) for
 //! smaller binary size and faster compile times.
 //!

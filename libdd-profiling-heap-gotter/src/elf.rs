@@ -140,33 +140,23 @@ impl SymbolOverrides {
             v.processed = false;
         }
 
-        // TODO: This is intentionally simple but expensive on workloads that
-        // dlopen many libraries: every change re-walks all loaded objects,
-        // re-parses their dynamic sections/GNU hash tables, and eagerly reads
-        // /proc/self/maps via PageProtGuard even if only one new object needs
-        // patching. Track already-processed libraries and lazily create the
-        // page-protection guard to avoid repeated heavy work.
-
-        let mut guard = PageProtGuard::new();
+        // TODO: Avoid rewalking all loaded objects and reparsing their dynamic
+        // sections after every dlopen.
 
         // SAFETY: closure runs synchronously inside dl_iterate_phdr.
         let self_ptr = self as *mut Self as usize;
-        let guard_ptr = &mut guard as *mut PageProtGuard as usize;
         iterate_libraries(move |info, is_exe| unsafe {
             let this = &mut *(self_ptr as *mut Self);
-            let g = &mut *(guard_ptr as *mut PageProtGuard);
             let lib_name = dlpi_name(info.dlpi_name);
             if is_vdso_or_dynamic_linker(lib_name.as_deref(), is_exe) {
                 return false;
             }
             if let Some(dyn_info) = DynamicInfo::from_phdr(info) {
                 let owned_name = lib_name.map(|c| c.into_owned()).unwrap_or_default();
-                this.apply_to_library(&dyn_info, owned_name, g);
+                this.apply_to_library(&dyn_info, owned_name);
             }
             false
         });
-
-        // `guard` restores page protections when it drops at end of scope.
 
         // Drop any tracked libraries that have been unloaded.
         self.patched_libraries.retain(|_, v| v.processed);
@@ -183,12 +173,7 @@ impl SymbolOverrides {
     /// pointers are valid and the object is still mapped at
     /// `dyn_info.base_address`. Call only from inside [`iterate_libraries`],
     /// while `dl_iterate_phdr` holds the loader lock.
-    unsafe fn apply_to_library(
-        &mut self,
-        dyn_info: &DynamicInfo,
-        library_name: String,
-        guard: &mut PageProtGuard,
-    ) {
+    unsafe fn apply_to_library(&mut self, dyn_info: &DynamicInfo, library_name: String) {
         unsafe {
             // Detect base-address reuse: a previous `dlclose` may have freed
             // the load address, and a later `dlopen` can place a different
@@ -221,6 +206,8 @@ impl SymbolOverrides {
                 return;
             }
 
+            let mut guard = None;
+
             // Pointer width alone does not make a relocation safely substitutable; see
             // `is_rela_got_pointer_reloc`. GOT slots (`GLOB_DAT` / `JUMP_SLOT`) resolve to exactly
             // the symbol address `S` because the dynamic linker ignores the addend,
@@ -237,7 +224,7 @@ impl SymbolOverrides {
                     dyn_info,
                     elf64_r_sym(reloc.r_info),
                     reloc.r_offset as usize,
-                    guard,
+                    &mut guard,
                 );
             }
         }
@@ -248,17 +235,21 @@ impl SymbolOverrides {
     ///
     /// # Safety
     ///
-    /// `dyn_info` must be valid for a currently-loaded object (see
-    /// [`Self::apply_to_library`]); `sym_index` and `r_offset` must come from
-    /// that object's own relocation table; and `guard` must belong to the
-    /// current patching pass. Dereferences `dyn_info`'s symtab/strtab and
-    /// writes process memory through `guard`.
+    /// - `dyn_info` must be valid for a currently-loaded object (see [`Self::apply_to_library`])
+    /// - `sym_index` and `r_offset` must come from that object's own relocation table
+    /// - `guard` must be scoped to `dyn_info`:
+    ///   - if `guard` is `Some(_)`, the guard must have been initialized in the enclosing
+    ///     `iterate_libraries` callback after reading the current `dyn_info`. Initialization
+    ///     matters because it's when permissions are snapshotted.
+    ///   - `guard` must be dropped before the enclosing `iterate_libraries` callback returns.
+    ///
+    /// Dereferences `dyn_info`'s symtab/strtab and writes process memory through `guard`.
     unsafe fn process_relocation(
         overrides: &HashMap<String, OverrideInfo>,
         dyn_info: &DynamicInfo,
         sym_index: u32,
         r_offset: usize,
-        guard: &mut PageProtGuard,
+        guard: &mut Option<PageProtGuard>,
     ) {
         unsafe {
             // st_name -> string in strtab. Walk lazily: we look up the
@@ -289,7 +280,9 @@ impl SymbolOverrides {
             }
             // Re-patching an already-hooked entry with the same hook address is
             // idempotent, so no per-entry dedup is needed.
-            guard.override_entry(addr, ov.new_symbol);
+            guard
+                .get_or_insert_with(PageProtGuard::new)
+                .override_entry(addr, ov.new_symbol);
         }
     }
 }

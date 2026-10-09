@@ -12,7 +12,21 @@ until `tests/conformance.rs` passes.
 | `provider-token-breakdown/` | `trajectory.gen_ai.client.token_breakdown@0.1.0` |
 | `provider-streaming/` | `gen_ai.client.provider_streaming@0.1.0` |
 | `gateway-request/` | `trajectory.gen_ai.gateway.request@0.1.0` |
+| `datadog/` | the Datadog binding of these metrics (series names, types and tags) |
 | `registry.json` | the metric registry, version 0.1.0 |
+
+## Source
+
+Every file here except this README is byte-for-byte a file of the
+specification at commit `dac9fe5d4c0287b016fcfa095d72c911c791306f`:
+
+| Here | In the specification |
+| --- | --- |
+| `provider-attempt/`, `provider-token-breakdown/`, `provider-streaming/`, `gateway-request/` | `conformance/metrics/` directories of the same name, complete |
+| `datadog/` | `conformance/datadog/portable-metrics/`, without its README and `metric-of-another-profile.json` (that case uses the agent run profile, which this crate does not implement) |
+| `registry.json` | `registry/metrics/registry.json` |
+
+## Cases
 
 A valid case holds `profile`, `observation`, optional `deployment_attributes`,
 and the `expected_metrics`, `expected_issues` and
