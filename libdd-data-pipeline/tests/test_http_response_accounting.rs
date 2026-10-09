@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use httpmock::{Method::POST, MockServer};
 use libdd_capabilities_impl::NativeCapabilities;
+use libdd_data_pipeline::OtlpProtocol;
 use libdd_data_pipeline::trace_exporter::{
     TelemetryConfig, TraceExporter, error::TraceExporterError,
 };
@@ -44,14 +45,34 @@ fn count(metrics: &[Value], name: &str, tag: Option<&str>) -> f64 {
 
 #[test]
 fn agent_response_accounting_matches_export_result() {
+    check_response_accounting(None);
+}
+
+#[test]
+fn otlp_json_response_accounting_matches_export_result() {
+    check_response_accounting(Some(OtlpProtocol::HttpJson));
+}
+
+#[test]
+fn otlp_protobuf_response_accounting_matches_export_result() {
+    check_response_accounting(Some(OtlpProtocol::HttpProtobuf));
+}
+
+fn check_response_accounting(protocol: Option<OtlpProtocol>) {
+    let error_attempts = if protocol.is_some() { 5 } else { 6 };
+    let path = if protocol.is_some() {
+        "/v1/traces"
+    } else {
+        "/v0.4/traces"
+    };
     for (status, attempts) in [
         (200, 1u32),
         (202, 1),
         (204, 1),
         (302, 1),
         (307, 1),
-        (400, 6),
-        (503, 6),
+        (400, error_attempts),
+        (503, error_attempts),
     ] {
         let agent = MockServer::start();
         let redirect = agent.mock(|when, then| {
@@ -59,7 +80,7 @@ fn agent_response_accounting_matches_export_result() {
             then.status(200);
         });
         let traces = agent.mock(|when, then| {
-            when.method(POST).path("/v0.4/traces");
+            when.method(POST).path(path);
             then.status(status)
                 .header("Location", agent.url("/redirect-target"))
                 .body(if status == 204 { "" } else { "response body" });
@@ -79,6 +100,11 @@ fn agent_response_accounting_matches_export_result() {
         });
 
         let mut builder = TraceExporter::<NativeCapabilities, ForkSafeRuntime>::builder();
+        if let Some(protocol) = protocol {
+            builder
+                .set_otlp_endpoint(&agent.url(path))
+                .set_otlp_protocol(protocol);
+        }
         builder
             .set_url(&agent.url("/"))
             .set_service("response-accounting")

@@ -193,6 +193,7 @@ mod tests {
     #[derive(Clone, Debug, Default)]
     struct TestCapabilities {
         requests: Arc<Mutex<Vec<http::Request<Bytes>>>>,
+        status: Option<http::StatusCode>,
     }
 
     impl HttpClientCapability for TestCapabilities {
@@ -210,7 +211,7 @@ mod tests {
         ) -> Result<http::Response<Bytes>, libdd_capabilities::HttpError> {
             self.requests.lock().unwrap().push(request);
             Ok(http::Response::builder()
-                .status(http::StatusCode::ACCEPTED)
+                .status(self.status.unwrap_or(http::StatusCode::ACCEPTED))
                 .body(Bytes::new())
                 .unwrap())
         }
@@ -307,6 +308,45 @@ mod tests {
         let (send_succeeded, payload_size) = observation.unwrap();
         assert!(send_succeeded);
         assert!(payload_size > 0);
+    }
+
+    #[test]
+    fn reports_redirects_as_failed_sends() {
+        for status in [
+            http::StatusCode::FOUND,
+            http::StatusCode::TEMPORARY_REDIRECT,
+        ] {
+            let capabilities = TestCapabilities {
+                status: Some(status),
+                ..Default::default()
+            };
+            let mut observed = false;
+            let result = futures::executor::block_on(send_agentless_traces_with_observer(
+                &capabilities,
+                v04_traces(),
+                &metadata(),
+                &config(),
+                false,
+                |result, size| {
+                    assert!(
+                        matches!(result, Err(SendWithRetryError::Http(response, 1)) if response.status() == status)
+                    );
+                    assert!(size > 0);
+                    observed = true;
+                },
+            ));
+
+            assert!(observed);
+            match result {
+                Err(AgentlessError::Send(error)) => {
+                    assert!(
+                        matches!(*error, SendWithRetryError::Http(response, 1) if response.status() == status)
+                    );
+                }
+                other => panic!("expected HTTP {status} error, got {other:?}"),
+            }
+            assert_eq!(capabilities.requests.lock().unwrap().len(), 1);
+        }
     }
 
     #[test]

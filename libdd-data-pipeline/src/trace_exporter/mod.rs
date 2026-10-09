@@ -935,14 +935,6 @@ impl<
         )
         .await;
 
-        // The shared retry helper accepts redirects; Agent trace export requires 2xx.
-        let result = match result {
-            Ok((response, attempts)) if !response.status().is_success() => {
-                Err(SendWithRetryError::Http(response, attempts))
-            }
-            result => result,
-        };
-
         #[cfg(feature = "telemetry")]
         self.emit_retry_result(&result, payload_len, counts);
 
