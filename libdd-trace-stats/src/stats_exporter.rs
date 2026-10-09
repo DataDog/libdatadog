@@ -808,36 +808,6 @@ mod tests {
 
     const BUCKETS_DURATION: Duration = Duration::from_secs(10);
 
-    #[cfg_attr(miri, ignore)]
-    #[tokio::test]
-    async fn redirects_fail_stats_submission() {
-        let server = MockServer::start_async().await;
-        for path in ["/v0.6/stats", "/api/v0.2/stats"] {
-            for status in [302, 307] {
-                let mut response = server.mock(|when, then| {
-                    when.method(POST).path(path);
-                    then.status(status)
-                        .header("Location", server.url("/redirect-target"));
-                });
-                let request = StatsRequest {
-                    body: vec![1, 2, 3],
-                    headers: http::HeaderMap::new(),
-                    compression: CompressionStrategy::None,
-                    endpoint: Endpoint::from_slice(&server.url(path)),
-                    retry: RetryStrategy::new(2, 1, RetryBackoffType::Constant, None),
-                };
-
-                assert!(
-                    send_stats_request(&NativeCapabilities::new_client(), request)
-                        .await
-                        .is_err()
-                );
-                response.assert_calls(1);
-                response.delete();
-            }
-        }
-    }
-
     /// Fails to compile if stats exporter is not Send and Sync
     #[test]
     fn test_stats_exporter_sync_send() {

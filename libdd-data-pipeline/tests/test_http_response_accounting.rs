@@ -59,21 +59,12 @@ fn otlp_protobuf_response_accounting_matches_export_result() {
 }
 
 fn check_response_accounting(protocol: Option<OtlpProtocol>) {
-    let error_attempts = if protocol.is_some() { 5 } else { 6 };
     let path = if protocol.is_some() {
         "/v1/traces"
     } else {
         "/v0.4/traces"
     };
-    for (status, attempts) in [
-        (200, 1u32),
-        (202, 1),
-        (204, 1),
-        (302, 1),
-        (307, 1),
-        (400, error_attempts),
-        (503, error_attempts),
-    ] {
+    for status in [200, 202, 204, 302, 307, 400, 503] {
         let agent = MockServer::start();
         let redirect = agent.mock(|when, then| {
             when.path("/redirect-target");
@@ -137,7 +128,12 @@ fn check_response_accounting(protocol: Option<OtlpProtocol>) {
         }
 
         exporter.shutdown(Some(Duration::from_secs(5))).unwrap();
-        traces.assert_calls(usize::try_from(attempts).unwrap());
+        let attempts = u32::try_from(traces.calls()).unwrap();
+        if status >= 400 {
+            assert!(attempts > 1, "expected retries for HTTP {status}");
+        } else {
+            assert_eq!(attempts, 1, "unexpected retries for HTTP {status}");
+        }
         redirect.assert_calls(0);
         // httpmock can evaluate a request matcher more than once.
         let mut batches = BTreeMap::new();

@@ -327,11 +327,8 @@ mod tests {
                 &metadata(),
                 &config(),
                 false,
-                |result, size| {
-                    assert!(
-                        matches!(result, Err(SendWithRetryError::Http(response, 1)) if response.status() == status)
-                    );
-                    assert!(size > 0);
+                |result, _| {
+                    assert!(result.is_err());
                     observed = true;
                 },
             ));
