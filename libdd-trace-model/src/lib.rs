@@ -358,7 +358,7 @@ pub trait ValueMapMut<T: ValueTypes>: ValueMap<T> {
     fn insert(&mut self, key: T::Text, value: AttributeValue<T>) -> Option<AttributeValue<T>>;
     /// Remove the value for `key`, returning it if it was present
     fn remove(&mut self, key: &str) -> Option<AttributeValue<T>>;
-    /// In place mutation and removal, return False to remove.
+    /// Keep only the entries for which `f` returns `true`; `f` may mutate the values it keeps.
     fn retain(&mut self, f: impl FnMut(&str, &mut AttributeValue<T>) -> bool);
     /// Iterate mutably over all `(key, value)` pairs
     fn iter_mut<'a>(&'a mut self) -> impl Iterator<Item = (&'a str, &'a mut AttributeValue<T>)>
@@ -385,7 +385,7 @@ pub trait ValueArrayMut<T: ValueTypes>: ValueArray<T> {
     fn get_mut(&mut self, index: usize) -> Option<&mut AttributeValue<T>>;
     /// Append a value to the end of the list
     fn push(&mut self, value: AttributeValue<T>);
-    /// In place mutation and removal, return False to remove.
+    /// Keep only the values for which `f` returns `true`; `f` may mutate the values it keeps.
     fn retain(&mut self, f: impl FnMut(&mut AttributeValue<T>) -> bool);
     fn iter_mut<'a>(&'a mut self) -> impl Iterator<Item = &'a mut AttributeValue<T>>
     where
