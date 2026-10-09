@@ -32,6 +32,58 @@ tokio::task_local! {
     static REPORT: Arc<Mutex<SendObservations>>;
 }
 
+/// Caller-owned observations from one send. All counts are unsigned and zero-suppressed.
+/// `bytes_sent` is one successful payload-size distribution sample. Status zero means no
+/// terminal HTTP response; otherwise `responses_count` belongs to `status_code`.
+/// The struct contains no owned pointers and requires no destructor.
+#[repr(C)]
+#[derive(Debug, Default)]
+pub struct TraceExporterObservations {
+    pub requests_count: u64,
+    pub errors_network: u64,
+    pub errors_timeout: u64,
+    pub errors_status_code: u64,
+    pub bytes_sent: u64,
+    pub chunks_sent: u64,
+    pub chunks_dropped_serialization_error: u64,
+    pub chunks_dropped_send_failure: u64,
+    pub chunks_dropped_p0: u64,
+    pub chunks_dropped_by_trace_filter: u64,
+    pub spans_enqueued_for_serialization: u64,
+    pub spans_dropped_serialization_error: u64,
+    pub spans_dropped_api_error: u64,
+    pub responses_count: u64,
+    pub status_code: u16,
+}
+
+impl From<SendObservations> for TraceExporterObservations {
+    fn from(report: SendObservations) -> Self {
+        let payload = report.payload.unwrap_or_default();
+        let (status_code, responses_count) = payload
+            .responses_count_per_code
+            .into_iter()
+            .next()
+            .unwrap_or_default();
+        Self {
+            requests_count: payload.requests_count,
+            errors_network: payload.errors_network,
+            errors_timeout: payload.errors_timeout,
+            errors_status_code: payload.errors_status_code,
+            bytes_sent: payload.bytes_sent,
+            chunks_sent: payload.chunks_sent,
+            chunks_dropped_serialization_error: payload.chunks_dropped_serialization_error,
+            chunks_dropped_send_failure: payload.chunks_dropped_send_failure,
+            chunks_dropped_p0: report.chunks_dropped_p0,
+            chunks_dropped_by_trace_filter: report.chunks_dropped_by_trace_filter,
+            spans_enqueued_for_serialization: payload.spans_enqueued_for_serialization,
+            spans_dropped_serialization_error: payload.spans_dropped_serialization_error,
+            spans_dropped_api_error: payload.spans_dropped_api_error,
+            responses_count,
+            status_code,
+        }
+    }
+}
+
 /// Observations attributable to one send. Cancellation may leave only filtering counts.
 /// Each exporter send currently prepares at most one payload, including V1 fallback.
 #[derive(Debug, Default)]

@@ -203,18 +203,18 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
 /// It can be produced from a [`SendWithRetryResult`] or from a [`SendDataResult`].
 #[derive(Clone, PartialEq, Debug, Default)]
 pub struct SendPayloadTelemetry {
-    pub requests_count: u64,
-    pub errors_network: u64,
-    pub errors_timeout: u64,
-    pub errors_status_code: u64,
-    pub bytes_sent: u64,
-    pub chunks_sent: u64,
-    pub chunks_dropped_serialization_error: u64,
-    pub chunks_dropped_send_failure: u64,
-    pub spans_enqueued_for_serialization: u64,
-    pub spans_dropped_serialization_error: u64,
-    pub spans_dropped_api_error: u64,
-    pub responses_count_per_code: HashMap<u16, u64>,
+    pub(crate) requests_count: u64,
+    pub(crate) errors_network: u64,
+    pub(crate) errors_timeout: u64,
+    pub(crate) errors_status_code: u64,
+    pub(crate) bytes_sent: u64,
+    pub(crate) chunks_sent: u64,
+    pub(crate) chunks_dropped_serialization_error: u64,
+    pub(crate) chunks_dropped_send_failure: u64,
+    pub(crate) spans_enqueued_for_serialization: u64,
+    pub(crate) spans_dropped_serialization_error: u64,
+    pub(crate) spans_dropped_api_error: u64,
+    pub(crate) responses_count_per_code: HashMap<u16, u64>,
 }
 
 impl From<&SendDataResult> for SendPayloadTelemetry {

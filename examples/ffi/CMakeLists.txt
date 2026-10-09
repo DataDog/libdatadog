@@ -82,8 +82,6 @@ if(NOT WIN32)
   target_link_libraries(crashtracking_unhandled_exception PRIVATE Datadog::Profiling)
 endif()
 
-# Temporary: exercise the external observations API. Only valid against a libdatadog built
-# with the `data-pipeline-external-observations` feature.
 option(DDOG_EXTERNAL_OBSERVATIONS "Build trace_exporter against the external observations API" OFF)
 
 add_executable(trace_exporter trace_exporter.c)
