@@ -255,7 +255,7 @@ fn oversized_ipc_warning_does_not_log_evaluation_data() {
     let sent = tracing::subscriber::with_default(subscriber, || {
         channel.try_send_request(&request(vec![row]))
     });
-    assert!(!sent);
+    assert!(sent.is_err());
     let logs = String::from_utf8(logs.0.lock().unwrap().clone()).unwrap();
     assert!(logs.contains("IPC message too large"));
     for canary in [
@@ -360,7 +360,7 @@ async fn bounded_ffe_submission_preserves_http_privacy_and_survives_rejection() 
         req
     };
     assert_eq!(
-        try_submit_ffe(&transport, || Ok(single(event()))),
+        try_submit_ffe(&transport, &mut single(event())),
         FfeSubmissionStatus::Accepted
     );
     let mut oversized = event();
@@ -370,7 +370,7 @@ async fn bounded_ffe_submission_preserves_http_privacy_and_survives_rejection() 
     for consent in [false, true] {
         oversized.observe_full_evaluation_data = consent;
         assert_eq!(
-            try_submit_ffe(&transport, || Ok(single(oversized.clone()))),
+            try_submit_ffe(&transport, &mut single(oversized.clone())),
             FfeSubmissionStatus::Accepted
         );
     }
@@ -378,7 +378,7 @@ async fn bounded_ffe_submission_preserves_http_privacy_and_survives_rejection() 
     let mut rejected = event();
     rejected.flag.key = "rejected-flag-canary".repeat(libdd_ipc::max_message_size() / 20 + 1);
     assert_eq!(
-        try_submit_ffe(&transport, || Ok(single(rejected))),
+        try_submit_ffe(&transport, &mut single(rejected)),
         FfeSubmissionStatus::PayloadTooLarge
     );
     let mut consented = event();
@@ -388,7 +388,7 @@ async fn bounded_ffe_submission_preserves_http_privacy_and_survives_rejection() 
     consented.context.as_mut().unwrap().evaluation =
         Some(r#"{"email":"consented-context-canary"}"#.into());
     assert_eq!(
-        try_submit_ffe(&transport, || Ok(single(consented))),
+        try_submit_ffe(&transport, &mut single(consented)),
         FfeSubmissionStatus::Accepted
     );
     for req in [
@@ -407,6 +407,7 @@ async fn bounded_ffe_submission_preserves_http_privacy_and_survives_rejection() 
                 .unwrap()
                 .channel
                 .try_send_request(&req)
+                .is_ok()
         );
     }
     tokio::time::timeout(Duration::from_secs(5), async {
@@ -474,7 +475,7 @@ fn oversized_ipc_warning_does_not_log_exposure_data() {
         })],
     };
     let sent = tracing::subscriber::with_default(subscriber, || channel.try_send_request(&request));
-    assert!(!sent);
+    assert!(sent.is_err());
     let logs = String::from_utf8(logs.0.lock().unwrap().clone()).unwrap();
     assert!(logs.contains("IPC message too large"));
     for canary in [
@@ -483,4 +484,77 @@ fn oversized_ipc_warning_does_not_log_exposure_data() {
     ] {
         assert!(!logs.contains(canary));
     }
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+#[cfg_attr(miri, ignore = "requires native IPC sockets")]
+fn kernel_size_rejection_retries_one_reduced_observation_without_reshedding() {
+    use crate::service::blocking::{SidecarTransport, try_submit_ffe};
+    use crate::service::ffe_submission::FfeSubmissionStatus;
+
+    let (conn, peer) = SeqpacketConn::socketpair().unwrap();
+    let size: libc::c_int = 4096;
+    // SAFETY: a live socket and valid integer storage; leave the global limit unchanged.
+    assert_eq!(
+        unsafe {
+            libc::setsockopt(
+                conn.as_raw_fd(),
+                libc::SOL_SOCKET,
+                libc::SO_SNDBUF,
+                (&size as *const libc::c_int).cast(),
+                std::mem::size_of_val(&size).try_into().unwrap(),
+            )
+        },
+        0
+    );
+    let transport = SidecarTransport::from(conn);
+    let empty = request(vec![]);
+    let mut bytes = vec![0; libdd_ipc::max_message_size()];
+    {
+        let mut sender = transport.inner.lock().unwrap();
+        sender.max_outstanding = 21;
+        for _ in 0..11 {
+            sender.channel.try_send_request(&empty).unwrap();
+            peer.try_recv_raw(&mut bytes).unwrap();
+        }
+        for _ in 0..9 {
+            assert_eq!(
+                sender.enqueue_actions(&empty).unwrap_err().kind(),
+                std::io::ErrorKind::WouldBlock
+            );
+        }
+    }
+    let mut row = event();
+    row.evaluation_count = 1;
+    row.last_evaluation = row.first_evaluation;
+    row.targeting_key = Some("x".repeat(16 * 1024));
+    row.normalize();
+    let mut observation = request(vec![row]);
+    if let SidecarInterfaceRequest::EnqueueActions { actions, .. } = &mut observation {
+        actions.retain(|action| matches!(action, SidecarAction::FfeFlagEvaluationBatch(_)));
+    }
+    assert_eq!(
+        try_submit_ffe(&transport, &mut observation),
+        FfeSubmissionStatus::Accepted
+    );
+    let (len, _) = peer.try_recv_raw(&mut bytes).unwrap();
+    let decoded: SidecarInterfaceRequest = decode(&bytes[..len]).unwrap();
+    let SidecarInterfaceRequest::EnqueueActions { actions, .. } = decoded else {
+        panic!("wrong request")
+    };
+    let [SidecarAction::FfeFlagEvaluationBatch(batch)] = actions.as_slice() else {
+        panic!("wrong actions")
+    };
+    let [row] = batch.flag_evaluations.as_slice() else {
+        panic!("wrong row count")
+    };
+    assert!(row.is_degraded);
+    assert!(row.targeting_key.is_none() && row.context.is_none());
+    assert_eq!(row.evaluation_count, 1);
+    assert_eq!(transport.inner.lock().unwrap().channel.0.outstanding(), 12);
+    assert_eq!(
+        peer.try_recv_raw(&mut bytes).unwrap_err().kind(),
+        std::io::ErrorKind::WouldBlock
+    );
 }

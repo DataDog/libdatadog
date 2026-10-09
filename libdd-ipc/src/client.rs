@@ -32,55 +32,6 @@ pub struct IpcClientConn {
     closed: bool,
 }
 
-#[cfg(all(test, target_os = "linux"))]
-mod tests {
-    use super::*;
-
-    #[test]
-    #[cfg_attr(miri, ignore)]
-    fn recoverable_packet_rejection_preserves_accounting_and_legacy_policy() {
-        for recoverable in [false, true] {
-            let (conn, peer) = SeqpacketConn::socketpair().unwrap();
-            let bytes: libc::c_int = 4096;
-            // SAFETY: valid socket and pointer/length for a live integer.
-            assert_eq!(
-                unsafe {
-                    libc::setsockopt(
-                        conn.as_raw_fd(),
-                        libc::SOL_SOCKET,
-                        libc::SO_SNDBUF,
-                        (&bytes as *const libc::c_int).cast(),
-                        std::mem::size_of_val(&bytes).try_into().unwrap(),
-                    )
-                },
-                0
-            );
-            let mut client = IpcClientConn::new(conn);
-            if recoverable {
-                let err = client
-                    .try_send_with_rejection(vec![0; 16 * 1024], &[])
-                    .unwrap_err();
-                assert_eq!(err.raw_os_error(), Some(libc::EMSGSIZE));
-            } else {
-                assert!(!client.try_send(vec![0; 16 * 1024], &[]));
-            }
-            assert_eq!(client.outstanding(), 0);
-            assert_eq!(client.is_closed(), !recoverable);
-            if recoverable {
-                client.try_send_with_rejection(vec![7], &[]).unwrap();
-                assert_eq!(client.outstanding(), 1);
-                let mut buf = [0; 1];
-                assert_eq!(peer.try_recv_raw(&mut buf).unwrap().0, 1);
-                assert_eq!(buf, [7]);
-                peer.try_send_raw(vec![0], &[]).unwrap();
-                client.drain_acks();
-                assert_eq!(client.outstanding(), 0);
-                assert!(!client.is_closed());
-            }
-        }
-    }
-}
-
 impl IpcClientConn {
     pub fn new(conn: SeqpacketConn) -> Self {
         Self {
@@ -126,33 +77,16 @@ impl IpcClientConn {
         }
     }
 
-    /// Attempt a non-blocking send.
+    /// Attempt a non-blocking send and return its outcome.
     ///
-    /// Returns `false` if the socket would block (EAGAIN). `data` is consumed
-    /// regardless of whether the transport accepts it.
-    pub fn try_send(&mut self, data: Vec<u8>, fds: &[RawFd]) -> bool {
-        match self.conn.try_send_raw(data, fds) {
-            Ok(()) => {
-                self.send_count += 1;
-                true
-            }
-            Err(e) if e.kind() == io::ErrorKind::WouldBlock => false,
-            Err(_) => {
-                // Fatal error (e.g. EPIPE): mark connection as closed.
-                self.closed = true;
-                false
-            }
+    /// A full socket or oversized packet rejects this message without closing
+    /// the connection. Other transport errors retain the existing fatal policy,
+    /// including macOS ENOBUFS. Only accepted sends advance ACK accounting.
+    /// `data` is consumed even when the message is rejected.
+    pub fn try_send(&mut self, data: Vec<u8>, fds: &[RawFd]) -> io::Result<()> {
+        if data.len() > max_message_size() {
+            return Err(io::Error::from(io::ErrorKind::FileTooLarge));
         }
-    }
-
-    /// Attempt a non-blocking send with recoverable packet rejection.
-    ///
-    /// Like [`Self::try_send`], but returns the I/O error and leaves the connection
-    /// open on Unix `EMSGSIZE`: the packet was rejected, not the connection.
-    /// This lets callers drop oversized observations without reconnecting.
-    /// `WouldBlock` is also nonfatal. Only accepted sends advance ACK accounting;
-    /// `data` is consumed even when rejected. Existing `try_send` policy is unchanged.
-    pub fn try_send_with_rejection(&mut self, data: Vec<u8>, fds: &[RawFd]) -> io::Result<()> {
         match self.conn.try_send_raw(data, fds) {
             Ok(()) => {
                 self.send_count += 1;
@@ -218,5 +152,65 @@ impl IpcClientConn {
             }
             // Intermediate ack for a prior fire-and-forget message — continue.
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    #[cfg_attr(miri, ignore)]
+    fn oversized_packet_preserves_connection_and_ack_accounting() {
+        let (conn, peer) = SeqpacketConn::socketpair().unwrap();
+        let bytes: libc::c_int = 4096;
+        // SAFETY: valid socket and pointer/length for a live integer. Do not
+        // change the process-wide configured packet limit for this kernel test.
+        assert_eq!(
+            unsafe {
+                libc::setsockopt(
+                    conn.as_raw_fd(),
+                    libc::SOL_SOCKET,
+                    libc::SO_SNDBUF,
+                    (&bytes as *const libc::c_int).cast(),
+                    std::mem::size_of_val(&bytes).try_into().unwrap(),
+                )
+            },
+            0
+        );
+        let mut client = IpcClientConn::new(conn);
+        let err = client.try_send(vec![0; 16 * 1024], &[]).unwrap_err();
+        assert_eq!(err.raw_os_error(), Some(libc::EMSGSIZE));
+        assert_eq!(client.outstanding(), 0);
+        assert!(!client.is_closed());
+        client.try_send(vec![7], &[]).unwrap();
+        assert_eq!(client.outstanding(), 1);
+        let mut buf = [0; 1];
+        assert_eq!(peer.try_recv_raw(&mut buf).unwrap().0, 1);
+        assert_eq!(buf, [7]);
+        peer.try_send_raw(vec![0], &[]).unwrap();
+        client.drain_acks();
+        assert_eq!(client.outstanding(), 0);
+        assert!(!client.is_closed());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn configured_packet_limit_rejects_without_sending_or_closing() {
+        let (conn, peer) = SeqpacketConn::socketpair().unwrap();
+        let mut client = IpcClientConn::new(conn);
+        let err = client
+            .try_send(vec![0; max_message_size() + 1], &[])
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::FileTooLarge);
+        assert_eq!(client.outstanding(), 0);
+        assert!(!client.is_closed());
+        assert_eq!(
+            peer.try_recv_raw(&mut [0; 1]).unwrap_err().kind(),
+            io::ErrorKind::WouldBlock
+        );
+        client.try_send(vec![7], &[]).unwrap();
+        assert_eq!(client.outstanding(), 1);
     }
 }

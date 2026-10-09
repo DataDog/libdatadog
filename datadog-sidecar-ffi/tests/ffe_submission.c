@@ -11,7 +11,14 @@ int main(void) {
   };
   ddog_Slice_FfeScalarAttribute attributes = { .ptr = &attribute, .len = 1 };
   ddog_FfeSnapshotState snapshot = { 0 };
-  ddog_FfeSubmissionStatus status = ddog_sidecar_check_ffe_submission(NULL);
+  ddog_FfeTelemetryContext context = { 0 };
+  ddog_FfeFlagEvaluation event = { 0 };
+  ddog_InstanceId *instance = ddog_sidecar_instanceId_build(
+      DDOG_CHARSLICE_C("session"), DDOG_CHARSLICE_C("runtime"));
+  ddog_QueueId queue = ddog_sidecar_queueId_generate();
+  ddog_FfeSubmissionStatus status = ddog_sidecar_try_submit_ffe_flag_evaluation(
+      NULL, instance, &queue, &context, &event, attributes, &snapshot);
+  ddog_sidecar_instanceId_drop(instance);
   // Compile the complete submission signature against generated declarations.
   ddog_FfeSubmissionStatus (*submit)(const ddog_SidecarTransport *, const ddog_InstanceId *,
       const ddog_QueueId *, const ddog_FfeTelemetryContext *, const ddog_FfeFlagEvaluation *,

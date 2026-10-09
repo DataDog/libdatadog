@@ -38,22 +38,10 @@ pub struct FfeSnapshotState {
     pub targeting_key_invalid: bool,
 }
 
-/// Advisory, non-reconnecting check before preparing borrowed descriptors.
-/// The caller must first honor its track kill switch and check required identity.
-/// `Ready` reserves nothing: submission repeats admission. Count rejection once
-/// per evaluation, not once per API call. A null transport is unavailable.
-#[unsafe(no_mangle)]
-pub extern "C" fn ddog_sidecar_check_ffe_submission(
-    transport: Option<&SidecarTransport>,
-) -> FfeSubmissionStatus {
-    transport.map_or(
-        FfeSubmissionStatus::Unavailable,
-        blocking::check_ffe_submission,
-    )
-}
-
-/// Try to submit one evaluation; never wait for the sender, reconnect, or retain
-/// rejected input. `Accepted` means local transport acceptance, not delivery.
+/// Submit one evaluation through the shared sender without reconnecting or
+/// waiting for capacity/delivery. The ordinary mutex and platform synchronization
+/// may briefly wait. Bounded input conversion happens before shared load shedding;
+/// rejected observations are not retained. `Accepted` is not a delivery guarantee.
 /// Oversized observations are retried once without targeting key or event context;
 /// a successfully accepted reduced observation also returns `Accepted`. Required
 /// metadata and optional flag dimensions must still fit the IPC packet limit.
@@ -83,9 +71,12 @@ pub unsafe extern "C" fn ddog_sidecar_try_submit_ffe_flag_evaluation(
     let Some(transport) = transport else {
         return FfeSubmissionStatus::Unavailable;
     };
-    blocking::try_submit_ffe(transport, || {
-        build_request(instance_id, queue_id, context, event, attributes, snapshot)
-    })
+    let mut request =
+        match build_request(instance_id, queue_id, context, event, attributes, snapshot) {
+            Ok(request) => request,
+            Err(status) => return status,
+        };
+    blocking::try_submit_ffe(transport, &mut request)
 }
 
 fn bounded_context_text<'a>(
@@ -824,18 +815,13 @@ mod tests {
     #[test]
     #[cfg(unix)]
     #[cfg_attr(miri, ignore)]
-    fn ffi_rechecks_admission_and_owns_the_accepted_snapshot() {
+    fn ffi_owns_the_accepted_snapshot() {
         let (conn, peer) = libdd_ipc::SeqpacketConn::socketpair().unwrap();
         let transport = SidecarTransport::from(conn);
         let instance = InstanceId::new("session", "runtime");
         let queue = QueueId::from(1);
-        assert_eq!(
-            ddog_sidecar_check_ffe_submission(Some(&transport)),
-            FfeSubmissionStatus::Ready
-        );
         let mut source = event(true);
         let mut value = String::from("captured");
-        let guard = transport.inner.lock().unwrap();
         let send = |attrs: &[FfeScalarAttribute<'_>]| unsafe {
             ddog_sidecar_try_submit_ffe_flag_evaluation(
                 Some(&transport),
@@ -847,8 +833,6 @@ mod tests {
                 &FfeSnapshotState::default(),
             )
         };
-        assert_eq!(send(&[attr("key", &value)]), FfeSubmissionStatus::Busy);
-        drop(guard);
         assert_eq!(send(&[attr("key", &value)]), FfeSubmissionStatus::Accepted);
         value.clear();
         source.observe_full_evaluation_data = false;
@@ -868,7 +852,17 @@ mod tests {
         );
         assert!(batch.flag_evaluations[0].observe_full_evaluation_data);
         assert_eq!(
-            ddog_sidecar_check_ffe_submission(None),
+            unsafe {
+                ddog_sidecar_try_submit_ffe_flag_evaluation(
+                    None,
+                    &instance,
+                    &queue,
+                    &metadata(),
+                    &source,
+                    Slice::empty(),
+                    &FfeSnapshotState::default(),
+                )
+            },
             FfeSubmissionStatus::Unavailable
         );
     }

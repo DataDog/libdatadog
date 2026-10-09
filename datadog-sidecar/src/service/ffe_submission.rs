@@ -1,34 +1,35 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Local admission outcomes for best-effort flagevaluation submission.
+//! Outcomes for best-effort flagevaluation submission.
 
-/// A successful readiness check reserves nothing; submission rechecks admission.
-/// Count a rejected observation once, not once for each check. These outcomes
-/// are not metric names and must not be reported through the rejected EVP path.
+use std::io;
+
+/// Local submission outcomes, not metric names or delivery guarantees.
+/// Do not report a rejected observation recursively through the EVP path.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FfeSubmissionStatus {
-    /// Advisory only; no snapshot or message has been accepted.
-    Ready,
     /// Accepted by the local transport, not necessarily delivered to the sidecar or intake.
     Accepted,
-    /// Absent, closed, or poisoned transport. Recovery belongs to ordinary lifecycle code.
+    /// Absent, closed, poisoned, or failed transport. Recovery belongs to lifecycle code.
     Unavailable,
-    /// Another caller owns the sender; no waiting was attempted.
-    Busy,
-    /// Shared outstanding-message ceiling reached before snapshot construction.
-    QueueFull,
-    /// Rejected by the shared low-priority shedding policy before snapshot construction.
-    LoadShed,
-    /// Required priority messages could not be sent first.
-    PriorityPending,
-    /// The observation could not be accepted immediately after admission.
+    /// Rejected by shared load shedding, pending configuration, or socket backpressure.
     WouldBlock,
-    /// Invalid required input or a request other than one FFE observation.
+    /// Invalid required input for the single-observation interface.
     InvalidInput,
-    /// Exceeds the existing IPC packet ceiling; the connection remains usable.
+    /// The observation still exceeds a packet limit after any reduced-event retry.
     PayloadTooLarge,
-    /// Request encoding failed before any bytes were sent.
-    EncodingError,
+}
+
+impl From<io::Error> for FfeSubmissionStatus {
+    fn from(error: io::Error) -> Self {
+        match error.kind() {
+            io::ErrorKind::WouldBlock => Self::WouldBlock,
+            io::ErrorKind::FileTooLarge => Self::PayloadTooLarge,
+            #[cfg(unix)]
+            _ if error.raw_os_error() == Some(libc::EMSGSIZE) => Self::PayloadTooLarge,
+            _ => Self::Unavailable,
+        }
+    }
 }

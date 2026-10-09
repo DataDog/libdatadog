@@ -11,9 +11,8 @@
 //!
 //! `SidecarSender` takes `&mut self`; the caller is responsible for exclusive access.
 
-use crate::service::ffe_submission::FfeSubmissionStatus;
 use crate::service::{
-    InstanceId, QueueId, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
+    InstanceId, QueueId, SerializedTracerHeaderTags, SessionConfig,
     sidecar_interface::{
         DynamicInstrumentationConfigState, SidecarFlushOptions, SidecarInterfaceChannel,
         SidecarInterfaceClientRequest, SidecarInterfaceRequest,
@@ -28,9 +27,6 @@ use libdd_trace_utils::trace_utils::TracerGenericTags;
 use std::collections::HashMap;
 use std::{io, time::Duration};
 use tracing::trace;
-
-#[cfg(all(test, unix))]
-mod ffe_submission_tests;
 
 /// Priority outbox for state-change (coalesced) messages.
 ///
@@ -173,152 +169,6 @@ pub struct SidecarSender {
 }
 
 impl SidecarSender {
-    /// Advisory FFE admission check. Drains available ACKs but never waits,
-    /// reconnects, advances shedding, or reserves a slot.
-    pub fn check_ffe_submission(&mut self) -> FfeSubmissionStatus {
-        if self.channel.0.is_closed() {
-            return FfeSubmissionStatus::Unavailable;
-        }
-        if self.channel.0.outstanding() >= self.max_outstanding / 2 {
-            self.channel.0.drain_acks();
-        }
-        if self.channel.0.is_closed() {
-            FfeSubmissionStatus::Unavailable
-        } else if self.channel.0.outstanding() >= self.max_outstanding {
-            FfeSubmissionStatus::QueueFull
-        } else {
-            FfeSubmissionStatus::Ready
-        }
-    }
-
-    /// Submit one FFE observation without waiting or reconnecting. `build` runs
-    /// only after admission; it must bound and normalize borrowed input before
-    /// ownership. No request is retained when submission is rejected.
-    /// A size rejection gets one retry without targeting key or event context.
-    /// Both full and degraded observations return `Accepted` on success.
-    /// Retains the existing transport policy: macOS `ENOBUFS` can close the
-    /// connection, unlike `WouldBlock`. Further observations are skipped until
-    /// an ordinary transport/lifecycle operation reconnects outside evaluation.
-    pub fn try_submit_ffe<F>(&mut self, build: F) -> FfeSubmissionStatus
-    where
-        F: FnOnce() -> Result<SidecarInterfaceRequest, FfeSubmissionStatus>,
-    {
-        let status = self.check_ffe_submission();
-        if status != FfeSubmissionStatus::Ready {
-            return status;
-        }
-        if let Err(status) = self.try_drain_ffe_outbox() {
-            return status;
-        }
-        let status = self.check_ffe_submission();
-        if status != FfeSubmissionStatus::Ready {
-            return status;
-        }
-        if self.channel.0.outstanding() > self.max_outstanding / 2 {
-            self.enqueue_actions_counter = self.enqueue_actions_counter.wrapping_add(1) % 10;
-            if self.enqueue_actions_counter != 0 {
-                return FfeSubmissionStatus::LoadShed;
-            }
-        }
-        let mut request = match build() {
-            Ok(request) => request,
-            Err(status) => return status,
-        };
-        if !matches!(&request, SidecarInterfaceRequest::EnqueueActions { actions, .. }
-            if matches!(actions.as_slice(), [SidecarAction::FfeFlagEvaluationBatch(batch)]
-                if batch.flag_evaluations.len() == 1))
-        {
-            return FfeSubmissionStatus::InvalidInput;
-        }
-        let status = Self::try_send_ffe_request(&mut self.channel, &request);
-        if status != FfeSubmissionStatus::PayloadTooLarge {
-            return status;
-        }
-        let SidecarInterfaceRequest::EnqueueActions { actions, .. } = &mut request else {
-            return status;
-        };
-        let [SidecarAction::FfeFlagEvaluationBatch(batch)] = actions.as_mut_slice() else {
-            return status;
-        };
-        let [event] = batch.flag_evaluations.as_mut_slice() else {
-            return status;
-        };
-        if !event.is_degraded && (event.targeting_key.is_some() || event.context.is_some()) {
-            // Match the final EVP size fallback. Move straight to the reduced
-            // send: no second admission, load-shed decision, or retained copy.
-            event.targeting_key = None;
-            event.context = None;
-            event.is_degraded = true;
-            return Self::try_send_ffe_request(&mut self.channel, &request);
-        }
-        status
-    }
-
-    /// FFE also sends pending configuration, which can fail serialization (for
-    /// example, a non-UTF-8 log path). Keep that failure out of the C boundary and
-    /// leave the failed slot, and all later slots, queued for lifecycle recovery.
-    fn try_drain_ffe_outbox(&mut self) -> Result<(), FfeSubmissionStatus> {
-        for slot in self.outbox.slots_mut() {
-            if let Some(request) = slot {
-                if self.channel.0.outstanding() >= self.max_outstanding {
-                    return Err(FfeSubmissionStatus::PriorityPending);
-                }
-                match Self::try_send_ffe_request(&mut self.channel, request) {
-                    FfeSubmissionStatus::Accepted => *slot = None,
-                    FfeSubmissionStatus::WouldBlock => {
-                        return Err(FfeSubmissionStatus::PriorityPending);
-                    }
-                    status => return Err(status),
-                }
-            }
-        }
-        Ok(())
-    }
-
-    /// Fallible send for an observation or the configuration that precedes it.
-    /// Other producers retain their existing generated send path.
-    fn try_send_ffe_request(
-        channel: &mut SidecarInterfaceChannel,
-        request: &SidecarInterfaceRequest,
-    ) -> FfeSubmissionStatus {
-        let size = match bincode::serialized_size(&request) {
-            Ok(size) => size,
-            Err(_) => return FfeSubmissionStatus::EncodingError,
-        };
-        let Ok(size) = usize::try_from(size) else {
-            return FfeSubmissionStatus::PayloadTooLarge;
-        };
-        if size > libdd_ipc::max_message_size() {
-            return FfeSubmissionStatus::PayloadTooLarge;
-        }
-        let Some(capacity) = size.checked_add(libdd_ipc::platform::HANDLE_SUFFIX_SIZE) else {
-            return FfeSubmissionStatus::PayloadTooLarge;
-        };
-        let mut data = Vec::with_capacity(capacity);
-        if bincode::serialize_into(&mut data, &request).is_err() {
-            return FfeSubmissionStatus::EncodingError;
-        }
-        // Configuration can transfer handles on Windows. Preserve those and the
-        // request's ACK policy, just like the ordinary generated send method.
-        let mut sink = libdd_ipc::handles::FdSink::new();
-        let Ok(()) = libdd_ipc::handles::TransferHandles::copy_handles(request, &mut sink);
-        let handles = sink.into_fds();
-        let result = if request.expects_response() {
-            channel.0.try_send_with_rejection(data, &handles)
-        } else {
-            channel.0.conn.try_send_raw(data, &handles)
-        };
-        match result {
-            Ok(()) => FfeSubmissionStatus::Accepted,
-            Err(e) if e.kind() == io::ErrorKind::WouldBlock => FfeSubmissionStatus::WouldBlock,
-            #[cfg(unix)]
-            Err(e) if e.raw_os_error() == Some(libc::EMSGSIZE) => {
-                FfeSubmissionStatus::PayloadTooLarge
-            }
-            Err(_) => FfeSubmissionStatus::Unavailable,
-        }
-    }
-
     pub fn new(channel: SidecarInterfaceChannel) -> Self {
         Self {
             channel,
@@ -341,7 +191,7 @@ impl SidecarSender {
                 if self.channel.0.outstanding() >= self.max_outstanding {
                     return false;
                 }
-                if !self.channel.try_send_request(msg) {
+                if self.channel.try_send_request(msg).is_err() {
                     return false;
                 }
                 *slot = None;
@@ -502,19 +352,19 @@ impl SidecarSender {
         self.try_drain_outbox();
     }
 
-    /// Enqueue telemetry actions.
+    /// Send an already-built `EnqueueActions` request after pending configuration.
     ///
-    /// When `outstanding > max_outstanding / 2`, 90% of calls are dropped to shed load.
-    pub fn enqueue_actions(
-        &mut self,
-        instance_id: InstanceId,
-        queue_id: QueueId,
-        actions: Vec<SidecarAction>,
-    ) {
+    /// When `outstanding > max_outstanding / 2`, 90% of calls are dropped.
+    /// Outbox backpressure and load shedding return `WouldBlock`; nothing is
+    /// retained. Callers needing only best-effort delivery may ignore the result.
+    pub fn enqueue_actions(&mut self, request: &SidecarInterfaceRequest) -> io::Result<()> {
         if !self.try_drain_outbox() {
-            return;
+            return Err(io::Error::from(if self.channel.0.is_closed() {
+                io::ErrorKind::NotConnected
+            } else {
+                io::ErrorKind::WouldBlock
+            }));
         }
-        // Load-shed: drop 90% when buffer is more than half full.
         let outstanding = self.channel.0.outstanding();
         if outstanding > self.max_outstanding / 2 {
             self.enqueue_actions_counter = self.enqueue_actions_counter.wrapping_add(1) % 10;
@@ -523,12 +373,10 @@ impl SidecarSender {
                     "enqueue_actions dropped: load-shedding (buffer more than half full) - outstanding: {}/{}",
                     outstanding, self.max_outstanding,
                 );
-                return;
+                return Err(io::Error::from(io::ErrorKind::WouldBlock));
             }
-            // The 10% that passes through falls to the try_send below.
         }
-        self.channel
-            .try_send_enqueue_actions(instance_id, queue_id, actions);
+        self.channel.try_send_request(request)
     }
 
     pub fn send_trace_v04_shm(
@@ -714,5 +562,81 @@ impl SidecarSender {
     pub fn stats(&mut self) -> Result<String, libdd_ipc::codec::DecodeError> {
         self.drain_outbox_blocking();
         self.channel.call_stats()
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use libdd_ipc::{SeqpacketConn, codec};
+
+    fn request() -> SidecarInterfaceRequest {
+        SidecarInterfaceRequest::EnqueueActions {
+            instance_id: InstanceId::new("session", "runtime"),
+            queue_id: QueueId::from(1),
+            actions: vec![],
+        }
+    }
+
+    fn receive(peer: &SeqpacketConn) -> SidecarInterfaceRequest {
+        let mut bytes = [0; 1024];
+        let (len, _) = peer.try_recv_raw(&mut bytes).unwrap();
+        codec::decode(&bytes[..len]).unwrap()
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn pending_configuration_precedes_actions_after_acks_restore_capacity() {
+        let (conn, peer) = SeqpacketConn::socketpair().unwrap();
+        let mut sender = SidecarSender::new(SidecarInterfaceChannel::new(conn));
+        sender.max_outstanding = 21;
+        for _ in 0..21 {
+            sender.channel.try_send_request(&request()).unwrap();
+            receive(&peer);
+        }
+        sender.set_session_default_service_name(Some("configured-service".into()));
+        assert_eq!(
+            sender.enqueue_actions(&request()).unwrap_err().kind(),
+            io::ErrorKind::WouldBlock
+        );
+        for _ in 0..21 {
+            peer.try_send_raw(vec![0], &[]).unwrap();
+        }
+        sender.enqueue_actions(&request()).unwrap();
+        assert!(
+            matches!(receive(&peer), SidecarInterfaceRequest::SetSessionDefaultServiceName {
+            name: Some(name),
+        } if name == "configured-service")
+        );
+        assert!(matches!(
+            receive(&peer),
+            SidecarInterfaceRequest::EnqueueActions { .. }
+        ));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn actions_use_the_existing_shared_load_shedding_policy() {
+        let (conn, peer) = SeqpacketConn::socketpair().unwrap();
+        let mut sender = SidecarSender::new(SidecarInterfaceChannel::new(conn));
+        sender.max_outstanding = 21;
+        for _ in 0..11 {
+            sender.channel.try_send_request(&request()).unwrap();
+            receive(&peer);
+        }
+        let mut accepted = 0;
+        for _ in 0..20 {
+            match sender.enqueue_actions(&request()) {
+                Ok(()) => {
+                    accepted += 1;
+                    assert!(matches!(
+                        receive(&peer),
+                        SidecarInterfaceRequest::EnqueueActions { .. }
+                    ));
+                }
+                Err(error) => assert_eq!(error.kind(), io::ErrorKind::WouldBlock),
+            }
+        }
+        assert_eq!(accepted, 2);
     }
 }
