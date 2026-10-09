@@ -10,9 +10,9 @@
 #[cfg(feature = "external-observations")]
 pub(super) use super::observations::{record_dropped, record_payload};
 
-#[cfg(not(feature = "external-observations"))]
+#[cfg(all(feature = "telemetry", not(feature = "external-observations")))]
 pub(super) fn record_payload(
-    _payload: impl FnOnce() -> super::payload_telemetry::SendPayloadTelemetry,
+    _payload: impl FnOnce() -> crate::telemetry::SendPayloadTelemetry,
 ) -> bool {
     false
 }

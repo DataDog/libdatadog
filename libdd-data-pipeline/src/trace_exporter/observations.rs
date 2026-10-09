@@ -12,8 +12,8 @@
 //! A report is scoped to one observed call through a task-local, so the send path needs no
 //! extra parameters and concurrent callers cannot consume each other's observations.
 
-use super::payload_telemetry::SendPayloadTelemetry;
 use super::{AgentResponse, TraceExporter, TraceExporterError};
+use crate::telemetry::SendPayloadTelemetry;
 use libdd_capabilities::{HttpClientCapability, LogWriterCapability, MaybeSend, SleepCapability};
 use libdd_shared_runtime::SharedRuntime;
 use libdd_trace_utils::span::TraceData;
