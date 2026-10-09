@@ -251,12 +251,15 @@ impl TraceFlusher {
         let response = send_data.send(&self.capabilities).await;
         self.metrics.lock_or_panic().update(&response);
         match response.last_result {
-            Ok(response) => {
+            Ok(response) if response.status().is_success() => {
                 if endpoint.api_key.is_none() {
                     // not when intake
                     self.write_remote_configs(endpoint.clone(), response.into_body().to_vec());
                 }
                 info!("Successfully flushed traces to {endpoint:?}");
+            }
+            Ok(response) => {
+                error!(status = %response.status(), "Error sending trace");
             }
             Err(e) => {
                 error!("Error sending trace: {e:?}");
@@ -318,6 +321,61 @@ mod tests {
     use httpmock::MockServer;
     use libdd_trace_utils::test_utils::{create_send_data, poll_for_mock_hit};
     use std::sync::Arc;
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn http_errors_are_not_logged_or_published_as_success() {
+        use libdd_trace_utils::send_with_retry::{RetryBackoffType, RetryStrategy};
+        use std::io::{Read, Seek, SeekFrom};
+
+        for intake in [false, true] {
+            for (status, attempts) in [(200, 1), (400, 3), (503, 3)] {
+                let server = MockServer::start_async().await;
+                let response = server.mock(|when, then| {
+                    when.method(httpmock::Method::POST).path("/traces");
+                    then.status(status).body(r#"{"rate_by_service":{}}"#);
+                });
+                let endpoint = Endpoint {
+                    url: server.url("/traces").parse().unwrap(),
+                    api_key: intake.then(|| "test-key".into()),
+                    ..Default::default()
+                };
+                let flusher = TraceFlusher::default();
+                let mut data = create_send_data(1, &endpoint);
+                data.set_retry_strategy(RetryStrategy::new(2, 1, RetryBackoffType::Constant, None));
+                let mut log = tempfile::tempfile().unwrap();
+                let subscriber = tracing_subscriber::fmt()
+                    .with_writer(log.try_clone().unwrap())
+                    .with_ansi(false)
+                    .without_time()
+                    .finish();
+                let guard = tracing::subscriber::set_default(subscriber);
+
+                flusher.send_and_handle_trace(data).await;
+                drop(guard);
+
+                response.assert_calls(attempts);
+                let success = status < 300;
+                assert_eq!(
+                    flusher.stats().agent_config_writers,
+                    u32::from(success && !intake),
+                    "status {status}"
+                );
+                let metrics = flusher.collect_metrics();
+                assert_eq!(metrics.api_requests, u64::try_from(attempts).unwrap());
+                assert_eq!(metrics.api_errors_status_code, u64::from(!success));
+                let mut text = String::new();
+                log.seek(SeekFrom::Start(0)).unwrap();
+                log.read_to_string(&mut text).unwrap();
+                assert_eq!(
+                    text.contains("Successfully flushed traces"),
+                    success,
+                    "{text}"
+                );
+                assert_eq!(text.contains("Error sending trace"), !success, "{text}");
+            }
+        }
+    }
 
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
