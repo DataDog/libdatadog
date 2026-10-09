@@ -365,7 +365,7 @@ pub(crate) async fn receive_report_from_stream(
     timeout: Duration,
     stream: &mut (impl AsyncBufReadExt + std::marker::Unpin),
     access: ReceiverFileAccess,
-) -> anyhow::Result<Option<(CrashtrackerConfiguration, CrashInfo)>> {
+) -> anyhow::Result<Option<(CrashtrackerConfiguration, CrashInfo, DebugLogger)>> {
     let mut builder = CrashInfoBuilder::new();
     let mut stdin_state = StdinState::Waiting;
     let mut config: Option<CrashtrackerConfiguration> = None;
@@ -557,7 +557,7 @@ pub(crate) async fn receive_report_from_stream(
         );
     }
 
-    Ok(Some((config, crash_info)))
+    Ok(Some((config, crash_info, debug_logger)))
 }
 
 /// Attach files using the report's access policy. Rejections must not reveal the target's contents

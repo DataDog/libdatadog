@@ -559,37 +559,61 @@ impl ErrorsIntakeUploader {
             return Ok(());
         }
 
-        // Build HTTP request using the same pattern as telemetry
-        let mut req_builder =
-            endpoint.to_request_builder(concat!("crashtracker/", env!("CARGO_PKG_VERSION")))?;
+        // Serialize once, reuse across retries
+        use super::{UPLOAD_MAX_RETRIES, is_retryable_status, retry_delay};
+        let body_str = serde_json::to_string(payload)?;
+        let timeout = Duration::from_millis(endpoint.timeout_ms);
+        let client = libdd_common::http_common::new_client_periodic();
+        let has_api_key = endpoint.api_key.is_some();
 
-        // Add errors intake specific headers
-        if endpoint.api_key.is_some() {
-            // Direct intake - DD-API-KEY is added by to_request_builder
-        } else {
-            // Agent proxy - add EvP subdomain header
-            req_builder =
-                req_builder.header("X-Datadog-EVP-Subdomain", PROD_ERRORS_INTAKE_SUBDOMAIN);
+        let mut last_err = None;
+        for attempt in 1..=UPLOAD_MAX_RETRIES {
+            let mut req_builder =
+                endpoint.to_request_builder(concat!("crashtracker/", env!("CARGO_PKG_VERSION")))?;
+
+            if !has_api_key {
+                // Agent proxy - add EvP subdomain header
+                req_builder =
+                    req_builder.header("X-Datadog-EVP-Subdomain", PROD_ERRORS_INTAKE_SUBDOMAIN);
+            }
+
+            let req = req_builder
+                .method(http::Method::POST)
+                .header(
+                    http::header::CONTENT_TYPE,
+                    libdd_common::header::APPLICATION_JSON,
+                )
+                .body(body_str.clone().into())?;
+
+            match tokio::time::timeout(timeout, client.request(req)).await {
+                Ok(Ok(resp)) => {
+                    let status = resp.status();
+                    if status.is_success() {
+                        return Ok(());
+                    }
+                    if !is_retryable_status(status) {
+                        return Err(anyhow::anyhow!(
+                            "Errors intake upload rejected with status {status}"
+                        ));
+                    }
+                    last_err = Some(anyhow::anyhow!(
+                        "Errors intake upload failed with status {status}"
+                    ));
+                }
+                Ok(Err(e)) => {
+                    last_err = Some(anyhow::anyhow!("Errors intake upload request error: {e}"));
+                }
+                Err(_) => {
+                    last_err = Some(anyhow::anyhow!("Errors intake upload timed out"));
+                }
+            }
+
+            if attempt < UPLOAD_MAX_RETRIES {
+                tokio::time::sleep(retry_delay(attempt)).await;
+            }
         }
 
-        let req = req_builder
-            .method(http::Method::POST)
-            .header(
-                http::header::CONTENT_TYPE,
-                libdd_common::header::APPLICATION_JSON,
-            )
-            .body(serde_json::to_string(payload)?.into())?;
-
-        // Create HTTP client and send request
-        let client = libdd_common::http_common::new_client_periodic();
-
-        tokio::time::timeout(
-            Duration::from_millis(endpoint.timeout_ms),
-            client.request(req),
-        )
-        .await??;
-
-        Ok(())
+        Err(last_err.unwrap_or_else(|| anyhow::anyhow!("Errors intake upload failed")))
     }
 }
 
