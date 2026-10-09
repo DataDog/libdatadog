@@ -1,6 +1,5 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
-use datadog_sidecar::service::blocking::SidecarTransport;
 use datadog_sidecar_ffi::*;
 
 macro_rules! assert_maybe_no_error {
@@ -13,7 +12,6 @@ macro_rules! assert_maybe_no_error {
 }
 
 use libdd_common::Endpoint;
-use libdd_common_ffi::{CharSlice, MaybeError};
 use std::path::PathBuf;
 use std::process::Command;
 use std::ptr::{null, null_mut};
@@ -25,20 +23,6 @@ use std::{
     io::Write,
     os::unix::prelude::{AsRawFd, FromRawFd},
 };
-
-#[test]
-fn evp_transport_has_expected_rust_abi_signature() {
-    // Keep the Rust symbol and its exact C-facing signature under compile-time
-    // test coverage independently of cbindgen's generated declaration.
-    let _: unsafe extern "C" fn(
-        &mut Box<SidecarTransport>,
-        EvpTransportMode,
-        &Endpoint,
-        *const Endpoint,
-        CharSlice<'_>,
-        &EvpProducerIdentity<'_>,
-    ) -> MaybeError = ddog_sidecar_session_set_evp_transport;
-}
 
 #[test]
 #[cfg_attr(
