@@ -249,7 +249,25 @@ impl TraceFlusher {
     async fn send_and_handle_trace(&self, send_data: SendData) {
         let endpoint = send_data.get_target().clone();
         let response = send_data.send(&self.capabilities).await;
+        self.handle_trace_response(endpoint, response);
+    }
+
+    fn handle_trace_response(&self, endpoint: Endpoint, response: SendDataResult) {
         self.metrics.lock_or_panic().update(&response);
+        if response.errors_timeout != 0
+            || response.errors_network != 0
+            || response.errors_status_code != 0
+            || response.chunks_dropped != 0
+        {
+            error!(
+                errors_timeout = response.errors_timeout,
+                errors_network = response.errors_network,
+                errors_status_code = response.errors_status_code,
+                chunks_dropped = response.chunks_dropped,
+                "Error sending trace: one or more requests failed"
+            );
+            return;
+        }
         match response.last_result {
             Ok(response) if response.status().is_success() => {
                 if endpoint.api_key.is_none() {
@@ -319,15 +337,34 @@ impl TraceFlusher {
 mod tests {
     use super::*;
     use httpmock::MockServer;
+    use libdd_capabilities::{Bytes, HttpError, SleepCapability};
+    use libdd_trace_utils::send_with_retry::{RetryBackoffType, RetryStrategy};
     use libdd_trace_utils::test_utils::{create_send_data, poll_for_mock_hit};
+    use libdd_trace_utils::tracer_payload::TracerPayloadCollection;
+    use std::collections::VecDeque;
+    use std::io::{Read, Seek, SeekFrom};
     use std::sync::Arc;
+
+    async fn capture_logs(future: impl std::future::Future<Output = ()>) -> String {
+        let mut log = tempfile::tempfile().unwrap();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(log.try_clone().unwrap())
+            .with_ansi(false)
+            .without_time()
+            .finish();
+        let guard = tracing::subscriber::set_default(subscriber);
+        future.await;
+        drop(guard);
+
+        let mut text = String::new();
+        log.seek(SeekFrom::Start(0)).unwrap();
+        log.read_to_string(&mut text).unwrap();
+        text
+    }
 
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn http_errors_are_not_logged_or_published_as_success() {
-        use libdd_trace_utils::send_with_retry::{RetryBackoffType, RetryStrategy};
-        use std::io::{Read, Seek, SeekFrom};
-
         for intake in [false, true] {
             for (status, attempts) in [(200, 1), (400, 3), (503, 3)] {
                 let server = MockServer::start_async().await;
@@ -343,16 +380,7 @@ mod tests {
                 let flusher = TraceFlusher::default();
                 let mut data = create_send_data(1, &endpoint);
                 data.set_retry_strategy(RetryStrategy::new(2, 1, RetryBackoffType::Constant, None));
-                let mut log = tempfile::tempfile().unwrap();
-                let subscriber = tracing_subscriber::fmt()
-                    .with_writer(log.try_clone().unwrap())
-                    .with_ansi(false)
-                    .without_time()
-                    .finish();
-                let guard = tracing::subscriber::set_default(subscriber);
-
-                flusher.send_and_handle_trace(data).await;
-                drop(guard);
+                let text = capture_logs(flusher.send_and_handle_trace(data)).await;
 
                 response.assert_calls(attempts);
                 let success = status < 300;
@@ -364,9 +392,6 @@ mod tests {
                 let metrics = flusher.collect_metrics();
                 assert_eq!(metrics.api_requests, u64::try_from(attempts).unwrap());
                 assert_eq!(metrics.api_errors_status_code, u64::from(!success));
-                let mut text = String::new();
-                log.seek(SeekFrom::Start(0)).unwrap();
-                log.read_to_string(&mut text).unwrap();
                 assert_eq!(
                     text.contains("Successfully flushed traces"),
                     success,
@@ -374,6 +399,126 @@ mod tests {
                 );
                 assert_eq!(text.contains("Error sending trace"), !success, "{text}");
             }
+        }
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    enum Reply {
+        Status(u16),
+        Network,
+        Timeout,
+        Body,
+        Build,
+    }
+
+    #[derive(Clone, Debug, Default)]
+    struct ScriptedClient(Arc<Mutex<VecDeque<Reply>>>);
+
+    impl HttpClientCapability for ScriptedClient {
+        fn new_client() -> Self {
+            Self::default()
+        }
+
+        fn new_periodic() -> Self {
+            Self::default()
+        }
+
+        async fn request(
+            &self,
+            _: http::Request<Bytes>,
+        ) -> Result<http::Response<Bytes>, HttpError> {
+            match self
+                .0
+                .lock()
+                .unwrap()
+                .pop_front()
+                .expect("unexpected request")
+            {
+                Reply::Status(status) => Ok(http::Response::builder()
+                    .status(status)
+                    .body(Bytes::from_static(br#"{"rate_by_service":{}}"#))
+                    .unwrap()),
+                Reply::Network => Err(HttpError::Network(anyhow::anyhow!("network failure"))),
+                Reply::Timeout => Err(HttpError::Timeout),
+                Reply::Body => Err(HttpError::ResponseBody(anyhow::anyhow!("body failure"))),
+                Reply::Build => Err(HttpError::InvalidRequest(anyhow::anyhow!(
+                    "invalid request"
+                ))),
+            }
+        }
+    }
+
+    impl SleepCapability for ScriptedClient {
+        fn new() -> Self {
+            Self::default()
+        }
+
+        async fn sleep(&self, _: Duration) {
+            futures::future::pending::<()>().await;
+        }
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn partial_batches_are_not_reported_as_success() {
+        use Reply::*;
+
+        for replies in [
+            [Status(503), Status(200), Status(200)],
+            [Status(200), Status(200), Status(503)],
+            [Status(200), Network, Status(200)],
+            [Status(200), Status(200), Network],
+            [Status(200), Status(200), Timeout],
+            [Status(200), Status(200), Body],
+            [Status(200), Status(200), Build],
+            [Status(200), Status(200), Status(200)],
+        ] {
+            let endpoint = Endpoint::from_slice("http://localhost/traces");
+            let template = create_send_data(1, &endpoint);
+            let TracerPayloadCollection::V07(payloads) = template.get_payloads() else {
+                panic!("expected V07 payload");
+            };
+            let mut payload = payloads[0].clone();
+            payload.chunks.push(Default::default());
+            let mut data = SendData::new(
+                3,
+                TracerPayloadCollection::V07(vec![payload; 3]),
+                Default::default(),
+                &endpoint,
+            );
+            data.set_retry_strategy(RetryStrategy::new(0, 0, RetryBackoffType::Constant, None));
+            let client = ScriptedClient(Arc::new(Mutex::new(VecDeque::from(replies))));
+            let result = data.send(&client).await;
+            assert!(client.0.lock().unwrap().is_empty());
+            let success = replies.iter().all(|reply| matches!(reply, Status(200)));
+            let dropped = u64::from(!success);
+            assert_eq!(result.requests_count, 3);
+            assert_eq!(result.chunks_sent, 3 - dropped);
+            assert_eq!(result.chunks_dropped, dropped);
+
+            let flusher = TraceFlusher::default();
+            let text =
+                capture_logs(async { flusher.handle_trace_response(endpoint, result) }).await;
+
+            assert_eq!(
+                text.contains("Successfully flushed traces"),
+                success,
+                "{replies:?}: {text}"
+            );
+            assert_eq!(
+                text.contains("Error sending trace"),
+                !success,
+                "{replies:?}: {text}"
+            );
+            assert_eq!(
+                flusher.stats().agent_config_writers,
+                u32::from(success),
+                "{replies:?}"
+            );
+            let metrics = flusher.collect_metrics();
+            assert_eq!(metrics.api_requests, 3);
+            assert_eq!(metrics.chunks_sent, 3 - dropped);
+            assert_eq!(metrics.chunks_dropped, dropped);
         }
     }
 

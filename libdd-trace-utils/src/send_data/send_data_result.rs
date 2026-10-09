@@ -8,8 +8,9 @@ use std::collections::HashMap;
 
 #[derive(Debug)]
 pub struct SendDataResult {
-    /// Keeps track of the last request result.
-    /// HTTP error responses are retained as `Ok`; callers must check the status.
+    /// Retained response or explicit error, not an aggregate success indicator.
+    /// HTTP errors are retained as `Ok`; subsequent transport errors may leave it
+    /// unchanged. Check the status and aggregate error/drop counters.
     pub last_result: anyhow::Result<http::Response<Bytes>>,
     /// Count metric for 'trace_api.requests'.
     pub requests_count: u64,
