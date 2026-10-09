@@ -1573,7 +1573,7 @@ mod tests {
             (*template.producer).clone(),
         )
         .unwrap();
-        session.set_evp_transport(config.clone()).unwrap();
+        session.add_evp_transport(config.clone()).unwrap();
         let before = session.get_evp_transport(EVP_SUBDOMAIN_VALUE).unwrap();
         let client = ScriptedCapabilities::new(vec![
             info_response(&[]),
@@ -1582,7 +1582,7 @@ mod tests {
         ]);
         assert!(send(&before, &client, "/api/v2/exposures").await);
 
-        session.set_evp_transport(config).unwrap();
+        session.add_evp_transport(config).unwrap();
         let after = session.get_evp_transport(EVP_SUBDOMAIN_VALUE).unwrap();
         assert!(before.shares_route_state(&after));
         assert_eq!(before.deduplication_scope(), after.deduplication_scope());
@@ -1599,11 +1599,11 @@ mod tests {
             (*template.producer).clone(),
         )
         .unwrap();
-        session.set_evp_transport(config.clone()).unwrap();
+        session.add_evp_transport(config.clone()).unwrap();
         let before = session.get_evp_transport(EVP_SUBDOMAIN_VALUE).unwrap();
         let client = ScriptedCapabilities::new(vec![info_response(&[])]);
         assert!(!send(&before, &client, "/api/v2/exposures").await);
-        session.set_evp_transport(config).unwrap();
+        session.add_evp_transport(config).unwrap();
         let after = session.get_evp_transport(EVP_SUBDOMAIN_VALUE).unwrap();
         assert!(before.shares_route_state(&after));
         assert!(!send(&after, &client, "/api/v2/flagevaluation").await);

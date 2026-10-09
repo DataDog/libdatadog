@@ -220,7 +220,8 @@ impl SessionInfo {
         }
     }
 
-    pub(crate) fn set_evp_transport(
+    /// Add or replace one target without changing other transports in this session.
+    pub(crate) fn add_evp_transport(
         &self,
         config: EvpTransportConfigWithIdentity,
     ) -> Result<(), super::EvpTransportConfigError> {
@@ -530,7 +531,7 @@ mod tests {
         };
 
         session
-            .set_evp_transport(
+            .add_evp_transport(
                 EvpTransportConfigWithIdentity::new(
                     crate::service::EvpTransportConfig::prefer_local_then_direct(
                         agent_endpoint,
@@ -568,7 +569,7 @@ mod tests {
         };
         for intake_subdomain in [EVENT_PLATFORM_INTAKE_SUBDOMAIN, "errors-intake"] {
             session
-                .set_evp_transport(
+                .add_evp_transport(
                     EvpTransportConfigWithIdentity::new(
                         crate::service::EvpTransportConfig::agent_only(
                             agent_endpoint.clone(),
@@ -631,7 +632,7 @@ mod tests {
         .unwrap();
         for change in 0..5 {
             let session = SessionInfo::default();
-            session.set_evp_transport(config.clone()).unwrap();
+            session.add_evp_transport(config.clone()).unwrap();
             let before = session
                 .get_evp_transport(EVENT_PLATFORM_INTAKE_SUBDOMAIN)
                 .unwrap();
@@ -653,7 +654,7 @@ mod tests {
                             .unwrap()
                 }
             }
-            session.set_evp_transport(updated).unwrap();
+            session.add_evp_transport(updated).unwrap();
             let after = session
                 .get_evp_transport(EVENT_PLATFORM_INTAKE_SUBDOMAIN)
                 .unwrap();

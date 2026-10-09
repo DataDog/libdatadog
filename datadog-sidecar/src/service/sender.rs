@@ -36,7 +36,7 @@ use tracing::trace;
 #[derive(Default)]
 struct SidecarOutbox {
     set_session_config: Option<SidecarInterfaceRequest>,
-    set_session_evp_transports: BTreeMap<String, SidecarInterfaceRequest>,
+    add_session_evp_transports: Option<SidecarInterfaceRequest>,
     set_session_process_tags: Option<SidecarInterfaceRequest>,
     set_session_default_service_name: Option<SidecarInterfaceRequest>,
     set_session_user_service_defined: Option<SidecarInterfaceRequest>,
@@ -48,8 +48,10 @@ struct SidecarOutbox {
 }
 
 impl SidecarOutbox {
-    fn remaining_slots_mut(&mut self) -> [&mut Option<SidecarInterfaceRequest>; 8] {
+    fn slots_mut(&mut self) -> [&mut Option<SidecarInterfaceRequest>; 10] {
         [
+            &mut self.set_session_config,
+            &mut self.add_session_evp_transports,
             &mut self.set_session_process_tags,
             &mut self.set_session_default_service_name,
             &mut self.set_session_user_service_defined,
@@ -107,7 +109,7 @@ fn coalesce(outbox: &mut SidecarOutbox, incoming: SidecarInterfaceRequest) {
     }
     if matches!(incoming, SidecarInterfaceRequest::ShutdownSession {}) {
         outbox.set_session_config = None;
-        outbox.set_session_evp_transports.clear();
+        outbox.add_session_evp_transports = None;
     }
     if let SidecarInterfaceRequest::ClearQueueId {
         ref instance_id,
@@ -126,10 +128,23 @@ fn coalesce(outbox: &mut SidecarOutbox, incoming: SidecarInterfaceRequest) {
         SidecarInterfaceRequest::SetSessionConfig { .. } => {
             outbox.set_session_config = Some(incoming);
         }
-        SidecarInterfaceRequest::SetSessionEvpTransport { ref config } => {
-            outbox
-                .set_session_evp_transports
-                .insert(config.transport.intake_subdomain.clone(), incoming);
+        SidecarInterfaceRequest::AddSessionEvpTransports { configs } => {
+            if let Some(SidecarInterfaceRequest::AddSessionEvpTransports { configs: pending }) =
+                &mut outbox.add_session_evp_transports
+            {
+                for config in configs {
+                    if let Some(previous) = pending.iter_mut().find(|previous| {
+                        previous.transport.intake_subdomain == config.transport.intake_subdomain
+                    }) {
+                        *previous = config;
+                    } else {
+                        pending.push(config);
+                    }
+                }
+            } else {
+                outbox.add_session_evp_transports =
+                    Some(SidecarInterfaceRequest::AddSessionEvpTransports { configs });
+            }
         }
         SidecarInterfaceRequest::SetSessionProcessTags { .. } => {
             outbox.set_session_process_tags = Some(incoming);
@@ -197,33 +212,7 @@ impl SidecarSender {
         if self.channel.0.outstanding() >= self.max_outstanding / 2 {
             self.channel.0.drain_acks();
         }
-        if let Some(msg) = &self.outbox.set_session_config {
-            if self.channel.0.outstanding() >= self.max_outstanding
-                || !self.channel.try_send_request(msg)
-            {
-                return false;
-            }
-            self.outbox.set_session_config = None;
-        }
-
-        let targets: Vec<_> = self
-            .outbox
-            .set_session_evp_transports
-            .keys()
-            .cloned()
-            .collect();
-        for target in targets {
-            if self.channel.0.outstanding() >= self.max_outstanding {
-                return false;
-            }
-            let msg = &self.outbox.set_session_evp_transports[&target];
-            if !self.channel.try_send_request(msg) {
-                return false;
-            }
-            self.outbox.set_session_evp_transports.remove(&target);
-        }
-
-        for slot in self.outbox.remaining_slots_mut() {
+        for slot in self.outbox.slots_mut() {
             if let Some(msg) = slot {
                 if self.channel.0.outstanding() >= self.max_outstanding {
                     return false;
@@ -240,15 +229,7 @@ impl SidecarSender {
     /// Stop on the first failed send, retaining that message and everything after it.
     /// Data must not overtake session setup or an explicit routing update.
     fn drain_outbox_blocking(&mut self) -> io::Result<()> {
-        if let Some(msg) = &self.outbox.set_session_config {
-            self.channel.send_request_blocking(msg)?;
-            self.outbox.set_session_config = None;
-        }
-        while let Some(entry) = self.outbox.set_session_evp_transports.first_entry() {
-            self.channel.send_request_blocking(entry.get())?;
-            entry.remove();
-        }
-        for slot in self.outbox.remaining_slots_mut() {
+        for slot in self.outbox.slots_mut() {
             if let Some(msg) = slot.as_ref() {
                 self.channel.send_request_blocking(msg)?;
                 *slot = None;
@@ -294,7 +275,9 @@ impl SidecarSender {
             .insert(config.transport.intake_subdomain.clone(), config.clone());
         coalesce(
             &mut self.outbox,
-            SidecarInterfaceRequest::SetSessionEvpTransport { config },
+            SidecarInterfaceRequest::AddSessionEvpTransports {
+                configs: vec![config],
+            },
         );
         self.try_drain_outbox();
     }
@@ -637,12 +620,14 @@ mod tests {
     use libdd_common::Endpoint;
 
     fn evp_request(target: &str, version: &str) -> SidecarInterfaceRequest {
-        SidecarInterfaceRequest::SetSessionEvpTransport {
-            config: EvpTransportConfigWithIdentity::new(
-                EvpTransportConfig::agent_only(Endpoint::default(), target),
-                EvpProducerIdentity::new("dd-trace-rb", version).unwrap(),
-            )
-            .unwrap(),
+        SidecarInterfaceRequest::AddSessionEvpTransports {
+            configs: vec![
+                EvpTransportConfigWithIdentity::new(
+                    EvpTransportConfig::agent_only(Endpoint::default(), target),
+                    EvpProducerIdentity::new("dd-trace-rb", version).unwrap(),
+                )
+                .unwrap(),
+            ],
         }
     }
 
@@ -653,18 +638,20 @@ mod tests {
         coalesce(&mut outbox, evp_request("errors-intake", "1.0.0"));
         coalesce(&mut outbox, evp_request("event-platform-intake", "2.0.0"));
 
-        assert_eq!(outbox.set_session_evp_transports.len(), 2);
-        let event_platform = &outbox.set_session_evp_transports["event-platform-intake"];
-        match event_platform {
-            SidecarInterfaceRequest::SetSessionEvpTransport { config } => {
-                assert_eq!(config.producer.version(), "2.0.0");
+        match outbox.add_session_evp_transports.as_ref().unwrap() {
+            SidecarInterfaceRequest::AddSessionEvpTransports { configs } => {
+                assert_eq!(configs.len(), 2);
+                assert_eq!(
+                    configs[0].transport.intake_subdomain,
+                    "event-platform-intake"
+                );
+                assert_eq!(configs[0].producer.version(), "2.0.0");
+                assert_eq!(configs[1].transport.intake_subdomain, "errors-intake");
+                assert_eq!(configs[1].producer.version(), "1.0.0");
             }
             _ => unreachable!(),
         }
-        assert!(
-            outbox
-                .set_session_evp_transports
-                .contains_key("errors-intake")
-        );
+        coalesce(&mut outbox, SidecarInterfaceRequest::ShutdownSession {});
+        assert!(outbox.add_session_evp_transports.is_none());
     }
 }

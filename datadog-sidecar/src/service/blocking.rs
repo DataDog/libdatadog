@@ -668,13 +668,71 @@ mod tests {
         buf[..len].to_vec()
     }
 
-    fn assert_evp_config(peer: &SeqpacketConn, expected: &EvpTransportConfigWithIdentity) {
+    fn assert_evp_configs(peer: &SeqpacketConn, expected: &[EvpTransportConfigWithIdentity]) {
         match libdd_ipc::codec::decode::<SidecarInterfaceRequest>(&receive_packet(peer)).unwrap() {
-            SidecarInterfaceRequest::SetSessionEvpTransport { config } => {
-                assert_eq!(&config, expected)
+            SidecarInterfaceRequest::AddSessionEvpTransports { configs } => {
+                assert_eq!(configs, expected)
             }
             request => panic!("expected EVP configuration, got {request:?}"),
         }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn coalesced_evp_updates_follow_session_setup_before_data() {
+        let (conn, peer) = SeqpacketConn::socketpair().unwrap();
+        let mut transport = SidecarTransport::from(conn);
+        let sender = transport.inner.get_mut().unwrap();
+        sender.max_outstanding = 0;
+        let config = super::SessionConfig {
+            endpoint: Endpoint::default(),
+            dogstatsd_endpoint: Endpoint::default(),
+            language: "php".into(),
+            language_version: "8.2".into(),
+            tracer_version: "1.0.0".into(),
+            flush_interval: Duration::from_secs(1),
+            remote_config_poll_interval: Duration::from_secs(1),
+            telemetry_heartbeat_interval: Duration::from_secs(1),
+            telemetry_extended_heartbeat_interval: Duration::from_secs(1),
+            force_flush_size: 1,
+            force_drop_size: 2,
+            retry_interval: Duration::from_secs(1),
+            log_level: "warn".into(),
+            log_file: crate::config::LogMethod::Disabled,
+            remote_config_products: vec![],
+            remote_config_capabilities: vec![],
+            remote_config_enabled: false,
+            process_tags: vec![],
+            peer_tag_keys: vec![],
+            span_kinds_stats_computed: vec![],
+            hostname: String::new(),
+            root_service: String::new(),
+            root_session_id: None,
+            parent_session_id: None,
+            otlp_metrics_endpoint: None,
+        };
+        sender.set_session_config("test-session".into(), config, false);
+        let event_platform = evp_config("event-platform-intake", "2.0.0");
+        let errors = evp_config("errors-intake", "1.0.0");
+        sender.set_session_evp_transport(evp_config("event-platform-intake", "1.0.0"));
+        sender.set_session_evp_transport(errors.clone());
+        sender.set_session_evp_transport(event_platform.clone());
+
+        // Release backpressure through the ordinary nonblocking drain.
+        sender.max_outstanding = 100;
+        sender.set_session_process_tags(vec![]);
+        sender.drain_and_send_raw_blocking(b"DATA").unwrap();
+        assert!(matches!(
+            libdd_ipc::codec::decode::<SidecarInterfaceRequest>(&receive_packet(&peer)).unwrap(),
+            SidecarInterfaceRequest::SetSessionConfig { session_id, .. }
+                if session_id == "test-session"
+        ));
+        assert_evp_configs(&peer, &[event_platform, errors]);
+        assert!(matches!(
+            libdd_ipc::codec::decode::<SidecarInterfaceRequest>(&receive_packet(&peer)).unwrap(),
+            SidecarInterfaceRequest::SetSessionProcessTags { .. }
+        ));
+        assert_eq!(receive_packet(&peer), b"DATA");
     }
 
     #[test]
@@ -685,7 +743,9 @@ mod tests {
         let sender = transport.inner.get_mut().unwrap();
         sender.max_outstanding = 0;
         let config = evp_config("event-platform-intake", "1.0.0");
+        let other = evp_config("errors-intake", "1.0.0");
         sender.set_session_evp_transport(config.clone());
+        sender.set_session_evp_transport(other.clone());
         drop(peer);
         assert!(sender.drain_and_send_raw_blocking(b"DATA").is_err());
 
@@ -693,7 +753,7 @@ mod tests {
         let (conn, peer) = SeqpacketConn::socketpair().unwrap();
         sender.channel = super::SidecarInterfaceChannel::new(conn);
         sender.drain_and_send_raw_blocking(b"DATA").unwrap();
-        assert_evp_config(&peer, &config);
+        assert_evp_configs(&peer, &[config, other]);
         assert_eq!(receive_packet(&peer), b"DATA");
     }
 
@@ -734,8 +794,8 @@ mod tests {
                 .unwrap()
                 .drain_and_send_raw_blocking(b"DATA")
                 .unwrap();
-            assert_evp_config(&peer, &other);
-            assert_evp_config(&peer, &config);
+            assert_evp_configs(&peer, &[other]);
+            assert_evp_configs(&peer, &[config]);
             assert_eq!(receive_packet(&peer), b"DATA");
         }
     }
@@ -773,9 +833,9 @@ mod tests {
                 .unwrap()
                 .drain_and_send_raw_blocking(b"DATA")
                 .unwrap();
-            assert_evp_config(&peer, &fresh);
+            assert_evp_configs(&peer, &[fresh]);
             if !shutdown {
-                assert_evp_config(&peer, &evp_config("errors-intake", "old"));
+                assert_evp_configs(&peer, &[evp_config("errors-intake", "old")]);
             }
             assert_eq!(receive_packet(&peer), b"DATA");
         }

@@ -344,15 +344,16 @@ pub trait SidecarInterface {
     /// The connection must right after that start emitting crashtracker messages.
     async fn enter_crashtracker_receiver();
 
-    /// Sets the explicit EVP transport for one intake target in this session.
+    /// Adds a batch of explicit per-target EVP transport updates to this session.
     ///
     /// This is separate from `SessionConfig` so consumers can opt in or update
     /// their target without replacing the session's other transports. Repeated
     /// identical configuration preserves routing and deduplication state.
+    /// Targets absent from the batch are unchanged; this is not a full snapshot.
     ///
     /// Keep this method last: request variants cross the bincode IPC boundary,
     /// so appending preserves the ordinals of all existing messages.
-    async fn set_session_evp_transport(config: EvpTransportConfigWithIdentity);
+    async fn add_session_evp_transports(configs: Vec<EvpTransportConfigWithIdentity>);
 }
 
 #[cfg(test)]
@@ -407,15 +408,23 @@ mod tests {
             EvpProducerIdentity::new("dd-trace-rb", "3.0.0").unwrap(),
         )
         .unwrap();
+        let configs = vec![
+            agentless_config,
+            EvpTransportConfigWithIdentity::new(
+                EvpTransportConfig::agent_only(Endpoint::default(), "errors-intake"),
+                EvpProducerIdentity::new("dd-trace-rb", "3.0.0").unwrap(),
+            )
+            .unwrap(),
+        ];
         let encoded =
-            libdd_ipc::codec::encode(&SidecarInterfaceClientRequest::SetSessionEvpTransport {
-                config: agentless_config.clone(),
+            libdd_ipc::codec::encode(&SidecarInterfaceClientRequest::AddSessionEvpTransports {
+                configs: configs.clone(),
             });
         let decoded: SidecarInterfaceRequest = libdd_ipc::codec::decode(&encoded)
             .expect("identity-bearing Agentless config request should decode");
         match decoded {
-            SidecarInterfaceRequest::SetSessionEvpTransport { config } => {
-                assert_eq!(config, agentless_config);
+            SidecarInterfaceRequest::AddSessionEvpTransports { configs: decoded } => {
+                assert_eq!(decoded, configs);
             }
             _ => panic!("decoded the wrong Agentless config request variant"),
         }

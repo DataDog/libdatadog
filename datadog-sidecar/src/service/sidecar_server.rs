@@ -1000,17 +1000,16 @@ impl SidecarInterface for ConnectionSidecarHandler {
         }
     }
 
-    async fn set_session_evp_transport(&self, config: EvpTransportConfigWithIdentity) {
+    async fn add_session_evp_transports(&self, configs: Vec<EvpTransportConfigWithIdentity>) {
         let Some(session_id) = self.session_id.get() else {
             warn!("cannot configure EVP transport before session configuration");
             return;
         };
-        if let Err(error) = self
-            .server
-            .get_session(session_id)
-            .set_evp_transport(config)
-        {
-            warn!("rejected EVP transport configuration: {error}");
+        let session = self.server.get_session(session_id);
+        for config in configs {
+            if let Err(error) = session.add_evp_transport(config) {
+                warn!("rejected EVP transport configuration: {error}");
+            }
         }
     }
 
@@ -1930,7 +1929,15 @@ mod tests {
         )
         .unwrap();
         tokio::task::block_in_place(|| {
-            sender.set_session_evp_transport(agentless_config);
+            sender.max_outstanding = 0;
+            sender.set_session_evp_transport(agentless_config.clone());
+            sender.set_session_evp_transport(
+                EvpTransportConfigWithIdentity::new(
+                    EvpTransportConfig::agent_only(Endpoint::default(), "errors-intake"),
+                    EvpProducerIdentity::new("dd-trace-rb", "4.0.0").unwrap(),
+                )
+                .unwrap(),
+            );
             sender
                 .ping()
                 .expect("identity-bearing Agentless config IPC round trip");
@@ -1941,6 +1948,25 @@ mod tests {
             .expect("Agentless transport installed");
         assert_eq!(agentless_transport.producer().origin(), "dd-trace-rb");
         assert_eq!(agentless_transport.producer().version(), "3.0.0");
+        let errors_transport = server
+            .get_session("session")
+            .get_evp_transport("errors-intake")
+            .expect("second target from the same batch installed");
+        assert_eq!(errors_transport.producer().version(), "4.0.0");
+        assert!(!agentless_transport.shares_route_state(&errors_transport));
+
+        tokio::task::block_in_place(|| {
+            sender.set_session_evp_transport(agentless_config);
+            sender.ping().expect("single-target update IPC round trip");
+        });
+        assert!(
+            errors_transport.shares_route_state(
+                &server
+                    .get_session("session")
+                    .get_evp_transport("errors-intake")
+                    .expect("a batch must not remove targets it does not mention")
+            )
+        );
 
         // Windows receives inside block_in_place: abort cannot interrupt its
         // blocking pipe read. Close the client first so that read can finish.
@@ -2239,7 +2265,7 @@ mod tests {
             cfg.tracer_version = "9.9.9".to_owned();
         });
         session
-            .set_evp_transport(
+            .add_evp_transport(
                 EvpTransportConfigWithIdentity::new(
                     EvpTransportConfig::prefer_local_then_direct(
                         endpoint,
