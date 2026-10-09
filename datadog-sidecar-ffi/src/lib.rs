@@ -1530,6 +1530,37 @@ pub extern "C" fn ddog_sidecar_reconnect(
     transport.reconnect(|| unsafe { factory() });
 }
 
+/// Continues on the connection of `connection` as another instance, keeping the state of
+/// `transport`. A fork child must do so with the transport it inherited: that connection still
+/// works, so `ddog_sidecar_reconnect` would keep it, but it belongs to the parent.
+///
+/// # Arguments
+///
+/// * `transport` - The inherited transport, whose connection is not used anymore.
+/// * `connection` - A new transport of the child, without configuration.
+/// * `instance_id` - The instance id of the child.
+/// * `remote_config_generation` - The remote config generation last read by the child.
+#[unsafe(no_mangle)]
+pub extern "C" fn ddog_sidecar_transport_replace_connection_as(
+    transport: &mut Box<SidecarTransport>,
+    connection: Box<SidecarTransport>,
+    instance_id: &InstanceId,
+    remote_config_generation: u64,
+) {
+    transport.replace_connection_as(connection, instance_id.clone(), remote_config_generation);
+}
+
+/// Releases the sockets of a transport inherited by a fork child from a thread which did not
+/// survive the fork, so that the sidecar drops the state of that thread. The transport itself is
+/// left alone: the thread may have been in the middle of using it.
+#[cfg(unix)]
+#[unsafe(no_mangle)]
+pub extern "C" fn ddog_sidecar_transport_release_inherited_fds(
+    transport: &mut Box<SidecarTransport>,
+) {
+    transport.release_inherited_fds()
+}
+
 /// Gets an agent info reader.
 #[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]

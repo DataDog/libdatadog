@@ -288,7 +288,9 @@ pub fn set_application(
     application: Option<ApplicationConfig>,
     remote_config_generation: u64,
 ) -> io::Result<()> {
-    transport.sender().set_application(application, remote_config_generation);
+    transport
+        .sender()
+        .set_application(application, remote_config_generation);
     Ok(())
 }
 

@@ -156,7 +156,7 @@ impl ConnectionState {
         true
     }
 
-    /// Marks the whole state as to be sent, for a new connection.
+    /// Marks the whole state as to be sent, for a new connection or a new session on it.
     fn resend_all(&mut self) {
         self.connection_config.pending = self.connection_config.value.is_some();
         self.process_tags.pending = self.process_tags.value.is_some();
@@ -253,6 +253,8 @@ impl SidecarSender {
             remote_config_notify_target,
             config,
         });
+        // The sidecar starts over with a new session: all state layered on it is sent again.
+        self.state.resend_all();
         self.try_drain_outbox();
     }
 
@@ -261,13 +263,10 @@ impl SidecarSender {
     pub fn set_instance_id(&mut self, instance_id: InstanceId, remote_config_generation: u64) {
         if let Some(connection) = self.state.connection_config.value.as_mut() {
             connection.instance_id = instance_id;
-            self.state.connection_config.pending = true;
         }
-        if matches!(self.state.application.value, Some(Some(_))) {
-            self.state.application.pending = true;
-        }
+        // Like a new configuration, the new instance starts over with a new session.
+        self.state.resend_all();
         self.state.application_generation = remote_config_generation;
-        self.state.pending_application_generation = None;
         self.try_drain_outbox();
     }
 
@@ -619,6 +618,38 @@ mod tests {
             sent_application(&received(&peer)),
             (DynamicInstrumentationConfigState::Enabled, 0)
         );
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn replaced_configuration_resends_the_state_layered_on_it() {
+        let (mut sender, peer) = sender();
+        let instance_id = InstanceId::new("session", "runtime");
+        sender.set_connection_config(instance_id.clone(), SessionConfig::for_test());
+        sender.set_user_service_defined(true);
+        sender.set_test_session_token("token".to_owned());
+        sender.set_application(Some(application("svc")), 3);
+        assert_eq!(received(&peer).len(), 4);
+
+        sender.set_connection_config(instance_id, SessionConfig::for_test());
+        // Unchanged since the previous session, which the sidecar replaced.
+        sender.set_user_service_defined(true);
+
+        match received(&peer).as_slice() {
+            [
+                SidecarInterfaceRequest::SetConnectionConfig { .. },
+                SidecarInterfaceRequest::SetUserServiceDefined { is_defined: true },
+                SidecarInterfaceRequest::SetTestSessionToken { token },
+                SidecarInterfaceRequest::SetApplication {
+                    application: replayed,
+                    remote_config_generation: 3,
+                },
+            ] => {
+                assert_eq!(token, "token");
+                assert_eq!(replayed.as_ref(), Some(&application("svc")));
+            }
+            other => panic!("unexpected requests for the new session: {other:?}"),
+        }
     }
 
     #[test]

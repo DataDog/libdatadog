@@ -805,6 +805,8 @@ impl SidecarInterface for ConnectionSidecarHandler {
         }
 
         self.session.store(session);
+        // The application is registered for the previous session: the client sends it again.
+        self.application.modify(|app| *app = None);
     }
 
     async fn set_process_tags(&mut self, process_tags: Vec<Tag>) {
@@ -1476,6 +1478,26 @@ mod tests {
             Some(test_application("remaining-service"))
         );
         assert_eq!(server.compute_stats().await.active_apps, 1);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn new_connection_config_drops_the_application_of_the_previous_session() {
+        let mut handler = test_handler(SidecarServer::default());
+        configure_session(&handler, InstanceId::new("session", "runtime"), |_| {});
+        handler
+            .set_application(Some(test_application("service")), 0)
+            .await;
+        assert!(handler.application.app.is_some());
+
+        handler
+            .set_connection_config(
+                InstanceId::new("session", "child"),
+                SessionConfig::for_test(),
+            )
+            .await;
+        assert!(handler.application.app.is_none());
     }
 
     #[tokio::test]
