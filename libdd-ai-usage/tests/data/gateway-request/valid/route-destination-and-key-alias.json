@@ -1,0 +1,64 @@
+{
+  "$schema": "../../../../schema/gateway-request-metric-fixture.schema.json",
+  "profile": "trajectory.gen_ai.gateway.request@0.1.0",
+  "case": "route-destination-and-key-alias",
+  "description": "A gateway that enabled its three deployment attributes. The request asked for the route chat-default, made two provider operations with one fallback, and its last operation went to the destination dest-7c1e. Every point carries the route, that destination, and the alias of the caller's key.",
+  "deployment_attributes": {
+    "trajectory.gateway.route": "chat-default",
+    "trajectory.gateway.destination.id": "dest-7c1e",
+    "trajectory.gateway.key.alias": "search-team-prod"
+  },
+  "observation": {
+    "operation_name": "chat",
+    "request_model": "chat-default",
+    "duration_seconds": 0.8,
+    "provider_operations": 2,
+    "provider_operation_coverage": "complete",
+    "fallbacks": 1
+  },
+  "expected_metrics": [
+    {
+      "name": "trajectory.gen_ai.gateway.request.duration",
+      "instrument": "histogram",
+      "unit": "s",
+      "value": 0.8,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.request.model": "chat-default",
+        "trajectory.observation.point": "gateway",
+        "trajectory.gateway.route": "chat-default",
+        "trajectory.gateway.destination.id": "dest-7c1e",
+        "trajectory.gateway.key.alias": "search-team-prod"
+      }
+    },
+    {
+      "name": "trajectory.gen_ai.gateway.request.fallbacks",
+      "instrument": "histogram",
+      "unit": "{fallback}",
+      "value": 1,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.request.model": "chat-default",
+        "trajectory.observation.point": "gateway",
+        "trajectory.gateway.route": "chat-default",
+        "trajectory.gateway.destination.id": "dest-7c1e",
+        "trajectory.gateway.key.alias": "search-team-prod"
+      }
+    },
+    {
+      "name": "trajectory.gen_ai.gateway.request.provider_operations",
+      "instrument": "histogram",
+      "unit": "{operation}",
+      "value": 2,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.request.model": "chat-default",
+        "trajectory.observation.point": "gateway",
+        "trajectory.gateway.route": "chat-default",
+        "trajectory.gateway.destination.id": "dest-7c1e",
+        "trajectory.gateway.key.alias": "search-team-prod",
+        "trajectory.provider.operation.coverage": "complete"
+      }
+    }
+  ]
+}

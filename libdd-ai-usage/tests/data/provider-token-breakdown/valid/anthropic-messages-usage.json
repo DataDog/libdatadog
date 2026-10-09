@@ -1,0 +1,75 @@
+{
+  "$schema": "../../../../schema/provider-token-breakdown-metric-fixture.schema.json",
+  "profile": "trajectory.gen_ai.client.token_breakdown@0.1.0",
+  "case": "anthropic-messages-usage",
+  "description": "A usage object in a provider's API shape, from the synthetic wire-format corpus (conformance/wire-formats/cases.json, case anthropic-full-response-cache-write-lifetime-to-bedrock): input_tokens 10 beside cache_read_input_tokens 40 and cache_creation_input_tokens 25, split 5 and 20 by lifetime. The reported input leaves cached tokens out, so the uncached input is the reported 10 and the parts sum to an inclusive input of 75.",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "anthropic",
+    "request_model": "claude-sonnet-4-5",
+    "input_basis": "excludes_cache",
+    "input_tokens": 10,
+    "output_tokens": 3,
+    "cache_read_input_tokens": 40,
+    "cache_write_input_tokens": 25,
+    "cache_write_5m_input_tokens": 5,
+    "cache_write_1h_input_tokens": 20,
+    "observation_point": "gateway"
+  },
+  "expected_metrics": [
+    {
+      "name": "gen_ai.client.inference.usage.cache_read.input_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 40,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "anthropic",
+        "gen_ai.request.model": "claude-sonnet-4-5",
+        "gen_ai.token.modality": "unknown",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.usage.cache_write.input_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 20,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "anthropic",
+        "gen_ai.request.model": "claude-sonnet-4-5",
+        "gen_ai.token.modality": "unknown",
+        "trajectory.cache.lifetime": "1h",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.usage.cache_write.input_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 5,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "anthropic",
+        "gen_ai.request.model": "claude-sonnet-4-5",
+        "gen_ai.token.modality": "unknown",
+        "trajectory.cache.lifetime": "5m",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "trajectory.gen_ai.client.inference.usage.uncached.input_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 10,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "anthropic",
+        "gen_ai.request.model": "claude-sonnet-4-5",
+        "gen_ai.token.modality": "unknown",
+        "trajectory.observation.point": "gateway"
+      }
+    }
+  ]
+}

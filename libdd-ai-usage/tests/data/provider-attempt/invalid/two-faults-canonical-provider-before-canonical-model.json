@@ -1,0 +1,18 @@
+{
+  "$schema": "../../../../schema/provider-attempt-metric-fixture.schema.json",
+  "profile": "gen_ai.client.provider_attempt@0.1.0",
+  "case": "two-faults-canonical-provider-before-canonical-model",
+  "description": "Within the canonical name the provider is checked first.",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "exampleai",
+    "duration_seconds": 1,
+    "streaming": false,
+    "input_tokens": 10,
+    "canonical_provider": "Example AI",
+    "canonical_model": "",
+    "observation_point": "gateway"
+  },
+  "expected_error_code": "identifier_invalid",
+  "expected_error": "canonical_provider must be"
+}

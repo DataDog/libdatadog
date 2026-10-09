@@ -1,0 +1,12 @@
+{
+  "$schema": "../../../../schema/gateway-request-metric-fixture.schema.json",
+  "profile": "trajectory.gen_ai.gateway.request@0.1.0",
+  "case": "count-without-coverage",
+  "observation": {
+    "operation_name": "chat",
+    "duration_seconds": 0.2,
+    "provider_operations": 2
+  },
+  "expected_error_code": "fields_contradict",
+  "expected_error": "provider_operation_coverage is required when provider_operations is present"
+}

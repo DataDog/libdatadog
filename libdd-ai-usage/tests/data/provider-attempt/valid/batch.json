@@ -1,0 +1,114 @@
+{
+  "$schema": "../../../../schema/provider-attempt-metric-fixture.schema.json",
+  "profile": "gen_ai.client.provider_attempt@0.1.0",
+  "case": "batch",
+  "description": "The provider served the operation as a batch request. The synthetic multipliers card prices a batch request at half input and output: 0.001 plus 0.0025, plus 0.001 per call, is 0.0045 USD. The token and cost Counters carry trajectory.request.batch with its one value, true; the Histograms do not.",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "exampleai",
+    "request_model": "ex-fast-1",
+    "duration_seconds": 30,
+    "streaming": false,
+    "input_tokens": 1000,
+    "output_tokens": 500,
+    "batch": true,
+    "cost_nano_usd": 4500000,
+    "cost_source": "calculated",
+    "cost_rate_card": "synthetic-multipliers@1",
+    "observation_point": "gateway"
+  },
+  "expected_metrics": [
+    {
+      "name": "gen_ai.client.inference.duration",
+      "instrument": "histogram",
+      "unit": "s",
+      "value": 30,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.request.model": "ex-fast-1",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.operation.input_tokens",
+      "instrument": "histogram",
+      "unit": "{token}",
+      "value": 1000,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.request.model": "ex-fast-1",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.operation.output_tokens",
+      "instrument": "histogram",
+      "unit": "{token}",
+      "value": 500,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.request.model": "ex-fast-1",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.usage.input_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 1000,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.request.model": "ex-fast-1",
+        "gen_ai.token.modality": "unknown",
+        "trajectory.request.batch": "true",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.usage.output_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 500,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.request.model": "ex-fast-1",
+        "gen_ai.token.modality": "unknown",
+        "trajectory.request.batch": "true",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "trajectory.gen_ai.client.inference.usage.cost",
+      "instrument": "counter",
+      "unit": "{nanoUSD}",
+      "value": 4500000,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.request.model": "ex-fast-1",
+        "trajectory.cost.source": "calculated",
+        "trajectory.cost.rate_card": "synthetic-multipliers@1",
+        "trajectory.request.batch": "true",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "trajectory.gen_ai.client.operation.cost",
+      "instrument": "histogram",
+      "unit": "{USD}",
+      "value": 0.0045,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.request.model": "ex-fast-1",
+        "trajectory.cost.source": "calculated",
+        "trajectory.observation.point": "gateway"
+      }
+    }
+  ]
+}

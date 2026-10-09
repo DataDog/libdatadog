@@ -1,0 +1,36 @@
+{
+  "$schema": "../../../../schema/provider-token-breakdown-metric-fixture.schema.json",
+  "profile": "trajectory.gen_ai.client.token_breakdown@0.1.0",
+  "case": "tier-without-write",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "anthropic",
+    "request_model": "claude-sonnet-4-5",
+    "input_tokens": 100,
+    "input_basis": "includes_cache",
+    "output_tokens": 1,
+    "cache_write_1h_input_tokens": 10,
+    "observation_point": "gateway"
+  },
+  "description": "A one-hour lifetime part reported without a cache-write total. The part is recorded under its lifetime; no total, remainder, or uncached input is inferred. A rejection in 0.2.0.",
+  "expected_metrics": [
+    {
+      "name": "gen_ai.client.inference.usage.cache_write.input_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 10,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "anthropic",
+        "gen_ai.request.model": "claude-sonnet-4-5",
+        "gen_ai.token.modality": "unknown",
+        "trajectory.cache.lifetime": "1h",
+        "trajectory.observation.point": "gateway"
+      }
+    }
+  ],
+  "expected_issues": [
+    "cache_read_missing",
+    "cache_write_missing"
+  ]
+}

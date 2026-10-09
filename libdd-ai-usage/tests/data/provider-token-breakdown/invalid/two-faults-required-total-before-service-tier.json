@@ -1,0 +1,15 @@
+{
+  "$schema": "../../../../schema/provider-token-breakdown-metric-fixture.schema.json",
+  "profile": "trajectory.gen_ai.client.token_breakdown@0.1.0",
+  "case": "two-faults-required-total-before-service-tier",
+  "description": "No input total, and a service tier that is not an identifier. The required totals are checked in step 6 and the tier in step 8.",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "exampleai",
+    "output_tokens": 5,
+    "service_tier": "priority tier",
+    "observation_point": "gateway"
+  },
+  "expected_error_code": "required_field_missing",
+  "expected_error": "input_tokens"
+}

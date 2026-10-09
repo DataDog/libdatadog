@@ -1,0 +1,36 @@
+{
+  "$schema": "../../../../schema/provider-attempt-metric-fixture.schema.json",
+  "profile": "gen_ai.client.provider_attempt@0.1.0",
+  "case": "null-element-in-a-member-it-does-not-define",
+  "description": "Two members this profile does not define hold a null array element: a made-up list, and the chunk interval list that only the provider-streaming profile defines. A member the profile does not define is ignored, whatever it holds, so the observation is valid and records its duration. The same null in an array the profile defines is field_type_invalid.",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "exampleai",
+    "duration_seconds": 0.31,
+    "streaming": false,
+    "annotations": [
+      null,
+      {
+        "note": null
+      }
+    ],
+    "output_chunk_intervals_seconds": [
+      0.1,
+      null
+    ],
+    "observation_point": "gateway"
+  },
+  "expected_metrics": [
+    {
+      "name": "gen_ai.client.inference.duration",
+      "instrument": "histogram",
+      "unit": "s",
+      "value": 0.31,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "trajectory.observation.point": "gateway"
+      }
+    }
+  ]
+}

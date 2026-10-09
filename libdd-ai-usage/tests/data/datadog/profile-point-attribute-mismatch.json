@@ -1,0 +1,23 @@
+{
+  "binding": "0.1.0",
+  "case": "profile-point-attribute-mismatch",
+  "description": "A point attribute that names another profile version than the one being submitted.",
+  "profile": "gen_ai.client.provider_attempt@0.1.0",
+  "historical": false,
+  "points": [
+    {
+      "name": "gen_ai.client.inference.usage.input_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 12,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.token.modality": "unknown",
+        "trajectory.profile": "gen_ai.client.provider_attempt@0.2.0",
+        "trajectory.observation.point": "gateway"
+      }
+    }
+  ],
+  "expected_error_code": "metric_profile_mismatch"
+}

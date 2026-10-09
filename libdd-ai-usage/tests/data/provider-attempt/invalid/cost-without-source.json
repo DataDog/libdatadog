@@ -1,0 +1,15 @@
+{
+  "$schema": "../../../../schema/provider-attempt-metric-fixture.schema.json",
+  "profile": "gen_ai.client.provider_attempt@0.1.0",
+  "case": "cost-without-source",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "anthropic",
+    "duration_seconds": 0.5,
+    "streaming": false,
+    "cost_usd": 3e-05,
+    "observation_point": "gateway"
+  },
+  "expected_error_code": "fields_contradict",
+  "expected_error": "cost_source is required when cost_usd is present"
+}

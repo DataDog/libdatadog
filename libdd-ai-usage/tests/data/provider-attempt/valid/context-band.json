@@ -1,0 +1,128 @@
+{
+  "$schema": "../../../../schema/provider-attempt-metric-fixture.schema.json",
+  "profile": "gen_ai.client.provider_attempt@0.1.0",
+  "case": "context-band",
+  "description": "A 250,000-token prompt priced in the upper band of the synthetic tiers card (250,000 at 6 per million plus 100 output at 22.5 per million is 1.50225 USD). The token and cost Counters carry the band; the Histograms and the server-tool Counter do not.",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "exampleai",
+    "request_model": "ex-long-1",
+    "duration_seconds": 4,
+    "streaming": false,
+    "input_tokens": 250000,
+    "output_tokens": 100,
+    "web_search_requests": 1,
+    "cost_nano_usd": 1502250000,
+    "cost_source": "calculated",
+    "cost_rate_card": "synthetic-tiers@1",
+    "context_band": "200k-1M",
+    "observation_point": "gateway"
+  },
+  "expected_metrics": [
+    {
+      "name": "gen_ai.client.inference.duration",
+      "instrument": "histogram",
+      "unit": "s",
+      "value": 4,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.request.model": "ex-long-1",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.operation.input_tokens",
+      "instrument": "histogram",
+      "unit": "{token}",
+      "value": 250000,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.request.model": "ex-long-1",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.operation.output_tokens",
+      "instrument": "histogram",
+      "unit": "{token}",
+      "value": 100,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.request.model": "ex-long-1",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.usage.input_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 250000,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.request.model": "ex-long-1",
+        "gen_ai.token.modality": "unknown",
+        "trajectory.context.band": "200k-1M",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.usage.output_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 100,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.request.model": "ex-long-1",
+        "gen_ai.token.modality": "unknown",
+        "trajectory.context.band": "200k-1M",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "trajectory.gen_ai.client.inference.usage.cost",
+      "instrument": "counter",
+      "unit": "{nanoUSD}",
+      "value": 1502250000,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.request.model": "ex-long-1",
+        "trajectory.cost.source": "calculated",
+        "trajectory.cost.rate_card": "synthetic-tiers@1",
+        "trajectory.context.band": "200k-1M",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "trajectory.gen_ai.client.inference.usage.server_tool.requests",
+      "instrument": "counter",
+      "unit": "{request}",
+      "value": 1,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.request.model": "ex-long-1",
+        "trajectory.server_tool.kind": "web_search",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "trajectory.gen_ai.client.operation.cost",
+      "instrument": "histogram",
+      "unit": "{USD}",
+      "value": 1.50225,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.request.model": "ex-long-1",
+        "trajectory.cost.source": "calculated",
+        "trajectory.observation.point": "gateway"
+      }
+    }
+  ]
+}

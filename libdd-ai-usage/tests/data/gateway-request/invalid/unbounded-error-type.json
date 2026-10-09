@@ -1,0 +1,12 @@
+{
+  "$schema": "../../../../schema/gateway-request-metric-fixture.schema.json",
+  "profile": "trajectory.gen_ai.gateway.request@0.1.0",
+  "case": "unbounded-error-type",
+  "observation": {
+    "operation_name": "chat",
+    "duration_seconds": 0.2,
+    "error_type": "failed for customer 123"
+  },
+  "expected_error_code": "identifier_invalid",
+  "expected_error": "error_type must be a low-cardinality identifier"
+}

@@ -1,0 +1,14 @@
+{
+  "$schema": "../../../../schema/provider-token-breakdown-metric-fixture.schema.json",
+  "profile": "trajectory.gen_ai.client.token_breakdown@0.1.0",
+  "case": "count-as-string",
+  "description": "A count given as a JSON string has the wrong type: a rejection with a code, never a failure to read the observation.",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "exampleai",
+    "input_tokens": "10",
+    "output_tokens": 1,
+    "observation_point": "gateway"
+  },
+  "expected_error_code": "field_type_invalid"
+}

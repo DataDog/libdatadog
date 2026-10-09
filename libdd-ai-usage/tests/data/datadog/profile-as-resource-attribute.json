@@ -1,0 +1,40 @@
+{
+  "binding": "0.1.0",
+  "case": "profile-as-resource-attribute",
+  "description": "The resource carries an attribute named trajectory.profile, with a value that names another profile. The portable contract puts the profile on the scope or the point, never on the resource, so the resource attribute is not submitted. The series has the one profile tag, of the profile being submitted.",
+  "profile": "gen_ai.client.provider_attempt@0.1.0",
+  "historical": false,
+  "points": [
+    {
+      "name": "gen_ai.client.inference.usage.input_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 12,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.token.modality": "unknown",
+        "trajectory.observation.point": "gateway"
+      }
+    }
+  ],
+  "resource_attributes": {
+    "service.name": "checkout",
+    "trajectory.profile": "gen_ai.client.provider_streaming@0.1.0"
+  },
+  "expected_series": [
+    {
+      "name": "gen_ai.client.inference.usage.input_tokens",
+      "type": "count",
+      "value": 12,
+      "tags": [
+        "gen_ai.operation.name:chat",
+        "gen_ai.provider.name:exampleai",
+        "gen_ai.token.modality:unknown",
+        "service:checkout",
+        "trajectory.observation.point:gateway",
+        "trajectory.profile:gen_ai.client.provider_attempt/0.1.0"
+      ]
+    }
+  ]
+}

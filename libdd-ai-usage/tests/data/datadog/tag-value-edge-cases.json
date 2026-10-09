@@ -1,0 +1,167 @@
+{
+  "binding": "0.1.0",
+  "case": "tag-value-edge-cases",
+  "description": "Six model values, to pin that normalization does nothing beyond its three steps. Two spaces become two underscores: nothing is collapsed. Leading and trailing underscores stay: nothing is trimmed. An empty value stays empty. The letter e with an acute accent as one code point becomes one underscore, and as e plus a combining accent becomes e and one underscore: Unicode is not normalized. A 250-character value keeps its length: nothing is truncated.",
+  "profile": "gen_ai.client.provider_attempt@0.1.0",
+  "historical": false,
+  "points": [
+    {
+      "name": "gen_ai.client.inference.usage.input_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 1,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.token.modality": "unknown",
+        "gen_ai.request.model": "A  B",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.usage.input_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 2,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.token.modality": "unknown",
+        "gen_ai.request.model": "_x_",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.usage.input_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 3,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.token.modality": "unknown",
+        "gen_ai.request.model": "",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.usage.input_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 4,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.token.modality": "unknown",
+        "gen_ai.request.model": "caf\u00e9",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.usage.input_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 5,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.token.modality": "unknown",
+        "gen_ai.request.model": "cafe\u0301",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.usage.input_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 6,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.token.modality": "unknown",
+        "gen_ai.request.model": "MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM",
+        "trajectory.observation.point": "gateway"
+      }
+    }
+  ],
+  "expected_series": [
+    {
+      "name": "gen_ai.client.inference.usage.input_tokens",
+      "type": "count",
+      "value": 3,
+      "tags": [
+        "gen_ai.operation.name:chat",
+        "gen_ai.provider.name:exampleai",
+        "gen_ai.request.model:",
+        "gen_ai.token.modality:unknown",
+        "trajectory.observation.point:gateway",
+        "trajectory.profile:gen_ai.client.provider_attempt/0.1.0"
+      ]
+    },
+    {
+      "name": "gen_ai.client.inference.usage.input_tokens",
+      "type": "count",
+      "value": 2,
+      "tags": [
+        "gen_ai.operation.name:chat",
+        "gen_ai.provider.name:exampleai",
+        "gen_ai.request.model:_x_",
+        "gen_ai.token.modality:unknown",
+        "trajectory.observation.point:gateway",
+        "trajectory.profile:gen_ai.client.provider_attempt/0.1.0"
+      ]
+    },
+    {
+      "name": "gen_ai.client.inference.usage.input_tokens",
+      "type": "count",
+      "value": 1,
+      "tags": [
+        "gen_ai.operation.name:chat",
+        "gen_ai.provider.name:exampleai",
+        "gen_ai.request.model:a__b",
+        "gen_ai.token.modality:unknown",
+        "trajectory.observation.point:gateway",
+        "trajectory.profile:gen_ai.client.provider_attempt/0.1.0"
+      ]
+    },
+    {
+      "name": "gen_ai.client.inference.usage.input_tokens",
+      "type": "count",
+      "value": 4,
+      "tags": [
+        "gen_ai.operation.name:chat",
+        "gen_ai.provider.name:exampleai",
+        "gen_ai.request.model:caf_",
+        "gen_ai.token.modality:unknown",
+        "trajectory.observation.point:gateway",
+        "trajectory.profile:gen_ai.client.provider_attempt/0.1.0"
+      ]
+    },
+    {
+      "name": "gen_ai.client.inference.usage.input_tokens",
+      "type": "count",
+      "value": 5,
+      "tags": [
+        "gen_ai.operation.name:chat",
+        "gen_ai.provider.name:exampleai",
+        "gen_ai.request.model:cafe_",
+        "gen_ai.token.modality:unknown",
+        "trajectory.observation.point:gateway",
+        "trajectory.profile:gen_ai.client.provider_attempt/0.1.0"
+      ]
+    },
+    {
+      "name": "gen_ai.client.inference.usage.input_tokens",
+      "type": "count",
+      "value": 6,
+      "tags": [
+        "gen_ai.operation.name:chat",
+        "gen_ai.provider.name:exampleai",
+        "gen_ai.request.model:mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm",
+        "gen_ai.token.modality:unknown",
+        "trajectory.observation.point:gateway",
+        "trajectory.profile:gen_ai.client.provider_attempt/0.1.0"
+      ]
+    }
+  ]
+}
