@@ -8,6 +8,7 @@
 //! map. However, since meta and metrics are expected to be typically small (20ish elements or
 //! less), linear scan is usually still competitive with hashmap's `get`.
 
+use libdd_trace_model::{AttributeValue, TraceText, ValueMap, ValueMapMut, ValueTypes};
 use serde::ser::{Serialize, Serializer};
 use std::borrow::Borrow;
 use std::collections::{HashMap, HashSet};
@@ -58,6 +59,57 @@ impl<K, V> Default for VecMap<K, V> {
             data: Default::default(),
             deduped: true,
         }
+    }
+}
+
+/// Upholds the [ValueMap] contract of yielding each key once: reads skip shadowed duplicates (see
+/// [VecMap::iter_unique]), and mutable traversals first drop them (see [VecMap::dedup_in_place]).
+impl<T: ValueTypes> ValueMap<T> for VecMap<T::Text, AttributeValue<T>> {
+    fn get(&self, key: &str) -> Option<&AttributeValue<T>> {
+        VecMap::get(self, key)
+    }
+
+    fn contains_key(&self, key: &str) -> bool {
+        VecMap::contains_key(self, key)
+    }
+
+    fn len(&self) -> usize {
+        self.len_unique()
+    }
+
+    fn iter<'a>(&'a self) -> impl Iterator<Item = (&'a str, &'a AttributeValue<T>)>
+    where
+        T: 'a,
+    {
+        self.iter_unique().map(|(k, v)| (k.as_str(), v))
+    }
+}
+
+impl<T: ValueTypes> ValueMapMut<T> for VecMap<T::Text, AttributeValue<T>> {
+    fn get_mut(&mut self, key: &str) -> Option<&mut AttributeValue<T>> {
+        VecMap::get_mut(self, key)
+    }
+
+    fn insert(&mut self, key: T::Text, value: AttributeValue<T>) -> Option<AttributeValue<T>> {
+        self.insert_or_replace(key, value)
+    }
+
+    fn remove(&mut self, key: &str) -> Option<AttributeValue<T>> {
+        VecMap::remove(self, key)
+    }
+
+    fn retain(&mut self, mut f: impl FnMut(&str, &mut AttributeValue<T>) -> bool) {
+        self.retain_mut(|k, v| f(k.as_str(), v));
+    }
+
+    fn iter_mut<'a>(&'a mut self) -> impl Iterator<Item = (&'a str, &'a mut AttributeValue<T>)>
+    where
+        T: 'a,
+    {
+        self.dedup_in_place();
+        // Keys are only borrowed immutably, so this can't introduce duplicates: iterate `data`
+        // directly rather than through `VecMap::iter_mut`, which dirties the `deduped` flag.
+        self.data.iter_mut().map(|(k, v)| (k.as_str(), v))
     }
 }
 
@@ -163,6 +215,23 @@ impl<K, V> VecMap<K, V> {
         self.data.retain(|(k, _)| k.borrow() != key);
     }
 
+    /// Remove all entries matching this key from the map, returning the value [VecMap::get] would
+    /// have returned. Like [VecMap::remove_slow], this is linear in the size of the map.
+    pub fn remove<Q>(&mut self, key: &Q) -> Option<V>
+    where
+        K: Borrow<Q>,
+        Q: ?Sized + PartialEq,
+    {
+        // The last match is the shadowing entry, the one `get` returns.
+        let index = self.data.iter().rposition(|(k, _)| k.borrow() == key)?;
+        let (_, removed) = self.data.remove(index);
+        if !self.deduped {
+            // Drop the shadowed duplicates in a single pass.
+            self.data.retain(|(k, _)| k.borrow() != key);
+        }
+        Some(removed)
+    }
+
     /// Iterate over the element, including duplicate entries.
     #[inline]
     pub fn iter(&self) -> slice::Iter<'_, (K, V)> {
@@ -223,6 +292,76 @@ impl<K, V> VecMap<K, V> {
         range: R,
     ) -> std::vec::Drain<'_, (K, V)> {
         self.data.drain(range)
+    }
+}
+
+impl<K: PartialEq, V> VecMap<K, V> {
+    /// Returns true if the entry at `index` is shadowed by a later entry with the same key.
+    fn is_shadowed(&self, index: usize) -> bool {
+        !self.deduped
+            && self.data[index + 1..]
+                .iter()
+                .any(|(k, _)| *k == self.data[index].0)
+    }
+
+    /// Iterate over the entries, skipping the ones shadowed by a later entry with the same key, so
+    /// that every key is yielded once with the value [VecMap::get] returns. Free when the map is
+    /// already deduped; quadratic in the size of the map otherwise, but never allocates.
+    pub fn iter_unique(&self) -> impl Iterator<Item = (&K, &V)> {
+        self.data
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !self.is_shadowed(*i))
+            .map(|(_, (k, v))| (k, v))
+    }
+
+    /// The number of distinct keys. See [VecMap::iter_unique] for the cost.
+    pub fn len_unique(&self) -> usize {
+        if self.deduped {
+            self.data.len()
+        } else {
+            (0..self.data.len())
+                .filter(|i| !self.is_shadowed(*i))
+                .count()
+        }
+    }
+
+    /// Remove entries shadowed by a later entry with the same key. As opposed to [VecMap::dedup],
+    /// this preserves the order of the remaining entries and doesn't allocate, at the cost of
+    /// being quadratic in the size of the map. Free when the map is already deduped.
+    pub fn dedup_in_place(&mut self) {
+        if self.deduped {
+            return;
+        }
+        let mut i = 0;
+        while i < self.data.len() {
+            if self.is_shadowed(i) {
+                self.data.remove(i);
+            } else {
+                i += 1;
+            }
+        }
+        self.deduped = true;
+    }
+
+    /// Retains only the entries for which `f` returns `true`, allowing values to be mutated.
+    /// Shadowed entries are dropped first (see [VecMap::dedup_in_place]), so `f` sees each key
+    /// once with the value [VecMap::get] returns, and dropping that value can't expose a shadowed
+    /// one. Keys are borrowed immutably, so the map stays deduped.
+    pub fn retain_mut(&mut self, mut f: impl FnMut(&K, &mut V) -> bool) {
+        self.dedup_in_place();
+        self.data.retain_mut(|(k, v)| f(k, v));
+    }
+
+    /// Set the value for `key`, overwriting the existing entry rather than appending a
+    /// duplicate, and returning the value it replaced. Unlike [VecMap::insert], this keeps a
+    /// deduped map deduped.
+    pub fn insert_or_replace(&mut self, key: K, value: V) -> Option<V> {
+        if let Some((_, existing)) = self.data.iter_mut().rev().find(|(k, _)| *k == key) {
+            return Some(std::mem::replace(existing, value));
+        }
+        self.data.push((key, value));
+        None
     }
 }
 
@@ -432,6 +571,99 @@ impl<'b, 'a: 'b, K, V> ExactSizeIterator for DedupedVecMapIter<'b, 'a, K, V> {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::span::BytesData;
+    use libdd_tinybytes::BytesString;
+
+    #[test]
+    fn remove_returns_shadowing_value_and_drops_duplicates() {
+        let mut map: VecMap<&str, i32> = VecMap::new();
+        map.insert("a", 1);
+        map.insert("b", 2);
+        map.insert("a", 3);
+        assert_eq!(map.remove("a"), Some(3));
+        assert!(!map.contains_key("a"));
+        assert_eq!(map.len(), 1);
+        assert_eq!(map.remove("a"), None);
+    }
+
+    fn with_duplicates() -> VecMap<BytesString, AttributeValue<BytesData>> {
+        let mut map = VecMap::new();
+        map.insert(BytesString::from_static("a"), AttributeValue::Int(1));
+        map.insert(BytesString::from_static("b"), AttributeValue::Int(2));
+        map.insert(BytesString::from_static("a"), AttributeValue::Int(3));
+        map.insert(BytesString::from_static("c"), AttributeValue::Int(4));
+        map
+    }
+
+    fn entries(map: &VecMap<BytesString, AttributeValue<BytesData>>) -> Vec<(&str, i64)> {
+        ValueMap::iter(map)
+            .map(|(k, v)| match v {
+                AttributeValue::Int(i) => (k, *i),
+                _ => unreachable!(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn value_map_hides_shadowed_duplicates() {
+        let map = with_duplicates();
+        assert!(!map.is_deduped());
+        assert_eq!(entries(&map), vec![("b", 2), ("a", 3), ("c", 4)]);
+        assert_eq!(ValueMap::len(&map), 3);
+        // The raw view is untouched.
+        assert_eq!(map.len(), 4);
+    }
+
+    #[test]
+    fn value_map_mut_traversals_drop_shadowed_duplicates() {
+        let mut map = with_duplicates();
+        let mut seen = Vec::new();
+        for (k, v) in ValueMapMut::iter_mut(&mut map) {
+            seen.push(k.to_owned());
+            *v = AttributeValue::Int(0);
+        }
+        assert_eq!(seen, ["b", "a", "c"]);
+        assert!(map.is_deduped());
+        assert_eq!(map.len(), 3);
+
+        let mut map = with_duplicates();
+        let mut seen = Vec::new();
+        ValueMapMut::retain(&mut map, |k, _| {
+            seen.push(k.to_owned());
+            k != "b"
+        });
+        assert_eq!(seen, ["b", "a", "c"]);
+        assert_eq!(entries(&map), vec![("a", 3), ("c", 4)]);
+    }
+
+    #[test]
+    fn insert_or_replace_keeps_map_deduped() {
+        let mut map: VecMap<&str, i32> = VecMap::new();
+        assert_eq!(map.insert_or_replace("a", 1), None);
+        assert_eq!(map.insert_or_replace("b", 2), None);
+        assert_eq!(map.insert_or_replace("a", 3), Some(1));
+        assert!(map.is_deduped());
+        assert_eq!(
+            map.iter().copied().collect::<Vec<_>>(),
+            [("a", 3), ("b", 2)]
+        );
+    }
+
+    #[test]
+    fn value_map_mut_insert_overwrites() {
+        let mut map: VecMap<BytesString, AttributeValue<BytesData>> = VecMap::new();
+        let key = || BytesString::from_static("k");
+        assert_eq!(
+            ValueMapMut::insert(&mut map, key(), AttributeValue::Int(1)),
+            None
+        );
+        assert_eq!(
+            ValueMapMut::insert(&mut map, key(), AttributeValue::Int(2)),
+            Some(AttributeValue::Int(1))
+        );
+        assert_eq!(map.len(), 1);
+        assert_eq!(ValueMap::get(&map, "k"), Some(&AttributeValue::Int(2)));
+    }
 
     #[test]
     fn get_returns_last_inserted() {

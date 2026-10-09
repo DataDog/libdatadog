@@ -52,9 +52,11 @@ libdd-capabilities = { path = "../libdd-capabilities", version = "4.0.1" }
 libdd-common = { version = "8.0.0", path = "../libdd-common", default-features = false }
 libdd-trace-normalization = { version = "4.2.0", path = "../libdd-trace-normalization" }
 libdd-trace-protobuf = { version = "5.1.0", path = "../libdd-trace-protobuf" }
+libdd-trace-model = { version = "0.1.0", path = "../libdd-trace-model" }
 libdd-tinybytes = { version = "1.1.5", path = "../libdd-tinybytes", features = [
     "bytes_string",
     "serialization",
+    "trace-model",
 ] }
 indexmap = { workspace = true, default-features = true }
 thin-vec = { workspace = true, default-features = true }

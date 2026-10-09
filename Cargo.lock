@@ -3494,6 +3494,7 @@ name = "libdd-tinybytes"
 version = "1.1.5"
 dependencies = [
  "libdd-tinybytes",
+ "libdd-trace-model",
  "once_cell",
  "pretty_assertions",
  "proptest",
@@ -3502,6 +3503,10 @@ dependencies = [
  "serde_json",
  "test-case",
 ]
+
+[[package]]
+name = "libdd-trace-model"
+version = "0.1.0"
 
 [[package]]
 name = "libdd-trace-normalization"
@@ -3605,6 +3610,7 @@ dependencies = [
  "libdd-capabilities-impl",
  "libdd-common",
  "libdd-tinybytes",
+ "libdd-trace-model",
  "libdd-trace-normalization",
  "libdd-trace-protobuf",
  "libdd-trace-utils",
