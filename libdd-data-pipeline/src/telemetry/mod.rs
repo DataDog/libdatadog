@@ -201,7 +201,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
 
 /// Telemetry describing the sending of a trace payload
 /// It can be produced from a [`SendWithRetryResult`] or from a [`SendDataResult`].
-#[derive(Clone, PartialEq, Debug, Default)]
+#[derive(PartialEq, Debug, Default)]
 pub struct SendPayloadTelemetry {
     pub(crate) requests_count: u64,
     pub(crate) errors_network: u64,

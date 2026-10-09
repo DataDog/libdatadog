@@ -4,18 +4,36 @@
 //! C bindings for external observations: exporter measurements returned to the caller
 //! instead of being delivered by the native telemetry client.
 //!
-//! This whole module is the `external-observations` feature and is meant to be deleted as a
-//! unit, together with `ddog_trace_exporter_config_enable_observations`.
+//! This whole module is the `external-observations` feature.
 
 use crate::error::{ExporterError, ExporterErrorCode as ErrorCode};
 use crate::response::ExporterResponse;
-use crate::trace_exporter::TraceExporter;
+use crate::trace_exporter::{TraceExporter, TraceExporterConfig};
 use crate::tracer::TracerTraceChunks;
 use crate::{catch_panic, gen_error};
 use libdd_data_pipeline::trace_exporter::observations::TraceExporterObservations;
 use libdd_trace_utils::span::span_pool::PooledChunks;
 use std::ptr::NonNull;
 use tokio_util::sync::CancellationToken as TokioCancellationToken;
+
+/// Select external observation delivery and disable native telemetry delivery.
+///
+/// # Safety
+/// `config`, when non-null, must be a live, exclusively borrowed configuration.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ddog_trace_exporter_config_enable_observations(
+    config: Option<&mut TraceExporterConfig>,
+) -> Option<Box<ExporterError>> {
+    catch_panic!(
+        if let Some(config) = config {
+            config.observations = true;
+            None
+        } else {
+            gen_error!(ErrorCode::InvalidArgument)
+        },
+        gen_error!(ErrorCode::Panic)
+    )
+}
 
 /// Send chunks with caller-owned observations on success, failure, or cancellation.
 /// Native telemetry is not submitted for this operation. Both outputs are initialised
@@ -55,7 +73,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_send_trace_chunks_observed(
             };
             let (result, report) =
                 exporter.send_trace_chunks_observed(PooledChunks::unpooled(chunks.0), cancel);
-            *observations_out = report.into();
+            *observations_out = report;
             match result {
                 Ok(response) => {
                     if let Some(out) = response_out {

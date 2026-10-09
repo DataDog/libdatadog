@@ -50,7 +50,7 @@ data-pipeline-compression = ["data-pipeline-ffi", "libdd-data-pipeline-ffi/compr
 # Enable client-side stats obfuscation in the linked data-pipeline crate. No FFI
 # surface of its own; only compiles the capability into the linked crate.
 data-pipeline-stats-obfuscation = ["data-pipeline-ffi", "libdd-data-pipeline-ffi/stats-obfuscation"]
-# Temporary: expose exporter observations for hosts that run their own telemetry client.
+# Expose exporter observations for hosts that run their own telemetry client.
 data-pipeline-external-observations = ["data-pipeline-ffi", "libdd-data-pipeline-ffi/external-observations"]
 crashtracker-ffi = ["dep:libdd-crashtracker-ffi"]
 # Enables the in-process collection of crash-info
