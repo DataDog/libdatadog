@@ -29,7 +29,6 @@ clippy.toml                          @DataDog/libdatadog
 cmake/                               @DataDog/apm-common-components-core
 CONTRIBUTING.md                      @DataDog/libdatadog-core
 Cross.toml                           @DataDog/apm-common-components-core
-libdd-ai-usage                       @DataDog/ccm @DataDog/apm-python-guild @DataDog/agent-console
 libdd-ffe                            @DataDog/feature-flagging-and-experimentation-sdk
 libdd-ffe-test-suite                 @DataDog/feature-flagging-and-experimentation-sdk
 libdd-ffe-ffi                        @DataDog/feature-flagging-and-experimentation-sdk
