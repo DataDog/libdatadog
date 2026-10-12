@@ -4,15 +4,15 @@
 use crate::Metadata;
 use anyhow::Result;
 use libdd_common::Endpoint;
-use libdd_common_ffi::slice::AsBytes;
 use libdd_common_ffi::CharSlice;
+use libdd_common_ffi::slice::AsBytes;
 use std::ffi::c_void;
-use windows::core::{HRESULT, HSTRING};
 use windows::Win32::Foundation::{BOOL, E_FAIL, S_OK};
 use windows::Win32::System::Diagnostics::Debug::OutputDebugStringW;
 use windows::Win32::System::ErrorReporting::WER_RUNTIME_EXCEPTION_INFORMATION;
+use windows::core::{HRESULT, HSTRING};
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 #[cfg(target_os = "windows")]
 /// Initialize the crash-tracking infrastructure.
@@ -50,7 +50,7 @@ fn output_debug_string(message: &str) {
     unsafe { OutputDebugStringW(&HSTRING::from(message)) };
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[cfg(target_os = "windows")]
 pub extern "C" fn OutOfProcessExceptionEventSignatureCallback(
     _context: *const c_void,
@@ -67,7 +67,7 @@ pub extern "C" fn OutOfProcessExceptionEventSignatureCallback(
     S_OK
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[cfg(target_os = "windows")]
 pub extern "C" fn OutOfProcessExceptionEventDebuggerLaunchCallback(
     _context: *const c_void,
@@ -83,7 +83,7 @@ pub extern "C" fn OutOfProcessExceptionEventDebuggerLaunchCallback(
     S_OK
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[cfg(target_os = "windows")]
 pub extern "C" fn OutOfProcessExceptionEventCallback(
     context: *const c_void,

@@ -16,7 +16,7 @@
 
 use std::hint::black_box;
 
-use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput};
+use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use libdd_ddsketch::DDSketch;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;

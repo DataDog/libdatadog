@@ -6,7 +6,7 @@ use core::{
     marker::PhantomData,
     mem::replace,
     ptr::{self, NonNull},
-    sync::atomic::{fence, AtomicPtr, AtomicU32, AtomicU64, Ordering},
+    sync::atomic::{AtomicPtr, AtomicU32, AtomicU64, Ordering, fence},
 };
 use std::{
     io,

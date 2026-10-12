@@ -1,8 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use kernel32::{CreateFileA, WaitForSingleObject};
-use std::ffi::{c_void, OsStr, OsString};
+use std::ffi::{OsStr, OsString, c_void};
 use std::fs::{File, OpenOptions};
 use std::os::windows::ffi::OsStrExt;
 use std::os::windows::fs::OpenOptionsExt;
@@ -12,34 +11,38 @@ use std::path::PathBuf;
 use std::process::ExitStatus;
 use std::ptr::null_mut;
 use std::{env, fs, io, io::Write};
-use winapi::{
-    DWORD, FILE_ATTRIBUTE_TEMPORARY, FILE_FLAG_DELETE_ON_CLOSE, FILE_SHARE_DELETE, FILE_SHARE_READ,
-    FILE_SHARE_WRITE, GENERIC_READ, GENERIC_WRITE, LPCSTR, OPEN_EXISTING, SECURITY_ATTRIBUTES,
-    WAIT_OBJECT_0,
-};
-use windows::core::{PCWSTR, PWSTR};
 use windows::Win32::Foundation::{
-    DuplicateHandle, DUPLICATE_SAME_ACCESS, HANDLE, INVALID_HANDLE_VALUE,
+    DUPLICATE_SAME_ACCESS, DuplicateHandle, HANDLE, INVALID_HANDLE_VALUE,
 };
 use windows::Win32::System::Threading::{
-    CreateProcessW, GetCurrentProcess, GetExitCodeProcess, InitializeProcThreadAttributeList,
-    UpdateProcThreadAttribute, CREATE_DEFAULT_ERROR_MODE, CREATE_NEW_PROCESS_GROUP,
-    CREATE_UNICODE_ENVIRONMENT, DETACHED_PROCESS, EXTENDED_STARTUPINFO_PRESENT, INFINITE,
-    LPPROC_THREAD_ATTRIBUTE_LIST, PROCESS_INFORMATION, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
-    STARTF_USESTDHANDLES, STARTUPINFOEXW, STARTUPINFOW, STARTUPINFOW_FLAGS,
+    CREATE_DEFAULT_ERROR_MODE, CREATE_NEW_PROCESS_GROUP, CREATE_UNICODE_ENVIRONMENT,
+    CreateProcessW, DETACHED_PROCESS, EXTENDED_STARTUPINFO_PRESENT, GetCurrentProcess,
+    GetExitCodeProcess, INFINITE, InitializeProcThreadAttributeList, LPPROC_THREAD_ATTRIBUTE_LIST,
+    PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROCESS_INFORMATION, STARTF_USESTDHANDLES, STARTUPINFOEXW,
+    STARTUPINFOW, STARTUPINFOW_FLAGS, UpdateProcThreadAttribute,
 };
+use windows::core::{PCWSTR, PWSTR};
 use windows::{
-    core::PCSTR,
     Win32::{
         Foundation::{GetLastError, HMODULE},
         System::LibraryLoader::{
-            GetModuleFileNameW, GetModuleHandleExA, GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
-            GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+            GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+            GetModuleFileNameW, GetModuleHandleExA,
         },
     },
+    core::PCSTR,
+};
+use windows_sys::Win32::{
+    Foundation::{GENERIC_READ, GENERIC_WRITE, WAIT_OBJECT_0},
+    Security::SECURITY_ATTRIBUTES,
+    Storage::FileSystem::{
+        CreateFileA, FILE_ATTRIBUTE_TEMPORARY, FILE_FLAG_DELETE_ON_CLOSE, FILE_SHARE_DELETE,
+        FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
+    },
+    System::Threading::WaitForSingleObject,
 };
 
-use crate::{LibDependency, Target, ENV_PASS_FD_KEY};
+use crate::{ENV_PASS_FD_KEY, LibDependency, Target};
 
 fn write_trampoline(process_name: &Option<String>) -> io::Result<(PathBuf, File)> {
     let path = if let Some(process_name) = process_name {
@@ -262,22 +265,23 @@ impl SpawnWorker {
 
     #[allow(clippy::manual_c_str_literals)] // c"NUL" from 1.77 and up
     fn open_null(read: bool) -> HANDLE {
-        let mut sa = SECURITY_ATTRIBUTES {
-            nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as DWORD,
+        let sa = SECURITY_ATTRIBUTES {
+            // SECURITY_ATTRIBUTES is a fixed-size Win32 structure that fits in a u32.
+            nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
             lpSecurityDescriptor: null_mut(),
             bInheritHandle: 1,
         };
         HANDLE(unsafe {
             CreateFileA(
-                "NUL\0".as_ptr() as LPCSTR,
+                "NUL\0".as_ptr(),
                 if read { GENERIC_READ } else { GENERIC_WRITE },
                 FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                &mut sa,
+                &sa,
                 OPEN_EXISTING,
                 0,
-                null_mut(),
+                0,
             )
-        } as isize)
+        })
     }
 
     fn raw_handle_from_stdio(stdio: Stdio, read: bool) -> HANDLE {
@@ -485,7 +489,7 @@ pub struct Child {
 impl Child {
     pub fn wait(&self) -> io::Result<ExitStatus> {
         unsafe {
-            let res = WaitForSingleObject(self.handle.as_raw_handle(), INFINITE);
+            let res = WaitForSingleObject(self.handle.as_raw_handle() as isize, INFINITE);
             let mut status = 0;
             if res != WAIT_OBJECT_0 {
                 return Err(io::Error::last_os_error());

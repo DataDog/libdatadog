@@ -4,7 +4,7 @@
 use heck::{ToPascalCase, ToSnakeCase};
 use proc_macro::TokenStream;
 use proc_macro2::Span;
-use quote::{format_ident, quote, ToTokens};
+use quote::{ToTokens, format_ident, quote};
 use syn::{FnArg, Ident, ItemTrait, ReturnType, TraitItem, Type};
 
 fn is_unit_type(ty: &Type) -> bool {
@@ -30,6 +30,7 @@ struct MethodInfo {
     name: Ident,
     variant: Ident,
     is_blocking: bool,
+    is_oneway: bool,
     return_type: Option<Box<Type>>,
     params: Vec<ParamInfo>,
     handle_param_indices: Vec<usize>,
@@ -46,6 +47,7 @@ fn collect_methods(item: &ItemTrait) -> Vec<MethodInfo> {
         let name = func.sig.ident.clone();
         let variant = Ident::new(&name.to_string().to_pascal_case(), Span::mixed_site());
         let is_blocking = has_attr(&func.attrs, "blocking");
+        let is_oneway = has_attr(&func.attrs, "oneway");
 
         let return_type = match &func.sig.output {
             ReturnType::Default => None,
@@ -58,6 +60,10 @@ fn collect_methods(item: &ItemTrait) -> Vec<MethodInfo> {
             }
         };
 
+        assert!(
+            !is_oneway || (!is_blocking && return_type.is_none()),
+            "oneway methods cannot return a response"
+        );
         let mut params: Vec<ParamInfo> = Vec::new();
         let mut handle_param_indices: Vec<usize> = Vec::new();
 
@@ -106,6 +112,7 @@ fn collect_methods(item: &ItemTrait) -> Vec<MethodInfo> {
             name,
             variant,
             is_blocking,
+            is_oneway,
             return_type,
             params,
             handle_param_indices,
@@ -125,6 +132,7 @@ fn has_client_request(methods: &[MethodInfo]) -> bool {
 }
 
 fn gen_request_enum(enum_name: &Ident, methods: &[MethodInfo]) -> proc_macro2::TokenStream {
+    let response_predicate = gen_response_predicate(enum_name, methods, false);
     let variants: Vec<_> = methods
         .iter()
         .map(|m| {
@@ -151,10 +159,12 @@ fn gen_request_enum(enum_name: &Ident, methods: &[MethodInfo]) -> proc_macro2::T
         pub enum #enum_name {
             #(#variants),*
         }
+        #response_predicate
     }
 }
 
 fn gen_client_request_enum(enum_name: &Ident, methods: &[MethodInfo]) -> proc_macro2::TokenStream {
+    let response_predicate = gen_response_predicate(enum_name, methods, true);
     let variants: Vec<_> = methods
         .iter()
         .map(|method| {
@@ -182,6 +192,27 @@ fn gen_client_request_enum(enum_name: &Ident, methods: &[MethodInfo]) -> proc_ma
         pub enum #enum_name<'request> {
             #(#variants),*
         }
+        #response_predicate
+    }
+}
+
+fn gen_response_predicate(
+    enum_name: &Ident,
+    methods: &[MethodInfo],
+    client: bool,
+) -> proc_macro2::TokenStream {
+    let lifetime = client.then(|| quote! { <'request> });
+    let arms = methods.iter().filter(|m| m.is_oneway).map(|m| {
+        let variant = &m.variant;
+        quote! { Self::#variant { .. } => false, }
+    });
+    quote! {
+        impl #lifetime #enum_name #lifetime {
+            /// Whether this request participates in the connection's reply accounting.
+            pub fn expects_response(&self) -> bool {
+                match self { #(#arms)* _ => true }
+            }
+        }
     }
 }
 
@@ -197,16 +228,21 @@ fn gen_transfer_handles(
         .filter(|m| !m.handle_param_indices.is_empty())
         .map(|m| {
             let variant = &m.variant;
-            let handle_names: Vec<_> = m
+            let handle_params: Vec<_> = m
                 .handle_param_indices
                 .iter()
-                .map(|&i| &m.params[i].name)
+                .map(|&i| &m.params[i])
                 .collect();
-            // One copy_handle call per #[SerializedHandle] param.
-            // Uses .into() to convert from the param type to PlatformHandle<OwnedFileHandle>.
-            let stmts: Vec<_> = handle_names
+            let handle_names = handle_params.iter().map(|p| {
+                let (attrs, name) = (&p.attrs, &p.name);
+                quote! { #(#attrs)* #name }
+            });
+            let stmts: Vec<_> = handle_params
                 .iter()
-                .map(|hn| quote! { __transport.copy_handle(#hn.clone().into())?; })
+                .map(|p| {
+                    let (attrs, name) = (&p.attrs, &p.name);
+                    quote! { #(#attrs)* libdd_ipc::handles::TransferHandles::copy_handles(#name, __transport)?; }
+                })
                 .collect();
             quote! {
                 #enum_name::#variant { #(#handle_names,)* .. } => {
@@ -222,14 +258,21 @@ fn gen_transfer_handles(
         .filter(|m| !m.handle_param_indices.is_empty())
         .map(|m| {
             let variant = &m.variant;
-            let handle_names: Vec<_> = m
+            let handle_params: Vec<_> = m
                 .handle_param_indices
                 .iter()
-                .map(|&i| &m.params[i].name)
+                .map(|&i| &m.params[i])
                 .collect();
-            let stmts: Vec<_> = handle_names
+            let handle_names = handle_params.iter().map(|p| {
+                let (attrs, name) = (&p.attrs, &p.name);
+                quote! { #(#attrs)* #name }
+            });
+            let stmts: Vec<_> = handle_params
                 .iter()
-                .map(|hn| quote! { #hn.receive_handles(__transport)?; })
+                .map(|p| {
+                    let (attrs, name) = (&p.attrs, &p.name);
+                    quote! { #(#attrs)* libdd_ipc::handles::TransferHandles::receive_handles(#name, __transport)?; }
+                })
                 .collect();
             quote! {
                 #enum_name::#variant { #(#handle_names,)* .. } => {
@@ -345,7 +388,9 @@ fn gen_serve_fn(
                 quote! { false }
             };
 
-            let response_code = if m.return_type.is_some() {
+            let response_code = if m.is_oneway {
+                quote! { handler.#name(#(#field_names),*).await; }
+            } else if m.return_type.is_some() {
                 // Flush any buffered acks before sending the typed response, so the client's
                 // send_count/ack_count loop processes them before reading the real reply.
                 quote! {
@@ -355,8 +400,18 @@ fn gen_serve_fn(
                         __pending_acks = 0;
                     }
                     let result = handler.#name(#(#field_names),*).await;
-                    let __resp_data = libdd_ipc::codec::encode(&result);
-                    libdd_ipc::send_raw_async(handler.connection().async_conn(), &__resp_data).await.ok();
+                    #[cfg(windows)]
+                    let __suffix_size = 4;
+                    #[cfg(not(windows))]
+                    let __suffix_size = 0;
+                    let __resp_data = libdd_ipc::codec::encode_with_reserve(
+                        &result,
+                        __suffix_size,
+                    );
+                    libdd_ipc::send_raw_async(
+                        handler.connection().async_conn(),
+                        __resp_data,
+                    ).await.ok();
                 }
             } else {
                 // On Linux, buffer up to 20 acks and flush in a single
@@ -372,8 +427,19 @@ fn gen_serve_fn(
                         }
                     }
                     #[cfg(not(target_os = "linux"))]
-                    // 1-byte ack: distinguishable from EOF (0 bytes from recvmsg on closed socket).
-                    libdd_ipc::send_raw_async(handler.connection().async_conn(), &[0u8]).await.ok();
+                    {
+                        // 1-byte ack: distinguishable from EOF (0 bytes from recvmsg on closed socket).
+                        #[cfg(windows)]
+                        let __suffix_size = 4;
+                        #[cfg(not(windows))]
+                        let __suffix_size = 0;
+                        let mut __ack = ::std::vec::Vec::with_capacity(1 + __suffix_size);
+                        __ack.push(0u8);
+                        libdd_ipc::send_raw_async(
+                            handler.connection().async_conn(),
+                            __ack,
+                        ).await.ok();
+                    }
                 }
             };
 
@@ -445,6 +511,10 @@ fn gen_channel(
             where
                 __Response: ::serde::de::DeserializeOwned,
             {
+                if !req.expects_response() {
+                    return Err(libdd_ipc::codec::DecodeError::Io(::std::io::Error::new(
+                        ::std::io::ErrorKind::InvalidInput, "oneway request has no reply")));
+                }
                 self.call_serialized_request_blocking(req)
             }
         }
@@ -485,8 +555,15 @@ fn gen_channel(
                 libdd_ipc::handles::TransferHandles::copy_handles(
                     &__req, &mut __sink
                 ).ok();
-                let mut __data = libdd_ipc::codec::encode(&__req);
                 let __fds = __sink.into_fds();
+                #[cfg(windows)]
+                let __suffix_size = 4 + 8 * __fds.len();
+                #[cfg(not(windows))]
+                let __suffix_size = 0;
+                let __data = libdd_ipc::codec::encode_with_reserve(
+                    &__req,
+                    __suffix_size,
+                );
                 {
                     let __max = libdd_ipc::max_message_size();
                     if __data.len() > __max {
@@ -495,32 +572,39 @@ fn gen_channel(
                 }
             };
 
-            if m.return_type.is_none() && !m.is_blocking {
+            if m.is_oneway {
                 let method_name = format_ident!("try_send_{}", name);
                 quote! {
                     pub fn #method_name(&mut self, #(#params),*) -> bool {
                         #build_req_and_fds
-                        self.0.try_send(&mut __data, &__fds)
+                        self.0.conn.try_send_raw(__data, &__fds).is_ok()
                     }
                 }
-            } else if m.return_type.is_none() {
+            } else if let Some(ret_ty) = &m.return_type {
+                let method_name = format_ident!("call_{}", name);
+                quote! {
+                    pub fn #method_name(&mut self, #(#params),*) -> ::std::result::Result<#ret_ty, libdd_ipc::codec::DecodeError> {
+                        #build_req_and_fds
+                        let (__resp, _) = self.0.call(__data, &__fds)
+                            .map_err(libdd_ipc::codec::DecodeError::Io)?;
+                        libdd_ipc::codec::decode::<#ret_ty>(&__resp)
+                    }
+                }
+            } else if m.is_blocking {
                 let method_name = format_ident!("call_{}", name);
                 quote! {
                     pub fn #method_name(&mut self, #(#params),*) -> ::std::io::Result<()> {
                         #build_req_and_fds
-                        self.0.call(&mut __data, &__fds)?;
+                        self.0.call(__data, &__fds)?;
                         Ok(())
                     }
                 }
             } else {
-                let method_name = format_ident!("call_{}", name);
-                let ret_ty = m.return_type.as_ref().unwrap();
+                let method_name = format_ident!("try_send_{}", name);
                 quote! {
-                    pub fn #method_name(&mut self, #(#params),*) -> ::std::result::Result<#ret_ty, libdd_ipc::codec::DecodeError> {
+                    pub fn #method_name(&mut self, #(#params),*) -> bool {
                         #build_req_and_fds
-                        let (__resp, _) = self.0.call(&mut __data, &__fds)
-                            .map_err(libdd_ipc::codec::DecodeError::Io)?;
-                        libdd_ipc::codec::decode::<#ret_ty>(&__resp)
+                        self.0.try_send(__data, &__fds)
                     }
                 }
             }
@@ -541,13 +625,21 @@ fn gen_channel(
             pub fn try_send_request(&mut self, req: &#enum_name) -> bool {
                 let mut __sink = libdd_ipc::handles::FdSink::new();
                 libdd_ipc::handles::TransferHandles::copy_handles(req, &mut __sink).ok();
-                let mut __data = libdd_ipc::codec::encode(req);
                 let __fds = __sink.into_fds();
+                #[cfg(windows)]
+                let __suffix_size = 4 + 8 * __fds.len();
+                #[cfg(not(windows))]
+                let __suffix_size = 0;
+                let __data = libdd_ipc::codec::encode_with_reserve(req, __suffix_size);
                 let __max = libdd_ipc::max_message_size();
                 if __data.len() > __max {
                     ::tracing::warn!(?req, len = __data.len(), max = __max, "IPC message too large");
                 }
-                self.0.try_send(&mut __data, &__fds)
+                if req.expects_response() {
+                    self.0.try_send(__data, &__fds)
+                } else {
+                    self.0.conn.try_send_raw(__data, &__fds).is_ok()
+                }
             }
 
             /// Generic blocking send (used by SidecarSender outbox drain).
@@ -557,13 +649,21 @@ fn gen_channel(
             ) -> ::std::io::Result<()> {
                 let mut __sink = libdd_ipc::handles::FdSink::new();
                 libdd_ipc::handles::TransferHandles::copy_handles(req, &mut __sink).ok();
-                let mut __data = libdd_ipc::codec::encode(req);
                 let __fds = __sink.into_fds();
+                #[cfg(windows)]
+                let __suffix_size = 4 + 8 * __fds.len();
+                #[cfg(not(windows))]
+                let __suffix_size = 0;
+                let __data = libdd_ipc::codec::encode_with_reserve(req, __suffix_size);
                 let __max = libdd_ipc::max_message_size();
                 if __data.len() > __max {
                     ::tracing::warn!(?req, len = __data.len(), max = __max, "IPC message too large");
                 }
-                self.0.send_blocking(&mut __data, &__fds)
+                if req.expects_response() {
+                    self.0.send_blocking(__data, &__fds)
+                } else {
+                    self.0.conn.send_raw_blocking(__data, &__fds)
+                }
             }
 
             /// Generic blocking request/response call that retains ownership of the request.
@@ -574,6 +674,10 @@ fn gen_channel(
             where
                 __Response: ::serde::de::DeserializeOwned,
             {
+                if !req.expects_response() {
+                    return Err(libdd_ipc::codec::DecodeError::Io(::std::io::Error::new(
+                        ::std::io::ErrorKind::InvalidInput, "oneway request has no reply")));
+                }
                 self.call_serialized_request_blocking(req)
             }
 
@@ -589,13 +693,17 @@ fn gen_channel(
             {
                 let mut __sink = libdd_ipc::handles::FdSink::new();
                 libdd_ipc::handles::TransferHandles::copy_handles(req, &mut __sink).ok();
-                let mut __data = libdd_ipc::codec::encode(req);
                 let __fds = __sink.into_fds();
+                #[cfg(windows)]
+                let __suffix_size = 4 + 8 * __fds.len();
+                #[cfg(not(windows))]
+                let __suffix_size = 0;
+                let __data = libdd_ipc::codec::encode_with_reserve(req, __suffix_size);
                 let __max = libdd_ipc::max_message_size();
                 if __data.len() > __max {
                     ::tracing::warn!(?req, len = __data.len(), max = __max, "IPC message too large");
                 }
-                let (__resp, _) = self.0.call(&mut __data, &__fds)
+                let (__resp, _) = self.0.call(__data, &__fds)
                     .map_err(libdd_ipc::codec::DecodeError::Io)?;
                 libdd_ipc::codec::decode::<__Response>(&__resp)
             }
@@ -616,7 +724,10 @@ fn gen_channel(
 ///
 /// Method attributes recognized (stripped before emission):
 /// - `#[blocking]` — `-> ()` method where client waits for ack (vs fire-and-forget)
-/// - `#[SerializedHandle]` on a parameter — the value carries an fd via SCM_RIGHTS
+/// - `#[oneway]` — sends no reply and does not participate in client reply accounting
+/// - `#[SerializedHandle]` on a parameter — transfer the value's OS handles separately from its
+///   serialized bytes. The parameter type must implement `TransferHandles`; wrapper structs
+///   implement it by forwarding to their contained handle-bearing value.
 /// - `#[ClientType(Type)]` on a parameter — use `Type` in the serialize-only client request
 #[proc_macro_attribute]
 pub fn service(_attr: TokenStream, input: TokenStream) -> TokenStream {

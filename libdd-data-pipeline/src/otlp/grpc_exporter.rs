@@ -78,8 +78,8 @@ pub(crate) mod prost_codec {
     use prost::Message as ProstMessage;
     use std::marker::PhantomData;
     use std::sync::Arc;
-    use tonic::codec::{Codec, DecodeBuf, Decoder, EncodeBuf, Encoder};
     use tonic::Status;
+    use tonic::codec::{Codec, DecodeBuf, Decoder, EncodeBuf, Encoder};
 
     #[derive(Clone, Default)]
     pub(crate) struct ProstCodecImpl<Enc, Dec> {

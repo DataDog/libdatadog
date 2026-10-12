@@ -4,7 +4,7 @@
 //! Workspace-wide regex engine re-exports.
 //!
 //! By default this module re-exports from the full [`regex`] crate.
-//! Enable the **`regex-lite`** feature to switch to [`regex_lite`] instead,
+//! Enable the **`regex-lite`** feature to switch to `regex_lite` instead,
 //! which trades advanced features (Unicode classes, look-around, etc.) for
 //! smaller binary size and faster compile times.
 //!
@@ -13,7 +13,7 @@
 //! regexes requiring Unicode character class support.
 
 #[cfg(all(feature = "regex-lite", not(feature = "require-regex-full")))]
-pub use regex_lite::{escape, Captures, Error, Regex, RegexBuilder, Replacer};
+pub use regex_lite::{Captures, Error, Regex, RegexBuilder, Replacer, escape};
 
 #[cfg(not(all(feature = "regex-lite", not(feature = "require-regex-full"))))]
-pub use regex::{escape, Captures, Error, Regex, RegexBuilder, Replacer};
+pub use regex::{Captures, Error, Regex, RegexBuilder, Replacer, escape};

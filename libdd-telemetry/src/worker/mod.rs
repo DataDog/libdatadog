@@ -26,16 +26,16 @@ use libdd_shared_runtime::Worker;
 use std::iter::Sum;
 use std::marker::PhantomData;
 use std::ops::Add;
+use std::{collections::HashSet, fmt::Debug, time::Duration};
 use std::{
     collections::hash_map::DefaultHasher,
     hash::{Hash, Hasher},
     ops::ControlFlow,
     sync::{
-        atomic::{AtomicU64, Ordering},
         Arc,
+        atomic::{AtomicU64, Ordering},
     },
 };
-use std::{collections::HashSet, fmt::Debug, time::Duration};
 // `web_time` re-exports `std::time::Instant`/`SystemTime` on native and
 // provides Performance.now()/Date.now()-backed shims on wasm32. We use
 // `time::Instant` and `time::SystemTime` through this module-local alias so
@@ -47,7 +47,8 @@ use std::sync::{Condvar, Mutex};
 
 use crate::metrics::MetricBucketStats;
 use futures::channel::oneshot;
-use http::{header, HeaderValue};
+use http::{HeaderValue, header};
+use libdd_common::mutable_metadata::{MutableMetadata, MutableMetadataHandle};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 #[cfg(not(target_arch = "wasm32"))]
@@ -69,7 +70,7 @@ macro_rules! telemetry_worker_log {
     ($worker:expr , ERROR , $fmt_str:tt, $($arg:tt)*) => {
         {
             debug!(
-                worker.runtime_id = %$worker.runtime_id,
+                worker.runtime_id = %$worker.mutable_metadata.load().runtime_id,
                 worker.debug_logging = $worker.config.telemetry_debug_logging_enabled,
                 $fmt_str,
                 $($arg)*
@@ -82,7 +83,7 @@ macro_rules! telemetry_worker_log {
     ($worker:expr , DEBUG , $fmt_str:tt, $($arg:tt)*) => {
         {
             debug!(
-                worker.runtime_id = %$worker.runtime_id,
+                worker.runtime_id = %$worker.mutable_metadata.load().runtime_id,
                 worker.debug_logging = $worker.config.telemetry_debug_logging_enabled,
                 $fmt_str,
                 $($arg)*
@@ -154,7 +155,7 @@ pub struct TelemetryWorker<C: HttpClientCapability + SleepCapability + MaybeSend
     mailbox: mpsc::Receiver<TelemetryActions>,
     cancellation_token: CancellationToken,
     seq_id: AtomicU64,
-    runtime_id: String,
+    mutable_metadata: MutableMetadataHandle,
     capabilities: C,
     metrics_flush_interval: Duration,
     deadlines: scheduler::Scheduler<LifecycleAction>,
@@ -176,7 +177,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Deb
             .field("mailbox", &self.mailbox)
             .field("cancellation_token", &self.cancellation_token)
             .field("seq_id", &self.seq_id)
-            .field("runtime_id", &self.runtime_id)
+            .field("mutable_metadata", &self.mutable_metadata)
             .field("metrics_flush_interval", &self.metrics_flush_interval)
             .field("deadlines", &self.deadlines)
             .field("data", &self.data)
@@ -199,7 +200,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Wor
             // a hot loop re-emitting Lifecycle::Stop on every iteration; the runtime will
             // tear the worker down via the handle.
             debug!(
-                worker.runtime_id = %self.runtime_id,
+                worker.runtime_id = %self.mutable_metadata.load().runtime_id,
                 "Telemetry worker mailbox closed; parking until shutdown"
             );
             std::future::pending::<()>().await;
@@ -214,7 +215,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Wor
         // Take the action that was stored by trigger()
         if let Some(action) = self.next_action.take() {
             debug!(
-                worker.runtime_id = %self.runtime_id,
+                worker.runtime_id = %self.mutable_metadata.load().runtime_id,
                 action = ?action,
                 "Received telemetry action"
             );
@@ -232,15 +233,35 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Wor
 
     /// Reset the worker state in the child process after a fork.
     ///
-    /// Discards inherited pending telemetry state and dedupe history without sending anything, and
-    /// drains the mailbox so that actions queued before the fork are not processed by the
-    /// child.
+    /// Discards inherited observations and dedupe history without sending anything. Metrics/logs
+    /// workers preserve the final requested lifecycle state from staged and queued control actions.
+    /// The child's sequence starts at one; the host must install its new identity before restarting
+    /// the worker.
     fn reset(&mut self) {
-        // Drain all actions queued in the mailbox before the fork.
-        while self.mailbox.try_recv().is_ok() {}
+        self.seq_id.store(1, Ordering::Relaxed);
+        let mut started = self.data.started;
+        // Apply staged control before queued control, without flushing inherited data on Stop.
+        let staged = self.next_action.take();
+        let queued = std::iter::from_fn(|| self.mailbox.try_recv().ok());
+        for action in staged.into_iter().chain(queued) {
+            match action {
+                TelemetryActions::Lifecycle(LifecycleAction::Start) => started = true,
+                TelemetryActions::Lifecycle(LifecycleAction::Stop) => started = false,
+                _ => {}
+            }
+        }
 
-        // Discard any action that was staged by the last trigger() call.
-        self.next_action = None;
+        // A queued Start or staged flush must not leave the child's metrics worker dormant.
+        if matches!(self.flavor, TelemetryWorkerFlavor::MetricsLogs) {
+            self.data.started = started;
+            self.deadlines.clear_pending();
+            if started {
+                let _ = self
+                    .deadlines
+                    .schedule_event(LifecycleAction::FlushMetricAggr);
+                let _ = self.deadlines.schedule_event(LifecycleAction::FlushData);
+            }
+        }
 
         // Clear all unbuffered telemetry data; the child must not send pre-fork data.
         self.data.logs = store::QueueHashMap::default();
@@ -880,7 +901,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
 
     async fn send_payload(&self, payload: &data::Payload) -> anyhow::Result<()> {
         debug!(
-            worker.runtime_id = %self.runtime_id,
+            worker.runtime_id = %self.mutable_metadata.load().runtime_id,
             payload.type = payload.request_type(),
             seq_id = self.seq_id.load(Ordering::Acquire),
             "Sending telemetry payload"
@@ -889,13 +910,13 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
         let result = self.send_request(req).await;
         match &result {
             Ok(resp) => debug!(
-                worker.runtime_id = %self.runtime_id,
+                worker.runtime_id = %self.mutable_metadata.load().runtime_id,
                 payload.type = payload.request_type(),
                 response.status = resp.status().as_u16(),
                 "Successfully sent telemetry payload"
             ),
             Err(e) => debug!(
-                worker.runtime_id = %self.runtime_id,
+                worker.runtime_id = %self.mutable_metadata.load().runtime_id,
                 payload.type = payload.request_type(),
                 error = ?e,
                 "Failed to send telemetry payload"
@@ -906,12 +927,13 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
 
     fn build_request(&self, payload: &data::Payload) -> anyhow::Result<http::Request<Bytes>> {
         let seq_id = self.next_seq_id();
+        let metadata = self.mutable_metadata.load();
         let tel = Telemetry {
             api_version: data::ApiVersion::V2,
             tracer_time: time::SystemTime::UNIX_EPOCH
                 .elapsed()
                 .map_or(0, |d| d.as_secs()),
-            runtime_id: &self.runtime_id,
+            runtime_id: &metadata.runtime_id,
             seq_id,
             host: &self.data.host,
             origin: None,
@@ -942,9 +964,21 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
             );
         let req = http_client::add_instrumentation_session_headers(
             req,
-            self.config.session_id.as_deref(),
-            self.config.parent_session_id.as_deref(),
-            self.config.root_session_id.as_deref(),
+            metadata
+                .session
+                .as_ref()
+                .map(|s| s.id.as_str())
+                .or(self.config.session_id.as_deref()),
+            metadata
+                .session
+                .as_ref()
+                .map(|s| s.parent_id.as_str())
+                .or(self.config.parent_session_id.as_deref()),
+            metadata
+                .session
+                .as_ref()
+                .map(|s| s.root_id.as_str())
+                .or(self.config.root_session_id.as_deref()),
         );
 
         let body = Bytes::from(serialize::serialize(&tel)?);
@@ -963,7 +997,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
         let timeout = time::Duration::from_millis(timeout_ms);
 
         debug!(
-            worker.runtime_id = %self.runtime_id,
+            worker.runtime_id = %self.mutable_metadata.load().runtime_id,
             http.timeout_ms = timeout_ms,
             "Sending HTTP request"
         );
@@ -972,14 +1006,14 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
         tokio::select! {
             _ = self.cancellation_token.cancelled() => {
                 debug!(
-                    worker.runtime_id = %self.runtime_id,
+                    worker.runtime_id = %self.mutable_metadata.load().runtime_id,
                     "Telemetry request cancelled"
                 );
                 Err(HttpError::Other(anyhow::anyhow!("Request cancelled")))
             },
             _ = sleeper.sleep(timeout) => {
                 debug!(
-                    worker.runtime_id = %self.runtime_id,
+                    worker.runtime_id = %self.mutable_metadata.load().runtime_id,
                     http.timeout_ms = timeout_ms,
                     "Telemetry request timed out"
                 );
@@ -1008,14 +1042,14 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
     async fn run_loop(mut self) {
         debug!(
             worker.flavor = ?self.flavor,
-            worker.runtime_id = %self.runtime_id,
+            worker.runtime_id = %self.mutable_metadata.load().runtime_id,
             "Starting telemetry worker"
         );
 
         loop {
             if self.cancellation_token.is_cancelled() {
                 debug!(
-                    worker.runtime_id = %self.runtime_id,
+                    worker.runtime_id = %self.mutable_metadata.load().runtime_id,
                     "Telemetry worker cancelled, shutting down"
                 );
                 return;
@@ -1023,7 +1057,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
 
             let action = self.recv_next_action().await;
             debug!(
-                worker.runtime_id = %self.runtime_id,
+                worker.runtime_id = %self.mutable_metadata.load().runtime_id,
                 action = ?action,
                 "Received telemetry action"
             );
@@ -1039,7 +1073,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
                 ControlFlow::Continue(()) => {}
                 ControlFlow::Break(()) => {
                     debug!(
-                        worker.runtime_id = %self.runtime_id,
+                        worker.runtime_id = %self.mutable_metadata.load().runtime_id,
                         worker.restartable = self.config.restartable,
                         "Telemetry worker received break signal"
                     );
@@ -1051,7 +1085,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
         }
 
         debug!(
-            worker.runtime_id = %self.runtime_id,
+            worker.runtime_id = %self.mutable_metadata.load().runtime_id,
             "Telemetry worker stopped"
         );
     }
@@ -1345,6 +1379,8 @@ pub struct TelemetryWorkerBuilder {
     pub host: Host,
     pub application: Application,
     pub runtime_id: Option<String>,
+    /// When provided, overrides `runtime_id`.
+    pub mutable_metadata: Option<MutableMetadataHandle>,
     pub dependencies: store::Store<data::Dependency, data::DependencyKey>,
     pub integrations: store::Store<data::Integration>,
     pub configurations: store::Store<data::Configuration>,
@@ -1397,6 +1433,7 @@ impl TelemetryWorkerBuilder {
                 ..Default::default()
             },
             runtime_id: None,
+            mutable_metadata: None,
             dependencies: store::Store::new(MAX_ITEMS),
             integrations: store::Store::new(MAX_ITEMS),
             configurations: store::Store::new(MAX_ITEMS),
@@ -1431,6 +1468,13 @@ impl TelemetryWorkerBuilder {
         let metrics_flush_interval =
             telemetry_heartbeat_interval.min(MetricBuckets::METRICS_FLUSH_INTERVAL);
 
+        let mutable_metadata = self.mutable_metadata.unwrap_or_else(|| {
+            let mut metadata = MutableMetadata::default();
+            metadata.runtime_id = self
+                .runtime_id
+                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+            metadata.into()
+        });
         let worker = TelemetryWorker {
             flavor: self.flavor,
             data: TelemetryWorkerData {
@@ -1452,9 +1496,7 @@ impl TelemetryWorkerBuilder {
             config,
             mailbox,
             seq_id: AtomicU64::new(1),
-            runtime_id: self
-                .runtime_id
-                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+            mutable_metadata,
             capabilities,
             metrics_flush_interval,
             deadlines: scheduler::Scheduler::new(vec![
@@ -1533,6 +1575,7 @@ mod tests {
         TelemetryWorkerFlavor, TelemetryWorkerHandle,
     };
     use libdd_capabilities_impl::NativeCapabilities;
+    use libdd_common::mutable_metadata::MutableMetadataHandle;
     use tokio::runtime::Runtime;
 
     fn is_send<T: Send>(_: T) {}
@@ -1574,6 +1617,72 @@ mod tests {
     }
 
     #[cfg_attr(miri, ignore)] // reqwest in build_worker
+    #[test]
+    fn telemetry_requests_observe_shared_runtime_id_updates() {
+        let metadata = MutableMetadataHandle::default();
+        metadata.set_runtime_id("initial".into());
+        let mut builder = TelemetryWorkerBuilder::new(
+            "host".into(),
+            "service".into(),
+            "rust".into(),
+            "1".into(),
+            "1".into(),
+        );
+        builder
+            .config
+            .set_endpoint(TelemetryEndpoint {
+                url: Some("http://127.0.0.1:1".into()),
+                ..Default::default()
+            })
+            .unwrap();
+        builder.runtime_id = Some("ignored".into());
+        builder.mutable_metadata = Some(metadata.clone());
+        let rt = Runtime::new().unwrap();
+        let (_, worker) = builder.build_worker::<NativeCapabilities>(Some(rt.handle().clone()));
+        let first = worker.build_request(&Payload::AppHeartbeat(())).unwrap();
+        let first: serde_json::Value = serde_json::from_slice(first.body()).unwrap();
+        assert_eq!(first["runtime_id"], "initial");
+        metadata.set_runtime_id("updated".into());
+        let second = worker.build_request(&Payload::AppHeartbeat(())).unwrap();
+        let second: serde_json::Value = serde_json::from_slice(second.body()).unwrap();
+        assert_eq!(second["runtime_id"], "updated");
+        assert_eq!(first["runtime_id"], "initial");
+        assert_eq!(second["seq_id"], first["seq_id"].as_u64().unwrap() + 1);
+    }
+
+    #[cfg_attr(miri, ignore)] // reqwest in build_worker
+    #[test]
+    fn mutable_identity_overrides_static_headers_atomically() {
+        use libdd_common::mutable_metadata::InstrumentationSession;
+
+        let worker = test_worker(Some("static".into()), Some("static-root".into()), None);
+        let parent = worker.build_request(&Payload::AppHeartbeat(())).unwrap();
+        worker.mutable_metadata.set_identity(
+            "child".into(),
+            InstrumentationSession {
+                id: "child-session".into(),
+                root_id: "root-session".into(),
+                parent_id: "parent-session".into(),
+            },
+        );
+        let child = worker.build_request(&Payload::AppHeartbeat(())).unwrap();
+        let body: serde_json::Value = serde_json::from_slice(child.body()).unwrap();
+        assert_eq!(body["runtime_id"], "child");
+        assert_eq!(child.headers()["dd-session-id"], "child-session");
+        assert_eq!(child.headers()["dd-root-session-id"], "root-session");
+        assert_eq!(child.headers()["dd-parent-session-id"], "parent-session");
+        assert_eq!(parent.headers()["dd-session-id"], "static");
+
+        worker
+            .mutable_metadata
+            .set_identity("no-headers".into(), InstrumentationSession::default());
+        let empty = worker.build_request(&Payload::AppHeartbeat(())).unwrap();
+        assert!(!empty.headers().contains_key("dd-session-id"));
+        assert!(!empty.headers().contains_key("dd-root-session-id"));
+        assert!(!empty.headers().contains_key("dd-parent-session-id"));
+    }
+
+    #[cfg_attr(miri, ignore)]
     #[test]
     fn telemetry_http_includes_dd_session_id() {
         let req = test_worker(Some("sess".into()), None, None)
@@ -1932,8 +2041,8 @@ mod tests {
     mod reset {
         use super::super::*;
         use crate::data::{
-            metrics::{MetricNamespace, MetricType},
             Configuration, ConfigurationOrigin, Dependency, Endpoint, Integration, Log, LogLevel,
+            metrics::{MetricNamespace, MetricType},
         };
         use libdd_capabilities_impl::NativeCapabilities;
         use libdd_shared_runtime::Worker;
@@ -1966,6 +2075,91 @@ mod tests {
                     is_crash: false,
                 },
             )
+        }
+
+        #[cfg_attr(miri, ignore)]
+        #[test]
+        fn fork_child_starts_a_new_sequence_without_resetting_the_parent() {
+            use crate::config::TelemetryEndpoint;
+            use httpmock::prelude::*;
+            use libdd_common::mutable_metadata::InstrumentationSession;
+            use libdd_shared_runtime::{BlockingRuntime, ForkSafeRuntime, SharedRuntime};
+
+            let server = MockServer::start();
+            let runtime = ForkSafeRuntime::new().unwrap();
+            let metadata = MutableMetadataHandle::default();
+            metadata.set_identity(
+                "parent".into(),
+                InstrumentationSession {
+                    id: "parent".into(),
+                    ..Default::default()
+                },
+            );
+            let mut builder = TelemetryWorkerBuilder::new(
+                "host".into(),
+                "service".into(),
+                "ruby".into(),
+                "1".into(),
+                "1".into(),
+            );
+            builder.flavor = TelemetryWorkerFlavor::MetricsLogs;
+            builder.mutable_metadata = Some(metadata.clone());
+            builder.config.telemetry_heartbeat_interval = Duration::from_secs(3600);
+            builder
+                .config
+                .set_endpoint(TelemetryEndpoint {
+                    url: Some(server.url("/")),
+                    ..Default::default()
+                })
+                .unwrap();
+            let (handle, worker) = builder.build_worker::<NativeCapabilities>(None);
+            let _worker = runtime.spawn_worker(worker, true).unwrap();
+            handle.send_start().unwrap();
+
+            let mut log_id = 0;
+            let mut flush = |id: &str, seq: u64| {
+                let mock = server.mock(|when, then| {
+                    when.method(POST)
+                        .header("dd-session-id", id)
+                        .body_includes(format!(r#""runtime_id":"{id}""#))
+                        .body_includes(format!(r#""seq_id":{seq},"#));
+                    then.status(202);
+                });
+                log_id += 1;
+                handle
+                    .try_send_msg(TelemetryActions::AddLog(make_log(log_id, "observation")))
+                    .unwrap();
+                handle
+                    .try_send_msg(TelemetryActions::Lifecycle(LifecycleAction::FlushData))
+                    .unwrap();
+                runtime.block_on(handle.stats().unwrap()).unwrap().unwrap();
+                assert_eq!(mock.calls(), 1, "runtime {id}, sequence {seq}");
+            };
+
+            flush("parent", 1);
+            flush("parent", 2);
+            // Successful and failed forks both use the parent-resume path.
+            for seq in [3, 4] {
+                runtime.before_fork();
+                runtime.after_fork_parent().unwrap();
+                flush("parent", seq);
+            }
+
+            for (id, parent) in [("child", "parent"), ("grandchild", "child")] {
+                runtime.before_fork();
+                metadata.set_identity(
+                    id.into(),
+                    InstrumentationSession {
+                        id: id.into(),
+                        root_id: "parent".into(),
+                        parent_id: parent.into(),
+                    },
+                );
+                runtime.after_fork_child().unwrap();
+                flush(id, 1);
+                flush(id, 2);
+            }
+            runtime.shutdown(None).unwrap();
         }
 
         /// After reset(), pending buffered telemetry and dedupe history is cleared.
@@ -2100,6 +2294,93 @@ mod tests {
                 "queued AddDependency must not be pending"
             );
             assert_eq!(stats.logs, 0, "queued AddLog must be discarded");
+        }
+
+        #[cfg_attr(miri, ignore)]
+        #[tokio::test]
+        async fn metrics_reset_keeps_queued_start_and_staged_flush_alive() {
+            let (handle, mut worker) = build_test_worker();
+            worker.flavor = TelemetryWorkerFlavor::MetricsLogs;
+            handle.send_start().unwrap();
+            worker.reset();
+            assert!(worker.data.started);
+            assert!(worker.mailbox.try_recv().is_err());
+            for action in [LifecycleAction::FlushMetricAggr, LifecycleAction::FlushData] {
+                worker.deadlines.clear_pending();
+                worker.next_action = Some(TelemetryActions::Lifecycle(action));
+                worker.reset();
+                assert!(worker.next_action.is_none());
+                for expected in [LifecycleAction::FlushMetricAggr, LifecycleAction::FlushData] {
+                    assert!(
+                        worker
+                            .deadlines
+                            .deadlines
+                            .iter()
+                            .any(|(_, action)| *action == expected)
+                    );
+                }
+            }
+        }
+
+        #[cfg_attr(miri, ignore)]
+        #[tokio::test]
+        async fn metrics_reset_preserves_ordered_lifecycle_state() {
+            use LifecycleAction::*;
+
+            for restartable in [false, true] {
+                for (initial, staged, queued, expected) in [
+                    (false, None, &[Start, Stop][..], false),
+                    (true, None, &[Stop][..], false),
+                    (true, Some(Stop), &[][..], false),
+                    (false, Some(Start), &[Stop][..], false),
+                    (true, Some(Stop), &[Start][..], true),
+                    (false, None, &[Stop, Start][..], true),
+                    (false, Some(Stop), &[Start, Stop][..], false),
+                    (true, Some(FlushData), &[Stop][..], false),
+                    (true, Some(FlushMetricAggr), &[Stop][..], false),
+                    (false, None, &[Start, Stop, Start][..], true),
+                    (false, None, &[][..], false),
+                    (true, None, &[][..], true),
+                ] {
+                    let (handle, mut worker) = build_test_worker();
+                    worker.flavor = TelemetryWorkerFlavor::MetricsLogs;
+                    worker.config.restartable = restartable;
+                    if initial {
+                        handle.send_start().unwrap();
+                        worker.trigger().await;
+                        worker.run().await;
+                    }
+                    worker.next_action = staged.map(TelemetryActions::Lifecycle);
+                    handle
+                        .try_send_msg(TelemetryActions::AddLog(make_log(1, "parent")))
+                        .unwrap();
+                    for action in queued {
+                        handle
+                            .try_send_msg(TelemetryActions::Lifecycle(*action))
+                            .unwrap();
+                    }
+
+                    worker.reset();
+
+                    assert_eq!(
+                        worker.data.started, expected,
+                        "restartable={restartable}, initial={initial}, staged={staged:?}, queued={queued:?}"
+                    );
+                    assert_eq!(
+                        worker.deadlines.deadlines.len(),
+                        if expected { 2 } else { 0 }
+                    );
+                    assert!(worker.mailbox.try_recv().is_err());
+                    assert!(worker.next_action.is_none());
+                    assert_eq!(worker.stats().logs, 0);
+
+                    handle.send_start().unwrap();
+                    worker.trigger().await;
+                    worker.run().await;
+                    assert!(worker.data.started);
+                    assert_eq!(worker.deadlines.deadlines.len(), 2);
+                }
+            }
         }
 
         /// After reset(), the worker accepts new telemetry and processes it normally.

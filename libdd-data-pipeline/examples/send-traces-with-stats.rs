@@ -12,7 +12,7 @@ mod example {
         TelemetryConfig, TraceExporter, TraceExporterInputFormat, TraceExporterOutputFormat,
     };
     use libdd_log::logger::{
-        logger_configure_std, logger_set_log_level, LogEventLevel, StdConfig, StdTarget,
+        LogEventLevel, StdConfig, StdTarget, logger_configure_std, logger_set_log_level,
     };
     use libdd_shared_runtime::{ForkSafeRuntime, SharedRuntime};
     use libdd_tinybytes::BytesString;

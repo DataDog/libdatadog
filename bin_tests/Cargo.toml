@@ -4,7 +4,8 @@
 [package]
 name = "bin_tests"
 version = "0.1.0"
-edition = "2021"
+edition.workspace = true
+rust-version.workspace = true
 publish = false
 build = "build.rs"
 
@@ -18,6 +19,7 @@ libdd-crashtracker = { path = "../libdd-crashtracker" }
 libdd-common = { path = "../libdd-common" }
 tempfile.workspace = true
 serde_json.workspace = true
+tokio = { workspace = true, features = ["io-util", "rt"] }
 libc.workspace = true
 errno = { workspace = true, default-features = true }
 nix = { workspace = true, features = ["signal", "socket"] }

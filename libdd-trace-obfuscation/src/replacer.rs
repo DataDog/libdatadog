@@ -3,7 +3,7 @@
 
 use libdd_common::regex_engine::{Regex, Replacer};
 use libdd_trace_protobuf::pb;
-use libdd_trace_utils::span::{v04, v1, v1::AttributeValue, SpanText, TraceData};
+use libdd_trace_utils::span::{SpanText, TraceData, v1, v1::AttributeValue, v04};
 use serde::{Deserialize, Deserializer, Serialize};
 
 // Agent-facing representation. `re` and `no_expansion` are derived runtime state.
@@ -90,7 +90,7 @@ pub fn replace_trace_tags(trace: &mut [pb::Span], rules: &[ReplaceRule]) {
 /// Replaces the tag values of a [`v04::Span`] using the given rules.
 ///
 /// Fields are the immutable [`SpanText`] type, so matches are written back through
-/// [`SpanText::from_owned`]. [`replace_all_opt`] returns `None` on no match, so untouched fields
+/// [`SpanText::from_owned`]. `replace_all_opt` returns `None` on no match, so untouched fields
 /// don't allocate.
 pub fn replace_span_tags_v04<T: TraceData>(span: &mut v04::Span<T>, rules: &[ReplaceRule]) {
     fn apply_rule<S: SpanText>(rule: &ReplaceRule, field: &mut S) {

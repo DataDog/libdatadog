@@ -1,8 +1,8 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::crash_info::{Metadata, TelemetryCrashUploader, UnknownValue};
 use crate::CrashtrackerConfiguration;
+use crate::crash_info::{Metadata, TelemetryCrashUploader, UnknownValue};
 use libdd_telemetry::data::LogLevel;
 use std::sync::Arc;
 

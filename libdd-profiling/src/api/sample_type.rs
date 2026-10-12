@@ -298,10 +298,12 @@ mod tests {
         let unknown = ValueType::new("unknown-type", "count");
         let result: Result<SampleType, _> = unknown.try_into();
         assert!(result.is_err(), "Unknown type should fail to parse");
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Unknown sample type"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Unknown sample type")
+        );
 
         let invalid_unit = ValueType::new("cpu-time", "count");
         let result: Result<SampleType, _> = invalid_unit.try_into();

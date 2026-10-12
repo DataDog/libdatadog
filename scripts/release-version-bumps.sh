@@ -206,9 +206,9 @@ while read -r crate; do
             echo "Semver level for $NAME overridden to $LEVEL; not running semver-level.sh"
         else
             echo "Executing semver-level.sh for $NAME since $RANGE (tag: $TAG)..."
-            # stderr is folded in so the reason travels with a failure; without this the
-            # capture swallows it and the run aborts with nothing to go on.
-            if ! SEMVER_LEVEL=$("${SCRIPT_DIR}/semver-level.sh" "$NAME" "refs/tags/$TAG" 2>&1); then
+            # stderr is left to the log, not captured: it carries progress lines and the
+            # failure reason, and folding it in would put them in front of the JSON.
+            if ! SEMVER_LEVEL=$("${SCRIPT_DIR}/semver-level.sh" "$NAME" "refs/tags/$TAG"); then
                 echo "ERROR: semver-level.sh failed for $NAME:" >&2
                 echo "$SEMVER_LEVEL" >&2
                 exit 1

@@ -1,8 +1,8 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use futures::future::Map;
 use futures::FutureExt;
+use futures::future::Map;
 use libdd_trace_utils::trace_utils::SendData;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::oneshot;
