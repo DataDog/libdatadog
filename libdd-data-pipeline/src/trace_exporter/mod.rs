@@ -1336,7 +1336,10 @@ impl<
         // mirroring `process_and_send_trace_chunks`. The builder should reject conflicting
         // destinations at build time instead.
         if let Some(max_line_size) = self.log_output {
-            let payload = libdd_trace_utils::span::v1::TracerPayload {
+            // Borrow `traces`' chunks into the payload rather than consuming them via
+            // `into_chunks()`: `write_log_traces_v1` only needs a `&TracerPayload`, so moving the
+            // chunks back afterwards lets `traces`' `Drop` recycle them into the pool (if any).
+            let mut payload = libdd_trace_utils::span::v1::TracerPayload {
                 container_id: T::Text::from_owned(self.metadata.container_id.clone()),
                 language_name: T::Text::from_owned(self.metadata.language.clone()),
                 language_version: T::Text::from_owned(self.metadata.language_version.clone()),
@@ -1348,10 +1351,12 @@ impl<
                 hostname: T::Text::from_owned(self.metadata.hostname.clone()),
                 app_version: T::Text::from_owned(self.metadata.app_version.clone()),
                 attributes: Default::default(),
-                chunks: traces.into_chunks(),
+                chunks: std::mem::take(&mut *traces),
             };
-            let stats = write_log_traces_v1(&self.capabilities, &payload, max_line_size)
-                .map_err(TraceExporterError::Io)?;
+            let result = write_log_traces_v1(&self.capabilities, &payload, max_line_size)
+                .map_err(TraceExporterError::Io);
+            *traces = std::mem::take(&mut payload.chunks);
+            let stats = result?;
             debug!(
                 spans_written = stats.spans_written,
                 spans_dropped = stats.spans_dropped,
@@ -1425,7 +1430,11 @@ impl<
             chunk_count,
             self.agent_payload_response_version.as_ref(),
         );
-        let out_payload = libdd_trace_utils::span::v1::TracerPayload {
+        // Borrow `traces`' chunks into the payload rather than consuming them via
+        // `into_chunks()`: both encoders only need a `&TracerPayload`, so moving the chunks back
+        // afterwards lets `traces`' `Drop` (at the end of this function) recycle them into the
+        // pool (if any) instead of dropping them outright.
+        let mut out_payload = libdd_trace_utils::span::v1::TracerPayload {
             container_id: T::Text::from_owned(self.metadata.container_id.clone()),
             language_name: T::Text::from_owned(self.metadata.language.clone()),
             language_version: T::Text::from_owned(self.metadata.language_version.clone()),
@@ -1437,13 +1446,14 @@ impl<
             hostname: T::Text::from_owned(self.metadata.hostname.clone()),
             app_version: T::Text::from_owned(self.metadata.app_version.clone()),
             attributes: Default::default(),
-            chunks: traces.into_chunks(),
+            chunks: std::mem::take(&mut *traces),
         };
         let mp_payload = if v1_supported {
             msgpack_encoder::v1::to_vec_from_v1(&out_payload)
         } else {
             msgpack_encoder::v04::to_vec_from_v1(&out_payload)
         };
+        *traces = std::mem::take(&mut out_payload.chunks);
         let counts = PayloadCounts {
             chunks: chunk_count,
             ..counts
@@ -3069,6 +3079,86 @@ mod tests {
         );
         mock_traces.assert();
         assert_eq!(mock_traces.calls(), 1);
+    }
+
+    /// Regression test for a real `TracePool` actually being fed back by a full send through the
+    /// agent path: `process_and_send_trace_chunks_v1` used to move the chunks into the outgoing
+    /// `TracerPayload` via `into_chunks()`, which discarded pooling (the payload was dropped, not
+    /// `traces`, once it had been encoded). The chunks now get moved back into `traces` after
+    /// encoding, so its `Drop` recycles them.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_send_trace_chunks_v1_feeds_a_real_pool() {
+        use libdd_trace_utils::span::v1::chunk_pool::TracePool;
+        use libdd_trace_utils::span::v1::{SpanBytes as SpanBytesV1, TraceChunkBytes};
+
+        agent_info::clear_cache_for_test();
+
+        let server = MockServer::start();
+        let mock_traces = server.mock(|when, then| {
+            when.method(POST).path("/v1.0/traces");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(r#"{ "rate_by_service": { "service:,env:": 1.0 } }"#);
+        });
+
+        let _mock_info = server.mock(|when, then| {
+            when.method(GET).path(INFO_ENDPOINT);
+            then.status(200)
+                .header("content-type", "application/json")
+                .header("datadog-agent-state", "1")
+                .body(format!(
+                    r#"{{"version":"1","client_drop_p0s":true,"endpoints":["{V1_TRACES_ENDPOINT}"]}}"#
+                ));
+        });
+
+        let exporter = build_test_exporter(
+            server.url("/"),
+            None,
+            TraceExporterInputFormat::V04,
+            TraceExporterOutputFormat::V1,
+            false,
+            false,
+        );
+
+        let start = std::time::Instant::now();
+        while agent_info::get_agent_info().is_none() {
+            if start.elapsed() > Duration::from_secs(5) {
+                panic!("timeout waiting for /info");
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+
+        let chunks = vec![TraceChunkBytes {
+            trace_id: [0; 16],
+            spans: vec![SpanBytesV1 {
+                name: BytesString::from_slice(b"op").unwrap(),
+                service: BytesString::from_static("svc"),
+                resource: BytesString::from_static("res"),
+                span_id: 2,
+                parent_id: 0,
+                start: 0,
+                duration: 1,
+                ..Default::default()
+            }],
+            ..Default::default()
+        }];
+
+        let pool = TracePool::with_capacity(100);
+        assert!(pool.is_empty(), "pool should start empty");
+        let result = exporter.send_trace_chunks_v1(pool.wrap_chunks(chunks), None);
+
+        assert!(
+            result.is_ok(),
+            "sync v1 native send should succeed: {:?}",
+            result.err()
+        );
+        mock_traces.assert();
+        assert_eq!(mock_traces.calls(), 1);
+        assert!(
+            !pool.is_empty(),
+            "the sent chunk should have been recycled back into the pool"
+        );
     }
 
     #[test]
