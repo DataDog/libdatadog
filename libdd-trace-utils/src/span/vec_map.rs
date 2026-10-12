@@ -263,8 +263,6 @@ impl<K: Eq + Hash, V> VecMap<K, V> {
             return;
         }
 
-        self.data.reverse();
-
         // Since we're going to shuffle elements around, it's not easy to keep references to keys in
         // the deduping set while deleting some of them, since deletion in a vec shifts all other
         // elements after it, invalidating references. When we finally call `retain`, we must not
@@ -287,12 +285,26 @@ impl<K: Eq + Hash, V> VecMap<K, V> {
         // We choose the two-pass approach, which is simpler, safe and reasonably fast. If needed in
         // the future, the unsafe one-pass approach can be implemented.
         let keep: Vec<bool> = {
-            let mut seen = HashSet::with_capacity(self.len());
-            self.data.iter().map(|(k, _)| seen.insert(k)).collect()
+            let mut seen = hashbrown::HashSet::with_capacity(self.len());
+            self.data
+                .iter()
+                .rev()
+                .map(|(k, _)| seen.insert(k))
+                .collect()
         };
 
-        let mut keep = keep.into_iter();
-        self.data.retain(|_| keep.next().unwrap_or(false));
+        let mut i = 0;
+        let data_len = self.data.len();
+        self.data.retain(|_| {
+            // keep is a bitmap of elements in reverse order. It does have indices pas the last element 
+            // that is kept.
+            // So f we do not keep the n last elements of the list, the lenght of keep will be data_len - n.
+            // First check that the index is in the keep bitmap, then index it in reverse order
+            let idx_start = data_len - keep.len();
+            let keep = i >= idx_start && keep.get(data_len - 1 - i).copied().unwrap_or(false);
+            i += 1;
+            keep
+        });
 
         self.deduped = true;
     }
@@ -375,7 +387,7 @@ impl<K: Serialize + Eq + Hash, V: Serialize> Serialize for VecMap<K, V> {
 
 pub enum DedupedVecMap<'a, K, V> {
     Borrowed(&'a VecMap<K, V>),
-    Owned(HashMap<&'a K, &'a V>),
+    Owned(hashbrown::HashMap<&'a K, &'a V>),
 }
 
 impl<'a, K, V> DedupedVecMap<'a, K, V> {
@@ -406,7 +418,7 @@ impl<'a, K, V> DedupedVecMap<'a, K, V> {
 
 pub enum DedupedVecMapIter<'b, 'a: 'b, K, V> {
     Borrowed(slice::Iter<'a, (K, V)>),
-    Owned(std::collections::hash_map::Iter<'b, &'a K, &'a V>),
+    Owned(hashbrown::hash_map::Iter<'b, &'a K, &'a V>),
 }
 
 impl<'b, 'a: 'b, K, V> Iterator for DedupedVecMapIter<'b, 'a, K, V> {
