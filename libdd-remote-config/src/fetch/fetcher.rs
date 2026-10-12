@@ -126,7 +126,7 @@ pub struct ConfigFetcherState<S, C: HttpClientCapability + SleepCapability> {
     pub invariants: ConfigInvariants,
     endpoint: Endpoint,
     pub expire_unused_files: bool,
-    http_client: C,
+    pub(in crate::fetch) http_client: C,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -259,7 +259,7 @@ pub struct ConfigClientState {
     last_error: Option<String>,
     /// Services discovered at runtime. Sent to the agent on each poll so it can route configs
     /// targeting those services to this client. Updated out-of-band by the consumer
-    extra_services: Vec<String>,
+    pub(in crate::fetch) extra_services: Vec<String>,
     /// Server-recommended interval between consecutive polls.
     refresh_interval: Option<Duration>,
 }
@@ -332,6 +332,11 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
     /// Sets the apply state on a stored file.
     pub fn set_config_state(&self, file: &RemoteConfigPath, state: ConfigApplyState) {
         self.state.set_config_state(file, state)
+    }
+
+    /// Destructures the fetcher into its file storage and state.
+    pub fn into_parts(self) -> (S, Arc<ConfigFetcherState<S::StoredFile, C>>) {
+        (self.file_storage, self.state)
     }
 
     fn build_config_request(
@@ -459,13 +464,28 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
         }
         client_state.last_error = None;
 
+        let result = self.process_agent_response(&body_bytes, target, client_state);
+        if let Err(e) = &result {
+            // Contrary to transport errors, failures to process the response are reported back
+            // to the agent with the next request.
+            client_state.last_error = Some(format!("{e:#}"));
+        }
+        result
+    }
+
+    fn process_agent_response(
+        &mut self,
+        body_bytes: &[u8],
+        target: &Target,
+        client_state: &mut ConfigClientState,
+    ) -> anyhow::Result<Option<Vec<Arc<S::StoredFile>>>> {
         // Nothing changed
         if body_bytes.len() <= 3 {
             trace!("Requested remote config and got an empty reply");
             return Ok(None);
         }
 
-        let response: ClientGetConfigsResponse = serde_json::from_slice(body_bytes.as_ref())?;
+        let response: ClientGetConfigsResponse = serde_json::from_slice(body_bytes)?;
 
         if response.config_status == ConfigStatus::Expired as i32 {
             debug!(
