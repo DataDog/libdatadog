@@ -1550,15 +1550,19 @@ pub extern "C" fn ddog_sidecar_transport_replace_connection_as(
     transport.replace_connection_as(connection, instance_id.clone(), remote_config_generation);
 }
 
-/// Releases the sockets of a transport inherited by a fork child from a thread which did not
-/// survive the fork, so that the sidecar drops the state of that thread. The transport itself is
-/// left alone: the thread may have been in the middle of using it.
+/// Closes the sockets of a transport inherited by a fork child from a thread which did not
+/// survive the fork, so that the sidecar drops the state of that thread.
+///
+/// # Safety
+///
+/// The transport must never be used or dropped afterwards, but leaked: the thread may have been
+/// in the middle of changing it, and its fd numbers may get reused.
 #[cfg(unix)]
 #[unsafe(no_mangle)]
-pub extern "C" fn ddog_sidecar_transport_release_inherited_fds(
+pub unsafe extern "C" fn ddog_sidecar_transport_close_inherited_fds(
     transport: &mut Box<SidecarTransport>,
 ) {
-    transport.release_inherited_fds()
+    unsafe { transport.close_inherited_fds() }
 }
 
 /// Gets an agent info reader.
@@ -1742,7 +1746,7 @@ pub struct AppsecCResponse {
 }
 
 /// Sends an AppSec message from the PHP extension through the sidecar to the helper's client of
-/// this connection. A client_init message starts a new client.
+/// this connection. A client_init message, as told by `client_init`, starts a new client.
 ///
 /// The response is allocated by the sidecar and must be freed with
 /// `ddog_sidecar_appsec_response_drop` when the caller is done with it.
@@ -1754,8 +1758,13 @@ pub struct AppsecCResponse {
 pub unsafe extern "C" fn ddog_sidecar_send_appsec_message(
     transport: &mut Box<SidecarTransport>,
     data: ffi::CharSlice,
+    client_init: bool,
 ) -> AppsecCResponse {
-    appsec_c_response(blocking::send_appsec_message(transport, data.as_bytes()))
+    appsec_c_response(blocking::send_appsec_message(
+        transport,
+        data.as_bytes(),
+        client_init,
+    ))
 }
 
 /// Sends an AppSec message once, without reconnecting the sidecar on failure.
@@ -1770,10 +1779,12 @@ pub unsafe extern "C" fn ddog_sidecar_send_appsec_message(
 pub unsafe extern "C" fn datadog_sidecar_send_appsec_message_without_reconnect(
     transport: &mut Box<SidecarTransport>,
     data: ffi::CharSlice,
+    client_init: bool,
 ) -> AppsecCResponse {
     appsec_c_response(blocking::send_appsec_message_without_reconnect(
         transport,
         data.as_bytes(),
+        client_init,
     ))
 }
 

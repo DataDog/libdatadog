@@ -1213,7 +1213,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
         }
     }
 
-    async fn send_appsec_message(&mut self, data: Vec<u8>) -> (Vec<u8>, bool) {
+    async fn send_appsec_message(&mut self, data: Vec<u8>, client_init: bool) -> (Vec<u8>, bool) {
         #[cfg(unix)]
         {
             let Some(appsec) = self.server.appsec.as_ref() else {
@@ -1229,7 +1229,10 @@ impl SidecarInterface for ConnectionSidecarHandler {
                 return (vec![], true /* disconnect */);
             }
 
-            let Some(response) = appsec.send_message(&mut self.appsec, data).await else {
+            let Some(response) = appsec
+                .send_message(&mut self.appsec, data, client_init)
+                .await
+            else {
                 info!("appsec: not in running phase anymore");
                 return (vec![], true /* disconnect */);
             };
@@ -1237,7 +1240,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
         }
         #[cfg(not(unix))]
         {
-            _ = data;
+            _ = (data, client_init);
             (vec![], false)
         }
     }

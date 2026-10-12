@@ -101,11 +101,12 @@ impl AppSecManager {
         &self,
         connection: &mut AppSecConnection,
         data: Vec<u8>,
+        client_init: bool,
     ) -> Option<AppSecMessageResponse> {
         let AppSecBackendState::Running(backend) = self.backend.get()? else {
             return None;
         };
-        Some((backend.send_message)(connection, data).await)
+        Some((backend.send_message)(connection, data, client_init).await)
     }
 
     pub(crate) fn disconnect(&self, connection: &mut AppSecConnection) {
@@ -129,9 +130,10 @@ impl AppSecManager {
     }
 }
 
-/// Forwards one message of a connection to the connection's client.
+/// Forwards one message of a connection to the connection's client. A client_init message starts
+/// a new client.
 type AppSecSendMessage =
-    for<'a> fn(&'a mut AppSecConnection, Vec<u8>) -> AppSecFuture<'a, AppSecMessageResponse>;
+    for<'a> fn(&'a mut AppSecConnection, Vec<u8>, bool) -> AppSecFuture<'a, AppSecMessageResponse>;
 
 pub type AppSecFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 

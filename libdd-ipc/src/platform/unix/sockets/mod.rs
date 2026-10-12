@@ -454,14 +454,15 @@ impl SeqpacketConn {
         self.inner.as_raw_fd()
     }
 
-    /// Releases the sockets of a connection inherited by a fork child, without touching the
-    /// connection otherwise: its fds are replaced by /dev/null. The connection then no longer
-    /// keeps the parent's connection open, and dropping it later only closes /dev/null, not an fd
-    /// number which got reused in the meantime.
-    pub fn release_inherited_fds(&self) {
-        let Ok(dev_null) = std::fs::File::open("/dev/null") else {
-            return;
-        };
+    /// Closes the sockets of a connection inherited by a fork child from a thread which did not
+    /// survive the fork, so that the peer drops the connection.
+    ///
+    /// # Safety
+    ///
+    /// The connection must never be used or dropped afterwards, but leaked: its fd numbers may get
+    /// reused. That thread may have been in the middle of changing any of its state, so leaking
+    /// it is the only safe option anyway.
+    pub unsafe fn close_inherited_fds(&self) {
         let fds = [
             Some(self.inner.as_raw_fd()),
             #[cfg(target_os = "macos")]
@@ -470,7 +471,7 @@ impl SeqpacketConn {
             self.liveness.as_ref().map(|fd| fd.as_raw_fd()),
         ];
         for fd in fds.into_iter().flatten() {
-            unsafe { libc::dup2(dev_null.as_raw_fd(), fd) };
+            unsafe { libc::close(fd) };
         }
     }
 }

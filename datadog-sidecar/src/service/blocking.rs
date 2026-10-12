@@ -57,10 +57,14 @@ impl SidecarTransport {
         self.inner.channel.0.conn.as_raw_fd()
     }
 
-    /// See [`libdd_ipc::SeqpacketConn::release_inherited_fds`].
+    /// See [`libdd_ipc::SeqpacketConn::close_inherited_fds`].
+    ///
+    /// # Safety
+    ///
+    /// The transport must never be used or dropped afterwards, but leaked.
     #[cfg(unix)]
-    pub fn release_inherited_fds(&self) {
-        self.inner.channel.0.conn.release_inherited_fds()
+    pub unsafe fn close_inherited_fds(&self) {
+        unsafe { self.inner.channel.0.conn.close_inherited_fds() }
     }
 
     pub fn reconnect<F>(&mut self, factory: F) -> bool
@@ -507,8 +511,9 @@ pub fn stats(transport: &mut SidecarTransport) -> io::Result<String> {
 pub fn send_appsec_message(
     transport: &mut SidecarTransport,
     data: &[u8],
+    client_init: bool,
 ) -> io::Result<(Vec<u8>, bool)> {
-    let request = SidecarInterfaceClientRequest::SendAppsecMessage { data };
+    let request = SidecarInterfaceClientRequest::SendAppsecMessage { data, client_init };
     transport.with_retry(|s| s.send_appsec_message(&request).map_err(decode_error_to_io))
 }
 
@@ -518,8 +523,9 @@ pub fn send_appsec_message(
 pub fn send_appsec_message_without_reconnect(
     transport: &mut SidecarTransport,
     data: &[u8],
+    client_init: bool,
 ) -> io::Result<(Vec<u8>, bool)> {
-    let request = SidecarInterfaceClientRequest::SendAppsecMessage { data };
+    let request = SidecarInterfaceClientRequest::SendAppsecMessage { data, client_init };
     transport
         .inner
         .send_appsec_message(&request)

@@ -244,11 +244,19 @@ pub trait SidecarInterface {
     async fn ensure_appsec_started(log_file_path: Vec<u8>, log_level: String) -> bool;
 
     /// Forwards an AppSec message from the PHP extension to the helper's client of this
-    /// connection. A client_init message starts a new client.
+    /// connection.
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - The message.
+    /// * `client_init` - Whether the message is a client_init, which starts a new client.
     ///
     /// Returns the response bytes from the helper and a flag indicating whether the client is
     /// gone, and the extension has to start over with client_init.
-    async fn send_appsec_message(#[ClientType(&'request [u8])] data: Vec<u8>) -> (Vec<u8>, bool);
+    async fn send_appsec_message(
+        #[ClientType(&'request [u8])] data: Vec<u8>,
+        client_init: bool,
+    ) -> (Vec<u8>, bool);
 
     /// Sends a ping to the service.
     #[blocking]
@@ -280,15 +288,19 @@ mod tests {
 
     #[test]
     fn appsec_client_request_decodes_as_server_request() {
-        let request = SidecarInterfaceClientRequest::SendAppsecMessage { data: b"payload" };
+        let request = SidecarInterfaceClientRequest::SendAppsecMessage {
+            data: b"payload",
+            client_init: true,
+        };
 
         let encoded = libdd_ipc::codec::encode(&request);
         let decoded: SidecarInterfaceRequest =
             libdd_ipc::codec::decode(&encoded).expect("client request should decode");
 
         match decoded {
-            SidecarInterfaceRequest::SendAppsecMessage { data } => {
+            SidecarInterfaceRequest::SendAppsecMessage { data, client_init } => {
                 assert_eq!(data, b"payload");
+                assert!(client_init);
             }
             _ => panic!("decoded the wrong request variant"),
         }

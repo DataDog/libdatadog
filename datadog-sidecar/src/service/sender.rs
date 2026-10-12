@@ -221,12 +221,15 @@ impl SidecarSender {
     }
 
     /// Blocking drain of pending state messages (used before blocking calls).
-    fn drain_outbox_blocking(&mut self) {
+    fn drain_outbox_blocking(&mut self) -> io::Result<()> {
         let channel = &mut self.channel;
+        let mut result = Ok(());
+        // A failed message stays pending, and so does the rest: the caller does not try in vain.
         self.state.send_pending(|request| {
-            channel.send_request_blocking(request).ok();
-            true
+            result = channel.send_request_blocking(request);
+            result.is_ok()
         });
+        result
     }
 
     /// Drain outbox blocking, then send pre-serialized bytes blocking (no fds).
@@ -235,7 +238,7 @@ impl SidecarSender {
     /// allowing callers to detect failure and trigger reconnect via `SidecarTransport::with_retry`.
     /// Only suitable for requests that transfer no file descriptors (e.g. `enqueue_actions`).
     pub fn drain_and_send_raw_blocking(&mut self, data: &[u8]) -> io::Result<()> {
-        self.drain_outbox_blocking();
+        self.drain_outbox_blocking()?;
         self.channel.0.send_blocking(data.to_vec(), &[])
     }
 
@@ -389,27 +392,30 @@ impl SidecarSender {
         &mut self,
         request: &SidecarInterfaceClientRequest<'_>,
     ) -> Result<(Vec<u8>, bool), libdd_ipc::codec::DecodeError> {
-        self.drain_outbox_blocking();
+        self.drain_outbox_blocking()
+            .map_err(libdd_ipc::codec::DecodeError::Io)?;
         self.channel.call_client_request_blocking(request)
     }
 
     pub fn flush(&mut self, options: SidecarFlushOptions) -> io::Result<()> {
-        self.drain_outbox_blocking();
+        self.drain_outbox_blocking()?;
         self.channel.call_flush(options)
     }
 
     pub fn ping(&mut self) -> io::Result<()> {
-        self.drain_outbox_blocking();
+        self.drain_outbox_blocking()?;
         self.channel.call_ping()
     }
 
     pub fn dump(&mut self) -> Result<String, libdd_ipc::codec::DecodeError> {
-        self.drain_outbox_blocking();
+        self.drain_outbox_blocking()
+            .map_err(libdd_ipc::codec::DecodeError::Io)?;
         self.channel.call_dump()
     }
 
     pub fn stats(&mut self) -> Result<String, libdd_ipc::codec::DecodeError> {
-        self.drain_outbox_blocking();
+        self.drain_outbox_blocking()
+            .map_err(libdd_ipc::codec::DecodeError::Io)?;
         self.channel.call_stats()
     }
 }
@@ -650,6 +656,20 @@ mod tests {
             }
             other => panic!("unexpected requests for the new session: {other:?}"),
         }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn a_failed_state_message_fails_the_blocking_call_and_stays_pending() {
+        let (mut sender, peer) = sender();
+        // Backpressure: the state is not sent along.
+        sender.max_outstanding = 0;
+        sender.set_user_service_defined(true);
+        sender.max_outstanding = 100;
+        drop(peer);
+
+        assert!(sender.ping().is_err());
+        assert!(sender.state.user_service_defined.pending);
     }
 
     #[test]
