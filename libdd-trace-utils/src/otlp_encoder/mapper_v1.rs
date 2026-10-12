@@ -799,6 +799,42 @@ mod tests_v1 {
     }
 
     #[test]
+    fn payload_level_metadata_survives_onto_otlp_resource() {
+        // Payload-level fields (env, service, app_version, language, tracer_version) come from
+        // `OtlpResourceInfo`, built once from the exporter's own metadata independently of the
+        // trace chunks — so they aren't lost even though v1 chunks/spans don't carry them
+        // themselves. Note: `hostname` is not emitted here; that's a pre-existing gap shared with
+        // the v0.4 path (`build_resource` is common to both), not specific to v1.
+        let resource_info = OtlpResourceInfo {
+            env: "prod".to_string(),
+            service: "my-service".to_string(),
+            app_version: "1.2.3".to_string(),
+            language: "rust".to_string(),
+            tracer_version: "9.9.9".to_string(),
+            ..Default::default()
+        };
+        let chunk = minimal_chunk([1; 16], minimal_span());
+        let req = map_traces_to_otlp_v1(&[chunk], &resource_info, false);
+        let resource_attrs = &req.resource_spans[0].resource.as_ref().unwrap().attributes;
+        let str_attr = |key: &str| {
+            resource_attrs
+                .iter()
+                .find(|a| a.key == key)
+                .and_then(|a| a.value.as_ref())
+                .and_then(|v| v.value.as_ref())
+                .map(|v| match v {
+                    PV::StringValue(s) => s.as_str(),
+                    other => panic!("expected stringValue for {key}, got {other:?}"),
+                })
+        };
+        assert_eq!(str_attr("deployment.environment.name"), Some("prod"));
+        assert_eq!(str_attr("service.name"), Some("my-service"));
+        assert_eq!(str_attr("service.version"), Some("1.2.3"));
+        assert_eq!(str_attr("telemetry.sdk.language"), Some("rust"));
+        assert_eq!(str_attr("telemetry.sdk.version"), Some("9.9.9"));
+    }
+
+    #[test]
     fn empty_chunk_does_not_panic() {
         let chunk = TraceChunk::<BytesData> {
             trace_id: [0; 16],

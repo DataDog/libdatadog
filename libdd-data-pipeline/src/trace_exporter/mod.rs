@@ -510,7 +510,7 @@ impl<
                     HealthMetric::Count(health_metrics::DESERIALIZE_TRACES, traces.len() as i64),
                     None,
                 );
-                self.send_trace_chunks_inner(PooledChunks::unpooled(traces))
+                self.process_and_send_trace_chunks(PooledChunks::unpooled(traces))
                     .await?
             }
             DeserInputFormat::V05 => {
@@ -530,7 +530,7 @@ impl<
                     HealthMetric::Count(health_metrics::DESERIALIZE_TRACES, traces.len() as i64),
                     None,
                 );
-                self.send_trace_chunks_inner(PooledChunks::unpooled(traces))
+                self.process_and_send_trace_chunks(PooledChunks::unpooled(traces))
                     .await?
             }
         };
@@ -630,7 +630,7 @@ impl<
     /// Reconcile `v1_active` with the agent's currently-advertised endpoints. Called only when
     /// V1 is configured and the agent info state has changed, so transitions are logged at most
     /// once per change. Note: `v1_active` can also transition `true → false` outside this path,
-    /// via the fail-closed hook in `send_trace_chunks_inner` when the agent returns 404 on
+    /// via the fail-closed hook in `process_and_send_trace_chunks` when the agent returns 404 on
     /// `/v1.0/traces` (the agent does not bump its state hash on 404).
     fn refresh_v1_active(&self, agent_info: &Arc<AgentInfo>) {
         let supports_v1 = agent_info
@@ -757,7 +757,7 @@ impl<
         if self.log_output.is_none() && self.agentless_config.is_none() {
             self.check_agent_info().await;
         }
-        self.send_trace_chunks_inner(trace_chunks).await
+        self.process_and_send_trace_chunks(trace_chunks).await
     }
 
     /// Force an immediate flush of client-computed stats if stats computation is currently
@@ -1144,7 +1144,7 @@ impl<
         Ok(AgentResponse::Unchanged)
     }
 
-    async fn send_trace_chunks_inner<T: TraceData>(
+    async fn process_and_send_trace_chunks<T: TraceData>(
         &self,
         mut traces: PooledChunks<'_, T>,
     ) -> Result<AgentResponse, TraceExporterError> {
@@ -1318,27 +1318,22 @@ impl<
         if self.log_output.is_none() && self.agentless_config.is_none() {
             self.check_agent_info().await;
         }
-        self.send_trace_chunks_inner_v1(trace_chunks).await
+        self.process_and_send_trace_chunks_v1(trace_chunks).await
     }
 
-    /// V1-native counterpart of [`Self::send_trace_chunks_inner`]. The pipeline up to
-    /// serialization (stats, dedup, agentless/OTLP dispatch) stays v1-native throughout: no
-    /// v0.4↔v1 conversion happens for those paths.
-    ///
-    /// Serialization onto the agent wire does negotiate, the same way
-    /// [`Self::send_trace_chunks_inner`] does via `v1_active`: while the agent hasn't advertised
+    /// Only the wire format negotiates, via `v1_active`: while the agent hasn't advertised
     /// `/v1.0/traces` (or has stopped advertising it), the v1-native chunks are downgraded to
     /// v0.4 msgpack (via [`msgpack_encoder::v04::to_vec_from_v1`]) and sent to `/v0.4/traces`
     /// instead of failing outright. This is a one-way downgrade for the wire format only — it
     /// does not turn this function into a general v0.4↔v1 conversion path.
-    async fn send_trace_chunks_inner_v1<T: TraceData>(
+    async fn process_and_send_trace_chunks_v1<T: TraceData>(
         &self,
         mut traces: PooledTraceChunks<'_, T>,
     ) -> Result<AgentResponse, TraceExporterError> {
         use libdd_trace_utils::span::SpanText;
 
         // TODO(APMSP-3608): log-output silently takes precedence over OTLP/agent here,
-        // mirroring `send_trace_chunks_inner`. The builder should reject conflicting
+        // mirroring `process_and_send_trace_chunks`. The builder should reject conflicting
         // destinations at build time instead.
         if let Some(max_line_size) = self.log_output {
             let payload = libdd_trace_utils::span::v1::TracerPayload {
@@ -1415,7 +1410,7 @@ impl<
 
         // Snapshot whether v1 is negotiated once so the serializer and the URL agree even if
         // `v1_active` flips mid-send (the background `/info` fetcher can race us otherwise) —
-        // mirrors `effective_output_format` in `send_trace_chunks_inner`.
+        // mirrors `effective_output_format` in `process_and_send_trace_chunks`.
         let v1_supported = self.v1_active.load(Ordering::Relaxed);
         let effective_format = if v1_supported {
             TraceExporterOutputFormat::V1
@@ -1463,9 +1458,9 @@ impl<
             .send_traces_with_telemetry(&endpoint, mp_payload, headers, counts)
             .await;
 
-        // State-hash trap mitigation, same rationale as `send_trace_chunks_inner`: on a 404 to
-        // `/v1.0/traces`, fail closed immediately and force an `/info` refresh so the next send
-        // downgrades to v0.4 without waiting for the fetcher's next poll.
+        // State-hash trap mitigation, same rationale as `process_and_send_trace_chunks`: on a 404
+        // to `/v1.0/traces`, fail closed immediately and force an `/info` refresh so the
+        // next send downgrades to v0.4 without waiting for the fetcher's next poll.
         if effective_format == TraceExporterOutputFormat::V1 {
             if let Err(TraceExporterError::Request(ref e)) = result {
                 if e.status() == http::StatusCode::NOT_FOUND
@@ -2084,7 +2079,7 @@ mod tests {
 
     // V1-native counterpart of `test_log_mode_send_writes_forwarder_json`: sends native v1
     // chunks (no msgpack decode — there is no byte-decode path for v1 input), hits the log
-    // branch in `send_trace_chunks_inner_v1`, and writes Forwarder-format JSON bytes through
+    // branch in `process_and_send_trace_chunks_v1`, and writes Forwarder-format JSON bytes through
     // the log-output capability.
     #[test]
     #[cfg_attr(miri, ignore)]
