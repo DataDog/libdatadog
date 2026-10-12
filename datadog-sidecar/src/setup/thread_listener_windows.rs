@@ -151,6 +151,7 @@ fn run_listener_windows(
         // Resolves to AuthPolicy::OsEnforced on Windows: the pipe's DACL already refuses
         // cross-user connects.
         authorizer: ConnectionAuthorizer::for_in_process_listener(),
+        drain_only_own_process: true,
     };
 
     crate::entry::enter_listener_loop_with_config(

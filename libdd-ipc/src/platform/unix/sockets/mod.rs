@@ -453,6 +453,27 @@ impl SeqpacketConn {
     pub fn as_raw_fd(&self) -> RawFd {
         self.inner.as_raw_fd()
     }
+
+    /// Closes the sockets of a connection inherited by a fork child from a thread which did not
+    /// survive the fork, so that the peer drops the connection.
+    ///
+    /// # Safety
+    ///
+    /// The connection must never be used or dropped afterwards, but leaked: its fd numbers may get
+    /// reused. That thread may have been in the middle of changing any of its state, so leaking
+    /// it is the only safe option anyway.
+    pub unsafe fn close_inherited_fds(&self) {
+        let fds = [
+            Some(self.inner.as_raw_fd()),
+            #[cfg(target_os = "macos")]
+            self._peer.as_ref().map(|fd| fd.as_raw_fd()),
+            #[cfg(target_os = "macos")]
+            self.liveness.as_ref().map(|fd| fd.as_raw_fd()),
+        ];
+        for fd in fds.into_iter().flatten() {
+            unsafe { libc::close(fd) };
+        }
+    }
 }
 
 impl AsRawFd for SeqpacketConn {
