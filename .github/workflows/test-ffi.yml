@@ -184,6 +184,15 @@ jobs:
           RUSTFLAGS: "${{ matrix.flags }}"
         run: |
           cargo ffi-test
+      - name: "Test sidecar C bindings (Unix)"
+        if: runner.os != 'Windows' && (needs.setup.outputs.crates-json == '' || contains(needs.setup.outputs.crates-json, 'datadog-sidecar-ffi'))
+        shell: bash
+        env:
+          RUSTFLAGS: "${{ matrix.flags }}"
+          CARGO_BUILD_PROFILE: "${{ matrix.profile }}"
+        run: |
+          cargo install cbindgen --version 0.29.0 --locked
+          bash scripts/test_sidecar_ffi.sh
       - name: "Test building CXX bindings - Crashinfo (Unix)"
         shell: bash
         if: matrix.platform != 'windows-latest'

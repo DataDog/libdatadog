@@ -45,6 +45,7 @@ pub mod exception_hash_rate_limiter;
 pub(crate) mod ffe_exposures_flusher;
 pub(crate) mod ffe_flagevaluation_flusher;
 pub(crate) mod ffe_metrics_flusher;
+pub mod ffe_submission;
 mod instance_id;
 mod queue_id;
 mod remote_configs;
