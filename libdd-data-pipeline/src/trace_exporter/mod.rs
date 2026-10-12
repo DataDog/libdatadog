@@ -64,9 +64,10 @@ use libdd_trace_utils::send_with_retry::{
     CompressionStrategy, RetryStrategy, SendWithRetryError, SendWithRetryResult, send_with_retry,
 };
 use libdd_trace_utils::span::span_pool::PooledChunks;
+use libdd_trace_utils::span::trace_utils::SDK_OTLP_EXPORT_KEY;
 use libdd_trace_utils::span::v1::TraceChunk;
 use libdd_trace_utils::span::v1::chunk_pool::PooledTraceChunks;
-use libdd_trace_utils::span::{TraceData, trace_utils_v1, v04::Span};
+use libdd_trace_utils::span::{SpanText, TraceData, trace_utils_v1, v04::Span};
 use libdd_trace_utils::trace_utils::TracerHeaderTags;
 #[cfg(all(feature = "telemetry", not(target_arch = "wasm32")))]
 use prost::Message;
@@ -1173,7 +1174,14 @@ impl<
             self.telemetry.load_full().as_deref(),
         );
 
+        // Agent and agentless both send the Datadog format; the builder rejects agentless + OTLP.
+        let native_export = self.otlp.is_none();
         for chunk in traces.iter_mut() {
+            if native_export {
+                if let Some(first) = chunk.first_mut() {
+                    add_native_export_marker(first);
+                }
+            }
             for span in chunk.iter_mut() {
                 span.dedup();
             }
@@ -1270,6 +1278,11 @@ impl<
     ///
     /// Sync facade over [`Self::send_trace_chunks_async_v1`]; panics inside an existing tokio
     /// context.
+    ///
+    /// `trace_chunks` accepts [`PooledTraceChunks`] so a caller can back it with a real
+    /// [`libdd_trace_utils::span::v1::chunk_pool::TracePool`] to recycle span/chunk allocations;
+    /// no caller in this codebase does so yet (today's production callers all go through
+    /// msgpack), wiring one up is left to a future change.
     ///
     /// # Arguments
     /// * trace_chunks: A list of native v1 trace chunks.
@@ -1708,6 +1721,14 @@ pub trait ResponseCallback {
     fn call(&self, response: &str);
 }
 
+/// Marks a span as exported natively (not over OTLP) with `_dd.sdk.otlp_export: "false"`.
+fn add_native_export_marker<T: TraceData>(span: &mut Span<T>) {
+    span.meta.insert(
+        T::Text::from_static_str(SDK_OTLP_EXPORT_KEY),
+        T::Text::from_static_str("false"),
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use self::error::AgentErrorKind;
@@ -1961,6 +1982,15 @@ mod tests {
         datagram.trim_matches(char::from(0)).to_string()
     }
 
+    // Size of the v04 body the exporter sends for `traces`, once it adds the native export marker.
+    fn marked_v04_len(traces: &[Vec<SpanBytes>]) -> usize {
+        let mut marked = traces.to_vec();
+        for chunk in marked.iter_mut() {
+            add_native_export_marker(&mut chunk[0]);
+        }
+        msgpack_encoder::v04::to_vec_from_v04(&marked).len()
+    }
+
     pub(crate) fn build_test_exporter(
         url: String,
         dogstatsd_url: Option<String>,
@@ -2194,6 +2224,9 @@ mod tests {
             }],
         ];
         let data = msgpack_encoder::v04::to_vec_from_v04(&traces);
+        let sent_len = marked_v04_len(&traces);
+        // The marker grows the body, so reporting the input length instead would fail below.
+        assert!(sent_len > data.len());
 
         let _result = exporter.send(data.as_ref()).expect("failed to send trace");
 
@@ -2215,7 +2248,7 @@ mod tests {
             ),
             format!(
                 "datadog.tracer.exporter.transport.sent.bytes:{}|d|#libdatadog_version:{}",
-                data.len(),
+                sent_len,
                 env!("CARGO_PKG_VERSION")
             ),
             format!(
@@ -2294,6 +2327,7 @@ mod tests {
             ..Default::default()
         }]];
         let data = msgpack_encoder::v04::to_vec_from_v04(&traces);
+        let sent_len = marked_v04_len(&traces);
         let result = exporter.send(data.as_ref());
 
         assert!(result.is_err());
@@ -2322,12 +2356,12 @@ mod tests {
         );
         let expected_dropped = format!(
             "datadog.tracer.exporter.transport.dropped.bytes:{}|d|#libdatadog_version:{}",
-            data.len(),
+            sent_len,
             env!("CARGO_PKG_VERSION")
         );
         let expected_sent_bytes = format!(
             "datadog.tracer.exporter.transport.sent.bytes:{}|d|#libdatadog_version:{}",
-            data.len(),
+            sent_len,
             env!("CARGO_PKG_VERSION")
         );
         let expected_sent_traces = format!(
@@ -2402,6 +2436,7 @@ mod tests {
             ..Default::default()
         }]];
         let data = msgpack_encoder::v04::to_vec_from_v04(&traces);
+        let sent_len = marked_v04_len(&traces);
         let result = exporter.send(data.as_ref());
 
         assert!(result.is_err());
@@ -2423,7 +2458,7 @@ mod tests {
         );
         let expected_sent_bytes = format!(
             "datadog.tracer.exporter.transport.sent.bytes:{}|d|#libdatadog_version:{}",
-            data.len(),
+            sent_len,
             env!("CARGO_PKG_VERSION")
         );
         let expected_sent_traces = format!(
@@ -2460,7 +2495,7 @@ mod tests {
         // Should NOT emit http.dropped.bytes for 404
         let dropped_bytes_metric = format!(
             "datadog.tracer.exporter.transport.dropped.bytes:{}|d|#libdatadog_version:{}",
-            data.len(),
+            sent_len,
             env!("CARGO_PKG_VERSION")
         );
         assert!(
@@ -2901,6 +2936,89 @@ mod tests {
     }
 
     #[test]
+    fn test_add_native_export_marker() {
+        let mut span = SpanBytes::default();
+        add_native_export_marker(&mut span);
+        assert_eq!(
+            span.meta.get(SDK_OTLP_EXPORT_KEY).map(|v| v.as_str()),
+            Some("false")
+        );
+
+        // A marker already set by the tracer is overridden once the span is deduped.
+        let mut span = SpanBytes::default();
+        span.meta.insert(
+            BytesString::from_static(SDK_OTLP_EXPORT_KEY),
+            BytesString::from_static("true"),
+        );
+        add_native_export_marker(&mut span);
+        span.dedup();
+        assert_eq!(span.meta.len(), 1);
+        assert_eq!(
+            span.meta.get(SDK_OTLP_EXPORT_KEY).map(|v| v.as_str()),
+            Some("false")
+        );
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_agent_export_marks_first_span_of_each_chunk() {
+        let server = MockServer::start();
+        let mock_agent = server.mock(|when, then| {
+            when.method(POST).path(V04_TRACES_ENDPOINT).is_true(|req| {
+                let Ok((chunks, _)) = msgpack_decoder::v04::from_slice(req.body_ref()) else {
+                    return false;
+                };
+                let is_marked = |span: &libdd_trace_utils::span::v04::SpanSlice| {
+                    span.meta
+                        .get(SDK_OTLP_EXPORT_KEY)
+                        .is_some_and(|v| v == "false")
+                };
+                chunks.len() == 2
+                    && chunks[0].len() == 2
+                    && chunks[1].len() == 1
+                    && is_marked(&chunks[0][0])
+                    && !chunks[0][1].meta.contains_key(SDK_OTLP_EXPORT_KEY)
+                    && is_marked(&chunks[1][0])
+            });
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(r#"{"rate_by_service": {}}"#);
+        });
+
+        let mut builder = TraceExporter::<NativeCapabilities, ForkSafeRuntime>::builder();
+        builder
+            .set_url(&server.url("/"))
+            .set_service("svc")
+            .set_tracer_version("1.0")
+            .set_language("rust")
+            .set_language_version("1.0")
+            .set_language_interpreter("rustc")
+            .set_input_format(TraceExporterInputFormat::V04)
+            .set_output_format(TraceExporterOutputFormat::V04);
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
+
+        let span = |trace_id, span_id, parent_id| SpanBytes {
+            name: BytesString::from_slice(b"op").unwrap(),
+            service: BytesString::from_static("svc"),
+            trace_id,
+            span_id,
+            parent_id,
+            ..Default::default()
+        };
+        let traces: Vec<Vec<SpanBytes>> =
+            vec![vec![span(1, 1, 0), span(1, 2, 1)], vec![span(2, 3, 0)]];
+        let data = msgpack_encoder::v04::to_vec_from_v04(&traces);
+        let result = exporter.send(data.as_ref());
+
+        assert!(
+            result.is_ok(),
+            "Agent send should succeed: {:?}",
+            result.err()
+        );
+        mock_agent.assert();
+    }
+
+    #[test]
     #[cfg_attr(miri, ignore)]
     fn test_agentless_export_via_builder() {
         let server = MockServer::start();
@@ -3226,6 +3344,73 @@ mod tests {
         }]];
         let data = msgpack_encoder::v04::to_vec_from_v04(&traces);
         exporter.send(data.as_ref()).unwrap();
+        mock_intake.assert();
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_agentless_export_marks_first_span_of_each_chunk() {
+        let server = MockServer::start();
+        let mock_intake = server.mock(|when, then| {
+            fn check_body(body: &[u8]) -> bool {
+                let Ok(body) = serde_json::from_slice::<serde_json::Value>(body) else {
+                    return false;
+                };
+                let marker = |trace: usize, span: usize| {
+                    body["traces"][trace]["spans"][span]["meta"][SDK_OTLP_EXPORT_KEY].as_str()
+                };
+                body["traces"].as_array().map(Vec::len) == Some(2)
+                    && marker(0, 0) == Some("false")
+                    && !body["traces"][0]["spans"][1].is_null()
+                    && marker(0, 1).is_none()
+                    && marker(1, 0) == Some("false")
+            }
+            let when = when.method(POST).path("/v1/input");
+            #[cfg(feature = "compression")]
+            let when = when.is_true(|req| {
+                #[cfg(not(target_arch = "wasm32"))]
+                let body = zstd::decode_all(req.body_ref());
+                #[cfg(target_arch = "wasm32")]
+                let body = zrip::decompress(req.body_ref());
+                body.is_ok_and(|body| check_body(&body))
+            });
+            #[cfg(not(feature = "compression"))]
+            let when = when.is_true(|req| check_body(req.body_ref()));
+            let _ = when;
+            then.status(200).body("");
+        });
+
+        let intake_url = format!("{}/v1/input", server.url("/").trim_end_matches('/'));
+        let mut builder = TraceExporterBuilder::default();
+        builder
+            .set_service("svc")
+            .set_tracer_version("1.0")
+            .set_language("rust")
+            .set_language_version("1.0")
+            .set_language_interpreter("rustc")
+            .set_agentless_endpoint(&intake_url, "k")
+            .set_input_format(TraceExporterInputFormat::V04)
+            .set_output_format(TraceExporterOutputFormat::V04);
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
+
+        let span = |trace_id, span_id, parent_id| SpanBytes {
+            name: BytesString::from_slice(b"op").unwrap(),
+            service: BytesString::from_static("svc"),
+            trace_id,
+            span_id,
+            parent_id,
+            ..Default::default()
+        };
+        let traces: Vec<Vec<SpanBytes>> =
+            vec![vec![span(1, 1, 0), span(1, 2, 1)], vec![span(2, 3, 0)]];
+        let data = msgpack_encoder::v04::to_vec_from_v04(&traces);
+        let result = exporter.send(data.as_ref());
+
+        assert!(
+            result.is_ok(),
+            "Agentless send should succeed: {:?}",
+            result.err()
+        );
         mock_intake.assert();
     }
 
@@ -3782,6 +3967,8 @@ mod single_threaded_tests {
     #[cfg_attr(miri, ignore)]
     #[test]
     fn test_client_side_stats_obfuscation_opt_in() {
+        let next_obf_version =
+            crate::trace_exporter::stats::SUPPORTED_OBFUSCATION_VERSION_CUSTOM_CONFIG;
         let current_obf_version = crate::trace_exporter::stats::SUPPORTED_OBFUSCATION_VERSION;
         let prev_obf_version = crate::trace_exporter::stats::SUPPORTED_OBFUSCATION_VERSION - 1;
         // Opt-in OFF, agent supports → must stay disabled.
@@ -3789,13 +3976,14 @@ mod single_threaded_tests {
             !run_obfuscation_test(false, Some(current_obf_version)),
             "obfuscation must stay disabled when builder opt-in is absent"
         );
+
         // Opt-in ON, agent does not advertise support → disabled.
         assert!(
             !run_obfuscation_test(true, None),
             "obfuscation must stay disabled when agent does not advertise support"
         );
 
-        // Opt-in ON, agent obfuscation_version < tracer obfuscation_version -> disabled;
+        // Opt-in ON, agent obfuscation_version != tracer obfuscation_version -> disabled;
         assert!(
             !run_obfuscation_test(true, Some(prev_obf_version)),
             "obfuscation must stay disabled when agent.obfuscation_version < tracer.obfuscation_version"
@@ -3804,7 +3992,13 @@ mod single_threaded_tests {
         // Opt-in ON, agent supports → enabled.
         assert!(
             run_obfuscation_test(true, Some(current_obf_version)),
-            "obfuscation must activate when opted in and agent supports"
+            "obfuscation must activate when opted in and agent obfuscation_version = 1"
+        );
+
+        // Opt-in ON, agent supports → enabled.
+        assert!(
+            run_obfuscation_test(true, Some(next_obf_version)),
+            "obfuscation must activate when opted in and agent obfuscation_version = 2"
         );
     }
 

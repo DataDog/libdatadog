@@ -2,6 +2,18 @@
 
 
 
+## [10.0.0](https://github.com/datadog/libdatadog/compare/libdd-telemetry-v9.0.0..libdd-telemetry-v10.0.0) - 2026-10-02
+
+### Added
+
+- Use mutable metadata ([#2552](https://github.com/datadog/libdatadog/issues/2552)) - ([c801252](https://github.com/datadog/libdatadog/commit/c80125280a56a2c8e78f8e098de7ecbbe4dd5033))
+
+### Changed
+
+- Update workspace to Rust 2024 edition ([#2575](https://github.com/datadog/libdatadog/issues/2575)) - ([620a212](https://github.com/datadog/libdatadog/commit/620a212fc91e128234f48b29d657c71d6ad5caed))
+
+
+
 ## [9.0.0](https://github.com/datadog/libdatadog/compare/libdd-telemetry-v8.0.0..libdd-telemetry-v9.0.0) - 2026-09-24
 
 ### Changed

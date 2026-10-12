@@ -580,6 +580,8 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
     /// attributes
     /// (`service.name`, `operation.name`, `resource.name`, `span.type`, `error.msg`,
     ///  `error.message`, `span.kind`) to the OTLP payload.
+    /// Also sets the `datadog.sdk.semantics` OTLP resource attribute to `"otel"` (it is
+    /// `"datadog"` otherwise).
     /// OTLP trace metrics are unaffected and always include available Datadog attributes.
     pub fn enable_otel_trace_semantics(&mut self) -> &mut Self {
         self.otel_trace_semantics_enabled = true;

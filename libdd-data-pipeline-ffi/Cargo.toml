@@ -36,15 +36,15 @@ rmp-serde.workspace = true
 libdd-trace-utils = { path = "../libdd-trace-utils" }
 
 [dependencies]
-libdd-capabilities-impl = { version = "6.0.0", path = "../libdd-capabilities-impl" }
+libdd-capabilities-impl = { version = "7.0.0", path = "../libdd-capabilities-impl" }
 libdd-data-pipeline = { path = "../libdd-data-pipeline" }
-libdd-shared-runtime = { version = "5.0.0", path = "../libdd-shared-runtime" }
+libdd-shared-runtime = { version = "6.0.0", path = "../libdd-shared-runtime" }
 libdd-common = { path = "../libdd-common", default-features = false }
-libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
+libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false, features = ["std"] }
 libdd-tinybytes = { path = "../libdd-tinybytes" }
 libdd-trace-utils = { path = "../libdd-trace-utils" }
 rmp.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true
 serde_json.workspace = true
-libdd-trace-obfuscation = { version = "9.0.0", path = "../libdd-trace-obfuscation", default-features = false }
+libdd-trace-obfuscation = { version = "10.0.0", path = "../libdd-trace-obfuscation", default-features = false }

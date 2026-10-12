@@ -71,6 +71,8 @@ mod otlp_export_tests {
                                         {"key": "telemetry.sdk.version", "value": {"stringValue": "1.0"}},
                                         {"key": "runtime-id", "value": {"stringValue": "test-runtime-id"}},
                                         {"key": "_dd.stats_computed", "value": {"stringValue": "true"}},
+                                        {"key": "_dd.sdk.otlp_export", "value": {"stringValue": "true"}},
+                                        {"key": "datadog.sdk.semantics", "value": {"stringValue": "otel"}},
                                     ]
                                 }
                             }]
