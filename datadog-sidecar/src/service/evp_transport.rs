@@ -1566,7 +1566,9 @@ mod tests {
 
     #[tokio::test]
     async fn unchanged_session_configuration_preserves_sticky_direct_and_deduplication() {
-        let session = crate::service::session_info::SessionInfo::default();
+        let mut session = crate::service::ConnectionSession::for_test(
+            crate::service::InstanceId::new("session", "runtime"),
+        );
         let template = agentless(Some("api-key"));
         let config = EvpTransportConfigWithIdentity::new(
             (*template.config).clone(),
@@ -1592,7 +1594,9 @@ mod tests {
 
     #[tokio::test]
     async fn unchanged_session_configuration_preserves_unavailable_cooldown() {
-        let session = crate::service::session_info::SessionInfo::default();
+        let mut session = crate::service::ConnectionSession::for_test(
+            crate::service::InstanceId::new("session", "runtime"),
+        );
         let template = agentless(None);
         let config = EvpTransportConfigWithIdentity::new(
             (*template.config).clone(),

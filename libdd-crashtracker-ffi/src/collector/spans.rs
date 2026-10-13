@@ -49,7 +49,7 @@ pub unsafe extern "C" fn ddog_crasht_clear_trace_ids() -> VoidResult {
 ///   Err() on failure. The most likely cause of failure is that the underlying set is full.
 ///
 /// Note: 128 bit ints in FFI were not stabilized until Rust 1.77
-/// https://blog.rust-lang.org/2024/03/30/i128-layout-update.html
+/// <https://blog.rust-lang.org/2024/03/30/i128-layout-update.html>
 /// We're currently locked into 1.76.0, have to do an ugly workaround involving 2 64 bit ints
 /// until we can upgrade.
 ///
@@ -78,7 +78,7 @@ pub unsafe extern "C" fn ddog_crasht_insert_trace_id(id_high: u64, id_low: u64) 
 ///   Err() on failure. The most likely cause of failure is that the underlying set is full.
 ///
 /// Note: 128 bit ints in FFI were not stabilized until Rust 1.77
-/// https://blog.rust-lang.org/2024/03/30/i128-layout-update.html
+/// <https://blog.rust-lang.org/2024/03/30/i128-layout-update.html>
 /// We're currently locked into 1.76.0, have to do an ugly workaround involving 2 64 bit ints
 /// until we can upgrade.
 ///
@@ -108,7 +108,7 @@ pub unsafe extern "C" fn ddog_crasht_insert_span_id(id_high: u64, id_low: u64) -
 ///                      be modified.
 ///
 /// Note: 128 bit ints in FFI were not stabilized until Rust 1.77
-/// https://blog.rust-lang.org/2024/03/30/i128-layout-update.html
+/// <https://blog.rust-lang.org/2024/03/30/i128-layout-update.html>
 /// We're currently locked into 1.76.0, have to do an ugly workaround involving 2 64 bit ints
 /// until we can upgrade.
 ///
@@ -142,7 +142,7 @@ pub unsafe extern "C" fn ddog_crasht_remove_span_id(
 ///                      be modified.
 ///
 /// Note: 128 bit ints in FFI were not stabilized until Rust 1.77
-/// https://blog.rust-lang.org/2024/03/30/i128-layout-update.html
+/// <https://blog.rust-lang.org/2024/03/30/i128-layout-update.html>
 /// We're currently locked into 1.76.0, have to do an ugly workaround involving 2 64 bit ints
 /// until we can upgrade.
 ///
