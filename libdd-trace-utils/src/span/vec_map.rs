@@ -296,9 +296,9 @@ impl<K: Eq + Hash, V> VecMap<K, V> {
         let mut i = 0;
         let data_len = self.data.len();
         self.data.retain(|_| {
-            // keep is a bitmap of elements in reverse order. It does have indices pas the last element 
-            // that is kept.
-            // So f we do not keep the n last elements of the list, the lenght of keep will be data_len - n.
+            // keep is a bitmap of elements in reverse order. The lenght of the bitmap only extends to the last element 
+            // that is kept
+            // So if the n last elements of the list are duplicates, the lenght of `keep` will be data_len - n.
             // First check that the index is in the keep bitmap, then index it in reverse order
             let idx_start = data_len - keep.len();
             let keep = i >= idx_start && keep.get(data_len - 1 - i).copied().unwrap_or(false);
