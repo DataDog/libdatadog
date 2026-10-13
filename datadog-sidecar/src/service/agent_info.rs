@@ -2,12 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! This file contains code for fetching and sharing the info from the Datadog Agent.
-//! It will keep one fetcher per Endpoint. The SidecarServer is expected to keep the AgentInfoGuard
-//! alive for the lifetime of the session.
+//! It will keep one fetcher per Endpoint. Each sidecar connection keeps an AgentInfoGuard alive
+//! for as long as it is configured with that endpoint.
 //! The fetcher will remain alive for a short while after all guards have been dropped.
 //! It writes the raw agent response to shared memory at a fixed per-endpoint location, to be
 //! consumed be tracers.
 
+use arc_swap::ArcSwap;
 use base64::Engine;
 use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use futures::FutureExt;
@@ -19,78 +20,106 @@ use libdd_data_pipeline::agent_info::schema::AgentInfoStruct;
 use libdd_data_pipeline::agent_info::{FetchInfoStatus, fetch_info_with_state};
 use libdd_ipc::one_way_shared_memory::{OneWayShmReader, OneWayShmWriter, open_named_shm};
 use libdd_ipc::platform::NamedShmHandle;
+use libdd_live_debugger::sender::agent_info_supports_debugger_v2_endpoint;
 use manual_future::ManualFuture;
 use std::ffi::CString;
 use std::hash::{Hash, Hasher};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
 use tracing::{error, warn};
 use zwohash::{HashMap, ZwoHasher};
 
+/// The map lock is only taken when a guard is created and when an idle fetcher retires; guards
+/// and readers of the fetched info never touch it, so per-connection guards stay uncontended.
 #[derive(Default, Clone)]
-pub struct AgentInfos(Arc<Mutex<HashMap<Endpoint, AgentInfoFetcher>>>);
+pub struct AgentInfos(Arc<Mutex<HashMap<Endpoint, Arc<AgentInfoFetcher>>>>);
 
 impl AgentInfos {
     /// Ensures a fetcher for the endpoints agent info and keeps it alive for at least as long as
     /// the returned guard exists.
     pub fn query_for(&self, endpoint: Endpoint) -> AgentInfoGuard {
         let mut infos_guard = self.0.lock_or_panic();
-        if let Some(info) = infos_guard.get_mut(&endpoint) {
-            info.rc += 1;
-        } else {
-            infos_guard.insert(
-                endpoint.clone(),
-                AgentInfoFetcher::new(self.clone(), endpoint.clone()),
-            );
-        }
+        let fetcher = match infos_guard.get(&endpoint) {
+            Some(fetcher) => {
+                fetcher.rc.fetch_add(1, Ordering::AcqRel);
+                fetcher.clone()
+            }
+            None => {
+                let fetcher = AgentInfoFetcher::start(self.clone(), endpoint.clone());
+                infos_guard.insert(endpoint, fetcher.clone());
+                fetcher
+            }
+        };
 
-        AgentInfoGuard {
-            infos: self.clone(),
-            endpoint,
-        }
+        AgentInfoGuard { fetcher }
     }
 }
 
 pub struct AgentInfoGuard {
-    infos: AgentInfos,
-    endpoint: Endpoint,
+    fetcher: Arc<AgentInfoFetcher>,
 }
 
 impl AgentInfoGuard {
     pub fn get(&self) -> Shared<ManualFuture<AgentInfoStruct>> {
-        let infos_guard = self.infos.0.lock_or_panic();
+        (**self.fetcher.infos.load()).clone()
+    }
 
-        #[allow(clippy::unwrap_used)]
-        let infos = infos_guard.get(&self.endpoint).unwrap();
-        infos.infos.clone()
+    /// Whether the last fetched agent info lacks the debugger v2 intake. False until the first
+    /// info has been fetched.
+    pub fn lacks_debugger_v2_endpoint(&self) -> bool {
+        self.fetcher.lacks_debugger_v2.load(Ordering::Relaxed)
     }
 }
 
 impl Drop for AgentInfoGuard {
     fn drop(&mut self) {
-        let mut infos_guard = self.infos.0.lock_or_panic();
-
-        #[allow(clippy::unwrap_used)]
-        let info = infos_guard.get_mut(&self.endpoint).unwrap();
-        info.last_update = Instant::now();
-        info.rc -= 1;
+        self.fetcher.touch();
+        self.fetcher.rc.fetch_sub(1, Ordering::AcqRel);
     }
 }
 
 pub struct AgentInfoFetcher {
-    /// Once the last_update is too old, we'll stop the fetcher.
-    last_update: Instant,
     /// Will be kept alive forever if rc > 0.
-    rc: u32,
+    rc: AtomicU32,
+    created_at: Instant,
+    /// Milliseconds since `created_at` of the last guard drop. Once it is too old (and rc is 0),
+    /// we'll stop the fetcher.
+    last_update_ms: AtomicU64,
     /// The initial fetch is an unresolved future (to be able to await on it), subsequent fetches
     /// are simply directly replacing this with a resolved future.
-    infos: Shared<ManualFuture<AgentInfoStruct>>,
+    infos: ArcSwap<Shared<ManualFuture<AgentInfoStruct>>>,
+    lacks_debugger_v2: AtomicBool,
 }
 
 impl AgentInfoFetcher {
-    fn new(agent_infos: AgentInfos, endpoint: Endpoint) -> AgentInfoFetcher {
+    fn touch(&self) {
+        let elapsed = self.created_at.elapsed().as_millis();
+        self.last_update_ms.store(
+            u64::try_from(elapsed).unwrap_or(u64::MAX),
+            Ordering::Relaxed,
+        );
+    }
+
+    fn idle_for(&self) -> Duration {
+        self.created_at
+            .elapsed()
+            .saturating_sub(Duration::from_millis(
+                self.last_update_ms.load(Ordering::Relaxed),
+            ))
+    }
+
+    fn start(agent_infos: AgentInfos, endpoint: Endpoint) -> Arc<AgentInfoFetcher> {
         let (future, completer) = ManualFuture::new();
+        let fetcher = Arc::new(AgentInfoFetcher {
+            rc: AtomicU32::new(1),
+            created_at: Instant::now(),
+            last_update_ms: AtomicU64::new(0),
+            infos: ArcSwap::from_pointee(future.shared()),
+            lacks_debugger_v2: AtomicBool::new(false),
+        });
+        let this = fetcher.clone();
         #[allow(clippy::unwrap_used)]
         tokio::spawn(async move {
             let mut state: Option<String> = None;
@@ -104,49 +133,57 @@ impl AgentInfoFetcher {
                 let fetched =
                     fetch_info_with_state::<NativeCapabilities>(&fetch_endpoint, state.as_deref())
                         .await;
-                let mut complete_fut = None;
                 {
+                    // Checked under the map lock, so that query_for cannot revive a fetcher
+                    // which is being removed.
                     let mut infos_guard = agent_infos.0.lock_or_panic();
-
-                    let infos = infos_guard.get_mut(&endpoint).unwrap();
-                    if infos.rc == 0 && infos.last_update.elapsed().as_secs() > 60 {
+                    if this.rc.load(Ordering::Acquire) == 0
+                        && this.idle_for() > Duration::from_secs(60)
+                    {
+                        infos_guard.remove(&endpoint);
                         break;
                     }
-                    match fetched {
-                        Ok(FetchInfoStatus::SameState) => {}
-                        Ok(FetchInfoStatus::NewState(status)) => {
-                            state = Some(status.state_hash);
-                            if writer.is_none() {
-                                writer = match OneWayShmWriter::<NamedShmHandle>::new(info_path(
-                                    &endpoint,
-                                )) {
-                                    Ok(writer) => Some(writer),
-                                    Err(e) => {
-                                        error!("Failed acquiring an agent info writer: {e:?}");
-                                        None
-                                    }
-                                };
-                            }
-                            if let Some(ref writer) = writer {
-                                // A payload that does not fit is logged and dropped by the
-                                // writer; the previously published info stays readable.
-                                _ = writer.write(&serde_json::to_vec(&status.info).unwrap());
-                            }
-                            if let Some(completer) = completer {
-                                complete_fut = Some(completer.complete(status.info));
-                            } else {
-                                infos.infos = ManualFuture::new_completed(status.info).shared();
-                            }
-                            completer = None;
+                }
+                let mut complete_fut = None;
+                match fetched {
+                    Ok(FetchInfoStatus::SameState) => {}
+                    Ok(FetchInfoStatus::NewState(status)) => {
+                        state = Some(status.state_hash);
+                        if writer.is_none() {
+                            writer = match OneWayShmWriter::<NamedShmHandle>::new(info_path(
+                                &endpoint,
+                            )) {
+                                Ok(writer) => Some(writer),
+                                Err(e) => {
+                                    error!("Failed acquiring an agent info writer: {e:?}");
+                                    None
+                                }
+                            };
                         }
-                        Err(e) => {
-                            // We'll just return the old values as long as the endpoint is
-                            // unreachable.
-                            warn!(
-                                "The agent info for {} could not be fetched: {}",
-                                fetch_endpoint.url, e
-                            );
+                        if let Some(ref writer) = writer {
+                            // A payload that does not fit is logged and dropped by the
+                            // writer; the previously published info stays readable.
+                            _ = writer.write(&serde_json::to_vec(&status.info).unwrap());
                         }
+                        this.lacks_debugger_v2.store(
+                            !agent_info_supports_debugger_v2_endpoint(&status.info),
+                            Ordering::Relaxed,
+                        );
+                        if let Some(completer) = completer {
+                            complete_fut = Some(completer.complete(status.info));
+                        } else {
+                            this.infos
+                                .store(Arc::new(ManualFuture::new_completed(status.info).shared()));
+                        }
+                        completer = None;
+                    }
+                    Err(e) => {
+                        // We'll just return the old values as long as the endpoint is
+                        // unreachable.
+                        warn!(
+                            "The agent info for {} could not be fetched: {}",
+                            fetch_endpoint.url, e
+                        );
                     }
                 }
                 if let Some(complete_fut) = complete_fut.take() {
@@ -154,14 +191,9 @@ impl AgentInfoFetcher {
                 }
                 sleep(Duration::from_secs(60)).await;
             }
-            agent_infos.0.lock().unwrap().remove(&endpoint);
         });
 
-        AgentInfoFetcher {
-            last_update: Instant::now(),
-            rc: 1,
-            infos: future.shared(),
-        }
+        fetcher
     }
 }
 

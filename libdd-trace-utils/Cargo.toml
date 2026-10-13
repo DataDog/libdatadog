@@ -25,6 +25,7 @@ required-features = ["bench-internals"]
 
 [dependencies]
 anyhow.workspace = true
+hashbrown = { workspace = true, default-features = true }
 base64 = { workspace = true, features = ["std"] }
 hex = { workspace = true, default-features = true }
 itoa.workspace = true

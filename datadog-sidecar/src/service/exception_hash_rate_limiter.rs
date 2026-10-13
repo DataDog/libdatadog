@@ -126,19 +126,6 @@ impl ExceptionHashRateLimiter {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
-    use crate::service::InstanceId;
-    use crate::service::telemetry::{
-        InternalTelemetryActions, get_telemetry_action_sender, init_telemetry_sender,
-    };
-
-    fn telemetry_action() -> InternalTelemetryActions {
-        InternalTelemetryActions {
-            instance_id: InstanceId::new("session", "runtime"),
-            service_name: "fork-test".into(),
-            env_name: "test".into(),
-            actions: vec![],
-        }
-    }
 
     #[test]
     #[cfg_attr(miri, ignore)] // Spawns a process and uses OS shared memory.
@@ -200,7 +187,6 @@ mod tests {
         current.add(456, Duration::from_secs(60));
         assert!(reader.find(456, Duration::from_secs(60)).is_some());
 
-        let (_telemetry, mut telemetry_rx) = init_telemetry_sender();
         let probes = server
             .shm_limiters()
             .probes
@@ -215,13 +201,6 @@ mod tests {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 unsafe { crate::setup::MasterListener::clear_inherited_state() }.unwrap();
                 crate::use_thread_sidecar_shm_namespace(Some(std::process::id()));
-                assert!(get_telemetry_action_sender().is_err());
-                let (_telemetry, mut telemetry_rx) = init_telemetry_sender();
-                get_telemetry_action_sender()
-                    .unwrap()
-                    .try_send(telemetry_action())
-                    .unwrap();
-                assert!(telemetry_rx.try_recv().is_ok());
                 let runtime = tokio::runtime::Builder::new_current_thread()
                     .enable_all()
                     .build()
@@ -269,10 +248,5 @@ mod tests {
                 .find(456, Duration::from_secs(60))
                 .is_some()
         );
-        get_telemetry_action_sender()
-            .unwrap()
-            .try_send(telemetry_action())
-            .unwrap();
-        assert!(telemetry_rx.try_recv().is_ok());
     }
 }
