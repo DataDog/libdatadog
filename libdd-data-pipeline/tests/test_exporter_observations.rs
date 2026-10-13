@@ -65,13 +65,9 @@ fn reports_terminal_results_without_native_delivery() {
                 if status == 503 {
                     assert!(payload.requests_count > 1);
                 }
-                assert_eq!(report.chunks_dropped_p0, 0);
-                assert_eq!(report.chunks_dropped_by_trace_filter, 0);
             }
             assert!(request.calls() >= 2);
-            let (result, stats) = exporter.shutdown_observed(None);
-            result.unwrap();
-            assert_eq!(stats, [0; 16]);
+            exporter.shutdown(None).unwrap();
             telemetry.assert_calls(0);
         }
     }
@@ -296,14 +292,11 @@ async fn css_filtering_reports_counts_before_the_empty_payload_send() {
     .await
     .unwrap();
     result.unwrap();
-    assert_eq!(report.chunks_dropped_by_trace_filter, 1);
-    assert_eq!(report.chunks_dropped_p0, 1);
     let payload = &report;
     assert_eq!(payload.chunks_sent, 0);
     assert_eq!(payload.spans_enqueued_for_serialization, 0);
     assert_eq!(payload.bytes_sent, 1);
     assert!(exporter.flush_client_side_stats_async().await);
-    assert_eq!(exporter.take_stats_observations(), [0; 16]);
     let exporter = std::sync::Arc::into_inner(exporter).unwrap();
     tokio::task::spawn_blocking(move || exporter.shutdown(None))
         .await

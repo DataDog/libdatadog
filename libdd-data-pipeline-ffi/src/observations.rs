@@ -94,78 +94,6 @@ pub unsafe extern "C" fn ddog_trace_exporter_send_trace_chunks_observed(
     )
 }
 
-/// Bounded stats counters: slot zero is whole-key collapse, slots 1..16 are bitmasks
-/// of resource (1), HTTP endpoint (2), peer tags (4), and additional metric tags (8).
-#[repr(C)]
-#[derive(Debug, Default)]
-pub struct TraceExporterStatsObservations {
-    pub collapsed_spans: [u64; 16],
-}
-
-/// Atomically drain background stats counters. Concurrent readers consume disjoint deltas.
-/// Drain and discard inherited counters in a forked child before restarting workers.
-///
-/// # Safety
-/// Non-null pointers must be valid; `out` must be writable and unaliased.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_trace_exporter_take_stats_observations(
-    exporter: Option<&TraceExporter>,
-    out: Option<NonNull<TraceExporterStatsObservations>>,
-) -> Option<Box<ExporterError>> {
-    let Some(mut out) = out else {
-        return gen_error!(ErrorCode::InvalidArgument);
-    };
-    unsafe {
-        out.as_ptr()
-            .write(TraceExporterStatsObservations::default());
-    }
-    let out = unsafe { out.as_mut() };
-    catch_panic!(
-        if let Some(exporter) = exporter {
-            out.collapsed_spans = exporter.take_stats_observations();
-            None
-        } else {
-            gen_error!(ErrorCode::InvalidArgument)
-        },
-        gen_error!(ErrorCode::Panic)
-    )
-}
-
-/// Consume an exporter, stop its workers, and return their final stats observations.
-/// A null output discards observations while still shutting down the exporter.
-///
-/// # Safety
-/// `exporter` must be exclusively owned and must not be used again. A non-null `out`
-/// must be writable and unaliased. It is initialised even on invalid input or panic.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_trace_exporter_shutdown_observed(
-    exporter: Option<Box<TraceExporter>>,
-    out: Option<NonNull<TraceExporterStatsObservations>>,
-) -> Option<Box<ExporterError>> {
-    if let Some(out) = out {
-        unsafe {
-            out.as_ptr()
-                .write(TraceExporterStatsObservations::default());
-        }
-    }
-    catch_panic!(
-        if let Some(exporter) = exporter {
-            let (result, counts) = exporter.shutdown_observed(None);
-            if let Some(out) = out {
-                unsafe {
-                    out.as_ptr().write(TraceExporterStatsObservations {
-                        collapsed_spans: counts,
-                    });
-                }
-            }
-            result.err().map(|e| Box::new(ExporterError::from(e)))
-        } else {
-            gen_error!(ErrorCode::InvalidArgument)
-        },
-        gen_error!(ErrorCode::Panic)
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -293,46 +221,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
-    fn stats_drain_and_shutdown_write_their_outputs_for_a_live_exporter() {
-        unsafe {
-            let server = MockServer::start();
-            let exporter = observed_exporter(&server.base_url());
-
-            let mut stats = MaybeUninit::<TraceExporterStatsObservations>::uninit();
-            let error = ddog_trace_exporter_take_stats_observations(
-                Some(exporter.as_ref()),
-                NonNull::new(stats.as_mut_ptr()),
-            );
-            assert!(error.is_none());
-            assert_eq!(stats.assume_init().collapsed_spans, [0; 16]);
-
-            let mut final_stats = MaybeUninit::<TraceExporterStatsObservations>::uninit();
-            let error = ddog_trace_exporter_shutdown_observed(
-                Some(exporter),
-                NonNull::new(final_stats.as_mut_ptr()),
-            );
-            assert!(error.is_none());
-            assert_eq!(final_stats.assume_init().collapsed_spans, [0; 16]);
-
-            // A null output discards the final drain but still shuts the exporter down.
-            let exporter = observed_exporter(&server.base_url());
-            assert!(ddog_trace_exporter_shutdown_observed(Some(exporter), None).is_none());
-        }
-    }
-
-    #[test]
-    fn shutdown_observed_rejects_a_missing_exporter_and_initialises_its_output() {
-        unsafe {
-            let mut stats = MaybeUninit::<TraceExporterStatsObservations>::uninit();
-            let error =
-                ddog_trace_exporter_shutdown_observed(None, NonNull::new(stats.as_mut_ptr()));
-            assert_eq!(error.unwrap().code, ErrorCode::InvalidArgument);
-            assert_eq!(stats.assume_init().collapsed_spans, [0; 16]);
-        }
-    }
-
-    #[test]
     fn observation_outputs_are_initialised_on_invalid_arguments() {
         unsafe {
             let mut response = MaybeUninit::<Option<Box<ExporterResponse>>>::uninit();
@@ -350,12 +238,6 @@ mod tests {
             assert_eq!(report.requests_count, 0);
             assert_eq!(report.status_code, 0);
             assert_eq!(report.bytes_sent, 0);
-
-            let mut stats = MaybeUninit::<TraceExporterStatsObservations>::uninit();
-            let error =
-                ddog_trace_exporter_take_stats_observations(None, NonNull::new(stats.as_mut_ptr()));
-            assert_eq!(error.unwrap().code, ErrorCode::InvalidArgument);
-            assert_eq!(stats.assume_init().collapsed_spans, [0; 16]);
         }
     }
 }

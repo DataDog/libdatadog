@@ -24,7 +24,6 @@ use std::sync::{Arc, Mutex};
 #[cfg(not(target_arch = "wasm32"))]
 use libdd_shared_runtime::BlockingRuntime;
 #[cfg(not(target_arch = "wasm32"))]
-use std::time::Duration;
 #[cfg(not(target_arch = "wasm32"))]
 use tokio_util::sync::CancellationToken;
 
@@ -35,9 +34,8 @@ tokio::task_local! {
 /// Caller-owned observations from one send. All counts are unsigned and zero-suppressed.
 /// `bytes_sent` is one successful payload-size distribution sample. Status zero means no
 /// terminal HTTP response; otherwise `responses_count` belongs to `status_code`.
-/// The struct contains no owned pointers and requires no destructor. Cancellation may leave
-/// only the filtering counts. Each exporter send currently prepares at most one payload,
-/// including V1 fallback.
+/// The struct contains no owned pointers and requires no destructor. Each exporter send currently
+/// prepares at most one payload, including V1 fallback.
 #[repr(C)]
 #[derive(Debug, Default)]
 pub struct TraceExporterObservations {
@@ -49,8 +47,6 @@ pub struct TraceExporterObservations {
     pub chunks_sent: u64,
     pub chunks_dropped_serialization_error: u64,
     pub chunks_dropped_send_failure: u64,
-    pub chunks_dropped_p0: u64,
-    pub chunks_dropped_by_trace_filter: u64,
     pub spans_enqueued_for_serialization: u64,
     pub spans_dropped_serialization_error: u64,
     pub spans_dropped_api_error: u64,
@@ -59,7 +55,7 @@ pub struct TraceExporterObservations {
 }
 
 impl TraceExporterObservations {
-    /// Replace the payload measurements, keeping the filtering counts.
+    /// Replace the payload measurements.
     fn set_payload(&mut self, payload: SendPayloadTelemetry) {
         let (status_code, responses_count) = payload
             .responses_count_per_code
@@ -108,28 +104,6 @@ impl<
     R: SharedRuntime,
 > TraceExporter<C, R>
 {
-    /// Atomically consume background stats observations. Slot zero denotes whole-key
-    /// collapse; other slots denote combinations of the four collapsed-field bits.
-    /// Returns zeros when external observations were not enabled on the builder.
-    pub fn take_stats_observations(&self) -> [u64; 16] {
-        self.observations.as_ref().map_or([0; 16], |o| o.take())
-    }
-
-    /// Stop workers, then consume their final stats deltas. A timed-out shutdown may
-    /// discard observations from work that did not finish before the deadline.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn shutdown_observed(
-        self,
-        timeout: Option<Duration>,
-    ) -> (Result<(), TraceExporterError>, [u64; 16])
-    where
-        R: BlockingRuntime,
-    {
-        let observations = self.observations.clone();
-        let result = self.shutdown(timeout);
-        (result, observations.map_or([0; 16], |o| o.take()))
-    }
-
     /// Send chunks and return measurements on both success and failure, without submitting
     /// this operation's measurements to the native telemetry client. The report is local to
     /// the call, so concurrent callers cannot consume each other's observations. Cancellation
@@ -171,41 +145,29 @@ mod tests {
     #[test]
     fn hooks_report_no_scope_outside_observe() {
         assert!(!record_payload(timeout_payload));
-        assert!(!record_dropped(1, 1));
     }
 
     #[tokio::test]
-    async fn observe_collects_hooks_and_starts_clean_each_time() {
-        let (recorded, first) = observe(async { record_dropped(2, 3) }).await;
-        assert!(recorded);
-        assert_eq!(first.chunks_dropped_p0, 2);
-        assert_eq!(first.chunks_dropped_by_trace_filter, 3);
+    async fn observe_starts_clean_each_time() {
+        let (_, first) = observe(async { record_payload(timeout_payload) }).await;
+        assert_eq!(first.requests_count, 3);
+        assert_eq!(first.errors_timeout, 1);
 
         let (_, second) = observe(async {}).await;
-        assert_eq!(second.chunks_dropped_p0, 0);
-        assert_eq!(second.chunks_dropped_by_trace_filter, 0);
-        // The scope ends with the call: nothing records afterwards.
-        assert!(!record_dropped(1, 1));
+        assert_eq!(second.requests_count, 0);
+        assert_eq!(second.errors_timeout, 0);
     }
 
     #[tokio::test]
     async fn spawned_tasks_do_not_see_the_report() {
         // Reports are task-local: a measurement emitted from a spawned task is not recorded.
-        let (recorded, report) =
-            observe(async { tokio::spawn(async { record_dropped(5, 5) }).await.unwrap() }).await;
+        let (recorded, report) = observe(async {
+            tokio::spawn(async { record_payload(timeout_payload) })
+                .await
+                .unwrap()
+        })
+        .await;
         assert!(!recorded);
-        assert_eq!(report.chunks_dropped_p0, 0);
-        assert_eq!(report.chunks_dropped_by_trace_filter, 0);
-    }
-
-    #[tokio::test]
-    async fn recording_a_payload_keeps_the_filtering_counts() {
-        let ((payload, dropped), report) =
-            observe(async { (record_payload(timeout_payload), record_dropped(2, 3)) }).await;
-        assert!(payload && dropped);
-        assert_eq!(report.requests_count, 3);
-        assert_eq!(report.errors_timeout, 1);
-        assert_eq!(report.chunks_dropped_p0, 2);
-        assert_eq!(report.chunks_dropped_by_trace_filter, 3);
+        assert_eq!(report.requests_count, 0);
     }
 }

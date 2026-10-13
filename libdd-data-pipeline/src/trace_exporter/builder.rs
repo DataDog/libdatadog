@@ -425,7 +425,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
 
     /// Select external observation delivery. Native telemetry workers are not constructed,
     /// including when `enable_telemetry` was also called. Consume send reports with
-    /// `send_trace_chunks_observed` and background deltas with `take_stats_observations`.
+    /// `send_trace_chunks_observed`.
     #[cfg(feature = "external-observations")]
     pub fn enable_observations(&mut self) -> &mut Self {
         self.observations = true;
