@@ -35,13 +35,13 @@ jobs:
             exit 1
           fi
 
-          # A 'backport v<N>.<M>' label targets the newest 'release/v<N>.<M>.*' branch (or an
-          # exact 'release/v<N>.<M>' branch when it exists). Resolve it accordingly.
+          # A 'backport v<N>.<M>' label targets the 'release/v<N>.<M>' branch. Resolve it
+          # accordingly.
           LABEL_VERSION=${BACKPORT_LABEL#backport }
-          TARGET_BRANCH=$(git ls-remote --heads origin "refs/heads/release/${LABEL_VERSION}" "refs/heads/release/${LABEL_VERSION}.*" \
-            | awk '{ print $2 }' | sed 's|^refs/heads/||' | sort -V | tail -n 1)
+          TARGET_BRANCH=$(git ls-remote --heads origin "refs/heads/release/${LABEL_VERSION}" \
+            | awk '{ print $2 }' | sed 's|^refs/heads/||')
           if [ -z "${TARGET_BRANCH}" ]; then
-            echo "No branch found for label '${BACKPORT_LABEL}' (expected a 'release/${LABEL_VERSION}' or 'release/${LABEL_VERSION}.*' branch)."
+            echo "No branch found for label '${BACKPORT_LABEL}' (expected a 'release/${LABEL_VERSION}' branch)."
             exit 1
           fi
           MERGE_COMMIT=$(git rev-parse HEAD)
