@@ -1,11 +1,11 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 use crate::{default_signals, shared::constants, signal_from_signum};
+use alloc::borrow::Cow;
+use core::time::Duration;
 use libdd_common::Endpoint;
-use std::borrow::Cow;
-use std::time::Duration;
 
-use super::{default_max_threads, CrashtrackerConfiguration, StacktraceCollection};
+use super::{CrashtrackerConfiguration, StacktraceCollection, default_max_threads};
 
 #[derive(Debug, Default)]
 pub struct CrashtrackerConfigurationBuilder {
@@ -23,7 +23,12 @@ pub struct CrashtrackerConfigurationBuilder {
     signals: Vec<i32>,
     timeout: Option<Duration>,
     unix_socket_path: Option<String>,
+    #[cfg(unix)]
+    unix_socket_connector: Option<fn(&str) -> std::os::fd::RawFd>,
     use_alt_stack: bool,
+    unwind_from_ucontext: bool,
+    trim_signal_delivery_frames: bool,
+    name_unresolved_frames: bool,
 }
 
 impl CrashtrackerConfigurationBuilder {
@@ -49,6 +54,21 @@ impl CrashtrackerConfigurationBuilder {
 
     pub fn demangle_names(mut self, demangle: bool) -> Self {
         self.demangle_names = demangle;
+        self
+    }
+
+    pub fn unwind_from_ucontext(mut self, enable: bool) -> Self {
+        self.unwind_from_ucontext = enable;
+        self
+    }
+
+    pub fn trim_signal_delivery_frames(mut self, enable: bool) -> Self {
+        self.trim_signal_delivery_frames = enable;
+        self
+    }
+
+    pub fn name_unresolved_frames(mut self, enable: bool) -> Self {
+        self.name_unresolved_frames = enable;
         self
     }
 
@@ -104,11 +124,21 @@ impl CrashtrackerConfigurationBuilder {
         self
     }
 
+    pub fn unix_socket_connector(mut self, connector: fn(&str) -> std::os::fd::RawFd) -> Self {
+        self.unix_socket_connector = Some(connector);
+        self
+    }
+
     pub fn build(self) -> anyhow::Result<CrashtrackerConfiguration> {
         // Requesting to create, but not use, the altstack is considered paradoxical.
         anyhow::ensure!(
             !self.create_alt_stack || self.use_alt_stack,
             "Cannot create an altstack without using it"
+        );
+        anyhow::ensure!(
+            !(self.trim_signal_delivery_frames || self.name_unresolved_frames)
+                || self.resolve_frames == StacktraceCollection::EnabledWithSymbolsInReceiver,
+            "trim_signal_delivery_frames and name_unresolved_frames require EnabledWithSymbolsInReceiver"
         );
         let timeout = self
             .timeout
@@ -159,7 +189,13 @@ impl CrashtrackerConfigurationBuilder {
             signals,
             timeout,
             unix_socket_path: self.unix_socket_path,
+            unix_socket_connector: self
+                .unix_socket_connector
+                .unwrap_or(super::default_unix_socket_connector),
             demangle_names: self.demangle_names,
+            unwind_from_ucontext: self.unwind_from_ucontext,
+            trim_signal_delivery_frames: self.trim_signal_delivery_frames,
+            name_unresolved_frames: self.name_unresolved_frames,
         })
     }
 }
@@ -168,7 +204,7 @@ impl CrashtrackerConfigurationBuilder {
 mod tests {
     use super::*;
     use crate::{default_signals, shared::constants};
-    use std::time::Duration;
+    use core::time::Duration;
 
     #[test]
     fn test_build_defaults() -> anyhow::Result<()> {
@@ -182,6 +218,42 @@ mod tests {
         assert_eq!(config.signals(), &default_signals());
         assert_eq!(config.timeout(), constants::DD_CRASHTRACK_DEFAULT_TIMEOUT);
         assert!(config.unix_socket_path().is_none());
+        assert!(!config.unwind_from_ucontext());
+        assert!(!config.trim_signal_delivery_frames());
+        assert!(!config.name_unresolved_frames());
+        Ok(())
+    }
+
+    #[test]
+    fn test_opt_in_stack_options_are_off_unless_set() -> anyhow::Result<()> {
+        // Defaults serialize exactly as before, so older configs and receivers
+        // see no difference.
+        let default_json = serde_json::to_value(CrashtrackerConfiguration::builder().build()?)?;
+        for key in [
+            "unwind_from_ucontext",
+            "trim_signal_delivery_frames",
+            "name_unresolved_frames",
+        ] {
+            assert!(
+                default_json.get(key).is_none(),
+                "{key} serialized by default"
+            );
+        }
+        let parsed: CrashtrackerConfiguration = serde_json::from_value(default_json)?;
+        assert!(!parsed.unwind_from_ucontext());
+
+        let config = CrashtrackerConfiguration::builder()
+            .unwind_from_ucontext(true)
+            .resolve_frames(StacktraceCollection::EnabledWithSymbolsInReceiver)
+            .trim_signal_delivery_frames(true)
+            .name_unresolved_frames(true)
+            .build()?;
+        let round_trip: CrashtrackerConfiguration =
+            serde_json::from_str(&serde_json::to_string(&config)?)?;
+        assert_eq!(round_trip, config);
+        assert!(round_trip.unwind_from_ucontext());
+        assert!(round_trip.trim_signal_delivery_frames());
+        assert!(round_trip.name_unresolved_frames());
         Ok(())
     }
 
@@ -192,6 +264,38 @@ mod tests {
             .use_alt_stack(false)
             .build();
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn stack_post_processing_requires_receiver_symbolization() {
+        for mode in [
+            StacktraceCollection::Disabled,
+            StacktraceCollection::WithoutSymbols,
+            StacktraceCollection::EnabledWithInprocessSymbols,
+        ] {
+            assert!(
+                CrashtrackerConfiguration::builder()
+                    .resolve_frames(mode)
+                    .trim_signal_delivery_frames(true)
+                    .build()
+                    .is_err()
+            );
+            assert!(
+                CrashtrackerConfiguration::builder()
+                    .resolve_frames(mode)
+                    .name_unresolved_frames(true)
+                    .build()
+                    .is_err()
+            );
+        }
+        assert!(
+            CrashtrackerConfiguration::builder()
+                .resolve_frames(StacktraceCollection::EnabledWithSymbolsInReceiver)
+                .trim_signal_delivery_frames(true)
+                .name_unresolved_frames(true)
+                .build()
+                .is_ok()
+        );
     }
 
     #[test]

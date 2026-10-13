@@ -8,7 +8,6 @@ use anyhow::Result;
 use serde::Deserialize;
 use std::ffi::OsStr;
 use std::fs;
-use std::ops::Add;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::rc::Rc;
@@ -61,6 +60,8 @@ impl Profiling {
         headers.push("ffe.h");
         #[cfg(feature = "shared-runtime")]
         headers.push("shared-runtime.h");
+        #[cfg(feature = "otel-thread-ctx")]
+        headers.push("otel-thread-ctx.h");
 
         let mut origin_path: PathBuf = [&self.source_include, "dummy.h"].iter().collect();
         let mut target_path: PathBuf = [&self.target_include, "dummy.h"].iter().collect();
@@ -130,23 +131,24 @@ impl Profiling {
 
 impl Module for Profiling {
     fn build(&self) -> Result<()> {
-        let features = self.features.to_string() + "," + "cbindgen";
-        #[cfg(feature = "crashtracker")]
-        let features = features.add(",crashtracker-collector,crashtracker-receiver,demangler");
-
         // Using rustc instead of build in order to overcome issues with LTO optimization.
         let mut cargo_args = vec![
             "rustc",
             "-p",
             CRATE_FOLDER,
+            "--no-default-features",
             "--features",
-            &features,
+            &self.features,
             "--target",
             &self.arch,
         ];
 
-        if self.profile.as_ref() == "release" {
-            cargo_args.push("--release");
+        match self.profile.as_ref() {
+            "debug" | "dev" => {}
+            profile => {
+                cargo_args.push("--profile");
+                cargo_args.push(profile);
+            }
         }
 
         // Parse profiling-ffi manifest in order to get the crate-type array.

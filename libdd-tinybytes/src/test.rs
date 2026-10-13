@@ -3,8 +3,8 @@
 
 use core::str;
 use std::hint::black_box;
-use std::sync::atomic::{self, AtomicUsize};
 use std::sync::Arc;
+use std::sync::atomic::{self, AtomicUsize};
 
 use super::*;
 use once_cell::sync::OnceCell;

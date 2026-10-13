@@ -6,9 +6,9 @@
 use std::collections::HashMap;
 
 use bytes::Bytes;
-use flate2::{write::GzEncoder, Compression};
+use flate2::{Compression, write::GzEncoder};
 use libdd_http_client::{HttpClient, HttpMethod, HttpRequest};
-use serde_json::{from_slice, Value};
+use serde_json::{Value, from_slice};
 use std::io::Write as _;
 
 use crate::{
@@ -28,7 +28,7 @@ use crate::{
 /// - Language metadata headers (`Datadog-Meta-Lang`, `Datadog-Meta-Lang-Version`,
 ///   `Datadog-Meta-Lang-Interpreter`, `Datadog-Meta-Tracer-Version`) from the [`LanguageMetadata`]
 ///   supplied when creating the client.
-/// - `User-Agent` derived from [`LanguageMetadata::user_agent`].
+/// - `User-Agent` derived from `LanguageMetadata::user_agent`.
 /// - Container/entity-ID headers (`Datadog-Container-Id`, `Datadog-Entity-ID`) read from
 ///   `/proc/self/cgroup` at startup, and `Datadog-External-Env` from `DD_EXTERNAL_ENV`.
 /// - `x-datadog-test-session-token` when a test token was set.
@@ -296,12 +296,14 @@ mod tests {
             .unwrap()
     }
 
+    #[cfg_attr(miri, ignore)] // real TLS/HTTP client construction is prohibitively slow under Miri
     #[test]
     fn builder_roundtrip() {
         let client = test_client(8126);
         assert!(client.base_url.contains("localhost"));
     }
 
+    #[cfg_attr(miri, ignore)] // real TLS/HTTP client construction is prohibitively slow under Miri
     #[test]
     fn static_headers_contain_language_metadata() {
         let client = test_client(8126);
@@ -315,6 +317,7 @@ mod tests {
         assert!(keys.contains(&"User-Agent"));
     }
 
+    #[cfg_attr(miri, ignore)] // real TLS/HTTP client construction is prohibitively slow under Miri
     #[test]
     fn extra_headers_propagated() {
         ensure_crypto_provider();

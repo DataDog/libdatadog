@@ -27,6 +27,9 @@ pub mod headers {
         .unwrap()
     });
 
+    static EMPTY_GUARD: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?m)^#if[^\n]*\n\s*#endif\n").unwrap());
+
     /// Gather all top level typedef and #define definitions from a C header file
     fn collect_definitions(header: &str) -> Vec<Span<'_>> {
         let mut items = Vec::new();
@@ -111,28 +114,186 @@ pub mod headers {
         new_content_parts
     }
 
+    /// Strip an optional leading block comment (`/** ... */`) and surrounding
+    /// whitespace from a definition span, returning just the statement text
+    /// with trailing whitespace removed.
+    ///
+    /// This lets two definitions that only differ by their doc comment be
+    /// compared by their statement alone.
+    fn statement_text(def: &str) -> &str {
+        let s = def.trim_start();
+        let s = if s.starts_with("/*") {
+            s.find("*/")
+                .map(|end| s[end + 2..].trim_start())
+                .unwrap_or(s)
+        } else {
+            s
+        };
+        s.trim_end()
+    }
+
+    // cbindgen repeats a type's outer platform guard around its fields and variants.
+    // Removing those redundant inner guards lets us find an existing unconditional copy.
+    fn without_redundant_guards(header: &str, def: &Span<'_>) -> Option<String> {
+        let mut guards = Vec::new();
+        for line in header[..def.start].lines().map(str::trim) {
+            if line.starts_with("#if ")
+                || line.starts_with("#ifdef ")
+                || line.starts_with("#ifndef ")
+            {
+                guards.push(Some(line));
+            } else if line == "#endif" {
+                guards.pop()?;
+            } else if line.starts_with("#else") || line.starts_with("#elif ") {
+                *guards.last_mut()? = None;
+            }
+        }
+        let guard = guards.last().copied().flatten()?;
+        if !guard.starts_with("#if ") {
+            return None;
+        }
+        let mut result = String::new();
+        let mut depth = 0usize;
+        let mut removed = false;
+        for line in statement_text(def.str).lines() {
+            let directive = line.trim();
+            if directive == guard {
+                depth += 1;
+                removed = true;
+            } else if directive == "#endif" {
+                depth = depth.checked_sub(1)?;
+            } else if directive.starts_with('#') {
+                return None;
+            } else {
+                result.push_str(line);
+                result.push('\n');
+            }
+        }
+        (removed && depth == 0).then(|| result.trim_end().to_owned())
+    }
+
+    fn is_ident(s: &str) -> bool {
+        let mut b = s.bytes();
+        b.next()
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == b'_')
+            && b.all(|c| c.is_ascii_alphanumeric() || c == b'_')
+    }
+
+    /// The identifier a typedef introduces, i.e. the last identifier before the
+    /// terminating semicolon. Works for `typedef ... NAME;`, pointer typedefs
+    /// (`typedef struct X *NAME;`) and full-body typedefs (`... } NAME;`).
+    fn typedef_name(stmt: &str) -> Option<&str> {
+        let s = stmt.trim_end().strip_suffix(';')?.trim_end();
+        let start = s
+            .rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+            .map(|i| i + 1)
+            .unwrap_or(0);
+        let name = &s[start..];
+        is_ident(name).then_some(name)
+    }
+
+    /// If the statement is a full-body struct/union/enum typedef
+    /// (`typedef struct X { ... } X;`), return the name it defines.
+    fn bodied_typedef_name(stmt: &str) -> Option<&str> {
+        if !stmt.contains('{') {
+            return None;
+        }
+        if !(stmt.starts_with("typedef struct")
+            || stmt.starts_with("typedef union")
+            || stmt.starts_with("typedef enum"))
+        {
+            return None;
+        }
+        typedef_name(stmt)
+    }
+
+    /// If the statement is a bare forward declaration of the form
+    /// `typedef struct X X;` (the two identifiers being equal, no body),
+    /// return the name `X`.
+    fn forward_decl_name(stmt: &str) -> Option<&str> {
+        if stmt.contains('{') {
+            return None;
+        }
+        let rest = stmt.strip_prefix("typedef")?.trim_start();
+        let rest = ["struct ", "union ", "enum "]
+            .iter()
+            .find_map(|kw| rest.strip_prefix(kw))?
+            .trim_start();
+        let body = rest.strip_suffix(';')?;
+        let mut tokens = body.split_whitespace();
+        let first = tokens.next()?;
+        let second = tokens.next()?;
+        if tokens.next().is_some() {
+            return None;
+        }
+        (first == second && is_ident(first)).then_some(first)
+    }
+
+    /// Remove intra-file duplicate typedefs left behind in the base header.
+    ///
+    /// cbindgen can emit the same type from multiple crate boundaries, and the
+    /// child-vs-base deduplication above only collapses byte-identical
+    /// definitions. Two cases slip through and break consumers compiling with
+    /// `-Werror -Wtypedef-redefinition`:
+    ///
+    /// 1. A bare forward declaration `typedef struct X X;` that coexists with the full-body
+    ///    definition `typedef struct X { ... } X;`. The forward declaration is redundant and is
+    ///    dropped.
+    /// 2. Two identical typedef statements whose doc comments differ (so they are not
+    ///    byte-identical). The later occurrence is dropped.
+    fn dedup_base_typedefs(content: &str) -> String {
+        let defs = collect_definitions(content);
+
+        let bodied_names: HashSet<&str> = defs
+            .iter()
+            .filter_map(|d| bodied_typedef_name(statement_text(d.str)))
+            .collect();
+
+        let mut kept_typedefs: HashSet<&str> = HashSet::new();
+        let mut result = String::with_capacity(content.len());
+        let mut pos = 0;
+        for d in &defs {
+            let stmt = statement_text(d.str);
+            let is_typedef = stmt.starts_with("typedef");
+            let drop = is_typedef
+                && (forward_decl_name(stmt).is_some_and(|name| bodied_names.contains(name))
+                    || !kept_typedefs.insert(stmt));
+            if drop {
+                result.push_str(&content[pos..d.start]);
+                pos = d.end;
+            }
+        }
+        result.push_str(&content[pos..]);
+        result
+    }
+
     pub fn dedup_headers(base: &str, headers: &[&str]) {
-        let mut unique_child_defs: Vec<String> = Vec::new();
+        let mut unique_child_defs = Vec::new();
         let mut present = HashSet::new();
 
-        for child_def in headers.iter().flat_map(|p| {
+        for (child_def, unguarded) in headers.iter().flat_map(|p| {
             let child_header = OpenOptions::new().read(true).write(true).open(p).unwrap();
 
             let child_header_content = read(&mut BufReader::new(&child_header));
             let child_defs = collect_definitions(&child_header_content);
             let new_content_parts = content_without_defs(&child_header_content, &child_defs);
 
-            write_parts(&mut BufWriter::new(&child_header), &new_content_parts).unwrap();
+            let without_defs = new_content_parts.concat();
+            let without_empty_guards = EMPTY_GUARD.replace_all(&without_defs, "");
+            write_parts(&mut BufWriter::new(&child_header), &[&without_empty_guards]).unwrap();
 
             child_defs
                 .into_iter()
-                .map(|m| m.str.to_owned())
+                .map(|m| {
+                    let unguarded = without_redundant_guards(&child_header_content, &m);
+                    (m.str.to_owned(), unguarded)
+                })
                 .collect::<Vec<_>>()
         }) {
             if present.contains(&child_def) {
                 continue;
             }
-            unique_child_defs.push(child_def.clone());
+            unique_child_defs.push((child_def.clone(), unguarded));
             present.insert(child_def);
         }
 
@@ -145,21 +306,65 @@ pub mod headers {
         let base_header_content = read(&mut BufReader::new(&base_header));
         let base_defs = collect_definitions(&base_header_content);
         let base_defs_set: HashSet<_> = base_defs.iter().map(|s| s.str).collect();
+        let statements: HashSet<_> = base_defs
+            .iter()
+            .map(|def| statement_text(def.str))
+            .chain(unique_child_defs.iter().map(|(def, _)| statement_text(def)))
+            .collect();
 
         let mut base_new_parts = vec![&base_header_content[..base_defs.last().unwrap().end]];
-        for child_def in &unique_child_defs {
-            if base_defs_set.contains(child_def.as_str()) {
+        for (child_def, unguarded) in &unique_child_defs {
+            if base_defs_set.contains(child_def.as_str())
+                || unguarded
+                    .as_deref()
+                    .is_some_and(|stmt| statements.contains(stmt))
+            {
                 continue;
             }
             base_new_parts.push(child_def);
         }
         base_new_parts.push(&base_header_content[base_defs.last().unwrap().end..]);
-        write_parts(&mut BufWriter::new(&base_header), &base_new_parts).unwrap();
+
+        // Definitions moved in from child headers (and any already present in
+        // the base) can introduce intra-file duplicate typedefs that the
+        // child-vs-base pass above does not catch. Collapse them so the base
+        // header compiles under `-Werror -Wtypedef-redefinition`.
+        let merged_base: String = base_new_parts.concat();
+        let deduped_base = dedup_base_typedefs(&merged_base);
+        write_parts(&mut BufWriter::new(&base_header), &[&deduped_base]).unwrap();
     }
 
     #[cfg(test)]
     mod tests {
         use super::*;
+
+        #[test]
+        fn redundant_platform_guards_match_unconditional_types() {
+            let header = "#if defined(_WIN32)\ntypedef enum Option_Tag {\n#if defined(_WIN32)\n  SOME,\n#endif\n#if defined(_WIN32)\n  NONE,\n#endif\n} Option_Tag;\n\ntypedef struct Option {\n  Option_Tag tag;\n#if defined(_WIN32)\n  int value;\n#endif\n} Option;\n#endif\n";
+            let defs = collect_definitions(header);
+            assert_eq!(
+                without_redundant_guards(header, &defs[0]).as_deref(),
+                Some("typedef enum Option_Tag {\n  SOME,\n  NONE,\n} Option_Tag;")
+            );
+            assert_eq!(
+                without_redundant_guards(header, &defs[1]).as_deref(),
+                Some("typedef struct Option {\n  Option_Tag tag;\n  int value;\n} Option;")
+            );
+        }
+
+        #[test]
+        fn differing_or_alternative_guards_are_preserved() {
+            for branch in [
+                "#if defined(__linux__)\n  int a;\n#endif",
+                "#if defined(_WIN32)\n  int a;\n#else\n  int b;\n#endif",
+            ] {
+                let header = format!(
+                    "#if defined(_WIN32)\ntypedef struct Foo {{\n{branch}\n}} Foo;\n#endif\n"
+                );
+                let defs = collect_definitions(&header);
+                assert!(without_redundant_guards(&header, &defs[0]).is_none());
+            }
+        }
 
         #[track_caller]
         fn test_regex_match(input: &str, expected: Vec<&str>) {
@@ -334,6 +539,106 @@ typedef struct ddog_Vec_U8 {
 } ddog_Vec_U8;
 "
             );
+        }
+
+        #[test]
+        fn forward_decl_is_dropped_when_full_body_exists() {
+            // The forward declaration may appear either before or after the
+            // full-body definition; both must be collapsed to the body.
+            let before = r"typedef struct ddog_prof_EncodedProfile ddog_prof_EncodedProfile;
+
+typedef struct ddog_prof_EncodedProfile {
+  struct ddog_prof_EncodedProfile *inner;
+} ddog_prof_EncodedProfile;
+";
+            assert_eq!(
+                dedup_base_typedefs(before),
+                r"typedef struct ddog_prof_EncodedProfile {
+  struct ddog_prof_EncodedProfile *inner;
+} ddog_prof_EncodedProfile;
+"
+            );
+
+            let after = r"typedef struct OpaqueStringId {
+  uint32_t offset;
+} OpaqueStringId;
+
+typedef struct OpaqueStringId OpaqueStringId;
+";
+            // The blank line that separated the two definitions is retained.
+            assert_eq!(
+                dedup_base_typedefs(after),
+                "typedef struct OpaqueStringId {\n  uint32_t offset;\n} OpaqueStringId;\n\n"
+            );
+        }
+
+        #[test]
+        fn opaque_forward_decl_is_kept_without_body() {
+            // An opaque type only has a forward declaration; it must be kept.
+            let input =
+                "typedef struct ddog_OpaqueCancellationToken ddog_OpaqueCancellationToken;\n";
+            assert_eq!(dedup_base_typedefs(input), input);
+        }
+
+        #[test]
+        fn distinct_alias_typedef_is_kept() {
+            // `typedef struct A B;` with A != B is a real alias, not a
+            // redundant forward declaration, even if `A` has a body.
+            let input = r"typedef struct ddog_OpaqueCancellationToken {
+  uint32_t _0;
+} ddog_OpaqueCancellationToken;
+
+typedef struct ddog_OpaqueCancellationToken ddog_prof_TokioCancellationToken;
+";
+            assert_eq!(dedup_base_typedefs(input), input);
+        }
+
+        #[test]
+        fn exact_duplicate_typedef_with_differing_comment_is_dropped() {
+            // Same pointer typedef emitted twice, once bare and once with a doc
+            // comment. The first occurrence (and its comment, if any) is kept,
+            // the later duplicate is removed.
+            let input = r"typedef struct ddog_prof_Function2 *ddog_prof_FunctionId2;
+
+/**
+ * A handle to a function.
+ */
+typedef struct ddog_prof_Function2 *ddog_prof_FunctionId2;
+";
+            assert_eq!(
+                dedup_base_typedefs(input),
+                "typedef struct ddog_prof_Function2 *ddog_prof_FunctionId2;\n\n"
+            );
+        }
+
+        #[test]
+        fn unrelated_typedefs_are_untouched() {
+            let input = r"typedef uint64_t ddog_QueueId;
+
+typedef struct ddog_Vec_U8 {
+  const uint8_t *ptr;
+} ddog_Vec_U8;
+
+typedef struct ddog_Slice_U8 *ddog_Slice_U8Handle;
+";
+            assert_eq!(dedup_base_typedefs(input), input);
+        }
+
+        #[test]
+        fn is_ident_rejects_leading_digit() {
+            // A valid identifier starts with a letter or underscore and may
+            // contain digits thereafter.
+            assert!(is_ident("ddog_prof_StringId"));
+            assert!(is_ident("_hidden"));
+            assert!(is_ident("Vec_U8"));
+
+            // A leading digit is not a valid identifier, even though every byte
+            // is alphanumeric.
+            assert!(!is_ident("0usize"));
+            assert!(!is_ident("16"));
+
+            // The empty string is not an identifier.
+            assert!(!is_ident(""));
         }
     }
 } /* Headers */

@@ -19,14 +19,12 @@ macro_rules! parse_string_header {
     }
 }
 
-#[derive(Default, Debug, Serialize, Deserialize, Clone)]
-pub struct TracerHeaderTags<'a> {
-    pub lang: &'a str,
-    pub lang_version: &'a str,
-    pub lang_interpreter: &'a str,
-    pub lang_vendor: &'a str,
-    pub tracer_version: &'a str,
-    pub container_id: &'a str,
+/// The subset of tracer header tags that are plain booleans/integers, with no string/lifetime
+/// data. Unlike the rest of [`TracerHeaderTags`], these are meaningful regardless of whether the
+/// tracer payload format carries its own lang/version metadata (e.g. the V1 msgpack payload),
+/// so they can be transferred on their own without a dedicated serialized envelope.
+#[derive(Default, Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+pub struct TracerGenericTags {
     // specifies that the client has marked top-level spans. Follows Go's isHeaderTrue rule:
     // absent/empty → false; "0"/"f"/"F"/"false"/"False"/"FALSE" → false;
     // every other non-empty value (including unparseable values like "yes") → true.
@@ -40,6 +38,17 @@ pub struct TracerHeaderTags<'a> {
     pub dropped_p0_traces: usize,
     // number of spans dropped in the tracer
     pub dropped_p0_spans: usize,
+}
+
+#[derive(Default, Debug, Serialize, Deserialize, Clone)]
+pub struct TracerHeaderTags<'a> {
+    pub lang: &'a str,
+    pub lang_version: &'a str,
+    pub lang_interpreter: &'a str,
+    pub lang_vendor: &'a str,
+    pub tracer_version: &'a str,
+    pub container_id: &'a str,
+    pub generic: TracerGenericTags,
 }
 
 impl<'a> From<TracerHeaderTags<'a>> for HeaderMap {
@@ -87,32 +96,32 @@ impl<'a> From<TracerHeaderTags<'a>> for HeaderMap {
             HeaderName::from_static("datadog-container-id"),
             tags.container_id,
         );
-        if tags.client_computed_stats {
+        if tags.generic.client_computed_stats {
             try_insert(
                 &mut headers,
                 HeaderName::from_static("datadog-client-computed-stats"),
                 HeaderValue::from_static("true"),
             );
         }
-        if tags.client_computed_top_level {
+        if tags.generic.client_computed_top_level {
             try_insert(
                 &mut headers,
                 HeaderName::from_static("datadog-client-computed-top-level"),
                 HeaderValue::from_static("true"),
             );
         }
-        if tags.dropped_p0_traces > 0 {
+        if tags.generic.dropped_p0_traces > 0 {
             try_insert(
                 &mut headers,
                 HeaderName::from_static("datadog-client-dropped-p0-traces"),
-                tags.dropped_p0_traces.to_string(),
+                tags.generic.dropped_p0_traces.to_string(),
             );
         }
-        if tags.dropped_p0_spans > 0 {
+        if tags.generic.dropped_p0_spans > 0 {
             try_insert(
                 &mut headers,
                 HeaderName::from_static("datadog-client-dropped-p0-spans"),
-                tags.dropped_p0_spans.to_string(),
+                tags.generic.dropped_p0_spans.to_string(),
             );
         }
         headers
@@ -134,20 +143,20 @@ impl<'a> From<&'a HeaderMap<HeaderValue>> for TracerHeaderTags<'a> {
             }
         );
         if let Some(v) = headers.get("datadog-client-computed-top-level") {
-            tags.client_computed_top_level = is_header_true(v.to_str().unwrap_or_default());
+            tags.generic.client_computed_top_level = is_header_true(v.to_str().unwrap_or_default());
         }
         if let Some(v) = headers.get("datadog-client-computed-stats") {
-            tags.client_computed_stats = is_header_true(v.to_str().unwrap_or_default());
+            tags.generic.client_computed_stats = is_header_true(v.to_str().unwrap_or_default());
         }
         if let Some(count) = headers.get("datadog-client-dropped-p0-traces") {
-            tags.dropped_p0_traces = count
+            tags.generic.dropped_p0_traces = count
                 .to_str()
                 .unwrap_or_default()
                 .parse()
                 .unwrap_or_default();
         }
         if let Some(count) = headers.get("datadog-client-dropped-p0-spans") {
-            tags.dropped_p0_spans = count.to_str().map_or(0, |c| c.parse().unwrap_or(0));
+            tags.generic.dropped_p0_spans = count.to_str().map_or(0, |c| c.parse().unwrap_or(0));
         }
         tags
     }
@@ -181,10 +190,12 @@ mod tests {
             lang_vendor: "vendor",
             tracer_version: "1.0",
             container_id: "id",
-            client_computed_top_level: true,
-            client_computed_stats: true,
-            dropped_p0_traces: 12,
-            dropped_p0_spans: 120,
+            generic: TracerGenericTags {
+                client_computed_top_level: true,
+                client_computed_stats: true,
+                dropped_p0_traces: 12,
+                dropped_p0_spans: 120,
+            },
         };
 
         let map: HeaderMap = header_tags.into();
@@ -217,10 +228,12 @@ mod tests {
             lang_vendor: "vendor",
             tracer_version: "1.0",
             container_id: "",
-            client_computed_top_level: false,
-            client_computed_stats: false,
-            dropped_p0_spans: 0,
-            dropped_p0_traces: 0,
+            generic: TracerGenericTags {
+                client_computed_top_level: false,
+                client_computed_stats: false,
+                dropped_p0_spans: 0,
+                dropped_p0_traces: 0,
+            },
         };
 
         let map: HeaderMap = header_tags.into();
@@ -271,10 +284,10 @@ mod tests {
         assert_eq!(tags.tracer_version, "1.0");
         assert_eq!(tags.lang_interpreter, "interpreter");
         assert_eq!(tags.container_id, "id");
-        assert!(tags.client_computed_stats);
-        assert!(!tags.client_computed_top_level);
-        assert_eq!(tags.dropped_p0_traces, 12);
-        assert_eq!(tags.dropped_p0_spans, 0);
+        assert!(tags.generic.client_computed_stats);
+        assert!(!tags.generic.client_computed_top_level);
+        assert_eq!(tags.generic.dropped_p0_traces, 12);
+        assert_eq!(tags.generic.dropped_p0_spans, 0);
     }
 
     #[test]
@@ -284,7 +297,7 @@ mod tests {
         header_map.insert("datadog-client-computed-stats", val.parse().unwrap());
         let tags: TracerHeaderTags = (&header_map).into();
         assert!(
-            !tags.client_computed_stats,
+            !tags.generic.client_computed_stats,
             "expected client_computed_stats=false for datadog-client-computed-stats header value {val:?}"
         );
     }
@@ -294,7 +307,7 @@ mod tests {
         let header_map = HeaderMap::new();
         let tags: TracerHeaderTags = (&header_map).into();
         assert!(
-            !tags.client_computed_stats,
+            !tags.generic.client_computed_stats,
             "expected client_computed_stats=false when datadog-client-computed-stats header is not set"
         );
     }
@@ -330,7 +343,7 @@ mod tests {
             header_map.insert("datadog-client-computed-stats", val.parse().unwrap());
             let tags: TracerHeaderTags = (&header_map).into();
             assert!(
-                tags.client_computed_stats,
+                tags.generic.client_computed_stats,
                 "expected client_computed_stats=true for value {val:?}"
             );
         }
@@ -343,7 +356,7 @@ mod tests {
             header_map.insert("datadog-client-computed-stats", val.parse().unwrap());
             let tags: TracerHeaderTags = (&header_map).into();
             assert!(
-                !tags.client_computed_stats,
+                !tags.generic.client_computed_stats,
                 "expected client_computed_stats=false for value {val:?}"
             );
         }
@@ -359,7 +372,7 @@ mod tests {
             header_map.insert("datadog-client-computed-top-level", val.parse().unwrap());
             let tags: TracerHeaderTags = (&header_map).into();
             assert!(
-                tags.client_computed_top_level,
+                tags.generic.client_computed_top_level,
                 "expected client_computed_top_level=true for value {val:?}"
             );
         }
@@ -372,7 +385,7 @@ mod tests {
             header_map.insert("datadog-client-computed-top-level", val.parse().unwrap());
             let tags: TracerHeaderTags = (&header_map).into();
             assert!(
-                !tags.client_computed_top_level,
+                !tags.generic.client_computed_top_level,
                 "expected client_computed_top_level=false for value {val:?}"
             );
         }
@@ -383,7 +396,7 @@ mod tests {
         let header_map = HeaderMap::new();
         let tags: TracerHeaderTags = (&header_map).into();
         assert!(
-            !tags.client_computed_top_level,
+            !tags.generic.client_computed_top_level,
             "expected client_computed_top_level=false when header is not set"
         );
     }

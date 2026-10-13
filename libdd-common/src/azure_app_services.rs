@@ -89,7 +89,7 @@ fn read_proc_self_environ() -> HashMap<String, String> {
         if entry.is_empty() {
             continue;
         }
-        let s = match std::str::from_utf8(entry) {
+        let s = match core::str::from_utf8(entry) {
             Ok(s) => s,
             Err(_) => continue,
         };

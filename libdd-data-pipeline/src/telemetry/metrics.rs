@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Provides an abstraction layer to hold metrics that comes from 'SendDataResult'.
+use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
 use libdd_common::tag;
 use libdd_telemetry::data::metrics::{MetricNamespace, MetricType};
 use libdd_telemetry::metrics::ContextKey;
@@ -33,16 +34,24 @@ pub enum MetricKind {
     ChunksDroppedSerializationError,
     /// trace_chunks_dropped metric (reason: send_failure)
     ChunksDroppedSendFailure,
+    /// spans_enqueued_for_serialization metric
+    SpansEnqueuedForSerialization,
+    /// spans_dropped metric (reason: serialization_error)
+    SpansDroppedSerializationError,
+    /// spans_dropped metric (reason: api_error)
+    SpansDroppedApiError,
 }
 
 /// Constants for metric names
-/// These must match https://github.com/DataDog/dd-go/blob/prod/trace/apps/tracer-telemetry-intake/telemetry-metrics/static/common_metrics.json
+/// These must match <https://github.com/DataDog/dd-go/blob/prod/trace/apps/tracer-telemetry-intake/telemetry-metrics/static/common_metrics.json>
 const API_REQUEST_STR: &str = "trace_api.requests";
 const API_ERRORS_STR: &str = "trace_api.errors";
 const API_BYTES_STR: &str = "trace_api.bytes";
 const API_RESPONSES_STR: &str = "trace_api.responses";
 const CHUNKS_SENT_STR: &str = "trace_chunks_sent";
 const CHUNKS_DROPPED_STR: &str = "trace_chunks_dropped";
+const SPANS_ENQUEUED_FOR_SERIALIZATION_STR: &str = "spans_enqueued_for_serialization";
+const SPANS_DROPPED_STR: &str = "spans_dropped";
 
 #[derive(Debug)]
 struct Metric {
@@ -131,6 +140,24 @@ const METRICS: &[Metric] = &[
             tag!["reason", "send_failure"],
         ],
     },
+    Metric {
+        name: SPANS_ENQUEUED_FOR_SERIALIZATION_STR,
+        metric_type: MetricType::Count,
+        namespace: MetricNamespace::Tracers,
+        tags: &[],
+    },
+    Metric {
+        name: SPANS_DROPPED_STR,
+        metric_type: MetricType::Count,
+        namespace: MetricNamespace::Tracers,
+        tags: &[tag!["reason", "serialization_error"]],
+    },
+    Metric {
+        name: SPANS_DROPPED_STR,
+        metric_type: MetricType::Count,
+        namespace: MetricNamespace::Tracers,
+        tags: &[tag!["reason", "api_error"]],
+    },
 ];
 
 /// Structure to accumulate partial results coming from sending traces to the agent.
@@ -146,7 +173,9 @@ impl Index<MetricKind> for Metrics {
 
 impl Metrics {
     /// Creates a new Metrics instance
-    pub fn new(worker: &TelemetryWorkerHandle) -> Self {
+    pub fn new<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static>(
+        worker: &TelemetryWorkerHandle<C>,
+    ) -> Self {
         let mut keys = Vec::new();
         for metric in METRICS {
             let key = worker.register_metric_context(
@@ -171,6 +200,7 @@ impl Metrics {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use libdd_capabilities_impl::NativeCapabilities;
     use libdd_telemetry::worker::TelemetryWorkerBuilder;
 
     #[cfg_attr(miri, ignore)]
@@ -182,7 +212,7 @@ mod tests {
             "0.1".to_string(),
             "1.0".to_string(),
         )
-        .spawn();
+        .spawn::<NativeCapabilities>();
 
         let metrics = Metrics::new(&worker);
 

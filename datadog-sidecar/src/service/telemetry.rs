@@ -1,46 +1,51 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::service::{InstanceId, RuntimeMetadata, SidecarAction, SidecarServer};
-use anyhow::{anyhow, Result};
+use crate::service::{
+    ConnectionSessionHandle, InstanceId, RuntimeMetadata, SidecarAction, SidecarServer,
+};
+use anyhow::Result;
 use libdd_common::MutexExt;
-use std::sync::OnceLock;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
-use crate::primary_sidecar_identifier;
-use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use base64::Engine;
-use datadog_ipc::one_way_shared_memory::OneWayShmWriter;
-use datadog_ipc::platform::NamedShmHandle;
-use std::collections::{HashMap, HashSet, VecDeque};
+use base64::prelude::BASE64_URL_SAFE_NO_PAD;
+use libdd_ipc::one_way_shared_memory::OneWayShmWriter;
+use libdd_ipc::platform::NamedShmHandle;
+use std::collections::{HashMap, HashSet, VecDeque, hash_map::Entry};
 use std::ffi::CString;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 use tokio::task::JoinHandle;
 use zwohash::ZwoHasher;
 
+use libdd_capabilities_impl::NativeCapabilities;
 use libdd_common::tag::Tag;
 use libdd_telemetry::worker::TelemetryWorkerBuilder;
 use serde::{Deserialize, Serialize};
 use std::ops::Sub;
-use std::sync::LazyLock;
 use std::time::SystemTime;
 
 use libdd_telemetry::config::Config;
 use libdd_telemetry::data::{self, Integration};
 use libdd_telemetry::metrics::{ContextKey, MetricContext};
-use libdd_telemetry::worker::{LifecycleAction, TelemetryActions, TelemetryWorkerHandle};
+use libdd_telemetry::worker::TelemetryActions;
+
+/// Sidecar's telemetry worker is native-only, so its handle is pinned to
+/// [`NativeCapabilities`].
+type TelemetryWorkerHandle = libdd_telemetry::worker::TelemetryWorkerHandle<NativeCapabilities>;
 use manual_future::ManualFuture;
-use serde_with::{serde_as, VecSkipError};
-use tokio::time::{sleep, sleep_until, Instant as TokioInstant};
+use serde_with::{VecSkipError, serde_as};
+use tokio::time::{Instant as TokioInstant, sleep, sleep_until};
 
 #[derive(Debug)]
 pub struct InternalTelemetryActions {
-    pub instance_id: InstanceId,
+    /// The connection whose session configuration the actions are submitted with.
+    pub session: ConnectionSessionHandle,
     pub service_name: String,
     pub env_name: String,
     pub actions: Vec<InternalTelemetryAction>,
@@ -51,6 +56,66 @@ pub enum InternalTelemetryAction {
     TelemetryAction(TelemetryActions),
     RegisterTelemetryMetric(MetricContext),
     AddMetricPoint((f64, String, Vec<Tag>)),
+}
+
+/// Creates telemetry clients for in-process components such as the embedded AppSec helper.
+#[derive(Clone)]
+pub struct InProcessTelemetryClientFactory {
+    sender: mpsc::Sender<InternalTelemetryActions>,
+}
+
+impl InProcessTelemetryClientFactory {
+    fn new(sender: mpsc::Sender<InternalTelemetryActions>) -> Self {
+        Self { sender }
+    }
+
+    pub fn create_client(
+        &self,
+        session: ConnectionSessionHandle,
+        service_name: String,
+        env_name: String,
+    ) -> InProcessTelemetryClient {
+        InProcessTelemetryClient {
+            sender: self.sender.clone(),
+            session,
+            service_name,
+            env_name,
+        }
+    }
+}
+
+/// A telemetry submission route bound to one logical client and application.
+///
+/// The cached telemetry worker is deliberately resolved by the receiver for every batch so this
+/// handle remains valid across cache eviction, worker replacement, and delayed connection setup.
+#[derive(Clone)]
+pub struct InProcessTelemetryClient {
+    sender: mpsc::Sender<InternalTelemetryActions>,
+    session: ConnectionSessionHandle,
+    service_name: String,
+    env_name: String,
+}
+
+impl InProcessTelemetryClient {
+    pub fn with_new_service_env(&self, service_name: String, env_name: String) -> Self {
+        Self {
+            sender: self.sender.clone(),
+            session: self.session.clone(),
+            service_name,
+            env_name,
+        }
+    }
+
+    pub fn submit(&self, action: InternalTelemetryAction) -> Result<(), String> {
+        self.sender
+            .try_send(InternalTelemetryActions {
+                session: self.session.clone(),
+                service_name: self.service_name.clone(),
+                env_name: self.env_name.clone(),
+                actions: vec![action],
+            })
+            .map_err(|e| format!("Failed to send telemetry action: {e}"))
+    }
 }
 
 pub(crate) async fn telemetry_action_receiver_task(
@@ -209,16 +274,17 @@ impl TelemetryBatch {
     ) -> Option<Arc<Mutex<Option<TelemetryCachedClient>>>> {
         match self {
             TelemetryBatch::Fresh(a) => {
-                get_telemetry_client(sidecar, &a.instance_id, &a.service_name, &a.env_name)
+                get_telemetry_client(sidecar, &a.session, &a.service_name, &a.env_name)
             }
             TelemetryBatch::Deferred(d) => {
                 let (service_name, env_name) = &d.key;
-                let mut tried_sessions = HashSet::new();
+                let mut tried_sessions: Vec<&ConnectionSessionHandle> = vec![];
                 for b in &d.actions {
-                    if tried_sessions.insert(b.instance_id.session_id.as_str()) {
+                    if !tried_sessions.iter().any(|s| s.ptr_eq(&b.session)) {
+                        tried_sessions.push(&b.session);
                         // repeated calls to get_existing_client could be avoided
                         if let Some(client) =
-                            get_telemetry_client(sidecar, &b.instance_id, service_name, env_name)
+                            get_telemetry_client(sidecar, &b.session, service_name, env_name)
                         {
                             return Some(client);
                         }
@@ -307,12 +373,22 @@ struct PerClientTelemetryBatch {
 
 type ComposerCache = HashMap<PathBuf, (SystemTime, Arc<Vec<data::Dependency>>)>;
 
-static COMPOSER_CACHE: LazyLock<tokio::sync::Mutex<ComposerCache>> =
+// Only replaced by the fork hook, before the child starts any sidecar work.
+static mut COMPOSER_CACHE: LazyLock<tokio::sync::Mutex<ComposerCache>> =
     LazyLock::new(|| tokio::sync::Mutex::new(Default::default()));
 
 static LAST_CACHE_CLEAN: AtomicU64 = AtomicU64::new(0);
 
-static TELEMETRY_ACTION_SENDER: OnceLock<mpsc::Sender<InternalTelemetryActions>> = OnceLock::new();
+#[cfg(unix)]
+pub(crate) unsafe fn clear_inherited_state() {
+    // SAFETY: Abandon the old mutex: it may be locked by a thread that did not survive fork.
+    unsafe {
+        (&raw mut COMPOSER_CACHE).write(LazyLock::new(|| {
+            tokio::sync::Mutex::new(Default::default())
+        }));
+    }
+    LAST_CACHE_CLEAN.store(0, Ordering::Relaxed);
+}
 
 #[serde_as]
 #[derive(Deserialize)]
@@ -328,7 +404,7 @@ pub struct TelemetryCachedEntry {
 
 pub struct TelemetryCachedClient {
     pub worker: TelemetryWorkerHandle,
-    pub shm_writer: OneWayShmWriter<NamedShmHandle>,
+    pub shm_writer: Option<OneWayShmWriter<NamedShmHandle>>,
     pub telemetry_metrics: HashMap<String, ContextKey>,
     pub handle: Option<JoinHandle<()>>,
     pub shared: TelemetryCachedClientShmData,
@@ -384,30 +460,37 @@ impl TelemetryCachedClient {
 
         let (handle, _join) = builder.spawn();
         info!("spawned telemetry worker {config:?}");
+        // Queue Start before another batch can send Stop to this worker.
+        handle.send_start().ok();
 
-        let worker = handle.clone();
-        tokio::spawn(async move {
-            worker
-                .send_msg(TelemetryActions::Lifecycle(LifecycleAction::Start))
-                .await
-                .ok();
-        });
-
-        Self {
+        let client = Self {
             worker: handle,
             shm_writer: {
-                #[allow(clippy::unwrap_used)]
-                OneWayShmWriter::<NamedShmHandle>::new(path_for_telemetry(service, env)).unwrap()
+                let path = path_for_telemetry(service, env);
+                OneWayShmWriter::<NamedShmHandle>::new(path.clone())
+                    .inspect_err(|e| {
+                        warn!(
+                            "Could not create the telemetry cache at {}: {e}. Continuing without it.",
+                            path.to_string_lossy()
+                        )
+                    })
+                    .ok()
             },
             shared: TelemetryCachedClientShmData::default(),
             telemetry_metrics: Default::default(),
             handle: None,
-        }
+        };
+        // Reset acknowledgements even if the first batch adds no cacheable data.
+        client.write_shm_file();
+        client
     }
 
     pub fn write_shm_file(&self) {
+        let Some(shm_writer) = &self.shm_writer else {
+            return;
+        };
         if let Ok(buf) = bincode::serialize(&self.shared) {
-            self.shm_writer.write(&buf);
+            shm_writer.write(&buf);
         } else {
             warn!("Failed to serialize telemetry data for shared memory");
         }
@@ -450,11 +533,14 @@ impl TelemetryCachedClient {
                     if let Some(telemetry_action) = self.to_telemetry_point(point) {
                         actions.push(telemetry_action);
                     } else {
-                        warn!("Attempted to send telemetry point for unregistered metric: {metric_name}");
+                        warn!(
+                            "Attempted to send telemetry point for unregistered metric: {metric_name}"
+                        );
                     }
                 }
                 SidecarAction::PhpComposerTelemetryFile(_) => {} // handled separately
                 SidecarAction::FfeExposureBatch(_) => {}         // handled in sidecar_server
+                SidecarAction::FfeFlagEvaluationBatch(_) => {}   // handled in sidecar_server
                 SidecarAction::FfeEvaluationMetrics { .. } => {} // handled in sidecar_server
             }
         }
@@ -475,57 +561,77 @@ impl TelemetryCachedClient {
     pub fn extract_composer_telemetry(path: PathBuf) -> ManualFuture<Arc<Vec<data::Dependency>>> {
         let (deps, completer) = ManualFuture::new();
         tokio::spawn(async {
-            let mut cache = COMPOSER_CACHE.lock().await;
-            let packages = match tokio::fs::metadata(&path).await.and_then(|m| m.modified()) {
+            // SAFETY: global which isn't &mut-accessed outside of single-threaded stage
+            let mut cache = unsafe { &*std::ptr::addr_of!(COMPOSER_CACHE) }.lock().await;
+            // Worker paths need constrained opens in thread mode. Use one handle so the timestamp
+            // and contents come from the same file.
+            let opened = async {
+                let file = {
+                    #[cfg(unix)]
+                    if libdd_common::unix_utils::worker_file_outputs_restricted() {
+                        libdd_common::unix_utils::open_regular_for_read(&path)
+                            .map(tokio::fs::File::from_std)
+                            .map_err(std::io::Error::from)
+                    } else {
+                        tokio::fs::File::open(&path).await
+                    }
+                    #[cfg(not(unix))]
+                    tokio::fs::File::open(&path).await
+                }?;
+                let modification = file.metadata().await?.modified()?;
+                Ok::<_, std::io::Error>((file, modification))
+            }
+            .await;
+            let (file, modification) = match opened {
+                Ok(opened) => opened,
                 Err(e) => {
-                    warn!("Failed to report dependencies from {path:?}, could not read modification time: {e:?}");
-                    Arc::new(vec![])
-                }
-                Ok(modification) => {
-                    let now = SystemTime::now();
-                    if let Some((last_update, actions)) = cache.get(&path) {
-                        if modification < *last_update {
-                            completer.complete(actions.clone()).await;
-                            return;
-                        }
-                    }
-                    async fn parse(path: &PathBuf) -> anyhow::Result<Vec<data::Dependency>> {
-                        let mut json = tokio::fs::read(&path).await?;
-                        #[cfg(not(target_arch = "x86"))]
-                        let parsed: ComposerPackages = simd_json::from_slice(json.as_mut_slice())?;
-                        #[cfg(target_arch = "x86")]
-                        let parsed = crate::interface::ComposerPackages { packages: vec![] }; // not interested in 32 bit
-                        Ok(parsed.packages)
-                    }
-                    let packages = Arc::new(parse(&path).await.unwrap_or_else(|e| {
-                        warn!("Failed to report dependencies from {path:?}: {e:?}");
-                        vec![]
-                    }));
-                    cache.insert(path, (now, packages.clone()));
-                    // cheap way to avoid unbounded caching
-                    const CACHE_INTERVAL: u64 = 2000;
-                    let last_clean = LAST_CACHE_CLEAN.load(Ordering::Relaxed);
-                    let now_secs = SystemTime::now()
-                        .duration_since(SystemTime::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_secs();
-                    if now_secs > last_clean + CACHE_INTERVAL
-                        && LAST_CACHE_CLEAN
-                            .compare_exchange(
-                                last_clean,
-                                now_secs,
-                                Ordering::SeqCst,
-                                Ordering::Acquire,
-                            )
-                            .is_ok()
-                    {
-                        cache.retain(|_, (inserted, _)| {
-                            *inserted > now.sub(Duration::from_secs(CACHE_INTERVAL))
-                        });
-                    }
-                    packages
+                    warn!(
+                        "Failed to report dependencies from {path:?}, could not read modification time: {e:?}"
+                    );
+                    completer.complete(Arc::new(vec![])).await;
+                    return;
                 }
             };
+
+            let now = SystemTime::now();
+            if let Some((last_update, actions)) = cache.get(&path) {
+                if modification < *last_update {
+                    completer.complete(actions.clone()).await;
+                    return;
+                }
+            }
+
+            async fn parse(mut file: tokio::fs::File) -> anyhow::Result<Vec<data::Dependency>> {
+                use tokio::io::AsyncReadExt;
+                let mut json = Vec::new();
+                file.read_to_end(&mut json).await?;
+                #[cfg(not(target_arch = "x86"))]
+                let parsed: ComposerPackages = simd_json::from_slice(json.as_mut_slice())?;
+                #[cfg(target_arch = "x86")]
+                let parsed = crate::interface::ComposerPackages { packages: vec![] }; // not interested in 32 bit
+                Ok(parsed.packages)
+            }
+            let packages = Arc::new(parse(file).await.unwrap_or_else(|e| {
+                warn!("Failed to report dependencies from {path:?}: {e:?}");
+                vec![]
+            }));
+            cache.insert(path, (now, packages.clone()));
+            // cheap way to avoid unbounded caching
+            const CACHE_INTERVAL: u64 = 2000;
+            let last_clean = LAST_CACHE_CLEAN.load(Ordering::Relaxed);
+            let now_secs = SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            if now_secs > last_clean + CACHE_INTERVAL
+                && LAST_CACHE_CLEAN
+                    .compare_exchange(last_clean, now_secs, Ordering::SeqCst, Ordering::Acquire)
+                    .is_ok()
+            {
+                cache.retain(|_, (inserted, _)| {
+                    *inserted > now.sub(Duration::from_secs(CACHE_INTERVAL))
+                });
+            }
             completer.complete(packages).await;
         });
         deps
@@ -534,7 +640,9 @@ impl TelemetryCachedClient {
 
 impl Drop for TelemetryCachedClient {
     fn drop(&mut self) {
-        self.shm_writer.write(&[]);
+        if let Some(shm_writer) = &self.shm_writer {
+            shm_writer.write(&[]);
+        }
     }
 }
 
@@ -543,7 +651,7 @@ type EnvString = String;
 type TelemetryCachedClientKey = (ServiceString, EnvString);
 
 pub struct TelemetryCachedClientSet {
-    pub inner: Arc<Mutex<HashMap<TelemetryCachedClientKey, TelemetryCachedEntry>>>,
+    pub(crate) inner: Arc<Mutex<HashMap<TelemetryCachedClientKey, TelemetryCachedEntry>>>,
     cleanup_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
@@ -593,8 +701,15 @@ impl TelemetryCachedClientSet {
     ) -> Option<Arc<Mutex<Option<TelemetryCachedClient>>>> {
         let key = (service.to_string(), env.to_string());
 
-        let map = self.inner.lock_or_panic();
-        map.get(&key).map(|e| e.client.clone())
+        let client = {
+            let mut map = self.inner.lock_or_panic();
+            map.get_mut(&key).map(|entry| {
+                entry.last_used = Instant::now();
+                entry.client.clone()
+            })
+        };
+        // Stop marks clients retired before removing them from the cache.
+        client.filter(|client| client.lock_or_panic().is_some())
     }
 
     pub fn get_or_create<F>(
@@ -609,11 +724,19 @@ impl TelemetryCachedClientSet {
     where
         F: FnOnce() -> Config,
     {
-        if let Some(existing) = self.get_existing_client(service, env) {
-            return existing;
+        if let Some(client) = self.get_existing_client(service, env) {
+            return client;
         }
-
-        let new_client = Arc::new(Mutex::new(Some(TelemetryCachedClient::new(
+        let mut map = self.inner.lock_or_panic();
+        let key = (service.to_string(), env.to_string());
+        if let Some(entry) = map.get_mut(&key) {
+            // Stop retires the client before removing its cache entry.
+            if entry.client.lock_or_panic().is_some() {
+                entry.last_used = Instant::now();
+                return entry.client.clone();
+            }
+        }
+        let client = Arc::new(Mutex::new(Some(TelemetryCachedClient::new(
             service,
             env,
             instance_id,
@@ -621,25 +744,32 @@ impl TelemetryCachedClientSet {
             get_config,
             process_tags,
         ))));
-
-        let mut map = self.inner.lock_or_panic();
-        let key = (service.to_string(), env.to_string());
         map.insert(
-            key.clone(),
+            key,
             TelemetryCachedEntry {
                 last_used: Instant::now(),
-                client: new_client.clone(),
+                client: client.clone(),
             },
         );
-
-        info!("Created new telemetry client for {key:?}");
-
-        new_client
+        info!("Created new telemetry client for service={service}, env={env}");
+        client
     }
 
-    pub fn remove_telemetry_client(&self, service: &str, env: &str) {
+    pub fn remove_telemetry_client(
+        &self,
+        service: &str,
+        env: &str,
+        expected: &Arc<Mutex<Option<TelemetryCachedClient>>>,
+    ) {
         let key = (service.to_string(), env.to_string());
-        self.inner.lock_or_panic().remove(&key);
+        let mut clients = self.inner.lock_or_panic();
+        let entry = clients.entry(key);
+        match entry {
+            Entry::Occupied(entry) if Arc::ptr_eq(&entry.get().client, expected) => {
+                entry.remove();
+            }
+            _ => {}
+        }
     }
 }
 
@@ -651,34 +781,28 @@ pub fn path_for_telemetry(service: &str, env: &str) -> CString {
 
     let mut path = format!(
         "/ddtl{}-{}",
-        primary_sidecar_identifier(),
+        crate::shm_namespace(),
         BASE64_URL_SAFE_NO_PAD.encode(hash.to_ne_bytes()),
     );
-    path.truncate(31);
+    if cfg!(unix) {
+        path.truncate(31);
+    }
 
     #[allow(clippy::unwrap_used)]
     CString::new(path).unwrap()
 }
 
-pub fn get_telemetry_action_sender() -> Result<mpsc::Sender<InternalTelemetryActions>> {
-    TELEMETRY_ACTION_SENDER
-        .get()
-        .cloned()
-        .ok_or_else(|| anyhow!("Telemetry action sender not initialized"))
-}
-
-pub(crate) fn init_telemetry_sender() -> Option<mpsc::Receiver<InternalTelemetryActions>> {
+pub(crate) fn init_telemetry_sender() -> (
+    InProcessTelemetryClientFactory,
+    mpsc::Receiver<InternalTelemetryActions>,
+) {
     let (tx, rx) = mpsc::channel(1000);
-    if TELEMETRY_ACTION_SENDER.set(tx).is_err() {
-        warn!("Telemetry action sender already initialized");
-        return None;
-    }
-    Some(rx)
+    (InProcessTelemetryClientFactory::new(tx), rx)
 }
 
 fn get_telemetry_client(
     sidecar: &SidecarServer,
-    instance_id: &InstanceId,
+    session: &ConnectionSessionHandle,
     service_name: &str,
     env_name: &str,
 ) -> Option<Arc<Mutex<Option<TelemetryCachedClient>>>> {
@@ -689,28 +813,279 @@ fn get_telemetry_client(
         return Some(existing);
     }
 
-    let session = sidecar.get_session(&instance_id.session_id);
-    let trace_config = session.get_trace_config();
-    let runtime_meta = RuntimeMetadata::new(
-        trace_config.language.as_str(),
-        trace_config.language_version.as_str(),
-        trace_config.tracer_version.as_str(),
-    );
-
-    let session_config = session.session_config.lock_or_panic().as_ref().cloned();
-    let Some(session_config) = session_config else {
-        // Session config not yet available (need to wait for set_session_config IPC)
-        return None;
-    };
-
-    let process_tags = session.process_tags_with_svc_source();
-
+    // Not yet available if the connection has not been configured yet.
+    let session = session.load()?;
+    let session_config = session.telemetry_config.clone();
     Some(sidecar.telemetry_clients.get_or_create(
         service_name,
         env_name,
-        instance_id,
-        &runtime_meta,
+        &session.instance_id,
+        &session.runtime_metadata(),
         move || session_config,
-        process_tags,
+        session.process_tags_with_svc_source(),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use libdd_ipc::one_way_shared_memory::{OneWayShmReader, open_named_shm};
+    use libdd_telemetry::worker::LifecycleAction;
+
+    #[test]
+    #[cfg(unix)]
+    #[cfg_attr(miri, ignore)]
+    fn fork_cleanup_does_not_wait_for_the_old_composer_cache() {
+        const CHILD: &str = "DD_TEST_COMPOSER_FORK_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "service::telemetry::tests::fork_cleanup_does_not_wait_for_the_old_composer_cache",
+                ])
+                .env(CHILD, "1")
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{output:?}");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("installed.json");
+        std::fs::write(
+            &path,
+            br#"{"packages":[{"name":"test/package","version":"1.0.0"}]}"#,
+        )
+        .unwrap();
+        let mut held = unsafe { &*std::ptr::addr_of!(COMPOSER_CACHE) }.blocking_lock();
+        held.insert(path.clone(), (SystemTime::UNIX_EPOCH, Arc::new(vec![])));
+        let pid = unsafe { libc::fork() };
+        assert!(pid >= 0, "fork failed");
+        if pid == 0 {
+            unsafe { libc::alarm(10) };
+            // Do not use or drop an inherited guard after replacing its mutex.
+            std::mem::forget(held);
+            let result = std::panic::catch_unwind(|| {
+                unsafe { clear_inherited_state() };
+                assert!(
+                    unsafe { &*std::ptr::addr_of!(COMPOSER_CACHE) }
+                        .try_lock()
+                        .unwrap()
+                        .is_empty()
+                );
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap()
+                    .block_on(async {
+                        let packages =
+                            TelemetryCachedClient::extract_composer_telemetry(path).await;
+                        assert_eq!(packages.len(), 1);
+                        assert_eq!(packages[0].name, "test/package");
+                    });
+            });
+            unsafe { libc::_exit(if result.is_ok() { 0 } else { 1 }) };
+        }
+        let mut status = 0;
+        assert_eq!(unsafe { libc::waitpid(pid, &mut status, 0) }, pid);
+        assert!(libc::WIFEXITED(status), "child hung or crashed: {status}");
+        assert_eq!(libc::WEXITSTATUS(status), 0);
+        assert!(held.get(&path).unwrap().1.is_empty());
+        drop(held);
+        assert!(
+            unsafe { &*std::ptr::addr_of!(COMPOSER_CACHE) }
+                .try_lock()
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn shm_paths_distinguish_services_and_environments() {
+        let path = path_for_telemetry("service-a", "env-a");
+        assert_ne!(path, path_for_telemetry("service-b", "env-a"));
+        assert_ne!(path, path_for_telemetry("service-a", "env-b"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    #[cfg_attr(miri, ignore)] // Uses OS shared memory and file output.
+    async fn client_start_precedes_immediate_stop() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("telemetry.json");
+        let mut config = Config::default();
+        config
+            .set_endpoint_uri(
+                libdd_common::parse_uri(&format!("file://{}", path.display())).unwrap(),
+            )
+            .unwrap();
+        let client = TelemetryCachedClient::new(
+            &format!("telemetry-start-stop-{}", std::process::id()),
+            "test",
+            &InstanceId::new("session", "runtime"),
+            &RuntimeMetadata::new("php", "8", "test"),
+            || config,
+            vec![],
+        );
+
+        // Queue the request's data and Stop before allowing spawned tasks to run.
+        client
+            .worker
+            .try_send_msg(TelemetryActions::AddConfig(data::Configuration {
+                name: "startup-race".into(),
+                value: Some("value".into()),
+                origin: data::ConfigurationOrigin::Code,
+                config_id: None,
+                seq_id: None,
+            }))
+            .unwrap();
+        client.worker.send_stop().unwrap();
+        // The queued stats reply is dropped only after Stop finishes.
+        assert!(client.worker.stats().unwrap().await.is_err());
+
+        let output = std::fs::read_to_string(path).unwrap();
+        assert!(output.contains("app-started"));
+        assert!(output.contains("startup-race"));
+        assert!(output.contains("app-closing"));
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn a_new_client_replaces_old_acknowledgements() {
+        let service = format!("telemetry-replacement-{}", std::process::id());
+        let path = path_for_telemetry(&service, "test");
+        let old = OneWayShmWriter::<NamedShmHandle>::new(path.clone()).unwrap();
+        let acknowledged = TelemetryCachedClientShmData {
+            config_sent: true,
+            last_endpoints_push: SystemTime::now(),
+            ..Default::default()
+        };
+        let bytes = bincode::serialize(&acknowledged).unwrap();
+        assert!(old.write(&bytes));
+        assert!(old.write(&bytes));
+        let mut reader =
+            OneWayShmReader::new_with_opener(open_named_shm(&path).ok(), path, |path| {
+                open_named_shm(path).ok()
+            });
+        assert!(reader.read().0);
+        let generation = reader.last_read_generation();
+
+        let _new = TelemetryCachedClient::new(
+            &service,
+            "test",
+            &InstanceId::new("session", "runtime"),
+            &RuntimeMetadata::new("php", "8", "test"),
+            Config::default,
+            vec![],
+        );
+        let (changed, bytes) = reader.read();
+        assert!(changed, "creating the client must reset acknowledgements");
+        let shared: TelemetryCachedClientShmData = bincode::deserialize(bytes).unwrap();
+        assert!(!shared.config_sent);
+        assert!(shared.integrations.is_empty());
+        assert!(shared.composer_paths.is_empty());
+        assert_eq!(shared.last_endpoints_push, SystemTime::UNIX_EPOCH);
+        assert!(reader.last_read_generation() > generation);
+        assert!(!old.write(&[]), "the old writer must stay retired");
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn concurrent_creation_shares_one_telemetry_client() {
+        let clients = TelemetryCachedClientSet::default();
+        let service = format!("telemetry-concurrent-{}", std::process::id());
+        let start = std::sync::Barrier::new(4);
+        let creations = AtomicU64::new(0);
+        let runtime = tokio::runtime::Handle::current();
+        let opened = std::thread::scope(|scope| {
+            let threads: Vec<_> = (0..4)
+                .map(|_| {
+                    scope.spawn(|| {
+                        let _entered = runtime.enter();
+                        start.wait();
+                        clients.get_or_create(
+                            &service,
+                            "test",
+                            &InstanceId::new("session", "runtime"),
+                            &RuntimeMetadata::new("php", "8", "test"),
+                            || {
+                                creations.fetch_add(1, Ordering::Relaxed);
+                                std::thread::sleep(Duration::from_millis(20));
+                                Config::default()
+                            },
+                            vec![],
+                        )
+                    })
+                })
+                .collect();
+            threads
+                .into_iter()
+                .map(|t| t.join().unwrap())
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(creations.load(Ordering::Relaxed), 1);
+        assert!(opened.iter().all(|client| Arc::ptr_eq(client, &opened[0])));
+    }
+
+    /// A delayed removal must not evict a newer client stored under the same key.
+    #[test]
+    fn stale_client_removal_preserves_replacement() {
+        let clients = TelemetryCachedClientSet {
+            inner: Arc::new(Mutex::new(HashMap::new())),
+            cleanup_handle: None,
+        };
+        let stale = Arc::new(Mutex::new(None));
+        let replacement = Arc::new(Mutex::new(None));
+        clients.inner.lock_or_panic().insert(
+            ("service".to_owned(), "env".to_owned()),
+            TelemetryCachedEntry {
+                last_used: Instant::now(),
+                client: Arc::clone(&replacement),
+            },
+        );
+
+        clients.remove_telemetry_client("service", "env", &stale);
+
+        assert!(Arc::ptr_eq(
+            &clients.inner.lock_or_panic()[&("service".to_owned(), "env".to_owned())].client,
+            &replacement,
+        ));
+
+        clients.remove_telemetry_client("service", "env", &replacement);
+        assert!(clients.inner.lock_or_panic().is_empty());
+    }
+
+    #[test]
+    fn in_process_client_keeps_instance_and_rebinds_application() {
+        let (sender, mut receiver) = mpsc::channel(2);
+        let submitter = InProcessTelemetryClientFactory::new(sender);
+        let session = ConnectionSessionHandle::default();
+        let client = submitter.create_client(
+            session.clone(),
+            "service-a".to_string(),
+            "env-a".to_string(),
+        );
+
+        client
+            .submit(InternalTelemetryAction::TelemetryAction(
+                TelemetryActions::Lifecycle(LifecycleAction::Start),
+            ))
+            .expect("first action should fit in the channel");
+        let first = receiver
+            .try_recv()
+            .expect("first action should be available");
+        assert!(first.session.ptr_eq(&session));
+        assert_eq!(first.service_name, "service-a");
+        assert_eq!(first.env_name, "env-a");
+
+        let rebound = client.with_new_service_env("service-b".to_string(), "env-b".to_string());
+        rebound
+            .submit(InternalTelemetryAction::TelemetryAction(
+                TelemetryActions::Lifecycle(LifecycleAction::Stop),
+            ))
+            .expect("second action should fit in the channel");
+        let second = receiver
+            .try_recv()
+            .expect("second action should be available");
+        assert!(second.session.ptr_eq(&session));
+        assert_eq!(second.service_name, "service-b");
+        assert_eq!(second.env_name, "env-b");
+    }
 }

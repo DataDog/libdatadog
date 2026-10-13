@@ -2,6 +2,39 @@
 
 
 
+## [1.1.5](https://github.com/datadog/libdatadog/compare/libdd-tinybytes-v1.1.4..libdd-tinybytes-v1.1.5) - 2026-10-02
+
+### Changed
+
+- Update workspace to Rust 2024 edition ([#2575](https://github.com/datadog/libdatadog/issues/2575)) - ([620a212](https://github.com/datadog/libdatadog/commit/620a212fc91e128234f48b29d657c71d6ad5caed))
+
+
+
+## [1.1.4](https://github.com/datadog/libdatadog/compare/libdd-tinybytes-v1.1.3..libdd-tinybytes-v1.1.4) - 2026-09-24
+
+### Changed
+
+- Move all remaining external deps to workspace-level dependencies ([#2476](https://github.com/datadog/libdatadog/issues/2476)) - ([ea4379c](https://github.com/datadog/libdatadog/commit/ea4379c9ca0dd024c7a3ed5c497fa8e117018d6a))
+
+
+
+## [1.1.3](https://github.com/datadog/libdatadog/compare/libdd-tinybytes-v1.1.2..libdd-tinybytes-v1.1.3) - 2026-09-08
+
+### Changed
+
+- Migrate HTTP & networking deps to workspace level (phase 4bis) ([#2350](https://github.com/datadog/libdatadog/issues/2350)) - ([55cdf67](https://github.com/datadog/libdatadog/commit/55cdf67b720b7df427b1febd147b0f72d486167f))
+
+
+
+## [1.1.2](https://github.com/datadog/libdatadog/compare/libdd-tinybytes-v1.1.1..libdd-tinybytes-v1.1.2) - 2026-08-07
+
+### Changed
+
+- Moving to workspace-level dependencies, phase 2 ([#2270](https://github.com/datadog/libdatadog/issues/2270)) - ([caa732f](https://github.com/datadog/libdatadog/commit/caa732f3fe7c82a347813ba36686e039d29981a3))
+- Consolidate core dependencies at workspace level (phase 1) ([#2253](https://github.com/datadog/libdatadog/issues/2253)) - ([15899df](https://github.com/datadog/libdatadog/commit/15899dfe754d12186ce7db72f0ff41c1920d52ec))
+
+
+
 ## [1.1.1](https://github.com/datadog/libdatadog/compare/libdd-tinybytes-v1.1.0..libdd-tinybytes-v1.1.1) - 2026-05-18
 
 ### Changed

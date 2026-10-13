@@ -30,7 +30,7 @@ impl From<StdConfig> for logger::StdConfig {
 ///
 /// # Errors
 /// Returns an error if the logger cannot be configured.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_logger_configure_std(config: StdConfig) -> Option<Box<Error>> {
     let config = logger::StdConfig::from(config);
     logger_configure_std(config)
@@ -42,7 +42,7 @@ pub extern "C" fn ddog_logger_configure_std(config: StdConfig) -> Option<Box<Err
 ///
 /// # Errors
 /// Returns an error if the logger cannot be configured.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_logger_disable_std() -> Option<Box<Error>> {
     logger_disable_std().err().map(|e| Box::new(Error::from(e)))
 }
@@ -78,7 +78,7 @@ impl<'a> From<FileConfig<'a>> for logger::FileConfig {
 ///
 /// # Errors
 /// Returns an error if the logger cannot be configured.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_logger_configure_file(config: FileConfig) -> Option<Box<Error>> {
     let config = logger::FileConfig::from(config);
     logger_configure_file(config)
@@ -90,7 +90,7 @@ pub extern "C" fn ddog_logger_configure_file(config: FileConfig) -> Option<Box<E
 ///
 /// # Errors
 /// Returns an error if the logger cannot be configured.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_logger_disable_file() -> Option<Box<Error>> {
     logger_disable_file()
         .err()
@@ -104,7 +104,7 @@ pub extern "C" fn ddog_logger_disable_file() -> Option<Box<Error>> {
 ///
 /// # Errors
 /// Returns an error if the log level cannot be set.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_logger_set_log_level(
     log_level: logger::LogEventLevel,
 ) -> Option<Box<Error>> {

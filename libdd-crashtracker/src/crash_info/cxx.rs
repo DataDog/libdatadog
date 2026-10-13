@@ -3,9 +3,9 @@
 
 //! CXX bindings for crash_info module - provides a safe and idiomatic C++ API
 
+use super::CrashInfo;
 use super::builder::CrashInfoBuilder;
 use super::stacktrace::{StackFrame, StackTrace};
-use super::CrashInfo;
 use crate::{BuildIdType, FileType, Metadata};
 
 // ============================================================================
@@ -121,7 +121,7 @@ pub mod ffi {
 
         // StackTrace methods
         fn add_frame(self: &mut StackTrace, frame: Box<StackFrame>, incomplete: bool)
-            -> Result<()>;
+        -> Result<()>;
         #[cxx_name = "mark_complete"]
         fn set_complete(self: &mut StackTrace) -> Result<()>;
 

@@ -37,7 +37,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::Context;
 
-use futures_util::task::{waker_ref, ArcWake, AtomicWaker};
+use futures_util::task::{ArcWake, AtomicWaker, waker_ref};
 
 /// Wraps an [`AtomicWaker`] to create our own waker.
 ///
@@ -112,8 +112,8 @@ impl<F: Future> Future for WeakWakerFuture<F> {
 mod tests {
     use std::future::Future;
     use std::pin::pin;
-    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::task::Context;
 
     use super::*;
@@ -139,9 +139,11 @@ mod tests {
         let base_waker = Arc::new(TestWaker {
             waked: AtomicBool::new(false),
         });
-        assert!(pinned_fut
-            .poll(&mut Context::from_waker(&waker(base_waker.clone())))
-            .is_pending());
+        assert!(
+            pinned_fut
+                .poll(&mut Context::from_waker(&waker(base_waker.clone())))
+                .is_pending()
+        );
         assert_eq!(Arc::strong_count(&base_waker), 2);
         drop(fut);
         assert!(!base_waker.waked.load(Ordering::SeqCst));
@@ -157,15 +159,19 @@ mod tests {
         let base_waker = Arc::new(TestWaker {
             waked: AtomicBool::new(false),
         });
-        assert!(pinned_fut
-            .as_mut()
-            .poll(&mut Context::from_waker(&waker(base_waker.clone())))
-            .is_pending());
+        assert!(
+            pinned_fut
+                .as_mut()
+                .poll(&mut Context::from_waker(&waker(base_waker.clone())))
+                .is_pending()
+        );
         assert_eq!(Arc::strong_count(&base_waker), 2);
         tx.unbounded_send(()).unwrap();
         assert!(base_waker.waked.load(Ordering::SeqCst));
-        assert!(pinned_fut
-            .poll(&mut Context::from_waker(&waker(base_waker.clone())))
-            .is_ready());
+        assert!(
+            pinned_fut
+                .poll(&mut Context::from_waker(&waker(base_waker.clone())))
+                .is_ready()
+        );
     }
 }

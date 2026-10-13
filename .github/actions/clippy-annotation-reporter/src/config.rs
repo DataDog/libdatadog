@@ -286,7 +286,7 @@ mod tests {
     impl EnvGuard {
         fn new(key: &str, value: &str) -> Self {
             let original_value = env::var(key).ok();
-            env::set_var(key, value);
+            unsafe { env::set_var(key, value) };
             Self {
                 key: key.to_string(),
                 original_value,
@@ -297,8 +297,8 @@ mod tests {
     impl Drop for EnvGuard {
         fn drop(&mut self) {
             match &self.original_value {
-                Some(val) => env::set_var(&self.key, val),
-                None => env::remove_var(&self.key),
+                Some(val) => unsafe { env::set_var(&self.key, val) },
+                None => unsafe { env::remove_var(&self.key) },
             }
         }
     }
@@ -461,9 +461,11 @@ mod tests {
 
         let result = Config::new(args, github_ctx);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Invalid repository format"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Invalid repository format")
+        );
     }
 }

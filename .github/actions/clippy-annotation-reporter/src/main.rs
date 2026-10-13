@@ -14,17 +14,28 @@ mod report_generator;
 use crate::config::ConfigBuilder;
 use crate::report_generator::generate_report;
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     let log_level = env::var("INPUT_LOG_LEVEL").unwrap_or_else(|_| "info".to_string());
 
-    // Set RUST_LOG if not already set
+    // Set RUST_LOG before starting the async runtime, while the process is still
+    // single-threaded. `env::set_var` is `unsafe` in the 2024 edition because a
+    // concurrent environment access from another thread would be a data race.
     if env::var("RUST_LOG").is_err() {
-        env::set_var("RUST_LOG", &log_level);
+        // SAFETY: this runs before the tokio runtime is built, so the process is
+        // single-threaded and nothing else can access the environment concurrently.
+        unsafe { env::set_var("RUST_LOG", &log_level) };
     }
 
     env_logger::init();
 
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .context("Failed to build the tokio runtime")?
+        .block_on(run())
+}
+
+async fn run() -> Result<()> {
     info!("Clippy Annotation Reporter starting...");
 
     let config = ConfigBuilder::new().build()?;
@@ -43,24 +54,46 @@ async fn main() -> Result<()> {
         &config.head_branch,
         &config.rules,
     )
-    .await
+    .await?
     {
-        Ok(result) => result,
-        Err(e) => {
-            if e.to_string().contains("No Rust files changed") {
-                info!("No Rust files changed in this PR, nothing to analyze.");
-                return Ok(());
-            }
-            return Err(e);
+        Some(result) => result,
+        None => {
+            // No Rust files changed. A prior revision of this PR may have touched
+            // Rust and posted a comment, so remove any stale one.
+            info!("No Rust files changed in this PR; removing any stale comment.");
+            commenter::delete_comment_if_exists(
+                &octocrab,
+                &config.owner,
+                &config.repo,
+                config.pr_number,
+                None,
+            )
+            .await?;
+            return Ok(());
         }
     };
+
+    // Nothing changed: don't post a comment, and remove any stale one left over
+    // from an earlier revision of this PR.
+    if !analysis_result.has_changes() {
+        info!("No changes to tracked clippy annotations; removing any stale comment.");
+        commenter::delete_comment_if_exists(
+            &octocrab,
+            &config.owner,
+            &config.repo,
+            config.pr_number,
+            None,
+        )
+        .await?;
+        info!("Process completed successfully!");
+        return Ok(());
+    }
 
     let report = generate_report(
         &analysis_result,
         &config.rules,
         &config.repository,
         &config.base_branch,
-        &config.head_branch,
     );
 
     commenter::post_comment(

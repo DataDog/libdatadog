@@ -4,7 +4,7 @@
 use crate::{AllocError, Allocator};
 use core::alloc::Layout;
 use core::cell::Cell;
-use core::ptr::{slice_from_raw_parts_mut, NonNull};
+use core::ptr::{NonNull, slice_from_raw_parts_mut};
 
 /// [LinearAllocator] is an arena allocator, meaning that deallocating
 /// individual allocations made by this allocator does nothing. Instead, the
@@ -34,7 +34,7 @@ impl<A: Allocator> LinearAllocator<A> {
         // SAFETY: this is the size/align of the actual allocation, so it must
         // be valid since the object exists.
         let allocation_layout =
-            unsafe { Layout::from_size_align(allocation.len(), layout.align()).unwrap_unchecked() };
+            unsafe { Layout::from_size_align_unchecked(allocation.len(), layout.align()) };
         Ok(Self {
             allocation_ptr: allocation.cast(),
             allocation_layout,
@@ -234,11 +234,7 @@ mod alignment_tests {
     fn align_offset(ptr: *const u8, align_to: usize) -> usize {
         let uintptr = ptr as usize;
         let rem = uintptr % align_to;
-        if rem == 0 {
-            0
-        } else {
-            align_to - rem
-        }
+        if rem == 0 { 0 } else { align_to - rem }
     }
 
     impl Drop for TestAllocator {

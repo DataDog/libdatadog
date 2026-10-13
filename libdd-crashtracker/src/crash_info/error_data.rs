@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::stacktrace::StackTrace;
 #[cfg(unix)]
+use alloc::rc::Rc;
+#[cfg(unix)]
 use blazesym::helper::ElfResolver;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -9,8 +11,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 #[cfg(unix)]
 use std::path::PathBuf;
-#[cfg(unix)]
-use std::rc::Rc;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ErrorData {
@@ -39,6 +39,12 @@ impl<'a> CachedElfResolvers<'a> {
             symbolizer,
             elf_resolvers: HashMap::new(),
         }
+    }
+
+    /// Resolve names without dropping the ELF cache between stacks.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn symbolizer(&self) -> &blazesym::symbolize::Symbolizer {
+        self.symbolizer
     }
 
     pub fn get_or_insert(&mut self, file_path: &PathBuf) -> anyhow::Result<Rc<ElfResolver>> {

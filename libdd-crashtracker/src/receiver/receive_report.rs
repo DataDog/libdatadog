@@ -1,64 +1,23 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+#[cfg(target_os = "linux")]
+use crate::StacktraceCollection;
+#[cfg(target_os = "linux")]
+use crate::ptrace_collector::crash_site_registers;
 use crate::{
-    crash_info::{
-        CrashInfo, CrashInfoBuilder, ErrorKind, SigInfo, Span, StackFrame, TelemetryCrashUploader,
-        Ucontext,
-    },
+    CrashtrackerConfiguration, StackTrace,
+    crash_info::{CrashInfo, CrashInfoBuilder, ErrorKind, SigInfo, Span, StackFrame, Ucontext},
+    receiver::debug_logger::{DebugLogger, ReceiverIssue},
     runtime_callback::RuntimeStack,
     shared::constants::*,
-    CrashtrackerConfiguration, StackTrace,
 };
 
 use anyhow::Context;
 use libdd_telemetry::data::LogLevel;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::io::AsyncBufReadExt;
-
-#[derive(Debug)]
-enum ReceiverIssue {
-    Timeout,
-    IoError,
-    ProcessLine,
-    AttachAdditionalFile,
-    IncompleteStacktrace,
-    UnexpectedLine,
-}
-
-impl ReceiverIssue {
-    fn tag(&self) -> &'static str {
-        match self {
-            ReceiverIssue::Timeout => "receiver_issue:timeout",
-            ReceiverIssue::IoError => "receiver_issue:io_error",
-            ReceiverIssue::ProcessLine => "receiver_issue:process_line_error",
-            ReceiverIssue::AttachAdditionalFile => "receiver_issue:attach_additional_file_error",
-            ReceiverIssue::IncompleteStacktrace => "receiver_issue:incomplete_stacktrace",
-            ReceiverIssue::UnexpectedLine => "receiver_issue:unexpected_line",
-        }
-    }
-}
-
-fn emit_debug_log(
-    logger: &Option<Arc<TelemetryCrashUploader>>,
-    issue: ReceiverIssue,
-    crash_uuid: &str,
-    message: String,
-    level: LogLevel,
-) {
-    if let Some(logger) = logger.as_ref().map(Arc::clone) {
-        let tags = format!(
-            "{},crash_uuid:{},is_crash_debug:true",
-            issue.tag(),
-            crash_uuid
-        );
-        tokio::spawn(async move {
-            let _ = logger.upload_general_log(message, tags, level).await;
-        });
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct RuntimeStackFrame {
@@ -98,6 +57,23 @@ impl From<RuntimeStackFrame> for StackFrame {
     }
 }
 
+/// Controls file access and process inspection for a crash report. IPC workers may have fewer
+/// privileges than the receiver's host, so select this policy from the connection, not the report.
+#[derive(Debug, Clone, Copy)]
+pub enum ReceiverFileAccess {
+    /// Use the configured paths and process ID for a trusted collector.
+    Trusted,
+    /// Constrain attachment paths, use the authenticated peer's PID and skip receiver-side
+    /// symbolization and remote unwinding.
+    Restricted { peer_pid: u32 },
+}
+
+impl ReceiverFileAccess {
+    pub(crate) fn is_restricted(&self) -> bool {
+        matches!(self, ReceiverFileAccess::Restricted { .. })
+    }
+}
+
 /// The crashtracker collector sends data in blocks.
 /// This enum tracks which block we're currently in, and, for multi-line blocks,
 /// collects the partial data until the block is closed and it can be appended
@@ -115,6 +91,7 @@ pub(crate) enum StdinState {
     SigInfo,
     SpanIds,
     StackTrace,
+    Threads,
     TraceIds,
     Ucontext,
     Waiting,
@@ -135,7 +112,7 @@ fn process_line(
     config: &mut Option<CrashtrackerConfiguration>,
     line: &str,
     state: StdinState,
-    telemetry_logger: &Option<Arc<TelemetryCrashUploader>>,
+    debug_logger: &DebugLogger,
 ) -> anyhow::Result<StdinState> {
     let next = match state {
         StdinState::AdditionalTags if line.starts_with(DD_CRASHTRACK_END_ADDITIONAL_TAGS) => {
@@ -169,6 +146,15 @@ fn process_line(
             let val = val.as_i64().context("Vals are ints")?;
             builder.with_counter(key.clone(), val)?;
             StdinState::Counters
+        }
+
+        StdinState::Threads if line.starts_with(DD_CRASHTRACK_END_THREADS) => StdinState::Waiting,
+        StdinState::Threads => {
+            // Attached as it arrives, so a stream cut short by EOF or the deadline keeps the
+            // threads it did deliver. Untrusted like every other line here: a malformed entry
+            // ends the report rather than being guessed at.
+            builder.with_thread(serde_json::from_str(line)?)?;
+            StdinState::Threads
         }
 
         StdinState::WholeStackTrace if line.starts_with(DD_CRASHTRACK_END_WHOLE_STACKTRACE) => {
@@ -336,6 +322,7 @@ fn process_line(
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_RUNTIME_STACK_FRAME) => {
             StdinState::RuntimeStackFrame(vec![])
         }
+        StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_THREADS) => StdinState::Threads,
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_TRACE_IDS) => {
             StdinState::TraceIds
         }
@@ -352,8 +339,7 @@ fn process_line(
         StdinState::Waiting => {
             let msg = format!("Unexpected line while receiving crashreport: {line}");
             builder.with_log_message(msg.clone(), true)?;
-            emit_debug_log(
-                telemetry_logger,
+            debug_logger.emit(
                 ReceiverIssue::UnexpectedLine,
                 &builder.uuid.to_string(),
                 msg,
@@ -370,14 +356,23 @@ fn process_line(
 ///    Some(CrashInfo)
 /// 2. `stdin` closes without a crash report (i.e. if the parent terminated normally). In this case
 ///    we return "None".
+///
+/// Borrows `stream` rather than consuming it. The crashing process blocks on
+/// POLLHUP from this connection, so closing it here would release that process
+/// before the caller has symbolized the report, and symbolization reads
+/// `/proc/<pid>/maps`. The caller decides when to close.
 pub(crate) async fn receive_report_from_stream(
     timeout: Duration,
-    stream: impl AsyncBufReadExt + std::marker::Unpin,
+    stream: &mut (impl AsyncBufReadExt + std::marker::Unpin),
+    access: ReceiverFileAccess,
 ) -> anyhow::Result<Option<(CrashtrackerConfiguration, CrashInfo)>> {
     let mut builder = CrashInfoBuilder::new();
     let mut stdin_state = StdinState::Waiting;
     let mut config: Option<CrashtrackerConfiguration> = None;
-    let mut telemetry_logger: Option<Arc<TelemetryCrashUploader>> = None;
+    // Usable before the collector sends anything, so a receiver that never gets
+    // a config or metadata block can still report why. Upgraded in the loop as
+    // those blocks arrive.
+    let mut debug_logger = DebugLogger::new(None, None);
 
     let mut crash_ping_sent = false;
 
@@ -388,14 +383,9 @@ pub(crate) async fn receive_report_from_stream(
 
     //TODO: This assumes that the input is valid UTF-8.
     loop {
-        // Initialize telemetry logger once we have both config and metadata.
-        if telemetry_logger.is_none() {
-            if let (Some(cfg), Some(md)) = (&config, builder.metadata.clone()) {
-                if let Ok(logger) = TelemetryCrashUploader::new(&md, cfg.endpoint()) {
-                    telemetry_logger = Some(Arc::new(logger));
-                }
-            }
-        }
+        // Re-point the debug logger at the real endpoint and application once
+        // the config and metadata blocks arrive. Cheap no-op until they do.
+        debug_logger.update(config.as_ref(), builder.metadata.as_ref());
 
         // We need to wait until at least we receive config, metadata, and kind (on non-Windows
         // platforms) before sending the crash ping
@@ -421,8 +411,7 @@ pub(crate) async fn receive_report_from_stream(
         let next_line = tokio::time::timeout(remaining_timeout, lines.next_line()).await;
         let Ok(next_line) = next_line else {
             builder.with_log_message(format!("Timeout: {next_line:?}"), true)?;
-            emit_debug_log(
-                &telemetry_logger,
+            debug_logger.emit(
                 ReceiverIssue::Timeout,
                 &builder.uuid.to_string(),
                 format!("Timeout while waiting for crash report input: {next_line:?}"),
@@ -435,8 +424,7 @@ pub(crate) async fn receive_report_from_stream(
             // We ignore error from uploading the log to telemetry, because what are we going to do?
             // If upload is failing, its not worth the effort to retry the request so we should just
             // continue on. At least we will get the log message in the crash info
-            emit_debug_log(
-                &telemetry_logger,
+            debug_logger.emit(
                 ReceiverIssue::IoError,
                 &builder.uuid.to_string(),
                 format!("IO error while reading crash report input: {next_line:?}"),
@@ -451,7 +439,7 @@ pub(crate) async fn receive_report_from_stream(
             &mut config,
             &next_line,
             stdin_state,
-            &telemetry_logger,
+            &debug_logger,
         ) {
             Ok(next_state) => {
                 stdin_state = next_state;
@@ -465,8 +453,7 @@ pub(crate) async fn receive_report_from_stream(
                     format!("Unable to process line: {next_line}. Error: {e}"),
                     true,
                 )?;
-                emit_debug_log(
-                    &telemetry_logger,
+                debug_logger.emit(
                     ReceiverIssue::ProcessLine,
                     &builder.uuid.to_string(),
                     format!("Unable to process line: {next_line}. Error: {e}"),
@@ -487,7 +474,40 @@ pub(crate) async fn receive_report_from_stream(
     }
 
     if !builder.has_data() {
+        // Nothing arrived at all, so there is no crash report to build and no
+        // config to upload it with. The env-derived logger is all we have, and
+        // this log is the only signal that the receiver ran and got nothing.
+        // Waited on rather than spawned: we return right after, and the caller
+        // drops the runtime, which would cancel a pending spawned task.
+        debug_logger
+            .emit_and_wait(
+                ReceiverIssue::NoData,
+                &builder.uuid.to_string(),
+                "Receiver received no data".to_string(),
+                LogLevel::Warn,
+            )
+            .await;
         return Ok(None);
+    }
+
+    // Use the authenticated PID before any process inspection. The reported PID could name the
+    // privileged host instead of the worker.
+    if let ReceiverFileAccess::Restricted { peer_pid } = access {
+        let claimed = builder.proc_info.as_ref().map(|p| p.pid);
+        if let Some(claimed) = claimed {
+            if claimed != peer_pid {
+                builder.with_log_message(
+                    format!(
+                        "Restricting crash process inspection to the authenticated peer pid \
+                         {peer_pid} (report claimed {claimed})"
+                    ),
+                    false,
+                )?;
+                if let Some(proc_info) = builder.proc_info.as_mut() {
+                    proc_info.pid = peer_pid;
+                }
+            }
+        }
     }
 
     enrich_thread_name(&mut builder)?;
@@ -496,26 +516,15 @@ pub(crate) async fn receive_report_from_stream(
     // Without a config, we don't even know the endpoint to transmit to.  Not much to do to recover.
     let config = config.context("Missing crashtracker configuration")?;
 
-    for filename in config.additional_files() {
-        if let Err(e) = builder.with_file(filename.clone()) {
-            builder.with_log_message(e.to_string(), true)?;
-            emit_debug_log(
-                &telemetry_logger,
-                ReceiverIssue::AttachAdditionalFile,
-                &builder.uuid.to_string(),
-                format!("Unable to attach additional file {filename:?}: {e}"),
-                LogLevel::Warn,
-            );
-        }
-    }
+    attach_additional_files(&mut builder, &config, access, &debug_logger)?;
 
-    // Thread collection is budgeted against the *remaining* receiver timeout;
-    // whatever time is left after reading the crash data from stdin.
-    // This makes sure the total receiver lifetime is bounded by the configured
-    // timeout, and we always emit whatever threads were collected before
-    // the deadline rather than silently discarding them.
+    // Collect threads within the remaining timeout and keep any results gathered before it ends.
+    // Skip this for restricted reports: libunwind opens mapped ELF/debug files without our path
+    // checks, and a worker can replace those paths with aliases to host-held descriptors. The
+    // crashing thread's stack supplied by the worker is retained.
+    // Use this fallback only when the collector supplied no threads.
     #[cfg(target_os = "linux")]
-    if config.collect_all_threads() {
+    if config.collect_all_threads() && !access.is_restricted() && builder.error.threads.is_none() {
         if let Some(proc_info) = builder.proc_info.as_ref() {
             let parent_pid = proc_info.pid;
             let crashing_tid = proc_info.tid;
@@ -540,8 +549,7 @@ pub(crate) async fn receive_report_from_stream(
     let crash_info = builder.build()?;
 
     if crash_info.incomplete {
-        emit_debug_log(
-            &telemetry_logger,
+        debug_logger.emit(
             ReceiverIssue::IncompleteStacktrace,
             &crash_info.uuid,
             "CrashInfo stacktrace incomplete".to_string(),
@@ -552,6 +560,52 @@ pub(crate) async fn receive_report_from_stream(
     Ok(Some((config, crash_info)))
 }
 
+/// Attach files using the report's access policy. Rejections must not reveal the target's contents
+/// or resolved path; only trusted receivers also print them to stderr.
+fn attach_additional_files(
+    builder: &mut CrashInfoBuilder,
+    config: &CrashtrackerConfiguration,
+    access: ReceiverFileAccess,
+    debug_logger: &DebugLogger,
+) -> anyhow::Result<()> {
+    use std::io::BufRead;
+    let restricted = access.is_restricted();
+    for filename in config.additional_files() {
+        let opened: std::io::Result<std::fs::File> = if restricted {
+            #[cfg(unix)]
+            {
+                libdd_common::unix_utils::open_regular_for_read(std::path::Path::new(filename))
+                    .map_err(std::io::Error::from)
+            }
+            #[cfg(not(unix))]
+            {
+                std::fs::File::open(filename)
+            }
+        } else {
+            std::fs::File::open(filename)
+        };
+        let result = opened.and_then(|file| {
+            std::io::BufReader::new(file)
+                .lines()
+                .collect::<std::io::Result<Vec<String>>>()
+        });
+        match result {
+            Ok(lines) => builder.with_file_and_contents(filename.clone(), lines)?,
+            Err(e) => {
+                let message = format!("Unable to attach additional file {filename:?}: {e}");
+                builder.with_log_message(message.clone(), !restricted)?;
+                debug_logger.emit(
+                    ReceiverIssue::AttachAdditionalFile,
+                    &builder.uuid.to_string(),
+                    message,
+                    LogLevel::Warn,
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 #[cfg(target_os = "linux")]
 fn collect_and_add_thread_contexts(
     builder: &mut CrashInfoBuilder,
@@ -560,73 +614,57 @@ fn collect_and_add_thread_contexts(
     crashing_tid: Option<u32>,
     budget: Duration,
 ) -> anyhow::Result<()> {
-    use crate::crash_info::{StackTrace, ThreadData};
-    use crate::receiver::ptrace_collector::stream_thread_contexts;
+    use crate::ptrace_collector::{stream_thread_contexts, thread_data_from_capture};
 
-    let crashing_tid = crashing_tid.unwrap_or(0) as i32;
     let parent_pid = parent_pid as i32;
-
-    let mut collected_threads = Vec::new();
+    let crashing_tid = crashing_tid.unwrap_or(0) as i32;
+    let crash_site = builder.ucontext.as_ref().and_then(crash_site_registers);
+    let mut threads = Vec::new();
+    let crashing_context = if config.unwind_from_ucontext() {
+        builder.ucontext.clone()
+    } else {
+        None
+    };
+    let mut crashing_stack = None;
 
     let incomplete = stream_thread_contexts(
         parent_pid,
         crashing_tid,
         config.max_threads(),
         budget,
-        config.resolve_frames(),
-        |tid, captured_context| {
-            let (name, state) = read_thread_stat(parent_pid, tid);
-            let name = name.unwrap_or_else(|| tid.to_string());
-
-            let stack = match captured_context {
-                Some(ctx) => ctx.stack_trace.clone(),
-                None => StackTrace::new_incomplete(),
-            };
-
-            collected_threads.push(ThreadData {
-                crashed: tid == crashing_tid,
-                name,
-                stack,
-                state,
-            });
+        crashing_context.as_ref(),
+        |tid, captured| {
+            let used_saved_context = captured.as_ref().is_some_and(|ctx| ctx.used_saved_context);
+            let thread =
+                thread_data_from_capture(parent_pid, crashing_tid, crash_site, tid, captured);
+            if thread.crashed
+                && should_promote_crashing_stack(config, used_saved_context)
+                && !thread.stack.frames.is_empty()
+            {
+                crashing_stack = Some(thread.stack.clone());
+            }
+            threads.push(thread);
         },
     )?;
 
     if incomplete {
         let _ = builder.with_counter("threads_incomplete".to_string(), 1);
     }
-
-    let _ = builder.with_threads(collected_threads);
-
+    if let Some(stack) = crashing_stack {
+        builder.with_stack(stack)?;
+    }
+    let _ = builder.with_threads(threads);
     Ok(())
 }
 
-/// Read thread name and state from a single `/proc/{pid}/task/{tid}/stat` file.
-///
-/// The stat file format is: `pid (comm) state ...`
-/// `comm` (the thread name) is enclosed between the first `(` and the last `)`
-/// The state character immediately follows the closing `)`.
 #[cfg(target_os = "linux")]
-fn read_thread_stat(pid: i32, tid: i32) -> (Option<String>, Option<String>) {
-    let content = match std::fs::read_to_string(format!("/proc/{pid}/task/{tid}/stat")) {
-        Ok(c) => c,
-        Err(_) => return (None, None),
-    };
-
-    let Some(name_start) = content.find('(') else {
-        return (None, None);
-    };
-    let Some(name_end) = content.rfind(')') else {
-        return (None, None);
-    };
-
-    let name = Some(content[name_start + 1..name_end].to_string());
-    let state = content[name_end + 1..]
-        .split_whitespace()
-        .next()
-        .map(|s| s.to_string());
-
-    (name, state)
+fn should_promote_crashing_stack(
+    config: &CrashtrackerConfiguration,
+    used_saved_context: bool,
+) -> bool {
+    config.unwind_from_ucontext()
+        && config.resolve_frames() == StacktraceCollection::EnabledWithSymbolsInReceiver
+        && used_saved_context
 }
 
 #[cfg(target_os = "linux")]
@@ -663,6 +701,163 @@ fn enrich_thread_name(_builder: &mut CrashInfoBuilder) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::crash_info::ThreadData;
+
+    fn stack_with_frames(ip: &str, function: Option<&str>) -> StackTrace {
+        let mut stack = StackTrace::new_incomplete();
+        stack.frames.push(StackFrame {
+            ip: Some(ip.to_string()),
+            sp: Some("0x7ffd0000".to_string()),
+            function: function.map(|f| f.to_string()),
+            ..Default::default()
+        });
+        stack
+    }
+
+    fn parse_test_lines(lines: &[&str]) -> anyhow::Result<(CrashInfoBuilder, StdinState)> {
+        let mut builder = CrashInfoBuilder::default();
+        let mut config = None;
+        let logger = DebugLogger::disabled();
+        let mut state = StdinState::Waiting;
+        for line in lines {
+            state = process_line(&mut builder, &mut config, line, state, &logger)?;
+        }
+        Ok((builder, state))
+    }
+
+    /// Keep the primary stack and completed threads when the stream stops inside a section.
+    #[test]
+    fn threads_delivered_before_a_truncated_stream_are_kept() {
+        let primary = stack_with_frames("0x1000", Some("main"));
+        let delivered = ThreadData {
+            crashed: false,
+            name: "sleeper".to_string(),
+            stack: stack_with_frames("0x3000", Some("sleep")),
+            state: None,
+        };
+        let (builder, state) = parse_test_lines(&[
+            DD_CRASHTRACK_BEGIN_WHOLE_STACKTRACE,
+            &serde_json::to_string(&primary).unwrap(),
+            DD_CRASHTRACK_END_WHOLE_STACKTRACE,
+            DD_CRASHTRACK_BEGIN_THREADS,
+            &serde_json::to_string(&delivered).unwrap(),
+        ])
+        .unwrap();
+        assert!(matches!(state, StdinState::Threads));
+        assert_eq!(builder.error.stack, Some(primary));
+        assert_eq!(
+            builder.error.threads.as_deref(),
+            Some([delivered].as_slice())
+        );
+    }
+
+    /// Thread sections must append, preserving all frame details.
+    #[test]
+    fn threads_block_round_trips() {
+        let threads = vec![
+            ThreadData {
+                crashed: true,
+                name: "main".to_string(),
+                stack: stack_with_frames("0x1000", Some("main")),
+                state: Some("R".to_string()),
+            },
+            ThreadData {
+                crashed: false,
+                name: "sleeper".to_string(),
+                stack: stack_with_frames("0x2000", None),
+                state: None,
+            },
+        ];
+
+        let first = serde_json::to_string(&threads[0]).unwrap();
+        let second = serde_json::to_string(&threads[1]).unwrap();
+        for separate_sections in [false, true] {
+            let mut lines = vec![DD_CRASHTRACK_BEGIN_THREADS, &first];
+            if separate_sections {
+                lines.extend([DD_CRASHTRACK_END_THREADS, DD_CRASHTRACK_BEGIN_THREADS]);
+            }
+            lines.extend([&second, DD_CRASHTRACK_END_THREADS]);
+            let (builder, state) = parse_test_lines(&lines).unwrap();
+            assert!(matches!(state, StdinState::Waiting));
+            assert_eq!(builder.error.threads.as_deref(), Some(threads.as_slice()));
+        }
+    }
+
+    #[test]
+    fn a_malformed_threads_entry_is_refused() {
+        assert!(parse_test_lines(&[DD_CRASHTRACK_BEGIN_THREADS, "{not json"]).is_err());
+    }
+
+    /// Reads from `socket` until `marker` shows up, then answers 200 so the
+    /// uploader's request completes instead of waiting out its timeout.
+    async fn serve_one_request(listener: tokio::net::TcpListener, marker: &str) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let (mut socket, _) = listener.accept().await.expect("accept");
+        let mut request = Vec::new();
+        let mut chunk = [0u8; 4096];
+        loop {
+            let n = socket.read(&mut chunk).await.expect("read");
+            if n == 0 {
+                break;
+            }
+            request.extend_from_slice(&chunk[..n]);
+            if String::from_utf8_lossy(&request).contains(marker) {
+                break;
+            }
+        }
+        let _ = socket
+            .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\n\r\n")
+            .await;
+        let _ = socket.flush().await;
+        String::from_utf8_lossy(&request).to_string()
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn test_receive_report_no_data_sends_debug_log() {
+        // Stand in for the agent, so the debug log has somewhere to land
+        // without a config block telling the receiver where to send.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        unsafe {
+            std::env::set_var(
+                "DD_TRACE_AGENT_URL",
+                format!("http://{}", listener.local_addr().unwrap()),
+            )
+        };
+        let server = tokio::spawn(async move {
+            tokio::time::timeout(
+                Duration::from_secs(5),
+                serve_one_request(listener, "no_data"),
+            )
+            .await
+            .expect("no telemetry request received")
+        });
+
+        let (sender, receiver) = tokio::net::UnixStream::pair().unwrap();
+        // Close without sending anything, as a parent that exited normally does.
+        drop(sender);
+
+        let mut stream = tokio::io::BufReader::new(receiver);
+        let report = receive_report_from_stream(
+            Duration::from_secs(1),
+            &mut stream,
+            ReceiverFileAccess::Trusted,
+        )
+        .await
+        .unwrap();
+        assert!(report.is_none());
+
+        let request = server.await.unwrap();
+        assert!(
+            request.contains("receiver_issue:no_data"),
+            "no_data tag missing from telemetry request: {request}"
+        );
+        assert!(
+            request.contains("Receiver received no data"),
+            "no_data message missing from telemetry request: {request}"
+        );
+    }
 
     #[test]
     fn test_stdin_state_waiting_to_message() {
@@ -672,7 +867,14 @@ mod tests {
         let state = StdinState::Waiting;
         let line = DD_CRASHTRACK_BEGIN_MESSAGE;
 
-        let next_state = process_line(&mut builder, &mut config, line, state, &None).unwrap();
+        let next_state = process_line(
+            &mut builder,
+            &mut config,
+            line,
+            state,
+            &DebugLogger::disabled(),
+        )
+        .unwrap();
 
         assert!(matches!(next_state, StdinState::Message));
     }
@@ -686,8 +888,14 @@ mod tests {
         let state = StdinState::Message;
         let message_line = "program panicked";
 
-        let next_state =
-            process_line(&mut builder, &mut config, message_line, state, &None).unwrap();
+        let next_state = process_line(
+            &mut builder,
+            &mut config,
+            message_line,
+            state,
+            &DebugLogger::disabled(),
+        )
+        .unwrap();
 
         // Should stay in message state
         assert!(matches!(next_state, StdinState::Message));
@@ -704,7 +912,14 @@ mod tests {
         let state = StdinState::Message;
         let line = DD_CRASHTRACK_END_MESSAGE;
 
-        let next_state = process_line(&mut builder, &mut config, line, state, &None).unwrap();
+        let next_state = process_line(
+            &mut builder,
+            &mut config,
+            line,
+            state,
+            &DebugLogger::disabled(),
+        )
+        .unwrap();
 
         assert!(matches!(next_state, StdinState::Waiting));
     }
@@ -717,7 +932,13 @@ mod tests {
         let state = StdinState::Message;
         let empty_line = "";
 
-        let result = process_line(&mut builder, &mut config, empty_line, state, &None);
+        let result = process_line(
+            &mut builder,
+            &mut config,
+            empty_line,
+            state,
+            &DebugLogger::disabled(),
+        );
 
         // Should handle empty line without error
         assert!(result.is_ok());
@@ -734,7 +955,7 @@ mod tests {
             &mut config,
             "Line 1 of panic",
             StdinState::Message,
-            &None,
+            &DebugLogger::disabled(),
         )
         .unwrap();
 
@@ -759,7 +980,7 @@ mod tests {
             &mut config,
             DD_CRASHTRACK_BEGIN_MESSAGE,
             state,
-            &None,
+            &DebugLogger::disabled(),
         )
         .unwrap();
         assert!(matches!(state, StdinState::Message));
@@ -770,7 +991,7 @@ mod tests {
             &mut config,
             "test panic message",
             state,
-            &None,
+            &DebugLogger::disabled(),
         )
         .unwrap();
         assert!(matches!(state, StdinState::Message));
@@ -782,7 +1003,7 @@ mod tests {
             &mut config,
             DD_CRASHTRACK_END_MESSAGE,
             state,
-            &None,
+            &DebugLogger::disabled(),
         )
         .unwrap();
         assert!(matches!(state, StdinState::Waiting));
@@ -802,7 +1023,7 @@ mod tests {
             &mut config,
             DD_CRASHTRACK_BEGIN_STACKTRACE,
             state,
-            &None,
+            &DebugLogger::disabled(),
         )
         .unwrap();
         assert!(matches!(state, StdinState::StackTrace));
@@ -813,7 +1034,7 @@ mod tests {
             &mut config,
             DD_CRASHTRACK_END_STACKTRACE,
             state,
-            &None,
+            &DebugLogger::disabled(),
         )
         .unwrap();
         assert!(matches!(state, StdinState::Waiting));
@@ -828,13 +1049,15 @@ mod tests {
         );
 
         // Verify a log message was recorded about no frames
-        assert!(builder
-            .log_messages
-            .as_ref()
-            .map(|msgs| msgs
-                .iter()
-                .any(|msg| msg.contains("No native stack frames received")))
-            .unwrap_or(false));
+        assert!(
+            builder
+                .log_messages
+                .as_ref()
+                .map(|msgs| msgs
+                    .iter()
+                    .any(|msg| msg.contains("No native stack frames received")))
+                .unwrap_or(false)
+        );
     }
 
     #[test]
@@ -850,14 +1073,21 @@ mod tests {
             &mut config,
             DD_CRASHTRACK_BEGIN_STACKTRACE,
             state,
-            &None,
+            &DebugLogger::disabled(),
         )
         .unwrap();
         assert!(matches!(state, StdinState::StackTrace));
 
         // Add a frame
         let frame_json = r#"{"ip":"0x1234"}"#;
-        state = process_line(&mut builder, &mut config, frame_json, state, &None).unwrap();
+        state = process_line(
+            &mut builder,
+            &mut config,
+            frame_json,
+            state,
+            &DebugLogger::disabled(),
+        )
+        .unwrap();
         assert!(matches!(state, StdinState::StackTrace));
 
         // End stacktrace
@@ -866,7 +1096,7 @@ mod tests {
             &mut config,
             DD_CRASHTRACK_END_STACKTRACE,
             state,
-            &None,
+            &DebugLogger::disabled(),
         )
         .unwrap();
         assert!(matches!(state, StdinState::Waiting));
@@ -892,7 +1122,7 @@ mod tests {
             &mut config,
             DD_CRASHTRACK_BEGIN_MESSAGE,
             state,
-            &None,
+            &DebugLogger::disabled(),
         )
         .unwrap();
         assert!(matches!(state, StdinState::Message));
@@ -902,7 +1132,14 @@ mod tests {
             "Exception 'Evil'\\n{}\\n{}\\n{{}}\\n{}",
             DD_CRASHTRACK_END_MESSAGE, DD_CRASHTRACK_BEGIN_CONFIG, DD_CRASHTRACK_END_CONFIG,
         );
-        state = process_line(&mut builder, &mut config, &sanitized_line, state, &None).unwrap();
+        state = process_line(
+            &mut builder,
+            &mut config,
+            &sanitized_line,
+            state,
+            &DebugLogger::disabled(),
+        )
+        .unwrap();
         // Must still be in Message state. the escaped sentinels are just text
         assert!(
             matches!(state, StdinState::Message),
@@ -915,7 +1152,7 @@ mod tests {
             &mut config,
             DD_CRASHTRACK_END_MESSAGE,
             state,
-            &None,
+            &DebugLogger::disabled(),
         )
         .unwrap();
         assert!(matches!(state, StdinState::Waiting));
@@ -926,5 +1163,174 @@ mod tests {
             "no config section should have been parsed"
         );
         assert!(builder.has_message());
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod crashing_thread_tests {
+    use super::*;
+    use crate::ptrace_collector::drop_frames_above_crash_site;
+    use std::collections::HashMap;
+
+    fn frame(ip: &str, sp: &str) -> StackFrame {
+        StackFrame {
+            ip: Some(ip.to_string()),
+            sp: Some(sp.to_string()),
+            ..StackFrame::new()
+        }
+    }
+
+    fn ucontext(arch: &str, registers: &[(&str, &str)]) -> Ucontext {
+        Ucontext {
+            arch: arch.to_string(),
+            registers: registers
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect::<HashMap<_, _>>(),
+            raw: None,
+        }
+    }
+
+    /// The prefix mirrors a real report: the thread is parked in `poll` inside the
+    /// signal handler, and the frames beneath the trampoline are the actual crash.
+    fn parked_in_handler() -> StackTrace {
+        StackTrace::from_frames(
+            vec![
+                frame("0x7ddee3ca126f", "0x7ddee2f7cbe0"), // __libc_poll
+                frame("0x7ddee2b4f356", "0x7ddee2f7cc10"), // ProcessHandle::finish
+                frame("0x7ddee2b527db", "0x7ddee2f7cc80"), // handle_posix_sigaction
+                frame("0x7ddee3be1050", "0x7ddee2f7d4c0"), // __restore_rt
+                frame("0x7ddee3c2feec", "0x7ddee2f7da80"), // crash site
+                frame("0x7ddee3be1050", "0x7ddee2f7dac0"),
+                frame("0x7ddee2e9ccc0", "0x7ffe06975aa0"),
+            ],
+            false,
+        )
+    }
+
+    #[test]
+    fn crash_site_frame_becomes_the_first_frame() {
+        let mut stack = parked_in_handler();
+        drop_frames_above_crash_site(&mut stack, 0x7ddee3c2feec, 0x7ddee2f7da80);
+
+        assert_eq!(stack.frames.len(), 3);
+        assert_eq!(stack.frames[0].ip.as_deref(), Some("0x7ddee3c2feec"));
+        assert_eq!(stack.frames[0].sp.as_deref(), Some("0x7ddee2f7da80"));
+    }
+
+    /// The handler runs on an alternate signal stack, so its frames can sit at
+    /// addresses either side of the thread's own stack. Only the exact crash-site
+    /// frame may end the prefix.
+    #[test]
+    fn alternate_signal_stack_above_thread_stack_is_still_trimmed() {
+        let mut stack = StackTrace::from_frames(
+            vec![
+                frame("0x1000", "0xffff0000"), // handler, on a higher-addressed alt stack
+                frame("0x1010", "0xffff0040"),
+                frame("0x2000", "0x7ffe0000"), // crash site, on the thread stack
+                frame("0x2010", "0x7ffe0040"),
+            ],
+            false,
+        );
+        drop_frames_above_crash_site(&mut stack, 0x2000, 0x7ffe0000);
+
+        assert_eq!(stack.frames.len(), 2);
+        assert_eq!(stack.frames[0].ip.as_deref(), Some("0x2000"));
+    }
+
+    /// The ucontext block zero-pads its registers while unwound frames don't, so the
+    /// two must be compared as numbers rather than as strings.
+    #[test]
+    fn zero_padded_registers_match_unpadded_frames() {
+        let registers = crash_site_registers(&ucontext(
+            "x86_64",
+            &[("rip", "0x00007ddee3c2feec"), ("rsp", "0x00007ddee2f7da80")],
+        ))
+        .expect("x86_64 registers should parse");
+
+        let mut stack = parked_in_handler();
+        drop_frames_above_crash_site(&mut stack, registers.0, registers.1);
+
+        assert_eq!(stack.frames.len(), 3);
+    }
+
+    #[test]
+    fn stack_is_untouched_when_no_frame_matches() {
+        let mut stack = parked_in_handler();
+        let before = stack.frames.clone();
+        drop_frames_above_crash_site(&mut stack, 0xdead, 0xbeef);
+
+        assert_eq!(stack.frames, before);
+    }
+
+    #[test]
+    fn stack_is_untouched_when_it_already_starts_at_the_crash_site() {
+        let mut stack = StackTrace::from_frames(
+            vec![frame("0x2000", "0x7ffe0000"), frame("0x2010", "0x7ffe0040")],
+            false,
+        );
+        let before = stack.frames.clone();
+        drop_frames_above_crash_site(&mut stack, 0x2000, 0x7ffe0000);
+
+        assert_eq!(stack.frames, before);
+    }
+
+    /// A frame sharing only the instruction pointer is a different activation of the
+    /// same function, not the crash site.
+    #[test]
+    fn matching_ip_alone_does_not_end_the_prefix() {
+        let mut stack = StackTrace::from_frames(
+            vec![
+                frame("0x2000", "0x7ffe0000"), // recursive call, same ip
+                frame("0x2000", "0x7ffe0040"), // crash site
+            ],
+            false,
+        );
+        drop_frames_above_crash_site(&mut stack, 0x2000, 0x7ffe0040);
+
+        assert_eq!(stack.frames.len(), 1);
+        assert_eq!(stack.frames[0].sp.as_deref(), Some("0x7ffe0040"));
+    }
+
+    #[test]
+    fn registers_are_read_per_architecture() {
+        assert_eq!(
+            crash_site_registers(&ucontext("x86_64", &[("rip", "0x10"), ("rsp", "0x20")])),
+            Some((0x10, 0x20))
+        );
+        assert_eq!(
+            crash_site_registers(&ucontext("aarch64", &[("pc", "0x10"), ("sp", "0x20")])),
+            Some((0x10, 0x20))
+        );
+        assert_eq!(
+            crash_site_registers(&ucontext("riscv64", &[("pc", "0x10"), ("sp", "0x20")])),
+            None
+        );
+        assert_eq!(
+            crash_site_registers(&ucontext("x86_64", &[("rip", "0x10")])),
+            None,
+            "a ucontext missing the stack pointer yields no crash site"
+        );
+    }
+
+    #[test]
+    fn promotes_only_symbolizable_stacks_from_saved_crash_registers() -> anyhow::Result<()> {
+        let receiver_symbols = CrashtrackerConfiguration::builder()
+            .unwind_from_ucontext(true)
+            .resolve_frames(StacktraceCollection::EnabledWithSymbolsInReceiver)
+            .build()?;
+        assert!(should_promote_crashing_stack(&receiver_symbols, true));
+        assert!(!should_promote_crashing_stack(&receiver_symbols, false));
+
+        let inprocess_symbols = CrashtrackerConfiguration::builder()
+            .unwind_from_ucontext(true)
+            .resolve_frames(StacktraceCollection::EnabledWithInprocessSymbols)
+            .build()?;
+        assert!(!should_promote_crashing_stack(&inprocess_symbols, true));
+        assert!(!should_promote_crashing_stack(
+            &CrashtrackerConfiguration::builder().build()?,
+            true
+        ));
+        Ok(())
     }
 }

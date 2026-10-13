@@ -6,12 +6,16 @@
 #![cfg_attr(not(test), deny(clippy::todo))]
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
+extern crate alloc;
+
+use alloc::borrow::Cow;
 use anyhow::Context;
-use http::uri;
+use core::{ops::Deref, str::FromStr};
+use http::uri::{self, PathAndQuery, Uri};
 use serde::de::Error;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::path::PathBuf;
 use std::sync::{Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
-use std::{borrow::Cow, ops::Deref, path::PathBuf, str::FromStr};
 
 pub mod azure_app_services;
 #[cfg(not(target_arch = "wasm32"))]
@@ -19,8 +23,11 @@ pub mod cc_utils;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod connector;
 #[cfg(feature = "reqwest")]
+#[cfg(feature = "http-client")]
 pub mod dump_server;
 pub mod entity_id;
+pub mod machine_id;
+pub mod mutable_metadata;
 pub mod regex_engine;
 #[macro_use]
 pub mod cstr;
@@ -28,6 +35,7 @@ pub mod cstr;
 pub mod bench_utils;
 pub mod config;
 pub mod error;
+#[cfg(feature = "http-client")]
 pub mod http_common;
 pub mod multipart;
 #[cfg(not(target_arch = "wasm32"))]
@@ -35,7 +43,7 @@ pub mod rate_limiter;
 pub mod tag;
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), not(target_os = "aix")))]
 pub mod threading;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod timeout;
@@ -171,7 +179,7 @@ mod sealed {
 
 pub mod header {
     #![allow(clippy::declare_interior_mutable_const)]
-    use http::{header::HeaderName, HeaderValue};
+    use http::{HeaderValue, header::HeaderName};
 
     pub const APPLICATION_MSGPACK_STR: &str = "application/msgpack";
     pub const APPLICATION_PROTOBUF_STR: &str = "application/x-protobuf";
@@ -194,17 +202,17 @@ pub mod header {
         HeaderName::from_static("x-datadog-test-session-token");
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "http-client"))]
 pub type HttpClient = http_common::GenericHttpClient<connector::Connector>;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "http-client"))]
 pub type HttpResponse = http_common::HttpResponse;
 pub type HttpRequestBuilder = http::request::Builder;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "http-client"))]
 pub trait Connect:
     hyper_util::client::legacy::connect::Connect + Clone + Send + Sync + 'static
 {
 }
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "http-client"))]
 impl<C: hyper_util::client::legacy::connect::Connect + Clone + Send + Sync + 'static> Connect
     for C
 {
@@ -213,7 +221,7 @@ impl<C: hyper_util::client::legacy::connect::Connect + Clone + Send + Sync + 'st
 // Used by tag! macro
 pub use const_format;
 
-#[derive(Clone, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Endpoint {
     #[serde(serialize_with = "serialize_uri", deserialize_with = "deserialize_uri")]
     pub url: http::Uri,
@@ -225,6 +233,18 @@ pub struct Endpoint {
     /// in-process resolver is used.
     #[serde(default)]
     pub use_system_resolver: bool,
+}
+
+impl core::fmt::Debug for Endpoint {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("Endpoint")
+            .field("url", &self.url)
+            .field("api_key", &self.api_key.as_ref().map(|_| "<redacted>"))
+            .field("timeout_ms", &self.timeout_ms)
+            .field("test_token", &self.test_token)
+            .field("use_system_resolver", &self.use_system_resolver)
+            .finish()
+    }
 }
 
 impl Default for Endpoint {
@@ -281,6 +301,20 @@ where
     builder.build().map_err(Error::custom)
 }
 
+/// Converts a human-facing URL string into the internal [`http::Uri`]
+/// representation.
+///
+/// NOTE: the name is misleading. For `http`/`https` this is an ordinary parse,
+/// but for the `file`/`unix`/`windows` schemes it *encodes* the path into the
+/// URI authority (see `encode_uri_path_in_authority`), so it is a
+/// URL-string-to-`Uri` *constructor*, not a pure parser.
+///
+/// WARNING: this is NOT idempotent for those three schemes. The `Uri` it
+/// returns stringifies back to the encoded form (`file://<hex>/`), and feeding
+/// that string in again re-encodes it, double-encoding the path. Only ever call
+/// this on an original URL string — never on the `.to_string()` of a `Uri` that
+/// already came out of here.
+///
 /// TODO: we should properly handle malformed urls
 /// * For windows and unix schemes:
 ///     * For compatibility reasons with existing implementation this parser stores the encoded path
@@ -331,6 +365,24 @@ pub fn decode_uri_path_in_authority(uri: &http::Uri) -> anyhow::Result<PathBuf> 
 impl Endpoint {
     /// Default value for the timeout field in milliseconds.
     pub const DEFAULT_TIMEOUT: u64 = 3_000;
+
+    pub fn agentless(site: &str, api_key: String) -> anyhow::Result<Self> {
+        Ok(Self {
+            url: Uri::builder()
+                .scheme("https")
+                .authority(
+                    uri::Authority::try_from(site)
+                        .with_context(|| format!("dd_site is an invalid url: {site}"))?,
+                )
+                .path_and_query(PathAndQuery::from_static(""))
+                .build()
+                .with_context(|| format!("rc url is invalid for site: {site}"))?,
+            api_key: Some(api_key.into()),
+            timeout_ms: Self::DEFAULT_TIMEOUT,
+            test_token: None,
+            use_system_resolver: true,
+        })
+    }
 
     /// Returns an iterator of optional endpoint-specific headers (api-key, test-token)
     /// as (header_name, header_value) string tuples for any that are available.
@@ -460,7 +512,7 @@ impl Endpoint {
         // configuration will mutate the system environment (it doesn't pass
         // it as part of the SAPI env, it changes the actual system env).
         let mut builder = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_millis(self.timeout_ms))
+            .timeout(core::time::Duration::from_millis(self.timeout_ms))
             .hickory_dns(!self.use_system_resolver)
             .no_proxy();
 

@@ -11,6 +11,7 @@ pub enum Payload {
     AppStarted(AppStarted),
     AppDependenciesLoaded(AppDependenciesLoaded),
     AppIntegrationsChange(AppIntegrationsChange),
+    AppProductChange(AppProductChange),
     AppClientConfigurationChange(AppClientConfigurationChange),
     AppEndpoints(AppEndpoints),
     AppHeartbeat(#[serde(skip_serializing)] ()),
@@ -29,6 +30,7 @@ impl Payload {
             AppStarted(_) => "app-started",
             AppDependenciesLoaded(_) => "app-dependencies-loaded",
             AppIntegrationsChange(_) => "app-integrations-change",
+            AppProductChange(_) => "app-product-change",
             AppClientConfigurationChange(_) => "app-client-configuration-change",
             AppEndpoints(_) => "app-endpoints",
             AppHeartbeat(_) => "app-heartbeat",
@@ -53,14 +55,14 @@ mod tests {
             configuration: vec![
                 Configuration {
                     name: "sampling_rate".to_string(),
-                    value: "0.5".to_string(),
+                    value: Some("0.5".to_string()),
                     origin: ConfigurationOrigin::EnvVar,
                     config_id: Some("config-123".to_string()),
                     seq_id: Some(42),
                 },
                 Configuration {
                     name: "log_level".to_string(),
-                    value: "debug".to_string(),
+                    value: Some("debug".to_string()),
                     origin: ConfigurationOrigin::Code,
                     config_id: None,
                     seq_id: None,
@@ -68,6 +70,9 @@ mod tests {
             ],
             dependencies: Vec::new(),
             integrations: Vec::new(),
+            install_signature: None,
+            products: Default::default(),
+            error: None,
         });
 
         let serialized = serde_json::to_value(&payload).unwrap();
@@ -106,10 +111,11 @@ mod tests {
                 Dependency {
                     name: "tokio".to_string(),
                     version: Some("1.32.0".to_string()),
+                    ..Default::default()
                 },
                 Dependency {
                     name: "serde".to_string(),
-                    version: None,
+                    ..Default::default()
                 },
             ],
         });
@@ -122,11 +128,15 @@ mod tests {
                 "dependencies": [
                     {
                         "name": "tokio",
-                        "version": "1.32.0"
+                        "version": "1.32.0",
+                        "hash": null,
+                        "metadata": null
                     },
                     {
                         "name": "serde",
-                        "version": null
+                        "version": null,
+                        "hash": null,
+                        "metadata": null
                     }
                 ]
             }
@@ -145,6 +155,7 @@ mod tests {
                     version: Some("0.19.0".to_string()),
                     compatible: Some(true),
                     auto_enabled: Some(false),
+                    ..Default::default()
                 },
                 Integration {
                     name: "redis".to_string(),
@@ -152,6 +163,7 @@ mod tests {
                     version: None,
                     compatible: None,
                     auto_enabled: None,
+                    error: Some("patch failed: boom".to_string()),
                 },
             ],
         });
@@ -167,14 +179,16 @@ mod tests {
                         "enabled": true,
                         "version": "0.19.0",
                         "compatible": true,
-                        "auto_enabled": false
+                        "auto_enabled": false,
+                        "error": null
                     },
                     {
                         "name": "redis",
                         "enabled": false,
                         "version": null,
                         "compatible": null,
-                        "auto_enabled": null
+                        "auto_enabled": null,
+                        "error": "patch failed: boom"
                     }
                 ]
             }
@@ -188,7 +202,7 @@ mod tests {
         let payload = Payload::AppClientConfigurationChange(AppClientConfigurationChange {
             configuration: vec![Configuration {
                 name: "timeout".to_string(),
-                value: "30s".to_string(),
+                value: Some("30s".to_string()),
                 origin: ConfigurationOrigin::RemoteConfig,
                 config_id: Some("remote-1".to_string()),
                 seq_id: Some(10),
@@ -485,17 +499,119 @@ mod tests {
     }
 
     #[test]
+    fn test_app_product_change_serialization() {
+        let mut products = std::collections::HashMap::new();
+        products.insert(
+            "appsec".to_string(),
+            ProductState {
+                enabled: true,
+                version: Some("1.2.3".to_string()),
+                error: None,
+            },
+        );
+        let payload = Payload::AppProductChange(AppProductChange { products });
+
+        let serialized = serde_json::to_value(&payload).unwrap();
+
+        let expected = json!({
+            "request_type": "app-product-change",
+            "payload": {
+                "products": {
+                    "appsec": {
+                        "enabled": true,
+                        "version": "1.2.3",
+                        "error": null
+                    }
+                }
+            }
+        });
+
+        assert_eq!(serialized, expected);
+    }
+
+    #[test]
+    fn test_dependency_metadata_serialization() {
+        let plain = Payload::AppDependenciesLoaded(AppDependenciesLoaded {
+            dependencies: vec![Dependency {
+                name: "requests".to_string(),
+                version: Some("2.0".to_string()),
+                ..Default::default()
+            }],
+        });
+        assert_eq!(
+            serde_json::to_value(&plain).unwrap(),
+            json!({
+                "request_type": "app-dependencies-loaded",
+                "payload": { "dependencies": [{
+                    "name": "requests", "version": "2.0", "hash": null, "metadata": null
+                }] }
+            })
+        );
+
+        // With SCA metadata: per the telemetry schema, `type` names the metadata kind and
+        // `value` is an opaque stringified-JSON payload that consumers must parse.
+        let with_sca = Payload::AppDependenciesLoaded(AppDependenciesLoaded {
+            dependencies: vec![Dependency {
+                name: "requests".to_string(),
+                version: Some("2.0".to_string()),
+                metadata: Some(vec![DependencyMetadata {
+                    r#type: "reachability".to_string(),
+                    value: "{\"id\":\"CVE-2024-1\",\"reached\":true}".to_string(),
+                }]),
+                ..Default::default()
+            }],
+        });
+        assert_eq!(
+            serde_json::to_value(&with_sca).unwrap(),
+            json!({
+                "request_type": "app-dependencies-loaded",
+                "payload": { "dependencies": [{
+                    "name": "requests",
+                    "version": "2.0",
+                    "hash": null,
+                    "metadata": [{
+                        "type": "reachability",
+                        "value": "{\"id\":\"CVE-2024-1\",\"reached\":true}"
+                    }]
+                }] }
+            })
+        );
+
+        // SCA enabled with no findings: `metadata` is present-but-empty (distinct from omitted).
+        let empty_meta = Payload::AppDependenciesLoaded(AppDependenciesLoaded {
+            dependencies: vec![Dependency {
+                name: "requests".to_string(),
+                version: Some("2.0".to_string()),
+                metadata: Some(vec![]),
+                ..Default::default()
+            }],
+        });
+        assert_eq!(
+            serde_json::to_value(&empty_meta).unwrap(),
+            json!({
+                "request_type": "app-dependencies-loaded",
+                "payload": { "dependencies": [{
+                    "name": "requests", "version": "2.0", "hash": null, "metadata": []
+                }] }
+            })
+        );
+    }
+
+    #[test]
     fn test_app_extended_heartbeat_serialization() {
         let payload = Payload::AppExtendedHeartbeat(AppStarted {
             configuration: vec![Configuration {
                 name: "feature_flag".to_string(),
-                value: "enabled".to_string(),
+                value: Some("enabled".to_string()),
                 origin: ConfigurationOrigin::Default,
                 config_id: None,
                 seq_id: None,
             }],
             dependencies: Vec::new(),
             integrations: Vec::new(),
+            install_signature: None,
+            products: Default::default(),
+            error: None,
         });
 
         let serialized = serde_json::to_value(&payload).unwrap();

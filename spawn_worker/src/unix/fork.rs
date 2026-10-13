@@ -21,7 +21,24 @@ pub enum Fork {
 /// When forking a multithreaded application, no code should allocate or access other potentially
 /// locked resources until call to exec is executed
 pub(crate) unsafe fn fork() -> Result<Fork, std::io::Error> {
-    let res = libc::fork();
+    unsafe {
+        let res = libc::fork();
+        match res {
+            -1 => Err(std::io::Error::last_os_error()),
+            0 => Ok(Fork::Child),
+            res => Ok(Fork::Parent(res)),
+        }
+    }
+}
+
+/// Forks, skipping pthread_atfork() handlers
+#[cfg(target_os = "linux")]
+pub(crate) unsafe fn fork_skip_atfork_handlers() -> Result<Fork, std::io::Error> {
+    // libc::_Fork doesn't exist not is it a thing in newer glibc versions
+    let res = unsafe {
+        let null = std::ptr::null::<libc::c_void>();
+        libc::syscall(libc::SYS_clone, libc::SIGCHLD, null, null, null, null)
+    } as libc::pid_t;
     match res {
         -1 => Err(std::io::Error::last_os_error()),
         0 => Ok(Fork::Child),
@@ -40,11 +57,13 @@ pub(crate) unsafe fn fork() -> Result<Fork, std::io::Error> {
 /// locked resources until call to exec is executed
 #[cfg(test)]
 unsafe fn fork_fn<Args>(args: Args, f: fn(Args) -> ()) -> Result<libc::pid_t, std::io::Error> {
-    match fork()? {
-        Fork::Parent(pid) => Ok(pid),
-        Fork::Child => {
-            f(args);
-            std::process::exit(0)
+    unsafe {
+        match fork()? {
+            Fork::Parent(pid) => Ok(pid),
+            Fork::Child => {
+                f(args);
+                std::process::exit(0)
+            }
         }
     }
 }

@@ -17,7 +17,7 @@ pub struct SigInfo {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[allow(clippy::upper_case_acronyms, non_camel_case_types)]
 #[repr(C)]
-/// See https://man7.org/linux/man-pages/man7/signal.7.html
+/// See <https://man7.org/linux/man-pages/man7/signal.7.html>
 pub enum SignalNames {
     SIGHUP,
     SIGINT,
@@ -116,7 +116,7 @@ mod unix {
         }
     }
 
-    extern "C" {
+    unsafe extern "C" {
         /// A bit of C code which can access the constants in <signal.h>.
         /// See the file comment on emit_sicodes.c for full details.
         fn translate_si_code_impl(signum: libc::c_int, si_code: libc::c_int) -> libc::c_int;
@@ -260,7 +260,7 @@ mod unix {
 )]
 #[allow(clippy::upper_case_acronyms, non_camel_case_types)]
 #[repr(C)]
-/// See https://man7.org/linux/man-pages/man2/sigaction.2.html
+/// See <https://man7.org/linux/man-pages/man2/sigaction.2.html>
 /// MUST REMAIN IN SYNC WITH THE ENUM IN emit_sigcodes.c
 pub enum SiCodes {
     BUS_ADRALN,
@@ -290,6 +290,30 @@ pub enum SiCodes {
     SI_USER,
     SYS_SECCOMP,
     UNKNOWN,
+}
+
+impl SigInfo {
+    /// Appends signal fields as ddtags entries, each prefixed with a leading comma.
+    pub fn append_ddtags(&self, tags: &mut String) {
+        use core::fmt::Write;
+        if let Some(si_addr) = &self.si_addr {
+            write!(tags, ",si_addr:{si_addr}").ok();
+        }
+        write!(tags, ",si_code:{}", self.si_code).ok();
+        write!(
+            tags,
+            ",si_code_human_readable:{:?}",
+            self.si_code_human_readable
+        )
+        .ok();
+        write!(tags, ",si_signo:{}", self.si_signo).ok();
+        write!(
+            tags,
+            ",si_signo_human_readable:{:?}",
+            self.si_signo_human_readable
+        )
+        .ok();
+    }
 }
 
 #[cfg(test)]

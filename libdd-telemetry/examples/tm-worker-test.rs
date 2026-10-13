@@ -39,14 +39,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     builder.config = libdd_telemetry::config::Config::from_env();
     builder
         .config
-        .set_endpoint(libdd_common::Endpoint {
-            url: libdd_common::parse_uri("file://./tm-worker-test.output").unwrap(),
+        .set_endpoint(libdd_telemetry::config::TelemetryEndpoint {
+            url: Some("file://./tm-worker-test.output".to_owned()),
             ..Default::default()
         })
         .unwrap();
     builder.config.telemetry_heartbeat_interval = Duration::from_secs(1);
 
-    let handle = builder.run()?;
+    let handle = builder.run::<libdd_capabilities_impl::NativeCapabilities>()?;
 
     let ping_metric = handle.register_metric_context(
         "test_telemetry.ping".into(),

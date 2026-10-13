@@ -3,6 +3,8 @@
 
 // Port of Agent's pkg/obfuscate/json_scanner.go.
 
+use super::JsonScanError;
+
 /// Opcode returned by [`Scanner::step`] for each input char.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Op {
@@ -21,7 +23,7 @@ pub enum Op {
 }
 
 /// What kind of composite value we are currently inside.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum ParseState {
     ObjectKey,   // object: expecting a key
     ObjectValue, // object: expecting a value (after ':')
@@ -30,8 +32,9 @@ enum ParseState {
 
 /// One variant per position in the JSON grammar.
 #[rustfmt::skip]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, Default)]
 enum State {
+    #[default]
     BeginValue,
     BeginValueOrEmpty,  // after '['
     BeginStringOrEmpty, // after '{'
@@ -57,24 +60,32 @@ enum State {
 
 /// A streaming JSON scanner. Feed chars one at a time via [`Scanner::step`];
 /// the returned [`Op`] describes the structural significance of each char.
+#[derive(Debug, Default)]
 pub struct Scanner {
     state: State,
     end_top: bool,
     parse_state: Vec<ParseState>,
-    pub(crate) err: Option<String>,
+    pub(crate) err: Option<JsonScanError>,
     /// Total chars consumed — incremented by the caller before each `step` call.
-    position: i64,
+    position: u64,
 }
 
 impl Scanner {
-    pub(crate) const fn new() -> Self {
-        Self {
-            state: State::BeginValue,
-            end_top: false,
-            parse_state: Vec::new(),
-            err: None,
-            position: 0,
-        }
+    /// Returns the scanner to the state of a freshly constructed one, keeping the parse-state
+    /// stack's allocation so a reused scratch does not reallocate on every input.
+    pub(crate) fn restart(&mut self) {
+        self.reset();
+        self.position = 0;
+    }
+
+    /// Approximate number of nesting levels the parse-state stack can hold without reallocating.
+    pub(crate) const fn retained_nesting_slots(&self) -> usize {
+        self.parse_state.capacity()
+    }
+
+    /// Shrinks the parse-state stack to hold at most `slots` nesting levels.
+    pub(crate) fn trim_nesting_slots_to(&mut self, slots: usize) {
+        self.parse_state.shrink_to(slots);
     }
 
     /// Resets the scanner to its initial state (used internally by `EndTop`).
@@ -98,10 +109,9 @@ impl Scanner {
             return Op::End;
         }
         if self.err.is_none() {
-            self.err = Some(format!(
-                "unexpected end of JSON input at char position {}",
-                self.position
-            ));
+            self.err = Some(JsonScanError::UnexpectedEndOfInput {
+                char_position: self.position,
+            });
         }
         Op::Error
     }
@@ -300,7 +310,7 @@ impl Scanner {
         }
     }
 
-    fn begin_string(&mut self, c: char) -> Op {
+    const fn begin_string(&mut self, c: char) -> Op {
         if is_space(c) {
             return Op::SkipSpace;
         }
@@ -395,7 +405,7 @@ impl Scanner {
         }
     }
 
-    fn exp_sign(&mut self, c: char) -> Op {
+    const fn exp_sign(&mut self, c: char) -> Op {
         if c.is_ascii_digit() {
             self.state = State::Exp0;
             Op::Continue
@@ -405,7 +415,7 @@ impl Scanner {
     }
 
     /// One hex digit in a `\uXXXX` escape; on success transitions to `next`.
-    fn hex_digit(&mut self, c: char, next: State) -> Op {
+    const fn hex_digit(&mut self, c: char, next: State) -> Op {
         if c.is_ascii_hexdigit() {
             self.state = next;
             Op::Continue
@@ -415,28 +425,31 @@ impl Scanner {
     }
 
     /// One character in a keyword literal (true/false/null); on match transitions to `next`.
-    fn lit(&mut self, c: char, expected: char, next: State, ctx: &'static str) -> Op {
+    const fn lit(&mut self, c: char, expected: char, next: State, context: &'static str) -> Op {
         if c == expected {
             self.state = next;
             Op::Continue
         } else {
-            self.error(c, ctx)
+            self.error(c, context)
         }
     }
 
     /// Last character in a keyword literal; on match transitions to `EndValue`.
-    fn lit_end(&mut self, c: char, expected: char, ctx: &'static str) -> Op {
+    const fn lit_end(&mut self, c: char, expected: char, context: &'static str) -> Op {
         if c == expected {
             self.state = State::EndValue;
             Op::Continue
         } else {
-            self.error(c, ctx)
+            self.error(c, context)
         }
     }
 
-    fn error(&mut self, c: char, ctx: &str) -> Op {
+    const fn error(&mut self, c: char, context: &'static str) -> Op {
         self.state = State::Error;
-        self.err = Some(format!("invalid character '{c}' {ctx}"));
+        self.err = Some(JsonScanError::InvalidCharacter {
+            character: c,
+            context,
+        });
         Op::Error
     }
 }
@@ -452,7 +465,7 @@ mod tests {
 
     #[test]
     fn test_valid_empty_object() {
-        let mut s = Scanner::new();
+        let mut s = Scanner::default();
         for c in "{}".chars() {
             assert_ne!(s.step(c), Op::Error, "error on char '{}'", { c });
         }
@@ -462,7 +475,7 @@ mod tests {
 
     #[test]
     fn test_valid_nested_json() {
-        let mut s = Scanner::new();
+        let mut s = Scanner::default();
         for c in r#"{"key":"value","num":42}"#.chars() {
             assert_ne!(s.step(c), Op::Error, "error on char '{}'", { c });
         }
@@ -471,7 +484,7 @@ mod tests {
 
     #[test]
     fn test_truncated_input_returns_error_on_eof() {
-        let mut s = Scanner::new();
+        let mut s = Scanner::default();
         for c in r#"{"key":"#.chars() {
             s.step(c);
         }
@@ -480,13 +493,13 @@ mod tests {
 
     #[test]
     fn test_invalid_input_returns_error() {
-        let mut s = Scanner::new();
+        let mut s = Scanner::default();
         assert_eq!(s.step(')'), Op::Error);
     }
 
     #[test]
     fn test_multiple_json_objects_no_errors() {
-        let mut s = Scanner::new();
+        let mut s = Scanner::default();
         for c in r#"{"a":1} {"b":2}"#.chars() {
             assert_ne!(s.step(c), Op::Error, "error on char '{}'", { c });
         }

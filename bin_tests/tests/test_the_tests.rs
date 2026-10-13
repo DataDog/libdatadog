@@ -5,7 +5,7 @@
 
 use std::{fs, process};
 
-use bin_tests::{fetch_built_artifacts, ArtifactType, ArtifactsBuild, BuildProfile};
+use bin_tests::{ArtifactType, ArtifactsBuild, BuildProfile, fetch_built_artifacts};
 
 #[test]
 #[cfg_attr(miri, ignore)]
@@ -34,7 +34,6 @@ fn test_the_tests_inner(profile: BuildProfile) {
             build_profile: profile,
             artifact_type: ArtifactType::CDylib,
             triple_target: None,
-            panic_abort: None,
         },
         &test_the_tests,
     ];

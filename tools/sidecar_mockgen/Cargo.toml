@@ -1,5 +1,6 @@
 [package]
-edition = "2021"
+edition.workspace = true
+rust-version.workspace = true
 name = "sidecar_mockgen"
 version = "0.1.0"
 publish = false
@@ -8,7 +9,8 @@ publish = false
 bench = false
 
 [dependencies]
-object = {version = "0.31.0"}
+# Reads ELF/Mach-O symbol tables.
+object = { workspace = true, default-features = true }
 
 [[bin]]
 name = "sidecar_mockgen"

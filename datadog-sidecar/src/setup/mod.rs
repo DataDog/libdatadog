@@ -16,15 +16,15 @@ pub use self::windows::*;
 #[cfg(unix)]
 pub mod thread_listener;
 #[cfg(unix)]
-pub use thread_listener::{connect_to_master, MasterListener};
+pub use thread_listener::{MasterListener, connect_to_master};
 
 // Thread-based listener module (Windows)
 #[cfg(windows)]
 pub mod thread_listener_windows;
 #[cfg(windows)]
-pub use thread_listener_windows::{connect_to_master, MasterListener};
+pub use thread_listener_windows::{MasterListener, connect_to_master};
 
-use datadog_ipc::SeqpacketConn;
+use libdd_ipc::SeqpacketConn;
 use std::io;
 
 /// Implementations of this interface must provide behavior repeatable across processes with the
@@ -35,4 +35,18 @@ pub trait Liaison: Sized {
     fn attempt_listen(&self) -> io::Result<Option<IpcServer>>;
     fn ipc_shared() -> Self;
     fn ipc_per_process() -> Self;
+
+    fn into_bound_files(self) -> Vec<std::path::PathBuf> {
+        Vec::new()
+    }
+}
+
+/// The liaison a subprocess sidecar listens on / connects to for the given `ipc_mode`. Shared by
+/// `start_or_connect_to_sidecar` and the crashtracker collector (`crashtracker_ipc_socket_path`) so
+/// both always target the same socket. (Thread mode keys the socket by the master PID instead.)
+pub fn liaison_for_ipc_mode(ipc_mode: crate::config::IpcMode) -> DefaultLiason {
+    match ipc_mode {
+        crate::config::IpcMode::Shared => DefaultLiason::ipc_shared(),
+        crate::config::IpcMode::InstancePerProcess => DefaultLiason::ipc_per_process(),
+    }
 }

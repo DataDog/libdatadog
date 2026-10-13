@@ -18,23 +18,21 @@ pub fn crashtracker_receiver(profile: BuildProfile) -> ArtifactsBuild {
 }
 
 /// Creates an ArtifactsBuild for the crashtracker_bin_test binary.
-pub fn crashtracker_bin_test(profile: BuildProfile, panic_abort: bool) -> ArtifactsBuild {
+pub fn crashtracker_bin_test(profile: BuildProfile) -> ArtifactsBuild {
     ArtifactsBuild {
         name: "crashtracker_bin_test".to_owned(),
         build_profile: profile,
         artifact_type: ArtifactType::Bin,
-        panic_abort: if panic_abort { Some(true) } else { None },
         ..Default::default()
     }
 }
 
 /// Creates an ArtifactsBuild for the crashing_test_app binary.
-pub fn crashing_app(profile: BuildProfile, panic_abort: bool) -> ArtifactsBuild {
+pub fn crashing_app(profile: BuildProfile) -> ArtifactsBuild {
     ArtifactsBuild {
         name: "crashing_test_app".to_owned(),
         build_profile: profile,
         artifact_type: ArtifactType::Bin,
-        panic_abort: if panic_abort { Some(true) } else { None },
         ..Default::default()
     }
 }
@@ -79,7 +77,7 @@ pub struct StandardArtifacts {
 impl StandardArtifacts {
     pub fn new(profile: BuildProfile) -> Self {
         Self {
-            crashtracker_bin: crashtracker_bin_test(profile, false),
+            crashtracker_bin: crashtracker_bin_test(profile),
             crashtracker_receiver: crashtracker_receiver(profile),
         }
     }
@@ -95,17 +93,17 @@ pub fn all_prebuild_artifacts() -> Vec<ArtifactsBuild> {
 
     // Standard artifacts for both Debug and Release profiles
     for profile in [BuildProfile::Debug, BuildProfile::Release] {
-        artifacts.push(crashtracker_bin_test(profile, false));
+        artifacts.push(crashtracker_bin_test(profile));
         artifacts.push(crashtracker_receiver(profile));
         artifacts.push(crashtracker_unix_socket_receiver(profile));
         artifacts.push(test_the_tests(profile));
         artifacts.push(profiling_ffi(profile));
-        artifacts.push(crashing_app(profile, false));
+        artifacts.push(crashing_app(profile));
     }
 
     // Panic abort variants (used by panic hook tests)
-    artifacts.push(crashtracker_bin_test(BuildProfile::Debug, true));
-    artifacts.push(crashing_app(BuildProfile::Debug, true));
+    artifacts.push(crashtracker_bin_test(BuildProfile::PanicAbort));
+    artifacts.push(crashing_app(BuildProfile::PanicAbort));
 
     artifacts
 }

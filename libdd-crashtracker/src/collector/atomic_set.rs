@@ -7,13 +7,13 @@
 //! handler can emit that information into the crash-report.
 //! If this is useful for other cases, we can consider moving it to ddcommon.
 
+use core::fmt::Debug;
+use core::num::NonZeroU128;
+use core::ptr::null_mut;
+use core::sync::atomic::Ordering::SeqCst;
 use portable_atomic::AtomicUsize;
 use rand::Rng;
-use std::fmt::Debug;
 use std::io::Write;
-use std::num::NonZeroU128;
-use std::ptr::null_mut;
-use std::sync::atomic::Ordering::SeqCst;
 
 #[derive(Debug, thiserror::Error)]
 pub enum AtomicSetError {
@@ -69,7 +69,7 @@ pub struct AtomicMultiset<T, const LEN: usize> {
 impl<T, const LEN: usize> AtomicMultiset<T, LEN>
 where
     T: Atomic,
-    <T as Atomic>::Item: std::cmp::PartialEq + Debug + Ord,
+    <T as Atomic>::Item: core::cmp::PartialEq + Debug + Ord,
 {
     /// Atomicity: The individual operations of the clear are atomic, but the overall operation
     /// is not atomic.
@@ -248,10 +248,12 @@ impl AtomicString {
 
     // Safety: This should only be called on pointers that came from `ptr_from_inner`.
     unsafe fn inner_from_ptr(v: *mut String) -> Option<String> {
-        if v.is_null() {
-            None
-        } else {
-            Some(*Box::from_raw(v))
+        unsafe {
+            if v.is_null() {
+                None
+            } else {
+                Some(*Box::from_raw(v))
+            }
         }
     }
 }
@@ -290,13 +292,15 @@ impl Atomic for AtomicString {
     /// SAFETY: This is only safe to use in a single threaded context
     #[cfg(test)]
     unsafe fn load(&self) -> Option<Self::Item> {
-        let v = self.inner.load(SeqCst);
-        if v.is_null() {
-            None
-        } else {
-            // Safety: the pointer is non-null, and was created from a box by the insert functions.
-            // We need to clone here since the set owns the original.
-            Some((*v).clone())
+        unsafe {
+            let v = self.inner.load(SeqCst);
+            if v.is_null() {
+                None
+            } else {
+                // Safety: the pointer is non-null, and was created from a box by the insert
+                // functions. We need to clone here since the set owns the original.
+                Some((*v).clone())
+            }
         }
     }
 
@@ -398,7 +402,7 @@ mod tests {
 
     #[test]
     fn test_string_ops() {
-        let mut expected = std::collections::BTreeMap::<String, usize>::new();
+        let mut expected = alloc::collections::BTreeMap::<String, usize>::new();
         let s = AtomicStringMultiset::<8>::new();
         compare(&s, &expected);
         insert_and_compare(&s, &mut expected, "a".to_string());
@@ -424,7 +428,7 @@ mod tests {
 
     #[test]
     fn test_span_ops() {
-        let mut expected = std::collections::BTreeMap::<NonZeroU128, usize>::new();
+        let mut expected = alloc::collections::BTreeMap::<NonZeroU128, usize>::new();
         let s: AtomicSpanSet<8> = AtomicSpanSet::<8>::new();
         compare(&s, &expected);
         insert_and_compare(&s, &mut expected, nz(42));
@@ -484,7 +488,7 @@ mod tests {
 
     fn remove_and_compare<T: Atomic>(
         s: &AtomicMultiset<T, 8>,
-        expected: &mut std::collections::BTreeMap<T::Item, usize>,
+        expected: &mut alloc::collections::BTreeMap<T::Item, usize>,
         v: T::Item,
     ) {
         remove(s, expected, v).unwrap();
@@ -493,7 +497,7 @@ mod tests {
 
     fn remove<T: Atomic>(
         s: &AtomicMultiset<T, 8>,
-        expected: &mut std::collections::BTreeMap<T::Item, usize>,
+        expected: &mut alloc::collections::BTreeMap<T::Item, usize>,
         v: T::Item,
     ) -> Result<(), AtomicSetError> {
         let idx = expected.get(&v).unwrap();
@@ -504,7 +508,7 @@ mod tests {
 
     fn compare<T: Atomic>(
         s: &AtomicMultiset<T, 8>,
-        expected: &std::collections::BTreeMap<T::Item, usize>,
+        expected: &alloc::collections::BTreeMap<T::Item, usize>,
     ) {
         let actual = s.values().unwrap();
         let golden: Vec<_> = expected.keys().cloned().collect();
@@ -514,7 +518,7 @@ mod tests {
 
     fn insert<T: Atomic>(
         s: &AtomicMultiset<T, 8>,
-        expected: &mut std::collections::BTreeMap<T::Item, usize>,
+        expected: &mut alloc::collections::BTreeMap<T::Item, usize>,
         v: T::Item,
     ) -> Result<(), AtomicSetError> {
         expected.insert(v.clone(), s.insert(v)?);
@@ -523,7 +527,7 @@ mod tests {
 
     fn insert_and_compare<T: Atomic>(
         s: &AtomicMultiset<T, 8>,
-        expected: &mut std::collections::BTreeMap<T::Item, usize>,
+        expected: &mut alloc::collections::BTreeMap<T::Item, usize>,
         v: T::Item,
     ) {
         insert(s, expected, v).unwrap();

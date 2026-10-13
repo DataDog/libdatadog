@@ -49,9 +49,8 @@ int main(void) {
   TRY(ddog_telemetry_builder_instantiate(&builder, service, lang, lang_version, tracer_version));
 
   ddog_CharSlice endpoint_char = DDOG_CHARSLICE_C("file://./examples_telemetry_metrics.out");
-  struct ddog_Endpoint *endpoint = ddog_endpoint_from_url(endpoint_char);
-  TRY(ddog_telemetry_builder_with_endpoint_config_endpoint(builder, endpoint));
-  ddog_endpoint_drop(endpoint);
+  TRY(ddog_telemetry_builder_with_endpoint_config_endpoint(
+      builder, endpoint_char, DDOG_CHARSLICE_C(""), 0, DDOG_CHARSLICE_C(""), false));
 
   ddog_CharSlice runtime_id = DDOG_CHARSLICE_C("fa1f0ed0-8a3a-49e8-8f23-46fb44e24579"),
                  service_version = DDOG_CHARSLICE_C("1.0"), env = DDOG_CHARSLICE_C("test");

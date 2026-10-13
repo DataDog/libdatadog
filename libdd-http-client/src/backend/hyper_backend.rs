@@ -150,8 +150,16 @@ impl super::Backend for HyperBackend {
     ) -> Result<Self, HttpClientError> {
         let mut builder = http_common::client_builder();
 
-        if !client_config.allow_connection_pooling() {
-            builder.pool_max_idle_per_host(0);
+        // Limit the number of idle connections kept in the pool, as a safety resource bound.
+        builder.pool_max_idle_per_host(crate::config::POOL_MAX_IDLE);
+
+        if client_config.periodic() {
+            // Pool connections with a small idle timeout instead of disabling pooling entirely,
+            // so consecutive requests within a flush interval can still reuse a connection
+            // while avoiding reusing connections the receiver may have closed.
+            builder
+                .pool_timer(hyper_util::rt::TokioTimer::new())
+                .pool_idle_timeout(crate::config::PERIODIC_POOL_IDLE_TIMEOUT);
         }
 
         Ok(Self {
@@ -183,20 +191,27 @@ impl super::Backend for HyperBackend {
             .map_err(|e| HttpClientError::InvalidConfig(e.to_string()))?;
 
         let timeout = request.timeout.unwrap_or(config.timeout());
-        let response = tokio::time::timeout(timeout, self.client.request(hyper_request))
-            .await
-            .map_err(|_| HttpClientError::TimedOut)?
-            .map_err(map_hyper_error)?;
+        let (status, headers, body_bytes) = tokio::time::timeout(timeout, async {
+            let response = self
+                .client
+                .request(hyper_request)
+                .await
+                .map_err(map_hyper_error)?;
 
-        let status = response.status().as_u16();
-        let headers = collect_response_headers(&response)?;
+            let status = response.status().as_u16();
+            let headers = collect_response_headers(&response)?;
 
-        let body_bytes = response
-            .into_body()
-            .collect()
-            .await
-            .map_err(|e| HttpClientError::IoError(e.to_string()))?
-            .to_bytes();
+            let body_bytes = response
+                .into_body()
+                .collect()
+                .await
+                .map_err(|e| HttpClientError::IoError(e.to_string()))?
+                .to_bytes();
+
+            Ok::<_, HttpClientError>((status, headers, body_bytes))
+        })
+        .await
+        .map_err(|_| HttpClientError::TimedOut)??;
 
         if config.treat_http_errors_as_errors() && status >= 400 {
             return Err(HttpClientError::RequestFailed {

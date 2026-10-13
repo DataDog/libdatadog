@@ -36,7 +36,7 @@ impl Drop for TempFileGuard {
     }
 }
 
-impl std::ops::Deref for TempFileGuard {
+impl core::ops::Deref for TempFileGuard {
     type Target = PathBuf;
 
     fn deref(&self) -> &Self::Target {
@@ -69,14 +69,14 @@ impl EnvGuard {
     /// drop.
     pub fn set(key: &'static str, value: &str) -> Self {
         let saved = std::env::var(key).ok();
-        std::env::set_var(key, value);
+        unsafe { std::env::set_var(key, value) };
         EnvGuard { key, saved }
     }
 
     /// Remove the environment variable. The previous value (if any) is restored on drop.
     pub fn remove(key: &'static str) -> Self {
         let saved = std::env::var(key).ok();
-        std::env::remove_var(key);
+        unsafe { std::env::remove_var(key) };
         EnvGuard { key, saved }
     }
 }
@@ -84,8 +84,8 @@ impl EnvGuard {
 impl Drop for EnvGuard {
     fn drop(&mut self) {
         match &self.saved {
-            Some(s) => std::env::set_var(self.key, s),
-            None => std::env::remove_var(self.key),
+            Some(s) => unsafe { std::env::set_var(self.key, s) },
+            None => unsafe { std::env::remove_var(self.key) },
         }
     }
 }
@@ -158,10 +158,10 @@ pub fn count_active_threads() -> anyhow::Result<usize> {
 
     #[cfg(windows)]
     {
-        use std::mem::{size_of, zeroed};
+        use core::mem::{size_of, zeroed};
         use windows_sys::Win32::Foundation::CloseHandle;
         use windows_sys::Win32::System::Diagnostics::ToolHelp::{
-            CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32,
+            CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
         };
 
         let current_pid = std::process::id();
@@ -426,13 +426,15 @@ mod tests {
         let guard = create_temp_file_path("test_prefix", "dat");
 
         // Verify path format
-        assert!(guard
-            .as_ref()
-            .file_name()
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .starts_with("test_prefix_"));
+        assert!(
+            guard
+                .as_ref()
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .starts_with("test_prefix_")
+        );
         assert_eq!(guard.as_ref().extension().unwrap(), "dat");
 
         // Test RAII cleanup: create file and verify it's cleaned up when guard drops
@@ -529,7 +531,8 @@ mod tests {
         );
 
         // Spawn some threads and verify the count increases
-        use std::sync::{Arc, Barrier};
+        use alloc::sync::Arc;
+        use std::sync::Barrier;
         let barrier = Arc::new(Barrier::new(6)); // 5 spawned threads + main thread
 
         let handles: Vec<_> = (0..5)
@@ -537,7 +540,7 @@ mod tests {
                 let barrier = Arc::clone(&barrier);
                 std::thread::spawn(move || {
                     barrier.wait();
-                    std::thread::sleep(std::time::Duration::from_millis(50));
+                    std::thread::sleep(core::time::Duration::from_millis(50));
                 })
             })
             .collect();

@@ -1,15 +1,18 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+#![cfg(feature = "std")]
 
-use std::panic::{catch_unwind, AssertUnwindSafe};
+use core::panic::AssertUnwindSafe;
+use std::panic::catch_unwind;
 
 /// Wraps a C-FFI function in standard form
 /// Expects the function to return a result type that implements into and to be decorated with
-/// #[named].
+/// `#[named]`.
 #[macro_export]
 macro_rules! wrap_with_ffi_result {
     ($body:block) => {{
-        use std::panic::{catch_unwind, AssertUnwindSafe};
+        use core::panic::AssertUnwindSafe;
+        use std::panic::catch_unwind;
 
         catch_unwind(AssertUnwindSafe(|| {
             $crate::wrap_with_ffi_result_no_catch!({ $body })
@@ -34,11 +37,12 @@ macro_rules! wrap_with_ffi_result_no_catch {
 }
 
 /// Wraps a C-FFI function in standard form.
-/// Expects the function to return a VoidResult and to be decorated with #[named].
+/// Expects the function to return a VoidResult and to be decorated with `#[named]`.
 #[macro_export]
 macro_rules! wrap_with_void_ffi_result {
     ($body:block) => {{
-        use std::panic::{catch_unwind, AssertUnwindSafe};
+        use core::panic::AssertUnwindSafe;
+        use std::panic::catch_unwind;
 
         catch_unwind(AssertUnwindSafe(|| {
             $crate::wrap_with_void_ffi_result_no_catch!({ $body })
@@ -80,7 +84,7 @@ impl ToHexStr for usize {
 /// being unable to allocate, this helper handles failures to allocate as well, turning them into a
 /// fallback error.
 pub fn handle_panic_error(
-    error: Box<dyn std::any::Any + Send + 'static>,
+    error: Box<dyn core::any::Any + Send + 'static>,
     function_name: &str,
 ) -> crate::Error {
     catch_unwind(AssertUnwindSafe(|| {
@@ -103,7 +107,7 @@ pub fn handle_panic_error(
 
 #[cfg(test)]
 mod tests {
-    use assert_no_alloc::{assert_no_alloc, AllocDisabler};
+    use assert_no_alloc::{AllocDisabler, assert_no_alloc};
     use function_name::named;
 
     #[cfg(debug_assertions)] // required when disable_release is set (default)
@@ -112,7 +116,7 @@ mod tests {
 
     #[test]
     fn test_handle_panic_error_fallback_does_not_allocate() {
-        let mut error_result_buffer: [std::os::raw::c_char; 100] = [0; 100];
+        let mut error_result_buffer: [core::ffi::c_char; 100] = [0; 100];
 
         assert_no_alloc(|| {
             // Simulate fallback code path of handle_panic_error + ddog_Error_message
@@ -125,7 +129,7 @@ mod tests {
         });
 
         unsafe {
-            let c_str = std::ffi::CStr::from_ptr(error_result_buffer.as_ptr());
+            let c_str = core::ffi::CStr::from_ptr(error_result_buffer.as_ptr());
             assert_eq!(
                 c_str.to_str().unwrap(),
                 "libdatadog failed: (panic) Cannot allocate error message"
@@ -151,7 +155,10 @@ mod tests {
         // ...restore original behavior
         std::panic::set_hook(original_hook);
 
-        assert_eq!(result.unwrap_err().to_string(), "test_wrap_with_ffi_result_turns_panic_into_error failed: (panic) this is a test panic message");
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "test_wrap_with_ffi_result_turns_panic_into_error failed: (panic) this is a test panic message"
+        );
     }
 
     #[test]
@@ -161,6 +168,9 @@ mod tests {
             Err(anyhow::anyhow!("this is a test error message"))?;
         });
 
-        assert_eq!(result.unwrap_err().to_string(), "test_wrap_with_ffi_result_does_not_modify_other_kinds_of_errors failed: this is a test error message");
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "test_wrap_with_ffi_result_does_not_modify_other_kinds_of_errors failed: this is a test error message"
+        );
     }
 }

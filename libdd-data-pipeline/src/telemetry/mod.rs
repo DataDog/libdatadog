@@ -6,6 +6,8 @@ pub mod error;
 pub mod metrics;
 use crate::telemetry::error::TelemetryError;
 use crate::telemetry::metrics::Metrics;
+use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
+use libdd_common::mutable_metadata::MutableMetadataHandle;
 use libdd_common::tag::Tag;
 use libdd_telemetry::worker::{
     LifecycleAction, TelemetryActions, TelemetryWorker, TelemetryWorkerBuilder,
@@ -30,7 +32,7 @@ pub struct TelemetryClientBuilder {
     language_version: Option<String>,
     tracer_version: Option<String>,
     config: libdd_telemetry::config::Config,
-    runtime_id: Option<String>,
+    mutable_metadata: Option<MutableMetadataHandle>,
 }
 
 impl TelemetryClientBuilder {
@@ -74,7 +76,10 @@ impl TelemetryClientBuilder {
     pub fn set_url(mut self, url: &str) -> Self {
         let _ = self
             .config
-            .set_endpoint(libdd_common::Endpoint::from_slice(url));
+            .set_endpoint(libdd_telemetry::config::TelemetryEndpoint {
+                url: Some(url.to_owned()),
+                ..Default::default()
+            });
         self
     }
 
@@ -86,9 +91,9 @@ impl TelemetryClientBuilder {
         self
     }
 
-    /// Sets runtime id for the telemetry client.
-    pub fn set_runtime_id(mut self, id: &str) -> Self {
-        self.runtime_id = Some(id.to_string());
+    /// Sets shared metadata.
+    pub fn set_mutable_metadata(mut self, metadata: MutableMetadataHandle) -> Self {
+        self.mutable_metadata = Some(metadata);
         self
     }
 
@@ -117,13 +122,28 @@ impl TelemetryClientBuilder {
     }
 
     /// Builds the telemetry client.
-    pub fn build(self) -> (TelemetryClient, TelemetryWorker) {
-        #[allow(clippy::unwrap_used)]
+    ///
+    /// `C` is the capability bundle (`NativeCapabilities` on native, `WasmCapabilities` on wasm).
+    pub fn build<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static>(
+        self,
+    ) -> Result<(TelemetryClient<C>, TelemetryWorker<C>), TelemetryError> {
+        let service_name = self
+            .service_name
+            .ok_or_else(|| TelemetryError::Builder("service_name is required".into()))?;
+        let language = self
+            .language
+            .ok_or_else(|| TelemetryError::Builder("language is required".into()))?;
+        let language_version = self
+            .language_version
+            .ok_or_else(|| TelemetryError::Builder("language_version is required".into()))?;
+        let tracer_version = self
+            .tracer_version
+            .ok_or_else(|| TelemetryError::Builder("tracer_version is required".into()))?;
         let mut builder = TelemetryWorkerBuilder::new_fetch_host(
-            self.service_name.unwrap(),
-            self.language.unwrap(),
-            self.language_version.unwrap(),
-            self.tracer_version.unwrap(),
+            service_name,
+            language,
+            language_version,
+            tracer_version,
         );
         builder.config = self.config;
         // Send only metrics and logs and drop lifecycle events
@@ -131,27 +151,52 @@ impl TelemetryClientBuilder {
         builder.application.env = self.env;
         builder.application.service_version = self.service_version;
 
-        if let Some(id) = self.runtime_id {
-            builder.runtime_id = Some(id);
-        }
+        builder.mutable_metadata = self.mutable_metadata;
 
-        let (worker_handle, worker) = builder.build_worker(None);
+        // No cancellation runtime handle: telemetry workers driven by SharedRuntime
+        // handle shutdown via WorkerHandle::stop, not the per-handle deadline path.
+        #[cfg(not(target_arch = "wasm32"))]
+        let (worker_handle, worker) = builder.build_worker::<C>(None);
+        #[cfg(target_arch = "wasm32")]
+        let (worker_handle, worker) = builder.build_worker::<C>();
 
-        (
+        Ok((
             TelemetryClient {
                 metrics: Metrics::new(&worker_handle),
                 worker: worker_handle,
             },
             worker,
-        )
+        ))
     }
 }
 
-/// Telemetry handle used to send metrics to the agent
-#[derive(Debug)]
-pub struct TelemetryClient {
+/// Telemetry handle used to send metrics to the agent.
+///
+/// `C` is the capability bundle (`NativeCapabilities` on native, `WasmCapabilities` on wasm).
+pub struct TelemetryClient<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> {
     metrics: Metrics,
-    worker: TelemetryWorkerHandle,
+    worker: TelemetryWorkerHandle<C>,
+}
+
+impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> std::fmt::Debug
+    for TelemetryClient<C>
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TelemetryClient")
+            .field("metrics", &self.metrics)
+            .field("worker", &self.worker)
+            .finish()
+    }
+}
+
+impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> TelemetryClient<C> {
+    /// Allow sharing a telemetry worker with data-pipeline
+    pub fn with_handle(handle: TelemetryWorkerHandle<C>) -> Self {
+        TelemetryClient {
+            metrics: Metrics::new(&handle),
+            worker: handle,
+        }
+    }
 }
 
 /// Telemetry describing the sending of a trace payload
@@ -166,6 +211,9 @@ pub struct SendPayloadTelemetry {
     chunks_sent: u64,
     chunks_dropped_serialization_error: u64,
     chunks_dropped_send_failure: u64,
+    spans_enqueued_for_serialization: u64,
+    spans_dropped_serialization_error: u64,
+    spans_dropped_api_error: u64,
     responses_count_per_code: HashMap<u16, u64>,
 }
 
@@ -235,9 +283,27 @@ impl SendPayloadTelemetry {
         };
         telemetry
     }
+
+    pub(crate) fn from_retry_result_with_spans(
+        value: &SendWithRetryResult,
+        bytes_sent: u64,
+        chunks: u64,
+        spans: u64,
+    ) -> Self {
+        let mut telemetry = Self::from_retry_result(value, bytes_sent, chunks);
+        telemetry.spans_enqueued_for_serialization = spans;
+        match value {
+            Err(SendWithRetryError::Build(_)) => {
+                telemetry.spans_dropped_serialization_error = spans;
+            }
+            Err(_) => telemetry.spans_dropped_api_error = spans,
+            Ok(_) => {}
+        }
+        telemetry
+    }
 }
 
-impl TelemetryClient {
+impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> TelemetryClient<C> {
     /// Sends metrics to the agent using a telemetry worker handle.
     ///
     /// # Arguments:
@@ -287,6 +353,25 @@ impl TelemetryClient {
             self.worker
                 .add_point(data.chunks_dropped_send_failure as f64, key, vec![])?;
         }
+        if data.spans_enqueued_for_serialization > 0 {
+            let key = self
+                .metrics
+                .get(metrics::MetricKind::SpansEnqueuedForSerialization);
+            self.worker
+                .add_point(data.spans_enqueued_for_serialization as f64, key, vec![])?;
+        }
+        if data.spans_dropped_serialization_error > 0 {
+            let key = self
+                .metrics
+                .get(metrics::MetricKind::SpansDroppedSerializationError);
+            self.worker
+                .add_point(data.spans_dropped_serialization_error as f64, key, vec![])?;
+        }
+        if data.spans_dropped_api_error > 0 {
+            let key = self.metrics.get(metrics::MetricKind::SpansDroppedApiError);
+            self.worker
+                .add_point(data.spans_dropped_api_error as f64, key, vec![])?;
+        }
         if !data.responses_count_per_code.is_empty() {
             let key = self.metrics.get(metrics::MetricKind::ApiResponses);
             for (status_code, count) in &data.responses_count_per_code {
@@ -318,12 +403,21 @@ impl TelemetryClient {
         Ok(())
     }
 
-    /// Starts the client
-    pub async fn start(&self) {
-        _ = self
-            .worker
-            .send_msg(TelemetryActions::Lifecycle(LifecycleAction::Start))
-            .await;
+    /// Starts the client.
+    ///
+    /// Sync-by-design: `Start` is dispatched via `try_send_msg` so the same
+    /// call site works from non-async constructors (e.g. wasm-bindgen's
+    /// `#[wasm_bindgen(constructor)]`, which cannot be async). The mailbox is
+    /// sized at `mpsc::channel(5000)` so a sync send is safe under normal load.
+    pub fn start(&self) -> Result<(), TelemetryError> {
+        self.worker
+            .try_send_msg(TelemetryActions::Lifecycle(LifecycleAction::Start))?;
+        Ok(())
+    }
+
+    /// Clone the telemetry handle
+    pub fn clone_handle(&self) -> TelemetryWorkerHandle<C> {
+        self.worker.clone()
     }
 }
 
@@ -334,7 +428,9 @@ mod tests {
     use httpmock::Method::POST;
     use httpmock::MockServer;
     use libdd_capabilities::HttpError;
+    use libdd_capabilities_impl::NativeCapabilities;
 
+    use libdd_common::mutable_metadata::MutableMetadata;
     use libdd_shared_runtime::{BlockingRuntime, ForkSafeRuntime, SharedRuntime, WorkerHandle};
     use libdd_trace_utils::test_utils::poll_for_mock_hits;
     // Use `regex::Regex` directly here because `httpmock`'s `body_matches`
@@ -343,7 +439,12 @@ mod tests {
     use regex::Regex;
     use tokio::time::sleep;
 
-    fn get_test_client(url: &str, runtime: &ForkSafeRuntime) -> (TelemetryClient, WorkerHandle) {
+    fn get_test_client(
+        url: &str,
+        runtime: &ForkSafeRuntime,
+    ) -> (TelemetryClient<NativeCapabilities>, WorkerHandle) {
+        let mut metadata = MutableMetadata::default();
+        metadata.runtime_id = "foo".into();
         let (client, worker) = TelemetryClientBuilder::default()
             .set_service_name("test_service")
             .set_service_version("test_version")
@@ -351,11 +452,12 @@ mod tests {
             .set_language("test_language")
             .set_language_version("test_language_version")
             .set_tracer_version("test_tracer_version")
-            .set_runtime_id("foo")
+            .set_mutable_metadata(metadata.into())
             .set_url(url)
             .set_heartbeat(100)
             .set_debug_enabled(true)
-            .build();
+            .build::<NativeCapabilities>()
+            .expect("TelemetryClientBuilder::build failed");
         let handle = runtime
             .spawn_worker(worker, true)
             .expect("Failed to spawn worker");
@@ -408,7 +510,7 @@ mod tests {
         let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
         shared_runtime
             .block_on(async {
-                client.start().await;
+                let _ = client.start();
                 let _ = client.send(&data);
                 // Wait for send to be processed
                 sleep(Duration::from_millis(100)).await;
@@ -439,7 +541,7 @@ mod tests {
         let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
         shared_runtime
             .block_on(async {
-                client.start().await;
+                let _ = client.start();
                 let _ = client.send(&data);
                 // Wait for send to be processed
                 sleep(Duration::from_millis(100)).await;
@@ -470,7 +572,7 @@ mod tests {
         let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
         shared_runtime
             .block_on(async {
-                client.start().await;
+                let _ = client.start();
                 let _ = client.send(&data);
                 // Wait for send to be processed
                 sleep(Duration::from_millis(100)).await;
@@ -501,7 +603,7 @@ mod tests {
         let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
         shared_runtime
             .block_on(async {
-                client.start().await;
+                let _ = client.start();
                 let _ = client.send(&data);
                 // Wait for send to be processed
                 sleep(Duration::from_millis(100)).await;
@@ -532,7 +634,7 @@ mod tests {
         let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
         shared_runtime
             .block_on(async {
-                client.start().await;
+                let _ = client.start();
                 let _ = client.send(&data);
                 // Wait for send to be processed
                 sleep(Duration::from_millis(100)).await;
@@ -563,7 +665,7 @@ mod tests {
         let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
         shared_runtime
             .block_on(async {
-                client.start().await;
+                let _ = client.start();
                 let _ = client.send(&data);
                 // Wait for send to be processed
                 sleep(Duration::from_millis(100)).await;
@@ -594,7 +696,7 @@ mod tests {
         let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
         shared_runtime
             .block_on(async {
-                client.start().await;
+                let _ = client.start();
                 let _ = client.send(&data);
                 // Wait for send to be processed
                 sleep(Duration::from_millis(100)).await;
@@ -625,7 +727,7 @@ mod tests {
         let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
         shared_runtime
             .block_on(async {
-                client.start().await;
+                let _ = client.start();
                 let _ = client.send(&data);
                 // Wait for send to be processed
                 sleep(Duration::from_millis(100)).await;
@@ -655,7 +757,7 @@ mod tests {
         let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
         shared_runtime
             .block_on(async {
-                client.start().await;
+                let _ = client.start();
                 client.send_client_side_stats_drops(3, 5).unwrap();
                 // Wait for send to be processed
                 sleep(Duration::from_millis(100)).await;
@@ -686,7 +788,7 @@ mod tests {
         let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
         shared_runtime
             .block_on(async {
-                client.start().await;
+                let _ = client.start();
                 let _ = client.send(&data);
                 // Wait for send to be processed
                 sleep(Duration::from_millis(100)).await;
@@ -729,11 +831,13 @@ mod tests {
             .body(Bytes::new())
             .unwrap();
         let result = Err(SendWithRetryError::Http(error_response, 5));
-        let telemetry = SendPayloadTelemetry::from_retry_result(&result, 1, 2);
+        let telemetry = SendPayloadTelemetry::from_retry_result_with_spans(&result, 1, 2, 7);
         assert_eq!(
             telemetry,
             SendPayloadTelemetry {
                 chunks_dropped_send_failure: 2,
+                spans_enqueued_for_serialization: 7,
+                spans_dropped_api_error: 7,
                 requests_count: 5,
                 errors_status_code: 1,
                 responses_count_per_code: HashMap::from([(400, 1)]),
@@ -831,7 +935,7 @@ mod tests {
         let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
         shared_runtime
             .block_on(async {
-                client.start().await;
+                let _ = client.start();
                 client
                     .send(&SendPayloadTelemetry {
                         requests_count: 1,
@@ -864,7 +968,7 @@ mod tests {
         let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
         shared_runtime
             .block_on(async {
-                client.start().await;
+                let _ = client.start();
                 client
                     .send(&SendPayloadTelemetry {
                         requests_count: 1,
@@ -887,6 +991,8 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     #[test]
     fn session_headers_telemetry_test() {
+        let mut metadata = MutableMetadata::default();
+        metadata.runtime_id = "foo".into();
         let shared_runtime = ForkSafeRuntime::new().expect("Failed to create runtime");
         let server = MockServer::start();
         let mut telemetry_srv = server.mock(|when, then| {
@@ -907,20 +1013,21 @@ mod tests {
             .set_language("test_language")
             .set_language_version("test_language_version")
             .set_tracer_version("test_tracer_version")
-            .set_runtime_id("foo")
+            .set_mutable_metadata(metadata.into())
             .set_url(&server.url("/"))
             .set_heartbeat(100)
             .set_debug_enabled(true)
             .set_session_id("sess-e2e")
             .set_root_session_id("root-e2e")
             .set_parent_session_id("parent-e2e")
-            .build();
+            .build::<NativeCapabilities>()
+            .expect("TelemetryClientBuilder::build failed");
         let handle = shared_runtime
             .spawn_worker(worker, true)
             .expect("Failed to spawn worker");
         shared_runtime
             .block_on(async {
-                client.start().await;
+                let _ = client.start();
                 client
                     .send(&SendPayloadTelemetry {
                         requests_count: 1,

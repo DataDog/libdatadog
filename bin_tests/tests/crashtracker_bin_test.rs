@@ -13,15 +13,16 @@ use anyhow::Context;
 #[cfg(all(target_os = "linux", not(target_env = "musl")))]
 use bin_tests::test_runner::run_crash_no_op;
 use bin_tests::{
+    ArtifactsBuild, BuildProfile,
     artifacts::{self, StandardArtifacts},
     fetch_built_artifacts,
-    test_runner::{run_crash_test_with_artifacts, CrashTestConfig, ValidatorFn},
+    test_runner::{CrashTestConfig, ValidatorFn, run_crash_test_with_artifacts},
     test_types::{CrashType, TestMode},
     validation::PayloadValidator,
-    ArtifactsBuild, BuildProfile,
 };
 use libdd_crashtracker::{
-    CrashtrackerConfiguration, Metadata, SiCodes, SigInfo, SignalNames, StacktraceCollection,
+    CrashtrackerConfiguration, Metadata, SiCodes, SigInfo, SignalNames, StackFrame,
+    StacktraceCollection,
 };
 use serde_json::Value;
 
@@ -159,12 +160,50 @@ fn test_crash_tracking_bin_unhandled_exception() {
     run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
 }
 
+/// Tests that when a C `assert()` fails, the crash report contains the assertion
+/// expression string in the error message.
+#[test]
+#[cfg(target_os = "linux")]
+#[cfg_attr(miri, ignore)]
+fn test_crash_tracking_bin_assert_fail() {
+    let config = CrashTestConfig::new(
+        BuildProfile::Release,
+        TestMode::DoNothing,
+        CrashType::AssertFail,
+    );
+    let artifacts = StandardArtifacts::new(config.profile);
+    let artifacts_map = fetch_built_artifacts(&artifacts.as_slice()).unwrap();
+
+    let validator: ValidatorFn = Box::new(|payload, fixtures| {
+        PayloadValidator::new(payload)
+            .validate_error_kind("UnixSignal")?
+            .validate_error_message_contains("test_value > 0")?
+            .validate_error_message_contains("trigger_c_assert")?;
+
+        // Validate SIGABRT signal info
+        let sig_info = &payload["sig_info"];
+        let signo_hr = sig_info["si_signo_human_readable"].as_str().unwrap_or("");
+        anyhow::ensure!(
+            signo_hr.contains("SIGABRT"),
+            "Expected SIGABRT in signal info, got: {signo_hr}"
+        );
+
+        validate_telemetry(&fixtures.crash_telemetry_path, "assert_fail")?;
+
+        Ok(())
+    });
+
+    run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
+}
+
 /// Tests that when `collect_all_threads` is enabled and the crash is reported via
 /// `report_unhandled_exception`, the crash report contains entries in `error.threads`
 /// for background threads with valid stack traces.
 ///
 /// This verifies that `PR_SET_PTRACER` is correctly called in the unhandled exception
 /// path so the receiver can ptrace the still-alive parent process.
+///
+/// Requires a Linux environment that permits ptrace attach.
 #[test]
 #[cfg(target_os = "linux")]
 #[cfg_attr(miri, ignore)]
@@ -173,7 +212,8 @@ fn test_crash_tracking_bin_unhandled_exception_multi_thread() {
         BuildProfile::Release,
         TestMode::UnhandledExceptionMultiThread,
         CrashType::UnhandledException,
-    );
+    )
+    .with_env("DD_TEST_UNWIND_FROM_UCONTEXT", "1");
     let artifacts = StandardArtifacts::new(config.profile);
     let artifacts_map = fetch_built_artifacts(&artifacts.as_slice()).unwrap();
 
@@ -182,7 +222,13 @@ fn test_crash_tracking_bin_unhandled_exception_multi_thread() {
             .validate_error_kind("UnhandledException")?
             .validate_error_message_contains(
                 "Process was terminated due to an unhandled exception of type 'RuntimeException'",
-            )?;
+            )?
+            .validate_callstack_functions(&["test_function1", "test_function2"])?;
+
+        assert!(
+            payload["ucontext"].is_null(),
+            "unhandled exception should not have a saved signal context"
+        );
 
         let all_threads = payload["error"]["threads"]
             .as_array()
@@ -313,6 +359,8 @@ fn test_crash_tracking_bin_runtime_callback_frame() {
 ///   - Exactly one thread has `crashed=true` (the crashing thread).
 ///   - Both worker threads are present by name (ct_worker_0, ct_worker_1).
 ///   - Each worker has their work frame in the stack trace.
+///
+/// Requires a Linux environment that permits ptrace attach.
 #[test]
 #[cfg(target_os = "linux")]
 #[cfg_attr(miri, ignore)]
@@ -399,6 +447,186 @@ fn test_crash_tracking_multi_thread_collection() {
             );
         }
 
+        // The receiver unwinds the crashing thread while it is parked inside our own
+        // signal handler, so its raw stack starts inside libdatadog. Those frames are
+        // trimmed back to the frame the kernel-saved registers point at, which is where
+        // error.stack starts too.
+        //
+        // The remote unwind has to cross the signal trampoline to reach that frame, and
+        // in some cases the trampoline carries no DWARF unwind info, so it stops short. There
+        // is nothing to trim in that case and the receiver leaves the stack alone, so
+        // only assert the invariant once the crash site is actually present.
+        let crashed_frames = crashed_threads[0]["stack"]["frames"]
+            .as_array()
+            .expect("crashed thread stack.frames should be an array");
+        let crash_site_ip = payload["error"]["stack"]["frames"]
+            .as_array()
+            .and_then(|frames| frames.first())
+            .and_then(|frame| frame["ip"].as_str())
+            .expect("error.stack should start at the faulting instruction");
+
+        let reached_crash_site = crashed_frames
+            .iter()
+            .any(|frame| frame["ip"].as_str() == Some(crash_site_ip));
+
+        if reached_crash_site {
+            assert_eq!(
+                crashed_frames
+                    .first()
+                    .and_then(|frame| frame["ip"].as_str()),
+                Some(crash_site_ip),
+                "crashed thread should start at the faulting instruction, like error.stack; got: {crashed_frames:?}"
+            );
+
+            for frame in crashed_frames {
+                let Some(function) = frame["function"].as_str() else {
+                    continue;
+                };
+                assert!(
+                    !function.contains("libdd_crashtracker::collector"),
+                    "crashed thread stack should not contain crashtracker collector frames, found '{function}' in: {crashed_frames:?}"
+                );
+            }
+        }
+
+        Ok(())
+    });
+
+    run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
+}
+
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+fn parse_hex_field(value: &Value) -> anyhow::Result<u64> {
+    let text = value
+        .as_str()
+        .context("expected hexadecimal address string")?;
+    Ok(u64::from_str_radix(
+        text.strip_prefix("0x").unwrap_or(text),
+        16,
+    )?)
+}
+
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+fn crashed_thread_frames(payload: &Value) -> anyhow::Result<&[Value]> {
+    let threads = payload["error"]["threads"]
+        .as_array()
+        .context("error.threads should be an array")?;
+    let crashed = threads
+        .iter()
+        .find(|thread| thread["crashed"].as_bool() == Some(true))
+        .context("no crashed thread in error.threads")?;
+    Ok(crashed["stack"]["frames"]
+        .as_array()
+        .context("crashed thread has no stack frames")?)
+}
+
+/// The test receiver substitutes a sentinel collector stack while retaining
+/// the real crash context. The receiver must promote the saved-context unwind.
+#[test]
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+#[cfg_attr(miri, ignore)]
+fn test_crash_tracking_bin_promotes_saved_context_stack() {
+    let config = CrashTestConfig::new(
+        BuildProfile::Debug,
+        TestMode::MultiThreadCollection,
+        CrashType::NullDeref,
+    )
+    .with_env("DD_TEST_UNWIND_FROM_UCONTEXT", "1")
+    .with_env("DD_TEST_REPLACE_STACKTRACE", "1");
+    let artifacts = StandardArtifacts::new(config.profile);
+    let artifacts_map = fetch_built_artifacts(&artifacts.as_slice()).unwrap();
+
+    let validator: ValidatorFn = Box::new(|payload, _fixtures| {
+        let (ip_register, sp_register) = match payload["ucontext"]["arch"].as_str() {
+            Some("x86_64") => ("rip", "rsp"),
+            Some("aarch64") => ("pc", "sp"),
+            other => anyhow::bail!("unsupported saved context architecture: {other:?}"),
+        };
+        let saved_ip = parse_hex_field(&payload["ucontext"]["registers"][ip_register])?;
+        let saved_sp = parse_hex_field(&payload["ucontext"]["registers"][sp_register])?;
+
+        let error_frames = payload["error"]["stack"]["frames"]
+            .as_array()
+            .context("error.stack.frames should be an array")?;
+        anyhow::ensure!(
+            error_frames.len() > 1,
+            "saved-context unwind should contain multiple frames: {error_frames:?}"
+        );
+        anyhow::ensure!(
+            parse_hex_field(&error_frames[0]["ip"])? == saved_ip
+                && parse_hex_field(&error_frames[0]["sp"])? == saved_sp,
+            "error.stack should start at the saved crash registers: {error_frames:?}"
+        );
+        anyhow::ensure!(
+            error_frames.iter().any(|frame| frame["function"]
+                .as_str()
+                .is_some_and(|name| name.contains("cause_segfault"))),
+            "symbolized crash stack should contain cause_segfault: {error_frames:?}"
+        );
+        anyhow::ensure!(
+            !error_frames
+                .iter()
+                .any(|frame| frame["function"].as_str() == Some("collector_fallback_sentinel")),
+            "receiver left the collector fallback stack in error.stack"
+        );
+
+        let crashed_frames = crashed_thread_frames(payload)?;
+        let first = crashed_frames
+            .first()
+            .context("crashed thread stack is empty")?;
+        anyhow::ensure!(
+            parse_hex_field(&first["ip"])? == saved_ip
+                && parse_hex_field(&first["sp"])? == saved_sp,
+            "crashed thread stack should start at the saved crash registers: {crashed_frames:?}"
+        );
+        Ok(())
+    });
+
+    run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
+}
+
+/// With in-process symbolization, the receiver must leave the collector's
+/// named primary stack intact even while collecting remote thread stacks.
+#[test]
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+#[cfg_attr(miri, ignore)]
+fn test_crash_tracking_bin_keeps_inprocess_symbols_with_saved_context() {
+    let config = CrashTestConfig::new(
+        BuildProfile::Debug,
+        TestMode::MultiThreadCollection,
+        CrashType::NullDeref,
+    )
+    .with_env("DD_TEST_UNWIND_FROM_UCONTEXT", "1")
+    .with_env("DD_TEST_STACKTRACE_COLLECTION", "inprocess_symbols");
+    let artifacts = StandardArtifacts::new(config.profile);
+    let artifacts_map = fetch_built_artifacts(&artifacts.as_slice()).unwrap();
+
+    let validator: ValidatorFn = Box::new(|payload, _fixtures| {
+        let error_frames = payload["error"]["stack"]["frames"]
+            .as_array()
+            .context("error.stack.frames should be an array")?;
+        anyhow::ensure!(
+            error_frames.iter().any(|frame| frame["function"]
+                .as_str()
+                .is_some_and(|name| name.contains("cause_segfault"))),
+            "collector's in-process function name was lost: {error_frames:?}"
+        );
+        anyhow::ensure!(
+            !crashed_thread_frames(payload)?.is_empty(),
+            "remote crashed-thread stack should still be collected"
+        );
         Ok(())
     });
 
@@ -578,6 +806,9 @@ fn test_crash_tracking_sidecar_basic() {
 /// Tests that collect_all_threads works with a sidecar (Unix socket) receiver.
 /// This exercises the SO_PEERCRED path in crash_handler.rs that resolves the
 /// receiver PID for PR_SET_PTRACER when receiver.handle.pid is None.
+///
+/// Ignored because it needs an environment that permits ptrace attach. Our CI runners
+/// report `yama ptrace_scope = 2` at the moment.
 #[test]
 #[cfg(target_os = "linux")]
 #[cfg_attr(miri, ignore)]
@@ -1152,9 +1383,9 @@ fn test_crash_tracking_bin_segfault() {
 fn test_crash_tracking_app(crash_type: &str) {
     use bin_tests::test_runner::run_custom_crash_test;
 
-    // Set up custom artifacts: receiver + crashing_test_app with panic_abort
+    // Set up custom artifacts: receiver + crashing_test_app with panic=abort
     let crashtracker_receiver = artifacts::crashtracker_receiver(BuildProfile::Release);
-    let crashing_app = artifacts::crashing_app(BuildProfile::Debug, true);
+    let crashing_app = artifacts::crashing_app(BuildProfile::PanicAbort);
 
     let artifacts_map = fetch_built_artifacts(&[&crashtracker_receiver, &crashing_app]).unwrap();
 
@@ -1168,7 +1399,8 @@ fn test_crash_tracking_app(crash_type: &str) {
             "panic" => {
                 let message = error["message"].as_str().unwrap();
                 assert!(
-                    message.contains("Process panicked with message") && message.contains("program panicked"),
+                    message.contains("Process panicked with message")
+                        && message.contains("program panicked"),
                     "Expected panic message to contain 'Process panicked with message' and 'program panicked', got: {}",
                     message
                 );
@@ -1228,7 +1460,7 @@ fn test_panic_hook_mode(mode: &str, expected_category: &str, expected_panic_mess
 
     // Set up custom artifacts: receiver + crashtracker_bin_test
     let crashtracker_receiver = artifacts::crashtracker_receiver(BuildProfile::Release);
-    let crashtracker_bin_test = artifacts::crashtracker_bin_test(BuildProfile::Debug, true);
+    let crashtracker_bin_test = artifacts::crashtracker_bin_test(BuildProfile::PanicAbort);
 
     let artifacts_map =
         fetch_built_artifacts(&[&crashtracker_receiver, &crashtracker_bin_test]).unwrap();
@@ -1302,7 +1534,7 @@ fn test_crash_tracking_callstack() {
     // Set up custom artifacts: receiver + crashing_test_app (in Debug mode)
     let crashtracker_receiver = artifacts::crashtracker_receiver(BuildProfile::Release);
     // compile in debug so we avoid inlining and can check the callchain
-    let crashing_app = artifacts::crashing_app(BuildProfile::Debug, false);
+    let crashing_app = artifacts::crashing_app(BuildProfile::Debug);
 
     let artifacts_map = fetch_built_artifacts(&[&crashtracker_receiver, &crashing_app]).unwrap();
 
@@ -1771,6 +2003,10 @@ fn assert_siginfo_message(sig_info: &Value, crash_typ: &str) {
                     || sig_info.is_object() && sig_info.as_object().is_none_or(|m| m.is_empty())
             );
         }
+        "assert_fail" => {
+            assert_eq!(sig_info["si_signo"], libc::SIGABRT);
+            assert_eq!(sig_info["si_signo_human_readable"], "SIGABRT");
+        }
         _ => panic!("unexpected crash_typ {crash_typ}"),
     }
 }
@@ -1904,6 +2140,10 @@ fn assert_telemetry_message(crash_telemetry: &[u8], crash_typ: &str) {
         }
         "unhandled_exception" => {
             // Unhandled exceptions have no signal info tags
+        }
+        "assert_fail" => {
+            assert!(tags.contains("si_signo_human_readable:SIGABRT"), "{tags:?}");
+            assert!(tags.contains("si_signo:6"), "{tags:?}");
         }
         _ => panic!("{crash_typ}"),
     }
@@ -2044,6 +2284,175 @@ fn crash_tracking_empty_endpoint() {
     let _ = child.wait();
 }
 
+/// Verifies graceful degradation: when the receiver's timeout fires before the collector
+/// sends all data, the receiver still uploads a partial crash report (incomplete=true)
+/// rather than silently discarding everything collected up to that point.
+#[test]
+#[cfg_attr(miri, ignore)]
+#[cfg(unix)]
+fn test_receiver_uploads_partial_report_on_timeout() -> anyhow::Result<()> {
+    use libdd_crashtracker::ErrorKind;
+    use std::time::{Duration, Instant};
+
+    let receiver = artifacts::crashtracker_receiver(BuildProfile::Debug);
+    let artifacts = fetch_built_artifacts(&[&receiver])?;
+    let fixtures = bin_tests::test_runner::TestFixtures::new()?;
+
+    let config = CrashtrackerConfiguration::builder()
+        .create_alt_stack(true)
+        .demangle_names(false)
+        .resolve_frames(StacktraceCollection::WithoutSymbols)
+        .signals(libdd_crashtracker::default_signals())
+        .timeout(Duration::from_millis(500))
+        .use_alt_stack(true)
+        .build()?;
+
+    let metadata = Metadata {
+        library_name: "libdatadog".to_owned(),
+        library_version: "1.0.0".to_owned(),
+        family: "native".to_owned(),
+        tags: vec![
+            "service:foo".into(),
+            "service_version:bar".into(),
+            "runtime-id:xyz".into(),
+            "language:native".into(),
+        ],
+    };
+
+    let siginfo = SigInfo {
+        si_addr: None,
+        si_code: 1,
+        si_code_human_readable: SiCodes::SEGV_MAPERR,
+        si_signo: libc::SIGSEGV,
+        si_signo_human_readable: SignalNames::SIGSEGV,
+    };
+
+    let socket_path = fixtures.output_dir.join("trace_agent.socket");
+    let listener = std::os::unix::net::UnixListener::bind(&socket_path)
+        .context("binding mock agent socket")?;
+    listener
+        .set_nonblocking(true)
+        .context("setting socket nonblocking")?;
+
+    let mut child = process::Command::new(&artifacts[&receiver])
+        .stdin(process::Stdio::piped())
+        .stdout(process::Stdio::null())
+        .stderr(process::Stdio::null())
+        .env(
+            "DD_TRACE_AGENT_URL",
+            format!("unix://{}", socket_path.display()),
+        )
+        .env("DD_CRASHTRACKER_RECEIVER_TIMEOUT_MS", "500")
+        .spawn()
+        .context("spawning receiver")?;
+
+    let mut stdin = std::io::BufWriter::new(child.stdin.take().context("child stdin missing")?);
+
+    // Two stack frames to include in the partial trace.
+    let frame0 = StackFrame {
+        ip: Some("0x00007f1234560000".to_owned()),
+        function: Some("crash_site".to_owned()),
+        file: Some("src/lib.rs".to_owned()),
+        line: Some(42),
+        ..StackFrame::default()
+    };
+    let frame1 = StackFrame {
+        ip: Some("0x00007f1234561000".to_owned()),
+        function: Some("caller_fn".to_owned()),
+        file: Some("src/main.rs".to_owned()),
+        line: Some(10),
+        ..StackFrame::default()
+    };
+
+    // Send config, kind, metadata, siginfo, then begin a stacktrace with two frames
+    // but deliberately omit DD_CRASHTRACK_END_STACKTRACE and DD_CRASHTRACK_DONE.
+    // The receiver blocks mid-stacktrace and times out after ~500ms.
+    for line in [
+        "DD_CRASHTRACK_BEGIN_CONFIG".to_string(),
+        serde_json::to_string(&config)?,
+        "DD_CRASHTRACK_END_CONFIG".to_string(),
+        "DD_CRASHTRACK_BEGIN_KIND".to_string(),
+        serde_json::to_string(&ErrorKind::UnixSignal)?,
+        "DD_CRASHTRACK_END_KIND".to_string(),
+        "DD_CRASHTRACK_BEGIN_METADATA".to_string(),
+        serde_json::to_string(&metadata)?,
+        "DD_CRASHTRACK_END_METADATA".to_string(),
+        "DD_CRASHTRACK_BEGIN_SIGINFO".to_string(),
+        serde_json::to_string(&siginfo)?,
+        "DD_CRASHTRACK_END_SIGINFO".to_string(),
+        "DD_CRASHTRACK_BEGIN_STACKTRACE".to_string(),
+        serde_json::to_string(&frame0)?,
+        serde_json::to_string(&frame1)?,
+        // no DD_CRASHTRACK_END_STACKTRACE so the receiver times out mid-stacktrace
+    ] {
+        writeln!(stdin, "{line}")?;
+    }
+    stdin.flush()?;
+    // stdin stays open so the receiver keeps blocking on the next read.
+    // The accept loop below runs while the receiver is waiting.
+
+    // The receiver times out ~500ms after the first line arrives, then uploads what it has.
+    let mut found_incomplete_report = false;
+    let mut found_timeout_log = false;
+    let mut found_crash_frame = false;
+    let deadline = Instant::now() + Duration::from_secs(3);
+
+    while Instant::now() < deadline {
+        match listener.accept() {
+            Ok((mut stream, _)) => {
+                // On macOS/BSD the accepted stream inherits the listener's non-blocking
+                // flag, so a read before the client flushes its body returns WouldBlock.
+                // read_http_request_body assumes a blocking stream, so restore that.
+                stream
+                    .set_nonblocking(false)
+                    .context("making accepted stream blocking")?;
+                let body = read_http_request_body(&mut stream);
+                let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
+                if body.contains("receiver_issue:timeout") {
+                    found_timeout_log = true;
+                }
+                if body.contains("crash_site") {
+                    found_crash_frame = true;
+                }
+                // The crash report telemetry carries is_crash:true; incomplete:true
+                // indicates the report was cut short by the timeout.
+                if body.contains("is_crash:true") && body.contains("incomplete:true") {
+                    found_incomplete_report = true;
+                }
+                if found_incomplete_report && found_timeout_log && found_crash_frame {
+                    break;
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
+
+    drop(stdin);
+    let status = child.wait()?;
+    assert!(
+        status.success(),
+        "receiver should exit cleanly after timeout; got: {status:?}"
+    );
+    assert!(
+        found_incomplete_report,
+        "receiver should upload a partial crash report (incomplete=true) on timeout, \
+         not silently drop everything it has collected"
+    );
+    assert!(
+        found_crash_frame,
+        "receiver should contain the crash frame function name `crash_site` in the body on timeout"
+    );
+    assert!(
+        found_timeout_log,
+        "receiver should emit a receiver_issue:timeout debug telemetry log when read times out"
+    );
+
+    Ok(())
+}
+
 #[test]
 #[cfg_attr(miri, ignore)]
 #[cfg(unix)]
@@ -2145,6 +2554,12 @@ fn test_receiver_emits_debug_logs_on_receiver_issue() -> anyhow::Result<()> {
     while start.elapsed() < timeout && bodies.len() < 16 {
         match listener.accept() {
             Ok((mut stream, _)) => {
+                // On macOS/BSD the accepted stream inherits the listener's non-blocking
+                // flag, so a read before the client flushes its body returns WouldBlock.
+                // read_http_request_body assumes a blocking stream, so restore that.
+                stream
+                    .set_nonblocking(false)
+                    .context("making accepted stream blocking")?;
                 let body = read_http_request_body(&mut stream);
                 bodies.push(body.clone());
                 // Update flags immediately to decide whether we can stop
@@ -2344,7 +2759,7 @@ fn setup_test_fixtures<'a>(crates: &[&'a ArtifactsBuild]) -> TestFixtures<'a> {
 fn setup_crashtracking_crates(
     crash_tracking_receiver_profile: BuildProfile,
 ) -> (ArtifactsBuild, ArtifactsBuild) {
-    let crashtracker_bin = artifacts::crashtracker_bin_test(crash_tracking_receiver_profile, false);
+    let crashtracker_bin = artifacts::crashtracker_bin_test(crash_tracking_receiver_profile);
     let crashtracker_receiver = artifacts::crashtracker_receiver(crash_tracking_receiver_profile);
     (crashtracker_bin, crashtracker_receiver)
 }
@@ -2572,10 +2987,12 @@ fn assert_errors_intake_payload(errors_intake_content: &[u8], crash_typ: &str) {
     match crash_typ {
         "null_deref" => {
             assert_eq!(error["type"], "SIGSEGV");
-            assert!(error["message"]
-                .as_str()
-                .unwrap()
-                .contains("Process terminated"));
+            assert!(
+                error["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("Process terminated")
+            );
             assert!(error["message"].as_str().unwrap().contains("SIGSEGV"));
         }
         "kill_sigabrt" | "raise_sigabrt" => {

@@ -7,38 +7,38 @@ use crate::{
     BuildIdType, CrashInfoBuilder, ErrorKind, FileType, Metadata, StackFrame, StackTrace,
     ThreadData,
 };
-use anyhow::{anyhow, Context, Result};
-use core::mem::size_of;
+use anyhow::{Context, Result, anyhow};
+use core::ffi::c_void;
+use core::mem::{MaybeUninit, size_of};
+use core::ptr::{addr_of, read_unaligned};
+use core::{fmt, slice, str};
 use libdd_common::Endpoint;
 use serde::{Deserialize, Serialize};
-use std::ffi::{c_void, OsString};
-use std::fmt;
-use std::mem::MaybeUninit;
+use std::ffi::OsString;
 use std::os::windows::ffi::OsStringExt;
-use std::ptr::{addr_of, read_unaligned};
 use std::sync::Mutex;
-use windows::core::{w, HSTRING, PCWSTR};
 use windows::Win32::Foundation::{ERROR_SUCCESS, HANDLE, HMODULE, TRUE};
 #[cfg(target_arch = "x86_64")]
 use windows::Win32::System::Diagnostics::Debug::CONTEXT_FULL_AMD64;
 #[cfg(target_arch = "x86")]
 use windows::Win32::System::Diagnostics::Debug::CONTEXT_FULL_X86;
 use windows::Win32::System::Diagnostics::Debug::{
-    AddrModeFlat, GetThreadContext, ReadProcessMemory, StackWalkEx, SymInitializeW, CONTEXT,
-    IMAGE_DATA_DIRECTORY, IMAGE_DEBUG_DIRECTORY, IMAGE_DEBUG_TYPE_CODEVIEW,
-    IMAGE_DIRECTORY_ENTRY_DEBUG, IMAGE_FILE_HEADER, IMAGE_NT_HEADERS32, IMAGE_NT_HEADERS64,
-    IMAGE_OPTIONAL_HEADER_MAGIC, STACKFRAME_EX, SYM_STKWALK_DEFAULT,
+    AddrModeFlat, CONTEXT, GetThreadContext, IMAGE_DATA_DIRECTORY, IMAGE_DEBUG_DIRECTORY,
+    IMAGE_DEBUG_TYPE_CODEVIEW, IMAGE_DIRECTORY_ENTRY_DEBUG, IMAGE_FILE_HEADER, IMAGE_NT_HEADERS32,
+    IMAGE_NT_HEADERS64, IMAGE_OPTIONAL_HEADER_MAGIC, ReadProcessMemory, STACKFRAME_EX,
+    SYM_STKWALK_DEFAULT, StackWalkEx, SymInitializeW,
 };
 use windows::Win32::System::Diagnostics::ToolHelp::{
-    CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32,
+    CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
 };
 use windows::Win32::System::ErrorReporting::WerRegisterRuntimeExceptionModule;
 use windows::Win32::System::ProcessStatus::{
     EnumProcessModules, GetModuleFileNameExW, GetModuleInformation, MODULEINFO,
 };
 use windows::Win32::System::Registry::{
-    RegCloseKey, RegCreateKeyExW, RegOpenKeyExW, RegQueryValueExW, RegSetValueExW, HKEY,
-    HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, KEY_WRITE, REG_DWORD, REG_OPTION_NON_VOLATILE,
+    HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, KEY_WRITE, REG_DWORD,
+    REG_OPTION_NON_VOLATILE, RegCloseKey, RegCreateKeyExW, RegOpenKeyExW, RegQueryValueExW,
+    RegSetValueExW,
 };
 use windows::Win32::System::SystemInformation::{
     IMAGE_FILE_MACHINE_AMD64, IMAGE_FILE_MACHINE_I386,
@@ -47,6 +47,7 @@ use windows::Win32::System::SystemServices::{
     IMAGE_DOS_HEADER, IMAGE_DOS_SIGNATURE, IMAGE_NT_SIGNATURE,
 };
 use windows::Win32::System::Threading::{GetProcessId, GetThreadId, OpenThread, THREAD_ALL_ACCESS};
+use windows::core::{HSTRING, PCWSTR, w};
 
 #[cfg(target_os = "windows")]
 /// Initialize the crash-tracking infrastructure.
@@ -220,8 +221,8 @@ pub fn exception_event_callback(
     // 1. wer_context.ptr points to valid memory
     // 2. the total size is smaller than isize::MAX
     let error_context_json =
-        unsafe { std::slice::from_raw_parts(wer_context.ptr as *const u8, wer_context.len) };
-    let error_context_str = std::str::from_utf8(error_context_json)?;
+        unsafe { slice::from_raw_parts(wer_context.ptr as *const u8, wer_context.len) };
+    let error_context_str = str::from_utf8(error_context_json)?;
     let error_context: ErrorContext = serde_json::from_str(error_context_str)?;
 
     let mut builder = CrashInfoBuilder::new();
@@ -285,7 +286,7 @@ fn read_wer_context(process_handle: HANDLE, base_address: usize) -> Result<WerCo
     let ptr = wer_context.as_mut_ptr();
 
     // SAFETY: buffer has the same size as WerContext, and they don't overlap
-    unsafe { std::ptr::copy_nonoverlapping(buffer.as_ptr(), ptr as *mut u8, buffer.len()) };
+    unsafe { core::ptr::copy_nonoverlapping(buffer.as_ptr(), ptr as *mut u8, buffer.len()) };
 
     // Validate prefix and suffix
     let raw_ptr = wer_context.as_ptr();
@@ -452,7 +453,7 @@ fn list_modules(process_handle: HANDLE) -> anyhow::Result<Vec<ModuleInfo>> {
 
     // Get the number of bytes required to store the array of module handles
     let mut cb_needed = 0;
-    unsafe { EnumProcessModules(process_handle, std::ptr::null_mut(), 0, &mut cb_needed) }
+    unsafe { EnumProcessModules(process_handle, core::ptr::null_mut(), 0, &mut cb_needed) }
         .context("Failed to get module list size")?;
 
     // Allocate enough space for the module handles
@@ -513,27 +514,27 @@ fn list_modules(process_handle: HANDLE) -> anyhow::Result<Vec<ModuleInfo>> {
 /// Make sure to perform proper validation on the data before using it, and don't use it for
 /// types that have references, because the references are relative to the target process.
 unsafe fn read_memory<T>(process_handle: HANDLE, address: u64) -> Result<T> {
-    let mut bytes_read = 0;
-    let mut value = MaybeUninit::<T>::uninit();
-    let size = size_of::<T>();
+    unsafe {
+        let mut bytes_read = 0;
+        let mut value = MaybeUninit::<T>::uninit();
+        let size = size_of::<T>();
 
-    // SAFETY: value has a size of `size`
-    let result = unsafe {
-        ReadProcessMemory(
+        // SAFETY: value has a size of `size`
+        let result = ReadProcessMemory(
             process_handle,
             address as *const _,
             value.as_mut_ptr() as *mut _,
             size,
             Some(&mut bytes_read),
-        )
-    };
+        );
 
-    anyhow::ensure!(
-        result.is_ok() && bytes_read == size,
-        "Failed to read memory"
-    );
+        anyhow::ensure!(
+            result.is_ok() && bytes_read == size,
+            "Failed to read memory"
+        );
 
-    Ok(value.assume_init())
+        Ok(value.assume_init())
+    }
 }
 
 fn read_memory_raw(process_handle: HANDLE, address: u64, size: usize) -> Result<Vec<u8>> {
@@ -655,7 +656,7 @@ fn get_pdb_info(process_handle: HANDLE, base_address: u64) -> Result<PdbInfo> {
         // 1. data is initialized and contained within a single allocated object
         // 2. data is non-null and aligned
         // 3. total size is smaller than isize::MAX
-        std::slice::from_raw_parts(
+        slice::from_raw_parts(
             debug_dir_buffer.as_ptr() as *const IMAGE_DEBUG_DIRECTORY,
             debug_dir_buffer.len() / size_of::<IMAGE_DEBUG_DIRECTORY>(),
         )
@@ -759,9 +760,8 @@ mod tests {
         // read_wer_context makes a copy, so the address should be different
         assert_ne!(actual_context.ptr, expected_context.ptr);
 
-        let buffer = unsafe {
-            std::slice::from_raw_parts(actual_context.ptr as *const u8, actual_context.len)
-        };
+        let buffer =
+            unsafe { slice::from_raw_parts(actual_context.ptr as *const u8, actual_context.len) };
         assert_eq!(buffer, expected_data);
     }
 
@@ -825,7 +825,7 @@ mod tests {
         assert_eq!(actual_pdb_info.age, expected_pdb_age);
 
         let bytes = unsafe {
-            std::slice::from_raw_parts(
+            slice::from_raw_parts(
                 &actual_pdb_info.signature as *const Guid as *const u8,
                 size_of::<Guid>(),
             )

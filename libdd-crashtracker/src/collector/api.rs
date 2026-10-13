@@ -4,10 +4,11 @@
 
 use super::{crash_handler::enable, receiver_manager::Receiver};
 use crate::{
-    clear_spans, clear_traces, collector::crash_handler::register_panic_hook,
+    CrashtrackerConfiguration, clear_spans, clear_traces,
+    collector::crash_handler::register_panic_hook,
     collector::signal_handler_manager::register_crash_handlers, crash_info::Metadata,
     reset_counters, shared::configuration::CrashtrackerReceiverConfig, update_config,
-    update_metadata, CrashtrackerConfiguration,
+    update_metadata,
 };
 
 pub static DEFAULT_SYMBOLS: [libc::c_int; 4] =
@@ -25,7 +26,7 @@ pub(super) fn mark_preload_logger_collector() {
     unsafe {
         let sym = libc::dlsym(libc::RTLD_DEFAULT, SYMBOL.as_ptr() as *const _);
         if !sym.is_null() {
-            let func: extern "C" fn() = std::mem::transmute(sym);
+            let func: extern "C" fn() = core::mem::transmute(sym);
             func();
         }
     }
@@ -86,6 +87,8 @@ pub fn init(
     Receiver::update_stored_config(receiver_config)?;
     register_crash_handlers(&config)?;
     register_panic_hook()?;
+    #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
+    super::assert_interceptor::install_assert_hook();
     enable();
     Ok(())
 }
@@ -116,11 +119,11 @@ pub fn reconfigure(
 mod single_threaded_tests {
     use super::*;
     use crate::{
-        begin_op, insert_span, insert_trace, CrashtrackerConfigurationBuilder, StacktraceCollection,
+        CrashtrackerConfigurationBuilder, StacktraceCollection, begin_op, insert_span, insert_trace,
     };
     use chrono::Utc;
+    use core::time::Duration;
     use libdd_common::tag;
-    use std::time::Duration;
 
     const PATH_TO_RECEIVER: &str = "/tmp/libdatadog/bin/libdatadog-crashtracking-receiver";
     // We can't run this in the main test runner because it (deliberately) crashes,
@@ -178,7 +181,7 @@ mod single_threaded_tests {
 
         std::thread::sleep(Duration::from_secs(2));
 
-        let p: *const u32 = std::ptr::null();
+        let p: *const u32 = core::ptr::null();
         let q = unsafe { *p };
         assert_eq!(q, 3);
     }
@@ -210,16 +213,12 @@ mod single_threaded_tests {
     #[cfg(target_os = "linux")]
     fn get_sigaltstack() -> Option<libc::stack_t> {
         let mut sigaltstack = libc::stack_t {
-            ss_sp: std::ptr::null_mut(),
+            ss_sp: core::ptr::null_mut(),
             ss_flags: 0,
             ss_size: 0,
         };
-        let res = unsafe { libc::sigaltstack(std::ptr::null(), &mut sigaltstack) };
-        if res == 0 {
-            Some(sigaltstack)
-        } else {
-            None
-        }
+        let res = unsafe { libc::sigaltstack(core::ptr::null(), &mut sigaltstack) };
+        if res == 0 { Some(sigaltstack) } else { None }
     }
 
     #[cfg_attr(miri, ignore)]
@@ -290,7 +289,7 @@ mod single_threaded_tests {
                 // Check the SIGBUS and SIGSEGV handlers are set with SA_ONSTACK
                 let mut sigaction = libc::sigaction {
                     sa_sigaction: 0,
-                    sa_mask: unsafe { std::mem::zeroed::<libc::sigset_t>() },
+                    sa_mask: unsafe { core::mem::zeroed::<libc::sigset_t>() },
                     sa_flags: 0,
                     sa_restorer: None,
                 };
@@ -300,7 +299,7 @@ mod single_threaded_tests {
                 for signal in default_signals() {
                     let signame = crate::signal_from_signum(signal).unwrap();
                     exit_code -= 1;
-                    let res = unsafe { libc::sigaction(signal, std::ptr::null(), &mut sigaction) };
+                    let res = unsafe { libc::sigaction(signal, core::ptr::null(), &mut sigaction) };
                     if res != 0 {
                         eprintln!("Failed to get {signame:?} handler");
                         std::process::exit(exit_code);
@@ -399,14 +398,14 @@ mod single_threaded_tests {
                 // we double-check here because the options need to be decoupled
                 let mut sigaction = libc::sigaction {
                     sa_sigaction: 0,
-                    sa_mask: unsafe { std::mem::zeroed::<libc::sigset_t>() },
+                    sa_mask: unsafe { core::mem::zeroed::<libc::sigset_t>() },
                     sa_flags: 0,
                     sa_restorer: None,
                 };
 
                 // First, SIGBUS
                 let res =
-                    unsafe { libc::sigaction(libc::SIGBUS, std::ptr::null(), &mut sigaction) };
+                    unsafe { libc::sigaction(libc::SIGBUS, core::ptr::null(), &mut sigaction) };
                 if res != 0 {
                     eprintln!("Failed to get SIGBUS handler");
                     std::process::exit(-6);
@@ -418,7 +417,7 @@ mod single_threaded_tests {
 
                 // Second, SIGSEGV
                 let res =
-                    unsafe { libc::sigaction(libc::SIGSEGV, std::ptr::null(), &mut sigaction) };
+                    unsafe { libc::sigaction(libc::SIGSEGV, core::ptr::null(), &mut sigaction) };
                 if res != 0 {
                     eprintln!("Failed to get SIGSEGV handler");
                     std::process::exit(-8);
@@ -513,14 +512,14 @@ mod single_threaded_tests {
                 // Similarly, we need to be extra sure that SA_ONSTACK is not present.
                 let mut sigaction = libc::sigaction {
                     sa_sigaction: 0,
-                    sa_mask: unsafe { std::mem::zeroed::<libc::sigset_t>() },
+                    sa_mask: unsafe { core::mem::zeroed::<libc::sigset_t>() },
                     sa_flags: 0,
                     sa_restorer: None,
                 };
 
                 // First, SIGBUS
                 let res =
-                    unsafe { libc::sigaction(libc::SIGBUS, std::ptr::null(), &mut sigaction) };
+                    unsafe { libc::sigaction(libc::SIGBUS, core::ptr::null(), &mut sigaction) };
                 if res != 0 {
                     eprintln!("Failed to get SIGBUS handler");
                     std::process::exit(-6);
@@ -532,7 +531,7 @@ mod single_threaded_tests {
 
                 // Second, SIGSEGV
                 let res =
-                    unsafe { libc::sigaction(libc::SIGSEGV, std::ptr::null(), &mut sigaction) };
+                    unsafe { libc::sigaction(libc::SIGSEGV, core::ptr::null(), &mut sigaction) };
                 if res != 0 {
                     eprintln!("Failed to get SIGSEGV handler");
                     std::process::exit(-8);

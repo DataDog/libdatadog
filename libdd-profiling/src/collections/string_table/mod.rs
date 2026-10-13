@@ -63,7 +63,7 @@ pub struct StringTable {
     /// The ordered hash set of unique strings. The order becomes the StringId.
     /// The static lifetime is a lie, it is tied to the `bytes`, which is only
     /// moved if the string table is moved e.g.
-    /// [StringTable::into_lending_iterator].
+    /// [`StringTable::into_lending_iter`], via the [`IntoLendingIterator`] trait.
     /// References to the underlying strings should generally not be handed,
     /// but if they are, they should be bound to the string table's lifetime
     /// or the lending iterator's lifetime.
@@ -139,7 +139,8 @@ impl StringTable {
     ///
     /// Fails if an allocator fails, or if the number of strings would exceed
     /// [`u32::MAX`].
-    pub fn try_intern(&mut self, str: &str) -> Result<StringId, Error> {
+    pub fn try_intern(&mut self, str: impl AsRef<str>) -> Result<StringId, Error> {
+        let str = str.as_ref();
         let set = &mut self.strings;
         match set.get_index_of(str) {
             // SAFETY: if it already exists, it must fit in the range.

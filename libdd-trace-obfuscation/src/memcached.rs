@@ -1,6 +1,27 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+/// Obfuscates a memcached command, returning `None` when nothing needs to change.
+///
+/// With `keep_command` false the command is wiped to `""`, or `None` if already empty. With it
+/// true, obfuscation only strips everything after the first `\r\n` and trims whitespace, so it
+/// returns `None` when there is no `\r\n` and no surrounding whitespace.
+#[must_use]
+pub fn obfuscate_memcached(cmd: &str, keep_command: bool) -> Option<String> {
+    if !keep_command {
+        return if cmd.is_empty() {
+            None
+        } else {
+            Some(String::new())
+        };
+    }
+    let needs_trim = cmd.starts_with(char::is_whitespace) || cmd.ends_with(char::is_whitespace);
+    if !cmd.contains("\r\n") && !needs_trim {
+        return None;
+    }
+    Some(obfuscate_memcached_string(cmd))
+}
+
 /// Obfuscates the memcached command cmd.
 #[must_use]
 pub fn obfuscate_memcached_string(cmd: &str) -> String {
@@ -9,9 +30,8 @@ pub fn obfuscate_memcached_string(cmd: &str) -> String {
     // to obfuscate sensitive information is to remove everything that follows
     // a new line. For non-storage commands, this will have no effect.
     // [1]: https://github.com/memcached/memcached/blob/master/doc/protocol.txt
-    let split: Vec<&str> = cmd.splitn(2, "\r\n").collect();
-    let res = split.first().copied().unwrap_or(cmd);
-    res.trim().to_string()
+    let (cmd, _rest) = cmd.split_once("\r\n").unwrap_or((cmd, ""));
+    cmd.trim().to_string()
 }
 
 #[cfg(test)]

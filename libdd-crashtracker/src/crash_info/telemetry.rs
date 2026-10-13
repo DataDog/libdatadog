@@ -1,12 +1,15 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
-use std::{fmt::Write, time::SystemTime};
+use core::fmt::Write;
+use std::time::SystemTime;
 
-use crate::{ErrorKind, SigInfo};
+use crate::{ErrorKind, SigInfo, parse_tags};
 
 use super::{CrashInfo, Metadata, TARGET_TRIPLE};
 use anyhow::Context;
 use chrono::{DateTime, Utc};
+use libdd_capabilities::HttpClientCapability;
+use libdd_capabilities_impl::NativeCapabilities;
 use libdd_common::Endpoint;
 use libdd_telemetry::{
     build_host,
@@ -79,7 +82,10 @@ impl CrashPingBuilder {
                 sig_info.si_code_human_readable, sig_info.si_signo_human_readable
             )
         } else {
-            format!("Crashtracker crash ping: crash processing started - Process terminated due to {:?}", kind)
+            format!(
+                "Crashtracker crash ping: crash processing started - Process terminated due to {:?}",
+                kind
+            )
         };
 
         Ok(CrashPing {
@@ -159,25 +165,6 @@ impl CrashPing {
     }
 }
 
-macro_rules! parse_tags {
-    (   $tag_iterator:expr,
-        $($tag_name:literal => $var:ident),* $(,)?)  => {
-        $(
-            let mut $var: Option<&str> = None;
-        )*
-        for tag in $tag_iterator {
-            let Some((name, value)) = tag.split_once(':') else {
-                continue;
-            };
-            match name {
-                $($tag_name => {$var = Some(value);}, )*
-                _ => {},
-            }
-        }
-
-    };
-}
-
 pub struct TelemetryCrashUploader {
     metadata: TelemetryMetadata,
     cfg: libdd_telemetry::config::Config,
@@ -197,13 +184,25 @@ impl TelemetryCrashUploader {
             // But do we want to support direct submission to the intake?
 
             // ignore result because what are we going to do?
-            let _ = if endpoint.url.scheme_str() == Some("file") {
+            if endpoint.url.scheme_str() == Some("file") {
+                // Write telemetry alongside the crash file. Rebuild from the
+                // decoded path so the file path is re-encoded exactly once.
                 let path = libdd_common::decode_uri_path_in_authority(&endpoint.url)
                     .context("file path is not valid")?;
-                cfg.set_host_from_url(&format!("file://{}.telemetry", path.display()))
+                let _ = cfg.set_endpoint(libdd_telemetry::config::TelemetryEndpoint {
+                    url: Some(format!("file://{}.telemetry", path.display())),
+                    ..Default::default()
+                });
             } else {
-                cfg.set_endpoint(endpoint.clone())
-            };
+                let _ = cfg.set_endpoint(libdd_telemetry::config::TelemetryEndpoint {
+                    api_key: endpoint.api_key.as_deref().map(str::to_owned),
+                    test_token: endpoint.test_token.as_deref().map(str::to_owned),
+                    timeout_ms: endpoint.timeout_ms,
+                    use_system_resolver: endpoint.use_system_resolver,
+                    ..Default::default()
+                });
+                let _ = cfg.set_endpoint_uri(endpoint.url.clone());
+            }
         }
 
         parse_tags!(
@@ -285,7 +284,7 @@ impl TelemetryCrashUploader {
     /// Send a crash info telemetry log to indicate that crash processing has completed
     pub async fn upload_crash_info(&self, crash_info: &CrashInfo) -> anyhow::Result<()> {
         let message = serde_json::to_string(crash_info)?;
-        let tags = extract_crash_info_tags(crash_info).unwrap_or_default();
+        let tags = extract_crash_info_tags(crash_info);
         let tracer_time = crash_info.timestamp.parse::<DateTime<Utc>>().map_or_else(
             |_| {
                 SystemTime::now()
@@ -342,9 +341,9 @@ impl TelemetryCrashUploader {
         self.send_telemetry_payload(&payload).await
     }
 
-    /// Helper to perform actual HTTP (or file) submission via configured telemetry client
+    /// Helper to perform actual HTTP submission via the native HTTP capability.
     async fn send_telemetry_payload(&self, payload: &data::Telemetry<'_>) -> anyhow::Result<()> {
-        let client = libdd_telemetry::worker::http_client::from_config(&self.cfg);
+        let client = NativeCapabilities::new_client();
         let req = request_builder(&self.cfg)?
             .method(http::Method::POST)
             .header(
@@ -359,19 +358,20 @@ impl TelemetryCrashUploader {
                 libdd_telemetry::worker::http_client::header::REQUEST_TYPE,
                 "logs",
             )
-            .body(serde_json::to_string(&payload)?.into())?;
+            .body(libdd_capabilities::Bytes::from(serde_json::to_vec(
+                &payload,
+            )?))?;
 
-        tokio::time::timeout(
-            std::time::Duration::from_millis({
-                if let Some(endp) = self.cfg.endpoint() {
-                    endp.timeout_ms
-                } else {
-                    Endpoint::DEFAULT_TIMEOUT
-                }
-            }),
-            client.request(req),
-        )
-        .await??;
+        let timeout = core::time::Duration::from_millis({
+            if let Some(endp) = self.cfg.endpoint() {
+                endp.timeout_ms
+            } else {
+                Endpoint::DEFAULT_TIMEOUT
+            }
+        });
+        tokio::time::timeout(timeout, client.request(req))
+            .await
+            .map_err(|_| anyhow::anyhow!("Telemetry crash report timed out"))??;
 
         Ok(())
     }
@@ -388,12 +388,7 @@ impl TelemetryCrashUploader {
         );
 
         if let Some(sig_info) = sig_info {
-            tags.push_str(&format!(
-                ",si_code_human_readable:{:?},si_signo:{},si_signo_human_readable:{:?}",
-                sig_info.si_code_human_readable,
-                sig_info.si_signo,
-                sig_info.si_signo_human_readable
-            ));
+            sig_info.append_ddtags(&mut tags);
         }
 
         write!(tags, ",runtime_platform:{TARGET_TRIPLE}").ok();
@@ -415,50 +410,16 @@ impl TelemetryCrashUploader {
     }
 }
 
-fn extract_crash_info_tags(crash_info: &CrashInfo) -> anyhow::Result<String> {
-    let mut tags = String::new();
-    write!(
-        &mut tags,
-        "data_schema_version:{}",
-        crash_info.data_schema_version
-    )?;
-    if let Some(fingerprint) = &crash_info.fingerprint {
-        write!(&mut tags, ",fingerprint:{fingerprint}")?;
-    }
-    write!(&mut tags, ",incomplete:{}", crash_info.incomplete)?;
-    write!(&mut tags, ",is_crash:{}", crash_info.error.is_crash)?;
-    write!(&mut tags, ",uuid:{}", crash_info.uuid)?;
-    for (counter, value) in &crash_info.counters {
-        write!(&mut tags, ",{counter}:{value}")?;
-    }
-
-    if let Some(siginfo) = &crash_info.sig_info {
-        if let Some(si_addr) = &siginfo.si_addr {
-            write!(&mut tags, ",si_addr:{si_addr}")?;
-        }
-        write!(&mut tags, ",si_code:{}", siginfo.si_code)?;
-        write!(
-            &mut tags,
-            ",si_code_human_readable:{:?}",
-            siginfo.si_code_human_readable
-        )?;
-        write!(&mut tags, ",si_signo:{}", siginfo.si_signo)?;
-        write!(
-            &mut tags,
-            ",si_signo_human_readable:{:?}",
-            siginfo.si_signo_human_readable
-        )?;
-    }
-    write!(&mut tags, ",runtime_platform:{TARGET_TRIPLE}")?;
-    Ok(tags)
+fn extract_crash_info_tags(crash_info: &CrashInfo) -> String {
+    crash_info.ddtags()
 }
 
 #[cfg(test)]
 mod tests {
     use super::TelemetryCrashUploader;
     use crate::{
-        crash_info::{test_utils::TestInstance, CrashInfo, CrashInfoBuilder, Metadata},
         ErrorKind,
+        crash_info::{CrashInfo, CrashInfoBuilder, Metadata, test_utils::TestInstance},
     };
     use libdd_common::Endpoint;
     use libdd_telemetry::data::LogLevel;
@@ -519,7 +480,10 @@ mod tests {
             new_test_uploader_with_process_tags(seed, "entrypoint.name:cli,entrypoint.type:script");
 
         t.cfg
-            .set_host_from_url(&format!("file://{}", output_filename.to_str().unwrap()))
+            .set_endpoint(libdd_telemetry::config::TelemetryEndpoint {
+                url: Some(format!("file://{}", output_filename.to_str().unwrap())),
+                ..Default::default()
+            })
             .unwrap();
         let test_instance = super::CrashInfo::test_instance(seed);
 
@@ -585,7 +549,10 @@ mod tests {
         let mut t = new_test_uploader(seed);
 
         t.cfg
-            .set_host_from_url(&format!("file://{}", output_filename.to_str().unwrap()))
+            .set_endpoint(libdd_telemetry::config::TelemetryEndpoint {
+                url: Some(format!("file://{}", output_filename.to_str().unwrap())),
+                ..Default::default()
+            })
             .unwrap();
 
         let sig_info = crate::SigInfo::test_instance(42);
@@ -661,7 +628,10 @@ mod tests {
         let mut t = new_test_uploader(seed);
 
         t.cfg
-            .set_host_from_url(&format!("file://{}", output_filename.to_str().unwrap()))
+            .set_endpoint(libdd_telemetry::config::TelemetryEndpoint {
+                url: Some(format!("file://{}", output_filename.to_str().unwrap())),
+                ..Default::default()
+            })
             .unwrap();
 
         let sig_info = crate::SigInfo::test_instance(123);
@@ -771,10 +741,13 @@ mod tests {
         let mut uploader = TelemetryCrashUploader::new(&metadata, &endpoint)?;
         uploader
             .cfg
-            .set_host_from_url(&format!(
-                "file://{}.telemetry",
-                output_filename.to_str().unwrap()
-            ))
+            .set_endpoint(libdd_telemetry::config::TelemetryEndpoint {
+                url: Some(format!(
+                    "file://{}.telemetry",
+                    output_filename.to_str().unwrap()
+                )),
+                ..Default::default()
+            })
             .unwrap();
 
         uploader.upload_crash_ping(&crash_ping).await?;
@@ -816,9 +789,11 @@ mod tests {
         assert!(result.is_ok());
         let crash_ping = result.unwrap();
         assert!(crash_ping.siginfo().is_none());
-        assert!(crash_ping
-            .message()
-            .contains("Crashtracker crash ping: crash processing started - Process terminated"));
+        assert!(
+            crash_ping
+                .message()
+                .contains("Crashtracker crash ping: crash processing started - Process terminated")
+        );
 
         // Test that crash ping fails without metadata
         let mut crash_info_builder = CrashInfoBuilder::new();
@@ -828,10 +803,12 @@ mod tests {
         crash_info_builder.with_kind(ErrorKind::UnixSignal).unwrap();
         let result = crash_info_builder.build_crash_ping();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("metadata is required"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("metadata is required")
+        );
 
         // Test successful build with both fields
         let mut crash_info_builder = CrashInfoBuilder::new();
@@ -883,10 +860,13 @@ mod tests {
 
         assert!(!crash_ping.crash_uuid().is_empty());
         assert!(Uuid::parse_str(crash_ping.crash_uuid()).is_ok());
-        assert_eq!(crash_ping.message(), format!(
-            "Crashtracker crash ping: crash processing started - Process terminated with {:?} ({:?})",
-            sig_info.si_code_human_readable, sig_info.si_signo_human_readable
-        ));
+        assert_eq!(
+            crash_ping.message(),
+            format!(
+                "Crashtracker crash ping: crash processing started - Process terminated with {:?} ({:?})",
+                sig_info.si_code_human_readable, sig_info.si_signo_human_readable
+            )
+        );
         assert_eq!(crash_ping.metadata(), &metadata);
         assert_eq!(crash_ping.siginfo(), Some(&sig_info));
     }
@@ -909,9 +889,11 @@ mod tests {
 
         assert!(!crash_ping.crash_uuid().is_empty());
         assert!(Uuid::parse_str(crash_ping.crash_uuid()).is_ok());
-        assert!(crash_ping
-            .message()
-            .contains("crash processing started - my process panicked"));
+        assert!(
+            crash_ping
+                .message()
+                .contains("crash processing started - my process panicked")
+        );
         assert_eq!(crash_ping.metadata(), &metadata);
         assert_eq!(crash_ping.siginfo(), Some(&sig_info));
     }
@@ -931,7 +913,10 @@ mod tests {
 
         uploader
             .cfg
-            .set_host_from_url(&format!("file://{}", output_filename.to_str().unwrap()))
+            .set_endpoint(libdd_telemetry::config::TelemetryEndpoint {
+                url: Some(format!("file://{}", output_filename.to_str().unwrap())),
+                ..Default::default()
+            })
             .unwrap();
 
         let sig_info = crate::SigInfo::test_instance(150);
@@ -986,10 +971,12 @@ mod tests {
         assert_eq!(uploaded_metadata, &expected_metadata_json);
 
         assert!(message_json["message"].is_string());
-        assert!(message_json["message"]
-            .as_str()
-            .unwrap()
-            .contains("crash processing started"));
+        assert!(
+            message_json["message"]
+                .as_str()
+                .unwrap()
+                .contains("crash processing started")
+        );
         Ok(())
     }
 
@@ -1006,7 +993,10 @@ mod tests {
         let mut uploader = new_test_uploader(7);
         uploader
             .cfg
-            .set_host_from_url(&format!("file://{}", output_filename.to_str().unwrap()))?;
+            .set_endpoint(libdd_telemetry::config::TelemetryEndpoint {
+                url: Some(format!("file://{}", output_filename.to_str().unwrap())),
+                ..Default::default()
+            })?;
 
         uploader
             .upload_general_log(

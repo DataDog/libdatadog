@@ -56,20 +56,18 @@ impl<K, V> Default for VecMap<K, V> {
     fn default() -> Self {
         Self {
             data: Default::default(),
-            deduped: false,
+            deduped: true,
         }
     }
 }
 
-// This implementation allocates, which isn't expected for equality testing (not allocating would be
-// rather tedious though). It's fine for tests (where `PartialEq` is currently needed), so we
-// cfg-gate it to avoid unintended usage in prod.
+// Only enabled for tests: this allocates (builds two `HashMap`s), which would be surprising
+// behind a plain `==` in production code. Production callers should use `slow_compare` instead,
+// so the cost is visible at the call site.
 #[cfg(any(test, feature = "test-utils"))]
 impl<K: Eq + Hash, V: PartialEq> PartialEq for VecMap<K, V> {
     fn eq(&self, other: &Self) -> bool {
-        let lhs: HashMap<&K, &V> = self.data.iter().map(|(k, v)| (k, v)).collect();
-        let rhs: HashMap<&K, &V> = other.data.iter().map(|(k, v)| (k, v)).collect();
-        lhs == rhs
+        self.slow_compare(other)
     }
 }
 
@@ -138,6 +136,20 @@ impl<K, V> VecMap<K, V> {
         self.data.iter().any(|(k, _)| k.borrow() == key)
     }
 
+    /// Compares two maps for equality, ignoring insertion order and duplicate entries (the last
+    /// value for a given key wins on both sides). This allocates two intermediate `HashMap`s, so
+    /// it's exposed as a named method rather than [PartialEq]/[Eq], to keep that cost visible at
+    /// the call site instead of hiding it behind `==`.
+    pub fn slow_compare(&self, other: &Self) -> bool
+    where
+        K: Eq + Hash,
+        V: PartialEq,
+    {
+        let lhs: HashMap<&K, &V> = self.data.iter().map(|(k, v)| (k, v)).collect();
+        let rhs: HashMap<&K, &V> = other.data.iter().map(|(k, v)| (k, v)).collect();
+        lhs == rhs
+    }
+
     /// Remove all entries matching this key from the map. This method uses [Vec::retain], and is
     /// thus potentially costly (like any removal in a vector-like datastructure).
     // Note: we might implement a tombstone or option-based deletion later, if removal is a bit too
@@ -173,6 +185,11 @@ impl<K, V> VecMap<K, V> {
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.data.is_empty()
+    }
+
+    #[inline]
+    pub fn capacity(&self) -> usize {
+        self.data.capacity()
     }
 
     /// Return `true` if the map hasn't been extended since the last call to [Self::dedup],
@@ -472,9 +489,9 @@ mod tests {
     }
 
     #[test]
-    fn is_deduped_false_initially() {
+    fn is_deduped_true_initially() {
         let m: VecMap<&str, i32> = VecMap::new();
-        assert!(!m.is_deduped());
+        assert!(m.is_deduped());
     }
 
     #[test]

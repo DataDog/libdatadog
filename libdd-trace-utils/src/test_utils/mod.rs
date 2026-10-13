@@ -16,7 +16,7 @@ use std::time::Duration;
 
 use crate::send_data::SendData;
 use crate::span::v04::{SpanBytes, VecMap};
-use crate::span::{v05, SharedDictBytes};
+use crate::span::{SharedDictBytes, v05};
 use crate::trace_utils::TracerHeaderTags;
 use crate::tracer_payload::TracerPayloadCollection;
 use httpmock::Mock;
@@ -498,6 +498,7 @@ pub fn create_send_data(size: usize, target_endpoint: &Endpoint) -> SendData {
         env: "test".to_owned(),
         hostname: "test_host".to_owned(),
         app_version: "2.0".to_owned(),
+        container_debug: None,
     };
 
     SendData::new(

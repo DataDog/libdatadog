@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::atomic_set::{AtomicSetError, AtomicSpanSet};
-use std::{io::Write, num::NonZeroU128};
+use core::num::NonZeroU128;
+use std::io::Write;
 
 static ACTIVE_SPANS: AtomicSpanSet<2048> = AtomicSpanSet::new();
 static ACTIVE_TRACES: AtomicSpanSet<2048> = AtomicSpanSet::new();

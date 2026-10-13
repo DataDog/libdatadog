@@ -1,6 +1,6 @@
 #include <windows.h>
-#include <WerApi.h>
-#include <Psapi.h>
+#include <werapi.h>
+#include <psapi.h>
 #include <vector>
 #include <string>
 #include <regex>

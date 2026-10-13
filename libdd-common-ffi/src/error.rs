@@ -1,9 +1,10 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+#![cfg(feature = "std")]
 
 use crate::slice::{AsBytes, CharSlice};
 use crate::vec::Vec;
-use std::fmt::{Debug, Display, Formatter};
+use core::fmt::{Debug, Display, Formatter};
 
 /// You probably don't want to use this directly. This constant is used by `handle_panic_error` to
 /// signal that something went wrong, but avoid needing any allocations to represent it.
@@ -15,7 +16,7 @@ pub(crate) const CANNOT_ALLOCATE_ERROR: Error = Error {
 
 // This error message is used as a placeholder for errors without message -- corresponding to an
 // error where we couldn't even _allocate_ the message (or some other even weirder error).
-const CANNOT_ALLOCATE: &std::ffi::CStr =
+const CANNOT_ALLOCATE: &core::ffi::CStr =
     c"libdatadog failed: (panic) Cannot allocate error message";
 const CANNOT_ALLOCATE_CHAR_SLICE: CharSlice = unsafe {
     crate::Slice::from_raw_parts(CANNOT_ALLOCATE.as_ptr(), CANNOT_ALLOCATE.to_bytes().len())
@@ -40,18 +41,18 @@ impl AsRef<str> for Error {
 }
 
 impl Display for Error {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         f.write_str(self.as_ref())
     }
 }
 
 impl Debug for Error {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         f.write_fmt(format_args!("Error(\"{}\")", self.as_ref()))
     }
 }
 
-impl std::error::Error for Error {}
+impl core::error::Error for Error {}
 
 impl From<String> for Error {
     fn from(value: String) -> Self {
@@ -63,7 +64,7 @@ impl From<String> for Error {
 impl From<Error> for String {
     fn from(mut value: Error) -> String {
         let mut vec = Vec::default();
-        std::mem::swap(&mut vec, &mut value.message);
+        core::mem::swap(&mut vec, &mut value.message);
         // Safety: .message is a String (just FFI safe).
         unsafe { String::from_utf8_unchecked(vec.into()) }
     }
@@ -83,8 +84,8 @@ impl From<anyhow::Error> for Error {
     }
 }
 
-impl From<Box<&dyn std::error::Error>> for Error {
-    fn from(value: Box<&dyn std::error::Error>) -> Self {
+impl From<Box<&dyn core::error::Error>> for Error {
+    fn from(value: Box<&dyn core::error::Error>) -> Self {
         Self::from(value.to_string())
     }
 }
@@ -105,7 +106,7 @@ pub fn clear_error(err: &mut Error) {
 /// # Safety
 ///
 /// Only pass null or a pointer to a valid, mutable `ddog_Error`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_Error_drop(error: Option<&mut Error>) {
     if let Some(err) = error {
         clear_error(err);
@@ -116,7 +117,7 @@ pub unsafe extern "C" fn ddog_Error_drop(error: Option<&mut Error>) {
 /// is dropped.
 /// # Safety
 /// Only pass null or a valid reference to a `ddog_Error`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_Error_message(error: Option<&Error>) -> CharSlice<'_> {
     match error {
         None => CharSlice::empty(),
@@ -136,5 +137,5 @@ pub unsafe extern "C" fn ddog_Error_message(error: Option<&Error>) -> CharSlice<
 
 pub type MaybeError = crate::Option<Error>;
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_MaybeError_drop(_: MaybeError) {}

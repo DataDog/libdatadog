@@ -1,6 +1,8 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+extern crate alloc;
+
 use criterion::criterion_main;
 
 mod benchmarks;

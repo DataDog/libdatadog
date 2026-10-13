@@ -1,8 +1,10 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use alloc::borrow::Cow;
+use core::net::Ipv6Addr;
 use libdd_common::regex_engine::Regex;
-use std::{borrow::Cow, collections::HashSet, net::Ipv6Addr, sync::LazyLock};
+use std::{collections::HashSet, sync::LazyLock};
 
 const ALLOWED_IP_ADDRESSES: [&str; 5] = [
     // localhost
@@ -38,7 +40,7 @@ static PREFIX_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 pub fn quantize_peer_ip_addresses<'a>(s: &'a str) -> Cow<'a, str> {
     let values = s.split(',');
     let mut should_return_new_string = false; // Set to true if the function should return a modified
-                                              // version of the string
+    // version of the string
 
     let quantized_values = values
         .map(|v| {
@@ -258,7 +260,12 @@ mod tests {
             ),
             "blocked-ip-address:1234,blocked-ip-address:53,blocked-ip-address,foo.dog"
         );
-        assert_eq!(quantize_peer_ip_addresses("http://172.24.160.151:8091,172.24.163.33:8091,172.24.164.111:8091,172.24.165.203:8091,172.24.168.235:8091,172.24.170.130:8091"), "http://blocked-ip-address:8091,blocked-ip-address:8091");
+        assert_eq!(
+            quantize_peer_ip_addresses(
+                "http://172.24.160.151:8091,172.24.163.33:8091,172.24.164.111:8091,172.24.165.203:8091,172.24.168.235:8091,172.24.170.130:8091"
+            ),
+            "http://blocked-ip-address:8091,blocked-ip-address:8091"
+        );
         assert_eq!(
             quantize_peer_ip_addresses("10-60-160-172.my-service.namespace.svc.abc.cluster.local"),
             "blocked-ip-address.my-service.namespace.svc.abc.cluster.local"

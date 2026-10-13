@@ -1,16 +1,16 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-pub use crate::send_data::send_data_result::SendDataResult;
 pub use crate::send_data::SendData;
+pub use crate::send_data::send_data_result::SendDataResult;
 use crate::span::v05::dict::SharedDict;
-use crate::span::{v05, TraceData};
-pub use crate::tracer_header_tags::TracerHeaderTags;
+use crate::span::{TraceData, v05};
+pub use crate::tracer_header_tags::{TracerGenericTags, TracerHeaderTags};
 use crate::tracer_payload::TracerPayloadCollection;
-use crate::tracer_payload::{self, TraceChunks, TraceEncoding};
+use crate::tracer_payload::{self, TraceChunks};
 use anyhow::anyhow;
-use bytes::buf::Reader;
 use bytes::Buf;
+use bytes::buf::Reader;
 use http_body_util::BodyExt;
 use libdd_common::azure_app_services;
 use libdd_trace_normalization::normalizer;
@@ -68,10 +68,14 @@ fn get_v05_strings_dict(reader: &mut Reader<impl Buf>) -> anyhow::Result<Vec<Str
     for _ in 0..dict_size {
         match read_value(reader)? {
             Value::String(s) => {
-                let parsed_string = s.into_str().ok_or_else(|| anyhow!("Error reading string dict"))?;
+                let parsed_string = s
+                    .into_str()
+                    .ok_or_else(|| anyhow!("Error reading string dict"))?;
                 dict.push(parsed_string);
             }
-            val => anyhow::bail!("Error deserializing strings dictionary. Value in string dict is not a string: {val}")
+            val => anyhow::bail!(
+                "Error deserializing strings dictionary. Value in string dict is not a string: {val}"
+            ),
         }
     }
     Ok(dict)
@@ -152,17 +156,19 @@ fn get_v05_span(reader: &mut Reader<impl Buf>, dict: &[String]) -> anyhow::Resul
         Value::Map(meta) => {
             for (k, v) in meta.iter() {
                 match k {
-                    Value::Integer(k) => {
-                        match v {
-                            Value::Integer(v) => {
-                                let key = str_from_dict(dict, *k)?;
-                                let val = str_from_dict(dict, *v)?;
-                                span.meta.insert(key, val);
-                            }
-                            _ => anyhow::bail!("Error reading span meta, value is not an integer and can't be looked up in dict: {v}")
+                    Value::Integer(k) => match v {
+                        Value::Integer(v) => {
+                            let key = str_from_dict(dict, *k)?;
+                            let val = str_from_dict(dict, *v)?;
+                            span.meta.insert(key, val);
                         }
-                    }
-                    _ => anyhow::bail!("Error reading span meta, key is not an integer and can't be looked up in dict: {k}")
+                        _ => anyhow::bail!(
+                            "Error reading span meta, value is not an integer and can't be looked up in dict: {v}"
+                        ),
+                    },
+                    _ => anyhow::bail!(
+                        "Error reading span meta, key is not an integer and can't be looked up in dict: {k}"
+                    ),
                 }
             }
         }
@@ -222,10 +228,10 @@ fn get_v05_string(
     field_name: &str,
 ) -> anyhow::Result<String> {
     match read_value(reader)? {
-        Value::Integer(s) => {
-            str_from_dict(dict, s)
-        },
-        val => anyhow::bail!("Error reading {field_name}, value is not an integer and can't be looked up in dict: {val}")
+        Value::Integer(s) => str_from_dict(dict, s),
+        val => anyhow::bail!(
+            "Error reading {field_name}, value is not an integer and can't be looked up in dict: {val}"
+        ),
     }
 }
 
@@ -318,6 +324,7 @@ pub(crate) fn construct_tracer_payload(
         language_version: tracer_tags.lang_version.to_string(),
         tags: HashMap::new(),
         tracer_version: tracer_tags.tracer_version.to_string(),
+        container_debug: None,
     }
 }
 
@@ -331,6 +338,7 @@ pub(crate) fn cmp_send_data_payloads(a: &pb::TracerPayload, b: &pb::TracerPayloa
         .then(a.runtime_id.cmp(&b.runtime_id))
         .then(a.env.cmp(&b.env))
         .then(a.app_version.cmp(&b.app_version))
+        .then(a.container_debug.cmp(&b.container_debug))
 }
 
 pub fn coalesce_send_data(mut data: Vec<SendData>) -> Vec<SendData> {
@@ -352,10 +360,13 @@ pub fn coalesce_send_data(mut data: Vec<SendData>) -> Vec<SendData> {
             // has similar results. The primary goal here is avoiding many small requests.
             // TODO: maybe make the MAX_PAYLOAD_SIZE configurable?
             if a.size + b.size < MAX_PAYLOAD_SIZE / 2 {
-                // Note: dedup_by drops a, and retains b.
-                b.tracer_payloads.append(&mut a.tracer_payloads);
-                b.size += a.size;
-                return true;
+                // Note: dedup_by drops a, and retains b. Only drop a if the append actually
+                // merged its data into b; otherwise keep both entries (e.g. diverging V1
+                // tracer metadata) so a's traces aren't silently lost.
+                if b.tracer_payloads.append(&mut a.tracer_payloads) {
+                    b.size += a.size;
+                    return true;
+                }
             }
         }
         false
@@ -542,13 +553,11 @@ pub fn enrich_span_with_google_cloud_function_metadata(
     function: Option<String>,
 ) {
     #[allow(clippy::todo)]
-    let Some(region) = &mini_agent_metadata.gcp_region
-    else {
+    let Some(region) = &mini_agent_metadata.gcp_region else {
         todo!()
     };
     #[allow(clippy::todo)]
-    let Some(project) = &mini_agent_metadata.gcp_project_id
-    else {
+    let Some(project) = &mini_agent_metadata.gcp_project_id else {
         todo!()
     };
 
@@ -583,25 +592,28 @@ pub fn enrich_span_with_azure_function_metadata(span: &mut pb::Span) {
     }
 }
 
-pub fn collect_trace_chunks<T: TraceData>(
-    traces: Vec<Vec<crate::span::v04::Span<T>>>,
-    format: TraceEncoding,
+/// Converts v0.4-shaped span chunks into the v0.5 wire representation.
+///
+/// v0.5 deduplicates every string field across the whole payload through a shared dictionary
+/// and replaces them with `u32` indices. This walks each span via [`v05::from_v04_span`],
+/// interning strings into the [`SharedDict`] as it goes, and returns the resulting
+/// `(dict, traces)` pair wrapped in [`TraceChunks::V05`].
+///
+/// Returns `Err` if any span fails to convert (e.g. unsupported field value); the partial
+/// dictionary built so far is discarded.
+pub fn convert_trace_chunks_v04_to_v05<T: TraceData>(
+    traces: &[Vec<crate::span::v04::Span<T>>],
 ) -> anyhow::Result<TraceChunks<T>> {
-    match format {
-        TraceEncoding::V05 => {
-            let mut shared_dict = SharedDict::default();
-            let mut v05_traces: Vec<Vec<v05::Span>> = Vec::with_capacity(traces.len());
-            for trace in traces {
-                let v05_trace = trace
-                    .into_iter()
-                    .map(|span| v05::from_v04_span(span, &mut shared_dict))
-                    .collect::<anyhow::Result<Vec<_>>>()?;
-                v05_traces.push(v05_trace);
-            }
-            Ok(TraceChunks::V05((shared_dict, v05_traces)))
-        }
-        TraceEncoding::V04 => Ok(TraceChunks::V04(traces)),
+    let mut shared_dict = SharedDict::default();
+    let mut v05_traces: Vec<Vec<v05::Span>> = Vec::with_capacity(traces.len());
+    for trace in traces {
+        let v05_trace = trace
+            .iter()
+            .map(|span| v05::from_v04_span(span, &mut shared_dict))
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        v05_traces.push(v05_trace);
     }
+    Ok(TraceChunks::V05((shared_dict, v05_traces)))
 }
 
 pub fn collect_pb_trace_chunks<T: tracer_payload::TraceChunkProcessor>(
@@ -638,12 +650,12 @@ pub fn collect_pb_trace_chunks<T: tracer_payload::TraceChunkProcessor>(
 
         for span in chunk.spans.iter_mut() {
             // TODO: obfuscate & truncate spans
-            if tracer_header_tags.client_computed_top_level {
+            if tracer_header_tags.generic.client_computed_top_level {
                 update_tracer_top_level(span);
             }
         }
 
-        if !tracer_header_tags.client_computed_top_level {
+        if !tracer_header_tags.generic.client_computed_top_level {
             compute_top_level_span(&mut chunk.spans);
         }
 
@@ -712,7 +724,7 @@ mod tests {
         test_utils::{create_test_no_alloc_span, create_test_span},
     };
     use http::Request;
-    use libdd_common::{http_common, Endpoint};
+    use libdd_common::{Endpoint, http_common};
     use serde_json::json;
 
     fn find_index_in_dict(dict: &SharedDictBytes, value: &str) -> Option<u32> {
@@ -742,6 +754,7 @@ mod tests {
                     env: "".to_string(),
                     hostname: "".to_string(),
                     app_version: "".to_string(),
+                    container_debug: None,
                 }]),
                 TracerHeaderTags::default(),
                 &Endpoint::default(),
@@ -1118,10 +1131,10 @@ mod tests {
     }
 
     #[test]
-    fn test_collect_trace_chunks_v05() {
+    fn test_convert_trace_chunks_v04_to_v05() {
         let chunk = vec![create_test_no_alloc_span(123, 456, 789, 1, true)];
 
-        let collection = collect_trace_chunks(vec![chunk], TraceEncoding::V05).unwrap();
+        let collection = convert_trace_chunks_v04_to_v05(&[chunk]).unwrap();
 
         let (dict, traces) = match collection {
             TraceChunks::V05(payload) => payload,
@@ -1190,27 +1203,6 @@ mod tests {
                 .unwrap(),
             1.0
         );
-    }
-
-    #[test]
-    fn test_collect_trace_chunks_v04() {
-        let chunk = vec![create_test_no_alloc_span(123, 456, 789, 1, true)];
-
-        let collection = collect_trace_chunks(vec![chunk], TraceEncoding::V04).unwrap();
-
-        let traces = match collection {
-            TraceChunks::V04(traces) => traces,
-            _ => panic!("Unexpected type"),
-        };
-
-        assert_eq!(traces.len(), 1);
-        assert_eq!(traces[0].len(), 1);
-        let span = &traces[0][0];
-        assert_eq!(span.trace_id, 123);
-        assert_eq!(span.span_id, 456);
-        assert_eq!(span.parent_id, 789);
-        assert_eq!(span.start, 1);
-        assert_eq!(span.error, 0);
     }
 
     #[test]

@@ -20,6 +20,10 @@ pub mod os {
         std::env::consts::OS
     }
 
+    pub const fn architecture() -> &'static str {
+        std::env::consts::ARCH
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     pub fn os_version() -> anyhow::Result<String> {
         sys_info::os_release().map_err(|e| e.into())
@@ -58,14 +62,16 @@ pub mod os {
     ///   malformed. All in all pretty safe
     #[cfg(unix)]
     pub unsafe fn uname() -> Option<String> {
-        let mut n = std::mem::zeroed();
-        match libc::uname(&mut n) {
-            0 => Some(
-                CStr::from_ptr(n.version.as_ptr())
-                    .to_string_lossy()
-                    .into_owned(),
-            ),
-            _ => None,
+        unsafe {
+            let mut n = std::mem::zeroed();
+            match libc::uname(&mut n) {
+                0 => Some(
+                    CStr::from_ptr(n.version.as_ptr())
+                        .to_string_lossy()
+                        .into_owned(),
+                ),
+                _ => None,
+            }
         }
     }
 }

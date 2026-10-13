@@ -30,6 +30,30 @@ impl SpanKind {
             _ => SpanKind::Internal,
         }
     }
+
+    /// Renders this [`SpanKind`] as the lowercase string used for the v0.4 `span.kind` meta value.
+    pub fn as_meta_str(&self) -> &'static str {
+        match self {
+            SpanKind::Internal => "internal",
+            SpanKind::Server => "server",
+            SpanKind::Client => "client",
+            SpanKind::Producer => "producer",
+            SpanKind::Consumer => "consumer",
+        }
+    }
+}
+
+impl From<u32> for SpanKind {
+    /// OTEL SpanKind wire value → enum; unset/unknown → Internal (per OTEL spec).
+    fn from(kind: u32) -> Self {
+        match kind {
+            2 => SpanKind::Server,
+            3 => SpanKind::Client,
+            4 => SpanKind::Producer,
+            5 => SpanKind::Consumer,
+            _ => SpanKind::Internal,
+        }
+    }
 }
 
 /// Typed V1 attribute value.
@@ -45,6 +69,24 @@ pub enum AttributeValue<T: TraceData> {
     List(Vec<AttributeValue<T>>),
 }
 
+// Implemented manually rather than derived: `VecMap`'s `PartialEq` is gated to
+// test/test-utils (see its definition) to keep its allocation cost out of casual `==`, so the
+// `KeyValue` variant compares via `slow_compare` instead of relying on that trait impl.
+impl<T: TraceData> PartialEq for AttributeValue<T> {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (AttributeValue::String(a), AttributeValue::String(b)) => a == b,
+            (AttributeValue::Float(a), AttributeValue::Float(b)) => a == b,
+            (AttributeValue::Int(a), AttributeValue::Int(b)) => a == b,
+            (AttributeValue::Bool(a), AttributeValue::Bool(b)) => a == b,
+            (AttributeValue::Bytes(a), AttributeValue::Bytes(b)) => a == b,
+            (AttributeValue::KeyValue(a), AttributeValue::KeyValue(b)) => a.slow_compare(b),
+            (AttributeValue::List(a), AttributeValue::List(b)) => a == b,
+            _ => false,
+        }
+    }
+}
+
 /// The generic representation of a V1 span.
 ///
 /// `T: TraceData` carries the associated text type `T::Text` used for every string field in the
@@ -52,7 +94,7 @@ pub enum AttributeValue<T: TraceData> {
 /// borrowed (e.g. `&str`). To define a generic function taking any `Span<T>` you can use the
 /// [`TraceData`] trait:
 /// ```
-/// use libdd_trace_utils::span::{v1::Span, TraceData};
+/// use libdd_trace_utils::span::{TraceData, v1::Span};
 /// fn foo<T: TraceData>(span: Span<T>) {
 ///     let _ = span.attributes.get("foo");
 /// }
@@ -112,6 +154,7 @@ pub struct TraceChunk<T: TraceData> {
 /// A V1 tracer payload: tracer-level metadata and the trace chunks it carries.
 #[derive(Debug, Default)]
 pub struct TracerPayload<T: TraceData> {
+    pub container_id: T::Text,
     pub language_name: T::Text,
     pub language_version: T::Text,
     pub tracer_version: T::Text,
