@@ -8,10 +8,10 @@
 //! map. However, since meta and metrics are expected to be typically small (20ish elements or
 //! less), linear scan is usually still competitive with hashmap's `get`.
 
+use hashbrown::{HashMap, hash_map};
 use libdd_trace_model::{AttributeValue, TraceText, ValueMap, ValueMapMut, ValueTypes};
 use serde::ser::{Serialize, Serializer};
 use std::borrow::Borrow;
-use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 use std::slice;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -387,8 +387,6 @@ impl<K: Eq + Hash, V> VecMap<K, V> {
             return;
         }
 
-        self.data.reverse();
-
         // Since we're going to shuffle elements around, it's not easy to keep references to keys in
         // the deduping set while deleting some of them, since deletion in a vec shifts all other
         // elements after it, invalidating references. When we finally call `retain`, we must not
@@ -411,12 +409,22 @@ impl<K: Eq + Hash, V> VecMap<K, V> {
         // We choose the two-pass approach, which is simpler, safe and reasonably fast. If needed in
         // the future, the unsafe one-pass approach can be implemented.
         let keep: Vec<bool> = {
-            let mut seen = HashSet::with_capacity(self.len());
-            self.data.iter().map(|(k, _)| seen.insert(k)).collect()
+            let mut seen = hashbrown::HashSet::with_capacity(self.len());
+            self.data
+                .iter()
+                .rev()
+                .map(|(k, _)| seen.insert(k))
+                .collect()
         };
 
-        let mut keep = keep.into_iter();
-        self.data.retain(|_| keep.next().unwrap_or(false));
+        let data_len = self.data.len();
+        let mut i = 0;
+        self.data.retain(|_| {
+            // keep is a bitmap of elements in reverse order
+            let keep = keep.get(data_len - 1 - i).copied().unwrap_or(false);
+            i += 1;
+            keep
+        });
 
         self.deduped = true;
     }
@@ -530,7 +538,7 @@ impl<'a, K, V> DedupedVecMap<'a, K, V> {
 
 pub enum DedupedVecMapIter<'b, 'a: 'b, K, V> {
     Borrowed(slice::Iter<'a, (K, V)>),
-    Owned(std::collections::hash_map::Iter<'b, &'a K, &'a V>),
+    Owned(hash_map::Iter<'b, &'a K, &'a V>),
 }
 
 impl<'b, 'a: 'b, K, V> Iterator for DedupedVecMapIter<'b, 'a, K, V> {
