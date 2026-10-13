@@ -2,10 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use libdd_ipc::{SeqpacketConn, ipc_server::OwnedServerConn};
-use std::sync::{
-    Arc,
-    atomic::{AtomicU64, Ordering},
-};
+use std::sync::atomic::AtomicU64;
 
 #[libdd_ipc_macros::service]
 trait Oneway {
@@ -17,7 +14,7 @@ trait Oneway {
 struct Handler {
     connection: OwnedServerConn,
     received: AtomicU64,
-    value: AtomicU64,
+    value: u64,
 }
 
 impl Oneway for Handler {
@@ -27,11 +24,11 @@ impl Oneway for Handler {
     fn recv_counter(&self) -> &AtomicU64 {
         &self.received
     }
-    async fn post(&self, value: u64) {
-        self.value.fetch_add(value, Ordering::Relaxed);
+    async fn post(&mut self, value: u64) {
+        self.value += value;
     }
-    async fn read(&self) -> u64 {
-        self.value.load(Ordering::Relaxed)
+    async fn read(&mut self) -> u64 {
+        self.value
     }
 }
 
@@ -39,11 +36,12 @@ impl Oneway for Handler {
 #[cfg_attr(miri, ignore = "requires native IPC sockets")]
 async fn oneway_packets_preserve_order_without_consuming_reply_slots() {
     let (client, server) = SeqpacketConn::socketpair().unwrap();
-    let server = tokio::spawn(serve_oneway_connection(Arc::new(Handler {
+    let mut handler = Handler {
         connection: OwnedServerConn::new(server).unwrap(),
         received: AtomicU64::new(0),
-        value: AtomicU64::new(0),
-    })));
+        value: 0,
+    };
+    let server = tokio::spawn(async move { serve_oneway_connection(&mut handler).await });
     tokio::task::spawn_blocking(move || {
         let mut client = OnewayChannel::new(client);
         assert!(client.try_send_post(1));

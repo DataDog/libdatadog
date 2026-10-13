@@ -135,7 +135,12 @@ mod tests {
     /// A malformed value must not fail configuration creation through the FFI boundary.
     #[test]
     fn ffi_getter_returns_false_when_field_is_malformed() {
-        let json = config_json(r#", "observeFullEvaluationData": null"#);
-        assert!(!observe_full_evaluation_data_via_ffi(&json));
+        for value in ["null", "1", "0", "\"true\"", "[]", "{}"] {
+            let json = config_json(&format!(", \"observeFullEvaluationData\": {value}"));
+            assert!(
+                !observe_full_evaluation_data_via_ffi(&json),
+                "value={value}"
+            );
+        }
     }
 }
