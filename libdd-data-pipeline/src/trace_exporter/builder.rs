@@ -1108,9 +1108,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
 
         Ok(TraceExporter {
             #[cfg(feature = "external-observations")]
-            observations: self
-                .observations
-                .then(|| Arc::new(super::CollapsedSpansObservations::default())),
+            observations: self.observations,
             endpoint: Endpoint {
                 url: agent_url,
                 test_token: self.test_session_token.map(|token| token.into()),

@@ -57,8 +57,6 @@ use libdd_shared_runtime::BlockingRuntime;
 use libdd_shared_runtime::{SharedRuntime, WorkerHandle};
 #[cfg(feature = "telemetry")]
 use libdd_telemetry::worker::TelemetryWorkerHandle;
-#[cfg(feature = "external-observations")]
-use libdd_trace_stats::span_concentrator::cardinality_limit_telemetry::CollapsedSpansObservations;
 use libdd_trace_utils::msgpack_decoder;
 use libdd_trace_utils::send_with_retry::{
     CompressionStrategy, RetryStrategy, SendWithRetryError, SendWithRetryResult, send_with_retry,
@@ -312,8 +310,9 @@ pub struct TraceExporter<
     log_output: Option<usize>,
     /// Whether background workers should be restarted in the child after a `fork()`.
     restart_after_fork: bool,
+    /// Whether the caller collects observations instead of native telemetry.
     #[cfg(feature = "external-observations")]
-    observations: Option<Arc<CollapsedSpansObservations>>,
+    observations: bool,
 }
 
 impl<
@@ -335,7 +334,7 @@ impl<
     #[cfg(feature = "telemetry")]
     pub fn set_telemetry_handle(&self, handle: Option<TelemetryWorkerHandle<C>>) {
         #[cfg(feature = "external-observations")]
-        if self.observations.is_some() {
+        if self.observations {
             return;
         }
         self.telemetry

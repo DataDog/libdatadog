@@ -111,7 +111,7 @@ name = "send-traces-with-stats"
 required-features = ["stats-obfuscation"]
 
 [features]
-default = ["https", "telemetry", "external-observations"]
+default = ["https", "telemetry"]
 telemetry = ["libdd-telemetry", "libdd-trace-stats/telemetry"]
 https = [
     "libdd-common/https",
@@ -128,7 +128,7 @@ https = [
 # temporary replacement while two instances of a client are used in an SDK. Once that
 # is no longer a problem, meaning the SDK and data-pipeline can share the same instance
 # this feature will be no longer useful and be removed.
-external-observations = ["telemetry", "libdd-trace-stats/external-observations"]
+external-observations = ["telemetry"]
 stats-obfuscation = [
     "libdd-data-pipeline-core/stats-obfuscation",
     "libdd-trace-stats/stats-obfuscation",
