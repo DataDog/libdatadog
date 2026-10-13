@@ -82,8 +82,13 @@ if(NOT WIN32)
   target_link_libraries(crashtracking_unhandled_exception PRIVATE Datadog::Profiling)
 endif()
 
+option(DDOG_EXTERNAL_OBSERVATIONS "Build trace_exporter against the external observations API" OFF)
+
 add_executable(trace_exporter trace_exporter.c)
 target_link_libraries(trace_exporter PRIVATE Datadog::Profiling)
+if(DDOG_EXTERNAL_OBSERVATIONS)
+  target_compile_definitions(trace_exporter PRIVATE DDOG_TRACE_EXPORTER_EXTERNAL_OBSERVATIONS)
+endif()
 set_vcruntime_link_type(trace_exporter ${VCRUNTIME_LINK_TYPE})
 
 add_executable(array_queue array_queue.cpp)

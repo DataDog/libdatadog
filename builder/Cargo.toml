@@ -31,6 +31,9 @@ data-pipeline = []
 data-pipeline-compression = ["data-pipeline"]
 # Enable client-side stats obfuscation in the data-pipeline crate.
 data-pipeline-stats-obfuscation = ["data-pipeline"]
+# Enable external observations so the telemetry data can be returned over the API. Consumers
+# of the generated header must define DDOG_TRACE_EXPORTER_EXTERNAL_OBSERVATIONS to see it.
+data-pipeline-external-observations = ["data-pipeline"]
 symbolizer = []
 library-config = []
 log = []

@@ -400,6 +400,7 @@ pub struct StatsExporter<
     flush_interval: time::Duration,
     concentrator: Arc<Mutex<Con>>,
     sender: StatsSender<Cap>,
+    #[cfg(feature = "external-observations")]
     observations: Option<
         Arc<crate::span_concentrator::cardinality_limit_telemetry::CollapsedSpansObservations>,
     >,
@@ -420,6 +421,7 @@ impl<
 > StatsExporter<Cap, Con>
 {
     /// Select externally drained cardinality observations instead of native telemetry.
+    #[cfg(feature = "external-observations")]
     pub fn with_observations(
         mut self,
         observations: Arc<
@@ -530,6 +532,7 @@ impl<
         Self {
             flush_interval,
             concentrator,
+            #[cfg(feature = "external-observations")]
             observations: None,
             sender: StatsSender::new(
                 destination,
@@ -567,6 +570,7 @@ impl<
             concentrator.flush_buckets(force_flush)
         };
 
+        #[cfg(feature = "external-observations")]
         if let Some(observations) = &self.observations {
             observations.record(flush.collapsed_spans, &flush.collapsed_fields_metrics);
         }
@@ -1669,7 +1673,10 @@ mod tests {
         );
     }
 
-    #[cfg(any(feature = "telemetry", feature = "dogstatsd"))]
+    #[cfg(all(
+        feature = "external-observations",
+        any(feature = "telemetry", feature = "dogstatsd")
+    ))]
     #[cfg_attr(miri, ignore = "httpmock retains detached server threads")]
     #[tokio::test]
     async fn external_observations_include_collapses_even_when_stats_send_fails() {
