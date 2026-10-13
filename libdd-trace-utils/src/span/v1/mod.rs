@@ -4,7 +4,7 @@
 use crate::span::vec_map::VecMap;
 use crate::span::{BytesData, SliceData, TraceData};
 pub use libdd_trace_model::AttributeValue;
-use libdd_trace_model::{TraceText, Value};
+use libdd_trace_model::TraceText;
 pub use thin_vec::ThinVec;
 
 /// OpenTelemetry SpanKind values, encoded on the wire as a `uint32`.
@@ -113,8 +113,12 @@ macro_rules! impl_vec_map_attributes {
         }
 
         impl<T: TraceData> libdd_trace_model::AttributesIter for $ty<T> {
-            fn attributes(&self) -> impl Iterator<Item = (&str, &Value<Self>)> {
-                self.attributes.iter_unique().map(|(k, v)| (k.as_str(), v))
+            fn attributes(
+                &self,
+            ) -> impl Iterator<Item = (&str, libdd_trace_model::AttributeRef<'_, T>)> {
+                self.attributes
+                    .iter_unique()
+                    .map(|(k, v)| (k.as_str(), v.into()))
             }
 
             fn has_attribute(&self, key: &str) -> bool {
@@ -202,8 +206,6 @@ impl<T: TraceData> libdd_trace_model::Span for Span<T> {
 fn non_empty<T: TraceText>(text: &T) -> Option<&str> {
     Some(text.as_str()).filter(|s| !s.is_empty())
 }
-
-impl<T: TraceData> libdd_trace_model::SpanTags for Span<T> {}
 
 impl<T: TraceData> libdd_trace_model::SpanEvent for SpanEvent<T> {
     fn name(&self) -> &str {
@@ -327,8 +329,8 @@ mod tests {
     use super::*;
     use libdd_tinybytes::BytesString;
     use libdd_trace_model::{
-        Attributes as _, ChunkSpanView, Span as _, SpanEvent as _, SpanLink as _, SpanTags as _,
-        TraceChunk as _,
+        AttributeRef, Attributes as _, AttributesIter as _, ChunkSpanView, Span as _,
+        SpanEvent as _, SpanLink as _, TraceChunk as _,
     };
 
     #[test]
@@ -381,7 +383,7 @@ mod tests {
             ),
             (None, None, false)
         );
-        assert_eq!(chunk.tag_str("_dd.origin"), None);
+        assert_eq!(chunk.origin(), "");
         let chunk = TraceChunkBytes {
             dropped_trace: true,
             origin: BytesString::from_static("synthetics"),
@@ -398,7 +400,8 @@ mod tests {
             (Some(2), Some(4), true)
         );
         assert_eq!(chunk.origin(), "synthetics");
-        assert_eq!(chunk.tag_str("_dd.origin"), Some("synthetics"));
+        // The chunk origin isn't an attribute.
+        assert_eq!(chunk.attribute_str("_dd.origin"), None);
         assert_eq!(chunk.spans().filter(|s| s.span_id() == 1).count(), 1);
     }
 
@@ -442,7 +445,7 @@ mod tests {
         assert_eq!(span.span_kind(), None);
         span.span_kind = SpanKind::Client;
         assert_eq!(span.span_kind(), Some("client"));
-        assert_eq!(span.tag_str("span.kind"), Some("client"));
+        assert_eq!(span.compat().attribute_str("span.kind"), Some("client"));
     }
 
     #[test]
@@ -457,15 +460,18 @@ mod tests {
             (span.env(), span.version(), span.component()),
             (Some("prod"), Some("1.2"), Some("http"))
         );
-        assert_eq!(span.tag_str("env"), Some("prod"));
-        // The attribute getters don't see promoted tags.
+        // The attribute getters don't see promoted tags, unless through the compat view.
         assert_eq!(span.attribute_str("env"), None);
+        assert_eq!(span.compat().attribute_str("env"), Some("prod"));
+        assert!(span.compat().has_attribute("env"));
+        // Promoted tags are strings.
+        assert_eq!(span.compat().attribute_f64("env"), None);
         // Empty text is unset.
         assert_eq!(SpanBytes::default().env(), None);
     }
 
     #[test]
-    fn chunk_span_view_tags_layer_span_over_chunk() {
+    fn compat_chunk_span_view_layers_span_over_chunk() {
         let s = |v: &'static str| AttributeValue::String(BytesString::from_static(v));
         let mut span = SpanBytes {
             env: BytesString::from_static("staging"),
@@ -480,6 +486,7 @@ mod tests {
         };
         for (k, v) in [
             ("env", "prod"),
+            ("version", "1.2"),
             ("peer.service", "chunk-db"),
             ("team", "core"),
         ] {
@@ -489,22 +496,39 @@ mod tests {
             span: &chunk.spans[0],
             chunk: &chunk,
         };
-        let mut tags: Vec<(&str, &str)> =
-            view.tags().map(|(k, v)| (k, v.as_str().unwrap())).collect();
-        tags.sort_unstable();
+        let compat = view.compat();
+        let mut attributes: Vec<(&str, &str)> = compat
+            .attributes()
+            .map(|(k, v)| (k, v.as_str().unwrap()))
+            .collect();
+        attributes.sort_unstable();
+        // Each key once: the span's `env` field shadows the chunk's `env` attribute.
         assert_eq!(
-            tags,
+            attributes,
             [
-                ("_dd.origin", "synthetics"),
                 ("env", "staging"),
                 ("peer.service", "span-db"),
                 ("team", "core"),
+                ("version", "1.2"),
             ]
         );
-        assert_eq!(view.tag_str("team"), Some("core"));
-        assert_eq!(view.tag_str("_dd.origin"), Some("synthetics"));
-        assert!(view.has_tag("_dd.origin"));
-        assert!(!view.has_tag("version"));
+        assert_eq!(compat.attribute_str("team"), Some("core"));
+        assert_eq!(compat.attribute_str("env"), Some("staging"));
+        assert!(!compat.has_attribute("component"));
+        // Promoted chunk tags get no compatibility.
+        assert_eq!(compat.attribute_str("_dd.origin"), None);
+        assert!(!compat.has_attribute("_dd.origin"));
+    }
+
+    #[test]
+    fn attributes_iter_borrows_values() {
+        let mut span = SpanBytes::default();
+        span.attributes
+            .insert(BytesString::from_static("n"), AttributeValue::Int(3));
+        assert_eq!(
+            span.attributes().collect::<Vec<_>>(),
+            [("n", AttributeRef::Int(3))]
+        );
     }
 
     #[test]

@@ -3,13 +3,13 @@
 
 //! A read-only view of a span that falls back to its enclosing chunk.
 
-use crate::{Attributes, AttributesIter, ORIGIN_KEY, Span, SpanTags, TagValue, TraceChunk, Value};
+use crate::{AttributeRef, Attributes, AttributesIter, Span, TraceChunk};
 
 /// Wraps a span together with its enclosing chunk.
 ///
 /// Chunk attributes hold values common to every span in the chunk (e.g. peer tags). Attribute
-/// and tag lookups fall back to the chunk whenever the span doesn't have its own value for a given
-/// key, with [`Span::tag_str`] also resolving the chunk's promoted tags (e.g. `_dd.origin`).
+/// lookups fall back to the chunk whenever the span doesn't have its own value for a given key.
+/// Chunk-level fields (e.g. [`TraceChunk::origin`]) are read from [`ChunkSpanView::chunk`].
 pub struct ChunkSpanView<'a, C: TraceChunk> {
     pub span: &'a C::Span,
     pub chunk: &'a C,
@@ -47,7 +47,7 @@ where
     C: TraceChunk + AttributesIter,
     C::Span: AttributesIter,
 {
-    fn attributes(&self) -> impl Iterator<Item = (&str, &Value<Self>)> {
+    fn attributes(&self) -> impl Iterator<Item = (&str, AttributeRef<'_, Self::Values>)> {
         self.span.attributes().chain(
             self.chunk
                 .attributes()
@@ -126,18 +126,6 @@ impl<C: TraceChunk> Span for ChunkSpanView<'_, C> {
             .or_else(|| self.chunk.attribute_str(crate::COMPONENT_KEY))
     }
 
-    // Promoted span tags resolve through the getters above (which include the chunk fallback);
-    // other keys go through the span's lookup, then the chunk's (e.g. its `_dd.origin` field).
-    fn tag_str(&self, key: &str) -> Option<&str> {
-        match key {
-            crate::SPAN_KIND_KEY => self.span_kind(),
-            crate::ENV_KEY => self.env(),
-            crate::VERSION_KEY => self.version(),
-            crate::COMPONENT_KEY => self.component(),
-            _ => self.span.tag_str(key).or_else(|| self.chunk.tag_str(key)),
-        }
-    }
-
     fn span_events(&self) -> impl Iterator<Item = &Self::SpanEvent> {
         self.span.span_events()
     }
@@ -161,30 +149,5 @@ impl<C: TraceChunk> Span for ChunkSpanView<'_, C> {
 
     fn is_partial_snapshot(&self) -> bool {
         self.span.is_partial_snapshot()
-    }
-}
-
-/// Yields the span's tags, then the chunk-level ones (its attributes, and its origin as
-/// `_dd.origin`) whose name the span doesn't have: the span's own values always win.
-impl<C> SpanTags for ChunkSpanView<'_, C>
-where
-    C: TraceChunk + AttributesIter,
-    C::Span: SpanTags,
-{
-    fn tags(&self) -> impl Iterator<Item = (&str, TagValue<'_, Self::Values>)> {
-        let origin = Some(self.chunk.origin())
-            .filter(|origin| !origin.is_empty())
-            .map(|origin| (ORIGIN_KEY, TagValue::Str(origin)));
-        let chunk_tags = self
-            .chunk
-            .attributes()
-            .map(|(key, value)| (key, TagValue::Value(value)))
-            .chain(origin)
-            .filter(|(key, _)| !self.span.has_tag(key));
-        self.span.tags().chain(chunk_tags)
-    }
-
-    fn has_tag(&self, name: &str) -> bool {
-        self.tags().any(|(key, _)| key == name)
     }
 }

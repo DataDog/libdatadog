@@ -3,7 +3,7 @@
 //! Trace-level filter logic for client-side stats (filter_tags, filter_tags_regex,
 //! ignore_resources as published by the agent's /info endpoint).
 use libdd_common::regex_engine::Regex;
-use libdd_trace_model::{ChunkSpanView, Span};
+use libdd_trace_model::{Attributes as _, ChunkSpanView, Span};
 use libdd_trace_normalization::{normalize_utils, normalizer};
 use tracing::{debug, error};
 
@@ -301,7 +301,8 @@ impl TraceFilterer {
     }
 
     fn check_tag_filter_with_normalization(filter: &impl TagFilter, root_span: &impl Span) -> bool {
-        let Some(value) = root_span.tag_str(filter.key()) else {
+        // Filter keys are user-configured v0.4 tag names, which may name a promoted tag.
+        let Some(value) = root_span.compat().attribute_str(filter.key()) else {
             return false;
         };
         match filter.key() {
@@ -812,15 +813,5 @@ mod tests {
             1,
             "dedicated span field should take precedence"
         );
-    }
-
-    #[test]
-    fn v1_reject_matches_chunk_origin() {
-        // The chunk-level `origin` field is exposed under `_dd.origin`.
-        let mut chunk = v1_chunk_with("r", &[]);
-        chunk.origin = "synthetics".into();
-        let mut traces = vec![chunk];
-        reject_str(&["_dd.origin:synthetics"]).filter_traces_v1(&mut traces);
-        assert!(traces.is_empty());
     }
 }

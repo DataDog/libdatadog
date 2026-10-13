@@ -293,6 +293,88 @@ impl<T: TraceData> libdd_trace_model::SpanEvent for SpanEvent<T> {
     }
 }
 
+/// A v04 trace (the spans sharing a trace id) viewed as a trace chunk.
+///
+/// v04 has no chunk-level storage: the chunk fields are read from the root span, the way the
+/// agent derives them (e.g. the origin from the root's `_dd.origin` tag), and the chunk has no
+/// attributes. The root span is found once, on construction.
+pub struct TraceChunk<'a, T: TraceData> {
+    spans: &'a [Span<T>],
+    root: Option<&'a Span<T>>,
+}
+
+impl<'a, T: TraceData> TraceChunk<'a, T> {
+    pub fn new(spans: &'a [Span<T>]) -> Self {
+        let root = super::trace_utils::get_root_span_index(spans)
+            .ok()
+            .and_then(|i| spans.get(i));
+        Self { spans, root }
+    }
+
+    fn root_meta(&self, key: &str) -> Option<&'a str> {
+        self.root?.meta.get(key).map(Borrow::borrow)
+    }
+}
+
+/// v04 chunks have no attributes.
+impl<T: TraceData> libdd_trace_model::Attributes for TraceChunk<'_, T> {
+    type Text = T::Text;
+    type Bytes = T::Bytes;
+    type Values = T;
+
+    fn attribute_str(&self, _key: &str) -> Option<&str> {
+        None
+    }
+
+    fn attribute_f64(&self, _key: &str) -> Option<f64> {
+        None
+    }
+}
+
+impl<T: TraceData> libdd_trace_model::AttributesIter for TraceChunk<'_, T> {
+    fn attributes(&self) -> impl Iterator<Item = (&str, libdd_trace_model::AttributeRef<'_, T>)> {
+        core::iter::empty()
+    }
+}
+
+impl<T: TraceData> libdd_trace_model::TraceChunk for TraceChunk<'_, T> {
+    type Span = Span<T>;
+
+    fn trace_id(&self) -> u128 {
+        self.root.map_or(0, |root| root.trace_id)
+    }
+
+    fn origin(&self) -> &str {
+        self.root_meta(libdd_trace_model::ORIGIN_KEY)
+            .unwrap_or_default()
+    }
+
+    fn spans(&self) -> impl Iterator<Item = &Self::Span> {
+        self.spans.iter()
+    }
+
+    fn priority(&self) -> Option<i32> {
+        let priority = self
+            .root?
+            .metrics
+            .get(libdd_trace_model::SAMPLING_PRIORITY_KEY)?;
+        i32::try_from(libdd_trace_model::f64_to_exact_i64(*priority)?).ok()
+    }
+
+    /// Parsed from the `"-<mechanism>"` value of the root's `_dd.p.dm` tag.
+    fn sampling_mechanism(&self) -> Option<u32> {
+        self.root_meta(libdd_trace_model::DECISION_MAKER_KEY)?
+            .strip_prefix('-')?
+            .parse()
+            .ok()
+    }
+
+    // v04 payloads report dropped traces through a request header, not per trace.
+    fn dropped_trace(&self) -> bool {
+        false
+    }
+}
+
 /// The generic representation of a V04 span link.
 /// `T` is the type used to represent strings in the span link.
 #[derive(Debug, Default, PartialEq, Serialize)]
@@ -684,5 +766,50 @@ mod tests {
         assert!(span.is_error());
         assert!(span.is_trace_root());
         assert!(!span.has_top_level());
+    }
+
+    #[test]
+    fn trace_chunk_reads_chunk_fields_from_root() {
+        use crate::span::v04::{SpanBytes, TraceChunk};
+        use libdd_trace_model::{ChunkSpanView, TraceChunk as _};
+
+        let mut root = SpanBytes {
+            trace_id: 7,
+            span_id: 1,
+            ..Default::default()
+        };
+        for (k, v) in [("_dd.origin", "synthetics"), ("_dd.p.dm", "-4")] {
+            root.meta.insert(k.into(), v.into());
+        }
+        root.metrics.insert("_sampling_priority_v1".into(), 2.0);
+        let mut child = SpanBytes {
+            trace_id: 7,
+            span_id: 2,
+            parent_id: 1,
+            ..Default::default()
+        };
+        child.meta.insert("_dd.origin".into(), "lambda".into());
+        // Some clients put the root span last.
+        let trace = [child, root];
+
+        let chunk = TraceChunk::new(&trace);
+        assert_eq!(chunk.trace_id(), 7);
+        // The root's origin is the chunk's, whatever the other spans say.
+        assert_eq!(chunk.origin(), "synthetics");
+        assert_eq!(chunk.priority(), Some(2));
+        assert_eq!(chunk.sampling_mechanism(), Some(4));
+        assert!(!chunk.dropped_trace());
+        assert_eq!(chunk.spans().count(), 2);
+        let view = ChunkSpanView {
+            span: &trace[0],
+            chunk: &chunk,
+        };
+        assert_eq!(view.chunk.origin(), "synthetics");
+
+        let empty = TraceChunk::<crate::span::BytesData>::new(&[]);
+        assert_eq!(
+            (empty.trace_id(), empty.origin(), empty.priority()),
+            (0, "", None)
+        );
     }
 }

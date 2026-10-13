@@ -15,7 +15,7 @@ use std::{
 use tracing::warn;
 
 use crate::span_concentrator::cardinality_limit_telemetry::CollapsedFieldSet;
-use libdd_trace_model::Span;
+use libdd_trace_model::{Attributes as _, ChunkSpanView, Span, TraceChunk};
 
 use super::{
     CardinalityLimitConfig,
@@ -37,7 +37,6 @@ const TAG_STATUS_CODE_OTEL: &str = "http.response.status_code";
 const TAG_METHOD_OTEL: &str = "http.request.method";
 const ADDITIONAL_METRIC_TAG_VALUE_MAX_LEN: usize = 200;
 const TAG_SYNTHETICS: &str = "synthetics";
-const TAG_ORIGIN: &str = "_dd.origin";
 const TAG_SVC_SRC: &str = "_dd.svc_src";
 const GRPC_STATUS_CODE_FIELD: &[&str] = &[
     "rpc.grpc.status_code",
@@ -296,8 +295,8 @@ impl<'a> BorrowedAggregationKey<'a> {
     /// key.
     /// If `additional_metric_tags` is not empty then matching span tags keys are included in the
     /// key.
-    pub(super) fn from_span<T: Span>(
-        span: &'a T,
+    pub(super) fn from_span<C: TraceChunk>(
+        span: &'a ChunkSpanView<'a, C>,
         peer_tag_keys: &'a [String],
         additional_metric_tag_keys: &'a [String],
     ) -> Self {
@@ -309,17 +308,20 @@ impl<'a> BorrowedAggregationKey<'a> {
         )
     }
 
-    pub(crate) fn from_obfuscated_span<'b, T>(
+    pub(crate) fn from_obfuscated_span<'b, C>(
         resource_name: &'a str,
-        span: &'b T,
+        span: &'b ChunkSpanView<'b, C>,
         peer_tag_keys: &'b [String],
         additional_metric_tag_keys: &'b [String],
     ) -> BorrowedAggregationKey<'a>
     where
-        T: Span,
+        C: TraceChunk,
         // resource_name is a temporary string on the stack the span will outlive it
         'b: 'a,
     {
+        // Peer tag and additional metric tag keys are user-configured v0.4 tag names, which may
+        // name a promoted tag.
+        let compat = span.compat();
         let span_kind = span.span_kind().unwrap_or_default();
         let peer_tags = if should_track_peer_tags(span_kind) {
             // Parse the meta tags of the span and return a list of the peer tags based on the list
@@ -327,7 +329,7 @@ impl<'a> BorrowedAggregationKey<'a> {
             peer_tag_keys
                 .iter()
                 .filter_map(|key| {
-                    let value = span.tag_str(key.as_str())?;
+                    let value = compat.attribute_str(key.as_str())?;
                     Some((key.as_str(), quantize_peer_ip_addresses(value)))
                 })
                 .collect()
@@ -359,7 +361,7 @@ impl<'a> BorrowedAggregationKey<'a> {
 
         let additional_metric_tags: Vec<(&'a str, &'a str)> = additional_metric_tag_keys
             .iter()
-            .filter_map(|key| match span.tag_str(key.as_str()) {
+            .filter_map(|key| match compat.attribute_str(key.as_str()) {
                 Some(v) if !v.is_empty() => {
                     // Byte length >= char count, so skip the char walk when byte length alone
                     // is within the max character length, otherwise stop as soon as we pass the max character length.
@@ -391,9 +393,7 @@ impl<'a> BorrowedAggregationKey<'a> {
                 service_source,
                 http_status_code: status_code,
                 grpc_status_code,
-                is_synthetics_request: span
-                    .tag_str(TAG_ORIGIN)
-                    .is_some_and(|origin| origin.starts_with(TAG_SYNTHETICS)),
+                is_synthetics_request: span.chunk.origin().starts_with(TAG_SYNTHETICS),
                 is_trace_root: if span.is_trace_root() {
                     pb::Trilean::True
                 } else {
@@ -827,7 +827,7 @@ fn encode_grouped_stats(key: OwnedAggregationKey, group: GroupedStats) -> pb::Cl
 
 #[cfg(test)]
 mod tests {
-    use libdd_trace_utils::span::v04::{SpanBytes, SpanSlice};
+    use libdd_trace_utils::span::v04::{self, SpanBytes, SpanSlice};
 
     use super::*;
     use libdd_trace_protobuf::pb;
@@ -1731,7 +1731,12 @@ mod tests {
         ];
 
         for (span, expected_key) in test_cases {
-            let borrowed_key = BorrowedAggregationKey::from_span(&span, &[], &[]);
+            let chunk = v04::TraceChunk::new(std::slice::from_ref(&span));
+            let view = ChunkSpanView {
+                span: &span,
+                chunk: &chunk,
+            };
+            let borrowed_key = BorrowedAggregationKey::from_span(&view, &[], &[]);
             assert_eq!(
                 OwnedAggregationKey::from(&borrowed_key),
                 expected_key,
@@ -1744,8 +1749,13 @@ mod tests {
         }
 
         for (span, expected_key) in test_cases_with_peer_tags {
+            let chunk = v04::TraceChunk::new(std::slice::from_ref(&span));
+            let view = ChunkSpanView {
+                span: &span,
+                chunk: &chunk,
+            };
             let borrowed_key =
-                BorrowedAggregationKey::from_span(&span, test_peer_tags.as_slice(), &[]);
+                BorrowedAggregationKey::from_span(&view, test_peer_tags.as_slice(), &[]);
             assert_eq!(OwnedAggregationKey::from(&borrowed_key), expected_key);
             assert_eq!(
                 get_hash(&borrowed_key),
@@ -1773,7 +1783,12 @@ mod tests {
             .into(),
             ..Default::default()
         };
-        let key = BorrowedAggregationKey::from_span(&span_ipv4, &peer_tag_keys, &[]);
+        let chunk = v04::TraceChunk::new(std::slice::from_ref(&span_ipv4));
+        let view = ChunkSpanView {
+            span: &span_ipv4,
+            chunk: &chunk,
+        };
+        let key = BorrowedAggregationKey::from_span(&view, &peer_tag_keys, &[]);
         let owned = OwnedAggregationKey::from(&key);
         assert_eq!(
             owned.peer_tags,
@@ -1804,7 +1819,12 @@ mod tests {
             ..Default::default()
         };
         let ipv6_keys = vec!["peer.hostname".to_string()];
-        let key = BorrowedAggregationKey::from_span(&span_ipv6, &ipv6_keys, &[]);
+        let chunk = v04::TraceChunk::new(std::slice::from_ref(&span_ipv6));
+        let view = ChunkSpanView {
+            span: &span_ipv6,
+            chunk: &chunk,
+        };
+        let key = BorrowedAggregationKey::from_span(&view, &ipv6_keys, &[]);
         let owned = OwnedAggregationKey::from(&key);
         assert_eq!(
             owned.peer_tags,
@@ -1832,7 +1852,12 @@ mod tests {
             ..Default::default()
         };
         let non_ip_keys = vec!["db.instance".to_string()];
-        let key = BorrowedAggregationKey::from_span(&span_non_ip, &non_ip_keys, &[]);
+        let chunk = v04::TraceChunk::new(std::slice::from_ref(&span_non_ip));
+        let view = ChunkSpanView {
+            span: &span_non_ip,
+            chunk: &chunk,
+        };
+        let key = BorrowedAggregationKey::from_span(&view, &non_ip_keys, &[]);
         let owned = OwnedAggregationKey::from(&key);
         assert_eq!(
             owned.peer_tags,

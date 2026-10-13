@@ -9,7 +9,9 @@
 extern crate alloc;
 
 mod chunk_span_view;
+mod compat;
 pub use chunk_span_view::ChunkSpanView;
+pub use compat::CompatSpan;
 
 use alloc::sync::Arc;
 use core::borrow::Borrow;
@@ -86,8 +88,10 @@ pub const PROMOTED_CHUNK_TAGS: [&str; 3] = [ORIGIN_KEY, SAMPLING_PRIORITY_KEY, D
 /// # Promoted tags
 ///
 /// Tags with a dedicated field (see [`PROMOTED_SPAN_TAGS`] and [`PROMOTED_CHUNK_TAGS`]) live only
-/// in that field, never in the attributes: the attribute getters don't see them. Use
-/// [`Span::tag_str`] / [`TraceChunk::tag_str`] to look a tag up by name wherever it is stored.
+/// in that field, never in the attributes: the attribute getters don't see them. Where a span tag
+/// must be looked up by its v0.4 name wherever it is stored (e.g. user-configured tag keys), wrap
+/// the span in a [`CompatSpan`]. The chunk tags have no such compatibility: read them from their
+/// [`TraceChunk`] getters.
 pub trait Attributes {
     type Text: TraceText;
     type Bytes: TraceBytes;
@@ -122,13 +126,13 @@ pub fn f64_to_exact_i64(f: f64) -> Option<i64> {
     }
 }
 
-/// Iteration over attributes for storage that holds [`AttributeValue`]s directly.
+/// Iteration over attributes.
 ///
 /// Implementations must yield each key at most once, with the value lookups return for it, even if
 /// the underlying storage tolerates duplicate entries.
 pub trait AttributesIter: Attributes {
     /// Iterate over all `(key, value)` attribute pairs, each key at most once
-    fn attributes(&self) -> impl Iterator<Item = (&str, &Value<Self>)>;
+    fn attributes(&self) -> impl Iterator<Item = (&str, AttributeRef<'_, Self::Values>)>;
 
     /// Returns true if an attribute (of any type) exists for `key`
     fn has_attribute(&self, key: &str) -> bool {
@@ -185,16 +189,13 @@ pub trait Span: Attributes {
     /// The instrumentation `component`, `None` if unset.
     fn component(&self) -> Option<&str>;
 
-    /// Look up a string tag by name: promoted tags (see [`Attributes`]) are read from their
-    /// dedicated field, any other key from the string attributes.
-    fn tag_str(&self, key: &str) -> Option<&str> {
-        match key {
-            SPAN_KIND_KEY => self.span_kind(),
-            ENV_KEY => self.env(),
-            VERSION_KEY => self.version(),
-            COMPONENT_KEY => self.component(),
-            _ => self.attribute_str(key),
-        }
+    /// View this span's attributes the way v0.4 `meta`/`metrics` would hold them, promoted tags
+    /// included. See [`CompatSpan`].
+    fn compat(&self) -> &CompatSpan<Self>
+    where
+        Self: Sized,
+    {
+        CompatSpan::from_ref(self)
     }
 
     /// Iterate over the events attached to this span
@@ -225,76 +226,6 @@ pub trait Span: Attributes {
     }
 }
 
-/// A tag value borrowed from a span: a promoted tag read from its dedicated field, or an
-/// attribute.
-pub enum TagValue<'a, T: ValueTypes> {
-    /// A promoted tag stored in a dedicated field (e.g. `env`).
-    Str(&'a str),
-    /// A value stored in the attributes.
-    Value(&'a AttributeValue<T>),
-}
-
-impl<'a, T: ValueTypes> TagValue<'a, T> {
-    /// The string value, `None` if this isn't a string.
-    #[must_use]
-    pub fn as_str(&self) -> Option<&'a str> {
-        match *self {
-            Self::Str(s) => Some(s),
-            Self::Value(v) => v.as_str(),
-        }
-    }
-}
-
-impl<T: ValueTypes> Clone for TagValue<'_, T> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<T: ValueTypes> Copy for TagValue<'_, T> {}
-
-impl<T: ValueTypes> Debug for TagValue<'_, T> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::Str(s) => f.debug_tuple("Str").field(s).finish(),
-            Self::Value(v) => f.debug_tuple("Value").field(v).finish(),
-        }
-    }
-}
-
-/// Iteration over every tag of a span by name, the way v0.4 `meta`/`metrics` would list them.
-///
-/// This should only really be used for customer-facing config to maintain backwards compatibility.
-/// For example: Customer defined sampling rules where they may reference promoted fields at
-/// runtime. Static implementations should prefer to explicitly act on promoted fields or generic
-/// attributes.
-pub trait SpanTags: Span + AttributesIter {
-    /// Iterate over all `(name, value)` tags, each name at most once: the attributes, plus the
-    /// promoted tags (see [`Attributes`]) read from their dedicated fields.
-    fn tags(&self) -> impl Iterator<Item = (&str, TagValue<'_, Self::Values>)> {
-        let promoted = [
-            (SPAN_KIND_KEY, self.span_kind()),
-            (ENV_KEY, self.env()),
-            (VERSION_KEY, self.version()),
-            (COMPONENT_KEY, self.component()),
-        ]
-        .into_iter()
-        .filter_map(|(key, value)| Some((key, TagValue::Str(value?))));
-        // Promoted tags never live in the attributes, so the two never overlap.
-        self.attributes()
-            .map(|(key, value)| (key, TagValue::Value(value)))
-            .chain(promoted)
-    }
-
-    /// Returns true if a tag (of any type) exists for `name`
-    fn has_tag(&self, name: &str) -> bool {
-        match name {
-            SPAN_KIND_KEY | ENV_KEY | VERSION_KEY | COMPONENT_KEY => self.tag_str(name).is_some(),
-            _ => self.has_attribute(name),
-        }
-    }
-}
-
 /// Read access to a trace chunk: a group of spans sharing the same trace id, plus chunk-level
 /// attributes common to all of them.
 pub trait TraceChunk: Attributes {
@@ -313,17 +244,6 @@ pub trait TraceChunk: Attributes {
     /// Returns true if the tracer dropped this trace, keeping only some of its spans (e.g. for
     /// single span sampling). Such a chunk must be treated as rejected whatever its priority.
     fn dropped_trace(&self) -> bool;
-
-    /// Look up a string tag by name: `_dd.origin` is read from [`TraceChunk::origin`], any other
-    /// key from the string attributes. The numeric promoted tags have no string form here; read
-    /// [`TraceChunk::priority`] and [`TraceChunk::sampling_mechanism`] instead.
-    fn tag_str(&self, key: &str) -> Option<&str> {
-        match key {
-            ORIGIN_KEY => Some(self.origin()).filter(|origin| !origin.is_empty()),
-            SAMPLING_PRIORITY_KEY | DECISION_MAKER_KEY => None,
-            _ => self.attribute_str(key),
-        }
-    }
 }
 
 /// Read access to a map of attribute values (the payload of [`AttributeValue::KeyValueList`]).
@@ -557,6 +477,102 @@ impl<T: ValueTypes> PartialEq for AttributeValue<T> {
 }
 
 impl<T: ValueTypes> Debug for AttributeValue<T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::String(arg0) => f.debug_tuple("String").field(arg0).finish(),
+            Self::Bool(arg0) => f.debug_tuple("Bool").field(arg0).finish(),
+            Self::Int(arg0) => f.debug_tuple("Int").field(arg0).finish(),
+            Self::Float(arg0) => f.debug_tuple("Float").field(arg0).finish(),
+            Self::Bytes(arg0) => f.debug_tuple("Bytes").field(arg0).finish(),
+            Self::Array(arg0) => f.debug_tuple("Array").field(arg0).finish(),
+            Self::KeyValueList(arg0) => f.debug_tuple("KeyValueList").field(arg0).finish(),
+        }
+    }
+}
+
+/// A borrowed [`AttributeValue`], or a value read from a dedicated field.
+pub enum AttributeRef<'a, T: ValueTypes> {
+    String(&'a str),
+    Bool(bool),
+    Int(i64),
+    Float(f64),
+    Bytes(&'a [u8]),
+    Array(&'a T::Array),
+    KeyValueList(&'a T::Map),
+}
+
+impl<'a, T: ValueTypes> AttributeRef<'a, T> {
+    /// The string value, `None` if this isn't a string.
+    #[must_use]
+    pub const fn as_str(&self) -> Option<&'a str> {
+        match *self {
+            Self::String(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    /// The integer value, `None` if this isn't a number or is a float that isn't exactly an
+    /// integer.
+    #[must_use]
+    pub fn as_i64(&self) -> Option<i64> {
+        match *self {
+            Self::Int(i) => Some(i),
+            Self::Float(f) => f64_to_exact_i64(f),
+            _ => None,
+        }
+    }
+
+    /// The numeric value, `None` if this isn't a number. Integers are converted to `f64`.
+    #[must_use]
+    pub const fn as_f64(&self) -> Option<f64> {
+        match *self {
+            // Lossy above 2^53, which is acceptable for the metric-like values read as floats.
+            #[allow(clippy::cast_precision_loss)]
+            Self::Int(i) => Some(i as f64),
+            Self::Float(f) => Some(f),
+            _ => None,
+        }
+    }
+}
+
+impl<'a, T: ValueTypes> From<&'a AttributeValue<T>> for AttributeRef<'a, T> {
+    fn from(value: &'a AttributeValue<T>) -> Self {
+        match value {
+            AttributeValue::String(s) => Self::String(s.as_str()),
+            AttributeValue::Bool(b) => Self::Bool(*b),
+            AttributeValue::Int(i) => Self::Int(*i),
+            AttributeValue::Float(f) => Self::Float(*f),
+            AttributeValue::Bytes(b) => Self::Bytes(b.borrow()),
+            AttributeValue::Array(a) => Self::Array(a),
+            AttributeValue::KeyValueList(m) => Self::KeyValueList(m),
+        }
+    }
+}
+
+impl<T: ValueTypes> Clone for AttributeRef<'_, T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<T: ValueTypes> Copy for AttributeRef<'_, T> {}
+
+impl<T: ValueTypes> PartialEq for AttributeRef<'_, T> {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::String(l0), Self::String(r0)) => l0 == r0,
+            (Self::Bool(l0), Self::Bool(r0)) => l0 == r0,
+            (Self::Int(l0), Self::Int(r0)) => l0 == r0,
+            (Self::Float(l0), Self::Float(r0)) => l0 == r0,
+            (Self::Bytes(l0), Self::Bytes(r0)) => l0 == r0,
+            (Self::Array(l0), Self::Array(r0)) => l0 == r0,
+            (Self::KeyValueList(l0), Self::KeyValueList(r0)) => l0 == r0,
+            _ => false,
+        }
+    }
+}
+
+impl<T: ValueTypes> Debug for AttributeRef<'_, T> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::String(arg0) => f.debug_tuple("String").field(arg0).finish(),

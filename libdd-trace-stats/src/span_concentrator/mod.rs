@@ -10,7 +10,7 @@ use tracing::{debug, warn};
 // std::time::SystemTime panics on wasm32.
 use web_time::{SystemTime, UNIX_EPOCH};
 
-use libdd_trace_model::Span;
+use libdd_trace_model::{Span, TraceChunk};
 use libdd_trace_protobuf::pb;
 use libdd_trace_utils::span::v1::SpanKind;
 
@@ -320,7 +320,9 @@ impl SpanConcentrator {
 
     /// Add a span into the concentrator, by computing stats if the span is eligible for stats
     /// computation.
-    pub fn add_span(&mut self, span: &impl Span) {
+    ///
+    /// The span comes with its chunk, which holds trace-level values such as the origin.
+    pub fn add_span<C: TraceChunk>(&mut self, span: &ChunkSpanView<'_, C>) {
         if !is_span_eligible(span, self.span_kinds_stats_computed.as_slice()) {
             return;
         }
