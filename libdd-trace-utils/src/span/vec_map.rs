@@ -8,9 +8,9 @@
 //! map. However, since meta and metrics are expected to be typically small (20ish elements or
 //! less), linear scan is usually still competitive with hashmap's `get`.
 
+use hashbrown::{HashMap, hash_map};
 use serde::ser::{Serialize, Serializer};
 use std::borrow::Borrow;
-use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 use std::slice;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -293,15 +293,11 @@ impl<K: Eq + Hash, V> VecMap<K, V> {
                 .collect()
         };
 
-        let mut i = 0;
         let data_len = self.data.len();
+        let mut i = 0;
         self.data.retain(|_| {
-            // keep is a bitmap of elements in reverse order. The lenght of the bitmap only extends to the last element 
-            // that is kept
-            // So if the n last elements of the list are duplicates, the lenght of `keep` will be data_len - n.
-            // First check that the index is in the keep bitmap, then index it in reverse order
-            let idx_start = data_len - keep.len();
-            let keep = i >= idx_start && keep.get(data_len - 1 - i).copied().unwrap_or(false);
+            // keep is a bitmap of elements in reverse order
+            let keep = keep.get(data_len - 1 - i).copied().unwrap_or(false);
             i += 1;
             keep
         });
@@ -387,7 +383,7 @@ impl<K: Serialize + Eq + Hash, V: Serialize> Serialize for VecMap<K, V> {
 
 pub enum DedupedVecMap<'a, K, V> {
     Borrowed(&'a VecMap<K, V>),
-    Owned(hashbrown::HashMap<&'a K, &'a V>),
+    Owned(HashMap<&'a K, &'a V>),
 }
 
 impl<'a, K, V> DedupedVecMap<'a, K, V> {
@@ -418,7 +414,7 @@ impl<'a, K, V> DedupedVecMap<'a, K, V> {
 
 pub enum DedupedVecMapIter<'b, 'a: 'b, K, V> {
     Borrowed(slice::Iter<'a, (K, V)>),
-    Owned(hashbrown::hash_map::Iter<'b, &'a K, &'a V>),
+    Owned(hash_map::Iter<'b, &'a K, &'a V>),
 }
 
 impl<'b, 'a: 'b, K, V> Iterator for DedupedVecMapIter<'b, 'a, K, V> {
