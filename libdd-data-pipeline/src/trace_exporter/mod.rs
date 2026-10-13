@@ -576,8 +576,6 @@ impl<
                     stats_cardinality_limits: self.client_side_stats.stats_cardinality_limits,
                     additional_metric_tag_keys: &self.client_side_stats.additional_metric_tag_keys,
                     restart_after_fork: self.restart_after_fork,
-                    #[cfg(feature = "external-observations")]
-                    observations: self.observations.clone(),
                     dogstatsd: if self.health_metrics_enabled {
                         self.dogstatsd.clone()
                     } else {

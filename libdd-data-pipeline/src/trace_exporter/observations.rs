@@ -94,16 +94,6 @@ pub(super) fn record_payload(payload: impl FnOnce() -> SendPayloadTelemetry) -> 
     with_report(|report| report.set_payload(payload()))
 }
 
-/// Record chunks dropped by client-side stats filtering in the current call's report.
-/// Returns whether a report is active.
-pub(super) fn record_dropped(p0_chunks: usize, trace_filter_chunks: usize) -> bool {
-    with_report(|report| {
-        report.chunks_dropped_p0 = u64::try_from(p0_chunks).unwrap_or(u64::MAX);
-        report.chunks_dropped_by_trace_filter =
-            u64::try_from(trace_filter_chunks).unwrap_or(u64::MAX);
-    })
-}
-
 /// Run `fut` with a fresh report, returning it along with the output. Observations already
 /// produced survive the future being dropped part-way, for instance on cancellation.
 async fn observe<F: Future>(fut: F) -> (F::Output, TraceExporterObservations) {
