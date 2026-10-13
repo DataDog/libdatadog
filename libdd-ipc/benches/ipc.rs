@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #[cfg(unix)]
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 #[cfg(unix)]
 use libdd_ipc::example_interface::{ExampleInterfaceChannel, ExampleServer};
 

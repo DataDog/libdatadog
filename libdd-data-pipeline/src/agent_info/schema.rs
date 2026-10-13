@@ -90,9 +90,14 @@ pub struct Config {
 // Almost the same as libdd_trace_obfuscation::obfuscation_config::ObfuscationConfig, but what the
 // agent exposes is slightly different
 pub struct AgentObfuscationConfig {
-    /// Old format from the agent, now present under `sql.obfuscation_mode` directly
-    pub sql_obfuscation_mode: obfuscation_config::SqlObfuscationMode,
+    // Old format from the agent, now present under sql->obfuscation_mode directly
+    pub sql_obfuscation_mode: Option<obfuscation_config::SqlObfuscationMode>,
     pub remove_stack_traces: bool,
+    pub sql_exec_plan: bool,
+    pub sql_exec_plan_normalize: bool,
+    pub mongo: bool,
+    pub elastic_search: bool,
+
     pub sql: Option<obfuscation_config::SqlConfig>,
     pub http: obfuscation_config::HttpConfig,
     pub redis: obfuscation_config::RedisConfig,
@@ -117,12 +122,14 @@ impl AgentInfo {
 
 impl From<AgentObfuscationConfig> for ObfuscationConfig {
     fn from(value: AgentObfuscationConfig) -> Self {
-        let sql_config = value.sql.unwrap_or_else(||
+        let sql_config = match value.sql {
+            Some(sql_config) => sql_config,
             // Fallback for the previous /info config format
-            obfuscation_config::SqlConfig {
-                obfuscation_mode: value.sql_obfuscation_mode,
+            None => obfuscation_config::SqlConfig {
+                obfuscation_mode: value.sql_obfuscation_mode.unwrap_or_default(),
                 ..Default::default()
-        });
+            },
+        };
         Self {
             tag_replace_rules: value.tag_replace_rules.unwrap_or_default(),
             http: value.http,
@@ -174,18 +181,55 @@ mod tests {
                     "mongo": true,
                     "sql_exec_plan": false,
                     "sql_exec_plan_normalize": false,
+                    "sql_obfuscation_mode": "",
+                    "tag_replace_rules": null,
                     "http": {
-                        "remove_query_string": false,
-                        "remove_path_digits": false
+                        "remove_query_string": true,
+                        "remove_path_digits": true
                     },
                     "remove_stack_traces": false,
                     "redis": {
+                        "enabled": true,
+                        "remove_all_args": true
+                    },
+                    "valkey": {
                         "enabled": true,
                         "remove_all_args": false
                     },
                     "memcached": {
                         "enabled": true,
                         "keep_command": false
+                    },
+                    "credit_cards": {
+                        "enabled": true,
+                        "luhn": false,
+                        "keep_values": null
+                    },
+                    "sql": {
+                        "replace_digits": false,
+                        "keep_sql_alias": false,
+                        "dollar_quoted_func": false,
+                        "keep_null": false,
+                        "keep_boolean": false,
+                        "keep_positional_parameter": false,
+                        "keep_trailing_semicolon": false,
+                        "keep_identifier_quotation": false,
+                        "replace_bind_parameter": false,
+                        "remove_space_between_parentheses": false,
+                        "keep_json_path": false,
+                        "obfuscation_mode": ""
+                    },
+                    "elasticsearch": {
+                        "enabled": true,
+                        "keep_keys": []
+                    },
+                    "opensearch": {
+                        "enabled": true,
+                        "keep_keys": []
+                    },
+                    "mongodb": {
+                        "enabled": true,
+                        "keep_keys": null
                     }
                 }
             }
@@ -214,7 +258,15 @@ mod tests {
     )]
     #[test]
     fn test_name() {
-        let _info: AgentInfoStruct = serde_json::from_str(input)
-            .expect("AgentInfoStruct should be parsed successfully from input");
+        let mut deserializer = serde_json::Deserializer::from_str(input);
+        let mut ignored = Vec::new();
+
+        let _info: AgentInfoStruct = serde_ignored::deserialize(&mut deserializer, |path| {
+            ignored.push(path.to_string());
+        })
+        .expect("AgentInfoStruct should be parsed successfully from input");
+
+        deserializer.end().expect("unexpected trailing input");
+        assert!(ignored.is_empty(), "Ignored fields: {ignored:#?}");
     }
 }

@@ -26,6 +26,21 @@
            explains why the two modes can't be mixed."
 )]
 //!
+//! ## ID representation
+//!
+//! W3C specifies [`trace-id` and `parent-id`] using [lowercase hexadecimal characters].
+//! `trace_id`, `span_id`, and `local_root_span_id` use W3C Trace Context byte order, equivalent to
+//! big-endian when interpreted as integers.
+//!
+//! [`trace-id` and `parent-id`]: https://github.com/w3c/trace-context/blob/6f387678/spec/20-http_header_format.md?plain=1#L96-L97
+//! [lowercase hexadecimal characters]: https://github.com/w3c/trace-context/blob/6f387678/spec/20-http_header_format.md?plain=1#L74
+//!
+//! When representing an active trace, both `trace_id` and `span_id` must be nonzero. Otherwise,
+//! `trace_id`, `span_id`, and `trace_flags` must be zero.
+//!
+//! The crate does not validate IDs or reject invalid combinations of `trace_id`, `span_id`, and
+//! `trace_flags`.
+//!
 //! ## Usage
 //!
 //! There are two main patterns for publishing and updating thread contexts.
@@ -41,9 +56,9 @@
 //! # fn main() {
 //! use libdd_otel_thread_ctx::linux::OwnedThreadContext;
 //!
-//! let trace_id = [0u8; 16];
-//! let span_id = [1u8; 8];
-//! let local_root_span_id = [2u8; 8];
+//! let trace_id = [1u8; 16];
+//! let span_id = [2u8; 8];
+//! let local_root_span_id = [3u8; 8];
 //!
 //! // First call allocates a record and attaches it.
 //! OwnedThreadContext::new(trace_id, span_id, 1, local_root_span_id, &[(0, "first")]).attach();
@@ -69,9 +84,9 @@
 //! # fn main() {
 //! use libdd_otel_thread_ctx::linux::OwnedThreadContext;
 //!
-//! let trace_id = [0u8; 16];
-//! let span_id = [1u8; 8];
-//! let local_root_span_id = [2u8; 8];
+//! let trace_id = [1u8; 16];
+//! let span_id = [2u8; 8];
+//! let local_root_span_id = [3u8; 8];
 //! let attrs: &[(u8, &str)] = &[(0, "GET"), (1, "/api/v1")];
 //!
 //! // Publish a new context and save the previously attached one (if any).

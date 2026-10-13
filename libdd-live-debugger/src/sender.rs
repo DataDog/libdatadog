@@ -9,10 +9,10 @@ use http::uri::PathAndQuery;
 use http::{Method, Uri};
 use libdd_capabilities::{BodySender, HttpClientCapability, ResponseFuture};
 use libdd_capabilities_impl::NativeHttpClient;
-use libdd_common::tag::Tag;
 use libdd_common::Endpoint;
+use libdd_common::tag::Tag;
 use libdd_data_pipeline::agent_info::schema::AgentInfoStruct;
-use percent_encoding::{percent_encode, CONTROLS};
+use percent_encoding::{CONTROLS, percent_encode};
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use std::borrow::Cow;
@@ -441,11 +441,11 @@ impl PayloadSender {
             SenderFuture::Outstanding(future) => {
                 if self.needs_boundary {
                     let header = concat!(
-                    BOUNDARY_LINE,
-                    "\r\n",
-                    "Content-Disposition: form-data; name=\"event\"; filename=\"event.json\"\r\n",
-                    "Content-Type: application/json\r\n",
-                    "\r\n",
+                        BOUNDARY_LINE,
+                        "\r\n",
+                        "Content-Disposition: form-data; name=\"event\"; filename=\"event.json\"\r\n",
+                        "Content-Type: application/json\r\n",
+                        "\r\n",
                     );
                     self.sender.send_chunk(header.into()).await?;
                 }
@@ -688,8 +688,8 @@ mod tests {
     use super::*;
     use libdd_capabilities::{ChunkFuture, HttpError, MaybeSend, StreamingBodySender};
     use std::borrow::Cow;
-    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     fn agent_endpoint() -> Endpoint {
         Endpoint::from_slice("http://localhost:8126")

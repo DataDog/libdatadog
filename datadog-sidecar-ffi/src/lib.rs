@@ -7,31 +7,34 @@
 #![cfg_attr(not(test), deny(clippy::todo))]
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
+#[cfg(windows)]
+pub mod remote_config_notification;
+#[cfg(target_os = "linux")]
+pub mod signal_flush;
 pub mod span;
 
 use crate::span::TracesBytes;
-use datadog_sidecar::agent_remote_config::{new_reader, reader_from_shm, AgentRemoteConfigWriter};
+use datadog_sidecar::agent_remote_config::{AgentRemoteConfigWriter, new_reader, reader_from_shm};
 use datadog_sidecar::config;
 use datadog_sidecar::config::LogMethod;
 use datadog_sidecar::service::agent_info::AgentInfoReader;
-use datadog_sidecar::service::telemetry::InternalTelemetryAction;
 use datadog_sidecar::service::{
-    blocking::{self, SidecarTransport},
-    AllocationKey, ContextDD, DynamicInstrumentationConfigState, EvalError,
+    AllocationKey, ApplicationConfig, ContextDD, ContextTruncationReason,
+    DynamicInstrumentationConfigState, EvalError,
     FfeEvaluationMetric as SidecarFfeEvaluationMetric, FfeExposure as SidecarFfeExposure,
     FfeExposureBatch as SidecarFfeExposureBatch,
     FfeFlagEvaluationBatch as SidecarFfeFlagEvaluationBatch,
     FfeFlagEvaluationEvent as SidecarFfeFlagEvaluationEvent,
-    FfeTelemetryContext as SidecarFfeTelemetryContext, FlagEvalEventContext, FlagKey, InstanceId,
-    QueueId, RuntimeMetadata, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
-    SidecarFlushOptions, TargetingRuleKey, VariantKey, MAX_CONTEXT_DEPTH, MAX_CONTEXT_FIELDS,
-    MAX_FIELD_LENGTH,
+    FfeTelemetryContext as SidecarFfeTelemetryContext, FieldOmissions, FlagEvalEventContext,
+    FlagKey, InstanceId, RuntimeMetadata, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
+    SidecarFlushOptions, TargetingRuleKey, VariantKey,
+    blocking::{self, SidecarTransport},
+    prune_context_json,
 };
-use datadog_sidecar::service::{get_telemetry_action_sender, InternalTelemetryActions};
-use datadog_sidecar::shm_remote_config::{path_for_remote_config, RemoteConfigReader};
+use datadog_sidecar::shm_remote_config::{RemoteConfigReader, path_for_remote_config};
 use libc::c_char;
-use libdd_common::tag::Tag;
 use libdd_common::Endpoint;
+use libdd_common::tag::Tag;
 use libdd_common_ffi::slice::{AsBytes, CharSlice, Slice};
 use libdd_common_ffi::{self as ffi, MaybeError};
 #[cfg(windows)]
@@ -41,28 +44,24 @@ use libdd_ipc::platform::{FileBackedHandle, MappedMem, NamedShmHandle, PlatformH
 use libdd_live_debugger::debugger_defs::DebuggerPayload;
 use libdd_remote_config::fetch::ConfigInvariants;
 use libdd_remote_config::{RemoteConfigCapabilities, RemoteConfigProduct, Target};
-use libdd_telemetry::data::metrics::{MetricNamespace, MetricType};
-use libdd_telemetry::metrics::MetricContext;
 use libdd_telemetry::{
     data::{self, Dependency, Integration},
-    worker::{LifecycleAction, LogIdentifier, TelemetryActions},
+    worker::{LifecycleAction, TelemetryActions},
 };
 use libdd_telemetry_ffi::try_c;
 use libdd_trace_utils::msgpack_encoder;
 use libdd_trace_utils::trace_utils::TracerGenericTags;
-use std::ffi::{c_void, CStr, CString};
+use std::ffi::{CStr, CString, c_void};
 use std::fs::File;
-use std::hash::{DefaultHasher, Hash, Hasher};
 #[cfg(unix)]
 use std::os::unix::prelude::FromRawFd;
 #[cfg(windows)]
 use std::os::windows::io::{FromRawHandle, RawHandle};
-use std::ptr::NonNull;
 use std::slice;
 use std::sync::Arc;
 use std::time::Duration;
 
-use datadog_sidecar::setup::{connect_to_master, MasterListener};
+use datadog_sidecar::setup::{MasterListener, connect_to_master};
 
 fn otlp_metrics_endpoint_with_agent_test_token(
     mut otlp_metrics_endpoint: Option<Endpoint>,
@@ -77,8 +76,8 @@ fn otlp_metrics_endpoint_with_agent_test_token(
     otlp_metrics_endpoint
 }
 
-#[no_mangle]
-#[cfg(target_os = "windows")]
+#[unsafe(no_mangle)]
+#[cfg(windows)]
 pub extern "C" fn ddog_setup_crashtracking(
     endpoint: Option<&Endpoint>,
     metadata: Metadata,
@@ -91,34 +90,36 @@ pub struct NativeFile {
     pub handle: Box<PlatformHandle<File>>,
 }
 
-/// This creates Rust PlatformHandle<File> from supplied C std FILE object.
+/// This creates Rust `PlatformHandle<File>` from supplied C std FILE object.
 /// This method takes the ownership of the underlying file descriptor.
 ///
 /// # Safety
 /// Caller must ensure the file descriptor associated with FILE pointer is open, and valid
 /// Caller must not close the FILE associated file descriptor after calling this function
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_ph_file_from(file: *mut libc::FILE) -> NativeFile {
-    #[cfg(unix)]
-    let handle = PlatformHandle::from_raw_fd(libc::fileno(file));
-    #[cfg(windows)]
-    let handle =
-        PlatformHandle::from_raw_handle(libc::get_osfhandle(libc::fileno(file)) as RawHandle);
+    unsafe {
+        #[cfg(unix)]
+        let handle = PlatformHandle::from_raw_fd(libc::fileno(file));
+        #[cfg(windows)]
+        let handle =
+            PlatformHandle::from_raw_handle(libc::get_osfhandle(libc::fileno(file)) as RawHandle);
 
-    NativeFile {
-        handle: Box::from(handle),
+        NativeFile {
+            handle: Box::from(handle),
+        }
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_ph_file_clone(platform_handle: &NativeFile) -> Box<NativeFile> {
     Box::new(NativeFile {
         handle: platform_handle.handle.clone(),
     })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_ph_file_drop(ph: NativeFile) {
     drop(ph)
 }
@@ -128,7 +129,7 @@ pub enum AgentRemoteConfigReader {
     Unnamed(datadog_sidecar::agent_remote_config::AgentRemoteConfigReader<ShmHandle>),
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_alloc_anon_shm_handle(
     size: usize,
     handle: &mut *mut ShmHandle,
@@ -138,7 +139,7 @@ pub extern "C" fn ddog_alloc_anon_shm_handle(
     MaybeError::None
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_alloc_anon_shm_handle_named(
     size: usize,
     handle: &mut *mut ShmHandle,
@@ -150,7 +151,7 @@ pub extern "C" fn ddog_alloc_anon_shm_handle_named(
     MaybeError::None
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_map_shm(
     handle: Box<ShmHandle>,
     mapped: &mut *mut MappedMem<ShmHandle>,
@@ -167,15 +168,15 @@ pub extern "C" fn ddog_map_shm(
     MaybeError::None
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_unmap_shm(mapped: Box<MappedMem<ShmHandle>>) -> Box<ShmHandle> {
     Box::new((*mapped).into())
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_drop_anon_shm_handle(_: Box<ShmHandle>) {}
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_create_agent_remote_config_writer(
     writer: &mut *mut AgentRemoteConfigWriter<ShmHandle>,
     handle: &mut *mut ShmHandle,
@@ -187,14 +188,14 @@ pub extern "C" fn ddog_create_agent_remote_config_writer(
     MaybeError::None
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_agent_remote_config_reader_for_endpoint(
     endpoint: &Endpoint,
 ) -> Box<AgentRemoteConfigReader> {
     Box::new(AgentRemoteConfigReader::Named(new_reader(endpoint)))
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_agent_remote_config_reader_for_anon_shm(
     handle: &ShmHandle,
@@ -207,7 +208,7 @@ pub unsafe extern "C" fn ddog_agent_remote_config_reader_for_anon_shm(
     MaybeError::None
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_agent_remote_config_write(
     writer: &AgentRemoteConfigWriter<ShmHandle>,
     data: ffi::CharSlice,
@@ -220,14 +221,14 @@ fn ddog_agent_remote_config_read_generic<'a, T>(
     data: &mut ffi::CharSlice<'a>,
 ) -> bool
 where
-    T: FileBackedHandle + From<MappedMem<T>>,
+    T: FileBackedHandle,
 {
     let (new, contents) = reader.read();
     *data = CharSlice::from_bytes(contents);
     new
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_agent_remote_config_read<'a>(
     reader: &'a mut AgentRemoteConfigReader,
     data: &mut ffi::CharSlice<'a>,
@@ -242,14 +243,14 @@ pub extern "C" fn ddog_agent_remote_config_read<'a>(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_agent_remote_config_reader_drop(_: Box<AgentRemoteConfigReader>) {}
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_agent_remote_config_writer_drop(_: Box<AgentRemoteConfigWriter<ShmHandle>>) {
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_remote_config_reader_for_endpoint<'a>(
     language: &ffi::CharSlice<'a>,
@@ -279,14 +280,14 @@ pub unsafe extern "C" fn ddog_remote_config_reader_for_endpoint<'a>(
 
 /// # Safety
 /// Argument should point to a valid C string.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_remote_config_reader_for_path(
     path: *const c_char,
 ) -> Box<RemoteConfigReader> {
-    Box::new(RemoteConfigReader::from_path(CStr::from_ptr(path)))
+    unsafe { Box::new(RemoteConfigReader::from_path(CStr::from_ptr(path))) }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 extern "C" fn ddog_remote_config_path(
     id: *const ConfigInvariants,
     target: *const Arc<Target>,
@@ -295,12 +296,14 @@ extern "C" fn ddog_remote_config_path(
     let target = unsafe { &*target };
     path_for_remote_config(id, target).into_raw()
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 unsafe extern "C" fn ddog_remote_config_path_free(path: *mut c_char) {
-    drop(CString::from_raw(path));
+    unsafe {
+        drop(CString::from_raw(path));
+    }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_remote_config_read<'a>(
     reader: &'a mut RemoteConfigReader,
     data: &mut ffi::CharSlice<'a>,
@@ -310,15 +313,15 @@ pub extern "C" fn ddog_remote_config_read<'a>(
     new
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_remote_config_reader_drop(_: Box<RemoteConfigReader>) {}
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_sidecar_transport_drop(_: Box<SidecarTransport>) {}
 
 /// # Safety
 /// Caller must ensure the process is safe to fork, at the time when this method is called
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_sidecar_connect(connection: &mut *mut SidecarTransport) -> MaybeError {
     let cfg = datadog_sidecar::config::FromEnv::config();
 
@@ -337,17 +340,15 @@ pub extern "C" fn ddog_sidecar_connect(connection: &mut *mut SidecarTransport) -
     MaybeError::None
 }
 
-#[no_mangle]
-pub extern "C" fn ddog_sidecar_connect_master(pid: i32) -> MaybeError {
+#[unsafe(no_mangle)]
+pub extern "C" fn ddog_sidecar_connect_master() -> MaybeError {
     let cfg = datadog_sidecar::config::FromEnv::config();
-    #[cfg(unix)]
-    datadog_sidecar::set_sidecar_master_pid(pid as u32);
-    try_c!(MasterListener::start(pid, cfg));
+    try_c!(MasterListener::start(cfg));
 
     MaybeError::None
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_sidecar_connect_worker(
     pid: i32,
     connection: &mut *mut SidecarTransport,
@@ -358,33 +359,45 @@ pub extern "C" fn ddog_sidecar_connect_worker(
     MaybeError::None
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_sidecar_shutdown_master_listener() -> MaybeError {
     try_c!(MasterListener::shutdown());
 
     MaybeError::None
 }
 
-#[no_mangle]
-pub extern "C" fn ddog_sidecar_is_master_listener_active(pid: i32) -> bool {
-    MasterListener::is_active(pid)
+/// Remove the master listener's socket and lock file, for SAPIs that exit without running
+/// PHP's module shutdown - php-fpm's master calls `exit()` straight from `fpm_pctl_exit()`, so
+/// `ddog_sidecar_shutdown_master_listener` never runs there. Safe to call more than once, and a
+/// no-op in a process that did not bind them.
+#[unsafe(no_mangle)]
+pub extern "C" fn ddog_sidecar_reap_master_listener_files() {
+    MasterListener::reap_bound_files_at_exit();
 }
 
-#[no_mangle]
-pub extern "C" fn ddog_sidecar_clear_inherited_listener() -> MaybeError {
-    try_c!(MasterListener::clear_inherited_state());
+#[unsafe(no_mangle)]
+pub extern "C" fn ddog_sidecar_is_master_listener_active() -> bool {
+    MasterListener::is_active()
+}
+
+/// # Safety
+/// On Unix, call in the child after fork, before starting threads. Inherited sidecar
+/// tasks and references to their state must not be used afterward.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ddog_sidecar_clear_inherited_listener() -> MaybeError {
+    try_c!(unsafe { MasterListener::clear_inherited_state() });
 
     MaybeError::None
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_sidecar_ping(transport: &mut Box<SidecarTransport>) -> MaybeError {
     try_c!(blocking::ping(transport));
 
     MaybeError::None
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_sidecar_flush(
     transport: &mut Box<SidecarTransport>,
     options: SidecarFlushOptions,
@@ -394,7 +407,7 @@ pub extern "C" fn ddog_sidecar_flush(
     MaybeError::None
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_instanceId_build(
     session_id: ffi::CharSlice,
@@ -406,19 +419,13 @@ pub unsafe extern "C" fn ddog_sidecar_instanceId_build(
     ))
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_instanceId_drop(instance_id: Box<InstanceId>) {
     drop(instance_id)
 }
 
-#[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_sidecar_queueId_generate() -> QueueId {
-    QueueId::new_unique()
-}
-
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_runtimeMeta_build(
     language_name: ffi::CharSlice,
@@ -434,19 +441,17 @@ pub unsafe extern "C" fn ddog_sidecar_runtimeMeta_build(
     Box::from(inner)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_runtimeMeta_drop(meta: Box<RuntimeMetadata>) {
     drop(meta)
 }
 
 /// Reports the runtime configuration to the telemetry.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_telemetry_enqueueConfig(
     transport: &mut Box<SidecarTransport>,
-    instance_id: &InstanceId,
-    queue_id: &QueueId,
     config_key: ffi::CharSlice,
     config_value: ffi::CharSlice,
     origin: data::ConfigurationOrigin,
@@ -468,20 +473,16 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_enqueueConfig(
     });
     try_c!(blocking::enqueue_actions(
         transport,
-        instance_id,
-        queue_id,
         vec![SidecarAction::Telemetry(config_entry)],
     ));
     MaybeError::None
 }
 
 /// Reports an endpoint to the telemetry.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_telemetry_addEndpoint(
     transport: &mut Box<SidecarTransport>,
-    instance_id: &InstanceId,
-    queue_id: &QueueId,
     method: libdd_telemetry::data::Method,
     path: CharSlice,
     operation_name: CharSlice,
@@ -499,8 +500,6 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_addEndpoint(
 
     try_c!(blocking::enqueue_actions(
         transport,
-        instance_id,
-        queue_id,
         vec![SidecarAction::Telemetry(endpoint)],
     ));
 
@@ -508,12 +507,10 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_addEndpoint(
 }
 
 /// Reports a dependency to the telemetry.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_telemetry_addDependency(
     transport: &mut Box<SidecarTransport>,
-    instance_id: &InstanceId,
-    queue_id: &QueueId,
     dependency_name: ffi::CharSlice,
     dependency_version: ffi::CharSlice,
 ) -> MaybeError {
@@ -529,8 +526,6 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_addDependency(
 
     try_c!(blocking::enqueue_actions(
         transport,
-        instance_id,
-        queue_id,
         vec![SidecarAction::Telemetry(dependency)],
     ));
 
@@ -538,12 +533,10 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_addDependency(
 }
 
 /// Reports an integration to the telemetry.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_telemetry_addIntegration(
     transport: &mut Box<SidecarTransport>,
-    instance_id: &InstanceId,
-    queue_id: &QueueId,
     integration_name: ffi::CharSlice,
     integration_version: ffi::CharSlice,
     integration_enabled: bool,
@@ -562,60 +555,48 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_addIntegration(
 
     try_c!(blocking::enqueue_actions(
         transport,
-        instance_id,
-        queue_id,
         vec![SidecarAction::Telemetry(integration)],
     ));
 
     MaybeError::None
 }
 
-/// Enqueues a list of actions to be performed.
-#[no_mangle]
+/// Stops the telemetry of the current application and clears it.
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_lifecycle_end(
     transport: &mut Box<SidecarTransport>,
-    instance_id: &InstanceId,
-    queue_id: &QueueId,
 ) -> MaybeError {
     try_c!(blocking::enqueue_actions(
         transport,
-        instance_id,
-        queue_id,
         vec![SidecarAction::Telemetry(TelemetryActions::Lifecycle(
             LifecycleAction::Stop,
         ))],
     ));
-    try_c!(blocking::clear_queue_id(transport, instance_id, queue_id));
+    try_c!(blocking::set_application(transport, None, 0));
 
     MaybeError::None
 }
 
-/// Enqueues a list of actions to be performed.
-#[no_mangle]
+/// Clears the application of the current request, at request end.
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_application_remove(
     transport: &mut Box<SidecarTransport>,
-    instance_id: &InstanceId,
-    queue_id: &QueueId,
 ) -> MaybeError {
-    try_c!(blocking::clear_queue_id(transport, instance_id, queue_id));
+    try_c!(blocking::set_application(transport, None, 0));
 
     MaybeError::None
 }
 
 /// Flushes the telemetry data.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_telemetry_flush(
     transport: &mut Box<SidecarTransport>,
-    instance_id: &InstanceId,
-    queue_id: &QueueId,
 ) -> MaybeError {
     try_c!(blocking::enqueue_actions(
         transport,
-        instance_id,
-        queue_id,
         vec![
             SidecarAction::Telemetry(TelemetryActions::Lifecycle(
                 LifecycleAction::FlushMetricAggr
@@ -628,17 +609,31 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_flush(
 }
 
 /// Returns whether the sidecar transport is closed or not.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_sidecar_is_closed(transport: &mut Box<SidecarTransport>) -> bool {
     transport.is_closed()
 }
 
-/// Sets the configuration for a session.
-#[no_mangle]
+/// Opaque registration for a Windows remote configuration callback.
+///
+/// Create it with `ddog_sidecar_remote_config_notification_new`, pass it to
+/// `ddog_sidecar_set_connection_config`, and release it with
+/// `ddog_sidecar_remote_config_notification_drop`.
+pub struct RemoteConfigNotification {
+    #[cfg(windows)]
+    inner: datadog_sidecar::windows::remote_config_notification::RemoteConfigNotification,
+}
+
+/// Sets the identity and configuration of the connection. It is kept by the transport and
+/// replayed after reconnects.
+///
+/// `default_service_name` is the process-stable service name the tracer resolves when `DD_SERVICE`
+/// is not set, reported as `svc.auto:<name>`. Pass an empty `CharSlice` if it is not reported.
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_sidecar_session_set_config(
+pub unsafe extern "C" fn ddog_sidecar_set_connection_config(
     transport: &mut Box<SidecarTransport>,
-    session_id: ffi::CharSlice,
+    instance_id: &InstanceId,
     agent_endpoint: &Endpoint,
     dogstatsd_endpoint: &Endpoint,
     otlp_metrics_endpoint: *const Endpoint,
@@ -654,145 +649,129 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
     force_drop_size: usize,
     log_level: ffi::CharSlice,
     log_path: ffi::CharSlice,
-    _remote_config_notify_function: *mut c_void,
+    win_remote_config_notification: *const RemoteConfigNotification, // null for non-win
     remote_config_products: *const RemoteConfigProduct,
     remote_config_products_count: usize,
     remote_config_capabilities: *const RemoteConfigCapabilities,
     remote_config_capabilities_count: usize,
     remote_config_enabled: bool,
-    is_fork: bool,
     process_tags: &libdd_common_ffi::Vec<Tag>,
+    default_service_name: ffi::CharSlice,
     hostname: ffi::CharSlice,
     root_service: ffi::CharSlice,
     root_session_id: ffi::CharSlice,
     parent_session_id: ffi::CharSlice,
 ) -> MaybeError {
-    let session_id_str: String = session_id.to_utf8_lossy().into();
-    let otlp_metrics_endpoint: Option<Endpoint> =
-        unsafe { otlp_metrics_endpoint.as_ref().cloned() };
-    let otlp_metrics_endpoint =
-        otlp_metrics_endpoint_with_agent_test_token(otlp_metrics_endpoint, agent_endpoint);
-    let session_config = SessionConfig {
-        endpoint: agent_endpoint.clone(),
-        dogstatsd_endpoint: dogstatsd_endpoint.clone(),
-        otlp_metrics_endpoint,
-        language: language.to_utf8_lossy().into(),
-        language_version: language_version.to_utf8_lossy().into(),
-        tracer_version: tracer_version.to_utf8_lossy().into(),
-        flush_interval: Duration::from_millis(flush_interval_milliseconds as u64),
-        remote_config_poll_interval: Duration::from_millis(
-            remote_config_poll_interval_millis as u64,
-        ),
-        telemetry_heartbeat_interval: Duration::from_millis(
-            telemetry_heartbeat_interval_millis as u64,
-        ),
-        telemetry_extended_heartbeat_interval: Duration::from_millis(
-            telemetry_extended_heartbeat_interval_millis,
-        ),
-        force_flush_size,
-        force_drop_size,
-        log_level: log_level.to_utf8_lossy().into(),
-        log_file: if log_path.is_empty() {
-            config::FromEnv::log_method()
-        } else {
-            LogMethod::File(String::from(log_path.to_utf8_lossy()).into())
-        },
-        remote_config_products: ffi::Slice::from_raw_parts(
-            remote_config_products,
-            remote_config_products_count,
-        )
-        .as_slice()
-        .to_vec(),
-        remote_config_capabilities: ffi::Slice::from_raw_parts(
-            remote_config_capabilities,
-            remote_config_capabilities_count,
-        )
-        .as_slice()
-        .to_vec(),
-        remote_config_enabled,
-        process_tags: process_tags.to_vec(),
-        peer_tag_keys: vec![],
-        span_kinds_stats_computed: vec![],
-        hostname: hostname.to_utf8_lossy().into(),
-        root_service: root_service.to_utf8_lossy().into(),
-        root_session_id: if root_session_id.is_empty() {
-            None
-        } else {
-            Some(root_session_id.to_utf8_lossy().into())
-        },
-        parent_session_id: if parent_session_id.is_empty() {
-            None
-        } else {
-            Some(parent_session_id.to_utf8_lossy().into())
-        },
-        retry_interval: Duration::from_millis(retry_interval_milliseconds as u64),
-    };
-    #[cfg(unix)]
-    try_c!(blocking::set_session_config(
-        transport,
-        session_id_str,
-        &session_config,
-        is_fork,
-    ));
-    #[cfg(windows)]
-    try_c!(blocking::set_session_config(
-        transport,
-        session_id_str,
-        datadog_sidecar::service::RemoteConfigNotifyFunction(_remote_config_notify_function,),
-        &session_config,
-        is_fork,
-    ));
+    unsafe {
+        let otlp_metrics_endpoint: Option<Endpoint> = otlp_metrics_endpoint.as_ref().cloned();
+        let otlp_metrics_endpoint =
+            otlp_metrics_endpoint_with_agent_test_token(otlp_metrics_endpoint, agent_endpoint);
+        let session_config = SessionConfig {
+            endpoint: agent_endpoint.clone(),
+            dogstatsd_endpoint: dogstatsd_endpoint.clone(),
+            otlp_metrics_endpoint,
+            language: language.to_utf8_lossy().into(),
+            language_version: language_version.to_utf8_lossy().into(),
+            tracer_version: tracer_version.to_utf8_lossy().into(),
+            flush_interval: Duration::from_millis(flush_interval_milliseconds as u64),
+            remote_config_poll_interval: Duration::from_millis(
+                remote_config_poll_interval_millis as u64,
+            ),
+            telemetry_heartbeat_interval: Duration::from_millis(
+                telemetry_heartbeat_interval_millis as u64,
+            ),
+            telemetry_extended_heartbeat_interval: Duration::from_millis(
+                telemetry_extended_heartbeat_interval_millis,
+            ),
+            force_flush_size,
+            force_drop_size,
+            log_level: log_level.to_utf8_lossy().into(),
+            log_file: if log_path.is_empty() {
+                config::FromEnv::log_method()
+            } else {
+                LogMethod::File(String::from(log_path.to_utf8_lossy()).into())
+            },
+            remote_config_products: ffi::Slice::from_raw_parts(
+                remote_config_products,
+                remote_config_products_count,
+            )
+            .as_slice()
+            .to_vec(),
+            remote_config_capabilities: ffi::Slice::from_raw_parts(
+                remote_config_capabilities,
+                remote_config_capabilities_count,
+            )
+            .as_slice()
+            .to_vec(),
+            remote_config_enabled,
+            process_tags: process_tags.to_vec(),
+            default_service_name: if default_service_name.is_empty() {
+                None
+            } else {
+                Some(default_service_name.to_utf8_lossy().into())
+            },
+            peer_tag_keys: vec![],
+            span_kinds_stats_computed: vec![],
+            hostname: hostname.to_utf8_lossy().into(),
+            root_service: root_service.to_utf8_lossy().into(),
+            root_session_id: if root_session_id.is_empty() {
+                None
+            } else {
+                Some(root_session_id.to_utf8_lossy().into())
+            },
+            parent_session_id: if parent_session_id.is_empty() {
+                None
+            } else {
+                Some(parent_session_id.to_utf8_lossy().into())
+            },
+            retry_interval: Duration::from_millis(retry_interval_milliseconds as u64),
+        };
+        #[cfg(unix)]
+        let _ = win_remote_config_notification;
+        #[cfg(unix)]
+        try_c!(blocking::set_connection_config(
+            transport,
+            instance_id.clone(),
+            session_config,
+        ));
+        #[cfg(windows)]
+        try_c!(blocking::set_connection_config(
+            transport,
+            instance_id.clone(),
+            win_remote_config_notification
+                .as_ref()
+                .map(|notification| notification.inner.target()),
+            session_config,
+        ));
 
-    MaybeError::None
+        MaybeError::None
+    }
 }
 
-/// Updates the process_tags for an existing session.
-#[no_mangle]
+/// Updates the process_tags of the connection.
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_sidecar_session_set_process_tags(
+pub unsafe extern "C" fn ddog_sidecar_set_process_tags(
     transport: &mut Box<SidecarTransport>,
     process_tags: &libdd_common_ffi::Vec<Tag>,
 ) -> MaybeError {
-    try_c!(blocking::set_session_process_tags(
-        transport,
-        process_tags.to_vec(),
-    ));
+    try_c!(blocking::set_process_tags(transport, process_tags.to_vec()));
 
     MaybeError::None
 }
 
-/// Records the tracer's auto-resolved default service name for the session
-/// (process-bound; sidecar emits `svc.auto:<name>` when `DD_SERVICE` is not
-/// currently set for the active request). Pass an empty `CharSlice` to clear.
-#[no_mangle]
+/// Records whether `DD_SERVICE` is currently set (per-request mutable; refresh
+/// on each RINIT). When `true` the sidecar emits `svc.user:true`; when `false`
+/// it falls back to the `svc.auto:<name>` of the connection configuration (if any).
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_sidecar_session_set_default_service_name(
-    transport: &mut Box<SidecarTransport>,
-    default_service_name: ffi::CharSlice,
-) -> MaybeError {
-    let name = if default_service_name.is_empty() {
-        None
-    } else {
-        Some(default_service_name.to_utf8_lossy().into_owned())
-    };
-    try_c!(blocking::set_session_default_service_name(transport, name));
-
-    MaybeError::None
-}
-
-/// Records whether `DD_SERVICE` is currently set for the session (per-request
-/// mutable; refresh on each RINIT). When `true` the sidecar emits
-/// `svc.user:true`; when `false` it falls back to the previously-recorded
-/// `svc.auto:<name>` (if any).
-#[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_sidecar_session_set_user_service_defined(
+pub unsafe extern "C" fn ddog_sidecar_set_user_service_defined(
     transport: &mut Box<SidecarTransport>,
     is_user_defined: bool,
 ) -> MaybeError {
-    try_c!(blocking::set_session_user_service_defined(
+    try_c!(blocking::set_user_service_defined(
         transport,
-        is_user_defined,
+        is_user_defined
     ));
 
     MaybeError::None
@@ -837,289 +816,17 @@ impl<'a> TryInto<SerializedTracerHeaderTags> for &'a TracerHeaderTags<'a> {
     }
 }
 
-/// Enqueues a telemetry log action to be processed internally.
-/// Non-blocking. Logs might be dropped if the internal queue is full.
-///
-/// # Safety
-/// Pointers must be valid, strings must be null-terminated if not null.
-#[no_mangle]
-pub unsafe extern "C" fn ddog_sidecar_enqueue_telemetry_log(
-    session_id_ffi: CharSlice,
-    runtime_id_ffi: CharSlice,
-    service_name_ffi: CharSlice,
-    env_name_ffi: CharSlice,
-    identifier_ffi: CharSlice,
-    level: libdd_telemetry::data::LogLevel,
-    message_ffi: CharSlice,
-    stack_trace_ffi: Option<NonNull<CharSlice>>,
-    tags_ffi: Option<NonNull<CharSlice>>,
-    is_sensitive: bool,
-) -> MaybeError {
-    try_c!(ddog_sidecar_enqueue_telemetry_log_impl(
-        session_id_ffi,
-        runtime_id_ffi,
-        service_name_ffi,
-        env_name_ffi,
-        identifier_ffi,
-        level,
-        message_ffi,
-        stack_trace_ffi,
-        tags_ffi,
-        is_sensitive,
-    ));
-
-    MaybeError::None
-}
-
 fn char_slice_to_string(slice: CharSlice) -> Result<String, String> {
     slice
         .try_to_string()
         .map_err(|e| format!("Failed to convert CharSlice to String: {e}"))
 }
 
-struct TelemetryContext {
-    instance_id: InstanceId,
-    service_name: String,
-    env_name: String,
-}
-
-impl TelemetryContext {
-    fn from_ffi(
-        session_id_ffi: CharSlice,
-        runtime_id_ffi: CharSlice,
-        service_name_ffi: CharSlice,
-        env_name_ffi: CharSlice,
-    ) -> Result<Self, String> {
-        if session_id_ffi.is_empty() {
-            return Err("Null or empty session_id".into());
-        }
-        if runtime_id_ffi.is_empty() {
-            return Err("Null or empty runtime_id".into());
-        }
-        if service_name_ffi.is_empty() {
-            return Err("Null or empty service_name".into());
-        }
-        if env_name_ffi.is_empty() {
-            return Err("Null or empty env_name".into());
-        }
-
-        Ok(Self {
-            instance_id: InstanceId::new(
-                char_slice_to_string(session_id_ffi)?,
-                char_slice_to_string(runtime_id_ffi)?,
-            ),
-            service_name: char_slice_to_string(service_name_ffi)?,
-            env_name: char_slice_to_string(env_name_ffi)?,
-        })
-    }
-
-    /// Sends a telemetry action through the internal telemetry channel
-    fn send_action(self, action: InternalTelemetryAction) -> Result<(), String> {
-        let sender = get_telemetry_action_sender()
-            .map_err(|e| format!("Failed to get telemetry action sender: {e}"))?;
-
-        let msg = InternalTelemetryActions {
-            instance_id: self.instance_id,
-            service_name: self.service_name,
-            env_name: self.env_name,
-            actions: vec![action],
-        };
-
-        sender
-            .try_send(msg)
-            .map_err(|e| format!("Failed to send telemetry action: {e}"))
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn ddog_sidecar_enqueue_telemetry_log_impl(
-    session_id_ffi: CharSlice,
-    runtime_id_ffi: CharSlice,
-    service_name_ffi: CharSlice,
-    env_name_ffi: CharSlice,
-    identifier_ffi: CharSlice,
-    level: libdd_telemetry::data::LogLevel,
-    message_ffi: CharSlice,
-    stack_trace_ffi: Option<NonNull<CharSlice>>,
-    tags_ffi: Option<NonNull<CharSlice>>,
-    is_sensitive: bool,
-) -> Result<(), String> {
-    if identifier_ffi.is_empty() || message_ffi.is_empty() {
-        return Err("Null or empty required arguments".into());
-    }
-
-    let ctx = TelemetryContext::from_ffi(
-        session_id_ffi,
-        runtime_id_ffi,
-        service_name_ffi,
-        env_name_ffi,
-    )?;
-
-    let identifier = char_slice_to_string(identifier_ffi)?;
-    let message = char_slice_to_string(message_ffi)?;
-
-    let stack_trace = stack_trace_ffi
-        .map(|s| char_slice_to_string(*unsafe { s.as_ref() }))
-        .transpose()?;
-    let tags: Option<String> = tags_ffi
-        .map(|s| char_slice_to_string(*unsafe { s.as_ref() }))
-        .transpose()?;
-
-    let mut hasher = DefaultHasher::new();
-    identifier.hash(&mut hasher);
-    let log_id = LogIdentifier {
-        identifier: hasher.finish(),
-    };
-
-    let log_data = libdd_telemetry::data::Log {
-        message,
-        level,
-        stack_trace,
-        count: 1,
-        tags: tags.unwrap_or("".into()),
-        is_sensitive,
-        is_crash: false,
-    };
-    let log_action = TelemetryActions::AddLog((log_id, log_data));
-
-    ctx.send_action(InternalTelemetryAction::TelemetryAction(log_action))
-}
-
-/// Enqueues a telemetry point to be processed internally.
-///
-/// # Safety
-/// Pointers must be valid, strings must be null-terminated if not null.
-#[no_mangle]
-pub unsafe extern "C" fn ddog_sidecar_enqueue_telemetry_point(
-    session_id_ffi: CharSlice,
-    runtime_id_ffi: CharSlice,
-    service_name_ffi: CharSlice,
-    env_name_ffi: CharSlice,
-    metric_name_ffi: CharSlice,
-    value: f64,
-    tags_ffi: Option<NonNull<CharSlice>>,
-) -> MaybeError {
-    try_c!(ddog_sidecar_enqueue_telemetry_point_impl(
-        session_id_ffi,
-        runtime_id_ffi,
-        service_name_ffi,
-        env_name_ffi,
-        metric_name_ffi,
-        value,
-        tags_ffi,
-    ));
-    MaybeError::None
-}
-
-fn ddog_sidecar_enqueue_telemetry_point_impl(
-    session_id_ffi: CharSlice,
-    runtime_id_ffi: CharSlice,
-    service_name_ffi: CharSlice,
-    env_name_ffi: CharSlice,
-    metric_name_ffi: CharSlice,
-    value: f64,
-    tags_ffi: Option<NonNull<CharSlice>>,
-) -> Result<(), String> {
-    if metric_name_ffi.is_empty() {
-        return Err("Null or empty metric_name".into());
-    }
-
-    let ctx = TelemetryContext::from_ffi(
-        session_id_ffi,
-        runtime_id_ffi,
-        service_name_ffi,
-        env_name_ffi,
-    )?;
-
-    let metric_name = char_slice_to_string(metric_name_ffi)?;
-
-    fn get_tags(tags_slice: CharSlice) -> Result<Vec<Tag>, String> {
-        let tags = char_slice_to_string(tags_slice)?;
-        let (tags, error) = libdd_common::tag::parse_tags(tags.as_str());
-        if let Some(error) = error {
-            return Err(error.to_string());
-        }
-        Ok(tags)
-    }
-
-    let tags = match tags_ffi {
-        Some(tags_slice) => get_tags(*unsafe { tags_slice.as_ref() })?,
-        None => Vec::default(),
-    };
-
-    ctx.send_action(InternalTelemetryAction::AddMetricPoint((
-        value,
-        metric_name,
-        tags,
-    )))
-}
-
-/// Registers a telemetry metric to be processed internally.
-///
-/// # Safety
-/// Pointers must be valid, strings must be null-terminated if not null.
-#[no_mangle]
-pub unsafe extern "C" fn ddog_sidecar_enqueue_telemetry_metric(
-    session_id_ffi: CharSlice,
-    runtime_id_ffi: CharSlice,
-    service_name_ffi: CharSlice,
-    env_name_ffi: CharSlice,
-    metric_name_ffi: CharSlice,
-    metric_type: MetricType,
-    metric_namespace: MetricNamespace,
-) -> MaybeError {
-    try_c!(ddog_sidecar_enqueue_telemetry_metric_impl(
-        session_id_ffi,
-        runtime_id_ffi,
-        service_name_ffi,
-        env_name_ffi,
-        metric_name_ffi,
-        metric_type,
-        metric_namespace,
-    ));
-    MaybeError::None
-}
-
-#[allow(clippy::too_many_arguments)]
-fn ddog_sidecar_enqueue_telemetry_metric_impl(
-    session_id_ffi: CharSlice,
-    runtime_id_ffi: CharSlice,
-    service_name_ffi: CharSlice,
-    env_name_ffi: CharSlice,
-    metric_name_ffi: CharSlice,
-    metric_type: MetricType,
-    metric_namespace: MetricNamespace,
-) -> Result<(), String> {
-    if metric_name_ffi.is_empty() {
-        return Err("Null or empty metric_name".into());
-    }
-
-    let ctx = TelemetryContext::from_ffi(
-        session_id_ffi,
-        runtime_id_ffi,
-        service_name_ffi,
-        env_name_ffi,
-    )?;
-
-    let metric_name = char_slice_to_string(metric_name_ffi)?;
-
-    ctx.send_action(InternalTelemetryAction::RegisterTelemetryMetric(
-        MetricContext {
-            name: metric_name,
-            tags: Vec::default(),
-            metric_type,
-            common: true,
-            namespace: metric_namespace,
-        },
-    ))
-}
-
 /// Sends a trace to the sidecar via shared memory.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_send_trace_v04_shm(
     transport: &mut Box<SidecarTransport>,
-    instance_id: &InstanceId,
     shm_handle: Box<ShmHandle>,
     len: usize,
     tracer_header_tags: &TracerHeaderTags,
@@ -1128,7 +835,6 @@ pub unsafe extern "C" fn ddog_sidecar_send_trace_v04_shm(
 
     try_c!(blocking::send_trace_v04_shm(
         transport,
-        instance_id,
         *shm_handle,
         len,
         tracer_header_tags,
@@ -1138,11 +844,10 @@ pub unsafe extern "C" fn ddog_sidecar_send_trace_v04_shm(
 }
 
 /// Sends a trace as bytes to the sidecar.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_send_trace_v04_bytes(
     transport: &mut Box<SidecarTransport>,
-    instance_id: &InstanceId,
     data: ffi::CharSlice,
     tracer_header_tags: &TracerHeaderTags,
 ) -> MaybeError {
@@ -1150,7 +855,6 @@ pub unsafe extern "C" fn ddog_sidecar_send_trace_v04_bytes(
 
     try_c!(blocking::send_trace_v04_bytes(
         transport,
-        instance_id,
         data.as_bytes().to_vec(),
         tracer_header_tags,
     ));
@@ -1161,11 +865,10 @@ pub unsafe extern "C" fn ddog_sidecar_send_trace_v04_bytes(
 /// Sends a V1-encoded trace to the sidecar via shared memory. The sidecar decodes the V1
 /// `TracerPayload`, can inspect it, and re-encodes it as V1 msgpack on the way to the agent's
 /// `/v1.0/traces` endpoint.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_send_trace_v1_shm(
     transport: &mut Box<SidecarTransport>,
-    instance_id: &InstanceId,
     shm_handle: Box<ShmHandle>,
     len: usize,
     tracer_header_tags: &TracerHeaderTags,
@@ -1178,7 +881,6 @@ pub unsafe extern "C" fn ddog_sidecar_send_trace_v1_shm(
 
     try_c!(blocking::send_trace_v1_shm(
         transport,
-        instance_id,
         *shm_handle,
         len,
         generic,
@@ -1195,11 +897,10 @@ pub unsafe extern "C" fn ddog_sidecar_send_trace_v1_shm(
 /// Sends a V1-encoded trace as bytes to the sidecar. The sidecar decodes the V1 `TracerPayload`,
 /// can inspect it, and re-encodes it as V1 msgpack on the way to the agent's `/v1.0/traces`
 /// endpoint.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_send_trace_v1_bytes(
     transport: &mut Box<SidecarTransport>,
-    instance_id: &InstanceId,
     data: ffi::CharSlice,
     tracer_header_tags: &TracerHeaderTags,
 ) -> MaybeError {
@@ -1211,7 +912,6 @@ pub unsafe extern "C" fn ddog_sidecar_send_trace_v1_bytes(
 
     try_c!(blocking::send_trace_v1_bytes(
         transport,
-        instance_id,
         data.as_bytes().to_vec(),
         generic,
         tracer_header_tags
@@ -1224,39 +924,30 @@ pub unsafe extern "C" fn ddog_sidecar_send_trace_v1_bytes(
     MaybeError::None
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 #[allow(improper_ctypes_definitions)] // DebuggerPayload is just a pointer, we hide its internals
 pub unsafe extern "C" fn ddog_sidecar_send_debugger_data(
     transport: &mut Box<SidecarTransport>,
-    instance_id: &InstanceId,
-    queue_id: QueueId,
     payloads: Vec<DebuggerPayload>,
 ) -> MaybeError {
     if payloads.is_empty() {
         return MaybeError::None;
     }
 
-    try_c!(blocking::send_debugger_data_shm_vec(
-        transport,
-        instance_id,
-        queue_id,
-        payloads,
-    ));
+    try_c!(blocking::send_debugger_data_shm_vec(transport, payloads));
 
     MaybeError::None
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 #[allow(improper_ctypes_definitions)] // DebuggerPayload is just a pointer, we hide its internals
 pub unsafe extern "C" fn ddog_sidecar_send_debugger_datum(
     transport: &mut Box<SidecarTransport>,
-    instance_id: &InstanceId,
-    queue_id: QueueId,
     payload: Box<DebuggerPayload>,
 ) -> MaybeError {
-    ddog_sidecar_send_debugger_data(transport, instance_id, queue_id, vec![*payload])
+    unsafe { ddog_sidecar_send_debugger_data(transport, vec![*payload]) }
 }
 
 #[repr(C)]
@@ -1300,12 +991,15 @@ pub struct FfeFlagEvaluation<'a> {
     pub allocation_key: CharSlice<'a>,
     pub targeting_rule_key: CharSlice<'a>,
     pub targeting_key: CharSlice<'a>,
-    /// UTF-8 JSON object. Empty, invalid, or non-object JSON is omitted. Object
-    /// values are pruned to 256 leaf fields, 256-byte string values, and four
-    /// levels of nested context depth.
+    /// UTF-8 JSON object, ignored without consent. Empty, invalid, or non-object
+    /// JSON is omitted without rejecting the evaluation. Retained context has
+    /// at most 256 leaves, 256-character keys/strings, 256 entries per container,
+    /// and depth four. Legacy JSON parsing is not a bounded-cost producer API.
     pub evaluation_context_json: CharSlice<'a>,
     pub error_message: CharSlice<'a>,
     pub runtime_default_used: bool,
+    /// Consent captured from the configuration used for this evaluation.
+    pub observe_full_evaluation_data: bool,
 }
 
 /// Send structured FFE exposure events to the sidecar. The sidecar owns
@@ -1316,23 +1010,15 @@ pub struct FfeFlagEvaluation<'a> {
 /// # Safety
 /// `context` and every element in `exposures` must contain valid UTF-8
 /// `CharSlice` values. Empty `exposures` is a no-op.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_send_ffe_exposure_batch(
     transport: &mut Box<SidecarTransport>,
-    instance_id: &InstanceId,
-    queue_id: &QueueId,
     context: &FfeTelemetryContext<'_>,
     exposures: Slice<FfeExposure<'_>>,
 ) -> MaybeError {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        ddog_sidecar_send_ffe_exposure_batch_impl(
-            transport,
-            instance_id,
-            queue_id,
-            context,
-            exposures,
-        )
+        ddog_sidecar_send_ffe_exposure_batch_impl(transport, context, exposures)
     }))
     .unwrap_or_else(|panic| {
         MaybeError::Some(libdd_common_ffi::utils::handle_panic_error(
@@ -1344,24 +1030,26 @@ pub unsafe extern "C" fn ddog_sidecar_send_ffe_exposure_batch(
 
 fn ddog_sidecar_send_ffe_exposure_batch_impl(
     transport: &mut Box<SidecarTransport>,
-    instance_id: &InstanceId,
-    queue_id: &QueueId,
     context: &FfeTelemetryContext<'_>,
     exposures: Slice<FfeExposure<'_>>,
 ) -> MaybeError {
-    let exposures = try_c!(exposures
-        .try_as_slice()
-        .map_err(|e| format!("Invalid exposure slice: {e}")));
+    let exposures = try_c!(
+        exposures
+            .try_as_slice()
+            .map_err(|e| format!("Invalid exposure slice: {e}"))
+    );
 
     if exposures.is_empty() {
         return MaybeError::None;
     }
 
     let context = try_c!(ffe_context_from_ffi(context));
-    let exposures = try_c!(exposures
-        .iter()
-        .map(ffe_exposure_from_ffi)
-        .collect::<Result<Vec<_>, _>>());
+    let exposures = try_c!(
+        exposures
+            .iter()
+            .map(ffe_exposure_from_ffi)
+            .collect::<Result<Vec<_>, _>>()
+    );
 
     if exposures.is_empty() {
         return MaybeError::None;
@@ -1369,8 +1057,6 @@ fn ddog_sidecar_send_ffe_exposure_batch_impl(
 
     try_c!(blocking::enqueue_actions(
         transport,
-        instance_id,
-        queue_id,
         vec![SidecarAction::FfeExposureBatch(SidecarFfeExposureBatch {
             context,
             exposures,
@@ -1384,25 +1070,20 @@ fn ddog_sidecar_send_ffe_exposure_batch_impl(
 /// callers must aggregate and bound event cardinality before passing a batch.
 ///
 /// # Safety
-/// `context` and every element in `flag_evaluations` must contain valid UTF-8
-/// `CharSlice` values. Empty `flag_evaluations` is a no-op.
-#[no_mangle]
+/// All slices must reference valid memory under the CharSlice contract. Context
+/// metadata and flag keys must be UTF-8. Malformed optional variant, allocation,
+/// rule, targeting, and context text is omitted; malformed error text becomes GENERAL.
+/// A null/zero targeting slice means missing; a non-null empty slice means empty.
+/// Empty `flag_evaluations` is a no-op. Use headers and library from the same build.
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_send_ffe_flag_evaluation_batch(
     transport: &mut Box<SidecarTransport>,
-    instance_id: &InstanceId,
-    queue_id: &QueueId,
     context: &FfeTelemetryContext<'_>,
     flag_evaluations: Slice<FfeFlagEvaluation<'_>>,
 ) -> MaybeError {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        ddog_sidecar_send_ffe_flag_evaluation_batch_impl(
-            transport,
-            instance_id,
-            queue_id,
-            context,
-            flag_evaluations,
-        )
+        ddog_sidecar_send_ffe_flag_evaluation_batch_impl(transport, context, flag_evaluations)
     }))
     .unwrap_or_else(|panic| {
         MaybeError::Some(libdd_common_ffi::utils::handle_panic_error(
@@ -1414,24 +1095,26 @@ pub unsafe extern "C" fn ddog_sidecar_send_ffe_flag_evaluation_batch(
 
 fn ddog_sidecar_send_ffe_flag_evaluation_batch_impl(
     transport: &mut Box<SidecarTransport>,
-    instance_id: &InstanceId,
-    queue_id: &QueueId,
     context: &FfeTelemetryContext<'_>,
     flag_evaluations: Slice<FfeFlagEvaluation<'_>>,
 ) -> MaybeError {
-    let flag_evaluations = try_c!(flag_evaluations
-        .try_as_slice()
-        .map_err(|e| format!("Invalid flag evaluation slice: {e}")));
+    let flag_evaluations = try_c!(
+        flag_evaluations
+            .try_as_slice()
+            .map_err(|e| format!("Invalid flag evaluation slice: {e}"))
+    );
 
     if flag_evaluations.is_empty() {
         return MaybeError::None;
     }
 
     let context = try_c!(ffe_context_from_ffi(context));
-    let flag_evaluations = try_c!(flag_evaluations
-        .iter()
-        .map(|event| ffe_flag_evaluation_from_ffi(event, &context.service))
-        .collect::<Result<Vec<_>, _>>());
+    let flag_evaluations = try_c!(
+        flag_evaluations
+            .iter()
+            .map(|event| ffe_flag_evaluation_from_ffi(event, &context.service))
+            .collect::<Result<Vec<_>, _>>()
+    );
 
     if flag_evaluations.is_empty() {
         return MaybeError::None;
@@ -1439,8 +1122,6 @@ fn ddog_sidecar_send_ffe_flag_evaluation_batch_impl(
 
     try_c!(blocking::enqueue_actions(
         transport,
-        instance_id,
-        queue_id,
         vec![SidecarAction::FfeFlagEvaluationBatch(
             SidecarFfeFlagEvaluationBatch {
                 context,
@@ -1459,12 +1140,10 @@ fn ddog_sidecar_send_ffe_flag_evaluation_batch_impl(
 /// # Safety
 /// `context` and every element in `metrics` must contain valid UTF-8
 /// `CharSlice` values. Empty `metrics` is a no-op.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_send_ffe_evaluation_metrics(
     transport: &mut Box<SidecarTransport>,
-    instance_id: &InstanceId,
-    queue_id: &QueueId,
     context: &FfeTelemetryContext<'_>,
     metrics: Slice<FfeEvaluationMetric<'_>>,
 ) -> MaybeError {
@@ -1473,13 +1152,15 @@ pub unsafe extern "C" fn ddog_sidecar_send_ffe_evaluation_metrics(
     }
 
     let context = try_c!(ffe_context_from_ffi(context));
-    let metrics = try_c!(metrics
-        .try_as_slice()
-        .map_err(|e| format!("Invalid metric slice: {e}"))
-        .and_then(|metrics| metrics
-            .iter()
-            .map(ffe_metric_from_ffi)
-            .collect::<Result<Vec<_>, _>>()));
+    let metrics = try_c!(
+        metrics
+            .try_as_slice()
+            .map_err(|e| format!("Invalid metric slice: {e}"))
+            .and_then(|metrics| metrics
+                .iter()
+                .map(ffe_metric_from_ffi)
+                .collect::<Result<Vec<_>, _>>())
+    );
 
     if metrics.is_empty() {
         return MaybeError::None;
@@ -1487,8 +1168,6 @@ pub unsafe extern "C" fn ddog_sidecar_send_ffe_evaluation_metrics(
 
     try_c!(blocking::enqueue_actions(
         transport,
-        instance_id,
-        queue_id,
         vec![SidecarAction::FfeEvaluationMetrics { context, metrics }],
     ));
     MaybeError::None
@@ -1520,16 +1199,45 @@ fn ffe_flag_evaluation_from_ffi(
     event: &FfeFlagEvaluation<'_>,
     service: &str,
 ) -> Result<SidecarFfeFlagEvaluationEvent, String> {
-    let evaluation = optional_json_object_string(event.evaluation_context_json)?;
+    let mut field_omissions = FieldOmissions::default();
+    let raw_evaluation =
+        if event.observe_full_evaluation_data && !event.evaluation_context_json.is_empty() {
+            match event.evaluation_context_json.try_to_utf8() {
+                Ok(raw) => Some(raw),
+                Err(_) => {
+                    field_omissions.record_context(ContextTruncationReason::SnapshotError);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+    let targeting_key = if event.targeting_key.as_raw_parts().0.is_null() {
+        None
+    } else {
+        match event.targeting_key.try_to_utf8() {
+            Ok(key) => Some(key.to_owned()),
+            Err(_) => {
+                field_omissions.targeting_key_invalid = true;
+                None
+            }
+        }
+    };
     let dd = (!service.is_empty()).then(|| ContextDD {
         service: service.to_owned(),
     });
-    let context = if evaluation.is_some() || dd.is_some() {
-        Some(FlagEvalEventContext { evaluation, dd })
+    let context = if raw_evaluation.is_some() || dd.is_some() {
+        Some(FlagEvalEventContext {
+            evaluation: raw_evaluation
+                .and_then(|raw| prune_context_json(raw, &mut field_omissions)),
+            dd,
+        })
     } else {
         None
     };
 
+    // Build the event from borrowed input, storing only the pruned context.
+    // Aggregation and output still apply their independent privacy checks.
     Ok(SidecarFfeFlagEvaluationEvent {
         timestamp: event.timestamp_ms,
         flag: FlagKey {
@@ -1538,83 +1246,23 @@ fn ffe_flag_evaluation_from_ffi(
         first_evaluation: event.first_evaluation_ms,
         last_evaluation: event.last_evaluation_ms,
         evaluation_count: event.evaluation_count,
-        variant: optional_string(event.variant)?.map(|key| VariantKey { key }),
-        allocation: optional_string(event.allocation_key)?.map(|key| AllocationKey { key }),
-        targeting_rule: optional_string(event.targeting_rule_key)?
+        variant: optional_string_if_valid_utf8(event.variant).map(|key| VariantKey { key }),
+        allocation: optional_string_if_valid_utf8(event.allocation_key)
+            .map(|key| AllocationKey { key }),
+        targeting_rule: optional_string_if_valid_utf8(event.targeting_rule_key)
             .map(|key| TargetingRuleKey { key }),
-        targeting_key: optional_string(event.targeting_key)?,
+        targeting_key,
         context,
-        error: optional_string(event.error_message)?.map(|message| EvalError { message }),
+        error: if event.error_message.is_empty() {
+            None
+        } else {
+            EvalError::from_message(event.error_message.try_to_utf8().unwrap_or("GENERAL"))
+        },
         runtime_default_used: event.runtime_default_used,
+        observe_full_evaluation_data: event.observe_full_evaluation_data,
+        is_degraded: false,
+        field_omissions,
     })
-}
-
-fn prune_evaluation_context_json(value: serde_json::Value) -> Option<String> {
-    let serde_json::Value::Object(attrs) = value else {
-        return None;
-    };
-
-    let mut remaining_fields = MAX_CONTEXT_FIELDS;
-    let pruned = prune_context_object(&attrs, 1, &mut remaining_fields);
-    Some(serde_json::Value::Object(pruned).to_string())
-}
-
-fn prune_context_object(
-    attrs: &serde_json::Map<String, serde_json::Value>,
-    depth: usize,
-    remaining_fields: &mut usize,
-) -> serde_json::Map<String, serde_json::Value> {
-    let mut keys: Vec<_> = attrs.keys().collect();
-    keys.sort();
-
-    let mut pruned = serde_json::Map::new();
-    for key in keys {
-        if *remaining_fields == 0 {
-            break;
-        }
-        let Some(value) = attrs
-            .get(key)
-            .and_then(|value| prune_context_value(value, depth, remaining_fields))
-        else {
-            continue;
-        };
-        pruned.insert(key.clone(), value);
-    }
-    pruned
-}
-
-fn prune_context_value(
-    value: &serde_json::Value,
-    depth: usize,
-    remaining_fields: &mut usize,
-) -> Option<serde_json::Value> {
-    match value {
-        serde_json::Value::String(s) if s.len() > MAX_FIELD_LENGTH => None,
-        serde_json::Value::Object(attrs) => {
-            if depth >= MAX_CONTEXT_DEPTH {
-                return None;
-            }
-            let pruned = prune_context_object(attrs, depth + 1, remaining_fields);
-            (!pruned.is_empty()).then_some(serde_json::Value::Object(pruned))
-        }
-        serde_json::Value::Array(values) => {
-            if depth >= MAX_CONTEXT_DEPTH {
-                return None;
-            }
-            let pruned: Vec<_> = values
-                .iter()
-                .filter_map(|value| prune_context_value(value, depth + 1, remaining_fields))
-                .collect();
-            (!pruned.is_empty()).then_some(serde_json::Value::Array(pruned))
-        }
-        _ => {
-            if *remaining_fields == 0 {
-                return None;
-            }
-            *remaining_fields -= 1;
-            Some(value.clone())
-        }
-    }
 }
 
 fn ffe_metric_from_ffi(
@@ -1629,6 +1277,14 @@ fn ffe_metric_from_ffi(
     })
 }
 
+// Omit empty or invalid UTF-8 flagevaluation dimensions, keeping the event and
+// healthy batch siblings. Unlike optional_string, conversion errors are discarded.
+fn optional_string_if_valid_utf8(slice: CharSlice) -> Option<String> {
+    optional_string(slice).ok().flatten()
+}
+
+// Empty means absent; invalid UTF-8 is an error. Preserve the existing metrics
+// path's error handling rather than silently omitting malformed metric fields.
 fn optional_string(slice: CharSlice) -> Result<Option<String>, String> {
     if slice.is_empty() {
         Ok(None)
@@ -1637,42 +1293,27 @@ fn optional_string(slice: CharSlice) -> Result<Option<String>, String> {
     }
 }
 
-fn optional_json_object_string(slice: CharSlice) -> Result<Option<String>, String> {
-    let Some(raw) = optional_string(slice)? else {
-        return Ok(None);
-    };
-    let value = match serde_json::from_str::<serde_json::Value>(&raw) {
-        Ok(value) => value,
-        Err(_) => return Ok(None),
-    };
-    Ok(prune_evaluation_context_json(value))
-}
-
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 #[allow(improper_ctypes_definitions)] // DebuggerPayload is just a pointer, we hide its internals
 pub unsafe extern "C" fn ddog_sidecar_send_debugger_diagnostics(
     transport: &mut Box<SidecarTransport>,
-    instance_id: &InstanceId,
-    queue_id: QueueId,
     diagnostics_payload: DebuggerPayload,
 ) -> MaybeError {
     try_c!(blocking::send_debugger_diagnostics(
         transport,
-        instance_id,
-        queue_id,
         diagnostics_payload,
     ));
 
     MaybeError::None
 }
 
-#[no_mangle]
+/// Sets the application of the request currently processed on this connection. Unchanged
+/// applications are not resent.
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_sidecar_set_universal_service_tags(
+pub unsafe extern "C" fn ddog_sidecar_set_application(
     transport: &mut Box<SidecarTransport>,
-    instance_id: &InstanceId,
-    queue_id: &QueueId,
     service_name: ffi::CharSlice,
     env_name: ffi::CharSlice,
     app_version: ffi::CharSlice,
@@ -1680,33 +1321,30 @@ pub unsafe extern "C" fn ddog_sidecar_set_universal_service_tags(
     dynamic_instrumentation_state: DynamicInstrumentationConfigState,
     remote_config_generation: u64,
 ) -> MaybeError {
-    try_c!(blocking::set_universal_service_tags(
+    try_c!(blocking::set_application(
         transport,
-        instance_id,
-        queue_id,
-        service_name.to_utf8_lossy().into(),
-        env_name.to_utf8_lossy().into(),
-        app_version.to_utf8_lossy().into(),
-        global_tags.to_vec(),
-        dynamic_instrumentation_state,
+        Some(ApplicationConfig {
+            service_name: service_name.to_utf8_lossy().into(),
+            env_name: env_name.to_utf8_lossy().into(),
+            app_version: app_version.to_utf8_lossy().into(),
+            global_tags: global_tags.to_vec(),
+            dynamic_instrumentation_state,
+        }),
         remote_config_generation,
     ));
 
     MaybeError::None
 }
 
-#[no_mangle]
+/// Updates the dynamic instrumentation state of the current application.
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_set_request_config(
     transport: &mut Box<SidecarTransport>,
-    instance_id: &InstanceId,
-    queue_id: &QueueId,
     dynamic_instrumentation_state: DynamicInstrumentationConfigState,
 ) -> MaybeError {
-    try_c!(blocking::set_request_config(
+    try_c!(blocking::set_dynamic_instrumentation_state(
         transport,
-        instance_id,
-        queue_id,
         dynamic_instrumentation_state,
     ));
 
@@ -1714,52 +1352,54 @@ pub unsafe extern "C" fn ddog_sidecar_set_request_config(
 }
 
 /// Dumps the current state of the sidecar.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_dump(
     transport: &mut Box<SidecarTransport>,
 ) -> ffi::CharSlice<'_> {
-    let str = match blocking::dump(transport) {
-        Ok(dump) => dump,
-        Err(e) => format!("{e:?}"),
-    };
-    let size = str.len();
-    let malloced = libc::malloc(size) as *mut u8;
-    let buf = slice::from_raw_parts_mut(malloced, size);
-    buf.copy_from_slice(str.as_bytes());
-    ffi::CharSlice::from_raw_parts(malloced as *mut c_char, size)
+    unsafe {
+        let str = match blocking::dump(transport) {
+            Ok(dump) => dump,
+            Err(e) => format!("{e:?}"),
+        };
+        let size = str.len();
+        let malloced = libc::malloc(size) as *mut u8;
+        let buf = slice::from_raw_parts_mut(malloced, size);
+        buf.copy_from_slice(str.as_bytes());
+        ffi::CharSlice::from_raw_parts(malloced as *mut c_char, size)
+    }
 }
 
 /// Retrieves the current statistics of the sidecar.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_stats(
     transport: &mut Box<SidecarTransport>,
 ) -> ffi::CharSlice<'_> {
-    let str = match blocking::stats(transport) {
-        Ok(stats) => stats,
-        Err(e) => format!("{e:?}"),
-    };
-    let size = str.len();
-    let malloced = libc::malloc(size) as *mut u8;
-    let buf = slice::from_raw_parts_mut(malloced, size);
-    buf.copy_from_slice(str.as_bytes());
-    ffi::CharSlice::from_raw_parts(malloced as *mut c_char, size)
+    unsafe {
+        let str = match blocking::stats(transport) {
+            Ok(stats) => stats,
+            Err(e) => format!("{e:?}"),
+        };
+        let size = str.len();
+        let malloced = libc::malloc(size) as *mut u8;
+        let buf = slice::from_raw_parts_mut(malloced, size);
+        buf.copy_from_slice(str.as_bytes());
+        ffi::CharSlice::from_raw_parts(malloced as *mut c_char, size)
+    }
 }
 
 /// Send a DogStatsD "count" metric.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_dogstatsd_count(
     transport: &mut Box<SidecarTransport>,
-    instance_id: &InstanceId,
     metric: ffi::CharSlice,
     value: i64,
     tags: Option<&libdd_common_ffi::Vec<Tag>>,
 ) -> MaybeError {
     try_c!(blocking::send_dogstatsd_actions(
         transport,
-        instance_id,
         vec![DogStatsDActionOwned::Count(
             metric.to_utf8_lossy().into_owned(),
             value,
@@ -1772,18 +1412,16 @@ pub unsafe extern "C" fn ddog_sidecar_dogstatsd_count(
 }
 
 /// Send a DogStatsD "distribution" metric.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_dogstatsd_distribution(
     transport: &mut Box<SidecarTransport>,
-    instance_id: &InstanceId,
     metric: ffi::CharSlice,
     value: f64,
     tags: Option<&libdd_common_ffi::Vec<Tag>>,
 ) -> MaybeError {
     try_c!(blocking::send_dogstatsd_actions(
         transport,
-        instance_id,
         vec![DogStatsDActionOwned::Distribution(
             metric.to_utf8_lossy().into_owned(),
             value,
@@ -1796,18 +1434,16 @@ pub unsafe extern "C" fn ddog_sidecar_dogstatsd_distribution(
 }
 
 /// Send a DogStatsD "gauge" metric.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_dogstatsd_gauge(
     transport: &mut Box<SidecarTransport>,
-    instance_id: &InstanceId,
     metric: ffi::CharSlice,
     value: f64,
     tags: Option<&libdd_common_ffi::Vec<Tag>>,
 ) -> MaybeError {
     try_c!(blocking::send_dogstatsd_actions(
         transport,
-        instance_id,
         vec![DogStatsDActionOwned::Gauge(
             metric.to_utf8_lossy().into_owned(),
             value,
@@ -1820,18 +1456,16 @@ pub unsafe extern "C" fn ddog_sidecar_dogstatsd_gauge(
 }
 
 /// Send a DogStatsD "histogram" metric.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_dogstatsd_histogram(
     transport: &mut Box<SidecarTransport>,
-    instance_id: &InstanceId,
     metric: ffi::CharSlice,
     value: f64,
     tags: Option<&libdd_common_ffi::Vec<Tag>>,
 ) -> MaybeError {
     try_c!(blocking::send_dogstatsd_actions(
         transport,
-        instance_id,
         vec![DogStatsDActionOwned::Histogram(
             metric.to_utf8_lossy().into_owned(),
             value,
@@ -1844,18 +1478,16 @@ pub unsafe extern "C" fn ddog_sidecar_dogstatsd_histogram(
 }
 
 /// Send a DogStatsD "set" metric.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_dogstatsd_set(
     transport: &mut Box<SidecarTransport>,
-    instance_id: &InstanceId,
     metric: ffi::CharSlice,
     value: i64,
     tags: Option<&libdd_common_ffi::Vec<Tag>>,
 ) -> MaybeError {
     try_c!(blocking::send_dogstatsd_actions(
         transport,
-        instance_id,
         vec![DogStatsDActionOwned::Set(
             metric.to_utf8_lossy().into_owned(),
             value,
@@ -1867,8 +1499,8 @@ pub unsafe extern "C" fn ddog_sidecar_dogstatsd_set(
     MaybeError::None
 }
 
-/// Sets x-datadog-test-session-token on all requests for the given session.
-#[no_mangle]
+/// Sets x-datadog-test-session-token on all requests of this connection.
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_set_test_session_token(
     transport: &mut Box<SidecarTransport>,
@@ -1889,7 +1521,7 @@ pub unsafe extern "C" fn ddog_sidecar_set_test_session_token(
 ///
 /// * `transport` - The transport used for communication.
 /// * `factory` - A C function that must return a pointer to "ddog_SidecarTransport"
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub extern "C" fn ddog_sidecar_reconnect(
     transport: &mut Box<SidecarTransport>,
@@ -1898,15 +1530,50 @@ pub extern "C" fn ddog_sidecar_reconnect(
     transport.reconnect(|| unsafe { factory() });
 }
 
+/// Continues on the connection of `connection` as another instance, keeping the state of
+/// `transport`. A fork child must do so with the transport it inherited: that connection still
+/// works, so `ddog_sidecar_reconnect` would keep it, but it belongs to the parent.
+///
+/// # Arguments
+///
+/// * `transport` - The inherited transport, whose connection is not used anymore.
+/// * `connection` - A new transport of the child, without configuration.
+/// * `instance_id` - The instance id of the child.
+/// * `remote_config_generation` - The remote config generation last read by the child.
+#[unsafe(no_mangle)]
+pub extern "C" fn ddog_sidecar_transport_replace_connection_as(
+    transport: &mut Box<SidecarTransport>,
+    connection: Box<SidecarTransport>,
+    instance_id: &InstanceId,
+    remote_config_generation: u64,
+) {
+    transport.replace_connection_as(connection, instance_id.clone(), remote_config_generation);
+}
+
+/// Closes the sockets of a transport inherited by a fork child from a thread which did not
+/// survive the fork, so that the sidecar drops the state of that thread.
+///
+/// # Safety
+///
+/// The transport must never be used or dropped afterwards, but leaked: the thread may have been
+/// in the middle of changing it, and its fd numbers may get reused.
+#[cfg(unix)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ddog_sidecar_transport_close_inherited_fds(
+    transport: &mut Box<SidecarTransport>,
+) {
+    unsafe { transport.close_inherited_fds() }
+}
+
 /// Gets an agent info reader.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_get_agent_info_reader(endpoint: &Endpoint) -> Box<AgentInfoReader> {
     Box::new(AgentInfoReader::new(endpoint))
 }
 
 /// Gets the current agent info environment (or empty if not existing)
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_get_agent_info_env<'a>(
     reader: &'a mut AgentInfoReader,
@@ -1926,7 +1593,7 @@ pub unsafe extern "C" fn ddog_get_agent_info_env<'a>(
 }
 
 /// Gets the container tags hash from agent info (or empty if not existing)
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_get_agent_info_container_tags_hash<'a>(
     reader: &'a mut AgentInfoReader,
@@ -1959,105 +1626,105 @@ macro_rules! check {
 pub struct SenderParameters {
     pub tracer_headers_tags: TracerHeaderTags<'static>,
     pub transport: Box<SidecarTransport>,
-    pub instance_id: Box<InstanceId>,
     pub limit: usize,
     pub n_requests: i64,
     pub buffer_size: i64,
     pub url: CharSlice<'static>,
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_send_traces_to_sidecar(
     traces: &mut TracesBytes,
     parameters: &mut SenderParameters,
 ) {
-    let size: usize = traces.iter().map(|trace| trace.len()).sum();
+    unsafe {
+        let size: usize = traces.iter().map(|trace| trace.len()).sum();
 
-    // Check connection to the sidecar
-    if parameters.transport.is_closed() {
-        tracing::info!(
-            "Skipping flushing traces of size {} as connection to sidecar failed",
-            size
-        );
-        return;
-    }
-
-    // Create and map shared memory
-    let shm = check!(
-        ShmHandle::new(parameters.limit),
-        "Failed to create shared memory"
-    );
-
-    let mut mapped_shm = check!(shm.clone().map(), "Failed to map shared memory");
-
-    for chunk in traces.iter_mut() {
-        for span in chunk.iter_mut() {
-            span.dedup();
-        }
-    }
-
-    // Write traces to the shared memory
-    let mut shm_slice = mapped_shm.as_slice_mut();
-    let shm_slice_len = shm_slice.len();
-    let written = match msgpack_encoder::v04::write_to_slice_from_v04(&mut shm_slice, traces) {
-        Ok(()) => shm_slice_len - shm_slice.len(),
-        Err(_) => {
-            tracing::error!("Failed serializing the traces");
+        // Check connection to the sidecar
+        if parameters.transport.is_closed() {
+            tracing::info!(
+                "Skipping flushing traces of size {} as connection to sidecar failed",
+                size
+            );
             return;
         }
-    };
 
-    // Send traces to the sidecar via the shared memory handler
-    let mut size_hint = written;
-    if parameters.n_requests > 0 {
-        size_hint = size_hint.max((parameters.buffer_size / parameters.n_requests + 1) as usize);
-    }
+        // Create and map shared memory
+        let shm = check!(
+            ShmHandle::new(parameters.limit),
+            "Failed to create shared memory"
+        );
 
-    let send_error = blocking::send_trace_v04_shm(
-        &mut parameters.transport,
-        &parameters.instance_id,
-        shm,
-        size_hint,
-        check!(
-            (&parameters.tracer_headers_tags).try_into(),
-            "Failed to convert tracer headers tags"
-        ),
-    );
+        let mut mapped_shm = check!(shm.clone().map(), "Failed to map shared memory");
 
-    // Retry sending traces via bytes if there was an error
-    if send_error.is_err() {
-        match blocking::send_trace_v04_bytes(
+        for chunk in traces.iter_mut() {
+            for span in chunk.iter_mut() {
+                span.dedup();
+            }
+        }
+
+        // Write traces to the shared memory
+        let mut shm_slice = mapped_shm.as_slice_mut();
+        let shm_slice_len = shm_slice.len();
+        let written = match msgpack_encoder::v04::write_to_slice_from_v04(&mut shm_slice, traces) {
+            Ok(()) => shm_slice_len - shm_slice.len(),
+            Err(_) => {
+                tracing::error!("Failed serializing the traces");
+                return;
+            }
+        };
+
+        // Send traces to the sidecar via the shared memory handler
+        let mut size_hint = written;
+        if parameters.n_requests > 0 {
+            size_hint =
+                size_hint.max((parameters.buffer_size / parameters.n_requests + 1) as usize);
+        }
+
+        let send_error = blocking::send_trace_v04_shm(
             &mut parameters.transport,
-            &parameters.instance_id,
-            msgpack_encoder::v04::to_vec_with_capacity_from_v04(traces, written as u32),
+            shm,
+            size_hint,
             check!(
                 (&parameters.tracer_headers_tags).try_into(),
                 "Failed to convert tracer headers tags"
             ),
-        ) {
-            Ok(_) => {}
-            Err(_) => tracing::debug!(
-                "Failed sending traces via shm to sidecar: {}",
-                send_error.err().unwrap_unchecked().to_string()
-            ),
-        };
-    }
+        );
 
-    tracing::event!(target: "info", tracing::Level::INFO, "Flushing trace of size {} to send-queue for {}", size, parameters.url);
-    // tracing::info!(
-    //     "Flushing traces of size {} to send-queue for {}",
-    //     size,
-    //     parameters.url
-    // );
+        // Retry sending traces via bytes if there was an error
+        if send_error.is_err() {
+            match blocking::send_trace_v04_bytes(
+                &mut parameters.transport,
+                msgpack_encoder::v04::to_vec_with_capacity_from_v04(traces, written as u32),
+                check!(
+                    (&parameters.tracer_headers_tags).try_into(),
+                    "Failed to convert tracer headers tags"
+                ),
+            ) {
+                Ok(_) => {}
+                Err(_) => tracing::debug!(
+                    "Failed sending traces via shm to sidecar: {}",
+                    send_error.err().unwrap_unchecked().to_string()
+                ),
+            };
+        }
+
+        tracing::event!(target: "info", tracing::Level::INFO, "Flushing trace of size {} to send-queue for {}", size, parameters.url);
+        // tracing::info!(
+        //     "Flushing traces of size {} to send-queue for {}",
+        //     size,
+        //     parameters.url
+        // );
+    }
 }
 
 /// Drops the agent info reader.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_drop_agent_info_reader(_: Box<AgentInfoReader>) {}
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_send_garbage(transport: &mut Box<SidecarTransport>) {
     // This shall fail.
@@ -2078,24 +1745,25 @@ pub struct AppsecCResponse {
     pub disconnect: bool,
 }
 
-/// Sends an AppSec message from the PHP extension through the sidecar to the registered helper.
+/// Sends an AppSec message from the PHP extension through the sidecar to the helper's client of
+/// this connection. A client_init message, as told by `client_init`, starts a new client.
 ///
 /// The response is allocated by the sidecar and must be freed with
 /// `ddog_sidecar_appsec_response_drop` when the caller is done with it.
 ///
 /// Returns a zeroed `ddog_AppsecCResponse` (null ptr) on transport errors.
 #[cfg(unix)]
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_send_appsec_message(
     transport: &mut Box<SidecarTransport>,
-    client_id: u64,
     data: ffi::CharSlice,
+    client_init: bool,
 ) -> AppsecCResponse {
     appsec_c_response(blocking::send_appsec_message(
         transport,
-        client_id,
         data.as_bytes(),
+        client_init,
     ))
 }
 
@@ -2106,17 +1774,17 @@ pub unsafe extern "C" fn ddog_sidecar_send_appsec_message(
 ///
 /// Returns a zeroed `ddog_AppsecCResponse` (null ptr) on transport errors.
 #[cfg(unix)]
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn datadog_sidecar_send_appsec_message_without_reconnect(
     transport: &mut Box<SidecarTransport>,
-    client_id: u64,
     data: ffi::CharSlice,
+    client_init: bool,
 ) -> AppsecCResponse {
     appsec_c_response(blocking::send_appsec_message_without_reconnect(
         transport,
-        client_id,
         data.as_bytes(),
+        client_init,
     ))
 }
 
@@ -2143,7 +1811,7 @@ fn appsec_c_response(response: std::io::Result<(Vec<u8>, bool)>) -> AppsecCRespo
 
 /// Frees an `AppsecCResponse` returned by an AppSec message function.
 #[cfg(unix)]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_sidecar_appsec_response_drop(response: AppsecCResponse) {
     if !response.ptr.is_null() {
         // SAFETY: ptr/len/capacity were produced by ManuallyDrop<Vec> in
@@ -2157,6 +1825,7 @@ pub extern "C" fn ddog_sidecar_appsec_response_drop(response: AppsecCResponse) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use datadog_sidecar::service::{MAX_CONTEXT_FIELDS, MAX_FIELD_LENGTH};
     use std::borrow::Cow;
 
     fn ffi_flag_evaluation<'a>(evaluation_context_json: &'a str) -> FfeFlagEvaluation<'a> {
@@ -2173,6 +1842,7 @@ mod tests {
             evaluation_context_json: CharSlice::from(evaluation_context_json),
             error_message: CharSlice::empty(),
             runtime_default_used: false,
+            observe_full_evaluation_data: true,
         }
     }
 
@@ -2259,6 +1929,204 @@ mod tests {
     }
 
     #[test]
+    fn ffe_flag_evaluation_carries_consent_and_sanitizes_errors() {
+        for consent in [false, true] {
+            let mut event = ffi_flag_evaluation(r#"{"email":"context-canary"}"#);
+            event.observe_full_evaluation_data = consent;
+            event.error_message = CharSlice::from("raw-error-canary");
+            let converted = ffe_flag_evaluation_from_ffi(&event, "svc").unwrap();
+            assert_eq!(converted.observe_full_evaluation_data, consent);
+            assert_eq!(converted.error.unwrap().message, "GENERAL");
+            assert_eq!(converted.context.unwrap().evaluation.is_some(), consent);
+        }
+    }
+
+    #[test]
+    fn ffe_flag_evaluation_error_codes_preserve_existing_policy() {
+        let long_error = "private-error-canary".repeat(4096);
+        for (message, expected) in [
+            ("", None),
+            ("FLAG_NOT_FOUND", Some("FLAG_NOT_FOUND")),
+            ("GENERAL", Some("GENERAL")),
+            ("flag_not_found", Some("GENERAL")),
+            (" FLAG_NOT_FOUND ", Some("GENERAL")),
+            (long_error.as_str(), Some("GENERAL")),
+        ] {
+            let mut event = ffi_flag_evaluation("");
+            event.error_message = CharSlice::from(message);
+            let converted = ffe_flag_evaluation_from_ffi(&event, "svc").unwrap();
+            assert_eq!(
+                converted.error.as_ref().map(|error| error.message.as_str()),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn ffe_flag_evaluation_malformed_optional_fields_preserve_siblings() {
+        let invalid = [0xffu8];
+        // SAFETY: the borrowed bytes outlive every conversion below.
+        let malformed = unsafe { CharSlice::from_raw_parts(invalid.as_ptr().cast(), 1) };
+        for consent in [false, true] {
+            let mut event = ffi_flag_evaluation("");
+            event.observe_full_evaluation_data = consent;
+            event.targeting_key = malformed;
+            event.evaluation_context_json = malformed;
+            event.error_message = malformed;
+            event.variant = malformed;
+            event.allocation_key = malformed;
+            event.targeting_rule_key = malformed;
+            let mut healthy = ffi_flag_evaluation("{}");
+            healthy.variant = CharSlice::from("on");
+            healthy.allocation_key = CharSlice::from("allocation");
+            healthy.targeting_rule_key = CharSlice::from("rule");
+            let events = [event, healthy];
+            let converted = events
+                .iter()
+                .map(|e| ffe_flag_evaluation_from_ffi(e, "svc"))
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap();
+            assert_eq!(converted.len(), 2);
+            assert_eq!(converted[0].evaluation_count, 7);
+            assert!(converted[0].variant.is_none());
+            assert!(converted[0].allocation.is_none());
+            assert!(converted[0].targeting_rule.is_none());
+            assert_eq!(converted[1].variant.as_ref().unwrap().key, "on");
+            assert_eq!(converted[1].allocation.as_ref().unwrap().key, "allocation");
+            assert_eq!(converted[1].targeting_rule.as_ref().unwrap().key, "rule");
+            assert_eq!(converted[1].evaluation_count, 7);
+            assert!(converted[0].targeting_key.is_none());
+            assert!(converted[0].context.as_ref().unwrap().evaluation.is_none());
+            assert_eq!(converted[0].error.as_ref().unwrap().message, "GENERAL");
+            assert!(converted[0].field_omissions.targeting_key_invalid);
+            assert_eq!(
+                converted[0]
+                    .field_omissions
+                    .contains_context(ContextTruncationReason::SnapshotError),
+                consent
+            );
+        }
+    }
+
+    #[test]
+    fn ffe_flag_evaluation_rejects_malformed_required_flag() {
+        let invalid = [0xffu8];
+        // SAFETY: the borrowed bytes outlive the conversion below.
+        let malformed = unsafe { CharSlice::from_raw_parts(invalid.as_ptr().cast(), 1) };
+        let mut event = ffi_flag_evaluation("{}");
+        event.flag_key = malformed;
+        assert!(ffe_flag_evaluation_from_ffi(&event, "svc").is_err());
+    }
+
+    #[test]
+    fn ffe_flag_evaluation_distinguishes_empty_missing_and_invalid_identity() {
+        let invalid = [0xffu8];
+        // SAFETY: the slices borrow live memory, or use the permitted null/zero pair.
+        let malformed =
+            unsafe { CharSlice::from_raw_parts(invalid.as_ptr().cast(), invalid.len()) };
+        let missing = unsafe { CharSlice::from_raw_parts(std::ptr::null(), 0) };
+        for (key, expected) in [
+            (CharSlice::from(""), Some("")),
+            (missing, None),
+            (malformed, None),
+        ] {
+            let mut event = ffi_flag_evaluation("{}");
+            event.targeting_key = key;
+            let converted = ffe_flag_evaluation_from_ffi(&event, "svc").unwrap();
+            assert_eq!(converted.targeting_key.as_deref(), expected);
+            assert_eq!(converted.evaluation_count, 7);
+        }
+    }
+
+    #[test]
+    fn ffe_flag_evaluation_context_owns_pruned_output_without_changing_input() {
+        let original = serde_json::json!({
+            "keep": "value",
+            "omit": "x".repeat(257)
+        })
+        .to_string();
+        let mut raw = original.clone();
+        let mut converted =
+            ffe_flag_evaluation_from_ffi(&ffi_flag_evaluation(&raw), "svc").unwrap();
+        assert_eq!(raw, original);
+        // The caller can change or release its input as soon as conversion returns.
+        raw.clear();
+        drop(raw);
+        assert_eq!(
+            converted.context.as_ref().unwrap().evaluation.as_deref(),
+            Some(r#"{"keep":"value"}"#)
+        );
+        assert_eq!(
+            converted
+                .context
+                .as_ref()
+                .unwrap()
+                .dd
+                .as_ref()
+                .unwrap()
+                .service,
+            "svc"
+        );
+        assert!(
+            converted
+                .field_omissions
+                .contains_context(ContextTruncationReason::MaxValueLength)
+        );
+        let before_normalization = converted.clone();
+        converted.normalize();
+        assert_eq!(converted, before_normalization);
+    }
+
+    #[test]
+    fn ffe_flag_evaluation_context_preserves_empty_and_invalid_input_policy() {
+        for consent in [false, true] {
+            for service in ["", "svc"] {
+                for raw in ["", "{}", "not-json", "[]"] {
+                    let mut event = ffi_flag_evaluation(raw);
+                    event.observe_full_evaluation_data = consent;
+                    let converted = ffe_flag_evaluation_from_ffi(&event, service).unwrap();
+                    assert_eq!(
+                        converted.context.is_some(),
+                        !service.is_empty() || (consent && !raw.is_empty())
+                    );
+                    assert_eq!(
+                        converted
+                            .context
+                            .as_ref()
+                            .and_then(|context| context.evaluation.as_deref()),
+                        (consent && raw == "{}").then_some("{}")
+                    );
+                    assert_eq!(
+                        converted
+                            .context
+                            .as_ref()
+                            .and_then(|context| context.dd.as_ref())
+                            .map(|dd| dd.service.as_str()),
+                        (!service.is_empty()).then_some(service)
+                    );
+                    assert_eq!(
+                        converted
+                            .field_omissions
+                            .contains_context(ContextTruncationReason::SnapshotError),
+                        consent && matches!(raw, "not-json" | "[]")
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn ffe_flag_evaluation_keeps_multibyte_context_at_character_limit() {
+        let raw =
+            serde_json::json!({"short": "é".repeat(256), "long": "é".repeat(257)}).to_string();
+        let converted = ffe_flag_evaluation_from_ffi(&ffi_flag_evaluation(&raw), "svc").unwrap();
+        let raw = converted.context.unwrap().evaluation.unwrap();
+        let value: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(value["short"], "é".repeat(256));
+        assert!(value.get("long").is_none());
+    }
+
+    #[test]
     fn ffe_flag_evaluation_prunes_context_field_count_and_long_strings() {
         let mut attrs = serde_json::Map::new();
         attrs.insert(
@@ -2277,10 +2145,11 @@ mod tests {
         let value: serde_json::Value = serde_json::from_str(&evaluation).unwrap();
         let attrs = value.as_object().unwrap();
 
-        assert_eq!(attrs.len(), MAX_CONTEXT_FIELDS);
+        assert_eq!(attrs.len(), MAX_CONTEXT_FIELDS - 1);
         assert!(!attrs.contains_key("aaa_long"));
         assert!(attrs.contains_key("field_000"));
-        assert!(attrs.contains_key(&format!("field_{:03}", MAX_CONTEXT_FIELDS - 1)));
+        assert!(attrs.contains_key(&format!("field_{:03}", MAX_CONTEXT_FIELDS - 2)));
+        assert!(!attrs.contains_key(&format!("field_{:03}", MAX_CONTEXT_FIELDS - 1)));
         assert!(!attrs.contains_key(&format!("field_{MAX_CONTEXT_FIELDS:03}")));
     }
 

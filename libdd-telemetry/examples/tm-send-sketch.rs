@@ -15,7 +15,7 @@ use libdd_capabilities_impl::NativeCapabilities;
 use libdd_telemetry::{
     build_host,
     config::Config,
-    data::{self, metrics::Distribution, Application, Telemetry},
+    data::{self, Application, Telemetry, metrics::Distribution},
     worker::http_client::request_builder,
 };
 use std::time::Duration;

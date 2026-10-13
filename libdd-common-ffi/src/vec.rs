@@ -81,6 +81,7 @@ impl<T> From<alloc::vec::Vec<T>> for Vec<T> {
     }
 }
 
+#[cfg(feature = "std")]
 impl From<anyhow::Error> for Vec<u8> {
     fn from(err: anyhow::Error) -> Self {
         Self::from(err.to_string().into_bytes())
@@ -144,6 +145,7 @@ impl<T> Default for Vec<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn test_default() {

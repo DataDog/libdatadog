@@ -1,13 +1,13 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use super::v04::Span;
 use super::TraceData;
+use super::v04::Span;
 use rand::{Rng as _, SeedableRng as _};
 use std::cell::RefCell;
 use std::ops::{Deref, DerefMut};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use thread_local::ThreadLocal;
 
 /// When this function returns true, do not add the returned span batch to the queue.

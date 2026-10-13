@@ -89,11 +89,7 @@ fn calculate_luhn(payload: &[u32]) -> u32 {
     for (i, val) in payload.iter().rev().enumerate() {
         let x = if i % 2 == 0 {
             let dbl_x = val * 2;
-            if dbl_x > 9 {
-                dbl_x - 9
-            } else {
-                dbl_x
-            }
+            if dbl_x > 9 { dbl_x - 9 } else { dbl_x }
         } else {
             *val
         };
@@ -178,7 +174,7 @@ const fn valid_card_prefix(n: u32) -> FuzzyBool {
 #[cfg(test)]
 mod tests {
     use crate::credit_cards::{
-        calculate_luhn, is_card_number, luhn_valid, valid_card_prefix, FuzzyBool,
+        FuzzyBool, calculate_luhn, is_card_number, luhn_valid, valid_card_prefix,
     };
 
     #[test]

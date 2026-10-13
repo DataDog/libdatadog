@@ -6,7 +6,7 @@ use crate::dd_constants::{
     RL_EFFECTIVE_RATE, SAMPLING_AGENT_RATE_TAG_KEY, SAMPLING_DECISION_MAKER_TAG_KEY,
     SAMPLING_KNUTH_RATE_TAG_KEY, SAMPLING_PRIORITY_TAG_KEY, SAMPLING_RULE_RATE_TAG_KEY,
 };
-use crate::dd_sampling::{mechanism, priority, SamplingMechanism, SamplingPriority};
+use crate::dd_sampling::{SamplingMechanism, SamplingPriority, mechanism, priority};
 use crate::sampling_rule_config::SamplingRuleConfig;
 
 /// Type alias for sampling rules update callback
@@ -14,6 +14,10 @@ use crate::sampling_rule_config::SamplingRuleConfig;
 pub type SamplingRulesCallback = Box<dyn for<'a> Fn(&'a [SamplingRuleConfig]) + Send + Sync>;
 
 use crate::types::{SamplingData, SpanProperties, TraceIdLike};
+use std::fmt::Write as _;
+use std::sync::Arc;
+
+use super::stack_str::StackStr;
 
 use super::agent_service_sampler::{AgentRates, ServicesSampler};
 use super::rate_limiter::RateLimiter;
@@ -79,15 +83,23 @@ impl DatadogSampler {
         })
     }
 
-    /// Computes a key for service-based sampling
-    fn service_key(&self, span: &impl SpanProperties) -> String {
-        // `Cow<str>` implements `Display`, so no `into_owned()` allocation is needed here;
-        // `format!` will borrow directly from the span.
-        format!("service:{},env:{}", span.service(), span.env())
+    /// Runs `f` with the key used for service-based rate lookup, formatted into a stack
+    /// buffer. Only service or env names long enough to overflow `SERVICE_KEY_STACK` bytes
+    /// fall back to a heap allocation.
+    fn with_service_key<R>(&self, span: &impl SpanProperties, f: impl FnOnce(&str) -> R) -> R {
+        const SERVICE_KEY_STACK: usize = 128;
+        let mut buf = [0u8; SERVICE_KEY_STACK];
+        let mut key = StackStr::new(&mut buf);
+        if write!(key, "service:{},env:{}", span.service(), span.env()).is_ok() {
+            f(key.into_str())
+        } else {
+            // Oversized service or env names; rare in practice.
+            f(&format!("service:{},env:{}", span.service(), span.env()))
+        }
     }
 
     /// Finds the highest precedence rule that matches the span
-    fn find_matching_rule(&self, span: &impl SpanProperties) -> Option<SamplingRule> {
+    fn find_matching_rule(&self, span: &impl SpanProperties) -> Option<Arc<SamplingRule>> {
         self.rules.find_matching_rule(|rule| rule.matches(span))
     }
 
@@ -116,7 +128,7 @@ impl DatadogSampler {
     /// Sample an incoming span based on the parent context and attributes.
     ///
     /// If a parent sampling decision is present it is inherited; otherwise the root-span
-    /// sampling pipeline is run via [`Self::sample_root`].
+    /// sampling pipeline is run via `Self::sample_root`.
     pub fn sample(&self, data: &impl SamplingData) -> DdSamplingResult {
         if let Some(is_parent_sampled) = data.is_parent_sampled() {
             let priority = match is_parent_sampled {
@@ -164,21 +176,20 @@ impl DatadogSampler {
                     is_keep = false;
                 }
             }
-        } else {
-            let service_key = self.service_key(span);
-            if let Some(sampler) = self.service_samplers.get(&service_key) {
-                used_agent_sampler = true;
-                sample_rate = sampler.sample_rate();
-                if !sampler.sample(trace_id) {
-                    is_keep = false;
-                }
-            } else {
-                // No agent rate for this service yet; keep with rate 1.0 until rates arrive.
-                sample_rate = 1.0;
+        } else if let Some(sampler) =
+            self.with_service_key(span, |service_key| self.service_samplers.get(service_key))
+        {
+            used_agent_sampler = true;
+            sample_rate = sampler.sample_rate();
+            if !sampler.sample(trace_id) {
+                is_keep = false;
             }
+        } else {
+            // No agent rate for this service yet; keep with rate 1.0 until rates arrive.
+            sample_rate = 1.0;
         }
 
-        let mechanism = self.get_sampling_mechanism(matching_rule.as_ref(), used_agent_sampler);
+        let mechanism = self.get_sampling_mechanism(matching_rule.as_deref(), used_agent_sampler);
 
         DdSamplingResult {
             priority: mechanism.to_priority(is_keep),
@@ -968,7 +979,7 @@ mod tests {
             create_attributes_with_service(test_service_name.clone(), "resource", "production");
         let span = TestSpan::new("test-span", attrs.as_slice());
         assert_eq!(
-            sampler.service_key(&span),
+            sampler.with_service_key(&span, |key| key.to_string()),
             format!("service:{test_service_name},env:production")
         );
 
@@ -979,8 +990,22 @@ mod tests {
         ];
         let span = TestSpan::new("test-span", attrs_no_env.as_slice());
         assert_eq!(
-            sampler.service_key(&span),
+            sampler.with_service_key(&span, |key| key.to_string()),
             format!("service:{test_service_name},env:")
+        );
+    }
+
+    #[test]
+    fn test_service_key_falls_back_to_heap_for_oversized_names() {
+        // Service names longer than the 128-byte stack buffer take the fallback path
+        // and still produce a well-formed key.
+        let long_service = "s".repeat(200);
+        let attrs = vec![TestAttribute::new(SERVICE_NAME, long_service.clone())];
+        let span = TestSpan::new("test-span", attrs.as_slice());
+        let sampler = DatadogSampler::new(vec![], 100);
+        assert_eq!(
+            sampler.with_service_key(&span, |key| key.to_string()),
+            format!("service:{long_service},env:")
         );
     }
 
@@ -999,12 +1024,16 @@ mod tests {
         assert_eq!(sampler.service_samplers.len(), 2);
 
         // Verify keys exist
-        assert!(sampler
-            .service_samplers
-            .contains_key("service:web,env:prod"));
-        assert!(sampler
-            .service_samplers
-            .contains_key("service:api,env:prod"));
+        assert!(
+            sampler
+                .service_samplers
+                .contains_key("service:web,env:prod")
+        );
+        assert!(
+            sampler
+                .service_samplers
+                .contains_key("service:api,env:prod")
+        );
 
         // Verify the sampling rates are correctly set
         if let Some(web_sampler) = sampler.service_samplers.get("service:web,env:prod") {
@@ -1390,9 +1419,11 @@ mod tests {
 
         // Should inherit the sampling decision from parent
         assert!(result_sampled.get_priority().is_keep());
-        assert!(result_sampled
-            .to_dd_sampling_tags(&TestAttributeFactory)
-            .is_none());
+        assert!(
+            result_sampled
+                .to_dd_sampling_tags(&TestAttributeFactory)
+                .is_none()
+        );
 
         // Test with non-sampled parent context
         let data_not_sampled = create_sampling_data(Some(false), &trace_id, "span", empty_attrs);
@@ -1400,9 +1431,11 @@ mod tests {
 
         // Should inherit the sampling decision from parent
         assert!(!result_not_sampled.get_priority().is_keep());
-        assert!(result_not_sampled
-            .to_dd_sampling_tags(&TestAttributeFactory)
-            .is_none());
+        assert!(
+            result_not_sampled
+                .to_dd_sampling_tags(&TestAttributeFactory)
+                .is_none()
+        );
     }
 
     #[test]
@@ -1438,9 +1471,11 @@ mod tests {
 
         // Should still sample (default behavior when no rules match) and add attributes
         assert!(result_no_match.get_priority().is_keep());
-        assert!(result_no_match
-            .to_dd_sampling_tags(&TestAttributeFactory)
-            .is_some());
+        assert!(
+            result_no_match
+                .to_dd_sampling_tags(&TestAttributeFactory)
+                .is_some()
+        );
     }
 
     #[test]
@@ -1664,7 +1699,10 @@ mod tests {
         let span = TestSpan::new("test-span", attrs.as_slice());
 
         let matching_rule = sampler.find_matching_rule(&span);
-        assert!(matching_rule.is_some(), "Expected to find a matching rule for service 'web-frontend' and name 'http.client.request'");
+        assert!(
+            matching_rule.is_some(),
+            "Expected to find a matching rule for service 'web-frontend' and name 'http.client.request'"
+        );
         let rule = matching_rule.unwrap();
         assert_eq!(rule.sample_rate, 0.5);
         assert_eq!(rule.provenance, "customer");
@@ -1682,9 +1720,11 @@ mod tests {
         // Valid JSON with rate_by_service
         let json = r#"{"rate_by_service":{"service:web,env:prod":0.5}}"#;
         callback(json);
-        assert!(sampler
-            .service_samplers
-            .contains_key("service:web,env:prod"));
+        assert!(
+            sampler
+                .service_samplers
+                .contains_key("service:web,env:prod")
+        );
 
         // Invalid JSON — should not panic
         callback("not json");

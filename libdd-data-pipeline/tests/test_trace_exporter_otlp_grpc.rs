@@ -7,7 +7,7 @@ mod grpc_export_tests {
     use libdd_capabilities_impl::NativeCapabilities;
     #[cfg(feature = "telemetry")]
     use libdd_data_pipeline::trace_exporter::TelemetryConfig;
-    use libdd_data_pipeline::{trace_exporter::TraceExporterBuilder, OtlpProtocol};
+    use libdd_data_pipeline::{OtlpProtocol, trace_exporter::TraceExporterBuilder};
     use libdd_shared_runtime::{ForkSafeRuntime, SharedRuntime};
     use libdd_trace_protobuf::opentelemetry::proto::{
         collector::trace::v1::{ExportTraceServiceRequest, ExportTraceServiceResponse},
@@ -19,8 +19,9 @@ mod grpc_export_tests {
     use regex::Regex;
     use serde_json::json;
     use std::sync::{
+        Arc,
         atomic::{AtomicUsize, Ordering},
-        mpsc, Arc,
+        mpsc,
     };
     use std::time::Duration;
     use tokio::net::TcpListener;
@@ -260,6 +261,14 @@ mod grpc_export_tests {
         assert_eq!(
             resource_attribute(&initial.request, "_dd.stats_computed"),
             Some("true")
+        );
+        assert_eq!(
+            resource_attribute(&initial.request, "_dd.sdk.otlp_export"),
+            Some("true")
+        );
+        assert_eq!(
+            resource_attribute(&initial.request, "datadog.sdk.semantics"),
+            Some("datadog")
         );
 
         shared_runtime.before_fork();

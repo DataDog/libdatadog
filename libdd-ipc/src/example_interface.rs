@@ -3,8 +3,8 @@
 use std::{
     fs::File,
     sync::{
-        atomic::{AtomicU64, Ordering},
         Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -31,7 +31,7 @@ pub trait ExampleInterface {
     async fn echo_len(payload: Vec<u8>) -> u32;
 }
 
-/// Shared server state. Cloned into a per-connection [`ExampleConnectionHandler`] on accept.
+/// Shared server state. Cloned into a per-connection `ExampleConnectionHandler` on accept.
 #[derive(Default, Clone)]
 pub struct ExampleServer {
     req_cnt: Arc<AtomicU64>,
@@ -47,10 +47,10 @@ impl ExampleServer {
                 return;
             }
         };
-        serve_example_interface_connection(Arc::new(ExampleConnectionHandler {
+        serve_example_interface_connection(&mut ExampleConnectionHandler {
             server: self,
             connection,
-        }))
+        })
         .await
     }
 }
@@ -70,24 +70,24 @@ impl ExampleInterface for ExampleConnectionHandler {
         &self.connection
     }
 
-    fn notify(&self) -> impl std::future::Future<Output = ()> + Send + '_ {
+    fn notify(&mut self) -> impl std::future::Future<Output = ()> + Send + '_ {
         std::future::ready(())
     }
 
-    fn ping(&self) -> impl std::future::Future<Output = ()> + Send + '_ {
+    fn ping(&mut self) -> impl std::future::Future<Output = ()> + Send + '_ {
         std::future::ready(())
     }
 
-    fn time_now(&self) -> impl std::future::Future<Output = Duration> + Send + '_ {
+    fn time_now(&mut self) -> impl std::future::Future<Output = Duration> + Send + '_ {
         std::future::ready(Instant::now().elapsed())
     }
 
-    fn req_cnt(&self) -> impl std::future::Future<Output = u32> + Send + '_ {
+    fn req_cnt(&mut self) -> impl std::future::Future<Output = u32> + Send + '_ {
         std::future::ready(self.server.req_cnt.load(Ordering::Relaxed) as u32)
     }
 
     fn store_file(
-        &self,
+        &mut self,
         file: PlatformHandle<File>,
     ) -> impl std::future::Future<Output = ()> + Send + '_ {
         #[allow(clippy::unwrap_used)]
@@ -95,14 +95,14 @@ impl ExampleInterface for ExampleConnectionHandler {
         std::future::ready(())
     }
 
-    async fn shm_sum(&self, handle: ShmHandle, len: usize) -> u64 {
+    async fn shm_sum(&mut self, handle: ShmHandle, len: usize) -> u64 {
         match handle.map() {
             Ok(mapped) => mapped.as_slice()[..len].iter().map(|&b| b as u64).sum(),
             Err(_) => u64::MAX,
         }
     }
 
-    fn echo_len(&self, payload: Vec<u8>) -> impl std::future::Future<Output = u32> + Send + '_ {
+    fn echo_len(&mut self, payload: Vec<u8>) -> impl std::future::Future<Output = u32> + Send + '_ {
         std::future::ready(payload.len() as u32)
     }
 }

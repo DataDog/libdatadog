@@ -199,11 +199,15 @@ pub mod tests {
         let configs: Vec<Configs> = cfg.lib_config.into();
         assert_eq!(configs.len(), 1);
         assert!(matches!(configs[0], Configs::TracingTags(_)));
-        assert!(!configs
-            .iter()
-            .any(|c| matches!(c, Configs::TracingSamplingRate(_))));
-        assert!(!configs
-            .iter()
-            .any(|c| matches!(c, Configs::TracingSamplingRules(_))));
+        assert!(
+            !configs
+                .iter()
+                .any(|c| matches!(c, Configs::TracingSamplingRate(_)))
+        );
+        assert!(
+            !configs
+                .iter()
+                .any(|c| matches!(c, Configs::TracingSamplingRules(_)))
+        );
     }
 }

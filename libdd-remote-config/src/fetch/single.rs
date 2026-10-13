@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::fetch::{
-    random_uuid_string, ConfigApplyState, ConfigClientState, ConfigFetcher, ConfigFetcherState,
-    ConfigInvariants, ConfigProductCapabilities, FileStorage,
+    ConfigApplyState, ConfigClientState, ConfigFetcher, ConfigFetcherState, ConfigInvariants,
+    ConfigProductCapabilities, FileStorage, random_uuid_string,
 };
 use crate::file_change_tracker::{Change, ChangeTracker, FilePath, UpdatedFiles};
 use crate::{RemoteConfigCapabilities, RemoteConfigPath, RemoteConfigProduct, Target};

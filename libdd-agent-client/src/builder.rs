@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use libdd_http_client::RetryConfig;
 
-use crate::{error::BuildError, language_metadata::LanguageMetadata, AgentClient};
+use crate::{AgentClient, error::BuildError, language_metadata::LanguageMetadata};
 
 /// Default timeout for agent requests.
 pub const DEFAULT_TIMEOUT_MS: u64 = 2_000;
@@ -71,7 +71,7 @@ impl Default for AgentTransport {
 /// # Required fields
 ///
 /// - Transport: one of [`AgentClientBuilder::http`], [`AgentClientBuilder::https`],
-///   [`AgentClientBuilder::unix_socket`], [`AgentClientBuilder::windows_named_pipe`],
+///   [`AgentClientBuilder::unix_socket`], `AgentClientBuilder::windows_named_pipe`,
 ///   [`AgentClientBuilder::transport`].
 /// - [`AgentClientBuilder::language_metadata`].
 ///
@@ -140,7 +140,7 @@ impl AgentClientBuilder {
 
     /// Set the request timeout.
     ///
-    /// Defaults to [`DEFAULT_TIMEOUT_MS`] (2 000 ms) when not set.
+    /// Defaults to `DEFAULT_TIMEOUT_MS` (2 000 ms) when not set.
     pub fn timeout(mut self, timeout: Duration) -> Self {
         self.timeout = Some(timeout);
         self

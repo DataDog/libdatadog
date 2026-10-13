@@ -5,7 +5,7 @@ use super::*;
 use crate::api;
 use crate::pprof::test_utils::{deserialize_compressed_pprof, string_table_fetch};
 use libdd_common::test_utils::{
-    create_temp_file_path, parse_http_request_sync, HttpRequest, TempFileGuard,
+    HttpRequest, TempFileGuard, create_temp_file_path, parse_http_request_sync,
 };
 use serde_json::json;
 
@@ -805,12 +805,16 @@ fn test_send_encoded_profile_file_export_preserves_metadata() {
 
     let tags_profiler = event_json["tags_profiler"].as_str().unwrap();
     assert!(tags_profiler.split(',').any(|tag| tag == "env:test"));
-    assert!(tags_profiler
-        .split(',')
-        .any(|tag| tag == "profile_type:cpu"));
-    assert!(tags_profiler
-        .split(',')
-        .any(|tag| tag.starts_with("runtime_platform:")));
+    assert!(
+        tags_profiler
+            .split(',')
+            .any(|tag| tag == "profile_type:cpu")
+    );
+    assert!(
+        tags_profiler
+            .split(',')
+            .any(|tag| tag.starts_with("runtime_platform:"))
+    );
 
     let attachment_part = request
         .multipart_parts
@@ -906,81 +910,91 @@ fn test_profile_add_dictionary_sample_requires_dictionary_profile() {
 #[test]
 fn test_exporter_create() {
     // Test agent exporter with default timeout
-    assert!(ProfileExporter::create_agent_exporter(
-        TEST_LIB_NAME,
-        TEST_LIB_VERSION,
-        TEST_FAMILY,
-        vec![ffi::Tag {
-            key: b"service",
-            value: b"test"
-        }],
-        b"http://localhost:8126",
-        0,
-        false,
-    )
-    .is_ok());
+    assert!(
+        ProfileExporter::create_agent_exporter(
+            TEST_LIB_NAME,
+            TEST_LIB_VERSION,
+            TEST_FAMILY,
+            vec![ffi::Tag {
+                key: b"service",
+                value: b"test"
+            }],
+            b"http://localhost:8126",
+            0,
+            false,
+        )
+        .is_ok()
+    );
 
     // Test with multiple tags and custom timeout
-    assert!(ProfileExporter::create_agent_exporter(
-        TEST_LIB_NAME,
-        TEST_LIB_VERSION,
-        TEST_FAMILY,
-        vec![
-            ffi::Tag {
-                key: b"service",
-                value: b"my-service"
-            },
-            ffi::Tag {
-                key: b"env",
-                value: b"prod"
-            },
-            ffi::Tag {
-                key: b"version",
-                value: b"2.0"
-            },
-        ],
-        b"http://localhost:8126",
-        10000,
-        false,
-    )
-    .is_ok());
+    assert!(
+        ProfileExporter::create_agent_exporter(
+            TEST_LIB_NAME,
+            TEST_LIB_VERSION,
+            TEST_FAMILY,
+            vec![
+                ffi::Tag {
+                    key: b"service",
+                    value: b"my-service"
+                },
+                ffi::Tag {
+                    key: b"env",
+                    value: b"prod"
+                },
+                ffi::Tag {
+                    key: b"version",
+                    value: b"2.0"
+                },
+            ],
+            b"http://localhost:8126",
+            10000,
+            false,
+        )
+        .is_ok()
+    );
 
     // Test agentless exporters with different sites
-    assert!(ProfileExporter::create_agentless_exporter(
-        TEST_LIB_NAME,
-        TEST_LIB_VERSION,
-        TEST_FAMILY,
-        vec![],
-        b"datadoghq.com",
-        b"fake-api-key",
-        5000,
-        false,
-    )
-    .is_ok());
+    assert!(
+        ProfileExporter::create_agentless_exporter(
+            TEST_LIB_NAME,
+            TEST_LIB_VERSION,
+            TEST_FAMILY,
+            vec![],
+            b"datadoghq.com",
+            b"fake-api-key",
+            5000,
+            false,
+        )
+        .is_ok()
+    );
 
-    assert!(ProfileExporter::create_agentless_exporter(
-        TEST_LIB_NAME,
-        TEST_LIB_VERSION,
-        TEST_FAMILY,
-        vec![],
-        b"datadoghq.eu",
-        b"fake-api-key",
-        0,
-        false,
-    )
-    .is_ok());
+    assert!(
+        ProfileExporter::create_agentless_exporter(
+            TEST_LIB_NAME,
+            TEST_LIB_VERSION,
+            TEST_FAMILY,
+            vec![],
+            b"datadoghq.eu",
+            b"fake-api-key",
+            0,
+            false,
+        )
+        .is_ok()
+    );
 
     // Test with no tags
-    assert!(ProfileExporter::create_agent_exporter(
-        TEST_LIB_NAME,
-        TEST_LIB_VERSION,
-        TEST_FAMILY,
-        vec![],
-        b"http://localhost:8126",
-        0,
-        false,
-    )
-    .is_ok());
+    assert!(
+        ProfileExporter::create_agent_exporter(
+            TEST_LIB_NAME,
+            TEST_LIB_VERSION,
+            TEST_FAMILY,
+            vec![],
+            b"http://localhost:8126",
+            0,
+            false,
+        )
+        .is_ok()
+    );
 }
 
 #[cfg(unix)]

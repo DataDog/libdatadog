@@ -6,21 +6,21 @@ pub mod send_data_result;
 use crate::msgpack_encoder;
 use crate::send_with_retry::compression::{add_headers, compress};
 use crate::send_with_retry::{
-    send_with_retry, CompressionStrategy, RetryStrategy, SendWithRetryResult,
+    CompressionStrategy, RetryStrategy, SendWithRetryResult, send_with_retry,
 };
 use crate::trace_utils::TracerHeaderTags;
 use crate::tracer_payload::TracerPayloadCollection;
-use anyhow::{anyhow, Context};
-use futures::stream::FuturesUnordered;
+use anyhow::{Context, anyhow};
 use futures::StreamExt;
-use http::{header::CONTENT_TYPE, HeaderMap, HeaderValue};
+use futures::stream::FuturesUnordered;
+use http::{HeaderMap, HeaderValue, header::CONTENT_TYPE};
 use libdd_capabilities::{HttpClientCapability, SleepCapability};
 use libdd_common::{
+    Endpoint,
     header::{
         APPLICATION_MSGPACK, APPLICATION_PROTOBUF, DATADOG_SEND_REAL_HTTP_STATUS,
         DATADOG_TRACE_COUNT,
     },
-    Endpoint,
 };
 use libdd_trace_protobuf::pb::{AgentPayload, TracerPayload};
 use send_data_result::SendDataResult;
@@ -442,10 +442,10 @@ mod tests {
     use super::*;
     use crate::send_with_retry::{RetryBackoffType, RetryStrategy};
     use crate::test_utils::create_test_no_alloc_span;
-    use crate::trace_utils::{construct_trace_chunk, construct_tracer_payload, TracerPayloadTags};
+    use crate::trace_utils::{TracerPayloadTags, construct_trace_chunk, construct_tracer_payload};
     use crate::tracer_header_tags::{TracerGenericTags, TracerHeaderTags};
-    use httpmock::prelude::*;
     use httpmock::MockServer;
+    use httpmock::prelude::*;
     use libdd_capabilities::HttpClientCapability;
     use libdd_capabilities_impl::NativeCapabilities;
     use libdd_common::Endpoint;

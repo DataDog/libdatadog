@@ -8,14 +8,14 @@
 //! dd-trace-dotnet: `POST /evp_proxy/v2/api/v2/exposures` with the header
 //! `X-Datadog-EVP-Subdomain: event-platform-intake`. No agent capability gate.
 
-use crate::service::ffe_evp_proxy;
 use crate::service::FfeExposureBatch;
+use crate::service::ffe_evp_proxy;
 #[cfg(test)]
 use ffe_evp_proxy::{EVP_SUBDOMAIN_HEADER, EVP_SUBDOMAIN_VALUE};
 use libdd_capabilities::{HttpClientCapability, SleepCapability};
 use libdd_common::Endpoint;
-use libdd_ffe::telemetry::exposures::encode_exposure_batch;
 pub(crate) use libdd_ffe::telemetry::exposures::ExposureDeduplicator;
+use libdd_ffe::telemetry::exposures::encode_exposure_batch;
 use tracing::debug;
 
 /// EVP proxy path for FFE exposure intake.

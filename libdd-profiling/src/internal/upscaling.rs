@@ -150,9 +150,11 @@ impl UpscalingRules {
             let collide_with_byvalue_rule = rules
                 .iter()
                 .find(|rule| is_overlapping(&rule.values_offset, values_offset));
-            anyhow::ensure!(collide_with_byvalue_rule.is_none(),
+            anyhow::ensure!(
+                collide_with_byvalue_rule.is_none(),
                 "The by-label rule (label name {label_name_str}, label value {label_value_str}) is colliding with a by-value rule on values offsets\n\
-                Existing values offset(s) {collide_with_byvalue_rule:?}, new rule values offset(s) {values_offset:?}");
+                Existing values offset(s) {collide_with_byvalue_rule:?}, new rule values offset(s) {values_offset:?}"
+            );
         }
         Ok(())
     }

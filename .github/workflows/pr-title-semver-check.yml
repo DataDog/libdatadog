@@ -170,7 +170,7 @@ jobs:
           set -euo pipefail
 
           CHANGED_CRATES='${{ needs.detect-changes.outputs.changed_crates }}'
-          BASELINE="main"
+          BASELINE="$GITHUB_BASE_REF"
           HIGHEST_LEVEL=""
 
           # Parse JSON array

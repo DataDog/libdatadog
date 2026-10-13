@@ -19,7 +19,7 @@ pub struct FfeExposureBatch {
     pub exposures: Vec<FfeExposure>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
 pub struct FfeExposure {
     pub timestamp_ms: u64,
     pub flag_key: String,
@@ -35,6 +35,16 @@ pub struct FfeExposure {
     /// organization, so `Some(0)` is a real value and must not be treated as
     /// absent.
     pub serial_id: Option<i32>,
+}
+
+// Whole IPC requests are logged on receive and when an oversized send is rejected.
+impl std::fmt::Debug for FfeExposure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FfeExposure")
+            .field("timestamp_ms", &self.timestamp_ms)
+            .field("serial_id", &self.serial_id)
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Clone)]
@@ -255,6 +265,18 @@ mod tests {
             serial_id: Some(serial_id),
             ..exposure(subject_id, allocation_key, variant)
         }
+    }
+
+    #[test]
+    fn exposure_batch_debug_redacts_identity_and_attributes() {
+        let batch = FfeExposureBatch {
+            context: context(),
+            exposures: vec![exposure("private-identity-canary", "alloc", "variant")],
+        };
+        let debug = format!("{batch:?}");
+        assert!(!debug.contains("private-identity-canary"));
+        assert!(!debug.contains("premium"));
+        assert!(debug.contains("timestamp_ms: 123"));
     }
 
     fn encode_one(deduplicator: &ExposureDeduplicator, exposure: FfeExposure) -> Option<Value> {
@@ -495,14 +517,16 @@ mod tests {
         let mut invalid = exposure("user", "alloc", "variant");
         invalid.allocation_key.clear();
 
-        assert!(encode_exposure_batch(
-            &deduplicator,
-            FfeExposureBatch {
-                context: context(),
-                exposures: vec![invalid],
-            },
-        )
-        .unwrap()
-        .is_none());
+        assert!(
+            encode_exposure_batch(
+                &deduplicator,
+                FfeExposureBatch {
+                    context: context(),
+                    exposures: vec![invalid],
+                },
+            )
+            .unwrap()
+            .is_none()
+        );
     }
 }

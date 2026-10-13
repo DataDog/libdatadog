@@ -16,13 +16,13 @@ pub use self::windows::*;
 #[cfg(unix)]
 pub mod thread_listener;
 #[cfg(unix)]
-pub use thread_listener::{connect_to_master, MasterListener};
+pub use thread_listener::{MasterListener, connect_to_master};
 
 // Thread-based listener module (Windows)
 #[cfg(windows)]
 pub mod thread_listener_windows;
 #[cfg(windows)]
-pub use thread_listener_windows::{connect_to_master, MasterListener};
+pub use thread_listener_windows::{MasterListener, connect_to_master};
 
 use libdd_ipc::SeqpacketConn;
 use std::io;
@@ -35,6 +35,10 @@ pub trait Liaison: Sized {
     fn attempt_listen(&self) -> io::Result<Option<IpcServer>>;
     fn ipc_shared() -> Self;
     fn ipc_per_process() -> Self;
+
+    fn into_bound_files(self) -> Vec<std::path::PathBuf> {
+        Vec::new()
+    }
 }
 
 /// The liaison a subprocess sidecar listens on / connects to for the given `ipc_mode`. Shared by

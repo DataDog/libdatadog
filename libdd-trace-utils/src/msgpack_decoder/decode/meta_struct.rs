@@ -5,8 +5,8 @@ use crate::msgpack_decoder::decode::buffer::Buffer;
 use crate::msgpack_decoder::decode::error::DecodeError;
 use crate::msgpack_decoder::decode::map::{read_map_len, read_map_vec};
 use crate::msgpack_decoder::decode::string::handle_null_marker;
-use crate::span::vec_map::VecMap;
 use crate::span::DeserializableTraceData;
+use crate::span::vec_map::VecMap;
 use rmp::decode;
 
 fn read_byte_array_len<T: DeserializableTraceData>(

@@ -4,7 +4,8 @@
 [package]
 name = "datadog-sidecar-ffi"
 version = "0.0.1"
-edition = "2021"
+edition.workspace = true
+rust-version.workspace = true
 publish = false
 
 [lib]
@@ -17,7 +18,7 @@ datadog-sidecar = { path = "../datadog-sidecar" }
 libdd-trace-utils = { path = "../libdd-trace-utils" }
 libdd-ipc = { path = "../libdd-ipc" }
 libdd-common = { path = "../libdd-common" }
-libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
+libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false, features = ["std"] }
 libdd-telemetry-ffi = { path = "../libdd-telemetry-ffi", default-features = false }
 libdd-remote-config = { path = "../libdd-remote-config" }
 libdd-live-debugger = { path = "../libdd-live-debugger" }

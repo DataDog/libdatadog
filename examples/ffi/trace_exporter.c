@@ -151,8 +151,51 @@ int verify_structured_value_encoder_rejects_invalid(void) {
     return 0;
 }
 
+int verify_mutable_identity(void) {
+    ddog_MutableMetadataHandle *metadata = NULL;
+    ddog_mutable_metadata_new(&metadata);
+    ddog_VoidResult result = ddog_mutable_metadata_set_identity(
+        metadata, DDOG_CHARSLICE_C("runtime"), DDOG_CHARSLICE_C("session"),
+        DDOG_CHARSLICE_C("root"), DDOG_CHARSLICE_C("parent"));
+    if (result.tag == DDOG_VOID_RESULT_ERR) {
+        ddog_Error_drop(&result.err);
+        ddog_mutable_metadata_free(metadata);
+        return 1;
+    }
+    ddog_TraceExporterConfig *config = NULL;
+    ddog_trace_exporter_config_new(&config);
+    ddog_TraceExporterError *err = ddog_trace_exporter_config_set_mutable_metadata(config, metadata);
+    ddog_mutable_metadata_free(metadata);
+    if (err != NULL) {
+        handle_error(err);
+        ddog_trace_exporter_config_free(config);
+        return 1;
+    }
+    // Metadata ownership must not depend on Agent polling or connection timeouts.
+    err = ddog_trace_exporter_config_set_output_to_log(config, 0);
+    if (err != NULL) {
+        handle_error(err);
+        ddog_trace_exporter_config_free(config);
+        return 1;
+    }
+    ddog_TraceExporter *exporter = NULL;
+    err = ddog_trace_exporter_new(&exporter, config);
+    ddog_trace_exporter_config_free(config);
+    if (err != NULL) {
+        handle_error(err);
+        return 1;
+    }
+    err = ddog_trace_exporter_shutdown(exporter, 1000);
+    if (err != NULL) {
+        handle_error(err);
+        return 1;
+    }
+    return 0;
+}
+
 int main(int argc, char** argv)
 {
+    if (verify_mutable_identity() != 0) return 1;
     if (verify_structured_value_encoder() != 0) return 1;
     if (verify_structured_value_encoder_rejects_invalid() != 0) return 1;
 
@@ -185,6 +228,7 @@ int main(int argc, char** argv)
     ddog_CharSlice env = DDOG_CHARSLICE_C("staging");
     ddog_CharSlice version = DDOG_CHARSLICE_C("1.0");
     ddog_CharSlice service = DDOG_CHARSLICE_C("test_app");
+    ddog_CharSlice runtime_id = DDOG_CHARSLICE_C("12345678-1234-1234-1234-123456789abc");
 
     ddog_TraceExporterError *ret = NULL;
     ddog_TraceExporterConfig *config = NULL;
@@ -200,10 +244,10 @@ int main(int argc, char** argv)
     ddog_trace_exporter_config_set_version(config, version);
     ddog_trace_exporter_config_set_service(config, service);
     ddog_trace_exporter_config_set_connection_timeout(config, 1000);
+    ddog_trace_exporter_config_set_runtime_id(config, runtime_id);
 
     ddog_TelemetryClientConfig telemetry_config = {
         .interval = 60000,
-        .runtime_id = DDOG_CHARSLICE_C("12345678-1234-1234-1234-123456789abc"),
         .debug_enabled = true,
         .session_id = DDOG_CHARSLICE_C("12345678-1234-1234-1234-123456789abc"),
         .root_session_id = DDOG_CHARSLICE_C("87654321-1234-1234-1234-123456789abc"),

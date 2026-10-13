@@ -107,8 +107,8 @@ impl SharedThreadContext {
 mod tests {
     use super::{SharedThreadContext, ThreadContext};
     use crate::linux::read_tls_context_ptr;
-    use std::sync::atomic::Ordering;
     use std::sync::Arc;
+    use std::sync::atomic::Ordering;
 
     const NO_TRACE_FLAGS: u8 = 0;
 

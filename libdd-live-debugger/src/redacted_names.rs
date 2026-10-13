@@ -5,8 +5,8 @@
 
 use libdd_common::regex_engine::Regex;
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::LazyLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 static REDACTED_NAMES: LazyLock<HashSet<&'static [u8]>> = LazyLock::new(|| {
     HashSet::from([
@@ -134,44 +134,52 @@ static REDACTED_TYPES_INITIALIZED: AtomicBool = AtomicBool::new(false);
 /// # Safety
 /// May only be called while not running yet - concurrent access to is_redacted_name is forbidden.
 pub unsafe fn add_redacted_name<I: Into<Vec<u8>>>(name: I) {
-    assert!(!REDACTED_NAMES_INITIALIZED.load(Ordering::Relaxed));
-    // I really don't want to Mutex this often checked value.
-    // Hence, unsafe, and caller has to ensure safety.
-    // An UnsafeCell would be perfect, but it isn't Sync...
-    let added_names = &mut (*(&*ADDED_REDACTED_NAMES as *const Vec<Vec<u8>>).cast_mut());
-    added_names.push(name.into());
+    unsafe {
+        assert!(!REDACTED_NAMES_INITIALIZED.load(Ordering::Relaxed));
+        // I really don't want to Mutex this often checked value.
+        // Hence, unsafe, and caller has to ensure safety.
+        // An UnsafeCell would be perfect, but it isn't Sync...
+        let added_names = &mut (*(&*ADDED_REDACTED_NAMES as *const Vec<Vec<u8>>).cast_mut());
+        added_names.push(name.into());
 
-    let redacted_names = &mut (*(&*REDACTED_NAMES as *const HashSet<&'static [u8]>).cast_mut());
-    redacted_names.insert(&added_names[added_names.len() - 1]);
+        let redacted_names = &mut (*(&*REDACTED_NAMES as *const HashSet<&'static [u8]>).cast_mut());
+        redacted_names.insert(&added_names[added_names.len() - 1]);
+    }
 }
 /// # Safety
 /// May only be called while not running yet - concurrent access to is_excluded_name is forbidden.
 pub unsafe fn add_excluded_name<I: Into<Vec<u8>>>(name: I) {
-    assert!(!EXCLUDED_NAMES_INITIALIZED.load(Ordering::Relaxed));
-    let excluded_names = &mut (*(&*EXCLUDED_NAMES as *const HashSet<Vec<u8>>).cast_mut());
-    excluded_names.insert(name.into());
+    unsafe {
+        assert!(!EXCLUDED_NAMES_INITIALIZED.load(Ordering::Relaxed));
+        let excluded_names = &mut (*(&*EXCLUDED_NAMES as *const HashSet<Vec<u8>>).cast_mut());
+        excluded_names.insert(name.into());
+    }
 }
 
 /// # Safety
 /// May only be called while not running yet - concurrent access to is_redacted_type is forbidden.
 pub unsafe fn add_redacted_type<I: AsRef<[u8]>>(name: I) {
-    assert!(!REDACTED_TYPES_INITIALIZED.load(Ordering::Relaxed));
-    let name = name.as_ref();
+    unsafe {
+        assert!(!REDACTED_TYPES_INITIALIZED.load(Ordering::Relaxed));
+        let name = name.as_ref();
 
-    if name.ends_with(b"*") {
-        let regex_str = &mut *(&*REDACTED_WILDCARD_TYPES_PATTERN as *const String).cast_mut();
-        if !regex_str.is_empty() {
-            regex_str.push('|')
+        if name.ends_with(b"*") {
+            let regex_str = &mut *(&*REDACTED_WILDCARD_TYPES_PATTERN as *const String).cast_mut();
+            if !regex_str.is_empty() {
+                regex_str.push('|')
+            }
+            let name = String::from_utf8_lossy(name);
+            regex_str
+                .push_str(libdd_common::regex_engine::escape(&name[..name.len() - 1]).as_str());
+            regex_str.push_str(".*");
+        } else {
+            let added_types = &mut (*(&*ADDED_REDACTED_TYPES as *const Vec<Vec<u8>>).cast_mut());
+            added_types.push(name.to_vec());
+
+            let redacted_types =
+                &mut (*(&*REDACTED_TYPES as *const HashSet<&'static [u8]>).cast_mut());
+            redacted_types.insert(&added_types[added_types.len() - 1]);
         }
-        let name = String::from_utf8_lossy(name);
-        regex_str.push_str(libdd_common::regex_engine::escape(&name[..name.len() - 1]).as_str());
-        regex_str.push_str(".*");
-    } else {
-        let added_types = &mut (*(&*ADDED_REDACTED_TYPES as *const Vec<Vec<u8>>).cast_mut());
-        added_types.push(name.to_vec());
-
-        let redacted_types = &mut (*(&*REDACTED_TYPES as *const HashSet<&'static [u8]>).cast_mut());
-        redacted_types.insert(&added_types[added_types.len() - 1]);
     }
 }
 

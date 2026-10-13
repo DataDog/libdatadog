@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use function_name::named;
-use libdd_common_ffi::{wrap_with_ffi_result, wrap_with_void_ffi_result, Result, VoidResult};
+use libdd_common_ffi::{Result, VoidResult, wrap_with_ffi_result, wrap_with_void_ffi_result};
 /// Resets all stored spans to 0.
 /// Expected to be used after a fork, to reset the spans on the child
 /// ATOMICITY:
@@ -11,7 +11,7 @@ use libdd_common_ffi::{wrap_with_ffi_result, wrap_with_void_ffi_result, Result, 
 ///     e.g. after a fork but before profiling ops start on the child.
 /// # Safety
 /// No safety concerns.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 #[named]
 pub unsafe extern "C" fn ddog_crasht_clear_span_ids() -> VoidResult {
@@ -26,14 +26,14 @@ pub unsafe extern "C" fn ddog_crasht_clear_span_ids() -> VoidResult {
 ///     e.g. after a fork but before profiling ops start on the child.
 /// # Safety
 /// No safety concerns.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 #[named]
 pub unsafe extern "C" fn ddog_crasht_clear_trace_ids() -> VoidResult {
     wrap_with_void_ffi_result!({ libdd_crashtracker::clear_traces()? })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 #[named]
 /// Atomically registers an active traceId.
@@ -49,7 +49,7 @@ pub unsafe extern "C" fn ddog_crasht_clear_trace_ids() -> VoidResult {
 ///   Err() on failure. The most likely cause of failure is that the underlying set is full.
 ///
 /// Note: 128 bit ints in FFI were not stabilized until Rust 1.77
-/// https://blog.rust-lang.org/2024/03/30/i128-layout-update.html
+/// <https://blog.rust-lang.org/2024/03/30/i128-layout-update.html>
 /// We're currently locked into 1.76.0, have to do an ugly workaround involving 2 64 bit ints
 /// until we can upgrade.
 ///
@@ -62,7 +62,7 @@ pub unsafe extern "C" fn ddog_crasht_insert_trace_id(id_high: u64, id_low: u64) 
     })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 #[named]
 /// Atomically registers an active SpanId.
@@ -78,7 +78,7 @@ pub unsafe extern "C" fn ddog_crasht_insert_trace_id(id_high: u64, id_low: u64) 
 ///   Err() on failure. The most likely cause of failure is that the underlying set is full.
 ///
 /// Note: 128 bit ints in FFI were not stabilized until Rust 1.77
-/// https://blog.rust-lang.org/2024/03/30/i128-layout-update.html
+/// <https://blog.rust-lang.org/2024/03/30/i128-layout-update.html>
 /// We're currently locked into 1.76.0, have to do an ugly workaround involving 2 64 bit ints
 /// until we can upgrade.
 ///
@@ -91,7 +91,7 @@ pub unsafe extern "C" fn ddog_crasht_insert_span_id(id_high: u64, id_low: u64) -
     })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 #[named]
 /// Atomically removes a completed SpanId.
@@ -108,7 +108,7 @@ pub unsafe extern "C" fn ddog_crasht_insert_span_id(id_high: u64, id_low: u64) -
 ///                      be modified.
 ///
 /// Note: 128 bit ints in FFI were not stabilized until Rust 1.77
-/// https://blog.rust-lang.org/2024/03/30/i128-layout-update.html
+/// <https://blog.rust-lang.org/2024/03/30/i128-layout-update.html>
 /// We're currently locked into 1.76.0, have to do an ugly workaround involving 2 64 bit ints
 /// until we can upgrade.
 ///
@@ -125,7 +125,7 @@ pub unsafe extern "C" fn ddog_crasht_remove_span_id(
     })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 #[named]
 /// Atomically removes a completed TraceId.
@@ -142,7 +142,7 @@ pub unsafe extern "C" fn ddog_crasht_remove_span_id(
 ///                      be modified.
 ///
 /// Note: 128 bit ints in FFI were not stabilized until Rust 1.77
-/// https://blog.rust-lang.org/2024/03/30/i128-layout-update.html
+/// <https://blog.rust-lang.org/2024/03/30/i128-layout-update.html>
 /// We're currently locked into 1.76.0, have to do an ugly workaround involving 2 64 bit ints
 /// until we can upgrade.
 ///
