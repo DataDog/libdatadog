@@ -28,7 +28,7 @@ node_total="${2:-1}"
 # Retune as benchmarks are added/removed; unknown crates default to 1.
 crate_weight() {
   case "$1" in
-    libdd-trace-utils) echo 15 ;;
+    libdd-trace-utils) echo 12 ;;
     libdd-profiling-heap-allocator) echo 7 ;;
     libdd-sampling) echo 6 ;;
     libdd-ddsketch) echo 5 ;;
