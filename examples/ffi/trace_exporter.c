@@ -151,31 +151,51 @@ int verify_structured_value_encoder_rejects_invalid(void) {
     return 0;
 }
 
-#ifdef DDOG_TRACE_EXPORTER_EXTERNAL_OBSERVATIONS
-int verify_external_observations_reject_invalid(void) {
-    ddog_TraceExporterObservations observations;
-    memset(&observations, 0xff, sizeof(observations));
-    ddog_TraceExporterResponse *unused_response = NULL;
-    ddog_TraceExporterError *invalid = ddog_trace_exporter_send_trace_chunks_observed(
-        NULL, NULL, &unused_response, &observations, NULL);
-    if (invalid == NULL || unused_response != NULL || observations.requests_count != 0 ||
-        observations.bytes_sent != 0 || observations.status_code != 0) return 1;
-    ddog_trace_exporter_error_free(invalid);
-    ddog_TraceExporterStatsObservations stats;
-    memset(&stats, 0xff, sizeof(stats));
-    invalid = ddog_trace_exporter_take_stats_observations(NULL, &stats);
-    if (invalid == NULL) return 1;
-    ddog_trace_exporter_error_free(invalid);
-    for (size_t i = 0; i < 16; i++) if (stats.collapsed_spans[i] != 0) return 1;
+int verify_mutable_identity(void) {
+    ddog_MutableMetadataHandle *metadata = NULL;
+    ddog_mutable_metadata_new(&metadata);
+    ddog_VoidResult result = ddog_mutable_metadata_set_identity(
+        metadata, DDOG_CHARSLICE_C("runtime"), DDOG_CHARSLICE_C("session"),
+        DDOG_CHARSLICE_C("root"), DDOG_CHARSLICE_C("parent"));
+    if (result.tag == DDOG_VOID_RESULT_ERR) {
+        ddog_Error_drop(&result.err);
+        ddog_mutable_metadata_free(metadata);
+        return 1;
+    }
+    ddog_TraceExporterConfig *config = NULL;
+    ddog_trace_exporter_config_new(&config);
+    ddog_TraceExporterError *err = ddog_trace_exporter_config_set_mutable_metadata(config, metadata);
+    ddog_mutable_metadata_free(metadata);
+    if (err != NULL) {
+        handle_error(err);
+        ddog_trace_exporter_config_free(config);
+        return 1;
+    }
+    // Metadata ownership must not depend on Agent polling or connection timeouts.
+    err = ddog_trace_exporter_config_set_output_to_log(config, 0);
+    if (err != NULL) {
+        handle_error(err);
+        ddog_trace_exporter_config_free(config);
+        return 1;
+    }
+    ddog_TraceExporter *exporter = NULL;
+    err = ddog_trace_exporter_new(&exporter, config);
+    ddog_trace_exporter_config_free(config);
+    if (err != NULL) {
+        handle_error(err);
+        return 1;
+    }
+    err = ddog_trace_exporter_shutdown(exporter, 1000);
+    if (err != NULL) {
+        handle_error(err);
+        return 1;
+    }
     return 0;
 }
-#endif
 
 int main(int argc, char** argv)
 {
-#ifdef DDOG_TRACE_EXPORTER_EXTERNAL_OBSERVATIONS
-    if (verify_external_observations_reject_invalid() != 0) return 1;
-#endif
+    if (verify_mutable_identity() != 0) return 1;
     if (verify_structured_value_encoder() != 0) return 1;
     if (verify_structured_value_encoder_rejects_invalid() != 0) return 1;
 
