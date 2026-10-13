@@ -54,7 +54,17 @@ tokio = { workspace = true, features = ["sync", "io-util"] }
 glibc_version.workspace = true
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { workspace = true, features = ["Wdk_Foundation", "Win32_Foundation", "Win32_Security", "Win32_System_Memory", "Win32_System_Pipes", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Threading"] }
+windows-sys = { workspace = true, features = [
+    "Wdk_Foundation",
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+    "Win32_System_Memory",
+    "Win32_System_Pipes",
+    "Win32_System_Threading",
+    "Win32_System_WindowsProgramming",
+] }
 tokio = { workspace = true, features = ["sync", "io-util", "net", "rt-multi-thread", "rt"] }
 
 [lib]
