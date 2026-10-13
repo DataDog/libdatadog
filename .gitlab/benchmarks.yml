@@ -58,4 +58,3 @@ benchmarks:
     UPSTREAM_REPO_URL: "https://github.com/DataDog/libdatadog" # The HTTP URL to the project's repository.
 
     KUBERNETES_SERVICE_ACCOUNT_OVERWRITE: libdatadog
-    FF_USE_LEGACY_KUBERNETES_EXECUTION_STRATEGY: "true"
