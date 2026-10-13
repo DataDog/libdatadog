@@ -380,6 +380,7 @@ fn run_listener(
         external_shutdown_rx: None,
         init_shm_eagerly: false,
         authorizer,
+        drain_only_own_process: true,
     };
 
     let runtime = tokio::runtime::Builder::new_current_thread()
