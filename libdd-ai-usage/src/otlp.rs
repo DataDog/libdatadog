@@ -131,7 +131,7 @@ impl MetricBatch {
             for ((name, attributes), (unit, samples)) in &group.histograms {
                 histograms.push((
                     metric(name, unit),
-                    histogram_point(attributes, samples, bounds(name, unit), window),
+                    histogram_point(attributes, &samples.values, bounds(name, unit), window),
                 ));
             }
             for (at, point) in sums {

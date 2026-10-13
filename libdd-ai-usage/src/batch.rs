@@ -20,35 +20,58 @@ use crate::registry::PROFILE_ATTRIBUTE;
 /// One series of a batch: a metric name and an attribute set.
 pub(crate) type SeriesKey = (String, Attributes);
 
+/// The samples of one Histogram series, in the order they were recorded.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct Samples {
+    pub(crate) values: Vec<f64>,
+    /// Each value's place in the batch's recording order, across groups.
+    pub(crate) order: Vec<u64>,
+}
+
 /// The points of one resource and one profile.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Group {
     /// Counter sums, exact while every increment is a whole number.
     pub(crate) counters: BTreeMap<SeriesKey, (String, Sum)>,
-    /// Histogram samples, in the order they were recorded.
-    pub(crate) histograms: BTreeMap<SeriesKey, (String, Vec<f64>)>,
+    pub(crate) histograms: BTreeMap<SeriesKey, (String, Samples)>,
 }
 
 impl Group {
-    fn points(&self) -> Vec<MetricPoint> {
-        let counters = self
-            .counters
+    fn counter_points(&self) -> Vec<MetricPoint> {
+        self.counters
             .iter()
             .map(|((name, attributes), (unit, sum))| match sum {
                 Sum::Integer(total) => {
                     MetricPoint::counter_exact(name, unit, *total, attributes.clone())
                 }
                 Sum::Double(total) => MetricPoint::counter(name, unit, *total, attributes.clone()),
-            });
-        let histograms =
-            self.histograms
-                .iter()
-                .flat_map(|((name, attributes), (unit, samples))| {
-                    samples.iter().map(move |sample| {
-                        MetricPoint::histogram(name, unit, *sample, attributes.clone())
+            })
+            .collect()
+    }
+
+    /// One point per Histogram sample, with its place in the batch's
+    /// recording order.
+    fn histogram_points(&self) -> impl Iterator<Item = (u64, MetricPoint)> + '_ {
+        self.histograms
+            .iter()
+            .flat_map(|((name, attributes), (unit, samples))| {
+                samples
+                    .order
+                    .iter()
+                    .zip(&samples.values)
+                    .map(move |(order, value)| {
+                        (
+                            *order,
+                            MetricPoint::histogram(name, unit, *value, attributes.clone()),
+                        )
                     })
-                });
-        counters.chain(histograms).collect()
+            })
+    }
+
+    fn points(&self) -> Vec<MetricPoint> {
+        let mut points = self.counter_points();
+        points.extend(self.histogram_points().map(|(_, point)| point));
+        points
     }
 }
 
@@ -58,6 +81,8 @@ impl Group {
 #[derive(Debug, Clone, Default)]
 pub struct MetricBatch {
     pub(crate) groups: BTreeMap<(Attributes, Profile), Group>,
+    /// Histogram samples added so far.
+    recorded: u64,
 }
 
 impl MetricBatch {
@@ -111,12 +136,14 @@ impl MetricBatch {
                     entry.1 = entry.1.add(Sum::of(point));
                 }
                 Instrument::Histogram => {
-                    group
+                    let samples = &mut group
                         .histograms
                         .entry(key)
-                        .or_insert_with(|| (point.unit.clone(), Vec::new()))
-                        .1
-                        .push(point.value);
+                        .or_insert_with(|| (point.unit.clone(), Samples::default()))
+                        .1;
+                    samples.values.push(point.value);
+                    samples.order.push(self.recorded);
+                    self.recorded += 1;
                 }
             }
         }
@@ -142,8 +169,21 @@ impl MetricBatch {
     /// tags normalize to the same series share its Counts.
     pub fn datadog_series(&self, historical: bool) -> Result<Vec<DatadogSeries>, MetricError> {
         let mut builder = SeriesBuilder::default();
+        let mut samples = Vec::new();
         for ((resource, profile), group) in &self.groups {
-            builder.add(*profile, &group.points(), resource, historical)?;
+            builder.add(*profile, &group.counter_points(), resource, historical)?;
+            samples.extend(
+                group
+                    .histogram_points()
+                    .map(|(order, point)| (order, *profile, resource, point)),
+            );
+        }
+        // A Histogram's `.sum` adds its samples in the order they were
+        // recorded, also when they come from resources whose tags normalize
+        // to the same series.
+        samples.sort_unstable_by_key(|(order, ..)| *order);
+        for (_, profile, resource, point) in samples {
+            builder.add(profile, std::slice::from_ref(&point), resource, historical)?;
         }
         Ok(builder.finish())
     }
@@ -255,6 +295,31 @@ mod tests {
             "{cost:?}"
         );
         assert!(cost[0].contains("service:api"), "{cost:?}");
+    }
+
+    #[test]
+    fn histogram_sums_follow_the_recording_order_across_resources() {
+        // Recorded API, api, API: grouped by resource, the sum would add
+        // 0.2 + 0.4 + 0.3, which is not the same double.
+        let mut batch = MetricBatch::new();
+        for (service, duration) in [("API", "0.2"), ("api", "0.3"), ("API", "0.4")] {
+            let mut call = attempt(&CALL.replace("1.5,", &format!("{duration},")));
+            call.resource.insert("service.name".into(), service.into());
+            batch.add(Profile::ProviderAttempt, &call).unwrap();
+        }
+        let series = batch.datadog_series(false).unwrap();
+        let sums: Vec<&DatadogSeries> = series
+            .iter()
+            .filter(|s| s.name == "gen_ai.client.inference.duration.sum")
+            .collect();
+        assert_eq!(sums.len(), 1, "{sums:?}");
+        assert_eq!(sums[0].value, 0.2 + 0.3 + 0.4);
+        assert_ne!(sums[0].value, 0.2 + 0.4 + 0.3);
+        let samples = series
+            .iter()
+            .filter(|s| s.name == "gen_ai.client.inference.duration")
+            .count();
+        assert_eq!(samples, 3);
     }
 
     #[test]
