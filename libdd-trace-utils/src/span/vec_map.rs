@@ -8,12 +8,15 @@
 //! map. However, since meta and metrics are expected to be typically small (20ish elements or
 //! less), linear scan is usually still competitive with hashmap's `get`.
 
+use crate::stack_alloc::StackBump;
 use hashbrown::{HashMap, hash_map};
 use serde::ser::{Serialize, Serializer};
 use std::borrow::Borrow;
 use std::hash::Hash;
 use std::slice;
 use std::sync::atomic::{AtomicBool, Ordering};
+
+use allocator_api2::vec::Vec as AllocVec;
 
 /// A Vec-backed map that provides HashMap-like lookup by key.
 ///
@@ -226,6 +229,16 @@ impl<K, V> VecMap<K, V> {
     }
 }
 
+/// Size of the inline [StackBump] buffer used by [VecMap::dedup].
+///
+/// Sizing: for 32 key references, `hashbrown` allocates a table of up to 64 buckets
+/// (`next_pow2(32 * 8 / 7)`), i.e. `64 * (8 + 1)` bytes of data+ctrl plus one hash group
+/// (a bit less than 600 bytes on 64-bit targets with SSE2), and the keep-bitmap adds one
+/// byte per element (32). ~650 bytes are needed, so 1024 leaves ample head room. Anything
+/// beyond the buffer transparently falls back to the global allocator inside
+/// [StackBump], so an under-sized buffer only costs performance, never correctness.
+const DEDUP_STACK_BYTES: usize = 1024;
+
 impl<K: Eq + Hash, V> VecMap<K, V> {
     /// Returns a deduped map, that either borrows from `self` without performing any work if the
     /// map is already deduped, or dedup the entries in a new separate vec otherwise. As opposed to
@@ -273,6 +286,7 @@ impl<K: Eq + Hash, V> VecMap<K, V> {
         // - clone the keys in the hashset. Alas, we don't want a `Clone` bound on `SpanText` (which
         //   is the type of keys in practice), as some representations can be expensive to clone,
         //   e.g. requiring to lock the GIL in Python (python-native, reference counted strings)
+        //
         // - a two-pass approach. In a first pass we store seen key references in a HashSet and
         //   build a bitmap of indices to keep. Once built, we can release the set and call
         //   `Vec::retain` without borrowing issues. It's safe but requires an additional pass over
@@ -284,13 +298,19 @@ impl<K: Eq + Hash, V> VecMap<K, V> {
         //
         // We choose the two-pass approach, which is simpler, safe and reasonably fast. If needed in
         // the future, the unsafe one-pass approach can be implemented.
-        let keep: Vec<bool> = {
-            let mut seen = hashbrown::HashSet::with_capacity(self.len());
-            self.data
-                .iter()
-                .rev()
-                .map(|(k, _)| seen.insert(k))
-                .collect()
+        let stack = StackBump::<DEDUP_STACK_BYTES>::new();
+        let keep: AllocVec<bool, _> = {
+            let mut seen =
+                hashbrown::HashSet::<&K, hashbrown::DefaultHashBuilder, _>::with_capacity_in(
+                    self.data.len(),
+                    &stack,
+                );
+            let mut keep = AllocVec::with_capacity_in(self.data.len(), &stack);
+
+            for (k, _) in self.data.iter().rev() {
+                keep.push(seen.insert(k));
+            }
+            keep
         };
 
         let data_len = self.data.len();
@@ -661,6 +681,30 @@ mod tests {
         let d = DedupedVecMap::Borrowed(&m);
         assert_eq!(d.len(), 0);
         assert_eq!(d.iter().count(), 0);
+    }
+
+    #[test]
+    fn dedup_at_stack_threshold_boundary() {
+        // `dedup` uses a stack-resident scratch allocator whose buffer fits ~32
+        // elements; beyond that, allocations spill to the heap. Exercise the boundary
+        // from both sides: every key is inserted twice, so the later value must
+        // shadow the earlier one on both paths.
+        for n in [32usize, 33, 128] {
+            let mut m = VecMap::new();
+            for i in 0..n {
+                m.insert(i / 2, i);
+            }
+            m.dedup();
+
+            let distinct_keys = n.div_ceil(2);
+            assert_eq!(m.len(), distinct_keys, "unexpected size for n = {n}");
+            for k in 0..distinct_keys {
+                // The last value inserted for key `k` is `2k + 1`, except for the
+                // final key of an odd-sized map, whose shadow never gets inserted.
+                let expected = (2 * k + 1).min(n - 1);
+                assert_eq!(m.get(&k), Some(&expected), "unexpected value for n = {n}");
+            }
+        }
     }
 
     #[test]
