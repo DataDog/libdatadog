@@ -21,6 +21,10 @@ use std::time::Duration;
 
 // public types we want to bring up to top level of service:: scope
 pub use connection_session::{ConnectionSession, ConnectionSessionHandle};
+pub use evp_transport::{
+    EvpProducerIdentity, EvpProducerIdentityError, EvpTransportConfig, EvpTransportConfigError,
+    EvpTransportConfigWithIdentity, EvpTransportMode, MAX_EVP_PRODUCER_IDENTITY_LENGTH,
+};
 pub use instance_id::InstanceId;
 pub use runtime_metadata::RuntimeMetadata;
 pub use serialized_tracer_header_tags::SerializedTracerHeaderTags;
@@ -37,8 +41,8 @@ mod connection_session;
 mod debugger_diagnostics_bookkeeper;
 mod dogstatsd_pool;
 pub(crate) mod evp_proxy;
+pub(crate) mod evp_transport;
 pub mod exception_hash_rate_limiter;
-pub(crate) mod ffe_evp_proxy;
 pub(crate) mod ffe_exposures_flusher;
 pub(crate) mod ffe_flagevaluation_flusher;
 pub(crate) mod ffe_metrics_flusher;
