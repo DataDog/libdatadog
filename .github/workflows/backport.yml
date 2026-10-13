@@ -54,16 +54,16 @@ jobs:
       - name: Collect Target Branches
         id: collect-targets
         run: |
-          # A 'backport v<N>.<M>' label targets the newest 'v<N>.<M>.*' branch (or an
-          # exact 'v<N>.<M>' branch when it exists). Resolve each label accordingly.
+          # A 'backport v<N>.<M>' label targets the newest 'release/v<N>.<M>.*' branch (or an
+          # exact 'release/v<N>.<M>' branch when it exists). Resolve each label accordingly.
           rm -f /tmp/backport-target-branches.txt
           while read -r LABEL; do
             VERSION=${LABEL#backport }
             TARGET_BRANCH=$(git ls-remote --heads "https://github.com/${GITHUB_REPOSITORY}.git" \
-              "refs/heads/${VERSION}" "refs/heads/${VERSION}.*" \
+              "refs/heads/release/${VERSION}" "refs/heads/release/${VERSION}.*" \
               | awk '{ print $2 }' | sed 's|^refs/heads/||' | sort -V | tail -n 1)
             if [ -z "${TARGET_BRANCH}" ]; then
-              echo "No branch found for label '${LABEL}' (expected a '${VERSION}' or '${VERSION}.*' branch)."
+              echo "No branch found for label '${LABEL}' (expected a 'release/${VERSION}' or 'release/${VERSION}.*' branch)."
               exit 1
             fi
             echo "${TARGET_BRANCH}" >> /tmp/backport-target-branches.txt
