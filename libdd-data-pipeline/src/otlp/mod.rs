@@ -11,7 +11,7 @@ pub mod grpc_exporter;
 pub use config::{OtlpMetricsConfig, OtlpProtocol, OtlpTraceConfig};
 #[allow(unused_imports)]
 pub use exporter::send_otlp_traces_http;
-pub use libdd_trace_utils::otlp_encoder::{OtlpResourceInfo, map_traces_to_otlp};
+pub use libdd_trace_utils::otlp_encoder::OtlpResourceInfo;
 pub use metrics::{OtlpStatsExporter, SharedOtlpStatsExporter};
 
 #[cfg(not(target_arch = "wasm32"))]
