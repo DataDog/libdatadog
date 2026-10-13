@@ -147,7 +147,7 @@ pub fn build_target_lookup(manifest_path: Option<&Path>) -> Result<(TargetLookup
             let src_path = target.src_path.into_std_path_buf();
 
             match kind {
-                "lib" | "proc-macro" => {
+                "lib" | "rlib" | "dylib" | "cdylib" | "staticlib" | "proc-macro" => {
                     lookup.insert_lib(&package.name, &target.name, src_path);
                 }
                 "test" => {
@@ -484,6 +484,24 @@ mod tests {
         let result = process_junit_xml(input, &lookup, &workspace_root).unwrap();
 
         assert!(result.contains(r#"file="my-crate/src/lib.rs""#));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_process_junit_xml_ffi_library() {
+        let manifest_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
+        let (lookup, workspace_root) = build_target_lookup(Some(&manifest_path)).unwrap();
+
+        let input = r#"<?xml version="1.0" encoding="UTF-8"?>
+<testsuites>
+  <testsuite name="libdd-library-config-ffi">
+    <testcase classname="libdd-library-config-ffi" name="tracer_metadata::tests::include_otel_thread_context_rejects_null" />
+  </testsuite>
+</testsuites>"#;
+
+        let result = process_junit_xml(input, &lookup, &workspace_root).unwrap();
+
+        assert!(result.contains(r#"file="libdd-library-config-ffi/src/tracer_metadata.rs""#));
     }
 
     #[test]
