@@ -37,7 +37,7 @@ jobs:
 
           # A 'backport v<N>.<M>' label targets the newest 'v<N>.<M>.*' branch (or an
           # exact 'v<N>.<M>' branch when it exists). Resolve it accordingly.
-          LABEL_VERSION=$(echo "${BACKPORT_LABEL}" | sed 's/^backport //')
+          LABEL_VERSION=${BACKPORT_LABEL#backport }
           TARGET_BRANCH=$(git ls-remote --heads origin "refs/heads/${LABEL_VERSION}" "refs/heads/${LABEL_VERSION}.*" \
             | awk '{ print $2 }' | sed 's|^refs/heads/||' | sort -V | tail -n 1)
           if [ -z "${TARGET_BRANCH}" ]; then

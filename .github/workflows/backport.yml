@@ -58,7 +58,7 @@ jobs:
           # exact 'v<N>.<M>' branch when it exists). Resolve each label accordingly.
           rm -f /tmp/backport-target-branches.txt
           while read -r LABEL; do
-            VERSION=$(echo "${LABEL}" | sed 's/^backport //')
+            VERSION=${LABEL#backport }
             TARGET_BRANCH=$(git ls-remote --heads "https://github.com/${GITHUB_REPOSITORY}.git" \
               "refs/heads/${VERSION}" "refs/heads/${VERSION}.*" \
               | awk '{ print $2 }' | sed 's|^refs/heads/||' | sort -V | tail -n 1)
@@ -131,10 +131,12 @@ jobs:
             exit 1
           fi
 
-          echo "branch=${BACKPORT_BRANCH}" >> "$GITHUB_OUTPUT"
-          echo "branch-from=$(git rev-parse ${TARGET_BRANCH})" >> "$GITHUB_OUTPUT"
-          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-          echo "target-branch=${TARGET_BRANCH}" >> "$GITHUB_OUTPUT"
+          {
+            echo "branch=${BACKPORT_BRANCH}"
+            echo "branch-from=$(git rev-parse ${TARGET_BRANCH})"
+            echo "commit=$(git rev-parse HEAD)"
+            echo "target-branch=${TARGET_BRANCH}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Push Commit
         uses: DataDog/commit-headless@action/v2.0.3
