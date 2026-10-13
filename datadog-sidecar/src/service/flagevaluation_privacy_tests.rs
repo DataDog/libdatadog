@@ -47,8 +47,6 @@ fn event() -> FfeFlagEvaluationEvent {
 fn request(events: Vec<FfeFlagEvaluationEvent>) -> SidecarInterfaceRequest {
     let ordinary = || SidecarAction::AddTelemetryMetricPoint(("ffe.healthy".into(), 3.0, vec![]));
     SidecarInterfaceRequest::EnqueueActions {
-        instance_id: InstanceId::new("privacy", "runtime"),
-        queue_id: QueueId::from(42),
         actions: vec![
             ordinary(),
             SidecarAction::FfeFlagEvaluationBatch(FfeFlagEvaluationBatch {
@@ -145,15 +143,6 @@ async fn matching_ipc_enforces_privacy_in_http_and_keeps_connection_healthy() {
         })
         .await;
     let server = SidecarServer::default();
-    server.get_session("privacy").modify_trace_config(|cfg| {
-        cfg.set_endpoint(Endpoint {
-            url: http.url("/").parse().unwrap(),
-            ..Endpoint::default()
-        })
-        .unwrap();
-        cfg.language = "php".into();
-        cfg.tracer_version = "1.25.1".into();
-    });
     let logs = LogBuffer(Arc::new(Mutex::new(Vec::new())));
     let log_writer = logs.clone();
     let subscriber = tracing_subscriber::fmt()
@@ -163,12 +152,24 @@ async fn matching_ipc_enforces_privacy_in_http_and_keeps_connection_healthy() {
         .with_writer(move || log_writer.clone())
         .finish();
     let (local, client) = SeqpacketConn::socketpair().unwrap();
-    let handler = Arc::new(ConnectionSidecarHandler::new(
-        server,
-        OwnedServerConn::new(local).unwrap(),
-    ));
+    let mut handler = ConnectionSidecarHandler::new(server, OwnedServerConn::new(local).unwrap());
+    handler.session.store({
+        let mut session = ConnectionSession::for_test(InstanceId::new("privacy", "runtime"));
+        session
+            .tracer_config
+            .set_endpoint(Endpoint {
+                url: http.url("/").parse().unwrap(),
+                ..Endpoint::default()
+            })
+            .unwrap();
+        session.tracer_config.language = "php".into();
+        session.tracer_config.tracer_version = "1.25.1".into();
+        session
+    });
+    let submitted_payloads = handler.submitted_payloads.clone();
     let task = tokio::spawn(
-        serve_sidecar_interface_connection(handler.clone()).with_subscriber(subscriber),
+        async move { serve_sidecar_interface_connection(&mut handler).await }
+            .with_subscriber(subscriber),
     );
     let mut consented = event();
     consented.flag.key = "consented".into();
@@ -201,7 +202,7 @@ async fn matching_ipc_enforces_privacy_in_http_and_keeps_connection_healthy() {
         .try_send_raw(encode(&SidecarInterfaceRequest::Ping {}), &[])
         .unwrap();
     tokio::time::timeout(Duration::from_secs(5), async {
-        while handler.submitted_payloads.load(Ordering::Relaxed) < 5 {
+        while submitted_payloads.load(Ordering::Relaxed) < 5 {
             tokio::task::yield_now().await;
         }
     })
@@ -281,8 +282,6 @@ fn oversized_ipc_warning_does_not_log_exposure_data() {
     let (client, _peer) = SeqpacketConn::socketpair().unwrap();
     let mut channel = SidecarInterfaceChannel::new(client);
     let request = SidecarInterfaceRequest::EnqueueActions {
-        instance_id: InstanceId::new("privacy", "runtime"),
-        queue_id: QueueId::from(42),
         actions: vec![SidecarAction::FfeExposureBatch(FfeExposureBatch {
             context: FfeTelemetryContext {
                 service: "svc".into(),
