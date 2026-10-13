@@ -151,8 +151,51 @@ int verify_structured_value_encoder_rejects_invalid(void) {
     return 0;
 }
 
+int verify_mutable_identity(void) {
+    ddog_MutableMetadataHandle *metadata = NULL;
+    ddog_mutable_metadata_new(&metadata);
+    ddog_VoidResult result = ddog_mutable_metadata_set_identity(
+        metadata, DDOG_CHARSLICE_C("runtime"), DDOG_CHARSLICE_C("session"),
+        DDOG_CHARSLICE_C("root"), DDOG_CHARSLICE_C("parent"));
+    if (result.tag == DDOG_VOID_RESULT_ERR) {
+        ddog_Error_drop(&result.err);
+        ddog_mutable_metadata_free(metadata);
+        return 1;
+    }
+    ddog_TraceExporterConfig *config = NULL;
+    ddog_trace_exporter_config_new(&config);
+    ddog_TraceExporterError *err = ddog_trace_exporter_config_set_mutable_metadata(config, metadata);
+    ddog_mutable_metadata_free(metadata);
+    if (err != NULL) {
+        handle_error(err);
+        ddog_trace_exporter_config_free(config);
+        return 1;
+    }
+    // Metadata ownership must not depend on Agent polling or connection timeouts.
+    err = ddog_trace_exporter_config_set_output_to_log(config, 0);
+    if (err != NULL) {
+        handle_error(err);
+        ddog_trace_exporter_config_free(config);
+        return 1;
+    }
+    ddog_TraceExporter *exporter = NULL;
+    err = ddog_trace_exporter_new(&exporter, config);
+    ddog_trace_exporter_config_free(config);
+    if (err != NULL) {
+        handle_error(err);
+        return 1;
+    }
+    err = ddog_trace_exporter_shutdown(exporter, 1000);
+    if (err != NULL) {
+        handle_error(err);
+        return 1;
+    }
+    return 0;
+}
+
 int main(int argc, char** argv)
 {
+    if (verify_mutable_identity() != 0) return 1;
     if (verify_structured_value_encoder() != 0) return 1;
     if (verify_structured_value_encoder_rejects_invalid() != 0) return 1;
 

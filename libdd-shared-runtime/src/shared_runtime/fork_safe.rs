@@ -22,7 +22,7 @@ fn build_runtime(worker_threads: usize) -> Result<Runtime, io::Error> {
         .build()
 }
 
-/// Owns a tokio runtime and manages [`PausableWorker`]s on it.
+/// Owns a tokio runtime and manages `PausableWorker`s on it.
 ///
 /// Supports the full fork protocol ([`before_fork`](Self::before_fork) /
 /// [`after_fork_parent`](Self::after_fork_parent) /
