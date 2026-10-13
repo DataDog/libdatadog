@@ -233,15 +233,35 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Wor
 
     /// Reset the worker state in the child process after a fork.
     ///
-    /// Discards inherited pending telemetry state and dedupe history without sending anything, and
-    /// drains the mailbox so that actions queued before the fork are not processed by the
-    /// child.
+    /// Discards inherited observations and dedupe history without sending anything. Metrics/logs
+    /// workers preserve the final requested lifecycle state from staged and queued control actions.
+    /// The child's sequence starts at one; the host must install its new identity before restarting
+    /// the worker.
     fn reset(&mut self) {
-        // Drain all actions queued in the mailbox before the fork.
-        while self.mailbox.try_recv().is_ok() {}
+        self.seq_id.store(1, Ordering::Relaxed);
+        let mut started = self.data.started;
+        // Apply staged control before queued control, without flushing inherited data on Stop.
+        let staged = self.next_action.take();
+        let queued = std::iter::from_fn(|| self.mailbox.try_recv().ok());
+        for action in staged.into_iter().chain(queued) {
+            match action {
+                TelemetryActions::Lifecycle(LifecycleAction::Start) => started = true,
+                TelemetryActions::Lifecycle(LifecycleAction::Stop) => started = false,
+                _ => {}
+            }
+        }
 
-        // Discard any action that was staged by the last trigger() call.
-        self.next_action = None;
+        // A queued Start or staged flush must not leave the child's metrics worker dormant.
+        if matches!(self.flavor, TelemetryWorkerFlavor::MetricsLogs) {
+            self.data.started = started;
+            self.deadlines.clear_pending();
+            if started {
+                let _ = self
+                    .deadlines
+                    .schedule_event(LifecycleAction::FlushMetricAggr);
+                let _ = self.deadlines.schedule_event(LifecycleAction::FlushData);
+            }
+        }
 
         // Clear all unbuffered telemetry data; the child must not send pre-fork data.
         self.data.logs = store::QueueHashMap::default();
@@ -944,9 +964,21 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
             );
         let req = http_client::add_instrumentation_session_headers(
             req,
-            self.config.session_id.as_deref(),
-            self.config.parent_session_id.as_deref(),
-            self.config.root_session_id.as_deref(),
+            metadata
+                .session
+                .as_ref()
+                .map(|s| s.id.as_str())
+                .or(self.config.session_id.as_deref()),
+            metadata
+                .session
+                .as_ref()
+                .map(|s| s.parent_id.as_str())
+                .or(self.config.parent_session_id.as_deref()),
+            metadata
+                .session
+                .as_ref()
+                .map(|s| s.root_id.as_str())
+                .or(self.config.root_session_id.as_deref()),
         );
 
         let body = Bytes::from(serialize::serialize(&tel)?);
@@ -1620,6 +1652,38 @@ mod tests {
 
     #[cfg_attr(miri, ignore)] // reqwest in build_worker
     #[test]
+    fn mutable_identity_overrides_static_headers_atomically() {
+        use libdd_common::mutable_metadata::InstrumentationSession;
+
+        let worker = test_worker(Some("static".into()), Some("static-root".into()), None);
+        let parent = worker.build_request(&Payload::AppHeartbeat(())).unwrap();
+        worker.mutable_metadata.set_identity(
+            "child".into(),
+            InstrumentationSession {
+                id: "child-session".into(),
+                root_id: "root-session".into(),
+                parent_id: "parent-session".into(),
+            },
+        );
+        let child = worker.build_request(&Payload::AppHeartbeat(())).unwrap();
+        let body: serde_json::Value = serde_json::from_slice(child.body()).unwrap();
+        assert_eq!(body["runtime_id"], "child");
+        assert_eq!(child.headers()["dd-session-id"], "child-session");
+        assert_eq!(child.headers()["dd-root-session-id"], "root-session");
+        assert_eq!(child.headers()["dd-parent-session-id"], "parent-session");
+        assert_eq!(parent.headers()["dd-session-id"], "static");
+
+        worker
+            .mutable_metadata
+            .set_identity("no-headers".into(), InstrumentationSession::default());
+        let empty = worker.build_request(&Payload::AppHeartbeat(())).unwrap();
+        assert!(!empty.headers().contains_key("dd-session-id"));
+        assert!(!empty.headers().contains_key("dd-root-session-id"));
+        assert!(!empty.headers().contains_key("dd-parent-session-id"));
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[test]
     fn telemetry_http_includes_dd_session_id() {
         let req = test_worker(Some("sess".into()), None, None)
             .build_request(&Payload::AppHeartbeat(()))
@@ -2013,6 +2077,91 @@ mod tests {
             )
         }
 
+        #[cfg_attr(miri, ignore)]
+        #[test]
+        fn fork_child_starts_a_new_sequence_without_resetting_the_parent() {
+            use crate::config::TelemetryEndpoint;
+            use httpmock::prelude::*;
+            use libdd_common::mutable_metadata::InstrumentationSession;
+            use libdd_shared_runtime::{BlockingRuntime, ForkSafeRuntime, SharedRuntime};
+
+            let server = MockServer::start();
+            let runtime = ForkSafeRuntime::new().unwrap();
+            let metadata = MutableMetadataHandle::default();
+            metadata.set_identity(
+                "parent".into(),
+                InstrumentationSession {
+                    id: "parent".into(),
+                    ..Default::default()
+                },
+            );
+            let mut builder = TelemetryWorkerBuilder::new(
+                "host".into(),
+                "service".into(),
+                "ruby".into(),
+                "1".into(),
+                "1".into(),
+            );
+            builder.flavor = TelemetryWorkerFlavor::MetricsLogs;
+            builder.mutable_metadata = Some(metadata.clone());
+            builder.config.telemetry_heartbeat_interval = Duration::from_secs(3600);
+            builder
+                .config
+                .set_endpoint(TelemetryEndpoint {
+                    url: Some(server.url("/")),
+                    ..Default::default()
+                })
+                .unwrap();
+            let (handle, worker) = builder.build_worker::<NativeCapabilities>(None);
+            let _worker = runtime.spawn_worker(worker, true).unwrap();
+            handle.send_start().unwrap();
+
+            let mut log_id = 0;
+            let mut flush = |id: &str, seq: u64| {
+                let mock = server.mock(|when, then| {
+                    when.method(POST)
+                        .header("dd-session-id", id)
+                        .body_includes(format!(r#""runtime_id":"{id}""#))
+                        .body_includes(format!(r#""seq_id":{seq},"#));
+                    then.status(202);
+                });
+                log_id += 1;
+                handle
+                    .try_send_msg(TelemetryActions::AddLog(make_log(log_id, "observation")))
+                    .unwrap();
+                handle
+                    .try_send_msg(TelemetryActions::Lifecycle(LifecycleAction::FlushData))
+                    .unwrap();
+                runtime.block_on(handle.stats().unwrap()).unwrap().unwrap();
+                assert_eq!(mock.calls(), 1, "runtime {id}, sequence {seq}");
+            };
+
+            flush("parent", 1);
+            flush("parent", 2);
+            // Successful and failed forks both use the parent-resume path.
+            for seq in [3, 4] {
+                runtime.before_fork();
+                runtime.after_fork_parent().unwrap();
+                flush("parent", seq);
+            }
+
+            for (id, parent) in [("child", "parent"), ("grandchild", "child")] {
+                runtime.before_fork();
+                metadata.set_identity(
+                    id.into(),
+                    InstrumentationSession {
+                        id: id.into(),
+                        root_id: "parent".into(),
+                        parent_id: parent.into(),
+                    },
+                );
+                runtime.after_fork_child().unwrap();
+                flush(id, 1);
+                flush(id, 2);
+            }
+            runtime.shutdown(None).unwrap();
+        }
+
         /// After reset(), pending buffered telemetry and dedupe history is cleared.
         #[cfg_attr(miri, ignore)] // reqwest in build_worker
         #[tokio::test]
@@ -2145,6 +2294,93 @@ mod tests {
                 "queued AddDependency must not be pending"
             );
             assert_eq!(stats.logs, 0, "queued AddLog must be discarded");
+        }
+
+        #[cfg_attr(miri, ignore)]
+        #[tokio::test]
+        async fn metrics_reset_keeps_queued_start_and_staged_flush_alive() {
+            let (handle, mut worker) = build_test_worker();
+            worker.flavor = TelemetryWorkerFlavor::MetricsLogs;
+            handle.send_start().unwrap();
+            worker.reset();
+            assert!(worker.data.started);
+            assert!(worker.mailbox.try_recv().is_err());
+            for action in [LifecycleAction::FlushMetricAggr, LifecycleAction::FlushData] {
+                worker.deadlines.clear_pending();
+                worker.next_action = Some(TelemetryActions::Lifecycle(action));
+                worker.reset();
+                assert!(worker.next_action.is_none());
+                for expected in [LifecycleAction::FlushMetricAggr, LifecycleAction::FlushData] {
+                    assert!(
+                        worker
+                            .deadlines
+                            .deadlines
+                            .iter()
+                            .any(|(_, action)| *action == expected)
+                    );
+                }
+            }
+        }
+
+        #[cfg_attr(miri, ignore)]
+        #[tokio::test]
+        async fn metrics_reset_preserves_ordered_lifecycle_state() {
+            use LifecycleAction::*;
+
+            for restartable in [false, true] {
+                for (initial, staged, queued, expected) in [
+                    (false, None, &[Start, Stop][..], false),
+                    (true, None, &[Stop][..], false),
+                    (true, Some(Stop), &[][..], false),
+                    (false, Some(Start), &[Stop][..], false),
+                    (true, Some(Stop), &[Start][..], true),
+                    (false, None, &[Stop, Start][..], true),
+                    (false, Some(Stop), &[Start, Stop][..], false),
+                    (true, Some(FlushData), &[Stop][..], false),
+                    (true, Some(FlushMetricAggr), &[Stop][..], false),
+                    (false, None, &[Start, Stop, Start][..], true),
+                    (false, None, &[][..], false),
+                    (true, None, &[][..], true),
+                ] {
+                    let (handle, mut worker) = build_test_worker();
+                    worker.flavor = TelemetryWorkerFlavor::MetricsLogs;
+                    worker.config.restartable = restartable;
+                    if initial {
+                        handle.send_start().unwrap();
+                        worker.trigger().await;
+                        worker.run().await;
+                    }
+                    worker.next_action = staged.map(TelemetryActions::Lifecycle);
+                    handle
+                        .try_send_msg(TelemetryActions::AddLog(make_log(1, "parent")))
+                        .unwrap();
+                    for action in queued {
+                        handle
+                            .try_send_msg(TelemetryActions::Lifecycle(*action))
+                            .unwrap();
+                    }
+
+                    worker.reset();
+
+                    assert_eq!(
+                        worker.data.started, expected,
+                        "restartable={restartable}, initial={initial}, staged={staged:?}, queued={queued:?}"
+                    );
+                    assert_eq!(
+                        worker.deadlines.deadlines.len(),
+                        if expected { 2 } else { 0 }
+                    );
+                    assert!(worker.mailbox.try_recv().is_err());
+                    assert!(worker.next_action.is_none());
+                    assert_eq!(worker.stats().logs, 0);
+
+                    handle.send_start().unwrap();
+                    worker.trigger().await;
+                    worker.run().await;
+                    assert!(worker.data.started);
+                    assert_eq!(worker.deadlines.deadlines.len(), 2);
+                }
+            }
         }
 
         /// After reset(), the worker accepts new telemetry and processes it normally.

@@ -338,7 +338,7 @@ fn gen_handler_trait(
             };
             quote! {
                 fn #name(
-                    &self,
+                    &mut self,
                     #(#params),*
                 ) -> impl ::std::future::Future<Output = #ret> + Send + '_;
             }
@@ -346,7 +346,8 @@ fn gen_handler_trait(
         .collect();
 
     quote! {
-        #vis trait #trait_name: Send + Sync + 'static {
+        /// Requests are handled one at a time, so the methods have exclusive access to the handler.
+        #vis trait #trait_name: Send {
             /// Returns the counter incremented on each received IPC message.
             /// The serve loop uses this to track received payloads.
             fn recv_counter(&self) -> &::std::sync::atomic::AtomicU64;
@@ -453,7 +454,7 @@ fn gen_serve_fn(
 
     quote! {
         pub async fn #serve_fn<H: #trait_name>(
-            handler: ::std::sync::Arc<H>,
+            handler: &mut H,
         ) {
             // Pending 1-byte acks for fire-and-forget methods, flushed via sendmmsg(2) on Linux.
             #[cfg(target_os = "linux")]

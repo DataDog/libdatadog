@@ -12,7 +12,7 @@ use std::io;
 pub enum FfeSubmissionStatus {
     /// Accepted by the local transport, not necessarily delivered to the sidecar or intake.
     Accepted,
-    /// Absent, closed, poisoned, or failed transport. Recovery belongs to lifecycle code.
+    /// Absent, closed, or failed transport. Recovery belongs to lifecycle code.
     Unavailable,
     /// Rejected by shared load shedding, pending configuration, or socket backpressure.
     WouldBlock,

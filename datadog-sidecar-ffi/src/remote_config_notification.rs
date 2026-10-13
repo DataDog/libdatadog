@@ -13,9 +13,9 @@ use std::ffi::c_void;
 /// have changed.
 ///
 /// On success, `*out` receives a newly allocated notification. Pass that pointer to
-/// `ddog_sidecar_session_set_config` to associate it with a session, and eventually release it
-/// with `ddog_sidecar_remote_config_notification_drop`. Session configuration does not take
-/// ownership of the notification.
+/// `ddog_sidecar_set_connection_config` to associate it with a connection, and eventually release
+/// it with `ddog_sidecar_remote_config_notification_drop`. The connection configuration does not
+/// take ownership of the notification.
 ///
 /// The callback runs asynchronously on a Windows thread-pool thread. Invocations of the
 /// caller-provided callback for the same notification do not overlap, but several remote
@@ -52,7 +52,7 @@ pub unsafe extern "C" fn ddog_sidecar_remote_config_notification_new(
 /// Passing NULL has no effect. If its callback is currently running, this function waits for the
 /// callback to return. Once this function returns, no callback for this notification is running or
 /// can start, so the caller may safely release the callback context or unload the callback code.
-/// A sidecar that still has the session configuration may continue sending signals, but those
+/// A sidecar that still has the connection configuration may continue sending signals, but those
 /// signals can no longer invoke the callback.
 ///
 /// # Safety
@@ -60,7 +60,7 @@ pub unsafe extern "C" fn ddog_sidecar_remote_config_notification_new(
 /// - `notification` must be NULL or a live pointer returned by
 ///   `ddog_sidecar_remote_config_notification_new`.
 /// - A non-NULL pointer may be passed to this function only once and must not be used concurrently
-///   by another call, including `ddog_sidecar_session_set_config`.
+///   by another call, including `ddog_sidecar_set_connection_config`.
 /// - This function must not be called from the notification's callback.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_sidecar_remote_config_notification_drop(

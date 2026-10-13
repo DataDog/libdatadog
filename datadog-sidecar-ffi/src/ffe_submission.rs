@@ -7,7 +7,7 @@ use crate::{FfeFlagEvaluation, FfeTelemetryContext};
 use datadog_sidecar::service::blocking::{self, SidecarTransport};
 pub use datadog_sidecar::service::ffe_submission::FfeSubmissionStatus;
 use datadog_sidecar::service::sidecar_interface::SidecarInterfaceRequest;
-use datadog_sidecar::service::{self, InstanceId, QueueId, SidecarAction};
+use datadog_sidecar::service::{self, SidecarAction};
 use libdd_common_ffi::slice::{AsBytes, CharSlice, Slice};
 use service::{
     ContextTruncationReason as Reason, FieldOmissions, MAX_CONTEXT_FIELDS, MAX_FIELD_LENGTH,
@@ -39,8 +39,9 @@ pub struct FfeSnapshotState {
 }
 
 /// Submit one evaluation through the shared sender without reconnecting or
-/// waiting for capacity/delivery. The ordinary mutex and platform synchronization
-/// may briefly wait. Bounded input conversion happens before shared load shedding;
+/// waiting for capacity/delivery. The transport is exclusively owned by its caller;
+/// platform synchronization may briefly wait. Bounded input conversion happens
+/// before shared load shedding;
 /// rejected observations are not retained. `Accepted` is not a delivery guarantee.
 /// Oversized observations are retried once without targeting key or event context;
 /// a successfully accepted reduced observation also returns `Accepted`. Required
@@ -54,15 +55,14 @@ pub struct FfeSnapshotState {
 /// and library. No diagnostic is recursively submitted through this EVP path.
 ///
 /// # Safety
-/// All references must be valid for the call. Non-null slices that are read must
+/// All references must be valid for the call, with exclusive access to the transport.
+/// Non-null slices that are read must
 /// point to live, aligned backing storage of their stated lengths. String bytes
 /// need not be UTF-8: malformed optional text is omitted. All C booleans must be
 /// valid boolean values. No pointers survive this call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_sidecar_try_submit_ffe_flag_evaluation(
-    transport: Option<&SidecarTransport>,
-    instance_id: &InstanceId,
-    queue_id: &QueueId,
+    transport: Option<&mut SidecarTransport>,
     context: &FfeTelemetryContext<'_>,
     event: &FfeFlagEvaluation<'_>,
     attributes: Slice<'_, FfeScalarAttribute<'_>>,
@@ -71,11 +71,10 @@ pub unsafe extern "C" fn ddog_sidecar_try_submit_ffe_flag_evaluation(
     let Some(transport) = transport else {
         return FfeSubmissionStatus::Unavailable;
     };
-    let mut request =
-        match build_request(instance_id, queue_id, context, event, attributes, snapshot) {
-            Ok(request) => request,
-            Err(status) => return status,
-        };
+    let mut request = match build_request(context, event, attributes, snapshot) {
+        Ok(request) => request,
+        Err(status) => return status,
+    };
     blocking::try_submit_ffe(transport, &mut request)
 }
 
@@ -188,8 +187,6 @@ fn safe_error(slice: CharSlice<'_>) -> Option<service::EvalError> {
 }
 
 fn build_request(
-    instance_id: &InstanceId,
-    queue_id: &QueueId,
     context: &FfeTelemetryContext<'_>,
     source: &FfeFlagEvaluation<'_>,
     attributes: Slice<'_, FfeScalarAttribute<'_>>,
@@ -231,8 +228,6 @@ fn build_request(
     };
     let mut bytes = 0usize;
     for value in [
-        instance_id.session_id.as_str(),
-        instance_id.runtime_id.as_str(),
         service,
         env,
         version,
@@ -291,8 +286,6 @@ fn build_request(
     // Context and errors are already sanitized above; the sidecar independently
     // validates them again at aggregation, without another JSON pass here.
     Ok(SidecarInterfaceRequest::EnqueueActions {
-        instance_id: instance_id.clone(),
-        queue_id: *queue_id,
         actions: vec![SidecarAction::FfeFlagEvaluationBatch(
             service::FfeFlagEvaluationBatch {
                 context: service::FfeTelemetryContext {
@@ -355,15 +348,7 @@ mod tests {
         attrs: &[FfeScalarAttribute<'_>],
         state: FfeSnapshotState,
     ) -> service::FfeFlagEvaluationEvent {
-        let request = build_request(
-            &InstanceId::new("session", "runtime"),
-            &QueueId::from(1),
-            &metadata(),
-            event,
-            attrs.into(),
-            &state,
-        )
-        .unwrap();
+        let request = build_request(&metadata(), event, attrs.into(), &state).unwrap();
         let SidecarInterfaceRequest::EnqueueActions { mut actions, .. } = request else {
             panic!("wrong request")
         };
@@ -440,14 +425,7 @@ mod tests {
         let mut source = event(true);
         source.variant = oversized.as_str().into();
         assert!(matches!(
-            build_request(
-                &InstanceId::new("session", "runtime"),
-                &QueueId::from(1),
-                &metadata(),
-                &source,
-                (&[][..]).into(),
-                &Default::default(),
-            ),
+            build_request(&metadata(), &source, (&[][..]).into(), &Default::default(),),
             Err(FfeSubmissionStatus::PayloadTooLarge)
         ));
     }
@@ -503,8 +481,6 @@ mod tests {
         for consent in [false, true] {
             let attributes = unsafe { Slice::from_raw_parts(std::ptr::null(), 1) };
             let request = build_request(
-                &InstanceId::new("session", "runtime"),
-                &QueueId::from(1),
                 &metadata(),
                 &event(consent),
                 attributes,
@@ -780,8 +756,6 @@ mod tests {
         let mut source = event(false);
         source.evaluation_count = 2;
         let result = build_request(
-            &InstanceId::new("s", "r"),
-            &QueueId::from(1),
             &metadata(),
             &source,
             Slice::empty(),
@@ -796,8 +770,6 @@ mod tests {
         let mut source = event(false);
         source.flag_key = huge.as_str().into();
         let result = build_request(
-            &InstanceId::new("s", "r"),
-            &QueueId::from(1),
             &metadata(),
             &source,
             Slice::empty(),
@@ -817,16 +789,12 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn ffi_owns_the_accepted_snapshot() {
         let (conn, peer) = libdd_ipc::SeqpacketConn::socketpair().unwrap();
-        let transport = SidecarTransport::from(conn);
-        let instance = InstanceId::new("session", "runtime");
-        let queue = QueueId::from(1);
+        let mut transport = SidecarTransport::from(conn);
         let mut source = event(true);
         let mut value = String::from("captured");
-        let send = |attrs: &[FfeScalarAttribute<'_>]| unsafe {
+        let mut send = |attrs: &[FfeScalarAttribute<'_>]| unsafe {
             ddog_sidecar_try_submit_ffe_flag_evaluation(
-                Some(&transport),
-                &instance,
-                &queue,
+                Some(&mut transport),
                 &metadata(),
                 &source,
                 attrs.into(),
@@ -855,8 +823,6 @@ mod tests {
             unsafe {
                 ddog_sidecar_try_submit_ffe_flag_evaluation(
                     None,
-                    &instance,
-                    &queue,
                     &metadata(),
                     &source,
                     Slice::empty(),

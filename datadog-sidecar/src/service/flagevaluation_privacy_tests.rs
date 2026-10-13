@@ -47,8 +47,6 @@ fn event() -> FfeFlagEvaluationEvent {
 fn request(events: Vec<FfeFlagEvaluationEvent>) -> SidecarInterfaceRequest {
     let ordinary = || SidecarAction::AddTelemetryMetricPoint(("ffe.healthy".into(), 3.0, vec![]));
     SidecarInterfaceRequest::EnqueueActions {
-        instance_id: InstanceId::new("privacy", "runtime"),
-        queue_id: QueueId::from(42),
         actions: vec![
             ordinary(),
             SidecarAction::FfeFlagEvaluationBatch(FfeFlagEvaluationBatch {
@@ -145,15 +143,6 @@ async fn matching_ipc_enforces_privacy_in_http_and_keeps_connection_healthy() {
         })
         .await;
     let server = SidecarServer::default();
-    server.get_session("privacy").modify_trace_config(|cfg| {
-        cfg.set_endpoint(Endpoint {
-            url: http.url("/").parse().unwrap(),
-            ..Endpoint::default()
-        })
-        .unwrap();
-        cfg.language = "php".into();
-        cfg.tracer_version = "1.25.1".into();
-    });
     let logs = LogBuffer(Arc::new(Mutex::new(Vec::new())));
     let log_writer = logs.clone();
     let subscriber = tracing_subscriber::fmt()
@@ -163,12 +152,24 @@ async fn matching_ipc_enforces_privacy_in_http_and_keeps_connection_healthy() {
         .with_writer(move || log_writer.clone())
         .finish();
     let (local, client) = SeqpacketConn::socketpair().unwrap();
-    let handler = Arc::new(ConnectionSidecarHandler::new(
-        server,
-        OwnedServerConn::new(local).unwrap(),
-    ));
+    let mut handler = ConnectionSidecarHandler::new(server, OwnedServerConn::new(local).unwrap());
+    handler.session.store({
+        let mut session = ConnectionSession::for_test(InstanceId::new("privacy", "runtime"));
+        session
+            .tracer_config
+            .set_endpoint(Endpoint {
+                url: http.url("/").parse().unwrap(),
+                ..Endpoint::default()
+            })
+            .unwrap();
+        session.tracer_config.language = "php".into();
+        session.tracer_config.tracer_version = "1.25.1".into();
+        session
+    });
+    let submitted_payloads = handler.submitted_payloads.clone();
     let task = tokio::spawn(
-        serve_sidecar_interface_connection(handler.clone()).with_subscriber(subscriber),
+        async move { serve_sidecar_interface_connection(&mut handler).await }
+            .with_subscriber(subscriber),
     );
     let mut consented = event();
     consented.flag.key = "consented".into();
@@ -201,7 +202,7 @@ async fn matching_ipc_enforces_privacy_in_http_and_keeps_connection_healthy() {
         .try_send_raw(encode(&SidecarInterfaceRequest::Ping {}), &[])
         .unwrap();
     tokio::time::timeout(Duration::from_secs(5), async {
-        while handler.submitted_payloads.load(Ordering::Relaxed) < 5 {
+        while submitted_payloads.load(Ordering::Relaxed) < 5 {
             tokio::task::yield_now().await;
         }
     })
@@ -307,14 +308,6 @@ async fn bounded_ffe_submission_preserves_http_privacy_and_survives_rejection() 
         })
         .await;
     let server = SidecarServer::default();
-    server.get_session("privacy").modify_trace_config(|cfg| {
-        cfg.set_endpoint(Endpoint {
-            url: http.url("/").parse().unwrap(),
-            ..Endpoint::default()
-        })
-        .unwrap();
-        cfg.language = "php".into();
-    });
     let logs = LogBuffer(Arc::new(Mutex::new(Vec::new())));
     let log_writer = logs.clone();
     let subscriber = tracing_subscriber::fmt()
@@ -324,31 +317,29 @@ async fn bounded_ffe_submission_preserves_http_privacy_and_survives_rejection() 
         .with_writer(move || log_writer.clone())
         .finish();
     let (local, client) = SeqpacketConn::socketpair().unwrap();
-    let handler = Arc::new(ConnectionSidecarHandler::new(
-        server,
-        OwnedServerConn::new(local).unwrap(),
-    ));
+    let mut handler = ConnectionSidecarHandler::new(server, OwnedServerConn::new(local).unwrap());
+    handler.session.store({
+        let mut session = ConnectionSession::for_test(InstanceId::new("privacy", "runtime"));
+        session
+            .tracer_config
+            .set_endpoint(Endpoint {
+                url: http.url("/").parse().unwrap(),
+                ..Endpoint::default()
+            })
+            .unwrap();
+        session.tracer_config.language = "php".into();
+        session
+    });
+    let submitted_payloads = handler.submitted_payloads.clone();
     let task = tokio::spawn(
-        serve_sidecar_interface_connection(handler.clone()).with_subscriber(subscriber),
+        async move { serve_sidecar_interface_connection(&mut handler).await }
+            .with_subscriber(subscriber),
     );
-    let transport = SidecarTransport::from(client);
+    let mut transport = SidecarTransport::from(client);
     // Ordinary traffic remains on its existing API and connection.
-    assert!(
-        transport
-            .inner
-            .lock()
-            .unwrap()
-            .channel
-            .try_send_enqueue_actions(
-                InstanceId::new("privacy", "runtime"),
-                QueueId::from(42),
-                vec![SidecarAction::AddTelemetryMetricPoint((
-                    "ffe.healthy".into(),
-                    1.0,
-                    vec![]
-                ))],
-            )
-    );
+    assert!(transport.inner.channel.try_send_enqueue_actions(vec![
+        SidecarAction::AddTelemetryMetricPoint(("ffe.healthy".into(), 1.0, vec![]))
+    ],));
     let single = |mut row: FfeFlagEvaluationEvent| {
         row.evaluation_count = 1;
         row.last_evaluation = row.first_evaluation;
@@ -360,7 +351,7 @@ async fn bounded_ffe_submission_preserves_http_privacy_and_survives_rejection() 
         req
     };
     assert_eq!(
-        try_submit_ffe(&transport, &mut single(event())),
+        try_submit_ffe(&mut transport, &mut single(event())),
         FfeSubmissionStatus::Accepted
     );
     let mut oversized = event();
@@ -370,7 +361,7 @@ async fn bounded_ffe_submission_preserves_http_privacy_and_survives_rejection() 
     for consent in [false, true] {
         oversized.observe_full_evaluation_data = consent;
         assert_eq!(
-            try_submit_ffe(&transport, &mut single(oversized.clone())),
+            try_submit_ffe(&mut transport, &mut single(oversized.clone())),
             FfeSubmissionStatus::Accepted
         );
     }
@@ -378,7 +369,7 @@ async fn bounded_ffe_submission_preserves_http_privacy_and_survives_rejection() 
     let mut rejected = event();
     rejected.flag.key = "rejected-flag-canary".repeat(libdd_ipc::max_message_size() / 20 + 1);
     assert_eq!(
-        try_submit_ffe(&transport, &mut single(rejected)),
+        try_submit_ffe(&mut transport, &mut single(rejected)),
         FfeSubmissionStatus::PayloadTooLarge
     );
     let mut consented = event();
@@ -388,7 +379,7 @@ async fn bounded_ffe_submission_preserves_http_privacy_and_survives_rejection() 
     consented.context.as_mut().unwrap().evaluation =
         Some(r#"{"email":"consented-context-canary"}"#.into());
     assert_eq!(
-        try_submit_ffe(&transport, &mut single(consented)),
+        try_submit_ffe(&mut transport, &mut single(consented)),
         FfeSubmissionStatus::Accepted
     );
     for req in [
@@ -400,18 +391,10 @@ async fn bounded_ffe_submission_preserves_http_privacy_and_survives_rejection() 
         },
         SidecarInterfaceRequest::Ping {},
     ] {
-        assert!(
-            transport
-                .inner
-                .lock()
-                .unwrap()
-                .channel
-                .try_send_request(&req)
-                .is_ok()
-        );
+        assert!(transport.inner.channel.try_send_request(&req).is_ok());
     }
     tokio::time::timeout(Duration::from_secs(5), async {
-        while handler.submitted_payloads.load(Ordering::Relaxed) < 7 {
+        while submitted_payloads.load(Ordering::Relaxed) < 7 {
             tokio::task::yield_now().await;
         }
     })
@@ -454,8 +437,6 @@ fn oversized_ipc_warning_does_not_log_exposure_data() {
     let (client, _peer) = SeqpacketConn::socketpair().unwrap();
     let mut channel = SidecarInterfaceChannel::new(client);
     let request = SidecarInterfaceRequest::EnqueueActions {
-        instance_id: InstanceId::new("privacy", "runtime"),
-        queue_id: QueueId::from(42),
         actions: vec![SidecarAction::FfeExposureBatch(FfeExposureBatch {
             context: FfeTelemetryContext {
                 service: "svc".into(),
@@ -508,11 +489,11 @@ fn kernel_size_rejection_retries_one_reduced_observation_without_reshedding() {
         },
         0
     );
-    let transport = SidecarTransport::from(conn);
+    let mut transport = SidecarTransport::from(conn);
     let empty = request(vec![]);
     let mut bytes = vec![0; libdd_ipc::max_message_size()];
     {
-        let mut sender = transport.inner.lock().unwrap();
+        let sender = &mut transport.inner;
         sender.max_outstanding = 21;
         for _ in 0..11 {
             sender.channel.try_send_request(&empty).unwrap();
@@ -520,7 +501,7 @@ fn kernel_size_rejection_retries_one_reduced_observation_without_reshedding() {
         }
         for _ in 0..9 {
             assert_eq!(
-                sender.enqueue_actions(&empty).unwrap_err().kind(),
+                sender.send_actions(&empty).unwrap_err().kind(),
                 std::io::ErrorKind::WouldBlock
             );
         }
@@ -535,7 +516,7 @@ fn kernel_size_rejection_retries_one_reduced_observation_without_reshedding() {
         actions.retain(|action| matches!(action, SidecarAction::FfeFlagEvaluationBatch(_)));
     }
     assert_eq!(
-        try_submit_ffe(&transport, &mut observation),
+        try_submit_ffe(&mut transport, &mut observation),
         FfeSubmissionStatus::Accepted
     );
     let (len, _) = peer.try_recv_raw(&mut bytes).unwrap();
@@ -552,7 +533,7 @@ fn kernel_size_rejection_retries_one_reduced_observation_without_reshedding() {
     assert!(row.is_degraded);
     assert!(row.targeting_key.is_none() && row.context.is_none());
     assert_eq!(row.evaluation_count, 1);
-    assert_eq!(transport.inner.lock().unwrap().channel.0.outstanding(), 12);
+    assert_eq!(transport.inner.channel.0.outstanding(), 12);
     assert_eq!(
         peer.try_recv_raw(&mut bytes).unwrap_err().kind(),
         std::io::ErrorKind::WouldBlock
