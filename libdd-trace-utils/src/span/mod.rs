@@ -138,9 +138,6 @@ impl ValueTypes for BytesData {
     type Map = VecMap<BytesString, AttributeValue<Self>>;
 }
 impl TraceData for BytesData {}
-// `VecMap` is only `PartialEq` in tests, see its impl.
-#[cfg(any(test, feature = "test-utils"))]
-impl libdd_trace_model::ValueTypesEq for BytesData {}
 
 impl DeserializableTraceData for BytesData {
     #[inline]
@@ -202,8 +199,6 @@ impl<'a> ValueTypes for SliceData<'a> {
 }
 
 impl<'a> TraceData for SliceData<'a> {}
-#[cfg(any(test, feature = "test-utils"))]
-impl libdd_trace_model::ValueTypesEq for SliceData<'_> {}
 
 impl<'a> DeserializableTraceData for SliceData<'a> {
     #[inline]

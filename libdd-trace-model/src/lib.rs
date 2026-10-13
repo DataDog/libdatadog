@@ -209,13 +209,9 @@ impl<T: ValueTypes> ValueArrayMut<T> for Vec<AttributeValue<T>> {
 pub trait ValueTypes: Sized {
     type Text: TraceText;
     type Bytes: TraceBytes;
-    type Array: ValueArrayMut<Self> + Clone + Debug;
-    type Map: ValueMapMut<Self> + Clone + Debug;
+    type Array: ValueArrayMut<Self> + Clone + Debug + PartialEq;
+    type Map: ValueMapMut<Self> + Clone + Debug + PartialEq;
 }
-
-/// [`ValueTypes`] whose containers implement [`PartialEq`], making [`AttributeValue`] comparable
-/// with `==`.
-pub trait ValueTypesEq: ValueTypes<Array: PartialEq, Map: PartialEq> {}
 
 /// The value in a map of attributes
 pub enum AttributeValue<T: ValueTypes> {
@@ -261,36 +257,6 @@ impl<T: ValueTypes> AttributeValue<T> {
     }
 }
 
-impl<T: ValueTypes> AttributeValue<T> {
-    /// Structural equality that doesn't require `PartialEq` on the backing containers.
-    ///
-    /// Maps are compared with [`value_maps_slow_eq`]. This is quadratic in the size of nested
-    /// maps, so prefer `==` where it is available.
-    pub fn slow_eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::String(l), Self::String(r)) => l == r,
-            (Self::Bool(l), Self::Bool(r)) => l == r,
-            (Self::Int(l), Self::Int(r)) => l == r,
-            (Self::Float(l), Self::Float(r)) => l == r,
-            (Self::Bytes(l), Self::Bytes(r)) => l == r,
-            (Self::Array(l), Self::Array(r)) => {
-                l.len() == r.len() && l.iter().zip(r.iter()).all(|(l, r)| l.slow_eq(r))
-            }
-            (Self::KeyValueList(l), Self::KeyValueList(r)) => value_maps_slow_eq(l, r),
-            _ => false,
-        }
-    }
-}
-
-/// Compares two value maps for equality, ignoring order. Doesn't allocate, but is quadratic in the
-/// size of the maps.
-pub fn value_maps_slow_eq<T: ValueTypes, M: ValueMap<T>>(lhs: &M, rhs: &M) -> bool {
-    lhs.len() == rhs.len()
-        && lhs
-            .iter()
-            .all(|(k, l)| rhs.get(k).is_some_and(|r| l.slow_eq(r)))
-}
-
 impl<T: ValueTypes> Clone for AttributeValue<T> {
     fn clone(&self) -> Self {
         match self {
@@ -305,9 +271,7 @@ impl<T: ValueTypes> Clone for AttributeValue<T> {
     }
 }
 
-// Only available when the backing containers are comparable: some (like `VecMap`) only offer
-// `PartialEq` in tests since comparing them allocates. Use `AttributeValue::slow_eq` otherwise.
-impl<T: ValueTypesEq> PartialEq for AttributeValue<T> {
+impl<T: ValueTypes> PartialEq for AttributeValue<T> {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::String(l0), Self::String(r0)) => l0 == r0,
@@ -348,7 +312,6 @@ mod tests {
         type Array = Vec<AttributeValue<Self>>;
         type Map = HashMap<String, AttributeValue<Self>>;
     }
-    impl ValueTypesEq for HashData {}
 
     type V = AttributeValue<HashData>;
     type Map = HashMap<String, V>;
@@ -396,35 +359,5 @@ mod tests {
         assert!(!ValueMap::contains_key(&map, "b"));
         assert_eq!(ValueMapMut::remove(&mut map, "a"), Some(V::Int(3)));
         assert!(ValueMap::is_empty(&map));
-    }
-
-    #[test]
-    fn slow_eq_matches_eq() {
-        let nested = |v: i64| {
-            let mut map = Map::new();
-            map.insert("n".into(), V::Array(vec![V::Int(v), str_value("s")]));
-            map.insert("m".into(), V::Bool(true));
-            V::KeyValueList(map)
-        };
-        let values = [
-            nested(1),
-            nested(2),
-            V::Int(1),
-            V::Float(1.0),
-            str_value("s"),
-        ];
-        for l in &values {
-            for r in &values {
-                assert_eq!(l.slow_eq(r), l == r, "{l:?} vs {r:?}");
-            }
-        }
-
-        let mut extra = Map::new();
-        extra.insert("m".into(), V::Bool(true));
-        let mut smaller = extra.clone();
-        extra.insert("other".into(), V::Bool(true));
-        assert!(!value_maps_slow_eq(&extra, &smaller));
-        smaller.insert("other".into(), V::Bool(true));
-        assert!(value_maps_slow_eq(&extra, &smaller));
     }
 }
