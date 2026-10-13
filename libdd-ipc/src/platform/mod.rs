@@ -6,6 +6,10 @@ mod unix;
 #[cfg(windows)]
 mod windows;
 
+/// Shared by both platforms; re-exported through each one's `sockets` module so that
+/// `platform::sockets::PeerCredentials` resolves the same way it always has.
+pub(crate) mod peer_credentials;
+
 mod mem_handle;
 pub use mem_handle::*;
 mod platform_handle;

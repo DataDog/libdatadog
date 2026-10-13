@@ -11,11 +11,11 @@
 
 use crate::error::{ExporterError, ExporterErrorCode as ErrorCode};
 use crate::response::ExporterResponse;
-use crate::structured_value::{encode_value, TracerValueToken};
+use crate::structured_value::{TracerValueToken, encode_value};
 use crate::trace_exporter::TraceExporter;
 use crate::{catch_panic, gen_error};
-use libdd_common_ffi::slice::{AsBytes, ByteSlice, Slice};
 use libdd_common_ffi::CharSlice;
+use libdd_common_ffi::slice::{AsBytes, ByteSlice, Slice};
 use libdd_tinybytes::{Bytes, BytesString};
 use libdd_trace_utils::span::span_pool::PooledChunks;
 use libdd_trace_utils::span::v04::{
@@ -104,45 +104,47 @@ pub struct TracerSpanLink<'a> {
 /// `out_handle` must point to valid, writable memory for a `Box<TracerSpan>`.
 /// All `CharSlice` fields in `fields` must point to valid memory for their
 /// stated length.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_tracer_span_new(
     out_handle: NonNull<Box<TracerSpan>>,
     fields: Option<&TracerSpanFields>,
 ) -> Option<Box<ExporterError>> {
-    catch_panic!(
-        if let Some(fields) = fields {
-            let inner = || -> Result<(), Option<Box<ExporterError>>> {
-                let service = charslice_to_bytesstring(fields.service)?;
-                let name = charslice_to_bytesstring(fields.name)?;
-                let resource = charslice_to_bytesstring(fields.resource)?;
-                let span_type = charslice_to_bytesstring(fields.span_type)?;
+    unsafe {
+        catch_panic!(
+            if let Some(fields) = fields {
+                let inner = || -> Result<(), Option<Box<ExporterError>>> {
+                    let service = charslice_to_bytesstring(fields.service)?;
+                    let name = charslice_to_bytesstring(fields.name)?;
+                    let resource = charslice_to_bytesstring(fields.resource)?;
+                    let span_type = charslice_to_bytesstring(fields.span_type)?;
 
-                let trace_id: u128 =
-                    ((fields.trace_id_high as u128) << 64) | (fields.trace_id_low as u128);
+                    let trace_id: u128 =
+                        ((fields.trace_id_high as u128) << 64) | (fields.trace_id_low as u128);
 
-                let span = SpanBytes {
-                    service,
-                    name,
-                    resource,
-                    r#type: span_type,
-                    trace_id,
-                    span_id: fields.span_id,
-                    parent_id: fields.parent_id,
-                    start: fields.start,
-                    duration: fields.duration,
-                    error: fields.error,
-                    ..Default::default()
+                    let span = SpanBytes {
+                        service,
+                        name,
+                        resource,
+                        r#type: span_type,
+                        trace_id,
+                        span_id: fields.span_id,
+                        parent_id: fields.parent_id,
+                        start: fields.start,
+                        duration: fields.duration,
+                        error: fields.error,
+                        ..Default::default()
+                    };
+
+                    out_handle.as_ptr().write(Box::new(TracerSpan(span)));
+                    Ok(())
                 };
-
-                out_handle.as_ptr().write(Box::new(TracerSpan(span)));
-                Ok(())
-            };
-            inner().err().flatten()
-        } else {
-            gen_error!(ErrorCode::InvalidArgument)
-        },
-        gen_error!(ErrorCode::Panic)
-    )
+                inner().err().flatten()
+            } else {
+                gen_error!(ErrorCode::InvalidArgument)
+            },
+            gen_error!(ErrorCode::Panic)
+        )
+    }
 }
 
 /// Free a `TracerSpan` and all its contents.
@@ -153,7 +155,7 @@ pub unsafe extern "C" fn ddog_tracer_span_new(
 ///
 /// `handle` must have been created by [`ddog_tracer_span_new`] and must not
 /// be used after this call.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_tracer_span_free(handle: Option<Box<TracerSpan>>) {
     drop(handle);
 }
@@ -169,7 +171,7 @@ pub unsafe extern "C" fn ddog_tracer_span_free(handle: Option<Box<TracerSpan>>) 
 ///
 /// `handle` must be a valid pointer to a `TracerSpan`. `key` and `value` must point to valid
 /// memory for their stated lengths.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_tracer_span_set_meta(
     handle: Option<&mut TracerSpan>,
     key: CharSlice,
@@ -205,7 +207,7 @@ pub unsafe extern "C" fn ddog_tracer_span_set_meta(
 ///
 /// `handle` must be a valid pointer to a `TracerSpan`. `key` must point to valid memory for its
 /// stated length.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_tracer_span_set_metric(
     handle: Option<&mut TracerSpan>,
     key: CharSlice,
@@ -238,7 +240,7 @@ pub unsafe extern "C" fn ddog_tracer_span_set_metric(
 ///
 /// `handle` must be a valid pointer to a `TracerSpan`. `key` and `value` must point to valid
 /// memory for their stated lengths.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_tracer_span_set_meta_struct_blob(
     handle: Option<&mut TracerSpan>,
     key: CharSlice,
@@ -277,7 +279,7 @@ pub unsafe extern "C" fn ddog_tracer_span_set_meta_struct_blob(
 /// `handle` must be a valid pointer to a `TracerSpan`. `key` must point to
 /// valid UTF-8 memory. `tokens` and every byte slice referenced by its tokens
 /// must remain valid for this call.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_tracer_span_set_meta_struct(
     handle: Option<&mut TracerSpan>,
     key: CharSlice,
@@ -312,7 +314,7 @@ pub unsafe extern "C" fn ddog_tracer_span_set_meta_struct(
 ///
 /// `handle` must be a valid pointer to a `TracerSpan`. All slices must point to
 /// valid memory for their stated lengths.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_tracer_span_set_links(
     handle: Option<&mut TracerSpan>,
     links: Slice<TracerSpanLink>,
@@ -374,32 +376,34 @@ pub unsafe extern "C" fn ddog_tracer_span_set_links(
 ///
 /// The name is copied before this function returns. The event remains detached
 /// until consumed by [`ddog_tracer_span_add_event`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_tracer_span_event_new(
     out_handle: NonNull<Box<TracerSpanEvent>>,
     name: CharSlice,
     time_unix_nano: u64,
 ) -> Option<Box<ExporterError>> {
-    catch_panic!(
-        match charslice_to_bytesstring(name) {
-            Ok(name) => {
-                out_handle
-                    .as_ptr()
-                    .write(Box::new(TracerSpanEvent(SpanEventBytes {
-                        time_unix_nano,
-                        name,
-                        ..Default::default()
-                    })));
-                None
-            }
-            Err(e) => e,
-        },
-        gen_error!(ErrorCode::Panic)
-    )
+    unsafe {
+        catch_panic!(
+            match charslice_to_bytesstring(name) {
+                Ok(name) => {
+                    out_handle
+                        .as_ptr()
+                        .write(Box::new(TracerSpanEvent(SpanEventBytes {
+                            time_unix_nano,
+                            name,
+                            ..Default::default()
+                        })));
+                    None
+                }
+                Err(e) => e,
+            },
+            gen_error!(ErrorCode::Panic)
+        )
+    }
 }
 
 /// Free a detached span event.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_tracer_span_event_free(handle: Option<Box<TracerSpanEvent>>) {
     drop(handle);
 }
@@ -439,7 +443,7 @@ fn set_event_array_attribute<T: Copy>(
 }
 
 /// Add or overwrite a string event attribute. The key and value are copied.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_tracer_span_event_set_string(
     event: Option<&mut TracerSpanEvent>,
     key: CharSlice,
@@ -459,7 +463,7 @@ pub unsafe extern "C" fn ddog_tracer_span_event_set_string(
 }
 
 /// Add or overwrite a boolean event attribute.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_tracer_span_event_set_bool(
     event: Option<&mut TracerSpanEvent>,
     key: CharSlice,
@@ -476,7 +480,7 @@ pub unsafe extern "C" fn ddog_tracer_span_event_set_bool(
 }
 
 /// Add or overwrite a signed integer event attribute.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_tracer_span_event_set_int(
     event: Option<&mut TracerSpanEvent>,
     key: CharSlice,
@@ -493,7 +497,7 @@ pub unsafe extern "C" fn ddog_tracer_span_event_set_int(
 }
 
 /// Add or overwrite a double event attribute.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_tracer_span_event_set_double(
     event: Option<&mut TracerSpanEvent>,
     key: CharSlice,
@@ -510,7 +514,7 @@ pub unsafe extern "C" fn ddog_tracer_span_event_set_double(
 }
 
 /// Add or overwrite a homogeneous string array event attribute.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_tracer_span_event_set_string_array(
     event: Option<&mut TracerSpanEvent>,
     key: CharSlice,
@@ -533,7 +537,7 @@ pub unsafe extern "C" fn ddog_tracer_span_event_set_string_array(
 }
 
 /// Add or overwrite a homogeneous boolean array event attribute.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_tracer_span_event_set_bool_array(
     event: Option<&mut TracerSpanEvent>,
     key: CharSlice,
@@ -546,7 +550,7 @@ pub unsafe extern "C" fn ddog_tracer_span_event_set_bool_array(
 }
 
 /// Add or overwrite a homogeneous signed integer array event attribute.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_tracer_span_event_set_int_array(
     event: Option<&mut TracerSpanEvent>,
     key: CharSlice,
@@ -559,7 +563,7 @@ pub unsafe extern "C" fn ddog_tracer_span_event_set_int_array(
 }
 
 /// Add or overwrite a homogeneous double array event attribute.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_tracer_span_event_set_double_array(
     event: Option<&mut TracerSpanEvent>,
     key: CharSlice,
@@ -576,7 +580,7 @@ pub unsafe extern "C" fn ddog_tracer_span_event_set_double_array(
 /// A non-null `event` is always consumed — moved into the span on success, or
 /// dropped on any error (a null `span`, or an internal panic). Callers must not
 /// use or free the event after this call. On error the span is unchanged.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_tracer_span_add_event(
     span: Option<&mut TracerSpan>,
     event: Option<Box<TracerSpanEvent>>,
@@ -613,21 +617,23 @@ pub struct TracerTraceChunks(Vec<Vec<SpanBytes>>);
 ///
 /// `out_handle` must point to valid, writable memory for a
 /// `Box<TracerTraceChunks>`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_tracer_trace_chunks_new(
     capacity: usize,
     out_handle: NonNull<Box<TracerTraceChunks>>,
 ) -> Option<Box<ExporterError>> {
-    catch_panic!(
-        {
-            let chunks = Vec::with_capacity(capacity);
-            out_handle
-                .as_ptr()
-                .write(Box::new(TracerTraceChunks(chunks)));
-            None
-        },
-        gen_error!(ErrorCode::Panic)
-    )
+    unsafe {
+        catch_panic!(
+            {
+                let chunks = Vec::with_capacity(capacity);
+                out_handle
+                    .as_ptr()
+                    .write(Box::new(TracerTraceChunks(chunks)));
+                None
+            },
+            gen_error!(ErrorCode::Panic)
+        )
+    }
 }
 
 /// Free a trace chunks container and all its contents.
@@ -637,7 +643,7 @@ pub unsafe extern "C" fn ddog_tracer_trace_chunks_new(
 /// # Safety
 ///
 /// `handle` must have been created by [`ddog_tracer_trace_chunks_new`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_tracer_trace_chunks_free(handle: Option<Box<TracerTraceChunks>>) {
     drop(handle);
 }
@@ -653,7 +659,7 @@ pub unsafe extern "C" fn ddog_tracer_trace_chunks_free(handle: Option<Box<Tracer
 /// # Safety
 ///
 /// `handle` must be a valid pointer to a `TracerTraceChunks`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_tracer_trace_chunks_begin_chunk(
     handle: Option<&mut TracerTraceChunks>,
     capacity: usize,
@@ -678,7 +684,7 @@ pub unsafe extern "C" fn ddog_tracer_trace_chunks_begin_chunk(
 ///
 /// * `handle` must be a valid pointer to a `TracerTraceChunks`.
 /// * `span` is consumed and must not be used after this call.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_tracer_trace_chunks_push_span(
     handle: Option<&mut TracerTraceChunks>,
     span: Option<Box<TracerSpan>>,
@@ -709,7 +715,7 @@ pub unsafe extern "C" fn ddog_tracer_trace_chunks_push_span(
 ///
 /// The returned token must be freed with
 /// [`ddog_trace_exporter_cancel_token_drop`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_trace_exporter_cancel_token_new() -> Box<TokioCancellationToken> {
     Box::new(TokioCancellationToken::new())
 }
@@ -724,7 +730,7 @@ pub extern "C" fn ddog_trace_exporter_cancel_token_new() -> Box<TokioCancellatio
 /// Cancelling while no send is using the token has no immediate effect. A send started later with
 /// an already-cancelled token fails the same way without contacting the agent, and cancelling
 /// after a send has finished does nothing.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_trace_exporter_cancel_token_cancel(token: Option<&TokioCancellationToken>) {
     if let Some(token) = token {
         token.cancel();
@@ -734,7 +740,7 @@ pub extern "C" fn ddog_trace_exporter_cancel_token_cancel(token: Option<&TokioCa
 /// Free a cancellation token.
 ///
 /// After this call the token is invalid and must not be reused.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_trace_exporter_cancel_token_drop(
     token: Option<Box<TokioCancellationToken>>,
 ) {
@@ -762,32 +768,34 @@ pub extern "C" fn ddog_trace_exporter_cancel_token_drop(
 /// * `chunks` is consumed and must not be used after this call.
 /// * If `response_out` is non-null it must point to valid writable memory for a
 ///   `Box<ExporterResponse>`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_trace_exporter_send_trace_chunks(
     exporter: Option<&TraceExporter>,
     chunks: Option<Box<TracerTraceChunks>>,
     response_out: Option<NonNull<Box<ExporterResponse>>>,
     cancel: Option<&TokioCancellationToken>,
 ) -> Option<Box<ExporterError>> {
-    let Some(exporter) = exporter else {
-        return gen_error!(ErrorCode::InvalidArgument);
-    };
-    let Some(chunks) = chunks else {
-        return gen_error!(ErrorCode::InvalidArgument);
-    };
+    unsafe {
+        let Some(exporter) = exporter else {
+            return gen_error!(ErrorCode::InvalidArgument);
+        };
+        let Some(chunks) = chunks else {
+            return gen_error!(ErrorCode::InvalidArgument);
+        };
 
-    catch_panic!(
-        match exporter.send_trace_chunks(PooledChunks::unpooled(chunks.0), cancel) {
-            Ok(resp) => {
-                if let Some(out) = response_out {
-                    out.as_ptr().write(Box::new(ExporterResponse::from(resp)));
+        catch_panic!(
+            match exporter.send_trace_chunks(PooledChunks::unpooled(chunks.0), cancel) {
+                Ok(resp) => {
+                    if let Some(out) = response_out {
+                        out.as_ptr().write(Box::new(ExporterResponse::from(resp)));
+                    }
+                    None
                 }
-                None
-            }
-            Err(e) => Some(Box::new(ExporterError::from(e))),
-        },
-        gen_error!(ErrorCode::Panic)
-    )
+                Err(e) => Some(Box::new(ExporterError::from(e))),
+            },
+            gen_error!(ErrorCode::Panic)
+        )
+    }
 }
 
 #[cfg(test)]
@@ -795,8 +803,8 @@ mod tests {
     use super::*;
     use crate::error::ddog_trace_exporter_error_free;
     use crate::structured_value::{
-        ddog_tracer_encode_value, ddog_tracer_encoded_value_as_slice,
-        ddog_tracer_encoded_value_free, TracerEncodedValue,
+        TracerEncodedValue, ddog_tracer_encode_value, ddog_tracer_encoded_value_as_slice,
+        ddog_tracer_encoded_value_free,
     };
     use std::mem::MaybeUninit;
 
@@ -1379,30 +1387,38 @@ mod tests {
             let bools = [true, false];
             let ints = [-1, 2];
             let doubles = [1.25, 2.5];
-            assert!(ddog_tracer_span_event_set_string_array(
-                Some(&mut event),
-                cs("strings"),
-                Slice::from(&strings[..])
-            )
-            .is_none());
-            assert!(ddog_tracer_span_event_set_bool_array(
-                Some(&mut event),
-                cs("bools"),
-                Slice::from(&bools[..])
-            )
-            .is_none());
-            assert!(ddog_tracer_span_event_set_int_array(
-                Some(&mut event),
-                cs("ints"),
-                Slice::from(&ints[..])
-            )
-            .is_none());
-            assert!(ddog_tracer_span_event_set_double_array(
-                Some(&mut event),
-                cs("doubles"),
-                Slice::from(&doubles[..])
-            )
-            .is_none());
+            assert!(
+                ddog_tracer_span_event_set_string_array(
+                    Some(&mut event),
+                    cs("strings"),
+                    Slice::from(&strings[..])
+                )
+                .is_none()
+            );
+            assert!(
+                ddog_tracer_span_event_set_bool_array(
+                    Some(&mut event),
+                    cs("bools"),
+                    Slice::from(&bools[..])
+                )
+                .is_none()
+            );
+            assert!(
+                ddog_tracer_span_event_set_int_array(
+                    Some(&mut event),
+                    cs("ints"),
+                    Slice::from(&ints[..])
+                )
+                .is_none()
+            );
+            assert!(
+                ddog_tracer_span_event_set_double_array(
+                    Some(&mut event),
+                    cs("doubles"),
+                    Slice::from(&doubles[..])
+                )
+                .is_none()
+            );
 
             assert_eq!(event.0.name.as_ref(), "exception");
             assert_eq!(event.0.time_unix_nano, 123);
@@ -1472,30 +1488,38 @@ mod tests {
             let ints: [i64; 0] = [];
             let doubles: [f64; 0] = [];
 
-            assert!(ddog_tracer_span_event_set_string_array(
-                Some(&mut event),
-                cs("strings"),
-                Slice::from(&strings[..])
-            )
-            .is_none());
-            assert!(ddog_tracer_span_event_set_bool_array(
-                Some(&mut event),
-                cs("bools"),
-                Slice::from(&bools[..])
-            )
-            .is_none());
-            assert!(ddog_tracer_span_event_set_int_array(
-                Some(&mut event),
-                cs("ints"),
-                Slice::from(&ints[..])
-            )
-            .is_none());
-            assert!(ddog_tracer_span_event_set_double_array(
-                Some(&mut event),
-                cs("doubles"),
-                Slice::from(&doubles[..])
-            )
-            .is_none());
+            assert!(
+                ddog_tracer_span_event_set_string_array(
+                    Some(&mut event),
+                    cs("strings"),
+                    Slice::from(&strings[..])
+                )
+                .is_none()
+            );
+            assert!(
+                ddog_tracer_span_event_set_bool_array(
+                    Some(&mut event),
+                    cs("bools"),
+                    Slice::from(&bools[..])
+                )
+                .is_none()
+            );
+            assert!(
+                ddog_tracer_span_event_set_int_array(
+                    Some(&mut event),
+                    cs("ints"),
+                    Slice::from(&ints[..])
+                )
+                .is_none()
+            );
+            assert!(
+                ddog_tracer_span_event_set_double_array(
+                    Some(&mut event),
+                    cs("doubles"),
+                    Slice::from(&doubles[..])
+                )
+                .is_none()
+            );
 
             for key in ["strings", "bools", "ints", "doubles"] {
                 assert_eq!(
@@ -1732,12 +1756,14 @@ mod tests {
                     .is_none()
             );
             let codes = [1i64, 2];
-            assert!(ddog_tracer_span_event_set_int_array(
-                Some(&mut event),
-                cs("codes"),
-                Slice::from(&codes[..])
-            )
-            .is_none());
+            assert!(
+                ddog_tracer_span_event_set_int_array(
+                    Some(&mut event),
+                    cs("codes"),
+                    Slice::from(&codes[..])
+                )
+                .is_none()
+            );
 
             assert!(ddog_tracer_span_add_event(Some(&mut span), Some(event)).is_none());
 

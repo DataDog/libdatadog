@@ -10,7 +10,7 @@ mod macros {
     use ffi::slice::AsBytes;
     use libdd_common_ffi as ffi;
     use libdd_telemetry::worker::TelemetryWorkerBuilder;
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub unsafe extern "C" fn ddog_telemetry_builder_with_str_application_service_version(
         telemetry_builder: &mut TelemetryWorkerBuilder,
         param: ffi::CharSlice,
@@ -29,7 +29,7 @@ mod macros {
             };
         ffi::MaybeError::None
     }
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub unsafe extern "C" fn ddog_telemetry_builder_with_str_application_env(
         telemetry_builder: &mut TelemetryWorkerBuilder,
         param: ffi::CharSlice,
@@ -47,7 +47,7 @@ mod macros {
         };
         ffi::MaybeError::None
     }
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub unsafe extern "C" fn ddog_telemetry_builder_with_str_application_runtime_name(
         telemetry_builder: &mut TelemetryWorkerBuilder,
         param: ffi::CharSlice,
@@ -66,7 +66,7 @@ mod macros {
             };
         ffi::MaybeError::None
     }
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub unsafe extern "C" fn ddog_telemetry_builder_with_str_application_runtime_version(
         telemetry_builder: &mut TelemetryWorkerBuilder,
         param: ffi::CharSlice,
@@ -85,7 +85,7 @@ mod macros {
             };
         ffi::MaybeError::None
     }
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub unsafe extern "C" fn ddog_telemetry_builder_with_str_application_runtime_patches(
         telemetry_builder: &mut TelemetryWorkerBuilder,
         param: ffi::CharSlice,
@@ -104,7 +104,7 @@ mod macros {
             };
         ffi::MaybeError::None
     }
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub unsafe extern "C" fn ddog_telemetry_builder_with_str_host_container_id(
         telemetry_builder: &mut TelemetryWorkerBuilder,
         param: ffi::CharSlice,
@@ -122,7 +122,7 @@ mod macros {
         };
         ffi::MaybeError::None
     }
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub unsafe extern "C" fn ddog_telemetry_builder_with_str_host_os(
         telemetry_builder: &mut TelemetryWorkerBuilder,
         param: ffi::CharSlice,
@@ -140,7 +140,7 @@ mod macros {
         };
         ffi::MaybeError::None
     }
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub unsafe extern "C" fn ddog_telemetry_builder_with_str_host_kernel_name(
         telemetry_builder: &mut TelemetryWorkerBuilder,
         param: ffi::CharSlice,
@@ -158,7 +158,7 @@ mod macros {
         };
         ffi::MaybeError::None
     }
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub unsafe extern "C" fn ddog_telemetry_builder_with_str_host_kernel_release(
         telemetry_builder: &mut TelemetryWorkerBuilder,
         param: ffi::CharSlice,
@@ -176,7 +176,7 @@ mod macros {
         };
         ffi::MaybeError::None
     }
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub unsafe extern "C" fn ddog_telemetry_builder_with_str_host_kernel_version(
         telemetry_builder: &mut TelemetryWorkerBuilder,
         param: ffi::CharSlice,
@@ -194,7 +194,7 @@ mod macros {
         };
         ffi::MaybeError::None
     }
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub unsafe extern "C" fn ddog_telemetry_builder_with_str_runtime_id(
         telemetry_builder: &mut TelemetryWorkerBuilder,
         param: ffi::CharSlice,
@@ -212,7 +212,7 @@ mod macros {
         };
         ffi::MaybeError::None
     }
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub unsafe extern "C" fn ddog_telemetry_builder_with_str_session_id(
         telemetry_builder: &mut TelemetryWorkerBuilder,
         param: ffi::CharSlice,
@@ -230,7 +230,7 @@ mod macros {
         };
         ffi::MaybeError::None
     }
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub unsafe extern "C" fn ddog_telemetry_builder_with_str_parent_session_id(
         telemetry_builder: &mut TelemetryWorkerBuilder,
         param: ffi::CharSlice,
@@ -249,7 +249,7 @@ mod macros {
             };
         ffi::MaybeError::None
     }
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub unsafe extern "C" fn ddog_telemetry_builder_with_str_root_session_id(
         telemetry_builder: &mut TelemetryWorkerBuilder,
         param: ffi::CharSlice,
@@ -285,7 +285,7 @@ mod macros {
         ParentSessionId,
         RootSessionId,
     }
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     /**
      Sets a property from it's string value.
 
@@ -524,7 +524,7 @@ mod macros {
         }
         ffi::MaybeError::None
     }
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     /**
      Sets a property from it's string value.
 
@@ -771,7 +771,7 @@ mod macros {
         }
         ffi::MaybeError::None
     }
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub unsafe extern "C" fn ddog_telemetry_builder_with_bool_config_telemetry_debug_logging_enabled(
         telemetry_builder: &mut TelemetryWorkerBuilder,
         param: bool,
@@ -792,7 +792,7 @@ mod macros {
     pub enum TelemetryWorkerBuilderBoolProperty {
         ConfigTelemetryDebugLoggingEnabled,
     }
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     /**
      Sets a property from it's string value.
 
@@ -822,7 +822,7 @@ mod macros {
         }
         ffi::MaybeError::None
     }
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     /**
      Sets a property from it's string value.
 

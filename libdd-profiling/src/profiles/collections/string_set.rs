@@ -1,9 +1,9 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use super::slice_set::SliceSet;
 use super::SetError;
 use super::ThinStr;
+use super::slice_set::SliceSet;
 use std::ffi::c_void;
 use std::hash::BuildHasher;
 use std::ops::Deref;
@@ -36,7 +36,7 @@ impl StringRef {
     /// `this` needs to be created from [``StringRef::into_raw`] and the set
     /// it belongs to should still be alive.
     pub unsafe fn from_raw(this: NonNull<c_void>) -> Self {
-        Self(ThinStr::from_raw(this))
+        unsafe { Self(ThinStr::from_raw(this)) }
     }
 }
 
@@ -109,8 +109,10 @@ impl UnsyncStringSet {
     ///     would use.
     ///  2. The string must be unique within the set.
     pub unsafe fn insert_unique_uncontended(&mut self, str: &str) -> Result<StringRef, SetError> {
-        let hash = Hasher::default().hash_one(str.as_bytes());
-        self.insert_unique_uncontended_with_hash(hash, str)
+        unsafe {
+            let hash = Hasher::default().hash_one(str.as_bytes());
+            self.insert_unique_uncontended_with_hash(hash, str)
+        }
     }
 
     /// Inserts a string into the string set without checking for duplicates, using a pre-calculated
@@ -125,10 +127,12 @@ impl UnsyncStringSet {
         hash: u64,
         str: &str,
     ) -> Result<StringRef, SetError> {
-        let new_slice = self
-            .0
-            .insert_unique_uncontended_with_hash(hash, str.as_bytes())?;
-        Ok(StringRef(new_slice.into()))
+        unsafe {
+            let new_slice = self
+                .0
+                .insert_unique_uncontended_with_hash(hash, str.as_bytes())?;
+            Ok(StringRef(new_slice.into()))
+        }
     }
 
     /// Adds the string to the string set if it isn't present already, and
@@ -149,14 +153,16 @@ impl UnsyncStringSet {
         hash: u64,
         str: &str,
     ) -> Result<StringRef, SetError> {
-        // SAFETY: the string's hash is correct, we use the same hasher as
-        // StringSet uses.
-        if let Some(id) = self.find_with_hash(hash, str) {
-            return Ok(id);
-        }
+        unsafe {
+            // SAFETY: the string's hash is correct, we use the same hasher as
+            // StringSet uses.
+            if let Some(id) = self.find_with_hash(hash, str) {
+                return Ok(id);
+            }
 
-        // SAFETY: we just checked above that the string isn't in the set.
-        self.insert_unique_uncontended_with_hash(hash, str)
+            // SAFETY: we just checked above that the string isn't in the set.
+            self.insert_unique_uncontended_with_hash(hash, str)
+        }
     }
 
     /// Returns an iterator over all strings in the set as [`StringRef`]s.

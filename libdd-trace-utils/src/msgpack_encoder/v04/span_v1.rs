@@ -30,12 +30,12 @@
 //! `component`, `span.kind`, `_dd.p.tid`, `_dd.origin`, `_dd.p.dm`, `_sampling_priority_v1`) is
 //! dropped: the dedicated field always wins, so each key is written at most once.
 
+use crate::span::TraceData;
 use crate::span::v1::{AttributeValue, Span, SpanEvent, SpanKind, SpanLink};
 use crate::span::vec_map::{DedupedVecMap, VecMap};
-use crate::span::TraceData;
 use rmp::encode::{
-    write_array_len, write_bin, write_bool, write_f64, write_i64, write_map_len, write_sint,
-    write_str, write_u32, write_u64, write_u8, RmpWrite, ValueWriteError,
+    RmpWrite, ValueWriteError, write_array_len, write_bin, write_bool, write_f64, write_i64,
+    write_map_len, write_sint, write_str, write_u8, write_u32, write_u64,
 };
 use std::borrow::Borrow;
 use std::collections::HashSet;

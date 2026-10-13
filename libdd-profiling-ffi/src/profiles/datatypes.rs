@@ -1,12 +1,12 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::string_storage::{get_inner_string_storage, ManagedStringStorage};
-use crate::{ensure_non_null_out_parameter, ArcHandle, ProfileError, ProfileStatus};
+use crate::string_storage::{ManagedStringStorage, get_inner_string_storage};
+use crate::{ArcHandle, ProfileError, ProfileStatus, ensure_non_null_out_parameter};
 use anyhow::Context;
 use function_name::named;
 use libdd_common_ffi::slice::{AsBytes, ByteSlice, CharSlice, Slice};
-use libdd_common_ffi::{wrap_with_ffi_result, Error, Handle, Timespec, ToInner};
+use libdd_common_ffi::{Error, Handle, Timespec, ToInner, wrap_with_ffi_result};
 use libdd_profiling::api::{self, ManagedStringId};
 use libdd_profiling::profiles::datatypes::{ProfilesDictionary, StringId2};
 use libdd_profiling::{api2, internal};
@@ -400,13 +400,13 @@ impl<'a> From<Sample<'a>> for api::StringIdSample<'a> {
 /// # Safety
 /// All slices must be have pointers that are suitably aligned for their type
 /// and must have the correct number of elements for the slice.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 pub unsafe extern "C" fn ddog_prof_Profile_new(
     sample_types: Slice<SampleType>,
     period: Option<&Period>,
 ) -> ProfileNewResult {
-    profile_new(sample_types, period, None)
+    unsafe { profile_new(sample_types, period, None) }
 }
 
 /// Create a new profile with the given sample types. Must call
@@ -427,7 +427,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_new(
 ///
 /// The `out` pointer must be non-null and suitable for pointer writes,
 /// including that it has the correct size and alignment.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 pub unsafe extern "C" fn ddog_prof_Profile_with_dictionary(
     out: *mut Profile,
@@ -435,16 +435,18 @@ pub unsafe extern "C" fn ddog_prof_Profile_with_dictionary(
     sample_types: Slice<SampleType>,
     period: Option<&Period>,
 ) -> ProfileStatus {
-    ensure_non_null_out_parameter!(out);
-    match profile_with_dictionary(dict, sample_types, period) {
-        // SAFETY: checked that it isn't null above, the rest comes from this
-        // function's own safety conditions. Technically, our safety conditions
-        // don't require a null check, but we're being safe there.
-        Ok(profile) => unsafe {
-            out.write(profile);
-            ProfileStatus::OK
-        },
-        Err(e) => ProfileStatus::from(e),
+    unsafe {
+        ensure_non_null_out_parameter!(out);
+        match profile_with_dictionary(dict, sample_types, period) {
+            // SAFETY: checked that it isn't null above, the rest comes from this
+            // function's own safety conditions. Technically, our safety conditions
+            // don't require a null check, but we're being safe there.
+            Ok(profile) => {
+                out.write(profile);
+                ProfileStatus::OK
+            }
+            Err(e) => ProfileStatus::from(e),
+        }
     }
 }
 
@@ -465,7 +467,7 @@ unsafe fn profile_with_dictionary(
 }
 
 /// Same as `ddog_profile_new` but also configures a `string_storage` for the profile.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 /// TODO: @ivoanjo Should this take a `*mut ManagedStringStorage` like Profile APIs do?
 pub unsafe extern "C" fn ddog_prof_Profile_with_string_storage(
@@ -473,7 +475,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_with_string_storage(
     period: Option<&Period>,
     string_storage: ManagedStringStorage,
 ) -> ProfileNewResult {
-    profile_new(sample_types, period, Some(string_storage))
+    unsafe { profile_new(sample_types, period, Some(string_storage)) }
 }
 
 unsafe fn profile_new(
@@ -481,30 +483,32 @@ unsafe fn profile_new(
     period: Option<&Period>,
     string_storage: Option<ManagedStringStorage>,
 ) -> ProfileNewResult {
-    let types = match sample_types.try_as_slice() {
-        Ok(s) => s,
-        Err(e) => return ProfileNewResult::Err(anyhow::Error::from(e).into()),
-    };
-    let period = period.copied();
+    unsafe {
+        let types = match sample_types.try_as_slice() {
+            Ok(s) => s,
+            Err(e) => return ProfileNewResult::Err(anyhow::Error::from(e).into()),
+        };
+        let period = period.copied();
 
-    let result = match string_storage {
-        None => internal::Profile::try_new(types, period)
-            .context("failed to initialize a profile without managed string storage"),
-        Some(s) => {
-            let string_storage = match get_inner_string_storage(s, true) {
-                Ok(string_storage) => string_storage,
-                Err(err) => return ProfileNewResult::Err(err.into()),
-            };
-            internal::Profile::try_with_string_storage(types, period, string_storage)
-                .context("failed to initialize a profile with managed string storage")
+        let result = match string_storage {
+            None => internal::Profile::try_new(types, period)
+                .context("failed to initialize a profile without managed string storage"),
+            Some(s) => {
+                let string_storage = match get_inner_string_storage(s, true) {
+                    Ok(string_storage) => string_storage,
+                    Err(err) => return ProfileNewResult::Err(err.into()),
+                };
+                internal::Profile::try_with_string_storage(types, period, string_storage)
+                    .context("failed to initialize a profile with managed string storage")
+            }
+        };
+        match result {
+            Ok(internal_profile) => {
+                let ffi_profile = Profile::new(internal_profile);
+                ProfileNewResult::Ok(ffi_profile)
+            }
+            Err(err) => ProfileNewResult::Err(err.into()),
         }
-    };
-    match result {
-        Ok(internal_profile) => {
-            let ffi_profile = Profile::new(internal_profile);
-            ProfileNewResult::Ok(ffi_profile)
-        }
-        Err(err) => ProfileNewResult::Err(err.into()),
     }
 }
 
@@ -519,7 +523,7 @@ unsafe fn profile_new(
 /// The `profile` ptr must point to a valid Profile object created by this
 /// module. The `type_str` and `unit` slices must point to valid UTF-8 memory for
 /// the duration of this call.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 pub unsafe extern "C" fn ddog_prof_Profile_set_custom_sample_type(
     profile: *mut Profile,
@@ -527,29 +531,33 @@ pub unsafe extern "C" fn ddog_prof_Profile_set_custom_sample_type(
     type_str: CharSlice,
     unit: CharSlice,
 ) -> ProfileResult {
-    (|| {
-        let profile = profile_ptr_to_inner(profile)?;
-        let type_str = type_str
-            .try_to_utf8()
-            .context("invalid UTF-8 in custom profile type")?;
-        let unit = unit
-            .try_to_utf8()
-            .context("invalid UTF-8 in custom profile unit")?;
-        profile.set_custom_sample_type(slot, api::ValueType::new(type_str, unit))
-    })()
-    .context("ddog_prof_Profile_set_custom_sample_type failed")
-    .into()
+    unsafe {
+        (|| {
+            let profile = profile_ptr_to_inner(profile)?;
+            let type_str = type_str
+                .try_to_utf8()
+                .context("invalid UTF-8 in custom profile type")?;
+            let unit = unit
+                .try_to_utf8()
+                .context("invalid UTF-8 in custom profile unit")?;
+            profile.set_custom_sample_type(slot, api::ValueType::new(type_str, unit))
+        })()
+        .context("ddog_prof_Profile_set_custom_sample_type failed")
+        .into()
+    }
 }
 
 /// # Safety
 /// The `profile` can be null, but if non-null it must point to a Profile
 /// made by this module, which has not previously been dropped.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_prof_Profile_drop(profile: *mut Profile) {
-    // Technically, this function has been designed so if it's double-dropped
-    // then it's okay, but it's not something that should be relied on.
-    if !profile.is_null() {
-        drop((*profile).take())
+    unsafe {
+        // Technically, this function has been designed so if it's double-dropped
+        // then it's okay, but it's not something that should be relied on.
+        if !profile.is_null() {
+            drop((*profile).take())
+        }
     }
 }
 
@@ -586,27 +594,29 @@ impl From<ProfileNewResult> for Result<Profile, Error> {
 /// module.
 /// This call is _NOT_ thread-safe.
 #[must_use]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_prof_Profile_add(
     profile: *mut Profile,
     sample: Sample,
     timestamp: Option<NonZeroI64>,
 ) -> ProfileResult {
-    (|| {
-        let profile = profile_ptr_to_inner(profile)?;
-        let uses_string_ids = sample
-            .labels
-            .first()
-            .is_some_and(|label| label.key.is_empty() && label.key_id.value > 0);
+    unsafe {
+        (|| {
+            let profile = profile_ptr_to_inner(profile)?;
+            let uses_string_ids = sample
+                .labels
+                .first()
+                .is_some_and(|label| label.key.is_empty() && label.key_id.value > 0);
 
-        if uses_string_ids {
-            profile.add_string_id_sample(sample.into(), timestamp)
-        } else {
-            profile.try_add_sample(sample.try_into()?, timestamp)
-        }
-    })()
-    .context("ddog_prof_Profile_add failed")
-    .into()
+            if uses_string_ids {
+                profile.add_string_id_sample(sample.into(), timestamp)
+            } else {
+                profile.try_add_sample(sample.try_into()?, timestamp)
+            }
+        })()
+        .context("ddog_prof_Profile_add failed")
+        .into()
+    }
 }
 /// # Safety
 /// The `profile` ptr must point to a valid Profile object created by this
@@ -618,42 +628,48 @@ pub unsafe extern "C" fn ddog_prof_Profile_add(
 ///
 /// This call is _NOT_ thread-safe.
 #[must_use]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_prof_Profile_add2(
     profile: *mut Profile,
     sample: Sample2,
     timestamp: Option<NonZeroI64>,
 ) -> ProfileStatus {
-    ProfileStatus::from((|| {
-        let profile = profile_ptr_to_inner(profile)?;
+    unsafe {
+        ProfileStatus::from((|| {
+            let profile = profile_ptr_to_inner(profile)?;
 
-        let locations = sample.locations.try_as_slice()?;
-        let values = sample.values.try_as_slice()?;
-        let labels = sample.labels.try_as_slice()?;
+            let locations = sample.locations.try_as_slice()?;
+            let values = sample.values.try_as_slice()?;
+            let labels = sample.labels.try_as_slice()?;
 
-        let labels_iter = labels.iter().map(|label| -> anyhow::Result<api2::Label> {
-            Ok(api2::Label {
-                key: label.key,
-                str: core::str::from_utf8(label.str.try_as_bytes()?)?,
-                num: label.num,
-                num_unit: core::str::from_utf8(label.num_unit.try_as_bytes()?)?,
-            })
-        });
-        profile
-            .try_add_sample2(locations, values, labels_iter, timestamp)
-            .context("ddog_prof_Profile_add failed")
-    })())
+            let labels_iter = labels.iter().map(|label| -> anyhow::Result<api2::Label> {
+                Ok(api2::Label {
+                    key: label.key,
+                    str: core::str::from_utf8(label.str.try_as_bytes()?)?.into(),
+                    num: label.num,
+                    num_unit: core::str::from_utf8(label.num_unit.try_as_bytes()?)?.into(),
+                })
+            });
+            profile
+                .try_add_sample2(locations.iter().copied(), values, labels_iter, timestamp)
+                .context("ddog_prof_Profile_add failed")
+        })())
+    }
 }
 
 pub(crate) unsafe fn profile_ptr_to_inner<'a>(
     profile_ptr: *mut Profile,
 ) -> anyhow::Result<&'a mut internal::Profile> {
-    match profile_ptr.as_mut() {
-        None => anyhow::bail!("profile pointer was null"),
-        Some(inner_ptr) => match inner_ptr.inner.as_mut() {
-            Some(profile) => Ok(profile),
-            None => anyhow::bail!("profile's inner pointer was null (indicates use-after-free)"),
-        },
+    unsafe {
+        match profile_ptr.as_mut() {
+            None => anyhow::bail!("profile pointer was null"),
+            Some(inner_ptr) => match inner_ptr.inner.as_mut() {
+                Some(profile) => Ok(profile),
+                None => {
+                    anyhow::bail!("profile's inner pointer was null (indicates use-after-free)")
+                }
+            },
+        }
     }
 }
 
@@ -673,20 +689,22 @@ pub(crate) unsafe fn profile_ptr_to_inner<'a>(
 /// The `profile` ptr must point to a valid Profile object created by this
 /// module.
 /// This call is _NOT_ thread-safe.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 pub unsafe extern "C" fn ddog_prof_Profile_set_endpoint(
     profile: *mut Profile,
     local_root_span_id: u64,
     endpoint: CharSlice,
 ) -> ProfileResult {
-    (|| {
-        let profile = profile_ptr_to_inner(profile)?;
-        let endpoint = endpoint.to_utf8_lossy();
-        profile.add_endpoint(local_root_span_id, endpoint)
-    })()
-    .context("ddog_prof_Profile_set_endpoint failed")
-    .into()
+    unsafe {
+        (|| {
+            let profile = profile_ptr_to_inner(profile)?;
+            let endpoint = endpoint.to_utf8_lossy();
+            profile.add_endpoint(local_root_span_id, endpoint)
+        })()
+        .context("ddog_prof_Profile_set_endpoint failed")
+        .into()
+    }
 }
 
 /// Count the number of times an endpoint has been seen.
@@ -699,20 +717,22 @@ pub unsafe extern "C" fn ddog_prof_Profile_set_endpoint(
 /// The `profile` ptr must point to a valid Profile object created by this
 /// module.
 /// This call is _NOT_ thread-safe.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 pub unsafe extern "C" fn ddog_prof_Profile_add_endpoint_count(
     profile: *mut Profile,
     endpoint: CharSlice,
     value: i64,
 ) -> ProfileResult {
-    (|| {
-        let profile = profile_ptr_to_inner(profile)?;
-        let endpoint = endpoint.to_utf8_lossy();
-        profile.add_endpoint_count(endpoint, value)
-    })()
-    .context("ddog_prof_Profile_set_endpoint failed")
-    .into()
+    unsafe {
+        (|| {
+            let profile = profile_ptr_to_inner(profile)?;
+            let endpoint = endpoint.to_utf8_lossy();
+            profile.add_endpoint_count(endpoint, value)
+        })()
+        .context("ddog_prof_Profile_set_endpoint failed")
+        .into()
+    }
 }
 
 /// Set whether "local root span id" labels should be omitted when serializing.
@@ -727,19 +747,21 @@ pub unsafe extern "C" fn ddog_prof_Profile_add_endpoint_count(
 /// The `profile` ptr must point to a valid Profile object created by this
 /// module.
 /// This call is _NOT_ thread-safe.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 pub unsafe extern "C" fn ddog_prof_Profile_set_omit_local_root_span_id_when_serializing(
     profile: *mut Profile,
     omit: bool,
 ) -> ProfileResult {
-    (|| {
-        let profile = profile_ptr_to_inner(profile)?;
-        profile.set_omit_local_root_span_id_when_serializing(omit);
-        anyhow::Ok(())
-    })()
-    .context("ddog_prof_Profile_set_omit_local_root_span_id_when_serializing failed")
-    .into()
+    unsafe {
+        (|| {
+            let profile = profile_ptr_to_inner(profile)?;
+            profile.set_omit_local_root_span_id_when_serializing(omit);
+            anyhow::Ok(())
+        })()
+        .context("ddog_prof_Profile_set_omit_local_root_span_id_when_serializing failed")
+        .into()
+    }
 }
 
 /// Add a poisson-based upscaling rule which will be use to adjust values and make them
@@ -763,7 +785,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_set_omit_local_root_span_id_when_seri
 /// module.
 /// This call is _NOT_ thread-safe.
 #[must_use]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_prof_Profile_add_upscaling_rule_poisson(
     profile: *mut Profile,
     offset_values: Slice<usize>,
@@ -773,24 +795,26 @@ pub unsafe extern "C" fn ddog_prof_Profile_add_upscaling_rule_poisson(
     count_value_offset: usize,
     sampling_distance: u64,
 ) -> ProfileResult {
-    (|| {
-        let profile = profile_ptr_to_inner(profile)?;
-        anyhow::ensure!(sampling_distance != 0, "sampling_distance must not be 0");
-        let upscaling_info = api::UpscalingInfo::Poisson {
-            sum_value_offset,
-            count_value_offset,
-            sampling_distance,
-        };
-        add_upscaling_rule(
-            profile,
-            offset_values,
-            label_name,
-            label_value,
-            upscaling_info,
-        )
-    })()
-    .context("ddog_prof_Profile_add_upscaling_rule_proportional failed")
-    .into()
+    unsafe {
+        (|| {
+            let profile = profile_ptr_to_inner(profile)?;
+            anyhow::ensure!(sampling_distance != 0, "sampling_distance must not be 0");
+            let upscaling_info = api::UpscalingInfo::Poisson {
+                sum_value_offset,
+                count_value_offset,
+                sampling_distance,
+            };
+            add_upscaling_rule(
+                profile,
+                offset_values,
+                label_name,
+                label_value,
+                upscaling_info,
+            )
+        })()
+        .context("ddog_prof_Profile_add_upscaling_rule_proportional failed")
+        .into()
+    }
 }
 
 /// Add a proportional-based upscaling rule which will be use to adjust values and make them
@@ -812,7 +836,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_add_upscaling_rule_poisson(
 /// module.
 /// This call is _NOT_ thread-safe.
 #[must_use]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_prof_Profile_add_upscaling_rule_proportional(
     profile: *mut Profile,
     offset_values: Slice<usize>,
@@ -821,23 +845,25 @@ pub unsafe extern "C" fn ddog_prof_Profile_add_upscaling_rule_proportional(
     total_sampled: u64,
     total_real: u64,
 ) -> ProfileResult {
-    (|| {
-        let profile = profile_ptr_to_inner(profile)?;
-        anyhow::ensure!(total_sampled != 0, "total_sampled must not be 0");
-        anyhow::ensure!(total_real != 0, "total_real must not be 0");
-        let upscaling_info = api::UpscalingInfo::Proportional {
-            scale: total_real as f64 / total_sampled as f64,
-        };
-        add_upscaling_rule(
-            profile,
-            offset_values,
-            label_name,
-            label_value,
-            upscaling_info,
-        )
-    })()
-    .context("ddog_prof_Profile_add_upscaling_rule_proportional failed")
-    .into()
+    unsafe {
+        (|| {
+            let profile = profile_ptr_to_inner(profile)?;
+            anyhow::ensure!(total_sampled != 0, "total_sampled must not be 0");
+            anyhow::ensure!(total_real != 0, "total_real must not be 0");
+            let upscaling_info = api::UpscalingInfo::Proportional {
+                scale: total_real as f64 / total_sampled as f64,
+            };
+            add_upscaling_rule(
+                profile,
+                offset_values,
+                label_name,
+                label_value,
+                upscaling_info,
+            )
+        })()
+        .context("ddog_prof_Profile_add_upscaling_rule_proportional failed")
+        .into()
+    }
 }
 
 unsafe fn add_upscaling_rule(
@@ -861,14 +887,16 @@ unsafe fn add_upscaling_rule(
 /// Only pass a reference to a valid `ddog_prof_EncodedProfile`, or null. A
 /// valid reference also means that it hasn't already been dropped or exported (do not
 /// call this twice on the same object).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_prof_EncodedProfile_drop(
     profile: *mut Handle<internal::EncodedProfile>,
 ) {
-    // Technically, this function has been designed so if it's double-dropped
-    // then it's okay, but it's not something that should be relied on.
-    if !profile.is_null() {
-        drop((*profile).take())
+    unsafe {
+        // Technically, this function has been designed so if it's double-dropped
+        // then it's okay, but it's not something that should be relied on.
+        if !profile.is_null() {
+            drop((*profile).take())
+        }
     }
 }
 
@@ -877,18 +905,20 @@ pub unsafe extern "C" fn ddog_prof_EncodedProfile_drop(
 /// consumed).
 /// # Safety
 /// Only pass a reference to a valid `ddog_prof_EncodedProfile`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 #[named]
 pub unsafe extern "C" fn ddog_prof_EncodedProfile_bytes<'a>(
     mut encoded_profile: *mut Handle<internal::EncodedProfile>,
 ) -> libdd_common_ffi::Result<ByteSlice<'a>> {
-    wrap_with_ffi_result!({
-        let slice = encoded_profile.to_inner_mut()?.buffer.as_slice();
-        // Rountdtrip through raw pointers to avoid Rust complaining about lifetimes.
-        let byte_slice = ByteSlice::from_raw_parts(slice.as_ptr(), slice.len());
-        anyhow::Ok(byte_slice)
-    })
+    unsafe {
+        wrap_with_ffi_result!({
+            let slice = encoded_profile.to_inner_mut()?.buffer.as_slice();
+            // Rountdtrip through raw pointers to avoid Rust complaining about lifetimes.
+            let byte_slice = ByteSlice::from_raw_parts(slice.as_ptr(), slice.len());
+            anyhow::Ok(byte_slice)
+        })
+    }
 }
 
 /// Serialize the aggregated profile.
@@ -908,29 +938,31 @@ pub unsafe extern "C" fn ddog_prof_EncodedProfile_bytes<'a>(
 /// The `profile` must point to a valid profile object.
 /// The `start_time` and `end_time` must be null or otherwise point to a valid TimeSpec object.
 #[must_use]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_prof_Profile_serialize(
     profile: *mut Profile,
     start_time: Option<&Timespec>,
     end_time: Option<&Timespec>,
 ) -> SerializeResult {
-    (|| {
-        let profile = profile_ptr_to_inner(profile)?;
+    unsafe {
+        (|| {
+            let profile = profile_ptr_to_inner(profile)?;
 
-        let mut old_profile = profile.reset_and_return_previous()?;
-        if let Some(start_time) = start_time {
-            old_profile.set_start_time(start_time.into())?;
-        }
+            let mut old_profile = profile.reset_and_return_previous()?;
+            if let Some(start_time) = start_time {
+                old_profile.set_start_time(start_time.into())?;
+            }
 
-        let end_time = end_time.map(SystemTime::from);
-        old_profile.serialize_into_compressed_pprof(end_time, None)
-    })()
-    .context("ddog_prof_Profile_serialize failed")
-    .into()
+            let end_time = end_time.map(SystemTime::from);
+            old_profile.serialize_into_compressed_pprof(end_time, None)
+        })()
+        .context("ddog_prof_Profile_serialize failed")
+        .into()
+    }
 }
 
 #[must_use]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_Vec_U8_as_slice(vec: &libdd_common_ffi::Vec<u8>) -> Slice<'_, u8> {
     vec.as_slice()
 }
@@ -947,21 +979,48 @@ pub unsafe extern "C" fn ddog_Vec_U8_as_slice(vec: &libdd_common_ffi::Vec<u8>) -
 /// The `profile` must meet all the requirements of a mutable reference to the profile. Given this
 /// can be called across an FFI boundary, the compiler cannot enforce this.
 /// If `time` is not null, it must point to a valid Timespec object.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 pub unsafe extern "C" fn ddog_prof_Profile_reset(profile: *mut Profile) -> ProfileResult {
-    (|| {
-        let profile = profile_ptr_to_inner(profile)?;
-        profile.reset_and_return_previous()?;
-        anyhow::Ok(())
-    })()
-    .context("ddog_prof_Profile_reset failed")
-    .into()
+    unsafe {
+        (|| {
+            let profile = profile_ptr_to_inner(profile)?;
+            profile.reset_and_return_previous()?;
+            anyhow::Ok(())
+        })()
+        .context("ddog_prof_Profile_reset failed")
+        .into()
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::super::profiles_dictionary::{
+        ddog_prof_ProfilesDictionary_drop, ddog_prof_ProfilesDictionary_insert_function,
+        ddog_prof_ProfilesDictionary_insert_mapping, ddog_prof_ProfilesDictionary_insert_str,
+        ddog_prof_ProfilesDictionary_new,
+    };
+    use super::super::utf8::Utf8Option;
     use super::*;
+    use libdd_profiling::profiles::datatypes::{
+        Function2 as DictionaryFunction2, FunctionId2, Mapping2 as DictionaryMapping2, MappingId2,
+    };
+
+    fn insert_dictionary_string(dict: Option<&ProfilesDictionary>, value: &str) -> StringId2 {
+        let mut id = StringId2::default();
+        // SAFETY: id is a valid out parameter, dict is provided by the live
+        // dictionary handle in the caller, and value is valid for this call.
+        unsafe {
+            Result::from(ddog_prof_ProfilesDictionary_insert_str(
+                &mut id,
+                dict,
+                CharSlice::from(value),
+                Utf8Option::Validate,
+            ))
+        }
+        .unwrap();
+        id
+    }
 
     #[test]
     fn ctor_and_dtor() -> Result<(), Error> {
@@ -1090,6 +1149,108 @@ mod tests {
     }
 
     #[test]
+    fn add2_with_dictionary() {
+        unsafe {
+            let mut dictionary_handle = ArcHandle::default();
+            Result::from(ddog_prof_ProfilesDictionary_new(&mut dictionary_handle)).unwrap();
+            let dictionary = dictionary_handle.as_inner().ok();
+
+            let mapping_filename = insert_dictionary_string(dictionary, "example.so");
+            let build_id = insert_dictionary_string(dictionary, "build-id");
+            let function_name = insert_dictionary_string(dictionary, "function");
+            let system_name = insert_dictionary_string(dictionary, "system_function");
+            let file_name = insert_dictionary_string(dictionary, "example.py");
+            let label_key = insert_dictionary_string(dictionary, "pid");
+
+            let mapping = DictionaryMapping2 {
+                memory_start: 1,
+                memory_limit: 2,
+                file_offset: 3,
+                filename: mapping_filename,
+                build_id,
+            };
+            let mut mapping_id = MappingId2::default();
+            Result::from(ddog_prof_ProfilesDictionary_insert_mapping(
+                &mut mapping_id,
+                dictionary,
+                &mapping,
+            ))
+            .unwrap();
+
+            let function = DictionaryFunction2 {
+                name: function_name,
+                system_name,
+                file_name,
+            };
+            let mut function_id = FunctionId2::default();
+            Result::from(ddog_prof_ProfilesDictionary_insert_function(
+                &mut function_id,
+                dictionary,
+                &function,
+            ))
+            .unwrap();
+
+            let sample_type = SampleType::CpuSamples;
+            let mut profile = std::mem::MaybeUninit::uninit();
+            Result::from(ddog_prof_Profile_with_dictionary(
+                profile.as_mut_ptr(),
+                &dictionary_handle,
+                Slice::from_raw_parts(&sample_type, 1),
+                None,
+            ))
+            .unwrap();
+            let mut profile = profile.assume_init();
+
+            let locations = [api2::Location2 {
+                mapping: mapping_id,
+                function: function_id,
+                address: 42,
+                line: 7,
+            }];
+            let values = [1_i64];
+            let labels = [Label2 {
+                key: label_key,
+                str: CharSlice::empty(),
+                num: 101,
+                num_unit: CharSlice::empty(),
+            }];
+            let sample = Sample2 {
+                locations: Slice::from(&locations[..]),
+                values: Slice::from(&values[..]),
+                labels: Slice::from(&labels[..]),
+            };
+
+            Result::from(ddog_prof_Profile_add2(
+                &mut profile,
+                sample,
+                std::num::NonZeroI64::new(42),
+            ))
+            .unwrap();
+            assert_eq!(
+                profile
+                    .inner
+                    .as_ref()
+                    .unwrap()
+                    .only_for_testing_num_timestamped_samples(),
+                1
+            );
+
+            Result::from(ddog_prof_Profile_add2(&mut profile, sample, None)).unwrap();
+            assert_eq!(
+                profile
+                    .inner
+                    .as_ref()
+                    .unwrap()
+                    .only_for_testing_num_aggregated_samples(),
+                1
+            );
+
+            ddog_prof_Profile_drop(&mut profile);
+            ddog_prof_ProfilesDictionary_drop(&mut dictionary_handle);
+        }
+    }
+
+    #[test]
     // TODO FIX
     #[cfg_attr(miri, ignore)]
     fn aggregate_samples() -> anyhow::Result<()> {
@@ -1156,87 +1317,89 @@ mod tests {
     }
 
     unsafe fn provide_distinct_locations_ffi() -> Profile {
-        let sample_type = SampleType::CpuSamples;
-        let mut profile = Result::from(ddog_prof_Profile_new(
-            Slice::from_raw_parts(&sample_type, 1),
-            None,
-        ))
-        .unwrap();
+        unsafe {
+            let sample_type = SampleType::CpuSamples;
+            let mut profile = Result::from(ddog_prof_Profile_new(
+                Slice::from_raw_parts(&sample_type, 1),
+                None,
+            ))
+            .unwrap();
 
-        let mapping = Mapping {
-            filename: "php".into(),
-            ..Default::default()
-        };
+            let mapping = Mapping {
+                filename: "php".into(),
+                ..Default::default()
+            };
 
-        let main_locations = vec![Location {
-            mapping,
-            function: Function {
-                name: "{main}".into(),
-                name_id: ManagedStringId { value: 0 },
-                system_name: "{main}".into(),
-                system_name_id: ManagedStringId { value: 0 },
-                filename: "index.php".into(),
-                filename_id: ManagedStringId { value: 0 },
-            },
-            ..Default::default()
-        }];
-        let test_locations = vec![Location {
-            mapping,
-            function: Function {
-                name: "test".into(),
-                name_id: ManagedStringId { value: 0 },
-                system_name: "test".into(),
-                system_name_id: ManagedStringId { value: 0 },
-                filename: "index.php".into(),
-                filename_id: ManagedStringId { value: 0 },
-            },
-            line: 4,
-            ..Default::default()
-        }];
-        let values: Vec<i64> = vec![1];
-        let labels = vec![Label {
-            key: Slice::from("pid"),
-            key_id: ManagedStringId { value: 0 },
-            str: Slice::from(""),
-            str_id: ManagedStringId { value: 0 },
-            num: 101,
-            num_unit: Slice::from(""),
-            num_unit_id: ManagedStringId { value: 0 },
-        }];
+            let main_locations = vec![Location {
+                mapping,
+                function: Function {
+                    name: "{main}".into(),
+                    name_id: ManagedStringId { value: 0 },
+                    system_name: "{main}".into(),
+                    system_name_id: ManagedStringId { value: 0 },
+                    filename: "index.php".into(),
+                    filename_id: ManagedStringId { value: 0 },
+                },
+                ..Default::default()
+            }];
+            let test_locations = vec![Location {
+                mapping,
+                function: Function {
+                    name: "test".into(),
+                    name_id: ManagedStringId { value: 0 },
+                    system_name: "test".into(),
+                    system_name_id: ManagedStringId { value: 0 },
+                    filename: "index.php".into(),
+                    filename_id: ManagedStringId { value: 0 },
+                },
+                line: 4,
+                ..Default::default()
+            }];
+            let values: Vec<i64> = vec![1];
+            let labels = vec![Label {
+                key: Slice::from("pid"),
+                key_id: ManagedStringId { value: 0 },
+                str: Slice::from(""),
+                str_id: ManagedStringId { value: 0 },
+                num: 101,
+                num_unit: Slice::from(""),
+                num_unit_id: ManagedStringId { value: 0 },
+            }];
 
-        let main_sample = Sample {
-            locations: Slice::from(main_locations.as_slice()),
-            values: Slice::from(values.as_slice()),
-            labels: Slice::from(labels.as_slice()),
-        };
+            let main_sample = Sample {
+                locations: Slice::from(main_locations.as_slice()),
+                values: Slice::from(values.as_slice()),
+                labels: Slice::from(labels.as_slice()),
+            };
 
-        let test_sample = Sample {
-            locations: Slice::from(test_locations.as_slice()),
-            values: Slice::from(values.as_slice()),
-            labels: Slice::from(labels.as_slice()),
-        };
+            let test_sample = Sample {
+                locations: Slice::from(test_locations.as_slice()),
+                values: Slice::from(values.as_slice()),
+                labels: Slice::from(labels.as_slice()),
+            };
 
-        Result::from(ddog_prof_Profile_add(&mut profile, main_sample, None)).unwrap();
-        assert_eq!(
+            Result::from(ddog_prof_Profile_add(&mut profile, main_sample, None)).unwrap();
+            assert_eq!(
+                profile
+                    .inner
+                    .as_ref()
+                    .unwrap()
+                    .only_for_testing_num_aggregated_samples(),
+                1
+            );
+
+            Result::from(ddog_prof_Profile_add(&mut profile, test_sample, None)).unwrap();
+            assert_eq!(
+                profile
+                    .inner
+                    .as_ref()
+                    .unwrap()
+                    .only_for_testing_num_aggregated_samples(),
+                2
+            );
+
             profile
-                .inner
-                .as_ref()
-                .unwrap()
-                .only_for_testing_num_aggregated_samples(),
-            1
-        );
-
-        Result::from(ddog_prof_Profile_add(&mut profile, test_sample, None)).unwrap();
-        assert_eq!(
-            profile
-                .inner
-                .as_ref()
-                .unwrap()
-                .only_for_testing_num_aggregated_samples(),
-            2
-        );
-
-        profile
+        }
     }
 
     #[test]

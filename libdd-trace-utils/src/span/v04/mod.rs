@@ -3,8 +3,8 @@
 
 use crate::span::{BytesData, SliceData, SpanKeyParseError, TraceData};
 use crate::tracer_payload::TraceChunks;
-use serde::ser::SerializeStruct;
 use serde::Serialize;
+use serde::ser::SerializeStruct;
 use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -67,7 +67,7 @@ fn is_empty_str<T: Borrow<str>>(value: &T) -> bool {
 /// or borrowed (e.g. &str). To define a generic function taking any `Span<T>` you can use the
 /// [`SpanValue`] trait:
 /// ```
-/// use libdd_trace_utils::span::{v04::Span, TraceData};
+/// use libdd_trace_utils::span::{TraceData, v04::Span};
 /// fn foo<T: TraceData>(span: Span<T>) {
 ///     let _ = span.meta.get("foo");
 /// }

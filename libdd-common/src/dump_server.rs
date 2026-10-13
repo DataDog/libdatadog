@@ -380,6 +380,16 @@ fn reconstruct_with_content_length(
     Ok(reconstructed)
 }
 
+/// Create or truncate a dump file, applying worker path restrictions when enabled by the sidecar.
+async fn create_dump_file(path: &std::path::Path) -> anyhow::Result<tokio::fs::File> {
+    #[cfg(unix)]
+    if crate::unix_utils::worker_file_outputs_restricted() {
+        let std_file = crate::unix_utils::open_regular_for_create(path)?;
+        return Ok(tokio::fs::File::from_std(std_file));
+    }
+    Ok(tokio::fs::File::create(path).await?)
+}
+
 /// Write request data to file if non-empty
 /// Decodes chunked transfer encoding if present
 async fn write_request_to_file(
@@ -395,6 +405,12 @@ async fn write_request_to_file(
     // overwriting a single dump file.
     let path_str = output_path.as_os_str().to_string_lossy();
     if path_str.ends_with('/') || path_str.ends_with(std::path::MAIN_SEPARATOR) {
+        // Directory mode creates and renames paths without constrained resolution, so disable it
+        // for worker endpoints.
+        #[cfg(unix)]
+        if crate::unix_utils::worker_file_outputs_restricted() {
+            anyhow::bail!("directory-mode request dumping is disabled under output restriction");
+        }
         let body = if parsed_request.is_chunked {
             decode_chunked_body(&parsed_request.raw_data[parsed_request.headers_len..])?
         } else {
@@ -416,7 +432,7 @@ async fn write_request_to_file(
         let dest = output_path.join(&name);
         let tmp = output_path.join(format!("{name}.tmp"));
         {
-            let mut file = tokio::fs::File::create(&tmp)
+            let mut file = create_dump_file(&tmp)
                 .await
                 .context("Failed to create dump file")?;
             file.write_all(&body)
@@ -439,7 +455,7 @@ async fn write_request_to_file(
         parsed_request.raw_data.clone()
     };
 
-    let mut file = tokio::fs::File::create(output_path)
+    let mut file = create_dump_file(output_path)
         .await
         .context("Failed to create dump file")?;
 

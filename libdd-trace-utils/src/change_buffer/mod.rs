@@ -54,14 +54,20 @@ impl std::fmt::Display for ChangeBufferError {
                 value_len,
                 buffer_len,
             } => {
-                write!(f, "read out of bounds: offset={offset}, value_len={value_len}, buffer_len={buffer_len}")
+                write!(
+                    f,
+                    "read out of bounds: offset={offset}, value_len={value_len}, buffer_len={buffer_len}"
+                )
             }
             ChangeBufferError::WriteOutOfBounds {
                 offset,
                 value_len,
                 buffer_len,
             } => {
-                write!(f, "write out of bounds: offset={offset}, value_len={value_len}, buffer_len={buffer_len}")
+                write!(
+                    f,
+                    "write out of bounds: offset={offset}, value_len={value_len}, buffer_len={buffer_len}"
+                )
             }
             ChangeBufferError::UnknownOpcode(val) => write!(f, "unknown opcode: {val}"),
         }
@@ -536,7 +542,10 @@ where
                 }
             }
             OpCode::Create | OpCode::CreateSpan | OpCode::CreateSpanFull => {
-                debug_assert!(false, "didn't expect Create, CreateSpan or CreateSpanFull in interpret_operation_cached");
+                debug_assert!(
+                    false,
+                    "didn't expect Create, CreateSpan or CreateSpanFull in interpret_operation_cached"
+                );
                 return Err(ChangeBufferError::UnknownOpcode(u32::MAX));
             }
         }

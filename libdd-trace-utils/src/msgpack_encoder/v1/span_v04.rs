@@ -4,15 +4,15 @@
 //! Upgrade encoder: `crate::span::v04::Span` → V1 msgpack wire.
 //! (Convention documented in [`crate::msgpack_encoder`].)
 
-use crate::span::v04::{AttributeAnyValue, AttributeArrayValue, Span, SpanEvent, SpanLink};
 use crate::span::TraceData;
+use crate::span::v04::{AttributeAnyValue, AttributeArrayValue, Span, SpanEvent, SpanLink};
 use rmp::encode::{
-    write_bin, write_bool, write_f64, write_sint, write_u64, write_uint, write_uint8, RmpWrite,
-    ValueWriteError,
+    RmpWrite, ValueWriteError, write_bin, write_bool, write_f64, write_sint, write_u64, write_uint,
+    write_uint8,
 };
 use std::borrow::Borrow;
 
-use super::{normalize_span_start, AnyValueKey, SpanEventKey, SpanKey, SpanLinkKey, StringTable};
+use super::{AnyValueKey, SpanEventKey, SpanKey, SpanLinkKey, StringTable, normalize_span_start};
 
 /// Maps the `span.kind` string tag (from v0.4 meta) to the OTEL SpanKind uint32.
 ///

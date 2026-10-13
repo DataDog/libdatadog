@@ -7,8 +7,8 @@ use core::ptr;
 use core::sync::atomic::AtomicBool;
 use core::sync::atomic::Ordering::SeqCst;
 use libc::{
-    c_void, mmap, sigaltstack, siginfo_t, MAP_ANON, MAP_FAILED, MAP_PRIVATE, PROT_NONE, PROT_READ,
-    PROT_WRITE, SIGSTKSZ,
+    MAP_ANON, MAP_FAILED, MAP_PRIVATE, PROT_NONE, PROT_READ, PROT_WRITE, SIGSTKSZ, c_void, mmap,
+    sigaltstack, siginfo_t,
 };
 use libdd_common::unix_utils::terminate;
 use nix::sys::signal::{self, SaFlags, SigAction, SigHandler};
@@ -137,73 +137,79 @@ pub(crate) unsafe fn chain_signal_handler(
 /// Allocates a signal altstack, and puts a guard page at the end.
 /// Inspired by https://github.com/rust-lang/rust/pull/69969/files
 unsafe fn create_alt_stack() -> anyhow::Result<()> {
-    // Ensure that the altstack size is the greater of 16 pages or SIGSTKSZ. This is necessary
-    // because the default SIGSTKSZ is 8KB, which we're starting to run into. This new size is
-    // arbitrary, but at least it's large enough for our purposes, and yet a small enough part of
-    // the process RSS that it shouldn't be a problem.
-    let page_size = page_size::get();
-    let sigalstack_base_size = core::cmp::max(SIGSTKSZ, 16 * page_size);
-    let stackp = mmap(
-        ptr::null_mut(),
-        sigalstack_base_size + page_size,
-        PROT_READ | PROT_WRITE,
-        MAP_PRIVATE | MAP_ANON,
-        -1,
-        0,
-    );
-    anyhow::ensure!(
-        stackp != MAP_FAILED,
-        "failed to allocate an alternative stack"
-    );
-    let guard_result = libc::mprotect(stackp, page_size, PROT_NONE);
-    anyhow::ensure!(
-        guard_result == 0,
-        "failed to set up alternative stack guard page"
-    );
-    let stackp = stackp.add(page_size);
+    unsafe {
+        // Ensure that the altstack size is the greater of 16 pages or SIGSTKSZ. This is necessary
+        // because the default SIGSTKSZ is 8KB, which we're starting to run into. This new size is
+        // arbitrary, but at least it's large enough for our purposes, and yet a small enough part
+        // of the process RSS that it shouldn't be a problem.
+        let page_size = page_size::get();
+        let sigalstack_base_size = core::cmp::max(SIGSTKSZ, 16 * page_size);
+        let stackp = mmap(
+            ptr::null_mut(),
+            sigalstack_base_size + page_size,
+            PROT_READ | PROT_WRITE,
+            MAP_PRIVATE | MAP_ANON,
+            -1,
+            0,
+        );
+        anyhow::ensure!(
+            stackp != MAP_FAILED,
+            "failed to allocate an alternative stack"
+        );
+        let guard_result = libc::mprotect(stackp, page_size, PROT_NONE);
+        anyhow::ensure!(
+            guard_result == 0,
+            "failed to set up alternative stack guard page"
+        );
+        let stackp = stackp.add(page_size);
 
-    let stack = libc::stack_t {
-        ss_sp: stackp,
-        ss_flags: 0,
-        ss_size: sigalstack_base_size,
-    };
-    let rval = sigaltstack(&stack, ptr::null_mut());
-    anyhow::ensure!(rval == 0, "sigaltstack failed {rval}");
-    Ok(())
+        let stack = libc::stack_t {
+            ss_sp: stackp,
+            ss_flags: 0,
+            ss_size: sigalstack_base_size,
+        };
+        let rval = sigaltstack(&stack, ptr::null_mut());
+        anyhow::ensure!(rval == 0, "sigaltstack failed {rval}");
+        Ok(())
+    }
 }
 
 unsafe fn register_signal_handler(
     signum: i32,
     config: &CrashtrackerConfiguration,
 ) -> anyhow::Result<(signal::Signal, SigAction)> {
-    let signal_type = signal_from_signum(signum)?;
+    unsafe {
+        let signal_type = signal_from_signum(signum)?;
 
-    // Between this and `create_alt_stack()`, there are a few things going on.
-    // - It is generally preferable to run in an altstack, given the choice.
-    // - Crashtracking does not currently provide any particular guarantees around stack usage; in
-    //   fact, it has been observed to frequently exceed 8192 bytes (default SIGSTKSZ) in practice.
-    // - Some runtimes (Ruby) will set the altstack to a respectable size (~16k), but will check the
-    //   value of the SP during their chained handler and become upset if the altstack is not what
-    //   they expect--in these cases, it is necessary to USE the altstack without creating it.
-    // - Some runtimes (Python, Rust) will set the altstack to the default size (8k), but will not
-    //   check the value of the SP during their chained handler--in these cases, for correct
-    //   operation it is necessary to CREATE and USE the altstack.
-    // - There are no known cases where it is useful to crate but not use the altstack--this case
-    //   handled in `new()` for CrashtrackerConfiguration.
-    let extra_saflags = if config.use_alt_stack() {
-        SaFlags::SA_ONSTACK
-    } else {
-        SaFlags::empty()
-    };
+        // Between this and `create_alt_stack()`, there are a few things going on.
+        // - It is generally preferable to run in an altstack, given the choice.
+        // - Crashtracking does not currently provide any particular guarantees around stack usage;
+        //   in fact, it has been observed to frequently exceed 8192 bytes (default SIGSTKSZ) in
+        //   practice.
+        // - Some runtimes (Ruby) will set the altstack to a respectable size (~16k), but will check
+        //   the value of the SP during their chained handler and become upset if the altstack is
+        //   not what they expect--in these cases, it is necessary to USE the altstack without
+        //   creating it.
+        // - Some runtimes (Python, Rust) will set the altstack to the default size (8k), but will
+        //   not check the value of the SP during their chained handler--in these cases, for correct
+        //   operation it is necessary to CREATE and USE the altstack.
+        // - There are no known cases where it is useful to crate but not use the altstack--this
+        //   case handled in `new()` for CrashtrackerConfiguration.
+        let extra_saflags = if config.use_alt_stack() {
+            SaFlags::SA_ONSTACK
+        } else {
+            SaFlags::empty()
+        };
 
-    let sig_action = SigAction::new(
-        SigHandler::SigAction(handle_posix_sigaction),
-        SaFlags::SA_NODEFER | extra_saflags,
-        signal::SigSet::empty(),
-    );
+        let sig_action = SigAction::new(
+            SigHandler::SigAction(handle_posix_sigaction),
+            SaFlags::SA_NODEFER | extra_saflags,
+            signal::SigSet::empty(),
+        );
 
-    let old_handler = signal::sigaction(signal_type, &sig_action)?;
-    Ok((signal_type, old_handler))
+        let old_handler = signal::sigaction(signal_type, &sig_action)?;
+        Ok((signal_type, old_handler))
+    }
 }
 
 #[cfg(test)]

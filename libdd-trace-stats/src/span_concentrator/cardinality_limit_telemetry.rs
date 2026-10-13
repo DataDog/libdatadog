@@ -100,16 +100,16 @@ impl CollapsedFieldsMetrics {
             }
             let field_tag = match field_value {
                 CollapsedFieldSet::RESOURCE_NAME => {
-                    libdd_common::tag!("collapsed_spans", "resource")
+                    libdd_common::tag!("collapsed", "resource")
                 }
                 CollapsedFieldSet::HTTP_ENDPOINT => {
-                    libdd_common::tag!("collapsed_spans", "http_endpoint")
+                    libdd_common::tag!("collapsed", "http_endpoint")
                 }
                 CollapsedFieldSet::PEER_TAGS => {
-                    libdd_common::tag!("collapsed_spans", "peer_tags")
+                    libdd_common::tag!("collapsed", "peer_tags")
                 }
                 CollapsedFieldSet::ADDITIONAL_TAGS => {
-                    libdd_common::tag!("collapsed_spans", "additional_metric_tags")
+                    libdd_common::tag!("collapsed", "additional_metric_tags")
                 }
                 // Should be unreachable, but don't fail in prod if provided with an invalid field
                 // set

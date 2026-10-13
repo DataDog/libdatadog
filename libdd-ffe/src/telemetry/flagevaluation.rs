@@ -32,8 +32,8 @@ use std::sync::{Arc, Mutex};
 
 mod sender;
 pub use sender::{
-    flagevaluation_agent_proxy_endpoint, send_flag_evaluation_batch, FlagEvaluationEvpSendConfig,
     EVP_FLAGEVALUATION_PATH, EVP_PAYLOAD_SIZE_LIMIT, EVP_SUBDOMAIN_HEADER, EVP_SUBDOMAIN_VALUE,
+    FlagEvaluationEvpSendConfig, flagevaluation_agent_proxy_endpoint, send_flag_evaluation_batch,
 };
 
 // ── Aggregation caps ────────────────────────────────────────────────────────
@@ -881,7 +881,7 @@ fn is_array_placeholder(value: &serde_json::Value) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
 
     fn context() -> FfeTelemetryContext {
         FfeTelemetryContext {

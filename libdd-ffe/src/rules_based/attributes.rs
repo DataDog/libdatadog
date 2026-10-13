@@ -66,10 +66,10 @@ mod pyo3_impl {
     use super::*;
 
     use pyo3::{
+        Borrowed,
         exceptions::PyTypeError,
         prelude::*,
         types::{PyBool, PyFloat, PyInt, PyString},
-        Borrowed,
     };
 
     /// Convert Python value to Attribute.

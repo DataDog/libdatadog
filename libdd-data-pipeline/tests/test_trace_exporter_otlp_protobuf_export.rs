@@ -8,8 +8,8 @@ mod otlp_protobuf_tests {
     use libdd_trace_utils::test_utils::create_test_json_span;
     use prost::Message;
     use serde_json::json;
-    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use tokio::task;
 
     #[cfg_attr(miri, ignore)]
@@ -40,13 +40,18 @@ mod otlp_protobuf_tests {
                             .first()
                             .and_then(|rs| rs.resource.as_ref())
                             .map(|resource| {
-                                resource.attributes.iter().any(|kv| {
-                                    kv.key == "service.name"
-                                        && matches!(
-                                            kv.value.as_ref().and_then(|v| v.value.as_ref()),
-                                            Some(Value::StringValue(s)) if s == "test"
-                                        )
-                                })
+                                let has_str_attr = |key: &str, expected: &str| {
+                                    resource.attributes.iter().any(|kv| {
+                                        kv.key == key
+                                            && matches!(
+                                                kv.value.as_ref().and_then(|v| v.value.as_ref()),
+                                                Some(Value::StringValue(s)) if s == expected
+                                            )
+                                    })
+                                };
+                                has_str_attr("service.name", "test")
+                                    && has_str_attr("_dd.sdk.otlp_export", "true")
+                                    && has_str_attr("datadog.sdk.semantics", "datadog")
                             })
                             .unwrap_or(false);
                         if valid {

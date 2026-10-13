@@ -4,7 +4,8 @@
 [package]
 name = "libdd-library-config-ffi"
 version = "0.0.2"
-edition = "2021"
+edition.workspace = true
+rust-version.workspace = true
 publish = false
 
 [lib]

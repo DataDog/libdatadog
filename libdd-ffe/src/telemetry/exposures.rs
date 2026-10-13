@@ -495,14 +495,16 @@ mod tests {
         let mut invalid = exposure("user", "alloc", "variant");
         invalid.allocation_key.clear();
 
-        assert!(encode_exposure_batch(
-            &deduplicator,
-            FfeExposureBatch {
-                context: context(),
-                exposures: vec![invalid],
-            },
-        )
-        .unwrap()
-        .is_none());
+        assert!(
+            encode_exposure_batch(
+                &deduplicator,
+                FfeExposureBatch {
+                    context: context(),
+                    exposures: vec![invalid],
+                },
+            )
+            .unwrap()
+            .is_none()
+        );
     }
 }

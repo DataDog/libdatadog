@@ -190,14 +190,12 @@ impl DatadogAgentContainerBuilder {
 
         let project_root_dir = metadata.workspace_root;
 
-        let calculated_path = Path::new(&project_root_dir)
+        Path::new(&project_root_dir)
             .join(relative_snapshot_path)
             .as_os_str()
             .to_str()
             .expect("unable to convert OS string")
-            .to_owned();
-
-        calculated_path
+            .to_owned()
     }
 }
 

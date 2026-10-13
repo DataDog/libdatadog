@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 use std::time::{self, Duration, SystemTime};
 
-use criterion::{criterion_group, Criterion};
+use criterion::{Criterion, criterion_group};
 use libdd_trace_stats::span_concentrator::SpanConcentrator;
 use libdd_trace_utils::span::v04::{SpanBytes, VecMap};
 

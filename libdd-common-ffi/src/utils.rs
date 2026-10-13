@@ -106,7 +106,7 @@ pub fn handle_panic_error(
 
 #[cfg(test)]
 mod tests {
-    use assert_no_alloc::{assert_no_alloc, AllocDisabler};
+    use assert_no_alloc::{AllocDisabler, assert_no_alloc};
     use function_name::named;
 
     #[cfg(debug_assertions)] // required when disable_release is set (default)
@@ -154,7 +154,10 @@ mod tests {
         // ...restore original behavior
         std::panic::set_hook(original_hook);
 
-        assert_eq!(result.unwrap_err().to_string(), "test_wrap_with_ffi_result_turns_panic_into_error failed: (panic) this is a test panic message");
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "test_wrap_with_ffi_result_turns_panic_into_error failed: (panic) this is a test panic message"
+        );
     }
 
     #[test]
@@ -164,6 +167,9 @@ mod tests {
             Err(anyhow::anyhow!("this is a test error message"))?;
         });
 
-        assert_eq!(result.unwrap_err().to_string(), "test_wrap_with_ffi_result_does_not_modify_other_kinds_of_errors failed: this is a test error message");
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "test_wrap_with_ffi_result_does_not_modify_other_kinds_of_errors failed: this is a test error message"
+        );
     }
 }

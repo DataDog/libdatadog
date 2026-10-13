@@ -7,7 +7,7 @@
 use std::cell::UnsafeCell;
 use std::mem::{self, MaybeUninit};
 use std::ptr;
-use std::sync::atomic::{AtomicU16, AtomicU32, AtomicU64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU16, AtomicU32, AtomicU64, Ordering};
 
 /// An `Option<T>` that supports lock-free atomic take.
 ///
@@ -69,13 +69,15 @@ impl<T> AtomicOption<T> {
     /// `bits` must hold a valid `Option<T>` bit-pattern in its low
     /// `size_of::<Option<T>>()` bytes, as produced by a previous `encode`.
     const unsafe fn decode(bits: u64) -> Option<T> {
-        let mut result = MaybeUninit::<Option<T>>::uninit();
-        ptr::copy_nonoverlapping(
-            ptr::from_ref(&bits).cast::<u8>(),
-            result.as_mut_ptr().cast::<u8>(),
-            size_of::<Option<T>>(),
-        );
-        result.assume_init()
+        unsafe {
+            let mut result = MaybeUninit::<Option<T>>::uninit();
+            ptr::copy_nonoverlapping(
+                ptr::from_ref(&bits).cast::<u8>(),
+                result.as_mut_ptr().cast::<u8>(),
+                size_of::<Option<T>>(),
+            );
+            result.assume_init()
+        }
     }
 
     /// Atomically replace the stored value with `None` and return what was there.
@@ -102,7 +104,7 @@ impl<T> AtomicOption<T> {
     /// # Safety
     /// Must not be called concurrently with [`take`], [`set`], or [`replace`].
     pub unsafe fn as_option(&self) -> &Option<T> {
-        &*self.0.get()
+        unsafe { &*self.0.get() }
     }
 }
 

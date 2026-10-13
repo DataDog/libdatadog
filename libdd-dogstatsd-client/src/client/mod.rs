@@ -4,8 +4,8 @@
 use crate::action::{DogStatsDAction, DogStatsDActionOwned};
 use cadence::prelude::*;
 use cadence::{Metric, MetricBuilder, QueuingMetricSink, StatsdClient};
-use libdd_common::tag::Tag;
 use libdd_common::Endpoint;
+use libdd_common::tag::Tag;
 #[cfg(feature = "shared-runtime")]
 use libdd_shared_runtime::{SharedRuntime, WorkerHandle};
 use sink::create_udp_sink;
@@ -194,7 +194,7 @@ impl DogStatsDClient {
 mod test {
     use super::*;
     use crate::action::DogStatsDAction::{Count, Distribution, Gauge, Histogram, Set};
-    use libdd_common::{tag, Endpoint};
+    use libdd_common::{Endpoint, tag};
     use std::net;
     use std::sync::Arc;
     use std::time::Duration;

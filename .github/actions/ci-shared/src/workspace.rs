@@ -52,7 +52,10 @@ pub fn load() -> Result<WorkspaceMetadata> {
     let workspace_root = metadata.workspace_root.clone();
     let packages: Vec<Package> = metadata.workspace_packages().into_iter().cloned().collect();
 
-    let member_names: HashSet<String> = packages.iter().map(|p| p.name.as_str().to_string()).collect();
+    let member_names: HashSet<String> = packages
+        .iter()
+        .map(|p| p.name.as_str().to_string())
+        .collect();
 
     let mut reverse_deps: HashMap<String, Vec<String>> = HashMap::new();
     for pkg in &packages {
@@ -82,12 +85,7 @@ mod tests {
     fn make_meta(deps: &[(&str, &[&str])]) -> WorkspaceMetadata {
         let reverse_deps = deps
             .iter()
-            .map(|(k, vs)| {
-                (
-                    k.to_string(),
-                    vs.iter().map(|s| s.to_string()).collect(),
-                )
-            })
+            .map(|(k, vs)| (k.to_string(), vs.iter().map(|s| s.to_string()).collect()))
             .collect();
         WorkspaceMetadata {
             packages: vec![],
@@ -153,10 +151,7 @@ mod tests {
     #[test]
     fn affected_from_duplicate_seeds_no_duplicates_in_result() {
         let meta = make_meta(&[("a", &["b"])]);
-        assert_eq!(
-            meta.affected_from(&names(&["a", "a"])),
-            set(&["a", "b"])
-        );
+        assert_eq!(meta.affected_from(&names(&["a", "a"])), set(&["a", "b"]));
     }
 
     #[test]
