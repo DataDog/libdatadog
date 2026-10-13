@@ -295,8 +295,64 @@ pub fn parse_tags(str: &str) -> (Vec<Tag>, Option<String>) {
     (tags, error_message)
 }
 
-#[cfg(all(test, feature = "alloc"))]
+#[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validate_serialized() {
+        assert_eq!(validate_serialized("key:value"), Ok(()));
+        assert_eq!(validate_serialized("key:value:with:colons"), Ok(()));
+        assert_eq!(validate_serialized("tag"), Ok(()));
+        assert_eq!(validate_serialized(""), Err(TagValidationError::Empty));
+        assert_eq!(
+            validate_serialized(":value"),
+            Err(TagValidationError::BeginsWithColon)
+        );
+        assert_eq!(
+            validate_serialized("key:"),
+            Err(TagValidationError::EndsWithColon)
+        );
+    }
+
+    #[test]
+    fn test_tag_parser() {
+        let mut parser = TagParser::new("key:value, :leading middle:colon trailing:  bare");
+        assert_eq!(parser.next(), Some(Ok("key:value")));
+        assert_eq!(
+            parser.next(),
+            Some(Err(InvalidTag {
+                value: ":leading",
+                error: TagValidationError::BeginsWithColon,
+            }))
+        );
+        assert_eq!(parser.next(), Some(Ok("middle:colon")));
+        assert_eq!(
+            parser.next(),
+            Some(Err(InvalidTag {
+                value: "trailing:",
+                error: TagValidationError::EndsWithColon,
+            }))
+        );
+        assert_eq!(parser.next(), Some(Ok("bare")));
+        assert_eq!(parser.next(), None);
+    }
+
+    #[test]
+    fn test_tag_parser_skips_empty_chunks() {
+        for input in ["", ",", " , ", ",, ,"] {
+            assert_eq!(TagParser::new(input).next(), None, "input: {input:?}");
+        }
+
+        let mut parser = TagParser::new(" ,key1:value1,, key2:value2 , ");
+        assert_eq!(parser.next(), Some(Ok("key1:value1")));
+        assert_eq!(parser.next(), Some(Ok("key2:value2")));
+        assert_eq!(parser.next(), None);
+    }
+}
+
+#[cfg(all(test, feature = "alloc"))]
+mod alloc_tests {
     use super::*;
     use proptest::prelude::*;
 
@@ -369,18 +425,6 @@ mod tests {
             Tag::validate("key", "value:"),
             Err(TagValidationError::EndsWithColon)
         );
-
-        assert_eq!(Tag::validate_value("key:value"), Ok(()));
-        assert_eq!(Tag::validate_value("tag"), Ok(()));
-        assert_eq!(Tag::validate_value(""), Err(TagValidationError::Empty));
-        assert_eq!(
-            Tag::validate_value(":value"),
-            Err(TagValidationError::BeginsWithColon)
-        );
-        assert_eq!(
-            Tag::validate_value("key:"),
-            Err(TagValidationError::EndsWithColon)
-        );
     }
 
     #[test]
@@ -448,28 +492,6 @@ mod tests {
     #[test]
     fn test_tailing_colon_parsing() {
         let _ = Tag::from_value("tag:").expect_err("Cannot end with a colon");
-    }
-
-    #[test]
-    fn test_tag_parser() {
-        let parsed =
-            TagParser::new("key:value, :leading middle:colon trailing:  bare").collect::<Vec<_>>();
-        assert_eq!(
-            parsed,
-            vec![
-                Ok("key:value"),
-                Err(InvalidTag {
-                    value: ":leading",
-                    error: TagValidationError::BeginsWithColon,
-                }),
-                Ok("middle:colon"),
-                Err(InvalidTag {
-                    value: "trailing:",
-                    error: TagValidationError::EndsWithColon,
-                }),
-                Ok("bare"),
-            ]
-        );
     }
 
     #[test]
