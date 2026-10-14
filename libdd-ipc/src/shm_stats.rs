@@ -13,11 +13,7 @@
 //! schema that it lays out: the aggregation key of a span, and the counters and duration histograms
 //! kept for each.
 
-#[cfg(test)]
-use std::ffi::CString;
 use std::hash::{Hash, Hasher};
-#[cfg(test)]
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, AtomicU32, AtomicU64, Ordering::*};
 use zwohash::ZwoHasher;
 
@@ -32,8 +28,6 @@ use crate::shm_table::{
     self, Pool, Schema, ShmTable, ShmTableMapping, WireStringRef, alloc_str, pool_eq, pool_string,
 };
 pub use crate::shm_table::{RELOAD_FILL_RATIO, StringRef};
-#[cfg(test)]
-use crate::shm_table::{SLOT_EMPTY, SLOT_INIT, bucket_hdr_size};
 
 /// Maximum peer-tag (key, value) pairs per aggregation slot.
 pub const MAX_PEER_TAGS: usize = 16;
@@ -52,13 +46,7 @@ pub const DEFAULT_STRING_POOL_BYTES: usize = 512 * 1024;
 /// Shared-memory span stats concentrator.
 pub type ShmSpanConcentrator = ShmTable<SpanStats>;
 
-#[cfg(test)]
-type ShmStatsMapping = ShmTableMapping<SpanStats>;
 type ShmEntry = shm_table::ShmEntry<SpanStats>;
-#[cfg(test)]
-type Layout = shm_table::Layout<SpanStats>;
-#[cfg(test)]
-type Bucket<'a> = shm_table::Bucket<'a, SpanStats>;
 
 fn bin_for_duration(nanos: i64) -> usize {
     if nanos <= 0 {
@@ -522,6 +510,13 @@ impl FlushableConcentrator for ShmSpanConcentrator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::shm_table::{SLOT_EMPTY, SLOT_INIT, bucket_hdr_size};
+    use std::ffi::CString;
+    use std::sync::Arc;
+
+    type ShmStatsMapping = ShmTableMapping<SpanStats>;
+    type Layout = shm_table::Layout<SpanStats>;
+    type Bucket<'a> = shm_table::Bucket<'a, SpanStats>;
     use std::sync::atomic::AtomicU32;
 
     fn mapping(c: &ShmSpanConcentrator) -> Arc<ShmStatsMapping> {
