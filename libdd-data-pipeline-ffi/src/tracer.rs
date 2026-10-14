@@ -606,7 +606,7 @@ pub unsafe extern "C" fn ddog_tracer_span_add_event(
 
 /// Opaque handle wrapping `Vec<Vec<SpanBytes>>` — a list of trace chunks,
 /// each containing a list of spans.
-pub struct TracerTraceChunks(Vec<Vec<SpanBytes>>);
+pub struct TracerTraceChunks(pub(crate) Vec<Vec<SpanBytes>>);
 
 /// Create a new empty trace chunks container.
 ///

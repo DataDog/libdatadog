@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::borrow::Cow;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -11,17 +12,25 @@ use libdd_dogstatsd_client::DogStatsDClient;
 use libdd_live_debugger::sender::{DebuggerType, PayloadSender};
 use libdd_remote_config::fetch::{ConfigInvariants, ConfigOptions};
 use libdd_telemetry::config::TelemetryEndpoint;
-use tracing::{debug, error, trace};
+use tracing::{debug, error, trace, warn};
 
 use crate::config::get_product_endpoint;
 use crate::log::{MULTI_LOG_FILTER, MULTI_LOG_WRITER, MultiEnvFilterGuard, MultiWriterGuard};
 use crate::service::agent_info::{AgentInfoGuard, AgentInfos};
 use crate::service::application::ActiveApplication;
 use crate::service::dogstatsd_pool::DogStatsDPool;
+use crate::service::evp_proxy::EVENT_PLATFORM_INTAKE_SUBDOMAIN;
+use crate::service::evp_transport::EvpTransport;
 use crate::service::remote_configs::RemoteConfigNotifyTarget;
 use crate::service::stats_flusher::{StatsConfig, stats_endpoint};
-use crate::service::{InstanceId, RuntimeMetadata, SessionConfig};
+use crate::service::{EvpTransportConfigWithIdentity, InstanceId, RuntimeMetadata, SessionConfig};
 use crate::{spawn_map_err, tracer};
+
+#[derive(Clone, Default)]
+struct EvpTransportState {
+    explicitly_configured: HashSet<String>,
+    transports: HashMap<String, EvpTransport>,
+}
 
 /// Session-level state of one sidecar connection.
 ///
@@ -40,6 +49,7 @@ pub struct ConnectionSession {
     pub remote_config_enabled: bool,
     pub(crate) stats_config: Option<StatsConfig>,
     pub otlp_metrics_endpoint: Option<Endpoint>,
+    evp_transports: EvpTransportState,
     pub process_tags: Vec<Tag>,
     auto_resolved_service_name: Option<String>,
     user_service_defined: bool,
@@ -193,6 +203,7 @@ impl ConnectionSession {
             remote_config_enabled: config.remote_config_enabled,
             stats_config,
             otlp_metrics_endpoint: config.otlp_metrics_endpoint,
+            evp_transports: EvpTransportState::default(),
             process_tags: config.process_tags,
             auto_resolved_service_name: config.default_service_name,
             user_service_defined: false,
@@ -206,6 +217,10 @@ impl ConnectionSession {
                 MULTI_LOG_WRITER.add(config.log_file),
             ))),
         };
+        session.set_default_evp_transport(
+            session.remote_config_options.invariants.endpoint.clone(),
+            EVENT_PLATFORM_INTAKE_SUBDOMAIN,
+        );
         session.refresh_stats_process_tags();
         session
     }
@@ -233,6 +248,7 @@ impl ConnectionSession {
             remote_config_enabled: false,
             stats_config: None,
             otlp_metrics_endpoint: None,
+            evp_transports: EvpTransportState::default(),
             process_tags: vec![],
             auto_resolved_service_name: None,
             user_service_defined: false,
@@ -242,6 +258,87 @@ impl ConnectionSession {
             remote_config_notify_target: None,
             agent_info: None,
             _log_guard: None,
+        }
+    }
+
+    /// Install the legacy Agent-only transport unless the client has already
+    /// provided an explicit EVP routing policy and producer identity.
+    pub(crate) fn set_default_evp_transport(&mut self, endpoint: Endpoint, intake_subdomain: &str) {
+        let state = &mut self.evp_transports;
+        if state.explicitly_configured.contains(intake_subdomain) {
+            return;
+        }
+
+        if endpoint.api_key.is_none() {
+            match EvpTransport::agent_only(endpoint, intake_subdomain) {
+                Ok(transport) => {
+                    if state
+                        .transports
+                        .get(intake_subdomain)
+                        .is_some_and(|current| current.has_same_configuration(&transport))
+                    {
+                        return;
+                    }
+                    state
+                        .transports
+                        .insert(intake_subdomain.to_owned(), transport);
+                }
+                Err(error) => warn!("Failed to configure Agent-only EVP transport: {error}"),
+            }
+        } else {
+            state.transports.remove(intake_subdomain);
+        }
+    }
+
+    /// Add or replace one target without changing other transports in this session.
+    pub(crate) fn add_evp_transport(
+        &mut self,
+        config: EvpTransportConfigWithIdentity,
+    ) -> Result<(), super::EvpTransportConfigError> {
+        let intake_subdomain = config.transport.intake_subdomain.clone();
+        let transport = EvpTransport::new_with_identity(config.transport, config.producer)?;
+        let state = &mut self.evp_transports;
+        state.explicitly_configured.insert(intake_subdomain.clone());
+        if state
+            .transports
+            .get(&intake_subdomain)
+            .is_some_and(|current| current.has_same_configuration(&transport))
+        {
+            return Ok(());
+        }
+        state.transports.insert(intake_subdomain, transport);
+        Ok(())
+    }
+
+    pub(crate) fn get_evp_transport(&self, intake_subdomain: &str) -> Option<EvpTransport> {
+        self.evp_transports
+            .transports
+            .get(intake_subdomain)
+            .cloned()
+    }
+
+    /// Return only a client-selected transport, not the legacy Agent-only default.
+    pub(crate) fn get_explicit_evp_transport(
+        &self,
+        intake_subdomain: &str,
+    ) -> Option<EvpTransport> {
+        let state = &self.evp_transports;
+        if state.explicitly_configured.contains(intake_subdomain) {
+            state.transports.get(intake_subdomain).cloned()
+        } else {
+            None
+        }
+    }
+
+    /// Keep routing and deduplication across reconfiguration of the same client instance.
+    /// A fork child or a different connection starts with its own transport state.
+    pub(crate) fn preserve_evp_transports(&mut self, previous: &Self) {
+        if self.instance_id == previous.instance_id {
+            self.evp_transports = previous.evp_transports.clone();
+            self.set_default_evp_transport(
+                self.remote_config_options.invariants.endpoint.clone(),
+                EVENT_PLATFORM_INTAKE_SUBDOMAIN,
+            );
         }
     }
 
@@ -415,6 +512,299 @@ impl ConnectionSession {
             |e| {
                 error!("Error sending to live debugger {debugger_type:?} endpoint: {e:?}");
             }
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[cfg(feature = "tracing")]
+    use std::sync::Mutex;
+
+    #[test]
+    #[cfg(feature = "tracing")]
+    fn invalid_legacy_evp_configuration_is_logged_without_endpoint_details() {
+        #[derive(Clone)]
+        struct LogBuffer(Arc<Mutex<Vec<u8>>>);
+
+        impl std::io::Write for LogBuffer {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let output = LogBuffer(Arc::default());
+        let writer = output.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_max_level(tracing::Level::WARN)
+            .with_writer(move || writer.clone())
+            .finish();
+        let _guard = tracing::subscriber::set_default(subscriber);
+        let mut session = ConnectionSession::for_test(InstanceId::new("session", "runtime"));
+        session.set_default_evp_transport(
+            Endpoint {
+                url: "http://agent.internal:8126/private-endpoint-canary"
+                    .parse()
+                    .unwrap(),
+                ..Endpoint::default()
+            },
+            "invalid.target-canary",
+        );
+
+        let logs = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
+        assert!(logs.contains("Failed to configure Agent-only EVP transport"));
+        assert!(logs.contains("EVP intake subdomain must be one canonical DNS label"));
+        assert!(!logs.contains("agent.internal"));
+        assert!(!logs.contains("private-endpoint-canary"));
+        assert!(!logs.contains("invalid.target-canary"));
+        assert!(session.get_evp_transport("invalid.target-canary").is_none());
+    }
+
+    #[test]
+    fn explicit_evp_transport_is_shared_and_not_overwritten_by_legacy_config() {
+        let mut session = ConnectionSession::for_test(InstanceId::new("session", "runtime"));
+        let agent_endpoint = Endpoint {
+            url: "http://agent.internal:8126/v0.4/traces".parse().unwrap(),
+            ..Endpoint::default()
+        };
+        let direct_endpoint = Endpoint {
+            url: "https://event-platform-intake.datadoghq.com/"
+                .parse()
+                .unwrap(),
+            api_key: Some("session-key".into()),
+            ..Endpoint::default()
+        };
+
+        session
+            .add_evp_transport(
+                EvpTransportConfigWithIdentity::new(
+                    crate::service::EvpTransportConfig::prefer_local_then_direct(
+                        agent_endpoint,
+                        Some(direct_endpoint),
+                        EVENT_PLATFORM_INTAKE_SUBDOMAIN,
+                    ),
+                    crate::service::EvpProducerIdentity::new("dd-trace-rb", "3.0.0").unwrap(),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let exposure_transport = session
+            .get_evp_transport(EVENT_PLATFORM_INTAKE_SUBDOMAIN)
+            .unwrap();
+        let flag_evaluation_transport = session
+            .get_evp_transport(EVENT_PLATFORM_INTAKE_SUBDOMAIN)
+            .unwrap();
+        assert!(exposure_transport.shares_route_state(&flag_evaluation_transport));
+        assert_eq!(exposure_transport.producer().origin(), "dd-trace-rb");
+        assert_eq!(exposure_transport.producer().version(), "3.0.0");
+
+        session.set_default_evp_transport(Endpoint::default(), EVENT_PLATFORM_INTAKE_SUBDOMAIN);
+        let after_legacy_config = session
+            .get_evp_transport(EVENT_PLATFORM_INTAKE_SUBDOMAIN)
+            .unwrap();
+        assert!(exposure_transport.shares_route_state(&after_legacy_config));
+    }
+
+    #[test]
+    fn separately_configured_evp_targets_have_isolated_route_state() {
+        let mut session = ConnectionSession::for_test(InstanceId::new("session", "runtime"));
+        let agent_endpoint = Endpoint {
+            url: "http://agent.internal:8126/v0.4/traces".parse().unwrap(),
+            ..Endpoint::default()
+        };
+        for intake_subdomain in [EVENT_PLATFORM_INTAKE_SUBDOMAIN, "errors-intake"] {
+            session
+                .add_evp_transport(
+                    EvpTransportConfigWithIdentity::new(
+                        crate::service::EvpTransportConfig::agent_only(
+                            agent_endpoint.clone(),
+                            intake_subdomain,
+                        ),
+                        crate::service::EvpProducerIdentity::new("dd-trace-rb", "3.0.0").unwrap(),
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+        }
+
+        let ffe = session
+            .get_evp_transport(EVENT_PLATFORM_INTAKE_SUBDOMAIN)
+            .unwrap();
+        let errors = session.get_evp_transport("errors-intake").unwrap();
+        assert!(!ffe.shares_route_state(&errors));
+    }
+
+    #[test]
+    fn evp_updates_preserve_snapshots_and_isolate_connections() {
+        use crate::service::{EvpProducerIdentity, EvpTransportConfig};
+
+        let config = EvpTransportConfigWithIdentity::new(
+            EvpTransportConfig::agent_only(Endpoint::default(), EVENT_PLATFORM_INTAKE_SUBDOMAIN),
+            EvpProducerIdentity::new("dd-trace-rb", "3.0.0").unwrap(),
+        )
+        .unwrap();
+        let mut initial = ConnectionSession::for_test(InstanceId::new("session", "runtime"));
+        initial.add_evp_transport(config.clone()).unwrap();
+        let handle = ConnectionSessionHandle::default();
+        handle.store(initial);
+        let snapshot = handle.load().unwrap();
+        let before = snapshot
+            .get_evp_transport(EVENT_PLATFORM_INTAKE_SUBDOMAIN)
+            .unwrap();
+
+        // Copy-on-write for unrelated settings must not reset routing or deduplication.
+        assert!(handle.update(|session| session.process_tags.clear()));
+        assert!(
+            before.shares_route_state(
+                &handle
+                    .load()
+                    .unwrap()
+                    .get_evp_transport(EVENT_PLATFORM_INTAKE_SUBDOMAIN)
+                    .unwrap()
+            )
+        );
+
+        let mut updated = config.clone();
+        updated.producer = EvpProducerIdentity::new("dd-trace-rb", "4.0.0").unwrap();
+        assert!(handle.update(|session| session.add_evp_transport(updated).unwrap()));
+        let after = handle
+            .load()
+            .unwrap()
+            .get_evp_transport(EVENT_PLATFORM_INTAKE_SUBDOMAIN)
+            .unwrap();
+        assert_eq!(after.producer().version(), "4.0.0");
+        assert!(!before.shares_route_state(&after));
+        let retained = snapshot
+            .get_evp_transport(EVENT_PLATFORM_INTAKE_SUBDOMAIN)
+            .unwrap();
+        assert_eq!(retained.producer().version(), "3.0.0");
+        assert!(before.shares_route_state(&retained));
+
+        // Even equal instance IDs cannot share mutable route state across connections.
+        let mut independent = ConnectionSession::for_test(InstanceId::new("session", "runtime"));
+        independent.add_evp_transport(config).unwrap();
+        assert!(
+            !before.shares_route_state(
+                &independent
+                    .get_evp_transport(EVENT_PLATFORM_INTAKE_SUBDOMAIN)
+                    .unwrap()
+            )
+        );
+    }
+
+    #[test]
+    fn repeated_legacy_configuration_preserves_exposure_deduplication_scope() {
+        let mut session = ConnectionSession::for_test(InstanceId::new("session", "runtime"));
+        let endpoint = Endpoint {
+            url: "http://localhost:8126/".parse().unwrap(),
+            ..Endpoint::default()
+        };
+        session.set_default_evp_transport(endpoint.clone(), EVENT_PLATFORM_INTAKE_SUBDOMAIN);
+        let before = session
+            .get_evp_transport(EVENT_PLATFORM_INTAKE_SUBDOMAIN)
+            .unwrap();
+        session.set_default_evp_transport(endpoint, EVENT_PLATFORM_INTAKE_SUBDOMAIN);
+        let after = session
+            .get_evp_transport(EVENT_PLATFORM_INTAKE_SUBDOMAIN)
+            .unwrap();
+        assert!(before.shares_route_state(&after));
+        assert_eq!(before.deduplication_scope(), after.deduplication_scope());
+    }
+
+    #[test]
+    fn meaningful_configuration_changes_replace_the_transport() {
+        use crate::service::{EvpProducerIdentity, EvpTransportConfig, EvpTransportMode};
+
+        let config = EvpTransportConfigWithIdentity::new(
+            EvpTransportConfig::prefer_local_then_direct(
+                Endpoint {
+                    url: "http://localhost:8126/".parse().unwrap(),
+                    ..Endpoint::default()
+                },
+                Some(Endpoint {
+                    url: "https://event-platform-intake.datadoghq.com/"
+                        .parse()
+                        .unwrap(),
+                    api_key: Some("first-key".into()),
+                    ..Endpoint::default()
+                }),
+                EVENT_PLATFORM_INTAKE_SUBDOMAIN,
+            ),
+            EvpProducerIdentity::new("dd-trace-rb", "3.0.0").unwrap(),
+        )
+        .unwrap();
+        for change in 0..5 {
+            let mut session = ConnectionSession::for_test(InstanceId::new("session", "runtime"));
+            session.add_evp_transport(config.clone()).unwrap();
+            let before = session
+                .get_evp_transport(EVENT_PLATFORM_INTAKE_SUBDOMAIN)
+                .unwrap();
+            let mut updated = config.clone();
+            match change {
+                0 => {
+                    updated.transport.direct_endpoint.as_mut().unwrap().api_key =
+                        Some("second-key".into())
+                }
+                1 => {
+                    updated.transport.agent_endpoint.url = "http://localhost:9126/".parse().unwrap()
+                }
+                2 => updated.transport.mode = EvpTransportMode::AgentOnly,
+                3 => updated.producer = EvpProducerIdentity::new("dd-trace-rb", "3.1.0").unwrap(),
+                _ => {
+                    updated.transport.direct_endpoint.as_mut().unwrap().url =
+                        "https://event-platform-intake.datadoghq.eu/"
+                            .parse()
+                            .unwrap()
+                }
+            }
+            session.add_evp_transport(updated).unwrap();
+            let after = session
+                .get_evp_transport(EVENT_PLATFORM_INTAKE_SUBDOMAIN)
+                .unwrap();
+            assert!(
+                !before.shares_route_state(&after),
+                "change {change} ignored"
+            );
+            assert_ne!(before.deduplication_scope(), after.deduplication_scope());
+        }
+    }
+
+    #[test]
+    fn legacy_api_key_endpoint_disables_ffe_transport_including_after_local_config() {
+        let mut session = ConnectionSession::for_test(InstanceId::new("session", "runtime"));
+        session.set_default_evp_transport(
+            Endpoint {
+                url: "http://localhost:8126/".parse().unwrap(),
+                ..Endpoint::default()
+            },
+            EVENT_PLATFORM_INTAKE_SUBDOMAIN,
+        );
+        assert!(
+            session
+                .get_evp_transport(EVENT_PLATFORM_INTAKE_SUBDOMAIN)
+                .is_some()
+        );
+
+        session.set_default_evp_transport(
+            Endpoint {
+                url: "https://trace.agent.datadoghq.com/".parse().unwrap(),
+                api_key: Some("legacy-agentless-key".into()),
+                ..Endpoint::default()
+            },
+            EVENT_PLATFORM_INTAKE_SUBDOMAIN,
+        );
+        assert!(
+            session
+                .get_evp_transport(EVENT_PLATFORM_INTAKE_SUBDOMAIN)
+                .is_none()
         );
     }
 }
