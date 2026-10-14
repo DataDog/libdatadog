@@ -115,7 +115,8 @@ fn tunnel_destination(uri: hyper::Uri) -> Result<hyper::Uri, http::Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Arc, OnceLock};
+    use alloc::sync::Arc;
+    use std::sync::OnceLock;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     #[tokio::test]
