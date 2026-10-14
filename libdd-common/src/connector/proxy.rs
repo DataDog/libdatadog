@@ -132,6 +132,8 @@ mod tests {
                 ))
                 .build()
         });
+        let mut connector = HttpProxyConnector::new(Connector::new_no_proxy());
+        connector.matcher = matcher;
         for (destination, expected) in [
             ("http://cdn.example/config", "cdn.example:80"),
             ("http://cdn.example:8080/config", "cdn.example:8080"),
@@ -152,8 +154,6 @@ mod tests {
                     .unwrap();
                 String::from_utf8(request).unwrap()
             });
-            let mut connector = HttpProxyConnector::new(Connector::new_no_proxy());
-            connector.matcher = matcher;
             assert!(
                 connector
                     .build_conn_stream(
