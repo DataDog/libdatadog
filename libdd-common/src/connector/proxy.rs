@@ -115,10 +115,23 @@ fn tunnel_destination(uri: hyper::Uri) -> Result<hyper::Uri, http::Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Arc, OnceLock};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     #[tokio::test]
     async fn proxy_connect_preserves_scheme_ports_and_authentication() {
+        let listener = Arc::new(tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap());
+        // The connector borrows a process-lifetime matcher, just like production.
+        // Keep it in a static owner rather than leaking an allocation per case.
+        static MATCHER: OnceLock<Matcher> = OnceLock::new();
+        let matcher = MATCHER.get_or_init(|| {
+            Matcher::builder()
+                .all(format!(
+                    "http://user:password@{}",
+                    listener.local_addr().unwrap()
+                ))
+                .build()
+        });
         for (destination, expected) in [
             ("http://cdn.example/config", "cdn.example:80"),
             ("http://cdn.example:8080/config", "cdn.example:8080"),
@@ -126,15 +139,7 @@ mod tests {
             ("https://cdn.example/config", "cdn.example:443"),
             ("https://cdn.example:8443/config", "cdn.example:8443"),
         ] {
-            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-            let matcher = Box::leak(Box::new(
-                Matcher::builder()
-                    .all(format!(
-                        "http://user:password@{}",
-                        listener.local_addr().unwrap()
-                    ))
-                    .build(),
-            ));
+            let listener = Arc::clone(&listener);
             let server = tokio::spawn(async move {
                 let (mut stream, _) = listener.accept().await.unwrap();
                 let mut request = Vec::new();
@@ -174,14 +179,14 @@ mod tests {
     #[tokio::test]
     async fn no_proxy_connects_directly() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let matcher = Box::leak(Box::new(
+        static MATCHER: LazyLock<Matcher> = LazyLock::new(|| {
             Matcher::builder()
                 .all("http://127.0.0.1:1")
                 .no("127.0.0.1")
-                .build(),
-        ));
+                .build()
+        });
         let mut connector = HttpProxyConnector::new(Connector::new_no_proxy());
-        connector.matcher = matcher;
+        connector.matcher = &MATCHER;
         let uri = format!("http://{}/config", listener.local_addr().unwrap())
             .parse()
             .unwrap();
