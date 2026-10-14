@@ -804,6 +804,10 @@ pub fn read_proc_maps() -> Vec<MapEntry> {
 /// many entries as it needs, then mprotects each page back to what
 /// `/proc/self/maps` reported at guard-construction time when it is
 /// dropped (including on panic or early return).
+/// For loaded objects, construct and drop the guard inside the same
+/// For loaded objects, construct and drop the guard inside the same
+/// [`iterate_libraries`] callback, so the loader lock keeps the object
+/// mapped while it is patched.
 pub struct PageProtGuard {
     page_size: usize,
     maps: Vec<MapEntry>,
@@ -836,16 +840,16 @@ impl PageProtGuard {
     /// then replace one GOT entry.
     ///
     /// # Safety
-    /// `addr` must point to a valid GOT slot in mapped memory.
+    /// `addr` must point to a valid pointer-sized slot in mapped memory.
+    /// The snapshotted mappings and their protections must remain unchanged
+    /// by other code until this guard is dropped.
     pub unsafe fn override_entry(&mut self, addr: usize, new_value: usize) -> bool {
         unsafe {
             let aligned = addr & !(self.page_size - 1);
             if !self.touched.contains_key(&aligned) {
-                // If /proc/self/maps isn't available (or the page isn't in
-                // it, which shouldn't happen for a mapped GOT page) fall
-                // back to PROT_READ - the RELRO'd default. That's tighter
-                // than the previous behavior of leaving pages RW.
-                let orig = self.original_prot(aligned).unwrap_or(PROT_READ);
+                let Some(orig) = self.original_prot(aligned) else {
+                    return false;
+                };
                 if mprotect(
                     aligned as *mut c_void,
                     self.page_size,
@@ -1039,7 +1043,7 @@ pub struct HookResult {
     /// Number of GOT entries successfully rewritten.
     pub entries_patched: usize,
     /// Number of GOT entries that matched the symbol but could not be
-    /// patched (`mprotect` failed to make the page writable).
+    /// patched (unknown original permissions or `mprotect` failed).
     pub entries_failed: usize,
 }
 
@@ -1129,9 +1133,6 @@ unsafe fn hook_symbol_impl(
 
         let mut entries_patched: usize = 0;
         let mut entries_failed: usize = 0;
-        let mut guard = PageProtGuard::new();
-
-        let guard_ptr = &mut guard as *mut PageProtGuard;
         let patched_ptr = &mut entries_patched as *mut usize;
         let failed_ptr = &mut entries_failed as *mut usize;
 
@@ -1156,14 +1157,13 @@ unsafe fn hook_symbol_impl(
                 return false;
             };
             // SAFETY: dyn_info was just produced from a currently-loaded
-            // library. guard_ptr/patched_ptr/failed_ptr are valid for the
+            // library. patched_ptr/failed_ptr are valid for the
             // duration of iterate_libraries (they point to locals in the
             // enclosing fn).
             patch_got_entries(
                 &dyn_info,
                 symbol_name_bytes,
                 hook_fn,
-                &mut *guard_ptr,
                 &mut *patched_ptr,
                 &mut *failed_ptr,
             );
@@ -1189,17 +1189,17 @@ unsafe fn hook_symbol_impl(
 ///
 /// # Safety
 /// `dyn_info` must have been produced by [`DynamicInfo::from_phdr`] for a
-/// currently-loaded ELF object. `guard` must belong to the current
-/// patching pass.
+/// currently-loaded ELF object. Call from inside [`iterate_libraries`],
+/// while the loader lock protects the mappings through permission restoration.
 unsafe fn patch_got_entries(
     dyn_info: &DynamicInfo,
     symbol_name: &[u8],
     hook_fn: usize,
-    guard: &mut PageProtGuard,
     patched: &mut usize,
     failed: &mut usize,
 ) {
     unsafe {
+        let mut guard = None;
         // The AMD64 SysV ABI states on page 73: "The AMD64 LP64 ABI architecture uses only
         // Elf64_Rela relocation entries with explicit addends":
         // <https://gitlab.com/x86-psABIs/x86-64-ABI/-/jobs/artifacts/master/raw/x86-64-ABI/abi.pdf?job=build>
@@ -1215,7 +1215,10 @@ unsafe fn patch_got_entries(
             if let Some(cstr) = dyn_info.sym_name(sym_idx) {
                 if cstr.to_bytes() == symbol_name {
                     let addr = u64_to_usize(reloc.r_offset) + dyn_info.base_address();
-                    if guard.override_entry(addr, hook_fn) {
+                    if guard
+                        .get_or_insert_with(PageProtGuard::new)
+                        .override_entry(addr, hook_fn)
+                    {
                         *patched += 1;
                     } else {
                         *failed += 1;

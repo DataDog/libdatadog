@@ -42,6 +42,9 @@ jobs:
     needs: setup
     if: needs.setup.outputs.fuzz-dirs-count != '0'
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
     strategy:
       matrix:
         directory: ${{ fromJson(needs.setup.outputs.fuzz-dirs) }}
@@ -61,15 +64,9 @@ jobs:
     - uses: taiki-e/install-action@2c41309d51ede152b6f2ee6bf3b71e6dc9a8b7df # 2.49.27
       with:
         tool: cargo-bolero
-    - name: Cache [rust]
-      id: rust-cache
-      uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
-      with:
-        cache-targets: true # cache build artifacts
-        cache-bin: true # cache the ~/.cargo/bin directory
-        shared-key: fuzz
-        save-if: ${{ github.ref == 'refs/heads/main' }}
-    - run: echo "rust-cache ${{ steps.rust-cache.outputs.cache-hit == 'true' && 'HIT' || 'MISS' }}"
+    - name: sccache
+      id: sccache
+      uses: ./.github/actions/setup-sccache
     - env:
         # Override rust-toolchain.toml so cargo-bolero runs on the dated nightly.
         RUSTUP_TOOLCHAIN: ${{ steps.nightly-version.outputs.version }}
@@ -88,3 +85,7 @@ jobs:
           cargo bolero test -T 30s --package $package $test
         done
         popd
+    - name: sccache statistics
+      if: always() && steps.sccache.outputs.enabled == 'true'
+      shell: bash
+      run: sccache --show-stats

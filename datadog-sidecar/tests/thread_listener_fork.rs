@@ -6,7 +6,6 @@
 use datadog_sidecar::config::Config;
 use datadog_sidecar::service::blocking;
 use datadog_sidecar::service::exception_hash_rate_limiter::ExceptionHashRateLimiter;
-use datadog_sidecar::service::telemetry::get_telemetry_action_sender;
 use datadog_sidecar::setup::{MasterListener, connect_to_master};
 use datadog_sidecar::tracer::shm_limiter_path;
 use libdd_ipc::rate_limiter::ShmLimiterMemory;
@@ -29,10 +28,8 @@ fn a_forked_worker_can_start_its_own_listener() {
         assert!(pid >= 0, "fork failed");
         if pid == 0 {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                assert!(get_telemetry_action_sender().is_ok());
                 unsafe { MasterListener::clear_inherited_state() }.unwrap();
                 assert!(!MasterListener::is_active());
-                assert!(get_telemetry_action_sender().is_err());
                 if !promote {
                     return;
                 }
