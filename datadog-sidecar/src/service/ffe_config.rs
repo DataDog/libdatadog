@@ -90,6 +90,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore = "requires native shared memory")]
     async fn cdn_subscribers_share_only_matching_credentials_and_environment() {
         // No yield before cancellation: no managed request is made by this test.
         let configs = CdnConfigs::default();

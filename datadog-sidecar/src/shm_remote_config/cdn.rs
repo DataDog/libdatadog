@@ -140,6 +140,7 @@ mod tests {
     use libdd_ffe::rules_based::UniversalFlagConfig;
 
     #[test]
+    #[cfg_attr(miri, ignore = "requires native shared memory")]
     fn cdn_readiness_changes_preserve_the_last_good_configuration() {
         let (publisher, path) = CdnPublisher::new().unwrap();
         let mut reader = CdnReader::new(&CString::new(path).unwrap());

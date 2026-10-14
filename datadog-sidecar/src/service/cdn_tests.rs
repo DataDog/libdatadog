@@ -20,6 +20,7 @@ fn config(url: &str) -> CdnConfig {
 }
 
 #[tokio::test]
+#[cfg_attr(miri, ignore = "requires native IPC sockets")]
 async fn cdn_thread_mode_rejects_subscriptions_without_http() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let config = config(&format!("http://{}/config", listener.local_addr().unwrap()));
@@ -42,6 +43,7 @@ async fn cdn_thread_mode_rejects_subscriptions_without_http() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[cfg_attr(miri, ignore = "requires native IPC sockets and shared memory")]
 async fn cdn_configuration_reaches_shared_memory_through_real_ipc_and_http() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let config = config(&format!("http://{}/config", listener.local_addr().unwrap()));
@@ -112,8 +114,14 @@ async fn cdn_configuration_reaches_shared_memory_through_real_ipc_and_http() {
     .await
     .unwrap();
     http.await.unwrap();
-    tokio::time::timeout(Duration::from_secs(5), server_task)
+    // A raw macOS datagram socketpair has no peer-liveness pipe, unlike
+    // normal sidecar connections. Stop its idle server after the explicit
+    // unsubscribe and Stopped snapshot have already been asserted.
+    server_task.abort();
+    if let Err(error) = tokio::time::timeout(Duration::from_secs(5), server_task)
         .await
-        .unwrap()
-        .unwrap();
+        .expect("IPC server did not stop after its client closed")
+    {
+        assert!(error.is_cancelled(), "IPC server panicked: {error}");
+    }
 }
