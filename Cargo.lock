@@ -3595,6 +3595,7 @@ dependencies = [
  "strum",
  "strum_macros",
  "sys-info",
+ "thiserror 2.0.17",
  "tokio",
  "tokio-util",
  "tools",
