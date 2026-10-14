@@ -11,24 +11,44 @@
 //! validation currently rejects only empty tags and likely colon-related mistakes. Compile-time
 //! validation by the [`tag!`] macro is intentionally stricter.
 
-use alloc::borrow::Cow;
-use core::fmt::{Debug, Display, Formatter};
-use serde::{Deserialize, Serialize};
+use core::fmt::{Display, Formatter};
+#[cfg(feature = "alloc")]
+use {
+    alloc::{
+        borrow::{Cow, ToOwned},
+        format,
+        string::{String, ToString},
+        vec,
+        vec::Vec,
+    },
+    core::fmt::Debug,
+    serde::{Deserialize, Serialize},
+};
 
+#[cfg(feature = "alloc")]
 pub use static_assertions::{const_assert, const_assert_ne};
 
 /// Describes some reasons why a tag is invalid.
 #[allow(missing_docs, reason = "variant names are self-documenting")]
-#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive] // so we can add more cases without breaking semver
 pub enum TagValidationError {
-    #[error("tag is empty")]
     Empty,
-    #[error("tag begins with a colon")]
     BeginsWithColon,
-    #[error("tag ends with a colon")]
     EndsWithColon,
 }
+
+impl Display for TagValidationError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        f.write_str(match self {
+            Self::Empty => "tag is empty",
+            Self::BeginsWithColon => "tag begins with a colon",
+            Self::EndsWithColon => "tag ends with a colon",
+        })
+    }
+}
+
+impl core::error::Error for TagValidationError {}
 
 /// A tag rejected while validating a tag.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -55,6 +75,21 @@ impl Display for InvalidTag<'_> {
 
 impl core::error::Error for InvalidTag<'_> {}
 
+/// Validates a tag that has already been serialized.
+#[inline]
+fn validate_serialized(value: &str) -> Result<(), TagValidationError> {
+    if value.is_empty() {
+        Err(TagValidationError::Empty)
+    } else if value.starts_with(':') {
+        Err(TagValidationError::BeginsWithColon)
+    } else if value.ends_with(':') {
+        Err(TagValidationError::EndsWithColon)
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(feature = "alloc")]
 #[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct Tag {
@@ -67,6 +102,7 @@ pub struct Tag {
     value: Cow<'static, str>,
 }
 
+#[cfg(feature = "alloc")]
 impl Tag {
     /// Used by the `tag!` macro. Not meant to be used directly, please use
     /// the macro instead.
@@ -88,6 +124,7 @@ impl Tag {
 // This can be a little more strict because it's compile-time evaluated.
 // https://docs.datadoghq.com/getting_started/tagging/#define-tags
 #[macro_export]
+#[cfg(feature = "alloc")]
 macro_rules! tag {
     ($key:expr, $val:expr) => {{
         // Keys come in "value" or "key:value" format. This pattern is always
@@ -118,12 +155,14 @@ macro_rules! tag {
     }};
 }
 
+#[cfg(feature = "alloc")]
 impl Debug for Tag {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("Tag").field("value", &self.value).finish()
     }
 }
 
+#[cfg(feature = "alloc")]
 impl AsRef<str> for Tag {
     fn as_ref(&self) -> &str {
         self.value.as_ref()
@@ -131,12 +170,14 @@ impl AsRef<str> for Tag {
 }
 
 // Any type which implements Display automatically has to_string.
+#[cfg(feature = "alloc")]
 impl Display for Tag {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         write!(f, "{}", self.value)
     }
 }
 
+#[cfg(feature = "alloc")]
 impl Tag {
     /// Validates a tag key and value pair.
     #[inline]
@@ -153,15 +194,7 @@ impl Tag {
     /// Validates a tag that has already been serialized.
     #[inline]
     pub fn validate_value(value: &str) -> Result<(), TagValidationError> {
-        if value.is_empty() {
-            Err(TagValidationError::Empty)
-        } else if value.starts_with(':') {
-            Err(TagValidationError::BeginsWithColon)
-        } else if value.ends_with(':') {
-            Err(TagValidationError::EndsWithColon)
-        } else {
-            Ok(())
-        }
+        validate_serialized(value)
     }
 
     /// Validates a tag.
@@ -219,7 +252,7 @@ impl<'a> Iterator for TagParser<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         let tag = self.chunks.find(|chunk| !chunk.is_empty())?;
         Some(
-            Tag::validate_value(tag)
+            validate_serialized(tag)
                 .map(|()| tag)
                 .map_err(|error| InvalidTag { value: tag, error }),
         )
@@ -234,6 +267,7 @@ impl<'a> Iterator for TagParser<'a> {
 ///
 /// Returns a tuple of the correctly parsed tags and an optional error message
 /// describing issues encountered during parsing.
+#[cfg(feature = "alloc")]
 pub fn parse_tags(str: &str) -> (Vec<Tag>, Option<String>) {
     let mut tags = vec![];
     let mut error_message = String::new();
@@ -263,6 +297,62 @@ pub fn parse_tags(str: &str) -> (Vec<Tag>, Option<String>) {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validate_serialized() {
+        assert_eq!(validate_serialized("key:value"), Ok(()));
+        assert_eq!(validate_serialized("key:value:with:colons"), Ok(()));
+        assert_eq!(validate_serialized("tag"), Ok(()));
+        assert_eq!(validate_serialized(""), Err(TagValidationError::Empty));
+        assert_eq!(
+            validate_serialized(":value"),
+            Err(TagValidationError::BeginsWithColon)
+        );
+        assert_eq!(
+            validate_serialized("key:"),
+            Err(TagValidationError::EndsWithColon)
+        );
+    }
+
+    #[test]
+    fn test_tag_parser() {
+        let mut parser = TagParser::new("key:value, :leading middle:colon trailing:  bare");
+        assert_eq!(parser.next(), Some(Ok("key:value")));
+        assert_eq!(
+            parser.next(),
+            Some(Err(InvalidTag {
+                value: ":leading",
+                error: TagValidationError::BeginsWithColon,
+            }))
+        );
+        assert_eq!(parser.next(), Some(Ok("middle:colon")));
+        assert_eq!(
+            parser.next(),
+            Some(Err(InvalidTag {
+                value: "trailing:",
+                error: TagValidationError::EndsWithColon,
+            }))
+        );
+        assert_eq!(parser.next(), Some(Ok("bare")));
+        assert_eq!(parser.next(), None);
+    }
+
+    #[test]
+    fn test_tag_parser_skips_empty_chunks() {
+        for input in ["", ",", " , ", ",, ,"] {
+            assert_eq!(TagParser::new(input).next(), None, "input: {input:?}");
+        }
+
+        let mut parser = TagParser::new(" ,key1:value1,, key2:value2 , ");
+        assert_eq!(parser.next(), Some(Ok("key1:value1")));
+        assert_eq!(parser.next(), Some(Ok("key2:value2")));
+        assert_eq!(parser.next(), None);
+    }
+}
+
+#[cfg(all(test, feature = "alloc"))]
+mod alloc_tests {
     use super::*;
     use proptest::prelude::*;
 
@@ -335,18 +425,6 @@ mod tests {
             Tag::validate("key", "value:"),
             Err(TagValidationError::EndsWithColon)
         );
-
-        assert_eq!(Tag::validate_value("key:value"), Ok(()));
-        assert_eq!(Tag::validate_value("tag"), Ok(()));
-        assert_eq!(Tag::validate_value(""), Err(TagValidationError::Empty));
-        assert_eq!(
-            Tag::validate_value(":value"),
-            Err(TagValidationError::BeginsWithColon)
-        );
-        assert_eq!(
-            Tag::validate_value("key:"),
-            Err(TagValidationError::EndsWithColon)
-        );
     }
 
     #[test]
@@ -414,28 +492,6 @@ mod tests {
     #[test]
     fn test_tailing_colon_parsing() {
         let _ = Tag::from_value("tag:").expect_err("Cannot end with a colon");
-    }
-
-    #[test]
-    fn test_tag_parser() {
-        let parsed =
-            TagParser::new("key:value, :leading middle:colon trailing:  bare").collect::<Vec<_>>();
-        assert_eq!(
-            parsed,
-            vec![
-                Ok("key:value"),
-                Err(InvalidTag {
-                    value: ":leading",
-                    error: TagValidationError::BeginsWithColon,
-                }),
-                Ok("middle:colon"),
-                Err(InvalidTag {
-                    value: "trailing:",
-                    error: TagValidationError::EndsWithColon,
-                }),
-                Ok("bare"),
-            ]
-        );
     }
 
     #[test]
