@@ -116,10 +116,11 @@ impl MetricBatch {
                 );
             }
         }
-        let group = self
-            .groups
-            .entry((projection.resource.clone(), profile))
-            .or_default();
+        // The profile is stated once per group, as the OTLP scope attribute; a
+        // resource never states it, as in the Datadog binding.
+        let mut resource = projection.resource.clone();
+        resource.remove(PROFILE_ATTRIBUTE);
+        let group = self.groups.entry((resource, profile)).or_default();
         for point in &projection.points {
             // The profile is stated once per group, as the OTLP scope
             // attribute; a point that also states it is the same series as
@@ -320,6 +321,21 @@ mod tests {
             .filter(|s| s.name == "gen_ai.client.inference.duration")
             .count();
         assert_eq!(samples, 3);
+    }
+
+    #[test]
+    fn a_resource_never_states_the_profile() {
+        let mut stated = attempt(CALL);
+        stated.resource.insert(
+            PROFILE_ATTRIBUTE.into(),
+            Profile::ProviderAttempt.id().into(),
+        );
+        let mut batch = MetricBatch::new();
+        batch.add(Profile::ProviderAttempt, &stated).unwrap();
+        batch.add(Profile::ProviderAttempt, &attempt(CALL)).unwrap();
+        let groups = batch.points();
+        assert_eq!(groups.len(), 1);
+        assert!(!groups[0].0.contains_key(PROFILE_ATTRIBUTE));
     }
 
     #[test]
