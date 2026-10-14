@@ -58,6 +58,10 @@ jobs:
     needs: setup
     if: needs.setup.outputs.packages-count != '0'
     runs-on: ${{ matrix.platform }}
+    permissions:
+      # id-token is needed to mint the GitHub OIDC token for the sccache S3 role
+      id-token: write
+      contents: read
     env:
       CARGO_TERM_COLOR: always
       CARGO_INCREMENTAL: 0
@@ -110,17 +114,9 @@ jobs:
           go-version: 'stable'
           cache: false
 
-      - name: Cache [rust]
-        id: rust-cache
-        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
-        env:
-          RUSTFLAGS: "${{ matrix.flags }}"
-        with:
-          cache-targets: true # cache build artifacts
-          cache-bin: true # cache the ~/.cargo/bin directory
-          shared-key: release
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      - run: echo "rust-cache ${{ steps.rust-cache.outputs.cache-hit == 'true' && 'HIT' || 'MISS' }}"
+      - name: sccache
+        id: sccache
+        uses: ./.github/actions/setup-sccache
       - name: "Generate profiling FFI"
         shell: bash
         env:
@@ -235,3 +231,7 @@ jobs:
         run: |
           cd examples/cxx
           .\build-profiling-dictionary.ps1
+      - name: sccache statistics
+        if: always() && steps.sccache.outputs.enabled == 'true'
+        shell: bash
+        run: sccache --show-stats
