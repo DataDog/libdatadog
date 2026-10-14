@@ -1,6 +1,140 @@
 id: ffi-extern-c-panic-containment
 snapshots:
   ? |
+    #[export_name = "ddog_renamed"]
+    extern "C" fn renamed_export() {
+        risky();
+    }
+  : labels:
+    - source: |-
+        extern "C" fn renamed_export() {
+            risky();
+        }
+      style: primary
+      start: 32
+      end: 79
+    - source: export_name
+      style: secondary
+      start: 2
+      end: 13
+    - source: '#[export_name = "ddog_renamed"]'
+      style: secondary
+      start: 0
+      end: 31
+    - source: '"C"'
+      style: secondary
+      start: 39
+      end: 42
+    - source: extern "C"
+      style: secondary
+      start: 32
+      end: 42
+    - source: extern "C"
+      style: secondary
+      start: 32
+      end: 42
+  ? |
+    #[no_mangle]
+    #[must_use]
+    pub(crate) extern "C" fn restricted_export() -> i32 {
+        risky()
+    }
+  : labels:
+    - source: |-
+        pub(crate) extern "C" fn restricted_export() -> i32 {
+            risky()
+        }
+      style: primary
+      start: 25
+      end: 92
+    - source: no_mangle
+      style: secondary
+      start: 2
+      end: 11
+    - source: '#[no_mangle]'
+      style: secondary
+      start: 0
+      end: 12
+    - source: '"C"'
+      style: secondary
+      start: 43
+      end: 46
+    - source: extern "C"
+      style: secondary
+      start: 36
+      end: 46
+    - source: extern "C"
+      style: secondary
+      start: 36
+      end: 46
+  ? |
+    #[no_mangle]
+    /// exported drop
+    extern "system" fn documented_system_export() {
+        risky();
+    }
+  : labels:
+    - source: |-
+        extern "system" fn documented_system_export() {
+            risky();
+        }
+      style: primary
+      start: 31
+      end: 93
+    - source: no_mangle
+      style: secondary
+      start: 2
+      end: 11
+    - source: '#[no_mangle]'
+      style: secondary
+      start: 0
+      end: 12
+    - source: '"system"'
+      style: secondary
+      start: 38
+      end: 46
+    - source: extern "system"
+      style: secondary
+      start: 31
+      end: 46
+    - source: extern "system"
+      style: secondary
+      start: 31
+      end: 46
+  ? |
+    #[no_mangle]
+    extern "C" fn private_export() {
+        risky();
+    }
+  : labels:
+    - source: |-
+        extern "C" fn private_export() {
+            risky();
+        }
+      style: primary
+      start: 13
+      end: 60
+    - source: no_mangle
+      style: secondary
+      start: 2
+      end: 11
+    - source: '#[no_mangle]'
+      style: secondary
+      start: 0
+      end: 12
+    - source: '"C"'
+      style: secondary
+      start: 20
+      end: 23
+    - source: extern "C"
+      style: secondary
+      start: 13
+      end: 23
+    - source: extern "C"
+      style: secondary
+      start: 13
+      end: 23
+  ? |
     #[no_mangle]
     pub unsafe extern "C" fn multiline(
         handle: *mut u8,
@@ -33,6 +167,39 @@ snapshots:
       style: secondary
       start: 17
       end: 34
+  ? |
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn edition_2024_export() {
+        risky();
+    }
+  : labels:
+    - source: |-
+        unsafe extern "C" fn edition_2024_export() {
+            risky();
+        }
+      style: primary
+      start: 21
+      end: 80
+    - source: no_mangle
+      style: secondary
+      start: 9
+      end: 18
+    - source: '#[unsafe(no_mangle)]'
+      style: secondary
+      start: 0
+      end: 20
+    - source: '"C"'
+      style: secondary
+      start: 35
+      end: 38
+    - source: extern "C"
+      style: secondary
+      start: 28
+      end: 38
+    - source: unsafe extern "C"
+      style: secondary
+      start: 21
+      end: 38
   ? |
     // allow(ffi-panic-boundary)
     pub extern "C" fn marker_without_colon() {
@@ -152,6 +319,30 @@ snapshots:
       start: 4
       end: 14
   ? |
+    pub extern fn default_abi() {
+        risky();
+    }
+  : labels:
+    - source: |-
+        pub extern fn default_abi() {
+            risky();
+        }
+      style: primary
+      start: 0
+      end: 44
+    - source: pub
+      style: secondary
+      start: 0
+      end: 3
+    - source: extern
+      style: secondary
+      start: 4
+      end: 10
+    - source: extern
+      style: secondary
+      start: 4
+      end: 10
+  ? |
     pub unsafe extern "C" fn unsafe_exposed() {
         risky();
     }
@@ -179,3 +370,31 @@ snapshots:
       style: secondary
       start: 4
       end: 21
+  ? |
+    pub unsafe extern "system" fn system_abi() {
+        risky();
+    }
+  : labels:
+    - source: |-
+        pub unsafe extern "system" fn system_abi() {
+            risky();
+        }
+      style: primary
+      start: 0
+      end: 59
+    - source: pub
+      style: secondary
+      start: 0
+      end: 3
+    - source: '"system"'
+      style: secondary
+      start: 18
+      end: 26
+    - source: extern "system"
+      style: secondary
+      start: 11
+      end: 26
+    - source: unsafe extern "system"
+      style: secondary
+      start: 4
+      end: 26

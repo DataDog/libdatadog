@@ -103,17 +103,7 @@ run_default() {
     if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
         scan_args+=(--format github)
     fi
-    # Hundreds of existing FFI accessors / the c_setters! template match
-    # these rules. Whole-repo scan leaves them off;
-    # scripts/run-ffi-panic-lint.sh fails only on newly added
-    # function_items, uncontained FFI-generating macro_rules, or new
-    # lines in invocations of those macros (ast-grep cannot expand).
-    scan_args+=(
-        --off=ffi-extern-c-panic-containment
-        --off=ffi-macro-emits-extern-c
-    )
     "$bin" scan "${scan_args[@]}" "$@"
-    bash "${SCRIPT_DIR}/run-ffi-panic-lint.sh"
 }
 
 main() {

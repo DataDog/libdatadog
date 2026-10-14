@@ -2,14 +2,16 @@ id: ffi-macro-emits-extern-c
 language: rust
 severity: warning
 message: >-
-  This macro_rules template emits pub extern "C" functions without panic
-  containment. Wrap the generated bodies with wrap_with_ffi_result!,
+  This macro_rules template emits exported FFI functions without panic
+  containment (`extern "C"`, bare `extern`, or `extern "system"`).
+  Wrap the generated bodies with wrap_with_ffi_result!,
   wrap_with_void_ffi_result!, catch_panic!, or std::panic::catch_unwind,
   or add `// allow(ffi-panic-boundary): <justification>` above the
   macro_rules. ast-grep does not expand macros; containment must be in
   the template (or the allow) so every expansion is covered.
 note: |
-  A panic that reaches an extern "C" boundary aborts the host process.
+  A panic that reaches an extern "C" or extern "system" boundary aborts
+  the host process. Bare `extern fn` is extern "C".
   Clippy cannot see panics from callees, and ast-grep cannot see
   functions that exist only after macro expansion. See AGENTS.md
   "Reliability & integrability".
@@ -28,7 +30,10 @@ rule:
     - kind: macro_definition
     - has:
         stopBy: end
-        regex: 'extern\s+"C"\s+fn'
+        # Token trees are not parsed as extern_modifier. Bare `extern fn`
+        # is C; `extern "system"` aborts on unwind the same way. Do not
+        # match `C-unwind` / `system-unwind` (the unwind ABIs).
+        regex: 'extern(?:\s+"(?:C|system)")?\s+fn'
     # Token trees are not parsed as function_item / call_expression.
     # Containment shows up as identifier nodes, not comments.
     - not:

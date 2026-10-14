@@ -2,14 +2,21 @@ id: ffi-extern-c-panic-containment
 language: rust
 severity: warning
 message: >-
-  pub extern "C" entry points must acknowledge panic containment.
+  Exported FFI entry points must acknowledge panic containment.
+  This covers `pub` functions and `#[no_mangle]` / `#[export_name]`
+  functions whose ABI is `extern "C"`, bare `extern` (C by default),
+  or `extern "system"`.
   Wrap the body with wrap_with_ffi_result!, wrap_with_void_ffi_result!,
   catch_panic!, or std::panic::catch_unwind. If containment is wrong
   here (trivial accessor, or datadog-sidecar-ffi which uses panic=abort),
   add `// allow(ffi-panic-boundary): <justification>` on a line directly
   above the function (attributes may sit in between).
 note: |
-  A panic that reaches an extern "C" boundary aborts the host process.
+  A panic that reaches an extern "C" or extern "system" boundary aborts
+  the host process. Bare `extern fn` is extern "C". `#[no_mangle]` and
+  `#[export_name]` export the symbol even when the function is not `pub`.
+  A private extern callback without one of those attributes is not an
+  entry point. `extern "C-unwind"` is a different ABI and is not matched.
   Clippy's panic/unwrap lints only see explicit panic constructs, not
   panics from callees. See AGENTS.md "Reliability & integrability".
 
@@ -25,16 +32,36 @@ ignores:
 rule:
   all:
     - kind: function_item
-    - has:
-        kind: visibility_modifier
-        regex: "^pub$"
+    # `pub(crate)` is not an export. `#[no_mangle]` / `#[export_name]` are,
+    # even when the function is not `pub`.
+    - any:
+        - has:
+            kind: visibility_modifier
+            regex: "^pub$"
+        - follows:
+            stopBy:
+              not:
+                any:
+                  - kind: attribute_item
+                  - kind: line_comment
+            kind: attribute_item
+            has:
+              stopBy: end
+              kind: identifier
+              regex: "^(no_mangle|export_name)$"
+    # Bare `extern` defaults to C. `"system"` is stdcall on x86 Windows
+    # and C elsewhere. Both abort on unwind. `"C-unwind"` does not.
     - has:
         kind: function_modifiers
         has:
           kind: extern_modifier
-          has:
-            kind: string_literal
-            regex: '^"C"$'
+          any:
+            - not:
+                has:
+                  kind: string_literal
+            - has:
+                kind: string_literal
+                regex: '^"(C|system)"$'
     - not:
         has:
           stopBy: end

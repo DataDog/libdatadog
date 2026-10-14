@@ -41,6 +41,22 @@ valid:
             risky();
         };
     }
+  - |
+    macro_rules! contained_bare {
+        ($name:ident) => {
+            pub extern fn $name() {
+                let _ = std::panic::catch_unwind(|| risky());
+            }
+        };
+    }
+  - |
+    macro_rules! unwind_abi {
+        ($name:ident) => {
+            pub extern "C-unwind" fn $name() {
+                risky();
+            }
+        };
+    }
 invalid:
   - |
     macro_rules! c_setters {
@@ -65,6 +81,23 @@ invalid:
     macro_rules! empty_allow {
         ($name:ident) => {
             pub extern "C" fn $name() {
+                risky();
+            }
+        };
+    }
+  - |
+    macro_rules! bare_extern {
+        ($name:ident) => {
+            pub extern fn $name() {
+                risky();
+            }
+        };
+    }
+  - |
+    macro_rules! system_extern {
+        ($name:ident) => {
+            #[no_mangle]
+            unsafe extern "system" fn $name() {
                 risky();
             }
         };

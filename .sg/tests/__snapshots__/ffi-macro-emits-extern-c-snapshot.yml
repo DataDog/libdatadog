@@ -31,6 +31,35 @@ snapshots:
       start: 61
       end: 152
   ? |
+    macro_rules! bare_extern {
+        ($name:ident) => {
+            pub extern fn $name() {
+                risky();
+            }
+        };
+    }
+  : labels:
+    - source: |-
+        macro_rules! bare_extern {
+            ($name:ident) => {
+                pub extern fn $name() {
+                    risky();
+                }
+            };
+        }
+      style: primary
+      start: 0
+      end: 121
+    - source: |-
+        ($name:ident) => {
+                pub extern fn $name() {
+                    risky();
+                }
+            }
+      style: secondary
+      start: 31
+      end: 118
+  ? |
     macro_rules! c_setters {
         ($name:ident) => {
             pub unsafe extern "C" fn $name() {
@@ -94,3 +123,35 @@ snapshots:
       style: secondary
       start: 46
       end: 241
+  ? |
+    macro_rules! system_extern {
+        ($name:ident) => {
+            #[no_mangle]
+            unsafe extern "system" fn $name() {
+                risky();
+            }
+        };
+    }
+  : labels:
+    - source: |-
+        macro_rules! system_extern {
+            ($name:ident) => {
+                #[no_mangle]
+                unsafe extern "system" fn $name() {
+                    risky();
+                }
+            };
+        }
+      style: primary
+      start: 0
+      end: 156
+    - source: |-
+        ($name:ident) => {
+                #[no_mangle]
+                unsafe extern "system" fn $name() {
+                    risky();
+                }
+            }
+      style: secondary
+      start: 33
+      end: 153
