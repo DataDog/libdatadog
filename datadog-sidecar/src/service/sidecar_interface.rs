@@ -38,6 +38,8 @@ pub struct SidecarFlushOptions {
 /// session and application state is therefore bound to the connection: it is set by the
 /// `set_*` methods (which the client replays after a reconnect) and implicitly applies to every
 /// other message on the same connection.
+/// CDN subscriptions carry their own complete configuration and may also use a
+/// dedicated connection without session/application messages.
 #[libdd_ipc_macros::service]
 pub trait SidecarInterface {
     /// Enqueues a list of actions for the application of the current request.
@@ -292,6 +294,14 @@ pub trait SidecarInterface {
     /// Keep this method last: request variants cross the bincode IPC boundary,
     /// so appending preserves the ordinals of all existing messages.
     async fn add_session_evp_transports(configs: Vec<EvpTransportConfigWithIdentity>);
+
+    /// Subscribe this connection to CDN configuration; None unsubscribes.
+    /// Returns an opaque shared-memory name for CdnReader. Resubscribe after a
+    /// reconnect to obtain the new name. In-process listeners return None.
+    #[blocking]
+    async fn subscribe_cdn_configuration(
+        config: Option<libdd_ffe::cdn::CdnConfig>,
+    ) -> Option<String>;
 }
 
 #[cfg(test)]

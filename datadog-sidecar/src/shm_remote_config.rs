@@ -1,6 +1,8 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache
 // License Version 2.0. This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
+pub mod cdn;
+
 use crate::service::{DynamicInstrumentationConfigState, InstanceId};
 use base64::Engine;
 use base64::prelude::BASE64_URL_SAFE_NO_PAD;
@@ -147,8 +149,12 @@ impl RemoteConfigReader {
 
 impl RemoteConfigWriter {
     pub fn new(id: &ConfigInvariants, target: &Arc<Target>) -> io::Result<RemoteConfigWriter> {
+        Self::from_path(path_for_remote_config(id, target))
+    }
+
+    fn from_path(path: CString) -> io::Result<Self> {
         Ok(RemoteConfigWriter {
-            writer: OneWayShmWriter::<NamedShmHandle>::new(path_for_remote_config(id, target))?,
+            writer: OneWayShmWriter::<NamedShmHandle>::new(path)?,
             dynamic_instrumentation: None,
         })
     }

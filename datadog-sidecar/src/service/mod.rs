@@ -43,6 +43,7 @@ mod dogstatsd_pool;
 pub(crate) mod evp_proxy;
 pub(crate) mod evp_transport;
 pub mod exception_hash_rate_limiter;
+pub(crate) mod ffe_config;
 pub(crate) mod ffe_exposures_flusher;
 pub(crate) mod ffe_flagevaluation_flusher;
 pub(crate) mod ffe_metrics_flusher;
