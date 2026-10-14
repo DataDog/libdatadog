@@ -51,7 +51,7 @@ async fn cdn_configuration_reaches_shared_memory_through_real_ipc_and_http() {
         let (mut socket, _) = listener.accept().await.unwrap();
         let mut request = [0; 4096];
         assert!(socket.read(&mut request).await.unwrap() > 0);
-        let body = r#"{"data":{"type":"universal-flag-configuration","attributes":{"createdAt":"2026-10-14T00:00:00Z","environment":{"name":"test"},"flags":{}}}}"#;
+        let body = r#"{"data":{"type":"universal-flag-configuration","attributes":{"format":"SERVER","createdAt":"2026-10-14T00:00:00Z","environment":{"name":"test"},"flags":{}}}}"#;
         socket.write_all(format!("HTTP/1.1 200 OK\r\nETag: accepted\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
     });
     let (server_conn, client) = SeqpacketConn::socketpair().unwrap();
