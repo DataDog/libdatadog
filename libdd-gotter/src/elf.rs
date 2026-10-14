@@ -900,17 +900,23 @@ impl Drop for PageProtGuard {
     }
 }
 
-/// `/proc/self/maps` snapshot shared by all objects of one [`iterate_libraries`] walk, read on
-/// first use. Guards restore their pages before their callback returns, so it stays accurate for
-/// later objects. glibc holds the loader lock for the whole walk; musl releases it between
+/// `/proc/self/maps` entries read while the loader had generation `dlpi_adds`.
+struct MapsSnapshot {
+    dlpi_adds: u64,
+    entries: Arc<[MapEntry]>,
+}
+
+/// [`MapsSnapshot`] shared by all objects of one [`iterate_libraries`] walk, read on first use.
+/// Guards restore their pages before their callback returns, so it stays accurate for later
+/// objects. glibc holds the loader lock for the whole walk; musl releases it between
 /// callbacks, so a changed `dlpi_adds` (a `dlopen` landed mid-walk) triggers a re-read.
 /// A failed or empty read is used for the current object only, and re-read for the next.
 #[derive(Default)]
-struct MapsSnapshot {
-    maps: Option<(u64, Arc<[MapEntry]>)>,
+struct LazyMapsSnapshot {
+    snapshot: Option<MapsSnapshot>,
 }
 
-impl MapsSnapshot {
+impl LazyMapsSnapshot {
     fn get(&mut self, dlpi_adds: u64) -> Arc<[MapEntry]> {
         self.get_with(dlpi_adds, read_proc_maps_into)
     }
@@ -920,14 +926,17 @@ impl MapsSnapshot {
         dlpi_adds: u64,
         read: impl FnOnce(&mut Vec<MapEntry>) -> bool,
     ) -> Arc<[MapEntry]> {
-        match &self.maps {
-            Some((adds, maps)) if *adds == dlpi_adds => Arc::clone(maps),
+        match &self.snapshot {
+            Some(snapshot) if snapshot.dlpi_adds == dlpi_adds => Arc::clone(&snapshot.entries),
             _ => {
                 let mut entries = Vec::new();
                 let complete = read(&mut entries);
-                let maps: Arc<[MapEntry]> = entries.into();
-                self.maps = (complete && !maps.is_empty()).then(|| (dlpi_adds, Arc::clone(&maps)));
-                maps
+                let entries: Arc<[MapEntry]> = entries.into();
+                self.snapshot = (complete && !entries.is_empty()).then(|| MapsSnapshot {
+                    dlpi_adds,
+                    entries: Arc::clone(&entries),
+                });
+                entries
             }
         }
     }
@@ -1182,7 +1191,7 @@ unsafe fn hook_symbol_impl(
         let mut entries_failed: usize = 0;
         let patched_ptr = &mut entries_patched as *mut usize;
         let failed_ptr = &mut entries_failed as *mut usize;
-        let mut maps = MapsSnapshot::default();
+        let mut maps = LazyMapsSnapshot::default();
 
         iterate_libraries(|info, is_exe| {
             // SAFETY: dl_iterate_phdr guarantees dlpi_name is a valid
@@ -1246,7 +1255,7 @@ unsafe fn patch_got_entries(
     dyn_info: &DynamicInfo,
     symbol_name: &[u8],
     hook_fn: usize,
-    maps: &mut MapsSnapshot,
+    maps: &mut LazyMapsSnapshot,
     dlpi_adds: u64,
     patched: &mut usize,
     failed: &mut usize,
@@ -1298,6 +1307,10 @@ mod tests {
         MAPS_READS.with(Cell::get)
     }
 
+    fn reset_maps_reads() {
+        MAPS_READS.with(|reads| reads.set(0));
+    }
+
     #[test]
     fn page_prot_guard_finds_original_mapping_protection() {
         let guard = PageProtGuard {
@@ -1327,13 +1340,13 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn maps_snapshot_rereads_only_when_dlpi_adds_changes() {
-        let mut maps = MapsSnapshot::default();
-        let before = maps_reads();
+        let mut maps = LazyMapsSnapshot::default();
+        reset_maps_reads();
         let first = maps.get(1);
         assert!(Arc::ptr_eq(&first, &maps.get(1)));
-        assert_eq!(maps_reads() - before, 1);
+        assert_eq!(maps_reads(), 1);
         assert!(!Arc::ptr_eq(&first, &maps.get(2)));
-        assert_eq!(maps_reads() - before, 2);
+        assert_eq!(maps_reads(), 2);
     }
 
     #[test]
@@ -1343,16 +1356,16 @@ mod tests {
             end: 0x2000,
             prot: PROT_READ,
         };
-        let mut maps = MapsSnapshot::default();
+        let mut maps = LazyMapsSnapshot::default();
         // A truncated read is still used for the current object, but not kept.
         let partial = maps.get_with(1, |out| {
             out.push(entry);
             false
         });
         assert_eq!(partial.len(), 1);
-        assert!(maps.maps.is_none());
+        assert!(maps.snapshot.is_none());
         assert!(maps.get_with(1, |_| true).is_empty());
-        assert!(maps.maps.is_none());
+        assert!(maps.snapshot.is_none());
         let full = maps.get_with(1, |out| {
             out.push(entry);
             true
@@ -1441,11 +1454,11 @@ mod tests {
         }
 
         let adds_before = dlpi_adds();
-        let reads_before = maps_reads();
+        reset_maps_reads();
         let result =
             unsafe { hook_symbol_excluding_self(c"getppid", hooked_getppid as *const () as usize) }
                 .expect("getppid resolves");
-        let reads = maps_reads() - reads_before;
+        let reads = maps_reads();
         // One read per loader generation. Only musl can see a concurrent `dlopen` (e.g. from
         // another test) mid-walk.
         let generations = 1 + usize::try_from(dlpi_adds() - adds_before).expect("fits");
