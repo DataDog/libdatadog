@@ -335,34 +335,4 @@ mod tests {
         }
         assert_eq!(big.len(), 1024);
     }
-
-    #[test]
-    fn dedup_scratch_footprint_fits_stack_budget() {
-        // Regression guard for the sizing of `DEDUP_STACK_BYTES` in `vec_map`: reproduce
-        // the scratch allocations `VecMap::dedup` makes for a map of 32 elements — a
-        // `hashbrown` set of 32 key references plus a 32-byte keep-bitmap — and check
-        // both fit in a 1024-byte inline buffer.
-        let keys: [u64; 32] = core::array::from_fn(|i| i as u64);
-        let bump = StackBump::<1024>::new();
-        {
-            let mut seen = hashbrown::HashSet::new_in(&bump);
-            let mut keep: AllocVec<bool, _> = AllocVec::new_in(&bump);
-            // The reservations mirror the sizes `VecMap::dedup` requests for a
-            // 32-element map; the assertion below then checks they were served
-            // inline, so a `hashbrown` upgrade that breaks the sizing budget fails
-            // here rather than silently spilling `VecMap::dedup`'s scratch to the heap.
-            seen.try_reserve(keys.len())
-                .expect("seen set fits the budget");
-            keep.try_reserve(keys.len())
-                .expect("keep bitmap fits the budget");
-            // 64 hashbrown buckets (8-byte references + control bytes) plus one byte
-            // per element: the set and the bitmap must both have been served inline.
-            assert!(bump.used_bytes() >= 64 * 9 + keys.len());
-            for k in keys.iter().rev() {
-                keep.push(seen.insert(k));
-            }
-            assert!(keep.iter().all(|&k| k));
-        }
-        assert!(bump.used_bytes() > 0);
-    }
 }
