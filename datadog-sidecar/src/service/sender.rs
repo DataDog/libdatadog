@@ -15,7 +15,7 @@
 //! `SidecarSender` takes `&mut self`; the caller is responsible for exclusive access.
 
 use crate::service::{
-    ApplicationConfig, InstanceId, SessionConfig,
+    ApplicationConfig, EvpTransportConfigWithIdentity, InstanceId, SessionConfig,
     sidecar_interface::{
         DynamicInstrumentationConfigState, SidecarFlushOptions, SidecarInterfaceChannel,
         SidecarInterfaceClientRequest, SidecarInterfaceRequest,
@@ -92,6 +92,7 @@ struct ConnectionConfig {
 #[derive(Default)]
 struct ConnectionState {
     connection_config: StateSlot<ConnectionConfig>,
+    evp_transports: StateSlot<Vec<EvpTransportConfigWithIdentity>>,
     process_tags: StateSlot<Vec<Tag>>,
     user_service_defined: StateSlot<bool>,
     test_session_token: StateSlot<String>,
@@ -113,6 +114,13 @@ impl ConnectionState {
                 #[cfg(windows)]
                 remote_config_notify_target: connection.remote_config_notify_target.clone(),
                 config: connection.config.clone(),
+            }
+        }) {
+            return false;
+        }
+        if !self.evp_transports.send_with(&mut submit, |configs| {
+            SidecarInterfaceRequest::AddSessionEvpTransports {
+                configs: configs.clone(),
             }
         }) {
             return false;
@@ -159,6 +167,7 @@ impl ConnectionState {
     /// Marks the whole state as to be sent, for a new connection or a new session on it.
     fn resend_all(&mut self) {
         self.connection_config.pending = self.connection_config.value.is_some();
+        self.evp_transports.pending = self.evp_transports.value.is_some();
         self.process_tags.pending = self.process_tags.value.is_some();
         self.user_service_defined.pending = self.user_service_defined.value.is_some();
         self.test_session_token.pending = self.test_session_token.value.is_some();
@@ -196,7 +205,13 @@ impl SidecarSender {
     /// Takes over the connection state of the sender this one replaces after a reconnect. The
     /// state is sent to the new connection before anything else.
     pub fn adopt_state(&mut self, previous: SidecarSender) {
+        let fresh_evp_transports = self.state.evp_transports.value.take();
         self.state = previous.state;
+        // A reconnect factory may provide fresher routing or credentials for one target.
+        // Preserve it while inheriting the other targets from the previous connection.
+        for config in fresh_evp_transports.into_iter().flatten() {
+            self.coalesce_evp_transport(config);
+        }
         self.state.resend_all();
         // The new connection may reach another sidecar, unrelated to what the client has read.
         self.state.application_generation = 0;
@@ -258,6 +273,23 @@ impl SidecarSender {
         });
         // The sidecar starts over with a new session: all state layered on it is sent again.
         self.state.resend_all();
+        self.try_drain_outbox();
+    }
+
+    fn coalesce_evp_transport(&mut self, config: EvpTransportConfigWithIdentity) {
+        let mut configs = self.state.evp_transports.value.clone().unwrap_or_default();
+        if let Some(previous) = configs.iter_mut().find(|previous| {
+            previous.transport.intake_subdomain == config.transport.intake_subdomain
+        }) {
+            *previous = config;
+        } else {
+            configs.push(config);
+        }
+        self.state.evp_transports.set(configs);
+    }
+
+    pub fn set_session_evp_transport(&mut self, config: EvpTransportConfigWithIdentity) {
+        self.coalesce_evp_transport(config);
         self.try_drain_outbox();
     }
 
