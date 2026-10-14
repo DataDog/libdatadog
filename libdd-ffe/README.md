@@ -30,6 +30,12 @@ followed; compressed and decoded responses are capped at 10 MiB. Cancelling the
 token interrupts HTTP and retry waits. Run the fetcher in the process that owns
 external I/O, such as the sidecar; constructing it does not spawn a worker.
 
+`CdnEndpoint` wraps `libdd_common::Endpoint` while retaining CDN validation,
+credential isolation and redacted diagnostics. URL credentials remain
+case-sensitive in subscription identity. The endpoint IPC representation is
+unchanged; `CdnConfig::request_timeout` remains the request deadline. Request
+headers are set explicitly, without the common builder's entity headers.
+
 ## `flagevaluation` EVP privacy
 
 - Each observation carries the consent captured by its SDK at evaluation time.

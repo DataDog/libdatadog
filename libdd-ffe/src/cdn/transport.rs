@@ -148,7 +148,9 @@ fn build_request(
     language: &str,
     version: &str,
 ) -> Result<Request<Body>, TransportFailure> {
-    let (request_url, authorization) = request_url_and_authorization(endpoint.as_str())?;
+    let (request_url, authorization) = request_url_and_authorization(endpoint.uri())?;
+    // Keep CDN headers explicit. Endpoint's generic request builder also adds
+    // entity/container headers, which are not part of this configuration API.
     let mut builder = Request::builder()
         .method(Method::GET)
         .uri(request_url)
@@ -173,11 +175,11 @@ fn build_request(
 }
 
 fn request_url_and_authorization(
-    endpoint: &str,
-) -> Result<(String, Option<String>), TransportFailure> {
-    let mut url = url::Url::parse(endpoint).map_err(|_| TransportFailure::BuildRequest)?;
+    endpoint: &http::Uri,
+) -> Result<(http::Uri, Option<String>), TransportFailure> {
+    let url = url::Url::parse(&endpoint.to_string()).map_err(|_| TransportFailure::BuildRequest)?;
     if url.username().is_empty() {
-        return Ok((endpoint.to_owned(), None));
+        return Ok((endpoint.clone(), None));
     }
 
     let mut credentials = percent_decode_str(url.username()).collect::<Vec<_>>();
@@ -190,11 +192,20 @@ fn request_url_and_authorization(
         base64::engine::general_purpose::STANDARD.encode(credentials)
     );
 
-    url.set_username("")
-        .map_err(|_| TransportFailure::BuildRequest)?;
-    url.set_password(None)
-        .map_err(|_| TransportFailure::BuildRequest)?;
-    Ok((url.to_string(), Some(authorization)))
+    // Remove URL credentials without normalizing the operator's path/query.
+    let authority = endpoint
+        .authority()
+        .and_then(|authority| authority.as_str().rsplit_once('@'))
+        .map(|(_, host)| host)
+        .ok_or(TransportFailure::BuildRequest)?;
+    let mut parts = endpoint.clone().into_parts();
+    parts.authority = Some(
+        authority
+            .parse()
+            .map_err(|_| TransportFailure::BuildRequest)?,
+    );
+    let uri = http::Uri::from_parts(parts).map_err(|_| TransportFailure::BuildRequest)?;
+    Ok((uri, Some(authorization)))
 }
 
 fn header_value(headers: &http::HeaderMap, name: http::header::HeaderName) -> Option<String> {
@@ -302,6 +313,66 @@ mod tests {
             "Basic dXNlcjpwYXNzd29yZA=="
         );
         assert_eq!(custom_request.uri(), "https://localhost/custom");
+    }
+
+    #[test]
+    fn custom_basic_auth_preserves_the_exact_path_and_query() {
+        let endpoint = CdnEndpoint::build(
+            "https://us%65r:p%40ss@[::1]:8443/a/../Config%2fraw?tenant=a%2Fb&tenant=x+y&empty=",
+            "ignored",
+            "must-not-be-added",
+            "must-not-be-sent",
+        )
+        .unwrap();
+        let request = build_request(&endpoint, None, "php", "1.27").unwrap();
+        assert_eq!(
+            request.uri(),
+            "https://[::1]:8443/a/../Config%2fraw?tenant=a%2Fb&tenant=x+y&empty="
+        );
+        assert_eq!(
+            request.headers()[AUTHORIZATION_HEADER],
+            "Basic dXNlcjpwQHNz"
+        );
+        assert!(!request.headers().contains_key(API_KEY_HEADER));
+        assert!(request.headers().keys().all(|name| matches!(
+            name.as_str(),
+            "accept-encoding"
+                | "dd-client-library-language"
+                | "dd-client-library-version"
+                | "dd-internal-untraced-request"
+                | "authorization"
+        )));
+    }
+
+    #[test]
+    fn custom_basic_auth_accepts_unescaped_password_characters() {
+        for (password, expected_authorization) in [
+            ("p[ss", "Basic dXNlcjpwW3Nz"),
+            ("päss", "Basic dXNlcjpww6Rzcw=="),
+        ] {
+            let endpoint = CdnEndpoint::custom(&format!(
+                "https://user:{password}@[::1]:8443/a/../Config%2fraw?tenant=a%2Fb"
+            ))
+            .unwrap();
+            let request = build_request(&endpoint, None, "php", "1.27").unwrap();
+            assert_eq!(
+                request.headers()[AUTHORIZATION_HEADER],
+                expected_authorization
+            );
+            assert_eq!(
+                request.uri(),
+                "https://[::1]:8443/a/../Config%2fraw?tenant=a%2Fb"
+            );
+            assert!(!request.headers().contains_key(API_KEY_HEADER));
+        }
+
+        let endpoint = CdnEndpoint::custom("https://user:päss@localhost/café?query=olé").unwrap();
+        let request = build_request(&endpoint, None, "php", "1.27").unwrap();
+        assert_eq!(request.uri(), "https://localhost/caf%C3%A9?query=ol%C3%A9");
+        assert_eq!(
+            request.headers()[AUTHORIZATION_HEADER],
+            "Basic dXNlcjpww6Rzcw=="
+        );
     }
 
     #[tokio::test]
