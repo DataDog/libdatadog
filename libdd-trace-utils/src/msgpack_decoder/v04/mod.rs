@@ -7,6 +7,8 @@ use self::span::decode_span;
 use crate::msgpack_decoder::decode::buffer::Buffer;
 use crate::msgpack_decoder::decode::error::DecodeError;
 use crate::span::DeserializableTraceData;
+use crate::span::v1::from_v04::trace_chunk_from_v04;
+use crate::span::v1::{TraceChunk, TraceChunkBytes, TraceChunkSlice};
 use crate::span::v04::{Span, SpanBytes, SpanSlice};
 
 /// Decodes a Bytes buffer into a `Vec<Vec<SpanBytes>>` object, also represented as a vector of
@@ -107,6 +109,64 @@ pub fn from_slice(data: &[u8]) -> Result<(Vec<Vec<SpanSlice<'_>>>, usize), Decod
 pub fn from_buffer<T: DeserializableTraceData>(
     data: &mut Buffer<T>,
 ) -> Result<(Vec<Vec<Span<T>>>, usize), DecodeError> {
+    decode_traces(data, |trace| trace)
+}
+
+/// Decodes a Bytes buffer of v0.4 msgpack traces straight into V1 [`TraceChunkBytes`].
+///
+/// Each trace is converted as soon as it is decoded (see
+/// [`crate::span::v1::from_v04::trace_chunk_from_v04`] for the mapping), so the v0.4 spans of
+/// the whole payload are never held at once.
+///
+/// # Returns
+///
+/// * `Ok((Vec<TraceChunkBytes>, usize))` - The decoded chunks and the number of bytes used by the
+///   decoder.
+/// * `Err(DecodeError)` - An error if the decoding process fails.
+///
+/// # Examples
+///
+/// ```
+/// use libdd_trace_protobuf::pb::Span;
+/// use libdd_trace_utils::msgpack_decoder::v04::from_bytes_into_v1;
+/// use rmp_serde::to_vec_named;
+///
+/// let span = Span {
+///     name: "test-span".to_owned(),
+///     ..Default::default()
+/// };
+/// let encoded_data = to_vec_named(&vec![vec![span]]).unwrap();
+/// let (chunks, _payload_size) =
+///     from_bytes_into_v1(libdd_tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
+///
+/// assert_eq!(1, chunks.len());
+/// assert_eq!("test-span", chunks[0].spans[0].name.as_str());
+/// ```
+pub fn from_bytes_into_v1(
+    data: libdd_tinybytes::Bytes,
+) -> Result<(Vec<TraceChunkBytes>, usize), DecodeError> {
+    from_buffer_into_v1(&mut Buffer::new(data))
+}
+
+/// Decodes a slice of v0.4 msgpack traces straight into V1 [`TraceChunkSlice`]s borrowing from
+/// `data`. See [`from_bytes_into_v1`].
+pub fn from_slice_into_v1(data: &[u8]) -> Result<(Vec<TraceChunkSlice<'_>>, usize), DecodeError> {
+    from_buffer_into_v1(&mut Buffer::new(data))
+}
+
+/// Generic version of [`from_bytes_into_v1`] / [`from_slice_into_v1`].
+pub fn from_buffer_into_v1<T: DeserializableTraceData>(
+    data: &mut Buffer<T>,
+) -> Result<(Vec<TraceChunk<T>>, usize), DecodeError> {
+    decode_traces(data, trace_chunk_from_v04)
+}
+
+/// Decodes the v0.4 list of traces, mapping each trace through `map_trace` as soon as its spans
+/// are decoded.
+fn decode_traces<T: DeserializableTraceData, C>(
+    data: &mut Buffer<T>,
+    mut map_trace: impl FnMut(Vec<Span<T>>) -> C,
+) -> Result<(Vec<C>, usize), DecodeError> {
     let trace_count = rmp::decode::read_array_len(data.as_mut_slice()).map_err(|_| {
         DecodeError::InvalidFormat("Unable to read array len for trace count".to_owned())
     })?;
@@ -143,7 +203,7 @@ pub fn from_buffer<T: DeserializableTraceData>(
                     },
                 )?;
 
-                traces.push(trace);
+                traces.push(map_trace(trace));
 
                 Ok(traces)
             },
@@ -162,6 +222,61 @@ mod tests {
     use rmp_serde::to_vec_named;
     use serde_json::json;
     use std::collections::HashMap;
+
+    fn v04_span_for_v1_decode() -> SpanBytes {
+        let mut span = SpanBytes {
+            service: BytesString::from_static("svc"),
+            name: BytesString::from_static("op"),
+            trace_id: 7,
+            span_id: 1,
+            ..Default::default()
+        };
+        span.meta.insert(
+            BytesString::from_static("env"),
+            BytesString::from_static("prod"),
+        );
+        span.meta.insert(
+            BytesString::from_static("_dd.origin"),
+            BytesString::from_static("synthetics"),
+        );
+        span.metrics
+            .insert(BytesString::from_static("_sampling_priority_v1"), 1.0);
+        span
+    }
+
+    #[test]
+    fn test_from_bytes_into_v1() {
+        let encoded =
+            crate::msgpack_encoder::v04::to_vec_from_v04(&[vec![v04_span_for_v1_decode()]]);
+        let (chunks, size) =
+            from_bytes_into_v1(Bytes::from(encoded.clone())).expect("Decoding failed");
+        let (_, v04_size) = from_slice(&encoded).expect("Decoding failed");
+        assert_eq!(size, v04_size);
+
+        assert_eq!(chunks.len(), 1);
+        let chunk = &chunks[0];
+        assert_eq!(chunk.trace_id[15], 7);
+        assert_eq!(chunk.priority, Some(1));
+        assert_eq!(chunk.origin.as_str(), "synthetics");
+        assert_eq!(chunk.spans.len(), 1);
+        assert_eq!(chunk.spans[0].name.as_str(), "op");
+        assert_eq!(chunk.spans[0].env.as_str(), "prod");
+    }
+
+    #[test]
+    fn test_from_slice_into_v1() {
+        let encoded =
+            crate::msgpack_encoder::v04::to_vec_from_v04(&[vec![v04_span_for_v1_decode()], vec![]]);
+        let (chunks, _) = from_slice_into_v1(&encoded).expect("Decoding failed");
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[0].spans[0].service, "svc");
+        assert!(chunks[1].spans.is_empty());
+    }
+
+    #[test]
+    fn test_from_slice_into_v1_invalid() {
+        assert!(from_slice_into_v1(&[0x91, 0xc1]).is_err());
+    }
 
     #[test]
     fn test_empty_array() {

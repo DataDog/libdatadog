@@ -6,6 +6,7 @@ use crate::span::{BytesData, SliceData, TraceData};
 pub use thin_vec::ThinVec;
 
 pub mod chunk_pool;
+pub mod from_v04;
 
 /// OpenTelemetry SpanKind values, encoded on the wire as a `uint32`.
 /// Unset or unrecognized kinds default to [`SpanKind::Internal`].

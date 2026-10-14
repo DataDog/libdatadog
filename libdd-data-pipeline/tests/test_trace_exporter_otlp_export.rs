@@ -51,7 +51,8 @@ mod otlp_export_tests {
 
         // Assert the request structure with json_body_includes, then inspect the complete span
         // array so a child without its own sampling priority must still carry the chunk-level
-        // sampled decision.
+        // sampled decision. The input is converted to V1, where the sampling priority lives on
+        // the chunk, so every span gets it as `_sampling_priority_v1`.
         let mock = server
             .mock_async(move |when, then| {
                 let flag = matcher_flag.clone();
@@ -96,11 +97,8 @@ mod otlp_export_tests {
                             .is_some_and(|spans| {
                                 spans.len() == 2
                                     && spans.iter().all(|span| span["flags"] == 1)
-                                    && spans.iter().any(|span| {
+                                    && spans.iter().all(|span| {
                                         has_attribute(span, "_sampling_priority_v1")
-                                    })
-                                    && spans.iter().any(|span| {
-                                        !has_attribute(span, "_sampling_priority_v1")
                                     })
                             });
                         if valid {
