@@ -40,6 +40,9 @@ use crate::appsec::{AppSecConnection, AppSecManager};
 #[cfg(unix)]
 use crate::config::AppSecConfig;
 use crate::service::agent_info::AgentInfos;
+use crate::service::data_streams_flusher::{
+    DsmTableKey, DsmTables, ShmProduct, flush_all_dsm_now, get_or_create_dsm_table,
+};
 use crate::service::debugger_diagnostics_bookkeeper::{
     DebuggerDiagnosticsBookkeeper, DebuggerDiagnosticsBookkeeperStats,
 };
@@ -111,6 +114,8 @@ pub struct SidecarServer {
     debugger_diagnostics_bookkeeper: Arc<DebuggerDiagnosticsBookkeeper>,
     /// Per-env&version SHM span concentrators (global across all sessions).
     pub(crate) span_concentrators: Arc<Mutex<HashMap<ConcentratorKey, Arc<SpanConcentratorState>>>>,
+    /// Per-(env, version, service, primary tag) SHM DSM tables (global across all sessions).
+    pub(crate) dsm_tables: DsmTables,
     /// HTTP client shared by FFE fire-and-forget forwarders for connection reuse.
     pub(crate) ffe_http_client: NativeCapabilities,
     /// Sidecar-owned exposure cache, shared across sessions/connections.
@@ -1125,6 +1130,33 @@ impl SidecarInterface for ConnectionSidecarHandler {
         }
     }
 
+    async fn add_dsm_stats_point(
+        &mut self,
+        env: String,
+        version: String,
+        service: String,
+        primary_tag: String,
+        point: libdd_ipc::shm_dsm::OwnedDsmStatsPoint,
+    ) {
+        let Some(session) = self.session.load() else {
+            return;
+        };
+        // Lazily create the table on the first IPC point for this key.
+        let key = DsmTableKey {
+            product: ShmProduct::DataStreams,
+            env,
+            version,
+            service,
+            primary_tag,
+        };
+        if let Some(state) = get_or_create_dsm_table(&self.server.dsm_tables, key, &session) {
+            let mut edge_tag_buf = Vec::new();
+            state
+                .table
+                .add_point(&point.as_shm_input(&mut edge_tag_buf));
+        }
+    }
+
     async fn flush(&mut self, options: SidecarFlushOptions) {
         let flag_evaluations = options.flag_evaluations;
         let ffe_coalescer = self.server.ffe_flagevaluation_coalescer.clone();
@@ -1138,12 +1170,14 @@ impl SidecarInterface for ConnectionSidecarHandler {
         let traces_and_stats = options.traces_and_stats;
         let flusher = self.server.trace_flusher.clone();
         let span_concentrators = self.server.span_concentrators.clone();
+        let dsm_tables = self.server.dsm_tables.clone();
         let flush_traces_and_stats = async move {
             if traces_and_stats {
                 if let Err(e) = tokio::spawn(async move { flusher.flush().await }).await {
                     error!("Failed flushing traces: {e:?}");
                 }
                 flush_all_stats_now(&span_concentrators).await;
+                flush_all_dsm_now(&dsm_tables).await;
                 debug!("Finished executing flush() for traces and stats")
             }
         };
