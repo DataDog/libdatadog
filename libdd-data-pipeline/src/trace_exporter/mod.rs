@@ -5,6 +5,8 @@ pub mod builder;
 pub mod error;
 mod log_writer;
 pub mod metrics;
+#[cfg(feature = "external-observations")]
+pub mod observations;
 pub mod stats;
 mod trace_serializer;
 
@@ -312,6 +314,9 @@ pub struct TraceExporter<
     log_output: Option<usize>,
     /// Whether background workers should be restarted in the child after a `fork()`.
     restart_after_fork: bool,
+    /// Whether the caller collects observations instead of native telemetry.
+    #[cfg(feature = "external-observations")]
+    observations: bool,
 }
 
 impl<
@@ -332,6 +337,10 @@ impl<
     /// Pass `None` on telemetry shut down, so reporting stops rather than targeting a dead worker.
     #[cfg(feature = "telemetry")]
     pub fn set_telemetry_handle(&self, handle: Option<TelemetryWorkerHandle<C>>) {
+        #[cfg(feature = "external-observations")]
+        if self.observations {
+            return;
+        }
         self.telemetry
             .store(handle.map(|h| Arc::new(TelemetryClient::with_handle(h))));
     }
@@ -343,14 +352,21 @@ impl<
 
     #[cfg(feature = "telemetry")]
     fn emit_retry_result(&self, result: &SendWithRetryResult, bytes: usize, counts: PayloadCounts) {
-        if let Some(telemetry) = self.telemetry.load_full().as_deref() {
-            let payload = SendPayloadTelemetry::from_retry_result_with_spans(
+        let payload = || {
+            SendPayloadTelemetry::from_retry_result_with_spans(
                 result,
                 bytes as u64,
                 counts.chunks as u64,
                 counts.spans as u64,
-            );
-            if let Err(e) = telemetry.send(&payload) {
+            )
+        };
+        // Observations collected for the caller's own telemetry client replace native delivery.
+        #[cfg(feature = "external-observations")]
+        if observations::record_payload(payload) {
+            return;
+        }
+        if let Some(telemetry) = self.telemetry.load_full().as_deref() {
+            if let Err(e) = telemetry.send(&payload()) {
                 error!(?e, "Error sending telemetry");
             }
         }
@@ -699,20 +715,29 @@ impl<
     where
         R: BlockingRuntime,
     {
-        self.shared_runtime.block_on(async {
-            match cancellation_token {
-                Some(token) => {
-                    tokio::select! {
-                        res = self.send_trace_chunks_async(trace_chunks) => res,
-                        _ = token.cancelled() => Err(TraceExporterError::Io(std::io::Error::new(
-                            std::io::ErrorKind::Interrupted,
-                            "send cancelled via cancellation token",
-                        ))),
-                    }
+        self.shared_runtime
+            .block_on(self.send_trace_chunks_cancellable(trace_chunks, cancellation_token))?
+    }
+
+    /// Send chunks, giving up with an `Interrupted` error once the token is cancelled.
+    #[cfg(not(target_arch = "wasm32"))]
+    async fn send_trace_chunks_cancellable<T: TraceData>(
+        &self,
+        trace_chunks: PooledChunks<'_, T>,
+        cancellation_token: Option<&CancellationToken>,
+    ) -> Result<AgentResponse, TraceExporterError> {
+        match cancellation_token {
+            Some(token) => {
+                tokio::select! {
+                    res = self.send_trace_chunks_async(trace_chunks) => res,
+                    _ = token.cancelled() => Err(TraceExporterError::Io(std::io::Error::new(
+                        std::io::ErrorKind::Interrupted,
+                        "send cancelled via cancellation token",
+                    ))),
                 }
-                None => self.send_trace_chunks_async(trace_chunks).await,
             }
-        })?
+            None => self.send_trace_chunks_async(trace_chunks).await,
+        }
     }
 
     /// Send a list of trace chunks to the agent, asynchronously (or OTLP when configured).
