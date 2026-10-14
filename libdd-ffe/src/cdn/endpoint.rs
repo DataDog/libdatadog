@@ -155,11 +155,8 @@ impl fmt::Display for EndpointError {
 impl std::error::Error for EndpointError {}
 
 fn normalize_site(site: &str) -> Result<String, EndpointError> {
-    let site = if site.trim().is_empty() {
-        DEFAULT_SITE
-    } else {
-        site
-    };
+    let site = site.trim();
+    let site = if site.is_empty() { DEFAULT_SITE } else { site };
     if !site.is_ascii()
         || site.chars().any(|character| {
             character.is_whitespace() || matches!(character, '/' | '\\' | '?' | '#' | '@' | ':')
@@ -176,8 +173,8 @@ mod tests {
 
     #[test]
     fn managed_endpoint_uses_normalized_site_and_encoded_environment() {
-        let endpoint =
-            CdnEndpoint::build("", "DATADOGHQ.EU", "prod / blue", "key").expect("managed endpoint");
+        let endpoint = CdnEndpoint::build("", " DATADOGHQ.EU \t", "prod / blue", "key")
+            .expect("managed endpoint");
 
         assert!(endpoint.is_managed());
         assert_eq!(endpoint.api_key(), Some("key"));
@@ -213,7 +210,6 @@ mod tests {
             "datadoghq.com?query",
             "datadoghq.com#fragment",
             "datadoghq.com:443",
-            " datadoghq.com",
             "data doghq.com",
             "dâtadoghq.com",
         ] {

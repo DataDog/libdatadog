@@ -4,7 +4,9 @@
 use super::CdnEndpoint;
 use base64::Engine;
 use flate2::read::GzDecoder;
-use http::header::{ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_LENGTH, ETAG, IF_NONE_MATCH};
+use http::header::{
+    ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_LENGTH, ETAG, IF_NONE_MATCH, RETRY_AFTER,
+};
 use http::{Method, Request};
 use http_body_util::BodyExt;
 use libdd_common::http_common::{self, Body};
@@ -45,6 +47,7 @@ pub(super) enum TransportFailure {
 
 pub(super) struct PollResponse {
     pub(super) status: u16,
+    pub(super) retry_after: Option<String>,
     pub(super) etag: Option<String>,
     pub(super) content_encoding: Option<String>,
     pub(super) body: Vec<u8>,
@@ -83,6 +86,7 @@ impl HyperTransport {
                 .map_err(|_| TransportFailure::Request)?;
             let status = response.status().as_u16();
             let etag = header_value(response.headers(), ETAG);
+            let retry_after = header_value(response.headers(), RETRY_AFTER);
             let content_encoding = header_value(response.headers(), CONTENT_ENCODING);
 
             // A non-200 body can never contain configuration. Dropping it here
@@ -90,6 +94,7 @@ impl HyperTransport {
             if status != 200 {
                 return Ok(PollResponse {
                     status,
+                    retry_after,
                     etag,
                     content_encoding,
                     body: Vec::new(),
@@ -109,6 +114,7 @@ impl HyperTransport {
             let body = collect_bounded(response.into_body(), MAX_RESPONSE_BODY_BYTES).await?;
             Ok(PollResponse {
                 status,
+                retry_after,
                 etag,
                 content_encoding,
                 body,
@@ -334,6 +340,34 @@ mod tests {
             Err(TransportFailure::Cancelled)
         ));
         server.abort();
+    }
+
+    #[tokio::test]
+    async fn retry_after_survives_discarding_an_error_body() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint =
+            CdnEndpoint::custom(&format!("http://{}/config", listener.local_addr().unwrap()))
+                .unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0; 4096];
+            assert!(socket.read(&mut request).await.unwrap() > 0);
+            socket.write_all(b"HTTP/1.1 429 Too Many Requests\r\nRetry-After: 10\r\nContent-Length: 100000000\r\n\r\n").await.unwrap();
+        });
+        let response = HyperTransport::new("php".into(), "1.27".into())
+            .get(
+                &endpoint,
+                Duration::from_secs(5),
+                None,
+                &CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status, 429);
+        assert_eq!(response.retry_after.as_deref(), Some("10"));
+        assert!(response.body.is_empty());
+        server.await.unwrap();
     }
 
     #[tokio::test]

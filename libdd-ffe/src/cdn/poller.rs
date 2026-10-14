@@ -10,7 +10,7 @@ use futures_util::FutureExt;
 use std::panic::AssertUnwindSafe;
 use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 use tokio_util::sync::CancellationToken;
 
 const MAX_POLL_ATTEMPTS: usize = 3;
@@ -33,6 +33,20 @@ struct ConfigurationResource<'a> {
 enum ConfigurationResourceType {
     #[serde(rename = "universal-flag-configuration")]
     UniversalFlagConfiguration,
+}
+
+// This is a CDN contract. Legacy Remote Configuration documents continue to
+// use their own parser, which does not require the CDN's format discriminator.
+#[derive(serde::Deserialize)]
+struct ServerConfiguration {
+    #[serde(rename = "format")]
+    _format: ServerFormat,
+}
+
+#[derive(serde::Deserialize)]
+enum ServerFormat {
+    #[serde(rename = "SERVER")]
+    Server,
 }
 
 #[derive(Clone, Copy)]
@@ -87,7 +101,7 @@ fn lock_unpoisoned<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum PollOutcome {
     Success,
-    Retryable,
+    Retryable(Duration),
     Stop,
     Cancelled,
 }
@@ -152,11 +166,15 @@ impl<T: Transport, S: ConfigurationSink> Poller<T, S> {
     async fn poll(&mut self, cancellation: &CancellationToken) -> PollOutcome {
         for attempt in 1..=MAX_POLL_ATTEMPTS {
             let outcome = self.poll_once(cancellation).await;
-            if outcome != PollOutcome::Retryable || attempt == MAX_POLL_ATTEMPTS {
+            let PollOutcome::Retryable(retry_after) = outcome else {
+                return outcome;
+            };
+            if attempt == MAX_POLL_ATTEMPTS {
                 return outcome;
             }
 
-            let delay = (self.retry_delay)(self.poll_interval, attempt, fastrand::f64());
+            let delay =
+                (self.retry_delay)(self.poll_interval, attempt, fastrand::f64()).max(retry_after);
             tokio::select! {
                 _ = cancellation.cancelled() => return PollOutcome::Cancelled,
                 _ = tokio::time::sleep(delay) => {}
@@ -203,7 +221,7 @@ impl<T: Transport, S: ConfigurationSink> Poller<T, S> {
                     WarningCategory::Request,
                     "Feature Flags agentless request failed; keeping the last known configuration",
                 );
-                PollOutcome::Retryable
+                PollOutcome::Retryable(Duration::ZERO)
             }
         }
     }
@@ -225,7 +243,13 @@ impl<T: Transport, S: ConfigurationSink> Poller<T, S> {
                     WarningCategory::RetryableHttp,
                     &format!("Feature Flags agentless endpoint returned retryable HTTP {status}"),
                 );
-                return PollOutcome::Retryable;
+                return PollOutcome::Retryable(
+                    response
+                        .retry_after
+                        .as_deref()
+                        .and_then(|value| retry_after(value, SystemTime::now()))
+                        .unwrap_or_default(),
+                );
             }
             status => {
                 self.warn(
@@ -263,6 +287,7 @@ impl<T: Transport, S: ConfigurationSink> Poller<T, S> {
         // the shared evaluator; malformed resources must not advance the ETag.
         let configuration = match serde_json::from_slice::<ConfigurationResponse<'_>>(&body)
             .and_then(|response| {
+                serde_json::from_str::<ServerConfiguration>(response.data.attributes.get())?;
                 UniversalFlagConfig::from_json(response.data.attributes.get().as_bytes().to_vec())
             }) {
             Ok(configuration) => Configuration::from_server_response(configuration),
@@ -294,6 +319,21 @@ impl<T: Transport, S: ConfigurationSink> Poller<T, S> {
             log::warn!("{message}");
         }
     }
+}
+
+fn retry_after(value: &str, now: SystemTime) -> Option<Duration> {
+    let value = value.trim();
+    let delay = if !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit()) {
+        Duration::from_secs(value.parse().ok()?)
+    } else {
+        httpdate::parse_http_date(value)
+            .ok()?
+            .duration_since(now)
+            .unwrap_or_default()
+    };
+    // Reject delays that cannot be represented by the runtime timer.
+    std::time::Instant::now().checked_add(delay)?;
+    Some(delay)
 }
 
 fn is_retryable_status(status: u16) -> bool {
@@ -422,6 +462,7 @@ mod tests {
     fn response(status: u16, etag: Option<&str>, body: &[u8]) -> PollResponse {
         PollResponse {
             status,
+            retry_after: None,
             etag: etag.map(str::to_owned),
             content_encoding: None,
             body: body.to_vec(),
@@ -515,6 +556,111 @@ mod tests {
             assert_eq!(poller.state.etag().as_deref(), Some("accepted"));
             assert_eq!(poller.sink.applications.load(Ordering::Relaxed), 1);
         }
+    }
+
+    #[test]
+    fn only_server_format_is_published_and_invalid_formats_keep_the_etag() {
+        let mut poller = test_poller(false);
+        assert_eq!(
+            poller.process_response(response(200, Some("accepted"), EMPTY_CONFIG)),
+            PollOutcome::Success
+        );
+        for format in [
+            None,
+            Some(serde_json::json!("CLIENT")),
+            Some(serde_json::json!(7)),
+            Some(serde_json::Value::Null),
+        ] {
+            let mut payload: serde_json::Value = serde_json::from_slice(EMPTY_CONFIG).unwrap();
+            let attributes = payload["data"]["attributes"].as_object_mut().unwrap();
+            attributes.remove("format");
+            if let Some(format) = format {
+                attributes.insert("format".to_owned(), format);
+            }
+            assert_eq!(
+                poller.process_response(response(
+                    200,
+                    Some("rejected"),
+                    &serde_json::to_vec(&payload).unwrap()
+                )),
+                PollOutcome::Stop
+            );
+            assert_eq!(poller.state.etag().as_deref(), Some("accepted"));
+            assert_eq!(poller.sink.applications.load(Ordering::Relaxed), 1);
+        }
+    }
+
+    #[test]
+    fn retry_after_accepts_seconds_and_http_dates_without_overflow() {
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_800_000_000);
+        assert_eq!(retry_after(" 10 ", now), Some(Duration::from_secs(10)));
+        assert_eq!(retry_after("0", now), Some(Duration::ZERO));
+        assert_eq!(
+            retry_after(&httpdate::fmt_http_date(now + Duration::from_secs(12)), now),
+            Some(Duration::from_secs(12))
+        );
+        assert_eq!(
+            retry_after(&httpdate::fmt_http_date(now - Duration::from_secs(12)), now),
+            Some(Duration::ZERO)
+        );
+        for invalid in [
+            "",
+            "-1",
+            "+1",
+            "1.5",
+            "later",
+            "18446744073709551615",
+            "18446744073709551616",
+        ] {
+            assert_eq!(retry_after(invalid, now), None, "{invalid}");
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn server_delay_does_not_reduce_backoff_or_extend_the_attempt_limit() {
+        let responses = ["10", "1", "100"].map(|delay| {
+            let mut response = response(429, None, b"");
+            response.retry_after = Some(delay.to_owned());
+            Ok(response)
+        });
+        let mut poller = retry_test_poller(QueueTransport::new(responses));
+        poller.retry_delay = |_, _, _| Duration::from_secs(5);
+        let started = tokio::time::Instant::now();
+        assert_eq!(
+            poller.poll(&CancellationToken::new()).await,
+            PollOutcome::Retryable(Duration::from_secs(100))
+        );
+        assert_eq!(started.elapsed(), Duration::from_secs(15));
+        assert_eq!(poller.transport.calls.load(Ordering::Relaxed), 3);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn cancellation_interrupts_a_server_requested_wait() {
+        let mut response = response(503, None, b"");
+        response.retry_after = Some("3600".to_owned());
+        let mut poller = retry_test_poller(QueueTransport::new([Ok(response)]));
+        let cancellation = CancellationToken::new();
+        let stop = cancellation.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            stop.cancel();
+        });
+        assert_eq!(poller.poll(&cancellation).await, PollOutcome::Cancelled);
+        assert_eq!(poller.transport.calls.load(Ordering::Relaxed), 1);
+    }
+
+    fn retry_test_poller(transport: QueueTransport) -> Poller<QueueTransport, TestSink> {
+        Poller::new(
+            CdnEndpoint::custom("http://localhost/config").unwrap(),
+            Duration::from_secs(30),
+            Duration::from_secs(5),
+            transport,
+            TestSink {
+                fail: AtomicBool::new(false),
+                applications: AtomicUsize::new(0),
+            },
+            Arc::new(PollState::default()),
+        )
     }
 
     #[test]
