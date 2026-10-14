@@ -1,7 +1,9 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use libdd_common::Endpoint;
 use std::fmt;
+use std::hash::{Hash, Hasher};
 use url::Url;
 
 const DEFAULT_SITE: &str = "datadoghq.com";
@@ -10,13 +12,106 @@ const AGENTLESS_CONFIGURATION_PATH: &str = "/api/v2/feature-flagging/config/rule
 
 /// A validated agentless endpoint. Only managed endpoints can own an API key,
 /// ensuring a custom endpoint cannot accidentally receive the Datadog credential.
-#[derive(Clone, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[serde(try_from = "SerializedEndpoint", into = "SerializedEndpoint")]
 pub struct CdnEndpoint {
+    // Keep construction and Debug private to the CDN boundary: the common
+    // endpoint permits arbitrary credentials and prints its URL in Debug.
+    endpoint: Endpoint,
+}
+
+impl PartialEq for CdnEndpoint {
+    fn eq(&self, other: &Self) -> bool {
+        self.identity() == other.identity()
+    }
+}
+
+impl Eq for CdnEndpoint {}
+
+impl Hash for CdnEndpoint {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.identity().hash(state);
+    }
+}
+
+// Preserve the existing subscription wire format. Request timing remains in
+// CdnConfig; generic endpoint defaults are not independent CDN settings.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct SerializedEndpoint {
     url: String,
     api_key: Option<String>,
 }
 
+impl TryFrom<SerializedEndpoint> for CdnEndpoint {
+    type Error = EndpointError;
+
+    fn try_from(value: SerializedEndpoint) -> Result<Self, Self::Error> {
+        Self::from_parts(&value.url, value.api_key)
+    }
+}
+
+impl From<CdnEndpoint> for SerializedEndpoint {
+    fn from(value: CdnEndpoint) -> Self {
+        Self {
+            url: value.endpoint.url.to_string(),
+            api_key: value.endpoint.api_key.map(|key| key.into_owned()),
+        }
+    }
+}
+
 impl CdnEndpoint {
+    // http::Uri compares the entire authority case-insensitively, including
+    // userinfo. Preserve case-sensitive credentials in subscription identity.
+    fn identity(&self) -> (Option<&str>, Option<&str>, Option<&str>, Option<&str>) {
+        (
+            self.uri().scheme_str(),
+            self.uri().authority().map(|authority| authority.as_str()),
+            self.uri().path_and_query().map(|path| path.as_str()),
+            self.api_key(),
+        )
+    }
+
+    fn from_parts(url: &str, api_key: Option<String>) -> Result<Self, EndpointError> {
+        Ok(Self {
+            endpoint: Endpoint {
+                url: Self::parse_uri(url)?,
+                api_key: api_key.map(Into::into),
+                ..Endpoint::default()
+            },
+        })
+    }
+
+    fn parse_uri(raw: &str) -> Result<http::Uri, EndpointError> {
+        if let Ok(uri) = raw.parse() {
+            return Ok(uri);
+        }
+
+        // URL userinfo may contain characters (such as Unicode or '[') that
+        // http::Uri rejects. The previous transport encoded them with Url
+        // before removing userinfo and constructing the HTTP request.
+        let parsed = Url::parse(raw).map_err(|_| EndpointError::InvalidUrl)?;
+        if parsed.username().is_empty() {
+            return Err(EndpointError::InvalidUrl);
+        }
+        let (_, authority_and_path) = raw.split_once("://").ok_or(EndpointError::InvalidUrl)?;
+        let path_start = authority_and_path
+            .find(['/', '?', '#'])
+            .unwrap_or(authority_and_path.len());
+        let authority = &parsed[url::Position::BeforeUsername..url::Position::AfterPort];
+        let encoded = format!(
+            "{}://{}{}",
+            parsed.scheme(),
+            authority,
+            &authority_and_path[path_start..]
+        );
+        // Keep an already valid path/query byte-for-byte. If it also needs
+        // encoding (for example Unicode), retain the previous Url behavior.
+        encoded
+            .parse()
+            .or_else(|_| parsed.as_str().parse())
+            .map_err(|_| EndpointError::InvalidUrl)
+    }
+
     pub fn build(
         base_url: &str,
         site: &str,
@@ -30,24 +125,25 @@ impl CdnEndpoint {
         }
     }
 
-    pub fn as_str(&self) -> &str {
-        &self.url
+    pub fn uri(&self) -> &http::Uri {
+        &self.endpoint.url
     }
 
     pub fn is_managed(&self) -> bool {
-        self.api_key.is_some()
+        self.endpoint.api_key.is_some()
     }
 
     pub fn api_key(&self) -> Option<&str> {
-        self.api_key.as_deref()
+        self.endpoint.api_key.as_deref()
     }
 
     pub(super) fn is_valid(&self) -> bool {
-        let Ok(url) = Url::parse(&self.url) else {
+        let endpoint_url = self.endpoint.url.to_string();
+        let Ok(url) = Url::parse(&endpoint_url) else {
             return false;
         };
         match self.api_key() {
-            None => Self::custom(&self.url).is_ok(),
+            None => Self::custom(&endpoint_url).is_ok_and(|endpoint| endpoint == *self),
             Some(key) => {
                 let Some(site) = url
                     .host_str()
@@ -88,10 +184,7 @@ impl CdnEndpoint {
             url.query_pairs_mut().append_pair("dd_env", environment);
         }
 
-        Ok(Self {
-            url: url.to_string(),
-            api_key: Some(api_key.to_owned()),
-        })
+        Self::from_parts(url.as_str(), Some(api_key.to_owned()))
     }
 
     pub fn custom(base_url: &str) -> Result<Self, EndpointError> {
@@ -111,12 +204,12 @@ impl CdnEndpoint {
             url.set_path(AGENTLESS_CONFIGURATION_PATH);
             url.to_string()
         } else {
-            // A custom non-root URL is opaque and must be requested exactly as
-            // the operator supplied it, including its query string.
+            // Preserve custom paths and query strings, including their percent
+            // encoding. http::Uri normalizes only the HTTP(S) scheme's case.
             base_url.to_owned()
         };
 
-        Ok(Self { url, api_key: None })
+        Self::from_parts(&url, None)
     }
 }
 
@@ -172,6 +265,68 @@ mod tests {
     use super::*;
 
     #[test]
+    fn url_credentials_are_case_sensitive_subscription_identity() {
+        let endpoints: std::collections::HashSet<_> = [
+            "https://user:Secret@localhost/config",
+            "https://user:secret@localhost/config",
+            "https://User:secret@localhost/config",
+        ]
+        .into_iter()
+        .map(|url| CdnEndpoint::custom(url).unwrap())
+        .collect();
+        assert_eq!(
+            endpoints.len(),
+            3,
+            "different credentials must not share a fetcher"
+        );
+        assert!(
+            endpoints
+                .contains(&CdnEndpoint::custom("https://user:Secret@localhost/config").unwrap())
+        );
+    }
+
+    #[test]
+    fn shared_endpoint_preserves_the_subscription_wire_contract() {
+        // The previous endpoint was serialized as these two fields. Keep
+        // compatibility with callers and sidecars built before this refactor.
+        #[derive(serde::Serialize, serde::Deserialize)]
+        struct PreviousEndpoint {
+            url: String,
+            api_key: Option<String>,
+        }
+
+        for endpoint in [
+            CdnEndpoint::managed("datadoghq.com", "production", "secret-key").unwrap(),
+            CdnEndpoint::custom("https://user:password@[::1]:8443/Config%2fraw?x=a%2Fb&x=c+d")
+                .unwrap(),
+        ] {
+            let previous = PreviousEndpoint {
+                url: endpoint.uri().to_string(),
+                api_key: endpoint.api_key().map(str::to_owned),
+            };
+            let previous_bytes = bincode::serialize(&previous).unwrap();
+            let current_bytes = bincode::serialize(&endpoint).unwrap();
+            assert_eq!(current_bytes, previous_bytes);
+            let decoded: CdnEndpoint = bincode::deserialize(&previous_bytes).unwrap();
+            assert_eq!(decoded, endpoint);
+            assert!(decoded.is_valid());
+            let old_reader: PreviousEndpoint = bincode::deserialize(&current_bytes).unwrap();
+            assert_eq!(old_reader.url, previous.url);
+            assert_eq!(old_reader.api_key, previous.api_key);
+        }
+    }
+
+    #[test]
+    fn invalid_serialized_endpoint_does_not_disclose_credentials() {
+        let wire = serde_json::json!({
+            "url": "https://private-credential@invalid host/config",
+            "api_key": null,
+        });
+        let error = serde_json::from_value::<CdnEndpoint>(wire).unwrap_err();
+        assert!(!error.to_string().contains("private-credential"));
+    }
+
+    #[test]
     fn managed_endpoint_uses_normalized_site_and_encoded_environment() {
         let endpoint = CdnEndpoint::build("", " DATADOGHQ.EU \t", "prod / blue", "key")
             .expect("managed endpoint");
@@ -179,7 +334,7 @@ mod tests {
         assert!(endpoint.is_managed());
         assert_eq!(endpoint.api_key(), Some("key"));
         assert_eq!(
-            endpoint.as_str(),
+            endpoint.uri().to_string(),
             "https://ufc-server.ff-cdn.datadoghq.eu/api/v2/feature-flagging/config/rules-based/server?dd_env=prod+%2F+blue"
         );
     }
@@ -188,7 +343,7 @@ mod tests {
     fn managed_endpoint_omits_an_absent_environment_and_defaults_blank_site() {
         let endpoint = CdnEndpoint::build("", "  ", "", "key").expect("managed endpoint");
         assert_eq!(
-            endpoint.as_str(),
+            endpoint.uri().to_string(),
             "https://ufc-server.ff-cdn.datadoghq.com/api/v2/feature-flagging/config/rules-based/server"
         );
     }
@@ -228,7 +383,7 @@ mod tests {
                 .expect("custom endpoint");
             assert!(!endpoint.is_managed());
             assert_eq!(
-                endpoint.as_str(),
+                endpoint.uri().to_string(),
                 "http://localhost:8080/api/v2/feature-flagging/config/rules-based/server"
             );
         }
@@ -241,7 +396,7 @@ mod tests {
         )
         .expect("custom endpoint");
         assert_eq!(
-            endpoint.as_str(),
+            endpoint.uri().to_string(),
             "https://user:pass@localhost/api/v2/feature-flagging/config/rules-based/server?tenant=a%2Fb"
         );
     }
@@ -256,8 +411,8 @@ mod tests {
         )
         .expect("custom endpoint");
         assert_eq!(
-            endpoint.as_str(),
-            "HTTPS://LOCALHOST/custom/path?tenant=a%2Fb"
+            endpoint.uri().to_string(),
+            "https://LOCALHOST/custom/path?tenant=a%2Fb"
         );
         assert!(!endpoint.is_managed());
         assert_eq!(endpoint.api_key(), None);
