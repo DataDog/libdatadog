@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::data::LiveDebuggingData;
-use libdd_common_ffi::slice::AsBytes;
 use libdd_common_ffi::CharSlice;
+use libdd_common_ffi::slice::AsBytes;
 
 #[repr(C)]
 pub struct LiveDebuggingParseResult {
@@ -13,7 +13,7 @@ pub struct LiveDebuggingParseResult {
 
 /// # Safety
 /// The `json` must be a valid UTF-8 string.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_parse_live_debugger_json(
     json: CharSlice,
 ) -> LiveDebuggingParseResult {
@@ -36,5 +36,5 @@ pub unsafe extern "C" fn ddog_parse_live_debugger_json(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_drop_live_debugger_parse_result(_: LiveDebuggingParseResult) {}

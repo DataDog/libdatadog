@@ -71,8 +71,10 @@ impl Utf8Option {
         self,
         t: T,
     ) -> Result<Cow<'a, str>, Utf8ConversionError> {
-        let bytes = t.try_as_bytes()?;
-        self.convert(bytes)
+        unsafe {
+            let bytes = t.try_as_bytes()?;
+            self.convert(bytes)
+        }
     }
 }
 

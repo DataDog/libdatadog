@@ -27,6 +27,7 @@ pub mod connector;
 pub mod dump_server;
 pub mod entity_id;
 pub mod machine_id;
+pub mod mutable_metadata;
 pub mod regex_engine;
 #[macro_use]
 pub mod cstr;
@@ -42,7 +43,7 @@ pub mod rate_limiter;
 pub mod tag;
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), not(target_os = "aix")))]
 pub mod threading;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod timeout;
@@ -178,7 +179,7 @@ mod sealed {
 
 pub mod header {
     #![allow(clippy::declare_interior_mutable_const)]
-    use http::{header::HeaderName, HeaderValue};
+    use http::{HeaderValue, header::HeaderName};
 
     pub const APPLICATION_MSGPACK_STR: &str = "application/msgpack";
     pub const APPLICATION_PROTOBUF_STR: &str = "application/x-protobuf";

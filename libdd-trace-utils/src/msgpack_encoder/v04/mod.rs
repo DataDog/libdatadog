@@ -1,11 +1,11 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::span::v04::Span;
-use crate::span::v1::TracerPayload;
 use crate::span::TraceData;
+use crate::span::v1::TracerPayload;
+use crate::span::v04::Span;
 use libdd_common::ResultInfallibleExt;
-use rmp::encode::{write_array_len, ByteBuf, RmpWrite, ValueWriteError};
+use rmp::encode::{ByteBuf, RmpWrite, ValueWriteError, write_array_len};
 
 const fn msgpack_string_encoding_len(s: &str) -> usize {
     const U16_MAX: usize = u16::MAX as usize;
@@ -249,7 +249,7 @@ fn encode_payload_from_v1<W: RmpWrite, T: TraceData>(
     writer: &mut W,
     payload: &TracerPayload<T>,
 ) -> Result<(), ValueWriteError<W::Error>> {
-    use span_v1::{encode_span, ChunkContext};
+    use span_v1::{ChunkContext, encode_span};
 
     write_array_len(writer, payload.chunks.len() as u32)?;
     for chunk in &payload.chunks {
@@ -285,7 +285,7 @@ fn encode_payload_from_v1<W: RmpWrite, T: TraceData>(
 /// Used by the trace exporter when the agent has not advertised `/v1.0/traces` via `/info`.
 /// The output is byte-compatible with [`to_vec_from_v04`] for equivalent data — chunk-level fields
 /// are propagated to every span and typed attributes are bucketed into the v0.4 `meta` /
-/// `metrics` / `meta_struct` maps per [`span_v1`]'s mapping table.
+/// `metrics` / `meta_struct` maps per `span_v1`'s mapping table.
 pub fn to_vec_from_v1<T: TraceData>(payload: &TracerPayload<T>) -> Vec<u8> {
     to_vec_with_capacity_from_v1(payload, 0)
 }

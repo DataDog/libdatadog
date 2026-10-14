@@ -143,8 +143,8 @@ pub fn trace_1_span(name: &str, resource: &str, meta: &[(&str, &str)]) -> Vec<se
 }
 
 pub fn span(name: &str, resource: &str, meta: &[(&str, &str)]) -> serde_json::Value {
-    let trace_id: u32 = rand::thread_rng().gen();
-    let span_id: u32 = rand::thread_rng().gen();
+    let trace_id: u32 = rand::thread_rng().r#gen();
+    let span_id: u32 = rand::thread_rng().r#gen();
     let meta: HashMap<&str, &str> = HashMap::from_iter(meta.iter().copied());
 
     json!(

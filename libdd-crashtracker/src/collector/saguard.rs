@@ -214,7 +214,7 @@ mod single_threaded_tests {
                 "Handler should not be called while signal is blocked by BlockOnly guard"
             );
         } // guard drops here; old mask is restored, SIGURG should now be delivered
-          // After unblocking, the signal should be handled
+        // After unblocking, the signal should be handled
         assert!(
             SIGURG_COUNT.load(Ordering::SeqCst),
             "Handler should be called after BlockOnly guard drops and pending signal is delivered"

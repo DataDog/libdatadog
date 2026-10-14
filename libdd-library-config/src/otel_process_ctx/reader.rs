@@ -19,12 +19,12 @@ use core::{
     cell::Cell,
     mem::{offset_of, size_of},
     ptr::{self, NonNull},
-    sync::atomic::{fence, Ordering},
+    sync::atomic::{Ordering, fence},
 };
 use std::io;
 
 use libdd_trace_protobuf::opentelemetry::proto::common::v1::{
-    any_value, AnyValue, KeyValue, ProcessContext,
+    AnyValue, KeyValue, ProcessContext, any_value,
 };
 use prost::Message;
 

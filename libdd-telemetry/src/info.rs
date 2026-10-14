@@ -62,14 +62,16 @@ pub mod os {
     ///   malformed. All in all pretty safe
     #[cfg(unix)]
     pub unsafe fn uname() -> Option<String> {
-        let mut n = std::mem::zeroed();
-        match libc::uname(&mut n) {
-            0 => Some(
-                CStr::from_ptr(n.version.as_ptr())
-                    .to_string_lossy()
-                    .into_owned(),
-            ),
-            _ => None,
+        unsafe {
+            let mut n = std::mem::zeroed();
+            match libc::uname(&mut n) {
+                0 => Some(
+                    CStr::from_ptr(n.version.as_ptr())
+                        .to_string_lossy()
+                        .into_owned(),
+                ),
+                _ => None,
+            }
         }
     }
 }

@@ -3,7 +3,7 @@
 
 use libdd_profiling_protobuf::prost_impls::{Profile, Sample};
 
-fn deserialize_compressed_pprof(encoded: &[u8]) -> anyhow::Result<Profile> {
+pub(crate) fn deserialize_compressed_pprof(encoded: &[u8]) -> anyhow::Result<Profile> {
     use prost::Message;
 
     // The zstd bindings use FFI so they don't work under miri. This means the

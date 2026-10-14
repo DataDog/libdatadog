@@ -1,7 +1,7 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::{Record, StringOffset, Value, WireType, OPT_ZERO};
+use crate::{OPT_ZERO, Record, StringOffset, Value, WireType};
 use std::io::{self, Write};
 
 /// ValueType describes the semantics and measurement units of a value.

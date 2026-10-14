@@ -6,11 +6,11 @@
 use crate::trace_exporter::error::{InternalErrorKind, RequestError, TraceExporterError};
 use libdd_capabilities::{HttpClientCapability, SleepCapability};
 use libdd_data_pipeline_core::{
-    send_agentless_traces_with_observer as send_traces, AgentlessError, AgentlessTraceConfig,
+    AgentlessError, AgentlessTraceConfig, send_agentless_traces_with_observer as send_traces,
 };
 use libdd_trace_utils::send_with_retry::{SendWithRetryError, SendWithRetryResult};
-use libdd_trace_utils::span::span_pool::PooledChunks;
 use libdd_trace_utils::span::TraceData;
+use libdd_trace_utils::span::span_pool::PooledChunks;
 use libdd_trace_utils::tracer_metadata::TracerMetadata;
 use tracing::error;
 

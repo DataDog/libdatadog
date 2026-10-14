@@ -29,6 +29,11 @@ use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{EnvFilter, Layer};
 
 fn create_logfile(path: &PathBuf) -> anyhow::Result<std::fs::File> {
+    // Session configuration can supply this path, so apply worker path restrictions.
+    #[cfg(unix)]
+    if libdd_common::unix_utils::worker_file_outputs_restricted() {
+        return Ok(libdd_common::unix_utils::open_regular_for_append(path)?);
+    }
     let log_file = std::fs::File::options()
         .create(true)
         .truncate(false)
@@ -539,8 +544,8 @@ pub(crate) fn enable_logging() -> anyhow::Result<()> {
     // Set initial log level if provided
     if let Ok(env) = env::var("DD_TRACE_LOG_LEVEL") {
         MULTI_LOG_FILTER.add(env); // this also immediately drops it, but will retain it for
-                                   // few
-                                   // seconds during startup
+        // few
+        // seconds during startup
     }
     if !config.log_level.is_empty() {
         let filter = MULTI_LOG_FILTER.add(config.log_level.clone());
@@ -556,15 +561,16 @@ pub(crate) fn enable_logging() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        enable_logging, is_sidecar_log_path, AppSecLogFormatter, AppSecLogWriter,
-        TemporarilyRetainedKeyParser, TemporarilyRetainedMap, MULTI_LOG_FILTER,
+        AppSecLogFormatter, AppSecLogWriter, MULTI_LOG_FILTER, TemporarilyRetainedKeyParser,
+        TemporarilyRetainedMap, enable_logging, is_sidecar_log_path,
     };
     use crate::log::MultiEnvFilter;
-    use std::sync::atomic::{AtomicI32, Ordering};
+    use std::collections::HashMap;
     use std::sync::LazyLock;
+    use std::sync::atomic::{AtomicI32, Ordering};
     use std::time::Duration;
     use tracing::subscriber::NoSubscriber;
-    use tracing::{debug, error, warn, Level};
+    use tracing::{Level, debug, error, warn};
     use tracing_subscriber::layer::Filter;
 
     static ENABLED: LazyLock<AtomicI32> = LazyLock::new(AtomicI32::default);
@@ -671,24 +677,32 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
+    #[serial_test::serial(log_counter)]
     fn test_logs_created_counter() {
         enable_logging().ok();
 
-        MULTI_LOG_FILTER.add("warn".to_string());
-        debug!("hi");
-        warn!("Bim");
-        warn!("Bam");
-        error!("Boom");
-        let map = MULTI_LOG_FILTER.collect_logs_created_count();
-        assert_eq!(2, map.len());
-        assert_eq!(map[&Level::WARN], 2);
-        assert_eq!(map[&Level::ERROR], 1);
+        let _filter = MULTI_LOG_FILTER.add("warn".to_string());
 
-        debug!("hi");
+        // Start from a known point; anything emitted before now is not ours.
+        let _ = MULTI_LOG_FILTER.collect_logs_created_count();
+
         warn!("Bim");
-        let map = MULTI_LOG_FILTER.collect_logs_created_count();
-        assert_eq!(1, map.len());
-        assert_eq!(map[&Level::WARN], 1);
+        error!("Boom");
+        debug!("hi");
+
+        assert_eq!(
+            MULTI_LOG_FILTER.collect_logs_created_count(),
+            HashMap::from([(Level::WARN, 1), (Level::ERROR, 1)])
+        );
+
+        warn!("Bim");
+        debug!("hi");
+
+        assert_eq!(
+            MULTI_LOG_FILTER.collect_logs_created_count(),
+            HashMap::from([(Level::WARN, 1)])
+        );
+        assert!(MULTI_LOG_FILTER.collect_logs_created_count().is_empty());
     }
 
     #[test]

@@ -1,7 +1,7 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use super::{Record, StringOffset, Value, WireType, OPT_ZERO};
+use super::{OPT_ZERO, Record, StringOffset, Value, WireType};
 use std::io::{self, Write};
 
 /// A label includes additional context for this sample. It can include things

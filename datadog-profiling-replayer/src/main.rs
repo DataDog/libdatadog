@@ -10,7 +10,7 @@
 mod profile_index;
 mod replayer;
 
-use clap::{command, Arg, ArgAction};
+use clap::{Arg, ArgAction, command};
 use prost::Message;
 use std::borrow::Cow;
 use std::io::Cursor;
