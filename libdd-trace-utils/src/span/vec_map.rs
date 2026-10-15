@@ -230,13 +230,6 @@ impl<K, V> VecMap<K, V> {
 }
 
 /// Size of the inline [StackBump] buffer used by [VecMap::dedup].
-///
-/// Sizing: for 32 key references, `hashbrown` allocates a table of up to 64 buckets
-/// (`next_pow2(32 * 8 / 7)`), i.e. `64 * (8 + 1)` bytes of data+ctrl plus one hash group
-/// (a bit less than 600 bytes on 64-bit targets with SSE2), and the keep-bitmap adds one
-/// byte per element (32). ~650 bytes are needed, so 1024 leaves ample head room. Anything
-/// beyond the buffer transparently falls back to the global allocator inside
-/// [StackBump], so an under-sized buffer only costs performance, never correctness.
 const DEDUP_STACK_BYTES: usize = 1024;
 
 impl<K: Eq + Hash, V> VecMap<K, V> {

@@ -8,10 +8,8 @@
 //! of  a buffer living on the caller's stack, avoiding any heap traffic for the common
 //! small-map case.
 //!
-//! Requests the inline buffer can't serve (too big to fit, or an alignment above 16)
-//! transparently fall back to the global (heap) allocator, and such blocks are freed
-//! on deallocation. An under-sized buffer therefore only costs performance, never
-//! correctness.
+//! Requests the inline buffer can't serve transparently fall back to the global (heap) allocator, and such blocks
+//! are freed on deallocation. An under-sized buffer therefore only costs performance, never correctness.
 
 use allocator_api2::alloc::{AllocError, Allocator, Global};
 use core::alloc::Layout;
@@ -19,13 +17,10 @@ use core::cell::{Cell, UnsafeCell};
 use core::mem::MaybeUninit;
 use core::ptr::NonNull;
 
-/// Alignment of the inline buffer. Requests for a higher alignment are served by the
-/// global-allocator fallback, since a pointer bump can only honor alignments up to the
-/// buffer's own alignment. 16 covers every alignment requested in practice by the
-/// collections this allocator backs (`hashbrown` tables of references, `Vec<bool>`).
-const MAX_INLINE_ALIGN: usize = 16;
-
-#[repr(align(16))]
+/// Inline storage. The buffer is minimally 8-aligned so we 
+/// don't loose capacity when allocating pointers for instance.
+/// from an initally non aligned adress.
+#[repr(align(8))]
 struct AlignedStorage<const N: usize>([MaybeUninit<u8>; N]);
 
 /// A bump allocator handing out sub-ranges of an inline `N`-byte buffer.
@@ -42,10 +37,9 @@ struct AlignedStorage<const N: usize>([MaybeUninit<u8>; N]);
 ///   when the [`StackBump`] value goes out of scope. **Destructors of objects stored in handed-out
 ///   memory are not run automatically**, so only store values with no `Drop` side effects (or drop
 ///   them explicitly beforehand).
-/// - Once the inline buffer is exhausted — or when a request asks for an alignment above 16 or more
-///   bytes than remain — allocations transparently fall back to the global (heap) allocator, and
-///   such blocks are freed on deallocation. An under-sized buffer therefore degrades performance,
-///   never correctness.
+/// - Once the inline buffer is exhausted allocations transparently fall back to the global (heap)
+///   allocator, and such blocks are freed on deallocation. An under-sized buffer therefore
+///   degrades performance, never correctness.
 pub(crate) struct StackBump<const N: usize> {
     /// Inline storage. `UnsafeCell` provides the interior mutability required to hand
     /// out mutable raw views of sub-ranges of the buffer through `&self`.
@@ -78,37 +72,30 @@ impl<const N: usize> StackBump<N> {
     }
 
     /// Whether `ptr` points inside the inline buffer, i.e. the block was granted from
-    /// it. Zero-sized blocks are only ever granted strictly inside the buffer: a
-    /// zero-sized request that would land exactly one past the end of the buffer is
-    /// served by the global-allocator fallback instead, so every inline block,
-    /// zero-sized or not, is recognized by this range check.
+    /// it. The check uses the block's extent (`addr + size <= base + N`) rather than its
+    /// start address alone, so zero-sized blocks granted at the boundary address
+    /// `base + N` — one past the end, a valid zero-sized block — are recognized too.
+    /// `layout` must match the one the block was allocated with, as the `Allocator`
+    /// contract guarantees for `deallocate`.
     #[inline]
-    fn is_inline(&self, ptr: NonNull<u8>) -> bool {
+    fn is_inline(&self, ptr: NonNull<u8>, layout: Layout) -> bool {
         let addr = ptr.as_ptr() as usize;
+        let end = addr.wrapping_add(layout.size());
         let base = self.base() as usize;
-        addr >= base && addr < base.wrapping_add(N)
+        addr >= base && end <= base.wrapping_add(N)
     }
 
     /// Bump-allocate `layout` out of the inline buffer, or `None` if it doesn't fit.
     fn allocate_inline(&self, layout: Layout) -> Option<NonNull<[u8]>> {
         let align = layout.align();
-        // A pointer bump can't produce blocks aligned beyond the buffer's own alignment;
-        // such requests are served by the global-allocator fallback in `allocate`.
-        if align > MAX_INLINE_ALIGN {
-            return None;
-        }
 
-        // Round the cursor up to the requested alignment. `align` being a power of two
-        // and a divisor of the buffer alignment, the resulting block is properly aligned;
-        // checked arithmetic rules out overflow.
-        let start = self.cursor.get().checked_add(align - 1)? & !(align - 1);
+        // Pick the next start with the correct alignement for the layout
+        // The Layout type guarantees that align is a power of two, 
+        let base = self.base() as usize;
+        let pad = base.wrapping_add(self.cursor.get()).wrapping_neg() & (align - 1);
+        let start = self.cursor.get().checked_add(pad)?;
         let end = start.checked_add(layout.size())?;
-        // Zero-sized blocks are only handed out strictly inside the buffer: a
-        // zero-sized request at the exhausted cursor would be granted exactly one
-        // past the end of the buffer, an address `is_inline` doesn't recognize. Serve
-        // those from the global allocator so `deallocate` can rely on `is_inline`
-        // alone.
-        if end > N || (layout.size() == 0 && start == N) {
+        if end > N {
             return None;
         }
         self.cursor.set(end);
@@ -116,7 +103,9 @@ impl<const N: usize> StackBump<N> {
         // SAFETY: `start + layout.size() == end <= N`, so the returned pointer and the
         // `layout.size()` bytes behind it are within the `N`-byte buffer owned by
         // `self`, which outlives every block it hands out (deallocation of inline
-        // blocks is a no-op).
+        // blocks is a no-op). `start == N` only happens for zero-sized requests, where
+        // `base + N` is the one-past-the-end address: valid to form and to hand out
+        // for a zero-sized block, and recognized as inline by `is_inline`.
         let ptr = unsafe { NonNull::new_unchecked(self.base().add(start)) };
         Some(NonNull::slice_from_raw_parts(ptr, layout.size()))
     }
@@ -133,8 +122,8 @@ unsafe impl<const N: usize> Allocator for &StackBump<N> {
         match self.allocate_inline(layout) {
             // The buffer can serve the request from inline storage: bump the cursor.
             Some(block) => Ok(block),
-            // Too big to fit, or an alignment a pointer bump can't honor: serve the
-            // request from the heap rather than fail.
+            // Too big to fit in the inline buffer, possibly after alignment padding:
+            // serve the request from the heap rather than fail.
             None => Global.allocate(layout),
         }
     }
@@ -148,7 +137,7 @@ unsafe impl<const N: usize> Allocator for &StackBump<N> {
     /// previous [`Allocator::allocate`] call on this allocator for `layout`.
     #[inline]
     unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
-        if self.is_inline(ptr) {
+        if self.is_inline(ptr, layout) {
             return;
         }
         // SAFETY: `ptr` was granted by `Global::allocate` with this exact layout (it
@@ -186,21 +175,49 @@ mod tests {
     }
 
     #[test]
-    fn alignment_beyond_inline_align_falls_back_to_global() {
+    fn alignment_beyond_storage_align_served_inline() {
         let bump = StackBump::<128>::new();
         let layout = Layout::from_size_align(32, 32).unwrap();
 
         let ptr = <&StackBump<128> as Allocator>::allocate(&&bump, layout).unwrap();
         assert_eq!(ptr.cast::<u8>().as_ptr() as usize % 32, 0);
-        // The block came from the global fallback: nothing was consumed from the
-        // inline buffer.
-        assert_eq!(bump.used_bytes(), 0);
+        // The block is served inline even though 32 exceeds the buffer's own 8-byte
+        // alignment: the bump rounds the absolute address up to the requested
+        // alignment, consuming the block plus any alignment padding.
+        assert!(bump.is_inline(ptr.cast(), layout));
+        assert!(bump.used_bytes() >= 32);
 
-        // Heap blocks must be writable and freed back to the global allocator.
-        // SAFETY: 32 bytes granted by the allocator, written before any other use.
-        unsafe { std::ptr::write_bytes(ptr.cast::<u8>().as_ptr(), 0xAB, 32) };
-        // SAFETY: the block was granted by `Global` with this exact layout.
+        // Inline deallocation is a no-op.
+        // SAFETY: the block was granted by a previous `allocate` call on this
+        // allocator with this exact layout.
         unsafe { <&StackBump<128> as Allocator>::deallocate(&&bump, ptr.cast(), layout) };
+    }
+
+    #[test]
+    fn alignment_padding_causes_fallback() {
+        let bump = StackBump::<64>::new();
+        // Consume an odd number of bytes with single-byte, align-1 requests, so the
+        // cursor is not 8-aligned. The buffer being 8-aligned (`repr(align(8))`), any
+        // subsequent align-32 request is then guaranteed a nonzero pad, whatever the
+        // buffer's runtime address: `pad = -(base + cursor) & 31` is always in
+        // `7..=31`, never 0.
+        for _ in 0..57 {
+            bump.allocate_inline(Layout::from_size_align(1, 1).unwrap())
+                .unwrap();
+        }
+        assert_eq!(bump.used_bytes(), 57);
+
+        // The 7 remaining bytes fit the block on size alone, but the alignment
+        // padding doesn't: the request must be served by the global fallback, without
+        // disturbing the bump cursor.
+        let layout = Layout::from_size_align(7, 32).unwrap();
+        let ptr = <&StackBump<64> as Allocator>::allocate(&&bump, layout).unwrap();
+        assert!(!bump.is_inline(ptr.cast(), layout));
+        assert_eq!(ptr.cast::<u8>().as_ptr() as usize % 32, 0);
+        assert_eq!(bump.used_bytes(), 57);
+        // SAFETY: the block was granted by a previous `allocate` call on this
+        // allocator with this exact layout; it came from `Global`, which frees it.
+        unsafe { <&StackBump<64> as Allocator>::deallocate(&&bump, ptr.cast(), layout) };
     }
 
     #[test]
@@ -251,7 +268,7 @@ mod tests {
     }
 
     #[test]
-    fn zst_at_exhausted_boundary_falls_back_to_global() {
+    fn zst_at_exhausted_boundary_is_served_inline() {
         let bump = StackBump::<64>::new();
         // Exhaust the inline buffer.
         let inline = <&StackBump<64> as Allocator>::allocate(
@@ -262,24 +279,37 @@ mod tests {
         assert_eq!(inline.len(), 64);
         assert_eq!(bump.used_bytes(), 64);
 
-        // A zero-sized request would land exactly one past the end of the buffer, so
-        // it is served by the global fallback: not at `base + N`, and without
-        // disturbing the bump cursor.
-        let zst = <&StackBump<64> as Allocator>::allocate(&&bump, Layout::new::<()>()).unwrap();
+        // A zero-sized request lands exactly one past the end of the buffer. That is a
+        // valid address to hand out for a zero-sized block, so it stays inline, at
+        // `base + N`, without disturbing the bump cursor.
+        let zst_layout = Layout::new::<()>();
+        let zst = <&StackBump<64> as Allocator>::allocate(&&bump, zst_layout).unwrap();
         assert_eq!(zst.len(), 0);
-        assert_ne!(
+        assert_eq!(
             zst.cast::<u8>().as_ptr() as usize,
             bump.base() as usize + 64
         );
         assert_eq!(bump.used_bytes(), 64);
-        // `is_inline` recognizes every inline block, so the boundary ZST is correctly
-        // classified as a global block.
-        assert!(!bump.is_inline(zst.cast()));
+        // `is_inline` recognizes every inline block, including the boundary ZST, so
+        // deallocation no-ops instead of forwarding to the global allocator.
+        assert!(bump.is_inline(zst.cast(), zst_layout));
         // SAFETY: the block was granted by a previous `allocate` call on this
-        // allocator with this exact layout; `Global::deallocate` no-ops zero-sized
-        // layouts.
+        // allocator with this exact layout.
         unsafe {
             <&StackBump<64> as Allocator>::deallocate(&&bump, zst.cast(), Layout::new::<()>())
+        };
+
+        // A subsequent non-zero request can neither reuse the boundary address nor
+        // fit past it: it is served by the global fallback, without disturbing the
+        // bump cursor, and its deallocation routes to `Global` through `is_inline`.
+        let after_layout = Layout::from_size_align(1, 1).unwrap();
+        let after = <&StackBump<64> as Allocator>::allocate(&&bump, after_layout).unwrap();
+        assert!(!bump.is_inline(after.cast(), after_layout));
+        assert_eq!(bump.used_bytes(), 64);
+        // SAFETY: the block was granted by a previous `allocate` call on this
+        // allocator with this exact layout; it came from `Global`, which frees it.
+        unsafe {
+            <&StackBump<64> as Allocator>::deallocate(&&bump, after.cast(), after_layout)
         };
     }
 
