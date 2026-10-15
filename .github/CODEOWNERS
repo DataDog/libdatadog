@@ -40,8 +40,8 @@ datadog-sidecar                      @DataDog/libdatadog-php @DataDog/libdatadog
 datadog-sidecar-ffi                  @DataDog/libdatadog-php @DataDog/libdatadog-apm
 datadog-sidecar-macros               @DataDog/libdatadog-php
 deny.toml                            @DataDog/libdatadog
-docs                                 @DataDog/libdatadog
-examples                             @DataDog/libdatadog
+/docs                                @DataDog/libdatadog
+/examples                            @DataDog/libdatadog
 libdd-agent-client                   @DataDog/apm-common-components-core
 libdd-alloc/                         @DataDog/libdatadog-profiling
 libdd-capabilities*/                 @DataDog/apm-common-components-core
