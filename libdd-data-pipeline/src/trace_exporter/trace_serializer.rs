@@ -90,10 +90,10 @@ impl TraceSerializer {
     /// Serialize the borrowed traces to the msgpack payload for `output_format`.
     //
     // APMSP-2812: this function only ever receives v0.4-shaped `Span<T>` (it's called from
-    // `send_trace_chunks_inner`'s v0.4-input path). When `output_format` negotiates to V1, it
-    // still has to cross-encode those v0.4 spans up to the V1 wire format here — genuine
-    // v1-native input has its own path (`send_trace_chunks_inner_v1`) that serializes straight
-    // from a native `v1::TracerPayload` and never goes through this function.
+    // `process_and_send_trace_chunks`'s v0.4-input path). When `output_format` negotiates to V1,
+    // it still has to cross-encode those v0.4 spans up to the V1 wire format here — genuine
+    // v1-native input has its own path (`process_and_send_trace_chunks_v1`) that serializes
+    // straight from a native `v1::TracerPayload` and never goes through this function.
     fn serialize_payload<T: TraceData>(
         &self,
         traces: &[Vec<Span<T>>],
