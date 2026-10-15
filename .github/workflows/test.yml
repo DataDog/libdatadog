@@ -446,9 +446,6 @@ jobs:
   no-certs-exporter:
     name: "exporter_e2e tests (no CA certificates)"
     runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-      contents: read
     concurrency:
       group: ci-${{ github.ref == 'refs/heads/main' && github.run_id || github.ref }}-no-certs-exporter
       cancel-in-progress: true
@@ -457,9 +454,19 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
         with:
           submodules: recursive
-      - name: sccache
-        id: sccache
-        uses: ./.github/actions/setup-sccache
+      - name: Cache [rust]
+        # S3 client builds a reqwest client that requires a system CA store and
+        # panics when the purged store is empty, so it cannot run inside the
+        # certificate-less container. Mounting certs or setting SSL_CERT_FILE
+        # would defeat the test's premise.
+        id: rust-cache
+        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
+        with:
+          cache-targets: true
+          cache-bin: true
+          shared-key: default
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: echo "rust-cache ${{ steps.rust-cache.outputs.cache-hit == 'true' && 'HIT' || 'MISS' }}"
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # 3.10.0
       - name: Pre-fetch dependencies (requires network/certs on the runner)
@@ -478,40 +485,18 @@ jobs:
         # The container has no CA certificates, reproducing minimal environments like
         # bare ubuntu:20.04. Regression test for 9a61cae82 which unconditionally loaded
         # the system cert store even for plain HTTP/unix endpoints.
-        shell: bash
-        run: |
-          # sccache runs inside the container like in cross-centos7: mount the
-          # tool-cache binary and forward the AWS session. sccache's rustls
-          # carries its own CA roots, so it can still TLS to S3 from the
-          # certificate-less image.
-          SCCACHE_ARGS=()
-          if [[ -n "${SCCACHE_PATH:-}" ]]; then
-            SCCACHE_ARGS+=(
-              -v "${SCCACHE_PATH}:/usr/local/bin/sccache:ro"
-              -e RUSTC_WRAPPER=sccache
-              -e SCCACHE_BUCKET=dd-ci-artefacts-build-stable
-              -e SCCACHE_REGION=us-east-1
-              -e SCCACHE_S3_KEY_PREFIX=libddprof-build/sccache
-              -e SCCACHE_S3_RW_MODE
-              -e SCCACHE_BASEDIRS=/workspace:/usr/local/cargo
-              -e AWS_ACCESS_KEY_ID
-              -e AWS_SECRET_ACCESS_KEY
-              -e AWS_SESSION_TOKEN
-              -e AWS_REGION
-            )
-          fi
-          docker run --rm \
-            --user "$(id -u):$(id -g)" \
-            -v "${{ github.workspace }}:/workspace" \
-            -v "${CARGO_HOME:-$HOME/.cargo}:/usr/local/cargo" \
-            -v "${RUSTUP_HOME:-$HOME/.rustup}:/usr/local/rustup" \
-            -e CARGO_HOME=/usr/local/cargo \
-            -e RUSTUP_HOME=/usr/local/rustup \
-            -e PATH=/usr/local/cargo/bin:/usr/local/rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-            -w /workspace \
-            "${SCCACHE_ARGS[@]}" \
-            libdatadog-no-certs \
-            sh -c "cargo test -p libdd-profiling --test exporter_e2e && if command -v sccache >/dev/null 2>&1; then sccache --show-stats; fi"
+        run: >-
+          docker run --rm
+          --user "$(id -u):$(id -g)"
+          -v "${{ github.workspace }}:/workspace"
+          -v "${CARGO_HOME:-$HOME/.cargo}:/usr/local/cargo"
+          -v "${RUSTUP_HOME:-$HOME/.rustup}:/usr/local/rustup"
+          -e CARGO_HOME=/usr/local/cargo
+          -e RUSTUP_HOME=/usr/local/rustup
+          -e PATH=/usr/local/cargo/bin:/usr/local/rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+          -w /workspace
+          libdatadog-no-certs
+          cargo test -p libdd-profiling --test exporter_e2e
 
   wasm:
     name: "WASM checks and tests"
