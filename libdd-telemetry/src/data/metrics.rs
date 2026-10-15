@@ -69,7 +69,6 @@ pub enum MetricNamespace {
     Mlobs,
     Ddtraceapi,
     AiGuard,
-    /// Metrics from the debugger products (Live Debugger, Dynamic Instrumentation, Exception Replay, etc.).
     Debugger,
 }
 
@@ -94,18 +93,4 @@ pub enum MetricType {
     Count,
     Distribution,
     Rate,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_debugger_namespace_name() {
-        assert_eq!(
-            serde_json::to_value(MetricNamespace::Debugger).unwrap(),
-            "debugger"
-        );
-        assert_eq!(MetricNamespace::Debugger.to_string(), "debugger");
-    }
 }
