@@ -73,7 +73,7 @@ license-tool.toml                    @DataDog/libdatadog
 local-linux.Dockerfile               @DataDog/libdatadog
 NOTICE                               @DataDog/libdatadog
 nightly-toolchain.toml               @DataDog/libdatadog
-README.md                            @DataDog/libdatadog
+/README.md                           @DataDog/libdatadog
 repository.datadog.yml               @DataDog/apm-common-components-core
 rust-toolchain.toml                  @DataDog/libdatadog
 rustfmt.toml                         @DataDog/libdatadog-core
