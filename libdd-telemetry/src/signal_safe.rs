@@ -10,6 +10,9 @@
 //! buffer. Async-signal-safety also depends on the transport, resolver,
 //! executor, and buffers supplied by the caller.
 
+#[cfg(feature = "signal-safe")]
+mod headers;
+
 use serde::{Serialize, Serializer};
 
 pub use libdd_common::tag::{TagRef, TagValidationError};
@@ -137,6 +140,14 @@ pub enum Error {
     #[cfg(feature = "signal-safe")]
     #[error("more than {MAX_EXTRA_HEADERS} extra headers")]
     TooManyHeaders,
+    /// An HTTP header name is empty or contains a character outside the token grammar.
+    #[cfg(feature = "signal-safe")]
+    #[error("invalid HTTP header name")]
+    InvalidHeaderName,
+    /// An HTTP header value contains a forbidden control character.
+    #[cfg(feature = "signal-safe")]
+    #[error("invalid HTTP header value")]
+    InvalidHeaderValue,
 }
 
 impl From<serde_json_core::ser::Error> for Error {
@@ -183,6 +194,7 @@ const FIXED_HEADERS: usize = 5;
 /// `extra_headers` are sent after the telemetry protocol headers, for example
 /// `DD-API-KEY` when submitting directly to the intake. At most
 /// [`MAX_EXTRA_HEADERS`] are accepted.
+/// Header names and values are validated before writing to the transport.
 ///
 /// The response buffer only needs to hold the HTTP response headers. A status
 /// in the `200..=299` range is considered successful.
@@ -201,7 +213,6 @@ pub async fn send_metrics<C>(
 where
     C: Read + Write,
 {
-    let body_len = encode_metrics(request, body_buffer)?;
     let application = request.application;
     // reqwless accepts a single header slice, so merge the protocol headers
     // and `extra_headers` on the stack.
@@ -228,9 +239,13 @@ where
         .ok_or(Error::TooManyHeaders)?
         .copy_from_slice(extra_headers);
 
+    let headers = &headers[..FIXED_HEADERS + extra_headers.len()];
+    headers::validate(headers)?;
+    let body_len = encode_metrics(request, body_buffer)?;
+
     let response = resource
         .request(Method::POST, path)
-        .headers(&headers[..FIXED_HEADERS + extra_headers.len()])
+        .headers(headers)
         .content_type(ContentType::ApplicationJson)
         .body(&body_buffer[..body_len])
         .send(response_buffer)
