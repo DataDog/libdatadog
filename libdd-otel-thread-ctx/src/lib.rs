@@ -16,13 +16,23 @@
 //! `SharedThreadContext`, an `Arc`-backed immutable record that can be cloned and attached on
 //! several threads. They can't coexist because the TLS slot is untyped. If both features are
 //! enabled, `owned-context` wins and the build script emits a warning.
+// The `linux` module only exists on Linux, so the links are only emitted there.
 #![cfg_attr(
-    feature = "owned-context",
+    all(feature = "owned-context", target_os = "linux"),
     doc = "The active mode is `owned-context`. See [`linux::OwnedThreadContext`]."
 )]
 #![cfg_attr(
-    not(feature = "owned-context"),
+    all(feature = "owned-context", not(target_os = "linux")),
+    doc = "The active mode is `owned-context`. See `linux::OwnedThreadContext`."
+)]
+#![cfg_attr(
+    all(not(feature = "owned-context"), target_os = "linux"),
     doc = "The active mode is `shared-context`. See [`linux::SharedThreadContext`], which also \
+           explains why the two modes can't be mixed."
+)]
+#![cfg_attr(
+    all(not(feature = "owned-context"), not(target_os = "linux")),
+    doc = "The active mode is `shared-context`. See `linux::SharedThreadContext`, which also \
            explains why the two modes can't be mixed."
 )]
 //!

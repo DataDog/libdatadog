@@ -23,7 +23,7 @@
 //! ## Untrusted contents
 //! Every byte of the segment is writable by every process that holds it, workers included, so
 //! nothing read out of it may authorise an access. The dimensions are validated once against
-//! the length actually mapped and then kept privately ([`Layout`]); string references are
+//! the length actually mapped and then kept privately; string references are
 //! checked against their own pool and copied out under a per-bucket budget; mutable fields are
 //! integer atomics that get decoded rather than loaded as Rust types. A peer can corrupt its
 //! own telemetry - that much is inherent in a buffer everyone may write - but it cannot make
@@ -52,6 +52,8 @@
 //! 3. Holds onto the old concentrator for ≥ 1 s, flushing it periodically, to absorb any spans that
 //!    arrived before workers noticed the reload flag.
 //! 4. Drops the old concentrator after that grace period.
+
+// The validated dimensions mentioned under "Untrusted contents" are kept in `Layout`.
 
 use arc_swap::ArcSwapOption;
 use std::ffi::{CStr, CString};

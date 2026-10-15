@@ -148,16 +148,16 @@ pub fn encode_traces<T: TraceData>(
 /// writing them to `out`. Same framing, packing, and oversized-span dropping behavior as
 /// [`encode_traces`] — see its docs — but takes v1
 /// [`TracerPayload`]/[`crate::span::v1::Span`] input and downgrades each span's unified
-/// attribute model back to the `meta`/`metrics`-shaped wire span via
-/// [`span_v1::LogSpanV1`], since the JSON log wire contract (consumed by the Datadog
-/// Forwarder Lambda) is unchanged by the v1 migration. Payload-level `env`/`app_version`/
-/// `attributes` are propagated into every span (lowest precedence, below chunk and span
-/// level) — same convention as the msgpack v0.4 downgrade encoder's
+/// attribute model back to the `meta`/`metrics`-shaped wire span, since the JSON log wire contract
+/// (consumed by the Datadog Forwarder Lambda) is unchanged by the v1 migration. Payload-level
+/// `env`/`app_version`/`attributes` are propagated into every span (lowest precedence, below chunk
+/// and span level) — same convention as the msgpack v0.4 downgrade encoder's
 /// `encode_payload_from_v1`.
 ///
 /// # Errors
 ///
 /// Returns any [`std::io::Error`] produced while writing to `out`.
+// The per-span downgrade is done by `span_v1::LogSpanV1`.
 pub fn encode_traces_v1<T: TraceData>(
     payload: &TracerPayload<T>,
     out: &mut impl Write,
