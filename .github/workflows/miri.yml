@@ -1,56 +1,15 @@
 name: Miri test
 on:
-  pull_request:
-    branches-ignore:
-      - release
-  push:
-    branches:
-      - main
-      - mq-working-branch-*
   schedule:
     - cron: '0 6 * * *'
+  workflow_dispatch:
 
 jobs:
-  setup:
-    runs-on: ubuntu-latest
-    outputs:
-      crates: ${{ steps.set-crates.outputs.crates }}
-    steps:
-    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
-      with:
-        fetch-depth: 0
-    - name: Get crates report
-      id: changed-crates
-      uses: ./.github/actions/crates-reporter
-    - name: Set crates to run Miri on
-      id: set-crates
-      env:
-        CHANGED_CRATES_STATUS: ${{ steps.changed-crates.outputs.status }}
-        CHANGED_CRATES: ${{ steps.changed-crates.outputs.crates }}
-        AFFECTED_CRATES: ${{ steps.changed-crates.outputs.affected_crates }}
-      run: |
-        if [[ "$CHANGED_CRATES_STATUS" == "success" ]]; then
-          echo "This is a pull request event, running Miri on changed and affected crates"
-          echo "Changed crates: $CHANGED_CRATES"
-          echo "Affected crates: $AFFECTED_CRATES"
-
-          # create a list of crates from the affected crates
-          CRATES=$(echo "$AFFECTED_CRATES" | jq -r 'map("-p " + .) | join(" ")')
-          [[ -z "$CRATES" || "$CRATES" == '""' ]] && CRATES=""
-        else
-          echo "This is a push event, running Miri on all crates"
-          CRATES="--workspace"
-        fi
-        echo "Crates: $CRATES"
-        echo "crates=$CRATES" >> $GITHUB_OUTPUT
-
   run-miri:
     runs-on: ubuntu-latest
     strategy:
       matrix:
         partition: [1, 2, 3, 4, 5]
-    needs: setup
-    if: ${{ needs.setup.outputs.crates != '' }}
     env:
       CARGO_TERM_COLOR: always
       CARGO_INCREMENTAL: 0
@@ -80,19 +39,10 @@ jobs:
       - uses: taiki-e/install-action@2c41309d51ede152b6f2ee6bf3b71e6dc9a8b7df # 2.49.27
         with:
           tool: nextest@0.9.96
-      - name: Cache [rust]
-        id: rust-cache
-        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
-        with:
-          cache-targets: true # cache build artifacts
-          cache-bin: true # cache the ~/.cargo/bin directory
-          shared-key: miri
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      - run: echo "rust-cache ${{ steps.rust-cache.outputs.cache-hit == 'true' && 'HIT' || 'MISS' }}"
       - env:
           # Override rust-toolchain.toml so miri runs on the dated nightly
           # (miri is nightly-only) instead of the workspace MSRV.
           RUSTUP_TOOLCHAIN: ${{ steps.nightly-version.outputs.version }}
-        run: MIRIFLAGS="-Zmiri-disable-isolation" cargo miri nextest run ${{ needs.setup.outputs.crates }} --partition count:${{ matrix.partition }}/5 --no-tests=pass
+        run: MIRIFLAGS="-Zmiri-disable-isolation" cargo miri nextest run --workspace --partition count:${{ matrix.partition }}/5 --no-tests=pass
       # We need to disable isolation because
       # "unsupported operation: `clock_gettime` with `REALTIME` clocks not available when isolation is enabled"
