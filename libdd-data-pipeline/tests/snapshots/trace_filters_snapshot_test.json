@@ -9,6 +9,7 @@
       "start": 0,
       "duration": 5,
       "meta": {
+        "_dd.sdk.otlp_export": "false",
         "my_require_tag": "true"
       },
       "metrics": {
@@ -26,6 +27,7 @@
       "start": 0,
       "duration": 5,
       "meta": {
+        "_dd.sdk.otlp_export": "false",
         "my_require_tag": "true"
       },
       "metrics": {

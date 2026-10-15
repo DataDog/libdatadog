@@ -58,6 +58,8 @@ impl std::error::Error for SendWithRetryError {}
 
 /// Send the `payload` with a POST request to `target` using the provided `retry_strategy` if the
 /// request fails.
+/// HTTP 4xx/5xx responses are retried; other non-2xx responses are terminal
+/// errors. Redirects are not followed by this helper.
 ///
 /// Standard endpoint headers (user-agent, api-key, test-token, entity headers) are set
 /// automatically via [`Endpoint::set_standard_headers`]. Additional `headers` are appended to the
@@ -215,13 +217,20 @@ pub async fn send_with_retry_and_size<C: HttpClientCapability + SleepCapability>
                         );
                         break Err(SendWithRetryError::Http(response, request_attempt));
                     }
-                } else {
+                } else if status.is_success() {
                     debug!(
                         status = status.as_u16(),
                         attempts = request_attempt,
                         "Request succeeded"
                     );
                     break Ok((response, request_attempt));
+                } else {
+                    error!(
+                        status = status.as_u16(),
+                        attempts = request_attempt,
+                        "Received non-success HTTP status, not retrying"
+                    );
+                    break Err(SendWithRetryError::Http(response, request_attempt));
                 }
             }
             Ok(Err(e)) => {
@@ -294,6 +303,54 @@ mod tests {
     use httpmock::MockServer;
     use libdd_capabilities::HttpClientCapability;
     use libdd_capabilities_impl::NativeCapabilities;
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn redirects_are_terminal_errors() {
+        let server = MockServer::start_async().await;
+        let redirect_target = server.mock(|when, then| {
+            when.path("/redirect-target");
+            then.status(200);
+        });
+
+        for status in [301, 302, 303, 304, 307, 308] {
+            let body = if status == 304 {
+                ""
+            } else {
+                "redirect response"
+            };
+            let mut response = server.mock(|when, then| {
+                when.method(httpmock::Method::POST).path("/traces");
+                then.status(status)
+                    .header("Location", server.url("/redirect-target"))
+                    .body(body);
+            });
+            let endpoint = Endpoint::from_slice(&server.url("/traces"));
+            let strategy = RetryStrategy::new(3, 10, RetryBackoffType::Constant, None);
+            let (result, size) = send_with_retry_and_size(
+                &NativeCapabilities::new_client(),
+                &endpoint,
+                vec![1, 2, 3],
+                &HeaderMap::new(),
+                &strategy,
+                CompressionStrategy::None,
+            )
+            .await;
+
+            match result {
+                Err(SendWithRetryError::Http(response, attempts)) => {
+                    assert_eq!(response.status().as_u16(), status);
+                    assert_eq!(response.body().as_ref(), body.as_bytes());
+                    assert_eq!(attempts, 1);
+                }
+                other => panic!("expected terminal HTTP {status} error, got {other:?}"),
+            }
+            assert_eq!(size, 3);
+            response.assert_calls(1);
+            redirect_target.assert_calls(0);
+            response.delete();
+        }
+    }
 
     #[cfg_attr(miri, ignore)]
     #[tokio::test]

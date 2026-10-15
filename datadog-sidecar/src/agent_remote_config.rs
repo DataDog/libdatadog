@@ -10,12 +10,8 @@ use std::io;
 use tracing::{trace, warn};
 use zwohash::ZwoHasher;
 
-pub struct AgentRemoteConfigEndpoint(Endpoint);
-
 pub struct AgentRemoteConfigWriter<T: FileBackedHandle>(OneWayShmWriter<T>);
-pub struct AgentRemoteConfigReader<T: FileBackedHandle>(
-    OneWayShmReader<T, Option<AgentRemoteConfigEndpoint>>,
-);
+pub struct AgentRemoteConfigReader<T: FileBackedHandle>(OneWayShmReader<T, Option<Endpoint>>);
 
 fn path_for_endpoint(endpoint: &Endpoint) -> CString {
     // We need a stable hash so that the outcome is independent of the process
@@ -59,12 +55,8 @@ fn try_open_shm(endpoint: &Endpoint) -> Option<MappedMem<NamedShmHandle>> {
 pub fn new_reader(endpoint: &Endpoint) -> AgentRemoteConfigReader<NamedShmHandle> {
     AgentRemoteConfigReader(OneWayShmReader::new_with_opener(
         try_open_shm(endpoint),
-        Some(AgentRemoteConfigEndpoint(endpoint.clone())),
-        |extra| {
-            extra
-                .as_ref()
-                .and_then(|endpoint| try_open_shm(&endpoint.0))
-        },
+        Some(endpoint.clone()),
+        |extra| extra.as_ref().and_then(try_open_shm),
     ))
 }
 
@@ -84,6 +76,14 @@ pub fn new_writer(endpoint: &Endpoint) -> io::Result<AgentRemoteConfigWriter<Nam
 impl<T: FileBackedHandle> AgentRemoteConfigReader<T> {
     pub fn read(&mut self) -> (bool, &[u8]) {
         self.0.read()
+    }
+}
+
+impl AgentRemoteConfigReader<NamedShmHandle> {
+    pub fn reconnect(&self) {
+        if let Some(endpoint) = &self.0.extra {
+            self.0.reconnect(&path_for_endpoint(endpoint));
+        }
     }
 }
 

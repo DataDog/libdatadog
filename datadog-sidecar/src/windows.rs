@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::enter_listener_loop;
+use libdd_ipc::platform::ProcessIdentityGuard;
 use libdd_ipc::{AsyncConn, SeqpacketListener};
 
 use futures::FutureExt;
@@ -21,13 +22,11 @@ use std::time::Instant;
 use tokio::select;
 use tracing::{error, info};
 use windows_sys::Win32::{
-    Foundation::{CloseHandle, ERROR_INSUFFICIENT_BUFFER, HANDLE, LocalFree},
+    Foundation::{ERROR_INSUFFICIENT_BUFFER, HANDLE, LocalFree},
     Security::{
         Authorization::ConvertSidToStringSidA, GetSidSubAuthority, GetSidSubAuthorityCount,
-        GetTokenInformation, TOKEN_MANDATORY_LABEL, TOKEN_QUERY, TOKEN_USER, TokenIntegrityLevel,
-        TokenUser,
+        GetTokenInformation, TOKEN_MANDATORY_LABEL, TOKEN_USER, TokenIntegrityLevel, TokenUser,
     },
-    System::Threading::{GetCurrentProcess, OpenProcessToken},
 };
 
 pub mod remote_config_notification;
@@ -118,6 +117,8 @@ pub fn setup_daemon_process(
 }
 
 pub fn ddog_setup_crashtracking(endpoint: Option<&Endpoint>, metadata: Metadata) -> bool {
+    // The trampoline and its registration must belong to the process identity.
+    let _identity = ProcessIdentityGuard::enter();
     // Ensure unique process names - we spawn one sidecar per console session id (see
     // setup/windows.rs for the reasoning)
     match write_crashtracking_trampoline(&format!(
@@ -145,22 +146,15 @@ pub fn ddog_setup_crashtracking(endpoint: Option<&Endpoint>, metadata: Metadata)
 
 static SIDECAR_IDENTIFIER: LazyLock<String> = LazyLock::new(fetch_sidecar_identifier);
 
+/// `GetCurrentProcessToken()`: an inline pseudo-handle from processthreadsapi.h (Windows 8+),
+/// not exported and thus not in windows-sys. It must never be closed.
+const CURRENT_PROCESS_TOKEN: HANDLE = -4;
+
 fn fetch_sidecar_identifier() -> String {
     unsafe {
-        let mut access_token = 0;
-
-        // Note that we do intentionally not use the thread token:
-        // IIS impersonates request users at the thread level (e.g. IUSR for Anonymous
-        // Authentication, or a "Connect As" user), but the sidecar is a child process that
-        // inherits the process identity (AppPool). Using the thread token would produce a
-        // different SID than the sidecar, so the client would look for a pipe that doesn't exist.
-        if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut access_token) == 0 {
-            error!(
-                "Failed fetching process token: {:?}",
-                Error::last_os_error()
-            );
-            return "".to_string();
-        }
+        // Unlike OpenProcessToken, not access-checked against an impersonating thread.
+        // Never the thread token: the sidecar inherits the process identity.
+        let access_token = CURRENT_PROCESS_TOKEN;
 
         let mut info_buffer_size = 0;
         if GetTokenInformation(
@@ -174,7 +168,6 @@ fn fetch_sidecar_identifier() -> String {
             let err = Error::last_os_error();
             if err.raw_os_error() != Some(ERROR_INSUFFICIENT_BUFFER as i32) {
                 error!("Failed fetching process token: {:?}", err);
-                CloseHandle(access_token);
                 return "".to_string();
             }
         }
@@ -193,7 +186,6 @@ fn fetch_sidecar_identifier() -> String {
                 "Failed fetching process token: {:?}",
                 Error::last_os_error()
             );
-            CloseHandle(access_token);
             return "".to_string();
         }
 
@@ -202,7 +194,6 @@ fn fetch_sidecar_identifier() -> String {
 
         if success == 0 {
             error!("Failed stringifying SID: {:?}", Error::last_os_error());
-            CloseHandle(access_token);
             return "".to_string();
         }
 
@@ -215,7 +206,6 @@ fn fetch_sidecar_identifier() -> String {
         // Without this, a non-elevated PHP process would try to connect to a sidecar spawned by
         // an elevated PHP process and fail with access denied.
         let integrity_level = fetch_integrity_level(access_token).unwrap_or(0);
-        CloseHandle(access_token);
 
         format!("{}-{:x}", user_sid, integrity_level)
     }
@@ -258,4 +248,28 @@ pub fn shm_namespace() -> &'static str {
 #[test]
 fn test_fetch_identifier() {
     assert!(primary_sidecar_identifier().starts_with("S-"));
+}
+
+#[test]
+fn test_fetch_identifier_while_impersonating() {
+    use windows_sys::Win32::Security::{ImpersonateAnonymousToken, RevertToSelf};
+    use windows_sys::Win32::System::Threading::GetCurrentThread;
+
+    struct Anonymous;
+    impl Drop for Anonymous {
+        fn drop(&mut self) {
+            unsafe { RevertToSelf() };
+        }
+    }
+
+    // Not impersonating, every token API yields the process identity, which the daemon inherits.
+    let process_identifier = fetch_sidecar_identifier();
+    assert!(process_identifier.starts_with("S-"));
+
+    assert_ne!(unsafe { ImpersonateAnonymousToken(GetCurrentThread()) }, 0);
+    let _anonymous = Anonymous;
+    // The thread token would give ANONYMOUS LOGON (S-1-5-7), and OpenProcessToken is denied.
+    let identifier = fetch_sidecar_identifier();
+    assert!(!identifier.starts_with("S-1-5-7-"), "{identifier}");
+    assert_eq!(identifier, process_identifier);
 }

@@ -1,7 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::AtomicOption;
+use crate::AtomicOptionBox;
 use crate::handles::{HandlesTransport, TransferHandles};
 use crate::platform::{OwnedFileHandle, PlatformHandle, mmap_handle, munmap_handle};
 #[cfg(feature = "tiny-bytes")]
@@ -46,7 +46,7 @@ where
 pub(crate) struct ShmPath {
     pub(crate) name: CString,
     #[cfg(unix)]
-    pub(crate) ownership: crate::platform::NameOwnership,
+    pub(crate) ownership: Option<crate::platform::NameOwnership>,
     /// Kept open by readers and owner alike; see `ShmIndex`.
     #[cfg(windows)]
     pub(crate) index: crate::platform::ShmIndex,
@@ -58,13 +58,15 @@ pub(crate) struct ShmPath {
 #[cfg(unix)]
 impl Drop for ShmPath {
     fn drop(&mut self) {
-        self.ownership.release(&self.name);
+        if let Some(ownership) = &self.ownership {
+            ownership.release(&self.name);
+        }
     }
 }
 
 pub struct NamedShmHandle {
     /// Drop before `inner` so the open descriptor prevents identity reuse during unlink.
-    pub(crate) path: AtomicOption<Box<ShmPath>>,
+    pub(crate) path: AtomicOptionBox<ShmPath>,
     pub(crate) inner: ShmHandle,
 }
 
@@ -73,7 +75,7 @@ impl NamedShmHandle {
     /// Must not be called concurrently with `unlink()`.
     pub unsafe fn get_path(&self) -> &[u8] {
         unsafe {
-            match self.path.as_option() {
+            match self.path.as_ref() {
                 Some(shm_path) => shm_path.name.to_bytes(),
                 None => b"",
             }
@@ -287,6 +289,52 @@ mod tests {
     use crate::platform::{FileBackedHandle, NamedShmHandle, ShmHandle};
     use std::ffi::CString;
     use std::io::Write;
+
+    #[test]
+    #[cfg(unix)]
+    #[cfg_attr(miri, ignore)]
+    fn detaching_after_fork_preserves_the_parent_mapping() {
+        use crate::platform::lock_shm;
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        let size = 2 * page_size::get();
+        let mapped = ShmHandle::new(size).unwrap().map().unwrap();
+        let base = mapped.as_slice().as_ptr();
+        let reserved = mapped.mapped_len;
+        let first = unsafe { &*base.cast::<AtomicU64>() };
+        let last = unsafe { &*base.add(size - size_of::<AtomicU64>()).cast::<AtomicU64>() };
+        first.store(11, Ordering::Relaxed);
+        last.store(22, Ordering::Relaxed);
+
+        // Inherit a held lock too: detachment in the child must reclaim it.
+        let _guard = lock_shm();
+        // SAFETY: the child only detaches its mapping, writes atomics, and calls _exit.
+        match unsafe { libc::fork() } {
+            -1 => panic!("fork failed"),
+            0 => {
+                let _guard = lock_shm();
+                let mut ok = mapped.make_private().is_ok();
+                if ok {
+                    ok = mapped.as_slice().as_ptr() == base
+                        && mapped.mapped_len == reserved
+                        && mapped.get_size() == size
+                        && first.load(Ordering::Relaxed) == 11
+                        && last.load(Ordering::Relaxed) == 22;
+                    first.store(u64::MAX, Ordering::Relaxed);
+                    last.store(u64::MAX, Ordering::Relaxed);
+                }
+                unsafe { libc::_exit(if ok { 0 } else { 1 }) }
+            }
+            pid => {
+                let mut status = 0;
+                assert_eq!(unsafe { libc::waitpid(pid, &mut status, 0) }, pid);
+                assert!(libc::WIFEXITED(status));
+                assert_eq!(libc::WEXITSTATUS(status), 0);
+                assert_eq!(first.load(Ordering::Relaxed), 11);
+                assert_eq!(last.load(Ordering::Relaxed), 22);
+            }
+        }
+    }
 
     #[test]
     #[cfg_attr(miri, ignore)]

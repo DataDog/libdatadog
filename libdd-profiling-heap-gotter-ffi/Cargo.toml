@@ -27,7 +27,7 @@ build_common = { path = "../build-common" }
 [dependencies]
 anyhow = { workspace = true, default-features = true }
 function_name.workspace = true
-libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
+libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false, features = ["std"] }
 # libdd-profiling-heap-gotter exposes the same public surface on every target
 # (no-ops on non-Linux), so this dependency is unconditional and the
 # FFI layer is portable too.
