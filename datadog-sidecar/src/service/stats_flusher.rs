@@ -67,6 +67,9 @@ pub(crate) struct StatsConfig {
 }
 
 /// Map key for the per-(env, version, root-service) concentrator map.
+///
+/// Unlike the `DsmTableKey` of the DSM tables, this names no product: span stats were the first
+/// table kept in shared memory, and their key and SHM path predate there being another one.
 #[derive(Clone, Debug, Hash, Eq, PartialEq)]
 pub struct ConcentratorKey {
     pub env: String,

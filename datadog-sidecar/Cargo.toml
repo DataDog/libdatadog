@@ -37,7 +37,9 @@ libdd-crashtracker = { path = "../libdd-crashtracker" }
 libdd-dogstatsd-client = { path = "../libdd-dogstatsd-client" }
 libdd-tinybytes = { path = "../libdd-tinybytes" }
 
+flate2.workspace = true
 futures.workspace = true
+rmp-serde.workspace = true
 manual_future.workspace = true
 http = { workspace = true, features = ["std"] }
 
@@ -90,6 +92,7 @@ windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Securit
 
 
 [dev-dependencies]
+rmpv.workspace = true
 tokio = { workspace = true, features = ["test-util", "macros"] }
 libc.workspace = true
 serial_test.workspace = true
