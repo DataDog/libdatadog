@@ -22,6 +22,7 @@ const CGROUP_V1_BASE_CONTROLLER: &str = "memory";
 #[derive(Debug, Clone, PartialEq)]
 pub enum CgroupFileParsingError {
     ContainerIdNotFound,
+    #[cfg(test)]
     CgroupNotFound,
     CannotOpenFile,
     InvalidFormat,
@@ -31,6 +32,7 @@ impl fmt::Display for CgroupFileParsingError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             CgroupFileParsingError::ContainerIdNotFound => write!(f, "Container id not found"),
+            #[cfg(test)]
             CgroupFileParsingError::CgroupNotFound => write!(f, "Cgroup not found"),
             CgroupFileParsingError::CannotOpenFile => {
                 write!(f, "Error while opening cgroup file")
@@ -50,10 +52,10 @@ fn compute_entity_id(
     container_id::extract_container_id(cgroup_path)
         .ok()
         .map(|container_id| format!("ci-{container_id}"))
-        .or(
+        .or_else(|| {
             cgroup_inode::get_cgroup_inode(base_controller, cgroup_path, cgroup_mount_path)
-                .map(|inode| format!("in-{inode}")),
-        )
+                .map(|inode| format!("in-{inode}"))
+        })
 }
 
 /// Set cgroup mount path to mock during tests
@@ -88,7 +90,7 @@ pub static CONTAINER_ID: LazyLock<Option<&'static str>> = LazyLock::new(|| {
         })
 });
 
-/// The `entity_id` if available, either `cid-<container_id>` or `in-<cgroup_inode>`
+/// The `entity_id` if available, either `ci-<container_id>` or `in-<cgroup_inode>`
 pub static ENTITY_ID: LazyLock<Option<&'static str>> = LazyLock::new(|| {
     compute_entity_id(
         CGROUP_V1_BASE_CONTROLLER,

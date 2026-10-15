@@ -3,25 +3,33 @@
 
 //! This module provides functions to parse the container id from the cgroup file
 use super::CgroupFileParsingError;
+#[cfg(test)]
 use crate::regex_engine::Regex;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
+#[cfg(test)]
 use std::sync::LazyLock;
 
+#[cfg(test)]
 const UUID_SOURCE: &str =
     r"[0-9a-f]{8}[-_][0-9a-f]{4}[-_][0-9a-f]{4}[-_][0-9a-f]{4}[-_][0-9a-f]{12}";
 /// PCF / Garden container UUID source: 8-4-4-4-4 hex (28 chars).
 /// Distinct from `UUID_SOURCE` (8-4-4-4-12) because the last group is 4 hex.
+#[cfg(test)]
 const PCF_UUID_SOURCE: &str = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}";
+#[cfg(test)]
 const CONTAINER_SOURCE: &str = r"[0-9a-f]{64}";
+#[cfg(test)]
 const TASK_SOURCE: &str = r"[0-9a-f]{32}-\d+";
 
+#[cfg(test)]
 pub(crate) static LINE_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     #[allow(clippy::unwrap_used)]
     Regex::new(r"^\d+:[^:]*:(.+)$").unwrap()
 });
 
+#[cfg(test)]
 pub(crate) static CONTAINER_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     #[allow(clippy::unwrap_used)]
     Regex::new(&format!(
@@ -31,12 +39,7 @@ pub(crate) static CONTAINER_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 fn parse_line(line: &str) -> Option<&str> {
-    // unwrap is OK since if regex matches then the groups must exist
-    #[allow(clippy::unwrap_used)]
-    LINE_REGEX
-        .captures(line)
-        .and_then(|captures| CONTAINER_REGEX.captures(captures.get(1).unwrap().as_str()))
-        .map(|captures| captures.get(1).unwrap().as_str())
+    super::super::parse_container_id(line)
 }
 
 /// Extract container id contained in the cgroup file located at `cgroup_path`
@@ -108,6 +111,11 @@ mod tests {
                 => None,
         };
         for (line, &expected_result) in test_lines.iter() {
+            let legacy = LINE_REGEX
+                .captures(line)
+                .and_then(|captures| CONTAINER_REGEX.captures(captures.get(1).unwrap().as_str()))
+                .map(|captures| captures.get(1).unwrap().as_str());
+            assert_eq!(parse_line(line), legacy, "legacy parser: {line}");
             assert_eq!(
                 parse_line(line),
                 expected_result,

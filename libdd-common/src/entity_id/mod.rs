@@ -3,11 +3,11 @@
 
 //! Extract the entity id, container id and external env
 //!
-//! The container id can be extracted from `/proc/self/group`
+//! The container id can be extracted from `/proc/self/cgroup`
 //!
 //! The entity id is one of:
-//! - `cid:<container id>` if available
-//! - `in:<cgroup node inode>` if container id is not available (e.g. when using cgroupV2)
+//! - `ci-<container id>` if available
+//! - `in-<cgroup node inode>` if container id is not available (e.g. when using cgroupV2)
 //!
 //! The external env is an environment variable provided by the admission controller.
 //!
@@ -51,13 +51,20 @@
 //! 1:name=systemd:/ecs/8cd79a803caf4d2aa945152e934a5c00/8cd79a803caf4d2aa945152e934a5c00-1053176469
 //! ```
 
-use crate::config::parse_env;
+//! With `alloc` on Linux, `discover` uses rustix for filesystem access and the shared shadow
+//! environment for `DD_EXTERNAL_ENV`. Pure cgroup parsing and the result types are portable.
+//! With `std`, the cached getters below use the shared environment API and the process filesystem.
+
+mod discovery;
+pub use discovery::{EntityInfo, parse_container_id};
+#[cfg(target_os = "linux")]
+pub use discovery::{discover, read_container_id, read_hostname};
+
+#[cfg(feature = "std")]
 use std::sync::LazyLock;
 
-const EXTERNAL_ENV_ENVIRONMENT_VARIABLE: &str = "DD_EXTERNAL_ENV";
-
 /// Unix specific module allowing the use of unix specific functions
-#[cfg(unix)]
+#[cfg(all(feature = "std", unix))]
 mod unix;
 
 /// Set the path to cgroup file to mock it during tests
@@ -70,6 +77,7 @@ pub fn set_cgroup_file(_file: String) {
 }
 
 /// Returns the `container_id` if available in the cgroup file, otherwise returns `None`
+#[cfg(feature = "std")]
 pub fn get_container_id() -> Option<&'static str> {
     #[cfg(unix)]
     {
@@ -81,7 +89,8 @@ pub fn get_container_id() -> Option<&'static str> {
     }
 }
 
-/// Returns the `entity_id` if available, either `cid-<container_id>` or `in-<cgroup_inode>`
+/// Returns the `entity_id` if available, either `ci-<container_id>` or `in-<cgroup_inode>`
+#[cfg(feature = "std")]
 pub fn get_entity_id() -> Option<&'static str> {
     #[cfg(unix)]
     {
@@ -93,21 +102,17 @@ pub fn get_entity_id() -> Option<&'static str> {
     }
 }
 
+#[cfg(feature = "std")]
 pub static DD_EXTERNAL_ENV: LazyLock<Option<&'static str>> = LazyLock::new(|| {
-    let leaked: Option<&'static str> = parse_env::str_not_empty(EXTERNAL_ENV_ENVIRONMENT_VARIABLE)
-        .map(|s| &*Box::leak(s.into_boxed_str()));
+    let leaked: Option<&'static str> =
+        discovery::external_env().map(|s| &*Box::leak(s.into_boxed_str()));
 
     leaked
 });
 
 /// Returns an iterator of entity-related headers (container-id, entity-id, external-env)
 /// as (header_name, header_value) string tuples for any that are available.
+#[cfg(feature = "std")]
 pub fn get_entity_headers() -> impl Iterator<Item = (&'static str, &'static str)> {
-    [
-        get_container_id().map(|v| ("datadog-container-id", v)),
-        get_entity_id().map(|v| ("datadog-entity-id", v)),
-        (*DD_EXTERNAL_ENV).map(|v| ("datadog-external-env", v)),
-    ]
-    .into_iter()
-    .flatten()
+    discovery::headers(get_container_id(), get_entity_id(), *DD_EXTERNAL_ENV)
 }
