@@ -73,9 +73,6 @@ macro_rules! write_const_msgpack_str {
 mod span_v04;
 mod span_v1;
 
-// Re-exported so introspection (`datadog-sidecar-ffi`) picks the same local root as the wire.
-pub use span_v1::local_root_idx;
-
 #[inline(always)]
 fn to_writer<W: RmpWrite, T: TraceData, S: AsRef<[Span<T>]>>(
     writer: &mut W,
@@ -244,10 +241,9 @@ pub fn to_encoded_byte_len_from_v04<T: TraceData, S: AsRef<[Span<T>]>>(traces: &
 /// Encodes a [`TracerPayload`] in the v0.4 wire format (downgrade path used when the agent
 /// does not advertise `/v1.0/traces`). The output is a msgpack array of traces, where each
 /// trace is itself a msgpack array of v0.4-shaped spans — matching the existing v0.4 wire
-/// format produced by [`to_vec_from_v04`]. Payload-level `env`/`app_version`/`attributes` are
-/// propagated into every span (see [`span_v1`]'s mapping table); `payload.hostname` has no v0.4
-/// body equivalent (the agent gets hostname from the `Datadog-Meta-Hostname` header instead) and is
-/// intentionally dropped here.
+/// format produced by [`to_vec_from_v04`]. Payload-level
+/// `env`/`app_version`/`hostname`/`attributes` are propagated into the spans (see [`span_v1`]'s
+/// mapping table).
 fn encode_payload_from_v1<W: RmpWrite, T: TraceData>(
     writer: &mut W,
     payload: &TracerPayload<T>,
@@ -272,6 +268,7 @@ fn encode_payload_from_v1<W: RmpWrite, T: TraceData>(
             &chunk.attributes,
             &payload.env,
             &payload.app_version,
+            &payload.hostname,
             &payload.attributes,
         );
         let root_idx = local_root_idx(chunk.spans.iter());
