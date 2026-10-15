@@ -34,10 +34,10 @@ use super::{
 /// # Errors
 ///
 /// This function will return any error emitted by the writer.
-pub(super) fn encode_attribute_value<W: RmpWrite, T: TraceData>(
+pub(super) fn encode_attribute_value<'a, W: RmpWrite, T: TraceData>(
     writer: &mut W,
-    value: &AttributeValue<T>,
-    table: &mut StringTable,
+    value: &'a AttributeValue<T>,
+    table: &mut StringTable<'a>,
 ) -> Result<(), ValueWriteError<W::Error>> {
     match value {
         AttributeValue::String(s) => {
@@ -94,10 +94,10 @@ pub(super) fn encode_attribute_value<W: RmpWrite, T: TraceData>(
 /// # Errors
 ///
 /// This function will return any error emitted by the writer.
-pub(super) fn encode_attributes_map<W: RmpWrite, T: TraceData>(
+pub(super) fn encode_attributes_map<'a, W: RmpWrite, T: TraceData>(
     writer: &mut W,
-    map: &VecMap<T::Text, AttributeValue<T>>,
-    table: &mut StringTable,
+    map: &'a VecMap<T::Text, AttributeValue<T>>,
+    table: &mut StringTable<'a>,
 ) -> Result<(), ValueWriteError<W::Error>> {
     // `VecMap` tolerates duplicate keys for fast insertion; `defensive_dedup` returns a view
     // with each key emitted once (last-write-wins) and warns if the map wasn't already deduped
@@ -128,10 +128,10 @@ pub(super) fn encode_attributes_map<W: RmpWrite, T: TraceData>(
 /// # Errors
 ///
 /// This function will return any error emitted by the writer.
-pub(super) fn encode_span_links<W: RmpWrite, T: TraceData>(
+pub(super) fn encode_span_links<'a, W: RmpWrite, T: TraceData>(
     writer: &mut W,
-    span_links: &[SpanLink<T>],
-    table: &mut StringTable,
+    span_links: &'a [SpanLink<T>],
+    table: &mut StringTable<'a>,
 ) -> Result<(), ValueWriteError<W::Error>> {
     write_uint8(writer, SpanKey::SpanLinks as u8)?;
     write_array_len(writer, span_links.len() as u32)?;
@@ -189,10 +189,10 @@ pub(super) fn encode_span_links<W: RmpWrite, T: TraceData>(
 /// # Errors
 ///
 /// This function will return any error emitted by the writer.
-pub(super) fn encode_span_events<W: RmpWrite, T: TraceData>(
+pub(super) fn encode_span_events<'a, W: RmpWrite, T: TraceData>(
     writer: &mut W,
-    span_events: &[SpanEvent<T>],
-    table: &mut StringTable,
+    span_events: &'a [SpanEvent<T>],
+    table: &mut StringTable<'a>,
 ) -> Result<(), ValueWriteError<W::Error>> {
     write_uint8(writer, SpanKey::SpanEvents as u8)?;
     write_array_len(writer, span_events.len() as u32)?;
@@ -235,10 +235,10 @@ pub(super) fn encode_span_events<W: RmpWrite, T: TraceData>(
 /// # Errors
 ///
 /// This function will return any error emitted by the writer.
-pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
+pub(super) fn encode_span<'a, W: RmpWrite, T: TraceData>(
     writer: &mut W,
-    span: &Span<T>,
-    table: &mut StringTable,
+    span: &'a Span<T>,
+    table: &mut StringTable<'a>,
 ) -> Result<(), ValueWriteError<W::Error>> {
     let is_parent = span.parent_id != 0;
     let has_duration = span.duration != 0;
