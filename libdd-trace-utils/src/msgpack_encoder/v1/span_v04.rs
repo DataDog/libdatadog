@@ -32,10 +32,10 @@ fn span_kind_from_str(s: &str) -> u32 {
 /// Encodes [`v04::SpanLink`](crate::span::v04::SpanLink)s into the V1 msgpack wire format
 /// (upgrade: v0.4 input → V1 output). Uses integer keys and string interning for string
 /// values. Each span link's trace ID is encoded as a 16-byte big-endian binary.
-pub fn encode_span_links<W: RmpWrite, T: TraceData>(
+pub fn encode_span_links<'a, W: RmpWrite, T: TraceData>(
     writer: &mut W,
-    span_links: &[SpanLink<T>],
-    table: &mut StringTable,
+    span_links: &'a [SpanLink<T>],
+    table: &mut StringTable<'a>,
 ) -> Result<(), ValueWriteError<W::Error>> {
     write_uint8(writer, SpanKey::SpanLinks as u8)?;
     rmp::encode::write_array_len(writer, span_links.len() as u32)?;
@@ -85,10 +85,10 @@ pub fn encode_span_links<W: RmpWrite, T: TraceData>(
 /// Encodes [`v04::SpanEvent`](crate::span::v04::SpanEvent)s into the V1 msgpack wire format
 /// (upgrade: v0.4 input → V1 output). Uses integer keys and string interning. Attribute values
 /// are type-tagged.
-pub fn encode_span_events<W: RmpWrite, T: TraceData>(
+pub fn encode_span_events<'a, W: RmpWrite, T: TraceData>(
     writer: &mut W,
-    span_events: &[SpanEvent<T>],
-    table: &mut StringTable,
+    span_events: &'a [SpanEvent<T>],
+    table: &mut StringTable<'a>,
 ) -> Result<(), ValueWriteError<W::Error>> {
     write_uint8(writer, SpanKey::SpanEvents as u8)?;
     rmp::encode::write_array_len(writer, span_events.len() as u32)?;
@@ -114,10 +114,10 @@ pub fn encode_span_events<W: RmpWrite, T: TraceData>(
     Ok(())
 }
 
-fn encode_span_event_attributes<W: RmpWrite, T: TraceData>(
+fn encode_span_event_attributes<'a, W: RmpWrite, T: TraceData>(
     writer: &mut W,
-    event: &SpanEvent<T>,
-    table: &mut StringTable,
+    event: &'a SpanEvent<T>,
+    table: &mut StringTable<'a>,
 ) -> Result<(), ValueWriteError<W::Error>> {
     rmp::encode::write_array_len(writer, event.attributes.len() as u32 * 3)?;
     for (k, attribute) in event.attributes.iter() {
@@ -127,15 +127,15 @@ fn encode_span_event_attributes<W: RmpWrite, T: TraceData>(
     Ok(())
 }
 
-fn encode_attribute_any_value<W: RmpWrite, T: TraceData>(
+fn encode_attribute_any_value<'a, W: RmpWrite, T: TraceData>(
     writer: &mut W,
-    attribute: &AttributeAnyValue<T>,
-    table: &mut StringTable,
+    attribute: &'a AttributeAnyValue<T>,
+    table: &mut StringTable<'a>,
 ) -> Result<(), ValueWriteError<W::Error>> {
-    fn encode_array_element<W: RmpWrite, T: TraceData>(
+    fn encode_array_element<'a, W: RmpWrite, T: TraceData>(
         writer: &mut W,
-        value: &AttributeArrayValue<T>,
-        table: &mut StringTable,
+        value: &'a AttributeArrayValue<T>,
+        table: &mut StringTable<'a>,
     ) -> Result<(), ValueWriteError<W::Error>> {
         match value {
             AttributeArrayValue::String(s) => {
@@ -185,10 +185,10 @@ fn encode_attribute_any_value<W: RmpWrite, T: TraceData>(
 /// - `error` is encoded as a boolean.
 /// - `env`, `version`, `component`, `span.kind` are promoted from meta to dedicated span fields.
 /// - String values use streaming string interning via `StringTable`.
-pub fn encode_span<W: RmpWrite, T: TraceData>(
+pub fn encode_span<'a, W: RmpWrite, T: TraceData>(
     writer: &mut W,
-    span: &Span<T>,
-    table: &mut StringTable,
+    span: &'a Span<T>,
+    table: &mut StringTable<'a>,
 ) -> Result<(), ValueWriteError<W::Error>> {
     let is_parent = span.parent_id != 0;
     let has_duration = span.duration != 0;

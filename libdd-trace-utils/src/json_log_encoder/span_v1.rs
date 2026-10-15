@@ -29,9 +29,9 @@ use std::fmt::Write as _;
 use super::span::{HexTraceId, HexU64};
 
 /// Reserved v0.4 `meta`/`metrics` key names written from dedicated typed fields (`env`,
-/// chunk `origin`, ...) rather than from the attribute map. See
-/// [`crate::msgpack_encoder::v04::span_v1::PROMOTED_ATTR_KEYS`] for the msgpack-side sibling
-/// of this list (this one omits `_dd.p.tid`: the JSON log's `trace_id` field carries the full
+/// chunk `origin`, ...) rather than from the attribute map. The msgpack-side v0.4 downgrade
+/// ([`crate::msgpack_encoder::v04::to_vec_from_v1`]) drops a colliding attribute only when the
+/// field is set (this list omits `_dd.p.tid`: the JSON log's `trace_id` field carries the full
 /// 128 bits directly, so there is no separate high-bits meta key here).
 const PROMOTED_ATTR_KEYS: &[&str] = &[
     "env",

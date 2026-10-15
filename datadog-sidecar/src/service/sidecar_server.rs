@@ -561,6 +561,7 @@ impl SidecarServer {
         data: tinybytes::Bytes,
         target: &Endpoint,
         retry_interval: u64,
+        flush_interval: Duration,
     ) {
         let headers: TracerHeaderTags = match headers.try_into() {
             Ok(headers) => headers,
@@ -572,7 +573,14 @@ impl SidecarServer {
                 return;
             }
         };
-        self.send_trace(headers, data, target, retry_interval, TraceEncoding::V04)
+        self.send_trace(
+            headers,
+            data,
+            target,
+            retry_interval,
+            flush_interval,
+            TraceEncoding::V04,
+        )
     }
 
     /// Entry point for the V1 trace path. Input bytes are a V1 msgpack `TracerPayload` from the
@@ -603,6 +611,7 @@ impl SidecarServer {
         v1_target: &Endpoint,
         v04_target: &Endpoint,
         retry_interval: u64,
+        flush_interval: Duration,
         force_v04: bool,
     ) {
         let supports_v1 = !force_v04 && Self::agent_supports_v1(session, v04_target);
@@ -614,7 +623,7 @@ impl SidecarServer {
                     );
                 };
                 // The payload was encoded from a builder that already deduped every map
-                // (`TracerPayloadV1Builder::into_payload`), so don't dedup it a second time.
+                // (`ddog_send_traces_to_sidecar_v1`), so don't dedup it a second time.
                 tracer_payload.mark_deduped();
                 // Cheap refcounted clones: decouples the header strings from `payload`'s
                 // borrow so `payload` can still be moved into `enqueue_trace` below.
@@ -649,7 +658,14 @@ impl SidecarServer {
                         size, v1_target, headers
                     );
                     trace!("Parsed the trace payload and enqueuing it for sending: {payload:?}");
-                    self.enqueue_trace(payload, size, headers, v1_target, retry_interval);
+                    self.enqueue_trace(
+                        payload,
+                        size,
+                        headers,
+                        v1_target,
+                        retry_interval,
+                        flush_interval,
+                    );
                     return;
                 }
 
@@ -672,6 +688,7 @@ impl SidecarServer {
                             headers,
                             v04_target,
                             retry_interval,
+                            flush_interval,
                         );
                     }
                     Err(e) => error!(
@@ -698,10 +715,17 @@ impl SidecarServer {
         }
         // Peek the session's `/info` (fetched since `set_connection_config`) without blocking the
         // send path. A fetcher keyed by the trace endpoint would be a separate, cold one.
-        session
-            .agent_info()
-            .and_then(|guard| guard.get().now_or_never())
-            .is_some_and(|info| agent_info_advertises_v1(&info))
+        let Some(info) = session.agent_info().map(|g| g.get()) else {
+            return false;
+        };
+        // `peek` borrows the resolved info; polling (which clones the whole struct) is only
+        // needed until the first poll resolves it.
+        match info.peek() {
+            Some(info) => agent_info_advertises_v1(info),
+            None => info
+                .now_or_never()
+                .is_some_and(|info| agent_info_advertises_v1(&info)),
+        }
     }
 
     fn send_trace(
@@ -710,6 +734,7 @@ impl SidecarServer {
         data: tinybytes::Bytes,
         target: &Endpoint,
         retry_interval: u64,
+        flush_interval: Duration,
         encoding: TraceEncoding,
     ) {
         debug!(
@@ -722,7 +747,14 @@ impl SidecarServer {
         match decode_to_trace_chunks(data, encoding) {
             Ok((payload, size)) => {
                 trace!("Parsed the trace payload and enqueuing it for sending: {payload:?}");
-                self.enqueue_trace(payload, size, headers, target, retry_interval);
+                self.enqueue_trace(
+                    payload,
+                    size,
+                    headers,
+                    target,
+                    retry_interval,
+                    flush_interval,
+                );
             }
             Err(e) => {
                 error!(
@@ -740,6 +772,7 @@ impl SidecarServer {
         headers: TracerHeaderTags,
         target: &Endpoint,
         retry_interval: u64,
+        flush_interval: Duration,
     ) {
         let mut data = SendData::new(
             size,
@@ -749,7 +782,7 @@ impl SidecarServer {
         );
         let strategy = RetryStrategy::new(5, retry_interval, RetryBackoffType::Exponential, None);
         data.set_retry_strategy(strategy);
-        self.trace_flusher.enqueue(data);
+        self.trace_flusher.enqueue(data, flush_interval);
     }
 
     pub async fn compute_stats(&self) -> SidecarStats {
@@ -857,10 +890,6 @@ impl SidecarInterface for ConnectionSidecarHandler {
     ) {
         debug!("Set connection config for {instance_id:?} to {config:?}");
 
-        self.server.trace_flusher.interval_ms.store(
-            u64::try_from(config.flush_interval.as_millis()).unwrap_or(u64::MAX),
-            Ordering::Relaxed,
-        );
         self.server.trace_flusher.min_force_flush_size_bytes.store(
             u32::try_from(config.force_flush_size).unwrap_or(u32::MAX),
             Ordering::Relaxed,
@@ -989,11 +1018,18 @@ impl SidecarInterface for ConnectionSidecarHandler {
         if let Some(endpoint) = trace_config.endpoint.clone() {
             let server = self.server.clone();
             let retry_interval = trace_config.retry_interval;
+            let flush_interval = trace_config.flush_interval;
             tokio::spawn(async move {
                 match handle.map() {
                     Ok(mapped) => {
                         let bytes = tinybytes::Bytes::from(mapped);
-                        server.send_trace_v04(&headers, bytes, &endpoint, retry_interval);
+                        server.send_trace_v04(
+                            &headers,
+                            bytes,
+                            &endpoint,
+                            retry_interval,
+                            flush_interval,
+                        );
                     }
                     Err(e) => error!("Failed mapping shared trace data memory: {}", e),
                 }
@@ -1016,9 +1052,10 @@ impl SidecarInterface for ConnectionSidecarHandler {
         if let Some(endpoint) = trace_config.endpoint.clone() {
             let server = self.server.clone();
             let retry_interval = trace_config.retry_interval;
+            let flush_interval = trace_config.flush_interval;
             tokio::spawn(async move {
                 let bytes = tinybytes::Bytes::from(data);
-                server.send_trace_v04(&headers, bytes, &endpoint, retry_interval);
+                server.send_trace_v04(&headers, bytes, &endpoint, retry_interval, flush_interval);
             });
         } else {
             warn!(
@@ -1047,6 +1084,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
         ) {
             let server = self.server.clone();
             let retry_interval = trace_config.retry_interval;
+            let flush_interval = trace_config.flush_interval;
             let force_v04 = trace_config.force_v04;
             let session = session.clone();
             tokio::spawn(async move {
@@ -1062,6 +1100,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
                             &v1_endpoint,
                             &v04_endpoint,
                             retry_interval,
+                            flush_interval,
                             force_v04,
                         );
                     }
@@ -1095,6 +1134,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
         ) {
             let server = self.server.clone();
             let retry_interval = trace_config.retry_interval;
+            let flush_interval = trace_config.flush_interval;
             let force_v04 = trace_config.force_v04;
             let session = session.clone();
             tokio::spawn(async move {
@@ -1108,6 +1148,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
                     &v1_endpoint,
                     &v04_endpoint,
                     retry_interval,
+                    flush_interval,
                     force_v04,
                 );
             });
@@ -2323,7 +2364,7 @@ mod tests {
             span_id: 42,
             start: 1_700_000_000_000,
             duration: 1_500,
-            // The tracer marks top-level spans itself; the sidecar no longer adds the metric.
+            // The tracer marks top-level spans itself.
             attributes: vec![(bs("_dd.top_level"), AttributeValue::Float(1.0))].into(),
             ..Default::default()
         };

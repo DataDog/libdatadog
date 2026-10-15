@@ -11,6 +11,7 @@ use std::borrow::Cow;
 use std::ffi::CString;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tracing::error;
 
 pub(crate) struct ShmLimiters {
@@ -79,6 +80,8 @@ pub struct Config {
     pub language_version: String,
     pub tracer_version: String,
     pub retry_interval: u64,
+    /// Longest time the session's traces wait in the shared trace flusher before being sent.
+    pub flush_interval: Duration,
     /// Downgrade V1 payloads to v0.4 regardless of the agent's `/info`.
     pub force_v04: bool,
 }

@@ -153,6 +153,7 @@ impl ConnectionSession {
             .clone_from(&config.tracer_version);
         tracer_config.retry_interval =
             u64::try_from(config.retry_interval.as_millis()).unwrap_or(u64::MAX);
+        tracer_config.flush_interval = config.flush_interval;
         tracer_config.force_v04 = config.force_v04_traces;
 
         let mut debugger_config = libdd_live_debugger::sender::Config::default();
