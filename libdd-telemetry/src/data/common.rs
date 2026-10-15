@@ -1,9 +1,8 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use alloc::string::String;
 use serde::{Deserialize, Serialize};
-
-use crate::data::*;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum ApiVersion {
@@ -17,20 +16,6 @@ impl ApiVersion {
             ApiVersion::V2 => "v2",
         }
     }
-}
-
-#[derive(Serialize, Debug)]
-pub struct Telemetry<'a> {
-    pub api_version: ApiVersion,
-    pub tracer_time: u64,
-    pub runtime_id: &'a str,
-    pub seq_id: u64,
-    pub application: &'a Application,
-    pub host: &'a Host,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub origin: Option<&'a str>,
-    #[serde(flatten)]
-    pub payload: &'a Payload,
 }
 
 #[derive(Serialize, Deserialize, Default, Debug)]
