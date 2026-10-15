@@ -75,7 +75,15 @@ pub(crate) const SHM_VERSION: u32 = 4;
 pub(crate) const SLOT_EMPTY: u64 = 0;
 pub(crate) const SLOT_INIT: u64 = u64::MAX;
 
-/// The sidecar should recreate the SHM when slot utilisation exceeds this ratio.
+/// Slot utilisation of the active bucket above which a table counts as nearly full.
+///
+/// Today this only triggers a warning. Once per flush interval the sidecar's stats flusher
+/// compares `slot_usage()` for the active bucket against this ratio and, above it, logs that the
+/// table is nearly full and suggests a larger slot count. Nothing else happens. The table is not
+/// recreated or grown, since the "Table growth" steps in the module docs are not implemented, and
+/// the sidecar always creates tables with `DEFAULT_SLOT_COUNT` slots, so acting on the warning
+/// needs a code change. A bucket that does fill up keeps recording inputs for the keys it already
+/// holds and silently drops inputs with new keys until the next bucket swap.
 pub const RELOAD_FILL_RATIO: f64 = 0.80;
 
 /// Max iterations when waiting for `in_flight` to reach zero (~100 µs).
