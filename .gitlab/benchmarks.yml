@@ -41,6 +41,15 @@ benchmarks:
     name: $BASE_CI_IMAGE
   rules: *benchmark_run_rules
   timeout: 80m
+  retry:
+    max: 2
+    # Infra failures only; a script_failure (a real benchmark failure) never re-runs.
+    when:
+      - unknown_failure
+      - data_integrity_failure
+      - runner_system_failure
+      - scheduler_failure
+      - api_failure
   script:
     # Decide which crates THIS shard benchmarks. Runs first, while $CI_PROJECT_DIR is the libdatadog
     # checkout (so ./benchmark/... and the compute_impacted_crates artifacts are available). The
@@ -131,7 +140,6 @@ benchmarks:
     UPSTREAM_REPO_URL: "https://github.com/DataDog/libdatadog" # The HTTP URL to the project's repository.
 
     KUBERNETES_SERVICE_ACCOUNT_OVERWRITE: libdatadog
-    FF_USE_LEGACY_KUBERNETES_EXECUTION_STRATEGY: "true"
 
     # sccache, consumed by benchmark/run_benchmarks_ci.sh. Its own key prefix,
     # not libddprof-build's: that pipeline builds --release and cargo bench uses
@@ -191,4 +199,3 @@ benchmarks_combine:
     UPSTREAM_REPO_URL: "https://github.com/DataDog/libdatadog"
 
     KUBERNETES_SERVICE_ACCOUNT_OVERWRITE: libdatadog
-    FF_USE_LEGACY_KUBERNETES_EXECUTION_STRATEGY: "true"

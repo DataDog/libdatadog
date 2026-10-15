@@ -32,7 +32,7 @@ required-features = ["bench-internals"]
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 lru = { workspace = true, default-features = true }
-libdd-common = { path = "../libdd-common", version = "8.0.0", default-features = false }
+libdd-common = { path = "../libdd-common", version = "8.0.0", default-features = false, features = ["std"] }
 libdd-trace-utils = { path = "../libdd-trace-utils", version = "14.0.0", optional = true }
 
 [features]

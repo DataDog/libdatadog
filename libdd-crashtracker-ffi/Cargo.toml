@@ -40,7 +40,7 @@ build_common = { path = "../build-common" }
 anyhow.workspace = true
 libdd-crashtracker = { path = "../libdd-crashtracker" }
 libdd-common = { path = "../libdd-common" }
-libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
+libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false, features = ["std"] }
 symbolic-demangle = { workspace = true, features = ["rust", "cpp", "msvc"], optional = true }
 symbolic-common = { workspace = true, optional = true }
 function_name.workspace = true

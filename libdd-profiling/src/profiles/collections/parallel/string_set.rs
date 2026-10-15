@@ -8,7 +8,7 @@ use std::ffi::c_void;
 use std::ops::Deref;
 
 /// A string set which can have parallel read and write operations.
-/// This is a newtype wrapper around ParallelSliceSet<u8> that adds
+/// This is a newtype wrapper around `ParallelSliceSet<u8>` that adds
 /// string-specific functionality like well-known strings.
 #[repr(transparent)]
 pub struct ParallelStringSet {

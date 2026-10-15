@@ -10,23 +10,26 @@ use super::sampling_rule::SamplingRule;
 /// Thread-safe container for sampling rules
 #[derive(Debug, Default, Clone)]
 pub(crate) struct RulesSampler {
-    inner: Arc<RwLock<Vec<SamplingRule>>>,
+    inner: Arc<RwLock<Vec<Arc<SamplingRule>>>>,
 }
 
 impl RulesSampler {
     pub fn new(rules: Vec<SamplingRule>) -> Self {
         Self {
-            inner: Arc::new(RwLock::new(rules)),
+            inner: Arc::new(RwLock::new(rules.into_iter().map(Arc::new).collect())),
         }
     }
 
     /// Updates the rules with a new set
     pub fn update_rules(&self, new_rules: Vec<SamplingRule>) {
-        *self.inner.write_or_panic() = new_rules;
+        *self.inner.write_or_panic() = new_rules.into_iter().map(Arc::new).collect();
     }
 
-    /// Finds the first matching rule for a span
-    pub fn find_matching_rule<F>(&self, matcher: F) -> Option<SamplingRule>
+    /// Finds the first matching rule for a span.
+    ///
+    /// Returns the rule behind an [`Arc`] so a match costs a refcount bump instead of
+    /// deep-cloning the rule's matchers and tag map on every sampled span.
+    pub fn find_matching_rule<F>(&self, matcher: F) -> Option<Arc<SamplingRule>>
     where
         F: Fn(&SamplingRule) -> bool,
     {

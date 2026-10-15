@@ -26,7 +26,6 @@ use std::str::FromStr;
 /// This function will return an error if:
 /// - The marker for the array length cannot be read.
 /// - Any `SpanLink` cannot be decoded.
-/// ```
 pub(crate) fn read_span_links<T: DeserializableTraceData>(
     buf: &mut Buffer<T>,
 ) -> Result<Vec<SpanLink<T>>, DecodeError> {

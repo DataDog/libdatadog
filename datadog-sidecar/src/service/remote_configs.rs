@@ -3,13 +3,14 @@
 
 use crate::service::{DynamicInstrumentationConfigState, InstanceId};
 use crate::shm_remote_config::{ShmRemoteConfigs, ShmRemoteConfigsGuard};
+use crate::tracer::ShmLimiters;
 use libdd_common::{MutexExt, tag::Tag};
 use libdd_remote_config::fetch::{
     ConfigInvariants, ConfigOptions, MultiTargetStats, NotifyTarget, ProductCapabilities,
 };
 use std::collections::hash_map::Entry;
 use std::fmt::Debug;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use zwohash::HashMap;
 
@@ -89,12 +90,17 @@ impl NotifyTarget for RemoteConfigNotifyTarget {
 }
 
 #[derive(Default, Clone)]
-pub struct RemoteConfigs(
-    Arc<Mutex<HashMap<ConfigInvariants, ShmRemoteConfigs<RemoteConfigNotifyTarget>>>>,
-);
+pub struct RemoteConfigs {
+    fetchers: Arc<Mutex<HashMap<ConfigInvariants, ShmRemoteConfigs<RemoteConfigNotifyTarget>>>>,
+    limiters: Arc<OnceLock<Arc<ShmLimiters>>>,
+}
 pub type RemoteConfigsGuard = ShmRemoteConfigsGuard<RemoteConfigNotifyTarget>;
 
 impl RemoteConfigs {
+    pub(crate) fn shm_limiters(&self) -> &ShmLimiters {
+        self.limiters.get_or_init(ShmLimiters::create)
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn add_runtime(
         &self,
@@ -110,10 +116,10 @@ impl RemoteConfigs {
         dynamic_instrumentation_state: DynamicInstrumentationConfigState,
         process_tags: Vec<Tag>,
     ) -> RemoteConfigsGuard {
-        match self.0.lock_or_panic().entry(options.invariants) {
+        match self.fetchers.lock_or_panic().entry(options.invariants) {
             Entry::Occupied(e) => e.into_mut(),
             Entry::Vacant(e) => {
-                let this = self.0.clone();
+                let this = self.fetchers.clone();
                 let invariants = e.key().clone();
                 e.insert(ShmRemoteConfigs::new(
                     invariants.clone(),
@@ -132,6 +138,7 @@ impl RemoteConfigs {
                         }
                     }),
                     poll_interval,
+                    self.shm_limiters().probes.clone(),
                 ))
             }
         }
@@ -153,13 +160,13 @@ impl RemoteConfigs {
     }
 
     pub fn shutdown(&self) {
-        for (_, rc) in self.0.lock_or_panic().drain() {
+        for (_, rc) in self.fetchers.lock_or_panic().drain() {
             rc.shutdown();
         }
     }
 
     pub fn stats(&self) -> MultiTargetStats {
-        self.0
+        self.fetchers
             .lock_or_panic()
             .values()
             .map(|rc| rc.stats())

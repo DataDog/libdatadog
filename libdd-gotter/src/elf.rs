@@ -28,6 +28,7 @@ use core::ffi::{CStr, c_char, c_int, c_void};
 use core::slice;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
+use std::sync::Arc;
 
 // Lossless integer conversion helpers for 64-bit platforms.
 //
@@ -763,11 +764,20 @@ pub struct MapEntry {
 /// it after patching, rather than leaving Full-RELRO pages read-write for
 /// the lifetime of the process.
 pub fn read_proc_maps() -> Vec<MapEntry> {
-    let Ok(f) = std::fs::File::open("/proc/self/maps") else {
-        return Vec::new();
-    };
     let mut out = Vec::new();
-    for line in BufReader::new(f).lines().map_while(Result::ok) {
+    read_proc_maps_into(&mut out);
+    out
+}
+
+/// Append the entries of /proc/self/maps to `out`; returns whether the whole file was read.
+fn read_proc_maps_into(out: &mut Vec<MapEntry>) -> bool {
+    #[cfg(test)]
+    tests::MAPS_READS.with(|reads| reads.set(reads.get() + 1));
+    let Ok(f) = std::fs::File::open("/proc/self/maps") else {
+        return false;
+    };
+    for line in BufReader::new(f).lines() {
+        let Ok(line) = line else { return false };
         let mut parts = line.split_whitespace();
         let Some(range) = parts.next() else { continue };
         let Some(perms) = parts.next() else { continue };
@@ -793,7 +803,7 @@ pub fn read_proc_maps() -> Vec<MapEntry> {
         }
         out.push(MapEntry { start, end, prot });
     }
-    out
+    true
 }
 
 /// Batched GOT-entry patcher that remembers each touched page's
@@ -804,15 +814,23 @@ pub fn read_proc_maps() -> Vec<MapEntry> {
 /// many entries as it needs, then mprotects each page back to what
 /// `/proc/self/maps` reported at guard-construction time when it is
 /// dropped (including on panic or early return).
+/// For loaded objects, construct and drop the guard inside the same
+/// [`iterate_libraries`] callback, so the loader lock keeps the object
+/// mapped while it is patched.
 pub struct PageProtGuard {
     page_size: usize,
-    maps: Vec<MapEntry>,
+    maps: Arc<[MapEntry]>,
     // Aligned page base -> original prot flags read from /proc/self/maps.
     touched: HashMap<usize, i32>,
 }
 
 impl PageProtGuard {
     pub fn new() -> Self {
+        Self::with_maps(read_proc_maps().into())
+    }
+
+    /// Like [`Self::new`], but looks protections up in an existing snapshot.
+    fn with_maps(maps: Arc<[MapEntry]>) -> Self {
         // SAFETY: sysconf(_SC_PAGESIZE) is safe to call; it
         // reads a cached kernel value with no side effects. Returns -1
         // on error; we fall back to 4 KiB in that case.
@@ -820,7 +838,7 @@ impl PageProtGuard {
         let page_size = usize::try_from(raw).unwrap_or(4096);
         Self {
             page_size,
-            maps: read_proc_maps(),
+            maps,
             touched: HashMap::new(),
         }
     }
@@ -836,16 +854,16 @@ impl PageProtGuard {
     /// then replace one GOT entry.
     ///
     /// # Safety
-    /// `addr` must point to a valid GOT slot in mapped memory.
+    /// `addr` must point to a valid pointer-sized slot in mapped memory.
+    /// The snapshotted mappings and their protections must remain unchanged
+    /// by other code until this guard is dropped.
     pub unsafe fn override_entry(&mut self, addr: usize, new_value: usize) -> bool {
         unsafe {
             let aligned = addr & !(self.page_size - 1);
             if !self.touched.contains_key(&aligned) {
-                // If /proc/self/maps isn't available (or the page isn't in
-                // it, which shouldn't happen for a mapped GOT page) fall
-                // back to PROT_READ - the RELRO'd default. That's tighter
-                // than the previous behavior of leaving pages RW.
-                let orig = self.original_prot(aligned).unwrap_or(PROT_READ);
+                let Some(orig) = self.original_prot(aligned) else {
+                    return false;
+                };
                 if mprotect(
                     aligned as *mut c_void,
                     self.page_size,
@@ -878,6 +896,48 @@ impl Drop for PageProtGuard {
             // mprotect'd earlier; restoring its original protection is safe.
             // Best-effort: nothing sensible to do on failure.
             unsafe { mprotect(aligned as *mut c_void, self.page_size, orig) };
+        }
+    }
+}
+
+/// `/proc/self/maps` entries read while the loader had generation `dlpi_adds`.
+struct MapsSnapshot {
+    dlpi_adds: u64,
+    entries: Arc<[MapEntry]>,
+}
+
+/// [`MapsSnapshot`] shared by all objects of one [`iterate_libraries`] walk, read on first use.
+/// Guards restore their pages before their callback returns, so it stays accurate for later
+/// objects. glibc holds the loader lock for the whole walk; musl releases it between
+/// callbacks, so a changed `dlpi_adds` (a `dlopen` landed mid-walk) triggers a re-read.
+/// A failed or empty read is used for the current object only, and re-read for the next.
+#[derive(Default)]
+struct LazyMapsSnapshot {
+    snapshot: Option<MapsSnapshot>,
+}
+
+impl LazyMapsSnapshot {
+    fn get(&mut self, dlpi_adds: u64) -> Arc<[MapEntry]> {
+        self.get_with(dlpi_adds, read_proc_maps_into)
+    }
+
+    fn get_with(
+        &mut self,
+        dlpi_adds: u64,
+        read: impl FnOnce(&mut Vec<MapEntry>) -> bool,
+    ) -> Arc<[MapEntry]> {
+        match &self.snapshot {
+            Some(snapshot) if snapshot.dlpi_adds == dlpi_adds => Arc::clone(&snapshot.entries),
+            _ => {
+                let mut entries = Vec::new();
+                let complete = read(&mut entries);
+                let entries: Arc<[MapEntry]> = entries.into();
+                self.snapshot = (complete && !entries.is_empty()).then(|| MapsSnapshot {
+                    dlpi_adds,
+                    entries: Arc::clone(&entries),
+                });
+                entries
+            }
         }
     }
 }
@@ -1039,7 +1099,7 @@ pub struct HookResult {
     /// Number of GOT entries successfully rewritten.
     pub entries_patched: usize,
     /// Number of GOT entries that matched the symbol but could not be
-    /// patched (`mprotect` failed to make the page writable).
+    /// patched (unknown original permissions or `mprotect` failed).
     pub entries_failed: usize,
 }
 
@@ -1129,11 +1189,9 @@ unsafe fn hook_symbol_impl(
 
         let mut entries_patched: usize = 0;
         let mut entries_failed: usize = 0;
-        let mut guard = PageProtGuard::new();
-
-        let guard_ptr = &mut guard as *mut PageProtGuard;
         let patched_ptr = &mut entries_patched as *mut usize;
         let failed_ptr = &mut entries_failed as *mut usize;
+        let mut maps = LazyMapsSnapshot::default();
 
         iterate_libraries(|info, is_exe| {
             // SAFETY: dl_iterate_phdr guarantees dlpi_name is a valid
@@ -1156,14 +1214,15 @@ unsafe fn hook_symbol_impl(
                 return false;
             };
             // SAFETY: dyn_info was just produced from a currently-loaded
-            // library. guard_ptr/patched_ptr/failed_ptr are valid for the
+            // library. patched_ptr/failed_ptr are valid for the
             // duration of iterate_libraries (they point to locals in the
             // enclosing fn).
             patch_got_entries(
                 &dyn_info,
                 symbol_name_bytes,
                 hook_fn,
-                &mut *guard_ptr,
+                &mut maps,
+                info.dlpi_adds,
                 &mut *patched_ptr,
                 &mut *failed_ptr,
             );
@@ -1189,17 +1248,20 @@ unsafe fn hook_symbol_impl(
 ///
 /// # Safety
 /// `dyn_info` must have been produced by [`DynamicInfo::from_phdr`] for a
-/// currently-loaded ELF object. `guard` must belong to the current
-/// patching pass.
+/// currently-loaded ELF object. Call from inside [`iterate_libraries`],
+/// while the loader lock protects the mappings through permission restoration.
+/// `maps` must belong to the current walk and `dlpi_adds` come from this callback's info.
 unsafe fn patch_got_entries(
     dyn_info: &DynamicInfo,
     symbol_name: &[u8],
     hook_fn: usize,
-    guard: &mut PageProtGuard,
+    maps: &mut LazyMapsSnapshot,
+    dlpi_adds: u64,
     patched: &mut usize,
     failed: &mut usize,
 ) {
     unsafe {
+        let mut guard = None;
         // The AMD64 SysV ABI states on page 73: "The AMD64 LP64 ABI architecture uses only
         // Elf64_Rela relocation entries with explicit addends":
         // <https://gitlab.com/x86-psABIs/x86-64-ABI/-/jobs/artifacts/master/raw/x86-64-ABI/abi.pdf?job=build>
@@ -1215,7 +1277,10 @@ unsafe fn patch_got_entries(
             if let Some(cstr) = dyn_info.sym_name(sym_idx) {
                 if cstr.to_bytes() == symbol_name {
                     let addr = u64_to_usize(reloc.r_offset) + dyn_info.base_address();
-                    if guard.override_entry(addr, hook_fn) {
+                    if guard
+                        .get_or_insert_with(|| PageProtGuard::with_maps(maps.get(dlpi_adds)))
+                        .override_entry(addr, hook_fn)
+                    {
                         *patched += 1;
                     } else {
                         *failed += 1;
@@ -1229,7 +1294,22 @@ unsafe fn patch_got_entries(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use tempfile::TempDir;
+
+    thread_local! {
+        /// `read_proc_maps` calls made by this thread.
+        pub(super) static MAPS_READS: Cell<usize> = const { Cell::new(0) };
+    }
+
+    fn maps_reads() -> usize {
+        MAPS_READS.with(Cell::get)
+    }
+
+    fn reset_maps_reads() {
+        MAPS_READS.with(|reads| reads.set(0));
+    }
 
     #[test]
     fn page_prot_guard_finds_original_mapping_protection() {
@@ -1246,7 +1326,8 @@ mod tests {
                     end: 0x3000,
                     prot: PROT_READ | PROT_EXEC,
                 },
-            ],
+            ]
+            .into(),
             touched: HashMap::new(),
         };
 
@@ -1254,6 +1335,155 @@ mod tests {
         assert_eq!(guard.original_prot(0x1fff), Some(PROT_READ));
         assert_eq!(guard.original_prot(0x2000), Some(PROT_READ | PROT_EXEC));
         assert_eq!(guard.original_prot(0x3000), None);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn maps_snapshot_rereads_only_when_dlpi_adds_changes() {
+        let mut maps = LazyMapsSnapshot::default();
+        reset_maps_reads();
+        let first = maps.get(1);
+        assert!(Arc::ptr_eq(&first, &maps.get(1)));
+        assert_eq!(maps_reads(), 1);
+        assert!(!Arc::ptr_eq(&first, &maps.get(2)));
+        assert_eq!(maps_reads(), 2);
+    }
+
+    #[test]
+    fn maps_snapshot_does_not_cache_failed_reads() {
+        let entry = MapEntry {
+            start: 0x1000,
+            end: 0x2000,
+            prot: PROT_READ,
+        };
+        let mut maps = LazyMapsSnapshot::default();
+        // A truncated read is still used for the current object, but not kept.
+        let partial = maps.get_with(1, |out| {
+            out.push(entry);
+            false
+        });
+        assert_eq!(partial.len(), 1);
+        assert!(maps.snapshot.is_none());
+        assert!(maps.get_with(1, |_| true).is_empty());
+        assert!(maps.snapshot.is_none());
+        let full = maps.get_with(1, |out| {
+            out.push(entry);
+            true
+        });
+        assert!(Arc::ptr_eq(
+            &full,
+            &maps.get_with(1, |_| panic!("a complete snapshot is reused"))
+        ));
+    }
+
+    /// Hooking a symbol imported by several Full-RELRO objects reads `/proc/self/maps` once per
+    /// pass, not once per patched object, and restores every read-only GOT page.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn hook_pass_reads_proc_maps_once() {
+        use std::process::Command;
+
+        static HOOK_CALLS: AtomicUsize = AtomicUsize::new(0);
+        unsafe extern "C" fn hooked_getppid() -> libc::pid_t {
+            HOOK_CALLS.fetch_add(1, Ordering::Relaxed);
+            // The test binary is excluded from patching, so this calls the original.
+            unsafe { libc::getppid() }
+        }
+        fn dlpi_adds() -> u64 {
+            let mut adds = 0;
+            iterate_libraries(|info, _| {
+                adds = info.dlpi_adds;
+                true
+            });
+            adds
+        }
+        fn protection(addr: usize) -> i32 {
+            read_proc_maps()
+                .iter()
+                .find(|m| addr >= m.start && addr < m.end)
+                .expect("slot is mapped")
+                .prot
+        }
+
+        const OBJECTS: usize = 4;
+        let dir = TempDir::new().expect("create temp dir");
+        let c_path = dir.path().join("maps_once.c");
+        std::fs::write(
+            &c_path,
+            "#include <unistd.h>\npid_t maps_once_call(void) { return getppid(); }\n",
+        )
+        .expect("write .c");
+        let handles: Vec<_> = (0..OBJECTS)
+            .map(|i| {
+                let so = dir.path().join(format!("libmaps_once_{i}.so"));
+                let status = Command::new("cc")
+                    .args(["-shared", "-fPIC", "-Wl,-z,relro,-z,now", "-o"])
+                    .arg(&so)
+                    .arg(&c_path)
+                    .status()
+                    .expect("cc should be available");
+                assert!(status.success(), "cc failed: {status}");
+                let so = std::ffi::CString::new(so.to_str().expect("utf8")).expect("CString");
+                let handle =
+                    unsafe { libc::dlopen(so.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+                assert!(!handle.is_null(), "dlopen failed");
+                (handle, so)
+            })
+            .collect();
+
+        // The `getppid` GOT slot of each fixture, read-only under Full RELRO.
+        let mut slots = Vec::new();
+        iterate_libraries(|info, _| unsafe {
+            let Some(name) = dlpi_name(info.dlpi_name) else {
+                return false;
+            };
+            if !handles.iter().any(|(_, so)| so.to_str() == Ok(&*name)) {
+                return false;
+            }
+            let dyn_info = DynamicInfo::from_phdr(info).expect("fixture parses");
+            for reloc in dyn_info.relas().iter().chain(dyn_info.jmprels()) {
+                if dyn_info.sym_name(elf64_r_sym(reloc.r_info)) == Some(c"getppid") {
+                    slots.push(u64_to_usize(reloc.r_offset) + dyn_info.base_address());
+                }
+            }
+            false
+        });
+        assert_eq!(slots.len(), OBJECTS);
+        for &slot in &slots {
+            assert_eq!(protection(slot), PROT_READ, "slot {slot:#x} before hooking");
+        }
+
+        let adds_before = dlpi_adds();
+        reset_maps_reads();
+        let result =
+            unsafe { hook_symbol_excluding_self(c"getppid", hooked_getppid as *const () as usize) }
+                .expect("getppid resolves");
+        let reads = maps_reads();
+        // One read per loader generation. Only musl can see a concurrent `dlopen` (e.g. from
+        // another test) mid-walk.
+        let generations = 1 + usize::try_from(dlpi_adds() - adds_before).expect("fits");
+
+        assert!(result.entries_patched >= OBJECTS, "{result:?}");
+        assert_eq!(result.entries_failed, 0, "{result:?}");
+        assert!(
+            (1..=generations).contains(&reads),
+            "read /proc/self/maps {reads} times for {} patched entries",
+            result.entries_patched
+        );
+        for &slot in &slots {
+            assert_eq!(protection(slot), PROT_READ, "slot {slot:#x} after hooking");
+        }
+        for (handle, _) in handles {
+            unsafe {
+                let call = libc::dlsym(handle, c"maps_once_call".as_ptr());
+                assert!(!call.is_null());
+                let call: unsafe extern "C" fn() -> libc::pid_t = std::mem::transmute(call);
+                let before = HOOK_CALLS.load(Ordering::Relaxed);
+                assert_eq!(call(), libc::getppid());
+                assert_eq!(HOOK_CALLS.load(Ordering::Relaxed), before + 1);
+                libc::dlclose(handle);
+            }
+        }
     }
 
     #[test]

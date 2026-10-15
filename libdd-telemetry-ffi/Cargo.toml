@@ -26,7 +26,7 @@ build_common = { path = "../build-common" }
 libdd-capabilities-impl = { path = "../libdd-capabilities-impl" }
 libdd-telemetry = { path = "../libdd-telemetry" }
 libdd-common = { path = "../libdd-common" }
-libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
+libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false, features = ["std"] }
 function_name.workspace = true
 paste.workspace = true
 

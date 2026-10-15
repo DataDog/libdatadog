@@ -15,14 +15,14 @@ pub mod platform;
 pub mod rate_limiter;
 pub mod shm_stats;
 
-mod atomic_option;
+mod atomic_option_box;
 pub mod client;
 pub mod codec;
 pub mod ipc_server;
 #[cfg(target_os = "linux")]
 pub mod signal_safe;
 
-pub use atomic_option::AtomicOption;
+pub use atomic_option_box::AtomicOptionBox;
 
 pub use client::IpcClientConn;
 #[cfg(target_os = "linux")]
