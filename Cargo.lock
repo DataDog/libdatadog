@@ -3185,7 +3185,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-http-client-lite"
-version = "44.0.0"
+version = "48.0.0"
 dependencies = [
  "embedded-io",
  "embedded-io-async",
