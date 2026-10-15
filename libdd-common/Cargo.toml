@@ -76,6 +76,9 @@ features = [
 [target.'cfg(unix)'.dependencies]
 nix = { workspace = true, features = ["process"], optional = true }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+rustix = { workspace = true, features = ["alloc", "fs", "system"], optional = true }
+
 [dev-dependencies]
 bytes = { workspace = true, features = ["std"] }
 httparse = { workspace = true, features = ["std"] }
@@ -93,6 +96,7 @@ default = ["std", "https"]
 alloc = [
     "dep:anyhow",
     "dep:const_format",
+    "dep:rustix",
     "dep:static_assertions",
     "serde/alloc",
 ]
