@@ -162,3 +162,124 @@ async fn rejects_too_many_extra_headers() {
     ));
     assert!(connection.request.is_empty());
 }
+
+async fn submit_headers(
+    application: &Application,
+    extra_headers: &[(&str, &str)],
+) -> (Result<u16, Error>, Vec<u8>) {
+    let host = Host::default();
+    let request = empty_request(application, &host);
+    let mut connection = FakeConnection {
+        response: b"HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\n\r\n",
+        response_offset: 0,
+        request: Vec::new(),
+    };
+    let mut body_buffer = [0_u8; 1_024];
+    let mut response_buffer = [0_u8; 256];
+    let result = {
+        let mut resource = HttpResource {
+            conn: HttpConnection::Plain(&mut connection),
+            host: "localhost",
+            base_path: "",
+        };
+        send_metrics(
+            &mut resource,
+            "/telemetry/proxy/api/v2/apmtelemetry",
+            &request,
+            extra_headers,
+            &mut body_buffer,
+            &mut response_buffer,
+        )
+        .await
+    };
+    (result, connection.request)
+}
+
+#[tokio::test]
+async fn rejects_invalid_extra_header_names_before_writing() {
+    for name in [
+        "",
+        "has space",
+        "has\ttab",
+        "name:value",
+        "header\"quote",
+        "header\r\nInjected",
+        "header\0",
+        "header\x7f",
+        "héadér",
+        "()<>@,;:\\\"/[]?={}",
+    ] {
+        let (result, written) = submit_headers(&Application::default(), &[(name, "value")]).await;
+        assert!(matches!(result, Err(Error::InvalidHeaderName)), "{name:?}");
+        assert!(written.is_empty(), "{name:?}");
+    }
+}
+
+#[tokio::test]
+async fn rejects_invalid_extra_header_values_before_writing() {
+    for byte in (0..=0x1f).chain(core::iter::once(0x7f)) {
+        if byte == b'\t' {
+            continue;
+        }
+        let value = char::from(byte).to_string();
+        let (result, written) =
+            submit_headers(&Application::default(), &[("x-header", &value)]).await;
+        assert!(
+            matches!(result, Err(Error::InvalidHeaderValue)),
+            "{byte:#x}"
+        );
+        assert!(written.is_empty(), "{byte:#x}");
+    }
+}
+
+#[tokio::test]
+async fn rejects_invalid_application_header_values_before_writing() {
+    for value in [
+        "rust\r\nX-Injected: yes",
+        "bad\n",
+        "bad\r",
+        "bad\0",
+        "bad\x7f",
+    ] {
+        for is_language in [true, false] {
+            let mut application = Application::default();
+            if is_language {
+                application.language_name = value.to_string();
+            } else {
+                application.tracer_version = value.to_string();
+            }
+            let (result, written) = submit_headers(&application, &[]).await;
+            assert!(
+                matches!(result, Err(Error::InvalidHeaderValue)),
+                "{value:?}"
+            );
+            assert!(written.is_empty(), "{value:?}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn accepts_valid_http_header_characters() {
+    let (result, written) = submit_headers(
+        &Application::default(),
+        &[("X-!#$%&'*+-.^_`|~", " \tvisible é"), ("x-empty", "")],
+    )
+    .await;
+    assert!(matches!(result, Ok(202)));
+    let written = String::from_utf8(written).unwrap();
+    assert!(written.contains("X-!#$%&'*+-.^_`|~:  \tvisible é\r\n"));
+    assert!(written.contains("x-empty: \r\n"));
+}
+
+#[cfg(feature = "std")]
+#[test]
+fn header_value_validation_matches_the_existing_http_type() {
+    for byte in 0..=u8::MAX {
+        let text = char::from(byte).to_string();
+        assert_eq!(
+            headers::validate(&[("x-header", &text)]).is_ok(),
+            http::HeaderValue::from_str(&text).is_ok(),
+            "header value {byte:#x}",
+        );
+    }
+}
