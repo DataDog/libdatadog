@@ -31,6 +31,7 @@ pub enum MetricNamespace {
     Rum,
     Appsec,
     IdePlugins,
+    /// Superseded by [`MetricNamespace::Debugger`]. Kept so existing FFI discriminants stay stable.
     LiveDebugger,
     Iast,
     General,
@@ -41,6 +42,7 @@ pub enum MetricNamespace {
     Mlobs,
     Ddtraceapi,
     AiGuard,
+    Debugger,
 }
 
 #[derive(
