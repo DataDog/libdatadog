@@ -1135,6 +1135,55 @@ pub unsafe extern "C" fn ddog_trace_exporter_builder_set_otlp_metrics_headers(
     )
 }
 
+/// Enable client-side stats obfuscation. Disabled by default.
+///
+/// Final activation also requires the agent to advertise a supported `obfuscation_version`
+/// via the `/info` endpoint. When disabled, no `datadog-obfuscation-version` header is sent
+/// on stats payloads.
+#[cfg(feature = "stats-obfuscation")]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ddog_trace_exporter_builder_enable_client_side_stats_obfuscation(
+    builder: Option<&mut TraceExporterBuilder<ForkSafeRuntime>>,
+) -> Option<Box<ExporterError>> {
+    catch_panic!(
+        if let Option::Some(builder) = builder {
+            builder.enable_client_side_stats_obfuscation();
+            None
+        } else {
+            gen_error!(ErrorCode::InvalidArgument)
+        },
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
+/// Sets the intake endpoint used to export client-side stats when agentless export is
+/// configured. No effect unless an agentless endpoint is also configured via
+/// `ddog_trace_exporter_builder_set_agentless_endpoint`; authentication reuses that
+/// endpoint's API key.
+///
+/// `url` must be a fully-qualified `http`/`https` URL with a host/authority (e.g.
+/// `https://trace.agent.{DD_SITE}/api/v0.2/stats`); a relative path is rejected at build
+/// time because the background worker cannot route a request to it.
+#[cfg(feature = "stats-obfuscation")]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ddog_trace_exporter_builder_set_agentless_stats_endpoint(
+    builder: Option<&mut TraceExporterBuilder<ForkSafeRuntime>>,
+    url: CharSlice,
+) -> Option<Box<ExporterError>> {
+    catch_panic!(
+        if let Option::Some(builder) = builder {
+            match sanitize_string(url) {
+                Ok(s) => builder.set_agentless_stats_endpoint(&s),
+                Err(e) => return Some(e),
+            };
+            None
+        } else {
+            gen_error!(ErrorCode::InvalidArgument)
+        },
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
 /// Configure the exporter to write traces as newline-delimited JSON to stdout (the Datadog
 /// Forwarder "log exporter" path) instead of sending them to a Datadog agent. Used in serverless
 /// environments (e.g. AWS Lambda) when no agent is reachable.
