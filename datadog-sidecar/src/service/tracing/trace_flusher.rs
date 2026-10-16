@@ -18,12 +18,10 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::select;
-use tokio::sync::mpsc;
-use tokio::sync::oneshot;
+use tokio::sync::{Notify, mpsc, oneshot};
 use tokio::task::{JoinError, JoinHandle};
 use tracing::{debug, error, info};
 
-const DEFAULT_FLUSH_INTERVAL_MS: u64 = 5_000;
 const DEFAULT_MIN_FORCE_FLUSH_SIZE_BYTES: u32 = 1_000_000;
 
 /// `TraceFlusherStats` holds stats of the trace flusher like the count of allocated shared memory
@@ -52,6 +50,9 @@ struct AgentRemoteConfigs {
 struct TraceFlusherData {
     traces: TraceSendData,
     flusher: Option<JoinHandle<()>>,
+    /// When the buffered traces must be flushed: the earliest `enqueue` time plus the flush
+    /// interval of the session that enqueued them.
+    deadline: Option<Instant>,
 }
 
 #[derive(Default)]
@@ -90,6 +91,9 @@ impl TraceFlusherMetrics {
 /// the minimum sizes for force flushing and dropping, and the remote configs.
 pub(crate) struct TraceFlusher {
     inner: Mutex<TraceFlusherData>,
+    /// Wakes the flusher task when `deadline` moved earlier.
+    deadline_changed: Notify,
+    /// Upper bound on the per-session flush interval; `join` lowers it to 0.
     pub(crate) interval_ms: AtomicU64,
     pub(crate) min_force_flush_size_bytes: AtomicU32,
     pub(crate) min_force_drop_size_bytes: AtomicU32, // put a limit on memory usage
@@ -101,7 +105,8 @@ impl Default for TraceFlusher {
     fn default() -> Self {
         Self {
             inner: Mutex::new(TraceFlusherData::default()),
-            interval_ms: AtomicU64::new(DEFAULT_FLUSH_INTERVAL_MS),
+            deadline_changed: Notify::new(),
+            interval_ms: AtomicU64::new(u64::MAX),
             min_force_flush_size_bytes: AtomicU32::new(DEFAULT_MIN_FORCE_FLUSH_SIZE_BYTES),
             min_force_drop_size_bytes: AtomicU32::new(trace_utils::MAX_PAYLOAD_SIZE as u32),
             remote_config: Mutex::new(Default::default()),
@@ -117,7 +122,9 @@ impl TraceFlusher {
     /// # Arguments
     ///
     /// * `data` - A `SendData` instance that needs to be added to the traces.
-    pub(crate) fn enqueue(self: &Arc<Self>, data: SendData) {
+    /// * `flush_interval` - The enqueuing session's flush interval: `data` is sent at the latest
+    ///   this long from now. The flusher is shared by all sessions, so each keeps its own interval.
+    pub(crate) fn enqueue(self: &Arc<Self>, data: SendData, flush_interval: Duration) {
         let mut flush_data = self.inner.lock_or_panic();
         let flush_data = flush_data.deref_mut();
 
@@ -132,6 +139,15 @@ impl TraceFlusher {
 
         flush_data.traces.send_data_size += data.len();
         flush_data.traces.send_data.push(data);
+
+        let max_interval = Duration::from_millis(self.interval_ms.load(Ordering::Relaxed));
+        // An interval too large to represent never expires (explicit flushes only).
+        if let Some(deadline) = Instant::now().checked_add(flush_interval.min(max_interval)) {
+            if flush_data.deadline.is_none_or(|d| deadline < d) {
+                flush_data.deadline = Some(deadline);
+                self.deadline_changed.notify_one();
+            }
+        }
 
         if flush_data.flusher.is_none() {
             let (force_flush_tx, force_flush_rx) = oneshot::channel();
@@ -232,15 +248,19 @@ impl TraceFlusher {
         &self,
         force_flush_tx: oneshot::Sender<Option<mpsc::Sender<()>>>,
     ) -> Vec<SendData> {
-        let trace_buffer = std::mem::replace(
-            &mut self.inner.lock_or_panic().traces,
-            TraceSendData {
-                send_data: vec![],
-                send_data_size: 0,
-                force_flush: Some(force_flush_tx),
-            },
-        )
-        .send_data;
+        let trace_buffer = {
+            let mut data = self.inner.lock_or_panic();
+            data.deadline = None;
+            std::mem::replace(
+                &mut data.traces,
+                TraceSendData {
+                    send_data: vec![],
+                    send_data_size: 0,
+                    force_flush: Some(force_flush_tx),
+                },
+            )
+            .send_data
+        };
         trace_utils::coalesce_send_data(trace_buffer)
             .into_iter()
             .collect()
@@ -271,15 +291,20 @@ impl TraceFlusher {
         tokio::spawn(async move {
             loop {
                 let mut flush_done_sender = None;
-                select! {
-                    _ = tokio::time::sleep(Duration::from_millis(
-                        self.interval_ms.load(Ordering::Relaxed),
-                    )) => {},
-                    result = &mut force_flush_rx => {
-                        if let Ok(sender) = result {
-                            flush_done_sender = sender;
-                        }
-                    },
+                loop {
+                    let deadline = self.inner.lock_or_panic().deadline;
+                    select! {
+                        _ = tokio::time::sleep_until(deadline.unwrap_or_else(Instant::now).into()),
+                            if deadline.is_some() => break,
+                        // An earlier deadline was set: re-arm the sleep.
+                        _ = self.deadline_changed.notified() => {},
+                        result = &mut force_flush_rx => {
+                            if let Ok(sender) = result {
+                                flush_done_sender = sender;
+                            }
+                            break;
+                        },
+                    }
                 }
 
                 debug!(
@@ -356,13 +381,13 @@ mod tests {
         let send_data_2 = create_send_data(size, &target_endpoint);
         let send_data_3 = create_send_data(size, &target_endpoint);
 
-        trace_flusher.enqueue(send_data_1);
-        trace_flusher.enqueue(send_data_2);
+        trace_flusher.enqueue(send_data_1, Duration::MAX);
+        trace_flusher.enqueue(send_data_2, Duration::MAX);
 
         assert!(poll_for_mock_hit(&mut mock, 10, 150, 0, false).await);
 
         // enqueue a trace that exceeds the min force flush size
-        trace_flusher.enqueue(send_data_3);
+        trace_flusher.enqueue(send_data_3, Duration::MAX);
 
         assert!(poll_for_mock_hit(&mut mock, 25, 100, 1, true).await);
     }
@@ -394,13 +419,47 @@ mod tests {
         };
         let send_data_1 = create_send_data(size, &target_endpoint);
 
-        trace_flusher.enqueue(send_data_1);
+        trace_flusher.enqueue(send_data_1, Duration::MAX);
 
         // Sleep for a duration longer than the flush interval
         tokio::time::sleep(Duration::from_millis(
             trace_flusher.interval_ms.load(Ordering::Relaxed) + 1,
         ))
         .await;
+        assert!(poll_for_mock_hit(&mut mock, 25, 100, 1, true).await);
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    // Test scenario: A session with a very long flush interval enqueues a trace, then a session
+    // with a short interval enqueues another. The short interval must wake the already sleeping
+    // flusher instead of waiting for the long one.
+    async fn test_shorter_session_interval_wakes_flusher() {
+        let trace_flusher = Arc::new(TraceFlusher::default());
+        let server = MockServer::start();
+        let mut mock = server
+            .mock_async(|_when, then| {
+                then.status(202)
+                    .header("content-type", "application/json")
+                    .body(r#"{"status":"ok"}"#);
+            })
+            .await;
+        let target_endpoint = Endpoint {
+            url: server.url("").to_owned().parse().unwrap(),
+            api_key: Some("test-key".into()),
+            ..Default::default()
+        };
+
+        trace_flusher.enqueue(
+            create_send_data(100, &target_endpoint),
+            Duration::from_secs(3000),
+        );
+        assert!(poll_for_mock_hit(&mut mock, 5, 50, 0, false).await);
+
+        trace_flusher.enqueue(
+            create_send_data(100, &target_endpoint),
+            Duration::from_millis(100),
+        );
         assert!(poll_for_mock_hit(&mut mock, 25, 100, 1, true).await);
     }
 
@@ -435,7 +494,7 @@ mod tests {
 
         let send_data_1 = create_send_data(size, &target_endpoint);
 
-        trace_flusher.enqueue(send_data_1);
+        trace_flusher.enqueue(send_data_1, Duration::MAX);
 
         assert!(poll_for_mock_hit(&mut mock, 5, 250, 0, true).await);
     }

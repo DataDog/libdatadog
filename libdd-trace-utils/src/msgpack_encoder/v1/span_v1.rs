@@ -5,7 +5,7 @@
 //! (Convention documented in [`crate::msgpack_encoder`].)
 
 use crate::span::TraceData;
-use crate::span::v1::{AttributeValue, Span, SpanEvent, SpanLink};
+use crate::span::v1::{AttributeValue, Span, SpanEvent, SpanKind, SpanLink};
 use crate::span::vec_map::VecMap;
 use rmp::encode::{
     RmpWrite, ValueWriteError, write_array_len, write_bin, write_bool, write_f64, write_map_len,
@@ -34,10 +34,10 @@ use super::{
 /// # Errors
 ///
 /// This function will return any error emitted by the writer.
-pub(super) fn encode_attribute_value<W: RmpWrite, T: TraceData>(
+pub(super) fn encode_attribute_value<'a, W: RmpWrite, T: TraceData>(
     writer: &mut W,
-    value: &AttributeValue<T>,
-    table: &mut StringTable,
+    value: &'a AttributeValue<T>,
+    table: &mut StringTable<'a>,
 ) -> Result<(), ValueWriteError<W::Error>> {
     match value {
         AttributeValue::String(s) => {
@@ -94,10 +94,10 @@ pub(super) fn encode_attribute_value<W: RmpWrite, T: TraceData>(
 /// # Errors
 ///
 /// This function will return any error emitted by the writer.
-pub(super) fn encode_attributes_map<W: RmpWrite, T: TraceData>(
+pub(super) fn encode_attributes_map<'a, W: RmpWrite, T: TraceData>(
     writer: &mut W,
-    map: &VecMap<T::Text, AttributeValue<T>>,
-    table: &mut StringTable,
+    map: &'a VecMap<T::Text, AttributeValue<T>>,
+    table: &mut StringTable<'a>,
 ) -> Result<(), ValueWriteError<W::Error>> {
     // `VecMap` tolerates duplicate keys for fast insertion; `defensive_dedup` returns a view
     // with each key emitted once (last-write-wins) and warns if the map wasn't already deduped
@@ -128,10 +128,10 @@ pub(super) fn encode_attributes_map<W: RmpWrite, T: TraceData>(
 /// # Errors
 ///
 /// This function will return any error emitted by the writer.
-pub(super) fn encode_span_links<W: RmpWrite, T: TraceData>(
+pub(super) fn encode_span_links<'a, W: RmpWrite, T: TraceData>(
     writer: &mut W,
-    span_links: &[SpanLink<T>],
-    table: &mut StringTable,
+    span_links: &'a [SpanLink<T>],
+    table: &mut StringTable<'a>,
 ) -> Result<(), ValueWriteError<W::Error>> {
     write_uint8(writer, SpanKey::SpanLinks as u8)?;
     write_array_len(writer, span_links.len() as u32)?;
@@ -189,10 +189,10 @@ pub(super) fn encode_span_links<W: RmpWrite, T: TraceData>(
 /// # Errors
 ///
 /// This function will return any error emitted by the writer.
-pub(super) fn encode_span_events<W: RmpWrite, T: TraceData>(
+pub(super) fn encode_span_events<'a, W: RmpWrite, T: TraceData>(
     writer: &mut W,
-    span_events: &[SpanEvent<T>],
-    table: &mut StringTable,
+    span_events: &'a [SpanEvent<T>],
+    table: &mut StringTable<'a>,
 ) -> Result<(), ValueWriteError<W::Error>> {
     write_uint8(writer, SpanKey::SpanEvents as u8)?;
     write_array_len(writer, span_events.len() as u32)?;
@@ -235,10 +235,10 @@ pub(super) fn encode_span_events<W: RmpWrite, T: TraceData>(
 /// # Errors
 ///
 /// This function will return any error emitted by the writer.
-pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
+pub(super) fn encode_span<'a, W: RmpWrite, T: TraceData>(
     writer: &mut W,
-    span: &Span<T>,
-    table: &mut StringTable,
+    span: &'a Span<T>,
+    table: &mut StringTable<'a>,
 ) -> Result<(), ValueWriteError<W::Error>> {
     let is_parent = span.parent_id != 0;
     let has_duration = span.duration != 0;
@@ -247,8 +247,9 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
     let has_env = !span.env.borrow().is_empty();
     let has_version = !span.version.borrow().is_empty();
     let has_component = !span.component.borrow().is_empty();
+    let has_kind = span.span_kind != SpanKind::Unspecified;
 
-    let span_len = 3 // span_id, start, kind — always present
+    let span_len = 2 // span_id, start — always present
         + (!span.service.borrow().is_empty()) as u32
         + (!span.name.borrow().is_empty()) as u32
         + (!span.resource.borrow().is_empty()) as u32
@@ -261,7 +262,8 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
         + (!span.span_events.is_empty()) as u32
         + has_env as u32
         + has_version as u32
-        + has_component as u32;
+        + has_component as u32
+        + has_kind as u32;
 
     write_map_len(writer, span_len)?;
 
@@ -331,9 +333,11 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
         write_uint8(writer, SpanKey::Component as u8)?;
         table.write_interned(writer, span.component.borrow())?;
     }
-    // SpanKind is always emitted (default = Internal).
-    write_uint8(writer, SpanKey::Kind as u8)?;
-    write_uint(writer, span.span_kind as u64)?;
+    // Unspecified (0) is the proto3 default, so it is left off the wire.
+    if has_kind {
+        write_uint8(writer, SpanKey::Kind as u8)?;
+        write_uint(writer, span.span_kind as u64)?;
+    }
 
     Ok(())
 }

@@ -99,6 +99,8 @@ pub struct SessionConfig {
     pub parent_session_id: Option<String>,
     /// Optional OTLP metrics intake endpoint.
     pub otlp_metrics_endpoint: Option<Endpoint>,
+    /// `DD_TRACE_AGENT_PROTOCOL_VERSION=0.4`: send v0.4 even when the agent advertises V1.
+    pub force_v04_traces: bool,
 }
 
 #[cfg(test)]
@@ -137,6 +139,7 @@ impl SessionConfig {
             root_session_id: None,
             parent_session_id: None,
             otlp_metrics_endpoint: None,
+            force_v04_traces: false,
         }
     }
 }
