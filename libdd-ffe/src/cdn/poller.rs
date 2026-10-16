@@ -142,11 +142,16 @@ impl<T: Transport, S: ConfigurationSink> Poller<T, S> {
                 return;
             }
 
+            let mut next_poll_delay = self.poll_interval;
             let poll = AssertUnwindSafe(self.poll(&cancellation)).catch_unwind();
             match poll.await {
                 Ok(PollOutcome::Cancelled) => return,
                 Ok(PollOutcome::Success) => self.sink.confirmed(),
-                Ok(_) => self.sink.failed(),
+                Ok(PollOutcome::Retryable(delay)) => {
+                    self.sink.failed();
+                    next_poll_delay = next_poll_delay.max(delay);
+                }
+                Ok(PollOutcome::Stop) => self.sink.failed(),
                 Err(_) => {
                     self.sink.failed();
                     self.warn(
@@ -158,7 +163,7 @@ impl<T: Transport, S: ConfigurationSink> Poller<T, S> {
 
             tokio::select! {
                 _ = cancellation.cancelled() => return,
-                _ = tokio::time::sleep(self.poll_interval) => {}
+                _ = tokio::time::sleep(next_poll_delay) => {}
             }
         }
     }
@@ -632,6 +637,38 @@ mod tests {
         );
         assert_eq!(started.elapsed(), Duration::from_secs(15));
         assert_eq!(poller.transport.calls.load(Ordering::Relaxed), 3);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn final_retry_after_delays_the_next_poll_and_remains_cancellable() {
+        // The fourth request starts a new poll. It must wait for both the
+        // configured interval and the final response's Retry-After minimum.
+        for (retry_after, stop_after, expected_calls) in
+            [("100", 99, 3), ("100", 101, 4), ("1", 29, 3), ("1", 31, 4)]
+        {
+            let mut final_response = response(429, None, b"");
+            final_response.retry_after = Some(retry_after.into());
+            let mut poller = retry_test_poller(QueueTransport::new([
+                Ok(response(503, None, b"")),
+                Ok(response(503, None, b"")),
+                Ok(final_response),
+                Ok(response(200, Some("accepted"), EMPTY_CONFIG)),
+            ]));
+            poller.retry_delay = no_retry_delay;
+            let cancellation = CancellationToken::new();
+            let stop = cancellation.clone();
+            let started = tokio::time::Instant::now();
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_secs(stop_after)).await;
+                stop.cancel();
+            });
+            poller.run(cancellation).await;
+            assert_eq!(started.elapsed(), Duration::from_secs(stop_after));
+            assert_eq!(
+                poller.transport.calls.load(Ordering::Relaxed),
+                expected_calls
+            );
+        }
     }
 
     #[tokio::test(start_paused = true)]

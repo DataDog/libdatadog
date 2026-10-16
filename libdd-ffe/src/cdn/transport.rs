@@ -178,9 +178,12 @@ fn request_url_and_authorization(
     endpoint: &http::Uri,
 ) -> Result<(http::Uri, Option<String>), TransportFailure> {
     let url = url::Url::parse(&endpoint.to_string()).map_err(|_| TransportFailure::BuildRequest)?;
-    if url.username().is_empty() {
+    let Some((_, host)) = endpoint
+        .authority()
+        .and_then(|authority| authority.as_str().rsplit_once('@'))
+    else {
         return Ok((endpoint.clone(), None));
-    }
+    };
 
     let mut credentials = percent_decode_str(url.username()).collect::<Vec<_>>();
     credentials.push(b':');
@@ -193,17 +196,8 @@ fn request_url_and_authorization(
     );
 
     // Remove URL credentials without normalizing the operator's path/query.
-    let authority = endpoint
-        .authority()
-        .and_then(|authority| authority.as_str().rsplit_once('@'))
-        .map(|(_, host)| host)
-        .ok_or(TransportFailure::BuildRequest)?;
     let mut parts = endpoint.clone().into_parts();
-    parts.authority = Some(
-        authority
-            .parse()
-            .map_err(|_| TransportFailure::BuildRequest)?,
-    );
+    parts.authority = Some(host.parse().map_err(|_| TransportFailure::BuildRequest)?);
     let uri = http::Uri::from_parts(parts).map_err(|_| TransportFailure::BuildRequest)?;
     Ok((uri, Some(authorization)))
 }
@@ -342,6 +336,30 @@ mod tests {
                 | "dd-internal-untraced-request"
                 | "authorization"
         )));
+    }
+
+    #[test]
+    fn custom_basic_auth_accepts_password_only_credentials() {
+        for (userinfo, expected) in [
+            (":token", "Basic OnRva2Vu"),
+            (":p%40ss", "Basic OnBAc3M="),
+            (":p[ss", "Basic OnBbc3M="),
+            (":päss", "Basic OnDDpHNz"),
+            (":", "Basic Og=="),
+            ("", "Basic Og=="),
+        ] {
+            let endpoint = CdnEndpoint::custom(&format!(
+                "https://{userinfo}@[::1]:8443/a/../Config%2fraw?tenant=a%2Fb"
+            ))
+            .unwrap();
+            let request = build_request(&endpoint, None, "php", "1.27").unwrap();
+            assert_eq!(request.headers()[AUTHORIZATION_HEADER], expected);
+            assert_eq!(
+                request.uri(),
+                "https://[::1]:8443/a/../Config%2fraw?tenant=a%2Fb"
+            );
+            assert!(!request.headers().contains_key(API_KEY_HEADER));
+        }
     }
 
     #[test]
