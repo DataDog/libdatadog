@@ -493,6 +493,51 @@ fn builder_tag_and_header_setters() {
     }
 }
 
+#[cfg(feature = "stats-obfuscation")]
+#[test]
+fn builder_stats_obfuscation_setters() {
+    unsafe {
+        // Agentless stats endpoint.
+        let setter = ddog_trace_exporter_builder_set_agentless_stats_endpoint;
+        assert_eq!(
+            setter(None, CharSlice::from("url")).unwrap().code,
+            ErrorCode::InvalidArgument
+        );
+
+        let mut config = TraceExporterBuilder::default();
+        assert_eq!(
+            setter(
+                Some(&mut config),
+                CharSlice::from("https://trace.agent.example.com/api/v0.2/stats")
+            ),
+            None
+        );
+        let mut expected = TraceExporterBuilder::default();
+        expected.set_agentless_stats_endpoint("https://trace.agent.example.com/api/v0.2/stats");
+        let configured = format!("{config:?}");
+        assert_eq!(configured, format!("{expected:?}"));
+
+        // Invalid UTF-8 is rejected and leaves the builder unchanged.
+        assert_eq!(
+            setter(Some(&mut config), CharSlice::from_bytes(&[0xff]))
+                .unwrap()
+                .code,
+            ErrorCode::InvalidInput
+        );
+        assert_eq!(format!("{config:?}"), configured);
+
+        // Client-side stats obfuscation.
+        let setter = ddog_trace_exporter_builder_enable_client_side_stats_obfuscation;
+        assert_eq!(setter(None).unwrap().code, ErrorCode::InvalidArgument);
+
+        let mut config = TraceExporterBuilder::default();
+        assert_eq!(setter(Some(&mut config)), None);
+        let mut expected = TraceExporterBuilder::default();
+        expected.enable_client_side_stats_obfuscation();
+        assert_eq!(format!("{config:?}"), format!("{expected:?}"));
+    }
+}
+
 #[test]
 fn config_two_string_setters_are_atomic() {
     type Setter = unsafe extern "C" fn(

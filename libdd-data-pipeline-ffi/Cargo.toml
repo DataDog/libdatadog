@@ -16,7 +16,13 @@ crate-type = ["lib", "staticlib", "cdylib"]
 bench = false
 
 [features]
-default = ["cbindgen", "catch_panic"]
+# `stats-obfuscation` is default-on because the builder FFI bindings it gates
+# (`ddog_trace_exporter_builder_enable_client_side_stats_obfuscation`,
+# `ddog_trace_exporter_builder_set_agentless_stats_endpoint`) are declared in the generated
+# header whenever cbindgen runs: cbindgen does not evaluate `#[cfg]`, so building with cbindgen
+# but without stats-obfuscation would emit header declarations for symbols missing from the
+# compiled library.
+default = ["cbindgen", "catch_panic", "stats-obfuscation"]
 catch_panic = []
 cbindgen = ["build_common/cbindgen", "libdd-common-ffi/cbindgen"]
 regex-lite = ["libdd-data-pipeline/regex-lite"]
@@ -24,9 +30,9 @@ regex-lite = ["libdd-data-pipeline/regex-lite"]
 compression = ["libdd-data-pipeline/compression"]
 # Expose exporter observations to hosts that run their own telemetry client.
 external-observations = ["libdd-data-pipeline/external-observations"]
-# Forward `stats-obfuscation` to the underlying crate. This has no FFI surface of
-# its own yet (client-side stats obfuscation is not configurable over the C API);
-# it only compiles the capability into the linked data-pipeline crate.
+# Forward `stats-obfuscation` to the underlying crate. Default-on (see `default`): the
+# feature gates builder methods that have FFI bindings, so the capability and the generated
+# header must always be in sync.
 stats-obfuscation = ["libdd-data-pipeline/stats-obfuscation"]
 
 [build-dependencies]
