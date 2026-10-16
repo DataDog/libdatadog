@@ -3159,6 +3159,8 @@ dependencies = [
  "embedded-io",
  "embedded-io-async",
  "embedded-nal-async",
+ "libc",
+ "reqwless",
  "rustix 1.1.5",
 ]
 
