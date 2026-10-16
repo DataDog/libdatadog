@@ -787,7 +787,11 @@ mod tests {
                 metrics: vec![("_top_level".into(), 1.0)].into(),
                 ..Default::default()
             };
-            concentrator.add_span(&span);
+            let chunk = libdd_trace_utils::span::v04::TraceChunk::new(std::slice::from_ref(&span));
+            concentrator.add_span(&libdd_trace_stats::span_concentrator::ChunkSpanView {
+                span: &span,
+                chunk: &chunk,
+            });
         }
         Arc::new(Mutex::new(concentrator))
     }
