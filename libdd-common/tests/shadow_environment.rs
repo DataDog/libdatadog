@@ -59,7 +59,8 @@ fn origin_discovery_keeps_startup_values_after_c_environment_changes() {
         Some("startup-value")
     );
 
-    #[cfg(target_os = "linux")]
+    // Miri does not support rustix's stat64 call; the snapshot assertions above still run.
+    #[cfg(all(target_os = "linux", not(miri)))]
     assert_eq!(
         libdd_common::entity_id::discover().external_env.as_deref(),
         Some("startup-value")
