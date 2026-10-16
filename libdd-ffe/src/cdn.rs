@@ -4,7 +4,8 @@
 //! CDN configuration fetching, independent of a tracer or sidecar lifecycle.
 //!
 //! Run the fetcher on the caller's Tokio runtime and cancel it before disposing
-//! of its sink. HTTPS uses the crypto provider selected by `libdd-common`.
+//! of its sink. Select `cdn,https` for ring or `cdn,fips` for FIPS HTTPS via
+//! `libdd-common`. CDN enables HTTP(S)_PROXY/NO_PROXY support independently of TLS.
 
 mod endpoint;
 mod poller;

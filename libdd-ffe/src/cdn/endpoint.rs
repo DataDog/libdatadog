@@ -72,6 +72,12 @@ impl CdnEndpoint {
     }
 
     fn from_parts(url: &str, api_key: Option<String>) -> Result<Self, EndpointError> {
+        if let Some(key) = &api_key {
+            if key.is_empty() {
+                return Err(EndpointError::MissingApiKey);
+            }
+            http::HeaderValue::from_str(key).map_err(|_| EndpointError::InvalidApiKey)?;
+        }
         Ok(Self {
             endpoint: Endpoint {
                 url: Self::parse_uri(url)?,
@@ -90,7 +96,7 @@ impl CdnEndpoint {
         // http::Uri rejects. The previous transport encoded them with Url
         // before removing userinfo and constructing the HTTP request.
         let parsed = Url::parse(raw).map_err(|_| EndpointError::InvalidUrl)?;
-        if parsed.username().is_empty() {
+        if parsed.username().is_empty() && parsed.password().is_none() {
             return Err(EndpointError::InvalidUrl);
         }
         let (_, authority_and_path) = raw.split_once("://").ok_or(EndpointError::InvalidUrl)?;
@@ -226,6 +232,7 @@ impl fmt::Debug for CdnEndpoint {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum EndpointError {
     MissingApiKey,
+    InvalidApiKey,
     InvalidUrl,
     UnsupportedScheme,
     UrlContainsWhitespace,
@@ -236,6 +243,7 @@ impl fmt::Display for EndpointError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let message = match self {
             Self::MissingApiKey => "no API key is configured for the managed endpoint",
+            Self::InvalidApiKey => "the configured API key is not a valid HTTP header value",
             Self::InvalidUrl => "the configured URL is not a valid absolute URL",
             Self::UnsupportedScheme => "the configured URL must use HTTP or HTTPS",
             Self::UrlContainsWhitespace => "the configured URL contains whitespace",
@@ -354,6 +362,24 @@ mod tests {
             CdnEndpoint::build("", "datadoghq.com", "", "").unwrap_err(),
             EndpointError::MissingApiKey
         );
+    }
+
+    #[test]
+    fn managed_endpoint_rejects_invalid_api_key_headers_without_disclosing_them() {
+        for key in ["secret\r", "secret\n", "secret\0", "secret\u{7f}"] {
+            let error = CdnEndpoint::managed("datadoghq.com", "", key).unwrap_err();
+            assert_eq!(error, EndpointError::InvalidApiKey);
+            assert!(!error.to_string().contains("secret"));
+            assert!(!format!("{error:?}").contains("secret"));
+            let wire = serde_json::json!({
+                "url": "https://ufc-server.ff-cdn.datadoghq.com/api/v2/feature-flagging/config/rules-based/server",
+                "api_key": key,
+            });
+            let error = serde_json::from_value::<CdnEndpoint>(wire).unwrap_err();
+            assert!(!error.to_string().contains("secret"));
+            // Custom endpoints ignore the Datadog credential entirely.
+            assert!(CdnEndpoint::build("http://localhost/config", "", "", key).is_ok());
+        }
     }
 
     #[test]
