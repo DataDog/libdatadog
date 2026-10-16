@@ -3,27 +3,48 @@ on:
   pull_request:
     branches-ignore:
       - release
-  push:
-    branches:
-      - main
-      - mq-working-branch-*
   schedule:
     - cron: '0 6 * * *'
+  workflow_dispatch:
 
 jobs:
   setup:
     runs-on: ubuntu-latest
     outputs:
       crates: ${{ steps.set-crates.outputs.crates }}
+      trigger: ${{ steps.unsafe-gate.outputs.trigger }}
     steps:
     - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
       with:
         fetch-depth: 0
+    # Miri detects UB, which originates in unsafe code: run it on a PR only when
+    # the diff touches unsafe code or its immediate context (hunk lines, added or
+    # removed, plus the 3 surrounding context lines). The nightly schedule always
+    # runs the full workspace, so anything this gate misses is caught there.
+    - name: Check whether the diff touches unsafe code
+      id: unsafe-gate
+      env:
+        BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      run: |
+        if [[ "${{ github.event_name }}" != "pull_request" ]]; then
+          echo "Not a pull request (nightly or manual run) — testing the full workspace."
+          echo "trigger=true" >> $GITHUB_OUTPUT
+          exit 0
+        fi
+        if git diff --no-color "$BASE_SHA"...HEAD -- '*.rs' | grep -E '^[-+ ]' | grep -qw unsafe; then
+          echo "Diff touches unsafe code or its immediate context — running miri."
+          echo "trigger=true" >> $GITHUB_OUTPUT
+        else
+          echo "No unsafe code in or around the diff — skipping miri."
+          echo "trigger=false" >> $GITHUB_OUTPUT
+        fi
     - name: Get crates report
       id: changed-crates
+      if: ${{ steps.unsafe-gate.outputs.trigger == 'true' }}
       uses: ./.github/actions/crates-reporter
     - name: Set crates to run Miri on
       id: set-crates
+      if: ${{ steps.unsafe-gate.outputs.trigger == 'true' }}
       env:
         CHANGED_CRATES_STATUS: ${{ steps.changed-crates.outputs.status }}
         CHANGED_CRATES: ${{ steps.changed-crates.outputs.crates }}
@@ -38,7 +59,7 @@ jobs:
           CRATES=$(echo "$AFFECTED_CRATES" | jq -r 'map("-p " + .) | join(" ")')
           [[ -z "$CRATES" || "$CRATES" == '""' ]] && CRATES=""
         else
-          echo "This is a push event, running Miri on all crates"
+          echo "This is a scheduled run, running Miri on all crates"
           CRATES="--workspace"
         fi
         echo "Crates: $CRATES"
@@ -50,7 +71,7 @@ jobs:
       matrix:
         partition: [1, 2, 3, 4, 5]
     needs: setup
-    if: ${{ needs.setup.outputs.crates != '' }}
+    if: ${{ needs.setup.outputs.trigger == 'true' && needs.setup.outputs.crates != '' }}
     env:
       CARGO_TERM_COLOR: always
       CARGO_INCREMENTAL: 0
@@ -80,15 +101,6 @@ jobs:
       - uses: taiki-e/install-action@2c41309d51ede152b6f2ee6bf3b71e6dc9a8b7df # 2.49.27
         with:
           tool: nextest@0.9.96
-      - name: Cache [rust]
-        id: rust-cache
-        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
-        with:
-          cache-targets: true # cache build artifacts
-          cache-bin: true # cache the ~/.cargo/bin directory
-          shared-key: miri
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      - run: echo "rust-cache ${{ steps.rust-cache.outputs.cache-hit == 'true' && 'HIT' || 'MISS' }}"
       - env:
           # Override rust-toolchain.toml so miri runs on the dated nightly
           # (miri is nightly-only) instead of the workspace MSRV.
