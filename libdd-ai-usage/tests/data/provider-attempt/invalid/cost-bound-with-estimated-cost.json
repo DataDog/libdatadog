@@ -1,0 +1,18 @@
+{
+  "$schema": "../../../../schema/provider-attempt-metric-fixture.schema.json",
+  "profile": "gen_ai.client.provider_attempt@0.1.0",
+  "case": "cost-bound-with-estimated-cost",
+  "description": "An estimated cost may be a lower bound only when it states the rate card that was applied. This one states none, as a producer's own figure does, so the bound contradicts it.",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "exampleai",
+    "duration_seconds": 0.5,
+    "streaming": false,
+    "cost_nano_usd": 250000000,
+    "cost_source": "estimated",
+    "cost_bound": "lower",
+    "observation_point": "gateway"
+  },
+  "expected_error_code": "fields_contradict",
+  "expected_error": "cost_bound requires cost_source calculated, or estimated with cost_rate_card"
+}

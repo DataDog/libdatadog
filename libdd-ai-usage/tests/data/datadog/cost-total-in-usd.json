@@ -1,0 +1,73 @@
+{
+  "binding": "0.1.0",
+  "case": "cost-total-in-usd",
+  "description": "Two reported costs of 0.1 and 0.2 USD in one second are added as integers, 300000000 nano-USD, and divided once: 0.3. A calculated cost keeps its rate card as a tag, written with / in place of @.",
+  "profile": "gen_ai.client.provider_attempt@0.1.0",
+  "historical": false,
+  "points": [
+    {
+      "name": "trajectory.gen_ai.client.inference.usage.cost",
+      "instrument": "counter",
+      "unit": "{nanoUSD}",
+      "value": 100000000,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "trajectory.cost.source": "reported",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "trajectory.gen_ai.client.inference.usage.cost",
+      "instrument": "counter",
+      "unit": "{nanoUSD}",
+      "value": 200000000,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "trajectory.cost.source": "reported",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "trajectory.gen_ai.client.inference.usage.cost",
+      "instrument": "counter",
+      "unit": "{nanoUSD}",
+      "value": 10500000,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "trajectory.cost.source": "calculated",
+        "trajectory.cost.rate_card": "synthetic-basic@1",
+        "trajectory.observation.point": "gateway"
+      }
+    }
+  ],
+  "expected_series": [
+    {
+      "name": "trajectory.gen_ai.client.inference.usage.cost",
+      "type": "count",
+      "value": 0.0105,
+      "tags": [
+        "gen_ai.operation.name:chat",
+        "gen_ai.provider.name:exampleai",
+        "trajectory.cost.rate_card:synthetic-basic/1",
+        "trajectory.cost.source:calculated",
+        "trajectory.observation.point:gateway",
+        "trajectory.profile:gen_ai.client.provider_attempt/0.1.0"
+      ]
+    },
+    {
+      "name": "trajectory.gen_ai.client.inference.usage.cost",
+      "type": "count",
+      "value": 0.3,
+      "tags": [
+        "gen_ai.operation.name:chat",
+        "gen_ai.provider.name:exampleai",
+        "trajectory.cost.source:reported",
+        "trajectory.observation.point:gateway",
+        "trajectory.profile:gen_ai.client.provider_attempt/0.1.0"
+      ]
+    }
+  ]
+}
