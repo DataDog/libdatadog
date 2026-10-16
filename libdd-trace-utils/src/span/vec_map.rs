@@ -63,7 +63,7 @@ impl<K, V> Default for VecMap<K, V> {
 }
 
 /// Upholds the [ValueMap] contract of yielding each key once: reads skip shadowed duplicates (see
-/// [VecMap::iter_unique]), and mutable traversals first drop them (see [VecMap::dedup_in_place]).
+/// [VecMap::iter_unique]), and mutable traversals first drop them (see [VecMap::dedup]).
 impl<T: ValueTypes> ValueMap<T> for VecMap<T::Text, AttributeValue<T>> {
     fn get(&self, key: &str) -> Option<&AttributeValue<T>> {
         VecMap::get(self, key)
@@ -106,7 +106,7 @@ impl<T: ValueTypes> ValueMapMut<T> for VecMap<T::Text, AttributeValue<T>> {
     where
         T: 'a,
     {
-        self.dedup_in_place();
+        self.dedup();
         // Keys are only borrowed immutably, so this can't introduce duplicates: iterate `data`
         // directly rather than through `VecMap::iter_mut`, which dirties the `deduped` flag.
         self.data.iter_mut().map(|(k, v)| (k.as_str(), v))
@@ -311,33 +311,6 @@ impl<K: PartialEq, V> VecMap<K, V> {
         }
     }
 
-    /// Remove entries shadowed by a later entry with the same key. As opposed to [VecMap::dedup],
-    /// this preserves the order of the remaining entries and doesn't allocate, at the cost of
-    /// being quadratic in the size of the map. Free when the map is already deduped.
-    pub fn dedup_in_place(&mut self) {
-        if self.deduped {
-            return;
-        }
-        let mut i = 0;
-        while i < self.data.len() {
-            if self.is_shadowed(i) {
-                self.data.remove(i);
-            } else {
-                i += 1;
-            }
-        }
-        self.deduped = true;
-    }
-
-    /// Retains only the entries for which `f` returns `true`, allowing values to be mutated.
-    /// Shadowed entries are dropped first (see [VecMap::dedup_in_place]), so `f` sees each key
-    /// once with the value [VecMap::get] returns, and dropping that value can't expose a shadowed
-    /// one. Keys are borrowed immutably, so the map stays deduped.
-    pub fn retain_mut(&mut self, mut f: impl FnMut(&K, &mut V) -> bool) {
-        self.dedup_in_place();
-        self.data.retain_mut(|(k, v)| f(k, v));
-    }
-
     /// Set the value for `key`, overwriting the existing entry rather than appending a
     /// duplicate, and returning the value it replaced. Unlike [VecMap::insert], this keeps a
     /// deduped map deduped.
@@ -351,6 +324,15 @@ impl<K: PartialEq, V> VecMap<K, V> {
 }
 
 impl<K: Eq + Hash, V> VecMap<K, V> {
+    /// Retains only the entries for which `f` returns `true`, allowing values to be mutated.
+    /// Shadowed entries are dropped first (see [VecMap::dedup]), so `f` sees each key once with
+    /// the value [VecMap::get] returns, and dropping that value can't expose a shadowed one. Keys
+    /// are borrowed immutably, so the map stays deduped.
+    pub fn retain_mut(&mut self, mut f: impl FnMut(&K, &mut V) -> bool) {
+        self.dedup();
+        self.data.retain_mut(|(k, v)| f(k, v));
+    }
+
     /// Returns a deduped map, that either borrows from `self` without performing any work if the
     /// map is already deduped, or dedup the entries in a new separate vec otherwise. As opposed to
     /// [Self::dedup], `as_deduped_map` takes an immutable reference to `self` but might allocate.
