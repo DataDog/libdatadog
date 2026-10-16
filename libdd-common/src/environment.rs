@@ -301,7 +301,7 @@ mod tests {
     use super::*;
     #[cfg(feature = "std")]
     use alloc::string::ToString;
-    use alloc::{vec, vec::Vec};
+    use alloc::vec;
 
     #[test]
     fn snapshot_owns_all_supplied_values_and_keeps_first_duplicates() {
@@ -426,7 +426,7 @@ mod tests {
     #[cfg(any(not(feature = "std"), unix))]
     #[test]
     fn c_environment_is_copied_and_preserves_non_unicode_values() {
-        use alloc::ffi::CString;
+        use alloc::{ffi::CString, vec::Vec};
 
         let entries = [
             CString::new("NAME=original=with=equals").unwrap(),
