@@ -1,0 +1,794 @@
+// Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
+use super::transport::{
+    MAX_RESPONSE_BODY_BYTES, PollResponse, Transport, TransportFailure, decode_response_body,
+};
+use super::{CdnEndpoint, ConfigurationSink};
+use crate::rules_based::{Configuration, UniversalFlagConfig};
+use futures_util::FutureExt;
+use std::panic::AssertUnwindSafe;
+use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::{Duration, SystemTime};
+use tokio_util::sync::CancellationToken;
+
+const MAX_POLL_ATTEMPTS: usize = 3;
+
+#[derive(serde::Deserialize)]
+struct ConfigurationResponse<'a> {
+    #[serde(borrow)]
+    data: ConfigurationResource<'a>,
+}
+
+#[derive(serde::Deserialize)]
+struct ConfigurationResource<'a> {
+    #[serde(rename = "type")]
+    _resource_type: ConfigurationResourceType,
+    #[serde(borrow)]
+    attributes: &'a serde_json::value::RawValue,
+}
+
+#[derive(serde::Deserialize)]
+enum ConfigurationResourceType {
+    #[serde(rename = "universal-flag-configuration")]
+    UniversalFlagConfiguration,
+}
+
+// This is a CDN contract. Legacy Remote Configuration documents continue to
+// use their own parser, which does not require the CDN's format discriminator.
+#[derive(serde::Deserialize)]
+struct ServerConfiguration {
+    #[serde(rename = "format")]
+    _format: ServerFormat,
+}
+
+#[derive(serde::Deserialize)]
+enum ServerFormat {
+    #[serde(rename = "SERVER")]
+    Server,
+}
+
+#[derive(Clone, Copy)]
+#[repr(u8)]
+enum WarningCategory {
+    Authentication = 1 << 0,
+    RetryableHttp = 1 << 1,
+    UnexpectedHttp = 1 << 2,
+    Request = 1 << 3,
+    MalformedPayload = 1 << 4,
+    ApplyFailure = 1 << 5,
+    UnexpectedException = 1 << 6,
+}
+
+#[derive(Default)]
+struct WarningSlots(AtomicU8);
+
+impl WarningSlots {
+    fn take(&self, category: WarningCategory) -> bool {
+        self.0.fetch_or(category as u8, Ordering::Relaxed) & category as u8 == 0
+    }
+
+    #[cfg(test)]
+    fn reset(&self) {
+        self.0.store(0, Ordering::Relaxed);
+    }
+}
+
+#[derive(Default)]
+pub(super) struct PollState {
+    etag: Mutex<Option<String>>,
+    warnings: WarningSlots,
+    poll_count: AtomicU64,
+}
+
+impl PollState {
+    fn etag(&self) -> Option<String> {
+        lock_unpoisoned(&self.etag).clone()
+    }
+
+    fn set_etag(&self, etag: Option<String>) {
+        *lock_unpoisoned(&self.etag) = etag;
+    }
+}
+
+fn lock_unpoisoned<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PollOutcome {
+    Success,
+    Retryable(Duration),
+    Stop,
+    Cancelled,
+}
+
+pub(super) struct Poller<T: Transport, S: ConfigurationSink> {
+    endpoint: CdnEndpoint,
+    poll_interval: Duration,
+    request_timeout: Duration,
+    transport: T,
+    sink: S,
+    state: Arc<PollState>,
+    retry_delay: fn(Duration, usize, f64) -> Duration,
+}
+
+impl<T: Transport, S: ConfigurationSink> Poller<T, S> {
+    pub(super) fn new(
+        endpoint: CdnEndpoint,
+        poll_interval: Duration,
+        request_timeout: Duration,
+        transport: T,
+        sink: S,
+        state: Arc<PollState>,
+    ) -> Self {
+        Self {
+            endpoint,
+            poll_interval,
+            request_timeout,
+            transport,
+            sink,
+            state,
+            retry_delay,
+        }
+    }
+
+    pub(super) async fn run(&mut self, cancellation: CancellationToken) {
+        loop {
+            if cancellation.is_cancelled() {
+                return;
+            }
+
+            let mut next_poll_delay = self.poll_interval;
+            let poll = AssertUnwindSafe(self.poll(&cancellation)).catch_unwind();
+            match poll.await {
+                Ok(PollOutcome::Cancelled) => return,
+                Ok(PollOutcome::Success) => self.sink.confirmed(),
+                Ok(PollOutcome::Retryable(delay)) => {
+                    self.sink.failed();
+                    next_poll_delay = next_poll_delay.max(delay);
+                }
+                Ok(PollOutcome::Stop) => self.sink.failed(),
+                Err(_) => {
+                    self.sink.failed();
+                    self.warn(
+                        WarningCategory::UnexpectedException,
+                        "Feature Flags agentless polling failed unexpectedly; polling continues",
+                    );
+                }
+            }
+
+            tokio::select! {
+                _ = cancellation.cancelled() => return,
+                _ = tokio::time::sleep(next_poll_delay) => {}
+            }
+        }
+    }
+
+    async fn poll(&mut self, cancellation: &CancellationToken) -> PollOutcome {
+        for attempt in 1..=MAX_POLL_ATTEMPTS {
+            let outcome = self.poll_once(cancellation).await;
+            let PollOutcome::Retryable(retry_after) = outcome else {
+                return outcome;
+            };
+            if attempt == MAX_POLL_ATTEMPTS {
+                return outcome;
+            }
+
+            let delay =
+                (self.retry_delay)(self.poll_interval, attempt, fastrand::f64()).max(retry_after);
+            tokio::select! {
+                _ = cancellation.cancelled() => return PollOutcome::Cancelled,
+                _ = tokio::time::sleep(delay) => {}
+            }
+        }
+        PollOutcome::Stop
+    }
+
+    async fn poll_once(&mut self, cancellation: &CancellationToken) -> PollOutcome {
+        if cancellation.is_cancelled() {
+            return PollOutcome::Cancelled;
+        }
+
+        self.state.poll_count.fetch_add(1, Ordering::Relaxed);
+        let etag = self.state.etag();
+        match self
+            .transport
+            .get(
+                &self.endpoint,
+                self.request_timeout,
+                etag.as_deref(),
+                cancellation,
+            )
+            .await
+        {
+            Ok(response) => self.process_response(response),
+            Err(TransportFailure::Cancelled) => PollOutcome::Cancelled,
+            Err(TransportFailure::BuildRequest) => {
+                self.warn(
+                    WarningCategory::Request,
+                    "Feature Flags agentless request could not be built",
+                );
+                PollOutcome::Stop
+            }
+            Err(TransportFailure::ResponseTooLarge) => {
+                self.warn(
+                    WarningCategory::MalformedPayload,
+                    "Feature Flags agentless response exceeds the 10 MiB limit; keeping the last known configuration",
+                );
+                PollOutcome::Stop
+            }
+            Err(_) => {
+                self.warn(
+                    WarningCategory::Request,
+                    "Feature Flags agentless request failed; keeping the last known configuration",
+                );
+                PollOutcome::Retryable(Duration::ZERO)
+            }
+        }
+    }
+
+    fn process_response(&mut self, response: PollResponse) -> PollOutcome {
+        match response.status {
+            304 if self.state.etag().is_some() => return PollOutcome::Success,
+            304 => return PollOutcome::Stop,
+            401 | 403 => {
+                self.warn(
+                    WarningCategory::Authentication,
+                    "Feature Flags agentless endpoint rejected authentication; verify endpoint authentication",
+                );
+                return PollOutcome::Stop;
+            }
+            200 => {}
+            status if is_retryable_status(status) => {
+                self.warn(
+                    WarningCategory::RetryableHttp,
+                    &format!("Feature Flags agentless endpoint returned retryable HTTP {status}"),
+                );
+                return PollOutcome::Retryable(
+                    response
+                        .retry_after
+                        .as_deref()
+                        .and_then(|value| retry_after(value, SystemTime::now()))
+                        .unwrap_or_default(),
+                );
+            }
+            status => {
+                self.warn(
+                    WarningCategory::UnexpectedHttp,
+                    &format!("Feature Flags agentless endpoint returned unexpected HTTP {status}"),
+                );
+                return PollOutcome::Stop;
+            }
+        }
+
+        let body = match decode_response_body(
+            &response.body,
+            response.content_encoding.as_deref(),
+            MAX_RESPONSE_BODY_BYTES,
+        ) {
+            Ok(body) => body,
+            Err(TransportFailure::ResponseTooLarge) => {
+                self.warn(
+                    WarningCategory::MalformedPayload,
+                    "Feature Flags agentless decoded response exceeds the 10 MiB limit; keeping the last known configuration",
+                );
+                return PollOutcome::Stop;
+            }
+            Err(_) => {
+                self.warn(
+                    WarningCategory::MalformedPayload,
+                    "Feature Flags agentless endpoint returned an invalid response body",
+                );
+                return PollOutcome::Stop;
+            }
+        };
+
+        // The managed endpoint returns a JSON:API resource, not a bare UFC.
+        // Validate its type before handing the original attributes bytes to
+        // the shared evaluator; malformed resources must not advance the ETag.
+        let configuration = match serde_json::from_slice::<ConfigurationResponse<'_>>(&body)
+            .and_then(|response| {
+                serde_json::from_str::<ServerConfiguration>(response.data.attributes.get())?;
+                UniversalFlagConfig::from_json(response.data.attributes.get().as_bytes().to_vec())
+            }) {
+            Ok(configuration) => Configuration::from_server_response(configuration),
+            Err(_) => {
+                self.warn(
+                    WarningCategory::MalformedPayload,
+                    "Feature Flags agentless endpoint returned malformed configuration",
+                );
+                return PollOutcome::Stop;
+            }
+        };
+
+        if self.sink.apply(configuration).is_err() {
+            self.warn(
+                WarningCategory::ApplyFailure,
+                "Feature Flags agentless configuration could not be applied",
+            );
+            return PollOutcome::Stop;
+        }
+
+        // The response has now been parsed and applied. A blank or absent
+        // ETag intentionally clears an older value.
+        self.state.set_etag(response.etag);
+        PollOutcome::Success
+    }
+
+    fn warn(&self, category: WarningCategory, message: &str) {
+        if self.state.warnings.take(category) {
+            log::warn!("{message}");
+        }
+    }
+}
+
+fn retry_after(value: &str, now: SystemTime) -> Option<Duration> {
+    let value = value.trim();
+    let delay = if !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit()) {
+        Duration::from_secs(value.parse().ok()?)
+    } else {
+        httpdate::parse_http_date(value)
+            .ok()?
+            .duration_since(now)
+            .unwrap_or_default()
+    };
+    // Reject delays that cannot be represented by the runtime timer.
+    std::time::Instant::now().checked_add(delay)?;
+    Some(delay)
+}
+
+fn is_retryable_status(status: u16) -> bool {
+    matches!(status, 408 | 429 | 500..=599)
+}
+
+fn retry_delay(poll_interval: Duration, attempt: usize, random: f64) -> Duration {
+    let base = if attempt <= 1 {
+        (poll_interval / 6).clamp(Duration::from_secs(2), Duration::from_secs(10))
+    } else {
+        (poll_interval / 3).clamp(Duration::from_secs(5), Duration::from_secs(30))
+    };
+    base.mul_f64(0.8 + random.clamp(0.0, 1.0) * 0.4)
+        .max(Duration::from_secs(1))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::ApplyError;
+    use super::super::transport::FetchFuture;
+    use super::*;
+    use std::collections::VecDeque;
+    use std::sync::atomic::{AtomicBool, AtomicUsize};
+
+    const EMPTY_CONFIG: &[u8] = br#"{"data": {
+        "type": "universal-flag-configuration",
+        "attributes": {
+        "createdAt": "2026-05-22T00:00:00.000Z",
+        "format": "SERVER",
+        "environment": {"name": "test"},
+        "flags": {}
+    }}}"#;
+
+    struct UnusedTransport;
+
+    impl Transport for UnusedTransport {
+        fn get<'a>(
+            &'a self,
+            _endpoint: &'a CdnEndpoint,
+            _timeout: Duration,
+            _etag: Option<&'a str>,
+            _cancellation: &'a CancellationToken,
+        ) -> FetchFuture<'a> {
+            Box::pin(async { unreachable!("transport is not used by response-processing tests") })
+        }
+    }
+
+    struct TestSink {
+        fail: AtomicBool,
+        applications: AtomicUsize,
+    }
+
+    struct QueueTransport {
+        responses: Mutex<VecDeque<Result<PollResponse, TransportFailure>>>,
+        calls: AtomicUsize,
+        in_flight: AtomicUsize,
+        max_in_flight: AtomicUsize,
+    }
+
+    impl QueueTransport {
+        fn new(
+            responses: impl IntoIterator<Item = Result<PollResponse, TransportFailure>>,
+        ) -> Self {
+            Self {
+                responses: Mutex::new(responses.into_iter().collect()),
+                calls: AtomicUsize::new(0),
+                in_flight: AtomicUsize::new(0),
+                max_in_flight: AtomicUsize::new(0),
+            }
+        }
+    }
+
+    impl Transport for QueueTransport {
+        fn get<'a>(
+            &'a self,
+            _endpoint: &'a CdnEndpoint,
+            _timeout: Duration,
+            _etag: Option<&'a str>,
+            _cancellation: &'a CancellationToken,
+        ) -> FetchFuture<'a> {
+            Box::pin(async move {
+                self.calls.fetch_add(1, Ordering::Relaxed);
+                let in_flight = self.in_flight.fetch_add(1, Ordering::Relaxed) + 1;
+                self.max_in_flight.fetch_max(in_flight, Ordering::Relaxed);
+                tokio::task::yield_now().await;
+                let result = lock_unpoisoned(&self.responses)
+                    .pop_front()
+                    .unwrap_or(Err(TransportFailure::Request));
+                self.in_flight.fetch_sub(1, Ordering::Relaxed);
+                result
+            })
+        }
+    }
+
+    impl ConfigurationSink for TestSink {
+        fn apply(&self, _configuration: Configuration) -> Result<(), ApplyError> {
+            self.applications.fetch_add(1, Ordering::Relaxed);
+            if self.fail.load(Ordering::Relaxed) {
+                Err(ApplyError)
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    fn test_poller(fail_apply: bool) -> Poller<UnusedTransport, TestSink> {
+        Poller {
+            endpoint: CdnEndpoint::build("http://localhost/custom", "", "", "")
+                .expect("test endpoint"),
+            poll_interval: Duration::from_secs(30),
+            request_timeout: Duration::from_secs(5),
+            transport: UnusedTransport,
+            sink: TestSink {
+                fail: AtomicBool::new(fail_apply),
+                applications: AtomicUsize::new(0),
+            },
+            state: Arc::new(PollState::default()),
+            retry_delay,
+        }
+    }
+
+    fn no_retry_delay(_: Duration, _: usize, _: f64) -> Duration {
+        Duration::ZERO
+    }
+
+    fn response(status: u16, etag: Option<&str>, body: &[u8]) -> PollResponse {
+        PollResponse {
+            status,
+            retry_after: None,
+            etag: etag.map(str::to_owned),
+            content_encoding: None,
+            body: body.to_vec(),
+        }
+    }
+
+    #[test]
+    fn retries_only_transport_timeouts_and_selected_statuses() {
+        for status in [408, 429, 500, 503, 599] {
+            assert!(is_retryable_status(status), "status {status}");
+        }
+        for status in [200, 204, 301, 400, 401, 403, 404, 499, 600] {
+            assert!(!is_retryable_status(status), "status {status}");
+        }
+    }
+
+    #[test]
+    fn retry_delay_applies_clamps_and_jitter() {
+        assert_eq!(
+            retry_delay(Duration::from_secs(30), 1, 0.0),
+            Duration::from_secs(4)
+        );
+        assert_eq!(
+            retry_delay(Duration::from_secs(30), 1, 1.0),
+            Duration::from_secs(6)
+        );
+        assert_eq!(
+            retry_delay(Duration::from_secs(30), 2, 0.0),
+            Duration::from_secs(8)
+        );
+        assert_eq!(
+            retry_delay(Duration::from_secs(30), 2, 1.0),
+            Duration::from_secs(12)
+        );
+        assert_eq!(
+            retry_delay(Duration::from_secs(1), 1, 0.0),
+            Duration::from_millis(1_600)
+        );
+    }
+
+    #[test]
+    fn etag_advances_only_after_parse_and_apply_succeed() {
+        let mut poller = test_poller(true);
+        poller.state.set_etag(Some("old".to_owned()));
+
+        assert_eq!(
+            poller.process_response(response(200, Some("new"), EMPTY_CONFIG)),
+            PollOutcome::Stop
+        );
+        assert_eq!(poller.state.etag().as_deref(), Some("old"));
+
+        poller.sink.fail.store(false, Ordering::Relaxed);
+        assert_eq!(
+            poller.process_response(response(200, Some("new"), EMPTY_CONFIG)),
+            PollOutcome::Success
+        );
+        assert_eq!(poller.state.etag().as_deref(), Some("new"));
+
+        assert_eq!(
+            poller.process_response(response(200, Some("ignored"), b"not-json")),
+            PollOutcome::Stop
+        );
+        assert_eq!(poller.state.etag().as_deref(), Some("new"));
+    }
+
+    #[test]
+    fn malformed_jsonapi_resources_keep_the_previous_configuration_and_etag() {
+        let mut poller = test_poller(false);
+        assert_eq!(
+            poller.process_response(response(200, Some("accepted"), EMPTY_CONFIG)),
+            PollOutcome::Success
+        );
+        let valid: serde_json::Value = serde_json::from_slice(EMPTY_CONFIG).unwrap();
+        let attributes = valid["data"]["attributes"].clone();
+        for malformed in [
+            attributes.clone(),
+            serde_json::json!({"data": {"type": "other-resource", "attributes": attributes}}),
+            serde_json::json!({"data": {"attributes": attributes}}),
+            serde_json::json!({"data": {"type": "universal-flag-configuration"}}),
+            serde_json::json!({"data": {"type": "universal-flag-configuration", "attributes": null}}),
+            serde_json::json!({"data": {"type": "universal-flag-configuration", "attributes": {}}}),
+        ] {
+            assert_eq!(
+                poller.process_response(response(
+                    200,
+                    Some("rejected"),
+                    &serde_json::to_vec(&malformed).unwrap()
+                )),
+                PollOutcome::Stop
+            );
+            assert_eq!(poller.state.etag().as_deref(), Some("accepted"));
+            assert_eq!(poller.sink.applications.load(Ordering::Relaxed), 1);
+        }
+    }
+
+    #[test]
+    fn only_server_format_is_published_and_invalid_formats_keep_the_etag() {
+        let mut poller = test_poller(false);
+        assert_eq!(
+            poller.process_response(response(200, Some("accepted"), EMPTY_CONFIG)),
+            PollOutcome::Success
+        );
+        for format in [
+            None,
+            Some(serde_json::json!("CLIENT")),
+            Some(serde_json::json!(7)),
+            Some(serde_json::Value::Null),
+        ] {
+            let mut payload: serde_json::Value = serde_json::from_slice(EMPTY_CONFIG).unwrap();
+            let attributes = payload["data"]["attributes"].as_object_mut().unwrap();
+            attributes.remove("format");
+            if let Some(format) = format {
+                attributes.insert("format".to_owned(), format);
+            }
+            assert_eq!(
+                poller.process_response(response(
+                    200,
+                    Some("rejected"),
+                    &serde_json::to_vec(&payload).unwrap()
+                )),
+                PollOutcome::Stop
+            );
+            assert_eq!(poller.state.etag().as_deref(), Some("accepted"));
+            assert_eq!(poller.sink.applications.load(Ordering::Relaxed), 1);
+        }
+    }
+
+    #[test]
+    fn retry_after_accepts_seconds_and_http_dates_without_overflow() {
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_800_000_000);
+        assert_eq!(retry_after(" 10 ", now), Some(Duration::from_secs(10)));
+        assert_eq!(retry_after("0", now), Some(Duration::ZERO));
+        assert_eq!(
+            retry_after(&httpdate::fmt_http_date(now + Duration::from_secs(12)), now),
+            Some(Duration::from_secs(12))
+        );
+        assert_eq!(
+            retry_after(&httpdate::fmt_http_date(now - Duration::from_secs(12)), now),
+            Some(Duration::ZERO)
+        );
+        for invalid in [
+            "",
+            "-1",
+            "+1",
+            "1.5",
+            "later",
+            "18446744073709551615",
+            "18446744073709551616",
+        ] {
+            assert_eq!(retry_after(invalid, now), None, "{invalid}");
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn server_delay_does_not_reduce_backoff_or_extend_the_attempt_limit() {
+        let responses = ["10", "1", "100"].map(|delay| {
+            let mut response = response(429, None, b"");
+            response.retry_after = Some(delay.to_owned());
+            Ok(response)
+        });
+        let mut poller = retry_test_poller(QueueTransport::new(responses));
+        poller.retry_delay = |_, _, _| Duration::from_secs(5);
+        let started = tokio::time::Instant::now();
+        assert_eq!(
+            poller.poll(&CancellationToken::new()).await,
+            PollOutcome::Retryable(Duration::from_secs(100))
+        );
+        assert_eq!(started.elapsed(), Duration::from_secs(15));
+        assert_eq!(poller.transport.calls.load(Ordering::Relaxed), 3);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn final_retry_after_delays_the_next_poll_and_remains_cancellable() {
+        // The fourth request starts a new poll. It must wait for both the
+        // configured interval and the final response's Retry-After minimum.
+        for (retry_after, stop_after, expected_calls) in
+            [("100", 99, 3), ("100", 101, 4), ("1", 29, 3), ("1", 31, 4)]
+        {
+            let mut final_response = response(429, None, b"");
+            final_response.retry_after = Some(retry_after.into());
+            let mut poller = retry_test_poller(QueueTransport::new([
+                Ok(response(503, None, b"")),
+                Ok(response(503, None, b"")),
+                Ok(final_response),
+                Ok(response(200, Some("accepted"), EMPTY_CONFIG)),
+            ]));
+            poller.retry_delay = no_retry_delay;
+            let cancellation = CancellationToken::new();
+            let stop = cancellation.clone();
+            let started = tokio::time::Instant::now();
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_secs(stop_after)).await;
+                stop.cancel();
+            });
+            poller.run(cancellation).await;
+            assert_eq!(started.elapsed(), Duration::from_secs(stop_after));
+            assert_eq!(
+                poller.transport.calls.load(Ordering::Relaxed),
+                expected_calls
+            );
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn cancellation_interrupts_a_server_requested_wait() {
+        let mut response = response(503, None, b"");
+        response.retry_after = Some("3600".to_owned());
+        let mut poller = retry_test_poller(QueueTransport::new([Ok(response)]));
+        let cancellation = CancellationToken::new();
+        let stop = cancellation.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            stop.cancel();
+        });
+        assert_eq!(poller.poll(&cancellation).await, PollOutcome::Cancelled);
+        assert_eq!(poller.transport.calls.load(Ordering::Relaxed), 1);
+    }
+
+    fn retry_test_poller(transport: QueueTransport) -> Poller<QueueTransport, TestSink> {
+        Poller::new(
+            CdnEndpoint::custom("http://localhost/config").unwrap(),
+            Duration::from_secs(30),
+            Duration::from_secs(5),
+            transport,
+            TestSink {
+                fail: AtomicBool::new(false),
+                applications: AtomicUsize::new(0),
+            },
+            Arc::new(PollState::default()),
+        )
+    }
+
+    #[test]
+    fn non_200_responses_are_never_decoded() {
+        let mut poller = test_poller(false);
+        poller.state.set_etag(Some("current".to_owned()));
+        assert_eq!(
+            poller.process_response(response(304, Some("ignored"), b"not-json")),
+            PollOutcome::Success
+        );
+        assert_eq!(poller.state.etag().as_deref(), Some("current"));
+        assert_eq!(
+            poller.process_response(response(401, None, EMPTY_CONFIG)),
+            PollOutcome::Stop
+        );
+        assert_eq!(poller.state.etag().as_deref(), Some("current"));
+    }
+
+    #[test]
+    fn a_304_without_an_accepted_etag_does_not_confirm_configuration() {
+        let mut poller = test_poller(false);
+        assert_eq!(
+            poller.process_response(response(304, None, b"")),
+            PollOutcome::Stop
+        );
+        assert_eq!(poller.sink.applications.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn warning_categories_are_suppressed_independently() {
+        let warnings = WarningSlots::default();
+        assert!(warnings.take(WarningCategory::Request));
+        assert!(!warnings.take(WarningCategory::Request));
+        assert!(warnings.take(WarningCategory::UnexpectedHttp));
+        assert!(!warnings.take(WarningCategory::UnexpectedHttp));
+        warnings.reset();
+        assert!(warnings.take(WarningCategory::Request));
+    }
+
+    #[tokio::test]
+    async fn a_poll_retries_three_times_without_overlapping_requests() {
+        let transport = QueueTransport::new([
+            Ok(response(503, None, b"ignored")),
+            Err(TransportFailure::TimedOut),
+            Ok(response(200, Some("accepted"), EMPTY_CONFIG)),
+        ]);
+        let state = Arc::new(PollState::default());
+        let mut poller = Poller {
+            endpoint: CdnEndpoint::build("http://localhost/custom", "", "", "")
+                .expect("test endpoint"),
+            poll_interval: Duration::from_secs(30),
+            request_timeout: Duration::from_secs(5),
+            transport,
+            sink: TestSink {
+                fail: AtomicBool::new(false),
+                applications: AtomicUsize::new(0),
+            },
+            state: Arc::clone(&state),
+            retry_delay: no_retry_delay,
+        };
+
+        assert_eq!(
+            poller.poll(&CancellationToken::new()).await,
+            PollOutcome::Success
+        );
+        assert_eq!(poller.transport.calls.load(Ordering::Relaxed), 3);
+        assert_eq!(poller.transport.max_in_flight.load(Ordering::Relaxed), 1);
+        assert_eq!(state.poll_count.load(Ordering::Relaxed), 3);
+        assert_eq!(state.etag().as_deref(), Some("accepted"));
+    }
+
+    #[tokio::test]
+    async fn cancellation_before_a_poll_prevents_the_first_request() {
+        let transport = QueueTransport::new([]);
+        let mut poller = Poller {
+            endpoint: CdnEndpoint::build("http://localhost/custom", "", "", "")
+                .expect("test endpoint"),
+            poll_interval: Duration::from_secs(30),
+            request_timeout: Duration::from_secs(5),
+            transport,
+            sink: TestSink {
+                fail: AtomicBool::new(false),
+                applications: AtomicUsize::new(0),
+            },
+            state: Arc::new(PollState::default()),
+            retry_delay: no_retry_delay,
+        };
+        let cancellation = CancellationToken::new();
+        cancellation.cancel();
+
+        assert_eq!(poller.poll(&cancellation).await, PollOutcome::Cancelled);
+        assert_eq!(poller.transport.calls.load(Ordering::Relaxed), 0);
+    }
+}

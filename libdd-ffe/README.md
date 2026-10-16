@@ -2,6 +2,46 @@
 
 This is an internal DataDog library that supports Feature Flag evaluation. It is intended for use in tracers and DataDog services. Expect frequent breaking changes and major bumps before it's stabilized.
 
+## CDN configuration
+
+Enable `cdn,https` to fetch managed or custom CDN configuration on an existing
+Tokio runtime using ring. For FIPS builds, disable default features and select
+`cdn,fips` instead; initialize the FIPS crypto provider before constructing the
+fetcher, as required by `libdd-common`. `cdn` itself does not select a TLS
+provider and enables the shared connector's `HTTP_PROXY`, `HTTPS_PROXY`, and
+`NO_PROXY` support. Implement `ConfigurationSink` to publish accepted
+configuration; return `ApplyError` if publication fails so the ETag stays at the
+last accepted version. `failed` and `confirmed` report stale and recovered
+delivery without deleting the last good configuration.
+
+```rust,ignore
+use libdd_ffe::cdn::{CdnConfig, CdnEndpoint, CdnFetcher};
+use std::time::Duration;
+
+let config = CdnConfig {
+    endpoint: CdnEndpoint::managed("datadoghq.com", "production", &api_key)?,
+    poll_interval: Duration::from_secs(30),
+    request_timeout: Duration::from_secs(5),
+    language: "php".into(),
+    version: tracer_version,
+};
+let mut fetcher = CdnFetcher::new(config, configuration_sink)?;
+fetcher.run(cancellation_token).await;
+```
+
+`CdnEndpoint::custom(url)` carries no Datadog API key. Redirects are not
+followed; invalid API-key header values fail endpoint construction. Custom URL
+Basic authentication accepts an empty username. Compressed and decoded responses
+are capped at 10 MiB. Cancelling the token interrupts HTTP and retry waits. A final `Retry-After` also bounds the
+wait before the next poll. Run the fetcher in the process that owns
+external I/O, such as the sidecar; constructing it does not spawn a worker.
+
+`CdnEndpoint` wraps `libdd_common::Endpoint` while retaining CDN validation,
+credential isolation and redacted diagnostics. URL credentials remain
+case-sensitive in subscription identity. The endpoint IPC representation is
+unchanged; `CdnConfig::request_timeout` remains the request deadline. Request
+headers are set explicitly, without the common builder's entity headers.
+
 ## `flagevaluation` EVP privacy
 
 - Each observation carries the consent captured by its SDK at evaluation time.
