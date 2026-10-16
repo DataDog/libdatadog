@@ -102,10 +102,12 @@ Exceptions are per dependency and must be justified in a comment:
 - a workspace entry that enables a feature for every member needs
   `# allow(workspace-deps-features): <justification>` on the line(s) directly above it.
 
-This is enforced in CI by the "Workspace dependency declarations" job of `lint.yml`. You can run it locally from inside the CI helper workspace:
+This is enforced in CI by the "Workspace dependency declarations" job of `lint.yml`, which builds the
+helpers on the pinned latest stable from `ci-toolchain.toml` (their dependencies have moved past the
+workspace MSRV). Run it locally the same way:
 
 ```bash
-(cd .github/actions && cargo run -p workspace-deps-lint)
+(cd .github/actions && RUSTUP_TOOLCHAIN=$(awk -F'"' '/^stable[[:space:]]*=/ {print $2}' ../ci-toolchain.toml) cargo run -p workspace-deps-lint)
 ```
 
 ### Cryptography
