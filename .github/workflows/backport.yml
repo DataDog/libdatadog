@@ -55,7 +55,8 @@ jobs:
         id: collect-targets
         run: |
           # A 'backport v<N>.<M>' label targets the 'release/v<N>.<M>' branch. Resolve
-          # each label accordingly.
+          # each label accordingly. Labels with no matching branch are skipped so the
+          # remaining backports still run.
           rm -f /tmp/backport-target-branches.txt
           while read -r LABEL; do
             VERSION=${LABEL#backport }
@@ -63,11 +64,15 @@ jobs:
               "refs/heads/release/${VERSION}" \
               | awk '{ print $2 }' | sed 's|^refs/heads/||')
             if [ -z "${TARGET_BRANCH}" ]; then
-              echo "No branch found for label '${LABEL}' (expected a 'release/${VERSION}' branch)."
-              exit 1
+              echo "::warning::Skipping label '${LABEL}': no 'release/${VERSION}' branch found."
+              continue
             fi
             echo "${TARGET_BRANCH}" >> /tmp/backport-target-branches.txt
           done < /tmp/backport-labels.sorted.txt
+          if [ ! -s /tmp/backport-target-branches.txt ]; then
+            echo "No branch found for any of the backport labels; nothing to backport."
+            exit 1
+          fi
           sort -u /tmp/backport-target-branches.txt -o /tmp/backport-target-branches.txt
           TARGET_BRANCHES_JSON=$(jq -R -s -c 'split("\n") | map(select(length > 0))' /tmp/backport-target-branches.txt)
           echo "target_branches_json=${TARGET_BRANCHES_JSON}" >> "$GITHUB_OUTPUT"
