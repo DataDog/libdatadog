@@ -25,6 +25,8 @@ mod endpoint;
 pub mod entity_id;
 #[cfg(feature = "alloc")]
 pub mod environment;
+#[cfg(feature = "alloc")]
+pub mod ffi;
 #[cfg(feature = "std")]
 mod lock_ext;
 #[cfg(feature = "std")]

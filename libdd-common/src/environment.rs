@@ -6,41 +6,47 @@
 //! Initialize explicitly during startup, before concurrent environment mutation is possible.
 //! The snapshot is immutable and published once; subsequent reads never access the process
 //! environment, including for missing keys. Before initialization, `std` builds fall back to
-//! `std::env::var`, and `no_std` builds return [`VarError::NotPresent`].
+//! `std::env`, and `no_std` builds report absent variables. [`var_os`] preserves OS strings;
+//! [`var`] converts them to UTF-8, returning the original value on conversion failure.
 //!
 //! ```
 //! use libdd_common::environment;
 //!
 //! environment::initialize_from([("DD_EXTERNAL_ENV", "startup-value")])?;
 //! assert_eq!(environment::var("DD_EXTERNAL_ENV")?, "startup-value");
+//! assert_eq!(
+//!     environment::var_os("DD_EXTERNAL_ENV").unwrap().to_str(),
+//!     Some("startup-value")
+//! );
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
-#[cfg(not(feature = "std"))]
-use alloc::vec::Vec;
+use crate::ffi::{OsStr, OsString};
 use alloc::{boxed::Box, collections::BTreeMap, string::String};
 use core::{
     fmt, ptr,
     sync::atomic::{AtomicPtr, Ordering},
 };
 
-#[cfg(feature = "std")]
-use std::ffi::{OsStr, OsString};
+#[cfg(all(feature = "std", unix))]
+use std::os::unix::ffi::OsStringExt;
 
 static ENVIRONMENT: ShadowEnvironment = ShadowEnvironment::new();
 
 /// Failure to read an environment variable as UTF-8.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum VarError {
+    /// No variable with this name is available.
     NotPresent,
-    NotUnicode,
+    /// The value is not valid UTF-8; retains the original OS string.
+    NotUnicode(OsString),
 }
 
 impl fmt::Display for VarError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             Self::NotPresent => "environment variable not found",
-            Self::NotUnicode => "environment variable is not valid UTF-8",
+            Self::NotUnicode(_) => "environment variable is not valid UTF-8",
         })
     }
 }
@@ -69,8 +75,16 @@ impl core::error::Error for InitError {}
 
 /// Read a variable from the shadow environment, or from the process environment in `std`
 /// builds when no shadow has been installed. Missing snapshot entries never fall back.
-pub fn var(name: &str) -> Result<String, VarError> {
+pub fn var<K: AsRef<OsStr>>(name: K) -> Result<String, VarError> {
     ENVIRONMENT.var(name)
+}
+
+/// Read an owned OS-string value without requiring UTF-8, like `std::env::var_os`.
+///
+/// Uses the same snapshot and pre-initialization fallback rules as [`var`]. Invalid names
+/// and absent variables return `None`; present empty values return an empty OS string.
+pub fn var_os<K: AsRef<OsStr>>(name: K) -> Option<OsString> {
+    ENVIRONMENT.var_os(name)
 }
 
 /// Whether the process-wide shadow environment has been initialized.
@@ -78,16 +92,17 @@ pub fn is_initialized() -> bool {
     ENVIRONMENT.is_initialized()
 }
 
-/// Copy caller-supplied UTF-8 variables into the shadow environment.
+/// Store caller-supplied OS-string variables in the shadow environment.
 ///
-/// Copies every supplied pair into owned storage. Duplicate names retain their first value,
-/// matching `getenv` lookup order. An empty iterator installs an authoritative empty snapshot.
-/// Initialization happens once; invalid entries leave the environment uninitialized.
+/// Takes ownership of owned strings and copies borrowed strings. Accepts UTF-8 strings and
+/// arbitrary OS strings, including non-UTF-8 names and values. Duplicate names retain their
+/// first value, matching `getenv` lookup order. An empty iterator installs an authoritative empty
+/// snapshot. Initialization happens once; invalid entries leave the environment uninitialized.
 pub fn initialize_from<I, K, V>(variables: I) -> Result<(), InitError>
 where
     I: IntoIterator<Item = (K, V)>,
-    K: AsRef<str>,
-    V: AsRef<str>,
+    K: Into<OsString>,
+    V: Into<OsString>,
 {
     if is_initialized() {
         return Err(InitError::AlreadyInitialized);
@@ -97,8 +112,9 @@ where
 
 /// Copy all process variables into owned storage during startup.
 ///
-/// Preserves non-UTF-8 values; [`var`] reports them as [`VarError::NotUnicode`]. Later changes
-/// to the process environment are not reflected in the shadow.
+/// Preserves non-UTF-8 values; [`var_os`] returns them and [`var`] reports
+/// [`VarError::NotUnicode`]. Later changes to the process environment are not reflected in the
+/// shadow.
 ///
 /// # Safety
 /// Call before other threads or native libraries can mutate the process environment. No
@@ -144,36 +160,26 @@ pub unsafe fn initialize_from_envp(envp: *const *const core::ffi::c_char) -> Res
 }
 
 struct Snapshot {
-    #[cfg(feature = "std")]
     values: BTreeMap<OsString, OsString>,
-    #[cfg(not(feature = "std"))]
-    values: BTreeMap<Vec<u8>, Vec<u8>>,
 }
 
 impl Snapshot {
     fn from_variables<I, K, V>(variables: I) -> Result<Self, InitError>
     where
         I: IntoIterator<Item = (K, V)>,
-        K: AsRef<str>,
-        V: AsRef<str>,
+        K: Into<OsString>,
+        V: Into<OsString>,
     {
         let mut values = BTreeMap::new();
         for (name, value) in variables {
-            let (name, value) = (name.as_ref(), value.as_ref());
-            if name.is_empty() || name.contains(['=', '\0']) {
+            let (name, value) = (name.into(), value.into());
+            if !valid_name(&name) {
                 return Err(InitError::InvalidName);
             }
-            if value.contains('\0') {
+            if value.as_encoded_bytes().contains(&0) {
                 return Err(InitError::InvalidValue);
             }
-            #[cfg(feature = "std")]
-            values
-                .entry(OsString::from(name))
-                .or_insert_with(|| OsString::from(value));
-            #[cfg(not(feature = "std"))]
-            values
-                .entry(name.as_bytes().to_vec())
-                .or_insert_with(|| value.as_bytes().to_vec());
+            values.entry(name).or_insert(value);
         }
         Ok(Self { values })
     }
@@ -192,16 +198,8 @@ impl Snapshot {
                 let bytes = unsafe { core::ffi::CStr::from_ptr(entry) }.to_bytes();
                 if let Some(index) = bytes.iter().position(|byte| *byte == b'=') {
                     if index != 0 {
-                        let name = bytes[..index].to_vec();
-                        let value = bytes[index + 1..].to_vec();
-                        #[cfg(feature = "std")]
-                        {
-                            use std::os::unix::ffi::OsStringExt;
-                            values
-                                .entry(OsString::from_vec(name))
-                                .or_insert_with(|| OsString::from_vec(value));
-                        }
-                        #[cfg(not(feature = "std"))]
+                        let name = OsString::from_vec(bytes[..index].to_vec());
+                        let value = OsString::from_vec(bytes[index + 1..].to_vec());
                         values.entry(name).or_insert(value);
                     }
                 }
@@ -212,27 +210,14 @@ impl Snapshot {
         Self { values }
     }
 
-    fn var(&self, name: &str) -> Result<String, VarError> {
-        #[cfg(feature = "std")]
-        {
-            self.values
-                .get(OsStr::new(name))
-                .ok_or(VarError::NotPresent)?
-                .to_str()
-                .map(String::from)
-                .ok_or(VarError::NotUnicode)
-        }
-        #[cfg(not(feature = "std"))]
-        {
-            let value = self
-                .values
-                .get(name.as_bytes())
-                .ok_or(VarError::NotPresent)?;
-            core::str::from_utf8(value)
-                .map(String::from)
-                .map_err(|_| VarError::NotUnicode)
-        }
+    fn var_os(&self, name: &OsStr) -> Option<OsString> {
+        self.values.get(name).cloned()
     }
+}
+
+fn valid_name(name: &OsStr) -> bool {
+    let bytes = name.as_encoded_bytes();
+    !bytes.is_empty() && !bytes.contains(&b'=') && !bytes.contains(&0)
 }
 
 struct ShadowEnvironment {
@@ -269,25 +254,30 @@ impl ShadowEnvironment {
         }
     }
 
-    fn var(&self, name: &str) -> Result<String, VarError> {
-        if name.is_empty() || name.contains(['=', '\0']) {
-            return Err(VarError::NotPresent);
+    fn var(&self, name: impl AsRef<OsStr>) -> Result<String, VarError> {
+        self.var_os(name)
+            .ok_or(VarError::NotPresent)?
+            .into_string()
+            .map_err(VarError::NotUnicode)
+    }
+
+    fn var_os(&self, name: impl AsRef<OsStr>) -> Option<OsString> {
+        let name = name.as_ref();
+        if !valid_name(name) {
+            return None;
         }
         let pointer = self.snapshot.load(Ordering::Acquire);
         if !pointer.is_null() {
             // SAFETY: release/acquire publication exposes a fully initialized immutable snapshot.
             // It is never replaced, and cannot be dropped while this method borrows `self`.
-            return unsafe { &*pointer }.var(name);
+            return unsafe { &*pointer }.var_os(name);
         }
         #[cfg(feature = "std")]
         {
-            std::env::var(name).map_err(|error| match error {
-                std::env::VarError::NotPresent => VarError::NotPresent,
-                std::env::VarError::NotUnicode(_) => VarError::NotUnicode,
-            })
+            std::env::var_os(name)
         }
         #[cfg(not(feature = "std"))]
-        Err(VarError::NotPresent)
+        None
     }
 }
 
@@ -328,6 +318,7 @@ mod tests {
         assert!(environment.is_initialized());
         assert_eq!(environment.var("SERVICE").unwrap(), "checkout");
         assert_eq!(environment.var("EMPTY").unwrap(), "");
+        assert_eq!(environment.var_os("EMPTY"), Some(OsString::new()));
         assert_eq!(environment.var("EQUALS").unwrap(), "a=b=c");
         assert_eq!(environment.var("MISSING"), Err(VarError::NotPresent));
     }
@@ -339,6 +330,7 @@ mod tests {
             .install(Snapshot::from_variables(core::iter::empty::<(&str, &str)>()).unwrap())
             .unwrap();
         assert_eq!(environment.var("PATH"), Err(VarError::NotPresent));
+        assert_eq!(environment.var_os("PATH"), None);
         assert_eq!(
             environment.install(Snapshot::from_variables([("PATH", "replacement")]).unwrap()),
             Err(InitError::AlreadyInitialized)
@@ -362,7 +354,49 @@ mod tests {
         assert!(!environment.is_initialized());
         for name in ["", "INVALID=NAME", "INVALID\0NAME"] {
             assert_eq!(environment.var(name), Err(VarError::NotPresent));
+            assert_eq!(environment.var_os(name), None);
         }
+    }
+
+    #[cfg(any(not(feature = "std"), unix))]
+    #[test]
+    fn supplied_os_strings_preserve_non_unicode_names_and_values() {
+        let key = OsString::from_vec(vec![b'K', 0xff]);
+        let value = OsString::from_vec(vec![0xfe, b'=', b'v']);
+        let snapshot = Snapshot::from_variables([
+            (key.clone(), value.clone()),
+            (key.clone(), OsString::from("ignored")),
+        ])
+        .unwrap();
+        let environment = ShadowEnvironment::new();
+        environment.install(snapshot).unwrap();
+
+        assert_eq!(environment.var_os(&key), Some(value.clone()));
+        assert_eq!(
+            environment.var(&key),
+            Err(VarError::NotUnicode(value.clone()))
+        );
+        // Returned values are independent of immutable shadow storage.
+        let mut returned = environment.var_os(&key).unwrap();
+        returned.clear();
+        assert_eq!(environment.var_os(&key), Some(value.clone()));
+        let borrowed = Snapshot::from_variables([(key.as_os_str(), value.as_os_str())]).unwrap();
+        assert_eq!(borrowed.var_os(&key), Some(value));
+    }
+
+    #[cfg(all(feature = "std", windows))]
+    #[test]
+    fn supplied_native_strings_preserve_unpaired_utf16_surrogates() {
+        use std::os::windows::ffi::OsStringExt;
+
+        let key = OsString::from_wide(&[u16::from(b'K'), 0xd800]);
+        let value = OsString::from_wide(&[0xdc00]);
+        let environment = ShadowEnvironment::new();
+        environment
+            .install(Snapshot::from_variables([(key.clone(), value.clone())]).unwrap())
+            .unwrap();
+        assert_eq!(environment.var_os(&key), Some(value.clone()));
+        assert_eq!(environment.var(&key), Err(VarError::NotUnicode(value)));
     }
 
     #[cfg(feature = "std")]
@@ -371,9 +405,13 @@ mod tests {
         let environment = ShadowEnvironment::new();
         let expected = std::env::var("PATH").map_err(|error| match error {
             std::env::VarError::NotPresent => VarError::NotPresent,
-            std::env::VarError::NotUnicode(_) => VarError::NotUnicode,
+            std::env::VarError::NotUnicode(value) => VarError::NotUnicode(value),
         });
         assert_eq!(environment.var("PATH"), expected);
+        assert_eq!(
+            environment.var_os(OsStr::new("PATH")),
+            std::env::var_os("PATH")
+        );
         assert!(!environment.is_initialized());
     }
 
@@ -382,6 +420,7 @@ mod tests {
     fn uninitialized_no_std_environment_has_no_system_fallback() {
         let environment = ShadowEnvironment::new();
         assert_eq!(environment.var("PATH"), Err(VarError::NotPresent));
+        assert_eq!(environment.var_os("PATH"), None);
         assert!(!environment.is_initialized());
     }
 
@@ -411,7 +450,9 @@ mod tests {
         environment.install(snapshot).unwrap();
         assert_eq!(environment.var("NAME").unwrap(), "original=with=equals");
         assert_eq!(environment.var("EMPTY").unwrap(), "");
-        assert_eq!(environment.var("RAW"), Err(VarError::NotUnicode));
+        let raw = OsString::from_vec(alloc::vec![0xff]);
+        assert_eq!(environment.var_os("RAW"), Some(raw.clone()));
+        assert_eq!(environment.var("RAW"), Err(VarError::NotUnicode(raw)));
     }
 
     #[cfg(any(not(feature = "std"), unix))]
