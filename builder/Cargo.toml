@@ -29,7 +29,8 @@ data-pipeline = []
 # Enable zstd compression for the agentless trace intake sender. Native builds
 # link the C implementation; WASM builds use pure-Rust zrip.
 data-pipeline-compression = ["data-pipeline"]
-# Enable client-side stats obfuscation in the data-pipeline crate.
+# Client-side stats obfuscation is now always enabled with data-pipeline; this flag is kept
+# for compatibility with existing release tooling and selection code.
 data-pipeline-stats-obfuscation = ["data-pipeline"]
 symbolizer = []
 library-config = []
