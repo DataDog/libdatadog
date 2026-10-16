@@ -59,6 +59,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri does not support stat64")]
     fn rustix_inode_lookup_follows_symlinks() {
         let directory = tempfile::tempdir().unwrap();
         let target = directory.path().join("target");
@@ -71,6 +72,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri's uname shim leaves bytes uninitialized")]
     fn rustix_hostname_matches_the_kernel_namespace_hostname() {
         let expected = std::fs::read_to_string("/proc/sys/kernel/hostname").unwrap();
         assert_eq!(
