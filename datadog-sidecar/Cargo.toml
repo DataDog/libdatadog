@@ -32,7 +32,7 @@ libdd-trace-utils = { path = "../libdd-trace-utils" }
 libdd-trace-stats = { path = "../libdd-trace-stats", features = ["telemetry", "dogstatsd"] }
 libdd-remote-config = { path = "../libdd-remote-config" }
 libdd-live-debugger = { path = "../libdd-live-debugger" }
-libdd-ffe = { path = "../libdd-ffe", features = ["exposure-events", "evaluation-metrics", "flagevaluation-evp"] }
+libdd-ffe = { path = "../libdd-ffe", features = ["exposure-events", "evaluation-metrics", "flagevaluation-evp", "cdn"] }
 libdd-crashtracker = { path = "../libdd-crashtracker" }
 libdd-dogstatsd-client = { path = "../libdd-dogstatsd-client" }
 libdd-tinybytes = { path = "../libdd-tinybytes" }

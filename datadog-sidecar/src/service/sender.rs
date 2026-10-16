@@ -420,6 +420,15 @@ impl SidecarSender {
         self.channel.call_request_blocking(request)
     }
 
+    pub fn subscribe_cdn_configuration(
+        &mut self,
+        request: &SidecarInterfaceRequest,
+    ) -> Result<Option<String>, libdd_ipc::codec::DecodeError> {
+        self.drain_outbox_blocking()
+            .map_err(libdd_ipc::codec::DecodeError::Io)?;
+        self.channel.call_request_blocking(request)
+    }
+
     pub fn send_appsec_message(
         &mut self,
         request: &SidecarInterfaceClientRequest<'_>,
