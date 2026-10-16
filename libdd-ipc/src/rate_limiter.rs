@@ -4,7 +4,6 @@
 #[cfg(unix)]
 use crate::platform::lock_shm;
 use crate::platform::{FileBackedHandle, MappedMem, NamedShmHandle};
-use crate::shm_safe::ShmSafe;
 use arc_swap::ArcSwapOption;
 use libdd_common::rate_limiter::LocalLimiter;
 use std::borrow::Cow;
@@ -14,8 +13,38 @@ use std::fmt::{Debug, Formatter};
 use std::io;
 use std::marker::PhantomData;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU32, AtomicU64, Ordering};
 use std::time::Duration;
+
+/// A type whose values can be stored in, and concurrently accessed from, memory shared with
+/// other processes.
+///
+/// The rate limiter creates `&Inner` references to either zero-filled memory or recycled slots.
+/// Morever, this memory is shared concurrently, and thus not immutable.
+///
+/// This breaks types that maintain validity or concurrency invariants. A `String` may observe
+/// non-UTF-8 bytes, a `Vec` a broken length/pointer pair, etc.
+///
+/// `ShmSafe` encodes that contract at the type level, so that the shared-memory wrappers in this
+/// module can require it instead of trusting every caller.
+///
+/// # Safety
+///
+/// To implement `ShmSafe` for `T`, the following must hold:
+///
+/// 1. **Every memory bit pattern is a valid value for `T`.**. `T` must therefore not contain
+///    references, raw pointers, `bool`s, `char`s, `enum`s, `NonZero*` or any other type that
+///    carries a validity invariant.
+/// 2. **Every field is interior-mutable.** Peers write the underlying bytes without any
+///    synchronization, so each field must be an atomic, an `UnsafeCell`, or a type that is itself
+///    `ShmSafe`.
+pub unsafe trait ShmSafe: Sized {}
+
+// `()` is the payload for limiters that only share their budget, not a value.
+unsafe impl ShmSafe for () {}
+// SAFETY: every bit pattern is a valid value of an atomic (its operations are defined for any
+// bytes), and its contents are by definition interior-mutable.
+unsafe impl ShmSafe for AtomicU64 {}
 
 #[repr(C)]
 #[derive(Default)]
@@ -530,8 +559,9 @@ impl<Inner: ShmSafe> Drop for ShmLimiter<Inner> {
 
 #[cfg(test)]
 mod tests {
-    use crate::rate_limiter::{ShmLimiter, ShmLimiterArena, ShmLimiterData, ShmLimiterMemory};
-    use crate::shm_safe::ShmSafe;
+    use crate::rate_limiter::{
+        ShmLimiter, ShmLimiterArena, ShmLimiterData, ShmLimiterMemory, ShmSafe,
+    };
     use std::ffi::CString;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicU64, Ordering};

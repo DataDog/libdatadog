@@ -2,8 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use libdd_common::MutexExt;
-use libdd_ipc::rate_limiter::{ShmLimiter, ShmLimiterMemory};
-use libdd_ipc::shm_safe::ShmSafe;
+use libdd_ipc::rate_limiter::{ShmLimiter, ShmLimiterMemory, ShmSafe};
 use std::ffi::CString;
 use std::io;
 use std::sync::atomic::{AtomicU64, Ordering};
