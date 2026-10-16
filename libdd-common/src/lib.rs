@@ -21,7 +21,7 @@ pub mod connector;
 pub mod dump_server;
 #[cfg(feature = "std")]
 mod endpoint;
-#[cfg(feature = "std")]
+#[cfg(feature = "alloc")]
 pub mod entity_id;
 #[cfg(feature = "alloc")]
 pub mod environment;
