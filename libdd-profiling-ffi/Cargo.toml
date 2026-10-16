@@ -50,14 +50,16 @@ data-pipeline-compression = ["data-pipeline-ffi", "libdd-data-pipeline-ffi/compr
 # Enable client-side stats obfuscation in the linked data-pipeline crate. No FFI
 # surface of its own; only compiles the capability into the linked crate.
 data-pipeline-stats-obfuscation = ["data-pipeline-ffi", "libdd-data-pipeline-ffi/stats-obfuscation"]
+# Expose exporter observations for hosts that run their own telemetry client.
+data-pipeline-external-observations = ["data-pipeline-ffi", "libdd-data-pipeline-ffi/external-observations"]
 crashtracker-ffi = ["dep:libdd-crashtracker-ffi"]
 # Enables the in-process collection of crash-info
 crashtracker-collector = ["crashtracker-ffi", "libdd-crashtracker-ffi/collector"]
 # Enables the use of this library to receiver crash-info from a suitable collector
 crashtracker-receiver = ["crashtracker-ffi", "libdd-crashtracker-ffi/receiver"]
 demangler = ["crashtracker-ffi", "libdd-crashtracker-ffi/demangler"]
-datadog-library-config-ffi = ["dep:libdd-library-config-ffi"]
-ddcommon-ffi = ["dep:libdd-common-ffi"]
+datadog-library-config-ffi = ["dep:libdd-library-config-ffi", "libdd-library-config-ffi/std"]
+ddcommon-ffi = ["dep:libdd-common-ffi", "libdd-common-ffi/std"]
 ddsketch-ffi = ["dep:libdd-ddsketch-ffi"]
 libdd-ffe-ffi = ["dep:libdd-ffe-ffi"]
 shared-runtime = ["dep:libdd-shared-runtime-ffi"]
@@ -75,7 +77,7 @@ libdd-crashtracker-ffi = { path = "../libdd-crashtracker-ffi", default-features 
 libdd-library-config-ffi = {  path = "../libdd-library-config-ffi", default-features = false, optional = true }
 libdd-profiling = { path = "../libdd-profiling" }
 libdd-common = { path = "../libdd-common" }
-libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false, optional = true }
+libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false, optional = true, features = ["std"] }
 libdd-telemetry-ffi = { path = "../libdd-telemetry-ffi", default-features = false, optional = true, features = ["expanded_builder_macros"] }
 libdd-ddsketch-ffi = { path = "../libdd-ddsketch-ffi", default-features = false, optional = true }
 libdd-log-ffi = { path = "../libdd-log-ffi", default-features = false, optional = true }

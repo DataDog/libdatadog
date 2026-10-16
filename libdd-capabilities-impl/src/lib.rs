@@ -17,7 +17,7 @@ use std::time::Duration;
 
 pub use env::NativeEnvCapability;
 pub use file::NativeFileCapability;
-pub use http::NativeHttpClient;
+pub use http::{NativeHttpClient, ResponseBodyLimit};
 pub use libdd_capabilities::{
     EnvCapability, EnvError, FileCapability, FileError, FileMetadata, HttpClientCapability,
     LogWriterCapability, SleepCapability,

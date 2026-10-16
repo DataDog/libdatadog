@@ -41,6 +41,7 @@ pub enum RemoteConfigProduct {
     LiveDebugging,
     LiveDebuggingSymbolDb,
     Debug,
+    ApmProfiling,
 }
 
 #[derive(Clone)]
