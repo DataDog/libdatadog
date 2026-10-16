@@ -9,6 +9,7 @@
 
 pub mod example_interface;
 pub mod handles;
+pub mod shm_safe;
 
 pub mod one_way_shared_memory;
 pub mod platform;
