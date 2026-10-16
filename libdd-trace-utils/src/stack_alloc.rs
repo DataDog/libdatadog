@@ -8,8 +8,9 @@
 //! of  a buffer living on the caller's stack, avoiding any heap traffic for the common
 //! small-map case.
 //!
-//! Requests the inline buffer can't serve transparently fall back to the global (heap) allocator, and such blocks
-//! are freed on deallocation. An under-sized buffer therefore only costs performance, never correctness.
+//! Requests the inline buffer can't serve transparently fall back to the global (heap) allocator,
+//! and such blocks are freed on deallocation. An under-sized buffer therefore only costs
+//! performance, never correctness.
 
 use allocator_api2::alloc::{AllocError, Allocator, Global};
 use core::alloc::Layout;
@@ -17,7 +18,7 @@ use core::cell::{Cell, UnsafeCell};
 use core::mem::MaybeUninit;
 use core::ptr::NonNull;
 
-/// Inline storage. The buffer is minimally 8-aligned so we 
+/// Inline storage. The buffer is minimally 8-aligned so we
 /// don't loose capacity when allocating pointers for instance.
 /// from an initally non aligned adress.
 #[repr(align(8))]
@@ -38,8 +39,8 @@ struct AlignedStorage<const N: usize>([MaybeUninit<u8>; N]);
 ///   memory are not run automatically**, so only store values with no `Drop` side effects (or drop
 ///   them explicitly beforehand).
 /// - Once the inline buffer is exhausted allocations transparently fall back to the global (heap)
-///   allocator, and such blocks are freed on deallocation. An under-sized buffer therefore
-///   degrades performance, never correctness.
+///   allocator, and such blocks are freed on deallocation. An under-sized buffer therefore degrades
+///   performance, never correctness.
 pub(crate) struct StackBump<const N: usize> {
     /// Inline storage. `UnsafeCell` provides the interior mutability required to hand
     /// out mutable raw views of sub-ranges of the buffer through `&self`.
@@ -90,7 +91,7 @@ impl<const N: usize> StackBump<N> {
         let align = layout.align();
 
         // Pick the next start with the correct alignement for the layout
-        // The Layout type guarantees that align is a power of two, 
+        // The Layout type guarantees that align is a power of two,
         let base = self.base() as usize;
         let pad = base.wrapping_add(self.cursor.get()).wrapping_neg() & (align - 1);
         let start = self.cursor.get().checked_add(pad)?;
@@ -308,9 +309,7 @@ mod tests {
         assert_eq!(bump.used_bytes(), 64);
         // SAFETY: the block was granted by a previous `allocate` call on this
         // allocator with this exact layout; it came from `Global`, which frees it.
-        unsafe {
-            <&StackBump<64> as Allocator>::deallocate(&&bump, after.cast(), after_layout)
-        };
+        unsafe { <&StackBump<64> as Allocator>::deallocate(&&bump, after.cast(), after_layout) };
     }
 
     #[test]
