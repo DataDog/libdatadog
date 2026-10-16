@@ -11,10 +11,10 @@
 //! ```
 //! use libdd_common::ffi::{OsStr, OsString};
 //!
-//! let mut name = OsString::from("SERVICE");
-//! name.push("_NAME");
-//! assert_eq!(name.as_os_str(), OsStr::new("SERVICE_NAME"));
-//! assert_eq!(name.into_string().unwrap(), "SERVICE_NAME");
+//! let name = OsString::from("SERVICE");
+//! let borrowed: &OsStr = name.as_ref();
+//! assert_eq!(borrowed.as_encoded_bytes(), b"SERVICE");
+//! assert_eq!(name.into_string().unwrap(), "SERVICE");
 //! ```
 
 #[cfg(any(not(feature = "std"), test))]

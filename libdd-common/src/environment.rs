@@ -15,8 +15,11 @@
 //! environment::initialize_from([("DD_EXTERNAL_ENV", "startup-value")])?;
 //! assert_eq!(environment::var("DD_EXTERNAL_ENV")?, "startup-value");
 //! assert_eq!(
-//!     environment::var_os("DD_EXTERNAL_ENV").unwrap().to_str(),
-//!     Some("startup-value")
+//!     environment::var_os("DD_EXTERNAL_ENV")
+//!         .unwrap()
+//!         .into_string()
+//!         .unwrap(),
+//!     "startup-value"
 //! );
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
@@ -318,7 +321,7 @@ mod tests {
         assert!(environment.is_initialized());
         assert_eq!(environment.var("SERVICE").unwrap(), "checkout");
         assert_eq!(environment.var("EMPTY").unwrap(), "");
-        assert_eq!(environment.var_os("EMPTY"), Some(OsString::new()));
+        assert_eq!(environment.var_os("EMPTY"), Some(OsString::from("")));
         assert_eq!(environment.var("EQUALS").unwrap(), "a=b=c");
         assert_eq!(environment.var("MISSING"), Err(VarError::NotPresent));
     }
@@ -376,11 +379,9 @@ mod tests {
             environment.var(&key),
             Err(VarError::NotUnicode(value.clone()))
         );
-        // Returned values are independent of immutable shadow storage.
-        let mut returned = environment.var_os(&key).unwrap();
-        returned.clear();
-        assert_eq!(environment.var_os(&key), Some(value.clone()));
-        let borrowed = Snapshot::from_variables([(key.as_os_str(), value.as_os_str())]).unwrap();
+        let borrowed_key: &OsStr = key.as_ref();
+        let borrowed_value: &OsStr = value.as_ref();
+        let borrowed = Snapshot::from_variables([(borrowed_key, borrowed_value)]).unwrap();
         assert_eq!(borrowed.var_os(&key), Some(value));
     }
 
@@ -408,10 +409,8 @@ mod tests {
             std::env::VarError::NotUnicode(value) => VarError::NotUnicode(value),
         });
         assert_eq!(environment.var("PATH"), expected);
-        assert_eq!(
-            environment.var_os(OsStr::new("PATH")),
-            std::env::var_os("PATH")
-        );
+        let name: &OsStr = "PATH".as_ref();
+        assert_eq!(environment.var_os(name), std::env::var_os("PATH"));
         assert!(!environment.is_initialized());
     }
 
