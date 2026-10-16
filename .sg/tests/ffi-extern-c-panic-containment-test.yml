@@ -1,0 +1,146 @@
+id: ffi-extern-c-panic-containment
+valid:
+  - |
+    pub extern "C" fn contained() {
+        let _ = std::panic::catch_unwind(|| risky());
+    }
+  - |
+    pub unsafe extern "C" fn wrapped() -> VoidResult {
+        wrap_with_void_ffi_result!({
+            risky();
+        })
+    }
+  - |
+    pub extern "C" fn wrapped_result() -> AnyResult {
+        wrap_with_ffi_result!({ ok() })
+    }
+  - |
+    pub extern "C" fn no_catch_is_explicit() {
+        wrap_with_ffi_result_no_catch!({ ok() })
+    }
+  - |
+    pub extern "C" fn void_no_catch() {
+        wrap_with_void_ffi_result_no_catch!({ risky(); })
+    }
+  - |
+    pub extern "C" fn crate_macro() {
+        catch_panic!(risky(), err)
+    }
+  - |
+    // allow(ffi-panic-boundary): reads a plain integer only
+    #[no_mangle]
+    pub extern "C" fn justified_accessor() -> i32 {
+        42
+    }
+  - |
+    pub(crate) extern "C" fn crate_visible() {
+        risky();
+    }
+  - |
+    extern "C" fn not_exported() {
+        risky();
+    }
+  - |
+    pub fn not_abi() {
+        risky();
+    }
+  - |
+    pub extern fn contained_default_abi() {
+        let _ = std::panic::catch_unwind(|| risky());
+    }
+  - |
+    #[no_mangle]
+    extern "C" fn contained_private_export() {
+        let _ = std::panic::catch_unwind(|| risky());
+    }
+  - |
+    // allow(ffi-panic-boundary): exported symbol, body is a field write
+    #[no_mangle]
+    extern "system" fn justified_system() {
+        42;
+    }
+  - |
+    // #[no_mangle]
+    extern "C" fn comment_is_not_an_export() {
+        risky();
+    }
+  - |
+    unsafe extern "system" fn private_system_callback() {
+        risky();
+    }
+  - |
+    #[no_mangle]
+    pub extern "C-unwind" fn unwind_abi_is_not_abort() {
+        risky();
+    }
+  - |
+    pub extern "system-unwind" fn system_unwind_abi() {
+        risky();
+    }
+invalid:
+  - |
+    pub extern "C" fn exposed() {
+        risky();
+    }
+  - |
+    pub unsafe extern "C" fn unsafe_exposed() {
+        risky();
+    }
+  - |
+    #[no_mangle]
+    pub unsafe extern "C" fn multiline(
+        handle: *mut u8,
+    ) {
+        risky();
+    }
+  - |
+    pub extern "C" fn comment_is_not_containment() {
+        // catch_unwind is intentionally absent
+        // wrap_with_ffi_result! is also absent
+        risky();
+    }
+  - |
+    // allow(ffi-panic-boundary):
+    pub extern "C" fn empty_justification() {
+        42;
+    }
+  - |
+    // allow(ffi-panic-boundary)
+    pub extern "C" fn marker_without_colon() {
+        42;
+    }
+  - |
+    #[no_mangle]
+    extern "C" fn private_export() {
+        risky();
+    }
+  - |
+    #[no_mangle]
+    #[must_use]
+    pub(crate) extern "C" fn restricted_export() -> i32 {
+        risky()
+    }
+  - |
+    #[export_name = "ddog_renamed"]
+    extern "C" fn renamed_export() {
+        risky();
+    }
+  - |
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn edition_2024_export() {
+        risky();
+    }
+  - |
+    pub extern fn default_abi() {
+        risky();
+    }
+  - |
+    pub unsafe extern "system" fn system_abi() {
+        risky();
+    }
+  - |
+    #[no_mangle]
+    /// exported drop
+    extern "system" fn documented_system_export() {
+        risky();
+    }
