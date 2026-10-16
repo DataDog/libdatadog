@@ -1,6 +1,42 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+//! Tracer metadata and serialization available with `core` and `alloc`.
+//!
+//! Linux discovery uses rustix for syscalls and the shared startup shadow environment:
+//!
+//! ```
+//! use libdd_library_config::tracer_metadata::{
+//!     TracerMetadata,
+//!     discovery::{self, EntityInfo},
+//! };
+//!
+//! # #[cfg(target_os = "linux")]
+//! fn collect() -> anyhow::Result<(alloc::vec::Vec<u8>, EntityInfo)> {
+//!     let origin = discovery::discover_origin();
+//!     let metadata = TracerMetadata {
+//!         tracer_language: "c".into(),
+//!         hostname: discovery::read_hostname()?,
+//!         container_id: origin.container_id.clone(),
+//!         ..Default::default()
+//!     };
+//!     Ok((metadata.to_msgpack()?, origin))
+//! }
+//! # extern crate alloc;
+//! ```
+//!
+//! The returned origin metadata provides the container, entity, and external-environment headers
+//! through [`discovery::EntityInfo::headers`]. Origin headers are separate from the legacy
+//! metadata MessagePack schema.
+
+use alloc::string::String;
+use alloc::vec::Vec;
+#[cfg(feature = "std")]
+use alloc::{borrow::ToOwned, vec};
+use core::{convert::Infallible, num::TryFromIntError};
+#[cfg(feature = "std")]
 use libdd_trace_protobuf::opentelemetry::proto as otel_proto;
+
+pub mod discovery;
 
 /// Thread-level context metadata the tracer wants to publish as part of the OTel process context.
 /// Set [TracerMetadata::threadlocal_metadata] to `Some(_)` to enable the threadlocal section; the
@@ -28,6 +64,9 @@ pub struct ThreadLocalMetadata {
     pub extra_attributes: Vec<(String, otel_proto::common::v1::any_value::Value)>,
 }
 
+/// Tracer metadata supplied by the caller, available with or without `std`.
+///
+/// Constructing metadata does not read the environment or discover host information.
 /// This struct MUST be backward compatible.
 #[derive(serde::Serialize, Debug, PartialEq)]
 pub struct TracerMetadata {
@@ -61,7 +100,7 @@ pub struct TracerMetadata {
     /// Thread-level context metadata; emit a `threadlocal.*` block in the OTel process context
     /// when `Some`. `None` disables the section entirely. See [ThreadLocalMetadata]. Ignored for
     /// (de)serialization; only used when converting to an OTel process context in
-    /// [TracerMetadata::to_otel_process_ctx].
+    /// `TracerMetadata::to_otel_process_ctx` (available with `std`).
     #[cfg(feature = "otel-thread-ctx")]
     #[serde(skip)]
     pub threadlocal_metadata: Option<ThreadLocalMetadata>,
@@ -86,6 +125,77 @@ impl Default for TracerMetadata {
     }
 }
 
+impl TracerMetadata {
+    /// Encode the legacy tracer metadata MessagePack map without publishing it.
+    ///
+    /// Available without `std`; the caller owns the returned bytes and decides how to store
+    /// them. The schema and field order match `rmp_serde::to_vec_named(self)`, including
+    /// omission of absent optional fields. Thread-context metadata is not part of this format.
+    ///
+    /// Returns an error if a string's byte length exceeds MessagePack's `u32` limit.
+    pub fn to_msgpack(&self) -> Result<Vec<u8>, TryFromIntError> {
+        // Keep this exhaustive so new schema fields must be considered by the encoder.
+        let Self {
+            schema_version,
+            runtime_id,
+            tracer_language,
+            tracer_version,
+            hostname,
+            service_name,
+            service_env,
+            service_version,
+            process_tags,
+            container_id,
+            #[cfg(feature = "otel-thread-ctx")]
+                threadlocal_metadata: _,
+        } = self;
+        let fields = [
+            ("runtime_id", runtime_id.as_deref()),
+            ("tracer_language", Some(tracer_language.as_str())),
+            ("tracer_version", Some(tracer_version.as_str())),
+            ("hostname", Some(hostname.as_str())),
+            ("service_name", service_name.as_deref()),
+            ("service_env", service_env.as_deref()),
+            ("service_version", service_version.as_deref()),
+            ("process_tags", process_tags.as_deref()),
+            ("container_id", container_id.as_deref()),
+        ];
+        let count = u32::try_from(1 + fields.iter().filter(|(_, value)| value.is_some()).count())?;
+        let mut buf = rmp::encode::ByteBuf::new();
+        infallible_write(rmp::encode::write_map_len(&mut buf, count));
+        write_string(&mut buf, "schema_version")?;
+        infallible_write(rmp::encode::write_uint(
+            &mut buf,
+            u64::from(*schema_version),
+        ));
+        for (key, value) in fields {
+            if let Some(value) = value {
+                write_string(&mut buf, key)?;
+                write_string(&mut buf, value)?;
+            }
+        }
+        Ok(buf.into_vec())
+    }
+}
+
+fn write_string(buf: &mut rmp::encode::ByteBuf, value: &str) -> Result<(), TryFromIntError> {
+    let len = u32::try_from(value.len())?;
+    infallible_write(rmp::encode::write_str_len(buf, len));
+    buf.as_mut_vec().extend_from_slice(value.as_bytes());
+    Ok(())
+}
+
+fn infallible_write<T>(result: Result<T, rmp::encode::ValueWriteError<Infallible>>) -> T {
+    match result {
+        Ok(value) => value,
+        Err(
+            rmp::encode::ValueWriteError::InvalidMarkerWrite(error)
+            | rmp::encode::ValueWriteError::InvalidDataWrite(error),
+        ) => match error {},
+    }
+}
+
+#[cfg(feature = "std")]
 impl TracerMetadata {
     // The value of the telemetry.sdk.name field to put in the otel context resource.
     const OTEL_SDK_NAME: &str = "libdatadog";
@@ -206,6 +316,7 @@ impl TracerMetadata {
     }
 }
 
+#[cfg(feature = "std")]
 pub enum AnonymousFileHandle {
     #[cfg(target_os = "linux")]
     Linux(memfd::Memfd),
@@ -213,7 +324,7 @@ pub enum AnonymousFileHandle {
     Other(()),
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(all(feature = "std", target_os = "linux"))]
 mod linux {
     use anyhow::Context;
     use rand::Rng;
@@ -242,7 +353,7 @@ mod linux {
             .create::<&str>(mfd_name.as_ref())
             .context("unable to create memfd")?;
 
-        let buf = rmp_serde::to_vec_named(data).context("failed serialization")?;
+        let buf = data.to_msgpack().context("failed serialization")?;
         mfd.as_file()
             .write_all(&buf)
             .context("unable to write into memfd")?;
@@ -258,7 +369,7 @@ mod linux {
     }
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(all(feature = "std", not(target_os = "linux")))]
 mod other {
     pub fn store_tracer_metadata(
         _data: &super::TracerMetadata,
@@ -267,12 +378,110 @@ mod other {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(all(feature = "std", target_os = "linux"))]
 pub use linux::*;
-#[cfg(not(target_os = "linux"))]
+#[cfg(all(feature = "std", not(target_os = "linux")))]
 pub use other::*;
 
 #[cfg(test)]
+mod serialization_tests {
+    use super::*;
+    use alloc::collections::BTreeMap;
+
+    #[test]
+    fn default_metadata_preserves_schema_and_omits_absent_fields() {
+        let serialized = yaml_serde::to_string(&TracerMetadata::default()).unwrap();
+        let fields: BTreeMap<String, String> = yaml_serde::from_str(&serialized).unwrap();
+
+        assert_eq!(fields.len(), 4);
+        assert_eq!(fields["schema_version"], "2");
+        assert_eq!(fields["tracer_language"], "");
+        assert_eq!(fields["tracer_version"], "");
+        assert_eq!(fields["hostname"], "");
+        assert_eq!(
+            TracerMetadata::default().to_msgpack().unwrap(),
+            b"\x84\xaeschema_version\x02\xaftracer_language\xa0\xaetracer_version\xa0\xa8hostname\xa0"
+        );
+    }
+
+    #[test]
+    fn caller_supplied_metadata_is_serializable_without_discovery() {
+        let metadata = TracerMetadata {
+            runtime_id: Some("runtime-id".into()),
+            tracer_language: "c".into(),
+            tracer_version: "1.2.3".into(),
+            hostname: "host".into(),
+            service_name: Some("checkout".into()),
+            service_env: Some("production".into()),
+            service_version: Some("4.5.6".into()),
+            process_tags: Some("region:us-east-1".into()),
+            container_id: Some("container-id".into()),
+            ..Default::default()
+        };
+        let serialized = yaml_serde::to_string(&metadata).unwrap();
+        let fields: BTreeMap<String, String> = yaml_serde::from_str(&serialized).unwrap();
+
+        assert_eq!(fields.len(), 10);
+        for (key, value) in [
+            ("schema_version", "2"),
+            ("runtime_id", "runtime-id"),
+            ("tracer_language", "c"),
+            ("tracer_version", "1.2.3"),
+            ("hostname", "host"),
+            ("service_name", "checkout"),
+            ("service_env", "production"),
+            ("service_version", "4.5.6"),
+            ("process_tags", "region:us-east-1"),
+            ("container_id", "container-id"),
+        ] {
+            assert_eq!(fields[key], value, "{key}");
+        }
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn msgpack_matches_serde_for_all_optional_field_combinations() {
+        for mask in 0u8..64 {
+            let metadata = TracerMetadata {
+                runtime_id: (mask & 1 != 0).then(|| "runtime-id".into()),
+                tracer_language: "c".into(),
+                tracer_version: "1.2.3".into(),
+                hostname: "host".into(),
+                service_name: (mask & 2 != 0).then(|| "checkout".into()),
+                service_env: (mask & 4 != 0).then(|| "production".into()),
+                service_version: (mask & 8 != 0).then(|| "4.5.6".into()),
+                process_tags: (mask & 16 != 0).then(|| "region:us-east-1".into()),
+                container_id: (mask & 32 != 0).then(String::new),
+                ..Default::default()
+            };
+            assert_eq!(
+                metadata.to_msgpack().unwrap(),
+                rmp_serde::to_vec_named(&metadata).unwrap(),
+                "optional field mask: {mask}"
+            );
+        }
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn msgpack_matches_serde_across_string_length_boundaries() {
+        for length in [0, 1, 31, 32, 255, 256, 65535, 65536] {
+            let metadata = TracerMetadata {
+                hostname: "h".repeat(length),
+                service_name: Some("サービス\0".into()),
+                schema_version: 255,
+                ..Default::default()
+            };
+            assert_eq!(
+                metadata.to_msgpack().unwrap(),
+                rmp_serde::to_vec_named(&metadata).unwrap(),
+                "string length: {length}"
+            );
+        }
+    }
+}
+
+#[cfg(all(test, feature = "std"))]
 mod tests {
     use super::*;
     use libdd_trace_protobuf::opentelemetry::proto::common::v1::any_value;

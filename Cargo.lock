@@ -3135,10 +3135,12 @@ version = "4.2.0"
 dependencies = [
  "anyhow",
  "libc",
+ "libdd-common",
  "libdd-trace-protobuf",
  "memfd",
  "prost",
  "rand 0.8.8",
+ "rmp",
  "rmp-serde",
  "serde",
  "serial_test",

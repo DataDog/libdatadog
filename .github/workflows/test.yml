@@ -157,6 +157,7 @@ jobs:
         shell: bash
         run: |
           cargo check -p libdd-library-config --no-default-features
+          cargo nextest run -p libdd-library-config --no-default-features --profile ci
           cargo check -p libdd-library-config-ffi --no-default-features --features standalone --profile panic-abort
       - name: "[${{ steps.rust-version.outputs.version}}] cargo nextest run no_std (libdd-common)"
         if: runner.os == 'Linux' && (env.PACKAGES == '' || contains(env.PACKAGES, 'libdd-common'))
