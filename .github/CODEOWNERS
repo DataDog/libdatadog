@@ -40,8 +40,8 @@ datadog-sidecar                      @DataDog/libdatadog-php @DataDog/libdatadog
 datadog-sidecar-ffi                  @DataDog/libdatadog-php @DataDog/libdatadog-apm
 datadog-sidecar-macros               @DataDog/libdatadog-php
 deny.toml                            @DataDog/libdatadog
-docs                                 @DataDog/libdatadog
-examples                             @DataDog/libdatadog
+/docs                                @DataDog/libdatadog
+/examples                            @DataDog/libdatadog
 libdd-agent-client                   @DataDog/apm-common-components-core
 libdd-alloc/                         @DataDog/libdatadog-profiling
 libdd-capabilities*/                 @DataDog/apm-common-components-core
@@ -73,7 +73,9 @@ license-tool.toml                    @DataDog/libdatadog
 local-linux.Dockerfile               @DataDog/libdatadog
 NOTICE                               @DataDog/libdatadog
 nightly-toolchain.toml               @DataDog/libdatadog
-README.md                            @DataDog/libdatadog
+/README.md                           @DataDog/libdatadog
+# Placeholder for a deprecated crate, owned by libdatadog as a fallback
+ruby/README.md                       @DataDog/libdatadog
 repository.datadog.yml               @DataDog/apm-common-components-core
 rust-toolchain.toml                  @DataDog/libdatadog
 rustfmt.toml                         @DataDog/libdatadog-core
