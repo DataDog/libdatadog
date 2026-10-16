@@ -5,6 +5,7 @@ on: # yamllint disable-line rule:truthy
     branches:
       - main
       - mq-working-branch-*
+      - release/*
   # Also run on PRs that touch the devshell or what it reads. Paths mirror the
   # Nix CODEOWNERS entries, plus the toolchain files (read by the flake) and
   # this workflow itself.
