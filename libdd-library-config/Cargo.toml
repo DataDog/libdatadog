@@ -34,7 +34,7 @@ process-context-reader = ["std"]
 process-context-writer = ["std"]
 
 [dependencies]
-libdd-common = { path = "../libdd-common", default-features = false, features = ["alloc"] }
+libdd-common = { version = "8.0.0", path = "../libdd-common", default-features = false, features = ["alloc"] }
 serde = { workspace = true, features = ["derive", "alloc"] }
 rmp.workspace = true
 yaml_serde = { workspace = true }
