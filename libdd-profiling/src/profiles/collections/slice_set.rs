@@ -23,10 +23,17 @@ pub struct SliceSet<T: Copy + Hash + Eq + 'static> {
 }
 
 impl<T: Copy + Hash + Eq + 'static> SliceSet<T> {
-    const SIZE_HINT: usize = 1024 * 1024;
+    // Start each shard at 64 KiB to lower the small-dictionary floor, then
+    // grow back to historical 1 MiB chunks for larger dictionaries.
+    const INITIAL_SIZE_HINT: usize = 64 * 1024;
+    const MAX_SIZE_HINT: usize = 1024 * 1024;
 
     pub fn try_with_capacity(capacity: usize) -> Result<Self, SetError> {
-        let arena = ChainAllocator::new_in(Self::SIZE_HINT, VirtualAllocator {});
+        let arena = ChainAllocator::new_capped_in(
+            Self::INITIAL_SIZE_HINT,
+            Self::MAX_SIZE_HINT,
+            VirtualAllocator {},
+        );
 
         let mut slices = HashTable::new();
         // SAFETY: we just made the empty hash table, so there's nothing that
