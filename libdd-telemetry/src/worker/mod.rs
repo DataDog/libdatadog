@@ -1340,25 +1340,25 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static>
 
     /// Enqueue a metric point without waiting for space.
     ///
-    /// Returns an error if the metric buffer appears full and the point is dropped.
+    /// The point is dropped when the buffer appears full. This method returns `Ok(())` even when
+    /// the point is dropped. Use [`Self::try_add_point`] to detect drops.
     pub fn add_point(
         &self,
         value: f64,
         context: &ContextKey,
         extra_tags: Vec<Tag>,
     ) -> anyhow::Result<()> {
-        // Points are the highest-frequency action; publish to the lock-free ring buffer rather
-        // than boxing a message + waking the receiver per point. The worker batch-drains it.
-        //
-        // The worker does not drain the buffer while it waits for a telemetry response. A full
-        // buffer drops the point, like `try_send_msg` drops other actions on a full mailbox.
-        if self.metric_ring.try_push(value, *context, extra_tags) {
-            Ok(())
-        } else {
-            Err(anyhow::anyhow!(
-                "telemetry metric buffer is full, the point is dropped"
-            ))
-        }
+        let _ = self.try_add_point(value, context, extra_tags);
+        Ok(())
+    }
+
+    /// Attempt to enqueue a metric point without waiting for space.
+    ///
+    /// Returns `false` if the buffer appears full and the point is dropped.
+    #[must_use = "a `false` result means that the point was dropped"]
+    pub fn try_add_point(&self, value: f64, context: &ContextKey, extra_tags: Vec<Tag>) -> bool {
+        // The worker does not drain the ring while it waits for a telemetry response.
+        self.metric_ring.try_push(value, *context, extra_tags)
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -2649,9 +2649,11 @@ mod tests {
         let producer = {
             let handle = handle.clone();
             std::thread::spawn(move || {
-                (0..total)
-                    .filter(|_| handle.add_point(1.0, &context, Vec::new()).is_ok())
-                    .count()
+                let accepted = (0..total)
+                    .filter(|_| handle.try_add_point(1.0, &context, Vec::new()))
+                    .count();
+                let legacy_result = handle.add_point(1.0, &context, Vec::new());
+                (accepted, legacy_result)
             })
         };
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
@@ -2662,8 +2664,12 @@ mod tests {
             );
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
-        let accepted = producer.join().unwrap();
+        let (accepted, legacy_result) = producer.join().unwrap();
         assert!(accepted > 0 && accepted < total as usize);
+        assert!(
+            legacy_result.is_ok(),
+            "a full metric buffer must not turn a best-effort point into an error"
+        );
 
         // The worker reads every accepted point when it drains again.
         worker.drain_metric_ring();

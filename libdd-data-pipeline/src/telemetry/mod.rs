@@ -9,7 +9,6 @@ use crate::telemetry::metrics::Metrics;
 use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
 use libdd_common::mutable_metadata::MutableMetadataHandle;
 use libdd_common::tag::Tag;
-use libdd_telemetry::metrics::ContextKey;
 use libdd_telemetry::worker::{
     LifecycleAction, TelemetryActions, TelemetryWorker, TelemetryWorkerBuilder,
     TelemetryWorkerFlavor, TelemetryWorkerHandle,
@@ -305,122 +304,103 @@ impl SendPayloadTelemetry {
 }
 
 impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> TelemetryClient<C> {
-    /// Attempts to enqueue each metric and returns the first error, if any.
+    /// Sends metrics to the agent using a telemetry worker handle.
+    ///
+    /// # Arguments:
+    ///
+    /// * `telemetry_handle`: telemetry worker handle used to enqueue metrics.
     pub fn send(&self, data: &SendPayloadTelemetry) -> Result<(), TelemetryError> {
-        self.send_with(data, |value, key, tags| {
-            self.worker.add_point(value, key, tags)
-        })
-    }
-
-    fn send_with(
-        &self,
-        data: &SendPayloadTelemetry,
-        mut try_add_point: impl FnMut(f64, &ContextKey, Vec<Tag>) -> anyhow::Result<()>,
-    ) -> Result<(), TelemetryError> {
-        let mut first_error: Option<TelemetryError> = None;
-        let mut add_point = |value, key: &ContextKey, tags| {
-            if let Err(error) = try_add_point(value, key, tags) {
-                first_error.get_or_insert_with(|| error.into());
-            }
-        };
         if data.requests_count > 0 {
             let key = self.metrics.get(metrics::MetricKind::ApiRequest);
-            add_point(data.requests_count as f64, key, vec![]);
+            self.worker
+                .add_point(data.requests_count as f64, key, vec![])?;
         }
         if data.errors_network > 0 {
             let key = self.metrics.get(metrics::MetricKind::ApiErrorsNetwork);
-            add_point(data.errors_network as f64, key, vec![]);
+            self.worker
+                .add_point(data.errors_network as f64, key, vec![])?;
         }
         if data.errors_timeout > 0 {
             let key = self.metrics.get(metrics::MetricKind::ApiErrorsTimeout);
-            add_point(data.errors_timeout as f64, key, vec![]);
+            self.worker
+                .add_point(data.errors_timeout as f64, key, vec![])?;
         }
         if data.errors_status_code > 0 {
             let key = self.metrics.get(metrics::MetricKind::ApiErrorsStatusCode);
-            add_point(data.errors_status_code as f64, key, vec![]);
+            self.worker
+                .add_point(data.errors_status_code as f64, key, vec![])?;
         }
         if data.bytes_sent > 0 {
             let key = self.metrics.get(metrics::MetricKind::ApiBytes);
-            add_point(data.bytes_sent as f64, key, vec![]);
+            self.worker.add_point(data.bytes_sent as f64, key, vec![])?;
         }
         if data.chunks_sent > 0 {
             let key = self.metrics.get(metrics::MetricKind::ChunksSent);
-            add_point(data.chunks_sent as f64, key, vec![]);
+            self.worker
+                .add_point(data.chunks_sent as f64, key, vec![])?;
         }
         if data.chunks_dropped_serialization_error > 0 {
             let key = self
                 .metrics
                 .get(metrics::MetricKind::ChunksDroppedSerializationError);
-            add_point(data.chunks_dropped_serialization_error as f64, key, vec![]);
+            self.worker
+                .add_point(data.chunks_dropped_serialization_error as f64, key, vec![])?;
         }
         if data.chunks_dropped_send_failure > 0 {
             let key = self
                 .metrics
                 .get(metrics::MetricKind::ChunksDroppedSendFailure);
-            add_point(data.chunks_dropped_send_failure as f64, key, vec![]);
+            self.worker
+                .add_point(data.chunks_dropped_send_failure as f64, key, vec![])?;
         }
         if data.spans_enqueued_for_serialization > 0 {
             let key = self
                 .metrics
                 .get(metrics::MetricKind::SpansEnqueuedForSerialization);
-            add_point(data.spans_enqueued_for_serialization as f64, key, vec![]);
+            self.worker
+                .add_point(data.spans_enqueued_for_serialization as f64, key, vec![])?;
         }
         if data.spans_dropped_serialization_error > 0 {
             let key = self
                 .metrics
                 .get(metrics::MetricKind::SpansDroppedSerializationError);
-            add_point(data.spans_dropped_serialization_error as f64, key, vec![]);
+            self.worker
+                .add_point(data.spans_dropped_serialization_error as f64, key, vec![])?;
         }
         if data.spans_dropped_api_error > 0 {
             let key = self.metrics.get(metrics::MetricKind::SpansDroppedApiError);
-            add_point(data.spans_dropped_api_error as f64, key, vec![]);
+            self.worker
+                .add_point(data.spans_dropped_api_error as f64, key, vec![])?;
         }
         if !data.responses_count_per_code.is_empty() {
             let key = self.metrics.get(metrics::MetricKind::ApiResponses);
             for (status_code, count) in &data.responses_count_per_code {
                 let tag = Tag::new("status_code", status_code.to_string().as_str())?;
-                add_point(*count as f64, key, vec![tag]);
+                self.worker.add_point(*count as f64, key, vec![tag])?;
             }
         }
-        first_error.map_or(Ok(()), Err)
+        Ok(())
     }
 
-    /// Attempts to enqueue both dropped-trace counts and returns the first error, if any.
+    /// Send dropped P0 trace counts to telemetry.
     pub fn send_client_side_stats_drops(
         &self,
         dropped_p0_traces: usize,
         dropped_by_trace_filter: usize,
     ) -> Result<(), TelemetryError> {
-        self.send_client_side_stats_drops_with(
-            dropped_p0_traces,
-            dropped_by_trace_filter,
-            |value, key, tags| self.worker.add_point(value, key, tags),
-        )
-    }
-
-    fn send_client_side_stats_drops_with(
-        &self,
-        dropped_p0_traces: usize,
-        dropped_by_trace_filter: usize,
-        mut try_add_point: impl FnMut(f64, &ContextKey, Vec<Tag>) -> anyhow::Result<()>,
-    ) -> Result<(), TelemetryError> {
-        let mut first_error: Option<TelemetryError> = None;
-        let mut add_point = |value, key: &ContextKey, tags| {
-            if let Err(error) = try_add_point(value, key, tags) {
-                first_error.get_or_insert_with(|| error.into());
-            }
-        };
         if dropped_p0_traces > 0 {
             let key = self.metrics.get(metrics::MetricKind::ChunksDroppedP0);
-            add_point(dropped_p0_traces as f64, key, vec![]);
+            self.worker
+                .add_point(dropped_p0_traces as f64, key, vec![])?;
         }
         if dropped_by_trace_filter > 0 {
             let key = self
                 .metrics
                 .get(metrics::MetricKind::ChunksDroppedByTraceFilter);
-            add_point(dropped_by_trace_filter as f64, key, vec![]);
+            self.worker
+                .add_point(dropped_by_trace_filter as f64, key, vec![])?;
         }
-        first_error.map_or(Ok(()), Err)
+        Ok(())
     }
 
     /// Starts the client.
@@ -486,7 +466,20 @@ mod tests {
 
     #[cfg_attr(miri, ignore)] // NativeCapabilities uses reqwest.
     #[test]
-    fn metric_batches_continue_after_a_point_is_dropped() {
+    fn full_metric_buffer_does_not_fail_telemetry_batches() {
+        let check = std::thread::spawn(check_full_metric_buffer_telemetry_batches);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while !check.is_finished() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "a full metric buffer blocked the telemetry batch"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        check.join().unwrap();
+    }
+
+    fn check_full_metric_buffer_telemetry_batches() {
         let (client, _worker) = TelemetryClientBuilder::default()
             .set_service_name("service")
             .set_language("rust")
@@ -494,47 +487,24 @@ mod tests {
             .set_tracer_version("1")
             .build::<NativeCapabilities>()
             .unwrap();
+        let context = *client.metrics.get(metrics::MetricKind::ApiRequest);
+
+        // The worker does not run, so the ring eventually fills.
+        let mut accepted = 0;
+        while client.worker.try_add_point(1.0, &context, Vec::new()) {
+            accepted += 1;
+            assert!(accepted < 100_000, "the metric ring must be bounded");
+        }
+        assert!(accepted > 0);
+
         let data = SendPayloadTelemetry {
             requests_count: 1,
-            errors_timeout: 2,
-            bytes_sent: 3,
-            responses_count_per_code: HashMap::from([(503, 4)]),
+            errors_timeout: 1,
+            responses_count_per_code: HashMap::from([(503, 1)]),
             ..Default::default()
         };
-
-        let mut attempted = Vec::new();
-        let result = client.send_with(&data, |value, key, tags| {
-            attempted.push((value, *key, tags));
-            if attempted.len() == 1 {
-                Err(anyhow::anyhow!("metric buffer is full"))
-            } else {
-                Ok(())
-            }
-        });
-        assert!(result.is_err());
-        assert_eq!(
-            attempted
-                .iter()
-                .map(|(value, _, _)| *value)
-                .collect::<Vec<_>>(),
-            vec![1.0, 2.0, 3.0, 4.0]
-        );
-        assert_eq!(
-            attempted[3].2,
-            vec![Tag::new("status_code", "503").unwrap()]
-        );
-
-        let mut attempted = Vec::new();
-        let result = client.send_client_side_stats_drops_with(5, 6, |value, _, _| {
-            attempted.push(value);
-            if attempted.len() == 1 {
-                Err(anyhow::anyhow!("metric buffer is full"))
-            } else {
-                Ok(())
-            }
-        });
-        assert!(result.is_err());
-        assert_eq!(attempted, vec![5.0, 6.0]);
+        assert!(client.send(&data).is_ok());
+        assert!(client.send_client_side_stats_drops(1, 1).is_ok());
     }
 
     #[test]

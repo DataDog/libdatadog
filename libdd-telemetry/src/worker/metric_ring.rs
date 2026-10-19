@@ -318,8 +318,22 @@ mod tests {
         assert_eq!(sum, (0..n).map(|i| i as f64).sum::<f64>());
     }
 
+    #[cfg_attr(miri, ignore)] // The deadline is not meaningful under Miri.
     #[test]
     fn full_buffer_drops_the_point_and_does_not_block() {
+        let check = std::thread::spawn(check_full_buffer_drops_the_point);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while !check.is_finished() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "a full metric buffer blocked its producer"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        check.join().unwrap();
+    }
+
+    fn check_full_buffer_drops_the_point() {
         // No consumer runs here. This is the state of the worker while it waits for the response
         // to a telemetry request. A push that waited for free space would never return.
         let ring = MetricRing::new();
