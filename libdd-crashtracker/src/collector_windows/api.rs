@@ -424,7 +424,7 @@ fn walk_thread_stack(
             frame.path.clone_from(&module.path);
 
             if let Some(pdb_info) = &module.pdb_info {
-                frame.build_id = Some(format!("{:X}{:x}", pdb_info.signature, pdb_info.age));
+                frame.build_id = Some(pdb_info.build_id());
                 frame.build_id_type = Some(BuildIdType::PDB);
                 frame.file_type = Some(FileType::PE);
             }
@@ -449,6 +449,14 @@ struct ModuleInfo {
 struct PdbInfo {
     age: u32,
     signature: Guid,
+}
+
+impl PdbInfo {
+    // Must match the key used by `datadog-ci pe-symbols upload`:
+    // uppercase GUID without dashes, then the age in lowercase hex.
+    fn build_id(&self) -> String {
+        format!("{:X}{:x}", self.signature, self.age)
+    }
 }
 
 fn list_modules(process_handle: HANDLE) -> anyhow::Result<Vec<ModuleInfo>> {
@@ -835,5 +843,23 @@ mod tests {
             )
         };
         assert_eq!(bytes, expected_pdb_signature);
+    }
+
+    #[test]
+    fn test_pdb_build_id() {
+        let signature = Guid {
+            data1: 0x0123ABCD,
+            data2: 0x4567,
+            data3: 0x89EF,
+            data4: [0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF],
+        };
+        let pdb_info = PdbInfo { age: 1, signature };
+        assert_eq!(pdb_info.build_id(), "0123ABCD456789EF0123456789ABCDEF1");
+
+        let pdb_info = PdbInfo {
+            age: 0x1a,
+            ..pdb_info
+        };
+        assert_eq!(pdb_info.build_id(), "0123ABCD456789EF0123456789ABCDEF1a");
     }
 }
