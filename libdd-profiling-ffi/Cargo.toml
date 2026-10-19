@@ -44,11 +44,16 @@ cbindgen = ["build_common/cbindgen", "libdd-common-ffi/cbindgen", "libdd-shared-
 ddtelemetry-ffi = ["dep:libdd-telemetry-ffi"]
 datadog-log-ffi = ["dep:libdd-log-ffi"]
 symbolizer = ["symbolizer-ffi"]
-data-pipeline-ffi = ["dep:libdd-data-pipeline-ffi"]
+# The data-pipeline FFI with client-side stats obfuscation always enabled: the builder
+# bindings for it (ddog_trace_exporter_builder_enable_client_side_stats_obfuscation,
+# ddog_trace_exporter_builder_set_agentless_stats_endpoint) are declared in the generated
+# header regardless of cfg (cbindgen does not evaluate #[cfg]), so the capability must be
+# compiled in whenever the data-pipeline FFI is included.
+data-pipeline-ffi = ["dep:libdd-data-pipeline-ffi", "libdd-data-pipeline-ffi/stats-obfuscation"]
 # Enable zstd compression for the agentless trace intake sender.
 data-pipeline-compression = ["data-pipeline-ffi", "libdd-data-pipeline-ffi/compression"]
-# Enable client-side stats obfuscation in the linked data-pipeline crate. No FFI
-# surface of its own; only compiles the capability into the linked crate.
+# Kept for compatibility with existing release tooling: client-side stats obfuscation is
+# now always enabled with data-pipeline (see data-pipeline-ffi above).
 data-pipeline-stats-obfuscation = ["data-pipeline-ffi", "libdd-data-pipeline-ffi/stats-obfuscation"]
 # Expose exporter observations for hosts that run their own telemetry client.
 data-pipeline-external-observations = ["data-pipeline-ffi", "libdd-data-pipeline-ffi/external-observations"]
