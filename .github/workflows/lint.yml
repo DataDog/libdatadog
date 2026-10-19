@@ -426,8 +426,15 @@ jobs:
           rustup set profile minimal
           rustup install
           rustup component add rust-docs
+      - name: sccache
+        id: sccache
+        uses: ./.github/actions/setup-sccache
       - name: Run cargo doc on ${{ matrix.platform }}
         shell: bash
         run: |
           RUSTDOCFLAGS='-D warnings' cargo doc --all-features --keep-going
           RUSTDOCFLAGS='-D warnings' cargo doc --keep-going
+      - name: sccache statistics
+        if: always() && steps.sccache.outputs.enabled == 'true'
+        shell: bash
+        run: sccache --show-stats
