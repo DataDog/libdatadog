@@ -413,7 +413,7 @@ fn walk_thread_stack(
 
         if let Some(module) = module {
             frame.relative_address = Some(format!(
-                "{:x}",
+                "0x{:x}",
                 native_frame.AddrPC.Offset - module.base_address
             ));
             frame.module_base_address = Some(format!("{:x}", module.base_address));
