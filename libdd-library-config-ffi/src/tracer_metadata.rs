@@ -3,7 +3,11 @@
 #![cfg(feature = "std")]
 
 use core::ffi::CStr;
-use libdd_common_ffi::Result;
+#[cfg(all(feature = "catch_panic", panic = "unwind"))]
+use libdd_common_ffi::wrap_with_ffi_result;
+#[cfg(not(all(feature = "catch_panic", panic = "unwind")))]
+use libdd_common_ffi::wrap_with_ffi_result_no_catch as wrap_with_ffi_result;
+use libdd_common_ffi::{Result, VoidResult};
 #[cfg(target_os = "linux")]
 use libdd_library_config::tracer_metadata::AnonymousFileHandle;
 use libdd_library_config::tracer_metadata::{self, TracerMetadata};
@@ -103,6 +107,43 @@ pub unsafe extern "C" fn ddog_tracer_metadata_set(
     }
 }
 
+/// Includes thread-context discovery metadata in the `TracerMetadata` object pointed to by `ptr`.
+///
+/// If the builder has no thread-context metadata, configures it to publish
+/// the `tlsdesc_v1_dev` schema and a key map containing `datadog.local_root_span_id`.
+/// If the thread-context metadata is already set, leaves it unchanged.
+///
+/// This function only updates the builder. Call `ddog_tracer_metadata_store` to publish it.
+///
+/// # Arguments
+/// - `ptr`: Pointer to a `TracerMetadata` instance.
+///
+/// # Safety
+/// - If non-null, `ptr` must point to a valid, properly aligned, live `TracerMetadata`.
+/// - The caller must ensure exclusive access to the instance for the duration of the call.
+/// - Ownership remains with the caller
+///
+/// # Returns
+/// - On success: `VoidResult::Ok`, also when thread-context metadata is already present
+/// - An error if `ptr` is null.
+#[unsafe(no_mangle)]
+#[function_name::named]
+pub unsafe extern "C" fn ddog_tracer_metadata_include_otel_thread_context(
+    ptr: *mut TracerMetadata,
+) -> VoidResult {
+    wrap_with_ffi_result!({
+        let metadata = unsafe { ptr.as_mut() }.ok_or_else(|| {
+            anyhow::anyhow!("Failed to include OTel thread context: received a null pointer")
+        })?;
+
+        metadata
+            .threadlocal_metadata
+            .get_or_insert_with(Default::default);
+
+        anyhow::Ok(())
+    })
+}
+
 /// Serializes the `TracerMetadata` into a platform-specific memory handle (e.g., memfd on Linux).
 /// This function also attempts to publish the tracer metadata as an OTel process context
 /// separately, but will ignore resulting errors.
@@ -147,5 +188,100 @@ pub unsafe extern "C" fn ddog_tracer_metadata_store(
                 Err(err) => Err(err),
             };
         result.into()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use libdd_library_config::tracer_metadata::ThreadLocalMetadata;
+
+    #[test]
+    fn include_otel_thread_context_rejects_null() {
+        let result =
+            unsafe { ddog_tracer_metadata_include_otel_thread_context(core::ptr::null_mut()) };
+
+        let error = result.unwrap_err();
+        assert!(error.to_string().contains("null pointer"), "{error}");
+    }
+
+    #[test]
+    fn include_otel_thread_context_preserves_existing_metadata() {
+        unsafe {
+            let ptr = ddog_tracer_metadata_new();
+
+            (*ptr).threadlocal_metadata = Some(ThreadLocalMetadata {
+                attribute_keys: vec!["some.key".to_owned()],
+                schema_version: Some("some_schema".to_owned()),
+                ..Default::default()
+            });
+
+            ddog_tracer_metadata_include_otel_thread_context(ptr).unwrap();
+
+            let metadata = (*ptr)
+                .threadlocal_metadata
+                .as_ref()
+                .expect("thread-context metadata should remain present");
+
+            assert_eq!(metadata.attribute_keys, vec!["some.key".to_owned()]);
+            assert_eq!(metadata.schema_version.as_deref(), Some("some_schema"));
+
+            ddog_tracer_metadata_free(ptr);
+        }
+    }
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn included_thread_context_metadata_is_published() {
+        use libdd_library_config::otel_process_ctx::{ProcessContextSelfReader, unpublish};
+        use std::os::fd::{FromRawFd, OwnedFd};
+
+        let expected = TracerMetadata {
+            threadlocal_metadata: Some(Default::default()),
+            ..Default::default()
+        }
+        .to_otel_process_ctx();
+
+        unsafe {
+            let ptr = ddog_tracer_metadata_new();
+            ddog_tracer_metadata_include_otel_thread_context(ptr).unwrap();
+
+            let handle = ddog_tracer_metadata_store(ptr).unwrap();
+            drop(OwnedFd::from_raw_fd(handle.fd));
+            ddog_tracer_metadata_free(ptr);
+        }
+
+        let actual = ProcessContextSelfReader::new()
+            .expect("published context should be discoverable")
+            .read()
+            .expect("published context should be readable");
+
+        unpublish().expect("published context should be removed");
+        assert_eq!(actual, expected);
+    }
+
+    #[cfg(all(feature = "catch_panic", panic = "unwind"))]
+    #[test]
+    #[function_name::named]
+    fn tracer_metadata_result_converts_panic_to_error() {
+        let operation = || -> anyhow::Result<()> { panic!("test panic") };
+
+        let result: VoidResult = wrap_with_ffi_result!({ operation() });
+        let message = result.unwrap_err().to_string();
+
+        assert!(message.contains(function_name!()), "{message}");
+        assert!(message.contains("test panic"), "{message}");
+    }
+
+    #[cfg(all(not(feature = "catch_panic"), panic = "unwind"))]
+    #[test]
+    #[function_name::named]
+    fn tracer_metadata_result_propagates_panic_without_containment() {
+        let operation = || -> anyhow::Result<()> { panic!("test panic") };
+
+        let result =
+            std::panic::catch_unwind(|| -> VoidResult { wrap_with_ffi_result!({ operation() }) });
+
+        assert!(result.is_err());
     }
 }

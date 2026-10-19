@@ -44,15 +44,9 @@ jobs:
         uses: taiki-e/install-action@2c41309d51ede152b6f2ee6bf3b71e6dc9a8b7df # 2.49.27
         with:
           tool: cargo-llvm-cov@0.6.13,nextest@0.9.96
-      - name: Cache [rust]
-        id: rust-cache
-        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
-        with:
-          cache-targets: true # cache build artifacts
-          cache-bin: true # cache the ~/.cargo/bin directory
-          shared-key: coverage
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      - run: echo "rust-cache ${{ steps.rust-cache.outputs.cache-hit == 'true' && 'HIT' || 'MISS' }}"
+      - name: sccache
+        id: sccache
+        uses: ./.github/actions/setup-sccache
       - name: Generate code coverage (including doc tests)
         env:
           # Override rust-toolchain.toml so cargo-llvm-cov runs on the dated
@@ -79,3 +73,7 @@ jobs:
           api_key: ${{ steps.dd-sts.outputs.api_key }}
           files: lcov.info
           format: lcov
+      - name: sccache statistics
+        if: always() && steps.sccache.outputs.enabled == 'true'
+        shell: bash
+        run: sccache --show-stats

@@ -40,6 +40,7 @@ pub(crate) mod rate_sampler;
 pub(crate) mod rules_sampler;
 pub(crate) mod sampling_rule;
 pub(crate) mod sampling_rule_config;
+pub(crate) mod stack_str;
 pub(crate) mod types;
 
 #[cfg(feature = "v04_span")]

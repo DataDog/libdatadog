@@ -203,18 +203,18 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
 /// It can be produced from a [`SendWithRetryResult`] or from a [`SendDataResult`].
 #[derive(PartialEq, Debug, Default)]
 pub struct SendPayloadTelemetry {
-    requests_count: u64,
-    errors_network: u64,
-    errors_timeout: u64,
-    errors_status_code: u64,
-    bytes_sent: u64,
-    chunks_sent: u64,
-    chunks_dropped_serialization_error: u64,
-    chunks_dropped_send_failure: u64,
-    spans_enqueued_for_serialization: u64,
-    spans_dropped_serialization_error: u64,
-    spans_dropped_api_error: u64,
-    responses_count_per_code: HashMap<u16, u64>,
+    pub(crate) requests_count: u64,
+    pub(crate) errors_network: u64,
+    pub(crate) errors_timeout: u64,
+    pub(crate) errors_status_code: u64,
+    pub(crate) bytes_sent: u64,
+    pub(crate) chunks_sent: u64,
+    pub(crate) chunks_dropped_serialization_error: u64,
+    pub(crate) chunks_dropped_send_failure: u64,
+    pub(crate) spans_enqueued_for_serialization: u64,
+    pub(crate) spans_dropped_serialization_error: u64,
+    pub(crate) spans_dropped_api_error: u64,
+    pub(crate) responses_count_per_code: HashMap<u16, u64>,
 }
 
 impl From<&SendDataResult> for SendPayloadTelemetry {
@@ -1042,5 +1042,30 @@ mod tests {
                 );
             })
             .expect("Failed to get runtime");
+    }
+
+    #[test]
+    fn failures_preserve_attempts_and_distinguish_drop_reasons() {
+        for (error, expected) in [
+            (SendWithRetryError::Build(0), (0, 0, 4, 0)),
+            (SendWithRetryError::Build(1), (0, 0, 4, 0)),
+            (SendWithRetryError::Timeout(3), (0, 1, 0, 4)),
+            (SendWithRetryError::ResponseBody(3), (1, 0, 0, 4)),
+        ] {
+            let report = SendPayloadTelemetry::from_retry_result_with_spans(&Err(error), 123, 2, 4);
+            assert_eq!(
+                (
+                    report.errors_network,
+                    report.errors_timeout,
+                    report.spans_dropped_serialization_error,
+                    report.spans_dropped_api_error
+                ),
+                expected
+            );
+            assert_eq!(report.spans_enqueued_for_serialization, 4);
+            assert_eq!(report.bytes_sent, 0);
+            assert_eq!(report.chunks_sent, 0);
+            assert!(report.responses_count_per_code.is_empty());
+        }
     }
 }
