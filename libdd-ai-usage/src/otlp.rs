@@ -238,13 +238,13 @@ fn key_values(attributes: &Attributes) -> Vec<pb::KeyValue> {
 #[allow(missing_docs)]
 pub(crate) mod pb {
     #[derive(Clone, PartialEq, ::prost::Message)]
-    pub struct ExportMetricsServiceRequest {
+    pub(crate) struct ExportMetricsServiceRequest {
         #[prost(message, repeated, tag = "1")]
         pub resource_metrics: Vec<ResourceMetrics>,
     }
 
     #[derive(Clone, PartialEq, ::prost::Message)]
-    pub struct ResourceMetrics {
+    pub(crate) struct ResourceMetrics {
         #[prost(message, optional, tag = "1")]
         pub resource: Option<Resource>,
         #[prost(message, repeated, tag = "2")]
@@ -254,7 +254,7 @@ pub(crate) mod pb {
     }
 
     #[derive(Clone, PartialEq, ::prost::Message)]
-    pub struct Resource {
+    pub(crate) struct Resource {
         #[prost(message, repeated, tag = "1")]
         pub attributes: Vec<KeyValue>,
         #[prost(uint32, tag = "2")]
@@ -262,7 +262,7 @@ pub(crate) mod pb {
     }
 
     #[derive(Clone, PartialEq, ::prost::Message)]
-    pub struct ScopeMetrics {
+    pub(crate) struct ScopeMetrics {
         #[prost(message, optional, tag = "1")]
         pub scope: Option<InstrumentationScope>,
         #[prost(message, repeated, tag = "2")]
@@ -272,7 +272,7 @@ pub(crate) mod pb {
     }
 
     #[derive(Clone, PartialEq, ::prost::Message)]
-    pub struct InstrumentationScope {
+    pub(crate) struct InstrumentationScope {
         #[prost(string, tag = "1")]
         pub name: String,
         #[prost(string, tag = "2")]
@@ -284,7 +284,7 @@ pub(crate) mod pb {
     }
 
     #[derive(Clone, PartialEq, ::prost::Message)]
-    pub struct Metric {
+    pub(crate) struct Metric {
         #[prost(string, tag = "1")]
         pub name: String,
         #[prost(string, tag = "2")]
@@ -295,9 +295,9 @@ pub(crate) mod pb {
         pub data: Option<metric::Data>,
     }
 
-    pub mod metric {
+    pub(crate) mod metric {
         #[derive(Clone, PartialEq, ::prost::Oneof)]
-        pub enum Data {
+        pub(crate) enum Data {
             #[prost(message, tag = "7")]
             Sum(super::Sum),
             #[prost(message, tag = "9")]
@@ -306,7 +306,7 @@ pub(crate) mod pb {
     }
 
     #[derive(Clone, PartialEq, ::prost::Message)]
-    pub struct Sum {
+    pub(crate) struct Sum {
         #[prost(message, repeated, tag = "1")]
         pub data_points: Vec<NumberDataPoint>,
         #[prost(enumeration = "AggregationTemporality", tag = "2")]
@@ -316,7 +316,7 @@ pub(crate) mod pb {
     }
 
     #[derive(Clone, PartialEq, ::prost::Message)]
-    pub struct Histogram {
+    pub(crate) struct Histogram {
         #[prost(message, repeated, tag = "1")]
         pub data_points: Vec<HistogramDataPoint>,
         #[prost(enumeration = "AggregationTemporality", tag = "2")]
@@ -324,7 +324,7 @@ pub(crate) mod pb {
     }
 
     #[derive(Clone, PartialEq, ::prost::Message)]
-    pub struct NumberDataPoint {
+    pub(crate) struct NumberDataPoint {
         #[prost(fixed64, tag = "2")]
         pub start_time_unix_nano: u64,
         #[prost(fixed64, tag = "3")]
@@ -337,9 +337,9 @@ pub(crate) mod pb {
         pub flags: u32,
     }
 
-    pub mod number_data_point {
+    pub(crate) mod number_data_point {
         #[derive(Clone, PartialEq, ::prost::Oneof)]
-        pub enum Value {
+        pub(crate) enum Value {
             #[prost(double, tag = "4")]
             AsDouble(f64),
             #[prost(sfixed64, tag = "6")]
@@ -348,7 +348,7 @@ pub(crate) mod pb {
     }
 
     #[derive(Clone, PartialEq, ::prost::Message)]
-    pub struct HistogramDataPoint {
+    pub(crate) struct HistogramDataPoint {
         #[prost(fixed64, tag = "2")]
         pub start_time_unix_nano: u64,
         #[prost(fixed64, tag = "3")]
@@ -372,7 +372,7 @@ pub(crate) mod pb {
     }
 
     #[derive(Clone, PartialEq, ::prost::Message)]
-    pub struct KeyValue {
+    pub(crate) struct KeyValue {
         #[prost(string, tag = "1")]
         pub key: String,
         #[prost(message, optional, tag = "2")]
@@ -380,14 +380,14 @@ pub(crate) mod pb {
     }
 
     #[derive(Clone, PartialEq, ::prost::Message)]
-    pub struct AnyValue {
+    pub(crate) struct AnyValue {
         #[prost(oneof = "any_value::Value", tags = "1")]
         pub value: Option<any_value::Value>,
     }
 
-    pub mod any_value {
+    pub(crate) mod any_value {
         #[derive(Clone, PartialEq, ::prost::Oneof)]
-        pub enum Value {
+        pub(crate) enum Value {
             #[prost(string, tag = "1")]
             StringValue(String),
         }

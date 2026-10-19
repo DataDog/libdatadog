@@ -48,6 +48,9 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
+// Items not exported from the crate root stay crate-private.
+#![warn(unreachable_pub)]
+
 mod batch;
 mod datadog;
 mod deployment;

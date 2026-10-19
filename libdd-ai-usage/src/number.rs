@@ -3,16 +3,17 @@
 
 //! Exact number handling: counts, the 2^53-1 bound, and USD to nano-USD.
 //!
-//! Nothing here casts with `as`. A double becomes an integer only through
-//! [`exact_u64`], which reads the bits of a value already known to be an
-//! integer in range, and an integer becomes a double through
-//! [`integer_to_f64`], which is exact up to 2^53.
+//! A double becomes an integer only through [`exact_integer`], once it is
+//! known to be a whole number in range, and an integer becomes a double
+//! through [`integer_to_f64`], which is exact up to 2^53 and rounds to the
+//! nearest double above it. Both are `as` casts that lose nothing else.
 
 /// 2^53-1: the largest count or nano-USD amount every JSON reader holds
 /// exactly.
 pub const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
 
-const TWO_POW_32: f64 = 4_294_967_296.0;
+/// 2^128: the first double no `u128` holds.
+const TWO_POW_128: f64 = 340_282_366_920_938_463_463_374_607_431_768_211_456.0;
 const NANO_PER_USD: u64 = 1_000_000_000;
 /// 10^7 USD is above 2^53-1 nano-USD, so nothing at or above it converts.
 const USD_CONVERSION_LIMIT: f64 = 1e7;
@@ -20,7 +21,7 @@ const NANO_DIGITS: usize = 9;
 
 /// How a JSON number reads as a count.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CountReading {
+pub(crate) enum CountReading {
     /// A non-negative integer of at most 2^53-1.
     Count(u64),
     /// A non-negative integer above 2^53-1, or a number no double holds.
@@ -32,7 +33,7 @@ pub enum CountReading {
 /// Classify a JSON number as a count. Positive infinity stands for a token
 /// too large for a double and is tested before anything else, so it is never
 /// called malformed.
-pub fn read_count(value: f64) -> CountReading {
+pub(crate) fn read_count(value: f64) -> CountReading {
     if value == f64::INFINITY {
         return CountReading::AboveBound;
     }
@@ -46,7 +47,7 @@ pub fn read_count(value: f64) -> CountReading {
 }
 
 /// The integer a double states, when it is a whole number in `[0, 2^53-1]`.
-pub fn exact_u64(value: f64) -> Option<u64> {
+pub(crate) fn exact_u64(value: f64) -> Option<u64> {
     exact_integer(value)
         .and_then(|integer| u64::try_from(integer).ok())
         .filter(|integer| *integer <= MAX_SAFE_INTEGER)
@@ -54,54 +55,21 @@ pub fn exact_u64(value: f64) -> Option<u64> {
 
 /// The integer a double states, when it is a non-negative whole number below
 /// 2^128. Every such double is an integer exactly, so nothing is rounded.
-///
-/// The value is read from the bits of the double: it is the 53-bit
-/// significand times `2^(exponent - 1075)`. Below 2^53 the significand is
-/// shifted right, and the shifted-out bits are zero because the value has no
-/// fraction; from 2^53 up it is shifted left.
-pub fn exact_integer(value: f64) -> Option<u128> {
-    if !value.is_finite() || value < 0.0 || value.fract() != 0.0 {
+pub(crate) fn exact_integer(value: f64) -> Option<u128> {
+    if !value.is_finite() || value < 0.0 || value.fract() != 0.0 || value >= TWO_POW_128 {
         return None;
     }
-    if value == 0.0 {
-        return Some(0);
-    }
-    let bits = value.to_bits();
-    let exponent = (bits >> 52) & 0x7ff;
-    let significand = u128::from((bits & ((1u64 << 52) - 1)) | (1u64 << 52));
-    match exponent.checked_sub(1075) {
-        Some(left) => {
-            let left = u32::try_from(left).ok().filter(|shift| *shift <= 75)?;
-            Some(significand << left)
-        }
-        None => {
-            let right = u32::try_from(1075 - exponent)
-                .ok()
-                .filter(|shift| *shift <= 52)?;
-            Some(significand >> right)
-        }
-    }
+    // A float-to-integer cast truncates toward zero; the value is already a
+    // whole number below 2^128, so it is exact.
+    Some(value as u128)
 }
 
 /// The double nearest to an integer: exact up to 2^53, and above it the
 /// nearest double, with a tie going to the one whose last bit is zero.
-pub fn integer_to_f64(value: u128) -> f64 {
-    let exact = u64::try_from(value)
-        .ok()
-        .filter(|v| *v <= MAX_SAFE_INTEGER + 1)
-        .and_then(|v| {
-            Some((
-                u32::try_from(v >> 32).ok()?,
-                u32::try_from(v & 0xffff_ffff).ok()?,
-            ))
-        });
-    match exact {
-        // Both halves and the product are exact, and the sum is at most 2^53.
-        Some((high, low)) => f64::from(high) * TWO_POW_32 + f64::from(low),
-        // Decimal parsing is correctly rounded, which a cast would also be;
-        // this path keeps the module free of numeric casts.
-        None => value.to_string().parse::<f64>().unwrap_or(f64::INFINITY),
-    }
+pub(crate) fn integer_to_f64(value: u128) -> f64 {
+    // An integer-to-float cast rounds to the nearest double, ties to even:
+    // exactly the rounding promised above.
+    value as f64
 }
 
 /// The nano-USD value of a USD amount, or `None` when the amount is unusable
