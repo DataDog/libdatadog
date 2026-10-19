@@ -405,3 +405,27 @@ jobs:
           experimental_checks: "notowned"
           # The repository path in which CODEOWNERS file should be validated."
           repository_path: "."
+
+  cargo-doc-lints:
+    needs: setup
+    name: "cargo doc lints #${{ matrix.platform }} ${{ matrix.rust_version }}"
+    runs-on: ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [windows-latest, ubuntu-latest]
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+        with:
+          submodules: recursive
+      - name: Install stable toolchain and cargo doc
+        id: install-toolchain
+        shell: bash
+        run: |
+          rustup set profile minimal
+          rustup install stable
+      - name: Run cargo doc on ${{ matrix.platform }}
+        shell: bash
+        run: |
+          RUSTDOCFLAGS='-D warnings' cargo doc --all-features --keep-going
