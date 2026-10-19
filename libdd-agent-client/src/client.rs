@@ -129,8 +129,6 @@ impl AgentClient {
     ///
     /// The payload is **always** gzip-compressed regardless of the client-level compression
     /// setting. This is a protocol requirement of the data-streams endpoint.
-    ///
-    /// Sent as a POST, as the Java and Go tracers send it.
     pub async fn send_pipeline_stats(&self, payload: Bytes) -> Result<(), SendError> {
         let request = HttpRequest::new(
             HttpMethod::Post,
