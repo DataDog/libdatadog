@@ -52,7 +52,7 @@ fn output_debug_string(message: &str) {
 
 #[unsafe(no_mangle)]
 #[cfg(target_os = "windows")]
-pub extern "C" fn OutOfProcessExceptionEventSignatureCallback(
+pub extern "system" fn OutOfProcessExceptionEventSignatureCallback(
     _context: *const c_void,
     _exception_information: *const WER_RUNTIME_EXCEPTION_INFORMATION,
     _index: i32,
@@ -69,7 +69,7 @@ pub extern "C" fn OutOfProcessExceptionEventSignatureCallback(
 
 #[unsafe(no_mangle)]
 #[cfg(target_os = "windows")]
-pub extern "C" fn OutOfProcessExceptionEventDebuggerLaunchCallback(
+pub extern "system" fn OutOfProcessExceptionEventDebuggerLaunchCallback(
     _context: *const c_void,
     _exception_information: *const WER_RUNTIME_EXCEPTION_INFORMATION,
     _is_custom_debugger: *mut BOOL,
@@ -85,7 +85,7 @@ pub extern "C" fn OutOfProcessExceptionEventDebuggerLaunchCallback(
 
 #[unsafe(no_mangle)]
 #[cfg(target_os = "windows")]
-pub extern "C" fn OutOfProcessExceptionEventCallback(
+pub extern "system" fn OutOfProcessExceptionEventCallback(
     context: *const c_void,
     exception_information: *const WER_RUNTIME_EXCEPTION_INFORMATION,
     _ownership_claimed: *mut BOOL,
