@@ -419,12 +419,13 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
         with:
           submodules: recursive
-      - name: Install stable toolchain and cargo doc
+      - name: Install toolchain and cargo doc
         id: install-toolchain
         shell: bash
         run: |
           rustup set profile minimal
-          rustup install stable
+          rustup install
+          rustup component add rust-docs
       - name: Run cargo doc on ${{ matrix.platform }}
         shell: bash
         run: |
