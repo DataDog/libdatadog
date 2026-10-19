@@ -69,7 +69,7 @@ use libdd_trace_utils::span::span_pool::PooledChunks;
 use libdd_trace_utils::span::trace_utils::SDK_OTLP_EXPORT_KEY;
 use libdd_trace_utils::span::v1::TraceChunk;
 use libdd_trace_utils::span::v1::chunk_pool::PooledTraceChunks;
-use libdd_trace_utils::span::{SpanText, TraceData, trace_utils_v1, v04::Span};
+use libdd_trace_utils::span::{SpanText, TraceData, trace_utils_v1, v04::Span, v04::SpanSlice};
 use libdd_trace_utils::trace_utils::TracerHeaderTags;
 #[cfg(all(feature = "telemetry", not(target_arch = "wasm32")))]
 use prost::Message;
@@ -507,56 +507,45 @@ impl<
             self.check_agent_info().await;
         }
 
-        let format: DeserInputFormat = self.input_format.into();
+        let traces = self.deserialize_traces(data, self.input_format.into())?;
 
-        let res = match format {
-            DeserInputFormat::V04 => {
-                let (traces, _) = msgpack_decoder::v04::from_slice(data).map_err(|e| {
-                    error!("Error deserializing trace from request body: {e}");
-                    self.emit_metric(
-                        HealthMetric::Count(health_metrics::DESERIALIZE_TRACES_ERRORS, 1),
-                        None,
-                    );
-                    TraceExporterError::Deserialization(e)
-                })?;
-                debug!(
-                    trace_count = traces.len(),
-                    "Trace deserialization completed successfully"
-                );
-                self.emit_metric(
-                    HealthMetric::Count(health_metrics::DESERIALIZE_TRACES, traces.len() as i64),
-                    None,
-                );
-                self.process_and_send_trace_chunks(PooledChunks::unpooled(traces))
-                    .await?
-            }
-            DeserInputFormat::V05 => {
-                let (traces, _) = msgpack_decoder::v05::from_slice(data).map_err(|e| {
-                    error!("Error deserializing trace from request body: {e}");
-                    self.emit_metric(
-                        HealthMetric::Count(health_metrics::DESERIALIZE_TRACES_ERRORS, 1),
-                        None,
-                    );
-                    TraceExporterError::Deserialization(e)
-                })?;
-                debug!(
-                    trace_count = traces.len(),
-                    "Trace deserialization completed successfully"
-                );
-                self.emit_metric(
-                    HealthMetric::Count(health_metrics::DESERIALIZE_TRACES, traces.len() as i64),
-                    None,
-                );
-                self.process_and_send_trace_chunks(PooledChunks::unpooled(traces))
-                    .await?
-            }
-        };
+        let res = self
+            .process_and_send_trace_chunks(PooledChunks::unpooled(traces))
+            .await?;
         if matches!(&res, AgentResponse::Changed { body } if body.is_empty()) {
             return Err(TraceExporterError::Agent(
                 error::AgentErrorKind::EmptyResponse,
             ));
         }
         Ok(res)
+    }
+
+    fn deserialize_traces<'a>(
+        &self,
+        data: &'a [u8],
+        format: DeserInputFormat,
+    ) -> Result<Vec<Vec<SpanSlice<'a>>>, TraceExporterError> {
+        let (traces, _) = match format {
+            DeserInputFormat::V04 => msgpack_decoder::v04::from_slice(data),
+            DeserInputFormat::V05 => msgpack_decoder::v05::from_slice(data),
+        }
+        .map_err(|e| {
+            error!("Error deserializing trace from request body: {e}");
+            self.emit_metric(
+                HealthMetric::Count(health_metrics::DESERIALIZE_TRACES_ERRORS, 1),
+                None,
+            );
+            TraceExporterError::Deserialization(e)
+        })?;
+        debug!(
+            trace_count = traces.len(),
+            "Trace deserialization completed successfully"
+        );
+        self.emit_metric(
+            HealthMetric::Count(health_metrics::DESERIALIZE_TRACES, traces.len() as i64),
+            None,
+        );
+        Ok(traces)
     }
 
     /// Check if agent info state has changed
@@ -3215,11 +3204,7 @@ mod tests {
         assert_eq!(mock_traces.calls(), 1);
     }
 
-    /// Regression test for a real `TracePool` actually being fed back by a full send through the
-    /// agent path: `process_and_send_trace_chunks_v1` used to move the chunks into the outgoing
-    /// `TracerPayload` via `into_chunks()`, which discarded pooling (the payload was dropped, not
-    /// `traces`, once it had been encoded). The chunks now get moved back into `traces` after
-    /// encoding, so its `Drop` recycles them.
+    /// A full v1 send through the agent path recycles the sent chunk back into the pool.
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_send_trace_chunks_v1_feeds_a_real_pool() {
