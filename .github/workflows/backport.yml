@@ -86,6 +86,9 @@ jobs:
       fail-fast: false
       matrix:
         target_branch: ${{ fromJSON(needs.collect-backport-targets.outputs.target_branches_json || '[]') }}
+    concurrency:
+      group: backport-${{ github.event.pull_request.number }}-${{ matrix.target_branch }}
+      cancel-in-progress: false
     permissions:
       contents: write
       id-token: write
@@ -98,10 +101,27 @@ jobs:
 
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
         with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
           persist-credentials: false
           fetch-depth: 0
 
+      - name: Check Backport Branch
+        id: backport-branch
+        env:
+          TARGET_BRANCH: ${{ matrix.target_branch }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          BACKPORT_BRANCH="backport-${PR_NUMBER}-to-${TARGET_BRANCH}"
+          REMOTE_REF=$(git ls-remote --heads origin "refs/heads/${BACKPORT_BRANCH}")
+          echo "branch=${BACKPORT_BRANCH}" >> "$GITHUB_OUTPUT"
+          if [ -n "$REMOTE_REF" ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Execute Backport
+        if: steps.backport-branch.outputs.exists == 'false'
         id: create-commit
         env:
           TARGET_BRANCH: ${{ matrix.target_branch }}
@@ -140,12 +160,16 @@ jobs:
             echo "branch=${BACKPORT_BRANCH}"
             echo "branch-from=$(git rev-parse ${TARGET_BRANCH})"
             echo "commit=$(git rev-parse HEAD)"
+            echo "worktree=${GITHUB_WORKSPACE}/${WORKTREE}"
             echo "target-branch=${TARGET_BRANCH}"
           } >> "$GITHUB_OUTPUT"
 
       - name: Push Commit
+        if: steps.backport-branch.outputs.exists == 'false'
         uses: DataDog/commit-headless@action/v2.0.3
         with:
+          token: ${{ steps.octo-sts.outputs.token }}
+          working-directory: ${{ steps.create-commit.outputs.worktree }}
           branch: ${{ steps.create-commit.outputs.branch }}
           head-sha: ${{ steps.create-commit.outputs.branch-from }}
           target: "DataDog/libdatadog"
@@ -158,8 +182,8 @@ jobs:
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-          TARGET_BRANCH: ${{ steps.create-commit.outputs.target-branch }}
-          BACKPORT_BRANCH: ${{ steps.create-commit.outputs.branch }}
+          TARGET_BRANCH: ${{ matrix.target_branch }}
+          BACKPORT_BRANCH: ${{ steps.backport-branch.outputs.branch }}
           GH_TOKEN: ${{ steps.octo-sts.outputs.token }}
         run: |
           set +e
@@ -172,9 +196,14 @@ jobs:
             exit 1
           fi
           if [ -z "${EXISTING_PR}" ]; then
+            BACKPORT_TITLE="${PR_TITLE} [backport #${PR_NUMBER}]"
+            TICKET_PATTERN='^(.*) (\[[A-Z]+-[0-9]+\])$'
+            if [[ "$PR_TITLE" =~ $TICKET_PATTERN ]]; then
+              BACKPORT_TITLE="${BASH_REMATCH[1]} [backport #${PR_NUMBER}] ${BASH_REMATCH[2]}"
+            fi
             set +e
             CREATE_OUT=$(gh pr create \
-              --title "${PR_TITLE} [backport ${TARGET_BRANCH}]" \
+              --title "${BACKPORT_TITLE}" \
               --body "Backport #${PR_NUMBER} to ${TARGET_BRANCH}" \
               --base ${TARGET_BRANCH} \
               --head ${BACKPORT_BRANCH} 2>&1)
