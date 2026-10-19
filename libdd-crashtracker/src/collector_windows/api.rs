@@ -4,7 +4,7 @@
 // SAFETY: All functions in the windows crate are marked as unsafe with no preconditions.
 
 use crate::{
-    BuildIdType, CrashInfoBuilder, ErrorKind, FileType, Metadata, StackFrame, StackTrace,
+    BuildIdType, CrashInfoBuilder, ErrorKind, FileType, Metadata, OsInfo, StackFrame, StackTrace,
     ThreadData,
 };
 use anyhow::{Context, Result, anyhow};
@@ -253,8 +253,12 @@ pub fn exception_event_callback(
     builder
         .with_kind(ErrorKind::Panic)
         .context("Failed to add error kind")?;
+    // WER loads the handler with the bitness of the crashed process, so the handler architecture
+    // is the process architecture. os_info reports the OS one (x86_64 for WOW64 processes).
+    let mut os_info: OsInfo = ::os_info::get().into();
+    os_info.architecture = std::env::consts::ARCH.to_string();
     builder
-        .with_os_info_this_machine()
+        .with_os_info(os_info)
         .context("Failed to add OS info")?;
     builder
         .with_incomplete(false)
