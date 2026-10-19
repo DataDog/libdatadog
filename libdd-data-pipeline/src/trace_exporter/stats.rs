@@ -359,7 +359,7 @@ pub(crate) fn process_traces_for_stats_v1<
         + Sync
         + 'static,
 >(
-    traces: &mut libdd_trace_utils::span::v1::chunk_pool::PooledTraceChunks<'_, T>,
+    traces: &mut libdd_trace_utils::span::v1::span_pool::PooledTraceChunks<'_, T>,
     header_tags: &mut libdd_trace_utils::trace_utils::TracerHeaderTags,
     client_side_stats: &ArcSwap<StatsComputationStatus>,
     client_computed_top_level: bool,
@@ -639,7 +639,7 @@ mod tests {
         fn process_traces_for_stats_v1_is_noop_when_disabled() {
             let client_side_stats = ArcSwap::new(Arc::new(StatsComputationStatus::Disabled));
             let mut traces =
-                libdd_trace_utils::span::v1::chunk_pool::PooledTraceChunks::unpooled(vec![
+                libdd_trace_utils::span::v1::span_pool::PooledTraceChunks::unpooled(vec![
                     TraceChunkBytes {
                         spans: vec![top_level_span(1, 10)],
                         // Negative priority would normally make `drop_chunks` remove this chunk,
@@ -666,6 +666,70 @@ mod tests {
             assert_eq!(traces.len(), 1);
             assert!(!header_tags.generic.client_computed_top_level);
             assert!(!header_tags.generic.client_computed_stats);
+        }
+
+        /// `process_traces_for_stats_v1` reports that stats were computed, and flips both
+        /// `client_computed_*` header tags, when stats computation is enabled.
+        #[test]
+        #[cfg_attr(miri, ignore)]
+        fn process_traces_for_stats_v1_enabled() {
+            use libdd_shared_runtime::{ForkSafeRuntime, SharedRuntime, Worker};
+
+            #[derive(Debug)]
+            struct NoopWorker;
+
+            #[async_trait::async_trait]
+            impl Worker for NoopWorker {
+                async fn run(&mut self) {}
+                async fn trigger(&mut self) {
+                    std::future::pending::<()>().await;
+                }
+            }
+
+            #[derive(Debug)]
+            struct NoopFlusher;
+
+            #[async_trait::async_trait]
+            impl FlushableStatsExport for NoopFlusher {
+                async fn force_flush(&self) {}
+            }
+
+            let runtime = ForkSafeRuntime::new().unwrap();
+            let worker_handle = runtime.spawn_worker(NoopWorker, false).unwrap();
+            let flush_handle =
+                Arc::downgrade(&Arc::new(NoopFlusher)) as Weak<dyn FlushableStatsExport>;
+            let client_side_stats = ArcSwap::new(Arc::new(StatsComputationStatus::Enabled {
+                stats_concentrator: Arc::new(new_concentrator()),
+                worker_handle,
+                flush_handle,
+            }));
+            let trace_filterer = TraceFilterer::default();
+
+            let mut traces =
+                libdd_trace_utils::span::v1::span_pool::PooledTraceChunks::unpooled(vec![
+                    TraceChunkBytes {
+                        spans: vec![top_level_span(1, 10)],
+                        ..Default::default()
+                    },
+                ]);
+            let mut header_tags = TracerHeaderTags::default();
+            let result = process_traces_for_stats_v1(
+                &mut traces,
+                &mut header_tags,
+                &client_side_stats,
+                false,
+                &trace_filterer,
+                #[cfg(feature = "telemetry")]
+                None::<
+                    &crate::telemetry::TelemetryClient<libdd_capabilities_impl::NativeCapabilities>,
+                >,
+            );
+
+            assert!(result);
+            assert!(header_tags.generic.client_computed_top_level);
+            assert!(header_tags.generic.client_computed_stats);
+
+            let _ = runtime.shutdown(None);
         }
     }
 }

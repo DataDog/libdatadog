@@ -10,7 +10,7 @@ use libdd_data_pipeline_core::{
 };
 use libdd_trace_utils::send_with_retry::{SendWithRetryError, SendWithRetryResult};
 use libdd_trace_utils::span::TraceData;
-use libdd_trace_utils::span::v1::chunk_pool::PooledTraceChunks;
+use libdd_trace_utils::span::v1::span_pool::PooledTraceChunks;
 use libdd_trace_utils::tracer_metadata::TracerMetadata;
 use tracing::error;
 

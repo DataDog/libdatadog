@@ -45,6 +45,11 @@ runs:
           echo "SCCACHE_BUCKET=dd-ci-artefacts-build-stable"
           echo "SCCACHE_REGION=us-east-1"
           echo "SCCACHE_S3_KEY_PREFIX=libddprof-build/sccache"
+          # Non-main refs hold the read-only IAM role; without this sccache
+          # attempts a forbidden S3 PUT on every cache miss.
+          if [[ "${{ github.ref }}" != "refs/heads/main" ]]; then
+            echo "SCCACHE_S3_RW_MODE=READ_ONLY"
+          fi
           echo "SCCACHE_BASEDIRS=${{ github.workspace }}${SEP}${CARGO_HOME_DIR}"
         } >> "$GITHUB_ENV"
     - name: Report disabled sccache

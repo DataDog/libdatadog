@@ -9,7 +9,7 @@ use libdd_trace_normalization::{normalize_utils, normalizer};
 use tracing::{debug, error};
 
 use crate::span::span_pool::PooledChunks;
-use crate::span::v1::chunk_pool::PooledTraceChunks;
+use crate::span::v1::span_pool::PooledTraceChunks;
 use crate::span::v1::{AttributeValue, SpanKind};
 use crate::span::vec_map::VecMap;
 use crate::span::{self, TraceData, trace_utils::get_root_span_index, trace_utils_v1};
@@ -408,7 +408,7 @@ impl TraceFilterer {
 mod tests {
     use super::TraceFilterer;
     use crate::span::span_pool::PooledChunks;
-    use crate::span::v1::chunk_pool::PooledTraceChunks;
+    use crate::span::v1::span_pool::PooledTraceChunks;
     use crate::span::v1::{
         AttributeValue as AttributeValueV1, SpanBytes as SpanBytesV1, TraceChunk,
     };

@@ -4,7 +4,7 @@
 //! Trace-utils functionalities implementation for V1 spans.
 
 use crate::span::trace_utils::DroppedP0Stats;
-use crate::span::v1::chunk_pool::PooledTraceChunks;
+use crate::span::v1::span_pool::PooledTraceChunks;
 use crate::span::v1::{AttributeValue, Span};
 use crate::span::{SpanText, TraceData};
 use std::collections::{HashMap, HashSet};
