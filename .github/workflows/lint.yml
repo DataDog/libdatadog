@@ -410,6 +410,9 @@ jobs:
     needs: setup
     name: "cargo doc lints #${{ matrix.platform }}"
     runs-on: ${{ matrix.platform }}
+    permissions:
+      id-token: write
+      contents: read
     strategy:
       fail-fast: false
       matrix:
