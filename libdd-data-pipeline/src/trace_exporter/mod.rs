@@ -1294,9 +1294,9 @@ impl<
     /// context.
     ///
     /// `trace_chunks` accepts [`PooledTraceChunks`] so a caller can back it with a real
-    /// [`libdd_trace_utils::span::v1::chunk_pool::TracePool`] to recycle span/chunk allocations;
-    /// no caller in this codebase does so yet (today's production callers all go through
-    /// msgpack), wiring one up is left to a future change.
+    /// [`libdd_trace_utils::span::v1::chunk_pool::TracePool`] to recycle span allocations; no
+    /// caller in this codebase does so yet (today's production callers all go through msgpack),
+    /// wiring one up is left to a future change.
     ///
     /// # Arguments
     /// * trace_chunks: A list of native v1 trace chunks.
