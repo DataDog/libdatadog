@@ -412,6 +412,10 @@ fn walk_thread_stack(
         });
 
         if let Some(module) = module {
+            frame.relative_address = Some(format!(
+                "0x{:x}",
+                native_frame.AddrPC.Offset - module.base_address
+            ));
             frame.module_base_address = Some(format!("{:x}", module.base_address));
             frame.symbol_address = Some(format!(
                 "{:x}",
@@ -420,7 +424,7 @@ fn walk_thread_stack(
             frame.path.clone_from(&module.path);
 
             if let Some(pdb_info) = &module.pdb_info {
-                frame.build_id = Some(format!("{:x}{:x}", pdb_info.signature, pdb_info.age));
+                frame.build_id = Some(pdb_info.build_id());
                 frame.build_id_type = Some(BuildIdType::PDB);
                 frame.file_type = Some(FileType::PE);
             }
@@ -445,6 +449,14 @@ struct ModuleInfo {
 struct PdbInfo {
     age: u32,
     signature: Guid,
+}
+
+impl PdbInfo {
+    // Must match the key used by `datadog-ci pe-symbols upload`:
+    // uppercase GUID without dashes, then the age in lowercase hex.
+    fn build_id(&self) -> String {
+        format!("{:X}{:x}", self.signature, self.age)
+    }
 }
 
 fn list_modules(process_handle: HANDLE) -> anyhow::Result<Vec<ModuleInfo>> {
@@ -575,13 +587,13 @@ struct Guid {
     pub data4: [u8; 8],
 }
 
-impl fmt::LowerHex for Guid {
+impl fmt::UpperHex for Guid {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
             // Guid format but without dashes
             // https://devblogs.microsoft.com/oldnewthing/20220928-00/?p=107221
-            "{:08x}{:04x}{:04x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+            "{:08X}{:04X}{:04X}{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
             self.data1,
             self.data2,
             self.data3,
@@ -831,5 +843,23 @@ mod tests {
             )
         };
         assert_eq!(bytes, expected_pdb_signature);
+    }
+
+    #[test]
+    fn test_pdb_build_id() {
+        let signature = Guid {
+            data1: 0x0123ABCD,
+            data2: 0x4567,
+            data3: 0x89EF,
+            data4: [0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF],
+        };
+        let pdb_info = PdbInfo { age: 1, signature };
+        assert_eq!(pdb_info.build_id(), "0123ABCD456789EF0123456789ABCDEF1");
+
+        let pdb_info = PdbInfo {
+            age: 0x1a,
+            ..pdb_info
+        };
+        assert_eq!(pdb_info.build_id(), "0123ABCD456789EF0123456789ABCDEF1a");
     }
 }
