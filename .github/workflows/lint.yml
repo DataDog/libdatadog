@@ -430,3 +430,4 @@ jobs:
         shell: bash
         run: |
           RUSTDOCFLAGS='-D warnings' cargo doc --all-features --keep-going
+          RUSTDOCFLAGS='-D warnings' cargo doc --keep-going
