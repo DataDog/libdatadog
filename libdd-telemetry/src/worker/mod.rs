@@ -2382,7 +2382,13 @@ mod tests {
         assert!(accepted > 0 && accepted < total as usize);
 
         // The worker reads every accepted point when it drains again.
-        worker.drain_metric_ring();
+        worker.flush_metric_aggregates();
+        let series: Vec<_> = worker.data.metric_buckets.flush_series().collect();
+        assert_eq!(series.len(), 1);
+        assert_eq!(series[0].0, context);
+        assert!(series[0].1.is_empty());
+        assert_eq!(series[0].2.len(), 1);
+        assert_eq!(series[0].2[0].1, accepted as f64);
         assert!(handle.add_point(1.0, &context, Vec::new()).is_ok());
     }
 }
