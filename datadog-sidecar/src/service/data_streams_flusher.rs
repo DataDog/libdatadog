@@ -535,12 +535,16 @@ mod tests {
         );
     }
 
+    /// Spelled out rather than taken from `PIPELINE_STATS_ENDPOINT_PATH`, so that a typo in the
+    /// constant fails here instead of being compared with itself.
     #[test]
     fn the_endpoint_is_the_agents_pipeline_stats_path() {
         let agent = Endpoint::from_slice("http://localhost:8126");
         let endpoint = dsm_endpoint(&agent).unwrap();
-        assert_eq!(endpoint.url.path(), PIPELINE_STATS_ENDPOINT_PATH);
-        assert_eq!(endpoint.url.authority(), agent.url.authority());
+        assert_eq!(
+            endpoint.url.to_string(),
+            "http://localhost:8126/v0.1/pipeline_stats"
+        );
 
         let agentless = Endpoint {
             api_key: Some("key".into()),
