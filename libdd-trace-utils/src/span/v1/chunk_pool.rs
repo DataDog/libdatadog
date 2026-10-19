@@ -112,7 +112,7 @@ impl<T: TraceData> SpanBatch<T> {
 }
 
 #[derive(Debug)]
-struct TracePoolInner<T: TraceData> {
+struct SpanPoolV1Inner<T: TraceData> {
     queue: crossbeam_channel::Sender<SpanBatch<T>>,
     receiver: crossbeam_channel::Receiver<SpanBatch<T>>,
     thread_cache: ThreadLocal<RefCell<SpanThreadCache<T>>>,
@@ -143,22 +143,22 @@ struct SpanThreadCache<T: TraceData> {
 /// this only recycles [`Span`]s, which carry the expensive allocations (`attributes`,
 /// `span_links`, `span_events`).
 ///
-/// [`TracePool::add_chunks`] drains each chunk's spans into the pool; the emptied chunk shell is
-/// dropped. [`TracePool::get_chunk`] returns a fresh chunk shell with a capacity-retained `spans`
+/// [`SpanPoolV1::add_chunks`] drains each chunk's spans into the pool; the emptied chunk shell is
+/// dropped. [`SpanPoolV1::get_chunk`] returns a fresh chunk shell with a capacity-retained `spans`
 /// buffer pulled from the pool. Spans are then pushed into it one at a time via
-/// [`TracePool::get_span`].
+/// [`SpanPoolV1::get_span`].
 #[derive(Debug, Clone)]
-pub struct TracePool<T: TraceData> {
-    inner: Arc<TracePoolInner<T>>,
+pub struct SpanPoolV1<T: TraceData> {
+    inner: Arc<SpanPoolV1Inner<T>>,
 }
 
-impl<T: TraceData> TracePool<T> {
+impl<T: TraceData> SpanPoolV1<T> {
     /// New pool holding at most `capacity` recycled spans.
     pub fn with_capacity(capacity: usize) -> Self {
         let (queue, receiver) = crossbeam_channel::unbounded();
         let capacity = capacity.max(MAX_BATCH_SIZE);
         Self {
-            inner: Arc::new(TracePoolInner {
+            inner: Arc::new(SpanPoolV1Inner {
                 queue,
                 receiver,
                 thread_cache: ThreadLocal::new(),
@@ -199,7 +199,7 @@ impl<T: TraceData> TracePool<T> {
 
     /// Get a fresh chunk shell, with its `spans` vec backed by a capacity-retained buffer pulled
     /// from the pool (or a fresh one if the pool is empty). Push spans into it via
-    /// [`TracePool::get_span`] to build a new chunk.
+    /// [`SpanPoolV1::get_span`] to build a new chunk.
     pub fn get_chunk(&self) -> TraceChunk<T> {
         TraceChunk {
             spans: self.pull_empty_spans(),
@@ -269,17 +269,17 @@ impl<T: TraceData> TracePool<T> {
     }
 }
 
-/// Owned trace chunks that return to a [`TracePool`] on drop. Deref's to the inner
+/// Owned trace chunks that return to a [`SpanPoolV1`] on drop. Deref's to the inner
 /// `Vec<TraceChunk<T>>` for in-place processing. With no pool ([`PooledTraceChunks::unpooled`])
 /// chunks just drop normally.
 #[derive(Debug)]
 pub struct PooledTraceChunks<'a, T: TraceData> {
     chunks: Vec<TraceChunk<T>>,
-    pool: Option<&'a TracePool<T>>,
+    pool: Option<&'a SpanPoolV1<T>>,
 }
 
 impl<'a, T: TraceData> PooledTraceChunks<'a, T> {
-    pub fn new(chunks: Vec<TraceChunk<T>>, pool: Option<&'a TracePool<T>>) -> Self {
+    pub fn new(chunks: Vec<TraceChunk<T>>, pool: Option<&'a SpanPoolV1<T>>) -> Self {
         Self { chunks, pool }
     }
 
@@ -347,7 +347,7 @@ mod tests {
 
     #[test]
     fn returned_chunks_feed_the_span_pool() {
-        let pool = TracePool::<crate::span::BytesData>::with_capacity(100);
+        let pool = SpanPoolV1::<crate::span::BytesData>::with_capacity(100);
         {
             // No drop-policy control here, but with 100 chunks it's astronomically unlikely all
             // get dropped by the 10% drop policy.
@@ -383,7 +383,7 @@ mod tests {
 
     #[test]
     fn get_chunk_recycles_a_capacity_retained_spans_vec() {
-        let pool = TracePool::<crate::span::BytesData>::with_capacity(100);
+        let pool = SpanPoolV1::<crate::span::BytesData>::with_capacity(100);
         let mut chunks = Vec::new();
         for i in 0..50 {
             chunks.push(chunk_with_span(&format!("s{i}")));
@@ -407,14 +407,14 @@ mod tests {
 
     #[test]
     fn unpooled_chunks_do_not_feed_the_pool() {
-        let pool = TracePool::<crate::span::BytesData>::with_capacity(100);
+        let pool = SpanPoolV1::<crate::span::BytesData>::with_capacity(100);
         drop(PooledTraceChunks::unpooled(vec![chunk_with_span("a")]));
         assert!(pool.is_empty());
     }
 
     #[test]
     fn into_chunks_disables_pooling() {
-        let pool = TracePool::<crate::span::BytesData>::with_capacity(100);
+        let pool = SpanPoolV1::<crate::span::BytesData>::with_capacity(100);
         let chunks = pool.wrap_chunks(vec![chunk_with_span("a")]);
         let inner = chunks.into_chunks();
         assert_eq!(inner.len(), 1);
@@ -423,7 +423,7 @@ mod tests {
 
     #[test]
     fn pools_are_bounded() {
-        let pool = TracePool::<crate::span::BytesData>::with_capacity(20);
+        let pool = SpanPoolV1::<crate::span::BytesData>::with_capacity(20);
         // drop_policy keeps ~90%; push far more than capacity and check the bound holds.
         for _ in 0..1000 {
             pool.add_chunks(std::iter::once(chunk_with_span("x")));
@@ -433,7 +433,7 @@ mod tests {
 
     #[test]
     fn retain_mut_returns_dropped_chunks_to_the_pool() {
-        let pool = TracePool::<crate::span::BytesData>::with_capacity(100);
+        let pool = SpanPoolV1::<crate::span::BytesData>::with_capacity(100);
         let mut chunks = Vec::new();
         for i in 0..50 {
             chunks.push(chunk_with_span(&format!("s{i}")));

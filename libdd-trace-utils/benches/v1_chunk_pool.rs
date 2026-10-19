@@ -6,7 +6,7 @@ use criterion::{Criterion, Throughput, black_box, criterion_group};
 use libdd_common::bench_utils::{MeasurementName, memory_allocated_criterion};
 use libdd_tinybytes::BytesString;
 use libdd_trace_utils::span::BytesData;
-use libdd_trace_utils::span::v1::chunk_pool::TracePool;
+use libdd_trace_utils::span::v1::chunk_pool::SpanPoolV1;
 use libdd_trace_utils::span::v1::{AttributeValue, Span, TraceChunk};
 
 /// Configurations exercised by the benchmarks: `(number of chunks, spans per chunk)`.
@@ -95,7 +95,7 @@ fn build_chunks<F: Fn() -> Span<BytesData>, G: Fn() -> TraceChunk<BytesData>>(
 
 /// Warm the pool with `count` freshly-allocated, populated spans (in a single chunk) so that the
 /// first measured iterations dequeue recycled spans/chunks (steady state) rather than allocating.
-fn warm_pool(pool: &TracePool<BytesData>, count: usize) {
+fn warm_pool(pool: &SpanPoolV1<BytesData>, count: usize) {
     let chunks = build_chunks(1, count, Span::default, TraceChunk::default);
     // Returning the chunks to the pool recycles both the spans and the chunk shells (minus the
     // ~10% dropped by each sub-pool's drop policy).
@@ -137,7 +137,7 @@ fn enqueue_dequeue<M: Measurement + MeasurementName + 'static>(c: &mut Criterion
     let mut group = c.benchmark_group(format!("v1_chunk_pool/{}", M::name()));
     for &(num_chunks, spans_per_chunk) in CONFIGS {
         let total = num_chunks * spans_per_chunk;
-        let pool = TracePool::<BytesData>::with_capacity(POOL_CAPACITY);
+        let pool = SpanPoolV1::<BytesData>::with_capacity(POOL_CAPACITY);
         warm_pool(&pool, total);
 
         bench_iter(

@@ -1294,7 +1294,7 @@ impl<
     /// context.
     ///
     /// `trace_chunks` accepts [`PooledTraceChunks`] so a caller can back it with a real
-    /// [`libdd_trace_utils::span::v1::chunk_pool::TracePool`] to recycle span allocations; no
+    /// [`libdd_trace_utils::span::v1::chunk_pool::SpanPoolV1`] to recycle span allocations; no
     /// caller in this codebase does so yet (today's production callers all go through msgpack),
     /// wiring one up is left to a future change.
     ///
@@ -3208,7 +3208,7 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_send_trace_chunks_v1_feeds_a_real_pool() {
-        use libdd_trace_utils::span::v1::chunk_pool::TracePool;
+        use libdd_trace_utils::span::v1::chunk_pool::SpanPoolV1;
         use libdd_trace_utils::span::v1::{SpanBytes as SpanBytesV1, TraceChunkBytes};
 
         agent_info::clear_cache_for_test();
@@ -3263,7 +3263,7 @@ mod tests {
             ..Default::default()
         }];
 
-        let pool = TracePool::with_capacity(100);
+        let pool = SpanPoolV1::with_capacity(100);
         assert!(pool.is_empty(), "pool should start empty");
         let result = exporter.send_trace_chunks_v1(pool.wrap_chunks(chunks), None);
 
