@@ -101,7 +101,7 @@ command CI uses; the first invocation downloads a pinned binary into `~/.cache` 
 ./scripts/run-ast-grep.sh
 ```
 
-New exported FFI entry points (`pub` or `#[no_mangle]` / `#[export_name]`, with `extern "C"`, bare `extern`, or `extern "system"`) must wrap panics (`wrap_with_ffi_result!`, `catch_panic!`,
+New exported FFI entry points (`pub` or `#[no_mangle]` / `#[export_name]`, including the `#[unsafe(...)]` forms, with `extern "C"`, bare `extern`, or `extern "system"`) must wrap panics (`wrap_with_ffi_result!`, `catch_panic!`,
 `std::panic::catch_unwind`, …) or carry `// allow(ffi-panic-boundary): <justification>` on a line
 directly above the function. The scan is whole-repo. Both FFI panic rules are
 warnings for now, so current hits are reported and do not fail the job. ast-grep does not expand macros, so containment belongs in the `macro_rules`

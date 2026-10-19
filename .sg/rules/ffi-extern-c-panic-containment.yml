@@ -4,17 +4,21 @@ severity: warning
 message: >-
   Exported FFI entry points must acknowledge panic containment.
   This covers `pub` functions and `#[no_mangle]` / `#[export_name]`
-  functions whose ABI is `extern "C"`, bare `extern` (C by default),
-  or `extern "system"`.
+  functions, including the edition 2024 `#[unsafe(no_mangle)]` and
+  `#[unsafe(export_name)]` forms, whose ABI is `extern "C"`, bare
+  `extern` (C by default), or `extern "system"`.
   Wrap the body with wrap_with_ffi_result!, wrap_with_void_ffi_result!,
   catch_panic!, or std::panic::catch_unwind. If containment is wrong
-  here (trivial accessor, or datadog-sidecar-ffi which uses panic=abort),
-  add `// allow(ffi-panic-boundary): <justification>` on a line directly
+  here (trivial accessor, or abort-on-purpose), add
+  `// allow(ffi-panic-boundary): <justification>` on a line directly
   above the function (attributes may sit in between).
+  datadog-sidecar-ffi is ignored: it uses panic=abort, so catch_unwind
+  is not allowed there.
 note: |
   A panic that reaches an extern "C" or extern "system" boundary aborts
-  the host process. Bare `extern fn` is extern "C". `#[no_mangle]` and
-  `#[export_name]` export the symbol even when the function is not `pub`.
+  the host process. Bare `extern fn` is extern "C". `#[no_mangle]`,
+  `#[unsafe(no_mangle)]`, `#[export_name]`, and `#[unsafe(export_name)]`
+  export the symbol even when the function is not `pub`.
   A private extern callback without one of those attributes is not an
   entry point. `extern "C-unwind"` is a different ABI and is not matched.
   Clippy's panic/unwrap lints only see explicit panic constructs, not
@@ -29,11 +33,15 @@ ignores:
   - "**/tests/**"
   - "**/examples/**"
   - "symbolizer-ffi/**"
+  # panic=abort. AGENTS.md forbids catch_unwind in this crate.
+  - "datadog-sidecar-ffi/**"
 rule:
   all:
     - kind: function_item
-    # `pub(crate)` is not an export. `#[no_mangle]` / `#[export_name]` are,
-    # even when the function is not `pub`.
+    # `pub(crate)` is not an export. `#[no_mangle]` and `#[export_name]`
+    # are, including edition 2024 `#[unsafe(no_mangle)]` and
+    # `#[unsafe(export_name)]`. The match is the inner identifier, so
+    # both spellings hit, even when the function is not `pub`.
     - any:
         - has:
             kind: visibility_modifier

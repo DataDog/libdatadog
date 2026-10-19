@@ -168,6 +168,39 @@ snapshots:
       start: 17
       end: 34
   ? |
+    #[unsafe(export_name = "ddog_renamed")]
+    extern "C" fn edition_2024_renamed() {
+        risky();
+    }
+  : labels:
+    - source: |-
+        extern "C" fn edition_2024_renamed() {
+            risky();
+        }
+      style: primary
+      start: 40
+      end: 93
+    - source: export_name
+      style: secondary
+      start: 9
+      end: 20
+    - source: '#[unsafe(export_name = "ddog_renamed")]'
+      style: secondary
+      start: 0
+      end: 39
+    - source: '"C"'
+      style: secondary
+      start: 47
+      end: 50
+    - source: extern "C"
+      style: secondary
+      start: 40
+      end: 50
+    - source: extern "C"
+      style: secondary
+      start: 40
+      end: 50
+  ? |
     #[unsafe(no_mangle)]
     unsafe extern "C" fn edition_2024_export() {
         risky();

@@ -25,6 +25,8 @@ ignores:
   - "**/tests/**"
   - "**/examples/**"
   - "symbolizer-ffi/**"
+  # panic=abort. AGENTS.md forbids catch_unwind in this crate.
+  - "datadog-sidecar-ffi/**"
 rule:
   all:
     - kind: macro_definition

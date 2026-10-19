@@ -131,6 +131,11 @@ invalid:
         risky();
     }
   - |
+    #[unsafe(export_name = "ddog_renamed")]
+    extern "C" fn edition_2024_renamed() {
+        risky();
+    }
+  - |
     pub extern fn default_abi() {
         risky();
     }
