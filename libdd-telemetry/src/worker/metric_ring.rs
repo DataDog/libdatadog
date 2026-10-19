@@ -9,11 +9,11 @@
 //! with:
 //!   * a lock-free reserve (a compare-and-swap on the write cursor) followed by a release-store
 //!     publish,
-//!   * a single consumer (the telemetry worker) that batch-drains all pending points,
+//!   * a single active consumer (the telemetry worker) that batch-drains all pending points,
 //!   * an amortized wakeup — the consumer is notified once every [`NOTIFY_INTERVAL`] points (and
 //!     whenever a producer finds the buffer full), not once per point, and
-//!   * bounded memory without blocking — a producer that would lap the consumer drops its point and
-//!     returns. A producer never waits for the consumer.
+//!   * bounded memory without waiting for space: a producer that would lap the consumer drops its
+//!     point and returns.
 //!
 //! # Why a full buffer drops the point
 //!
@@ -33,17 +33,17 @@
 //! `value`/`tags` into that slot's cells and **release-stores** the encoded key. The consumer
 //! reads slots in sequence order; it **acquire-loads** the flag and stops at the first `0` (a point
 //! not yet published), so the producers' field writes are always visible before the consumer reads
-//! them, and points are consumed in publication order. After reading, the consumer restores `0`.
+//! them, and points are consumed in reservation order. After reading, the consumer restores `0`.
 //!
 //! # Safety
 //!
 //! Each slot's [`UnsafeCell`]s are written by exactly one producer (the thread that reserved that
-//! sequence) and read by exactly one consumer (the worker), and the two are ordered by the
-//! release/acquire on the ready flag. No two threads ever touch the same slot's cells concurrently,
-//! which is what makes the `unsafe impl Sync` sound.
+//! sequence) and read by at most one consumer. A guard prevents overlapping drain calls, and the
+//! ready flag orders each producer's writes before the consumer's reads. The read cursor orders
+//! the consumer's reads before a producer reuses the slot.
 
 use std::cell::UnsafeCell;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use tokio::sync::Notify;
 
@@ -76,6 +76,14 @@ impl Slot {
             tags: UnsafeCell::new(Vec::new()),
             ready: AtomicU64::new(0),
         }
+    }
+}
+
+struct DrainGuard<'a>(&'a AtomicBool);
+
+impl Drop for DrainGuard<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
     }
 }
 
@@ -112,12 +120,14 @@ pub struct MetricRing {
     /// Next sequence to consume; published by the single consumer and read by producers to detect
     /// a full buffer.
     read_pos: AtomicU64,
+    /// Prevents overlapping calls to the safe `drain` method.
+    draining: AtomicBool,
     /// Wakes the consumer. Notified every [`NOTIFY_INTERVAL`] points and when the buffer is full.
     notify: Notify,
 }
 
-// SAFETY: see the module-level "Safety" note — per-slot cells have a single writer and a single
-// reader, ordered by the release/acquire on `ready`.
+// SAFETY: the drain guard ensures a single active reader. Cursor and ready flag synchronization
+// orders each slot's producer and consumer accesses.
 unsafe impl Send for MetricRing {}
 unsafe impl Sync for MetricRing {}
 
@@ -128,6 +138,7 @@ impl MetricRing {
             slots: slots.into_boxed_slice(),
             write_pos: AtomicU64::new(0),
             read_pos: AtomicU64::new(0),
+            draining: AtomicBool::new(false),
             notify: Notify::new(),
         }
     }
@@ -137,25 +148,36 @@ impl MetricRing {
         self.notify.notified()
     }
 
-    /// Publish a metric point, or drop it when the buffer is full. It never waits for the consumer.
+    /// Publish a metric point, or drop it when the buffer is full. It does not wait for space.
     /// Use [`MetricRing::try_push`] to learn whether the point was dropped. Safe to call from any
     /// thread.
     pub fn push(&self, value: f64, key: ContextKey, tags: Vec<Tag>) {
         let _ = self.try_push(value, key, tags);
     }
 
-    /// Publish a metric point. Lock-free, and it never waits for the consumer: when the buffer is
-    /// full the point is dropped, the consumer is woken, and `false` is returned. Safe to call
-    /// from any thread.
+    /// Publish a metric point without waiting for space. When the buffer is full, the point is
+    /// dropped, the consumer is woken, and `false` is returned. Safe to call from any thread.
     #[must_use = "a `false` result means that the buffer was full and the point was dropped"]
     pub fn try_push(&self, value: f64, key: ContextKey, tags: Vec<Tag>) -> bool {
+        let seq = self.write_pos.load(Ordering::Relaxed);
+        self.try_push_from(value, key, tags, seq)
+    }
+
+    #[inline]
+    fn try_push_from(&self, value: f64, key: ContextKey, tags: Vec<Tag>, mut seq: u64) -> bool {
         // Reserve a sequence only when its slot is free. The slot of `seq` holds the point of
         // `seq - RING_SIZE` until the consumer advances `read_pos` past it. A sequence that is
         // reserved must always be published, because the consumer stops at the first empty slot.
         // So the check for space comes before the reservation, and a full buffer reserves nothing.
-        let mut seq = self.write_pos.load(Ordering::Relaxed);
         loop {
             if seq.wrapping_sub(self.read_pos.load(Ordering::Acquire)) >= RING_SIZE as u64 {
+                // Another producer and the consumer may have advanced past our stale cursor.
+                // Refresh it before deciding that the buffer is full.
+                let current = self.write_pos.load(Ordering::Relaxed);
+                if current != seq {
+                    seq = current;
+                    continue;
+                }
                 self.notify.notify_one();
                 return false;
             }
@@ -188,8 +210,19 @@ impl MetricRing {
         true
     }
 
-    /// Drain all currently-published points in order, invoking `f` for each. Single-consumer only.
+    /// Drain currently published points in order, invoking `f` for each.
+    ///
+    /// If another drain is in progress, this call returns without consuming points.
     pub fn drain(&self, mut f: impl FnMut(f64, ContextKey, Vec<Tag>)) {
+        if self
+            .draining
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_err()
+        {
+            return;
+        }
+        let _guard = DrainGuard(&self.draining);
+
         loop {
             // Only the consumer writes `read_pos`, so a relaxed load of our own cursor is fine.
             let seq = self.read_pos.load(Ordering::Relaxed);
@@ -225,7 +258,7 @@ impl Default for MetricRing {
 mod tests {
     use super::*;
     use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     fn key(index: u32, t: MetricType) -> ContextKey {
         ContextKey::from_parts(index, t)
@@ -285,6 +318,7 @@ mod tests {
                 "a full buffer must drop the point"
             );
         }
+        ring.push(-1.0, key(0, MetricType::Count), Vec::new());
 
         // A dropped point reserves no sequence, so the consumer sees no gap: it reads every
         // accepted point, in order.
@@ -311,7 +345,49 @@ mod tests {
     }
 
     #[test]
-    fn dropped_point_releases_its_tags() {
+    fn full_buffer_wakes_the_consumer() {
+        use std::future::Future;
+        use std::task::{Context, Waker};
+
+        let ring = MetricRing::new();
+        for i in 0..RING_SIZE as u32 {
+            assert!(ring.try_push(1.0, key(i, MetricType::Count), Vec::new()));
+        }
+
+        // Consume the notification from filling the ring before checking the full-buffer path.
+        let mut context = Context::from_waker(Waker::noop());
+        let mut initial = std::pin::pin!(ring.notified());
+        assert!(initial.as_mut().poll(&mut context).is_ready());
+        let mut notified = std::pin::pin!(ring.notified());
+        assert!(notified.as_mut().poll(&mut context).is_pending());
+
+        assert!(!ring.try_push(1.0, key(0, MetricType::Count), Vec::new()));
+        assert!(notified.as_mut().poll(&mut context).is_ready());
+    }
+
+    #[test]
+    fn stale_producer_cursor_does_not_drop_a_point_when_the_ring_is_empty() {
+        for start in [0, u64::MAX] {
+            let ring = MetricRing::new();
+            ring.write_pos.store(start, Ordering::Relaxed);
+            ring.read_pos.store(start, Ordering::Relaxed);
+
+            // A producer pauses after reading this cursor. Another producer publishes, and the
+            // consumer drains that point before the first producer resumes.
+            let stale_cursor = ring.write_pos.load(Ordering::Relaxed);
+            assert!(ring.try_push(1.0, key(1, MetricType::Count), Vec::new()));
+            let mut delivered = Vec::new();
+            ring.drain(|value, _, _| delivered.push(value));
+            assert_eq!(delivered, vec![1.0]);
+
+            assert!(ring.try_push_from(2.0, key(2, MetricType::Count), Vec::new(), stale_cursor));
+            ring.drain(|value, _, _| delivered.push(value));
+            assert_eq!(delivered, vec![1.0, 2.0]);
+        }
+    }
+
+    #[test]
+    fn dropped_point_tags_are_not_delivered() {
         let ring = MetricRing::new();
         for i in 0..RING_SIZE as u32 {
             assert!(ring.try_push(0.0, key(i, MetricType::Count), Vec::new()));
@@ -326,6 +402,51 @@ mod tests {
         );
     }
 
+    #[test]
+    fn overlapping_drains_do_not_run_concurrently() {
+        let ring = Arc::new(MetricRing::new());
+        assert!(ring.try_push(1.0, key(1, MetricType::Count), Vec::new()));
+        assert!(ring.try_push(2.0, key(2, MetricType::Count), Vec::new()));
+
+        let entered = Arc::new(std::sync::Barrier::new(2));
+        let resume = Arc::new(std::sync::Barrier::new(2));
+        let first = {
+            let ring = ring.clone();
+            let entered = entered.clone();
+            let resume = resume.clone();
+            std::thread::spawn(move || {
+                let mut delivered = Vec::new();
+                ring.drain(|_, key, _| {
+                    delivered.push(key.index());
+                    if key.index() == 1 {
+                        entered.wait();
+                        resume.wait();
+                    }
+                });
+                delivered
+            })
+        };
+
+        entered.wait();
+        let mut overlapping = Vec::new();
+        ring.drain(|_, key, _| overlapping.push(key.index()));
+        resume.wait();
+        let delivered = first.join().unwrap();
+
+        assert!(overlapping.is_empty());
+        assert_eq!(delivered, vec![1, 2]);
+
+        assert!(ring.try_push(3.0, key(3, MetricType::Count), Vec::new()));
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            ring.drain(|_, _, _| panic!("consumer callback failed"));
+        }));
+        assert!(result.is_err());
+        assert!(ring.try_push(4.0, key(4, MetricType::Count), Vec::new()));
+        let mut delivered_after_panic = Vec::new();
+        ring.drain(|_, key, _| delivered_after_panic.push(key.index()));
+        assert_eq!(delivered_after_panic, vec![4]);
+    }
+
     #[cfg_attr(miri, ignore)] // very slow
     #[test]
     fn multi_producer_batch_drain_delivers_every_accepted_point_once() {
@@ -333,66 +454,57 @@ mod tests {
         let producers = 4u32;
         let per_producer = 50_000u32;
         let done = Arc::new(AtomicBool::new(false));
-        let consumed = Arc::new(AtomicU64::new(0));
-        let value_sum = Arc::new(AtomicU64::new(0)); // sum of integer values, as bits
 
         // Consumer thread: drain until every accepted point is accounted for.
         let consumer = {
             let ring = ring.clone();
             let done = done.clone();
-            let consumed = consumed.clone();
-            let value_sum = value_sum.clone();
             std::thread::spawn(move || {
+                let mut delivered = Vec::new();
                 loop {
-                    ring.drain(|v, _k, _t| {
-                        consumed.fetch_add(1, Ordering::Relaxed);
-                        value_sum.fetch_add(v as u64, Ordering::Relaxed);
+                    let producers_done = done.load(Ordering::Acquire);
+                    ring.drain(|value, key, _| {
+                        assert_eq!(value as u32, key.index());
+                        delivered.push(key.index());
                     });
-                    if done.load(Ordering::Acquire)
-                        && ring.read_pos.load(Ordering::Acquire)
-                            == ring.write_pos.load(Ordering::Acquire)
-                    {
+                    if producers_done {
                         break;
                     }
                     std::hint::spin_loop();
                 }
+                delivered
             })
         };
 
-        // Each producer counts what the buffer accepted. A producer that finds the buffer full
+        // Each producer records what the buffer accepted. A producer that finds the buffer full
         // drops the point and continues, so the producers never wait for the consumer.
         let mut handles = Vec::new();
-        for _ in 0..producers {
+        for producer in 0..producers {
             let ring = ring.clone();
             handles.push(std::thread::spawn(move || {
-                let mut accepted = 0u64;
-                let mut accepted_sum = 0u64;
+                let mut accepted = Vec::new();
                 for i in 0..per_producer {
-                    if ring.try_push(i as f64, key(i, MetricType::Count), Vec::new()) {
-                        accepted += 1;
-                        accepted_sum += i as u64;
+                    let id = producer * per_producer + i;
+                    if ring.try_push(id as f64, key(id, MetricType::Count), Vec::new()) {
+                        accepted.push(id);
                     }
                 }
-                (accepted, accepted_sum)
+                accepted
             }));
         }
-        let mut accepted = 0u64;
-        let mut accepted_sum = 0u64;
+        let mut accepted = Vec::new();
         for h in handles {
-            let (count, sum) = h.join().unwrap();
-            accepted += count;
-            accepted_sum += sum;
+            accepted.extend(h.join().unwrap());
         }
         done.store(true, Ordering::Release);
-        consumer.join().unwrap();
+        let mut delivered = consumer.join().unwrap();
 
-        assert!(accepted > 0);
-        assert!(accepted <= (producers * per_producer) as u64);
+        assert!(!accepted.is_empty());
+        accepted.sort_unstable();
+        delivered.sort_unstable();
         assert_eq!(
-            consumed.load(Ordering::Relaxed),
-            accepted,
+            delivered, accepted,
             "every accepted point is delivered one time"
         );
-        assert_eq!(value_sum.load(Ordering::Relaxed), accepted_sum);
     }
 }

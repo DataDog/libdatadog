@@ -1338,6 +1338,9 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static>
         Ok(())
     }
 
+    /// Enqueue a metric point without waiting for space.
+    ///
+    /// Returns an error if the metric buffer is full and the point is dropped.
     pub fn add_point(
         &self,
         value: f64,
@@ -1347,9 +1350,8 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static>
         // Points are the highest-frequency action; publish to the lock-free ring buffer rather
         // than boxing a message + waking the receiver per point. The worker batch-drains it.
         //
-        // This never waits for the worker. The worker does not drain the buffer while it waits for
-        // the response to a telemetry request, so a full buffer drops the point, like the
-        // `try_send_msg` of the other actions does on a full mailbox.
+        // The worker does not drain the buffer while it waits for a telemetry response. A full
+        // buffer drops the point, like `try_send_msg` drops other actions on a full mailbox.
         if self.metric_ring.try_push(value, *context, extra_tags) {
             Ok(())
         } else {
@@ -2665,6 +2667,11 @@ mod tests {
 
         // The worker reads every accepted point when it drains again.
         worker.drain_metric_ring();
+        worker.data.metric_buckets.flush_aggregates();
+        let series: Vec<_> = worker.data.metric_buckets.flush_series().collect();
+        assert_eq!(series.len(), 1);
+        assert_eq!(series[0].0, context);
+        assert_eq!(series[0].2[0].1, accepted as f64);
         assert!(handle.add_point(1.0, &context, Vec::new()).is_ok());
     }
 }
