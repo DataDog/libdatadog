@@ -440,7 +440,7 @@ pub(crate) fn process_traces_for_stats_v1<
         + Sync
         + 'static,
 >(
-    traces: &mut libdd_trace_utils::span::v1::chunk_pool::PooledTraceChunks<'_, T>,
+    traces: &mut libdd_trace_utils::span::v1::span_pool::PooledTraceChunks<'_, T>,
     header_tags: &mut libdd_trace_utils::trace_utils::TracerHeaderTags,
     client_side_stats: &ArcSwap<StatsComputationStatus>,
     client_computed_top_level: bool,
@@ -720,7 +720,7 @@ mod tests {
         fn process_traces_for_stats_v1_is_noop_when_disabled() {
             let client_side_stats = ArcSwap::new(Arc::new(StatsComputationStatus::Disabled));
             let mut traces =
-                libdd_trace_utils::span::v1::chunk_pool::PooledTraceChunks::unpooled(vec![
+                libdd_trace_utils::span::v1::span_pool::PooledTraceChunks::unpooled(vec![
                     TraceChunkBytes {
                         spans: vec![top_level_span(1, 10)],
                         // Negative priority would normally make `drop_chunks` remove this chunk,
@@ -787,7 +787,7 @@ mod tests {
             let trace_filterer = TraceFilterer::default();
 
             let mut traces =
-                libdd_trace_utils::span::v1::chunk_pool::PooledTraceChunks::unpooled(vec![
+                libdd_trace_utils::span::v1::span_pool::PooledTraceChunks::unpooled(vec![
                     TraceChunkBytes {
                         spans: vec![top_level_span(1, 10)],
                         ..Default::default()

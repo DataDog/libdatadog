@@ -68,7 +68,7 @@ use libdd_trace_utils::send_with_retry::{
 use libdd_trace_utils::span::span_pool::PooledChunks;
 use libdd_trace_utils::span::trace_utils::SDK_OTLP_EXPORT_KEY;
 use libdd_trace_utils::span::v1::TraceChunk;
-use libdd_trace_utils::span::v1::chunk_pool::PooledTraceChunks;
+use libdd_trace_utils::span::v1::span_pool::PooledTraceChunks;
 use libdd_trace_utils::span::{SpanText, TraceData, trace_utils_v1, v04::Span, v04::SpanSlice};
 use libdd_trace_utils::trace_utils::TracerHeaderTags;
 #[cfg(all(feature = "telemetry", not(target_arch = "wasm32")))]
@@ -1294,7 +1294,7 @@ impl<
     /// context.
     ///
     /// `trace_chunks` accepts [`PooledTraceChunks`] so a caller can back it with a real
-    /// [`libdd_trace_utils::span::v1::chunk_pool::SpanPoolV1`] to recycle span allocations; no
+    /// [`libdd_trace_utils::span::v1::span_pool::SpanPoolV1`] to recycle span allocations; no
     /// caller in this codebase does so yet (today's production callers all go through msgpack),
     /// wiring one up is left to a future change.
     ///
@@ -3208,7 +3208,7 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_send_trace_chunks_v1_feeds_a_real_pool() {
-        use libdd_trace_utils::span::v1::chunk_pool::SpanPoolV1;
+        use libdd_trace_utils::span::v1::span_pool::SpanPoolV1;
         use libdd_trace_utils::span::v1::{SpanBytes as SpanBytesV1, TraceChunkBytes};
 
         agent_info::clear_cache_for_test();

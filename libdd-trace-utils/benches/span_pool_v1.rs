@@ -6,7 +6,7 @@ use criterion::{Criterion, Throughput, black_box, criterion_group};
 use libdd_common::bench_utils::{MeasurementName, memory_allocated_criterion};
 use libdd_tinybytes::BytesString;
 use libdd_trace_utils::span::BytesData;
-use libdd_trace_utils::span::v1::chunk_pool::SpanPoolV1;
+use libdd_trace_utils::span::v1::span_pool::SpanPoolV1;
 use libdd_trace_utils::span::v1::{AttributeValue, Span, TraceChunk};
 
 /// Configurations exercised by the benchmarks: `(number of chunks, spans per chunk)`.
@@ -134,7 +134,7 @@ fn bench_iter<
 /// Dequeue chunks/spans from the pool, populate them, then enqueue the chunks back into the pool
 /// (recycling spans and chunk shells on drop). Throughput is reported per span.
 fn enqueue_dequeue<M: Measurement + MeasurementName + 'static>(c: &mut Criterion<M>) {
-    let mut group = c.benchmark_group(format!("v1_chunk_pool/{}", M::name()));
+    let mut group = c.benchmark_group(format!("span_pool_v1/{}", M::name()));
     for &(num_chunks, spans_per_chunk) in CONFIGS {
         let total = num_chunks * spans_per_chunk;
         let pool = SpanPoolV1::<BytesData>::with_capacity(POOL_CAPACITY);
@@ -163,9 +163,9 @@ fn enqueue_dequeue<M: Measurement + MeasurementName + 'static>(c: &mut Criterion
     group.finish();
 }
 
-criterion_group!(v1_chunk_pool_benches, enqueue_dequeue,);
+criterion_group!(span_pool_v1_benches, enqueue_dequeue,);
 criterion_group!(
-    name = v1_chunk_pool_alloc_benches;
+    name = span_pool_v1_alloc_benches;
     config = memory_allocated_criterion(&super::GLOBAL);
     targets = enqueue_dequeue,
 );

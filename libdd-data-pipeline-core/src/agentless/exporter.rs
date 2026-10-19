@@ -12,7 +12,7 @@ use libdd_trace_utils::send_with_retry::{
     send_with_retry_and_size,
 };
 use libdd_trace_utils::span::span_pool::PooledChunks;
-use libdd_trace_utils::span::v1::chunk_pool::PooledTraceChunks;
+use libdd_trace_utils::span::v1::span_pool::PooledTraceChunks;
 use libdd_trace_utils::span::{TraceData, trace_utils::compute_top_level_span, trace_utils_v1};
 use libdd_trace_utils::tracer_metadata::TracerMetadata;
 use thiserror::Error;
