@@ -48,7 +48,7 @@ jobs:
         id: sccache
         uses: ./.github/actions/setup-sccache
       - name: Measure per-crate test and bench times
-        run: benchmark/crate_timing.sh
+        run: cargo run --quiet -p tools --bin crate_timing
       - name: Write job summary
         if: always()
         run: |
