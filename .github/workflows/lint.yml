@@ -408,7 +408,7 @@ jobs:
 
   cargo-doc-lints:
     needs: setup
-    name: "cargo doc lints #${{ matrix.platform }} ${{ matrix.rust_version }}"
+    name: "cargo doc lints #${{ matrix.platform }}"
     runs-on: ${{ matrix.platform }}
     strategy:
       fail-fast: false
