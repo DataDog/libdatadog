@@ -1340,7 +1340,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static>
 
     /// Enqueue a metric point without waiting for space.
     ///
-    /// Returns an error if the metric buffer is full and the point is dropped.
+    /// Returns an error if the metric buffer appears full and the point is dropped.
     pub fn add_point(
         &self,
         value: f64,

@@ -3,14 +3,14 @@
 
 //! A bounded multi-producer / single-consumer ring buffer for metric points.
 //!
-//! Metric points are the highest-frequency telemetry action, so routing every point through the
-//! worker's tokio mpsc channel — a heap-boxed [`TelemetryActions`] message plus a receiver wakeup
-//! per point — dominates the per-`add_point` cost. This ring buffer replaces that per-point cost
-//! with:
+//! Metric points are the highest-frequency telemetry action. Routing every point through the
+//! worker's tokio mpsc channel requires a heap-boxed [`TelemetryActions`](super::TelemetryActions)
+//! message and a receiver wakeup per point. This dominates the per-`add_point` cost. The ring
+//! buffer replaces that per-point cost with:
 //!   * a lock-free reserve (a compare-and-swap on the write cursor) followed by a release-store
 //!     publish,
 //!   * a single active consumer (the telemetry worker) that batch-drains all pending points,
-//!   * an amortized wakeup — the consumer is notified once every [`NOTIFY_INTERVAL`] points (and
+//!   * an amortized wakeup: the consumer is notified once every `NOTIFY_INTERVAL` points (and
 //!     whenever a producer finds the buffer full), not once per point, and
 //!   * bounded memory without waiting for space: a producer that would lap the consumer drops its
 //!     point and returns.
@@ -148,34 +148,45 @@ impl MetricRing {
         self.notify.notified()
     }
 
-    /// Publish a metric point, or drop it when the buffer is full. It does not wait for space.
+    /// Publish a metric point, or drop it when the buffer appears full. It does not wait for space.
     /// Use [`MetricRing::try_push`] to learn whether the point was dropped. Safe to call from any
     /// thread.
     pub fn push(&self, value: f64, key: ContextKey, tags: Vec<Tag>) {
         let _ = self.try_push(value, key, tags);
     }
 
-    /// Publish a metric point without waiting for space. When the buffer is full, the point is
-    /// dropped, the consumer is woken, and `false` is returned. Safe to call from any thread.
-    #[must_use = "a `false` result means that the buffer was full and the point was dropped"]
+    /// Publish a metric point without waiting for space. When the buffer appears full, the point
+    /// is dropped, the consumer is woken, and `false` is returned. A concurrent drain can free
+    /// space while the producer checks capacity. Safe to call from any thread.
+    #[must_use = "a `false` result means that the point was dropped"]
     pub fn try_push(&self, value: f64, key: ContextKey, tags: Vec<Tag>) -> bool {
         let seq = self.write_pos.load(Ordering::Relaxed);
-        self.try_push_from(value, key, tags, seq)
+        let read = self.read_pos.load(Ordering::Acquire);
+        self.try_push_from(value, key, tags, seq, read)
     }
 
     #[inline]
-    fn try_push_from(&self, value: f64, key: ContextKey, tags: Vec<Tag>, mut seq: u64) -> bool {
+    fn try_push_from(
+        &self,
+        value: f64,
+        key: ContextKey,
+        tags: Vec<Tag>,
+        mut seq: u64,
+        mut read: u64,
+    ) -> bool {
         // Reserve a sequence only when its slot is free. The slot of `seq` holds the point of
         // `seq - RING_SIZE` until the consumer advances `read_pos` past it. A sequence that is
         // reserved must always be published, because the consumer stops at the first empty slot.
         // So the check for space comes before the reservation, and a full buffer reserves nothing.
         loop {
-            if seq.wrapping_sub(self.read_pos.load(Ordering::Acquire)) >= RING_SIZE as u64 {
-                // Another producer and the consumer may have advanced past our stale cursor.
-                // Refresh it before deciding that the buffer is full.
+            if seq.wrapping_sub(read) >= RING_SIZE as u64 {
+                // A stale write cursor can be behind the reader, and a stale read cursor can make
+                // space look full. Recheck both before dropping the point.
+                let refreshed_read = self.read_pos.fetch_add(0, Ordering::Acquire);
                 let current = self.write_pos.load(Ordering::Relaxed);
-                if current != seq {
+                if current != seq || seq.wrapping_sub(refreshed_read) < RING_SIZE as u64 {
                     seq = current;
+                    read = refreshed_read;
                     continue;
                 }
                 self.notify.notify_one();
@@ -188,7 +199,10 @@ impl MetricRing {
                 Ordering::Relaxed,
             ) {
                 Ok(_) => break,
-                Err(current) => seq = current,
+                Err(current) => {
+                    seq = current;
+                    read = self.read_pos.load(Ordering::Acquire);
+                }
             }
         }
 
@@ -380,10 +394,32 @@ mod tests {
             ring.drain(|value, _, _| delivered.push(value));
             assert_eq!(delivered, vec![1.0]);
 
-            assert!(ring.try_push_from(2.0, key(2, MetricType::Count), Vec::new(), stale_cursor));
+            assert!(ring.try_push_from(
+                2.0,
+                key(2, MetricType::Count),
+                Vec::new(),
+                stale_cursor,
+                ring.read_pos.load(Ordering::Acquire),
+            ));
             ring.drain(|value, _, _| delivered.push(value));
             assert_eq!(delivered, vec![1.0, 2.0]);
         }
+    }
+
+    #[test]
+    fn stale_consumer_cursor_does_not_drop_a_point_after_a_drain() {
+        let ring = MetricRing::new();
+        for i in 0..RING_SIZE as u32 {
+            assert!(ring.try_push(i as f64, key(i, MetricType::Count), Vec::new()));
+        }
+        let stale_read = ring.read_pos.load(Ordering::Acquire);
+        ring.drain(|_, _, _| {});
+        let seq = ring.write_pos.load(Ordering::Relaxed);
+
+        assert!(ring.try_push_from(7.0, key(7, MetricType::Count), Vec::new(), seq, stale_read,));
+        let mut delivered = Vec::new();
+        ring.drain(|value, _, _| delivered.push(value));
+        assert_eq!(delivered, vec![7.0]);
     }
 
     #[test]
