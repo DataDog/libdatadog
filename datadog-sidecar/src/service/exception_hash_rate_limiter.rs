@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use libdd_common::MutexExt;
-use libdd_ipc::rate_limiter::{ShmLimiter, ShmLimiterMemory};
+use libdd_ipc::rate_limiter::{ShmLimiter, ShmLimiterMemory, ShmSafe};
 use std::ffi::CString;
 use std::io;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -58,9 +58,13 @@ pub struct ExceptionHashRateLimiter {
     mem: ShmLimiterMemory<EntryData>,
 }
 
+#[repr(transparent)]
 struct EntryData {
     pub hash: AtomicU64,
 }
+
+// SAFETY: `EntryData` is a transparent wrapper around `AtomicU64`, which is `ShmSafe`.
+unsafe impl ShmSafe for EntryData {}
 
 pub struct HashLimiter {
     shm: ShmLimiter<EntryData>,
