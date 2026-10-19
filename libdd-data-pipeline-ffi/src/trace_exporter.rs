@@ -77,6 +77,8 @@ pub struct TraceExporterConfig {
     client_computed_stats: bool,
     client_computed_top_level: bool,
     telemetry_cfg: Option<TelemetryConfig>,
+    #[cfg(feature = "external-observations")]
+    pub(crate) observations: bool,
     telemetry_instrumentation_sessions: TelemetryInstrumentationSessions,
     health_metrics_enabled: bool,
     process_tags: Option<String>,
@@ -525,13 +527,13 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_connection_timeout(
 
 /// Sets a shared runtime for the TraceExporter to use for background workers.
 ///
-/// `handle` must have been initialized with [`ddog_shared_runtime_new`].
+/// `handle` must have been initialized with `ddog_shared_runtime_new`.
 ///
 /// When set, the exporter will use the provided runtime instead of creating its own.
 /// This allows multiple exporters (or other components) to share a single runtime.
 /// The config holds a clone of the `Arc` (increments the strong count), so the
 /// original handle remains valid and must still be freed with
-/// [`ddog_shared_runtime_free`].
+/// `ddog_shared_runtime_free`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_trace_exporter_config_set_shared_runtime(
     config: Option<&mut TraceExporterConfig>,
@@ -878,6 +880,10 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
                 if let Some(cfg) = &config.telemetry_cfg {
                     builder.enable_telemetry(cfg.clone());
                 }
+                #[cfg(feature = "external-observations")]
+                if config.observations {
+                    builder.enable_observations();
+                }
 
                 if let Some(handle) = &config.mutable_metadata {
                     builder.set_mutable_metadata(handle.clone());
@@ -964,6 +970,41 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_trace_exporter_free(handle: Box<TraceExporter>) {
     let _ = catch_panic!(handle.shutdown(None), Ok(()));
+}
+
+/// Consumes the exporter and waits at most `timeout_ms` for its workers to flush.
+/// The handle is consumed on success and error. Other workers on a shared runtime
+/// are unaffected. The deadline bounds worker flushing, not runtime destruction:
+/// dropping the last runtime owner can additionally wait for blocking tasks such
+/// as system DNS resolution. Hosts must account for that separately.
+///
+/// # Safety
+///
+/// `handle` must be valid and must not be used concurrently or after this call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ddog_trace_exporter_shutdown(
+    handle: Box<TraceExporter>,
+    timeout_ms: u64,
+) -> Option<Box<ExporterError>> {
+    catch_panic!(
+        handle
+            .shutdown(Some(std::time::Duration::from_millis(timeout_ms)))
+            .err()
+            .map(|err| Box::new(ExporterError::from(err))),
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
+/// Releases the exporter without flushing or stopping its workers.
+/// The caller must also dispose of the runtime that owns those workers. This is
+/// intended for finalisation and failed fork recovery with an exclusively owned runtime.
+///
+/// # Safety
+///
+/// `handle` must be valid and must not be used concurrently or after this call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ddog_trace_exporter_discard(handle: Box<TraceExporter>) {
+    catch_panic!(drop(handle), ())
 }
 
 /// Send traces to the Datadog Agent.

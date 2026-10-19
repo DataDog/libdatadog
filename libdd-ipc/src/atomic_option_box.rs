@@ -29,8 +29,8 @@ impl<T> AtomicOptionBox<T> {
     /// Borrow the current value without taking it.
     ///
     /// # Safety
-    /// Must not be called concurrently with [`take`], and the returned reference must not
-    /// outlive a subsequent [`take`] or drop of the value.
+    /// Must not be called concurrently with [`Self::take`], and the returned reference must not
+    /// outlive a subsequent [`Self::take`] or drop of the value.
     pub unsafe fn as_ref(&self) -> Option<&T>
     where
         T: Sync,
