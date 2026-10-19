@@ -455,10 +455,11 @@ jobs:
         with:
           submodules: recursive
       - name: Cache [rust]
-        # S3 client builds a reqwest client that requires a system CA store and
-        # panics when the purged store is empty, so it cannot run inside the
-        # certificate-less container. Mounting certs or setting SSL_CERT_FILE
-        # would defeat the test's premise.
+        # We do not use sccache for this job because S3 client builds a
+        # reqwest client that requires a system CA store and panics when the
+        # purged store is empty, so it cannot run inside the certificate-less
+        # container. Mounting certs or setting SSL_CERT_FILE would defeat the
+        # test's premise.
         id: rust-cache
         uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
         with:
