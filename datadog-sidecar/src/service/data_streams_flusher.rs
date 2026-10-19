@@ -535,8 +535,6 @@ mod tests {
         );
     }
 
-    /// Spelled out rather than taken from `PIPELINE_STATS_ENDPOINT_PATH`, so that a typo in the
-    /// constant fails here instead of being compared with itself.
     #[test]
     fn the_endpoint_is_the_agents_pipeline_stats_path() {
         let agent = Endpoint::from_slice("http://localhost:8126");
