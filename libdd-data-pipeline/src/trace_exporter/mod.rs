@@ -68,8 +68,8 @@ use libdd_trace_utils::send_with_retry::{
 use libdd_trace_utils::span::span_pool::PooledChunks;
 use libdd_trace_utils::span::trace_utils::SDK_OTLP_EXPORT_KEY;
 use libdd_trace_utils::span::v1::TraceChunk;
-use libdd_trace_utils::span::v1::chunk_pool::PooledTraceChunks;
-use libdd_trace_utils::span::{SpanText, TraceData, trace_utils_v1, v04::Span};
+use libdd_trace_utils::span::v1::span_pool::PooledTraceChunks;
+use libdd_trace_utils::span::{SpanText, TraceData, trace_utils_v1, v04::Span, v04::SpanSlice};
 use libdd_trace_utils::trace_utils::TracerHeaderTags;
 #[cfg(all(feature = "telemetry", not(target_arch = "wasm32")))]
 use prost::Message;
@@ -507,56 +507,45 @@ impl<
             self.check_agent_info().await;
         }
 
-        let format: DeserInputFormat = self.input_format.into();
+        let traces = self.deserialize_traces(data, self.input_format.into())?;
 
-        let res = match format {
-            DeserInputFormat::V04 => {
-                let (traces, _) = msgpack_decoder::v04::from_slice(data).map_err(|e| {
-                    error!("Error deserializing trace from request body: {e}");
-                    self.emit_metric(
-                        HealthMetric::Count(health_metrics::DESERIALIZE_TRACES_ERRORS, 1),
-                        None,
-                    );
-                    TraceExporterError::Deserialization(e)
-                })?;
-                debug!(
-                    trace_count = traces.len(),
-                    "Trace deserialization completed successfully"
-                );
-                self.emit_metric(
-                    HealthMetric::Count(health_metrics::DESERIALIZE_TRACES, traces.len() as i64),
-                    None,
-                );
-                self.process_and_send_trace_chunks(PooledChunks::unpooled(traces))
-                    .await?
-            }
-            DeserInputFormat::V05 => {
-                let (traces, _) = msgpack_decoder::v05::from_slice(data).map_err(|e| {
-                    error!("Error deserializing trace from request body: {e}");
-                    self.emit_metric(
-                        HealthMetric::Count(health_metrics::DESERIALIZE_TRACES_ERRORS, 1),
-                        None,
-                    );
-                    TraceExporterError::Deserialization(e)
-                })?;
-                debug!(
-                    trace_count = traces.len(),
-                    "Trace deserialization completed successfully"
-                );
-                self.emit_metric(
-                    HealthMetric::Count(health_metrics::DESERIALIZE_TRACES, traces.len() as i64),
-                    None,
-                );
-                self.process_and_send_trace_chunks(PooledChunks::unpooled(traces))
-                    .await?
-            }
-        };
+        let res = self
+            .process_and_send_trace_chunks(PooledChunks::unpooled(traces))
+            .await?;
         if matches!(&res, AgentResponse::Changed { body } if body.is_empty()) {
             return Err(TraceExporterError::Agent(
                 error::AgentErrorKind::EmptyResponse,
             ));
         }
         Ok(res)
+    }
+
+    fn deserialize_traces<'a>(
+        &self,
+        data: &'a [u8],
+        format: DeserInputFormat,
+    ) -> Result<Vec<Vec<SpanSlice<'a>>>, TraceExporterError> {
+        let (traces, _) = match format {
+            DeserInputFormat::V04 => msgpack_decoder::v04::from_slice(data),
+            DeserInputFormat::V05 => msgpack_decoder::v05::from_slice(data),
+        }
+        .map_err(|e| {
+            error!("Error deserializing trace from request body: {e}");
+            self.emit_metric(
+                HealthMetric::Count(health_metrics::DESERIALIZE_TRACES_ERRORS, 1),
+                None,
+            );
+            TraceExporterError::Deserialization(e)
+        })?;
+        debug!(
+            trace_count = traces.len(),
+            "Trace deserialization completed successfully"
+        );
+        self.emit_metric(
+            HealthMetric::Count(health_metrics::DESERIALIZE_TRACES, traces.len() as i64),
+            None,
+        );
+        Ok(traces)
     }
 
     /// Check if agent info state has changed
@@ -1278,11 +1267,11 @@ impl<
             .send_traces_with_telemetry(&endpoint, prepared.data, prepared.headers, counts)
             .await;
 
-        // State-hash trap mitigation: the agent does not return a `Datadog-Agent-State`
-        // header on 404, so without this hook we'd stay pinned to V1 until the next `/info`
-        // poll (up to the fetcher's refresh interval). On a 404 to `/v1.0/traces`, fail
-        // closed immediately and force an `/info` refresh so the next send uses V0.4 and
-        // V1 support is re-detected as soon as the agent advertises it again.
+        // The agent does not return a `Datadog-Agent-State` header on 404, so without this hook
+        // we'd stay pinned to V1 until the next `/info` poll (up to the fetcher's refresh
+        // interval). On a 404 to `/v1.0/traces`, fail closed immediately and force an `/info`
+        // refresh so the next send uses V0.4 and V1 support is re-detected as soon as the agent
+        // advertises it again.
         if effective_format == TraceExporterOutputFormat::V1 {
             if let Err(TraceExporterError::Request(ref e)) = result {
                 if e.status() == http::StatusCode::NOT_FOUND
@@ -1305,9 +1294,9 @@ impl<
     /// context.
     ///
     /// `trace_chunks` accepts [`PooledTraceChunks`] so a caller can back it with a real
-    /// [`libdd_trace_utils::span::v1::chunk_pool::TracePool`] to recycle span/chunk allocations;
-    /// no caller in this codebase does so yet (today's production callers all go through
-    /// msgpack), wiring one up is left to a future change.
+    /// [`libdd_trace_utils::span::v1::span_pool::SpanPoolV1`] to recycle span allocations; no
+    /// caller in this codebase does so yet (today's production callers all go through msgpack),
+    /// wiring one up is left to a future change.
     ///
     /// # Arguments
     /// * trace_chunks: A list of native v1 trace chunks.
@@ -1359,6 +1348,30 @@ impl<
         self.process_and_send_trace_chunks_v1(trace_chunks).await
     }
 
+    /// Move `traces`' chunks into a fresh [`libdd_trace_utils::span::v1::TracerPayload`] carrying
+    /// this exporter's metadata, taking them via `std::mem::take` rather than `into_chunks()` so
+    /// the caller can move them back into `traces` after encoding, letting `traces`' `Drop`
+    /// recycle them into the pool (if any) instead of dropping them outright.
+    fn take_into_v1_payload<T: TraceData>(
+        &self,
+        traces: &mut PooledTraceChunks<'_, T>,
+    ) -> libdd_trace_utils::span::v1::TracerPayload<T> {
+        libdd_trace_utils::span::v1::TracerPayload {
+            container_id: T::Text::from_owned(self.metadata.container_id.clone()),
+            language_name: T::Text::from_owned(self.metadata.language.clone()),
+            language_version: T::Text::from_owned(self.metadata.language_version.clone()),
+            tracer_version: T::Text::from_owned(self.metadata.tracer_version.clone()),
+            runtime_id: T::Text::from_owned(
+                self.metadata.mutable_metadata.load().runtime_id.clone(),
+            ),
+            env: T::Text::from_owned(self.metadata.env.clone()),
+            hostname: T::Text::from_owned(self.metadata.hostname.clone()),
+            app_version: T::Text::from_owned(self.metadata.app_version.clone()),
+            attributes: Default::default(),
+            chunks: std::mem::take(&mut **traces),
+        }
+    }
+
     /// Only the wire format negotiates, via `v1_active`: while the agent hasn't advertised
     /// `/v1.0/traces` (or has stopped advertising it), the v1-native chunks are downgraded to
     /// v0.4 msgpack (via [`msgpack_encoder::v04::to_vec_from_v1`]) and sent to `/v0.4/traces`
@@ -1368,31 +1381,15 @@ impl<
         &self,
         mut traces: PooledTraceChunks<'_, T>,
     ) -> Result<AgentResponse, TraceExporterError> {
-        use libdd_trace_utils::span::SpanText;
-
         // TODO(APMSP-3608): log-output silently takes precedence over OTLP/agent here,
         // mirroring `process_and_send_trace_chunks`. The builder should reject conflicting
         // destinations at build time instead.
         if let Some(max_line_size) = self.log_output {
-            // Borrow `traces`' chunks into the payload rather than consuming them via
-            // `into_chunks()`: `write_log_traces_v1` only needs a `&TracerPayload`, so moving the
-            // chunks back afterwards lets `traces`' `Drop` recycle them into the pool (if any).
-            let mut payload = libdd_trace_utils::span::v1::TracerPayload {
-                container_id: T::Text::from_owned(self.metadata.container_id.clone()),
-                language_name: T::Text::from_owned(self.metadata.language.clone()),
-                language_version: T::Text::from_owned(self.metadata.language_version.clone()),
-                tracer_version: T::Text::from_owned(self.metadata.tracer_version.clone()),
-                runtime_id: T::Text::from_owned(
-                    self.metadata.mutable_metadata.load().runtime_id.clone(),
-                ),
-                env: T::Text::from_owned(self.metadata.env.clone()),
-                hostname: T::Text::from_owned(self.metadata.hostname.clone()),
-                app_version: T::Text::from_owned(self.metadata.app_version.clone()),
-                attributes: Default::default(),
-                chunks: std::mem::take(&mut *traces),
-            };
+            let mut payload = self.take_into_v1_payload(&mut traces);
             let result = write_log_traces_v1(&self.capabilities, &payload, max_line_size)
                 .map_err(TraceExporterError::Io);
+            // `write_log_traces_v1` only needs a `&TracerPayload`, so give the chunks back to
+            // `traces` right away, letting its `Drop` recycle them into the pool (if any).
             *traces = std::mem::take(&mut payload.chunks);
             let stats = result?;
             debug!(
@@ -1468,29 +1465,14 @@ impl<
             chunk_count,
             self.agent_payload_response_version.as_ref(),
         );
-        // Borrow `traces`' chunks into the payload rather than consuming them via
-        // `into_chunks()`: both encoders only need a `&TracerPayload`, so moving the chunks back
-        // afterwards lets `traces`' `Drop` (at the end of this function) recycle them into the
-        // pool (if any) instead of dropping them outright.
-        let mut out_payload = libdd_trace_utils::span::v1::TracerPayload {
-            container_id: T::Text::from_owned(self.metadata.container_id.clone()),
-            language_name: T::Text::from_owned(self.metadata.language.clone()),
-            language_version: T::Text::from_owned(self.metadata.language_version.clone()),
-            tracer_version: T::Text::from_owned(self.metadata.tracer_version.clone()),
-            runtime_id: T::Text::from_owned(
-                self.metadata.mutable_metadata.load().runtime_id.clone(),
-            ),
-            env: T::Text::from_owned(self.metadata.env.clone()),
-            hostname: T::Text::from_owned(self.metadata.hostname.clone()),
-            app_version: T::Text::from_owned(self.metadata.app_version.clone()),
-            attributes: Default::default(),
-            chunks: std::mem::take(&mut *traces),
-        };
+        let mut out_payload = self.take_into_v1_payload(&mut traces);
         let mp_payload = if v1_supported {
             msgpack_encoder::v1::to_vec_from_v1(&out_payload)
         } else {
             msgpack_encoder::v04::to_vec_from_v1(&out_payload)
         };
+        // Give the chunks back to `traces` now that encoding is done, letting its `Drop` recycle
+        // them into the pool (if any) instead of dropping them outright.
         *traces = std::mem::take(&mut out_payload.chunks);
         let counts = PayloadCounts {
             chunks: chunk_count,
@@ -1506,9 +1488,9 @@ impl<
             .send_traces_with_telemetry(&endpoint, mp_payload, headers, counts)
             .await;
 
-        // State-hash trap mitigation, same rationale as `process_and_send_trace_chunks`: on a 404
-        // to `/v1.0/traces`, fail closed immediately and force an `/info` refresh so the
-        // next send downgrades to v0.4 without waiting for the fetcher's next poll.
+        // Same rationale as `process_and_send_trace_chunks`: on a 404 to `/v1.0/traces`, fail
+        // closed immediately and force an `/info` refresh so the next send downgrades to v0.4
+        // without waiting for the fetcher's next poll.
         if effective_format == TraceExporterOutputFormat::V1 {
             if let Err(TraceExporterError::Request(ref e)) = result {
                 if e.status() == http::StatusCode::NOT_FOUND
@@ -2143,9 +2125,8 @@ mod tests {
     }
 
     // V1-native counterpart of `test_log_mode_send_writes_forwarder_json`: sends native v1
-    // chunks (no msgpack decode — there is no byte-decode path for v1 input), hits the log
-    // branch in `process_and_send_trace_chunks_v1`, and writes Forwarder-format JSON bytes through
-    // the log-output capability.
+    // chunks, hits the log branch in `process_and_send_trace_chunks_v1`, and writes
+    // Forwarder-format JSON bytes through the log-output capability.
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_log_mode_send_v1_writes_forwarder_json() {
@@ -3098,8 +3079,7 @@ mod tests {
     }
 
     /// V1-native counterpart of [`test_agentless_export_via_builder`]: sends native v1 chunks
-    /// (no msgpack decode — there is no byte-decode path for v1 input) through the agentless
-    /// JSON dispatch path.
+    /// through the agentless JSON dispatch path.
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_agentless_export_via_builder_v1() {
@@ -3156,10 +3136,10 @@ mod tests {
     }
 
     /// `send_trace_chunks_v1` is the sync facade over `send_trace_chunks_async_v1`, sending
-    /// native v1 chunks with no msgpack involved (unlike `send`/`send_async`).
+    /// native v1 chunks.
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn test_send_trace_chunks_v1_sync_facade() {
+    fn test_send_trace_chunks_v1_sync() {
         use libdd_trace_utils::span::v1::{SpanBytes as SpanBytesV1, TraceChunkBytes};
 
         agent_info::clear_cache_for_test();
@@ -3224,15 +3204,11 @@ mod tests {
         assert_eq!(mock_traces.calls(), 1);
     }
 
-    /// Regression test for a real `TracePool` actually being fed back by a full send through the
-    /// agent path: `process_and_send_trace_chunks_v1` used to move the chunks into the outgoing
-    /// `TracerPayload` via `into_chunks()`, which discarded pooling (the payload was dropped, not
-    /// `traces`, once it had been encoded). The chunks now get moved back into `traces` after
-    /// encoding, so its `Drop` recycles them.
+    /// A full v1 send through the agent path recycles the sent chunk back into the pool.
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_send_trace_chunks_v1_feeds_a_real_pool() {
-        use libdd_trace_utils::span::v1::chunk_pool::TracePool;
+        use libdd_trace_utils::span::v1::span_pool::SpanPoolV1;
         use libdd_trace_utils::span::v1::{SpanBytes as SpanBytesV1, TraceChunkBytes};
 
         agent_info::clear_cache_for_test();
@@ -3287,7 +3263,7 @@ mod tests {
             ..Default::default()
         }];
 
-        let pool = TracePool::with_capacity(100);
+        let pool = SpanPoolV1::with_capacity(100);
         assert!(pool.is_empty(), "pool should start empty");
         let result = exporter.send_trace_chunks_v1(pool.wrap_chunks(chunks), None);
 

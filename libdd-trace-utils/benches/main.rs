@@ -15,7 +15,7 @@ mod deserialization_v05;
 mod otlp_encoding;
 mod serialization;
 mod span_pool;
-mod v1_chunk_pool;
+mod span_pool_v1;
 
 criterion_main!(
     serialization::serialize_benches,
@@ -27,6 +27,6 @@ criterion_main!(
     otlp_encoding::otlp_benches,
     span_pool::span_pool_benches,
     span_pool::span_pool_alloc_benches,
-    v1_chunk_pool::v1_chunk_pool_benches,
-    v1_chunk_pool::v1_chunk_pool_alloc_benches
+    span_pool_v1::span_pool_v1_benches,
+    span_pool_v1::span_pool_v1_alloc_benches
 );
