@@ -14,7 +14,6 @@ jobs:
     outputs:
       mode: ${{ steps.coverage-scope.outputs.mode }}
       packages: ${{ steps.coverage-scope.outputs.packages }}
-      crates-json: ${{ steps.coverage-scope.outputs.crates-json }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
         with:
@@ -33,25 +32,19 @@ jobs:
             if [[ "$COUNT" == "0" ]]; then
               MODE="skip"
               PACKAGES=""
-              CRATES_JSON=""
             else
               MODE="crates"
               PACKAGES=$(echo "$AFFECTED_CRATES" | jq -r 'map("-p " + .) | join(" ")')
-              CRATES_JSON="$AFFECTED_CRATES"
             fi
           else
             # Push, schedule, the run-all-tests label, or a reporter failure:
             # cover everything so the baseline stays complete.
             MODE="workspace"
             PACKAGES=""
-            CRATES_JSON=""
           fi
           {
             echo "mode=$MODE"
             echo "packages=$PACKAGES"
-            echo "crates-json<<EOF"
-            echo "$CRATES_JSON"
-            echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
   coverage:
@@ -101,7 +94,6 @@ jobs:
           RUSTUP_TOOLCHAIN: ${{ steps.nightly-version.outputs.version }}
           MODE: ${{ needs.setup.outputs.mode }}
           PACKAGES: ${{ needs.setup.outputs.packages }}
-          CRATES_JSON: ${{ needs.setup.outputs.crates-json }}
         run: |
           if [[ "$MODE" == "crates" ]]; then
             # Word splitting on $PACKAGES is intentional: one -p flag per crate.
@@ -112,21 +104,12 @@ jobs:
           else
             cargo llvm-cov --all-features --workspace --no-report nextest --no-tests=pass
             cargo llvm-cov --all-features --workspace --no-report --doc
-            CRATES_JSON=$(cargo metadata --no-deps --format-version 1 | jq '[.packages[].name]')
           fi
           # One lcov file per crate, in both modes, so pull requests and the
-          # main baseline are always split the same way.
-          for crate in $(echo "$CRATES_JSON" | jq -r '.[]'); do
-            if ! cargo llvm-cov report --doctests --lcov \
-                --output-path "lcov-${crate}.info" \
-                --package "${crate}"; then
-              if [[ -s "lcov-${crate}.info" ]]; then
-                echo "::error::Coverage report generation failed for ${crate}"
-                exit 1
-              fi
-              echo "No coverage data for ${crate}, skipping"
-            fi
-          done
+          # main baseline are always split the same way. A single report pass;
+          # split_lcov.sh explains why not one `--package` report per crate.
+          cargo llvm-cov report --doctests --lcov --output-path /tmp/lcov-all.info
+          ./scripts/split_lcov.sh /tmp/lcov-all.info .
       # Forked PRs get no id-token permission, so on failure the upload below
       # runs with an empty key and is itself continue-on-error.
       - name: Get Datadog credentials via dd-sts
