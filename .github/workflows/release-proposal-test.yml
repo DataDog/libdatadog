@@ -22,6 +22,9 @@ jobs:
     outputs:
       upload_artifact: ${{ steps.package-crates.outputs.upload_artifact }}
       dd_trace_rs_versions: ${{ steps.dd-trace-rs-versions.outputs.versions }}
+      # Passed to compile-dd-trace-rs, whose checkout of the dd-trace-rs
+      # repository doesn't contain this repo's ci-toolchain.toml.
+      stable-version: ${{ steps.stable-version.outputs.version }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
         with:
@@ -170,12 +173,9 @@ jobs:
           fetch-depth: 0
           repository: DataDog/dd-trace-rs
           ref: ${{ matrix.version }}
-      # This job checks out the dd-trace-rs repository, which has no
-      # ci-toolchain.toml, so the stable pin stays hardcoded here. Keep it in
-      # sync with `stable` in libdatadog's ci-toolchain.toml.
       - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c #stable
         with:
-          toolchain: 1.99.0
+          toolchain: ${{ needs.package-and-upload-crates.outputs.stable-version }}
 
       - name: Download release data
         uses: actions/download-artifact@v4

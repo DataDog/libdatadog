@@ -207,10 +207,6 @@ jobs:
     permissions:
       id-token: write
       contents: read
-    # The helper crates under .github/actions have dependencies that have moved
-    # past the workspace MSRV, so build and run them on the pinned latest
-    # stable from ci-toolchain.toml. RUSTUP_TOOLCHAIN overrides the repo-root
-    # rust-toolchain.toml (workspace MSRV) for every cargo invocation below.
     env:
       RUSTUP_TOOLCHAIN: ${{ needs.setup.outputs.stable-version }}
     steps:
@@ -320,8 +316,6 @@ jobs:
         working-directory: .github/actions
         env:
           CHECK_PACKAGES: ${{ steps.detect.outputs.packages }}
-          # The helper crates' dependencies have moved past the workspace
-          # MSRV, so run them on the pinned latest stable from ci-toolchain.toml.
           RUSTUP_TOOLCHAIN: ${{ steps.stable-version.outputs.version }}
         run: |
           if [[ -z "$CHECK_PACKAGES" ]]; then
@@ -338,7 +332,6 @@ jobs:
         working-directory: .github/actions
         env:
           CHECK_PACKAGES: ${{ steps.detect.outputs.packages }}
-          # Same pinned latest stable as the clippy step above.
           RUSTUP_TOOLCHAIN: ${{ steps.stable-version.outputs.version }}
         run: |
           # Some helper crates (e.g. crates-reporter) have no tests.
