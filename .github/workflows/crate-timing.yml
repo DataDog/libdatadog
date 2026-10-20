@@ -8,8 +8,8 @@ on:
   pull_request:
     paths:
       - '.github/workflows/crate-timing.yml'
-      - 'benchmark/crate_timing.sh'
-      - 'benchmark/bench_features.sh'
+      - 'tools/Cargo.toml'
+      - 'tools/src/**'
 
 permissions:
   contents: read
@@ -27,7 +27,9 @@ jobs:
   crate-timing:
     name: "Per-crate test & bench execution time"
     # The workspace build fills a default runner's disk (same pool as test.yml).
-    runs-on: ${{ fromJSON('{"labels":"ubuntu-latest-16-cores","group":"APM Larger Runners"}') }}
+    runs-on:
+      labels: ubuntu-latest-16-cores
+      group: APM Larger Runners
     timeout-minutes: 150
     steps:
       - name: Checkout sources

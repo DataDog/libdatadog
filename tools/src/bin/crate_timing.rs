@@ -473,7 +473,7 @@ impl TestNode {
 
     fn into_doc(self, depth: usize) -> doc::Node {
         let cut = depth <= 1 && !self.children.is_empty();
-        let hidden = cut.then(|| test_count(&self)).unwrap_or(0);
+        let hidden = if cut { test_count(&self) } else { 0 };
         let children = if cut {
             Vec::new()
         } else {
