@@ -1,7 +1,8 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use chrono::{DateTime, Timelike, Utc};
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, de::value::StrDeserializer};
 
 use crate::rules_based::{
     Configuration, EvaluationContext, ExpectedFlagType, Timestamp,
@@ -27,16 +28,9 @@ impl EvaluationOptions {
         let Some(timestamp) = attribute.as_str() else {
             return Err(EvaluationError::InvalidContext);
         };
-        // Require the RFC3339 form used by SDK contexts. chrono also accepts
-        // spaces, lowercase separators, and leap seconds, which are not accepted
-        // by all SDKs.
-        if timestamp.as_bytes().get(10) != Some(&b'T')
-            || timestamp.ends_with('z')
-            || DateTime::parse_from_rfc3339(timestamp)
-                .map_or(true, |parsed| parsed.nanosecond() >= 1_000_000_000)
-        {
-            return Err(EvaluationError::InvalidContext);
-        }
+        // Use the same timestamp deserializer as allocation startAt and endAt.
+        Timestamp::deserialize(StrDeserializer::<serde::de::value::Error>::new(timestamp))
+            .map_err(|_| EvaluationError::InvalidContext)?;
         Ok(true)
     }
 }
@@ -300,15 +294,7 @@ mod opt_out_tests {
                 Err(EvaluationError::InvalidContext),
             ),
             (
-                Some(json!("2026-10-19 12:00:00Z")),
-                Err(EvaluationError::InvalidContext),
-            ),
-            (
                 Some(json!("2026-10-19T12:00:00")),
-                Err(EvaluationError::InvalidContext),
-            ),
-            (
-                Some(json!("2016-12-31T23:59:60Z")),
                 Err(EvaluationError::InvalidContext),
             ),
         ] {
@@ -322,6 +308,46 @@ mod opt_out_tests {
                 EvaluationOptions::default().exclude_experiments(&subject),
                 Ok(false)
             );
+        }
+    }
+
+    #[test]
+    fn opt_out_uses_allocation_timestamp_contract() {
+        let immediate = EvaluationOptions {
+            experimentation_opt_out_immediate: true,
+        };
+        for timestamp in [
+            "2026-10-19T12:00:00Z",
+            "2099-01-01T00:00:00.123456789+05:30",
+            "2026-10-19 12:00:00Z",
+            "2026-10-19t12:00:00z",
+            "2016-12-31T23:59:60Z",
+            "2026-10-19T1:00:00Z",
+            "2026-10-19T12:00:00,123Z",
+            "2026-10-19T12:00:00+24:00",
+            "2026-02-30T00:00:00Z",
+            "2026-10-19T12:00:00",
+            "private-invalid-timestamp",
+            "",
+        ] {
+            let allocation =
+                serde_json::from_value::<crate::rules_based::ufc::AllocationWire>(json!({
+                    "key": "test",
+                    "startAt": timestamp,
+                    "endAt": timestamp,
+                    "splits": [],
+                    "doLog": true,
+                }));
+            let result = immediate.exclude_experiments(&context(Some(json!(timestamp))));
+            let expected = if allocation.is_ok() {
+                Ok(true)
+            } else {
+                Err(EvaluationError::InvalidContext)
+            };
+            assert_eq!(result, expected, "{timestamp:?}");
+            if let Err(error) = result {
+                assert!(!error.to_string().contains(timestamp) || timestamp.is_empty());
+            }
         }
     }
 
