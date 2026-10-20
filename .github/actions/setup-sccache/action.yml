@@ -1,0 +1,58 @@
+name: sccache
+description: |
+  S3-backed sccache (dd-ci-artefacts-build-stable), shared with the GitLab
+  pipeline. Only main writes; every other ref reads. The calling job needs
+  `permissions: id-token: write, contents: read`. Forks get no id-token and
+  compile uncached.
+outputs:
+  enabled:
+    description: Whether sccache is active in this job ('true' / 'false')
+    value: ${{ steps.aws.outcome == 'success' }}
+runs:
+  using: composite
+  steps:
+    - name: Configure AWS credentials (sccache)
+      id: aws
+      # Forked PRs get no id-token; degrade to an uncached build, don't fail.
+      continue-on-error: true
+      uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+      with:
+        role-to-assume: ${{ github.ref == 'refs/heads/main' && 'arn:aws:iam::486234852809:role/libdatadog-github-actions-sccache-write' || 'arn:aws:iam::486234852809:role/libdatadog-github-actions-sccache-read' }}
+        aws-region: us-east-1
+    - name: Install sccache
+      # clippy-driver support needs sccache >= 0.11.0
+      uses: Mozilla-Actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+      with:
+        version: v0.18.0
+      if: steps.aws.outcome == 'success'
+    - name: Enable sccache
+      if: steps.aws.outcome == 'success'
+      shell: bash
+      run: |
+        # Basedirs strip to the same forms as GitLab (repo-relative and
+        # .cargo-relative) so entries hit across CI systems. Separator: `;` on
+        # Windows, `:` elsewhere; native absolute paths only.
+        CARGO_HOME_DIR="${CARGO_HOME:-$HOME/.cargo}"
+        if [[ "$RUNNER_OS" == "Windows" ]]; then
+          CARGO_HOME_DIR=$(cygpath -w "$CARGO_HOME_DIR")
+          SEP=";"
+        else
+          SEP=":"
+        fi
+        {
+          echo "RUSTC_WRAPPER=sccache"
+          echo "CARGO_INCREMENTAL=0"
+          echo "SCCACHE_BUCKET=dd-ci-artefacts-build-stable"
+          echo "SCCACHE_REGION=us-east-1"
+          echo "SCCACHE_S3_KEY_PREFIX=libddprof-build/sccache"
+          # Non-main refs hold the read-only IAM role; without this sccache
+          # attempts a forbidden S3 PUT on every cache miss.
+          if [[ "${{ github.ref }}" != "refs/heads/main" ]]; then
+            echo "SCCACHE_S3_RW_MODE=READ_ONLY"
+          fi
+          echo "SCCACHE_BASEDIRS=${{ github.workspace }}${SEP}${CARGO_HOME_DIR}"
+        } >> "$GITHUB_ENV"
+    - name: Report disabled sccache
+      if: steps.aws.outcome != 'success'
+      shell: bash
+      run: echo '::warning::sccache disabled for this run (no OIDC token — fork PR?)'
