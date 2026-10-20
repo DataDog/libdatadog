@@ -53,8 +53,6 @@
 //!    arrived before workers noticed the reload flag.
 //! 4. Drops the old concentrator after that grace period.
 
-// The validated dimensions mentioned under "Untrusted contents" are kept in `Layout`.
-
 use arc_swap::ArcSwapOption;
 use std::ffi::{CStr, CString};
 use std::hash::{Hash, Hasher};
