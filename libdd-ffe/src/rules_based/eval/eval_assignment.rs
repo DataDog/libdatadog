@@ -1,7 +1,7 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Timelike, Utc};
 
 use crate::rules_based::{
     Configuration, EvaluationContext, ExpectedFlagType, Timestamp,
@@ -28,10 +28,12 @@ impl EvaluationOptions {
             return Err(EvaluationError::InvalidContext);
         };
         // Require the RFC3339 form used by SDK contexts. chrono also accepts
-        // spaces and lowercase separators, which are not accepted by all SDKs.
+        // spaces, lowercase separators, and leap seconds, which are not accepted
+        // by all SDKs.
         if timestamp.as_bytes().get(10) != Some(&b'T')
             || timestamp.ends_with('z')
-            || DateTime::parse_from_rfc3339(timestamp).is_err()
+            || DateTime::parse_from_rfc3339(timestamp)
+                .map_or(true, |parsed| parsed.nanosecond() >= 1_000_000_000)
         {
             return Err(EvaluationError::InvalidContext);
         }
@@ -303,6 +305,10 @@ mod opt_out_tests {
             ),
             (
                 Some(json!("2026-10-19T12:00:00")),
+                Err(EvaluationError::InvalidContext),
+            ),
+            (
+                Some(json!("2016-12-31T23:59:60Z")),
                 Err(EvaluationError::InvalidContext),
             ),
         ] {
