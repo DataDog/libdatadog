@@ -224,6 +224,7 @@ mod tests {
                   "variations": {"trap": {"key": "trap", "value": "trap"}},
                   "allocations": [{
                     "key": "invalid",
+                    "doLog": true,
                     "rules": [{"conditions": [{
                       "attribute": "email",
                       "operator": "MATCHES",
@@ -239,6 +240,7 @@ mod tests {
                   "variations": {"on": {"key": "on", "value": "valid"}},
                   "allocations": [{
                     "key": "static",
+                    "doLog": false,
                     "splits": [{"variationKey": "on", "shards": []}]
                   }]
                 }

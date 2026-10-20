@@ -156,12 +156,7 @@ pub(crate) struct AllocationWire {
     #[serde(default)]
     pub end_at: Option<Timestamp>,
     pub splits: Vec<SplitWire>,
-    #[serde(default = "default_do_log")]
     pub do_log: bool,
-}
-
-fn default_do_log() -> bool {
-    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -653,7 +648,35 @@ impl ShardRange {
 
 #[cfg(test)]
 mod tests {
-    use super::{TryParse, UniversalFlagConfigWire};
+    use super::{AllocationWire, TryParse, UniversalFlagConfigWire};
+
+    #[test]
+    fn allocation_requires_an_explicit_boolean_do_log() {
+        for do_log in [true, false] {
+            let allocation: AllocationWire = serde_json::from_value(serde_json::json!({
+                "key": "allocation", "splits": [], "doLog": do_log
+            }))
+            .unwrap();
+            assert_eq!(allocation.do_log, do_log);
+        }
+
+        for field in [
+            "",
+            r#", "doLog": null"#,
+            r#", "doLog": "true""#,
+            r#", "doLog": "false""#,
+            r#", "doLog": 0"#,
+            r#", "doLog": 1"#,
+            r#", "doLog": []"#,
+            r#", "doLog": {}"#,
+        ] {
+            let json = format!(r#"{{"key": "allocation", "splits": []{field}}}"#);
+            assert!(
+                serde_json::from_str::<AllocationWire>(&json).is_err(),
+                "must reject allocation with malformed or missing doLog: {json}"
+            );
+        }
+    }
 
     #[test]
     fn observe_full_evaluation_data_defaults_to_false_when_absent() {
