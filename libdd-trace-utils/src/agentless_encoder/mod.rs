@@ -480,10 +480,10 @@ fn serialize_scalar<S: serde::Serializer, T: TraceData>(
 
 /// Reserved v0.4 `meta`/`metrics` key names written from dedicated typed fields (`env`, chunk
 /// `origin`, ...) rather than from the v1 attribute map — the dedicated field always wins and
-/// a colliding attribute is dropped. See
-/// [`crate::msgpack_encoder::v04::span_v1::PROMOTED_ATTR_KEYS`] for the sibling list on the
-/// msgpack side (this one omits `_dd.p.tid`, which is handled below with "seen" tracking
-/// instead, matching this module's own `_dd.p.tid`/`_dd.span_links`/`events` convention).
+/// a colliding attribute is dropped. The msgpack-side v0.4 downgrade
+/// ([`crate::msgpack_encoder::v04::to_vec_from_v1`]) drops it only when the field is set (this
+/// list omits `_dd.p.tid`, which is handled below with "seen" tracking instead, matching this
+/// module's own `_dd.p.tid`/`_dd.span_links`/`events` convention).
 const PROMOTED_ATTR_KEYS_V1: &[&str] = &[
     "env",
     "version",
@@ -498,7 +498,7 @@ const PROMOTED_ATTR_KEYS_V1: &[&str] = &[
 /// callers can skip emitting the default value.
 fn span_kind_to_meta_v1(kind: v1::SpanKind) -> Option<&'static str> {
     match kind {
-        v1::SpanKind::Internal => None,
+        v1::SpanKind::Unspecified | v1::SpanKind::Internal => None,
         v1::SpanKind::Server => Some("server"),
         v1::SpanKind::Client => Some("client"),
         v1::SpanKind::Producer => Some("producer"),

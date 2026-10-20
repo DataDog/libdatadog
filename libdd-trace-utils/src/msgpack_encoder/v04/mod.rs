@@ -241,24 +241,22 @@ pub fn to_encoded_byte_len_from_v04<T: TraceData, S: AsRef<[Span<T>]>>(traces: &
 /// Encodes a [`TracerPayload`] in the v0.4 wire format (downgrade path used when the agent
 /// does not advertise `/v1.0/traces`). The output is a msgpack array of traces, where each
 /// trace is itself a msgpack array of v0.4-shaped spans — matching the existing v0.4 wire
-/// format produced by [`to_vec_from_v04`]. Payload-level `env`/`app_version`/`attributes` are
-/// propagated into every span (see [`span_v1`]'s mapping table); `payload.hostname` has no v0.4
-/// body equivalent (the agent gets hostname from the `Datadog-Meta-Hostname` header instead) and is
-/// intentionally dropped here.
+/// format produced by [`to_vec_from_v04`]. Payload-level
+/// `env`/`app_version`/`hostname`/`attributes` are propagated into the spans (see [`span_v1`]'s
+/// mapping table).
 fn encode_payload_from_v1<W: RmpWrite, T: TraceData>(
     writer: &mut W,
     payload: &TracerPayload<T>,
 ) -> Result<(), ValueWriteError<W::Error>> {
-    use span_v1::{ChunkContext, encode_span};
+    use span_v1::{ChunkContext, encode_span, local_root_idx};
 
     write_array_len(writer, payload.chunks.len() as u32)?;
     for chunk in &payload.chunks {
-        // v0.4 has no wire-level equivalent of `dropped_trace`; the closest historical signal
-        // is `USER_REJECT` (priority -1), which tells the agent the sampler rejected this trace
-        // without dropping the spans themselves. Only force it when the chunk doesn't already
-        // carry a negative (reject-like) priority.
+        // v0.4 has no wire-level equivalent of `dropped_trace`; preserve the chunk's own
+        // sampling priority (so AUTO_REJECT `0` stays `0`) and default to `-1` only when the
+        // chunk carries no priority at all.
         let priority = if chunk.dropped_trace {
-            Some(chunk.priority.filter(|&p| p < 0).unwrap_or(-1))
+            chunk.priority.or(Some(-1))
         } else {
             chunk.priority
         };
@@ -270,11 +268,13 @@ fn encode_payload_from_v1<W: RmpWrite, T: TraceData>(
             &chunk.attributes,
             &payload.env,
             &payload.app_version,
+            &payload.hostname,
             &payload.attributes,
         );
+        let root_idx = local_root_idx(chunk.spans.iter());
         write_array_len(writer, chunk.spans.len() as u32)?;
-        for span in &chunk.spans {
-            encode_span(writer, span, &ctx)?;
+        for (i, span) in chunk.spans.iter().enumerate() {
+            encode_span(writer, span, &ctx, i == root_idx, i == 0)?;
         }
     }
     Ok(())

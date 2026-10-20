@@ -6,11 +6,12 @@ use crate::span::{BytesData, SliceData, TraceData};
 pub use thin_vec::ThinVec;
 
 /// OpenTelemetry SpanKind values, encoded on the wire as a `uint32`.
-/// Unset or unrecognized kinds default to [`SpanKind::Internal`].
+/// Unset or unrecognized kinds are [`SpanKind::Unspecified`] (OTel `SPAN_KIND_UNSPECIFIED`).
 #[repr(u32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SpanKind {
     #[default]
+    Unspecified = 0,
     Internal = 1,
     Server = 2,
     Client = 3,
@@ -20,20 +21,23 @@ pub enum SpanKind {
 
 impl SpanKind {
     /// Parses a v0.4 `span.kind` meta value into a [`SpanKind`].
-    /// Unrecognized values map to [`SpanKind::Internal`].
+    /// Unrecognized values map to [`SpanKind::Unspecified`].
     pub fn from_meta(s: &str) -> Self {
         match s {
+            "internal" => SpanKind::Internal,
             "server" => SpanKind::Server,
             "client" => SpanKind::Client,
             "producer" => SpanKind::Producer,
             "consumer" => SpanKind::Consumer,
-            _ => SpanKind::Internal,
+            _ => SpanKind::Unspecified,
         }
     }
 
-    /// Renders this [`SpanKind`] as the lowercase string used for the v0.4 `span.kind` meta value.
+    /// Renders this [`SpanKind`] as the lowercase string used for the v0.4 `span.kind` meta value
+    /// (empty for `Unspecified`).
     pub fn as_meta_str(&self) -> &'static str {
         match self {
+            SpanKind::Unspecified => "",
             SpanKind::Internal => "internal",
             SpanKind::Server => "server",
             SpanKind::Client => "client",
@@ -44,14 +48,15 @@ impl SpanKind {
 }
 
 impl From<u32> for SpanKind {
-    /// OTEL SpanKind wire value → enum; unset/unknown → Internal (per OTEL spec).
+    /// OTEL SpanKind wire value → enum; unset/unknown → Unspecified.
     fn from(kind: u32) -> Self {
         match kind {
+            1 => SpanKind::Internal,
             2 => SpanKind::Server,
             3 => SpanKind::Client,
             4 => SpanKind::Producer,
             5 => SpanKind::Consumer,
-            _ => SpanKind::Internal,
+            _ => SpanKind::Unspecified,
         }
     }
 }
@@ -180,13 +185,142 @@ pub type AttributeValueSlice<'a> = AttributeValue<SliceData<'a>>;
 pub type TraceChunkSlice<'a> = TraceChunk<SliceData<'a>>;
 pub type TracerPayloadSlice<'a> = TracerPayload<SliceData<'a>>;
 
+type AttributeMap<T> = VecMap<<T as TraceData>::Text, AttributeValue<T>>;
+
+/// Applies `f` to an attribute map, then to every map nested in its values. `f` runs first so a
+/// dedup never visits the values of dropped duplicates.
+fn visit_attr_map<T: TraceData>(
+    map: &mut AttributeMap<T>,
+    f: &mut impl FnMut(&mut AttributeMap<T>),
+) {
+    f(map);
+    for v in map.values_mut() {
+        v.visit_attr_maps(f);
+    }
+}
+
+impl<T: TraceData> AttributeValue<T> {
+    fn visit_attr_maps(&mut self, f: &mut impl FnMut(&mut AttributeMap<T>)) {
+        match self {
+            AttributeValue::KeyValue(map) => visit_attr_map(map, f),
+            AttributeValue::List(list) => list.iter_mut().for_each(|v| v.visit_attr_maps(f)),
+            _ => {}
+        }
+    }
+}
+
+impl<T: TraceData> Span<T> {
+    fn visit_attr_maps(&mut self, f: &mut impl FnMut(&mut AttributeMap<T>)) {
+        visit_attr_map(&mut self.attributes, f);
+        for link in &mut self.span_links {
+            visit_attr_map(&mut link.attributes, f);
+        }
+        for event in &mut self.span_events {
+            visit_attr_map(&mut event.attributes, f);
+        }
+    }
+
+    /// Dedup this span's attribute maps, including its links' and events'.
+    pub fn dedup(&mut self) {
+        self.visit_attr_maps(&mut VecMap::dedup);
+    }
+}
+
+impl<T: TraceData> TraceChunk<T> {
+    fn visit_attr_maps(&mut self, f: &mut impl FnMut(&mut AttributeMap<T>)) {
+        visit_attr_map(&mut self.attributes, f);
+        for span in &mut self.spans {
+            span.visit_attr_maps(f);
+        }
+    }
+
+    /// Dedup the chunk's attribute maps and those of every span it carries.
+    pub fn dedup(&mut self) {
+        self.visit_attr_maps(&mut VecMap::dedup);
+    }
+}
+
+impl<T: TraceData> TracerPayload<T> {
+    fn visit_attr_maps(&mut self, f: &mut impl FnMut(&mut AttributeMap<T>)) {
+        visit_attr_map(&mut self.attributes, f);
+        for chunk in &mut self.chunks {
+            chunk.visit_attr_maps(f);
+        }
+    }
+
+    /// Dedup every attribute map, so encoding takes the no-copy path of `defensive_dedup`.
+    pub fn dedup(&mut self) {
+        self.visit_attr_maps(&mut VecMap::dedup);
+    }
+
+    /// Flags every attribute map as deduped without scanning, for a payload decoded from an
+    /// encoding of an already-deduped payload (see [`VecMap::mark_deduped`]).
+    pub fn mark_deduped(&mut self) {
+        self.visit_attr_maps(&mut VecMap::mark_deduped);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn span_kind_default_is_internal() {
-        assert_eq!(SpanKind::default(), SpanKind::Internal);
+    fn span_kind_default_is_unspecified() {
+        assert_eq!(SpanKind::default(), SpanKind::Unspecified);
+        assert_eq!(SpanKind::from(0), SpanKind::Unspecified);
+        assert_eq!(SpanKind::from(1), SpanKind::Internal);
+        assert_eq!(SpanKind::from(9), SpanKind::Unspecified);
+    }
+
+    fn nested_attrs() -> AttributeMap<BytesData> {
+        let mut inner = VecMap::new();
+        inner.insert("k".into(), AttributeValue::Int(1));
+        inner.insert("k".into(), AttributeValue::Int(2));
+        let mut map = VecMap::new();
+        map.insert("m".into(), AttributeValue::KeyValue(inner));
+        map
+    }
+
+    fn nested_is_deduped(map: &AttributeMap<BytesData>) -> bool {
+        matches!(map.get("m"), Some(AttributeValue::KeyValue(m)) if m.is_deduped())
+    }
+
+    #[test]
+    fn payload_dedup_reaches_nested_maps_and_keeps_flags_set() {
+        let mut payload = TracerPayloadBytes {
+            attributes: nested_attrs(),
+            chunks: vec![TraceChunk {
+                spans: vec![Span {
+                    attributes: nested_attrs(),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        payload.dedup();
+        let span_attrs = &payload.chunks[0].spans[0].attributes;
+        assert!(payload.attributes.is_deduped() && span_attrs.is_deduped());
+        assert!(nested_is_deduped(&payload.attributes) && nested_is_deduped(span_attrs));
+        let Some(AttributeValue::KeyValue(m)) = span_attrs.get("m") else {
+            panic!("nested map missing");
+        };
+        assert_eq!(m.len(), 1);
+        assert_eq!(m.get("k"), Some(&AttributeValue::Int(2)));
+    }
+
+    #[test]
+    fn payload_mark_deduped_flags_nested_maps_without_dropping_entries() {
+        let mut payload = TracerPayloadBytes {
+            attributes: nested_attrs(),
+            ..Default::default()
+        };
+        payload.mark_deduped();
+        assert!(payload.attributes.is_deduped() && nested_is_deduped(&payload.attributes));
+        let Some(AttributeValue::KeyValue(m)) = payload.attributes.get("m") else {
+            panic!("nested map missing");
+        };
+        assert_eq!(m.len(), 2);
     }
 
     #[test]
@@ -196,12 +330,13 @@ mod tests {
         assert_eq!(SpanKind::from_meta("producer"), SpanKind::Producer);
         assert_eq!(SpanKind::from_meta("consumer"), SpanKind::Consumer);
         assert_eq!(SpanKind::from_meta("internal"), SpanKind::Internal);
-        assert_eq!(SpanKind::from_meta(""), SpanKind::Internal);
-        assert_eq!(SpanKind::from_meta("anything-else"), SpanKind::Internal);
+        assert_eq!(SpanKind::from_meta(""), SpanKind::Unspecified);
+        assert_eq!(SpanKind::from_meta("anything-else"), SpanKind::Unspecified);
     }
 
     #[test]
     fn span_kind_repr_matches_otel_spec() {
+        assert_eq!(SpanKind::Unspecified as u32, 0);
         assert_eq!(SpanKind::Internal as u32, 1);
         assert_eq!(SpanKind::Server as u32, 2);
         assert_eq!(SpanKind::Client as u32, 3);
@@ -210,9 +345,9 @@ mod tests {
     }
 
     #[test]
-    fn span_default_has_internal_kind() {
+    fn span_default_has_unspecified_kind() {
         let s = SpanBytes::default();
-        assert_eq!(s.span_kind, SpanKind::Internal);
+        assert_eq!(s.span_kind, SpanKind::Unspecified);
         assert!(!s.error);
         assert!(s.attributes.is_empty());
     }
