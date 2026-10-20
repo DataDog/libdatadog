@@ -220,7 +220,12 @@ jobs:
           fetch-tags: true
       - name: Read stable version from ci-toolchain.toml
         id: stable-version
-        run: echo "version=$(grep -Po '^stable = "\K[^"]+' ci-toolchain.toml)" >> $GITHUB_OUTPUT
+        run: |
+          echo "version=$(grep -Po '^stable = "\K[^"]+' ci-toolchain.toml)" >> $GITHUB_OUTPUT
+          # Job-wide default for the rest of the job, so cargo release /
+          # semver-checks / public-api run on the pinned stable instead of
+          # the repo-root MSRV from rust-toolchain.toml.
+          echo "RUSTUP_TOOLCHAIN=$(grep -Po '^stable = "\K[^"]+' ci-toolchain.toml)" >> $GITHUB_ENV
       - name: Read nightly version from ci-toolchain.toml
         id: nightly-version
         run: echo "version=$(grep -Po '^nightly = "\K[^"]+' ci-toolchain.toml)" >> $GITHUB_OUTPUT

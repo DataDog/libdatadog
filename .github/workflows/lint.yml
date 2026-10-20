@@ -272,9 +272,10 @@ jobs:
           fi
 
           # Workspace-level files, and ci-shared which every other helper
-          # crate depends on, affect every helper crate.
+          # crate depends on, affect every helper crate. A toolchain bump
+          # can surface new warnings, so check everything on those too.
           if git diff --name-only "origin/${PR_BASE_REF}...HEAD" -- \
-              .github/actions/Cargo.toml .github/actions/Cargo.lock \
+              .github/actions/Cargo.toml .github/actions/Cargo.lock ci-toolchain.toml \
               .github/actions/ci-shared | grep -q .; then
             exit 0 # empty 'packages' → check everything
           fi

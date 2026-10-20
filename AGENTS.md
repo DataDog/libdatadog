@@ -107,7 +107,7 @@ helpers on the pinned latest stable from `ci-toolchain.toml` (their dependencies
 workspace MSRV). Run it locally the same way:
 
 ```bash
-(cd .github/actions && RUSTUP_TOOLCHAIN=$(awk -F'"' '/^stable[[:space:]]*=/ {print $2}' ../ci-toolchain.toml) cargo run -p workspace-deps-lint)
+(cd .github/actions && RUSTUP_TOOLCHAIN=$(awk -F'"' '/^stable[[:space:]]*=/ {print $2}' ../../ci-toolchain.toml) cargo run -p workspace-deps-lint)
 ```
 
 ### Cryptography
