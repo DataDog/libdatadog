@@ -9,10 +9,10 @@
 //! out.
 //!
 //! ## What a slot holds
-//! One slot per stats group, keyed by the point's aggregation hash. As in the Java and Go
-//! tracers, the pathway hash, parent hash and edge tags reported for a group are those of the
-//! first point that created it; later points with the same aggregation hash only add to its
-//! histograms.
+//! One slot per stats group, keyed by the point's pathway hash, which already folds in the
+//! parent's. As in the Java and Go tracers, the parent hash and edge tags reported for a group
+//! are those of the first point that created it; later points with the same pathway hash only
+//! add to its histograms.
 //!
 //! Each group has three histograms - pathway latency and edge latency (in seconds) and payload
 //! size (in bytes) - whose bins are the backend's own DDSketch bins (`BACKEND_GAMMA`,
