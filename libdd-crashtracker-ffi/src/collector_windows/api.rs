@@ -93,7 +93,7 @@ pub extern "system" fn OutOfProcessExceptionEventCallback(
     _size: *mut u32,
     _signature_count: *mut u32,
 ) -> HRESULT {
-    let result: Result<(), _> = (|| {
+    let result: Result<bool, _> = (|| {
         anyhow::ensure!(
             !exception_information.is_null(),
             "exception_information is null"
@@ -111,11 +111,17 @@ pub extern "system" fn OutOfProcessExceptionEventCallback(
         )
     })();
 
-    if let Err(e) = result {
-        output_debug_string(format!("OutOfProcessExceptionEventCallback failed: {e}").as_str());
-        return E_FAIL;
+    match result {
+        Ok(true) => output_debug_string("OutOfProcessExceptionEventCallback succeeded"),
+        Ok(false) => output_debug_string(
+            "OutOfProcessExceptionEventCallback skipped: no frame in the required module",
+        ),
+        Err(e) => {
+            output_debug_string(
+                format!("OutOfProcessExceptionEventCallback failed: {e:#}").as_str(),
+            );
+            return E_FAIL;
+        }
     }
-
-    output_debug_string("OutOfProcessExceptionEventCallback succeeded");
     S_OK
 }

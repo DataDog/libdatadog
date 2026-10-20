@@ -204,13 +204,14 @@ pub struct WerContext {
     suffix: u64,
 }
 
+/// Returns false if the crash is skipped because it is not in `required_module`.
 #[cfg(target_os = "windows")]
 pub fn exception_event_callback(
     context: usize,
     process_handle: HANDLE,
     thread_handle: HANDLE,
     exception_context: &CONTEXT,
-) -> Result<()> {
+) -> Result<bool> {
     unsafe { SymInitializeW(process_handle, PCWSTR::null(), true)? };
 
     let wer_context = read_wer_context(process_handle, context)?;
@@ -235,14 +236,19 @@ pub fn exception_event_callback(
     // The current context of the crashing thread is in the exception dispatcher. The walk can
     // stop there before it reaches the crash, in particular on x86.
     let crash_stack =
-        walk_thread_stack(process_handle, crash_tid, &modules, Some(exception_context))
-            .unwrap_or(StackTrace::new_incomplete());
+        match walk_thread_stack(process_handle, crash_tid, &modules, Some(exception_context)) {
+            Ok(stack) => stack,
+            Err(e) if error_context.required_module.is_some() => {
+                return Err(e.context("Failed to walk the crashing thread stack"));
+            }
+            Err(_) => StackTrace::new_incomplete(),
+        };
     if error_context
         .required_module
         .as_deref()
         .is_some_and(|module| !has_module_frame(&crash_stack.frames, module))
     {
-        return anyhow::Ok(());
+        return Ok(false);
     }
 
     let mut builder = CrashInfoBuilder::new();
@@ -290,7 +296,7 @@ pub fn exception_event_callback(
         .upload_to_endpoint(&error_context.endpoint)
         .context("Failed to upload crash info")?;
 
-    anyhow::Ok(())
+    Ok(true)
 }
 
 fn read_wer_context(process_handle: HANDLE, base_address: usize) -> Result<WerContext> {
