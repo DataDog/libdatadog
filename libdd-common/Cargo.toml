@@ -162,3 +162,6 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage)'] }
 [lints.clippy]
 std_instead_of_alloc = "warn"
 std_instead_of_core = "warn"
+
+[package.metadata.cargo-machete]
+ignored = ["webpki-roots", "webpki-root-certs"]
