@@ -66,7 +66,11 @@ pub fn init_crashtracking_windows(
     metadata: Metadata,
 ) -> Result<()> {
     let endpoint = endpoint.cloned();
-    let error_context = ErrorContext { endpoint, metadata };
+    let error_context = ErrorContext {
+        endpoint,
+        metadata,
+        required_module: None,
+    };
     let error_context_json = serde_json::to_string(&error_context)?;
     set_error_context(&error_context_json)?;
 
@@ -175,6 +179,9 @@ fn set_error_context(message: &str) -> Result<()> {
 pub struct ErrorContext {
     endpoint: Option<Endpoint>,
     metadata: Metadata,
+    /// Module file name, e.g. "foo.dll". When set, a crash is reported only if a frame of the
+    /// crashing thread is in this module. A crash whose stack cannot be walked is not reported.
+    required_module: Option<String>,
 }
 
 static WERCONTEXT: Mutex<WerContext> = Mutex::new(WerContext {
@@ -205,11 +212,6 @@ pub fn exception_event_callback(
 ) -> Result<()> {
     unsafe { SymInitializeW(process_handle, PCWSTR::null(), true)? };
 
-    let pid = unsafe { GetProcessId(process_handle) };
-    let crash_tid = unsafe { GetThreadId(thread_handle) };
-    let threads = list_threads(pid).context("Failed to list threads")?;
-    let modules = list_modules(process_handle).unwrap_or_default();
-
     let wer_context = read_wer_context(process_handle, context)?;
 
     anyhow::ensure!(
@@ -225,21 +227,33 @@ pub fn exception_event_callback(
     let error_context_str = str::from_utf8(error_context_json)?;
     let error_context: ErrorContext = serde_json::from_str(error_context_str)?;
 
+    let pid = unsafe { GetProcessId(process_handle) };
+    let crash_tid = unsafe { GetThreadId(thread_handle) };
+    let modules = list_modules(process_handle).unwrap_or_default();
+
+    let crash_stack = walk_thread_stack(process_handle, crash_tid, &modules)
+        .unwrap_or(StackTrace::new_incomplete());
+    if error_context
+        .required_module
+        .as_deref()
+        .is_some_and(|module| !has_module_frame(&crash_stack.frames, module))
+    {
+        return anyhow::Ok(());
+    }
+
     let mut builder = CrashInfoBuilder::new();
+    builder
+        .with_stack(crash_stack)
+        .context("Failed to add crashed thread info")?;
 
+    let threads = list_threads(pid).context("Failed to list threads")?;
     for thread in threads {
-        let stack_result = walk_thread_stack(process_handle, thread, &modules);
-        let stack: StackTrace = stack_result.unwrap_or(StackTrace::new_incomplete());
-
-        if thread == crash_tid {
-            builder
-                .with_stack(stack.clone())
-                .context("Failed to add crashed thread info")?;
-        }
-
         if thread == crash_tid {
             continue;
         }
+
+        let stack = walk_thread_stack(process_handle, thread, &modules)
+            .unwrap_or(StackTrace::new_incomplete());
 
         builder
             .with_thread(ThreadData {
@@ -334,6 +348,15 @@ fn read_wer_context(process_handle: HANDLE, base_address: usize) -> Result<WerCo
     };
 
     Ok(wer_context)
+}
+
+fn has_module_frame(frames: &[StackFrame], module_name: &str) -> bool {
+    frames.iter().any(|frame| {
+        frame.path.as_deref().is_some_and(|path| {
+            let file_name = path.rsplit(['\\', '/']).next().unwrap_or(path);
+            file_name.eq_ignore_ascii_case(module_name)
+        })
+    })
 }
 
 // https://github.com/microsoft/win32metadata/issues/1044
@@ -865,5 +888,40 @@ mod tests {
             ..pdb_info
         };
         assert_eq!(pdb_info.build_id(), "0123ABCD456789EF0123456789ABCDEF1a");
+    }
+
+    #[test]
+    fn test_has_module_frame() {
+        let frame = |path: Option<&str>| {
+            let mut frame = StackFrame::new();
+            frame.path = path.map(String::from);
+            frame
+        };
+        let frames = vec![
+            frame(None),
+            frame(Some(r"C:\Windows\System32\ntdll.dll")),
+            frame(Some(r"\\?\C:\Program Files\Datadog\ddinjector_x64.dll")),
+        ];
+
+        assert!(has_module_frame(&frames, "ddinjector_x64.dll"));
+        assert!(has_module_frame(&frames, "DDINJECTOR_X64.DLL"));
+        assert!(!has_module_frame(&frames, "ddinjector_x86.dll"));
+        assert!(!has_module_frame(&frames, "x64.dll"));
+        assert!(!has_module_frame(&frames[..2], "ddinjector_x64.dll"));
+        assert!(!has_module_frame(&[], "ddinjector_x64.dll"));
+    }
+
+    #[test]
+    fn test_error_context_required_module() {
+        let metadata =
+            r#"{"library_name": "a", "library_version": "1", "family": "f", "tags": []}"#;
+
+        let json = format!(r#"{{"metadata": {metadata}}}"#);
+        let context: ErrorContext = serde_json::from_str(&json).unwrap();
+        assert_eq!(context.required_module, None);
+
+        let json = format!(r#"{{"metadata": {metadata}, "required_module": "foo.dll"}}"#);
+        let context: ErrorContext = serde_json::from_str(&json).unwrap();
+        assert_eq!(context.required_module.as_deref(), Some("foo.dll"));
     }
 }
