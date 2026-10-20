@@ -1,11 +1,7 @@
 name: Test Nix
 
 on: # yamllint disable-line rule:truthy
-  push:
-    branches:
-      - main
-      - mq-working-branch-*
-  # Also run on PRs that touch the devshell or what it reads. Paths mirror the
+  # Run on PRs that touch the devshell or what it reads. Paths mirror the
   # Nix CODEOWNERS entries, plus the toolchain files (read by the flake) and
   # this workflow itself.
   pull_request:
