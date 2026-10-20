@@ -707,7 +707,7 @@ checksum = "dc0b364ead1874514c8c2855ab558056ebfeb775653e7ae45ff72f28f8f3166c"
 
 [[package]]
 name = "build_common"
-version = "45.0.0"
+version = "46.0.0"
 dependencies = [
  "cbindgen",
  "serde_json",
@@ -715,7 +715,7 @@ dependencies = [
 
 [[package]]
 name = "builder"
-version = "45.0.0"
+version = "46.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -1361,7 +1361,7 @@ checksum = "d7a1e2f27636f116493b8b860f5546edb47c8d8f8ea73e1d2a20be88e28d1fea"
 
 [[package]]
 name = "datadog-profiling-replayer"
-version = "45.0.0"
+version = "46.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -2713,7 +2713,7 @@ checksum = "7581282928bc99698341d1de7590964c28db747c164eaac9409432a3eaed098a"
 
 [[package]]
 name = "libdd-agent-client"
-version = "45.0.0"
+version = "46.0.0"
 dependencies = [
  "bytes",
  "flate2",
@@ -2810,7 +2810,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-common-ffi"
-version = "45.0.0"
+version = "46.0.0"
 dependencies = [
  "anyhow",
  "assert_no_alloc",
@@ -2866,7 +2866,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-crashtracker-ffi"
-version = "45.0.0"
+version = "46.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -2955,7 +2955,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-data-pipeline-ffi"
-version = "45.0.0"
+version = "46.0.0"
 dependencies = [
  "build_common",
  "httpmock",
@@ -2988,7 +2988,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-ddsketch-ffi"
-version = "45.0.0"
+version = "46.0.0"
 dependencies = [
  "build_common",
  "libdd-common-ffi",
@@ -3063,7 +3063,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-ffe-test-suite"
-version = "45.0.0"
+version = "46.0.0"
 dependencies = [
  "chrono",
  "criterion",
@@ -3233,7 +3233,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-log-ffi"
-version = "45.0.0"
+version = "46.0.0"
 dependencies = [
  "build_common",
  "libdd-common-ffi",
@@ -3351,7 +3351,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-profiling-heap-gotter-ffi"
-version = "45.0.0"
+version = "46.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -3449,7 +3449,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-shared-runtime-ffi"
-version = "45.0.0"
+version = "46.0.0"
 dependencies = [
  "build_common",
  "libdd-shared-runtime",
@@ -3490,7 +3490,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-telemetry-ffi"
-version = "45.0.0"
+version = "46.0.0"
 dependencies = [
  "build_common",
  "function_name",
@@ -3596,6 +3596,7 @@ dependencies = [
 name = "libdd-trace-utils"
 version = "14.0.0"
 dependencies = [
+ "allocator-api2",
  "anyhow",
  "base64 0.22.1",
  "bolero",
@@ -5798,7 +5799,7 @@ dependencies = [
 
 [[package]]
 name = "symbolizer-ffi"
-version = "45.0.0"
+version = "46.0.0"
 dependencies = [
  "blazesym-c",
  "build_common",
@@ -6254,7 +6255,7 @@ dependencies = [
 
 [[package]]
 name = "tools"
-version = "45.0.0"
+version = "46.0.0"
 dependencies = [
  "anyhow",
  "cargo_metadata",

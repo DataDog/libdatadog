@@ -47,7 +47,7 @@ test = ["hyper/server", "hyper-util"]
 [dependencies]
 anyhow.workspace = true
 bytes = { workspace = true, features = ["std"], optional = true }
-libdd-common = { path = "../libdd-common", version = "8.0.0", default-features = false }
+libdd-common = { path = "../libdd-common", version = "8.0.0", default-features = false, features = ["std"] }
 libdd-capabilities = { path = "../libdd-capabilities", version = "4.0.1" }
 libdd-trace-protobuf = { path = "../libdd-trace-protobuf", version = "5.1.0", optional = true }
 hyper = { workspace = true, optional = true, features = ["http1", "client"] }

@@ -158,6 +158,12 @@ jobs:
         run: |
           cargo check -p libdd-library-config --no-default-features
           cargo check -p libdd-library-config-ffi --no-default-features --features standalone --profile panic-abort
+      - name: "[${{ steps.rust-version.outputs.version}}] cargo nextest run no_std (libdd-common)"
+        if: runner.os == 'Linux' && (env.PACKAGES == '' || contains(env.PACKAGES, 'libdd-common'))
+        shell: bash
+        run: |
+          cargo nextest run -p libdd-common --no-default-features --profile ci --verbose
+          cargo nextest run -p libdd-common --no-default-features --features alloc --profile ci --verbose
       - name: "[${{ steps.rust-version.outputs.version}}] cargo test (doc) and cargo nextest run"
         shell: bash
         # Run doc tests with cargo test and run tests with nextest and generate junit.xml
@@ -382,6 +388,7 @@ jobs:
               -e SCCACHE_BUCKET=dd-ci-artefacts-build-stable
               -e SCCACHE_REGION=us-east-1
               -e SCCACHE_S3_KEY_PREFIX=libddprof-build/sccache
+              -e SCCACHE_S3_RW_MODE
               -e SCCACHE_BASEDIRS=/workspace:/usr/local/cargo
               -e AWS_ACCESS_KEY_ID
               -e AWS_SECRET_ACCESS_KEY
@@ -400,7 +407,7 @@ jobs:
             -w /workspace \
             "${SCCACHE_ARGS[@]}" \
             libdatadog-centos7 \
-            sh -c "$NEXTEST_CMD && sccache --show-stats"
+            sh -c "$NEXTEST_CMD && if command -v sccache >/dev/null 2>&1; then sccache --show-stats; fi"
       - name: Add file attributes to JUnit XML
         if: success() || failure()
         run: cargo run --bin add_junit_file_attributes -- target/nextest/ci/junit.xml
@@ -463,6 +470,11 @@ jobs:
         with:
           submodules: recursive
       - name: Cache [rust]
+        # We do not use sccache for this job because S3 client builds a
+        # reqwest client that requires a system CA store and panics when the
+        # purged store is empty, so it cannot run inside the certificate-less
+        # container. Mounting certs or setting SSL_CERT_FILE would defeat the
+        # test's premise.
         id: rust-cache
         uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
         with:
@@ -522,7 +534,11 @@ jobs:
         id: sccache
         uses: ./.github/actions/setup-sccache
       - name: Install wasm-bindgen test runner
-        run: cargo install wasm-bindgen-cli --version 0.2.100 --locked
+        # Prebuilt binary: `cargo install` recompiles ~100 crates every run,
+        # and the final link is never sccache-cacheable.
+        uses: taiki-e/install-action@2c41309d51ede152b6f2ee6bf3b71e6dc9a8b7df # 2.49.27
+        with:
+          tool: wasm-bindgen-cli@0.2.100
       - name: "cargo check -p libdd-data-pipeline --target wasm32-unknown-unknown --no-default-features"
         run: cargo check -p libdd-data-pipeline --target wasm32-unknown-unknown --no-default-features
         env:
