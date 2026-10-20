@@ -3,8 +3,9 @@
 use std::time::{self, Duration, SystemTime};
 
 use criterion::{Criterion, criterion_group};
-use libdd_trace_stats::span_concentrator::SpanConcentrator;
-use libdd_trace_utils::span::v04::{SpanBytes, VecMap};
+use libdd_trace_model::TraceChunk as _;
+use libdd_trace_stats::span_concentrator::{ChunkSpanView, SpanConcentrator};
+use libdd_trace_utils::span::v04::{SpanBytes, TraceChunk, VecMap};
 
 fn get_bucket_start(now: SystemTime, n: u64) -> i64 {
     let start = now.duration_since(time::UNIX_EPOCH).unwrap() + Duration::from_secs(10 * n);
@@ -49,20 +50,22 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         #[cfg(feature = "stats-obfuscation")]
         None,
     );
-    let mut spans = vec![];
-    for trace_id in 1..100 {
-        for span_id in 1..100 {
-            spans.push(get_span(now, trace_id, span_id));
-        }
-    }
+    let traces: Vec<Vec<SpanBytes>> = (1..100)
+        .map(|trace_id| {
+            (1..100)
+                .map(|span_id| get_span(now, trace_id, span_id))
+                .collect()
+        })
+        .collect();
+    let chunks: Vec<_> = traces.iter().map(|trace| TraceChunk::new(trace)).collect();
     group.bench_function("add_spans_to_concentrator", |b| {
         b.iter_batched_ref(
-            || (concentrator.clone(), spans.clone()),
-            |data| {
-                let concentrator = &mut data.0;
-                let spans = &data.1;
-                for span in spans {
-                    concentrator.add_span(span);
+            || concentrator.clone(),
+            |concentrator| {
+                for chunk in &chunks {
+                    for span in chunk.spans() {
+                        concentrator.add_span(&ChunkSpanView { span, chunk });
+                    }
                 }
             },
             criterion::BatchSize::LargeInput,

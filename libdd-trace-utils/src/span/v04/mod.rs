@@ -134,6 +134,247 @@ where
     serializer.serialize_u64(*v as u64)
 }
 
+/// v04 spans keep strings and numbers in the separate `meta` and `metrics` maps, which the typed
+/// reads look up directly. A key present in both maps stays reachable through both.
+impl<T: TraceData> libdd_trace_model::Attributes for Span<T> {
+    type Text = T::Text;
+    type Bytes = T::Bytes;
+    type Values = T;
+
+    fn attribute_str(&self, key: &str) -> Option<&str> {
+        self.meta.get(key).map(Borrow::borrow)
+    }
+
+    fn attribute_f64(&self, key: &str) -> Option<f64> {
+        self.metrics.get(key).copied()
+    }
+}
+
+impl<T: TraceData> libdd_trace_model::Span for Span<T> {
+    type SpanEvent = SpanEvent<T>;
+    type SpanLink = SpanLink<T>;
+
+    fn service(&self) -> &str {
+        self.service.borrow()
+    }
+
+    fn resource(&self) -> &str {
+        self.resource.borrow()
+    }
+
+    fn name(&self) -> &str {
+        self.name.borrow()
+    }
+
+    fn typ(&self) -> &str {
+        self.r#type.borrow()
+    }
+
+    fn span_id(&self) -> u64 {
+        self.span_id
+    }
+
+    fn parent_id(&self) -> u64 {
+        self.parent_id
+    }
+
+    fn start(&self) -> i64 {
+        self.start
+    }
+
+    fn duration(&self) -> i64 {
+        self.duration
+    }
+
+    fn is_error(&self) -> bool {
+        self.error != 0
+    }
+
+    // v04 has no dedicated fields for these; they are regular `meta` tags.
+    fn span_kind(&self) -> Option<&str> {
+        self.meta.get("span.kind").map(Borrow::borrow)
+    }
+
+    fn env(&self) -> Option<&str> {
+        self.meta.get("env").map(Borrow::borrow)
+    }
+
+    fn version(&self) -> Option<&str> {
+        self.meta.get("version").map(Borrow::borrow)
+    }
+
+    fn component(&self) -> Option<&str> {
+        self.meta.get("component").map(Borrow::borrow)
+    }
+
+    fn span_events(&self) -> impl Iterator<Item = &Self::SpanEvent> {
+        self.span_events.iter()
+    }
+
+    fn span_links(&self) -> impl Iterator<Item = &Self::SpanLink> {
+        self.span_links.iter()
+    }
+}
+
+/// v04 span links only carry string attributes.
+impl<T: TraceData> libdd_trace_model::Attributes for SpanLink<T> {
+    type Text = T::Text;
+    type Bytes = T::Bytes;
+    type Values = T;
+
+    fn attribute_str(&self, key: &str) -> Option<&str> {
+        self.attributes.get(key).map(Borrow::borrow)
+    }
+
+    fn attribute_f64(&self, _key: &str) -> Option<f64> {
+        None
+    }
+}
+
+impl<T: TraceData> libdd_trace_model::SpanLink for SpanLink<T> {
+    fn trace_id(&self) -> u128 {
+        (u128::from(self.trace_id_high) << 64) | u128::from(self.trace_id)
+    }
+
+    fn span_id(&self) -> u64 {
+        self.span_id
+    }
+
+    fn tracestate(&self) -> &str {
+        self.tracestate.borrow()
+    }
+
+    fn flags(&self) -> u32 {
+        self.flags
+    }
+}
+
+/// Typed reads only see single values; array attributes read as missing.
+impl<T: TraceData> libdd_trace_model::Attributes for SpanEvent<T> {
+    type Text = T::Text;
+    type Bytes = T::Bytes;
+    type Values = T;
+
+    fn attribute_str(&self, key: &str) -> Option<&str> {
+        match self.attributes.get(key)? {
+            AttributeAnyValue::SingleValue(AttributeArrayValue::String(s)) => Some(s.borrow()),
+            _ => None,
+        }
+    }
+
+    fn attribute_f64(&self, key: &str) -> Option<f64> {
+        match self.attributes.get(key)? {
+            AttributeAnyValue::SingleValue(AttributeArrayValue::Double(f)) => Some(*f),
+            // Lossy above 2^53, which is acceptable for the metric-like values read as floats.
+            #[allow(clippy::cast_precision_loss)]
+            AttributeAnyValue::SingleValue(AttributeArrayValue::Integer(i)) => Some(*i as f64),
+            _ => None,
+        }
+    }
+
+    fn attribute_i64(&self, key: &str) -> Option<i64> {
+        match self.attributes.get(key)? {
+            AttributeAnyValue::SingleValue(AttributeArrayValue::Integer(i)) => Some(*i),
+            AttributeAnyValue::SingleValue(AttributeArrayValue::Double(f)) => {
+                libdd_trace_model::f64_to_exact_i64(*f)
+            }
+            _ => None,
+        }
+    }
+}
+
+impl<T: TraceData> libdd_trace_model::SpanEvent for SpanEvent<T> {
+    fn name(&self) -> &str {
+        self.name.borrow()
+    }
+
+    fn time_unix_nano(&self) -> u64 {
+        self.time_unix_nano
+    }
+}
+
+/// A v04 trace (the spans sharing a trace id) viewed as a trace chunk.
+///
+/// v04 has no chunk-level storage: the chunk fields are read from the root span, the way the
+/// agent derives them (e.g. the origin from the root's `_dd.origin` tag), and the chunk has no
+/// attributes. The root span is found once, on construction.
+pub struct TraceChunk<'a, T: TraceData> {
+    spans: &'a [Span<T>],
+    root: Option<&'a Span<T>>,
+}
+
+impl<'a, T: TraceData> TraceChunk<'a, T> {
+    pub fn new(spans: &'a [Span<T>]) -> Self {
+        let root = super::trace_utils::get_root_span_index(spans)
+            .ok()
+            .and_then(|i| spans.get(i));
+        Self { spans, root }
+    }
+
+    fn root_meta(&self, key: &str) -> Option<&'a str> {
+        self.root?.meta.get(key).map(Borrow::borrow)
+    }
+}
+
+/// v04 chunks have no attributes.
+impl<T: TraceData> libdd_trace_model::Attributes for TraceChunk<'_, T> {
+    type Text = T::Text;
+    type Bytes = T::Bytes;
+    type Values = T;
+
+    fn attribute_str(&self, _key: &str) -> Option<&str> {
+        None
+    }
+
+    fn attribute_f64(&self, _key: &str) -> Option<f64> {
+        None
+    }
+}
+
+impl<T: TraceData> libdd_trace_model::AttributesIter for TraceChunk<'_, T> {
+    fn attributes(&self) -> impl Iterator<Item = (&str, libdd_trace_model::AttributeRef<'_, T>)> {
+        core::iter::empty()
+    }
+}
+
+impl<T: TraceData> libdd_trace_model::TraceChunk for TraceChunk<'_, T> {
+    type Span = Span<T>;
+
+    fn trace_id(&self) -> u128 {
+        self.root.map_or(0, |root| root.trace_id)
+    }
+
+    fn origin(&self) -> &str {
+        self.root_meta(libdd_trace_model::ORIGIN_KEY)
+            .unwrap_or_default()
+    }
+
+    fn spans(&self) -> impl Iterator<Item = &Self::Span> {
+        self.spans.iter()
+    }
+
+    fn priority(&self) -> Option<i32> {
+        let priority = self
+            .root?
+            .metrics
+            .get(libdd_trace_model::SAMPLING_PRIORITY_KEY)?;
+        i32::try_from(libdd_trace_model::f64_to_exact_i64(*priority)?).ok()
+    }
+
+    /// Parsed from the `"-<mechanism>"` value of the root's `_dd.p.dm` tag.
+    fn sampling_mechanism(&self) -> Option<u32> {
+        self.root_meta(libdd_trace_model::DECISION_MAKER_KEY)?
+            .strip_prefix('-')?
+            .parse()
+            .ok()
+    }
+
+    // v04 payloads report dropped traces through a request header, not per trace.
+    fn dropped_trace(&self) -> bool {
+        false
+    }
+}
+
 /// The generic representation of a V04 span link.
 /// `T` is the type used to represent strings in the span link.
 #[derive(Debug, Default, PartialEq, Serialize)]
@@ -343,6 +584,51 @@ mod tests {
     use std::collections::HashMap;
 
     #[test]
+    fn model_traits_expose_v04_links_and_events() {
+        use libdd_trace_model::{Attributes, Span as _, SpanLink as _};
+
+        let link = SpanLink::<SliceData> {
+            trace_id: 2,
+            trace_id_high: 1,
+            span_id: 3,
+            attributes: HashMap::from([(Cow::Borrowed("k"), Cow::Borrowed("v"))]),
+            ..Default::default()
+        };
+        assert_eq!(link.trace_id(), (1u128 << 64) | 2);
+        assert_eq!(link.attribute_str("k"), Some("v"));
+
+        let event = SpanEvent::<SliceData> {
+            attributes: HashMap::from([
+                (
+                    Cow::Borrowed("int"),
+                    AttributeAnyValue::SingleValue(AttributeArrayValue::Integer(i64::MAX)),
+                ),
+                (
+                    Cow::Borrowed("whole"),
+                    AttributeAnyValue::SingleValue(AttributeArrayValue::Double(4.0)),
+                ),
+                (
+                    Cow::Borrowed("frac"),
+                    AttributeAnyValue::SingleValue(AttributeArrayValue::Double(4.5)),
+                ),
+            ]),
+            ..Default::default()
+        };
+        assert_eq!(event.attribute_i64("int"), Some(i64::MAX));
+        assert_eq!(event.attribute_i64("whole"), Some(4));
+        assert_eq!(event.attribute_i64("frac"), None);
+        assert_eq!(event.attribute_f64("frac"), Some(4.5));
+
+        let span = Span::<SliceData> {
+            span_links: vec![link],
+            span_events: vec![event],
+            ..Default::default()
+        };
+        assert_eq!(span.span_links().count(), 1);
+        assert_eq!(span.span_events().count(), 1);
+    }
+
+    #[test]
     fn skip_serializing_empty_fields_test() {
         let expected = b"\x87\xa7service\xa0\xa4name\xa0\xa8resource\xa0\xa8trace_id\x00\xa7span_id\x00\xa5start\x00\xa8duration\x00";
         let val: Span<SliceData<'_>> = Span::default();
@@ -448,5 +734,82 @@ mod tests {
 
         let serialized = rmp_serde::encode::to_vec_named(&span).unwrap();
         assert_eq!(expected, serialized.as_slice());
+    }
+
+    #[test]
+    fn model_attributes_read_dedicated_maps() {
+        use crate::span::v04::SpanBytes;
+        use libdd_tinybytes::BytesString;
+        use libdd_trace_model::{Attributes, Span as _};
+
+        let mut span = SpanBytes {
+            parent_id: 0,
+            error: 1,
+            ..Default::default()
+        };
+        span.meta
+            .insert(BytesString::from("shared"), BytesString::from("str"));
+        span.metrics.insert(BytesString::from("shared"), 2.0);
+        span.metrics.insert(BytesString::from("_dd.measured"), 1.0);
+        span.meta
+            .insert(BytesString::from("span.kind"), BytesString::from("Server"));
+
+        // A key in both maps stays reachable through both typed reads.
+        assert_eq!(span.attribute_str("shared"), Some("str"));
+        assert_eq!(span.attribute_f64("shared"), Some(2.0));
+        assert_eq!(span.attribute_str("missing"), None);
+        assert_eq!(span.attribute_f64("missing"), None);
+
+        // span.kind is returned verbatim, without normalization.
+        assert_eq!(span.span_kind(), Some("Server"));
+        assert!(span.is_measured());
+        assert!(span.is_error());
+        assert!(span.is_trace_root());
+        assert!(!span.has_top_level());
+    }
+
+    #[test]
+    fn trace_chunk_reads_chunk_fields_from_root() {
+        use crate::span::v04::{SpanBytes, TraceChunk};
+        use libdd_trace_model::{ChunkSpanView, TraceChunk as _};
+
+        let mut root = SpanBytes {
+            trace_id: 7,
+            span_id: 1,
+            ..Default::default()
+        };
+        for (k, v) in [("_dd.origin", "synthetics"), ("_dd.p.dm", "-4")] {
+            root.meta.insert(k.into(), v.into());
+        }
+        root.metrics.insert("_sampling_priority_v1".into(), 2.0);
+        let mut child = SpanBytes {
+            trace_id: 7,
+            span_id: 2,
+            parent_id: 1,
+            ..Default::default()
+        };
+        child.meta.insert("_dd.origin".into(), "lambda".into());
+        // Some clients put the root span last.
+        let trace = [child, root];
+
+        let chunk = TraceChunk::new(&trace);
+        assert_eq!(chunk.trace_id(), 7);
+        // The root's origin is the chunk's, whatever the other spans say.
+        assert_eq!(chunk.origin(), "synthetics");
+        assert_eq!(chunk.priority(), Some(2));
+        assert_eq!(chunk.sampling_mechanism(), Some(4));
+        assert!(!chunk.dropped_trace());
+        assert_eq!(chunk.spans().count(), 2);
+        let view = ChunkSpanView {
+            span: &trace[0],
+            chunk: &chunk,
+        };
+        assert_eq!(view.chunk.origin(), "synthetics");
+
+        let empty = TraceChunk::<crate::span::BytesData>::new(&[]);
+        assert_eq!(
+            (empty.trace_id(), empty.origin(), empty.priority()),
+            (0, "", None)
+        );
     }
 }
