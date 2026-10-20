@@ -135,6 +135,11 @@ mod tests {
         });
         let mut connector = HttpProxyConnector::new(Connector::new_no_proxy());
         connector.matcher = matcher;
+        #[cfg(feature = "tls-core")]
+        let tls_available = connector.tls_config.is_some() && connector.proxy_dialer.is_some();
+        #[cfg(not(feature = "tls-core"))]
+        let tls_available = false;
+        let timeout = core::time::Duration::from_secs(5);
         for (destination, expected) in [
             ("http://cdn.example/config", "cdn.example:80"),
             ("http://cdn.example:8080/config", "cdn.example:8080"),
@@ -142,6 +147,20 @@ mod tests {
             ("https://cdn.example/config", "cdn.example:443"),
             ("https://cdn.example:8443/config", "cdn.example:8443"),
         ] {
+            // Without TLS (including unavailable roots), HTTPS fails before
+            // contacting the proxy. Do not start a server that cannot be used.
+            if destination.starts_with("https") && !tls_available {
+                assert!(
+                    tokio::time::timeout(
+                        timeout,
+                        connector.build_conn_stream(destination.parse().unwrap(), true)
+                    )
+                    .await
+                    .expect("unavailable TLS should fail promptly")
+                    .is_err()
+                );
+                continue;
+            }
             let listener = Arc::clone(&listener);
             let server = tokio::spawn(async move {
                 let (mut stream, _) = listener.accept().await.unwrap();
@@ -156,15 +175,21 @@ mod tests {
                 String::from_utf8(request).unwrap()
             });
             assert!(
-                connector
-                    .build_conn_stream(
+                tokio::time::timeout(
+                    timeout,
+                    connector.build_conn_stream(
                         destination.parse().unwrap(),
                         destination.starts_with("https")
-                    )
-                    .await
-                    .is_err()
+                    ),
+                )
+                .await
+                .expect("proxy exchange should complete")
+                .is_err()
             );
-            let request = server.await.unwrap();
+            let request = tokio::time::timeout(timeout, server)
+                .await
+                .expect("proxy should receive a CONNECT request")
+                .unwrap();
             assert!(
                 request.starts_with(&format!("CONNECT {expected} HTTP/1.1\r\n")),
                 "{request}"
