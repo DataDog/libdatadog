@@ -140,8 +140,7 @@ pub struct ShmDsmStats {
 /// Stats group key as stored in the mapping.
 #[repr(C)]
 pub struct ShmDsmKey {
-    /// What groups are keyed on; see [`DsmStatsPointInput::aggregation_hash`].
-    aggregation_hash: AtomicU64,
+    /// What groups are keyed on: the pathway hash.
     hash: AtomicU64,
     parent_hash: AtomicU64,
     edge_tags: [WireStringRef; MAX_EDGE_TAGS],
@@ -155,18 +154,17 @@ pub struct DataStreams;
 // SAFETY: `ShmDsmKey` and `ShmDsmStats` are `#[repr(C)]` and made only of integer atomics.
 unsafe impl Schema for DataStreams {
     const ID: u32 = 2;
-    const VERSION: u32 = 1;
+    const VERSION: u32 = 2;
 
     type Key = ShmDsmKey;
     type Value = ShmDsmStats;
     type Input<'a> = DsmStatsPointInput<'a>;
 
     fn hash(input: &DsmStatsPointInput<'_>) -> u64 {
-        input.aggregation_hash
+        input.hash
     }
 
     fn write_key(k: &ShmDsmKey, pool: &Pool, cursor: &AtomicU32, input: &DsmStatsPointInput<'_>) {
-        k.aggregation_hash.store(input.aggregation_hash, Relaxed);
         k.hash.store(input.hash, Relaxed);
         k.parent_hash.store(input.parent_hash, Relaxed);
         // Zipped, so a caller passing more tags than there is room for loses the surplus.
@@ -178,10 +176,10 @@ unsafe impl Schema for DataStreams {
         k.edge_tag_count.store(stored, Relaxed);
     }
 
-    /// Only the aggregation hash is compared: a group is its aggregation hash, and its other
-    /// key fields are whatever the first point brought.
+    /// Only the pathway hash is compared: a group is its pathway hash, which already folds in
+    /// the parent's, and its other key fields are whatever the first point brought.
     fn key_matches(k: &ShmDsmKey, _pool: &Pool, input: &DsmStatsPointInput<'_>) -> bool {
-        k.aggregation_hash.load(Relaxed) == input.aggregation_hash
+        k.hash.load(Relaxed) == input.hash
     }
 
     fn record(s: &ShmDsmStats, input: &DsmStatsPointInput<'_>) {
@@ -202,10 +200,7 @@ fn nanos_to_seconds(nanos: i64) -> f64 {
 
 /// One DSM stats point, ready to be fed into [`ShmDsmTable::add_point`].
 pub struct DsmStatsPointInput<'a> {
-    /// What the point is grouped on: the pathway hash, or a hash that folds it in together with
-    /// whatever else the tracer aggregates on.
-    pub aggregation_hash: u64,
-    /// Pathway hash of the checkpoint.
+    /// Pathway hash of the checkpoint; points are grouped on it.
     pub hash: u64,
     /// Pathway hash of the previous checkpoint, or 0 for the first one.
     pub parent_hash: u64,
@@ -223,7 +218,6 @@ pub struct DsmStatsPointInput<'a> {
 /// point.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct OwnedDsmStatsPoint {
-    pub aggregation_hash: u64,
     pub hash: u64,
     pub parent_hash: u64,
     pub edge_tags: Vec<String>,
@@ -243,7 +237,6 @@ impl OwnedDsmStatsPoint {
         edge_tag_buf.clear();
         edge_tag_buf.extend(self.edge_tags.iter().map(String::as_str));
         DsmStatsPointInput {
-            aggregation_hash: self.aggregation_hash,
             hash: self.hash,
             parent_hash: self.parent_hash,
             edge_tags: edge_tag_buf.as_slice(),
@@ -395,10 +388,9 @@ mod tests {
         t.mem.load_full().unwrap()
     }
 
-    fn point<'a>(aggregation_hash: u64, edge_tags: &'a [&'a str]) -> DsmStatsPointInput<'a> {
+    fn point<'a>(hash: u64, edge_tags: &'a [&'a str]) -> DsmStatsPointInput<'a> {
         DsmStatsPointInput {
-            aggregation_hash,
-            hash: aggregation_hash ^ 0xff,
+            hash,
             parent_hash: 42,
             edge_tags,
             pathway_latency_ns: 1_500_000_000,
@@ -475,7 +467,7 @@ mod tests {
             "the second point did not find the first's slot"
         );
         let g = &groups[0];
-        assert_eq!(g.hash, 7 ^ 0xff);
+        assert_eq!(g.hash, 7);
         assert_eq!(g.parent_hash, 42);
         assert_eq!(g.edge_tags, tags);
 
@@ -497,7 +489,6 @@ mod tests {
         let t = table(test_path());
         t.add_point(&point(7, &["topic:a"]));
         t.add_point(&DsmStatsPointInput {
-            hash: 1,
             parent_hash: 2,
             ..point(7, &["topic:b", "type:kafka"])
         });
@@ -506,7 +497,7 @@ mod tests {
         let mut groups = drain_all(&t);
         groups.sort_by_key(|g| g.hash);
         assert_eq!(groups.len(), 2);
-        let first = groups.iter().find(|g| g.hash == 7 ^ 0xff).unwrap();
+        let first = groups.iter().find(|g| g.hash == 7).unwrap();
         assert_eq!(first.edge_tags, ["topic:a"]);
         assert_eq!(first.parent_hash, 42);
         assert_eq!(decode(&first.pathway_latency).count(), 2.0);
@@ -574,7 +565,6 @@ mod tests {
         let worker = ShmDsmTable::open(&path).unwrap();
 
         let owned = OwnedDsmStatsPoint {
-            aggregation_hash: 5,
             hash: 6,
             parent_hash: 0,
             edge_tags: vec!["direction:in".into()],

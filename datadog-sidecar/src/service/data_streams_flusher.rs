@@ -481,7 +481,6 @@ mod tests {
         )
         .unwrap();
         table.add_point(&DsmStatsPointInput {
-            aggregation_hash: 1,
             hash: 1,
             parent_hash: 0,
             edge_tags: &["direction:out", "topic:orders"],

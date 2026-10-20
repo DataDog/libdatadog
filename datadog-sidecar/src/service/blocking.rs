@@ -864,7 +864,6 @@ mod tests {
                 "svc".into(),
                 "region:eu".into(),
                 libdd_ipc::shm_dsm::OwnedDsmStatsPoint {
-                    aggregation_hash: 1,
                     hash: 2,
                     parent_hash: 3,
                     edge_tags: vec!["topic:orders".into()],
