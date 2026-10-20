@@ -68,6 +68,11 @@ pub struct StringTable {
     /// but if they are, they should be bound to the string table's lifetime
     /// or the lending iterator's lifetime.
     strings: HashSet<&'static str>,
+
+    /// When set, the next new-string intern fails with [`Error::OutOfMemory`].
+    /// Used to test that callers propagate allocation failures instead of panicking.
+    #[cfg(test)]
+    fail_allocations: bool,
 }
 
 impl Default for StringTable {
@@ -110,7 +115,12 @@ impl StringTable {
         // which is sketchy.
         strings.insert("");
 
-        Self { bytes, strings }
+        Self {
+            bytes,
+            strings,
+            #[cfg(test)]
+            fail_allocations: false,
+        }
     }
 
     /// Returns the number of strings currently held in the string table.
@@ -118,6 +128,13 @@ impl StringTable {
     #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> usize {
         self.strings.len()
+    }
+
+    /// Makes the next new-string intern fail with [`Error::OutOfMemory`].
+    /// Existing strings still look up successfully.
+    #[cfg(test)]
+    pub fn only_for_testing_fail_allocations(&mut self) {
+        self.fail_allocations = true;
     }
 
     /// Adds the string to the string table if it isn't present already, and
@@ -146,6 +163,11 @@ impl StringTable {
             // SAFETY: if it already exists, it must fit in the range.
             Some(offset) => Ok(unsafe { StringId::try_from(offset).unwrap_unchecked() }),
             None => {
+                #[cfg(test)]
+                if self.fail_allocations {
+                    return Err(Error::OutOfMemory);
+                }
+
                 // No match. Get the current size of the table, which
                 // corresponds to the StringId it will have when inserted.
                 let string_id = StringId::try_from(set.len()).map_err(|_| Error::StorageFull)?;
@@ -308,6 +330,21 @@ mod tests {
         let string = table.intern("datadog");
         assert_eq!(StringId::from_offset(1), string);
         assert_eq!(2, table.len());
+    }
+
+    #[test]
+    fn try_intern_returns_out_of_memory_when_allocations_fail() {
+        let mut table = StringTable::new();
+        table.only_for_testing_fail_allocations();
+
+        assert_eq!(
+            table.try_intern("new-string"),
+            Err(Error::OutOfMemory),
+            "new strings should fail when allocations are forced to fail"
+        );
+        // Already-present strings still resolve without allocating.
+        assert_eq!(table.try_intern(""), Ok(StringId::ZERO));
+        assert_eq!(1, table.len());
     }
 
     #[track_caller]

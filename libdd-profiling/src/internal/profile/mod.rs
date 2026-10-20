@@ -680,16 +680,16 @@ impl Profile {
         // Clone to avoid holding an immutable borrow of `self.sample_types` while interning.
         let sample_types = self.sample_types.clone();
         for sample_type in sample_types.iter().copied() {
-            let sample_type = self.intern_sample_type(sample_type);
+            let sample_type = self.intern_sample_type(sample_type)?;
             Record::<_, 1, NO_OPT_ZERO>::from(sample_type).encode(writer)?;
         }
 
         // Period type needs string interning, which must happen before we start moving fields out
         // of `self`. (Many fields below are consumed via `into_iter()`.)
-        let period_type_and_value: Option<(ValueType, i64)> = self
-            .period
-            .map(|period| (self.intern_sample_type(period.sample_type), period.value));
-
+        let period_type_and_value: Option<(ValueType, i64)> = match self.period {
+            Some(period) => Some((self.intern_sample_type(period.sample_type)?, period.value)),
+            None => None,
+        };
         for (offset, item) in self.mappings.into_iter().enumerate() {
             let mapping = protobuf::Mapping {
                 id: Record::from((offset + 1) as u64),
@@ -923,7 +923,10 @@ impl Profile {
     }
 
     #[inline(always)]
-    fn intern_sample_type(&mut self, sample_type: api::SampleType) -> ValueType {
+    fn intern_sample_type(
+        &mut self,
+        sample_type: api::SampleType,
+    ) -> Result<ValueType, string_table::Error> {
         let (type_, unit) = if let Some(value_type) = self.sample_type_overrides.get(&sample_type) {
             (value_type.r#type.as_ref(), value_type.unit.as_ref())
         } else {
@@ -931,10 +934,10 @@ impl Profile {
             (value_type.r#type, value_type.unit)
         };
 
-        ValueType {
-            r#type: Record::from(self.strings.intern(type_)),
-            unit: Record::from(self.strings.intern(unit)),
-        }
+        Ok(ValueType {
+            r#type: Record::from(self.strings.try_intern(type_)?),
+            unit: Record::from(self.strings.try_intern(unit)?),
+        })
     }
 
     /// Fetches the endpoint information for the label. There may be errors,
@@ -1162,6 +1165,13 @@ impl Profile {
     #[cfg(test)]
     fn interned_strings_count(&self) -> usize {
         self.strings.len()
+    }
+
+    /// Makes new string interns fail with out-of-memory so serialization can
+    /// be checked for error propagation instead of panics.
+    #[cfg(test)]
+    fn only_for_testing_fail_string_allocations(&mut self) {
+        self.strings.only_for_testing_fail_allocations();
     }
 
     // Ideally, these would be [cgf(test)]. But its used in other module's test
@@ -3411,5 +3421,25 @@ mod api_tests {
                 .is_err(),
             "expected setter to reject non-custom sample type slots"
         );
+    }
+
+    /// Sample-type interning used to panic on allocator failure during export.
+    /// Force OutOfMemory and check serialization returns an error instead.
+    #[test]
+    fn intern_sample_type_oom_returns_error_instead_of_panicking() {
+        let mut profile = Profile::new(&[api::SampleType::CpuSamples], None);
+        profile.only_for_testing_fail_string_allocations();
+
+        let result = profile.serialize_into_compressed_pprof(None, None);
+        let err = match result {
+            Ok(_) => panic!(
+                "expected serialization to fail when sample-type string interning is out of memory"
+            ),
+            Err(err) => err,
+        };
+        let oom = err
+            .downcast_ref::<string_table::Error>()
+            .expect("expected string_table::Error from sample-type interning");
+        assert_eq!(*oom, string_table::Error::OutOfMemory);
     }
 }
