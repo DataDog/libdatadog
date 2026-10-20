@@ -209,6 +209,7 @@ pub fn exception_event_callback(
     context: usize,
     process_handle: HANDLE,
     thread_handle: HANDLE,
+    exception_context: &CONTEXT,
 ) -> Result<()> {
     unsafe { SymInitializeW(process_handle, PCWSTR::null(), true)? };
 
@@ -231,8 +232,11 @@ pub fn exception_event_callback(
     let crash_tid = unsafe { GetThreadId(thread_handle) };
     let modules = list_modules(process_handle).unwrap_or_default();
 
-    let crash_stack = walk_thread_stack(process_handle, crash_tid, &modules)
-        .unwrap_or(StackTrace::new_incomplete());
+    // The current context of the crashing thread is in the exception dispatcher. The walk can
+    // stop there before it reaches the crash, in particular on x86.
+    let crash_stack =
+        walk_thread_stack(process_handle, crash_tid, &modules, Some(exception_context))
+            .unwrap_or(StackTrace::new_incomplete());
     if error_context
         .required_module
         .as_deref()
@@ -252,7 +256,7 @@ pub fn exception_event_callback(
             continue;
         }
 
-        let stack = walk_thread_stack(process_handle, thread, &modules)
+        let stack = walk_thread_stack(process_handle, thread, &modules, None)
             .unwrap_or(StackTrace::new_incomplete());
 
         builder
@@ -366,26 +370,33 @@ struct AlignedContext {
     ctx: CONTEXT,
 }
 
+/// Walks the stack of a thread from `initial_context`, or from the current thread context when
+/// it is None.
 fn walk_thread_stack(
     process_handle: HANDLE,
     thread_id: u32,
     modules: &[ModuleInfo],
+    initial_context: Option<&CONTEXT>,
 ) -> Result<StackTrace> {
     let mut stacktrace = StackTrace::new_incomplete();
     let thread_handle = unsafe { OpenThread(THREAD_ALL_ACCESS, false, thread_id)? };
     let mut context = AlignedContext::default();
 
-    #[cfg(target_arch = "x86_64")]
-    {
-        context.ctx.ContextFlags = CONTEXT_FULL_AMD64;
-    }
-    #[cfg(target_arch = "x86")]
-    {
-        context.ctx.ContextFlags = CONTEXT_FULL_X86;
-    }
+    if let Some(initial_context) = initial_context {
+        context.ctx = *initial_context;
+    } else {
+        #[cfg(target_arch = "x86_64")]
+        {
+            context.ctx.ContextFlags = CONTEXT_FULL_AMD64;
+        }
+        #[cfg(target_arch = "x86")]
+        {
+            context.ctx.ContextFlags = CONTEXT_FULL_X86;
+        }
 
-    // The context is properly aligned on a 16-byte boundary
-    unsafe { GetThreadContext(thread_handle, &mut context.ctx)? };
+        // The context is properly aligned on a 16-byte boundary
+        unsafe { GetThreadContext(thread_handle, &mut context.ctx)? };
+    }
 
     let mut native_frame = STACKFRAME_EX::default();
     let machine_type: u32;
