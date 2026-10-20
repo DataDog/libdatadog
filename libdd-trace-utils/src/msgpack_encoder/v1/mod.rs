@@ -4,14 +4,14 @@
 mod span_v04;
 mod span_v1;
 
-use crate::span::v04::Span;
-use crate::span::v1::TracerPayload;
 use crate::span::TraceData;
+use crate::span::v1::TracerPayload;
+use crate::span::v04::Span;
 use crate::tracer_metadata::TracerMetadata;
 use libdd_common::ResultInfallibleExt;
 use rmp::encode::{
-    write_array_len, write_bin, write_map_len, write_sint, write_str, write_uint, write_uint8,
-    ByteBuf, RmpWrite, ValueWriteError,
+    ByteBuf, RmpWrite, ValueWriteError, write_array_len, write_bin, write_map_len, write_sint,
+    write_str, write_uint, write_uint8,
 };
 use std::borrow::Borrow;
 use std::collections::HashMap;
@@ -83,7 +83,7 @@ pub(super) enum SpanEventKey {
 }
 
 /// Type discriminants for attribute values.
-/// An attribute value is encoded as [type_uint8][actual_value].
+/// An attribute value is encoded as `[type_uint8][actual_value]`.
 #[repr(u8)]
 pub(super) enum AnyValueKey {
     String = 1,

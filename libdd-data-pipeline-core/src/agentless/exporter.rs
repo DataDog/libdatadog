@@ -8,11 +8,11 @@ use http::HeaderMap;
 use libdd_capabilities::{HttpClientCapability, SleepCapability};
 use libdd_common::Endpoint;
 use libdd_trace_utils::send_with_retry::{
-    send_with_retry_and_size, CompressionStrategy, RetryBackoffType, RetryStrategy,
-    SendWithRetryError, SendWithRetryResult,
+    CompressionStrategy, RetryBackoffType, RetryStrategy, SendWithRetryError, SendWithRetryResult,
+    send_with_retry_and_size,
 };
 use libdd_trace_utils::span::span_pool::PooledChunks;
-use libdd_trace_utils::span::{trace_utils::compute_top_level_span, TraceData};
+use libdd_trace_utils::span::{TraceData, trace_utils::compute_top_level_span};
 use libdd_trace_utils::tracer_metadata::TracerMetadata;
 use thiserror::Error;
 
@@ -184,7 +184,7 @@ mod tests {
     use bytes::Bytes;
     use libdd_tinybytes::BytesString;
     use libdd_trace_obfuscation::obfuscation_config::ObfuscationConfig;
-    use libdd_trace_utils::span::{v04::SpanBytes, BytesData};
+    use libdd_trace_utils::span::{BytesData, v04::SpanBytes};
     use std::{
         sync::{Arc, Mutex},
         time::Duration,
@@ -193,6 +193,7 @@ mod tests {
     #[derive(Clone, Debug, Default)]
     struct TestCapabilities {
         requests: Arc<Mutex<Vec<http::Request<Bytes>>>>,
+        status: Option<http::StatusCode>,
     }
 
     impl HttpClientCapability for TestCapabilities {
@@ -210,7 +211,7 @@ mod tests {
         ) -> Result<http::Response<Bytes>, libdd_capabilities::HttpError> {
             self.requests.lock().unwrap().push(request);
             Ok(http::Response::builder()
-                .status(http::StatusCode::ACCEPTED)
+                .status(self.status.unwrap_or(http::StatusCode::ACCEPTED))
                 .body(Bytes::new())
                 .unwrap())
         }
@@ -283,9 +284,11 @@ mod tests {
         assert_eq!(request.uri(), "https://example.test/v1/input");
         assert_eq!(request.headers()["dd-api-key"], "test-api-key");
         assert_eq!(request.headers()["x-datadog-trace-count"], "1");
-        assert!(String::from_utf8(request_body(request))
-            .unwrap()
-            .contains("\"_top_level\":1"));
+        assert!(
+            String::from_utf8(request_body(request))
+                .unwrap()
+                .contains("\"_top_level\":1")
+        );
     }
 
     #[test]
@@ -305,6 +308,42 @@ mod tests {
         let (send_succeeded, payload_size) = observation.unwrap();
         assert!(send_succeeded);
         assert!(payload_size > 0);
+    }
+
+    #[test]
+    fn reports_redirects_as_failed_sends() {
+        for status in [
+            http::StatusCode::FOUND,
+            http::StatusCode::TEMPORARY_REDIRECT,
+        ] {
+            let capabilities = TestCapabilities {
+                status: Some(status),
+                ..Default::default()
+            };
+            let mut observed = false;
+            let result = futures::executor::block_on(send_agentless_traces_with_observer(
+                &capabilities,
+                v04_traces(),
+                &metadata(),
+                &config(),
+                false,
+                |result, _| {
+                    assert!(result.is_err());
+                    observed = true;
+                },
+            ));
+
+            assert!(observed);
+            match result {
+                Err(AgentlessError::Send(error)) => {
+                    assert!(
+                        matches!(*error, SendWithRetryError::Http(response, 1) if response.status() == status)
+                    );
+                }
+                other => panic!("expected HTTP {status} error, got {other:?}"),
+            }
+            assert_eq!(capabilities.requests.lock().unwrap().len(), 1);
+        }
     }
 
     #[test]

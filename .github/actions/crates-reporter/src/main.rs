@@ -12,8 +12,8 @@
 //!   affected_crates_count  – integer
 
 use anyhow::Result;
-use cargo_metadata::camino::Utf8Path;
 use cargo_metadata::Package;
+use cargo_metadata::camino::Utf8Path;
 use ci_shared::crate_detection::CrateInfo;
 use ci_shared::git;
 use ci_shared::github_output::set_output;

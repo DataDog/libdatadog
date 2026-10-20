@@ -4,7 +4,7 @@
 use heck::{ToPascalCase, ToSnakeCase};
 use proc_macro::TokenStream;
 use proc_macro2::Span;
-use quote::{format_ident, quote, ToTokens};
+use quote::{ToTokens, format_ident, quote};
 use syn::{FnArg, Ident, ItemTrait, ReturnType, TraitItem, Type};
 
 fn is_unit_type(ty: &Type) -> bool {
@@ -338,7 +338,7 @@ fn gen_handler_trait(
             };
             quote! {
                 fn #name(
-                    &self,
+                    &mut self,
                     #(#params),*
                 ) -> impl ::std::future::Future<Output = #ret> + Send + '_;
             }
@@ -346,7 +346,8 @@ fn gen_handler_trait(
         .collect();
 
     quote! {
-        #vis trait #trait_name: Send + Sync + 'static {
+        /// Requests are handled one at a time, so the methods have exclusive access to the handler.
+        #vis trait #trait_name: Send {
             /// Returns the counter incremented on each received IPC message.
             /// The serve loop uses this to track received payloads.
             fn recv_counter(&self) -> &::std::sync::atomic::AtomicU64;
@@ -453,7 +454,7 @@ fn gen_serve_fn(
 
     quote! {
         pub async fn #serve_fn<H: #trait_name>(
-            handler: ::std::sync::Arc<H>,
+            handler: &mut H,
         ) {
             // Pending 1-byte acks for fire-and-forget methods, flushed via sendmmsg(2) on Linux.
             #[cfg(target_os = "linux")]
@@ -604,7 +605,7 @@ fn gen_channel(
                 quote! {
                     pub fn #method_name(&mut self, #(#params),*) -> bool {
                         #build_req_and_fds
-                        self.0.try_send(__data, &__fds)
+                        self.0.try_send(__data, &__fds).is_ok()
                     }
                 }
             }
@@ -622,7 +623,7 @@ fn gen_channel(
             #(#channel_methods)*
 
             /// Generic fire-and-forget send (used by SidecarSender outbox drain).
-            pub fn try_send_request(&mut self, req: &#enum_name) -> bool {
+            pub fn try_send_request(&mut self, req: &#enum_name) -> ::std::io::Result<()> {
                 let mut __sink = libdd_ipc::handles::FdSink::new();
                 libdd_ipc::handles::TransferHandles::copy_handles(req, &mut __sink).ok();
                 let __fds = __sink.into_fds();
@@ -634,11 +635,12 @@ fn gen_channel(
                 let __max = libdd_ipc::max_message_size();
                 if __data.len() > __max {
                     ::tracing::warn!(?req, len = __data.len(), max = __max, "IPC message too large");
+                    return Err(::std::io::Error::from(::std::io::ErrorKind::FileTooLarge));
                 }
                 if req.expects_response() {
                     self.0.try_send(__data, &__fds)
                 } else {
-                    self.0.conn.try_send_raw(__data, &__fds).is_ok()
+                    self.0.conn.try_send_raw(__data, &__fds)
                 }
             }
 

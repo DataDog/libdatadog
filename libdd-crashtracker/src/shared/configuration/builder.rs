@@ -5,7 +5,7 @@ use alloc::borrow::Cow;
 use core::time::Duration;
 use libdd_common::Endpoint;
 
-use super::{default_max_threads, CrashtrackerConfiguration, StacktraceCollection};
+use super::{CrashtrackerConfiguration, StacktraceCollection, default_max_threads};
 
 #[derive(Debug, Default)]
 pub struct CrashtrackerConfigurationBuilder {
@@ -273,23 +273,29 @@ mod tests {
             StacktraceCollection::WithoutSymbols,
             StacktraceCollection::EnabledWithInprocessSymbols,
         ] {
-            assert!(CrashtrackerConfiguration::builder()
-                .resolve_frames(mode)
+            assert!(
+                CrashtrackerConfiguration::builder()
+                    .resolve_frames(mode)
+                    .trim_signal_delivery_frames(true)
+                    .build()
+                    .is_err()
+            );
+            assert!(
+                CrashtrackerConfiguration::builder()
+                    .resolve_frames(mode)
+                    .name_unresolved_frames(true)
+                    .build()
+                    .is_err()
+            );
+        }
+        assert!(
+            CrashtrackerConfiguration::builder()
+                .resolve_frames(StacktraceCollection::EnabledWithSymbolsInReceiver)
                 .trim_signal_delivery_frames(true)
-                .build()
-                .is_err());
-            assert!(CrashtrackerConfiguration::builder()
-                .resolve_frames(mode)
                 .name_unresolved_frames(true)
                 .build()
-                .is_err());
-        }
-        assert!(CrashtrackerConfiguration::builder()
-            .resolve_frames(StacktraceCollection::EnabledWithSymbolsInReceiver)
-            .trim_signal_delivery_frames(true)
-            .name_unresolved_frames(true)
-            .build()
-            .is_ok());
+                .is_ok()
+        );
     }
 
     #[test]

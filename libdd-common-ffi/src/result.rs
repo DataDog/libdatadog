@@ -1,5 +1,6 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+#![cfg(feature = "std")]
 
 use crate::Error;
 
@@ -41,7 +42,7 @@ impl From<Error> for VoidResult {
 }
 
 /// A generic result type for when an operation may fail,
-/// or may return <T> in case of success.
+/// or may return `<T>` in case of success.
 #[repr(C)]
 pub enum Result<T> {
     Ok(T),

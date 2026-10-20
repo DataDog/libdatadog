@@ -4,7 +4,7 @@
 pub mod dict;
 
 use crate::span::v04::{AttributeAnyValue, AttributeArrayValue, SpanEvent, SpanLink};
-use crate::span::{SharedDictBytes, SpanText, TraceData, SPAN_LINK_FLAGS_SET_SENTINEL};
+use crate::span::{SPAN_LINK_FLAGS_SET_SENTINEL, SharedDictBytes, SpanText, TraceData};
 use anyhow::Result;
 use indexmap::map::RawEntryApiV1;
 use libdd_tinybytes::BytesString;
@@ -295,8 +295,8 @@ pub fn from_v04_span<T: TraceData>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::span::v04::{SpanBytes, VecMap};
     use crate::span::BytesData;
+    use crate::span::v04::{SpanBytes, VecMap};
     use libdd_tinybytes::BytesString;
 
     /// Returns the JSON string interned in `meta` under `key`, if present.

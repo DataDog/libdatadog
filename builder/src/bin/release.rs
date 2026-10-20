@@ -3,13 +3,13 @@
 
 use std::env;
 
-use build_common::{determine_paths, OutPaths};
+use build_common::{OutPaths, determine_paths};
 
 use builder::builder::Builder;
 use builder::common::Common;
 #[cfg(feature = "crashtracker")]
 use builder::crashtracker::CrashTracker;
-use builder::features::{profiling_features, Selection};
+use builder::features::{Selection, profiling_features};
 #[cfg(feature = "profiling")]
 use builder::profiling::Profiling;
 use builder::utils::project_root;

@@ -141,8 +141,8 @@ pub async fn get_changed_files(
 mod tests {
     use super::*;
     use http::Uri;
-    use httpmock::prelude::*;
     use httpmock::MockServer;
+    use httpmock::prelude::*;
     use mockall::predicate::*;
     use serde_json::json;
     use std::io::{Error as IoError, ErrorKind};
@@ -207,10 +207,12 @@ mod tests {
         let result = git_ops.get_file_content("src/test.rs", "main");
 
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Failed to execute git show command"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Failed to execute git show command")
+        );
     }
 
     #[test]
@@ -263,10 +265,12 @@ mod tests {
 
         // A genuine git failure still surfaces as an error.
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Git show command failed"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Git show command failed")
+        );
     }
 
     #[test]
@@ -298,10 +302,12 @@ mod tests {
         let result = git_ops.get_file_content("src/binary.rs", "main");
 
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Failed to parse file content as UTF-8"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Failed to parse file content as UTF-8")
+        );
     }
 
     #[test]
@@ -368,10 +374,12 @@ mod tests {
         let result = git_ops.get_all_rust_files();
 
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Failed to execute git ls-files command"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Failed to execute git ls-files command")
+        );
     }
 
     #[test]
@@ -391,10 +399,12 @@ mod tests {
         let result = git_ops.get_all_rust_files();
 
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Git ls-files command failed"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Git ls-files command failed")
+        );
     }
 
     // Tests for get_changed_files
@@ -526,10 +536,12 @@ mod tests {
         let result = get_changed_files(&octocrab, "test-owner", "test-repo", 123).await;
 
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Failed to list PR files"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Failed to list PR files")
+        );
 
         list_files_mock.assert();
     }

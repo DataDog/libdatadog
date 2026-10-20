@@ -325,23 +325,25 @@ impl<'a, T: Copy> ThinSlice<'a, T> {
         slice: &[T],
         spare_capacity: &'a mut [MaybeUninit<u8>],
     ) -> Self {
-        let allocation = spare_capacity.as_mut_ptr().cast::<u8>();
+        unsafe {
+            let allocation = spare_capacity.as_mut_ptr().cast::<u8>();
 
-        // Write the size prefix
-        let size_bytes = slice.len().to_ne_bytes();
-        core::ptr::copy_nonoverlapping(size_bytes.as_ptr(), allocation, USIZE_WIDTH);
+            // Write the size prefix
+            let size_bytes = slice.len().to_ne_bytes();
+            core::ptr::copy_nonoverlapping(size_bytes.as_ptr(), allocation, USIZE_WIDTH);
 
-        // Write the data
-        let data = unsafe { allocation.add(USIZE_WIDTH).cast::<T>() };
-        core::ptr::copy_nonoverlapping(slice.as_ptr(), data, slice.len());
+            // Write the data
+            let data = allocation.add(USIZE_WIDTH).cast::<T>();
+            core::ptr::copy_nonoverlapping(slice.as_ptr(), data, slice.len());
 
-        let size_ptr = NonNull::new_unchecked(allocation);
-        let thin_ptr = ThinPtr {
-            size_ptr,
-            _marker: PhantomData,
-        };
-        let _marker = PhantomData;
-        ThinSlice { thin_ptr, _marker }
+            let size_ptr = NonNull::new_unchecked(allocation);
+            let thin_ptr = ThinPtr {
+                size_ptr,
+                _marker: PhantomData,
+            };
+            let _marker = PhantomData;
+            ThinSlice { thin_ptr, _marker }
+        }
     }
 
     /// Returns the memory layout of this slice.
@@ -437,8 +439,10 @@ impl<'a> ThinStr<'a> {
         str: &str,
         spare_capacity: &'a mut [MaybeUninit<u8>],
     ) -> Self {
-        let inner = ThinSlice::from_slice_in_unchecked(str.as_bytes(), spare_capacity);
-        ThinStr { inner }
+        unsafe {
+            let inner = ThinSlice::from_slice_in_unchecked(str.as_bytes(), spare_capacity);
+            ThinStr { inner }
+        }
     }
 
     /// Returns the memory layout of this string.

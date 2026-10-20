@@ -1,6 +1,5 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
-
 //! Implementation of the Linux parts of the [OTEL process
 //! context specification](https://github.com/open-telemetry/opentelemetry-specification/blob/main/oteps/profiles/4719-process-ctx.md).
 //!
@@ -74,7 +73,7 @@ mod tests {
 
     use super::ProcessContextSelfReader;
     use libdd_trace_protobuf::opentelemetry::proto::common::v1::{
-        any_value, AnyValue, KeyValue, ProcessContext,
+        AnyValue, KeyValue, ProcessContext, any_value,
     };
     use libdd_trace_protobuf::opentelemetry::proto::resource::v1::Resource;
     use prost::Message;
@@ -84,7 +83,7 @@ mod tests {
         use core::ptr;
         use std::io;
 
-        use super::super::{reader, MappingHeaderSnapshot};
+        use super::super::{MappingHeaderSnapshot, reader};
 
         pub(super) fn read_process_context() -> io::Result<MappingHeaderSnapshot> {
             let mapping_addr = reader::linux::find_otel_mapping()?;

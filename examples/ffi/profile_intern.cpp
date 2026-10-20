@@ -120,7 +120,7 @@ int main(void) {
 
     int64_t value = i * 10;
     ddog_Slice_I64 values = {.ptr = &value, .len = 1};
-    int64_t timestamp = 3 + 800 * i;
+    int64_t timestamp = 3 + int64_t{800} * i;
     check_result(ddog_prof_Profile_intern_sample(profile, stacktrace, values, labels, timestamp));
   }
   std::chrono::time_point<std::chrono::system_clock> end = std::chrono::system_clock::now();

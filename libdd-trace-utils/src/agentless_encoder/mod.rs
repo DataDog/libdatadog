@@ -26,14 +26,14 @@
 //!
 //! TODO: span normalization (service/name/resource/type truncation + defaults)
 
-use crate::hex::{hex_low_u64, hex_u128, hex_u64};
-use crate::span::v04::{AttributeAnyValue, AttributeArrayValue, Span, SpanEvent, SpanLink};
+use crate::hex::{hex_low_u64, hex_u64, hex_u128};
 use crate::span::v1;
-use crate::span::{TraceData, SPAN_LINK_FLAGS_SET_SENTINEL};
+use crate::span::v04::{AttributeAnyValue, AttributeArrayValue, Span, SpanEvent, SpanLink};
+use crate::span::{SPAN_LINK_FLAGS_SET_SENTINEL, TraceData};
 use crate::tracer_metadata::TracerMetadata;
 use serde::{
-    ser::{SerializeMap, SerializeSeq},
     Serialize, Serializer,
+    ser::{SerializeMap, SerializeSeq},
 };
 use std::borrow::{Borrow, Cow};
 use std::collections::HashSet;
@@ -60,7 +60,7 @@ const TRUNCATION_SUFFIX: &str = "...";
 ///
 /// The shape of the input of the macro is made to look like a closure
 /// Contrary to a closure, the names of the types have to be named in full
-/// ```ignore
+/// ```text
 ///        Optional generic| serializer|
 ///            parameter   |.  |               Captured variables from env
 ///         --------------  --- ---------------------------------------------------------

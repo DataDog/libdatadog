@@ -2,12 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{
+    RemoteConfigPath, RemoteConfigProduct,
     config::{
         agent_config::{self, AgentConfigFile},
         agent_task::{self, AgentTaskFile},
         dynamic::{self, DynamicConfigFile},
     },
-    RemoteConfigPath, RemoteConfigProduct,
 };
 use std::collections::HashMap;
 use std::fmt::{Debug, Display, Formatter, Result};

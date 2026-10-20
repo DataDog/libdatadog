@@ -2,6 +2,23 @@
 
 
 
+## [11.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-stats-v10.0.0..libdd-trace-stats-v11.0.0) - 2026-10-02
+
+### Added
+
+- Authenticate sidecar connections and shared memory ([#2551](https://github.com/datadog/libdatadog/issues/2551)) - ([d120c10](https://github.com/datadog/libdatadog/commit/d120c1090a03fa7274fed4121344d25660081895))
+- Add mutable metadata ([#2545](https://github.com/datadog/libdatadog/issues/2545)) - ([823002e](https://github.com/datadog/libdatadog/commit/823002e431dff914aa7332d2647ec73d0537f9f3))
+
+### Changed
+
+- Update workspace to Rust 2024 edition ([#2575](https://github.com/datadog/libdatadog/issues/2575)) - ([620a212](https://github.com/datadog/libdatadog/commit/620a212fc91e128234f48b29d657c71d6ad5caed))
+
+### Fixed
+
+- Fix precedence for http endpoint ([#2582](https://github.com/datadog/libdatadog/issues/2582)) - ([2b00b95](https://github.com/datadog/libdatadog/commit/2b00b955ec2ed5cdaca35ee60ebaf343099d4e23))
+
+
+
 ## [10.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-stats-v9.0.0..libdd-trace-stats-v10.0.0) - 2026-09-24
 
 ### Added

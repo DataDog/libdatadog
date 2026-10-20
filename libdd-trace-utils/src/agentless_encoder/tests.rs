@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::encode_payload;
-use crate::span::v04::{AttributeAnyValue, AttributeArrayValue, Span, SpanEvent, SpanLink, VecMap};
 use crate::span::BytesData;
+use crate::span::v04::{AttributeAnyValue, AttributeArrayValue, Span, SpanEvent, SpanLink, VecMap};
 use crate::tracer_metadata::TracerMetadata;
 use libdd_common::mutable_metadata::MutableMetadataHandle;
 use libdd_tinybytes::{Bytes, BytesString};
@@ -99,9 +99,10 @@ fn span_preserves_escaped_dynamic_values_ids_and_metrics_bytes() {
 
     let encoded = encode_payload(&[vec![span]], &TracerMetadata::default(), true).unwrap();
     let expected = expected_payload_with_span(
-        r#"{"trace_id":"aabbccddeeff0011","span_id":"0000000000000001","parent_id":"0000000000000000","name":"op\"\n","resource":"op\"\n","service":"svc\\","error":1,"start":0,"duration":2,"type":"web\t","meta":{"tag\"":"line\n\\","_dd.p.tid":"1122334455667788"},"metrics":{"_top_level":2,"fraction":1.5,"_trace_root":1}}"#,
+        r#"{"trace_id":"aabbccddeeff0011","span_id":"0000000000000001","parent_id":"0000000000000000","name":"op\"\n","resource":"op\"\n","service":"svc\\","error":1,"start":0,"duration":2,"type":"web\t","meta":{"tag\"":"line\n\\","_dd.p.tid":"1122334455667788"},"metrics":{"fraction":1.5,"_top_level":2,"_trace_root":1}}"#,
     );
-    assert_eq!(encoded, expected.as_bytes());
+    println!("{}", str::from_utf8(&encoded).unwrap());
+    assert_eq!(str::from_utf8(&encoded), Ok(expected.as_str()));
 }
 
 #[cfg_attr(miri, ignore)] // serde_json/rmp_serde overhead is prohibitively slow under Miri
@@ -126,7 +127,7 @@ fn defensive_dedup_preserves_last_meta_and_metric_values() {
     let expected = expected_payload_with_span(
         r#"{"trace_id":"0000000000000001","span_id":"0000000000000002","parent_id":"0000000000000009","name":"op","resource":"op","service":"","error":0,"start":3,"duration":4,"meta":{"duplicate":"last"},"metrics":{"duplicate":2.5}}"#,
     );
-    assert_eq!(encoded, expected.as_bytes());
+    assert_eq!(str::from_utf8(&encoded), Ok(expected.as_str()));
 }
 
 #[cfg_attr(miri, ignore)] // serde_json/rmp_serde overhead is prohibitively slow under Miri
@@ -154,9 +155,9 @@ fn existing_synthetic_meta_and_root_metric_values_win() {
 
     let encoded = encode_payload(&[vec![span]], &TracerMetadata::default(), false).unwrap();
     let expected = expected_payload_with_span(
-        r#"{"trace_id":"0000000000000001","span_id":"0000000000000002","parent_id":"0000000000000000","name":"op","resource":"op","service":"","error":0,"start":3,"duration":4,"meta":{"_dd.span_links":"kept-links","events":"kept-events","_dd.compute_stats":"kept-stats","_dd.p.tid":"kept-tid"},"metrics":{"_trace_root":7.5}}"#,
+        r#"{"trace_id":"0000000000000001","span_id":"0000000000000002","parent_id":"0000000000000000","name":"op","resource":"op","service":"","error":0,"start":3,"duration":4,"meta":{"_dd.p.tid":"kept-tid","_dd.compute_stats":"kept-stats","events":"kept-events","_dd.span_links":"kept-links"},"metrics":{"_trace_root":7.5}}"#,
     );
-    assert_eq!(encoded, expected.as_bytes());
+    assert_eq!(str::from_utf8(&encoded), Ok(expected.as_str()));
 }
 
 #[cfg_attr(miri, ignore)] // serde_json/rmp_serde overhead is prohibitively slow under Miri
@@ -194,7 +195,7 @@ fn span_links_and_events_preserve_nested_serde_json_bytes() {
     let expected = expected_payload_with_span(
         r#"{"trace_id":"0000000000000001","span_id":"0000000000000002","parent_id":"0000000000000009","name":"op","resource":"op","service":"","error":0,"start":3,"duration":4,"meta":{"_dd.span_links":"[{\"trace_id\":\"00000000000000020000000000000001\",\"span_id\":\"0000000000000003\",\"attributes\":{\"role\":\"queue\"},\"flags\":1,\"tracestate\":\"dd=s:1\"}]","events":"[{\"name\":\"exception\",\"time_unix_nano\":7,\"attributes\":{\"message\":\"bad\"}}]"},"metrics":{}}"#,
     );
-    assert_eq!(encoded, expected.as_bytes());
+    assert_eq!(str::from_utf8(&encoded), Ok(expected.as_str()));
 }
 
 #[cfg_attr(miri, ignore)] // serde_json/rmp_serde overhead is prohibitively slow under Miri
@@ -223,7 +224,7 @@ fn meta_struct_preserves_exact_bytes_and_propagates_malformed_values() {
     let expected = expected_payload_with_span(
         r#"{"trace_id":"0000000000000001","span_id":"0000000000000002","parent_id":"0000000000000009","name":"op","resource":"op","service":"","error":0,"start":3,"duration":4,"meta":{},"metrics":{},"meta_struct":{"app\"key":{"answer":42}}}"#,
     );
-    assert_eq!(encoded, expected.as_bytes());
+    assert_eq!(str::from_utf8(&encoded), Ok(expected.as_str()));
 
     span.meta_struct
         .insert(bs("malformed"), Bytes::from(vec![0xc1]));

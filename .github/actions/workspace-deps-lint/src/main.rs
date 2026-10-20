@@ -18,14 +18,14 @@
 //!
 //! Path dependencies are crates of this repository, not external dependencies, so they are ignored.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use cargo_metadata::MetadataCommand;
 use clap::Parser;
 use std::path::{Path, PathBuf};
 
 mod lint;
 
-use lint::{lint_member, lint_workspace_dependencies, Violation};
+use lint::{Violation, lint_member, lint_workspace_dependencies};
 
 #[derive(Parser)]
 #[command(
@@ -87,7 +87,10 @@ fn main() -> Result<()> {
     // Sanity check: if we selected less packages than args.package, it means that some of them
     // don't exist.
     if manifests.len() < args.package.len() {
-        bail!("One (or more) of the packages specified through `--packages`/`--p` couldn't be found in the root workspace manifest: {}", args.package.join(","));
+        bail!(
+            "One (or more) of the packages specified through `--packages`/`--p` couldn't be found in the root workspace manifest: {}",
+            args.package.join(",")
+        );
     }
 
     manifests.sort();

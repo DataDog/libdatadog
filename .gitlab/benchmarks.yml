@@ -30,7 +30,7 @@
 # both candidate and baseline for its assigned crates on the same runner (so the comparison stays
 # noise-controlled), then benchmarks_combine merges the shards' results into a single PR comment.
 benchmarks:
-  parallel: 2
+  parallel: 3
   tags: ["runner:apm-k8s-tweaked-metal"]
   needs:
     # Not created on main (which runs the full suite) -- hence optional.
@@ -41,6 +41,15 @@ benchmarks:
     name: $BASE_CI_IMAGE
   rules: *benchmark_run_rules
   timeout: 80m
+  retry:
+    max: 2
+    # Infra failures only; a script_failure (a real benchmark failure) never re-runs.
+    when:
+      - unknown_failure
+      - data_integrity_failure
+      - runner_system_failure
+      - scheduler_failure
+      - api_failure
   script:
     # Decide which crates THIS shard benchmarks. Runs first, while $CI_PROJECT_DIR is the libdatadog
     # checkout (so ./benchmark/... and the compute_impacted_crates artifacts are available). The
@@ -65,6 +74,7 @@ benchmarks:
           echo "Shard ${CI_NODE_INDEX:-1}/${CI_NODE_TOTAL:-1} crates: $BENCH_PACKAGES"
           ;;
       esac
+    - export CACHE_FAILURES_LOG="${CI_PROJECT_DIR}/.cache-failures.log" && rm -f "${CACHE_FAILURES_LOG}"
     - export ARTIFACTS_DIR="$(pwd)/reports" && (mkdir "${ARTIFACTS_DIR}" || :)
     - !reference [.clone_benchmarking_platform, script]
     - cd /platform
@@ -108,6 +118,15 @@ benchmarks:
       fi
     # Hand this shard's reports to benchmarks_combine, which posts the single PR comment.
     - mv "${ARTIFACTS_DIR}" "${CI_PROJECT_DIR}/reports-${CI_NODE_INDEX:-1}"
+  after_script:
+    - |
+      set -u
+      f="${CI_PROJECT_DIR}/.cache-failures.log"
+      if [[ -e "$f" ]]; then
+        echo "" >&2
+        echo "CACHE FAILED:" >&2
+        cat "$f" >&2
+      fi
   artifacts:
     name: "reports-${CI_NODE_INDEX}"
     paths:
@@ -121,7 +140,6 @@ benchmarks:
     UPSTREAM_REPO_URL: "https://github.com/DataDog/libdatadog" # The HTTP URL to the project's repository.
 
     KUBERNETES_SERVICE_ACCOUNT_OVERWRITE: libdatadog
-    FF_USE_LEGACY_KUBERNETES_EXECUTION_STRATEGY: "true"
 
     # sccache, consumed by benchmark/run_benchmarks_ci.sh. Its own key prefix,
     # not libddprof-build's: that pipeline builds --release and cargo bench uses
@@ -133,6 +151,7 @@ benchmarks:
     SCCACHE_REGION: us-east-1
     SCCACHE_S3_KEY_PREFIX: libdatadog/benchmarks/sccache
     SCCACHE_ERROR_LOG: /tmp/sccache.log
+    SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
     # Required: candidate and baseline compile at different absolute paths, and
     # without a basedir sccache keys on the path, so they would share nothing.
     # Both leaf dirs, not the parent: sccache keys on the unmatched remainder.
@@ -180,4 +199,3 @@ benchmarks_combine:
     UPSTREAM_REPO_URL: "https://github.com/DataDog/libdatadog"
 
     KUBERNETES_SERVICE_ACCOUNT_OVERWRITE: libdatadog
-    FF_USE_LEGACY_KUBERNETES_EXECUTION_STRATEGY: "true"

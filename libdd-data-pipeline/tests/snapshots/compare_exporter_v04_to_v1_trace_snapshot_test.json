@@ -8,6 +8,7 @@
     "parent_id": 0,
     "type": "web",
     "meta": {
+      "_dd.sdk.otlp_export": "false",
       "_dd.hostname": "my-host",
       "_dd.origin": "lambda",
       "_dd.p.dm": "-4",

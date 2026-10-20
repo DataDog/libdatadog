@@ -1,7 +1,7 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use criterion::{black_box, criterion_group, Criterion};
+use criterion::{Criterion, black_box, criterion_group};
 use libdd_trace_obfuscation::redis;
 
 fn obfuscate_redis_string_benchmark(c: &mut Criterion) {

@@ -11,12 +11,12 @@
 
 mod agentless;
 
+pub use agentless::{
+    AgentlessError, AgentlessTraceConfig, DEFAULT_AGENTLESS_TIMEOUT, send_agentless_traces,
+    send_agentless_traces_with_observer,
+};
 #[cfg(feature = "stats-obfuscation")]
 pub use agentless::{
-    agentless_stats_version, AgentlessStatsConfig, AgentlessV04Error, AgentlessV04Exporter,
-};
-pub use agentless::{
-    send_agentless_traces, send_agentless_traces_with_observer, AgentlessError,
-    AgentlessTraceConfig, DEFAULT_AGENTLESS_TIMEOUT,
+    AgentlessStatsConfig, AgentlessV04Error, AgentlessV04Exporter, agentless_stats_version,
 };
 pub use libdd_trace_utils::tracer_metadata::TracerMetadata;

@@ -1,7 +1,7 @@
 [package]
 name = "clippy-annotation-reporter"
 rust-version = "1.87.0"
-edition = "2021"
+edition = "2024"
 version = "0.1.0"
 description = "GitHub Action for reporting clippy annotation usage in PRs"
 homepage = "https://github.com/DataDog/libdatadog/tree/main/.github/actions/clippy-annotation-reporter"

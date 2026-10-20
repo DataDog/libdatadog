@@ -7,7 +7,7 @@
 //! - macOS: `AF_UNIX SOCK_DGRAM` with an fd-passing connection handshake. This emulates the
 //!   semantics which SOCK_SEQPACKET provides us on Linux.
 
-use nix::sys::socket::{recvmsg, sendmsg, AddressFamily, SockFlag, SockType};
+use nix::sys::socket::{AddressFamily, SockFlag, SockType, recvmsg, sendmsg};
 pub use nix::sys::socket::{ControlMessage, ControlMessageOwned, MsgFlags, UnixAddr};
 #[cfg(target_os = "linux")]
 use std::mem::MaybeUninit;
@@ -32,9 +32,9 @@ pub use macos::is_listening;
 
 use crate::platform::message::MAX_FDS;
 #[cfg(not(target_os = "macos"))]
-use linux::get_peer_credentials;
+pub use linux::get_peer_credentials;
 #[cfg(target_os = "macos")]
-use macos::get_peer_credentials;
+pub use macos::get_peer_credentials;
 
 /// Global socket buffer size. Determines `max_message_size()` and is applied to new connections.
 static SOCKET_BUFFER_SIZE: AtomicUsize = AtomicUsize::new(4 * 1024 * 1024);
@@ -56,12 +56,7 @@ pub fn max_message_size() -> usize {
 /// transferred out-of-band via `SCM_RIGHTS`; non-zero on Windows (see `sockets.rs`).
 pub const HANDLE_SUFFIX_SIZE: usize = 0;
 
-/// Credentials of the connected peer, obtained once at connection time.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct PeerCredentials {
-    pub pid: u32,
-    pub uid: u32,
-}
+pub use crate::platform::peer_credentials::PeerCredentials;
 
 pub(super) fn create_unix_socket(sock_type: SockType) -> io::Result<OwnedFd> {
     let fd = nix::sys::socket::socket(AddressFamily::Unix, sock_type, SockFlag::empty(), None)
@@ -457,6 +452,27 @@ impl SeqpacketConn {
 
     pub fn as_raw_fd(&self) -> RawFd {
         self.inner.as_raw_fd()
+    }
+
+    /// Closes the sockets of a connection inherited by a fork child from a thread which did not
+    /// survive the fork, so that the peer drops the connection.
+    ///
+    /// # Safety
+    ///
+    /// The connection must never be used or dropped afterwards, but leaked: its fd numbers may get
+    /// reused. That thread may have been in the middle of changing any of its state, so leaking
+    /// it is the only safe option anyway.
+    pub unsafe fn close_inherited_fds(&self) {
+        let fds = [
+            Some(self.inner.as_raw_fd()),
+            #[cfg(target_os = "macos")]
+            self._peer.as_ref().map(|fd| fd.as_raw_fd()),
+            #[cfg(target_os = "macos")]
+            self.liveness.as_ref().map(|fd| fd.as_raw_fd()),
+        ];
+        for fd in fds.into_iter().flatten() {
+            unsafe { libc::close(fd) };
+        }
     }
 }
 

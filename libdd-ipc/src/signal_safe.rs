@@ -87,7 +87,7 @@ impl PreparedRequest {
     /// continue sending and receiving concurrently.
     #[inline(always)]
     pub unsafe fn exchange(&self) -> i32 {
-        exchange(self)
+        unsafe { exchange(self) }
     }
 }
 
@@ -109,46 +109,24 @@ struct KernelPollFd {
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[inline(never)]
 unsafe fn exchange(channel: &PreparedRequest) -> i32 {
-    // Raw Linux syscalls return `-errno` directly. They do not set libc's thread-local `errno`.
-    const EINTR: isize = 4;
-    const EAGAIN: isize = 11;
-    const CLOCK_MONOTONIC: usize = 1;
-    const MSG_DONTWAIT: usize = 0x40;
-    const MSG_NOSIGNAL: usize = 0x4000;
-    const POLLOUT: i16 = 4;
-    const POLLHUP: i16 = 16;
+    unsafe {
+        // Raw Linux syscalls return `-errno` directly. They do not set libc's thread-local `errno`.
+        const EINTR: isize = 4;
+        const EAGAIN: isize = 11;
+        const CLOCK_MONOTONIC: usize = 1;
+        const MSG_DONTWAIT: usize = 0x40;
+        const MSG_NOSIGNAL: usize = 0x4000;
+        const POLLOUT: i16 = 4;
+        const POLLHUP: i16 = 16;
 
-    let send_fd = channel.send_fd;
-    let receive_fd = channel.receive_fd;
-    let request_len = channel.request_len;
+        let send_fd = channel.send_fd;
+        let receive_fd = channel.receive_fd;
+        let request_len = channel.request_len;
 
-    let mut now = KernelTimespec {
-        seconds: 0,
-        nanoseconds: 0,
-    };
-    let result = raw_syscall6(
-        libc::SYS_clock_gettime as usize,
-        CLOCK_MONOTONIC,
-        (&raw mut now).cast::<u8>() as usize,
-        0,
-        0,
-        0,
-        0,
-    );
-    if result < 0 {
-        return result as i32;
-    }
-    // Use one absolute deadline for send, backpressure, and completion. Restarting a relative
-    // timeout after EINTR or EAGAIN could otherwise keep process termination alive
-    // indefinitely. Wrapping arithmetic is intentional: debug overflow checks would introduce
-    // panic paths.
-    let deadline_seconds = now.seconds.wrapping_add(10);
-    let deadline_nanoseconds = now.nanoseconds;
-    // Poll when send hits backpressure, and after sending to await pipe closure.
-    let mut sent = false;
-    let mut poll = false;
-
-    loop {
+        let mut now = KernelTimespec {
+            seconds: 0,
+            nanoseconds: 0,
+        };
         let result = raw_syscall6(
             libc::SYS_clock_gettime as usize,
             CLOCK_MONOTONIC,
@@ -161,103 +139,128 @@ unsafe fn exchange(channel: &PreparedRequest) -> i32 {
         if result < 0 {
             return result as i32;
         }
-        let mut remaining_seconds = deadline_seconds.wrapping_sub(now.seconds);
-        let mut remaining_nanoseconds = deadline_nanoseconds.wrapping_sub(now.nanoseconds);
-        if remaining_nanoseconds < 0 {
-            remaining_nanoseconds = remaining_nanoseconds.wrapping_add(1_000_000_000);
-            remaining_seconds = remaining_seconds.wrapping_sub(1);
-        }
-        if remaining_seconds < 0 || (remaining_seconds == 0 && remaining_nanoseconds == 0) {
-            return -libc::ETIMEDOUT;
-        }
-        let mut remaining = KernelTimespec {
-            seconds: remaining_seconds,
-            nanoseconds: remaining_nanoseconds,
-        };
+        // Use one absolute deadline for send, backpressure, and completion. Restarting a relative
+        // timeout after EINTR or EAGAIN could otherwise keep process termination alive
+        // indefinitely. Wrapping arithmetic is intentional: debug overflow checks would introduce
+        // panic paths.
+        let deadline_seconds = now.seconds.wrapping_add(10);
+        let deadline_nanoseconds = now.nanoseconds;
+        // Poll when send hits backpressure, and after sending to await pipe closure.
+        let mut sent = false;
+        let mut poll = false;
 
-        if poll {
-            let mut pollfd = KernelPollFd {
-                fd: if sent { receive_fd } else { send_fd },
-                // POLLHUP is reported even with no requested events. No pipe read is needed.
-                events: if sent { 0 } else { POLLOUT },
-                revents: 0,
-            };
+        loop {
             let result = raw_syscall6(
-                libc::SYS_ppoll as usize,
-                (&raw mut pollfd).cast::<u8>() as usize,
-                1,
-                (&raw mut remaining).cast::<u8>() as usize,
+                libc::SYS_clock_gettime as usize,
+                CLOCK_MONOTONIC,
+                (&raw mut now).cast::<u8>() as usize,
                 0,
-                // The kernel's 64-bit signal-set size is eight bytes. No mask is supplied, but
-                // passing the ABI size keeps this a valid direct ppoll syscall on both targets.
-                8,
+                0,
+                0,
                 0,
             );
-            if result > 0 {
-                if sent {
-                    return if pollfd.revents & POLLHUP != 0 {
-                        0
-                    } else {
-                        -libc::EIO
-                    };
+            if result < 0 {
+                return result as i32;
+            }
+            let mut remaining_seconds = deadline_seconds.wrapping_sub(now.seconds);
+            let mut remaining_nanoseconds = deadline_nanoseconds.wrapping_sub(now.nanoseconds);
+            if remaining_nanoseconds < 0 {
+                remaining_nanoseconds = remaining_nanoseconds.wrapping_add(1_000_000_000);
+                remaining_seconds = remaining_seconds.wrapping_sub(1);
+            }
+            if remaining_seconds < 0 || (remaining_seconds == 0 && remaining_nanoseconds == 0) {
+                return -libc::ETIMEDOUT;
+            }
+            let mut remaining = KernelTimespec {
+                seconds: remaining_seconds,
+                nanoseconds: remaining_nanoseconds,
+            };
+
+            if poll {
+                let mut pollfd = KernelPollFd {
+                    fd: if sent { receive_fd } else { send_fd },
+                    // POLLHUP is reported even with no requested events. No pipe read is needed.
+                    events: if sent { 0 } else { POLLOUT },
+                    revents: 0,
+                };
+                let result = raw_syscall6(
+                    libc::SYS_ppoll as usize,
+                    (&raw mut pollfd).cast::<u8>() as usize,
+                    1,
+                    (&raw mut remaining).cast::<u8>() as usize,
+                    0,
+                    // The kernel's 64-bit signal-set size is eight bytes. No mask is supplied, but
+                    // passing the ABI size keeps this a valid direct ppoll syscall on both
+                    // targets.
+                    8,
+                    0,
+                );
+                if result > 0 {
+                    if sent {
+                        return if pollfd.revents & POLLHUP != 0 {
+                            0
+                        } else {
+                            -libc::EIO
+                        };
+                    }
+                    poll = false;
+                    continue;
                 }
-                poll = false;
+                if result == -EINTR {
+                    continue;
+                }
+                if result == 0 {
+                    return -libc::ETIMEDOUT;
+                }
+                return result as i32;
+            }
+
+            let result = raw_syscall6(
+                libc::SYS_sendmsg as usize,
+                send_fd as usize,
+                (&raw const channel.message) as usize,
+                // Nonblocking I/O lets the single ppoll deadline bound backpressure. MSG_NOSIGNAL
+                // prevents a closed sidecar socket from delivering SIGPIPE to the raw worker.
+                MSG_DONTWAIT | MSG_NOSIGNAL,
+                0,
+                0,
+                0,
+            );
+            // SOCK_SEQPACKET preserves message boundaries: a positive short send is a protocol
+            // failure rather than progress that can be resumed with a pointer offset.
+            if result == request_len as isize {
+                // The packet now owns the transferred writer. Release our copy so the server's
+                // close produces EOF. Taking ownership also prevents a second close during drop.
+                if let Some(completion) = channel.completion.replace(None) {
+                    raw_syscall6(
+                        libc::SYS_close as usize,
+                        completion.into_raw_fd() as usize,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                    );
+                }
+                sent = true;
+                poll = true;
                 continue;
             }
+
             if result == -EINTR {
                 continue;
             }
-            if result == 0 {
-                return -libc::ETIMEDOUT;
+            if result == -EAGAIN {
+                // Retry the send after readiness, within the original deadline.
+                poll = true;
+                continue;
             }
-            return result as i32;
-        }
-
-        let result = raw_syscall6(
-            libc::SYS_sendmsg as usize,
-            send_fd as usize,
-            (&raw const channel.message) as usize,
-            // Nonblocking I/O lets the single ppoll deadline bound backpressure. MSG_NOSIGNAL
-            // prevents a closed sidecar socket from delivering SIGPIPE to the raw worker.
-            MSG_DONTWAIT | MSG_NOSIGNAL,
-            0,
-            0,
-            0,
-        );
-        // SOCK_SEQPACKET preserves message boundaries: a positive short send is a protocol
-        // failure rather than progress that can be resumed with a pointer offset.
-        if result == request_len as isize {
-            // The packet now owns the transferred writer. Release our copy so the server's
-            // close produces EOF. Taking ownership also prevents a second close during drop.
-            if let Some(completion) = channel.completion.replace(None) {
-                raw_syscall6(
-                    libc::SYS_close as usize,
-                    completion.into_raw_fd() as usize,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                );
+            if result < 0 {
+                return result as i32;
             }
-            sent = true;
-            poll = true;
-            continue;
+            // Any other nonnegative result is an impossible short packet for this protocol.
+            return -libc::EPROTO;
         }
-
-        if result == -EINTR {
-            continue;
-        }
-        if result == -EAGAIN {
-            // Retry the send after readiness, within the original deadline.
-            poll = true;
-            continue;
-        }
-        if result < 0 {
-            return result as i32;
-        }
-        // Any other nonnegative result is an impossible short packet for this protocol.
-        return -libc::EPROTO;
     }
 }
 #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]

@@ -1,24 +1,24 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use super::{append_handle_suffix, make_overlapped, PendingHandleTransfers};
+use super::{PendingHandleTransfers, append_handle_suffix, make_overlapped};
 use libdd_common::MutexExt;
 use std::cell::UnsafeCell;
 use std::ffi::c_void;
 use std::io;
-use std::os::windows::io::RawHandle;
+use std::os::windows::io::{OwnedHandle, RawHandle};
 use std::ptr::{null, null_mut};
 use std::sync::{Arc, Condvar, Mutex};
 use windows_sys::Win32::Foundation::{
-    GetLastError, ERROR_IO_PENDING, ERROR_OPERATION_ABORTED, ERROR_WRITE_FAULT, HANDLE,
+    ERROR_IO_PENDING, ERROR_OPERATION_ABORTED, ERROR_WRITE_FAULT, GetLastError, HANDLE,
 };
 use windows_sys::Win32::Storage::FileSystem::{SetFileCompletionNotificationModes, WriteFile};
+use windows_sys::Win32::System::IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED};
 use windows_sys::Win32::System::Threading::{
-    CancelThreadpoolIo, CloseThreadpoolIo, CreateThreadpoolIo, StartThreadpoolIo,
-    WaitForThreadpoolIoCallbacks, PTP_CALLBACK_INSTANCE, PTP_IO,
+    CancelThreadpoolIo, CloseThreadpoolIo, CreateThreadpoolIo, PTP_CALLBACK_INSTANCE, PTP_IO,
+    StartThreadpoolIo, WaitForThreadpoolIoCallbacks,
 };
 use windows_sys::Win32::System::WindowsProgramming::FILE_SKIP_COMPLETION_PORT_ON_SUCCESS;
-use windows_sys::Win32::System::IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED};
 
 /// Serializes writes through a single owned in-flight slot.
 ///
@@ -103,7 +103,7 @@ impl PipeWriter {
         }
 
         let mut wire = data;
-        let transfers = append_handle_suffix(&mut wire, handles, peer_pid)?;
+        let transfers = append_handle_suffix(&mut wire, handles, peer_pid, &mut state.peer)?;
         let len = u32::try_from(wire.len())
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "IPC message is too large"))?;
         let completion = Arc::new(Completion::default());
@@ -220,6 +220,7 @@ impl WriteContext {
 #[derive(Default)]
 struct WriteState {
     pending: Option<Box<PendingWrite>>,
+    peer: Option<Arc<OwnedHandle>>,
     error: Option<u32>,
     closing: bool,
 }
@@ -311,9 +312,9 @@ mod tests {
     use libdd_common::MutexExt;
 
     use super::*;
-    use crate::platform::windows::sockets::{max_message_size, SeqpacketConn, HANDLE_SUFFIX_SIZE};
+    use crate::platform::windows::sockets::{HANDLE_SUFFIX_SIZE, SeqpacketConn, max_message_size};
     use std::mem::size_of;
-    use std::sync::{mpsc, Arc};
+    use std::sync::{Arc, mpsc};
     use std::time::{Duration, Instant};
 
     const TEST_TIMEOUT: Duration = Duration::from_secs(5);
@@ -324,14 +325,16 @@ mod tests {
         let (sender, receiver) = SeqpacketConn::socketpair().unwrap();
         for id in 0..9 {
             sender.try_send_raw(vec![id], &[]).unwrap();
-            assert!(sender
-                .writer()
-                .unwrap()
-                .context
-                .state
-                .lock_or_panic()
-                .pending
-                .is_none());
+            assert!(
+                sender
+                    .writer()
+                    .unwrap()
+                    .context
+                    .state
+                    .lock_or_panic()
+                    .pending
+                    .is_none()
+            );
         }
         let mut buffer = [0; 1 + HANDLE_SUFFIX_SIZE];
         for id in 0..9 {

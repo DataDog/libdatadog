@@ -40,6 +40,7 @@ pub(crate) mod rate_sampler;
 pub(crate) mod rules_sampler;
 pub(crate) mod sampling_rule;
 pub(crate) mod sampling_rule_config;
+pub(crate) mod stack_str;
 pub(crate) mod types;
 
 #[cfg(feature = "v04_span")]
@@ -48,7 +49,7 @@ pub mod v04_span;
 // Re-export key types for convenience
 pub use agent_service_sampler::ServicesSampler;
 pub use datadog_sampler::{DatadogSampler, OtelConsistentSampling, SamplingRulesCallback};
-pub use dd_sampling::{mechanism, priority, SamplingDecision, SamplingMechanism, SamplingPriority};
+pub use dd_sampling::{SamplingDecision, SamplingMechanism, SamplingPriority, mechanism, priority};
 pub use sampling_rule::SamplingRule;
 pub use sampling_rule_config::{ParsedSamplingRules, SamplingRuleConfig};
 pub use types::{

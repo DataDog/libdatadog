@@ -4,7 +4,7 @@
 //! Prepared flushes sent on the normal connection, with a private completion pipe.
 
 use super::{
-    blocking::SidecarTransport, sidecar_interface::SidecarInterfaceRequest, SidecarFlushOptions,
+    SidecarFlushOptions, blocking::SidecarTransport, sidecar_interface::SidecarInterfaceRequest,
 };
 use libdd_ipc::{platform::PlatformHandle, signal_safe::PreparedRequest};
 use std::io;
@@ -23,10 +23,7 @@ impl SignalFlush {
         template: &mut SidecarTransport,
         options: SidecarFlushOptions,
     ) -> io::Result<Self> {
-        let sender = template
-            .inner
-            .get_mut()
-            .map_err(|_| io::Error::other("poisoned sidecar transport"))?;
+        let sender = &template.inner;
         let (receiver, completion) = io::pipe()?;
         let completion = PlatformHandle::from(completion);
         let message = SidecarInterfaceRequest::FlushSignal {
@@ -51,6 +48,6 @@ impl SignalFlush {
     /// and block all worker signals. Do not use an inherited object after fork.
     #[inline(always)]
     pub unsafe fn run(&self) -> i32 {
-        self.request.exchange()
+        unsafe { self.request.exchange() }
     }
 }

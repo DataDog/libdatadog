@@ -10,8 +10,8 @@ use std::sync::{Arc, Mutex};
 use tracing::{debug, error};
 
 use super::{
-    pausable_worker::PausableWorker, BoxedWorker, SharedRuntime, SharedRuntimeError, WorkerEntry,
-    WorkerHandle,
+    BoxedWorker, SharedRuntime, SharedRuntimeError, WorkerEntry, WorkerHandle,
+    pausable_worker::PausableWorker,
 };
 
 /// Single-threaded local executor runtime for wasm32.

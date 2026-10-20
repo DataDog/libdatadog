@@ -4,9 +4,9 @@
 //! FFI Test Runner
 //!
 //! Builds and runs FFI examples to verify they compile and work correctly.
-//! Usage: cargo ffi-test [--skip-build] [--filter <pattern>] [--keep-artifacts]
+//! Usage: cargo ffi-test [--skip-build] [--filter `<pattern>`] [--keep-artifacts]
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use clap::Parser;
 use colored::Colorize;
 use std::collections::HashMap;
@@ -109,6 +109,7 @@ const FFI_FEATURES: &[&str] = &[
     "profiling",
     "telemetry",
     "data-pipeline",
+    "data-pipeline-external-observations",
     "symbolizer",
     "crashtracker",
     "library-config",
@@ -330,6 +331,7 @@ fn build_examples(project_root: &Path) -> Result<()> {
             "-B",
             path_str!(&build_dir)?,
             "-DCMAKE_BUILD_TYPE=Release",
+            "-DDDOG_EXTERNAL_OBSERVATIONS=ON",
             &format!("-DDatadog_ROOT={}", release_dir.display()),
         ]),
         "CMake configure",

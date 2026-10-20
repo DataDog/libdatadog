@@ -3,11 +3,11 @@
 
 use std::hint::spin_loop;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use libdd_data_pipeline::trace_buffer::{
     BufferSize, Export, TraceBuffer, TraceBufferConfig, TraceChunk,
 };

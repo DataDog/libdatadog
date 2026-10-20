@@ -8,8 +8,8 @@ use crate::targets::{Root, TargetsList};
 use crate::{RemoteConfigCapabilities, RemoteConfigPath, RemoteConfigProduct, Target};
 use base64::Engine;
 use hashbrown::HashMap;
-use http::uri::PathAndQuery;
 use http::StatusCode;
+use http::uri::PathAndQuery;
 use libdd_capabilities::{HttpClientCapability, SleepCapability};
 use libdd_common::{Endpoint, MutexExt};
 use libdd_trace_protobuf::remoteconfig::{
@@ -813,12 +813,13 @@ pub mod tests {
                 version,
                 contents: String::from_utf8(contents).unwrap(),
             }));
-            assert!(self
-                .files
-                .lock()
-                .unwrap()
-                .insert(path.clone(), data.clone())
-                .is_none());
+            assert!(
+                self.files
+                    .lock()
+                    .unwrap()
+                    .insert(path.clone(), data.clone())
+                    .is_none()
+            );
             Ok(Arc::new(PathStore {
                 path: path.clone(),
                 storage: self.clone(),

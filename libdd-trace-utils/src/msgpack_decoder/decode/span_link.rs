@@ -5,8 +5,8 @@ use crate::msgpack_decoder::decode::buffer::Buffer;
 use crate::msgpack_decoder::decode::error::DecodeError;
 use crate::msgpack_decoder::decode::number::read_number;
 use crate::msgpack_decoder::decode::string::{handle_null_marker, read_str_map_to_hashmap};
-use crate::span::v04::SpanLink;
 use crate::span::DeserializableTraceData;
+use crate::span::v04::SpanLink;
 use std::borrow::Borrow;
 use std::str::FromStr;
 
@@ -26,7 +26,6 @@ use std::str::FromStr;
 /// This function will return an error if:
 /// - The marker for the array length cannot be read.
 /// - Any `SpanLink` cannot be decoded.
-/// ```
 pub(crate) fn read_span_links<T: DeserializableTraceData>(
     buf: &mut Buffer<T>,
 ) -> Result<Vec<SpanLink<T>>, DecodeError> {

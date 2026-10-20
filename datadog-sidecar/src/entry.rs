@@ -5,29 +5,29 @@ use anyhow::Context;
 use crossbeam_utils::atomic::AtomicCell;
 #[cfg(target_os = "linux")]
 use spawn_worker::read_pt_interp_self;
-use spawn_worker::{entrypoint, Entrypoint, Stdio};
+use spawn_worker::{Entrypoint, Stdio, entrypoint};
 use std::fs::File;
 use std::future::Future;
 use std::{
     io,
     sync::{
-        atomic::{AtomicUsize, Ordering},
         Arc,
+        atomic::{AtomicUsize, Ordering},
     },
     time::{Duration, Instant},
 };
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::Instant as TokioInstant;
 
-use crate::service::blocking::SidecarTransport;
+use crate::auth::{ConnectionAuthorizer, Decision};
 use crate::service::SidecarServer;
+use crate::service::blocking::SidecarTransport;
 
 use crate::setup::{self, IpcClient, IpcServer, Liaison};
 
 use crate::config::{self, Config};
 use crate::self_telemetry::self_telemetry;
 use crate::service::{init_telemetry_sender, telemetry_action_receiver_task};
-use crate::tracer::SHM_LIMITER;
 use crate::watchdog::Watchdog;
 use crate::{ddog_daemon_entry_point, setup_daemon_process};
 
@@ -35,9 +35,17 @@ use crate::{ddog_daemon_entry_point, setup_daemon_process};
 pub struct MainLoopConfig {
     pub enable_ctrl_c_handler: bool,
     pub external_shutdown_rx: Option<oneshot::Receiver<()>>,
-    /// Set to false in thread mode so the worker's UID can be obtained on the
-    /// first connection and used to fchown the SHM.
+    /// Set to false for Unix thread mode: authenticate and adopt the first worker's
+    /// identity before initializing SHM.
     pub init_shm_eagerly: bool,
+    /// Decides which peers may be served. The default expects an out-of-process sidecar
+    /// spawned by a PHP process; in-process listeners must supply
+    /// [`ConnectionAuthorizer::for_in_process_listener`] instead.
+    pub authorizer: ConnectionAuthorizer,
+    /// Whether shutdown waits only for the connections of this process. An in-process listener
+    /// must not hold up the exit of its host for the connections of other processes, like forked
+    /// children: these lose their connection and reconnect to a listener of their own.
+    pub drain_only_own_process: bool,
 }
 
 impl Default for MainLoopConfig {
@@ -46,6 +54,8 @@ impl Default for MainLoopConfig {
             enable_ctrl_c_handler: true,
             external_shutdown_rx: None,
             init_shm_eagerly: true,
+            authorizer: ConnectionAuthorizer::for_spawned_sidecar(),
+            drain_only_own_process: false,
         }
     }
 }
@@ -100,11 +110,10 @@ where
         });
     }
 
-    if loop_config.init_shm_eagerly {
-        drop(SHM_LIMITER.lock());
-    }
-
     let server = SidecarServer::default();
+    if loop_config.init_shm_eagerly {
+        server.shm_limiters();
+    }
     // Initialize telemetry synchronously so both the in-process helper and FFI callers can enqueue
     // actions before the receiver task gets its first poll.
     let (in_process_telemetry, telemetry_rx) = init_telemetry_sender();
@@ -120,9 +129,7 @@ where
     #[cfg(not(unix))]
     drop(in_process_telemetry);
 
-    if let Some(rx) = telemetry_rx {
-        tokio::spawn(telemetry_action_receiver_task(server.clone(), rx));
-    }
+    tokio::spawn(telemetry_action_receiver_task(server.clone(), telemetry_rx));
 
     let (shutdown_complete_tx, shutdown_complete_rx) = mpsc::channel::<()>(1);
 
@@ -133,15 +140,42 @@ where
     let watchdog_handle = watchdog.spawn_watchdog(server.clone());
     let telemetry_handle = self_telemetry(server.clone(), watchdog_handle);
 
+    let authorizer = loop_config.authorizer;
+    let drain_only_own_process = loop_config.drain_only_own_process;
+    #[cfg(unix)]
+    let defer_shm_init = !loop_config.init_shm_eagerly;
     let listener_result = listener(Box::new({
         let shutdown_complete_tx = shutdown_complete_tx.clone();
         let server = server.clone();
         move |socket| {
+            let peer = match socket.peer_credentials() {
+                Ok(peer) => peer,
+                Err(e) => {
+                    tracing::warn!(
+                        "IPC: rejected connection with unreadable peer credentials: {e}"
+                    );
+                    return;
+                }
+            };
+            let decision = authorizer.authorize(&peer);
+            authorizer.log_denied(&peer, decision);
+            if decision == Decision::Deny {
+                return;
+            }
+            #[cfg(unix)]
+            if defer_shm_init {
+                setup::thread_listener::initialize_worker(&peer);
+                server.shm_limiters();
+            }
+
             let connection = connections.accept();
             tracing::info!("connection accepted");
 
             let server = server.clone();
-            let shutdown_complete_tx = shutdown_complete_tx.clone();
+            // Connections not holding a sender are dropped with the runtime, once the drained
+            // ones are done.
+            let shutdown_complete_tx = (!drain_only_own_process || peer.pid == std::process::id())
+                .then(|| shutdown_complete_tx.clone());
             tokio::spawn(async move {
                 server.accept_connection(socket).await;
                 drop(connection);
@@ -232,7 +266,10 @@ where
     Fut: Future<Output = io::Result<()>>,
     C: Fn() + Sync + Send + 'static,
 {
-    #[cfg(feature = "tokio-console")]
+    // `console-subscriber` requires Tokio's unstable task tracing support. Cargo's
+    // `--all-features` does not set that compiler cfg, so only initialize the
+    // subscriber when both halves of the opt-in are present.
+    #[cfg(all(feature = "tokio-console", tokio_unstable))]
     console_subscriber::init();
 
     let mut builder = tokio::runtime::Builder::new_multi_thread();
@@ -337,6 +374,8 @@ pub fn start_or_connect_to_sidecar_with_entrypoint(
     cfg: Config,
     daemon_entrypoint: Entrypoint,
 ) -> anyhow::Result<SidecarTransport> {
+    #[cfg(unix)]
+    crate::use_thread_sidecar_shm_namespace(None);
     // On Windows, named-pipe buffer sizes are fixed at creation time.  Set the global before
     // attempt_listen so that the initial server pipe (created by this process and handed to the
     // daemon) uses the configured size.  The daemon restores the same value at startup so that
@@ -345,6 +384,11 @@ pub fn start_or_connect_to_sidecar_with_entrypoint(
     if cfg.pipe_buffer_size > 0 {
         libdd_ipc::platform::set_pipe_buffer_size(cfg.pipe_buffer_size);
     }
+
+    // The pipes and the spawned daemon must belong to the process identity, not to an
+    // impersonated user.
+    #[cfg(windows)]
+    let _identity = libdd_ipc::platform::ProcessIdentityGuard::enter();
 
     let liaison = setup::liaison_for_ipc_mode(cfg.ipc_mode);
 
@@ -359,6 +403,13 @@ pub fn start_or_connect_to_sidecar_with_entrypoint(
                 break None;
             }
             Ok(None) => break None,
+            // A refusal from the directory checks is a hard failure, retrying that is pointless.
+            Err(ref e) if e.kind() == io::ErrorKind::PermissionDenied => {
+                break Some(
+                    anyhow::Error::from(io::Error::new(e.kind(), e.to_string()))
+                        .context("Refusing to start the sidecar"),
+                );
+            }
             Err(_e) if deadline.is_some_and(|d| Instant::now() < d) => {
                 std::thread::sleep(Duration::from_millis(5));
                 continue;

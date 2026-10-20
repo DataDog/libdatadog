@@ -3,8 +3,10 @@
 
 use std::{collections::VecDeque, hash::Hash};
 
+use crate::data::{Dependency, DependencyKey};
+
 mod queuehashmap {
-    use hashbrown::{hash_table::HashTable, DefaultHashBuilder};
+    use hashbrown::{DefaultHashBuilder, hash_table::HashTable};
     use std::{
         collections::VecDeque,
         hash::{BuildHasher, Hash},
@@ -159,6 +161,16 @@ pub trait Keyed<K> {
 impl<T: Clone> Keyed<T> for T {
     fn key(&self) -> T {
         self.clone()
+    }
+}
+
+impl Keyed<DependencyKey> for Dependency {
+    fn key(&self) -> DependencyKey {
+        DependencyKey {
+            name: self.name.clone(),
+            version: self.version.clone(),
+            hash: self.hash.clone(),
+        }
     }
 }
 

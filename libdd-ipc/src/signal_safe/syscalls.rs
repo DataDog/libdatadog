@@ -20,23 +20,25 @@ pub unsafe fn raw_syscall6(
     arg5: usize,
     arg6: usize,
 ) -> isize {
-    let result: isize;
-    // Linux x86_64 uses r10, not the C ABI's rcx, for argument four. `syscall` itself clobbers rcx
-    // and r11; declaring both prevents the surrounding Rust from keeping live values there.
-    asm!(
-        "syscall",
-        inlateout("rax") number as isize => result,
-        in("rdi") arg1,
-        in("rsi") arg2,
-        in("rdx") arg3,
-        in("r10") arg4,
-        in("r8") arg5,
-        in("r9") arg6,
-        lateout("rcx") _,
-        lateout("r11") _,
-        options(nostack, preserves_flags),
-    );
-    result
+    unsafe {
+        let result: isize;
+        // Linux x86_64 uses r10, not the C ABI's rcx, for argument four. `syscall` itself clobbers
+        // rcx and r11; declaring both prevents the surrounding Rust from keeping live values there.
+        asm!(
+            "syscall",
+            inlateout("rax") number as isize => result,
+            in("rdi") arg1,
+            in("rsi") arg2,
+            in("rdx") arg3,
+            in("r10") arg4,
+            in("r8") arg5,
+            in("r9") arg6,
+            lateout("rcx") _,
+            lateout("r11") _,
+            options(nostack, preserves_flags),
+        );
+        result
+    }
 }
 
 /// A direct Linux syscall returning negative errno, without accessing libc or TLS.
@@ -55,21 +57,23 @@ pub unsafe fn raw_syscall6(
     arg5: usize,
     arg6: usize,
 ) -> isize {
-    let result: isize;
-    // Linux AArch64 takes the syscall number in x8, arguments in x0..x5, and returns in x0.
-    // Listing every register explicitly keeps the compiler from generating a helper call.
-    asm!(
-        "svc #0",
-        in("x8") number,
-        inlateout("x0") arg1 as isize => result,
-        in("x1") arg2,
-        in("x2") arg3,
-        in("x3") arg4,
-        in("x4") arg5,
-        in("x5") arg6,
-        options(nostack),
-    );
-    result
+    unsafe {
+        let result: isize;
+        // Linux AArch64 takes the syscall number in x8, arguments in x0..x5, and returns in x0.
+        // Listing every register explicitly keeps the compiler from generating a helper call.
+        asm!(
+            "svc #0",
+            in("x8") number,
+            inlateout("x0") arg1 as isize => result,
+            in("x1") arg2,
+            in("x2") arg3,
+            in("x3") arg4,
+            in("x4") arg5,
+            in("x5") arg6,
+            options(nostack),
+        );
+        result
+    }
 }
 
 /// A direct Linux syscall returning negative errno, without accessing libc or TLS.

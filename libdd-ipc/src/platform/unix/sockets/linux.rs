@@ -3,8 +3,8 @@
 
 //! Linux-specific IPC socket implementation using `AF_UNIX SOCK_SEQPACKET`.
 
-use super::{create_unix_socket, PeerCredentials, SeqpacketConn, SeqpacketListener};
-use nix::sys::socket::{accept, bind, connect, listen, Backlog, SockType, UnixAddr};
+use super::{PeerCredentials, SeqpacketConn, SeqpacketListener, create_unix_socket};
+use nix::sys::socket::{Backlog, SockType, UnixAddr, accept, bind, connect, listen};
 use std::os::fd::RawFd;
 use std::{
     io,
@@ -151,5 +151,6 @@ pub fn get_peer_credentials(fd: RawFd) -> io::Result<PeerCredentials> {
     Ok(PeerCredentials {
         pid: cred.pid as u32,
         uid: cred.uid,
+        gid: cred.gid,
     })
 }

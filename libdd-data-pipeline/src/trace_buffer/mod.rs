@@ -16,12 +16,12 @@ use std::{
 use libdd_capabilities::{HttpClientCapability, LogWriterCapability, MaybeSend, SleepCapability};
 use libdd_shared_runtime::{SharedRuntime, Worker};
 use libdd_trace_utils::span::{
-    span_pool::{PooledChunks, SpanPool},
     BytesData,
+    span_pool::{PooledChunks, SpanPool},
 };
 
 use crate::trace_exporter::{
-    agent_response::AgentResponse, error::TraceExporterError, TraceExporter,
+    TraceExporter, agent_response::AgentResponse, error::TraceExporterError,
 };
 
 /// Trait for types stored in a [`TraceBuffer`] that can report their approximate byte size.
@@ -292,7 +292,7 @@ impl<T> Batch<T> {
 ///
 /// Unless in synchronous mode, when [`TraceBuffer::send_chunk`] is called, the trace chunk
 /// will be buffered until:
-/// * The number of spans in the buffer is greater than [`TraceBufferConfig::span_flush_threshold`]
+/// * The number of buffered bytes is greater than [`TraceBufferConfig::flush_threshold_bytes`]
 /// * The time since the last flush is greater than [`TraceBufferConfig::max_flush_interval`]
 /// * [`TraceBuffer::force_flush`] is called. This method triggers a flush, but do not wait for the
 ///   flush to be done before returning
@@ -301,7 +301,7 @@ impl<T> Batch<T> {
 ///
 /// # Synchronous mode
 ///
-/// If [`TraceBufferConfig::synchronous_writes`] is true, this blocks until
+/// If [`TraceBufferConfig::synchronous_export`] is true, this blocks until
 /// * Either until the chunks have been flushed to the agent
 /// * Or if `synchronous_writes_timeout` is Some, until the timeout is reached. At which point the
 ///   flush might continue in the background
@@ -551,22 +551,22 @@ impl<T> Sender<T> {
             return Err(TraceBufferError::BatchFull(e));
         }
         state.metrics.spans_queued += chunk_len;
-        let gen = state.batch.batch_gen;
+        let r#gen = state.batch.batch_gen;
         if state.flush_needed.is_none()
             && (state.batch.byte_count > self.flush_trigger_bytes || self.synchronous_write)
         {
             state.flush_needed = Some(FlushType::Automatic);
             self.waiter.notify_receiver(state);
         }
-        Ok(gen)
+        Ok(r#gen)
     }
 
     fn trigger_flush(&self) -> Result<BatchGeneration, TraceBufferError> {
         let mut state = self.get_running_state()?;
-        let gen = state.batch.batch_gen;
+        let r#gen = state.batch.batch_gen;
         state.flush_needed = Some(FlushType::Force);
         self.waiter.notify_receiver(state);
-        Ok(gen)
+        Ok(r#gen)
     }
 
     /// Flush the current batch and wait, up to `timeout`, for the exporter to export the
@@ -1008,8 +1008,8 @@ impl<T: Send + Debug + 'static> Worker for TraceExporterWorker<T> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
 
     use libdd_shared_runtime::{BlockingRuntime, ForkSafeRuntime, SharedRuntime};
