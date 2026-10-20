@@ -48,6 +48,8 @@ rustls = { workspace = true, optional = true }
 hyper-rustls = { workspace = true, features = ["http1", "tls12"], optional = true }
 # Unused; pins a floor on this transitive-only dep since rustls itself only requires ^0.103.5.
 rustls-webpki = { workspace = true, optional = true }
+webpki-roots = { workspace = true, optional = true }
+webpki-root-certs = { workspace = true, optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 # Target gating keeps these dependencies out of WASM. They are also optional so
@@ -126,7 +128,7 @@ http-client = [
 tls-core = ["http-client", "rustls", "hyper-rustls", "rustls-platform-verifier"]
 # Default HTTPS: ring as crypto provider
 https = ["tls-core", "rustls/ring", "hyper-rustls/ring"]
-use_webpki_roots = ["std", "hyper-rustls/webpki-roots"]
+use_webpki_roots = ["std", "hyper-rustls/webpki-roots", "dep:webpki-roots", "dep:webpki-root-certs"]
 # Enable this feature to enable stubbing of cgroup
 # php directly import this crate and uses functions gated by this feature for their test
 cgroup_testing = ["std"]
@@ -160,3 +162,6 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage)'] }
 [lints.clippy]
 std_instead_of_alloc = "warn"
 std_instead_of_core = "warn"
+
+[package.metadata.cargo-machete]
+ignored = ["webpki-roots", "webpki-root-certs"]
