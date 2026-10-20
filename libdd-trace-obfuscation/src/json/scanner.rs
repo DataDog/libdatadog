@@ -7,7 +7,7 @@ use super::JsonScanError;
 
 /// Opcode returned by [`Scanner::step`] for each input char.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Op {
+pub(crate) enum Op {
     Continue,     // uninteresting char (inside a literal)
     BeginLiteral, // first char of a string / number / bool / null
     BeginObject,  // '{'
@@ -61,7 +61,7 @@ enum State {
 /// A streaming JSON scanner. Feed chars one at a time via [`Scanner::step`];
 /// the returned [`Op`] describes the structural significance of each char.
 #[derive(Debug, Default)]
-pub struct Scanner {
+pub(crate) struct Scanner {
     state: State,
     end_top: bool,
     parse_state: Vec<ParseState>,
