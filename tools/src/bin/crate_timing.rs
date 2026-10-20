@@ -34,6 +34,10 @@ const CRASHTRACKER_FEATURE: &str = "libdd-crashtracker/generate-unit-test-files"
 // there under RUSTFLAGS="-C prefer-dynamic", a shape this tool never builds.
 const SKIPPED_CRATES: [&str; 2] = ["builder", "test_spawn_from_lib"];
 
+// Rows in the "Slowest tests" section: the outlier view, kept short; the
+// breakdown tree below it holds the rest.
+const SLOWEST_SHOWN: usize = 10;
+
 const SCOPE: &str = "_Wall-clock, measured by tools/src/bin/crate_timing.rs. Covers the main \
                      nextest pass (+ doc tests, + the serial tracing-integration pass) and the \
                      criterion benchmarks at the benchmarks job's sampling settings. Other CI \
@@ -68,7 +72,7 @@ struct Args {
     #[arg(long, num_args = 1..)]
     packages: Vec<String>,
 
-    /// Rendering of the per-test breakdown.
+    /// Whether the report includes the per-test breakdown tree.
     #[arg(long, value_enum, default_value_t = Format::Tree)]
     format: Format,
 
@@ -361,17 +365,21 @@ fn report_docs(times: &Times, tests: &[TestResult], args: &Args) -> Vec<doc::Doc
     if !tests.is_empty() {
         docs.push(doc::Doc::Heading {
             level: 2,
-            text: "Test breakdown".into(),
+            text: "Slowest tests".into(),
         });
-        docs.push(match args.format {
-            Format::Tree => doc::Doc::Tree(
+        docs.push(doc::Doc::Table(slowest_tests(tests, SLOWEST_SHOWN)));
+        if matches!(args.format, Format::Tree) {
+            docs.push(doc::Doc::Heading {
+                level: 2,
+                text: "Test breakdown".into(),
+            });
+            docs.push(doc::Doc::Tree(
                 test_tree(tests)
                     .into_iter()
                     .map(|root| root.into_doc(args.depth))
                     .collect(),
-            ),
-            Format::Table => doc::Doc::Table(slowest_tests(tests)),
-        });
+            ));
+        }
     }
     docs
 }
@@ -380,8 +388,8 @@ fn report_docs(times: &Times, tests: &[TestResult], args: &Args) -> Vec<doc::Doc
 /// made it.
 fn settings(args: &Args) -> String {
     let rendering = match args.format {
-        Format::Tree => format!("as a tree to depth {}", args.depth),
-        Format::Table => "as a table of the 30 slowest tests".to_string(),
+        Format::Tree => format!("slowest tests plus a tree to depth {}", args.depth),
+        Format::Table => "slowest tests only".to_string(),
     };
     let crates = if args.packages.is_empty() {
         "all workspace crates".to_string()
@@ -410,7 +418,7 @@ fn crate_table(times: &Times) -> doc::Table {
             .map(|phase| doc::Column::new(phase.name(), doc::Align::Right)),
     );
     columns.extend(
-        ["bench fns", "total"]
+        ["bench fns", "s/fn", "total", "share"]
             .iter()
             .map(|&title| doc::Column::new(title, doc::Align::Right)),
     );
@@ -420,11 +428,14 @@ fn crate_table(times: &Times) -> doc::Table {
     let mut by_total_desc: Vec<(&Rc<str>, &CrateTimes)> = times.iter().collect();
     by_total_desc.sort_by_key(|&(_, t)| std::cmp::Reverse(t.total()));
 
+    let grand_total = times.values().map(CrateTimes::total).sum::<u64>();
     for (name, t) in by_total_desc {
         let mut cells = vec![name.to_string()];
         cells.extend(Phase::ALL.iter().map(|p| human(t.get(*p) as f64)));
         cells.push(t.bench_fns.to_string());
+        cells.push(bench_secs_per_fn(t));
         cells.push(human(t.total() as f64));
+        cells.push(share(t.total(), grand_total));
         cells.push(failed_phases(t));
         table.row(cells);
     }
@@ -434,12 +445,18 @@ fn crate_table(times: &Times) -> doc::Table {
 
 fn totals_row(times: &Times) -> Vec<String> {
     let sum = |phase: Phase| times.values().map(|t| t.get(phase)).sum::<u64>();
+    let bench_fns = times.values().map(|t| t.bench_fns).sum::<u64>();
+    let grand_total = times.values().map(CrateTimes::total).sum::<u64>();
     let mut cells: Vec<String> = vec!["**total**".into()];
     cells.extend(Phase::ALL.iter().map(|p| human(sum(*p) as f64)));
-    cells.push(times.values().map(|t| t.bench_fns).sum::<u64>().to_string());
-    cells.push(human(
-        times.values().map(CrateTimes::total).sum::<u64>() as f64
-    ));
+    cells.push(bench_fns.to_string());
+    cells.push(if bench_fns == 0 {
+        String::new()
+    } else {
+        human(sum(Phase::Bench) as f64 / bench_fns as f64)
+    });
+    cells.push(human(grand_total as f64));
+    cells.push(share(grand_total, grand_total));
     cells.push(String::new());
     cells
 }
@@ -450,6 +467,26 @@ fn failed_phases(t: &CrateTimes) -> String {
         .map(|p| p.name())
         .collect::<Vec<_>>()
         .join(",")
+}
+
+/// Bench seconds per criterion function. The sampling settings put a floor
+/// under this (~6s per fn at warm-up 1s + measurement 5s), so it separates
+/// "many functions" from "slow functions".
+fn bench_secs_per_fn(t: &CrateTimes) -> String {
+    if t.bench_fns == 0 {
+        String::new()
+    } else {
+        human(t.get(Phase::Bench) as f64 / t.bench_fns as f64)
+    }
+}
+
+/// The crate's share of all measured time, in percent.
+fn share(secs: u64, grand_total: u64) -> String {
+    if grand_total == 0 {
+        String::new()
+    } else {
+        format!("{:.1}%", secs as f64 / grand_total as f64 * 100.0)
+    }
 }
 
 /// A crate, module or test in the per-test breakdown tree. Internal nodes carry
@@ -565,8 +602,8 @@ fn leaf_name(name: &str) -> &str {
     name.rsplit_once("::").map_or(name, |(_, test)| test)
 }
 
-/// The 30 slowest tests, flat: the breakdown's table rendering.
-fn slowest_tests(tests: &[TestResult]) -> doc::Table {
+/// The `take` slowest tests, flat: the outlier view over the full tree.
+fn slowest_tests(tests: &[TestResult], take: usize) -> doc::Table {
     let mut table = doc::Table::new(vec![
         doc::Column::new("time", doc::Align::Right),
         doc::Column::new("test", doc::Align::Left),
@@ -575,7 +612,7 @@ fn slowest_tests(tests: &[TestResult]) -> doc::Table {
     ]);
     let mut by_duration_desc: Vec<&TestResult> = tests.iter().collect();
     by_duration_desc.sort_by(|a, b| b.secs.total_cmp(&a.secs));
-    for t in by_duration_desc.into_iter().take(30) {
+    for t in by_duration_desc.into_iter().take(take) {
         table.row(vec![
             human(t.secs),
             t.name.clone(),
@@ -765,5 +802,60 @@ mod tests {
                 .iter()
                 .all(|leaf| leaf.note.as_deref() == Some("fail") || leaf.note.is_none())
         );
+    }
+
+    fn crate_times(phase: Phase, secs: u64, bench_fns: u64) -> CrateTimes {
+        let mut t = CrateTimes::default();
+        t.set(phase, secs);
+        t.bench_fns = bench_fns;
+        t
+    }
+
+    #[test]
+    fn derived_columns_separate_bench_count_from_bench_cost() {
+        let benched = crate_times(Phase::Bench, 310, 50);
+        assert_eq!(bench_secs_per_fn(&benched), "6.2s");
+        // the floor of the sampling settings shows as ~6s/fn, not as mystery minutes
+        assert_eq!(bench_secs_per_fn(&CrateTimes::default()), "");
+
+        assert_eq!(share(60, 240), "25.0%");
+        assert_eq!(share(2, 240), "0.8%");
+        assert_eq!(share(0, 0), "");
+    }
+
+    #[test]
+    fn report_shows_outliers_and_shares_beside_the_tree() {
+        let times: Times = [
+            (Rc::from("heavy"), crate_times(Phase::Bench, 310, 50)),
+            (Rc::from("light"), crate_times(Phase::Tests, 2, 0)),
+        ]
+        .into_iter()
+        .collect();
+        let tests = [test("heavy", "m::slowpoke", 5.0, true)];
+
+        let tree_args = Args {
+            packages: vec![],
+            format: Format::Tree,
+            depth: 3,
+        };
+        let markdown = doc::render_markdown(&report_docs(&times, &tests, &tree_args));
+        assert!(markdown.contains("## Slowest tests"));
+        assert!(markdown.contains("slowpoke"));
+        assert!(markdown.contains("| s/fn |"));
+        assert!(markdown.contains("6.2s"));
+        assert!(markdown.contains("99.4%")); // 310/312 of the measured time
+        assert!(markdown.contains("100.0%"));
+        assert!(markdown.contains("## Test breakdown"));
+        assert!(markdown.contains("```text"));
+
+        // The compact format keeps the outliers but drops the tree.
+        let table_args = Args {
+            packages: vec![],
+            format: Format::Table,
+            depth: 3,
+        };
+        let compact = doc::render_markdown(&report_docs(&times, &tests, &table_args));
+        assert!(compact.contains("## Slowest tests"));
+        assert!(!compact.contains("## Test breakdown"));
     }
 }
