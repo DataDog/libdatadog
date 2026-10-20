@@ -366,7 +366,7 @@ jobs:
           # into the container PATH, forward the AWS session, and use the
           # container paths as basedirs.
           SCCACHE_ARGS=()
-          if [[ -n "${SCCACHE_PATH:-}" ]]; then
+          if [[ -n "${SCCACHE_PATH:-}" && "${{ steps.sccache.outputs.enabled }}" == "true" ]]; then
             SCCACHE_ARGS+=(
               -v "${SCCACHE_PATH}:/usr/local/bin/sccache:ro"
               -e RUSTC_WRAPPER=sccache
@@ -374,6 +374,8 @@ jobs:
               -e SCCACHE_REGION=us-east-1
               -e SCCACHE_S3_KEY_PREFIX=libddprof-build/sccache
               -e SCCACHE_S3_RW_MODE
+              -e SCCACHE_SKIP_CACHE_CHECK
+              -e SCCACHE_IGNORE_SERVER_IO_ERROR
               -e SCCACHE_BASEDIRS=/workspace:/usr/local/cargo
               -e AWS_ACCESS_KEY_ID
               -e AWS_SECRET_ACCESS_KEY

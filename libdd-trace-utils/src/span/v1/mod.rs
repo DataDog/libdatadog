@@ -3,6 +3,7 @@
 
 use crate::span::vec_map::VecMap;
 use crate::span::{BytesData, SliceData, TraceData};
+pub use libdd_trace_model::AttributeValue;
 pub use thin_vec::ThinVec;
 
 /// OpenTelemetry SpanKind values, encoded on the wire as a `uint32`.
@@ -52,37 +53,6 @@ impl From<u32> for SpanKind {
             4 => SpanKind::Producer,
             5 => SpanKind::Consumer,
             _ => SpanKind::Internal,
-        }
-    }
-}
-
-/// Typed V1 attribute value.
-/// Replaces v0.4's split `meta` / `metrics` / `meta_struct` maps.
-#[derive(Debug)]
-pub enum AttributeValue<T: TraceData> {
-    String(T::Text),
-    Float(f64),
-    Int(i64),
-    Bool(bool),
-    Bytes(T::Bytes),
-    KeyValue(VecMap<T::Text, AttributeValue<T>>),
-    List(Vec<AttributeValue<T>>),
-}
-
-// Implemented manually rather than derived: `VecMap`'s `PartialEq` is gated to
-// test/test-utils (see its definition) to keep its allocation cost out of casual `==`, so the
-// `KeyValue` variant compares via `slow_compare` instead of relying on that trait impl.
-impl<T: TraceData> PartialEq for AttributeValue<T> {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (AttributeValue::String(a), AttributeValue::String(b)) => a == b,
-            (AttributeValue::Float(a), AttributeValue::Float(b)) => a == b,
-            (AttributeValue::Int(a), AttributeValue::Int(b)) => a == b,
-            (AttributeValue::Bool(a), AttributeValue::Bool(b)) => a == b,
-            (AttributeValue::Bytes(a), AttributeValue::Bytes(b)) => a == b,
-            (AttributeValue::KeyValue(a), AttributeValue::KeyValue(b)) => a.slow_compare(b),
-            (AttributeValue::List(a), AttributeValue::List(b)) => a == b,
-            _ => false,
         }
     }
 }
