@@ -554,7 +554,7 @@ fn flatten_attr_into_v1<'a, T: TraceData>(
         v1::AttributeValue::Int(i) => metrics_out.push((Cow::Owned(key.clone()), *i as f64)),
         v1::AttributeValue::Float(f) => metrics_out.push((Cow::Owned(key.clone()), *f)),
         v1::AttributeValue::Bytes(b) => bytes_out.push((Cow::Owned(key.clone()), b.clone())),
-        v1::AttributeValue::List(items) => {
+        v1::AttributeValue::Array(items) => {
             let base_len = key.len();
             for (i, item) in items.iter().enumerate() {
                 key.push('.');
@@ -563,7 +563,7 @@ fn flatten_attr_into_v1<'a, T: TraceData>(
                 key.truncate(base_len);
             }
         }
-        v1::AttributeValue::KeyValue(map) => {
+        v1::AttributeValue::KeyValueList(map) => {
             let base_len = key.len();
             for (k, v) in map.defensive_dedup().iter() {
                 key.push('.');
@@ -626,7 +626,7 @@ fn collect_attrs_v1<'a, T: TraceData>(
             }
             // Nested case: the leaf key has to be built (`key.0`, `key.a.b`, ...), so it can no
             // longer borrow the original attribute name alone.
-            v1::AttributeValue::List(_) | v1::AttributeValue::KeyValue(_) => {
+            v1::AttributeValue::Array(_) | v1::AttributeValue::KeyValueList(_) => {
                 key_buf.clear();
                 key_buf.push_str(k.borrow());
                 flatten_attr_into_v1(
@@ -1005,7 +1005,7 @@ fn is_supported_event_attr_v1<T: TraceData>(v: &v1::AttributeValue<T>) -> bool {
             | v1::AttributeValue::Bool(_)
             | v1::AttributeValue::Int(_)
             | v1::AttributeValue::Float(_)
-            | v1::AttributeValue::List(_)
+            | v1::AttributeValue::Array(_)
     )
 }
 
@@ -1057,7 +1057,7 @@ fn encode_event_attr_value_v1<T: TraceData, S: Serializer>(
     v: &v1::AttributeValue<T>,
 ) -> Result<S::Ok, S::Error> {
     match v {
-        v1::AttributeValue::List(items) => {
+        v1::AttributeValue::Array(items) => {
             let scalars: Vec<_> = items
                 .iter()
                 .filter(|e| is_scalar_array_elem_v1(e))
