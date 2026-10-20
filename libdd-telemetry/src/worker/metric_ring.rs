@@ -31,8 +31,6 @@
 //! release/acquire on the ready flag. No two threads ever touch the same slot's cells concurrently,
 //! which is what makes the `unsafe impl Sync` sound.
 
-// The consumer notification batch size is `NOTIFY_INTERVAL`.
-
 use std::cell::UnsafeCell;
 use std::sync::atomic::{AtomicU64, Ordering};
 

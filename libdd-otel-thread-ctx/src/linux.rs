@@ -385,7 +385,6 @@ fn read_tls_context_ptr() -> *const ThreadContextRecord {
 /// Exposed under the `test-utils` feature, which carries no stability guarantee. Do not
 /// dereference the returned pointer: the record is owned by the library, and may be freed by the
 /// autocleaner as soon as the calling thread detaches it or exits.
-// Untyped view of `read_tls_context_ptr`: same pointer.
 #[cfg(any(test, feature = "test-utils"))]
 pub fn read_tls_pointer_untyped() -> *const u8 {
     read_tls_context_ptr().cast()
