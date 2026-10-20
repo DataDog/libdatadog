@@ -9,6 +9,36 @@ use crate::rules_based::{
     ufc::{Allocation, Assignment, AssignmentReason, CompiledFlagsConfig, Flag, Shard, Split},
 };
 
+/// Controls optional behavior for one evaluation. The SDK resolves configuration.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct EvaluationOptions {
+    /// Honor the subject's `dd_experimentation_opt_out_at` timestamp.
+    pub experimentation_opt_out_immediate: bool,
+}
+
+impl EvaluationOptions {
+    fn exclude_experiments(self, context: &EvaluationContext) -> Result<bool, EvaluationError> {
+        if !self.experimentation_opt_out_immediate {
+            return Ok(false);
+        }
+        let Some(attribute) = context.get_attribute("dd_experimentation_opt_out_at") else {
+            return Ok(false);
+        };
+        let Some(timestamp) = attribute.as_str() else {
+            return Err(EvaluationError::InvalidContext);
+        };
+        // Require the RFC3339 form used by SDK contexts. chrono also accepts
+        // spaces and lowercase separators, which are not accepted by all SDKs.
+        if timestamp.as_bytes().get(10) != Some(&b'T')
+            || timestamp.ends_with('z')
+            || DateTime::parse_from_rfc3339(timestamp).is_err()
+        {
+            return Err(EvaluationError::InvalidContext);
+        }
+        Ok(true)
+    }
+}
+
 /// Evaluate the specified feature flag for the given subject and return assigned variation and
 /// an optional assignment event for logging.
 pub fn get_assignment(
@@ -37,10 +67,32 @@ impl Configuration {
         expected_type: ExpectedFlagType,
         now: DateTime<Utc>,
     ) -> Result<Assignment, EvaluationError> {
-        let result = self
-            .flags
-            .compiled
-            .eval_flag(flag_key, context, expected_type, now);
+        self.eval_flag_with_options(
+            flag_key,
+            context,
+            expected_type,
+            now,
+            EvaluationOptions::default(),
+        )
+    }
+
+    /// Evaluate a flag with SDK-selected behavior. No environment is read here.
+    pub fn eval_flag_with_options(
+        &self,
+        flag_key: &str,
+        context: &EvaluationContext,
+        expected_type: ExpectedFlagType,
+        now: DateTime<Utc>,
+        options: EvaluationOptions,
+    ) -> Result<Assignment, EvaluationError> {
+        let exclude_experiments = options.exclude_experiments(context)?;
+        let result = self.flags.compiled.eval_flag(
+            flag_key,
+            context,
+            expected_type,
+            now,
+            exclude_experiments,
+        );
 
         match &result {
             Ok(assignment) => {
@@ -71,8 +123,10 @@ impl CompiledFlagsConfig {
         subject: &EvaluationContext,
         expected_type: ExpectedFlagType,
         now: DateTime<Utc>,
+        exclude_experiments: bool,
     ) -> Result<Assignment, EvaluationError> {
-        self.get_flag(flag_key)?.eval(subject, expected_type, now)
+        self.get_flag(flag_key)?
+            .eval(subject, expected_type, now, exclude_experiments)
     }
 
     fn get_flag(&self, flag_key: &str) -> Result<&Flag, EvaluationError> {
@@ -90,6 +144,7 @@ impl Flag {
         context: &EvaluationContext,
         expected_type: ExpectedFlagType,
         now: DateTime<Utc>,
+        exclude_experiments: bool,
     ) -> Result<Assignment, EvaluationError> {
         if !expected_type.is_compatible(self.variation_type.into()) {
             return Err(EvaluationError::TypeMismatch {
@@ -98,7 +153,8 @@ impl Flag {
             });
         }
 
-        let (allocation, split, reason) = self.find_allocation(context, now)?;
+        let (allocation, split, reason) =
+            self.find_allocation(context, now, exclude_experiments)?;
 
         Ok(Assignment {
             value: split.value.clone(),
@@ -114,8 +170,12 @@ impl Flag {
         &self,
         context: &EvaluationContext,
         now: DateTime<Utc>,
+        exclude_experiments: bool,
     ) -> Result<(&Allocation, &Split, AssignmentReason), EvaluationError> {
         for allocation in &self.allocations {
+            if exclude_experiments && allocation.do_log {
+                continue;
+            }
             if let Some((split, reason)) = allocation.get_matching_split(context, now)? {
                 return Ok((allocation, split, reason));
             }
@@ -199,6 +259,114 @@ impl Shard {
         let h = self.sharder.shard(&[targeting_key]);
 
         self.ranges.iter().any(|range| range.contains(h))
+    }
+}
+
+#[cfg(test)]
+mod opt_out_tests {
+    use super::*;
+    use crate::rules_based::{Attribute, Str, UniversalFlagConfig};
+    use serde_json::json;
+    use std::{collections::HashMap, sync::Arc};
+
+    fn context(value: Option<serde_json::Value>) -> EvaluationContext {
+        let mut attributes = HashMap::<Str, Attribute>::new();
+        if let Some(value) = value {
+            attributes.insert(
+                "dd_experimentation_opt_out_at".into(),
+                serde_json::from_value(value).unwrap(),
+            );
+        }
+        EvaluationContext::new(None, Arc::new(attributes))
+    }
+
+    #[test]
+    fn opt_out_timestamp_validation_and_disabled_mode() {
+        let immediate = EvaluationOptions {
+            experimentation_opt_out_immediate: true,
+        };
+        for (value, expected) in [
+            (None, Ok(false)),
+            (Some(json!("2026-10-19T12:00:00Z")), Ok(true)),
+            (Some(json!("2099-01-01T00:00:00.123456789+05:30")), Ok(true)),
+            (Some(json!(null)), Err(EvaluationError::InvalidContext)),
+            (Some(json!(true)), Err(EvaluationError::InvalidContext)),
+            (Some(json!(123)), Err(EvaluationError::InvalidContext)),
+            (Some(json!("")), Err(EvaluationError::InvalidContext)),
+            (
+                Some(json!("2026-02-30T00:00:00Z")),
+                Err(EvaluationError::InvalidContext),
+            ),
+            (
+                Some(json!("2026-10-19 12:00:00Z")),
+                Err(EvaluationError::InvalidContext),
+            ),
+            (
+                Some(json!("2026-10-19T12:00:00")),
+                Err(EvaluationError::InvalidContext),
+            ),
+        ] {
+            let subject = context(value.clone());
+            assert_eq!(
+                immediate.exclude_experiments(&subject),
+                expected,
+                "{value:?}"
+            );
+            assert_eq!(
+                EvaluationOptions::default().exclude_experiments(&subject),
+                Ok(false)
+            );
+        }
+    }
+
+    #[test]
+    fn opt_out_skips_before_targeting_and_preserves_ordinary_fallback() {
+        let config = Configuration::from_server_response(
+            UniversalFlagConfig::from_json(serde_json::to_vec(&json!({
+                "createdAt": "2026-10-19T00:00:00Z",
+                "environment": {"name": "test"},
+                "flags": {"feature": {
+                    "key": "feature",
+                    "enabled": true,
+                    "variationType": "BOOLEAN",
+                    "variations": {
+                        "on": {"key": "on", "value": true},
+                        "off": {"key": "off", "value": false}
+                    },
+                    "allocations": [{
+                        "key": "experiment",
+                        "splits": [{"variationKey": "on", "shards": [{
+                            "salt": "test", "totalShards": 10000, "ranges": [{"start": 0, "end": 5000}]
+                        }]}]
+                    }, {
+                        "key": "ordinary", "doLog": false,
+                        "splits": [{"variationKey": "off", "shards": []}]
+                    }]
+                }}
+            })).unwrap()).unwrap()
+        );
+        let subject = context(Some(json!("2026-10-19T00:00:00Z")));
+        // Missing targeting key would fail in the first allocation if it ran.
+        assert_eq!(
+            config
+                .eval_flag("feature", &subject, ExpectedFlagType::Boolean, Utc::now())
+                .unwrap_err(),
+            EvaluationError::TargetingKeyMissing,
+        );
+        let assignment = config
+            .eval_flag_with_options(
+                "feature",
+                &subject,
+                ExpectedFlagType::Boolean,
+                Utc::now(),
+                EvaluationOptions {
+                    experimentation_opt_out_immediate: true,
+                },
+            )
+            .unwrap();
+        assert_eq!(assignment.allocation_key.as_str(), "ordinary");
+        assert_eq!(assignment.value.variation_value(), json!(false));
+        assert!(!assignment.do_log);
     }
 }
 

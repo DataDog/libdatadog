@@ -156,6 +156,61 @@ pub unsafe extern "C" fn ddog_ffe_get_assignment(
     expected_type: ExpectedFlagType,
     context: Handle<EvaluationContext>,
 ) -> Handle<ResolutionDetails> {
+    // SAFETY: this function has the same handle and string requirements.
+    unsafe {
+        ddog_ffe_get_assignment_with_options(
+            config,
+            flag_key,
+            expected_type,
+            context,
+            EvaluationOptions::default(),
+        )
+    }
+}
+
+/// Optional behavior selected by the SDK at provider construction.
+#[derive(Clone, Copy, Default)]
+#[repr(C)]
+pub struct EvaluationOptions {
+    pub experimentation_opt_out_immediate: bool,
+}
+
+/// Evaluate a flag with optional subject experimentation exclusion.
+///
+/// # Ownership
+/// The caller must free the returned handle with `ddog_ffe_assignment_drop`.
+///
+/// # Safety
+/// `config` and `context` must be valid handles. `flag_key` must be a valid
+/// NUL-terminated string.
+#[unsafe(no_mangle)]
+#[must_use]
+pub unsafe extern "C" fn ddog_ffe_get_assignment_with_options(
+    config: Handle<Configuration>,
+    flag_key: *const c_char,
+    expected_type: ExpectedFlagType,
+    context: Handle<EvaluationContext>,
+    options: EvaluationOptions,
+) -> Handle<ResolutionDetails> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        // SAFETY: the caller provides valid handles and a valid string.
+        unsafe { get_assignment_with_options(config, flag_key, expected_type, context, options) }
+    }))
+    .unwrap_or_else(|_| {
+        Handle::new(
+            EvaluationError::Internal(Str::from_static_str("feature flag evaluation failed"))
+                .into(),
+        )
+    })
+}
+
+unsafe fn get_assignment_with_options(
+    config: Handle<Configuration>,
+    flag_key: *const c_char,
+    expected_type: ExpectedFlagType,
+    context: Handle<EvaluationContext>,
+    options: EvaluationOptions,
+) -> Handle<ResolutionDetails> {
     if flag_key.is_null() {
         return Handle::new(
             EvaluationError::Internal(Str::from_static_str(
@@ -180,7 +235,15 @@ pub unsafe extern "C" fn ddog_ffe_get_assignment(
         );
     };
 
-    let assignment_result = config.eval_flag(flag_key, context, expected_type.into(), now());
+    let assignment_result = config.eval_flag_with_options(
+        flag_key,
+        context,
+        expected_type.into(),
+        now(),
+        ffe::EvaluationOptions {
+            experimentation_opt_out_immediate: options.experimentation_opt_out_immediate,
+        },
+    );
 
     Handle::new(assignment_result.into())
 }
@@ -407,6 +470,7 @@ impl From<&EvaluationError> for ErrorCode {
         match value {
             EvaluationError::TypeMismatch { .. } => ErrorCode::TypeMismatch,
             EvaluationError::TargetingKeyMissing => ErrorCode::TargetingKeyMissing,
+            EvaluationError::InvalidContext => ErrorCode::InvalidContext,
             EvaluationError::ConfigurationParseError => ErrorCode::ParseError,
             EvaluationError::FlagConfigurationInvalid => ErrorCode::ParseError,
             EvaluationError::ConfigurationMissing => ErrorCode::ProviderNotReady,
@@ -496,5 +560,12 @@ mod tests {
 
         assert!(matches!(Reason::from(&details), Reason::Error));
         assert_eq!(ErrorCode::from(&details), ErrorCode::ParseError);
+    }
+
+    #[test]
+    fn invalid_opt_out_is_exposed_as_invalid_context() {
+        let details = ResolutionDetails::from(EvaluationError::InvalidContext);
+        assert!(matches!(Reason::from(&details), Reason::Error));
+        assert_eq!(ErrorCode::from(&details), ErrorCode::InvalidContext);
     }
 }

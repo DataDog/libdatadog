@@ -5,8 +5,8 @@ use std::{collections::HashMap, fs, path::PathBuf, sync::Arc};
 
 use chrono::Utc;
 use libdd_ffe::rules_based::{
-    AssignmentReason, Attribute, Configuration, EvaluationContext, EvaluationError, FlagType, Str,
-    UniversalFlagConfig, get_assignment,
+    AssignmentReason, Attribute, Configuration, EvaluationContext, EvaluationError,
+    EvaluationOptions, FlagType, Str, UniversalFlagConfig, get_assignment,
 };
 use serde::Deserialize;
 
@@ -19,6 +19,8 @@ struct TestCase {
     targeting_key: Option<Str>,
     attributes: Arc<HashMap<Str, Attribute>>,
     result: TestResult,
+    #[serde(default)]
+    capabilities: HashMap<String, TestResult>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -47,6 +49,8 @@ fn evaluates_canonical_json_fixtures() {
     let now = Utc::now();
 
     let mut fixture_count = 0;
+    let mut baseline_count = 0;
+    let mut opt_out_count = 0;
     for entry in fs::read_dir(&cases_dir).unwrap() {
         let path = entry.unwrap().path();
         if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
@@ -58,7 +62,55 @@ fn evaluates_canonical_json_fixtures() {
             .unwrap_or_else(|err| panic!("failed to parse fixture {}: {err}", path.display()));
 
         for test_case in test_cases {
+            baseline_count += 1;
             let subject = EvaluationContext::new(test_case.targeting_key, test_case.attributes);
+            if let Some(expected) = test_case.capabilities.get("experimentationOptOutImmediate") {
+                opt_out_count += 1;
+                let result = config.eval_flag_with_options(
+                    &test_case.flag,
+                    &subject,
+                    test_case.variation_type.into(),
+                    now,
+                    EvaluationOptions {
+                        experimentation_opt_out_immediate: true,
+                    },
+                );
+                let (value, reason, error) = match result {
+                    Ok(assignment) => (
+                        assignment.value.variation_value(),
+                        reason_from_assignment(assignment.reason),
+                        None,
+                    ),
+                    Err(err) => (
+                        test_case.default_value.clone(),
+                        reason_from_error(&err),
+                        error_code_from_error(&err),
+                    ),
+                };
+                assert_eq!(
+                    value,
+                    expected.value,
+                    "immediate value for {} in {}",
+                    test_case.flag,
+                    path.display()
+                );
+                if let Some(expected_reason) = expected.reason.as_deref() {
+                    assert_eq!(
+                        reason,
+                        expected_reason,
+                        "immediate reason for {} in {}",
+                        test_case.flag,
+                        path.display()
+                    );
+                }
+                assert_eq!(
+                    error,
+                    expected.error_code.as_deref(),
+                    "immediate error for {} in {}",
+                    test_case.flag,
+                    path.display()
+                );
+            }
             let result = get_assignment(
                 Some(&config),
                 &test_case.flag,
@@ -111,6 +163,14 @@ fn evaluates_canonical_json_fixtures() {
     }
 
     assert!(fixture_count > 0, "no canonical FFE fixtures loaded");
+    assert!(
+        baseline_count >= 325,
+        "baseline fixture coverage was reduced"
+    );
+    assert_eq!(
+        opt_out_count, 18,
+        "immediate opt-out capability was not exercised"
+    );
 }
 
 fn reason_from_assignment(reason: AssignmentReason) -> &'static str {
@@ -135,6 +195,7 @@ fn error_code_from_error(err: &EvaluationError) -> Option<&'static str> {
         EvaluationError::FlagDisabled | EvaluationError::DefaultAllocationNull => None,
         EvaluationError::TypeMismatch { .. } => Some("TYPE_MISMATCH"),
         EvaluationError::TargetingKeyMissing => Some("TARGETING_KEY_MISSING"),
+        EvaluationError::InvalidContext => Some("INVALID_CONTEXT"),
         EvaluationError::ConfigurationParseError | EvaluationError::FlagConfigurationInvalid => {
             Some("PARSE_ERROR")
         }
