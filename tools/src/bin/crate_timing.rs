@@ -67,6 +67,21 @@ struct Args {
     /// Restrict to these crates (default: all); benches are scoped the same way.
     #[arg(long, num_args = 1..)]
     packages: Vec<String>,
+
+    /// Rendering of the per-test breakdown.
+    #[arg(long, value_enum, default_value_t = Format::Tree)]
+    format: Format,
+
+    /// Levels shown in the breakdown tree: 1 = crates, 2 = +modules, 3 = +tests
+    /// (ignored by --format table).
+    #[arg(long, default_value_t = 3)]
+    depth: usize,
+}
+
+#[derive(Clone, Copy, Debug, clap::ValueEnum)]
+enum Format {
+    Tree,
+    Table,
 }
 
 /// The timed execution shapes, one per report column.
@@ -334,23 +349,57 @@ fn human(secs: f64) -> String {
     }
 }
 
-fn report_docs(times: &Times, tests: &[TestResult]) -> Vec<doc::Doc> {
+fn report_docs(times: &Times, tests: &[TestResult], args: &Args) -> Vec<doc::Doc> {
     let mut docs = vec![
         doc::Doc::Heading {
             level: 1,
             text: "Per-crate test & benchmark execution time".into(),
         },
-        doc::Doc::Para(SCOPE.into()),
+        doc::Doc::Para(format!("{SCOPE} {}", settings(args))),
         doc::Doc::Table(crate_table(times)),
     ];
     if !tests.is_empty() {
         docs.push(doc::Doc::Heading {
             level: 2,
-            text: "Slowest tests".into(),
+            text: "Test breakdown".into(),
         });
-        docs.push(doc::Doc::Table(slowest_tests(tests)));
+        docs.push(match args.format {
+            Format::Tree => doc::Doc::Tree(
+                test_tree(tests)
+                    .into_iter()
+                    .map(|root| root.into_doc(args.depth))
+                    .collect(),
+            ),
+            Format::Table => doc::Doc::Table(slowest_tests(tests)),
+        });
     }
     docs
+}
+
+/// The invocation settings the report was produced with, so an artifact says what
+/// made it.
+fn settings(args: &Args) -> String {
+    let rendering = match args.format {
+        Format::Tree => format!("as a tree to depth {}", args.depth),
+        Format::Table => "as a table of the 30 slowest tests".to_string(),
+    };
+    let crates = if args.packages.is_empty() {
+        "all workspace crates".to_string()
+    } else {
+        let n = args.packages.len();
+        format!("{n} selected crate{}", if n == 1 { "" } else { "s" })
+    };
+    format!("Measured at {} {rendering}, over {crates}.", commit())
+}
+
+fn commit() -> String {
+    Command::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+        .unwrap_or_else(|| "an unknown commit".to_string())
 }
 
 fn crate_table(times: &Times) -> doc::Table {
@@ -403,6 +452,120 @@ fn failed_phases(t: &CrateTimes) -> String {
         .join(",")
 }
 
+/// A crate, module or test in the per-test breakdown tree. Internal nodes carry
+/// the sum of their children's times and any descendant's failure.
+struct TestNode {
+    label: String,
+    secs: f64,
+    failed: bool,
+    children: Vec<TestNode>,
+}
+
+impl TestNode {
+    fn leaf(test: &TestResult) -> Self {
+        Self {
+            label: leaf_name(&test.name).to_string(),
+            secs: test.secs,
+            failed: !test.ok,
+            children: Vec::new(),
+        }
+    }
+
+    fn into_doc(self, depth: usize) -> doc::Node {
+        let cut = depth <= 1 && !self.children.is_empty();
+        let hidden = cut.then(|| test_count(&self)).unwrap_or(0);
+        let children = if cut {
+            Vec::new()
+        } else {
+            self.children
+                .into_iter()
+                .map(|child| child.into_doc(depth - 1))
+                .collect()
+        };
+        let mut notes = Vec::new();
+        if self.failed {
+            notes.push("fail".to_string());
+        }
+        if cut {
+            notes.push(format!("… {hidden} tests"));
+        }
+        doc::Node {
+            label: self.label,
+            value: human(self.secs),
+            note: (!notes.is_empty()).then(|| notes.join(", ")),
+            children,
+        }
+    }
+}
+
+fn test_count(node: &TestNode) -> usize {
+    if node.children.is_empty() {
+        1
+    } else {
+        node.children.iter().map(test_count).sum()
+    }
+}
+
+/// A crate or module node: children slowest-first, time summed from them,
+/// failures propagated up.
+fn branch(label: String, mut children: Vec<TestNode>) -> TestNode {
+    children.sort_by(|a, b| b.secs.total_cmp(&a.secs));
+    TestNode {
+        label,
+        secs: children.iter().map(|c| c.secs).sum(),
+        failed: children.iter().any(|c| c.failed),
+        children,
+    }
+}
+
+/// Groups flat test timings into a crate → module → test tree, slowest first at
+/// every level. Tests outside any module hang directly off their crate.
+fn test_tree(tests: &[TestResult]) -> Vec<TestNode> {
+    // (crate, module) → tests; the map keys keep crates and modules sorted.
+    let grouped: BTreeMap<(&str, &str), Vec<&TestResult>> =
+        tests.iter().fold(BTreeMap::new(), |mut grouped, test| {
+            grouped
+                .entry((test.crate_name.as_ref(), test_module(&test.name)))
+                .or_default()
+                .push(test);
+            grouped
+        });
+
+    let by_crate: BTreeMap<&str, Vec<TestNode>> = grouped.into_iter().fold(
+        BTreeMap::new(),
+        |mut by_crate, ((crate_name, module), tests)| {
+            let children = by_crate.entry(crate_name).or_default();
+            match module {
+                "" => children.extend(tests.iter().copied().map(TestNode::leaf)),
+                _ => children.push(branch(
+                    module.to_string(),
+                    tests.iter().copied().map(TestNode::leaf).collect(),
+                )),
+            }
+            by_crate
+        },
+    );
+
+    let mut roots: Vec<TestNode> = by_crate
+        .into_iter()
+        .map(|(crate_name, children)| branch(crate_name.to_string(), children))
+        .collect();
+    roots.sort_by(|a, b| b.secs.total_cmp(&a.secs));
+    roots
+}
+
+/// The module path of a nextest test name: "mod::sub::test" → "mod::sub", and
+/// "" for tests outside any module.
+fn test_module(name: &str) -> &str {
+    name.rsplit_once("::").map_or("", |(module, _)| module)
+}
+
+/// The bare test name: "mod::sub::test" → "test".
+fn leaf_name(name: &str) -> &str {
+    name.rsplit_once("::").map_or(name, |(_, test)| test)
+}
+
+/// The 30 slowest tests, flat: the breakdown's table rendering.
 fn slowest_tests(tests: &[TestResult]) -> doc::Table {
     let mut table = doc::Table::new(vec![
         doc::Column::new("time", doc::Align::Right),
@@ -517,8 +680,90 @@ fn main() -> Result<()> {
             .bench_fns = bench_functions_since(Path::new("target/criterion"), since);
     }
 
-    let markdown = doc::render_markdown(&report_docs(&times, &tests));
+    let markdown = doc::render_markdown(&report_docs(&times, &tests, &args));
     fs::write(results_dir.join("results.md"), &markdown).context("failed to write results.md")?;
     print!("{markdown}");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test(crate_name: &str, name: &str, secs: f64, ok: bool) -> TestResult {
+        TestResult {
+            crate_name: crate_name.into(),
+            name: name.into(),
+            secs,
+            ok,
+        }
+    }
+
+    fn labels(nodes: &[TestNode]) -> Vec<&str> {
+        nodes.iter().map(|n| n.label.as_str()).collect()
+    }
+
+    #[test]
+    fn test_tree_groups_by_crate_and_module() {
+        let tests = [
+            test("alpha", "mod1::t1", 2.0, true),
+            test("alpha", "mod1::t2", 1.0, false),
+            test("alpha", "t3", 0.5, true),
+            test("beta", "m::x", 0.2, true),
+        ];
+
+        let roots = test_tree(&tests);
+        assert_eq!(labels(&roots), ["alpha", "beta"]);
+
+        let alpha = &roots[0];
+        assert!((alpha.secs - 3.5).abs() < 1e-9);
+        // crates without failures are not marked
+        assert!(!roots[1].failed);
+        assert_eq!(labels(&alpha.children), ["mod1", "t3"]);
+
+        let module = &alpha.children[0];
+        assert!((module.secs - 3.0).abs() < 1e-9);
+        // module and crate times are the sum of their children...
+        assert!((alpha.children[1].secs - 0.5).abs() < 1e-9);
+        assert_eq!(labels(&module.children), ["t1", "t2"]);
+
+        // ...and failures propagate up, leaves ordered slowest-first
+        assert!(alpha.failed && module.failed && !module.children[0].failed);
+        assert!(module.children[1].failed);
+    }
+
+    #[test]
+    fn into_doc_honors_depth_and_notes_hidden_tests() {
+        let tests = [
+            test("alpha", "m::t1", 2.0, true),
+            test("alpha", "m::t2", 1.0, false),
+            test("alpha", "t3", 0.5, true),
+        ];
+
+        let roots: Vec<doc::Node> = test_tree(&tests)
+            .into_iter()
+            .map(|root| root.into_doc(1))
+            .collect();
+        let root = &roots[0];
+        assert!(root.children.is_empty());
+        assert_eq!(root.note.as_deref(), Some("fail, … 3 tests"));
+
+        // A leaf shown at the depth limit hides nothing and carries no note.
+        let leaves: Vec<doc::Node> = test_tree(&tests)
+            .into_iter()
+            .flat_map(|root| {
+                root.into_doc(3)
+                    .children
+                    .into_iter()
+                    .flat_map(|module| module.children)
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        assert!(leaves.iter().all(|leaf| leaf.children.is_empty()));
+        assert!(
+            leaves
+                .iter()
+                .all(|leaf| leaf.note.as_deref() == Some("fail") || leaf.note.is_none())
+        );
+    }
 }
