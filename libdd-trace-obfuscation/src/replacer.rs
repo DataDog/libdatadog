@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use libdd_common::regex_engine::{Regex, Replacer};
+use libdd_trace_model::ValueArrayMut;
 use libdd_trace_protobuf::pb;
 use libdd_trace_utils::span::{SpanText, TraceData, v1, v1::AttributeValue, v04};
 use serde::{Deserialize, Deserializer, Serialize};
@@ -206,19 +207,19 @@ fn apply_rule<S: SpanText>(rule: &ReplaceRule, field: &mut S) {
     }
 }
 
-/// Applies `rule` to `value`, recursing into `List`/`KeyValue` so nested string leaves are
+/// Applies `rule` to `value`, recursing into `Array`/`KeyValueList` so nested string leaves are
 /// scrubbed too: the agentless encoder flattens those into plain dotted tags before sending, so
 /// leaving them out here would let matching data (e.g. a `payment: {number: "..."}` attribute)
 /// reach the intake unredacted.
 fn apply_rule_to_attr_value<T: TraceData>(rule: &ReplaceRule, value: &mut AttributeValue<T>) {
     match value {
         AttributeValue::String(s) => apply_rule(rule, s),
-        AttributeValue::List(values) => {
+        AttributeValue::Array(values) => {
             for v in values.iter_mut() {
                 apply_rule_to_attr_value(rule, v);
             }
         }
-        AttributeValue::KeyValue(map) => {
+        AttributeValue::KeyValueList(map) => {
             for (_, v) in map.iter_mut() {
                 apply_rule_to_attr_value(rule, v);
             }

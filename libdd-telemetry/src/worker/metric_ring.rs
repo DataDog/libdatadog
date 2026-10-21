@@ -4,13 +4,13 @@
 //! A bounded multi-producer / single-consumer ring buffer for metric points.
 //!
 //! Metric points are the highest-frequency telemetry action, so routing every point through the
-//! worker's tokio mpsc channel — a heap-boxed [`TelemetryActions`] message plus a receiver wakeup
-//! per point — dominates the per-`add_point` cost. This ring buffer replaces that per-point cost
-//! with:
+//! worker's tokio mpsc channel — a heap-boxed [`super::TelemetryActions`] message plus a receiver
+//! wakeup per point — dominates the per-`add_point` cost. This ring buffer replaces that per-point
+//! cost with:
 //!   * a wait-free reserve (`fetch_add` on the write cursor) followed by a release-store publish,
 //!   * a single consumer (the telemetry worker) that batch-drains all pending points,
-//!   * an amortized wakeup — the consumer is notified once every [`NOTIFY_INTERVAL`] points (and
-//!     whenever a producer has to wait for back-pressure), not once per point, and
+//!   * an amortized wakeup — the consumer is notified once per batch of points (and whenever a
+//!     producer has to wait for back-pressure), not once per point, and
 //!   * synchronous back-pressure — a producer that would lap the consumer spins/yields until the
 //!     consumer has caught up, bounding memory without dropping points.
 //!

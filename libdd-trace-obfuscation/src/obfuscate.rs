@@ -3,6 +3,7 @@
 
 use core::borrow::Borrow;
 
+use libdd_trace_model::ValueArrayMut;
 use libdd_trace_protobuf::pb::{
     self, attribute_any_value::AttributeAnyValueType,
     attribute_array_value::AttributeArrayValueType,
@@ -556,15 +557,15 @@ fn obfuscate_v1_span_event<T: TraceData>(event: &mut v1::SpanEvent<T>, config: &
 /// Obfuscates a single [`v1::AttributeValue`] in place if it looks like a credit-card number.
 ///
 /// `String`, `Int`, and `Float` values are checked (stringifying the latter two); on a hit the
-/// value becomes `String("?")`, mirroring [`obfuscate_v04_attribute_value`]. `List` elements and
-/// `KeyValue` entries are checked recursively. `Bool` and `Bytes` are left untouched: they can't
-/// hold a card number in a form the check below understands.
+/// value becomes `String("?")`, mirroring [`obfuscate_v04_attribute_value`]. `Array` elements and
+/// `KeyValueList` entries are checked recursively. `Bool` and `Bytes` are left untouched: they
+/// can't hold a card number in a form the check below understands.
 ///
 /// `path` is the dotted key this value will be flattened to by the agentless encoder (see
 /// `flatten_attr_into_v1`), e.g. `"payment.account_id"` for the `account_id` entry nested inside
-/// a `payment` `KeyValue` attribute. `should_obfuscate_cc_key`'s exemption list is keyed by that
-/// final flattened name, not the immediate child key, so nested entries must check against the
-/// accumulated path rather than their own key alone.
+/// a `payment` `KeyValueList` attribute. `should_obfuscate_cc_key`'s exemption list is keyed by
+/// that final flattened name, not the immediate child key, so nested entries must check against
+/// the accumulated path rather than their own key alone.
 fn obfuscate_v1_attribute_credit_card<T: TraceData>(
     value: &mut AttributeValue<T>,
     config: &ObfuscationConfig,
@@ -586,12 +587,12 @@ fn obfuscate_v1_attribute_credit_card<T: TraceData>(
                 *value = AttributeValue::String(T::Text::from_static_str("?"));
             }
         }
-        AttributeValue::List(values) => {
+        AttributeValue::Array(values) => {
             for v in values.iter_mut() {
                 obfuscate_v1_attribute_credit_card(v, config, path);
             }
         }
-        AttributeValue::KeyValue(map) => {
+        AttributeValue::KeyValueList(map) => {
             for (k, v) in map.iter_mut() {
                 let child_path = format!("{path}.{}", as_str(k));
                 if should_obfuscate_cc_key(&child_path, config) {
@@ -1403,7 +1404,7 @@ mod v1_tests {
             .insert(bs("cc"), AttributeValue::String(bs("4111111111111111")));
         event.attributes.insert(
             bs("cc_array"),
-            AttributeValue::List(vec![AttributeValue::String(bs("4111111111111111"))]),
+            AttributeValue::Array(vec![AttributeValue::String(bs("4111111111111111"))]),
         );
         span.span_events.push(event);
         let obf_config = ObfuscationConfig {
@@ -1422,7 +1423,7 @@ mod v1_tests {
         ));
         assert!(matches!(
             attrs.get("cc_array"),
-            Some(AttributeValue::List(v)) if matches!(&v[0], AttributeValue::String(s) if s.as_str() == "?")
+            Some(AttributeValue::Array(v)) if matches!(&v[0], AttributeValue::String(s) if s.as_str() == "?")
         ));
     }
 }
