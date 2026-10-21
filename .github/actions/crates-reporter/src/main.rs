@@ -43,16 +43,11 @@ fn main() -> Result<()> {
     log::info!("Changed files: {:?}", changed_files);
 
     let workspace = workspace::load()?;
-    let members: Vec<Package> = workspace.members().to_vec();
-    let mut changed_crates =
-        collect_changed_crates(&changed_files, &members, workspace.workspace_root());
-
-    // A toolchain bump can change how every crate builds, formats or lints,
-    // so a change to the CI toolchain pins counts as a change to all crates.
-    if changed_files.iter().any(|f| f == "ci-toolchain.toml") {
-        log::info!("ci-toolchain.toml changed, counting all crates as changed");
-        changed_crates = all_crates(&members);
-    }
+    let changed_crates = collect_changed_crates(
+        &changed_files,
+        workspace.members(),
+        workspace.workspace_root(),
+    );
 
     if changed_crates.is_empty() {
         log::info!("Changed crates is empty");
@@ -74,10 +69,6 @@ fn main() -> Result<()> {
     )
 }
 
-fn all_crates(members: &[Package]) -> Vec<CrateInfo> {
-    members.iter().map(Into::into).collect()
-}
-
 fn collect_changed_crates(
     changed_files: &[String],
     members: &[Package],
@@ -95,9 +86,13 @@ fn collect_changed_crates(
                 continue;
             };
             let relative_dir_str = relative_dir.as_str();
-            if (file == relative_dir_str || file.starts_with(&format!("{relative_dir_str}/")))
-                && crate_inventory.insert(member.name.to_string())
-            {
+            // A toolchain bump can change how every crate builds, formats or
+            // lints, so a change to the CI toolchain pins counts as a change
+            // to all crates.
+            let touches_crate = file == relative_dir_str
+                || file.starts_with(&format!("{relative_dir_str}/"))
+                || file == "ci-toolchain.toml";
+            if touches_crate && crate_inventory.insert(member.name.to_string()) {
                 crates.push(member.into());
             }
         }
