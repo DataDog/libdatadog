@@ -6,6 +6,8 @@ use crate::msgpack_decoder::decode::{
     buffer::Buffer, map::read_map_len, number::read_number, string::handle_null_marker,
 };
 use crate::span::DeserializableTraceData;
+use crate::span::v1::from_v04::trace_chunk_from_v04;
+use crate::span::v1::{TraceChunkBytes, TraceChunkSlice};
 use crate::span::v04::{Span, SpanBytes, SpanSlice};
 use crate::span::vec_map::VecMap;
 
@@ -137,6 +139,36 @@ fn from_buffer<T: DeserializableTraceData>(
 where
     T::Text: Clone,
 {
+    decode_traces(data, |trace| trace)
+}
+
+/// Decodes a Bytes buffer of v0.5 msgpack traces straight into V1 [`TraceChunkBytes`].
+///
+/// Each trace is converted as soon as it is decoded (see
+/// [`crate::span::v1::from_v04::trace_chunk_from_v04`] for the mapping, v0.5 spans carrying the
+/// same fields as v0.4 ones), so the spans of the whole payload are never held at once in their
+/// v0.5 shape.
+pub fn from_bytes_into_v1(
+    data: libdd_tinybytes::Bytes,
+) -> Result<(Vec<TraceChunkBytes>, usize), DecodeError> {
+    decode_traces(&mut Buffer::new(data), trace_chunk_from_v04)
+}
+
+/// Decodes a slice of v0.5 msgpack traces straight into V1 [`TraceChunkSlice`]s borrowing from
+/// `data`. See [`from_bytes_into_v1`].
+pub fn from_slice_into_v1(data: &[u8]) -> Result<(Vec<TraceChunkSlice<'_>>, usize), DecodeError> {
+    decode_traces(&mut Buffer::new(data), trace_chunk_from_v04)
+}
+
+/// Decodes the v0.5 `[dict, traces]` payload, mapping each trace through `map_trace` as soon as
+/// its spans are decoded.
+fn decode_traces<T: DeserializableTraceData, C>(
+    data: &mut Buffer<T>,
+    mut map_trace: impl FnMut(Vec<Span<T>>) -> C,
+) -> Result<(Vec<C>, usize), DecodeError>
+where
+    T::Text: Clone,
+{
     let data_elem = rmp::decode::read_array_len(data.as_mut_slice())
         .map_err(|_| DecodeError::InvalidFormat("Unable to read payload len".to_string()))?;
 
@@ -151,7 +183,7 @@ where
     let trace_count = rmp::decode::read_array_len(data.as_mut_slice())
         .map_err(|_| DecodeError::InvalidFormat("Unable to read trace len".to_string()))?;
 
-    let mut traces: Vec<Vec<Span<T>>> = Vec::with_capacity(trace_count as usize);
+    let mut traces: Vec<C> = Vec::with_capacity(trace_count as usize);
     let start_len = data.len();
 
     for _ in 0..trace_count {
@@ -163,7 +195,7 @@ where
             let span = deserialize_span(data, &dict)?;
             trace.push(span);
         }
-        traces.push(trace);
+        traces.push(map_trace(trace));
     }
     Ok((traces, start_len - data.len()))
 }
@@ -315,6 +347,39 @@ mod tests {
 
     type V05Payload = (Vec<String>, Vec<Vec<V05Span>>);
     type V05PayloadMalformed = (Vec<String>, Vec<Vec<V05SpanMalformed>>);
+
+    #[test]
+    fn test_from_slice_into_v1() {
+        let mut span = crate::span::v04::SpanBytes {
+            name: libdd_tinybytes::BytesString::from_static("op"),
+            trace_id: 3,
+            span_id: 1,
+            ..Default::default()
+        };
+        span.meta.insert(
+            libdd_tinybytes::BytesString::from_static("span.kind"),
+            libdd_tinybytes::BytesString::from_static("server"),
+        );
+        let crate::tracer_payload::TraceChunks::V05(payload) =
+            crate::trace_utils::convert_trace_chunks_v04_to_v05(&[vec![span]]).unwrap()
+        else {
+            panic!("expected a v0.5 payload");
+        };
+        let encoded = rmp_serde::to_vec(&payload).unwrap();
+
+        let (chunks, _) = from_slice_into_v1(&encoded).expect("Decoding failed");
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].trace_id[15], 3);
+        assert_eq!(chunks[0].spans[0].name, "op");
+        assert_eq!(
+            chunks[0].spans[0].span_kind,
+            crate::span::v1::SpanKind::Server
+        );
+
+        let (owned, _) = from_bytes_into_v1(libdd_tinybytes::Bytes::from(encoded.clone()))
+            .expect("Decoding failed");
+        assert_eq!(owned[0].spans[0].name.as_str(), "op");
+    }
 
     #[test]
     fn deserialize_dict_test() {

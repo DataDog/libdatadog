@@ -12,25 +12,16 @@ use http::{HeaderMap, HeaderValue, header::CONTENT_TYPE};
 use libdd_common::header::{
     APPLICATION_MSGPACK, DATADOG_SEND_REAL_HTTP_STATUS, DATADOG_TRACE_COUNT,
 };
+use libdd_trace_utils::msgpack_decoder;
 use libdd_trace_utils::msgpack_decoder::decode::error::DecodeError;
 use libdd_trace_utils::msgpack_encoder;
-use libdd_trace_utils::span::{TraceData, v04::Span};
+use libdd_trace_utils::span::TraceData;
+use libdd_trace_utils::span::v1::TracerPayload;
 use libdd_trace_utils::trace_utils::{self, TracerHeaderTags};
-use libdd_trace_utils::tracer_metadata::TracerMetadata;
 use libdd_trace_utils::tracer_payload::{self};
 
 /// Minimal capacity of fresh buffers allocated to encode traces, in bytes.
 const MIN_BUFFER_CAPACITY: usize = 1024;
-
-/// Prepared traces payload ready for sending to the agent
-pub(super) struct PreparedTracesPayload {
-    /// Serialized msgpack payload
-    pub data: Vec<u8>,
-    /// HTTP headers for the request
-    pub headers: HeaderMap,
-    /// Number of trace chunks
-    pub chunk_count: usize,
-}
 
 /// Trace serialization client for handling payload preparation
 #[derive(Debug)]
@@ -44,27 +35,6 @@ impl TraceSerializer {
         Self {
             previous_serialised_len: AtomicUsize::new(MIN_BUFFER_CAPACITY),
         }
-    }
-
-    /// Prepare traces payload and HTTP headers for sending to agent
-    pub(super) fn prepare_traces_payload<T: TraceData>(
-        &self,
-        traces: &[Vec<Span<T>>],
-        header_tags: TracerHeaderTags,
-        metadata: &TracerMetadata,
-        agent_payload_response_version: Option<&AgentResponsePayloadVersion>,
-        output_format: TraceExporterOutputFormat,
-    ) -> Result<PreparedTracesPayload, TraceExporterError> {
-        let chunk_count = traces.len();
-        let headers =
-            self.build_traces_headers(header_tags, chunk_count, agent_payload_response_version);
-        let mp_payload = self.serialize_payload(traces, metadata, output_format)?;
-
-        Ok(PreparedTracesPayload {
-            data: mp_payload,
-            headers,
-            chunk_count,
-        })
     }
 
     /// Build HTTP headers for traces request
@@ -87,61 +57,61 @@ impl TraceSerializer {
         headers
     }
 
-    /// Serialize the borrowed traces to the msgpack payload for `output_format`.
-    //
-    // This function only ever receives v0.4-shaped `Span<T>` (it's called from
-    // `process_and_send_trace_chunks`'s v0.4-input path). When `output_format` negotiates to V1,
-    // it still has to cross-encode those v0.4 spans up to the V1 wire format here — genuine
-    // v1-native input has its own path (`process_and_send_trace_chunks_v1`) that serializes
-    // straight from a native `v1::TracerPayload` and never goes through this function.
-    fn serialize_payload<T: TraceData>(
+    /// Serialize the V1 `payload` to the msgpack wire format for `output_format`.
+    pub(super) fn serialize_payload_v1<T: TraceData>(
         &self,
-        traces: &[Vec<Span<T>>],
-        metadata: &TracerMetadata,
+        payload: &TracerPayload<T>,
         output_format: TraceExporterOutputFormat,
     ) -> Result<Vec<u8>, TraceExporterError> {
         let capacity = self
             .previous_serialised_len
             .load(Ordering::Relaxed)
             .max(MIN_BUFFER_CAPACITY);
+        // The capacity is only a pre-allocation hint, saturating is fine.
+        let capacity_hint = u32::try_from(capacity).unwrap_or(u32::MAX);
         let buff = match output_format {
             TraceExporterOutputFormat::V04 => {
-                msgpack_encoder::v04::to_vec_with_capacity_from_v04(traces, capacity as u32)
+                msgpack_encoder::v04::to_vec_with_capacity_from_v1(payload, capacity_hint)
             }
-            // v0.4 spans cross-encoded as V1 on the wire (used when the agent advertises
-            // /v1.0/traces).
-            TraceExporterOutputFormat::V1 => msgpack_encoder::v1::to_vec_with_capacity_from_v04(
-                traces,
-                capacity as u32,
-                metadata,
-            ),
-            TraceExporterOutputFormat::V05 => {
-                let map_err = |e: anyhow::Error| {
-                    TraceExporterError::Deserialization(DecodeError::InvalidFormat(e.to_string()))
-                };
-                let payload =
-                    trace_utils::convert_trace_chunks_v04_to_v05(traces).map_err(map_err)?;
-                match payload {
-                    tracer_payload::TraceChunks::V05(p) => {
-                        let mut buff = Vec::with_capacity(capacity);
-                        rmp_serde::encode::write(&mut buff, &p)
-                            .map_err(TraceExporterError::Serialization)?;
-                        buff
-                    }
-                    // `convert_trace_chunks_v04_to_v05` always returns `V05`.
-                    _ => {
-                        return Err(TraceExporterError::Deserialization(
-                            DecodeError::InvalidFormat(
-                                "v0.5 conversion produced an unexpected payload variant".to_owned(),
-                            ),
-                        ));
-                    }
-                }
+            TraceExporterOutputFormat::V1 => {
+                msgpack_encoder::v1::to_vec_with_capacity_from_v1(payload, capacity_hint)
             }
+            TraceExporterOutputFormat::V05 => serialize_v05(payload, capacity)?,
         };
         self.previous_serialised_len
             .store(buff.len(), Ordering::Relaxed);
         Ok(buff)
+    }
+}
+
+/// Serialize the V1 `payload` as v0.5.
+///
+/// There is no V1 → v0.5 encoder: the payload is downgraded to the v0.4 wire format, decoded back
+/// as borrowed v0.4 spans and converted to v0.5 from there. This keeps the v0.5 output identical
+/// to the v0.4 downgrade (same promoted fields, flattened attributes, ...) at the cost of an extra
+/// encode/decode, which is acceptable for this legacy output format.
+fn serialize_v05<T: TraceData>(
+    payload: &TracerPayload<T>,
+    capacity: usize,
+) -> Result<Vec<u8>, TraceExporterError> {
+    let v04 = msgpack_encoder::v04::to_vec_from_v1(payload);
+    let (traces, _) =
+        msgpack_decoder::v04::from_slice(&v04).map_err(TraceExporterError::Deserialization)?;
+    let map_err = |e: anyhow::Error| {
+        TraceExporterError::Deserialization(DecodeError::InvalidFormat(e.to_string()))
+    };
+    match trace_utils::convert_trace_chunks_v04_to_v05(&traces).map_err(map_err)? {
+        tracer_payload::TraceChunks::V05(p) => {
+            let mut buff = Vec::with_capacity(capacity);
+            rmp_serde::encode::write(&mut buff, &p).map_err(TraceExporterError::Serialization)?;
+            Ok(buff)
+        }
+        // `convert_trace_chunks_v04_to_v05` always returns `V05`.
+        _ => Err(TraceExporterError::Deserialization(
+            DecodeError::InvalidFormat(
+                "v0.5 conversion produced an unexpected payload variant".to_owned(),
+            ),
+        )),
     }
 }
 
@@ -152,7 +122,9 @@ mod tests {
     use http::header::CONTENT_TYPE;
     use libdd_common::header::APPLICATION_MSGPACK_STR;
     use libdd_tinybytes::BytesString;
-    use libdd_trace_utils::span::v04::SpanBytes;
+    use libdd_trace_utils::span::BytesData;
+    use libdd_trace_utils::span::v1::from_v04::trace_chunk_from_v04;
+    use libdd_trace_utils::span::v04::{SpanBytes, SpanSlice};
     use libdd_trace_utils::trace_utils::{TracerGenericTags, TracerHeaderTags};
 
     fn create_test_span() -> SpanBytes {
@@ -237,167 +209,91 @@ mod tests {
         assert_eq!(headers.get(DATADOG_TRACE_COUNT).unwrap(), "2");
     }
 
-    #[test]
-    fn test_serialize_payload_v04() {
-        let serializer = TraceSerializer::new();
-        let original_traces = vec![vec![create_test_span()]];
+    fn create_test_payload() -> TracerPayload<BytesData> {
+        TracerPayload {
+            language_name: BytesString::from_static("rust"),
+            chunks: vec![trace_chunk_from_v04(vec![create_test_span()])],
+            ..Default::default()
+        }
+    }
 
-        let result = serializer.serialize_payload(
-            &original_traces,
-            &TracerMetadata::default(),
-            TraceExporterOutputFormat::V04,
-        );
-        assert!(result.is_ok());
-
-        let serialized = result.unwrap();
-        assert!(!serialized.is_empty());
-
-        // Verify we can deserialize it back and data integrity is preserved
-        let (deserialized_traces, _) =
-            libdd_trace_utils::msgpack_decoder::v04::from_slice(&serialized).unwrap();
-        assert_eq!(deserialized_traces.len(), 1);
-        assert_eq!(deserialized_traces[0].len(), 1);
-
-        let original_span = &original_traces[0][0];
-        let deserialized_span = &deserialized_traces[0][0];
-
-        assert_eq!(original_span.name, deserialized_span.name.as_ref());
-        assert_eq!(original_span.service, deserialized_span.service.as_ref());
-        assert_eq!(original_span.resource, deserialized_span.resource.as_ref());
-        assert_eq!(original_span.r#type, deserialized_span.r#type.as_ref());
-        assert_eq!(original_span.start, deserialized_span.start);
-        assert_eq!(original_span.duration, deserialized_span.duration);
-        assert_eq!(original_span.span_id, deserialized_span.span_id);
-        assert_eq!(original_span.trace_id, deserialized_span.trace_id);
-        assert_eq!(original_span.parent_id, deserialized_span.parent_id);
-        assert_eq!(original_span.error, deserialized_span.error);
+    fn assert_test_span_roundtrip(span: &SpanSlice<'_>) {
+        let original = create_test_span();
+        assert_eq!(original.name, span.name.as_ref());
+        assert_eq!(original.service, span.service.as_ref());
+        assert_eq!(original.resource, span.resource.as_ref());
+        assert_eq!(original.r#type, span.r#type.as_ref());
+        assert_eq!(original.start, span.start);
+        assert_eq!(original.duration, span.duration);
+        assert_eq!(original.span_id, span.span_id);
+        assert_eq!(original.trace_id, span.trace_id);
+        assert_eq!(original.parent_id, span.parent_id);
+        assert_eq!(original.error, span.error);
     }
 
     #[test]
-    fn test_serialize_payload_v05() {
+    fn test_serialize_payload_v1_as_v04() {
         let serializer = TraceSerializer::new();
-        let original_traces = vec![vec![create_test_span()]];
+        let serialized = serializer
+            .serialize_payload_v1(&create_test_payload(), TraceExporterOutputFormat::V04)
+            .unwrap();
 
-        let result = serializer.serialize_payload(
-            &original_traces,
-            &TracerMetadata::default(),
+        let (traces, _) = libdd_trace_utils::msgpack_decoder::v04::from_slice(&serialized).unwrap();
+        assert_eq!(traces.len(), 1);
+        assert_eq!(traces[0].len(), 1);
+        assert_test_span_roundtrip(&traces[0][0]);
+        assert_eq!(
+            serializer.previous_serialised_len.load(Ordering::Relaxed),
+            serialized.len()
+        );
+    }
+
+    #[test]
+    fn test_serialize_payload_v1_as_v05() {
+        let serializer = TraceSerializer::new();
+        let serialized = serializer
+            .serialize_payload_v1(&create_test_payload(), TraceExporterOutputFormat::V05)
+            .unwrap();
+
+        let (traces, _) = libdd_trace_utils::msgpack_decoder::v05::from_slice(&serialized).unwrap();
+        assert_eq!(traces.len(), 1);
+        assert_eq!(traces[0].len(), 1);
+        assert_test_span_roundtrip(&traces[0][0]);
+    }
+
+    #[test]
+    fn test_serialize_payload_v1_as_v1() {
+        let serializer = TraceSerializer::new();
+        let serialized = serializer
+            .serialize_payload_v1(&create_test_payload(), TraceExporterOutputFormat::V1)
+            .unwrap();
+
+        let (payload, _) = libdd_trace_utils::msgpack_decoder::v1::from_slice(&serialized).unwrap();
+        assert_eq!(payload.language_name, "rust");
+        assert_eq!(payload.chunks.len(), 1);
+        let span = &payload.chunks[0].spans[0];
+        assert_eq!(span.name, "test_span");
+        assert_eq!(span.span_id, 123);
+        assert_eq!(span.parent_id, 789);
+    }
+
+    #[test]
+    fn test_serialize_payload_v1_empty() {
+        let serializer = TraceSerializer::new();
+        let payload = TracerPayload::<BytesData>::default();
+        for format in [
+            TraceExporterOutputFormat::V04,
             TraceExporterOutputFormat::V05,
-        );
-        assert!(result.is_ok());
-
-        let serialized = result.unwrap();
-        assert!(!serialized.is_empty());
-
-        // Verify we can deserialize it back and data integrity is preserved
-        let (deserialized_traces, _) =
-            libdd_trace_utils::msgpack_decoder::v05::from_slice(&serialized).unwrap();
-        assert_eq!(deserialized_traces.len(), 1);
-        assert_eq!(deserialized_traces[0].len(), 1);
-
-        let original_span = &original_traces[0][0];
-        let deserialized_span = &deserialized_traces[0][0];
-
-        assert_eq!(original_span.name, deserialized_span.name.as_ref());
-        assert_eq!(original_span.service, deserialized_span.service.as_ref());
-        assert_eq!(original_span.resource, deserialized_span.resource.as_ref());
-        assert_eq!(original_span.r#type, deserialized_span.r#type.as_ref());
-        assert_eq!(original_span.start, deserialized_span.start);
-        assert_eq!(original_span.duration, deserialized_span.duration);
-        assert_eq!(original_span.span_id, deserialized_span.span_id);
-        assert_eq!(original_span.trace_id, deserialized_span.trace_id);
-        assert_eq!(original_span.parent_id, deserialized_span.parent_id);
-        assert_eq!(original_span.error, deserialized_span.error);
-    }
-
-    #[test]
-    fn test_prepare_traces_payload_v04() {
-        let serializer = TraceSerializer::new();
-        let traces = vec![
-            vec![create_test_span()],
-            vec![create_test_span(), create_test_span()],
-        ];
-        let header_tags = create_test_header_tags();
-
-        let result = serializer.prepare_traces_payload(
-            &traces,
-            header_tags,
-            &TracerMetadata::default(),
-            None,
-            TraceExporterOutputFormat::V04,
-        );
-        assert!(result.is_ok());
-
-        let prepared = result.unwrap();
-        assert_eq!(prepared.chunk_count, 2);
-        assert!(!prepared.data.is_empty());
-        assert!(!prepared.headers.is_empty());
-
-        // Check headers
-        assert_eq!(prepared.headers.get(DATADOG_TRACE_COUNT).unwrap(), "2");
-        assert_eq!(prepared.headers.get("datadog-meta-lang").unwrap(), "rust");
-    }
-
-    #[test]
-    fn test_prepare_traces_payload_v05() {
-        let serializer = TraceSerializer::new();
-        let traces = vec![vec![create_test_span()]];
-        let header_tags = create_test_header_tags();
-
-        let result = serializer.prepare_traces_payload(
-            &traces,
-            header_tags,
-            &TracerMetadata::default(),
-            None,
-            TraceExporterOutputFormat::V05,
-        );
-        assert!(result.is_ok());
-
-        let prepared = result.unwrap();
-        assert_eq!(prepared.chunk_count, 1);
-        assert!(!prepared.data.is_empty());
-        assert!(!prepared.headers.is_empty());
-    }
-
-    #[test]
-    fn test_prepare_traces_payload_with_agent_version() {
-        let agent_version = AgentResponsePayloadVersion::new();
-        let serializer = TraceSerializer::new();
-        let traces = vec![vec![create_test_span()]];
-        let header_tags = create_test_header_tags();
-
-        let result = serializer.prepare_traces_payload(
-            &traces,
-            header_tags,
-            &TracerMetadata::default(),
-            Some(&agent_version),
-            TraceExporterOutputFormat::V04,
-        );
-        assert!(result.is_ok());
-
-        let prepared = result.unwrap();
-        assert_eq!(prepared.chunk_count, 1);
-        assert!(prepared.headers.contains_key(DATADOG_RATES_PAYLOAD_VERSION));
-    }
-
-    #[test]
-    fn test_prepare_traces_payload_empty_traces() {
-        let serializer = TraceSerializer::new();
-        let traces: Vec<Vec<SpanBytes>> = vec![];
-        let header_tags = create_test_header_tags();
-
-        let result = serializer.prepare_traces_payload(
-            &traces,
-            header_tags,
-            &TracerMetadata::default(),
-            None,
-            TraceExporterOutputFormat::V04,
-        );
-        assert!(result.is_ok());
-
-        let prepared = result.unwrap();
-        assert_eq!(prepared.chunk_count, 0);
-        assert!(!prepared.data.is_empty()); // Even empty traces result in some serialized data
-        assert_eq!(prepared.headers.get(DATADOG_TRACE_COUNT).unwrap(), "0");
+            TraceExporterOutputFormat::V1,
+        ] {
+            // Even empty payloads result in some serialized data.
+            assert!(
+                !serializer
+                    .serialize_payload_v1(&payload, format)
+                    .unwrap()
+                    .is_empty()
+            );
+        }
     }
 
     #[test]
