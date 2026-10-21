@@ -40,6 +40,12 @@ system environment. Before initialization, `std` builds use the process environm
 accepts caller-supplied UTF-8 pairs safely, and `initialize_from_envp` copies a stable C
 `envp` array, preserving non-UTF-8 values.
 
+To capture and read the shadow without allocations, use Linux's `initialize_in(buffer)`
+(or `initialize_from_in` / `initialize_from_envp_in`) with a process-lifetime
+`&'static mut [u8]`, then borrow values with `var_os_ref`. These shared-environment APIs
+also work with `libdd-common`'s `alloc` feature disabled. Successful initialization keeps
+the buffer immutable for the process lifetime; failures return the storage for reuse.
+
 ```rust
 use libdd_library_config::tracer_metadata::{
     TracerMetadata, discovery::{self, EntityInfo},
