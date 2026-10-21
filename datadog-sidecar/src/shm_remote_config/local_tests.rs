@@ -259,3 +259,71 @@ fn target_switch_keeps_local_ffe_and_caches_the_complete_agent_directory() {
     assert_ffe(manager.fetch_update(), first_path.as_str(), "first-agent");
     assert_none(&mut manager);
 }
+
+#[test]
+#[cfg(unix)]
+#[cfg_attr(miri, ignore = "requires child processes and native shared memory")]
+fn agent_directory_replacement_preserves_local_ffe_and_reapplies_agent_configs() {
+    const CHILD: &str = "DD_TEST_LOCAL_FFE_AGENT_REPLACEMENT";
+    if std::env::var_os(CHILD).is_none() {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "shm_remote_config::local_tests::agent_directory_replacement_preserves_local_ffe_and_reapplies_agent_configs"])
+            .env(CHILD, "1").output().unwrap();
+        assert!(output.status.success(), "{output:?}");
+        return;
+    }
+    let mut manager = manager();
+    let target = target("local-ffe-agent-restart");
+    let apm_path = path("APM_TRACING");
+    let content = serde_json::to_vec(&dummy_dynamic_config(true)).unwrap();
+    let old_file = store_shm(1, &apm_path, content.clone()).unwrap();
+    let old_writer = RemoteConfigWriter::new(&manager.invariants, &target).unwrap();
+    publish(&old_writer, &[(&apm_path, &old_file)]);
+    manager.track_target(&target);
+    let (publisher, handle) = CdnPublisher::new().unwrap();
+    apply(&publisher, "unchanged-cdn");
+    manager.set_local_configuration(Some(handle)).unwrap();
+    assert_ffe(manager.fetch_update(), CDN_PATH, "unchanged-cdn");
+    assert!(matches!(
+        manager.fetch_update(),
+        RemoteConfigUpdate::Add {
+            limiter_index: 8,
+            ..
+        }
+    ));
+    assert_none(&mut manager);
+    let previous_generation = manager.current_remote_config_generation();
+
+    // The same agent file/limiter index belongs to a new arena; CDN is independent.
+    let new_file = store_shm(1, &apm_path, content).unwrap();
+    let new_writer = RemoteConfigWriter::new(&manager.invariants, &target).unwrap();
+    publish(&new_writer, &[(&apm_path, &new_file)]);
+    drop((old_writer, old_file));
+    assert_remove(manager.fetch_update(), apm_path.as_str());
+    let RemoteConfigUpdate::Add {
+        value,
+        limiter_index,
+    } = manager.fetch_update()
+    else {
+        panic!("expected agent config to be reapplied");
+    };
+    assert_eq!(value.path.as_str(), apm_path.as_str());
+    assert_eq!(limiter_index, 8);
+    assert_none(&mut manager);
+    assert!(manager.current_remote_config_generation() > previous_generation);
+    assert_eq!(manager.active_configs.len(), 2);
+    assert_eq!(
+        manager.local_configuration_state(),
+        Some(RemoteConfigDeliveryState::Ready)
+    );
+
+    // Suppressing arena-only reapplication must not suppress real CDN replacements.
+    apply(&publisher, "changed-cdn");
+    assert_remove(manager.fetch_update(), CDN_PATH);
+    assert_ffe(manager.fetch_update(), CDN_PATH, "changed-cdn");
+    assert_none(&mut manager);
+    manager.set_local_configuration(None).unwrap();
+    assert_remove(manager.fetch_update(), CDN_PATH);
+    assert_none(&mut manager);
+    assert_eq!(manager.active_configs.len(), 1);
+}

@@ -636,7 +636,7 @@ pub struct RemoteConfigManager {
     local_snapshot: Option<PublicationSnapshot>,
     local_attachment: u64,
     check_configs: Vec<String>,
-    /// Reapply every config after replacement: unchanged limiter indices refer to a new arena.
+    /// Reapply agent configs after replacement: unchanged limiter indices refer to a new arena.
     reapply_all: bool,
     pub current_runtime_id: String,
 }
@@ -807,8 +807,12 @@ impl RemoteConfigManager {
             }
         }
 
+        let local_key = self.local_config_key();
         while let Some(config) = self.check_configs.pop() {
-            if self.reapply_all || !self.last_read_configs.contains(&config) {
+            // Local publications do not belong to the replaced agent limiter arena.
+            if (self.reapply_all && local_key.as_ref() != Some(&config))
+                || !self.last_read_configs.contains(&config)
+            {
                 trace!("Removing remote config file {config}");
                 if let Some(path) = self.active_configs.remove(&config) {
                     return RemoteConfigUpdate::Remove(path);
@@ -817,7 +821,6 @@ impl RemoteConfigManager {
         }
         self.reapply_all = false;
 
-        let local_key = self.local_config_key();
         while let Some(config) = self.last_read_configs.pop() {
             if let Entry::Vacant(entry) = self.active_configs.entry(config) {
                 let parsed = if local_key.as_ref() == Some(entry.key()) {
