@@ -4,12 +4,6 @@ on:
   schedule:
     - cron: '0 6 * * 1'
   workflow_dispatch:
-  # Temporary: validation for the PR introducing this workflow; remove before merging.
-  pull_request:
-    paths:
-      - '.github/workflows/crate-timing.yml'
-      - 'tools/Cargo.toml'
-      - 'tools/src/**'
 
 permissions:
   contents: read
