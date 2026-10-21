@@ -917,10 +917,24 @@ where
 
 /// Async send on a Windows named pipe IPC connection.
 ///
-/// Server responses never carry handles; a zero-handle-count suffix is
-/// appended. Takes ownership of `data` so the same ordered writer used by
-/// synchronous callers can retain its allocation, inside `block_in_place` to
+/// A zero-handle-count suffix is appended. Takes ownership of `data` so the same ordered writer
+/// used by synchronous callers can retain its allocation, inside `block_in_place` to
 /// bypass mio.
 pub async fn send_raw_async(conn: &AsyncConn, data: Vec<u8>) -> io::Result<()> {
     tokio::task::block_in_place(|| conn.writer()?.send(data, &[], conn.peer_pid, true))
+}
+
+/// Duplicate response handles into the peer using the same ordered writer as requests.
+pub async fn send_raw_with_handles_async<T: crate::handles::TransferHandles + Sync>(
+    conn: &AsyncConn,
+    data: Vec<u8>,
+    value: &T,
+) -> io::Result<()> {
+    // Raw Windows handles are not Send: collect them inside the synchronous operation.
+    tokio::task::block_in_place(|| {
+        let mut sink = crate::handles::FdSink::new();
+        let Ok(()) = value.copy_handles(&mut sink);
+        conn.writer()?
+            .send(data, &sink.into_fds(), conn.peer_pid, true)
+    })
 }

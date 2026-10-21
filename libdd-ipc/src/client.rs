@@ -33,6 +33,25 @@ pub struct IpcClientConn {
 }
 
 impl IpcClientConn {
+    /// Receive a typed reply and attach its transferred OS handles before returning it.
+    pub fn call_with_handles<T>(
+        &mut self,
+        data: Vec<u8>,
+        fds: &[RawFd],
+    ) -> Result<T, crate::codec::DecodeError>
+    where
+        T: serde::de::DeserializeOwned + crate::handles::TransferHandles,
+    {
+        let (bytes, handles) = self
+            .call(data, fds)
+            .map_err(crate::codec::DecodeError::Io)?;
+        let mut response: T = crate::codec::decode(&bytes)?;
+        response
+            .receive_handles(&mut crate::handles::FdSource::new(handles))
+            .map_err(crate::codec::DecodeError::Io)?;
+        Ok(response)
+    }
+
     pub fn new(conn: SeqpacketConn) -> Self {
         Self {
             conn,
@@ -158,6 +177,55 @@ impl IpcClientConn {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    #[cfg_attr(miri, ignore = "requires native descriptors and /proc")]
+    fn malformed_handle_replies_release_received_descriptors() {
+        use crate::handles::{FdSink, TransferHandles};
+        use crate::platform::{OwnedFileHandle, PlatformHandle, ShmHandle};
+        use std::os::fd::AsRawFd;
+        use std::os::unix::fs::MetadataExt;
+
+        let handle = ShmHandle::new(4096).unwrap();
+        let descriptor: PlatformHandle<OwnedFileHandle> = handle.clone().into();
+        let stat = nix::sys::stat::fstat(descriptor.as_raw_fd()).unwrap();
+        let count = || {
+            std::fs::read_dir("/proc/self/fd")
+                .unwrap()
+                .filter_map(Result::ok)
+                .filter_map(|entry| entry.path().metadata().ok())
+                .filter(|meta| meta.ino() == stat.st_ino && meta.dev() == stat.st_dev)
+                .count()
+        };
+        let before = count();
+        for malformed in [false, true] {
+            let (client, server) = SeqpacketConn::socketpair().unwrap();
+            let response = handle.clone();
+            let task = std::thread::spawn(move || {
+                let mut request = [0; 32];
+                server.recv_raw_blocking(&mut request).unwrap();
+                if malformed {
+                    let mut sink = FdSink::new();
+                    response.copy_handles(&mut sink).unwrap();
+                    // Invalid Option tag, with a real descriptor that must be closed.
+                    server
+                        .send_raw_blocking(vec![255], &sink.into_fds())
+                        .unwrap();
+                } else {
+                    // Valid payload, but its required descriptor is missing.
+                    server
+                        .send_raw_blocking(crate::codec::encode(&Some(response)), &[])
+                        .unwrap();
+                }
+            });
+            let result =
+                IpcClientConn::new(client).call_with_handles::<Option<ShmHandle>>(vec![0], &[]);
+            assert!(result.is_err());
+            task.join().unwrap();
+            assert_eq!(count(), before, "failed reply leaked a received descriptor");
+        }
+    }
 
     #[test]
     #[cfg(target_os = "linux")]
