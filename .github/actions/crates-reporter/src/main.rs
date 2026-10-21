@@ -43,11 +43,16 @@ fn main() -> Result<()> {
     log::info!("Changed files: {:?}", changed_files);
 
     let workspace = workspace::load()?;
-    let changed_crates = collect_changed_crates(
-        &changed_files,
-        workspace.members(),
-        workspace.workspace_root(),
-    );
+    let members: Vec<Package> = workspace.members().to_vec();
+    let mut changed_crates =
+        collect_changed_crates(&changed_files, &members, workspace.workspace_root());
+
+    // A toolchain bump can change how every crate builds, formats or lints,
+    // so a change to the CI toolchain pins counts as a change to all crates.
+    if changed_files.iter().any(|f| f == "ci-toolchain.toml") {
+        log::info!("ci-toolchain.toml changed, counting all crates as changed");
+        changed_crates = all_crates(&members);
+    }
 
     if changed_crates.is_empty() {
         log::info!("Changed crates is empty");
@@ -67,6 +72,24 @@ fn main() -> Result<()> {
         Some(result.into_iter().collect()),
         &base_ref,
     )
+}
+
+fn crate_info(member: &Package) -> CrateInfo {
+    CrateInfo {
+        name: member.name.to_string(),
+        version: member.version.to_string(),
+        manifest: member.manifest_path.clone().into(),
+        path: member.manifest_path.parent().unwrap().into(),
+        publish: if let Some(publishable) = &member.publish {
+            !publishable.is_empty()
+        } else {
+            true
+        },
+    }
+}
+
+fn all_crates(members: &[Package]) -> Vec<CrateInfo> {
+    members.iter().map(crate_info).collect()
 }
 
 fn collect_changed_crates(
@@ -89,17 +112,7 @@ fn collect_changed_crates(
             if (file == relative_dir_str || file.starts_with(&format!("{relative_dir_str}/")))
                 && crate_inventory.insert(member.name.to_string())
             {
-                crates.push(CrateInfo {
-                    name: member.name.to_string(),
-                    version: member.version.to_string(),
-                    manifest: member.manifest_path.clone().into(),
-                    path: member.manifest_path.parent().unwrap().into(),
-                    publish: if let Some(publishable) = &member.publish {
-                        !publishable.is_empty()
-                    } else {
-                        true
-                    },
-                });
+                crates.push(crate_info(member));
             }
         }
     }
