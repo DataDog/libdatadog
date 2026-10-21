@@ -379,8 +379,7 @@ jobs:
           fi
           # sccache runs inside the container: mount the tool-cache binary
           # into the container PATH, forward the AWS session, and use the
-          # container paths as basedirs. Gate on `enabled`: the action may have
-          # disabled sccache after a failed server probe.
+          # container paths as basedirs.
           SCCACHE_ARGS=()
           if [[ -n "${SCCACHE_PATH:-}" && "${{ steps.sccache.outputs.enabled }}" == "true" ]]; then
             SCCACHE_ARGS+=(
