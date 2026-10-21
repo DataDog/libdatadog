@@ -249,6 +249,17 @@ pub trait SidecarInterface {
         point: libdd_ipc::shm_dsm::OwnedDsmStatsPoint,
     );
 
+    /// IPC fallback: add a DSM backlog offset directly to the sidecar's SHM DSM backlog table
+    /// for (env, version, service, primary tag). Creates the tables if needed, as
+    /// `add_dsm_stats_point` does.
+    async fn add_dsm_backlog(
+        env: String,
+        version: String,
+        service: String,
+        primary_tag: String,
+        backlog: libdd_ipc::shm_dsm_backlog::OwnedDsmBacklog,
+    );
+
     /// Starts the AppSec backend if it has not already been initialized.
     ///
     /// Returns only after initialization finishes, so subsequent AppSec messages

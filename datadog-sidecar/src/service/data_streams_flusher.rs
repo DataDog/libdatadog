@@ -9,9 +9,10 @@
 //! concentrators: an empty drain tells PHP workers to stop writing, and a final drain follows
 //! before removal.
 //!
-//! Each table is drained once per [`DSM_BUCKET_NANOS`] interval, just after its boundary, and
-//! sent to the agent's `/v0.1/pipeline_stats` endpoint as the gzipped msgpack payload the Java
-//! and Go tracers send.
+//! Each key has two tables: the stats table, and the backlog table holding the highest offset
+//! seen per backlog (Kafka partition, consumer group). Both are drained once per
+//! [`DSM_BUCKET_NANOS`] interval, just after its boundary, and sent together to the agent's
+//! `/v0.1/pipeline_stats` endpoint as the gzipped msgpack payload the Java and Go tracers send.
 
 use crate::service::connection_session::ConnectionSession;
 use base64::Engine;
@@ -24,14 +25,18 @@ use libdd_capabilities_impl::{HttpClientCapability, NativeCapabilities};
 use libdd_common::{Endpoint, MutexExt};
 use libdd_ipc::shm_dsm::{
     DEFAULT_DSM_SLOT_COUNT, DEFAULT_DSM_STRING_POOL_BYTES, DSM_BUCKET_NANOS, DsmStatsBucket,
-    ShmDsmTable,
+    ShmDsmTable, now_nanos,
+};
+use libdd_ipc::shm_dsm_backlog::{
+    DEFAULT_DSM_BACKLOG_SLOT_COUNT, DEFAULT_DSM_BACKLOG_STRING_POOL_BYTES, DsmBacklog,
+    DsmBacklogBucket, ShmDsmBacklogTable,
 };
 use libdd_trace_utils::send_with_retry::{
     CompressionStrategy, RetryBackoffType, RetryStrategy, send_with_retry,
 };
 use libdd_trace_utils::tracer_header_tags::TracerHeaderTags;
 use serde::{Serialize, Serializer};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::ffi::CString;
 use std::hash::{Hash, Hasher};
 use std::io::Write;
@@ -107,8 +112,19 @@ pub struct DsmTableKey {
     pub primary_tag: String,
 }
 
-/// Compute the SHM path for a DSM table.
+/// Compute the SHM path for a DSM stats table.
 pub fn dsm_table_shm_path(key: &DsmTableKey) -> CString {
+    shm_path("dddsm", key)
+}
+
+/// Compute the SHM path for the DSM backlog table kept alongside a stats table.
+pub fn dsm_backlog_shm_path(key: &DsmTableKey) -> CString {
+    shm_path("dddsb", key)
+}
+
+/// `prefix` tells a key's tables apart; it is not hashed, so that it keeps the stats table's
+/// path what it was.
+fn shm_path(prefix: &str, key: &DsmTableKey) -> CString {
     let mut hasher = ZwoHasher::default();
     key.product.as_str().hash(&mut hasher);
     key.env.hash(&mut hasher);
@@ -118,7 +134,7 @@ pub fn dsm_table_shm_path(key: &DsmTableKey) -> CString {
     let hash = hasher.finish();
 
     let mut path = format!(
-        "/dddsm{}-{}",
+        "/{prefix}{}-{}",
         crate::shm_namespace(),
         BASE64_URL_SAFE_NO_PAD.encode(hash.to_ne_bytes()),
     );
@@ -132,21 +148,23 @@ pub fn dsm_table_shm_path(key: &DsmTableKey) -> CString {
 /// State held per [`DsmTableKey`].
 pub struct DsmTableState {
     pub table: ShmDsmTable,
+    pub backlogs: ShmDsmBacklogTable,
     key: DsmTableKey,
     config: DsmConfig,
 }
 
-// SAFETY: ShmDsmTable is designed for cross-process sharing; all internal state uses atomic
-// operations.
+// SAFETY: ShmDsmTable and ShmDsmBacklogTable are designed for cross-process sharing; all
+// internal state uses atomic operations.
 unsafe impl Send for DsmTableState {}
 
 pub(crate) type DsmTables = Arc<Mutex<HashMap<DsmTableKey, Arc<DsmTableState>>>>;
 
-/// Look up or create the SHM DSM table for `key`.
+/// Look up or create the SHM DSM tables for `key`.
 ///
-/// Called lazily when a PHP worker sends a stats point over IPC because it could not write it
-/// to SHM directly (no table yet). Returns `None` when DSM is not available for the session
-/// (agentless).
+/// Called lazily when a PHP worker sends a stats point or a backlog over IPC because it could
+/// not write it to SHM directly (no table yet). Both tables are created together, so that a
+/// worker that can open one can open the other. Returns `None` when DSM is not available for
+/// the session (agentless).
 pub(crate) fn get_or_create_dsm_table(
     tables: &DsmTables,
     key: DsmTableKey,
@@ -162,15 +180,27 @@ pub(crate) fn get_or_create_dsm_table(
         // Entry is being retired (reload signalled) — fall through to create a fresh one.
     }
 
-    match ShmDsmTable::create(
-        dsm_table_shm_path(&key),
+    let created = ShmDsmBacklogTable::create(
+        dsm_backlog_shm_path(&key),
         DSM_BUCKET_NANOS,
-        DEFAULT_DSM_SLOT_COUNT,
-        DEFAULT_DSM_STRING_POOL_BYTES,
-    ) {
-        Ok(table) => {
+        DEFAULT_DSM_BACKLOG_SLOT_COUNT,
+        DEFAULT_DSM_BACKLOG_STRING_POOL_BYTES,
+    )
+    .and_then(|backlogs| {
+        let table = ShmDsmTable::create(
+            dsm_table_shm_path(&key),
+            DSM_BUCKET_NANOS,
+            DEFAULT_DSM_SLOT_COUNT,
+            DEFAULT_DSM_STRING_POOL_BYTES,
+        )
+        .inspect_err(|_| backlogs.unlink())?;
+        Ok((table, backlogs))
+    });
+    match created {
+        Ok((table, backlogs)) => {
             let state = Arc::new(DsmTableState {
                 table,
+                backlogs,
                 key: key.clone(),
                 config,
             });
@@ -202,9 +232,10 @@ fn until_next_drain(now: SystemTime) -> Duration {
 
 /// Spawn-and-forget flush loop for a DSM table.
 ///
-/// **Idle removal**: when a drain produces no data, the reload bit is set on the SHM, signalling
-/// PHP workers to stop writing (they will fall back to the IPC path). After a grace period, a
-/// final forced drain sends any remaining data and the table is removed from the map.
+/// **Idle removal**: when a drain produces no data in either table, the reload bit is set on
+/// both, signalling PHP workers to stop writing (they will fall back to the IPC path). After a
+/// grace period, a final forced drain sends any remaining data and the tables are removed from
+/// the map.
 pub(crate) async fn run_dsm_flush_loop(
     tables: Weak<Mutex<HashMap<DsmTableKey, Arc<DsmTableState>>>>,
     key: DsmTableKey,
@@ -228,9 +259,9 @@ pub(crate) async fn run_dsm_flush_loop(
             break; // sidecar shutting down
         };
 
-        let buckets = state.table.drain_buckets(false);
-        if !buckets.is_empty() {
-            if let Err(e) = send_buckets(&client, &state, buckets).await {
+        let drained = state.drain(false);
+        if !drained.is_empty() {
+            if let Err(e) = send_buckets(&client, &state, drained).await {
                 warn!(
                     "Failed to send DSM stats for env={} version={} service={}: {e}",
                     key.env, key.version, key.service
@@ -245,7 +276,9 @@ pub(crate) async fn run_dsm_flush_loop(
             key.env, key.version, key.service
         );
         state.table.signal_reload();
+        state.backlogs.signal_reload();
         state.table.unlink();
+        state.backlogs.unlink();
         tokio::time::sleep(Duration::from_secs(1)).await;
         {
             let mut guard = arc.lock_or_panic();
@@ -254,9 +287,9 @@ pub(crate) async fn run_dsm_flush_loop(
                 guard.remove(&key);
             }
         }
-        let buckets = state.table.drain_buckets(true);
-        if !buckets.is_empty() {
-            if let Err(e) = send_buckets(&client, &state, buckets).await {
+        let drained = state.drain(true);
+        if !drained.is_empty() {
+            if let Err(e) = send_buckets(&client, &state, drained).await {
                 warn!("Failed final DSM stats flush: {e}");
             }
         }
@@ -273,11 +306,11 @@ pub async fn flush_all_dsm_now(tables: &DsmTables) {
     join_all(states.iter().map(|state| {
         let client = &client;
         async move {
-            let buckets = state.table.drain_buckets(true);
-            if buckets.is_empty() {
+            let drained = state.drain(true);
+            if drained.is_empty() {
                 return;
             }
-            if let Err(e) = send_buckets(client, state, buckets).await {
+            if let Err(e) = send_buckets(client, state, drained).await {
                 warn!("flush_all_dsm_now: failed to send DSM stats: {e}");
             }
         }
@@ -285,12 +318,35 @@ pub async fn flush_all_dsm_now(tables: &DsmTables) {
     .await;
 }
 
+/// What one drain of a key's two tables took out of them.
+struct Drained {
+    stats: Vec<DsmStatsBucket>,
+    backlogs: Vec<DsmBacklogBucket>,
+}
+
+impl Drained {
+    fn is_empty(&self) -> bool {
+        self.stats.is_empty() && self.backlogs.is_empty()
+    }
+}
+
+impl DsmTableState {
+    /// Drain both tables as of one instant, so that the buckets of an interval share a start.
+    fn drain(&self, force: bool) -> Drained {
+        let now = now_nanos();
+        Drained {
+            stats: self.table.drain_buckets_at(force, now),
+            backlogs: self.backlogs.drain_buckets_at(force, now),
+        }
+    }
+}
+
 async fn send_buckets(
     client: &NativeCapabilities,
     state: &DsmTableState,
-    buckets: Vec<DsmStatsBucket>,
+    drained: Drained,
 ) -> anyhow::Result<()> {
-    let body = gzip(&encode_payload(&state.key, &state.config, &buckets)?)?;
+    let body = gzip(&encode_payload(&state.key, &state.config, &drained)?)?;
 
     let config = &state.config;
     let mut headers: http::HeaderMap = TracerHeaderTags {
@@ -361,6 +417,16 @@ struct StatsBucket<'a> {
     start: u64,
     duration: u64,
     stats: Vec<StatsPoint<'a>>,
+    /// As in the Java tracer, a bucket without backlogs carries no `Backlogs` at all.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    backlogs: Vec<Backlog<'a>>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "PascalCase")]
+struct Backlog<'a> {
+    tags: &'a [String],
+    value: i64,
 }
 
 #[derive(Serialize)]
@@ -378,8 +444,45 @@ struct StatsPoint<'a> {
 fn encode_payload(
     key: &DsmTableKey,
     config: &DsmConfig,
-    buckets: &[DsmStatsBucket],
+    drained: &Drained,
 ) -> anyhow::Result<Vec<u8>> {
+    // Both tables' buckets for an interval go out as one, ordered by start.
+    let mut buckets: BTreeMap<(u64, u64), StatsBucket<'_>> = BTreeMap::new();
+    fn bucket<'m, 'a>(
+        buckets: &'m mut BTreeMap<(u64, u64), StatsBucket<'a>>,
+        start: u64,
+        duration: u64,
+    ) -> &'m mut StatsBucket<'a> {
+        buckets
+            .entry((start, duration))
+            .or_insert_with(|| StatsBucket {
+                start,
+                duration,
+                stats: vec![],
+                backlogs: vec![],
+            })
+    }
+    for b in &drained.stats {
+        bucket(&mut buckets, b.start, b.duration)
+            .stats
+            .extend(b.stats.iter().map(|g| StatsPoint {
+                edge_tags: &g.edge_tags,
+                hash: g.hash,
+                parent_hash: g.parent_hash,
+                pathway_latency: Bin(&g.pathway_latency),
+                edge_latency: Bin(&g.edge_latency),
+                payload_size: Bin(&g.payload_size),
+            }));
+    }
+    for b in &drained.backlogs {
+        bucket(&mut buckets, b.start, b.duration)
+            .backlogs
+            .extend(b.backlogs.iter().map(|DsmBacklog { tags, value }| Backlog {
+                tags,
+                value: *value,
+            }));
+    }
+
     let payload = StatsPayload {
         env: &key.env,
         service: &key.service,
@@ -389,25 +492,7 @@ fn encode_payload(
         primary_tag: &key.primary_tag,
         product_mask: PRODUCT_APM | PRODUCT_DSM,
         process_tags: &config.process_tags,
-        stats: buckets
-            .iter()
-            .map(|b| StatsBucket {
-                start: b.start,
-                duration: b.duration,
-                stats: b
-                    .stats
-                    .iter()
-                    .map(|g| StatsPoint {
-                        edge_tags: &g.edge_tags,
-                        hash: g.hash,
-                        parent_hash: g.parent_hash,
-                        pathway_latency: Bin(&g.pathway_latency),
-                        edge_latency: Bin(&g.edge_latency),
-                        payload_size: Bin(&g.payload_size),
-                    })
-                    .collect(),
-            })
-            .collect(),
+        stats: buckets.into_values().collect(),
     };
     Ok(rmp_serde::to_vec_named(&payload)?)
 }
@@ -480,6 +565,13 @@ mod tests {
             4096,
         )
         .unwrap();
+        let backlogs = ShmDsmBacklogTable::create(
+            CString::new(format!("/dddsb-flush-t-{}", std::process::id())).unwrap(),
+            DSM_BUCKET_NANOS,
+            8,
+            4096,
+        )
+        .unwrap();
         table.add_point(&DsmStatsPointInput {
             hash: 1,
             parent_hash: 0,
@@ -490,6 +582,7 @@ mod tests {
         });
         let state = DsmTableState {
             table,
+            backlogs,
             key: key(),
             config: DsmConfig {
                 endpoint: dsm_endpoint(&Endpoint::from_slice(&server.url("/"))).unwrap(),
@@ -497,9 +590,9 @@ mod tests {
             },
         };
 
-        let buckets = state.table.drain_buckets(true);
-        assert_eq!(buckets.len(), 1);
-        send_buckets(&NativeCapabilities::new_client(), &state, buckets)
+        let drained = state.drain(true);
+        assert_eq!(drained.stats.len(), 1);
+        send_buckets(&NativeCapabilities::new_client(), &state, drained)
             .await
             .unwrap();
         mock.assert_async().await;
@@ -527,7 +620,9 @@ mod tests {
             },
         ] {
             assert_ne!(path, dsm_table_shm_path(&other));
+            assert_ne!(dsm_backlog_shm_path(&key()), dsm_backlog_shm_path(&other));
         }
+        assert_ne!(path, dsm_backlog_shm_path(&key()));
         assert_ne!(
             path,
             crate::service::stats_flusher::env_stats_shm_path("env-a", "1.0", "service-a")
@@ -567,7 +662,7 @@ mod tests {
     /// msgpack `bin`.
     #[test]
     fn the_payload_has_the_fields_the_backend_expects() {
-        let buckets = [DsmStatsBucket {
+        let stats = vec![DsmStatsBucket {
             start: 30_000_000_000,
             duration: DSM_BUCKET_NANOS,
             stats: vec![
@@ -589,7 +684,11 @@ mod tests {
                 },
             ],
         }];
-        let bytes = encode_payload(&key(), &config(), &buckets).unwrap();
+        let drained = Drained {
+            stats,
+            backlogs: vec![],
+        };
+        let bytes = encode_payload(&key(), &config(), &drained).unwrap();
         let value = rmpv::decode::read_value(&mut bytes.as_slice()).unwrap();
 
         let field = |v: &rmpv::Value, name: &str| -> rmpv::Value {
@@ -646,5 +745,80 @@ mod tests {
 
         // As in the Java tracer, a point without edge tags carries no `EdgeTags` at all.
         assert!(!has(&points[1], "EdgeTags"));
+        // Nor does a bucket without backlogs carry `Backlogs`.
+        assert!(!has(bucket, "Backlogs"));
+    }
+
+    /// Backlogs go out in the bucket of the interval they were recorded in, next to its stats;
+    /// an interval with only backlogs still gets a bucket, and buckets are ordered by start.
+    #[test]
+    fn backlogs_share_their_intervals_bucket_with_its_stats() {
+        let group = || DsmStatsGroup {
+            hash: 1,
+            parent_hash: 0,
+            edge_tags: vec![],
+            pathway_latency: vec![],
+            edge_latency: vec![],
+            payload_size: vec![],
+        };
+        let backlog = |partition: &str, value| DsmBacklog {
+            tags: vec![
+                "topic:orders".into(),
+                "type:kafka_produce".into(),
+                format!("partition:{partition}"),
+            ],
+            value,
+        };
+        let drained = Drained {
+            stats: vec![DsmStatsBucket {
+                start: 2 * DSM_BUCKET_NANOS,
+                duration: DSM_BUCKET_NANOS,
+                stats: vec![group()],
+            }],
+            backlogs: vec![
+                DsmBacklogBucket {
+                    start: 2 * DSM_BUCKET_NANOS,
+                    duration: DSM_BUCKET_NANOS,
+                    backlogs: vec![backlog("0", 41)],
+                },
+                DsmBacklogBucket {
+                    start: DSM_BUCKET_NANOS,
+                    duration: DSM_BUCKET_NANOS,
+                    backlogs: vec![backlog("1", 7)],
+                },
+            ],
+        };
+        let bytes = encode_payload(&key(), &config(), &drained).unwrap();
+        let value = rmpv::decode::read_value(&mut bytes.as_slice()).unwrap();
+        let field = |v: &rmpv::Value, name: &str| -> rmpv::Value {
+            v.as_map()
+                .unwrap()
+                .iter()
+                .find(|(k, _)| k.as_str() == Some(name))
+                .map(|(_, v)| v.clone())
+                .unwrap_or_else(|| panic!("missing {name}"))
+        };
+
+        let buckets = field(&value, "Stats");
+        let buckets = buckets.as_array().unwrap();
+        assert_eq!(buckets.len(), 2);
+        assert_eq!(field(&buckets[0], "Start").as_u64(), Some(DSM_BUCKET_NANOS));
+        assert!(field(&buckets[0], "Stats").as_array().unwrap().is_empty());
+        assert_eq!(
+            field(&buckets[1], "Start").as_u64(),
+            Some(2 * DSM_BUCKET_NANOS)
+        );
+        assert_eq!(field(&buckets[1], "Stats").as_array().unwrap().len(), 1);
+
+        let backlogs = field(&buckets[1], "Backlogs");
+        let backlog = &backlogs.as_array().unwrap()[0];
+        let tags: Vec<_> = field(backlog, "Tags")
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t.as_str().unwrap().to_owned())
+            .collect();
+        assert_eq!(tags, ["topic:orders", "type:kafka_produce", "partition:0"]);
+        assert_eq!(field(backlog, "Value").as_i64(), Some(41));
     }
 }

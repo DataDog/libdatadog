@@ -511,6 +511,26 @@ pub fn add_dsm_stats_point(
     Ok(transport.with_retry(|s| s.send(&request)))
 }
 
+/// IPC fallback for DSM backlogs. Returns whether the offset was sent, as
+/// [`add_dsm_stats_point`] does.
+pub fn add_dsm_backlog(
+    transport: &mut SidecarTransport,
+    env: String,
+    version: String,
+    service: String,
+    primary_tag: String,
+    backlog: libdd_ipc::shm_dsm_backlog::OwnedDsmBacklog,
+) -> io::Result<bool> {
+    let request = SidecarInterfaceRequest::AddDsmBacklog {
+        env,
+        version,
+        service,
+        primary_tag,
+        backlog,
+    };
+    Ok(transport.with_retry(|s| s.send(&request)))
+}
+
 /// Starts the AppSec backend in the sidecar and waits for initialization to
 /// complete before returning.
 pub fn ensure_appsec_started(
@@ -581,7 +601,8 @@ pub fn ping(transport: &mut SidecarTransport) -> io::Result<Duration> {
 #[cfg(unix)]
 mod tests {
     use crate::service::blocking::{
-        SidecarTransport, add_dsm_stats_point, add_span_to_concentrator, send_dogstatsd_actions,
+        SidecarTransport, add_dsm_backlog, add_dsm_stats_point, add_span_to_concentrator,
+        send_dogstatsd_actions,
     };
     use crate::service::sidecar_interface::{
         DynamicInstrumentationConfigState, SidecarInterfaceRequest,
@@ -893,6 +914,60 @@ mod tests {
                 assert_eq!(point.edge_tags, ["topic:orders"]);
             }
             _ => panic!("expected a DSM stats point"),
+        }
+
+        drop(peer);
+        assert!(!send(&mut transport));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn dsm_backlog_fallback_reports_whether_the_offset_was_sent() {
+        use libdd_ipc::shm_dsm_backlog::BacklogTag;
+        let (conn, peer) = SeqpacketConn::socketpair().unwrap();
+        let mut transport = SidecarTransport::from(conn);
+        transport
+            .set_read_timeout(Some(Duration::from_millis(100)))
+            .unwrap();
+        let send = |transport: &mut SidecarTransport| {
+            add_dsm_backlog(
+                transport,
+                "env".into(),
+                "v1".into(),
+                "svc".into(),
+                "".into(),
+                libdd_ipc::shm_dsm_backlog::OwnedDsmBacklog {
+                    tags: vec![
+                        (BacklogTag::Topic, "orders".into()),
+                        (BacklogTag::Type, "kafka_produce".into()),
+                    ],
+                    offset: 42,
+                },
+            )
+            .unwrap()
+        };
+        assert!(send(&mut transport));
+        let mut buf = [0; 1024];
+        let (len, _) = peer.try_recv_raw(&mut buf).unwrap();
+        match libdd_ipc::codec::decode::<SidecarInterfaceRequest>(&buf[..len]).unwrap() {
+            SidecarInterfaceRequest::AddDsmBacklog {
+                env,
+                service,
+                backlog,
+                ..
+            } => {
+                assert_eq!(env, "env");
+                assert_eq!(service, "svc");
+                assert_eq!(
+                    backlog.tags,
+                    [
+                        (BacklogTag::Topic, "orders".to_owned()),
+                        (BacklogTag::Type, "kafka_produce".to_owned()),
+                    ]
+                );
+                assert_eq!(backlog.offset, 42);
+            }
+            _ => panic!("expected a DSM backlog"),
         }
 
         drop(peer);
