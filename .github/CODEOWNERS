@@ -73,7 +73,7 @@ LICENSE*                             @DataDog/libdatadog
 license-tool.toml                    @DataDog/libdatadog
 local-linux.Dockerfile               @DataDog/libdatadog
 NOTICE                               @DataDog/libdatadog
-nightly-toolchain.toml               @DataDog/libdatadog
+ci-toolchain.toml                    @DataDog/libdatadog
 /README.md                           @DataDog/libdatadog
 # Placeholder for a deprecated crate, owned by libdatadog as a fallback
 ruby/README.md                       @DataDog/libdatadog

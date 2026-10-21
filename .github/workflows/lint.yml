@@ -17,6 +17,7 @@ jobs:
       clippy-packages: ${{ steps.set-packages.outputs.clippy-packages }}
       rust-version: ${{ steps.rust-version.outputs.version }}
       nightly-version: ${{ steps.nightly-version.outputs.version }}
+      stable-version: ${{ steps.stable-version.outputs.version }}
     steps:
     - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
       with:
@@ -24,9 +25,12 @@ jobs:
     - name: Read Rust version from rust-toolchain.toml
       id: rust-version
       run: echo "version=$(grep -Po '^channel = "\K[^"]+' rust-toolchain.toml)" >> $GITHUB_OUTPUT
-    - name: Read nightly version from nightly-toolchain.toml
+    - name: Read nightly version from ci-toolchain.toml
       id: nightly-version
-      run: echo "version=$(grep -Po '^channel = "\K[^"]+' nightly-toolchain.toml)" >> $GITHUB_OUTPUT
+      run: echo "version=$(grep -Po '^nightly = "\K[^"]+' ci-toolchain.toml)" >> $GITHUB_OUTPUT
+    - name: Read stable version from ci-toolchain.toml
+      id: stable-version
+      run: echo "version=$(grep -Po '^stable = "\K[^"]+' ci-toolchain.toml)" >> $GITHUB_OUTPUT
     - name: Get crate report
       id: changed-crates
       uses: ./.github/actions/crates-reporter
@@ -100,7 +104,7 @@ jobs:
             ci_helpers:
               - '.github/actions/**'
               - '.github/workflows/lint.yml'
-              - 'nightly-toolchain.toml'
+              - 'ci-toolchain.toml'
               - 'rustfmt.toml'
               - 'clippy.toml'
 
@@ -145,7 +149,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        rust_version: ["msrv", "stable", "nightly"]
+        rust_version: ["msrv", "${{ needs.setup.outputs.stable-version }}", "nightly"]
         platform: [windows-latest, ubuntu-latest]
     steps:
       - name: Checkout sources
@@ -196,29 +200,29 @@ jobs:
         run: sccache --show-stats
 
   workspace-deps:
-    needs: changes
+    needs: [changes, setup]
     if: github.event_name != 'pull_request' || needs.changes.outputs.manifests == 'true'
     runs-on: ubuntu-latest
     name: "Workspace dependency declarations"
     permissions:
       id-token: write
       contents: read
+    env:
+      RUSTUP_TOOLCHAIN: ${{ needs.setup.outputs.stable-version }}
     steps:
       - name: Checkout sources
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+      - name: Install ${{ needs.setup.outputs.stable-version }} toolchain
+        run: |
+          rustup set profile minimal
+          rustup toolchain install ${{ needs.setup.outputs.stable-version }}
       - name: sccache
         id: sccache
         uses: ./.github/actions/setup-sccache
-      # The helper crates under .github/actions pin their own stable toolchain.
       - name: Build the dependency linter
         working-directory: .github/actions
         run: cargo build --release -p workspace-deps-lint
       - name: Check dependency declarations
-        # The linter shells out to `cargo metadata` to enumerate the workspace
-        # members. Keep that on the runner's preinstalled stable toolchain
-        # instead of downloading the workspace MSRV just to read a manifest.
-        env:
-          RUSTUP_TOOLCHAIN: stable
         run: .github/actions/target/release/workspace-deps-lint --manifest-path Cargo.toml
 
   ci-helpers:
@@ -240,9 +244,12 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
         with:
           fetch-depth: 0 # to diff against the PR base branch
-      - name: Read nightly version from nightly-toolchain.toml
+      - name: Read nightly version from ci-toolchain.toml
         id: nightly-version
-        run: echo "version=$(grep -Po '^channel = "\K[^"]+' nightly-toolchain.toml)" >> $GITHUB_OUTPUT
+        run: echo "version=$(grep -Po '^nightly = "\K[^"]+' ci-toolchain.toml)" >> $GITHUB_OUTPUT
+      - name: Read stable version from ci-toolchain.toml
+        id: stable-version
+        run: echo "version=$(grep -Po '^stable = "\K[^"]+' ci-toolchain.toml)" >> $GITHUB_OUTPUT
       - name: sccache
         id: sccache
         uses: ./.github/actions/setup-sccache
@@ -265,9 +272,10 @@ jobs:
           fi
 
           # Workspace-level files, and ci-shared which every other helper
-          # crate depends on, affect every helper crate.
+          # crate depends on, affect every helper crate. A toolchain bump
+          # can surface new warnings, so check everything on those too.
           if git diff --name-only "origin/${PR_BASE_REF}...HEAD" -- \
-              .github/actions/Cargo.toml .github/actions/Cargo.lock .github/actions/rust-toolchain.toml \
+              .github/actions/Cargo.toml .github/actions/Cargo.lock ci-toolchain.toml \
               .github/actions/ci-shared | grep -q .; then
             exit 0 # empty 'packages' → check everything
           fi
@@ -286,12 +294,17 @@ jobs:
           rustup set profile minimal
           rustup install ${{ steps.nightly-version.outputs.version }}
           rustup component add rustfmt --toolchain ${{ steps.nightly-version.outputs.version }}
+      - name: Install ${{ steps.stable-version.outputs.version }} toolchain and clippy
+        run: |
+          rustup set profile minimal
+          rustup install ${{ steps.stable-version.outputs.version }}
+          rustup component add clippy --toolchain ${{ steps.stable-version.outputs.version }}
       - name: Run rustfmt
         working-directory: .github/actions
         env:
           FMT_PACKAGES: ${{ steps.detect.outputs.packages }}
-          # Override the helper workspace's stable pin so rustfmt runs on
-          # nightly (required by the unstable_features in rustfmt.toml).
+          # Override the pinned stable so rustfmt runs on nightly (required
+          # by the unstable_features in rustfmt.toml).
           RUSTUP_TOOLCHAIN: ${{ steps.nightly-version.outputs.version }}
         run: |
           if [[ -z "$FMT_PACKAGES" ]]; then
@@ -304,6 +317,7 @@ jobs:
         working-directory: .github/actions
         env:
           CHECK_PACKAGES: ${{ steps.detect.outputs.packages }}
+          RUSTUP_TOOLCHAIN: ${{ steps.stable-version.outputs.version }}
         run: |
           if [[ -z "$CHECK_PACKAGES" ]]; then
             cargo clippy --workspace --all-targets -- -D warnings
@@ -319,6 +333,7 @@ jobs:
         working-directory: .github/actions
         env:
           CHECK_PACKAGES: ${{ steps.detect.outputs.packages }}
+          RUSTUP_TOOLCHAIN: ${{ steps.stable-version.outputs.version }}
         run: |
           # Some helper crates (e.g. crates-reporter) have no tests.
           if [[ -z "$CHECK_PACKAGES" ]]; then

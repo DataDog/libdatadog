@@ -212,17 +212,23 @@ jobs:
       contents: write
     needs: [check-proposal-ongoing, check-membership, validate-inputs]
     runs-on: ubuntu-latest
-    env:
-      RUSTUP_TOOLCHAIN: 1.92.0
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
         with:
           ref: ${{ env.MAIN_BRANCH }}
           fetch-depth: 0
           fetch-tags: true
-      - name: Read nightly version from nightly-toolchain.toml
+      - name: Read stable version from ci-toolchain.toml
+        id: stable-version
+        run: |
+          echo "version=$(grep -Po '^stable = "\K[^"]+' ci-toolchain.toml)" >> $GITHUB_OUTPUT
+          # Job-wide default for the rest of the job, so cargo release /
+          # semver-checks / public-api run on the pinned stable instead of
+          # the repo-root MSRV from rust-toolchain.toml.
+          echo "RUSTUP_TOOLCHAIN=$(grep -Po '^stable = "\K[^"]+' ci-toolchain.toml)" >> $GITHUB_ENV
+      - name: Read nightly version from ci-toolchain.toml
         id: nightly-version
-        run: echo "version=$(grep -Po '^channel = "\K[^"]+' nightly-toolchain.toml)" >> $GITHUB_OUTPUT
+        run: echo "version=$(grep -Po '^nightly = "\K[^"]+' ci-toolchain.toml)" >> $GITHUB_OUTPUT
       - name: Cache [rust]
         # Kept on rust-cache deliberately (not migrated to S3 sccache with the
         # other jobs): this job compiles with the explicit 1.92.0 toolchain,
@@ -242,7 +248,7 @@ jobs:
         run: ln -sf ~/.rustup/toolchains/${{ steps.nightly-version.outputs.version }}-x86_64-unknown-linux-gnu ~/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu
       - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c #stable
         with:
-          toolchain: ${{ env.RUSTUP_TOOLCHAIN }}
+          toolchain: ${{ steps.stable-version.outputs.version }}
       
       - name: Install dependencies
         run: |

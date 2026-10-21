@@ -27,8 +27,19 @@ outputs:
 runs:
   using: 'composite'
   steps:
-    # Rust is auto-installed by rustup from the workspace's rust-toolchain.toml
-    # on first cargo invocation; no explicit setup needed.
+    # The helper crates' dependencies have moved past the workspace MSRV, so
+    # build them on the pinned latest stable from the repo-root
+    # ci-toolchain.toml instead of the rust-toolchain.toml MSRV.
+    - name: Read stable version from ci-toolchain.toml
+      id: stable-version
+      shell: bash
+      run: echo "version=$(grep -Po '^stable = "\K[^"]+' ${{ github.action_path }}/../../../ci-toolchain.toml)" >> $GITHUB_OUTPUT
+    - name: Install ${{ steps.stable-version.outputs.version }} toolchain
+      shell: bash
+      run: |
+        rustup set profile minimal
+        rustup toolchain install ${{ steps.stable-version.outputs.version }}
+
     - name: Fetch all branches
       if: ${{ github.event_name == 'pull_request' }}
       shell: bash
@@ -40,6 +51,8 @@ runs:
     - name: Build change reporter
       if: ${{ github.event_name == 'pull_request' }}
       shell: bash
+      env:
+        RUSTUP_TOOLCHAIN: ${{ steps.stable-version.outputs.version }}
       run: |
         cd ${{ github.action_path }}/..
         cargo build --release -p crates-reporter
