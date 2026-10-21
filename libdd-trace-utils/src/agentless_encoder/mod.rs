@@ -658,14 +658,14 @@ fn collect_attrs_v1<'a, T: TraceData>(
 
 /// V1-native analog of [`encode_payload`]. Downgrades v1's unified attribute model back to the
 /// same `meta`/`metrics`/`meta_struct`-shaped wire fields, so the emitted JSON body is
-/// equivalent to what a v0.4 tracer would produce for the same trace — see
-/// [`crate::msgpack_encoder::v04::span_v1`] for the mapping table this mirrors. Chunk-level
+/// equivalent to what a v0.4 tracer would produce for the same trace. Chunk-level
 /// context (`trace_id`, `origin`, `priority`, `sampling_mechanism`, `dropped_trace`, chunk
 /// attributes) is propagated into every span, matching the [`v1::TraceChunk`]-level granularity v1
 /// operates at.
 ///
 /// `client_side_stats` has the same meaning as in [`encode_payload`]: when `true`, the encoder
 /// will **not** inject `meta["_dd.compute_stats"]="1"` on the first span of each chunk.
+// See `crate::msgpack_encoder::v04::span_v1` for the mapping table this mirrors.
 pub fn encode_payload_from_v1<T: TraceData>(
     chunks: &[v1::TraceChunk<T>],
     metadata: &TracerMetadata,
