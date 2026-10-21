@@ -290,18 +290,17 @@ pub trait SidecarInterface {
     /// their target without replacing the session's other transports. Repeated
     /// identical configuration preserves routing and deduplication state.
     /// Targets absent from the batch are unchanged; this is not a full snapshot.
-    ///
-    /// Keep this method last: request variants cross the bincode IPC boundary,
-    /// so appending preserves the ordinals of all existing messages.
     async fn add_session_evp_transports(configs: Vec<EvpTransportConfigWithIdentity>);
 
     /// Subscribe this connection to CDN configuration; None unsubscribes.
-    /// Returns an opaque shared-memory name for CdnReader. Resubscribe after a
-    /// reconnect to obtain the new name. In-process listeners return None.
+    /// Returns a handle for CdnReader. Resubscribe after reconnecting.
+    /// In-process listeners return None. Keep new methods at the end to preserve
+    /// the bincode ordinals of existing requests.
     #[blocking]
+    #[SerializedHandle]
     async fn subscribe_cdn_configuration(
         config: Option<libdd_ffe::cdn::CdnConfig>,
-    ) -> Option<String>;
+    ) -> Option<crate::shm_remote_config::cdn::CdnHandle>;
 }
 
 #[cfg(test)]

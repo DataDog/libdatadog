@@ -747,23 +747,23 @@ impl SidecarInterface for ConnectionSidecarHandler {
     async fn subscribe_cdn_configuration(
         &mut self,
         config: Option<libdd_ffe::cdn::CdnConfig>,
-    ) -> Option<String> {
+    ) -> Option<crate::shm_remote_config::cdn::CdnHandle> {
         let Some(config) = config.filter(|_| self.server.cdn_enabled) else {
             self.cdn_subscription = None;
             return None;
         };
         if let Some(subscription) = &self.cdn_subscription {
             if subscription.config == config {
-                return Some(subscription.path.clone());
+                return Some(subscription.handle.clone());
             }
         }
         // Drop the previous subscription even if replacement settings fail.
         self.cdn_subscription = None;
         match self.server.cdn_configs.subscribe(config) {
             Ok(subscription) => {
-                let path = subscription.path.clone();
+                let handle = subscription.handle.clone();
                 self.cdn_subscription = Some(subscription);
-                Some(path)
+                Some(handle)
             }
             Err(_) => {
                 warn!("Could not subscribe to CDN configuration");

@@ -431,11 +431,12 @@ impl SidecarSender {
 
     pub fn subscribe_cdn_configuration(
         &mut self,
-        request: &SidecarInterfaceRequest,
-    ) -> Result<Option<String>, libdd_ipc::codec::DecodeError> {
+        config: Option<libdd_ffe::cdn::CdnConfig>,
+    ) -> Result<Option<crate::shm_remote_config::cdn::CdnHandle>, libdd_ipc::codec::DecodeError>
+    {
         self.drain_outbox_blocking()
             .map_err(libdd_ipc::codec::DecodeError::Io)?;
-        self.channel.call_request_blocking(request)
+        self.channel.call_subscribe_cdn_configuration(config)
     }
 
     pub fn send_appsec_message(

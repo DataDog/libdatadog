@@ -5,7 +5,6 @@ use super::*;
 use crate::service::blocking::{SidecarTransport, subscribe_cdn_configuration};
 use crate::shm_remote_config::cdn::{CdnDeliveryState, CdnReader};
 use libdd_ffe::cdn::{CdnConfig, CdnEndpoint};
-use std::ffi::CString;
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -62,16 +61,14 @@ async fn cdn_configuration_reaches_shared_memory_through_real_ipc_and_http() {
         transport
             .set_read_timeout(Some(Duration::from_secs(5)))
             .unwrap();
-        let path = subscribe_cdn_configuration(&mut transport, Some(config.clone()))
+        let handle = subscribe_cdn_configuration(&mut transport, Some(config.clone()))
             .unwrap()
             .unwrap();
-        assert_eq!(
-            subscribe_cdn_configuration(&mut transport, Some(config))
-                .unwrap()
-                .unwrap(),
-            path
-        );
-        let mut reader = CdnReader::new(&CString::new(path).unwrap());
+        let repeated = subscribe_cdn_configuration(&mut transport, Some(config))
+            .unwrap()
+            .unwrap();
+        let mut repeated_reader = CdnReader::new(repeated).unwrap();
+        let mut reader = CdnReader::new(handle).unwrap();
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
             if let Some(snapshot) = reader.read().unwrap() {
@@ -81,6 +78,10 @@ async fn cdn_configuration_reaches_shared_memory_through_real_ipc_and_http() {
                     std::str::from_utf8(&snapshot.configuration)
                         .unwrap()
                         .contains("test")
+                );
+                assert_eq!(
+                    repeated_reader.read().unwrap().unwrap().configuration,
+                    snapshot.configuration
                 );
                 break;
             }
