@@ -397,11 +397,18 @@ pub fn obfuscate_v1_chunk_attributes<T: TraceData>(
     config: &ObfuscationConfig,
 ) {
     if config.credit_cards.enabled {
+        // `origin` is a dedicated field (emitted as `_dd.origin`), not part of `attributes`, so
+        // it needs its own check alongside the generic attribute loop below.
+        if is_card_number(chunk.origin.borrow(), config.credit_cards.luhn) {
+            chunk.origin = T::Text::from_static_str("?");
+        }
         chunk
             .attributes
             .iter_mut()
             .filter(|(key, _)| should_obfuscate_cc_key(as_str(key), config))
-            .for_each(|(_, value)| obfuscate_v1_attribute_credit_card(value, config));
+            .for_each(|(key, value)| {
+                obfuscate_v1_attribute_credit_card(value, config, as_str(key));
+            });
     }
     replace_chunk_tags_v1(chunk, &config.tag_replace_rules);
 }
@@ -416,10 +423,18 @@ pub fn obfuscate_v1_span<T: TraceData>(span: &mut v1::Span<T>, config: &Obfuscat
     }
 
     if config.credit_cards.enabled {
+        // `component` is a dedicated field (a plain meta tag in v0.4, thus already scanned
+        // there), not part of `attributes`, so it needs its own check alongside the generic
+        // attribute loop below.
+        if is_card_number(span.component.borrow(), config.credit_cards.luhn) {
+            span.component = T::Text::from_static_str("?");
+        }
         span.attributes
             .iter_mut()
             .filter(|(key, _)| should_obfuscate_cc_key(as_str(key), config))
-            .for_each(|(_, value)| obfuscate_v1_attribute_credit_card(value, config));
+            .for_each(|(key, value)| {
+                obfuscate_v1_attribute_credit_card(value, config, as_str(key));
+            });
     }
 
     match as_str(&span.r#type) {
@@ -535,7 +550,7 @@ fn obfuscate_v1_span_event<T: TraceData>(event: &mut v1::SpanEvent<T>, config: &
         .attributes
         .iter_mut()
         .filter(|(key, _)| should_obfuscate_cc_key(as_str(key), config))
-        .for_each(|(_, value)| obfuscate_v1_attribute_credit_card(value, config));
+        .for_each(|(key, value)| obfuscate_v1_attribute_credit_card(value, config, as_str(key)));
 }
 
 /// Obfuscates a single [`v1::AttributeValue`] in place if it looks like a credit-card number.
@@ -544,9 +559,16 @@ fn obfuscate_v1_span_event<T: TraceData>(event: &mut v1::SpanEvent<T>, config: &
 /// value becomes `String("?")`, mirroring [`obfuscate_v04_attribute_value`]. `List` elements and
 /// `KeyValue` entries are checked recursively. `Bool` and `Bytes` are left untouched: they can't
 /// hold a card number in a form the check below understands.
+///
+/// `path` is the dotted key this value will be flattened to by the agentless encoder (see
+/// `flatten_attr_into_v1`), e.g. `"payment.account_id"` for the `account_id` entry nested inside
+/// a `payment` `KeyValue` attribute. `should_obfuscate_cc_key`'s exemption list is keyed by that
+/// final flattened name, not the immediate child key, so nested entries must check against the
+/// accumulated path rather than their own key alone.
 fn obfuscate_v1_attribute_credit_card<T: TraceData>(
     value: &mut AttributeValue<T>,
     config: &ObfuscationConfig,
+    path: &str,
 ) {
     match value {
         AttributeValue::String(s) => {
@@ -566,13 +588,14 @@ fn obfuscate_v1_attribute_credit_card<T: TraceData>(
         }
         AttributeValue::List(values) => {
             for v in values.iter_mut() {
-                obfuscate_v1_attribute_credit_card(v, config);
+                obfuscate_v1_attribute_credit_card(v, config, path);
             }
         }
         AttributeValue::KeyValue(map) => {
             for (k, v) in map.iter_mut() {
-                if should_obfuscate_cc_key(as_str(k), config) {
-                    obfuscate_v1_attribute_credit_card(v, config);
+                let child_path = format!("{path}.{}", as_str(k));
+                if should_obfuscate_cc_key(&child_path, config) {
+                    obfuscate_v1_attribute_credit_card(v, config, &child_path);
                 }
             }
         }
