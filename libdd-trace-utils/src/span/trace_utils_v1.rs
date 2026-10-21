@@ -134,8 +134,8 @@ pub fn is_partial_snapshot<T: TraceData>(span: &Span<T>) -> bool {
 /// Remove spans and chunks, only keeping the ones that may be sampled by the agent.
 ///
 /// Unlike v0.4 (where sampling priority is a per-span metric), v1's `priority` is already a
-/// direct field on [`TraceChunk`], so it is read once per chunk instead of being searched for
-/// across the chunk's spans.
+/// direct field on [`TraceChunk`](crate::span::v1::TraceChunk), so it is read once per chunk
+/// instead of being searched for across the chunk's spans.
 ///
 /// # Returns
 ///
