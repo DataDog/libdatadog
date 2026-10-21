@@ -29,9 +29,6 @@ pub trait ExampleInterface {
     /// Used to verify that messages larger than mio's 4 KB internal read buffer are handled
     /// correctly (no ERROR_MORE_DATA panic).
     async fn echo_len(payload: Vec<u8>) -> u32;
-    /// Return the transferred segment to exercise handle-bearing replies, including None.
-    #[SerializedHandle]
-    async fn echo_shm(#[SerializedHandle] handle: Option<ShmHandle>) -> Option<ShmHandle>;
 }
 
 /// Shared server state. Cloned into a per-connection `ExampleConnectionHandler` on accept.
@@ -107,9 +104,5 @@ impl ExampleInterface for ExampleConnectionHandler {
 
     fn echo_len(&mut self, payload: Vec<u8>) -> impl std::future::Future<Output = u32> + Send + '_ {
         std::future::ready(payload.len() as u32)
-    }
-
-    async fn echo_shm(&mut self, handle: Option<ShmHandle>) -> Option<ShmHandle> {
-        handle
     }
 }

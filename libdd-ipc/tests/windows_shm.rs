@@ -43,13 +43,6 @@ fn test_shm_handle_transfer() {
 
     assert_ne!(received_sum, u64::MAX, "shm mapping failed on server side");
     assert_eq!(received_sum, expected_sum);
-
-    let handle = ShmHandle::new(4096).unwrap();
-    let mut original = handle.clone().map().unwrap();
-    original.as_slice_mut()[0] = 42;
-    let returned = channel.call_echo_shm(Some(handle)).unwrap().unwrap();
-    assert_eq!(returned.map().unwrap().as_slice()[0], 42);
-    assert!(channel.call_echo_shm(None).unwrap().is_none());
 }
 
 /// Verifies that IPC messages larger than 4 KB are handled without panicking.

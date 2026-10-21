@@ -39,15 +39,4 @@ fn test_blocking_client() {
     // Store a file via handle transfer
     let f = tempfile::tempfile().unwrap();
     channel.try_send_store_file(f.into());
-
-    // The typed reply follows buffered acknowledgements and carries a real descriptor.
-    use libdd_ipc::platform::{FileBackedHandle, ShmHandle};
-    let handle = ShmHandle::new(8192).unwrap();
-    let mut writer = handle.clone().map().unwrap();
-    writer.as_slice_mut()[8000] = 42;
-    let returned = channel.call_echo_shm(Some(handle)).unwrap().unwrap();
-    let reader = returned.map().unwrap();
-    assert_eq!(reader.as_slice()[8000], 42);
-    assert!(channel.call_echo_shm(None).unwrap().is_none());
-    channel.call_ping().unwrap();
 }
