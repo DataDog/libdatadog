@@ -224,6 +224,10 @@ jobs:
         id: nightly-version
         run: echo "version=$(grep -Po '^channel = "\K[^"]+' nightly-toolchain.toml)" >> $GITHUB_OUTPUT
       - name: Cache [rust]
+        # Kept on rust-cache deliberately (not migrated to S3 sccache with the
+        # other jobs): this job compiles with the explicit 1.92.0 toolchain,
+        # so entries written by main's MSRV jobs would never hit. Runs are rare
+        # (release proposals only).
         id: rust-cache
         uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2.8.1
         with:
