@@ -74,22 +74,8 @@ fn main() -> Result<()> {
     )
 }
 
-fn crate_info(member: &Package) -> CrateInfo {
-    CrateInfo {
-        name: member.name.to_string(),
-        version: member.version.to_string(),
-        manifest: member.manifest_path.clone().into(),
-        path: member.manifest_path.parent().unwrap().into(),
-        publish: if let Some(publishable) = &member.publish {
-            !publishable.is_empty()
-        } else {
-            true
-        },
-    }
-}
-
 fn all_crates(members: &[Package]) -> Vec<CrateInfo> {
-    members.iter().map(crate_info).collect()
+    members.iter().map(Into::into).collect()
 }
 
 fn collect_changed_crates(
@@ -112,7 +98,7 @@ fn collect_changed_crates(
             if (file == relative_dir_str || file.starts_with(&format!("{relative_dir_str}/")))
                 && crate_inventory.insert(member.name.to_string())
             {
-                crates.push(crate_info(member));
+                crates.push(member.into());
             }
         }
     }
