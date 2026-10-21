@@ -68,6 +68,7 @@ use std::sync::atomic::{AtomicI64, AtomicU8, AtomicU32, AtomicU64, Ordering::*, 
 use std::thread;
 
 use crate::platform::{FileBackedHandle, MappedMem, NamedShmHandle};
+pub(crate) use crate::rate_limiter::ShmSafe;
 
 /// Version of everything here that is not a schema's: the header and the bucket regions.
 pub(crate) const SHM_VERSION: u32 = 4;
@@ -96,20 +97,19 @@ const MAX_SLOT_WAIT_ITERS: u32 = 10_000;
 
 /// What the slots of one kind of table hold, and how inputs reach them.
 ///
-/// # Safety
 /// `Key` and `Value` live in a mapping every peer can write, and are reached through references
-/// made straight from its bytes, starting out zeroed. Both must be `#[repr(C)]` and made only of
-/// integer atomics (or arrays and structs of them), so that every bit pattern - all zeroes
-/// included - is a valid value. Anything read out of them is a peer's to have written, and is
-/// decoded and bounds-checked rather than trusted.
-pub unsafe trait Schema: 'static {
+/// made straight from its bytes, starting out zeroed. [`ShmSafe`] is what makes that sound, so
+/// implementing a schema needs no `unsafe` of its own. Both should also be `#[repr(C)]`, so that
+/// their layout is the same in every process that maps the segment. Anything read out of them is
+/// a peer's to have written, and is decoded and bounds-checked rather than trusted.
+pub trait Schema: 'static {
     /// Identifies the schema in the header, so that a segment is only opened as its own kind.
     const ID: u32;
     /// Bumped whenever `Key`, `Value`, or what is stored in them changes.
     const VERSION: u32;
 
-    type Key;
-    type Value;
+    type Key: ShmSafe;
+    type Value: ShmSafe;
     type Input<'a>;
 
     /// Hash of the input's key. Any value is fine; the table remaps the two it reserves.
@@ -145,6 +145,9 @@ pub(crate) struct WireStringRef {
     pub(crate) offset: AtomicU32,
     pub(crate) len: AtomicU32,
 }
+
+// SAFETY: `#[repr(C)]` and made only of integer atomics.
+unsafe impl ShmSafe for WireStringRef {}
 
 impl WireStringRef {
     pub(crate) fn snapshot(&self) -> StringRef {
@@ -912,8 +915,7 @@ mod tests {
     /// segment only opens as the schema that created it.
     struct Counter;
 
-    // SAFETY: both are integer atomics.
-    unsafe impl Schema for Counter {
+    impl Schema for Counter {
         const ID: u32 = u32::MAX;
         const VERSION: u32 = 1;
 
