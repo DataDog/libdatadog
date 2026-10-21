@@ -10,28 +10,73 @@ use crate::rules_based::{
     ufc::{Allocation, Assignment, AssignmentReason, CompiledFlagsConfig, Flag, Shard, Split},
 };
 
+/// Selects how a subject's opt-out timestamp affects exposure-logging allocations.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ExperimentationOptOutMode {
+    /// Ignore the opt-out attribute.
+    #[default]
+    Disabled,
+    /// Exclude all exposure-logging allocations immediately.
+    Immediate,
+    /// Exclude allocations activated at or after opt-out, or with unknown activation.
+    FutureExperimentsOnly,
+}
+
 /// Controls optional behavior for one evaluation. The SDK resolves configuration.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct EvaluationOptions {
     /// Honor the subject's `dd_experimentation_opt_out_at` timestamp.
-    pub experimentation_opt_out_immediate: bool,
+    pub experimentation_opt_out_mode: ExperimentationOptOutMode,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum ExperimentationExclusion {
+    #[default]
+    None,
+    Immediate,
+    ActivatedAtOrAfter(Timestamp),
+}
+
+impl ExperimentationExclusion {
+    fn excludes(self, allocation: &Allocation) -> bool {
+        if !allocation.do_log {
+            return false;
+        }
+        match self {
+            Self::None => false,
+            Self::Immediate => true,
+            Self::ActivatedAtOrAfter(cutoff) => allocation
+                .randomization_activated_at
+                .is_none_or(|activation| activation >= cutoff),
+        }
+    }
 }
 
 impl EvaluationOptions {
-    fn exclude_experiments(self, context: &EvaluationContext) -> Result<bool, EvaluationError> {
-        if !self.experimentation_opt_out_immediate {
-            return Ok(false);
+    fn experimentation_exclusion(
+        self,
+        context: &EvaluationContext,
+    ) -> Result<ExperimentationExclusion, EvaluationError> {
+        if self.experimentation_opt_out_mode == ExperimentationOptOutMode::Disabled {
+            return Ok(ExperimentationExclusion::None);
         }
         let Some(attribute) = context.get_attribute("dd_experimentation_opt_out_at") else {
-            return Ok(false);
+            return Ok(ExperimentationExclusion::None);
         };
         let Some(timestamp) = attribute.as_str() else {
             return Err(EvaluationError::InvalidContext);
         };
         // Use the same timestamp deserializer as allocation startAt and endAt.
-        Timestamp::deserialize(StrDeserializer::<serde::de::value::Error>::new(timestamp))
-            .map_err(|_| EvaluationError::InvalidContext)?;
-        Ok(true)
+        let cutoff =
+            Timestamp::deserialize(StrDeserializer::<serde::de::value::Error>::new(timestamp))
+                .map_err(|_| EvaluationError::InvalidContext)?;
+        Ok(match self.experimentation_opt_out_mode {
+            ExperimentationOptOutMode::Disabled => ExperimentationExclusion::None,
+            ExperimentationOptOutMode::Immediate => ExperimentationExclusion::Immediate,
+            ExperimentationOptOutMode::FutureExperimentsOnly => {
+                ExperimentationExclusion::ActivatedAtOrAfter(cutoff)
+            }
+        })
     }
 }
 
@@ -81,14 +126,11 @@ impl Configuration {
         now: DateTime<Utc>,
         options: EvaluationOptions,
     ) -> Result<Assignment, EvaluationError> {
-        let exclude_experiments = options.exclude_experiments(context)?;
-        let result = self.flags.compiled.eval_flag(
-            flag_key,
-            context,
-            expected_type,
-            now,
-            exclude_experiments,
-        );
+        let exclusion = options.experimentation_exclusion(context)?;
+        let result =
+            self.flags
+                .compiled
+                .eval_flag(flag_key, context, expected_type, now, exclusion);
 
         match &result {
             Ok(assignment) => {
@@ -119,10 +161,10 @@ impl CompiledFlagsConfig {
         subject: &EvaluationContext,
         expected_type: ExpectedFlagType,
         now: DateTime<Utc>,
-        exclude_experiments: bool,
+        exclusion: ExperimentationExclusion,
     ) -> Result<Assignment, EvaluationError> {
         self.get_flag(flag_key)?
-            .eval(subject, expected_type, now, exclude_experiments)
+            .eval(subject, expected_type, now, exclusion)
     }
 
     fn get_flag(&self, flag_key: &str) -> Result<&Flag, EvaluationError> {
@@ -140,7 +182,7 @@ impl Flag {
         context: &EvaluationContext,
         expected_type: ExpectedFlagType,
         now: DateTime<Utc>,
-        exclude_experiments: bool,
+        exclusion: ExperimentationExclusion,
     ) -> Result<Assignment, EvaluationError> {
         if !expected_type.is_compatible(self.variation_type.into()) {
             return Err(EvaluationError::TypeMismatch {
@@ -149,8 +191,7 @@ impl Flag {
             });
         }
 
-        let (allocation, split, reason) =
-            self.find_allocation(context, now, exclude_experiments)?;
+        let (allocation, split, reason) = self.find_allocation(context, now, exclusion)?;
 
         Ok(Assignment {
             value: split.value.clone(),
@@ -166,10 +207,10 @@ impl Flag {
         &self,
         context: &EvaluationContext,
         now: DateTime<Utc>,
-        exclude_experiments: bool,
+        exclusion: ExperimentationExclusion,
     ) -> Result<(&Allocation, &Split, AssignmentReason), EvaluationError> {
         for allocation in &self.allocations {
-            if exclude_experiments && allocation.do_log {
+            if exclusion.excludes(allocation) {
                 continue;
             }
             if let Some((split, reason)) = allocation.get_matching_split(context, now)? {
@@ -279,7 +320,7 @@ mod opt_out_tests {
     #[test]
     fn opt_out_timestamp_validation_and_disabled_mode() {
         let immediate = EvaluationOptions {
-            experimentation_opt_out_immediate: true,
+            experimentation_opt_out_mode: ExperimentationOptOutMode::Immediate,
         };
         for (value, expected) in [
             (None, Ok(false)),
@@ -300,13 +341,15 @@ mod opt_out_tests {
         ] {
             let subject = context(value.clone());
             assert_eq!(
-                immediate.exclude_experiments(&subject),
+                immediate
+                    .experimentation_exclusion(&subject)
+                    .map(|value| value != ExperimentationExclusion::None),
                 expected,
                 "{value:?}"
             );
             assert_eq!(
-                EvaluationOptions::default().exclude_experiments(&subject),
-                Ok(false)
+                EvaluationOptions::default().experimentation_exclusion(&subject),
+                Ok(ExperimentationExclusion::None)
             );
         }
     }
@@ -314,7 +357,7 @@ mod opt_out_tests {
     #[test]
     fn opt_out_uses_allocation_timestamp_contract() {
         let immediate = EvaluationOptions {
-            experimentation_opt_out_immediate: true,
+            experimentation_opt_out_mode: ExperimentationOptOutMode::Immediate,
         };
         for timestamp in [
             "2026-10-19T12:00:00Z",
@@ -338,9 +381,9 @@ mod opt_out_tests {
                     "splits": [],
                     "doLog": true,
                 }));
-            let result = immediate.exclude_experiments(&context(Some(json!(timestamp))));
+            let result = immediate.experimentation_exclusion(&context(Some(json!(timestamp))));
             let expected = if allocation.is_ok() {
-                Ok(true)
+                Ok(ExperimentationExclusion::Immediate)
             } else {
                 Err(EvaluationError::InvalidContext)
             };
@@ -392,13 +435,163 @@ mod opt_out_tests {
                 ExpectedFlagType::Boolean,
                 Utc::now(),
                 EvaluationOptions {
-                    experimentation_opt_out_immediate: true,
+                    experimentation_opt_out_mode: ExperimentationOptOutMode::Immediate,
                 },
             )
             .unwrap();
         assert_eq!(assignment.allocation_key.as_str(), "ordinary");
         assert_eq!(assignment.value.variation_value(), json!(false));
         assert!(!assignment.do_log);
+    }
+
+    fn future_configuration(activation: serde_json::Value) -> Configuration {
+        let mut flag = json!({
+            "key": "feature", "enabled": true, "variationType": "BOOLEAN",
+            "variations": {
+                "on": {"key": "on", "value": true},
+                "off": {"key": "off", "value": false}
+            },
+            "allocations": [{
+                "key": "experiment", "doLog": true,
+                "randomizationActivatedAt": activation,
+                "splits": [{"variationKey": "on", "shards": [], "serialId": 7}]
+            }, {
+                "key": "ordinary", "doLog": false,
+                "splits": [{"variationKey": "off", "shards": [], "serialId": 8}]
+            }]
+        });
+        let original = flag.clone();
+        flag["key"] = json!("neighbor");
+        flag["allocations"][0]["randomizationActivatedAt"] = serde_json::Value::Null;
+        Configuration::from_server_response(
+            UniversalFlagConfig::from_json(
+                serde_json::to_vec(&json!({
+                    "createdAt": "2026-10-19T00:00:00Z",
+                    "environment": {"name": "test"},
+                    "flags": {"feature": original, "neighbor": flag}
+                }))
+                .unwrap(),
+            )
+            .unwrap(),
+        )
+    }
+
+    #[test]
+    fn future_cutoff_preserves_precision_and_exposure_selection() {
+        let subject = context(Some(json!("2026-10-19T12:00:00Z")));
+        for (activation, eligible) in [
+            (json!("2026-10-19T11:59:59.999999999Z"), true),
+            (json!("2026-10-19T12:00:00Z"), false),
+            (json!("2026-10-19T12:00:00.000000001Z"), false),
+            (json!("2026-10-19T17:30:00+05:30"), false),
+            (serde_json::Value::Null, false),
+        ] {
+            let config = future_configuration(activation.clone());
+            for mode in [
+                ExperimentationOptOutMode::Disabled,
+                ExperimentationOptOutMode::Immediate,
+                ExperimentationOptOutMode::FutureExperimentsOnly,
+            ] {
+                let options = EvaluationOptions {
+                    experimentation_opt_out_mode: mode,
+                };
+                let expected = mode == ExperimentationOptOutMode::Disabled
+                    || (mode == ExperimentationOptOutMode::FutureExperimentsOnly && eligible);
+                let result = config
+                    .eval_flag_with_options(
+                        "feature",
+                        &subject,
+                        ExpectedFlagType::Boolean,
+                        Utc::now(),
+                        options,
+                    )
+                    .unwrap();
+                assert_eq!(
+                    result.value.variation_value(),
+                    json!(expected),
+                    "{mode:?}: {activation}"
+                );
+                assert_eq!(result.do_log, expected);
+                assert_eq!(
+                    result.allocation_key.as_str(),
+                    if expected { "experiment" } else { "ordinary" }
+                );
+                assert_eq!(result.serial_id, Some(if expected { 7 } else { 8 }));
+                let eligible_subject = config
+                    .eval_flag_with_options(
+                        "feature",
+                        &context(None),
+                        ExpectedFlagType::Boolean,
+                        Utc::now(),
+                        options,
+                    )
+                    .unwrap();
+                assert!(eligible_subject.do_log);
+            }
+        }
+    }
+
+    #[test]
+    fn malformed_activation_is_isolated_in_every_mode() {
+        for activation in [json!("bad"), json!(42), json!(true), json!([]), json!({})] {
+            let config = future_configuration(activation);
+            for mode in [
+                ExperimentationOptOutMode::Disabled,
+                ExperimentationOptOutMode::Immediate,
+                ExperimentationOptOutMode::FutureExperimentsOnly,
+            ] {
+                let options = EvaluationOptions {
+                    experimentation_opt_out_mode: mode,
+                };
+                let subject = context(Some(json!("2026-10-19T12:00:00Z")));
+                assert_eq!(
+                    config
+                        .eval_flag_with_options(
+                            "feature",
+                            &subject,
+                            ExpectedFlagType::Boolean,
+                            Utc::now(),
+                            options,
+                        )
+                        .unwrap_err(),
+                    EvaluationError::FlagConfigurationInvalid
+                );
+                assert!(
+                    config
+                        .eval_flag_with_options(
+                            "neighbor",
+                            &subject,
+                            ExpectedFlagType::Boolean,
+                            Utc::now(),
+                            options,
+                        )
+                        .is_ok()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn future_invalid_context_precedes_flag_lookup() {
+        let config = future_configuration(json!("2026-10-19T00:00:00Z"));
+        for value in [
+            json!(null),
+            json!(true),
+            json!(42),
+            json!(""),
+            json!("private-invalid"),
+        ] {
+            let result = config.eval_flag_with_options(
+                "missing",
+                &context(Some(value)),
+                ExpectedFlagType::Boolean,
+                Utc::now(),
+                EvaluationOptions {
+                    experimentation_opt_out_mode: ExperimentationOptOutMode::FutureExperimentsOnly,
+                },
+            );
+            assert_eq!(result.unwrap_err(), EvaluationError::InvalidContext);
+        }
     }
 }
 

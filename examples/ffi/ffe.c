@@ -180,7 +180,67 @@ void evaluate_and_print_flag(
     ddog_ffe_assignment_drop(&assignment);
 }
 
+static int verify_opt_out_modes(void) {
+    const char* json =
+        "{\"createdAt\":\"2026-10-19T00:00:00Z\",\"environment\":{\"name\":\"test\"},"
+        "\"flags\":{\"feature\":{\"key\":\"feature\",\"enabled\":true,\"variationType\":\"BOOLEAN\","
+        "\"variations\":{\"on\":{\"key\":\"on\",\"value\":true},\"off\":{\"key\":\"off\",\"value\":false}},"
+        "\"allocations\":[{\"key\":\"experiment\",\"doLog\":true,\"randomizationActivatedAt\":\"2026-10-19T12:00:00Z\","
+        "\"splits\":[{\"variationKey\":\"on\",\"shards\":[]}]},{\"key\":\"ordinary\",\"doLog\":false,"
+        "\"splits\":[{\"variationKey\":\"off\",\"shards\":[]}]}]}}}";
+    struct ddog_ffe_Result_HandleConfiguration parsed = ddog_ffe_configuration_new(
+        (struct ddog_ffe_BorrowedStr){.ptr = (const uint8_t*)json, .len = strlen(json)}
+    );
+    if (parsed.tag != DDOG_FFE_RESULT_HANDLE_CONFIGURATION_OK_HANDLE_CONFIGURATION) {
+        ddog_Error_drop(&parsed.err);
+        return 1;
+    }
+    ddog_ffe_Handle_Configuration config = parsed.ok;
+    const char* cutoffs[] = {
+        "2026-10-19T11:59:59.999999999Z", "2026-10-19T12:00:00Z",
+        "2026-10-19T12:00:00.000000001Z"
+    };
+    const enum ddog_ffe_ExperimentationOptOutMode modes[] = {
+        DDOG_FFE_EXPERIMENTATION_OPT_OUT_MODE_DISABLED,
+        DDOG_FFE_EXPERIMENTATION_OPT_OUT_MODE_IMMEDIATE,
+        DDOG_FFE_EXPERIMENTATION_OPT_OUT_MODE_FUTURE_EXPERIMENTS_ONLY
+    };
+    int failed = 0;
+    for (size_t i = 0; i < 3; i++) {
+        struct ddog_ffe_AttributePair attribute = {
+            .name = "dd_experimentation_opt_out_at",
+            .value = {.tag = DDOG_FFE_ATTRIBUTE_VALUE_STRING, .string = cutoffs[i]}
+        };
+        ddog_ffe_Handle_EvaluationContext context = ddog_ffe_evaluation_context_new("subject", &attribute, 1);
+        for (size_t j = 0; j < 3; j++) {
+            ddog_ffe_Handle_ResolutionDetails result = ddog_ffe_get_assignment_with_opt_out_mode(
+                config, "feature", DDOG_FFE_EXPECTED_FLAG_TYPE_BOOLEAN, context, modes[j]
+            );
+            struct ddog_ffe_VariantValue value = ddog_ffe_assignment_get_value(result);
+            bool expected = j == 0 || (j == 2 && i == 2);
+            failed |= value.tag != DDOG_FFE_VARIANT_VALUE_BOOLEAN || value.boolean != expected;
+            failed |= ddog_ffe_assignment_get_error_code(result) != DDOG_FFE_ERROR_CODE_OK;
+            failed |= ddog_ffe_assignment_get_do_log(result) != expected;
+            ddog_ffe_assignment_drop(&result);
+        }
+        struct ddog_ffe_EvaluationOptions options = {.experimentation_opt_out_immediate = true};
+        ddog_ffe_Handle_ResolutionDetails old_result = ddog_ffe_get_assignment_with_options(
+            config, "feature", DDOG_FFE_EXPECTED_FLAG_TYPE_BOOLEAN, context, options
+        );
+        struct ddog_ffe_VariantValue old_value = ddog_ffe_assignment_get_value(old_result);
+        failed |= old_value.tag != DDOG_FFE_VARIANT_VALUE_BOOLEAN || old_value.boolean;
+        ddog_ffe_assignment_drop(&old_result);
+        ddog_ffe_evaluation_context_drop(&context);
+    }
+    ddog_ffe_configuration_drop(&config);
+    return failed;
+}
+
 int main(int argc, char* argv[]) {
+    if (verify_opt_out_modes() != 0) {
+        fprintf(stderr, "Experimentation opt-out mode checks failed\n");
+        return 1;
+    }
     printf("Datadog FFE FFI Example\n");
     printf("=======================\n\n");
 

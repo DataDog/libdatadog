@@ -175,6 +175,29 @@ pub struct EvaluationOptions {
     pub experimentation_opt_out_immediate: bool,
 }
 
+/// SDK-selected handling of a subject's experimentation opt-out timestamp.
+#[derive(Clone, Copy, Default)]
+#[repr(C)]
+pub enum ExperimentationOptOutMode {
+    /// Ignore the subject's opt-out attribute.
+    #[default]
+    Disabled,
+    /// Exclude exposure-logging allocations immediately.
+    Immediate,
+    /// Exclude allocations activated at or after opt-out, or with unknown activation.
+    FutureExperimentsOnly,
+}
+
+impl From<ExperimentationOptOutMode> for ffe::ExperimentationOptOutMode {
+    fn from(mode: ExperimentationOptOutMode) -> Self {
+        match mode {
+            ExperimentationOptOutMode::Disabled => Self::Disabled,
+            ExperimentationOptOutMode::Immediate => Self::Immediate,
+            ExperimentationOptOutMode::FutureExperimentsOnly => Self::FutureExperimentsOnly,
+        }
+    }
+}
+
 /// Evaluate a flag with optional subject experimentation exclusion.
 ///
 /// # Ownership
@@ -192,9 +215,37 @@ pub unsafe extern "C" fn ddog_ffe_get_assignment_with_options(
     context: Handle<EvaluationContext>,
     options: EvaluationOptions,
 ) -> Handle<ResolutionDetails> {
+    let mode = if options.experimentation_opt_out_immediate {
+        ExperimentationOptOutMode::Immediate
+    } else {
+        ExperimentationOptOutMode::Disabled
+    };
+    // SAFETY: this function has the same handle and string requirements.
+    unsafe {
+        ddog_ffe_get_assignment_with_opt_out_mode(config, flag_key, expected_type, context, mode)
+    }
+}
+
+/// Evaluate a flag with SDK-selected experimentation opt-out behavior.
+///
+/// # Ownership
+/// The caller must free the returned handle with `ddog_ffe_assignment_drop`.
+///
+/// # Safety
+/// `config` and `context` must be valid handles. `flag_key` must be a valid
+/// NUL-terminated string. `mode` must be a valid enum value.
+#[unsafe(no_mangle)]
+#[must_use]
+pub unsafe extern "C" fn ddog_ffe_get_assignment_with_opt_out_mode(
+    config: Handle<Configuration>,
+    flag_key: *const c_char,
+    expected_type: ExpectedFlagType,
+    context: Handle<EvaluationContext>,
+    mode: ExperimentationOptOutMode,
+) -> Handle<ResolutionDetails> {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         // SAFETY: the caller provides valid handles and a valid string.
-        unsafe { get_assignment_with_options(config, flag_key, expected_type, context, options) }
+        unsafe { get_assignment_with_mode(config, flag_key, expected_type, context, mode) }
     }))
     .unwrap_or_else(|_| {
         Handle::new(
@@ -204,12 +255,12 @@ pub unsafe extern "C" fn ddog_ffe_get_assignment_with_options(
     })
 }
 
-unsafe fn get_assignment_with_options(
+unsafe fn get_assignment_with_mode(
     config: Handle<Configuration>,
     flag_key: *const c_char,
     expected_type: ExpectedFlagType,
     context: Handle<EvaluationContext>,
-    options: EvaluationOptions,
+    mode: ExperimentationOptOutMode,
 ) -> Handle<ResolutionDetails> {
     if flag_key.is_null() {
         return Handle::new(
@@ -241,7 +292,7 @@ unsafe fn get_assignment_with_options(
         expected_type.into(),
         now(),
         ffe::EvaluationOptions {
-            experimentation_opt_out_immediate: options.experimentation_opt_out_immediate,
+            experimentation_opt_out_mode: mode.into(),
         },
     );
 
@@ -552,7 +603,103 @@ pub unsafe extern "C" fn ddog_ffe_assignment_drop(assignment: *mut Handle<Resolu
 
 #[cfg(test)]
 mod tests {
+    use std::{collections::HashMap, sync::Arc};
+
     use super::*;
+
+    #[test]
+    fn opt_out_modes_cross_the_ffi_boundary() {
+        let wire = ffe::UniversalFlagConfig::from_json(
+            br#"{
+                "createdAt":"2026-10-19T00:00:00Z", "environment":{"name":"test"},
+                "flags":{"feature":{
+                    "key":"feature", "enabled":true, "variationType":"BOOLEAN",
+                    "variations":{"on":{"key":"on","value":true},"off":{"key":"off","value":false}},
+                    "allocations":[
+                        {"key":"experiment","doLog":true,"randomizationActivatedAt":"2026-10-19T12:00:00Z",
+                         "splits":[{"variationKey":"on","shards":[]}]},
+                        {"key":"ordinary","doLog":false,"splits":[{"variationKey":"off","shards":[]}]}
+                    ]
+                }}
+            }"#.to_vec(),
+        )
+        .unwrap();
+        let mut config = Handle::new(Configuration::from_server_response(wire));
+        for (cutoff, future_excluded) in [
+            ("2026-10-19T11:59:59.999999999Z", true),
+            ("2026-10-19T12:00:00Z", true),
+            ("2026-10-19T12:00:00.000000001Z", false),
+        ] {
+            let mut context = Handle::new(EvaluationContext::new(
+                Some("subject".into()),
+                Arc::new(HashMap::from([(
+                    "dd_experimentation_opt_out_at".into(),
+                    ffe::Attribute::from(cutoff),
+                )])),
+            ));
+            for (mode, excluded) in [
+                (ExperimentationOptOutMode::Disabled, false),
+                (ExperimentationOptOutMode::Immediate, true),
+                (
+                    ExperimentationOptOutMode::FutureExperimentsOnly,
+                    future_excluded,
+                ),
+            ] {
+                // SAFETY: handles have no Drop. Copies borrow live resources, as C callers do.
+                // Each original handle is freed exactly once after its last use.
+                let config_copy = unsafe { std::ptr::read(&config) };
+                // SAFETY: the context stays live throughout this evaluation.
+                let context_copy = unsafe { std::ptr::read(&context) };
+                // SAFETY: both handles are live and the flag key is a static C string.
+                let mut result = unsafe {
+                    ddog_ffe_get_assignment_with_opt_out_mode(
+                        config_copy,
+                        c"feature".as_ptr(),
+                        ExpectedFlagType::Boolean,
+                        context_copy,
+                        mode,
+                    )
+                };
+                // SAFETY: the returned handle is live until the drop below.
+                let details = unsafe { result.as_ref() };
+                assert_eq!(ErrorCode::from(details), ErrorCode::Ok);
+                let assignment = details.as_ref().as_ref().unwrap();
+                assert_eq!(assignment.do_log, !excluded);
+                assert_eq!(
+                    assignment.allocation_key.as_str(),
+                    if excluded { "ordinary" } else { "experiment" }
+                );
+                // SAFETY: the result is no longer borrowed and is freed once.
+                unsafe { ddog_ffe_assignment_drop(&mut result) };
+            }
+            // SAFETY: these copies borrow the live resources; only the originals are freed.
+            let config_copy = unsafe { std::ptr::read(&config) };
+            // SAFETY: the context stays live through the existing boolean interface call.
+            let context_copy = unsafe { std::ptr::read(&context) };
+            // SAFETY: both handles are live and the flag key is a static C string.
+            let mut result = unsafe {
+                ddog_ffe_get_assignment_with_options(
+                    config_copy,
+                    c"feature".as_ptr(),
+                    ExpectedFlagType::Boolean,
+                    context_copy,
+                    EvaluationOptions {
+                        experimentation_opt_out_immediate: true,
+                    },
+                )
+            };
+            // SAFETY: the result stays live until the drop below.
+            let details = unsafe { result.as_ref() };
+            assert_eq!(ErrorCode::from(details), ErrorCode::Ok);
+            assert!(!details.as_ref().as_ref().unwrap().do_log);
+            // SAFETY: all result borrows ended; free each handle exactly once.
+            unsafe { ddog_ffe_assignment_drop(&mut result) };
+            // SAFETY: all calls using the context completed.
+            unsafe { Handle::free(&mut context) };
+        }
+        // SAFETY: all calls completed and the configuration handle is still live.
+        unsafe { Handle::free(&mut config) };
+    }
 
     #[test]
     fn rejected_flag_is_exposed_as_parse_error() {

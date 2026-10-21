@@ -155,6 +155,8 @@ pub(crate) struct AllocationWire {
     pub start_at: Option<Timestamp>,
     #[serde(default)]
     pub end_at: Option<Timestamp>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub randomization_activated_at: Option<Timestamp>,
     pub splits: Vec<SplitWire>,
     #[serde(default = "default_do_log")]
     pub do_log: bool,
