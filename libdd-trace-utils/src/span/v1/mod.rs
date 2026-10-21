@@ -3,7 +3,10 @@
 
 use crate::span::vec_map::VecMap;
 use crate::span::{BytesData, SliceData, TraceData};
+pub use libdd_trace_model::AttributeValue;
 pub use thin_vec::ThinVec;
+
+pub mod span_pool;
 
 /// OpenTelemetry SpanKind values, encoded on the wire as a `uint32`.
 /// Unset or unrecognized kinds default to [`SpanKind::Internal`].
@@ -52,37 +55,6 @@ impl From<u32> for SpanKind {
             4 => SpanKind::Producer,
             5 => SpanKind::Consumer,
             _ => SpanKind::Internal,
-        }
-    }
-}
-
-/// Typed V1 attribute value.
-/// Replaces v0.4's split `meta` / `metrics` / `meta_struct` maps.
-#[derive(Debug)]
-pub enum AttributeValue<T: TraceData> {
-    String(T::Text),
-    Float(f64),
-    Int(i64),
-    Bool(bool),
-    Bytes(T::Bytes),
-    KeyValue(VecMap<T::Text, AttributeValue<T>>),
-    List(Vec<AttributeValue<T>>),
-}
-
-// Implemented manually rather than derived: `VecMap`'s `PartialEq` is gated to
-// test/test-utils (see its definition) to keep its allocation cost out of casual `==`, so the
-// `KeyValue` variant compares via `slow_compare` instead of relying on that trait impl.
-impl<T: TraceData> PartialEq for AttributeValue<T> {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (AttributeValue::String(a), AttributeValue::String(b)) => a == b,
-            (AttributeValue::Float(a), AttributeValue::Float(b)) => a == b,
-            (AttributeValue::Int(a), AttributeValue::Int(b)) => a == b,
-            (AttributeValue::Bool(a), AttributeValue::Bool(b)) => a == b,
-            (AttributeValue::Bytes(a), AttributeValue::Bytes(b)) => a == b,
-            (AttributeValue::KeyValue(a), AttributeValue::KeyValue(b)) => a.slow_compare(b),
-            (AttributeValue::List(a), AttributeValue::List(b)) => a == b,
-            _ => false,
         }
     }
 }
@@ -166,6 +138,30 @@ pub struct TracerPayload<T: TraceData> {
     pub chunks: Vec<TraceChunk<T>>,
 }
 
+impl<T: TraceData> Span<T> {
+    /// Deduplicates every attribute map on this span (its own `attributes`, and each span
+    /// link's and span event's `attributes`), keeping the last occurrence of each key.
+    pub fn dedup(&mut self) {
+        self.attributes.dedup();
+        for link in &mut self.span_links {
+            link.attributes.dedup();
+        }
+        for event in &mut self.span_events {
+            event.attributes.dedup();
+        }
+    }
+}
+
+impl<T: TraceData> TraceChunk<T> {
+    /// Deduplicates this chunk's own `attributes`, plus every span's attribute maps.
+    pub fn dedup(&mut self) {
+        self.attributes.dedup();
+        for span in &mut self.spans {
+            span.dedup();
+        }
+    }
+}
+
 pub type SpanBytes = Span<BytesData>;
 pub type SpanLinkBytes = SpanLink<BytesData>;
 pub type SpanEventBytes = SpanEvent<BytesData>;
@@ -215,5 +211,67 @@ mod tests {
         assert_eq!(s.span_kind, SpanKind::Internal);
         assert!(!s.error);
         assert!(s.attributes.is_empty());
+    }
+
+    fn key(s: &str) -> libdd_tinybytes::BytesString {
+        libdd_tinybytes::BytesString::from_slice(s.as_bytes()).unwrap()
+    }
+
+    #[test]
+    fn span_dedup_removes_duplicate_keys_everywhere() {
+        let mut span = SpanBytes::default();
+        span.attributes.insert(key("a"), AttributeValue::Int(1));
+        span.attributes.insert(key("a"), AttributeValue::Int(2));
+        span.span_links.push(SpanLinkBytes::default());
+        span.span_links[0]
+            .attributes
+            .insert(key("b"), AttributeValue::Int(1));
+        span.span_links[0]
+            .attributes
+            .insert(key("b"), AttributeValue::Int(2));
+        span.span_events.push(SpanEventBytes::default());
+        span.span_events[0]
+            .attributes
+            .insert(key("c"), AttributeValue::Int(1));
+        span.span_events[0]
+            .attributes
+            .insert(key("c"), AttributeValue::Int(2));
+
+        span.dedup();
+
+        assert_eq!(
+            span.attributes.get(&key("a")),
+            Some(&AttributeValue::Int(2))
+        );
+        assert_eq!(
+            span.span_links[0].attributes.get(&key("b")),
+            Some(&AttributeValue::Int(2))
+        );
+        assert_eq!(
+            span.span_events[0].attributes.get(&key("c")),
+            Some(&AttributeValue::Int(2))
+        );
+    }
+
+    #[test]
+    fn trace_chunk_dedup_dedups_chunk_and_span_attributes() {
+        let mut chunk = TraceChunkBytes::default();
+        chunk.attributes.insert(key("x"), AttributeValue::Int(1));
+        chunk.attributes.insert(key("x"), AttributeValue::Int(2));
+        let mut span = SpanBytes::default();
+        span.attributes.insert(key("y"), AttributeValue::Int(1));
+        span.attributes.insert(key("y"), AttributeValue::Int(2));
+        chunk.spans.push(span);
+
+        chunk.dedup();
+
+        assert_eq!(
+            chunk.attributes.get(&key("x")),
+            Some(&AttributeValue::Int(2))
+        );
+        assert_eq!(
+            chunk.spans[0].attributes.get(&key("y")),
+            Some(&AttributeValue::Int(2))
+        );
     }
 }
