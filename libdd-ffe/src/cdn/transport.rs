@@ -3,7 +3,7 @@
 
 use super::CdnEndpoint;
 use base64::Engine;
-use flate2::read::GzDecoder;
+use flate2::read::MultiGzDecoder;
 use http::header::{
     ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_LENGTH, ETAG, IF_NONE_MATCH, RETRY_AFTER,
 };
@@ -241,7 +241,7 @@ pub(super) fn decode_response_body(
         return Ok(body.to_vec());
     }
 
-    let decoder = GzDecoder::new(body);
+    let decoder = MultiGzDecoder::new(body);
     let mut decoded = Vec::new();
     decoder
         .take(limit as u64 + 1)
@@ -277,6 +277,31 @@ mod tests {
             decode_response_body(&gzip(b"configuration"), Some("gzip"), 64).expect("decode gzip"),
             b"configuration"
         );
+    }
+
+    #[test]
+    fn gzip_member_limits_and_trailing_bytes_are_checked() {
+        let mut members = gzip(&[b'a'; 32]);
+        members.extend(gzip(&[b'b'; 33]));
+        assert_eq!(
+            decode_response_body(&members, Some("gzip"), 64),
+            Err(TransportFailure::ResponseTooLarge)
+        );
+        assert_eq!(
+            decode_response_body(&members, Some("gzip"), 65)
+                .unwrap()
+                .len(),
+            65
+        );
+
+        for suffix in [b"garbage".to_vec(), gzip(b"truncated")[..5].to_vec()] {
+            let mut body = gzip(b"configuration");
+            body.extend(suffix);
+            assert_eq!(
+                decode_response_body(&body, Some("gzip"), 64),
+                Err(TransportFailure::ResponseBody)
+            );
+        }
     }
 
     #[test]

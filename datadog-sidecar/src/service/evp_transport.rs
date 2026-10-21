@@ -13,6 +13,7 @@ use libdd_capabilities::{Bytes, HttpClientCapability, HttpError, SleepCapability
 use libdd_capabilities_impl::ResponseBodyLimit;
 use libdd_common::Endpoint;
 use serde::{Deserialize, Deserializer, Serialize};
+use sha2::{Digest, Sha256};
 use std::fmt::{Display, Formatter};
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
@@ -404,6 +405,46 @@ struct EvpRequest<'a> {
     success_name: &'a str,
 }
 
+/// Equivalent connections share the sidecar exposure cache, but different delivery
+/// configurations and SDK identities must not suppress each other's events.
+/// Hash once at construction so cache keys do not retain direct-intake credentials.
+fn exposure_deduplication_scope(
+    config: &EvpTransportConfig,
+    producer: &EvpProducerIdentity,
+) -> String {
+    fn field(hasher: &mut Sha256, value: &[u8]) {
+        hasher.update(value.len().to_le_bytes());
+        hasher.update(value);
+    }
+
+    let mut hasher = Sha256::new();
+    hasher.update([match config.mode {
+        EvpTransportMode::AgentOnly => 0,
+        EvpTransportMode::PreferLocalThenDirect => 1,
+    }]);
+    for endpoint in [
+        Some(&config.agent_endpoint),
+        config.direct_endpoint.as_ref(),
+    ] {
+        hasher.update([u8::from(endpoint.is_some())]);
+        if let Some(endpoint) = endpoint {
+            field(&mut hasher, endpoint.url.to_string().as_bytes());
+            for value in [&endpoint.api_key, &endpoint.test_token] {
+                hasher.update([u8::from(value.is_some())]);
+                if let Some(value) = value {
+                    field(&mut hasher, value.as_bytes());
+                }
+            }
+            hasher.update(endpoint.timeout_ms.to_le_bytes());
+            hasher.update([u8::from(endpoint.use_system_resolver)]);
+        }
+    }
+    field(&mut hasher, config.intake_subdomain.as_bytes());
+    field(&mut hasher, producer.origin().as_bytes());
+    field(&mut hasher, producer.version().as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
 /// A per-session selector. Clones share route state, allowing exposures and
 /// flag evaluations to make one discovery decision while distinct sessions
 /// remain isolated even when they target the same intake URL.
@@ -412,6 +453,7 @@ pub(crate) struct EvpTransport {
     id: u64,
     config: Arc<EvpTransportConfig>,
     producer: Arc<EvpProducerIdentity>,
+    deduplication_scope: Arc<str>,
     state: Arc<AsyncMutex<RouteState>>,
     clock: Arc<dyn Fn() -> Instant + Send + Sync>,
     unavailable_recovery_cooldown: Duration,
@@ -465,6 +507,7 @@ impl EvpTransport {
 
         Ok(Self {
             id: NEXT_TRANSPORT_ID.fetch_add(1, Ordering::Relaxed),
+            deduplication_scope: exposure_deduplication_scope(&config, &producer).into(),
             config: Arc::new(config),
             producer: Arc::new(producer),
             state: Arc::new(AsyncMutex::new(state)),
@@ -500,13 +543,8 @@ impl EvpTransport {
         self.config == other.config && self.producer == other.producer
     }
 
-    pub(crate) fn deduplication_scope(&self) -> String {
-        format!(
-            "{}\0{}\0{}",
-            self.id,
-            self.producer.origin(),
-            self.producer.version()
-        )
+    pub(crate) fn deduplication_scope(&self) -> &str {
+        &self.deduplication_scope
     }
 
     #[cfg(test)]
@@ -1542,6 +1580,95 @@ mod tests {
             requests[1].0,
             "https://event-platform-intake.datadoghq.com/api/v2/exposures"
         );
+    }
+
+    #[test]
+    fn equivalent_connections_share_deduplication_but_not_route_state() {
+        let first = agentless(Some("api-key"));
+        let second = agentless(Some("api-key"));
+        assert_eq!(first.deduplication_scope(), second.deduplication_scope());
+        assert!(!first.shares_route_state(&second));
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    fn deduplication_uses_effective_configuration() {
+        let first = EvpTransport::agent_only(
+            endpoint("http://agent.internal:8126", Some("ignored-key")),
+            EVP_SUBDOMAIN_VALUE,
+        )
+        .unwrap();
+        let second = EvpTransport::new_with_identity(
+            EvpTransportConfig {
+                mode: EvpTransportMode::AgentOnly,
+                agent_endpoint: endpoint("http://agent.internal:8126", None),
+                direct_endpoint: Some(endpoint(
+                    "https://event-platform-intake.datadoghq.com/",
+                    Some("also-ignored"),
+                )),
+                intake_subdomain: EVP_SUBDOMAIN_VALUE.to_owned(),
+            },
+            EvpProducerIdentity::legacy_sidecar(),
+        )
+        .unwrap();
+        assert_eq!(first.deduplication_scope(), second.deduplication_scope());
+    }
+
+    #[test]
+    fn distinct_configurations_keep_exposure_deduplication_isolated() {
+        let baseline = agentless(Some("api-key"));
+        let config = (*baseline.config).clone();
+        let producer = (*baseline.producer).clone();
+        let mut cases = Vec::new();
+
+        let mut changed = config.clone();
+        changed.agent_endpoint.url = "http://other-agent:8126/v0.4/traces".parse().unwrap();
+        cases.push(("agent destination", changed, producer.clone()));
+        let mut changed = config.clone();
+        changed.agent_endpoint.test_token = Some("other-test".into());
+        cases.push(("agent test token", changed, producer.clone()));
+        let mut changed = config.clone();
+        changed.direct_endpoint.as_mut().unwrap().api_key = Some("other-key".into());
+        cases.push(("direct credentials", changed, producer.clone()));
+        let mut changed = config.clone();
+        changed.direct_endpoint.as_mut().unwrap().url =
+            "https://event-platform-intake.datadoghq.eu/"
+                .parse()
+                .unwrap();
+        cases.push(("direct destination", changed, producer.clone()));
+        let mut changed = config.clone();
+        changed.direct_endpoint.as_mut().unwrap().test_token = Some("other-test".into());
+        cases.push(("direct test token", changed, producer.clone()));
+        let mut changed = config.clone();
+        changed.direct_endpoint = None;
+        cases.push(("no direct fallback", changed, producer.clone()));
+        let mut changed = config.clone();
+        changed.mode = EvpTransportMode::AgentOnly;
+        cases.push(("routing policy", changed, producer.clone()));
+        let mut changed = config.clone();
+        changed.intake_subdomain = "errors-intake".to_owned();
+        changed.direct_endpoint.as_mut().unwrap().url =
+            "https://errors-intake.datadoghq.com/".parse().unwrap();
+        cases.push(("intake target", changed, producer.clone()));
+        cases.push((
+            "SDK origin",
+            config.clone(),
+            EvpProducerIdentity::new("dd-trace-php", producer.version()).unwrap(),
+        ));
+        cases.push((
+            "SDK version",
+            config,
+            EvpProducerIdentity::new(producer.origin(), "4.0.0").unwrap(),
+        ));
+
+        for (name, config, producer) in cases {
+            let transport = EvpTransport::new_with_identity(config, producer).unwrap();
+            assert_ne!(
+                baseline.deduplication_scope(),
+                transport.deduplication_scope(),
+                "{name}"
+            );
+        }
     }
 
     #[tokio::test]

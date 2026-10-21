@@ -29,26 +29,43 @@ pub struct CdnConfig {
     pub version: String,
 }
 
-#[derive(Clone, Copy, Debug, thiserror::Error)]
-#[error("invalid CDN polling interval, request timeout, or client identity")]
-pub struct InvalidConfig;
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum InvalidConfig {
+    #[error("invalid CDN endpoint")]
+    Endpoint,
+    #[error("invalid CDN polling interval")]
+    PollInterval,
+    #[error("invalid CDN request timeout")]
+    RequestTimeout,
+    #[error("invalid CDN client language")]
+    Language,
+    #[error("invalid CDN client version")]
+    Version,
+}
 
 impl CdnConfig {
     /// Validate again at IPC boundaries; deserialization is not validation.
     pub fn validate(&self) -> Result<(), InvalidConfig> {
-        if !self.endpoint.is_valid()
-            || self.poll_interval.is_zero()
-            || self.poll_interval > Duration::from_secs(3600)
-            || self.request_timeout.is_zero()
-            || self.request_timeout > Duration::from_secs(300)
-            || self.language.is_empty()
+        if !self.endpoint.is_valid() {
+            return Err(InvalidConfig::Endpoint);
+        }
+        if self.poll_interval.is_zero() || self.poll_interval > Duration::from_secs(3600) {
+            return Err(InvalidConfig::PollInterval);
+        }
+        if self.request_timeout.is_zero() || self.request_timeout > Duration::from_secs(300) {
+            return Err(InvalidConfig::RequestTimeout);
+        }
+        if self.language.is_empty()
             || self.language.len() > 128
-            || self.version.is_empty()
-            || self.version.len() > 256
             || http::HeaderValue::from_str(&self.language).is_err()
+        {
+            return Err(InvalidConfig::Language);
+        }
+        if self.version.is_empty()
+            || self.version.len() > 256
             || http::HeaderValue::from_str(&self.version).is_err()
         {
-            return Err(InvalidConfig);
+            return Err(InvalidConfig::Version);
         }
         Ok(())
     }
@@ -142,5 +159,41 @@ mod tests {
         config.request_timeout = Duration::from_secs(5);
         config.language = "php\r\ninjected: value".into();
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn invalid_config_identifies_the_field_without_disclosing_values() {
+        let config = CdnConfig {
+            endpoint: CdnEndpoint::custom("http://secret-user:secret-pass@localhost/config")
+                .unwrap(),
+            poll_interval: Duration::from_secs(30),
+            request_timeout: Duration::from_secs(5),
+            language: "php".into(),
+            version: "1.27.0".into(),
+        };
+        for (field, expected) in [
+            ("endpoint", "invalid CDN endpoint"),
+            ("poll_interval", "invalid CDN polling interval"),
+            ("request_timeout", "invalid CDN request timeout"),
+            ("language", "invalid CDN client language"),
+            ("version", "invalid CDN client version"),
+        ] {
+            let mut invalid = config.clone();
+            match field {
+                "endpoint" => {
+                    let mut wire = serde_json::to_value(&config.endpoint).unwrap();
+                    wire["api_key"] = "secret-key".into();
+                    invalid.endpoint = serde_json::from_value(wire).unwrap();
+                }
+                "poll_interval" => invalid.poll_interval = Duration::ZERO,
+                "request_timeout" => invalid.request_timeout = Duration::from_secs(301),
+                "language" => invalid.language = "secret-language\r\n".into(),
+                "version" => invalid.version = "secret-version\r\n".into(),
+                _ => unreachable!(),
+            }
+            let error = invalid.validate().unwrap_err();
+            assert_eq!(error.to_string(), expected);
+            assert!(!format!("{error:?}").contains("secret"));
+        }
     }
 }

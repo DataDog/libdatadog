@@ -47,6 +47,7 @@ pub(crate) mod ffe_config;
 pub(crate) mod ffe_exposures_flusher;
 pub(crate) mod ffe_flagevaluation_flusher;
 pub(crate) mod ffe_metrics_flusher;
+pub mod ffe_submission;
 mod instance_id;
 mod remote_configs;
 mod runtime_metadata;

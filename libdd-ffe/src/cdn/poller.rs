@@ -17,7 +17,7 @@ const MAX_POLL_ATTEMPTS: usize = 3;
 
 #[derive(serde::Deserialize)]
 struct ConfigurationResponse<'a> {
-    #[serde(borrow)]
+    #[serde(borrow, deserialize_with = "deserialize_object")]
     data: ConfigurationResource<'a>,
 }
 
@@ -30,9 +30,20 @@ struct ConfigurationResource<'a> {
 }
 
 #[derive(serde::Deserialize)]
+#[serde(try_from = "String")]
 enum ConfigurationResourceType {
-    #[serde(rename = "universal-flag-configuration")]
     UniversalFlagConfiguration,
+}
+
+impl TryFrom<String> for ConfigurationResourceType {
+    type Error = &'static str;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        match value.as_str() {
+            "universal-flag-configuration" => Ok(Self::UniversalFlagConfiguration),
+            _ => Err("invalid resource type"),
+        }
+    }
 }
 
 // This is a CDN contract. Legacy Remote Configuration documents continue to
@@ -44,9 +55,48 @@ struct ServerConfiguration {
 }
 
 #[derive(serde::Deserialize)]
+#[serde(try_from = "String")]
 enum ServerFormat {
-    #[serde(rename = "SERVER")]
     Server,
+}
+
+impl TryFrom<String> for ServerFormat {
+    type Error = &'static str;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        match value.as_str() {
+            "SERVER" => Ok(Self::Server),
+            _ => Err("invalid format"),
+        }
+    }
+}
+
+// Derived structs can accept positional arrays. At the CDN JSON boundary,
+// require maps while retaining borrowed attributes and unknown-field support.
+#[derive(serde::Deserialize)]
+#[serde(transparent, bound(deserialize = "T: serde::Deserialize<'de>"))]
+struct JsonObject<T>(#[serde(deserialize_with = "deserialize_object")] T);
+
+fn deserialize_object<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::Deserialize<'de>,
+{
+    struct ObjectVisitor<T>(std::marker::PhantomData<T>);
+
+    impl<'de, T: serde::Deserialize<'de>> serde::de::Visitor<'de> for ObjectVisitor<T> {
+        type Value = T;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("a JSON object")
+        }
+
+        fn visit_map<A: serde::de::MapAccess<'de>>(self, map: A) -> Result<T, A::Error> {
+            T::deserialize(serde::de::value::MapAccessDeserializer::new(map))
+        }
+    }
+
+    deserializer.deserialize_map(ObjectVisitor(std::marker::PhantomData))
 }
 
 #[derive(Clone, Copy)]
@@ -290,11 +340,15 @@ impl<T: Transport, S: ConfigurationSink> Poller<T, S> {
         // The managed endpoint returns a JSON:API resource, not a bare UFC.
         // Validate its type before handing the original attributes bytes to
         // the shared evaluator; malformed resources must not advance the ETag.
-        let configuration = match serde_json::from_slice::<ConfigurationResponse<'_>>(&body)
-            .and_then(|response| {
-                serde_json::from_str::<ServerConfiguration>(response.data.attributes.get())?;
-                UniversalFlagConfig::from_json(response.data.attributes.get().as_bytes().to_vec())
-            }) {
+        let configuration = match serde_json::from_slice::<JsonObject<ConfigurationResponse<'_>>>(
+            &body,
+        )
+        .and_then(|JsonObject(response)| {
+            serde_json::from_str::<JsonObject<ServerConfiguration>>(
+                response.data.attributes.get(),
+            )?;
+            UniversalFlagConfig::from_json(response.data.attributes.get().as_bytes().to_vec())
+        }) {
             Ok(configuration) => Configuration::from_server_response(configuration),
             Err(_) => {
                 self.warn(
@@ -561,6 +615,88 @@ mod tests {
             assert_eq!(poller.state.etag().as_deref(), Some("accepted"));
             assert_eq!(poller.sink.applications.load(Ordering::Relaxed), 1);
         }
+    }
+
+    #[test]
+    fn jsonapi_requires_objects_and_string_discriminators() {
+        let valid: serde_json::Value = serde_json::from_slice(EMPTY_CONFIG).unwrap();
+        let attributes = valid["data"]["attributes"].clone();
+        let mut object_type = valid.clone();
+        object_type["data"]["type"] = serde_json::json!({"universal-flag-configuration": null});
+        let mut object_format = valid.clone();
+        object_format["data"]["attributes"]["format"] = serde_json::json!({"SERVER": null});
+        for malformed in [
+            object_type,
+            object_format,
+            serde_json::json!({"data": ["universal-flag-configuration", attributes]}),
+            serde_json::json!([["universal-flag-configuration", attributes]]),
+        ] {
+            let mut poller = test_poller(false);
+            assert_eq!(
+                poller.process_response(response(200, Some("accepted"), EMPTY_CONFIG)),
+                PollOutcome::Success
+            );
+            assert_eq!(
+                poller.process_response(response(
+                    200,
+                    Some("malformed"),
+                    &serde_json::to_vec(&malformed).unwrap()
+                )),
+                PollOutcome::Stop,
+                "{malformed}"
+            );
+            assert_eq!(poller.state.etag().as_deref(), Some("accepted"));
+            assert_eq!(poller.sink.applications.load(Ordering::Relaxed), 1);
+        }
+    }
+
+    #[test]
+    fn jsonapi_accepts_escaped_discriminators_and_unknown_fields() {
+        let mut valid: serde_json::Value = serde_json::from_slice(EMPTY_CONFIG).unwrap();
+        valid["meta"] = serde_json::json!({"ignored": true});
+        valid["data"]["meta"] = serde_json::json!({"ignored": true});
+        let body = serde_json::to_string(&valid)
+            .unwrap()
+            .replace("\"SERVER\"", "\"\\u0053ERVER\"")
+            .replace(
+                "\"universal-flag-configuration\"",
+                "\"universal-flag-\\u0063onfiguration\"",
+            );
+        let mut poller = test_poller(false);
+        assert_eq!(
+            poller.process_response(response(200, Some("accepted"), body.as_bytes())),
+            PollOutcome::Success
+        );
+        assert_eq!(poller.state.etag().as_deref(), Some("accepted"));
+        assert_eq!(poller.sink.applications.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn configuration_spanning_gzip_members_is_published() {
+        fn member(bytes: &[u8]) -> Vec<u8> {
+            use std::io::Write;
+            let mut encoder =
+                flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+            encoder.write_all(bytes).unwrap();
+            encoder.finish().unwrap()
+        }
+        let mut poller = test_poller(false);
+        let split = EMPTY_CONFIG.len() / 2;
+        let mut body = member(&EMPTY_CONFIG[..split]);
+        body.extend(member(&EMPTY_CONFIG[split..]));
+        let mut update = response(200, Some("new"), &body);
+        update.content_encoding = Some("gzip".into());
+        assert_eq!(poller.process_response(update), PollOutcome::Success);
+        assert_eq!(poller.state.etag().as_deref(), Some("new"));
+        assert_eq!(poller.sink.applications.load(Ordering::Relaxed), 1);
+
+        // An invalid suffix must not publish a valid prefix or advance its ETag.
+        body.extend_from_slice(b"not gzip");
+        let mut update = response(200, Some("rejected"), &body);
+        update.content_encoding = Some("gzip".into());
+        assert_eq!(poller.process_response(update), PollOutcome::Stop);
+        assert_eq!(poller.state.etag().as_deref(), Some("new"));
+        assert_eq!(poller.sink.applications.load(Ordering::Relaxed), 1);
     }
 
     #[test]

@@ -32,9 +32,13 @@ fetcher.run(cancellation_token).await;
 `CdnEndpoint::custom(url)` carries no Datadog API key. Redirects are not
 followed; invalid API-key header values fail endpoint construction. Custom URL
 Basic authentication accepts an empty username. Compressed and decoded responses
-are capped at 10 MiB. Cancelling the token interrupts HTTP and retry waits. A final `Retry-After` also bounds the
+are capped at 10 MiB, including the combined output of concatenated gzip members.
+Cancelling the token interrupts HTTP and retry waits. A final `Retry-After` also bounds the
 wait before the next poll. Run the fetcher in the process that owns
 external I/O, such as the sidecar; constructing it does not spawn a worker.
+
+`CdnConfig::validate` identifies the invalid setting through `InvalidConfig`
+variants without including URLs, credentials, or rejected values in diagnostics.
 
 `CdnEndpoint` wraps `libdd_common::Endpoint` while retaining CDN validation,
 credential isolation and redacted diagnostics. URL credentials remain
