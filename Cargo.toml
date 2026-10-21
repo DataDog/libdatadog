@@ -106,7 +106,7 @@ ignored = [
 # The RHEL restrictions are for the dd-trace-php repository. Someone in the
 # community, Remi Collet, packages the extension for these systems.
 [workspace.package]
-rust-version = "1.87.0"
+rust-version = "1.91.1"
 edition = "2024"
 version = "46.0.0"
 license = "Apache-2.0"

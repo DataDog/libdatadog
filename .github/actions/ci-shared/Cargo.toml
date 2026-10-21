@@ -5,7 +5,7 @@
 name = "ci-shared"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.87.0"
+rust-version = "1.91.1"
 publish = false
 
 [dependencies]

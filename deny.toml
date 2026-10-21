@@ -1,8 +1,5 @@
 [advisories]
 unmaintained = "workspace"
-ignore = [
-  { id = "RUSTSEC-2026-0009", reason = "the fixed version requires rust >=1.88.0. TODO: remove this after bumping MSRV"}
-]
 
 [bans]
 multiple-versions = "warn"
