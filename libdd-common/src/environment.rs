@@ -258,16 +258,31 @@ impl ShadowEnvironment {
         self.state.load(Ordering::Acquire) >= BUFFER
     }
 
-    #[cfg(feature = "alloc")]
-    fn install(&self, snapshot: Snapshot) -> Result<(), InitError> {
-        let pointer = Box::into_raw(Box::new(snapshot));
+    fn reserve(&self) -> Result<(), InitError> {
         match self.state.compare_exchange(
             UNINITIALIZED,
             INITIALIZING,
-            Ordering::Relaxed,
-            Ordering::Relaxed,
+            Ordering::Acquire,
+            Ordering::Acquire,
         ) {
-            Ok(_) => {
+            Ok(_) => Ok(()),
+            Err(mut state) => {
+                // A losing initializer must return only after the winning snapshot is ready.
+                // Reservation covers only infallible atomic stores, never user code.
+                while state == INITIALIZING {
+                    core::hint::spin_loop();
+                    state = self.state.load(Ordering::Acquire);
+                }
+                Err(InitError::AlreadyInitialized)
+            }
+        }
+    }
+
+    #[cfg(feature = "alloc")]
+    fn install(&self, snapshot: Snapshot) -> Result<(), InitError> {
+        let pointer = Box::into_raw(Box::new(snapshot));
+        match self.reserve() {
+            Ok(()) => {
                 self.snapshot.store(pointer.cast(), Ordering::Relaxed);
                 self.state.store(OWNED, Ordering::Release);
                 Ok(())
@@ -293,16 +308,7 @@ impl ShadowEnvironment {
                 buffer,
             });
         }
-        if self
-            .state
-            .compare_exchange(
-                UNINITIALIZED,
-                INITIALIZING,
-                Ordering::Relaxed,
-                Ordering::Relaxed,
-            )
-            .is_err()
-        {
+        if self.reserve().is_err() {
             return Err(BufferInitError {
                 error: InitError::AlreadyInitialized,
                 buffer,
@@ -581,6 +587,38 @@ mod tests {
             }
         });
         assert_eq!(successes.load(Ordering::Relaxed), 1);
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn competing_storage_modes_return_with_a_readable_snapshot() {
+        static mut DATA: [u8; 13] = *b"VALUE=buffer\0";
+        let environment = ShadowEnvironment::new();
+        let barrier = std::sync::Barrier::new(2);
+        // SAFETY: this test consumes its unique static storage once.
+        let buffer = unsafe { &mut *core::ptr::addr_of_mut!(DATA) };
+        std::thread::scope(|scope| {
+            let buffered = scope.spawn(|| {
+                barrier.wait();
+                let result = environment
+                    .install_buffer(buffer, 13)
+                    .map_err(|failure| failure.error);
+                assert!(environment.is_initialized());
+                assert!(environment.var_os_ref("VALUE".as_ref()).is_some());
+                result
+            });
+            let owned = scope.spawn(|| {
+                let snapshot = Snapshot::from_variables([("VALUE", "owned")]).unwrap();
+                barrier.wait();
+                let result = environment.install(snapshot);
+                assert!(environment.is_initialized());
+                assert!(environment.var_os_ref("VALUE".as_ref()).is_some());
+                result
+            });
+            let results = [buffered.join().unwrap(), owned.join().unwrap()];
+            assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+            assert!(results.contains(&Err(InitError::AlreadyInitialized)));
+        });
     }
 }
 
