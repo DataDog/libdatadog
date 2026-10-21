@@ -3,11 +3,29 @@
 
 use super::*;
 use crate::service::blocking::{SidecarTransport, subscribe_cdn_configuration};
-use crate::shm_remote_config::cdn::{CdnDeliveryState, CdnReader};
+use crate::shm_remote_config::{
+    RemoteConfigDeliveryState, RemoteConfigManager, RemoteConfigUpdate,
+};
 use libdd_ffe::cdn::{CdnConfig, CdnEndpoint};
+use libdd_ffe::rules_based::UniversalFlagConfig;
+use libdd_remote_config::{default_registry, fetch::ConfigInvariants};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+fn manager(handle: crate::shm_remote_config::RemoteConfigHandle) -> RemoteConfigManager {
+    let mut manager = RemoteConfigManager::new_with_registry(
+        ConfigInvariants {
+            language: "php".into(),
+            tracer_version: "test".into(),
+            endpoint: libdd_common::Endpoint::from_slice("http://unused:8126"),
+            agentless: None,
+        },
+        Arc::new(default_registry().with::<UniversalFlagConfig>().unwrap()),
+    );
+    manager.set_local_configuration(Some(handle)).unwrap();
+    manager
+}
 fn config(url: &str) -> CdnConfig {
     CdnConfig {
         endpoint: CdnEndpoint::custom(url).unwrap(),
@@ -67,22 +85,27 @@ async fn cdn_configuration_reaches_shared_memory_through_real_ipc_and_http() {
         let repeated = subscribe_cdn_configuration(&mut transport, Some(config))
             .unwrap()
             .unwrap();
-        let mut repeated_reader = CdnReader::new(repeated).unwrap();
-        let mut reader = CdnReader::new(handle).unwrap();
+        let mut repeated_reader = manager(repeated);
+        let mut reader = manager(handle);
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
-            if let Some(snapshot) = reader.read().unwrap() {
-                assert_eq!(snapshot.state, CdnDeliveryState::Ready);
-                assert_eq!(snapshot.revision, 1);
-                assert!(
-                    std::str::from_utf8(&snapshot.configuration)
-                        .unwrap()
-                        .contains("test")
-                );
+            if let RemoteConfigUpdate::Add {
+                value,
+                limiter_index,
+            } = reader.fetch_update()
+            {
+                assert_eq!(value.path.as_str(), "datadog/0/FFE_FLAGS/cdn/config");
+                assert_eq!(limiter_index, 0);
+                let parsed = value.data.unwrap();
+                assert!(parsed.downcast::<UniversalFlagConfig>().is_some());
                 assert_eq!(
-                    repeated_reader.read().unwrap().unwrap().configuration,
-                    snapshot.configuration
+                    reader.local_configuration_state(),
+                    Some(RemoteConfigDeliveryState::Ready)
                 );
+                assert!(matches!(
+                    repeated_reader.fetch_update(),
+                    RemoteConfigUpdate::Add { .. }
+                ));
                 break;
             }
             assert!(
@@ -98,11 +121,8 @@ async fn cdn_configuration_reaches_shared_memory_through_real_ipc_and_http() {
         );
         let deadline = Instant::now() + Duration::from_secs(2);
         loop {
-            if reader
-                .read()
-                .unwrap()
-                .is_some_and(|snapshot| snapshot.state == CdnDeliveryState::Stopped)
-            {
+            let _ = reader.fetch_update();
+            if reader.local_configuration_state() == Some(RemoteConfigDeliveryState::Stopped) {
                 break;
             }
             assert!(

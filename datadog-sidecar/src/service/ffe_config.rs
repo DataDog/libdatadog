@@ -1,7 +1,7 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::shm_remote_config::cdn::{CdnHandle, CdnPublisher};
+use crate::shm_remote_config::{RemoteConfigHandle, cdn::CdnPublisher};
 use libdd_common::MutexExt;
 use libdd_ffe::cdn::{CdnConfig, CdnFetcher};
 use std::collections::HashMap;
@@ -16,7 +16,7 @@ pub(crate) struct CdnConfigs(Arc<Mutex<HashMap<CdnConfig, Weak<CdnSubscription>>
 
 pub(crate) struct CdnSubscription {
     pub(crate) config: CdnConfig,
-    pub(crate) handle: CdnHandle,
+    pub(crate) handle: RemoteConfigHandle,
     cancellation: CancellationToken,
     cache: Weak<Mutex<HashMap<CdnConfig, Weak<CdnSubscription>>>>,
 }
@@ -131,8 +131,9 @@ mod tests {
 #[cfg(test)]
 mod lifecycle_tests {
     use super::*;
-    use crate::shm_remote_config::cdn::{CdnDeliveryState, CdnReader};
+    use crate::shm_remote_config::{RemoteConfigDeliveryState, RemoteConfigManager};
     use libdd_ffe::cdn::CdnEndpoint;
+    use libdd_remote_config::fetch::ConfigInvariants;
     use std::time::Duration;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -143,7 +144,7 @@ mod lifecycle_tests {
             .enable_all()
             .build()
             .unwrap();
-        let (configs, subscription, mut reader, initial) = runtime.block_on(async {
+        let (configs, subscription, mut reader) = runtime.block_on(async {
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             let config = CdnConfig {
                 endpoint: CdnEndpoint::custom(&format!("http://{}/config", listener.local_addr().unwrap())).unwrap(),
@@ -159,24 +160,29 @@ mod lifecycle_tests {
             });
             let configs = CdnConfigs::default();
             let subscription = configs.subscribe(config).unwrap();
-            let mut reader = CdnReader::new(subscription.handle.clone()).unwrap();
-            let initial = tokio::time::timeout(Duration::from_secs(5), async {
+            let mut reader = RemoteConfigManager::new(ConfigInvariants {
+                language: "php".into(), tracer_version: "test".into(),
+                endpoint: libdd_common::Endpoint::from_slice("http://unused:8126"), agentless: None,
+            });
+            reader.set_local_configuration(Some(subscription.handle.clone())).unwrap();
+            tokio::time::timeout(Duration::from_secs(5), async {
                 loop {
-                    if let Some(snapshot) = reader.read().unwrap() {
-                        assert_eq!(snapshot.state, CdnDeliveryState::Ready);
-                        break snapshot;
+                    let _ = reader.fetch_update();
+                    if reader.local_configuration_state() == Some(RemoteConfigDeliveryState::Ready) {
+                        break;
                     }
                     tokio::time::sleep(Duration::from_millis(1)).await;
                 }
             }).await.unwrap();
-            (configs, subscription, reader, initial)
+            (configs, subscription, reader)
         });
         configs.shutdown();
         drop(runtime);
-        let terminal = reader.read().unwrap().unwrap();
-        assert_eq!(terminal.configuration, initial.configuration);
-        assert_eq!(terminal.revision, initial.revision);
-        assert_eq!(terminal.state, CdnDeliveryState::Stopped);
+        let _ = reader.fetch_update();
+        assert_eq!(
+            reader.local_configuration_state(),
+            Some(RemoteConfigDeliveryState::Stopped)
+        );
         drop(subscription);
     }
 }

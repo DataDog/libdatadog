@@ -293,14 +293,14 @@ pub trait SidecarInterface {
     async fn add_session_evp_transports(configs: Vec<EvpTransportConfigWithIdentity>);
 
     /// Subscribe this connection to CDN configuration; None unsubscribes.
-    /// Returns a handle for CdnReader. Resubscribe after reconnecting.
+    /// Returns a handle for RemoteConfigManager. Resubscribe after reconnecting.
     /// In-process listeners return None. Keep new methods at the end to preserve
     /// the bincode ordinals of existing requests.
     #[blocking]
     #[SerializedHandle]
     async fn subscribe_cdn_configuration(
         config: Option<libdd_ffe::cdn::CdnConfig>,
-    ) -> Option<crate::shm_remote_config::cdn::CdnHandle>;
+    ) -> Option<crate::shm_remote_config::RemoteConfigHandle>;
 }
 
 #[cfg(test)]

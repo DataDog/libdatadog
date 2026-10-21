@@ -747,7 +747,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
     async fn subscribe_cdn_configuration(
         &mut self,
         config: Option<libdd_ffe::cdn::CdnConfig>,
-    ) -> Option<crate::shm_remote_config::cdn::CdnHandle> {
+    ) -> Option<crate::shm_remote_config::RemoteConfigHandle> {
         let Some(config) = config.filter(|_| self.server.cdn_enabled) else {
             self.cdn_subscription = None;
             return None;

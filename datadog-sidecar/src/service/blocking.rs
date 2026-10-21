@@ -549,12 +549,12 @@ pub fn ensure_appsec_started(
     })
 }
 
-/// Subscribe this connection and return the handle for a CdnReader.
+/// Subscribe this connection and return the handle for RemoteConfigManager.
 /// Call again after reconnecting: the new sidecar may use another segment.
 pub fn subscribe_cdn_configuration(
     transport: &mut SidecarTransport,
     config: Option<libdd_ffe::cdn::CdnConfig>,
-) -> io::Result<Option<crate::shm_remote_config::cdn::CdnHandle>> {
+) -> io::Result<Option<crate::shm_remote_config::RemoteConfigHandle>> {
     transport.with_retry(|s| {
         s.subscribe_cdn_configuration(config.clone())
             .map_err(decode_error_to_io)
