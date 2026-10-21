@@ -1,17 +1,13 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use super::os_str::OsStr;
 use alloc::{string::String, vec::Vec};
 use core::{borrow::Borrow, ops::Deref};
 
 /// An owned OS string backed by bytes, which need not be valid UTF-8.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct OsString(Vec<u8>);
-
-/// A borrowed OS string backed by bytes, which need not be valid UTF-8.
-#[repr(transparent)]
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct OsStr([u8]);
 
 impl OsString {
     /// Take ownership of arbitrary Unix-style OS bytes without copying.
@@ -22,19 +18,6 @@ impl OsString {
     /// Convert to UTF-8 without copying, returning the original bytes on failure.
     pub fn into_string(self) -> Result<String, Self> {
         String::from_utf8(self.0).map_err(|error| Self(error.into_bytes()))
-    }
-}
-
-impl OsStr {
-    /// Borrow arbitrary Unix-style OS bytes without copying.
-    pub fn from_bytes(bytes: &[u8]) -> &Self {
-        // SAFETY: OsStr is transparent over [u8] and imposes no byte validity constraints.
-        unsafe { &*(bytes as *const [u8] as *const Self) }
-    }
-
-    /// Borrow the underlying encoded bytes.
-    pub fn as_encoded_bytes(&self) -> &[u8] {
-        &self.0
     }
 }
 
@@ -52,21 +35,9 @@ impl Borrow<OsStr> for OsString {
     }
 }
 
-impl AsRef<OsStr> for OsStr {
-    fn as_ref(&self) -> &OsStr {
-        self
-    }
-}
-
 impl AsRef<OsStr> for OsString {
     fn as_ref(&self) -> &OsStr {
         self
-    }
-}
-
-impl AsRef<OsStr> for str {
-    fn as_ref(&self) -> &OsStr {
-        OsStr::from_bytes(self.as_bytes())
     }
 }
 

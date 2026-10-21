@@ -1,43 +1,52 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Process-wide, owned shadow environment, available with `alloc` and without `std`.
+//! Process-wide immutable shadow environment, with owned or caller-provided storage.
+//! Available on targets with pointer-width atomics.
 //!
 //! Initialize explicitly during startup, before concurrent environment mutation is possible.
 //! The snapshot is immutable and published once; subsequent reads never access the process
 //! environment, including for missing keys. Before initialization, `std` builds fall back to
-//! `std::env`, and `no_std` builds report absent variables. [`var_os`] preserves OS strings;
-//! [`var`] converts them to UTF-8, returning the original value on conversion failure.
+//! `std::env` for owned reads, and `no_std` builds report absent variables. With `alloc`,
+//! `var_os` returns owned OS strings and `var` converts them to UTF-8. [`var_os_ref`] borrows
+//! directly from an installed snapshot without allocating or falling back to the system.
+//!
+//! Caller-buffer initialization and borrowed reads require neither `alloc` nor `std`:
 //!
 //! ```
 //! use libdd_common::environment;
 //!
-//! environment::initialize_from([("DD_EXTERNAL_ENV", "startup-value")])?;
-//! assert_eq!(environment::var("DD_EXTERNAL_ENV")?, "startup-value");
-//! assert_eq!(
-//!     environment::var_os("DD_EXTERNAL_ENV")
-//!         .unwrap()
-//!         .into_string()
-//!         .unwrap(),
-//!     "startup-value"
-//! );
-//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! static mut BUFFER: [u8; 128] = [0; 128];
+//! // SAFETY: startup calls this once and creates no other references to BUFFER.
+//! let buffer = unsafe { &mut *core::ptr::addr_of_mut!(BUFFER) };
+//! environment::initialize_from_in([("DD_EXTERNAL_ENV", "startup-value")], buffer)?;
+//! let value = environment::var_os_ref("DD_EXTERNAL_ENV").unwrap();
+//! assert_eq!(value.as_encoded_bytes(), b"startup-value");
+//! # Ok::<(), environment::BufferInitError>(())
 //! ```
 
-use crate::ffi::{OsStr, OsString};
+use crate::ffi::OsStr;
+#[cfg(feature = "alloc")]
+use crate::ffi::OsString;
+#[cfg(feature = "alloc")]
 use alloc::{boxed::Box, collections::BTreeMap, string::String};
 use core::{
     fmt, ptr,
-    sync::atomic::{AtomicPtr, Ordering},
+    sync::atomic::{AtomicPtr, AtomicUsize, Ordering},
 };
 
-#[cfg(all(feature = "std", unix))]
-use std::os::unix::ffi::OsStringExt;
+mod buffer;
+#[cfg(any(not(feature = "std"), unix))]
+pub use buffer::initialize_from_envp_in;
+#[cfg(target_os = "linux")]
+pub use buffer::initialize_in;
+pub use buffer::{BufferInitError, initialize_from_in};
 
 static ENVIRONMENT: ShadowEnvironment = ShadowEnvironment::new();
 
 /// Failure to read an environment variable as UTF-8.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg(feature = "alloc")]
 pub enum VarError {
     /// No variable with this name is available.
     NotPresent,
@@ -45,6 +54,7 @@ pub enum VarError {
     NotUnicode(OsString),
 }
 
+#[cfg(feature = "alloc")]
 impl fmt::Display for VarError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
@@ -54,6 +64,7 @@ impl fmt::Display for VarError {
     }
 }
 
+#[cfg(feature = "alloc")]
 impl core::error::Error for VarError {}
 
 /// Failure to initialize the shadow environment.
@@ -62,6 +73,8 @@ pub enum InitError {
     AlreadyInitialized,
     InvalidName,
     InvalidValue,
+    /// Caller-provided storage could not hold the snapshot.
+    BufferTooSmall,
 }
 
 impl fmt::Display for InitError {
@@ -70,6 +83,7 @@ impl fmt::Display for InitError {
             Self::AlreadyInitialized => "shadow environment is already initialized",
             Self::InvalidName => "environment variable name is empty or contains '=' or NUL",
             Self::InvalidValue => "environment variable value contains NUL",
+            Self::BufferTooSmall => "shadow environment buffer is too small",
         })
     }
 }
@@ -78,6 +92,7 @@ impl core::error::Error for InitError {}
 
 /// Read a variable from the shadow environment, or from the process environment in `std`
 /// builds when no shadow has been installed. Missing snapshot entries never fall back.
+#[cfg(feature = "alloc")]
 pub fn var<K: AsRef<OsStr>>(name: K) -> Result<String, VarError> {
     ENVIRONMENT.var(name)
 }
@@ -86,8 +101,18 @@ pub fn var<K: AsRef<OsStr>>(name: K) -> Result<String, VarError> {
 ///
 /// Uses the same snapshot and pre-initialization fallback rules as [`var`]. Invalid names
 /// and absent variables return `None`; present empty values return an empty OS string.
+#[cfg(feature = "alloc")]
 pub fn var_os<K: AsRef<OsStr>>(name: K) -> Option<OsString> {
     ENVIRONMENT.var_os(name)
+}
+
+/// Borrow a value from the installed snapshot without allocating.
+///
+/// Returns `None` for invalid names, absent variables, or an uninitialized snapshot.
+/// This never reads the system environment, including in `std` builds: live system values
+/// cannot be safely borrowed. The returned value is immutable for the process lifetime.
+pub fn var_os_ref<K: AsRef<OsStr>>(name: K) -> Option<&'static OsStr> {
+    ENVIRONMENT.var_os_ref(name.as_ref())
 }
 
 /// Whether the process-wide shadow environment has been initialized.
@@ -101,6 +126,7 @@ pub fn is_initialized() -> bool {
 /// arbitrary OS strings, including non-UTF-8 names and values. Duplicate names retain their
 /// first value, matching `getenv` lookup order. An empty iterator installs an authoritative empty
 /// snapshot. Initialization happens once; invalid entries leave the environment uninitialized.
+#[cfg(feature = "alloc")]
 pub fn initialize_from<I, K, V>(variables: I) -> Result<(), InitError>
 where
     I: IntoIterator<Item = (K, V)>,
@@ -122,7 +148,7 @@ where
 /// # Safety
 /// Call before other threads or native libraries can mutate the process environment. No
 /// environment mutation may occur for the duration of the copy, including through C APIs.
-#[cfg(any(feature = "std", target_os = "linux"))]
+#[cfg(all(feature = "alloc", any(feature = "std", target_os = "linux")))]
 pub unsafe fn initialize() -> Result<(), InitError> {
     if is_initialized() {
         return Err(InitError::AlreadyInitialized);
@@ -153,7 +179,7 @@ pub unsafe fn initialize() -> Result<(), InitError> {
 /// # Safety
 /// The array and all its NUL-terminated strings must be valid and immutable throughout this
 /// call. The array must end in a null pointer. No pointers into it are retained afterward.
-#[cfg(any(not(feature = "std"), unix))]
+#[cfg(all(feature = "alloc", any(not(feature = "std"), unix)))]
 pub unsafe fn initialize_from_envp(envp: *const *const core::ffi::c_char) -> Result<(), InitError> {
     if is_initialized() {
         return Err(InitError::AlreadyInitialized);
@@ -162,10 +188,12 @@ pub unsafe fn initialize_from_envp(envp: *const *const core::ffi::c_char) -> Res
     ENVIRONMENT.install(unsafe { Snapshot::from_envp(envp) })
 }
 
+#[cfg(feature = "alloc")]
 struct Snapshot {
     values: BTreeMap<OsString, OsString>,
 }
 
+#[cfg(feature = "alloc")]
 impl Snapshot {
     fn from_variables<I, K, V>(variables: I) -> Result<Self, InitError>
     where
@@ -188,33 +216,15 @@ impl Snapshot {
     }
 
     #[cfg(any(not(feature = "std"), unix))]
-    unsafe fn from_envp(mut envp: *const *const core::ffi::c_char) -> Self {
+    unsafe fn from_envp(envp: *const *const core::ffi::c_char) -> Self {
         let mut values = BTreeMap::new();
-        if !envp.is_null() {
-            loop {
-                // SAFETY: the caller guarantees a readable, NUL-terminated pointer array.
-                let entry = unsafe { *envp };
-                if entry.is_null() {
-                    break;
-                }
-                // SAFETY: each entry is a valid immutable C string for this call.
-                let bytes = unsafe { core::ffi::CStr::from_ptr(entry) }.to_bytes();
-                if let Some(index) = bytes.iter().position(|byte| *byte == b'=') {
-                    if index != 0 {
-                        let name = OsString::from_vec(bytes[..index].to_vec());
-                        let value = OsString::from_vec(bytes[index + 1..].to_vec());
-                        values.entry(name).or_insert(value);
-                    }
-                }
-                // SAFETY: the caller guarantees the next pointer exists up to the terminator.
-                envp = unsafe { envp.add(1) };
-            }
+        // SAFETY: the caller guarantees valid, immutable C strings during the copy.
+        for (name, value) in unsafe { buffer::Envp::new(envp) } {
+            values
+                .entry(OsString::from(name))
+                .or_insert_with(|| OsString::from(value));
         }
         Self { values }
-    }
-
-    fn var_os(&self, name: &OsStr) -> Option<OsString> {
-        self.values.get(name).cloned()
     }
 }
 
@@ -224,29 +234,44 @@ fn valid_name(name: &OsStr) -> bool {
 }
 
 struct ShadowEnvironment {
-    snapshot: AtomicPtr<Snapshot>,
+    snapshot: AtomicPtr<()>,
+    buffer_len: AtomicUsize,
+    state: AtomicUsize,
 }
+
+const UNINITIALIZED: usize = 0;
+const INITIALIZING: usize = 1;
+const BUFFER: usize = 2;
+#[cfg(feature = "alloc")]
+const OWNED: usize = 3;
 
 impl ShadowEnvironment {
     const fn new() -> Self {
         Self {
             snapshot: AtomicPtr::new(ptr::null_mut()),
+            buffer_len: AtomicUsize::new(0),
+            state: AtomicUsize::new(UNINITIALIZED),
         }
     }
 
     fn is_initialized(&self) -> bool {
-        !self.snapshot.load(Ordering::Acquire).is_null()
+        self.state.load(Ordering::Acquire) >= BUFFER
     }
 
+    #[cfg(feature = "alloc")]
     fn install(&self, snapshot: Snapshot) -> Result<(), InitError> {
         let pointer = Box::into_raw(Box::new(snapshot));
-        match self.snapshot.compare_exchange(
-            ptr::null_mut(),
-            pointer,
-            Ordering::Release,
-            Ordering::Acquire,
+        match self.state.compare_exchange(
+            UNINITIALIZED,
+            INITIALIZING,
+            Ordering::Relaxed,
+            Ordering::Relaxed,
         ) {
-            Ok(_) => Ok(()),
+            Ok(_) => {
+                self.snapshot.store(pointer.cast(), Ordering::Relaxed);
+                self.state.store(OWNED, Ordering::Release);
+                Ok(())
+            }
             Err(_) => {
                 // SAFETY: this unpublished allocation is still exclusively owned by this call.
                 unsafe {
@@ -257,6 +282,67 @@ impl ShadowEnvironment {
         }
     }
 
+    fn install_buffer(
+        &self,
+        buffer: &'static mut [u8],
+        used: usize,
+    ) -> Result<(), BufferInitError> {
+        if used > buffer.len() {
+            return Err(BufferInitError {
+                error: InitError::BufferTooSmall,
+                buffer,
+            });
+        }
+        if self
+            .state
+            .compare_exchange(
+                UNINITIALIZED,
+                INITIALIZING,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            )
+            .is_err()
+        {
+            return Err(BufferInitError {
+                error: InitError::AlreadyInitialized,
+                buffer,
+            });
+        }
+        self.snapshot
+            .store(buffer.as_mut_ptr().cast(), Ordering::Relaxed);
+        self.buffer_len.store(used, Ordering::Relaxed);
+        self.state.store(BUFFER, Ordering::Release);
+        Ok(())
+    }
+
+    fn var_os_ref(&self, name: &OsStr) -> Option<&OsStr> {
+        if !valid_name(name) {
+            return None;
+        }
+        // The release/acquire state transition publishes both metadata and complete contents.
+        match self.state.load(Ordering::Acquire) {
+            BUFFER => {
+                let pointer = self.snapshot.load(Ordering::Relaxed).cast::<u8>();
+                let len = self.buffer_len.load(Ordering::Relaxed);
+                // SAFETY: installation consumes exclusive process-lifetime storage, checks
+                // its length, and never mutates or replaces it after publication.
+                let bytes = unsafe { core::slice::from_raw_parts(pointer, len) };
+                // SAFETY: buffer initialization copies complete native OS-string encodings.
+                unsafe { buffer::find(bytes, name) }
+            }
+            #[cfg(feature = "alloc")]
+            OWNED => {
+                let pointer = self.snapshot.load(Ordering::Relaxed).cast::<Snapshot>();
+                // SAFETY: the published owned snapshot is immutable and remains alive while
+                // self is borrowed. Drop requires exclusive access to self.
+                let snapshot = unsafe { &*pointer };
+                snapshot.values.get(name).map(AsRef::<OsStr>::as_ref)
+            }
+            _ => None,
+        }
+    }
+
+    #[cfg(feature = "alloc")]
     fn var(&self, name: impl AsRef<OsStr>) -> Result<String, VarError> {
         self.var_os(name)
             .ok_or(VarError::NotPresent)?
@@ -264,16 +350,14 @@ impl ShadowEnvironment {
             .map_err(VarError::NotUnicode)
     }
 
+    #[cfg(feature = "alloc")]
     fn var_os(&self, name: impl AsRef<OsStr>) -> Option<OsString> {
         let name = name.as_ref();
         if !valid_name(name) {
             return None;
         }
-        let pointer = self.snapshot.load(Ordering::Acquire);
-        if !pointer.is_null() {
-            // SAFETY: release/acquire publication exposes a fully initialized immutable snapshot.
-            // It is never replaced, and cannot be dropped while this method borrows `self`.
-            return unsafe { &*pointer }.var_os(name);
+        if self.is_initialized() {
+            return self.var_os_ref(name).map(OsString::from);
         }
         #[cfg(feature = "std")]
         {
@@ -284,24 +368,27 @@ impl ShadowEnvironment {
     }
 }
 
+#[cfg(feature = "alloc")]
 impl Drop for ShadowEnvironment {
     fn drop(&mut self) {
         let pointer = *self.snapshot.get_mut();
-        if !pointer.is_null() {
+        if *self.state.get_mut() == OWNED {
             // SAFETY: exclusive access ensures no readers remain; this owns the published box.
             unsafe {
-                drop(Box::from_raw(pointer));
+                drop(Box::from_raw(pointer.cast::<Snapshot>()));
             }
         }
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "alloc"))]
 mod tests {
     use super::*;
     #[cfg(feature = "std")]
     use alloc::string::ToString;
     use alloc::vec;
+    #[cfg(all(feature = "std", unix))]
+    use std::os::unix::ffi::OsStringExt;
 
     #[test]
     fn snapshot_owns_all_supplied_values_and_keeps_first_duplicates() {
@@ -320,6 +407,13 @@ mod tests {
 
         assert!(environment.is_initialized());
         assert_eq!(environment.var("SERVICE").unwrap(), "checkout");
+        assert_eq!(
+            environment
+                .var_os_ref("SERVICE".as_ref())
+                .unwrap()
+                .as_encoded_bytes(),
+            b"checkout"
+        );
         assert_eq!(environment.var("EMPTY").unwrap(), "");
         assert_eq!(environment.var_os("EMPTY"), Some(OsString::from("")));
         assert_eq!(environment.var("EQUALS").unwrap(), "a=b=c");
@@ -382,7 +476,7 @@ mod tests {
         let borrowed_key: &OsStr = key.as_ref();
         let borrowed_value: &OsStr = value.as_ref();
         let borrowed = Snapshot::from_variables([(borrowed_key, borrowed_value)]).unwrap();
-        assert_eq!(borrowed.var_os(&key), Some(value));
+        assert_eq!(borrowed.values.get(borrowed_key), Some(&value));
     }
 
     #[cfg(all(feature = "std", windows))]
@@ -487,5 +581,52 @@ mod tests {
             }
         });
         assert_eq!(successes.load(Ordering::Relaxed), 1);
+    }
+}
+
+#[cfg(test)]
+mod buffer_storage_tests {
+    use super::*;
+
+    #[test]
+    fn empty_buffer_is_initialized_and_authoritative() {
+        static mut EMPTY: [u8; 0] = [];
+        let environment = ShadowEnvironment::new();
+        assert!(!environment.is_initialized());
+        assert!(environment.var_os_ref("PATH".as_ref()).is_none());
+        // SAFETY: this test consumes its unique static storage once.
+        let buffer = unsafe { &mut *core::ptr::addr_of_mut!(EMPTY) };
+        environment.install_buffer(buffer, 0).unwrap();
+        assert!(environment.is_initialized());
+        assert!(environment.var_os_ref("PATH".as_ref()).is_none());
+        #[cfg(feature = "alloc")]
+        assert_eq!(environment.var_os("PATH"), None);
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn publication_makes_buffer_and_length_visible_to_readers() {
+        static mut DATA: [u8; 4] = *b"K=v\0";
+        let environment = ShadowEnvironment::new();
+        std::thread::scope(|scope| {
+            for _ in 0..8 {
+                let environment = &environment;
+                scope.spawn(move || {
+                    while !environment.is_initialized() {
+                        std::thread::yield_now();
+                    }
+                    assert_eq!(
+                        environment
+                            .var_os_ref("K".as_ref())
+                            .unwrap()
+                            .as_encoded_bytes(),
+                        b"v"
+                    );
+                });
+            }
+            // SAFETY: this test consumes its unique static storage once.
+            let buffer = unsafe { &mut *core::ptr::addr_of_mut!(DATA) };
+            environment.install_buffer(buffer, 4).unwrap();
+        });
     }
 }
