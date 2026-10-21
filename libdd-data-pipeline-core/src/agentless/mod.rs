@@ -9,7 +9,10 @@ mod exporter;
 mod v04;
 
 pub use config::{AgentlessTraceConfig, DEFAULT_AGENTLESS_TIMEOUT};
-pub use exporter::{AgentlessError, send_agentless_traces, send_agentless_traces_with_observer};
+pub use exporter::{
+    AgentlessError, send_agentless_traces, send_agentless_traces_v1,
+    send_agentless_traces_with_observer, send_agentless_traces_with_observer_v1,
+};
 #[cfg(feature = "stats-obfuscation")]
 pub use v04::{
     AgentlessStatsConfig, AgentlessV04Error, AgentlessV04Exporter, agentless_stats_version,
