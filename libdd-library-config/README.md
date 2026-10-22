@@ -41,8 +41,8 @@ unsafe fn initialize_metadata_environment(
 With `std`, safe `environment::initialize()` copies `std::env::vars_os()` instead.
 Initialization copies the supplied variables into owned, immutable storage. Later process
 environment changes do not affect reads, and missing snapshot keys never fall back to the
-system environment. Before initialization, `std` builds use the process environment and
-`no_std` builds report absent variables. Alternatively, `environment::initialize_from`
+system environment. Before initialization, owned reads in `std` builds use the process
+environment and `no_std` builds report absent variables. Alternatively, `environment::initialize_from`
 accepts caller-supplied OS-string pairs safely. Both forms preserve non-UTF-8 values.
 
 To capture and read the shadow without allocations, use
@@ -52,6 +52,11 @@ pairs through `initialize_from`. These shared-environment APIs work with `libdd-
 `alloc` feature disabled. Successful initialization keeps the buffer immutable for the
 process lifetime; failures return the storage for reuse. Call `into_buffer()` to cancel
 initialization and recover the adapter's buffer.
+
+For UTF-8 values, `environment::ShadowEnvCapability` implements `EnvCapability::get` as
+`Result<Option<&str>, EnvError>`. Values borrow the snapshot without allocating, and invalid
+UTF-8 returns `EnvError::NotUnicode` without an allocated payload. Constructing a capability
+does not initialize the snapshot; its reads return `Ok(None)` until initialization.
 
 ```rust
 use libdd_library_config::tracer_metadata::{

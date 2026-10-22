@@ -4,7 +4,7 @@
 //! Linux metadata discovery using rustix, available without `std`.
 //!
 //! Filesystem access, namespace inode lookups, and hostname discovery are handled internally.
-//! Environment variables come from [`environment`]'s owned startup snapshot. Results are not
+//! Environment variables come from [`environment`]'s immutable startup snapshot. Results are not
 //! cached.
 
 #[cfg(target_os = "linux")]
