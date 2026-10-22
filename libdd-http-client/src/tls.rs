@@ -15,7 +15,9 @@
 
 mod certificate_distrust;
 
-#[cfg(test)]
+// Skipped under Miri: the certificate distrust tests exercise ring-backed
+// signature verification, whose FFI cannot execute there.
+#[cfg(all(test, not(miri)))]
 mod certificate_distrust_tests;
 
 use std::sync::Arc;

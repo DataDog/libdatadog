@@ -38,7 +38,9 @@ mod certificate_distrust;
 #[cfg(feature = "hyper-proxy")]
 mod proxy;
 
-#[cfg(all(test, feature = "https", not(feature = "use_webpki_roots")))]
+// Skipped under Miri: the certificate distrust tests exercise ring-backed
+// signature verification, whose FFI cannot execute there.
+#[cfg(all(test, feature = "https", not(feature = "use_webpki_roots"), not(miri)))]
 mod certificate_distrust_tests;
 
 #[cfg(feature = "http-client")]
