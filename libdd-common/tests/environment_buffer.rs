@@ -3,6 +3,7 @@
 
 #![cfg(target_has_atomic = "ptr")]
 
+use libdd_common::environment::EnvCapability;
 use libdd_common::{environment, ffi::OsStr};
 #[cfg(all(feature = "std", unix))]
 use std::os::unix::ffi::OsStrExt;
@@ -16,6 +17,8 @@ fn buffer_initialization_copies_values_and_returns_failed_storage() {
 
     assert!(!environment::is_initialized());
     assert!(environment::var_os_ref("PATH").is_none());
+    let capability = environment::ShadowEnvCapability::new();
+    assert_eq!(capability.get("PATH"), Ok(None));
     // SAFETY: this test runs once and creates the only references to these statics.
     let (small, storage) = unsafe {
         (
@@ -44,6 +47,7 @@ fn buffer_initialization_copies_values_and_returns_failed_storage() {
         raw_entry.as_ptr().cast(),
         c"SERVICE=ignored".as_ptr(),
         c"EMPTY=".as_ptr(),
+        c"RAW=\xff".as_ptr(),
         c"malformed".as_ptr(),
         c"=invalid".as_ptr(),
         core::ptr::null(),
@@ -55,6 +59,23 @@ fn buffer_initialization_copies_values_and_returns_failed_storage() {
 
     let saved = environment::var_os_ref("SERVICE").unwrap();
     assert_eq!(saved.as_encoded_bytes(), b"startup");
+    // The result borrows the capability's snapshot, independently of the lookup key.
+    let borrowed = {
+        let name = *b"SERVICE";
+        capability
+            .get(core::str::from_utf8(&name).unwrap())
+            .unwrap()
+            .unwrap()
+    };
+    assert_eq!(borrowed, "startup");
+    assert_eq!(borrowed.as_ptr(), saved.as_encoded_bytes().as_ptr());
+    assert_eq!(capability.get("EMPTY"), Ok(Some("")));
+    assert_eq!(capability.get("MISSING"), Ok(None));
+    assert_eq!(capability.get("BAD=NAME"), Ok(None));
+    assert_eq!(
+        capability.get("RAW"),
+        Err(environment::EnvError::NotUnicode)
+    );
     assert_eq!(
         environment::var_os_ref(raw_key).unwrap().as_encoded_bytes(),
         &[0xff, b'=', b'v']
@@ -95,11 +116,17 @@ fn buffer_preserves_native_windows_surrogates() {
     let value = OsString::from_wide(&[0xdc00]);
     // SAFETY: this test consumes its unique static storage exactly once.
     let storage = unsafe { &mut *core::ptr::addr_of_mut!(STORAGE) };
+    let capability = environment::ShadowEnvCapability::new();
+    assert_eq!(capability.get("PATH"), Ok(None));
     environment::with_buffer(storage)
-        .initialize_from([(&key, &value)])
+        .initialize_from([(&key, &value), (&OsString::from("RAW"), &value)])
         .unwrap();
     let saved: &OsStr = environment::var_os_ref(&key).unwrap();
     assert_eq!(saved.as_encoded_bytes(), value.as_encoded_bytes());
+    assert_eq!(
+        capability.get("RAW"),
+        Err(environment::EnvError::NotUnicode)
+    );
     assert_eq!(
         environment::var(&key),
         Err(environment::VarError::NotUnicode(value))

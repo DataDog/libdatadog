@@ -115,7 +115,7 @@ impl EnvCapability for NativeCapabilities {
         Self::new()
     }
 
-    fn get(&self, name: &str) -> Result<Option<String>, EnvError> {
+    fn get(&self, name: &str) -> Result<Option<&str>, EnvError> {
         self.env.get(name)
     }
 }

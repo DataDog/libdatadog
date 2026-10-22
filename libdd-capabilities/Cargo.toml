@@ -16,9 +16,20 @@ crate-type = ["lib"]
 bench = false
 
 [dependencies]
-http = { workspace = true, features = ["std"] }
-bytes = { workspace = true, features = ["std"] }
-anyhow = { workspace = true, default-features = true }
-thiserror = { workspace = true, default-features = true }
-futures-channel = { workspace = true, features = ["std"] }
-futures-util = { workspace = true, features = ["alloc"] }
+http = { workspace = true, features = ["std"], optional = true }
+bytes = { workspace = true, features = ["std"], optional = true }
+anyhow = { workspace = true, default-features = true, optional = true }
+thiserror = { workspace = true, default-features = true, optional = true }
+futures-channel = { workspace = true, features = ["std"], optional = true }
+futures-util = { workspace = true, features = ["alloc"], optional = true }
+
+[features]
+default = ["std"]
+std = [
+    "dep:anyhow",
+    "dep:bytes",
+    "dep:futures-channel",
+    "dep:futures-util",
+    "dep:http",
+    "dep:thiserror",
+]

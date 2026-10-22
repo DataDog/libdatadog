@@ -16,7 +16,7 @@
 //! Caller-buffer initialization and borrowed reads require neither `alloc` nor `std`:
 //!
 //! ```
-//! use libdd_common::environment;
+//! use libdd_common::environment::{self, EnvCapability};
 //!
 //! static mut BUFFER: [u8; 128] = [0; 128];
 //! // SAFETY: startup calls this once and creates no other references to BUFFER.
@@ -24,6 +24,8 @@
 //! environment::with_buffer(buffer).initialize_from([("DD_EXTERNAL_ENV", "startup-value")])?;
 //! let value = environment::var_os_ref("DD_EXTERNAL_ENV").unwrap();
 //! assert_eq!(value.as_encoded_bytes(), b"startup-value");
+//! let env = environment::ShadowEnvCapability::new();
+//! assert_eq!(env.get("DD_EXTERNAL_ENV").unwrap(), Some("startup-value"));
 //! # Ok::<(), environment::BufferInitError>(())
 //! ```
 
@@ -39,8 +41,31 @@ use core::{
 
 mod buffer;
 pub use buffer::{BufferInitError, BufferedInitializer, with_buffer};
+pub use libdd_capabilities::{EnvCapability, EnvError};
 
 static ENVIRONMENT: ShadowEnvironment = ShadowEnvironment::new();
+
+/// An allocation-free capability reading the installed process-wide shadow environment.
+///
+/// Constructing this handle does not capture or initialize the environment. Until a snapshot
+/// is installed, reads return `Ok(None)`, including with `std`. Values borrow immutable
+/// snapshot storage; non-UTF-8 values return [`EnvError::NotUnicode`].
+#[derive(Clone, Copy, Debug)]
+pub struct ShadowEnvCapability;
+
+impl EnvCapability for ShadowEnvCapability {
+    fn new() -> Self {
+        Self
+    }
+
+    fn get(&self, name: &str) -> Result<Option<&str>, EnvError> {
+        var_os_ref(name)
+            .map(|value| {
+                core::str::from_utf8(value.as_encoded_bytes()).map_err(|_| EnvError::NotUnicode)
+            })
+            .transpose()
+    }
+}
 
 /// Failure to read an environment variable as UTF-8.
 #[derive(Clone, Debug, PartialEq, Eq)]
