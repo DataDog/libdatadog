@@ -35,13 +35,17 @@ async fn plain_http_client_does_not_follow_cross_scheme_redirects() {
             // Redirect to a scheme the client was not configured for; it must
             // not be followed, since the plain-HTTP client has no preconfigured
             // (distrust-checked) TLS backend.
-            then.status(301).header("Location", "https://127.0.0.1:9/redirected");
+            then.status(301)
+                .header("Location", "https://127.0.0.1:9/redirected");
         })
         .await;
 
     let client = HttpClient::new(server.url("/"), Duration::from_secs(5)).unwrap();
     let request = HttpRequest::new(HttpMethod::Get, server.url("/moved"));
-    let response = client.send(request).await.expect("redirect response is returned");
+    let response = client
+        .send(request)
+        .await
+        .expect("redirect response is returned");
 
     // The redirect is stopped: the 3xx response itself is returned to the
     // caller and no TLS connection to the redirected URL is ever attempted.

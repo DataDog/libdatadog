@@ -81,8 +81,8 @@ impl DistrustServerCertVerifier {
 /// distrust check, for crates that construct their own TLS
 /// configurations on top of the platform verifier.
 ///
-/// Install the returned verifier via `ConfigBuilder::dangerous().with_custom_certificate_verifier`, passing the
-/// same crypto provider to the builder.
+/// Install the returned verifier via `ConfigBuilder::dangerous().with_custom_certificate_verifier`,
+/// passing the same crypto provider to the builder.
 #[cfg(feature = "tls-distrust")]
 pub fn platform_verifier_with_distrust(
     provider: Arc<CryptoProvider>,
