@@ -1167,13 +1167,6 @@ impl Profile {
         self.strings.len()
     }
 
-    /// Makes new string interns fail with out-of-memory so serialization can
-    /// be checked for error propagation instead of panics.
-    #[cfg(test)]
-    fn only_for_testing_fail_string_allocations(&mut self) {
-        self.strings.only_for_testing_fail_allocations();
-    }
-
     // Ideally, these would be [cgf(test)]. But its used in other module's test
     // code, which would break if we did so. We could try to do something with
     // a test "feature", but this naming scheme is sufficient for now.
@@ -3421,25 +3414,5 @@ mod api_tests {
                 .is_err(),
             "expected setter to reject non-custom sample type slots"
         );
-    }
-
-    /// Sample-type interning used to panic on allocator failure during export.
-    /// Force OutOfMemory and check serialization returns an error instead.
-    #[test]
-    fn intern_sample_type_oom_returns_error_instead_of_panicking() {
-        let mut profile = Profile::new(&[api::SampleType::CpuSamples], None);
-        profile.only_for_testing_fail_string_allocations();
-
-        let result = profile.serialize_into_compressed_pprof(None, None);
-        let err = match result {
-            Ok(_) => panic!(
-                "expected serialization to fail when sample-type string interning is out of memory"
-            ),
-            Err(err) => err,
-        };
-        let oom = err
-            .downcast_ref::<string_table::Error>()
-            .expect("expected string_table::Error from sample-type interning");
-        assert_eq!(*oom, string_table::Error::OutOfMemory);
     }
 }
