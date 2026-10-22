@@ -29,8 +29,17 @@ mod conn_stream;
 #[cfg(feature = "http-client")]
 use conn_stream::{ConnStream, ConnStreamError};
 
+// Only the platform-verifier TLS configuration uses the distrust wrapper: with
+// `use_webpki_roots`, the webpki-roots 1.0.10 bundle already excludes the
+// compromised trust anchors.
+#[cfg(all(feature = "tls-core", not(feature = "use_webpki_roots")))]
+mod certificate_distrust;
+
 #[cfg(feature = "hyper-proxy")]
 mod proxy;
+
+#[cfg(all(test, feature = "https", not(feature = "use_webpki_roots")))]
+mod certificate_distrust_tests;
 
 #[cfg(feature = "http-client")]
 #[derive(Clone)]
@@ -163,14 +172,24 @@ mod https {
     /// Builds the client TLS config using the system trust roots.
     /// `SSL_CERT_FILE` and `SSL_CERT_DIR` variable are only supported on linux, see
     /// `rustls_platform_verifier` doc for details.
+    ///
+    /// The platform verifier is wrapped with an application-level distrust check that
+    /// rejects known-compromised public keys, until `rustls-webpki` can be updated to
+    /// a version carrying the upstream fix (see `certificate_distrust`).
     pub(super) fn build_tls_config() -> anyhow::Result<ClientConfig> {
-        use rustls_platform_verifier::BuilderVerifierExt;
+        use alloc::sync::Arc;
+
+        use super::certificate_distrust::DistrustServerCertVerifier;
 
         ensure_crypto_provider_initialized(); // One-time initialization of a crypto provider if needed
         require_crypto_provider()?;
 
-        Ok(ClientConfig::builder()
-            .with_platform_verifier()?
+        let builder = ClientConfig::builder();
+        let verifier =
+            DistrustServerCertVerifier::platform_with_distrust(builder.crypto_provider().clone())?;
+        Ok(builder
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(verifier))
             .with_no_client_auth())
     }
 
