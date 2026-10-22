@@ -22,8 +22,7 @@ fn origin_discovery_keeps_startup_values_after_c_environment_changes() {
         "startup-value"
     );
 
-    // SAFETY: no other code in this test process mutates the environment during the copy.
-    unsafe { environment::initialize() }.unwrap();
+    environment::initialize().unwrap();
 
     // SAFETY: all reads below use owned shadow storage; there are no process-env readers.
     unsafe {
