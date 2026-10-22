@@ -31,10 +31,12 @@ runs:
     # build them on the pinned latest stable from the repo-root
     # ci-toolchain.toml instead of the rust-toolchain.toml MSRV.
     - name: Read stable version from ci-toolchain.toml
+      if: ${{ github.event_name == 'pull_request' }}
       id: stable-version
       shell: bash
       run: echo "version=$(grep -Po '^stable = "\K[^"]+' ${{ github.action_path }}/../../../ci-toolchain.toml)" >> $GITHUB_OUTPUT
     - name: Install ${{ steps.stable-version.outputs.version }} toolchain
+      if: ${{ github.event_name == 'pull_request' }}
       shell: bash
       run: |
         rustup set profile minimal
