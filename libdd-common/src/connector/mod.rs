@@ -121,7 +121,7 @@ impl Connector {
 }
 
 #[cfg(feature = "tls-core")]
-mod https {
+pub(crate) mod https {
     #[cfg(feature = "use_webpki_roots")]
     use hyper_rustls::ConfigBuilderExt;
 
@@ -158,8 +158,11 @@ mod https {
         Ok(())
     }
 
+    /// Builds the TLS configuration shared by every libdd-common HTTPS client:
+    /// the hyper connector, the hyper-proxy tunnel and dialer, and the reqwest
+    /// client builder (see `Endpoint::to_reqwest_client_builder`).
     #[cfg(feature = "use_webpki_roots")]
-    pub(super) fn build_tls_config() -> anyhow::Result<ClientConfig> {
+    pub(crate) fn build_tls_config() -> anyhow::Result<ClientConfig> {
         ensure_crypto_provider_initialized(); // One-time initialization of a crypto provider if needed
         require_crypto_provider()?;
 
@@ -176,7 +179,7 @@ mod https {
     /// The platform verifier is wrapped with an application-level distrust check that
     /// rejects known-compromised public keys, until `rustls-webpki` can be updated to
     /// a version carrying the upstream fix (see `certificate_distrust`).
-    pub(super) fn build_tls_config() -> anyhow::Result<ClientConfig> {
+    pub(crate) fn build_tls_config() -> anyhow::Result<ClientConfig> {
         use alloc::sync::Arc;
 
         use super::certificate_distrust::DistrustServerCertVerifier;
