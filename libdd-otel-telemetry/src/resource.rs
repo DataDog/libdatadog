@@ -1,10 +1,10 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use opentelemetry::{Key, KeyValue, Value};
-use opentelemetry_sdk::Resource;
+use crate::attribute::normalize_attributes;
+use crate::{AttributeValue, KeyValue};
 
-/// Builds an OTel `Resource` from primitive attributes, with Datadog's precedence rules.
+/// Builds OTLP resource attributes from primitive values, with Datadog's precedence rules.
 ///
 /// Mirrors `datadog-opentelemetry::otlp_utils::build_otel_resource`'s merge order: explicit
 /// `service`/`env`/`version` win over generic attributes, which win over defaults. Kept
@@ -41,38 +41,40 @@ impl ResourceBuilder {
     /// Adds a generic resource attribute. Later calls with the same key overwrite earlier ones;
     /// `service`/`env`/`version` always take precedence over attributes added this way,
     /// regardless of call order.
-    pub fn with_attribute<K, V>(mut self, key: K, value: V) -> Self
-    where
-        K: Into<Key>,
-        V: Into<Value>,
-    {
+    pub fn with_attribute(
+        mut self,
+        key: impl Into<String>,
+        value: impl Into<AttributeValue>,
+    ) -> Self {
         self.attributes.push(KeyValue::new(key, value));
         self
     }
 
-    pub(crate) fn build(self) -> Resource {
-        let mut builder = Resource::builder();
-        for attribute in self.attributes {
-            builder = builder.with_attribute(attribute);
-        }
+    pub(crate) fn build(mut self) -> Vec<KeyValue> {
+        self.attributes.retain(|attribute| {
+            !matches!(
+                attribute.key.as_str(),
+                "service.name" | "service.version" | "deployment.environment.name"
+            )
+        });
         if let Some(service) = self.service {
-            builder = builder.with_service_name(service);
+            self.attributes.push(KeyValue::new("service.name", service));
         }
         if let Some(env) = self.env {
-            builder =
-                builder.with_attribute(opentelemetry::KeyValue::new("deployment.environment", env));
+            self.attributes
+                .push(KeyValue::new("deployment.environment.name", env));
         }
         if let Some(version) = self.version {
-            builder =
-                builder.with_attribute(opentelemetry::KeyValue::new("service.version", version));
+            self.attributes
+                .push(KeyValue::new("service.version", version));
         }
-        builder.build()
+        normalize_attributes(&self.attributes)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use opentelemetry::{Array, Key, Value};
+    use crate::{AttributeArray, AttributeValue};
 
     use super::ResourceBuilder;
 
@@ -83,37 +85,61 @@ mod tests {
             .with_attribute("int", 42_i64)
             .with_attribute("float", 1.5_f64)
             .with_attribute("string", "value")
-            .with_attribute("bools", Value::Array(Array::Bool(vec![true, false])))
-            .with_attribute("ints", Value::Array(Array::I64(vec![1, 2])))
-            .with_attribute("floats", Value::Array(Array::F64(vec![1.5, 2.5])))
+            .with_attribute("bools", AttributeArray::Bool(vec![true, false]))
+            .with_attribute("ints", AttributeArray::I64(vec![1, 2]))
+            .with_attribute("floats", AttributeArray::F64(vec![1.5, 2.5]))
             .with_attribute(
                 "strings",
-                Value::Array(Array::String(vec!["a".into(), "b".into()])),
+                AttributeArray::String(vec!["a".into(), "b".into()]),
             )
             .build();
 
-        assert_eq!(resource.get(&Key::new("bool")), Some(Value::Bool(true)));
-        assert_eq!(resource.get(&Key::new("int")), Some(Value::I64(42)));
-        assert_eq!(resource.get(&Key::new("float")), Some(Value::F64(1.5)));
+        let value = |key: &str| {
+            resource
+                .iter()
+                .find(|attribute| attribute.key == key)
+                .map(|attribute| attribute.value.clone())
+        };
+        assert_eq!(value("bool"), Some(AttributeValue::Bool(true)));
+        assert_eq!(value("int"), Some(AttributeValue::I64(42)));
+        assert_eq!(value("float"), Some(AttributeValue::F64(1.5)));
         assert_eq!(
-            resource.get(&Key::new("string")),
-            Some(Value::String("value".into()))
+            value("string"),
+            Some(AttributeValue::String("value".into()))
         );
         assert_eq!(
-            resource.get(&Key::new("bools")),
-            Some(Value::Array(Array::Bool(vec![true, false])))
+            value("bools"),
+            Some(AttributeValue::Array(AttributeArray::Bool(vec![
+                true, false
+            ])))
         );
         assert_eq!(
-            resource.get(&Key::new("ints")),
-            Some(Value::Array(Array::I64(vec![1, 2])))
+            value("ints"),
+            Some(AttributeValue::Array(AttributeArray::I64(vec![1, 2])))
         );
         assert_eq!(
-            resource.get(&Key::new("floats")),
-            Some(Value::Array(Array::F64(vec![1.5, 2.5])))
+            value("floats"),
+            Some(AttributeValue::Array(AttributeArray::F64(vec![1.5, 2.5])))
         );
         assert_eq!(
-            resource.get(&Key::new("strings")),
-            Some(Value::Array(Array::String(vec!["a".into(), "b".into()])))
+            value("strings"),
+            Some(AttributeValue::Array(AttributeArray::String(vec![
+                "a".into(),
+                "b".into()
+            ])))
         );
+    }
+
+    #[test]
+    fn explicit_service_fields_take_precedence() {
+        let resource = ResourceBuilder::new()
+            .with_attribute("service.name", "generic")
+            .with_attribute("deployment.environment.name", "generic")
+            .with_service("checkout")
+            .with_env("prod")
+            .build();
+
+        assert!(resource.contains(&crate::KeyValue::new("service.name", "checkout")));
+        assert!(resource.contains(&crate::KeyValue::new("deployment.environment.name", "prod")));
     }
 }

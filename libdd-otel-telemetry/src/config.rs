@@ -36,9 +36,7 @@ impl OtlpProtocol {
 
 /// Aggregation temporality preference for metrics export.
 ///
-/// Re-exported as a crate-local type (rather than requiring consumers to depend on
-/// `opentelemetry_sdk` directly) so no upstream SDK type ever needs to appear in a consumer's
-/// public surface.
+/// Kept as a crate-local type so no third-party SDK type appears in a consumer's public surface.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Temporality {
     #[default]
@@ -75,16 +73,7 @@ pub fn parse_otlp_headers(s: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-impl From<Temporality> for opentelemetry_sdk::metrics::Temporality {
-    fn from(value: Temporality) -> Self {
-        match value {
-            Temporality::Delta => opentelemetry_sdk::metrics::Temporality::Delta,
-            Temporality::Cumulative => opentelemetry_sdk::metrics::Temporality::Cumulative,
-        }
-    }
-}
-
-/// Configuration for a single OTLP exporter (metrics or logs).
+/// Configuration for the OTLP metrics exporter.
 #[derive(Debug, Clone)]
 pub struct OtlpExporterConfig {
     pub endpoint: String,

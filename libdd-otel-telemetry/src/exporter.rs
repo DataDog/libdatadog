@@ -3,57 +3,33 @@
 
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
-use std::thread;
-use std::time::Duration;
 
-use libdd_shared_runtime::{BasicRuntime, BlockingRuntime, SharedRuntime};
-use opentelemetry_sdk::error::{OTelSdkError, OTelSdkResult};
-use opentelemetry_sdk::metrics::Temporality as SdkTemporality;
-use opentelemetry_sdk::metrics::data::ResourceMetrics;
-use opentelemetry_sdk::metrics::exporter::PushMetricExporter;
+use http::HeaderMap;
+use libdd_capabilities::HttpClientCapability;
+use libdd_capabilities_impl::NativeCapabilities;
+use libdd_common::Endpoint;
+use libdd_trace_utils::send_with_retry::{
+    CompressionStrategy, RetryBackoffType, RetryStrategy, send_with_retry,
+};
 
 use crate::ExportCounters;
-use crate::aggregator::{Counters, build_metric_exporter};
-use crate::config::{OtlpExporterConfig, Temporality};
-use crate::error::BuildWarning;
+use crate::aggregator::Counters;
+use crate::config::{OtlpExporterConfig, OtlpProtocol, Temporality};
+use crate::error::{BuildWarning, OtelMetricsError};
 
-/// A Datadog-flavored OTLP [`PushMetricExporter`] that a host tracer can plug into its own
-/// `SdkMeterProvider` + `PeriodicReader`.
-///
-/// It wraps an upstream [`opentelemetry_otlp::MetricExporter`] and tracks export attempts,
-/// successes, and failures — the centralized equivalent of dd-trace-rs's old
-/// `TelemetryTrackingExporter`. Poll [`DatadogMetricExporter::counters`] to feed those counts
-/// into your own telemetry system.
+const MAX_RETRIES: u32 = 4;
+const RETRY_DELAY_MS: u64 = 100;
+
+/// OTLP/HTTP protobuf exporter built entirely from libdatadog transport components.
+#[derive(Debug)]
 pub struct DatadogMetricExporter {
-    inner: opentelemetry_otlp::MetricExporter,
+    endpoint: Endpoint,
+    headers: HeaderMap,
+    capabilities: NativeCapabilities,
     counters: Arc<Counters>,
-    runtime: Option<Arc<dyn MetricExporterRuntime>>,
-}
-
-trait MetricExporterRuntime: Send + Sync {
-    fn export(
-        &self,
-        exporter: &opentelemetry_otlp::MetricExporter,
-        metrics: &ResourceMetrics,
-    ) -> OTelSdkResult;
-}
-
-impl<R> MetricExporterRuntime for R
-where
-    R: BlockingRuntime + Send + Sync,
-{
-    fn export(
-        &self,
-        exporter: &opentelemetry_otlp::MetricExporter,
-        metrics: &ResourceMetrics,
-    ) -> OTelSdkResult {
-        self.block_on(async { exporter.export(metrics).await })
-            .map_err(|error| OTelSdkError::InternalFailure(error.to_string()))?
-    }
 }
 
 impl DatadogMetricExporter {
-    /// Snapshot of export telemetry counters accumulated so far.
     pub fn counters(&self) -> ExportCounters {
         self.counters.snapshot()
     }
@@ -61,93 +37,113 @@ impl DatadogMetricExporter {
     pub(crate) fn counters_handle(&self) -> Arc<Counters> {
         Arc::clone(&self.counters)
     }
-}
 
-impl Drop for DatadogMetricExporter {
-    fn drop(&mut self) {
-        if let Some(runtime) = self.runtime.take() {
-            let _ = thread::Builder::new()
-                .name("libdd-otel-metrics-drop".to_string())
-                .spawn(move || drop(runtime));
-        }
-    }
-}
-
-impl std::fmt::Debug for DatadogMetricExporter {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("DatadogMetricExporter")
-            .field("counters", &self.counters.snapshot())
-            .finish()
-    }
-}
-
-impl PushMetricExporter for DatadogMetricExporter {
-    async fn export(&self, metrics: &ResourceMetrics) -> OTelSdkResult {
+    pub(crate) async fn export(&self, payload: Vec<u8>) -> Result<(), OtelMetricsError> {
         self.counters.attempts.fetch_add(1, Ordering::Relaxed);
-        let result = match self.runtime.as_deref() {
-            Some(runtime) => runtime.export(&self.inner, metrics),
-            None => Err(OTelSdkError::InternalFailure(
-                "metrics exporter runtime is unavailable".to_string(),
-            )),
-        };
-        match &result {
+        let retry_strategy = RetryStrategy::new(
+            MAX_RETRIES,
+            RETRY_DELAY_MS,
+            RetryBackoffType::Exponential,
+            None,
+        );
+        let result = send_with_retry(
+            &self.capabilities,
+            &self.endpoint,
+            payload,
+            &self.headers,
+            &retry_strategy,
+            CompressionStrategy::None,
+        )
+        .await
+        .map(|_| ())
+        .map_err(|error| OtelMetricsError(error.to_string()));
+        match result {
             Ok(()) => self.counters.successes.fetch_add(1, Ordering::Relaxed),
             Err(_) => self.counters.failures.fetch_add(1, Ordering::Relaxed),
         };
         result
     }
-
-    fn force_flush(&self) -> OTelSdkResult {
-        self.inner.force_flush()
-    }
-
-    fn shutdown_with_timeout(&self, timeout: Duration) -> OTelSdkResult {
-        self.inner.shutdown_with_timeout(timeout)
-    }
-
-    fn temporality(&self) -> SdkTemporality {
-        self.inner.temporality()
-    }
 }
 
-/// Builds a [`DatadogMetricExporter`] from an [`OtlpExporterConfig`].
+/// Builds the native OTLP metrics exporter.
 ///
-/// `runtime` drives every export because the upstream SDK invokes exporters from a plain worker
-/// thread with no async reactor.
+/// The temporality argument is retained for source compatibility. Aggregation temporality is
+/// applied before encoding rather than by the transport.
 pub fn build_datadog_metric_exporter(
     config: &OtlpExporterConfig,
-    temporality: Temporality,
+    _temporality: Temporality,
 ) -> Result<DatadogMetricExporter, BuildWarning> {
-    let runtime = Arc::new(
-        BasicRuntime::new().map_err(|error| BuildWarning::ExporterInitFailed(error.to_string()))?,
-    );
-    build_datadog_metric_exporter_with_runtime(config, temporality, runtime)
+    match config.protocol {
+        OtlpProtocol::HttpProtobuf => {}
+        OtlpProtocol::Grpc => {
+            return Err(BuildWarning::UnsupportedProtocol(
+                "the native gRPC transport has not been generalized beyond traces yet".to_owned(),
+            ));
+        }
+        OtlpProtocol::HttpJson => {
+            return Err(BuildWarning::UnsupportedProtocol(
+                "http/json protocol is not supported for OTLP metrics export".to_owned(),
+            ));
+        }
+    }
+
+    #[cfg(not(feature = "http"))]
+    return Err(BuildWarning::UnsupportedProtocol(
+        "http/protobuf protocol requires the 'http' feature".to_owned(),
+    ));
+
+    #[cfg(feature = "http")]
+    {
+        let url = libdd_common::parse_uri(&config.endpoint)
+            .map_err(|error| BuildWarning::InvalidEndpoint(error.to_string()))?;
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            http::header::CONTENT_TYPE,
+            libdd_common::header::APPLICATION_PROTOBUF,
+        );
+        for (key, value) in &config.headers {
+            let name = http::header::HeaderName::from_bytes(key.as_bytes())
+                .map_err(|error| BuildWarning::InvalidHeader(error.to_string()))?;
+            let value = http::header::HeaderValue::from_str(value)
+                .map_err(|error| BuildWarning::InvalidHeader(error.to_string()))?;
+            headers.insert(name, value);
+        }
+        Ok(DatadogMetricExporter {
+            endpoint: Endpoint {
+                url,
+                timeout_ms: u64::try_from(config.timeout.as_millis()).unwrap_or(u64::MAX),
+                ..Endpoint::default()
+            },
+            headers,
+            capabilities: NativeCapabilities::new_periodic(),
+            counters: Arc::new(Counters::default()),
+        })
+    }
 }
 
-pub(crate) fn build_datadog_metric_exporter_with_runtime<R>(
-    config: &OtlpExporterConfig,
-    temporality: Temporality,
-    runtime: Arc<R>,
-) -> Result<DatadogMetricExporter, BuildWarning>
-where
-    R: BlockingRuntime + Send + Sync + 'static,
-{
-    let build_config = config.clone();
-    let build_runtime = Arc::clone(&runtime);
-    let inner = thread::Builder::new()
-        .name("libdd-otel-metrics-init".to_string())
-        .spawn(move || {
-            build_runtime.block_on(async { build_metric_exporter(&build_config, temporality) })
-        })
-        .map_err(|error| BuildWarning::ExporterInitFailed(error.to_string()))?
-        .join()
-        .map_err(|_| {
-            BuildWarning::ExporterInitFailed("metrics exporter build thread panicked".to_string())
-        })?
-        .map_err(|error| BuildWarning::ExporterInitFailed(error.to_string()))??;
-    Ok(DatadogMetricExporter {
-        inner,
-        counters: Arc::new(Counters::default()),
-        runtime: Some(runtime),
-    })
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn grpc_reports_the_remaining_transport_gap() {
+        let result = build_datadog_metric_exporter(
+            &OtlpExporterConfig::new("http://127.0.0.1:4317", OtlpProtocol::Grpc),
+            Temporality::Delta,
+        );
+        assert!(matches!(result, Err(BuildWarning::UnsupportedProtocol(_))));
+    }
+
+    #[test]
+    fn invalid_http_headers_are_rejected() {
+        let result = build_datadog_metric_exporter(
+            &OtlpExporterConfig::new(
+                "http://127.0.0.1:4318/v1/metrics",
+                OtlpProtocol::HttpProtobuf,
+            )
+            .with_header("invalid header", "value"),
+            Temporality::Delta,
+        );
+        assert!(matches!(result, Err(BuildWarning::InvalidHeader(_))));
+    }
 }

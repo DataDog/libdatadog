@@ -3,7 +3,8 @@
 
 use std::sync::Arc;
 
-use opentelemetry::KeyValue;
+use crate::KeyValue;
+use crate::attribute::normalize_attributes;
 
 /// Opaque handle to an instrument registered on a [`crate::OtelMetricsAggregator`].
 ///
@@ -43,11 +44,11 @@ pub enum InstrumentKind {
     ObservableUpDownCounter,
 }
 
-/// Metadata needed to create the underlying instrument once, at registration time.
+/// Metadata needed to register an instrument once.
 ///
 /// The `meter_*` fields carry the OpenTelemetry instrumentation scope the instrument belongs to.
-/// The aggregator creates one SDK `Meter` per distinct scope so exported metrics keep the host's
-/// scope rather than a single crate-internal one.
+/// The aggregator groups exported metrics by that scope instead of collapsing them into one
+/// crate-internal scope.
 #[derive(Debug, Clone)]
 pub struct InstrumentDescriptor {
     pub name: String,
@@ -98,17 +99,15 @@ impl InstrumentDescriptor {
     }
 
     /// Sets instrumentation-scope attributes, normalized for stable scope identity.
-    pub fn with_scope_attributes(mut self, mut attributes: Vec<KeyValue>) -> Self {
-        attributes.sort_by(|left, right| left.key.as_str().cmp(right.key.as_str()));
-        attributes.dedup();
-        self.meter_attributes = attributes;
+    pub fn with_scope_attributes(mut self, attributes: Vec<KeyValue>) -> Self {
+        self.meter_attributes = normalize_attributes(&attributes);
         self
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use opentelemetry::KeyValue;
+    use crate::KeyValue;
 
     use super::{InstrumentDescriptor, InstrumentKind};
 

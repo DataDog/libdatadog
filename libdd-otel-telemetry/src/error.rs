@@ -16,7 +16,7 @@ pub enum BuildWarning {
     UnsupportedProtocol(String),
     /// A configured exporter header is not valid for the selected transport.
     InvalidHeader(String),
-    /// The underlying `opentelemetry-otlp` exporter failed to build.
+    /// The native exporter or its runtime failed to initialize.
     ExporterInitFailed(String),
 }
 

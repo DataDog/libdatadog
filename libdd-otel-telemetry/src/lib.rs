@@ -3,11 +3,9 @@
 
 //! Shared OpenTelemetry metrics aggregation and OTLP export for Datadog tracers.
 //!
-//! Every `dd-trace-xx` library today depends on and configures its own copy of the community
-//! OpenTelemetry **SDK** (aggregation, views, OTLP encoding) to support `ddtrace`'s OTel
-//! metrics/logs bridge. This crate centralizes that implementation in one place, built on top of
-//! upstream `opentelemetry_sdk`/`opentelemetry-otlp` — this is the only crate in the Datadog
-//! tracer ecosystem meant to depend on those packages going forward.
+//! This crate centralizes aggregation, collection, OTLP encoding, and export without linking the
+//! OpenTelemetry Rust SDK. It uses libdatadog's runtime, transport, and vendored OTLP protobuf
+//! primitives so host tracers do not gain another SDK dependency.
 //!
 //! # Design principle: primitives only
 //!
@@ -34,20 +32,20 @@
 #![cfg_attr(not(test), deny(clippy::panic))]
 
 mod aggregator;
+mod attribute;
 mod config;
 mod error;
-#[cfg(any(feature = "grpc", feature = "http"))]
 mod exporter;
 mod instrument;
 mod resource;
+mod wire;
 
 pub use aggregator::{ExportCounters, OtelMetricsAggregator, OtelMetricsAggregatorBuilder};
+pub use attribute::{AttributeArray, AttributeValue, KeyValue};
 pub use config::{OtlpExporterConfig, OtlpProtocol, Temporality, parse_otlp_headers};
 pub use error::{BuildWarning, OtelMetricsError};
-#[cfg(any(feature = "grpc", feature = "http"))]
 pub use exporter::{DatadogMetricExporter, build_datadog_metric_exporter};
 pub use instrument::{
     InstrumentDescriptor, InstrumentId, InstrumentKind, ObservableCallback, ObservableMeasurement,
 };
-pub use opentelemetry::{Array as AttributeArray, KeyValue, Value as AttributeValue};
 pub use resource::ResourceBuilder;
