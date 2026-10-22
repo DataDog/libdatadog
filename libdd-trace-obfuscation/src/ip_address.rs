@@ -3,8 +3,7 @@
 
 use alloc::borrow::Cow;
 use core::net::Ipv6Addr;
-use libdd_common::regex_engine::Regex;
-use std::{collections::HashSet, sync::LazyLock};
+use std::collections::HashSet;
 
 const ALLOWED_IP_ADDRESSES: [&str; 5] = [
     // localhost
@@ -16,12 +15,6 @@ const ALLOWED_IP_ADDRESSES: [&str; 5] = [
     // ECS task metadata
     "169.254.170.2",
 ];
-
-const PREFIX_REGEX_LITERAL: &str = r"^((?:dnspoll|ftp|file|http|https):/{2,3})";
-static PREFIX_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    #[allow(clippy::unwrap_used)]
-    Regex::new(PREFIX_REGEX_LITERAL).unwrap()
-});
 
 /// Quantizes a comma separated list of hosts.
 ///
@@ -91,12 +84,21 @@ fn quantize_ip(s: &str) -> Option<String> {
 /// Split the ip prefix, can be either a provider specific prefix or a protocol
 fn split_prefix(s: &str) -> (&str, &str) {
     if let Some(tail) = s.strip_prefix("ip-") {
-        ("ip-", tail)
-    } else if let Some(protocol) = PREFIX_REGEX.find(s) {
-        s.split_at(protocol.end())
-    } else {
-        ("", s)
+        return ("ip-", tail);
     }
+    if let Some((protocol, tail)) = s.split_once(':') {
+        if matches!(protocol, "dnspoll" | "ftp" | "file" | "http" | "https") {
+            let slash_count = if tail.starts_with("///") {
+                3
+            } else if tail.starts_with("//") {
+                2
+            } else {
+                return ("", s);
+            };
+            return s.split_at(protocol.len() + 1 + slash_count);
+        }
+    }
+    ("", s)
 }
 
 /// Check if `s` starts with a valid ip. If it does return Some((ip, suffix)), else return None.
@@ -176,8 +178,14 @@ mod tests {
     #[test]
     fn test_split_prefix() {
         assert_eq!(split_prefix("ip-1.1.1.1"), ("ip-", "1.1.1.1"));
+        assert_eq!(split_prefix("dnspoll://1.1.1.1"), ("dnspoll://", "1.1.1.1"));
+        assert_eq!(split_prefix("file://1.1.1.1"), ("file://", "1.1.1.1"));
+        assert_eq!(split_prefix("http://1.1.1.1"), ("http://", "1.1.1.1"));
         assert_eq!(split_prefix("https://1.1.1.1"), ("https://", "1.1.1.1"));
         assert_eq!(split_prefix("ftp:///1.1.1.1"), ("ftp:///", "1.1.1.1"));
+        assert_eq!(split_prefix("ftp:////1.1.1.1"), ("ftp:///", "/1.1.1.1"));
+        assert_eq!(split_prefix("http:/1.1.1.1"), ("", "http:/1.1.1.1"));
+        assert_eq!(split_prefix("smtp://1.1.1.1"), ("", "smtp://1.1.1.1"));
         assert_eq!(split_prefix("1.1.1.1"), ("", "1.1.1.1"));
         assert_eq!(split_prefix("foo,bar-1.1.1.1"), ("", "foo,bar-1.1.1.1"));
     }
