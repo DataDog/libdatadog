@@ -38,74 +38,100 @@ impl core::error::Error for BufferInitError {
     }
 }
 
-/// Copy variables into process-lifetime caller storage without allocating.
+/// Initialize the shadow environment using process-lifetime caller storage.
 ///
-/// Entries are packed as `name=value\0`, and lookups scan the packed entries. Duplicate
-/// names keep their first value. Names and values obey the same validation rules as
-/// `initialize_from`. An empty iterator installs an authoritative empty snapshot.
-///
-/// On success, the buffer is held for the process lifetime. On failure, no snapshot is
-/// published and the error returns the buffer; its contents may have been overwritten.
-pub fn initialize_from_in<I, K, V>(
-    variables: I,
+/// Methods consume this adapter. Successful initialization retains the buffer for the
+/// process lifetime; errors return it for reuse. Call [`Self::into_buffer`] to recover
+/// the storage without initializing.
+#[must_use = "initialize the shadow environment or recover the storage with into_buffer"]
+pub struct BufferedInitializer {
     buffer: &'static mut [u8],
-) -> Result<(), BufferInitError>
-where
-    I: IntoIterator<Item = (K, V)>,
-    K: AsRef<OsStr>,
-    V: AsRef<OsStr>,
-{
-    if ENVIRONMENT.is_initialized() {
-        return Err(BufferInitError {
-            error: InitError::AlreadyInitialized,
-            buffer,
-        });
-    }
-    let result = {
-        let mut writer = Writer::new(buffer);
-        variables
-            .into_iter()
-            .try_for_each(|(name, value)| writer.push(name.as_ref(), value.as_ref()))
-            .map(|()| writer.used)
-    };
-    match result {
-        Ok(used) => ENVIRONMENT.install_buffer(buffer, used),
-        Err(error) => Err(BufferInitError { error, buffer }),
-    }
 }
 
-/// Copy a C environment array into process-lifetime caller storage without allocating.
+/// Choose caller-provided storage for allocation-free shadow initialization.
 ///
-/// A null `envp` installs an empty snapshot. Malformed entries are skipped and duplicate
-/// names retain their first value. Buffer ownership and errors match [`initialize_from_in`].
-///
-/// # Safety
-/// The array and all its NUL-terminated strings must be valid and immutable throughout
-/// this call, and the array must end in a null pointer. No source pointers are retained.
-#[cfg(any(not(feature = "std"), unix))]
-pub unsafe fn initialize_from_envp_in(
-    envp: *const *const c_char,
-    buffer: &'static mut [u8],
-) -> Result<(), BufferInitError> {
-    // SAFETY: the caller guarantees the array remains valid during the copy.
-    initialize_from_in(unsafe { Envp::new(envp) }, buffer)
+/// Available with or without `alloc` and `std`. Supply typed pairs with
+/// [`BufferedInitializer::initialize_from`] or a stable C environment array with
+/// `BufferedInitializer::initialize_from_envp`.
+pub fn with_buffer(buffer: &'static mut [u8]) -> BufferedInitializer {
+    BufferedInitializer { buffer }
 }
 
-/// Copy all Linux process variables into caller storage without allocating.
-///
-/// Buffer ownership and errors match [`initialize_from_in`]. Available with or without
-/// `alloc` and `std`.
-///
-/// # Safety
-/// Call before other threads or native libraries can mutate the process environment.
-/// No environment mutation may occur for the duration of the copy, including through C APIs.
-#[cfg(target_os = "linux")]
-pub unsafe fn initialize_in(buffer: &'static mut [u8]) -> Result<(), BufferInitError> {
-    unsafe extern "C" {
-        static environ: *const *const core::ffi::c_char;
+impl BufferedInitializer {
+    /// Recover the caller's storage without initializing the shadow environment.
+    pub fn into_buffer(self) -> &'static mut [u8] {
+        self.buffer
     }
-    // SAFETY: the caller guarantees a stable process environment during the copy.
-    unsafe { initialize_from_envp_in(environ, buffer) }
+
+    /// Copy variables into caller storage without allocating.
+    ///
+    /// Entries are packed as `name=value\0`, and lookups scan the packed entries. Duplicate
+    /// names keep their first value. Names and values obey the same validation rules as
+    /// `initialize_from`. An empty iterator installs an authoritative empty snapshot.
+    ///
+    /// On success, the buffer is held for the process lifetime. On failure, no snapshot is
+    /// published and the error returns the buffer; its contents may have been overwritten.
+    pub fn initialize_from<I, K, V>(self, variables: I) -> Result<(), BufferInitError>
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: AsRef<OsStr>,
+        V: AsRef<OsStr>,
+    {
+        let buffer = self.buffer;
+        if ENVIRONMENT.is_initialized() {
+            return Err(BufferInitError {
+                error: InitError::AlreadyInitialized,
+                buffer,
+            });
+        }
+        let result = {
+            let mut writer = Writer::new(buffer);
+            variables
+                .into_iter()
+                .try_for_each(|(name, value)| writer.push(name.as_ref(), value.as_ref()))
+                .map(|()| writer.used)
+        };
+        match result {
+            Ok(used) => ENVIRONMENT.install_buffer(buffer, used),
+            Err(error) => Err(BufferInitError { error, buffer }),
+        }
+    }
+
+    /// Copy a C environment array into caller storage without allocating.
+    ///
+    /// A null `envp` installs an empty snapshot. Malformed entries are skipped and duplicate
+    /// names retain their first value. Buffer ownership and errors match [`Self::initialize_from`].
+    /// Available with `std` on Unix, and without `std` on any supported target.
+    ///
+    /// ```
+    /// use libdd_common::environment;
+    ///
+    /// static mut BUFFER: [u8; 64] = [0; 64];
+    /// let envp = [c"DD_EXTERNAL_ENV=startup".as_ptr(), core::ptr::null()];
+    /// // SAFETY: this startup code creates the only reference to BUFFER.
+    /// let buffer = unsafe { &mut *core::ptr::addr_of_mut!(BUFFER) };
+    /// // SAFETY: envp is terminated, and its C strings remain valid during the copy.
+    /// unsafe { environment::with_buffer(buffer).initialize_from_envp(envp.as_ptr()) }?;
+    /// assert_eq!(
+    ///     environment::var_os_ref("DD_EXTERNAL_ENV")
+    ///         .unwrap()
+    ///         .as_encoded_bytes(),
+    ///     b"startup"
+    /// );
+    /// # Ok::<(), environment::BufferInitError>(())
+    /// ```
+    ///
+    /// # Safety
+    /// The array and all its NUL-terminated strings must be valid and immutable throughout
+    /// this call, and the array must end in a null pointer. No source pointers are retained.
+    #[cfg(any(not(feature = "std"), unix))]
+    pub unsafe fn initialize_from_envp(
+        self,
+        envp: *const *const c_char,
+    ) -> Result<(), BufferInitError> {
+        // SAFETY: the caller guarantees the array remains valid during the copy.
+        self.initialize_from(unsafe { Envp::new(envp) })
+    }
 }
 
 struct Writer<'a> {

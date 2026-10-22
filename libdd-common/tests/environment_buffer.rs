@@ -23,23 +23,35 @@ fn buffer_initialization_copies_values_and_returns_failed_storage() {
             &mut *core::ptr::addr_of_mut!(STORAGE),
         )
     };
-    let failure = environment::initialize_from_in([("K", "value")], small).unwrap_err();
+    let failure = environment::with_buffer(small)
+        .initialize_from([("K", "value")])
+        .unwrap_err();
     assert_eq!(failure.error, environment::InitError::BufferTooSmall);
     assert!(!environment::is_initialized());
     // The failed initialization retained no access to this buffer.
     let returned = failure.buffer;
     returned.fill(0xaa);
 
-    let mut raw_value = [0xff, b'=', b'v'];
+    let storage = environment::with_buffer(storage).into_buffer();
+    storage.fill(0xaa);
+    assert!(!environment::is_initialized());
+
+    let mut service = *b"SERVICE=startup\0";
+    let mut raw_entry = *b"K\xff=\xff=v\0";
     let raw_key = OsStr::from_bytes(b"K\xff");
-    let variables: [(&OsStr, &OsStr); 4] = [
-        ("SERVICE".as_ref(), "startup".as_ref()),
-        (raw_key, OsStr::from_bytes(&raw_value)),
-        ("SERVICE".as_ref(), "ignored".as_ref()),
-        ("EMPTY".as_ref(), "".as_ref()),
+    let envp = [
+        service.as_ptr().cast(),
+        raw_entry.as_ptr().cast(),
+        c"SERVICE=ignored".as_ptr(),
+        c"EMPTY=".as_ptr(),
+        c"malformed".as_ptr(),
+        c"=invalid".as_ptr(),
+        core::ptr::null(),
     ];
-    environment::initialize_from_in(variables, storage).unwrap();
-    raw_value.fill(b'x');
+    // SAFETY: the terminated pointer array and its C strings remain valid during the copy.
+    unsafe { environment::with_buffer(storage).initialize_from_envp(envp.as_ptr()) }.unwrap();
+    service.fill(b'x');
+    raw_entry.fill(b'x');
 
     let saved = environment::var_os_ref("SERVICE").unwrap();
     assert_eq!(saved.as_encoded_bytes(), b"startup");
@@ -54,7 +66,9 @@ fn buffer_initialization_copies_values_and_returns_failed_storage() {
     assert!(environment::var_os_ref("MISSING").is_none());
     assert!(environment::var_os_ref("BAD=NAME").is_none());
 
-    let failure = environment::initialize_from_in([("K", "replacement")], returned).unwrap_err();
+    let failure = environment::with_buffer(returned)
+        .initialize_from([("K", "replacement")])
+        .unwrap_err();
     assert_eq!(failure.error, environment::InitError::AlreadyInitialized);
     assert_eq!(failure.buffer, &[0xaa; 2]);
     assert_eq!(saved.as_encoded_bytes(), b"startup");
@@ -81,7 +95,9 @@ fn buffer_preserves_native_windows_surrogates() {
     let value = OsString::from_wide(&[0xdc00]);
     // SAFETY: this test consumes its unique static storage exactly once.
     let storage = unsafe { &mut *core::ptr::addr_of_mut!(STORAGE) };
-    environment::initialize_from_in([(&key, &value)], storage).unwrap();
+    environment::with_buffer(storage)
+        .initialize_from([(&key, &value)])
+        .unwrap();
     let saved: &OsStr = environment::var_os_ref(&key).unwrap();
     assert_eq!(saved.as_encoded_bytes(), value.as_encoded_bytes());
     assert_eq!(

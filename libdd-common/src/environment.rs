@@ -10,6 +10,8 @@
 //! `std::env` for owned reads, and `no_std` builds report absent variables. With `alloc`,
 //! `var_os` returns owned OS strings and `var` converts them to UTF-8. [`var_os_ref`] borrows
 //! directly from an installed snapshot without allocating or falling back to the system.
+//! With `std`, `initialize()` captures `std::env::vars_os()`. Without `std`, supply a stable
+//! C environment array through `initialize_from_envp`, or through the buffer adapter below.
 //!
 //! Caller-buffer initialization and borrowed reads require neither `alloc` nor `std`:
 //!
@@ -19,7 +21,7 @@
 //! static mut BUFFER: [u8; 128] = [0; 128];
 //! // SAFETY: startup calls this once and creates no other references to BUFFER.
 //! let buffer = unsafe { &mut *core::ptr::addr_of_mut!(BUFFER) };
-//! environment::initialize_from_in([("DD_EXTERNAL_ENV", "startup-value")], buffer)?;
+//! environment::with_buffer(buffer).initialize_from([("DD_EXTERNAL_ENV", "startup-value")])?;
 //! let value = environment::var_os_ref("DD_EXTERNAL_ENV").unwrap();
 //! assert_eq!(value.as_encoded_bytes(), b"startup-value");
 //! # Ok::<(), environment::BufferInitError>(())
@@ -36,11 +38,7 @@ use core::{
 };
 
 mod buffer;
-#[cfg(any(not(feature = "std"), unix))]
-pub use buffer::initialize_from_envp_in;
-#[cfg(target_os = "linux")]
-pub use buffer::initialize_in;
-pub use buffer::{BufferInitError, initialize_from_in};
+pub use buffer::{BufferInitError, BufferedInitializer, with_buffer};
 
 static ENVIRONMENT: ShadowEnvironment = ShadowEnvironment::new();
 
@@ -143,32 +141,26 @@ where
 ///
 /// Preserves non-UTF-8 values; [`var_os`] returns them and [`var`] reports
 /// [`VarError::NotUnicode`]. Later changes to the process environment are not reflected in the
-/// shadow.
+/// shadow. Uses `std::env::vars_os`; without `std`, supply variables explicitly through
+/// `initialize_from` or `initialize_from_envp`.
 ///
-/// # Safety
-/// Call before other threads or native libraries can mutate the process environment. No
-/// environment mutation may occur for the duration of the copy, including through C APIs.
-#[cfg(all(feature = "alloc", any(feature = "std", target_os = "linux")))]
-pub unsafe fn initialize() -> Result<(), InitError> {
+/// ```
+/// use libdd_common::environment;
+///
+/// environment::initialize()?;
+/// assert!(environment::is_initialized());
+/// # Ok::<(), environment::InitError>(())
+/// ```
+#[cfg(feature = "std")]
+pub fn initialize() -> Result<(), InitError> {
     if is_initialized() {
         return Err(InitError::AlreadyInitialized);
     }
-    #[cfg(feature = "std")]
-    {
-        let mut values = BTreeMap::new();
-        for (name, value) in std::env::vars_os() {
-            values.entry(name).or_insert(value);
-        }
-        ENVIRONMENT.install(Snapshot { values })
+    let mut values = BTreeMap::new();
+    for (name, value) in std::env::vars_os() {
+        values.entry(name).or_insert(value);
     }
-    #[cfg(not(feature = "std"))]
-    {
-        unsafe extern "C" {
-            static environ: *const *const core::ffi::c_char;
-        }
-        // SAFETY: the caller ensures the process environment stays valid and immutable.
-        unsafe { initialize_from_envp(environ) }
-    }
+    ENVIRONMENT.install(Snapshot { values })
 }
 
 /// Copy a null-terminated C environment array into owned storage.
