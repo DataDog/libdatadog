@@ -1,0 +1,101 @@
+name: sccache
+description: |
+  S3-backed sccache (dd-ci-artefacts-build-stable), shared with the GitLab
+  pipeline. Only main writes; every other ref reads. The calling job needs
+  `permissions: id-token: write, contents: read`. Forks get no id-token and
+  compile uncached, and so does any run whose sccache server cannot start
+  (storage unreachable, bad credentials) — a cache failure never fails the job.
+outputs:
+  enabled:
+    description: Whether sccache is active in this job ('true' / 'false')
+    value: ${{ steps.enable.outputs.enabled == 'true' }}
+runs:
+  using: composite
+  steps:
+    - name: Configure AWS credentials (sccache)
+      id: aws
+      # Forked PRs get no id-token; degrade to an uncached build, don't fail.
+      continue-on-error: true
+      uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+      with:
+        role-to-assume: ${{ github.ref == 'refs/heads/main' && 'arn:aws:iam::486234852809:role/libdatadog-github-actions-sccache-write' || 'arn:aws:iam::486234852809:role/libdatadog-github-actions-sccache-read' }}
+        aws-region: us-east-1
+    - name: Install sccache
+      # clippy-driver support needs sccache >= 0.11.0
+      uses: Mozilla-Actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+      with:
+        version: v0.18.0
+      if: steps.aws.outcome == 'success'
+    - name: Enable sccache
+      id: enable
+      if: steps.aws.outcome == 'success'
+      shell: bash
+      run: |
+        # Basedirs strip to the same forms as GitLab (repo-relative and
+        # .cargo-relative) so entries hit across CI systems. Separator: `;` on
+        # Windows, `:` elsewhere; native absolute paths only.
+        CARGO_HOME_DIR="${CARGO_HOME:-$HOME/.cargo}"
+        if [[ "$RUNNER_OS" == "Windows" ]]; then
+          CARGO_HOME_DIR=$(cygpath -w "$CARGO_HOME_DIR")
+          SEP=";"
+        else
+          SEP=":"
+        fi
+        export SCCACHE_BUCKET=dd-ci-artefacts-build-stable
+        export SCCACHE_REGION=us-east-1
+        export SCCACHE_S3_KEY_PREFIX=libddprof-build/sccache
+        # Non-main refs hold the read-only IAM role; without this sccache
+        # attempts a forbidden S3 PUT on every cache miss.
+        if [[ "${{ github.ref }}" != "refs/heads/main" ]]; then
+          export SCCACHE_S3_RW_MODE=READ_ONLY
+        fi
+        export SCCACHE_BASEDIRS="${{ github.workspace }}${SEP}${CARGO_HOME_DIR}"
+
+        # The startup storage check (`.sccache_check` from S3) kills the
+        # server — and with it the build — on any error. Probe the server here
+        # and fall back to compiling uncached if it won't start.
+        err=""
+        for attempt in 1 2 3; do
+          if [[ "$attempt" == 3 ]]; then
+            export SCCACHE_LOG=debug
+            export SCCACHE_ERROR_LOG="$RUNNER_TEMP/sccache-startup.log"
+            : > "$SCCACHE_ERROR_LOG"
+          fi
+          if err=$(sccache --start-server 2>&1); then
+            # The probe already ran the startup check; the first compile
+            # starts its own server.
+            sccache --stop-server >/dev/null 2>&1 || true
+            {
+              echo "RUSTC_WRAPPER=sccache"
+              echo "CARGO_INCREMENTAL=0"
+              echo "SCCACHE_BUCKET=$SCCACHE_BUCKET"
+              echo "SCCACHE_REGION=$SCCACHE_REGION"
+              echo "SCCACHE_S3_KEY_PREFIX=$SCCACHE_S3_KEY_PREFIX"
+              if [[ -n "${SCCACHE_S3_RW_MODE:-}" ]]; then
+                echo "SCCACHE_S3_RW_MODE=$SCCACHE_S3_RW_MODE"
+              fi
+              echo "SCCACHE_BASEDIRS=$SCCACHE_BASEDIRS"
+              # Servers respawned lazily after an idle timeout must not run
+              # the fatal startup check again.
+              echo "SCCACHE_SKIP_CACHE_CHECK=true"
+              echo "SCCACHE_IGNORE_SERVER_IO_ERROR=1"
+            } >> "$GITHUB_ENV"
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          sccache --stop-server >/dev/null 2>&1 || true
+          sleep 1
+        done
+        echo "::warning::sccache disabled: server startup failed 3/3 times, compiling uncached (details in this step's log)"
+        {
+          echo "----- sccache startup failure (last attempt, debug trace) -----"
+          echo "$err"
+          if [[ -s "${SCCACHE_ERROR_LOG:-}" ]]; then
+            cat "$SCCACHE_ERROR_LOG"
+          fi
+        } >&2
+        echo "enabled=false" >> "$GITHUB_OUTPUT"
+    - name: Report disabled sccache
+      if: steps.aws.outcome != 'success'
+      shell: bash
+      run: echo '::warning::sccache disabled for this run (no OIDC token — fork PR?)'

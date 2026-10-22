@@ -12,7 +12,8 @@ use libdd_trace_utils::send_with_retry::{
     send_with_retry_and_size,
 };
 use libdd_trace_utils::span::span_pool::PooledChunks;
-use libdd_trace_utils::span::{TraceData, trace_utils::compute_top_level_span};
+use libdd_trace_utils::span::v1::span_pool::PooledTraceChunks;
+use libdd_trace_utils::span::{TraceData, trace_utils::compute_top_level_span, trace_utils_v1};
 use libdd_trace_utils::tracer_metadata::TracerMetadata;
 use thiserror::Error;
 
@@ -108,6 +109,80 @@ where
     send_agentless_json(capabilities, config, headers, json_body, observer).await
 }
 
+/// Encodes and sends already-decoded v1 trace chunks.
+///
+/// V1-native counterpart of [`send_agentless_traces`].
+pub async fn send_agentless_traces_v1<C, T>(
+    capabilities: &C,
+    traces: PooledTraceChunks<'_, T>,
+    metadata: &TracerMetadata,
+    config: &AgentlessTraceConfig,
+    client_side_stats: bool,
+) -> Result<(), AgentlessError>
+where
+    C: HttpClientCapability + SleepCapability,
+    T: TraceData,
+{
+    send_agentless_traces_with_observer_v1(
+        capabilities,
+        traces,
+        metadata,
+        config,
+        client_side_stats,
+        |_, _| {},
+    )
+    .await
+}
+
+/// Encodes and sends already-decoded v1 trace chunks, reporting the final send result.
+///
+/// The observer is invoked once after the retry loop with the post-compression payload size.
+pub async fn send_agentless_traces_with_observer_v1<C, T, F>(
+    capabilities: &C,
+    mut traces: PooledTraceChunks<'_, T>,
+    metadata: &TracerMetadata,
+    config: &AgentlessTraceConfig,
+    client_side_stats: bool,
+    observer: F,
+) -> Result<(), AgentlessError>
+where
+    C: HttpClientCapability + SleepCapability,
+    T: TraceData,
+    F: FnOnce(&SendWithRetryResult, usize),
+{
+    // Top-level tagging is already done before sending when client-side stats are active.
+    if !metadata.client_computed_top_level && !client_side_stats {
+        for chunk in traces.iter_mut() {
+            trace_utils_v1::compute_top_level_span(&mut chunk.spans);
+        }
+    }
+    for chunk in traces.iter_mut() {
+        // Chunk-level attributes are merged into every span at encode time, so they need
+        // scrubbing too, not just the spans' own attributes below.
+        libdd_trace_obfuscation::obfuscate::obfuscate_v1_chunk_attributes(
+            chunk,
+            &config.obfuscation_config,
+        );
+        for span in &mut chunk.spans {
+            // Obfuscate every span we are about to send to the intake
+            libdd_trace_obfuscation::obfuscate::obfuscate_v1_span(span, &config.obfuscation_config);
+            // Remove duplicate attributes before serialization
+            span.dedup();
+        }
+        chunk.attributes.dedup();
+    }
+
+    let trace_count = traces.len();
+    let json_body = libdd_trace_utils::agentless_encoder::encode_payload_from_v1(
+        &traces,
+        metadata,
+        client_side_stats,
+    )
+    .map_err(AgentlessError::Serialization)?;
+    let headers = build_agentless_headers(metadata, trace_count);
+    send_agentless_json(capabilities, config, headers, json_body, observer).await
+}
+
 /// Sends an encoded agentless JSON request.
 ///
 /// The configured API key replaces any `dd-api-key` value in `headers`.
@@ -193,6 +268,7 @@ mod tests {
     #[derive(Clone, Debug, Default)]
     struct TestCapabilities {
         requests: Arc<Mutex<Vec<http::Request<Bytes>>>>,
+        status: Option<http::StatusCode>,
     }
 
     impl HttpClientCapability for TestCapabilities {
@@ -210,7 +286,7 @@ mod tests {
         ) -> Result<http::Response<Bytes>, libdd_capabilities::HttpError> {
             self.requests.lock().unwrap().push(request);
             Ok(http::Response::builder()
-                .status(http::StatusCode::ACCEPTED)
+                .status(self.status.unwrap_or(http::StatusCode::ACCEPTED))
                 .body(Bytes::new())
                 .unwrap())
         }
@@ -307,6 +383,42 @@ mod tests {
         let (send_succeeded, payload_size) = observation.unwrap();
         assert!(send_succeeded);
         assert!(payload_size > 0);
+    }
+
+    #[test]
+    fn reports_redirects_as_failed_sends() {
+        for status in [
+            http::StatusCode::FOUND,
+            http::StatusCode::TEMPORARY_REDIRECT,
+        ] {
+            let capabilities = TestCapabilities {
+                status: Some(status),
+                ..Default::default()
+            };
+            let mut observed = false;
+            let result = futures::executor::block_on(send_agentless_traces_with_observer(
+                &capabilities,
+                v04_traces(),
+                &metadata(),
+                &config(),
+                false,
+                |result, _| {
+                    assert!(result.is_err());
+                    observed = true;
+                },
+            ));
+
+            assert!(observed);
+            match result {
+                Err(AgentlessError::Send(error)) => {
+                    assert!(
+                        matches!(*error, SendWithRetryError::Http(response, 1) if response.status() == status)
+                    );
+                }
+                other => panic!("expected HTTP {status} error, got {other:?}"),
+            }
+            assert_eq!(capabilities.requests.lock().unwrap().len(), 1);
+        }
     }
 
     #[test]

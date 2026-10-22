@@ -412,7 +412,7 @@ mod single_threaded_tests {
                     "credit_cards": {
                         "enabled": true,
                         "luhn": false,
-                        "keep_values": []
+                        "keep_values": null
                     },
                     "sql": {
                         "replace_digits": false,
@@ -438,7 +438,7 @@ mod single_threaded_tests {
                     },
                     "mongodb": {
                         "enabled": true,
-                        "keep_keys": []
+                        "keep_keys": null
                     }
                 }
         },
@@ -469,7 +469,7 @@ mod single_threaded_tests {
         format!("{:x}", Sha256::digest(json.as_bytes()))
     }
 
-    const TEST_INFO_HASH: &str = "da585e5ee37588827971df914b4de574024e327aaae37f5e6f42959c9c3d6369";
+    const TEST_INFO_HASH: &str = "4e2f660408e869b937e9639738f5620f75e806b854f6f13edaac12c637683c41";
 
     #[cfg_attr(miri, ignore)]
     #[tokio::test]

@@ -53,7 +53,7 @@ impl DogStatsDClient {
         })
     }
 
-    /// Create a [`Client`] backed by a [`MetricSinkWorker`] running on the
+    /// Create a [`DogStatsDClient`] backed by a background worker running on the
     /// provided [`SharedRuntime`].
     ///
     /// Returns the client and a [`WorkerHandle`] that can be used to stop the
@@ -61,6 +61,7 @@ impl DogStatsDClient {
     ///
     /// # Errors
     /// Returns an error if the endpoint is invalid or the worker cannot be spawned.
+    // The background worker is a `MetricSinkWorker`.
     #[cfg(feature = "shared-runtime")]
     pub fn new_with_shared_runtime(
         endpoint: Endpoint,
@@ -196,7 +197,6 @@ mod test {
     use crate::action::DogStatsDAction::{Count, Distribution, Gauge, Histogram, Set};
     use libdd_common::{Endpoint, tag};
     use std::net;
-    use std::sync::Arc;
     use std::time::Duration;
 
     #[test]
@@ -237,6 +237,7 @@ mod test {
 
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
+    #[cfg(feature = "shared-runtime")]
     async fn test_thread_safety() {
         let socket = net::UdpSocket::bind("127.0.0.1:0").expect("failed to bind host socket");
         let _ = socket.set_read_timeout(Some(Duration::from_millis(500)));

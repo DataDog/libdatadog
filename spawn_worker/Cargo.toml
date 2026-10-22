@@ -11,6 +11,9 @@ publish = false
 [lib]
 bench = false
 
+[features]
+trampoline-host-loader = []
+
 [dependencies]
 anyhow.workspace = true
 io-lifetimes = { workspace = true, features = ["close"] }

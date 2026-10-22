@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use libdd_common::regex_engine::{Regex, Replacer};
+use libdd_trace_model::ValueArrayMut;
 use libdd_trace_protobuf::pb;
-use libdd_trace_utils::span::{SpanText, TraceData, v04};
+use libdd_trace_utils::span::{SpanText, TraceData, v1, v1::AttributeValue, v04};
 use serde::{Deserialize, Deserializer, Serialize};
 
 // Agent-facing representation. `re` and `no_expansion` are derived runtime state.
@@ -90,7 +91,7 @@ pub fn replace_trace_tags(trace: &mut [pb::Span], rules: &[ReplaceRule]) {
 /// Replaces the tag values of a [`v04::Span`] using the given rules.
 ///
 /// Fields are the immutable [`SpanText`] type, so matches are written back through
-/// [`SpanText::from_owned`]. [`replace_all_opt`] returns `None` on no match, so untouched fields
+/// [`SpanText::from_owned`]. `replace_all_opt` returns `None` on no match, so untouched fields
 /// don't allocate.
 pub fn replace_span_tags_v04<T: TraceData>(span: &mut v04::Span<T>, rules: &[ReplaceRule]) {
     fn apply_rule<S: SpanText>(rule: &ReplaceRule, field: &mut S) {
@@ -121,6 +122,119 @@ pub fn replace_span_tags_v04<T: TraceData>(span: &mut v04::Span<T>, rules: &[Rep
                 }
             }
         }
+    }
+}
+
+/// Replaces the tag values of a [`v1::Span`] using the given rules.
+///
+/// V1 counterpart of [`replace_span_tags_v04`]: rules apply to `String`-valued entries of the
+/// span's `attributes` map instead of a dedicated `meta` map.
+pub fn replace_span_tags_v1<T: TraceData>(span: &mut v1::Span<T>, rules: &[ReplaceRule]) {
+    for rule in rules {
+        match rule.name.as_ref() {
+            "*" => {
+                for (_, value) in &mut span.attributes {
+                    apply_rule_to_attr_value(rule, value);
+                }
+                // The "*" wildcard intentionally applies to `span.resource` as well as
+                // meta tags, matching the Datadog Agent reference implementation in
+                // `pkg/trace/filters/replacer.go` (see the `Replace` and `ReplaceV1`
+                // functions, which apply "*" rules to both span meta and `s.Resource`).
+                apply_rule(rule, &mut span.resource);
+                // `env`/`version`/`component` were plain meta tags in v0.4 (and thus already
+                // covered by the loop above); v1 promoted them to dedicated fields, so the
+                // wildcard needs to reach them explicitly to keep the same behavior.
+                apply_rule(rule, &mut span.env);
+                apply_rule(rule, &mut span.version);
+                apply_rule(rule, &mut span.component);
+            }
+            "resource.name" => {
+                apply_rule(rule, &mut span.resource);
+            }
+            // `env`/`version`/`component` are dedicated v1 fields; in v0.4 they were ordinary
+            // meta tags reachable by name, so mirror that here for backward compatibility.
+            "env" => {
+                apply_rule(rule, &mut span.env);
+            }
+            "version" => {
+                apply_rule(rule, &mut span.version);
+            }
+            "component" => {
+                apply_rule(rule, &mut span.component);
+            }
+            _ => {
+                if let Some(value) = span.attributes.get_mut(rule.name.as_str()) {
+                    apply_rule_to_attr_value(rule, value);
+                }
+            }
+        }
+    }
+}
+
+/// Replaces the tag values of a [`v1::TraceChunk`]'s own `attributes` using the given rules.
+///
+/// Chunk-level attributes are merged into every emitted span at encode time (see
+/// `collect_attrs_v1` in the agentless encoder), so they need the same scrubbing as span-level
+/// attributes. There is no `resource`/`env`/`version`/`component` field at the chunk level, but
+/// `origin` is a dedicated field (a plain `_dd.origin` meta tag in v0.4), so the wildcard and the
+/// `_dd.origin` name need to reach it explicitly, mirroring how [`replace_span_tags_v1`] handles
+/// `env`/`version`/`component`.
+pub fn replace_chunk_tags_v1<T: TraceData>(chunk: &mut v1::TraceChunk<T>, rules: &[ReplaceRule]) {
+    for rule in rules {
+        match rule.name.as_ref() {
+            "*" => {
+                for (_, value) in &mut chunk.attributes {
+                    apply_rule_to_attr_value(rule, value);
+                }
+                apply_rule(rule, &mut chunk.origin);
+            }
+            "resource.name" => {}
+            "_dd.origin" => {
+                apply_rule(rule, &mut chunk.origin);
+            }
+            _ => {
+                if let Some(value) = chunk.attributes.get_mut(rule.name.as_str()) {
+                    apply_rule_to_attr_value(rule, value);
+                }
+            }
+        }
+    }
+}
+
+fn apply_rule<S: SpanText>(rule: &ReplaceRule, field: &mut S) {
+    if let Some(new) = replace_all_opt(&rule.re, &rule.repl, rule.no_expansion, field.borrow()) {
+        *field = S::from_owned(new);
+    }
+}
+
+/// Applies `rule` to `value`, recursing into `Array`/`KeyValueList` so nested string leaves are
+/// scrubbed too: the agentless encoder flattens those into plain dotted tags before sending, so
+/// leaving them out here would let matching data (e.g. a `payment: {number: "..."}` attribute)
+/// reach the intake unredacted.
+fn apply_rule_to_attr_value<T: TraceData>(rule: &ReplaceRule, value: &mut AttributeValue<T>) {
+    match value {
+        AttributeValue::String(s) => apply_rule(rule, s),
+        AttributeValue::Array(values) => {
+            for v in values.iter_mut() {
+                apply_rule_to_attr_value(rule, v);
+            }
+        }
+        AttributeValue::KeyValueList(map) => {
+            for (_, v) in map.iter_mut() {
+                apply_rule_to_attr_value(rule, v);
+            }
+        }
+        // `flatten_attr_into_v1` serializes bools as the literal strings "true"/"false" into
+        // `meta`, so a rule must be able to match that textual form; only convert to `String` on
+        // an actual match, to leave a non-matching value exactly as `flatten_attr_into_v1` would
+        // have serialized it anyway.
+        AttributeValue::Bool(b) => {
+            let s = if *b { "true" } else { "false" };
+            if let Some(new) = replace_all_opt(&rule.re, &rule.repl, rule.no_expansion, s) {
+                *value = AttributeValue::String(T::Text::from_owned(new));
+            }
+        }
+        AttributeValue::Int(_) | AttributeValue::Float(_) | AttributeValue::Bytes(_) => {}
     }
 }
 

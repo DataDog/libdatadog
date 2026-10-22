@@ -65,6 +65,7 @@ members = [
   "libdd-log-ffi",
   "libdd-sampling",
   "libdd-otel-telemetry",
+  "libdd-trace-model",
 ]
 
 # https://doc.rust-lang.org/cargo/reference/resolver.html
@@ -108,7 +109,7 @@ ignored = [
 [workspace.package]
 rust-version = "1.87.0"
 edition = "2024"
-version = "44.0.0"
+version = "46.0.0"
 license = "Apache-2.0"
 authors = ["Datadog Inc. <info@datadoghq.com>"]
 
@@ -196,6 +197,7 @@ hex = { version = "0.4", default-features = false }
 http = { version = "1.1", default-features = false }
 http-body = { version = "1", default-features = false }
 http-body-util = { version = "0.1", default-features = false }
+httpdate = { version = "1.0", default-features = false }
 # allow(workspace-deps-features): httpmock 0.8.0-alpha.1 does not compile
 # without the `cookies` feature: its own `readers.rs` calls `req.cookies()`
 # unconditionally while that method is gated behind `cookies`. Keep it as a
@@ -214,6 +216,7 @@ itoa = { version = "1.0", default-features = false }
 # and that this possibility will be gone in future versions). We enable it by
 # default for everyone.
 libc = { version = "0.2", default-features = true }
+libc_alloc = { version = "1.0", default-features = false }
 libdd-libunwind-sys = { version = "1.0.3", default-features = false }
 log = { version = "0.4.21", default-features = false }
 lru = { version = "0.16.3", default-features = false }
@@ -262,18 +265,20 @@ rmpv = { version = "1.3.0", default-features = false }
 rustc-hash = { version = "2.1.1", default-features = false }
 rustls = { version = "0.23", default-features = false }
 rustls-platform-verifier = { version = "0.6", default-features = false }
-rustls-webpki = { version = ">=0.103.13", default-features = false }
+rustls-webpki = { version = "0.103.16", default-features = false }
 schemars = { version = "0.8.21", default-features = false }
 semver = { version = "1.0", default-features = false }
 serde = { version = "1.0", default-features = false }
 serde-transcode = { version = "1.1", default-features = false }
 serde_bytes = { version = "0.11.9", default-features = false }
+serde_ignored = { version = "0.1.14", default-features = false }
 # allow(workspace-deps-features): serde_json requires at least one of `std` or
 # `alloc`. We set `alloc` here as the minimal working baseline, and to avoid
 # repeating alloc everywhere. Enabling `std` on top of it is fine.
 serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
 serde_with = { version = "3.11.0", default-features = false }
 serde_yaml = { version = "0.9.34", default-features = false }
+yaml_serde = { version = "0.10.7", default-features = false }
 serial_test = { version = "3.2", default-features = false }
 sha2 = { version = "0.10", default-features = false }
 simd-json = { version = "=0.14", default-features = false }
@@ -316,6 +321,8 @@ wait-timeout = { version = "0.2", default-features = false }
 walkdir = { version = "2.4", default-features = false }
 wasm-bindgen-futures = { version = "0.4", default-features = false }
 wasm-bindgen-test = { version = "=0.3.50", default-features = false }
+webpki-roots = { version = "1.0.10", default-features = false }
+webpki-root-certs = { version = "1.0.10", default-features = false }
 web-time = { version = "1", default-features = false }
 windows = { version = "0.59.0", default-features = false }
 windows-sys = { version = "0.52", default-features = false }

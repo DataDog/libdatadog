@@ -121,15 +121,6 @@ jobs:
           rustup set profile minimal
           rustup install ${{ needs.setup.outputs.nightly-version }}
           rustup component add rustfmt --toolchain ${{ needs.setup.outputs.nightly-version }}
-      - name: Cache [rust]
-        id: rust-cache
-        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
-        with:
-          cache-targets: true # cache build artifacts
-          cache-bin: true # cache the ~/.cargo/bin directory
-          shared-key: lint
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      - run: echo "rust-cache ${{ steps.rust-cache.outputs.cache-hit == 'true' && 'HIT' || 'MISS' }}"
       - name: Run rustfmt
         env:
           FMT_PACKAGES: ${{ needs.setup.outputs.fmt-packages }}
@@ -148,6 +139,9 @@ jobs:
     if: needs.setup.outputs.crates-count != '0'
     name: "clippy #${{ matrix.platform }} ${{ matrix.rust_version }}"
     runs-on: ${{ matrix.platform }}
+    permissions:
+      id-token: write
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -172,15 +166,9 @@ jobs:
           rustup install "$VERSION"
           rustup component add clippy --toolchain "$VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-      - name: Cache [rust]
-        id: rust-cache
-        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
-        with:
-          cache-targets: true # cache build artifacts
-          cache-bin: true # cache the ~/.cargo/bin directory
-          shared-key: clippy-${{ matrix.rust_version }}
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      - run: echo "rust-cache ${{ steps.rust-cache.outputs.cache-hit == 'true' && 'HIT' || 'MISS' }}"
+      - name: sccache
+        id: sccache
+        uses: ./.github/actions/setup-sccache
       - name: Run clippy on ${{ matrix.platform }} ${{ matrix.rust_version }}
         shell: bash
         env:
@@ -202,24 +190,25 @@ jobs:
             # shellcheck disable=SC2086
             cargo clippy $CLIPPY_PACKAGES --all-targets --all-features --keep-going -- -D warnings
           fi
+      - name: sccache statistics
+        if: always() && steps.sccache.outputs.enabled == 'true'
+        shell: bash
+        run: sccache --show-stats
 
   workspace-deps:
     needs: changes
     if: github.event_name != 'pull_request' || needs.changes.outputs.manifests == 'true'
     runs-on: ubuntu-latest
     name: "Workspace dependency declarations"
+    permissions:
+      id-token: write
+      contents: read
     steps:
       - name: Checkout sources
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
-      - name: Cache [rust]
-        id: rust-cache
-        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
-        with:
-          workspaces: .github/actions
-          cache-targets: true # cache build artifacts
-          shared-key: workspace-deps-lint
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      - run: echo "rust-cache ${{ steps.rust-cache.outputs.cache-hit == 'true' && 'HIT' || 'MISS' }}"
+      - name: sccache
+        id: sccache
+        uses: ./.github/actions/setup-sccache
       # The helper crates under .github/actions pin their own stable toolchain.
       - name: Build the dependency linter
         working-directory: .github/actions
@@ -240,6 +229,9 @@ jobs:
       contains(github.event.pull_request.labels.*.name, 'run-all-tests')
     runs-on: ubuntu-latest
     name: "CI helper crates (fmt, clippy, test)"
+    permissions:
+      id-token: write
+      contents: read
     env:
       CARGO_TERM_COLOR: always
       CARGO_INCREMENTAL: 0
@@ -251,17 +243,9 @@ jobs:
       - name: Read nightly version from nightly-toolchain.toml
         id: nightly-version
         run: echo "version=$(grep -Po '^channel = "\K[^"]+' nightly-toolchain.toml)" >> $GITHUB_OUTPUT
-      - name: Cache [rust]
-        id: rust-cache
-        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
-        with:
-          workspaces: .github/actions
-          # We expect CI executables to be small and reasonably fast to
-          # compile. Let's not pollute the cache for now.
-          cache-targets: false
-          shared-key: ci-helpers
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      - run: echo "rust-cache ${{ steps.rust-cache.outputs.cache-hit == 'true' && 'HIT' || 'MISS' }}"
+      - name: sccache
+        id: sccache
+        uses: ./.github/actions/setup-sccache
       # The helper crates under .github/actions form their own workspace, which
       # is invisible to the root-workspace change report of the `setup` job.
       #
@@ -421,3 +405,46 @@ jobs:
           experimental_checks: "notowned"
           # The repository path in which CODEOWNERS file should be validated."
           repository_path: "."
+
+  cargo-doc-lints:
+    needs: setup
+    name: "cargo doc lints #${{ matrix.platform }}"
+    runs-on: ${{ matrix.platform }}
+    permissions:
+      id-token: write
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [windows-latest, ubuntu-latest, macos-15]
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+        with:
+          submodules: recursive
+      - name: Install toolchain and cargo doc
+        id: install-toolchain
+        shell: bash
+        run: |
+          rustup set profile minimal
+          rustup install
+          rustup component add rust-docs
+      # aws-lc-fips-sys (enabled by `--all-features` via `fips`) needs Go to build
+      - name: Install Go (macOS and Linux)
+        if: runner.os == 'macOS' || runner.os == 'Linux'
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version: 'stable'
+          cache: false
+      - name: sccache
+        id: sccache
+        uses: ./.github/actions/setup-sccache
+      - name: Run cargo doc on ${{ matrix.platform }}
+        shell: bash
+        run: |
+          RUSTDOCFLAGS='-D warnings' cargo doc --all-features --keep-going
+          RUSTDOCFLAGS='-D warnings' cargo doc --keep-going
+      - name: sccache statistics
+        if: always() && steps.sccache.outputs.enabled == 'true'
+        shell: bash
+        run: sccache --show-stats

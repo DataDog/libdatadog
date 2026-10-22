@@ -20,9 +20,8 @@ mod linux {
         Ok(mfd)
     }
 
-    use crate::TRAMPOLINE_BIN;
     pub(crate) fn write_trampoline() -> anyhow::Result<memfd::Memfd> {
-        write_memfd("spawn_worker_trampoline", TRAMPOLINE_BIN)
+        write_memfd("spawn_worker_trampoline", &super::super::trampoline_bin())
     }
 }
 
@@ -632,7 +631,7 @@ impl SpawnWorker {
             }
             SpawnMethod::Exec => {
                 let path = CString::new(
-                    write_to_tmp_file(crate::TRAMPOLINE_BIN)?
+                    write_to_tmp_file(&super::trampoline_bin())?
                         .into_temp_path()
                         .keep()? // ensure the file is not auto cleaned in parent process
                         .as_os_str()

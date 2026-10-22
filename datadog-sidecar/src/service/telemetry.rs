@@ -1,10 +1,11 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::service::{InstanceId, RuntimeMetadata, SidecarAction, SidecarServer};
-use anyhow::{Result, anyhow};
+use crate::service::{
+    ConnectionSessionHandle, InstanceId, RuntimeMetadata, SidecarAction, SidecarServer,
+};
+use anyhow::Result;
 use libdd_common::MutexExt;
-use std::sync::OnceLock;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
@@ -17,7 +18,7 @@ use std::ffi::CString;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 use tokio::task::JoinHandle;
 use zwohash::ZwoHasher;
@@ -27,7 +28,6 @@ use libdd_common::tag::Tag;
 use libdd_telemetry::worker::TelemetryWorkerBuilder;
 use serde::{Deserialize, Serialize};
 use std::ops::Sub;
-use std::sync::LazyLock;
 use std::time::SystemTime;
 
 use libdd_telemetry::config::Config;
@@ -44,7 +44,8 @@ use tokio::time::{Instant as TokioInstant, sleep, sleep_until};
 
 #[derive(Debug)]
 pub struct InternalTelemetryActions {
-    pub instance_id: InstanceId,
+    /// The connection whose session configuration the actions are submitted with.
+    pub session: ConnectionSessionHandle,
     pub service_name: String,
     pub env_name: String,
     pub actions: Vec<InternalTelemetryAction>,
@@ -70,13 +71,13 @@ impl InProcessTelemetryClientFactory {
 
     pub fn create_client(
         &self,
-        instance_id: InstanceId,
+        session: ConnectionSessionHandle,
         service_name: String,
         env_name: String,
     ) -> InProcessTelemetryClient {
         InProcessTelemetryClient {
             sender: self.sender.clone(),
-            instance_id,
+            session,
             service_name,
             env_name,
         }
@@ -86,11 +87,11 @@ impl InProcessTelemetryClientFactory {
 /// A telemetry submission route bound to one logical client and application.
 ///
 /// The cached telemetry worker is deliberately resolved by the receiver for every batch so this
-/// handle remains valid across cache eviction, worker replacement, and delayed session setup.
+/// handle remains valid across cache eviction, worker replacement, and delayed connection setup.
 #[derive(Clone)]
 pub struct InProcessTelemetryClient {
     sender: mpsc::Sender<InternalTelemetryActions>,
-    instance_id: InstanceId,
+    session: ConnectionSessionHandle,
     service_name: String,
     env_name: String,
 }
@@ -99,7 +100,7 @@ impl InProcessTelemetryClient {
     pub fn with_new_service_env(&self, service_name: String, env_name: String) -> Self {
         Self {
             sender: self.sender.clone(),
-            instance_id: self.instance_id.clone(),
+            session: self.session.clone(),
             service_name,
             env_name,
         }
@@ -108,7 +109,7 @@ impl InProcessTelemetryClient {
     pub fn submit(&self, action: InternalTelemetryAction) -> Result<(), String> {
         self.sender
             .try_send(InternalTelemetryActions {
-                instance_id: self.instance_id.clone(),
+                session: self.session.clone(),
                 service_name: self.service_name.clone(),
                 env_name: self.env_name.clone(),
                 actions: vec![action],
@@ -273,16 +274,17 @@ impl TelemetryBatch {
     ) -> Option<Arc<Mutex<Option<TelemetryCachedClient>>>> {
         match self {
             TelemetryBatch::Fresh(a) => {
-                get_telemetry_client(sidecar, &a.instance_id, &a.service_name, &a.env_name)
+                get_telemetry_client(sidecar, &a.session, &a.service_name, &a.env_name)
             }
             TelemetryBatch::Deferred(d) => {
                 let (service_name, env_name) = &d.key;
-                let mut tried_sessions = HashSet::new();
+                let mut tried_sessions: Vec<&ConnectionSessionHandle> = vec![];
                 for b in &d.actions {
-                    if tried_sessions.insert(b.instance_id.session_id.as_str()) {
+                    if !tried_sessions.iter().any(|s| s.ptr_eq(&b.session)) {
+                        tried_sessions.push(&b.session);
                         // repeated calls to get_existing_client could be avoided
                         if let Some(client) =
-                            get_telemetry_client(sidecar, &b.instance_id, service_name, env_name)
+                            get_telemetry_client(sidecar, &b.session, service_name, env_name)
                         {
                             return Some(client);
                         }
@@ -371,12 +373,22 @@ struct PerClientTelemetryBatch {
 
 type ComposerCache = HashMap<PathBuf, (SystemTime, Arc<Vec<data::Dependency>>)>;
 
-static COMPOSER_CACHE: LazyLock<tokio::sync::Mutex<ComposerCache>> =
+// Only replaced by the fork hook, before the child starts any sidecar work.
+static mut COMPOSER_CACHE: LazyLock<tokio::sync::Mutex<ComposerCache>> =
     LazyLock::new(|| tokio::sync::Mutex::new(Default::default()));
 
 static LAST_CACHE_CLEAN: AtomicU64 = AtomicU64::new(0);
 
-static TELEMETRY_ACTION_SENDER: OnceLock<mpsc::Sender<InternalTelemetryActions>> = OnceLock::new();
+#[cfg(unix)]
+pub(crate) unsafe fn clear_inherited_state() {
+    // SAFETY: Abandon the old mutex: it may be locked by a thread that did not survive fork.
+    unsafe {
+        (&raw mut COMPOSER_CACHE).write(LazyLock::new(|| {
+            tokio::sync::Mutex::new(Default::default())
+        }));
+    }
+    LAST_CACHE_CLEAN.store(0, Ordering::Relaxed);
+}
 
 #[serde_as]
 #[derive(Deserialize)]
@@ -392,7 +404,7 @@ pub struct TelemetryCachedEntry {
 
 pub struct TelemetryCachedClient {
     pub worker: TelemetryWorkerHandle,
-    pub shm_writer: OneWayShmWriter<NamedShmHandle>,
+    pub shm_writer: Option<OneWayShmWriter<NamedShmHandle>>,
     pub telemetry_metrics: HashMap<String, ContextKey>,
     pub handle: Option<JoinHandle<()>>,
     pub shared: TelemetryCachedClientShmData,
@@ -454,8 +466,15 @@ impl TelemetryCachedClient {
         let client = Self {
             worker: handle,
             shm_writer: {
-                #[allow(clippy::unwrap_used)]
-                OneWayShmWriter::<NamedShmHandle>::new(path_for_telemetry(service, env)).unwrap()
+                let path = path_for_telemetry(service, env);
+                OneWayShmWriter::<NamedShmHandle>::new(path.clone())
+                    .inspect_err(|e| {
+                        warn!(
+                            "Could not create the telemetry cache at {}: {e}. Continuing without it.",
+                            path.to_string_lossy()
+                        )
+                    })
+                    .ok()
             },
             shared: TelemetryCachedClientShmData::default(),
             telemetry_metrics: Default::default(),
@@ -467,8 +486,11 @@ impl TelemetryCachedClient {
     }
 
     pub fn write_shm_file(&self) {
+        let Some(shm_writer) = &self.shm_writer else {
+            return;
+        };
         if let Ok(buf) = bincode::serialize(&self.shared) {
-            self.shm_writer.write(&buf);
+            shm_writer.write(&buf);
         } else {
             warn!("Failed to serialize telemetry data for shared memory");
         }
@@ -539,7 +561,8 @@ impl TelemetryCachedClient {
     pub fn extract_composer_telemetry(path: PathBuf) -> ManualFuture<Arc<Vec<data::Dependency>>> {
         let (deps, completer) = ManualFuture::new();
         tokio::spawn(async {
-            let mut cache = COMPOSER_CACHE.lock().await;
+            // SAFETY: global which isn't &mut-accessed outside of single-threaded stage
+            let mut cache = unsafe { &*std::ptr::addr_of!(COMPOSER_CACHE) }.lock().await;
             // Worker paths need constrained opens in thread mode. Use one handle so the timestamp
             // and contents come from the same file.
             let opened = async {
@@ -617,7 +640,9 @@ impl TelemetryCachedClient {
 
 impl Drop for TelemetryCachedClient {
     fn drop(&mut self) {
-        self.shm_writer.write(&[]);
+        if let Some(shm_writer) = &self.shm_writer {
+            shm_writer.write(&[]);
+        }
     }
 }
 
@@ -767,29 +792,17 @@ pub fn path_for_telemetry(service: &str, env: &str) -> CString {
     CString::new(path).unwrap()
 }
 
-pub fn get_telemetry_action_sender() -> Result<mpsc::Sender<InternalTelemetryActions>> {
-    TELEMETRY_ACTION_SENDER
-        .get()
-        .cloned()
-        .ok_or_else(|| anyhow!("Telemetry action sender not initialized"))
-}
-
 pub(crate) fn init_telemetry_sender() -> (
     InProcessTelemetryClientFactory,
-    Option<mpsc::Receiver<InternalTelemetryActions>>,
+    mpsc::Receiver<InternalTelemetryActions>,
 ) {
     let (tx, rx) = mpsc::channel(1000);
-    if TELEMETRY_ACTION_SENDER.set(tx.clone()).is_err() {
-        warn!("Telemetry action sender already initialized");
-        let sender = TELEMETRY_ACTION_SENDER.get().cloned().unwrap_or(tx);
-        return (InProcessTelemetryClientFactory::new(sender), None);
-    }
-    (InProcessTelemetryClientFactory::new(tx), Some(rx))
+    (InProcessTelemetryClientFactory::new(tx), rx)
 }
 
 fn get_telemetry_client(
     sidecar: &SidecarServer,
-    instance_id: &InstanceId,
+    session: &ConnectionSessionHandle,
     service_name: &str,
     env_name: &str,
 ) -> Option<Arc<Mutex<Option<TelemetryCachedClient>>>> {
@@ -800,29 +813,16 @@ fn get_telemetry_client(
         return Some(existing);
     }
 
-    let session = sidecar.get_session(&instance_id.session_id);
-    let trace_config = session.get_trace_config();
-    let runtime_meta = RuntimeMetadata::new(
-        trace_config.language.as_str(),
-        trace_config.language_version.as_str(),
-        trace_config.tracer_version.as_str(),
-    );
-
-    let session_config = session.session_config.lock_or_panic().as_ref().cloned();
-    let Some(session_config) = session_config else {
-        // Session config not yet available (need to wait for set_session_config IPC)
-        return None;
-    };
-
-    let process_tags = session.process_tags_with_svc_source();
-
+    // Not yet available if the connection has not been configured yet.
+    let session = session.load()?;
+    let session_config = session.telemetry_config.clone();
     Some(sidecar.telemetry_clients.get_or_create(
         service_name,
         env_name,
-        instance_id,
-        &runtime_meta,
+        &session.instance_id,
+        &session.runtime_metadata(),
         move || session_config,
-        process_tags,
+        session.process_tags_with_svc_source(),
     ))
 }
 
@@ -831,6 +831,72 @@ mod tests {
     use super::*;
     use libdd_ipc::one_way_shared_memory::{OneWayShmReader, open_named_shm};
     use libdd_telemetry::worker::LifecycleAction;
+
+    #[test]
+    #[cfg(unix)]
+    #[cfg_attr(miri, ignore)]
+    fn fork_cleanup_does_not_wait_for_the_old_composer_cache() {
+        const CHILD: &str = "DD_TEST_COMPOSER_FORK_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "service::telemetry::tests::fork_cleanup_does_not_wait_for_the_old_composer_cache",
+                ])
+                .env(CHILD, "1")
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{output:?}");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("installed.json");
+        std::fs::write(
+            &path,
+            br#"{"packages":[{"name":"test/package","version":"1.0.0"}]}"#,
+        )
+        .unwrap();
+        let mut held = unsafe { &*std::ptr::addr_of!(COMPOSER_CACHE) }.blocking_lock();
+        held.insert(path.clone(), (SystemTime::UNIX_EPOCH, Arc::new(vec![])));
+        let pid = unsafe { libc::fork() };
+        assert!(pid >= 0, "fork failed");
+        if pid == 0 {
+            unsafe { libc::alarm(10) };
+            // Do not use or drop an inherited guard after replacing its mutex.
+            std::mem::forget(held);
+            let result = std::panic::catch_unwind(|| {
+                unsafe { clear_inherited_state() };
+                assert!(
+                    unsafe { &*std::ptr::addr_of!(COMPOSER_CACHE) }
+                        .try_lock()
+                        .unwrap()
+                        .is_empty()
+                );
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap()
+                    .block_on(async {
+                        let packages =
+                            TelemetryCachedClient::extract_composer_telemetry(path).await;
+                        assert_eq!(packages.len(), 1);
+                        assert_eq!(packages[0].name, "test/package");
+                    });
+            });
+            unsafe { libc::_exit(if result.is_ok() { 0 } else { 1 }) };
+        }
+        let mut status = 0;
+        assert_eq!(unsafe { libc::waitpid(pid, &mut status, 0) }, pid);
+        assert!(libc::WIFEXITED(status), "child hung or crashed: {status}");
+        assert_eq!(libc::WEXITSTATUS(status), 0);
+        assert!(held.get(&path).unwrap().1.is_empty());
+        drop(held);
+        assert!(
+            unsafe { &*std::ptr::addr_of!(COMPOSER_CACHE) }
+                .try_lock()
+                .is_ok()
+        );
+    }
 
     #[test]
     fn shm_paths_distinguish_services_and_environments() {
@@ -990,8 +1056,9 @@ mod tests {
     fn in_process_client_keeps_instance_and_rebinds_application() {
         let (sender, mut receiver) = mpsc::channel(2);
         let submitter = InProcessTelemetryClientFactory::new(sender);
+        let session = ConnectionSessionHandle::default();
         let client = submitter.create_client(
-            InstanceId::new("session", "runtime"),
+            session.clone(),
             "service-a".to_string(),
             "env-a".to_string(),
         );
@@ -1004,7 +1071,7 @@ mod tests {
         let first = receiver
             .try_recv()
             .expect("first action should be available");
-        assert_eq!(first.instance_id, InstanceId::new("session", "runtime"));
+        assert!(first.session.ptr_eq(&session));
         assert_eq!(first.service_name, "service-a");
         assert_eq!(first.env_name, "env-a");
 
@@ -1017,7 +1084,7 @@ mod tests {
         let second = receiver
             .try_recv()
             .expect("second action should be available");
-        assert_eq!(second.instance_id, InstanceId::new("session", "runtime"));
+        assert!(second.session.ptr_eq(&session));
         assert_eq!(second.service_name, "service-b");
         assert_eq!(second.env_name, "env-b");
     }

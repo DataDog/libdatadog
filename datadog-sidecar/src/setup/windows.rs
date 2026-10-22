@@ -81,25 +81,29 @@ mod tests {
 
     pub fn basic_liaison_connection_test<T>(liaison: &T) -> Result<(), anyhow::Error>
     where
-        T: Liaison,
+        T: Liaison + Sync,
     {
         {
             let listener: SeqpacketListener = liaison.attempt_listen().unwrap().unwrap();
             // can't listen twice when some listener is active
             assert!(liaison.attempt_listen().unwrap().is_none());
 
-            // try_accept() must run concurrently with connect_to_server() because connect()
-            // blocks reading the 4-byte PID handshake that try_accept() writes after accepting.
-            let srv_thread = std::thread::spawn(move || listener.try_accept().unwrap());
-            let client: SeqpacketConn = liaison.connect_to_server().unwrap();
-            let srv: SeqpacketConn = srv_thread.join().unwrap();
+            // connect_to_server() does not return until the listener accepts the pipe and sends
+            // its PID, so run the blocking client while awaiting the accept.
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .build()
+                .unwrap();
+            let (client, srv): (SeqpacketConn, SeqpacketConn) = std::thread::scope(|scope| {
+                let client_thread = scope.spawn(|| liaison.connect_to_server().unwrap());
+                let srv = runtime.block_on(listener.accept_async()).unwrap();
+                (client_thread.join().unwrap(), srv)
+            });
             client.send_raw_blocking(vec![255], &[]).unwrap();
             let mut buf = vec![0u8; libdd_ipc::max_message_size() + libdd_ipc::HANDLE_SUFFIX_SIZE];
             let (n, _) = srv.recv_raw_blocking(&mut buf).unwrap();
             assert_eq!(n, 1);
             assert_eq!(buf[0], 255);
             drop(client);
-            // listener was moved into srv_thread and is dropped when the thread completes
         }
 
         // we should be able to open a new listener now

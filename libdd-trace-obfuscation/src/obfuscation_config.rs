@@ -1,6 +1,7 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use libdd_trace_protobuf::deserializers::deserialize_null_into_default;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
@@ -35,6 +36,7 @@ impl Default for MemcachedConfig {
 pub struct CreditCardConfig {
     pub enabled: bool,
     pub luhn: bool,
+    #[serde(deserialize_with = "deserialize_null_into_default")]
     pub keep_values: HashSet<String>,
 }
 
@@ -61,6 +63,7 @@ pub struct JsonObfuscatorConfig {
     /// not be obfuscated.
     // Accept both `/info`'s `keep_keys` and the Agent config's `keep_values`.
     #[serde(alias = "keep_values")]
+    #[serde(deserialize_with = "deserialize_null_into_default")]
     pub keep_keys: HashSet<String>,
     /// `transform_keys` will specify a set of keys whose string values are passed to the
     /// transform callback given to [`JsonObfuscator::obfuscate_with`] or

@@ -17,12 +17,12 @@ async-trait.workspace = true
 http = { workspace = true, features = ["std"] }
 prost = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["sync", "time"] }
-libdd-capabilities = { version = "4.0.0", path = "../libdd-capabilities" }
-libdd-capabilities-impl = { version = "6.0.0", path = "../libdd-capabilities-impl", default-features = false }
-libdd-common = { version = "7.0.0", path = "../libdd-common", default-features = false }
-libdd-shared-runtime = { version = "5.0.0", path = "../libdd-shared-runtime", default-features = false }
-libdd-trace-protobuf = { version = "5.0.1", path = "../libdd-trace-protobuf" }
-libdd-trace-utils = { version = "13.0.0", path = "../libdd-trace-utils", default-features = false }
+libdd-capabilities = { version = "4.0.1", path = "../libdd-capabilities" }
+libdd-capabilities-impl = { version = "7.0.0", path = "../libdd-capabilities-impl", default-features = false }
+libdd-common = { version = "8.0.0", path = "../libdd-common", default-features = false }
+libdd-shared-runtime = { version = "6.0.0", path = "../libdd-shared-runtime", default-features = false }
+libdd-trace-protobuf = { version = "5.1.0", path = "../libdd-trace-protobuf" }
+libdd-trace-utils = { version = "14.0.0", path = "../libdd-trace-utils", default-features = false }
 
 [features]
 default = ["http"]
@@ -36,4 +36,4 @@ http = [
 test-utils = []
 
 [dev-dependencies]
-libdd-shared-runtime = { version = "5.0.0", path = "../libdd-shared-runtime" }
+libdd-shared-runtime = { version = "6.0.0", path = "../libdd-shared-runtime" }

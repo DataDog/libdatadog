@@ -10,6 +10,7 @@
 
 use super::OtlpResourceInfo;
 use super::mapper::{MAX_ATTRIBUTES_PER_SPAN, build_resource, proto_kv};
+use crate::span::trace_utils::SDK_OTLP_EXPORT_KEY;
 use crate::span::v1::{AttributeValue, Span, SpanEvent, SpanLink, TraceChunk};
 use crate::span::{SPAN_LINK_FLAGS_SET_SENTINEL, TraceData};
 use std::borrow::Borrow;
@@ -43,7 +44,7 @@ fn attr_value_to_proto<T: TraceData>(value: &AttributeValue<T>) -> ProtoValue {
         AttributeValue::Int(i) => ProtoValue::IntValue(*i),
         AttributeValue::Float(f) => ProtoValue::DoubleValue(*f),
         AttributeValue::Bytes(b) => ProtoValue::BytesValue(b.borrow().to_vec()),
-        AttributeValue::List(items) => ProtoValue::ArrayValue(ProtoArrayValue {
+        AttributeValue::Array(items) => ProtoValue::ArrayValue(ProtoArrayValue {
             values: items
                 .iter()
                 .map(|it| ProtoAnyValue {
@@ -51,7 +52,7 @@ fn attr_value_to_proto<T: TraceData>(value: &AttributeValue<T>) -> ProtoValue {
                 })
                 .collect(),
         }),
-        AttributeValue::KeyValue(map) => ProtoValue::KvlistValue(ProtoKvList {
+        AttributeValue::KeyValueList(map) => ProtoValue::KvlistValue(ProtoKvList {
             values: map
                 .defensive_dedup()
                 .iter()
@@ -189,6 +190,8 @@ fn collect_span_attributes_v1<T: TraceData>(
             "_dd.origin" => has_origin,
             "_dd.p.dm" => has_sampling_mechanism,
             "_sampling_priority_v1" => has_sampling_priority,
+            // Always stripped: the resource-level `_dd.sdk.otlp_export: "true"` is authoritative.
+            SDK_OTLP_EXPORT_KEY => true,
             _ => false,
         };
         !(promoted_and_set || (otel_trace_semantics_enabled && ERROR_MESSAGE_KEYS.contains(key)))
@@ -412,7 +415,7 @@ pub fn map_traces_to_otlp_v1<T: TraceData>(
     resource_info: &OtlpResourceInfo,
     otel_trace_semantics_enabled: bool,
 ) -> ProtoReq {
-    let resource = build_resource(resource_info);
+    let resource = build_resource(resource_info, otel_trace_semantics_enabled);
     // Pre-size to the total span count so the per-span push loop never reallocates.
     let total_spans: usize = trace_chunks.iter().map(|chunk| chunk.spans.len()).sum();
     let mut all_spans: Vec<ProtoSpan> = Vec::with_capacity(total_spans);
@@ -662,7 +665,7 @@ mod tests_v1 {
         let mut span = minimal_span();
         span.attributes.insert(
             bs("list"),
-            AttributeValue::List(vec![AttributeValue::Int(1), AttributeValue::Int(2)]),
+            AttributeValue::Array(vec![AttributeValue::Int(1), AttributeValue::Int(2)]),
         );
         let chunk = minimal_chunk([1; 16], span);
         let req = map_traces_to_otlp_v1(&[chunk], &OtlpResourceInfo::default(), false);
@@ -684,7 +687,7 @@ mod tests_v1 {
         let mut nested = crate::span::vec_map::VecMap::new();
         nested.insert(bs("nested_key"), AttributeValue::String(bs("nested_val")));
         span.attributes
-            .insert(bs("kv"), AttributeValue::KeyValue(nested));
+            .insert(bs("kv"), AttributeValue::KeyValueList(nested));
         let chunk = minimal_chunk([1; 16], span);
         let req = map_traces_to_otlp_v1(&[chunk], &OtlpResourceInfo::default(), false);
         let s = &req.resource_spans[0].scope_spans[0].spans[0];
@@ -796,6 +799,126 @@ mod tests_v1 {
             status.message, "boom",
             "error message still promoted to Status"
         );
+    }
+
+    #[test]
+    fn payload_level_metadata_survives_onto_otlp_resource() {
+        // Payload-level fields (env, service, app_version, language, tracer_version) come from
+        // `OtlpResourceInfo`, built once from the exporter's own metadata independently of the
+        // trace chunks — so they aren't lost even though v1 chunks/spans don't carry them
+        // themselves. Note: `hostname` is not emitted here; that's a pre-existing gap shared with
+        // the v0.4 path (`build_resource` is common to both), not specific to v1.
+        let resource_info = OtlpResourceInfo {
+            env: "prod".to_string(),
+            service: "my-service".to_string(),
+            app_version: "1.2.3".to_string(),
+            language: "rust".to_string(),
+            tracer_version: "9.9.9".to_string(),
+            ..Default::default()
+        };
+        let chunk = minimal_chunk([1; 16], minimal_span());
+        let req = map_traces_to_otlp_v1(&[chunk], &resource_info, false);
+        let resource_attrs = &req.resource_spans[0].resource.as_ref().unwrap().attributes;
+        let str_attr = |key: &str| {
+            resource_attrs
+                .iter()
+                .find(|a| a.key == key)
+                .and_then(|a| a.value.as_ref())
+                .and_then(|v| v.value.as_ref())
+                .map(|v| match v {
+                    PV::StringValue(s) => s.as_str(),
+                    other => panic!("expected stringValue for {key}, got {other:?}"),
+                })
+        };
+        assert_eq!(str_attr("deployment.environment.name"), Some("prod"));
+        assert_eq!(str_attr("service.name"), Some("my-service"));
+        assert_eq!(str_attr("service.version"), Some("1.2.3"));
+        assert_eq!(str_attr("telemetry.sdk.language"), Some("rust"));
+        assert_eq!(str_attr("telemetry.sdk.version"), Some("9.9.9"));
+    }
+
+    #[test]
+    fn sdk_adoption_resource_attrs_and_span_marker_stripped() {
+        for (otel_semantics, expected_semantics) in [(false, "datadog"), (true, "otel")] {
+            let mut span = minimal_span();
+            span.attributes
+                .insert(bs(SDK_OTLP_EXPORT_KEY), AttributeValue::String(bs("false")));
+            span.attributes
+                .insert(bs("http.method"), AttributeValue::String(bs("GET")));
+            let mut chunk = minimal_chunk([1; 16], span);
+            // A chunk-level marker must be stripped too.
+            chunk
+                .attributes
+                .insert(bs(SDK_OTLP_EXPORT_KEY), AttributeValue::String(bs("false")));
+            let req = map_traces_to_otlp_v1(&[chunk], &OtlpResourceInfo::default(), otel_semantics);
+            let resource_attr = |key: &str| {
+                req.resource_spans[0]
+                    .resource
+                    .as_ref()
+                    .unwrap()
+                    .attributes
+                    .iter()
+                    .find(|a| a.key == key)
+                    .map(|kv| match kv.value.as_ref().unwrap().value {
+                        Some(PV::StringValue(ref v)) => v.clone(),
+                        ref other => panic!("expected string, got {other:?}"),
+                    })
+            };
+            assert_eq!(
+                resource_attr("_dd.sdk.otlp_export").as_deref(),
+                Some("true")
+            );
+            assert_eq!(
+                resource_attr("datadog.sdk.semantics").as_deref(),
+                Some(expected_semantics)
+            );
+            let s = &req.resource_spans[0].scope_spans[0].spans[0];
+            assert!(
+                !s.attributes.iter().any(|a| a.key == SDK_OTLP_EXPORT_KEY),
+                "span/chunk-level _dd.sdk.otlp_export must be stripped"
+            );
+            assert!(s.attributes.iter().any(|a| a.key == "http.method"));
+            assert_eq!(s.dropped_attributes_count, 0);
+        }
+    }
+
+    #[test]
+    fn chunk_only_marker_stripped_and_not_counted_as_dropped() {
+        // When the span doesn't carry the marker, the chunk-level copy survives the merge and
+        // must be stripped by the eligibility filter itself, without skewing the dropped count.
+        for otel_semantics in [false, true] {
+            let baseline = {
+                let chunk = minimal_chunk([1; 16], minimal_span());
+                let req =
+                    map_traces_to_otlp_v1(&[chunk], &OtlpResourceInfo::default(), otel_semantics);
+                req.resource_spans[0].scope_spans[0].spans[0]
+                    .attributes
+                    .len()
+            };
+            let filler = MAX_ATTRIBUTES_PER_SPAN + 5;
+
+            let mut span = minimal_span();
+            for i in 0..filler {
+                span.attributes
+                    .insert(bs(&format!("attr.{i}")), AttributeValue::String(bs("v")));
+            }
+            let mut chunk = minimal_chunk([1; 16], span);
+            chunk
+                .attributes
+                .insert(bs(SDK_OTLP_EXPORT_KEY), AttributeValue::String(bs("false")));
+            let req = map_traces_to_otlp_v1(&[chunk], &OtlpResourceInfo::default(), otel_semantics);
+            let s = &req.resource_spans[0].scope_spans[0].spans[0];
+
+            assert!(
+                !s.attributes.iter().any(|a| a.key == SDK_OTLP_EXPORT_KEY),
+                "chunk-level _dd.sdk.otlp_export must be stripped"
+            );
+            assert_eq!(s.attributes.len(), MAX_ATTRIBUTES_PER_SPAN);
+            assert_eq!(
+                s.dropped_attributes_count as usize,
+                baseline + filler - MAX_ATTRIBUTES_PER_SPAN
+            );
+        }
     }
 
     #[test]

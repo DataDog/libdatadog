@@ -42,6 +42,10 @@ pub struct MainLoopConfig {
     /// spawned by a PHP process; in-process listeners must supply
     /// [`ConnectionAuthorizer::for_in_process_listener`] instead.
     pub authorizer: ConnectionAuthorizer,
+    /// Whether shutdown waits only for the connections of this process. An in-process listener
+    /// must not hold up the exit of its host for the connections of other processes, like forked
+    /// children: these lose their connection and reconnect to a listener of their own.
+    pub drain_only_own_process: bool,
 }
 
 impl Default for MainLoopConfig {
@@ -51,6 +55,7 @@ impl Default for MainLoopConfig {
             external_shutdown_rx: None,
             init_shm_eagerly: true,
             authorizer: ConnectionAuthorizer::for_spawned_sidecar(),
+            drain_only_own_process: false,
         }
     }
 }
@@ -105,11 +110,10 @@ where
         });
     }
 
-    if loop_config.init_shm_eagerly {
-        crate::tracer::init_shm_limiters();
-    }
-
     let server = SidecarServer::default();
+    if loop_config.init_shm_eagerly {
+        server.shm_limiters();
+    }
     // Initialize telemetry synchronously so both the in-process helper and FFI callers can enqueue
     // actions before the receiver task gets its first poll.
     let (in_process_telemetry, telemetry_rx) = init_telemetry_sender();
@@ -125,9 +129,7 @@ where
     #[cfg(not(unix))]
     drop(in_process_telemetry);
 
-    if let Some(rx) = telemetry_rx {
-        tokio::spawn(telemetry_action_receiver_task(server.clone(), rx));
-    }
+    tokio::spawn(telemetry_action_receiver_task(server.clone(), telemetry_rx));
 
     let (shutdown_complete_tx, shutdown_complete_rx) = mpsc::channel::<()>(1);
 
@@ -139,6 +141,7 @@ where
     let telemetry_handle = self_telemetry(server.clone(), watchdog_handle);
 
     let authorizer = loop_config.authorizer;
+    let drain_only_own_process = loop_config.drain_only_own_process;
     #[cfg(unix)]
     let defer_shm_init = !loop_config.init_shm_eagerly;
     let listener_result = listener(Box::new({
@@ -162,13 +165,17 @@ where
             #[cfg(unix)]
             if defer_shm_init {
                 setup::thread_listener::initialize_worker(&peer);
+                server.shm_limiters();
             }
 
             let connection = connections.accept();
             tracing::info!("connection accepted");
 
             let server = server.clone();
-            let shutdown_complete_tx = shutdown_complete_tx.clone();
+            // Connections not holding a sender are dropped with the runtime, once the drained
+            // ones are done.
+            let shutdown_complete_tx = (!drain_only_own_process || peer.pid == std::process::id())
+                .then(|| shutdown_complete_tx.clone());
             tokio::spawn(async move {
                 server.accept_connection(socket).await;
                 drop(connection);
@@ -259,6 +266,9 @@ where
     Fut: Future<Output = io::Result<()>>,
     C: Fn() + Sync + Send + 'static,
 {
+    // `console-subscriber` requires Tokio's unstable task tracing support. Cargo's
+    // `--all-features` does not set that compiler cfg, so only initialize the
+    // subscriber when both halves of the opt-in are present.
     #[cfg(all(feature = "tokio-console", tokio_unstable))]
     console_subscriber::init();
 
@@ -374,6 +384,11 @@ pub fn start_or_connect_to_sidecar_with_entrypoint(
     if cfg.pipe_buffer_size > 0 {
         libdd_ipc::platform::set_pipe_buffer_size(cfg.pipe_buffer_size);
     }
+
+    // The pipes and the spawned daemon must belong to the process identity, not to an
+    // impersonated user.
+    #[cfg(windows)]
+    let _identity = libdd_ipc::platform::ProcessIdentityGuard::enter();
 
     let liaison = setup::liaison_for_ipc_mode(cfg.ipc_mode);
 
