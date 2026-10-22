@@ -3097,6 +3097,7 @@ dependencies = [
  "libdd-common",
  "reqwest",
  "rustls",
+ "rustls-platform-verifier",
  "tempfile",
  "thiserror 2.0.17",
  "tokio",

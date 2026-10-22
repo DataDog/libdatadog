@@ -23,6 +23,15 @@ impl super::Backend for ReqwestBackend {
     ) -> Result<Self, HttpClientError> {
         let mut builder = reqwest::Client::builder().timeout(client_config.timeout());
 
+        // Route reqwest HTTPS through the shared TLS configuration so the
+        // compromised-key distrust check and the selected crypto provider apply
+        // (see `crate::tls`). Without this, reqwest would build its own platform
+        // verifier, bypassing the distrust wrapper.
+        #[cfg(any(feature = "https", feature = "fips"))]
+        {
+            builder = builder.tls_backend_preconfigured(crate::tls::build_tls_config()?);
+        }
+
         match transport {
             TransportConfig::Tcp => {}
             #[cfg(unix)]
@@ -147,12 +156,27 @@ fn build_multipart_form(
 }
 
 /// Map a `reqwest::Error` to our `HttpClientError` variants.
+///
+/// The message includes the whole error source chain, since relevant details
+/// (e.g. TLS rejection reasons) only appear in nested sources.
 fn map_reqwest_error(e: reqwest::Error) -> HttpClientError {
     if e.is_timeout() {
         HttpClientError::TimedOut
     } else if e.is_connect() {
-        HttpClientError::ConnectionFailed(e.to_string())
+        HttpClientError::ConnectionFailed(error_chain(&e))
     } else {
-        HttpClientError::IoError(e.to_string())
+        HttpClientError::IoError(error_chain(&e))
     }
+}
+
+/// Renders an error together with its whole source chain.
+fn error_chain(error: &dyn std::error::Error) -> String {
+    let mut chain = error.to_string();
+    let mut source = error.source();
+    while let Some(error) = source {
+        chain.push_str(": ");
+        chain.push_str(&error.to_string());
+        source = error.source();
+    }
+    chain
 }
