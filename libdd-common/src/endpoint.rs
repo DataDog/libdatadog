@@ -308,13 +308,12 @@ impl Endpoint {
             .no_proxy();
 
         let request_url = match self.url.scheme_str() {
-            // HTTP/HTTPS endpoints
-            Some("http") | Some("https") => {
-                // Route reqwest HTTPS through the same TLS configuration as the
-                // hyper connector, so the compromised-key distrust check and the
-                // selected crypto provider apply to both clients. Without this,
-                // reqwest would build its own platform verifier, bypassing the
-                // distrust wrapper.
+            // HTTPS endpoints: route reqwest through the same TLS configuration
+            // as the hyper connector, so the compromised-key distrust check and
+            // the selected crypto provider apply to both clients. Without this,
+            // reqwest would build its own platform verifier, bypassing the
+            // distrust wrapper.
+            Some("https") => {
                 #[cfg(feature = "tls-core")]
                 {
                     builder = builder
@@ -322,6 +321,11 @@ impl Endpoint {
                 }
                 self.url.to_string()
             }
+            // Plain-HTTP endpoints never negotiate TLS, so don't preconfigure a
+            // TLS backend: building the configuration eagerly loads the system
+            // CA roots, which fails in minimal container environments that have
+            // no CA certificates installed.
+            Some("http") => self.url.to_string(),
 
             // File dump endpoint (debugging) - uses platform-specific local transport
             Some("file") => {

@@ -27,8 +27,13 @@ impl super::Backend for ReqwestBackend {
         // compromised-key distrust check and the selected crypto provider apply
         // (see `crate::tls`). Without this, reqwest would build its own platform
         // verifier, bypassing the distrust wrapper.
+        //
+        // Only HTTPS base URLs get the preconfigured TLS backend: building the
+        // configuration eagerly loads the system CA roots, which must not happen
+        // for plain-HTTP clients in minimal environments that have no CA
+        // certificates installed.
         #[cfg(any(feature = "https", feature = "fips"))]
-        {
+        if is_https_url(client_config.base_url()) {
             builder = builder.tls_backend_preconfigured(crate::tls::build_tls_config()?);
         }
 
@@ -153,6 +158,13 @@ fn build_multipart_form(
 
             Ok(form.part(part.name, reqwest_part))
         })
+}
+
+/// Returns whether `url` has an `https` scheme.
+#[cfg(any(feature = "https", feature = "fips"))]
+fn is_https_url(url: &str) -> bool {
+    url.split_once(':')
+        .is_some_and(|(scheme, _)| scheme.eq_ignore_ascii_case("https"))
 }
 
 /// Map a `reqwest::Error` to our `HttpClientError` variants.
