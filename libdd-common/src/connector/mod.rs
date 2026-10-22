@@ -29,11 +29,14 @@ mod conn_stream;
 #[cfg(feature = "http-client")]
 use conn_stream::{ConnStream, ConnStreamError};
 
-// Only the platform-verifier TLS configuration uses the distrust wrapper: with
-// `use_webpki_roots`, the webpki-roots 1.0.10 bundle already excludes the
-// compromised trust anchors.
-#[cfg(all(feature = "tls-core", not(feature = "use_webpki_roots")))]
+#[cfg(any(
+    all(feature = "tls-core", not(feature = "use_webpki_roots")),
+    feature = "tls-distrust"
+))]
 mod certificate_distrust;
+
+#[cfg(feature = "tls-distrust")]
+pub use certificate_distrust::platform_verifier_with_distrust;
 
 #[cfg(feature = "hyper-proxy")]
 mod proxy;

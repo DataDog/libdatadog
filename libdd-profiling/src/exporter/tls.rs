@@ -35,8 +35,6 @@ impl TlsConfig {
     /// On macOS, this is lightweight; the platform verifier defers
     /// Security.framework calls to the first TLS handshake.
     pub fn new() -> Result<Self, rustls::Error> {
-        use rustls_platform_verifier::BuilderVerifierExt;
-
         // Use an explicit CryptoProvider rather than relying on
         // `CryptoProvider::get_default_or_install_from_crate_features()`.
         // Feature unification may enable multiple crypto backends in the same
@@ -45,9 +43,18 @@ impl TlsConfig {
             .cloned()
             .unwrap_or_else(|| std::sync::Arc::new(Self::default_crypto_provider()));
 
+
+        // The platform verifier is a wrapper that checks for compromised-keys
+        // (RUSTSEC-2026-0382).
+        // TODO: Remove when we can bump the minimum `rustls-webpki` to
+        // 0.103.16
+        let verifier =
+            libdd_common::connector::platform_verifier_with_distrust(provider.clone())?;
+
         let config = rustls::ClientConfig::builder_with_provider(provider)
             .with_safe_default_protocol_versions()?
-            .with_platform_verifier()?
+            .dangerous()
+            .with_custom_certificate_verifier(verifier)
             .with_no_client_auth();
         Ok(Self(config))
     }
