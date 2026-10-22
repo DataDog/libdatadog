@@ -22,7 +22,7 @@
 //! attack paths.
 
 use alloc::sync::Arc;
-use std::{collections::HashMap, sync::LazyLock};
+use std::{collections::HashSet, sync::LazyLock};
 
 use rustls::{
     CertificateError, DigitallySignedStruct, DistinguishedName, Error, SignatureScheme,
@@ -35,25 +35,18 @@ use rustls::{
 // Compare public keys to also reject reissued and cross-signed certificates using the same keys.
 // These fixed, complete DER SPKIs have a two-byte SEQUENCE header followed by 118 bytes of
 // contents. See data/distrusted/README.md for provenance and encoding.
-const DISTRUSTED_SPKI_BYTES: &[&[u8; 120]] = &[
-    include_bytes!("data/distrusted/EMDVTLSCAG3B.spki.der"),
-    include_bytes!("data/distrusted/EMDVTLSCAG3C.spki.der"),
-    include_bytes!("data/distrusted/EMEVTLSCAG3B.spki.der"),
-    include_bytes!("data/distrusted/EMEVTLSCAG3C.spki.der"),
-    include_bytes!("data/distrusted/EMOVTLSCAG3B.spki.der"),
-    include_bytes!("data/distrusted/EMOVTLSCAG3C.spki.der"),
-    include_bytes!("data/distrusted/EMOVCSCAG3B.spki.der"),
-    include_bytes!("data/distrusted/EMOVCSCAG3C.spki.der"),
-];
-
-// Indexed blocklist so every presented certificate is checked with a single lookup instead
-// of scanning the list. `LazyLock` is required because a `HashMap` cannot be built in `const`
-// context; the blocklist is fixed at compile time and never grows afterwards.
-static DISTRUSTED_SPKIS: LazyLock<HashMap<&'static [u8], ()>> = LazyLock::new(|| {
-    DISTRUSTED_SPKI_BYTES
-        .iter()
-        .map(|spki| (spki.as_slice(), ()))
-        .collect()
+static DISTRUSTED_SPKIS: LazyLock<HashSet<&'static [u8]>> = LazyLock::new(|| {
+    const DISTRUSTED_SPKI_BYTES: &[&[u8; 120]] = &[
+        include_bytes!("data/distrusted/EMDVTLSCAG3B.spki.der"),
+        include_bytes!("data/distrusted/EMDVTLSCAG3C.spki.der"),
+        include_bytes!("data/distrusted/EMEVTLSCAG3B.spki.der"),
+        include_bytes!("data/distrusted/EMEVTLSCAG3C.spki.der"),
+        include_bytes!("data/distrusted/EMOVTLSCAG3B.spki.der"),
+        include_bytes!("data/distrusted/EMOVTLSCAG3C.spki.der"),
+        include_bytes!("data/distrusted/EMOVCSCAG3B.spki.der"),
+        include_bytes!("data/distrusted/EMOVCSCAG3C.spki.der"),
+    ];
+    HashSet::from_iter(DISTRUSTED_SPKI_BYTES.iter().map(AsRef::as_ref))
 });
 
 /// A [`ServerCertVerifier`] that rejects any certificate chain containing a
@@ -95,7 +88,7 @@ impl ServerCertVerifier for DistrustServerCertVerifier {
     ) -> Result<ServerCertVerified, Error> {
         for cert in core::iter::once(end_entity).chain(intermediates) {
             let spki = ParsedCertificate::try_from(cert)?.subject_public_key_info();
-            if DISTRUSTED_SPKIS.contains_key(spki.as_ref()) {
+            if DISTRUSTED_SPKIS.contains(spki.as_ref()) {
                 return Err(Error::InvalidCertificate(
                     CertificateError::ApplicationVerificationFailure,
                 ));
