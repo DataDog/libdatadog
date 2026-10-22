@@ -60,7 +60,7 @@ pub(super) fn encode_attribute_value<W: RmpWrite, T: TraceData>(
             write_uint8(writer, AnyValueKey::Bytes as u8)?;
             write_bin(writer, b.borrow())?;
         }
-        AttributeValue::List(arr) => {
+        AttributeValue::Array(arr) => {
             // Encoded as a flat array of `[type, value]` pairs.
             write_uint8(writer, AnyValueKey::Array as u8)?;
             write_array_len(writer, arr.len() as u32 * TYPED_VALUE_STRIDE)?;
@@ -68,7 +68,7 @@ pub(super) fn encode_attribute_value<W: RmpWrite, T: TraceData>(
                 encode_attribute_value(writer, v, table)?;
             }
         }
-        AttributeValue::KeyValue(map) => {
+        AttributeValue::KeyValueList(map) => {
             // Encoded as a flat array of `[key, type, value]` triplets — consistent with the
             // top-level attributes map (`encode_attributes_map`).
             write_uint8(writer, AnyValueKey::KeyValueList as u8)?;

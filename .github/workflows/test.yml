@@ -190,6 +190,21 @@ jobs:
               cargo nextest run -p libdd-otel-thread-ctx --no-default-features --features shared-context --profile ci --verbose --no-tests=pass
             fi
           fi
+      - name: "[${{ steps.rust-version.outputs.version}}] CDN transport with each TLS provider"
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          if [[ -z "$PACKAGES" ]] || echo "$PACKAGES" | grep -Eq "libdd-(ffe|common)"; then
+            for provider in https fips; do
+              # Isolate runtime features: unrelated workspace/dev dependencies
+              # must not be what enables the CDN proxy connector.
+              cargo tree -p libdd-ffe --no-default-features --features "cdn,$provider" \
+                --edges normal,build --prefix none --format '{p} {f}' \
+                | grep -E '^libdd-common .*hyper-proxy'
+              cargo nextest run -p libdd-ffe --no-default-features \
+                --features "cdn,$provider" --profile ci --success-output never
+            done
+          fi
       - name: "[${{ steps.rust-version.outputs.version}}] cargo nextest run -p libdd-common --no-default-features --features fips"
         if: runner.os == 'Linux'
         shell: bash
