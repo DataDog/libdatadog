@@ -519,11 +519,9 @@ impl ConnectionSession {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(feature = "tracing")]
     use std::sync::Mutex;
 
     #[test]
-    #[cfg(feature = "tracing")]
     fn invalid_legacy_evp_configuration_is_logged_without_endpoint_details() {
         #[derive(Clone)]
         struct LogBuffer(Arc<Mutex<Vec<u8>>>);

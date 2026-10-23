@@ -33,7 +33,6 @@ use std::ffi::CStr;
 #[unsafe(no_mangle)]
 #[allow(unused)]
 pub extern "C" fn ddog_daemon_entry_point(trampoline_data: &TrampolineData) {
-    #[cfg(feature = "tracing")]
     crate::log::enable_logging().ok();
 
     if let Err(err) = nix::unistd::setsid() {

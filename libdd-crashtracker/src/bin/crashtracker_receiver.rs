@@ -1,7 +1,7 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-#[cfg(not(unix))]
+#[cfg(any(not(unix), not(feature = "receiver")))]
 fn main() {}
 
 #[cfg(unix)]

@@ -207,7 +207,7 @@ impl PartialEq<&str> for BytesString {
 
 impl Debug for BytesString {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.serialize_str(self.as_str())
+        f.write_str(self.as_str())
     }
 }
 

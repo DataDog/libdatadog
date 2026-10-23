@@ -1253,10 +1253,8 @@ impl<
                 return Err(e);
             }
         };
-        let counts = PayloadCounts {
-            chunks: prepared.chunk_count,
-            ..counts
-        };
+        let mut counts = counts;
+        counts.chunks = prepared.chunk_count;
 
         let endpoint = Endpoint {
             url: effective_format.add_path(&self.endpoint.url),
@@ -1474,10 +1472,8 @@ impl<
         // Give the chunks back to `traces` now that encoding is done, letting its `Drop` recycle
         // them into the pool (if any) instead of dropping them outright.
         *traces = std::mem::take(&mut out_payload.chunks);
-        let counts = PayloadCounts {
-            chunks: chunk_count,
-            ..counts
-        };
+        let mut counts = counts;
+        counts.chunks = chunk_count;
 
         let endpoint = Endpoint {
             url: effective_format.add_path(&self.endpoint.url),

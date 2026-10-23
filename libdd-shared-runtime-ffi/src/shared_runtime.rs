@@ -71,6 +71,8 @@ impl Drop for SharedRuntimeFFIError {
     }
 }
 
+// Only used as the fallback of `catch_panic!`, which discards it without the feature.
+#[cfg_attr(not(feature = "catch_panic"), allow(unused_macros))]
 macro_rules! panic_error {
     () => {
         Some(Box::new(SharedRuntimeFFIError::new(
