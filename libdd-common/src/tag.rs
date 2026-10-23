@@ -532,7 +532,21 @@ mod alloc_tests {
     #[test]
     fn borrowed_tag_from_owned_tag() {
         let tag = Tag::new("env", "staging:east").unwrap();
-        assert_eq!(TagRef::from(&tag).parts(), (Some("env"), "staging:east"));
+        let borrowed = TagRef::from(&tag);
+        let (key, value) = borrowed.parts();
+        assert_eq!((key, value), (Some("env"), "staging:east"));
+        assert_eq!(key.unwrap().as_ptr(), tag.as_ref().as_ptr());
+        assert_eq!(borrowed.to_string(), tag.as_ref());
+    }
+
+    #[test]
+    fn borrowed_tag_from_unkeyed_owned_tag() {
+        let tag = Tag::from_value(String::from("staging")).unwrap();
+        let borrowed = TagRef::from(&tag);
+        let (key, value) = borrowed.parts();
+        assert_eq!((key, value), (None, "staging"));
+        assert_eq!(value.as_ptr(), tag.as_ref().as_ptr());
+        assert_eq!(borrowed.to_string(), tag.as_ref());
     }
 
     #[test]

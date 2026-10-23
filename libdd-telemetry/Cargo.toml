@@ -36,7 +36,7 @@ required-features = ["std"]
 
 [features]
 default = ["std", "tracing"]
-alloc = ["dep:serde_json", "dep:thiserror", "libdd-common/alloc", "serde/alloc"]
+alloc = ["dep:serde-json-core", "dep:serde_json", "dep:thiserror", "libdd-common/alloc", "serde/alloc"]
 std = [
     "alloc",
     "dep:anyhow",
@@ -73,7 +73,7 @@ base64 = { workspace = true, features = ["std"], optional = true }
 futures = { workspace = true, optional = true }
 http = { workspace = true, features = ["std"], optional = true }
 serde = { workspace = true, features = ["derive"] }
-serde-json-core.workspace = true
+serde-json-core = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 strum.workspace = true
 strum_macros.workspace = true

@@ -216,9 +216,7 @@ where
     let application = request.application;
     // reqwless accepts a single header slice, so merge the protocol headers
     // and `extra_headers` on the stack.
-    let mut headers = [("", ""); FIXED_HEADERS + MAX_EXTRA_HEADERS];
-    let (fixed, extra) = headers.split_at_mut(FIXED_HEADERS);
-    fixed.copy_from_slice(&[
+    let fixed: [(&str, &str); FIXED_HEADERS] = [
         (
             protocol::REQUEST_TYPE_HEADER,
             protocol::GENERATE_METRICS_REQUEST_TYPE,
@@ -233,7 +231,10 @@ where
             &application.tracer_version,
         ),
         (protocol::CONNECTION_HEADER, protocol::CONNECTION_CLOSE),
-    ]);
+    ];
+    let mut headers = [("", ""); FIXED_HEADERS + MAX_EXTRA_HEADERS];
+    let (protocol_headers, extra) = headers.split_at_mut(FIXED_HEADERS);
+    protocol_headers.copy_from_slice(&fixed);
     extra
         .get_mut(..extra_headers.len())
         .ok_or(Error::TooManyHeaders)?
