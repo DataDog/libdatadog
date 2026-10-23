@@ -23,7 +23,6 @@ Common utilities and foundational components shared across Datadog telemetry lib
 - `azure_app_services`: Azure App Services integration
 - `config`: Configuration utilities
 - `connector`: HTTP/HTTPS connector implementations
-- `cstr`: C string utilities and macros
 - `entity_id`: Container and entity ID detection
 - `error`: Common error types
 - `header`: Datadog HTTP headers
