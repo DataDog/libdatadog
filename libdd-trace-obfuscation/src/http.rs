@@ -246,46 +246,24 @@ fn redact_path_digits(path: &str) -> Option<String> {
     redacted.then(|| segments.join("/"))
 }
 
-/// Whether `prefix` is an RFC 3986 scheme: ALPHA *( ALPHA / DIGIT / "+" / "-" / "." ). At a `:` in
-/// a URL, this is what says whether the `:` is the scheme's.
-fn is_scheme(prefix: &[u8]) -> bool {
-    prefix.first().is_some_and(u8::is_ascii_alphabetic)
-        && prefix[1..]
-            .iter()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'-' | b'.'))
-}
-
-/// Whether a `:` in `region`, a URL up to its query, fails RFC 3986 parsing, which
-/// [`obfuscate_url_string`] answers with `"?"`.
-///
-/// A `:` is legal as a scheme's, as a numeric port's, and in a path segment that is not the first
-/// segment of a relative reference. Anywhere else it fails the parse: `https://example.com:port/x`,
-/// `http://foo:bar.com/x`, `:`.
-fn has_unparsable_colon(region: &str) -> bool {
-    let Some(colon) = region.find(':') else {
-        return false;
-    };
-    let rest = if is_scheme(&region.as_bytes()[..colon]) {
-        &region[colon + 1..]
-    } else if region[..colon].contains('/') {
-        // A ':' behind a path separator sits in a later segment, where RFC 3986 allows it. The
-        // authority check below still applies, because "//" holds a separator too.
-        region
-    } else {
-        // Neither a scheme's nor a later segment's: a relative reference whose first segment holds
-        // a ':' is path-noscheme, which forbids one.
-        return true;
-    };
-    let Some(authority) = rest.strip_prefix("//") else {
-        // No authority, so what is left is a path or an opaque part, and both allow a ':'.
-        return false;
-    };
-    let authority = authority.split('/').next().unwrap_or(authority);
-    // In an authority a ':' introduces the port, which has to be digits, and there is only one.
-    match authority.rsplit_once(':') {
-        Some((host, port)) => host.contains(':') || !port.bytes().all(|b| b.is_ascii_digit()),
-        None => false,
-    }
+/// Whether a byte before the query may make [`obfuscate_url_string`] change the URL, `?` aside.
+#[allow(
+    clippy::inline_always,
+    reason = "called per byte from three loops, which rustc otherwise leaves out of line"
+)]
+#[inline(always)]
+fn is_path_trigger(b: u8, remove_path_digits: bool) -> bool {
+    // A fragment is always normalized and userinfo always stripped. Returning on the first '#'
+    // guarantees any '@' seen before it precedes the fragment.
+    matches!(b, b'#' | b'@' | b'%')
+        || (remove_path_digits && b.is_ascii_digit())
+        // non-ASCII (>= 0x80) or control char (< 0x20)
+        || !(0x20..0x80).contains(&b)
+        || b == 0x7F
+        // uppercase scheme gets lowercased
+        || b.is_ascii_uppercase()
+        || is_go_url_escape_cat1(b as char)
+        || is_go_url_escape_cat2_path(b as char)
 }
 
 /// Returns whether [`obfuscate_url_string`] could change `url`, letting callers skip building the
@@ -303,35 +281,70 @@ pub fn should_obfuscate_url(
     // scan bytes directly and avoid UTF-8 decoding. Path and query need different checks, so we
     // split the scan at the first '?'.
     let bytes = url.as_bytes();
+    let mut i = 0;
+
+    // Scheme and authority. With either option on, a URL that fails to parse becomes "?", and a
+    // misplaced ':' is the one failure no byte trigger catches. With both off, a failed parse only
+    // strips userinfo, which '@' already triggers. The path scan resumes where this stops.
+    if remove_query_string || remove_path_digits {
+        let mut is_scheme = bytes.first().is_some_and(u8::is_ascii_alphabetic);
+        while let Some(&b) = bytes.get(i) {
+            if matches!(b, b':' | b'/' | b'?') {
+                break;
+            }
+            if is_path_trigger(b, remove_path_digits) {
+                return true;
+            }
+            is_scheme &= b.is_ascii_alphanumeric() || matches!(b, b'+' | b'-' | b'.');
+            i += 1;
+        }
+        let authority_may_follow = if bytes.get(i) == Some(&b':') {
+            // A relative reference's first segment cannot hold a ':' (RFC 3986 path-noscheme).
+            if !is_scheme {
+                return true;
+            }
+            i += 1;
+            true
+        } else {
+            i == 0
+        };
+        // Only a scheme or the start of the URL can precede an authority: "a//b" is a path.
+        if authority_may_follow && bytes[i..].starts_with(b"//") {
+            i += 2;
+            let mut in_port = false;
+            while let Some(&b) = bytes.get(i) {
+                if matches!(b, b'/' | b'?') {
+                    break;
+                }
+                if is_path_trigger(b, remove_path_digits) {
+                    return true;
+                }
+                if b == b':' {
+                    // A second ':' fails like a non-digit port.
+                    if in_port {
+                        return true;
+                    }
+                    in_port = true;
+                } else if in_port && !b.is_ascii_digit() {
+                    return true;
+                }
+                i += 1;
+            }
+        }
+        // From here a ':' is in a path segment or the query, where it is legal.
+    }
 
     // Path region.
-    let mut path_end = bytes.len();
-    let mut i = 0;
     while i < bytes.len() {
         match bytes[i] {
-            // A fragment is always normalized and userinfo always stripped. Returning on the first
-            // '#' guarantees any '@' seen here precedes the fragment.
-            b'#' | b'@' => return true,
             b'?' => {
                 if remove_query_string {
                     return true;
                 }
-                path_end = i;
                 i += 1;
                 break;
             }
-            b if (remove_path_digits && b.is_ascii_digit())
-                    // non-ASCII (>= 0x80) or control char (< 0x20)
-                    || !(0x20..0x80).contains(&b)
-                    || b == 0x7F
-                    || b == b'%'
-                    // uppercase scheme gets lowercased
-                    || b.is_ascii_uppercase()
-                    || is_go_url_escape_cat1(b as char)
-                    || is_go_url_escape_cat2_path(b as char) =>
-            {
-                return true;
-            }
+            b if is_path_trigger(b, remove_path_digits) => return true,
             _ => {}
         }
         i += 1;
@@ -349,11 +362,7 @@ pub fn should_obfuscate_url(
         i += 1;
     }
 
-    // No byte triggers, but a URL that fails to parse is replaced with "?" whenever either option
-    // is on, and a stray ':' is the one failure this scan cannot see. With both options off a
-    // failed parse only strips userinfo, which takes an '@', a trigger already. Reaching here means
-    // no '#' was seen either, so the path region ends at the query.
-    (remove_query_string || remove_path_digits) && has_unparsable_colon(&url[..path_end])
+    false
 }
 
 /// Obfuscates an HTTP URL, returning `None` when nothing needs to change.
@@ -665,6 +674,12 @@ mod tests {
             "http://foo.com:8o80/x",
             "http://a:b:c/d",
             "//foo.com:port/x",
+            "1http://x",
+            "a_b:c",
+            "http://a:1:2/x",
+            "http://a::/x",
+            "http://a:1a/x",
+            "//a:b",
         ] {
             assert_eq!(obfuscate_url_string(url, true, false), "?", "{url}");
             assert!(should_obfuscate_url(url, true, false), "{url}");
@@ -681,6 +696,66 @@ mod tests {
             false,
             true
         ));
+    }
+
+    /// A `:` that parses leaves the URL unchanged, so the precheck passes it.
+    #[test]
+    fn should_obfuscate_url_passes_parsable_colons() {
+        use super::should_obfuscate_url;
+
+        for url in [
+            "http:a:b",
+            "x:y:z",
+            "a+b-c.d:x",
+            "http:/a:b",
+            "http:////a:b",
+            "/a:b",
+            "a/b:c",
+            "a//b:c",
+            "//a/b:c",
+            "http://a/b:c",
+            "http://a:/x",
+            "http://:/x",
+            "http://a:8080/x",
+            "http://a:99999999999999999999",
+        ] {
+            assert_eq!(obfuscate_url_string(url, true, false), url, "{url}");
+            assert!(!should_obfuscate_url(url, true, false), "{url}");
+        }
+        // The query is not parsed, so its colons never matter.
+        assert_eq!(
+            obfuscate_url_string("http://a?b:c", false, true),
+            "http://a?b:c"
+        );
+        assert!(!should_obfuscate_url("http://a?b:c", false, true));
+    }
+
+    /// The precheck contract over every short URL built from these pieces.
+    #[test]
+    fn should_obfuscate_url_never_skips_a_short_rewrite() {
+        use super::should_obfuscate_url;
+
+        const PIECES: [&str; 10] = ["", "a", "1", "_", ":", "/", "//", "?", "#", "http:"];
+        let mut url = String::new();
+        for n in 0..PIECES.len().pow(4) {
+            url.clear();
+            let mut k = n;
+            for _ in 0..4 {
+                url.push_str(PIECES[k % PIECES.len()]);
+                k /= PIECES.len();
+            }
+            for (remove_query_string, remove_path_digits) in
+                [(false, false), (true, false), (false, true), (true, true)]
+            {
+                if !should_obfuscate_url(&url, remove_query_string, remove_path_digits) {
+                    assert_eq!(
+                        obfuscate_url_string(&url, remove_query_string, remove_path_digits),
+                        url,
+                        "{url:?} query={remove_query_string}, digits={remove_path_digits}"
+                    );
+                }
+            }
+        }
     }
 
     /// The precheck promises that `false` means the rewrite would not change the URL. Anything the
