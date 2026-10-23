@@ -26,7 +26,7 @@ use std::time::Duration;
 /// non-UTF-8 bytes, a `Vec` a broken length/pointer pair, etc.
 ///
 /// `ShmSafe` encodes that contract at the type level, so that the shared-memory wrappers in this
-/// module and in [`crate::shm_table`] can require it instead of trusting every caller.
+/// module and in `crate::shm_table` can require it instead of trusting every caller.
 ///
 /// # Safety
 ///

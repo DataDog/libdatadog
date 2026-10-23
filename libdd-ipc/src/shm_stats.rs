@@ -4,9 +4,9 @@
 //! Lock-free shared-memory span stats concentrator.
 //!
 //! All PHP worker processes open the same SHM file and call
-//! [`ShmSpanConcentrator::add_span`].  The sidecar is the creator
-//! ([`ShmSpanConcentrator::create`]) and periodically calls
-//! [`ShmSpanConcentrator::flush`] to drain the inactive bucket.
+//! `ShmSpanConcentrator::add_span`.  The sidecar is the creator
+//! (`ShmSpanConcentrator::create`) and periodically calls
+//! `ShmSpanConcentrator::flush` to drain the inactive bucket.
 //!
 //! The table itself - layout, slot lifecycle, double-buffering, and what may and may not be
 //! trusted in the mapping - is the shared table's (`shm_table`); this module is the [`SpanStats`]
@@ -109,7 +109,7 @@ struct KeyScalars {
 /// Integer atomics throughout, which is about validity more than atomicity: a `bool` that is
 /// neither 0 nor 1, or a `Trilean` outside `0..=2`, is an invalid value whose existence as a
 /// typed reference is already undefined behaviour, before anything inspects it. The scalars
-/// travel as raw integers and become Rust types in [`ShmKeyHeader::scalars`], after checking.
+/// travel as raw integers and become Rust types in `ShmKeyHeader::scalars`, after checking.
 #[repr(C)]
 pub struct ShmKeyHeader {
     /// In [`fixed_strs`] order.
@@ -293,7 +293,7 @@ impl Schema for SpanStats {
     }
 }
 
-/// Pre-extracted span stats for one span, ready to be fed into [`ShmSpanConcentrator::add_span`].
+/// Pre-extracted span stats for one span, ready to be fed into `ShmSpanConcentrator::add_span`.
 pub struct ShmSpanInput<'a> {
     /// Aggregation key fields (everything except peer tags).
     pub fixed: FixedAggregationKey<&'a str>,
@@ -319,7 +319,7 @@ pub struct OwnedShmSpanInput {
 }
 
 impl OwnedShmSpanInput {
-    /// Borrow as a [`ShmSpanInput`] for passing to [`ShmSpanConcentrator::add_span`].
+    /// Borrow as a [`ShmSpanInput`] for passing to `ShmSpanConcentrator::add_span`.
     ///
     /// `peer_tag_buf` is a caller-supplied scratch buffer; it must outlive the returned value.
     pub fn as_shm_input<'a>(
