@@ -15,9 +15,10 @@ on: # yamllint disable-line rule:truthy
 #
 # This workflow runs from the TAGGED COMMIT, which makes it untrusted by
 # design: whoever can push a release tag controls this file's contents. It
-# therefore holds no secrets and mints no tokens. Its only power is to
-# trigger notify-dispatch.yml from main, where the octo-sts mint lives. See
-# that workflow for the trust chain.
+# therefore holds no permissions and mints no tokens. It exists only so that
+# notify-dispatch.yml, which watches this run complete via workflow_run and
+# resolves from the default branch, mints and dispatches from reviewed code.
+# See that workflow for the trust chain.
 
 permissions: {}
 
@@ -26,18 +27,6 @@ jobs:
     name: "Notify DataDog/libdatadog-rb"
     if: github.event.deleted == false
     runs-on: ubuntu-latest
-    permissions:
-      actions: write
     steps:
-      - name: Trigger notify-dispatch on main
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ github.ref_name }}
-        run: |
-          # The tag filter above is a loose glob; skip shapes that are not
-          # plain releases before spending a second workflow run on them.
-          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::notice::${VERSION} is not a plain release tag; nothing to notify."
-            exit 0
-          fi
-          gh workflow run notify-dispatch.yml --ref main -f version="$VERSION"
+      - name: No-op
+        run: echo "Release tag ${{ github.ref_name }} pushed. notify-dispatch.yml picks this up from main."

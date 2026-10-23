@@ -1,40 +1,44 @@
 name: Dispatch libdatadog release to libdatadog-rb
 
 on: # yamllint disable-line rule:truthy
-  workflow_dispatch:
-    inputs:
-      version:
-        description: Release tag name, for example v46.1.0
-        required: true
-        type: string
+  workflow_run: # zizmor: ignore[dangerous-triggers]
+    workflows:
+      - Notify libdatadog-rb of a libdatadog release
+    types:
+      - completed
 
 # The octo-sts mint for libdatadog-rb lives here, on the default branch, on
-# purpose. Tag-push runs execute the workflow file from the tagged commit, so
-# a mint inside a tag-triggered workflow hands its token to whoever can push
-# release tags. notify-libdatadog-rb.yml (or a human) dispatches this
-# workflow with --ref main, so the minting code is the reviewed
-# definition from main, and the libdatadog-rb trust policy pins this file to
-# refs/heads/main. Callers can pass a version string. Only main's code
-# decides what happens with it.
+# purpose. notify-libdatadog-rb.yml (the tag-push trigger) executes from the
+# tagged commit, so a mint there hands its token to whoever can push release
+# tags. workflow_run resolves THIS workflow from the default branch, so the
+# minting code is the reviewed definition from main, and the libdatadog-rb
+# trust policy pins this file to refs/heads/main. The triggering run decides
+# only that a push happened. This workflow's guards decide everything else,
+# and only main's code can change them.
 
 permissions: {}
 
 jobs:
   dispatch:
     name: "Dispatch to DataDog/libdatadog-rb"
+    if: >-
+      ${{ github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_repository.full_name == github.repository }}
     runs-on: ubuntu-latest
     permissions:
       id-token: write
     env:
-      VERSION: ${{ inputs.version }}
+      VERSION: ${{ github.event.workflow_run.head_branch }}
     steps:
-      # The caller may be anyone who can run this workflow. Validate the
-      # version shape and the tag's existence before minting anything.
+      # The triggering run carries only the push event and the tag name. The
+      # version comes from the tag ref itself, and its existence is checked
+      # against the repository. Validate both before minting anything.
       - name: Validate version and tag
         id: check
         run: |
           if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::notice::${VERSION} is not a plain release tag; nothing to notify."
+            echo "::notice::${VERSION} is not a plain release tag. Nothing to notify."
             echo "skip=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -60,4 +64,4 @@ jobs:
             -f event_type=libdatadog-released \
             -f "client_payload[version]=${VERSION#v}" \
             -f "client_payload[triggered_by]=${{ github.repository }}" \
-            -f "client_payload[source_run_url]=${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            -f "client_payload[source_run_url]=${{ github.event.workflow_run.html_url }}"
