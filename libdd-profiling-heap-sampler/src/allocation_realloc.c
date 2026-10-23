@@ -152,7 +152,7 @@ void *dd_allocation_realloc_commit(void *old_user, void *new_raw, dd_realloc_pre
 
     /* Report the free of the OLD sampled allocation (the address the
      * profiler last saw as live). No matching alloc is fired: the new
-     * block is unsampled. dd_probe_free just emits the ddheap:free
+     * block is unsampled. dd_probe_free just emits the otel_memory:free
      * USDT so the profiler can close the live-heap entry. */
     dd_probe_free(old_user);
     return new_raw;
