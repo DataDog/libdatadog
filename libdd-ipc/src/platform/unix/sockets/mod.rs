@@ -551,7 +551,13 @@ where
                 if buf.len() < size {
                     buf.resize(size, 0u8);
                 }
-                match recvmsg_raw(inner.as_raw_fd(), buf, MsgFlags::empty()) {
+                let mut result = recvmsg_raw(inner.as_raw_fd(), buf, MsgFlags::empty());
+                // A peer closing with unread data (e.g. acks) resets the connection. Linux reports
+                // that before the messages the peer sent earlier: receive those, EOF follows them.
+                if matches!(&result, Err(e) if e.raw_os_error() == Some(libc::ECONNRESET)) {
+                    result = recvmsg_raw(inner.as_raw_fd(), buf, MsgFlags::empty());
+                }
+                match result {
                     Err(e) => Err(e),
                     Ok((n, fds)) => {
                         // recvmsg_raw's &mut borrow of buf has ended; safe to read &buf[..n].
