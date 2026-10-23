@@ -39,8 +39,6 @@ pub mod error;
 pub mod http_common;
 #[cfg(feature = "std")]
 pub mod multipart;
-#[cfg(all(feature = "std", not(target_arch = "wasm32")))]
-pub mod rate_limiter;
 pub mod tag;
 #[cfg(all(feature = "std", any(test, feature = "test-utils")))]
 pub mod test_utils;
