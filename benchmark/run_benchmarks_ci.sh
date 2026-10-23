@@ -33,17 +33,9 @@ report_cache_failures() {
   fi
 }
 
-# The single source of truth for which crate-specific features each crate's benchmarks need.
-# When scoping a run we must pass only the features for the selected crates (cargo errors on
-# --features for a crate that isn't part of the selection).
-bench_features_for_crate() {
-  case "$1" in
-    libdd-crashtracker) echo "libdd-crashtracker/benchmarking" ;;
-    libdd-sampling) echo "libdd-sampling/v04_span libdd-sampling/bench-internals" ;;
-    libdd-trace-utils) echo "libdd-trace-utils/bench-internals" ;;
-    *) echo "" ;;
-  esac
-}
+# Crate-specific bench features live in bench_features.sh.
+# shellcheck disable=1091
+source "${SCRIPT_DIR}/bench_features.sh"
 
 # Run benchmarks.
 message "Running benchmarks"

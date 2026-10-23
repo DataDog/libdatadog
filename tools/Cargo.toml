@@ -38,3 +38,7 @@ bench = false
 [[bin]]
 name = "add_junit_file_attributes"
 bench = false
+
+[[bin]]
+name = "crate_timing"
+bench = false
