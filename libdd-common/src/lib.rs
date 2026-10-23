@@ -12,8 +12,6 @@ extern crate alloc;
 
 #[cfg(feature = "std")]
 pub mod azure_app_services;
-#[cfg(feature = "bench-utils")]
-pub mod bench_utils;
 #[cfg(feature = "std")]
 pub mod config;
 #[cfg(all(feature = "std", not(target_arch = "wasm32")))]
@@ -40,8 +38,6 @@ pub mod mutable_metadata;
 #[cfg(feature = "std")]
 pub mod regex_engine;
 pub mod tag;
-#[cfg(all(feature = "std", any(test, feature = "test-utils")))]
-pub mod test_utils;
 #[cfg(all(feature = "std", not(target_arch = "wasm32"), not(target_os = "aix")))]
 pub mod threading;
 #[cfg(all(feature = "std", not(target_arch = "wasm32")))]

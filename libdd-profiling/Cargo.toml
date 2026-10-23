@@ -20,7 +20,6 @@ bench = false
 default = []
 cxx = ["dep:cxx", "dep:cxx-build"]
 otel = ["dep:opentelemetry-proto"]
-test-utils = ["libdd-common/test-utils"]
 
 [[bench]]
 name = "main"
@@ -41,7 +40,7 @@ hashbrown.workspace = true
 http = { workspace = true, features = ["std"] }
 indexmap = { workspace = true, default-features = true }
 libdd-alloc = { version = "1.0.0", path = "../libdd-alloc" }
-libdd-common = { version = "8.0.0", path = "../libdd-common", default-features = false, features = ["reqwest", "test-utils"] }
+libdd-common = { version = "8.0.0", path = "../libdd-common", default-features = false, features = ["reqwest"] }
 libdd-profiling-protobuf = { version = "2.0.0", path = "../libdd-profiling-protobuf", features = ["prost_impls"] }
 opentelemetry-proto = { workspace = true, optional = true, features = ["profiles", "gen-tonic-messages"] }
 parking_lot.workspace = true
@@ -77,8 +76,7 @@ zrip = { workspace = true, features = ["frame"] }
 [dev-dependencies]
 bolero = { workspace = true, features = ["std"] }
 criterion.workspace = true
-libdd-common = { path = "../libdd-common", features = ["test-utils"] }
-libdd-profiling = { path = ".", features = ["test-utils"] }
+tools = { path = "../tools", default-features = false, features = ["test-utils"] }
 # rand is only used by tests/exporter_e2e.rs (rand::random), never by the
 # library itself, so it lives in dev-dependencies. `rand::random` needs the
 # thread RNG, i.e. both `std` and `std_rng` defaults.

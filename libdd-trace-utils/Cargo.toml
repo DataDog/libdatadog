@@ -86,9 +86,7 @@ zrip = { workspace = true, features = ["frame"], optional = true }
 
 [dev-dependencies]
 libdd-capabilities-impl = { version = "7.0.0", path = "../libdd-capabilities-impl" }
-libdd-common = { path = "../libdd-common", default-features = false, features = [
-    "bench-utils",
-] }
+tools = { path = "../tools", default-features = false, features = ["bench-utils"] }
 bolero = { workspace = true, features = ["std"] }
 criterion.workspace = true
 httpmock.workspace = true

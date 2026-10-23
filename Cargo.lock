@@ -2773,7 +2773,6 @@ dependencies = [
  "arc-swap",
  "bytes",
  "const_format",
- "criterion",
  "futures",
  "futures-util",
  "hex",
@@ -2787,8 +2786,6 @@ dependencies = [
  "indexmap 2.12.1",
  "libc",
  "maplit",
- "mime",
- "multer",
  "nix 0.29.0",
  "pin-project",
  "proptest",
@@ -2804,6 +2801,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.17",
  "tokio",
+ "tools",
  "tower-service",
  "webpki-root-certs",
  "webpki-roots",
@@ -3281,7 +3279,6 @@ dependencies = [
  "indexmap 2.12.1",
  "libdd-alloc",
  "libdd-common",
- "libdd-profiling",
  "libdd-profiling-protobuf",
  "opentelemetry-proto",
  "parking_lot",
@@ -3300,6 +3297,7 @@ dependencies = [
  "thiserror 2.0.17",
  "tokio",
  "tokio-util",
+ "tools",
  "zrip",
  "zstd",
 ]
@@ -3431,6 +3429,7 @@ dependencies = [
  "lru",
  "serde",
  "serde_json",
+ "tools",
 ]
 
 [[package]]
@@ -3483,6 +3482,7 @@ dependencies = [
  "sys-info",
  "tokio",
  "tokio-util",
+ "tools",
  "tracing",
  "tracing-subscriber",
  "uuid",
@@ -3646,6 +3646,7 @@ dependencies = [
  "thin-vec",
  "thread_local",
  "tokio",
+ "tools",
  "tracing",
  "urlencoding",
  "zrip",
@@ -6283,13 +6284,23 @@ name = "tools"
 version = "46.0.0"
 dependencies = [
  "anyhow",
+ "bytes",
  "cargo_metadata",
  "clap",
  "colored",
+ "criterion",
+ "futures",
+ "futures-util",
+ "httparse",
  "libdd-common",
+ "mime",
+ "multer",
  "quick-xml",
+ "rand 0.8.8",
+ "tokio",
  "toml",
  "wait-timeout",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]

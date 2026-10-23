@@ -26,8 +26,6 @@ futures-util = { workspace = true, optional = true }
 hex = { workspace = true, default-features = true, optional = true }
 httparse = { workspace = true, features = ["std"], optional = true }
 http = { workspace = true, features = ["std"], optional = true }
-mime = { workspace = true, optional = true }
-multer = { workspace = true, optional = true }
 bytes = { workspace = true, features = ["std"], optional = true }
 pin-project = { workspace = true, optional = true }
 rand = { workspace = true, default-features = true, optional = true }
@@ -46,7 +44,6 @@ reqwest = { workspace = true, features = [
     "rustls-no-provider",
     "hickory-dns",
 ], optional = true }
-criterion = { workspace = true, optional = true }
 rustls-platform-verifier = { workspace = true, optional = true }
 thiserror = { workspace = true, default-features = true, optional = true }
 serde = { workspace = true, features = ["derive"] }
@@ -103,15 +100,12 @@ nix = { workspace = true, features = ["process"], optional = true }
 
 [dev-dependencies]
 bytes = { workspace = true, features = ["std"] }
-httparse = { workspace = true, features = ["std"] }
 indexmap = { workspace = true, default-features = true }
 maplit.workspace = true
-mime.workspace = true
-multer.workspace = true
 proptest = { workspace = true, default-features = true }
-rand = { workspace = true, default-features = true }
 tempfile.workspace = true
 tokio = { workspace = true, features = ["rt", "macros", "time"] }
+tools = { path = "../tools", default-features = false, features = ["test-utils"] }
 
 [features]
 default = ["std", "https"]
@@ -146,6 +140,7 @@ http-client = [
     "dep:http-body-util",
     "dep:tower-service",
     "dep:tokio",
+    "dep:rand",
 ]
 # TLS plumbing without a crypto provider. Use `https` or `fips` to select one.
 tls-core = ["http-client", "rustls", "hyper-rustls", "rustls-platform-verifier", "dep:rustls-webpki"]
@@ -170,11 +165,7 @@ fips = ["tls-core", "hyper-rustls/fips"]
 # Honor HTTP(S)_PROXY/NO_PROXY environment variables for the hyper connector,
 hyper-proxy = ["http-client", "hyper-util/client-proxy"]
 # Enable reqwest client builder support with file dump debugging
-reqwest = ["http-client", "dep:reqwest", "test-utils"]
-# Enable test utilities for use in other crates
-test-utils = ["std", "dep:httparse", "dep:rand", "dep:mime", "dep:multer"]
-# Enable benchmark utilities (ReportingAllocator, Criterion allocation measurement)
-bench-utils = ["std", "dep:criterion"]
+reqwest = ["http-client", "dep:reqwest", "dep:httparse"]
 
 [lints.rust]
 # We run coverage checks in our github actions. These checks are run with
