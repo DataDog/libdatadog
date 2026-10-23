@@ -93,7 +93,7 @@ pub extern "system" fn OutOfProcessExceptionEventCallback(
     _size: *mut u32,
     _signature_count: *mut u32,
 ) -> HRESULT {
-    let result: Result<(), _> = (|| {
+    let result: Result<bool, _> = (|| {
         anyhow::ensure!(
             !exception_information.is_null(),
             "exception_information is null"
@@ -101,19 +101,27 @@ pub extern "system" fn OutOfProcessExceptionEventCallback(
 
         let process_handle = unsafe { (*exception_information).hProcess };
         let thread_handle = unsafe { (*exception_information).hThread };
+        let exception_context = unsafe { &(*exception_information).context };
 
         libdd_crashtracker::exception_event_callback(
             context as usize,
             process_handle,
             thread_handle,
+            exception_context,
         )
     })();
 
-    if let Err(e) = result {
-        output_debug_string(format!("OutOfProcessExceptionEventCallback failed: {e}").as_str());
-        return E_FAIL;
+    match result {
+        Ok(true) => output_debug_string("OutOfProcessExceptionEventCallback succeeded"),
+        Ok(false) => output_debug_string(
+            "OutOfProcessExceptionEventCallback skipped: no frame in the required module",
+        ),
+        Err(e) => {
+            output_debug_string(
+                format!("OutOfProcessExceptionEventCallback failed: {e:#}").as_str(),
+            );
+            return E_FAIL;
+        }
     }
-
-    output_debug_string("OutOfProcessExceptionEventCallback succeeded");
     S_OK
 }
