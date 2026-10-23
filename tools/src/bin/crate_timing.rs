@@ -656,17 +656,6 @@ fn main() -> Result<()> {
         build(&mut cmd, &logs_dir.join(format!("{}-build.log", c)), c)?;
     }
 
-    println!("== Building bench binaries (untimed)");
-    for c in &selection.bench_crates {
-        let mut cmd = bench(c);
-        cmd.arg("--no-run");
-        build(
-            &mut cmd,
-            &logs_dir.join(format!("{}-bench-build.log", c)),
-            c,
-        )?;
-    }
-
     println!("== Timing tests");
     for c in &selection.crates {
         let mut cmd = nextest(c);
@@ -703,6 +692,14 @@ fn main() -> Result<()> {
 
     println!("== Timing benchmarks");
     for c in &selection.bench_crates {
+        let mut build_cmd = bench(c);
+        build_cmd.arg("--no-run");
+        build(
+            &mut build_cmd,
+            &logs_dir.join(format!("{}-bench-build.log", c)),
+            c,
+        )?;
+
         // Criterion rewrites `*/new/estimates.json` per measured variant; 1s of slack
         // absorbs coarse filesystem timestamps.
         let since = SystemTime::now()
