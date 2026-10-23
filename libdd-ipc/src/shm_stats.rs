@@ -25,7 +25,8 @@ use libdd_trace_stats::span_concentrator::{
 };
 
 use crate::shm_table::{
-    self, Pool, Schema, ShmSafe, ShmTable, ShmTableMapping, WireStringRef, alloc_str, pool_eq, pool_string,
+    self, Pool, Schema, ShmSafe, ShmTable, ShmTableMapping, WireStringRef, alloc_str, pool_eq,
+    pool_string,
 };
 pub use crate::shm_table::{RELOAD_FILL_RATIO, StringRef};
 
