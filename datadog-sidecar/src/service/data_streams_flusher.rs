@@ -79,27 +79,9 @@ pub(crate) struct DsmConfig {
     pub process_tags: Vec<String>,
 }
 
-/// Products that keep tables in shared memory.
-///
-/// Part of what keys a [`DsmTableKey`], so that a table's path names the product it belongs to.
-/// The span stats concentrators' `ConcentratorKey` predates this and has no product.
-#[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
-pub enum ShmProduct {
-    DataStreams,
-}
-
-impl ShmProduct {
-    fn as_str(self) -> &'static str {
-        match self {
-            ShmProduct::DataStreams => "dsm",
-        }
-    }
-}
-
 /// Map key for the DSM table map: one table per payload the tables are flushed into.
 #[derive(Clone, Debug, Hash, Eq, PartialEq)]
 pub struct DsmTableKey {
-    pub product: ShmProduct,
     pub env: String,
     pub version: String,
     /// The service the points are reported under, including any service override.
@@ -110,7 +92,6 @@ pub struct DsmTableKey {
 /// Compute the SHM path for a DSM table.
 pub fn dsm_table_shm_path(key: &DsmTableKey) -> CString {
     let mut hasher = ZwoHasher::default();
-    key.product.as_str().hash(&mut hasher);
     key.env.hash(&mut hasher);
     key.version.hash(&mut hasher);
     key.service.hash(&mut hasher);
@@ -419,7 +400,6 @@ mod tests {
 
     fn key() -> DsmTableKey {
         DsmTableKey {
-            product: ShmProduct::DataStreams,
             env: "env-a".into(),
             version: "1.0".into(),
             service: "service-a".into(),
