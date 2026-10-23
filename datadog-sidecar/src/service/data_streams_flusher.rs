@@ -533,9 +533,11 @@ mod tests {
     #[test]
     fn draining_waits_for_the_next_boundary() {
         let at = |nanos: u64| UNIX_EPOCH + Duration::from_nanos(nanos);
+        // A microsecond rather than a nanosecond past the boundary: Windows keeps SystemTime in
+        // 100 ns ticks, which would round a single nanosecond away.
         assert_eq!(
-            until_next_drain(at(10 * DSM_BUCKET_NANOS + 1)),
-            Duration::from_nanos(DSM_BUCKET_NANOS - 1) + DRAIN_GRACE
+            until_next_drain(at(10 * DSM_BUCKET_NANOS + 1_000)),
+            Duration::from_nanos(DSM_BUCKET_NANOS - 1_000) + DRAIN_GRACE
         );
         assert_eq!(
             until_next_drain(at(10 * DSM_BUCKET_NANOS)),
