@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 #[cfg(feature = "generate-unit-test-files")]
 use std::process::Command;
 
-pub use libdd_common::cc_utils::cc;
+pub use cc_utils::cc;
 
 // Build CXX bridge - cross-platform function
 #[cfg(feature = "cxx")]
@@ -48,7 +48,7 @@ fn build_c_file() {
         .expect("Failed to convert dst file path to str");
 
     println!("cargo:rerun-if-changed={}", dst_file);
-    libdd_common::cc_utils::ImprovedBuild::new()
+    cc_utils::ImprovedBuild::new()
         .file(&src)
         .link_dynamically("dl")
         // this is needed for the cross compile (cargo cross)
@@ -92,7 +92,7 @@ fn build_cpp_file() {
         .expect("Failed to convert dst file path to str");
 
     println!("cargo:rerun-if-changed={}", dst_file);
-    libdd_common::cc_utils::ImprovedBuild::new()
+    cc_utils::ImprovedBuild::new()
         .cpp(true)
         .file(&src)
         .link_dynamically("dl")

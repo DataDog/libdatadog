@@ -76,7 +76,6 @@ hyper-util = { workspace = true, features = [
 http-body = { workspace = true, optional = true }
 http-body-util = { workspace = true, optional = true }
 tower-service = { workspace = true, optional = true }
-cc = { workspace = true, optional = true }
 libc = { workspace = true, optional = true }
 tokio = { workspace = true, features = [
     "rt",
@@ -127,7 +126,6 @@ std = [
     "anyhow/std",
     "dep:arc-swap",
     "dep:bytes",
-    "dep:cc",
     "dep:futures",
     "dep:futures-util",
     "dep:hex",
