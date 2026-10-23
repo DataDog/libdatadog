@@ -3,8 +3,8 @@
 
 //! Lock-free shared-memory Data Streams Monitoring (DSM) stats table.
 //!
-//! PHP workers record a stats point per checkpoint with [`ShmDsmTable::add_point`]; the sidecar
-//! creates the table and periodically drains it with [`ShmDsmTable::drain_buckets`]. The table
+//! PHP workers record a stats point per checkpoint with `ShmDsmTable::add_point`; the sidecar
+//! creates the table and periodically drains it with `ShmDsmTable::drain_buckets`. The table
 //! itself is the shared one (`shm_table`); this module is the [`DataStreams`] schema it lays
 //! out.
 //!
@@ -203,7 +203,7 @@ fn nanos_to_seconds(nanos: i64) -> f64 {
     nanos as f64 / 1e9
 }
 
-/// One DSM stats point, ready to be fed into [`ShmDsmTable::add_point`].
+/// One DSM stats point, ready to be fed into `ShmDsmTable::add_point`.
 pub struct DsmStatsPointInput<'a> {
     /// Pathway hash of the checkpoint; points are grouped on it.
     pub hash: u64,
@@ -232,7 +232,7 @@ pub struct OwnedDsmStatsPoint {
 }
 
 impl OwnedDsmStatsPoint {
-    /// Borrow as a [`DsmStatsPointInput`] for passing to [`ShmDsmTable::add_point`].
+    /// Borrow as a [`DsmStatsPointInput`] for passing to `ShmDsmTable::add_point`.
     ///
     /// `edge_tag_buf` is a caller-supplied scratch buffer; it must outlive the returned value.
     pub fn as_shm_input<'a>(
