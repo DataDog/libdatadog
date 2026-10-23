@@ -23,6 +23,9 @@ pub mod dump_server;
 mod endpoint;
 #[cfg(feature = "std")]
 pub mod entity_id;
+#[cfg(target_has_atomic = "ptr")]
+pub mod environment;
+pub mod ffi;
 #[cfg(feature = "std")]
 mod lock_ext;
 #[cfg(feature = "std")]
