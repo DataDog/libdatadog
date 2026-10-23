@@ -19,13 +19,14 @@
 //! | `metrics[k]`                              | `AttributeValue::Float`                    |
 //! | `meta_struct[k]`                          | `AttributeValue::Bytes`                    |
 //! | `error: i32`                              | `error: bool` (non-zero → `true`)          |
-//! | first span's `trace_id` + `meta["_dd.p.tid"]` | chunk `trace_id` (128-bit big-endian)  |
+//! | first span's `trace_id` + any span's `meta["_dd.p.tid"]` | chunk `trace_id` (128-bit big-endian) |
 //! | root span's `metrics["_sampling_priority_v1"]` | chunk `priority`                      |
 //! | root span's `meta["_dd.origin"]`          | chunk `origin`                             |
 //! | root span's `meta["_dd.p.dm"]`            | chunk `sampling_mechanism` (absolute value)|
 //!
-//! `meta["_dd.p.tid"]` is consumed into the chunk `trace_id` and not kept as an attribute; the
-//! other chunk-level tags stay on their spans as attributes too, like the wire encoder does.
+//! `meta["_dd.p.tid"]` is consumed into the chunk `trace_id` and not kept as an attribute; it is
+//! looked up on every span of the chunk, since per RFC #85 only the root carries it. The other
+//! chunk-level tags stay on their spans as attributes too, like the wire encoder does.
 
 use crate::span::v1::{AttributeValue, Span, SpanEvent, SpanKind, SpanLink, ThinVec, TraceChunk};
 use crate::span::v04;
@@ -60,19 +61,27 @@ fn sampling_mechanism<T: TraceData>(span: &v04::Span<T>) -> Option<u32> {
 }
 
 fn extract_chunk_attrs<T: TraceData>(spans: &[v04::Span<T>]) -> ChunkAttrs {
-    // trace_id is invariant per chunk. v0.4 spans carry only the low 64 bits; the high 64 bits
-    // are propagated as the hex string meta tag "_dd.p.tid".
-    let trace_id = spans
-        .first()
-        .map(|s| {
-            let high = s
-                .meta
+    // trace_id is invariant per chunk: its low 64 bits are taken from the first span. The high 64
+    // bits are resolved over the whole chunk, from either a span's native u128 `trace_id` or its
+    // `_dd.p.tid` hex meta tag, which per RFC #85 is set on the chunk root only (and the root
+    // isn't necessarily the first span).
+    let high = spans
+        .iter()
+        .find_map(|s| {
+            // Shifting a u128 right by 64 always fits in a u64.
+            let native_high = (s.trace_id >> 64) as u64;
+            if native_high != 0 {
+                return Some(native_high);
+            }
+            s.meta
                 .get("_dd.p.tid")
                 .and_then(|v| u64::from_str_radix(v.borrow(), 16).ok())
-                .unwrap_or(0);
-            (u128::from(high) << 64) | s.trace_id
         })
         .unwrap_or(0);
+    let low = spans
+        .first()
+        .map_or(0, |s| s.trace_id & u128::from(u64::MAX));
+    let trace_id = (u128::from(high) << 64) | low;
 
     let mut priority = None;
     let mut origin_tag = None;
@@ -384,6 +393,43 @@ mod tests {
         assert_eq!(chunk.priority, Some(1));
         assert_eq!(chunk.origin, bs("lambda"));
         assert_eq!(chunk.sampling_mechanism, None);
+    }
+
+    #[test]
+    fn high_trace_id_is_read_from_a_later_root_span() {
+        // RFC #85: `_dd.p.tid` is only set on the chunk root, which may not come first.
+        let child = V04SpanBytes {
+            trace_id: 0x1234,
+            span_id: 2,
+            parent_id: 1,
+            ..Default::default()
+        };
+        let mut root = V04SpanBytes {
+            trace_id: 0x1234,
+            span_id: 1,
+            ..Default::default()
+        };
+        root.meta.insert(bs("_dd.p.tid"), bs("00000000000000ab"));
+
+        let chunk = trace_chunk_from_v04(vec![child, root]);
+        let mut expected_trace_id = [0u8; 16];
+        expected_trace_id[7] = 0xab;
+        expected_trace_id[14] = 0x12;
+        expected_trace_id[15] = 0x34;
+        assert_eq!(chunk.trace_id, expected_trace_id);
+        assert!(attr(&chunk, 1, "_dd.p.tid").is_none());
+    }
+
+    #[test]
+    fn high_trace_id_prefers_native_u128_trace_id() {
+        let span = V04SpanBytes {
+            trace_id: (0xcd_u128 << 64) | 0x1234,
+            span_id: 1,
+            ..Default::default()
+        };
+        let chunk = trace_chunk_from_v04(vec![span]);
+        assert_eq!(chunk.trace_id[7], 0xcd);
+        assert_eq!(chunk.trace_id[15], 0x34);
     }
 
     #[test]

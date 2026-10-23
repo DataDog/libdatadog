@@ -11,7 +11,7 @@
 use super::OtlpResourceInfo;
 use super::mapper::{MAX_ATTRIBUTES_PER_SPAN, build_resource, proto_kv};
 use crate::span::trace_utils::SDK_OTLP_EXPORT_KEY;
-use crate::span::v1::{AttributeValue, Span, SpanEvent, SpanLink, TraceChunk};
+use crate::span::v1::{AttributeValue, Span, SpanEvent, SpanKind, SpanLink, TraceChunk};
 use crate::span::{SPAN_LINK_FLAGS_SET_SENTINEL, TraceData};
 use std::borrow::Borrow;
 use std::collections::hash_map::Entry;
@@ -27,12 +27,24 @@ use libdd_trace_protobuf::opentelemetry::proto::trace::v1::{
     span::{Event as ProtoEvent, Link as ProtoLink},
 };
 
-use super::mapper::status_code;
+use super::mapper::{dd_type_to_otlp_kind, status_code};
 
 /// Meta keys promoted to a dedicated OTLP location (Status message), so they're excluded from
 /// the emitted attributes under OTel-semantics. Mirrors the v0.4 mapper's `error.msg`/
 /// `error.message` handling.
 const ERROR_MESSAGE_KEYS: [&str; 2] = ["error.msg", "error.message"];
+
+/// OTLP SpanKind for a span. `Internal` is also the default when a v0.4 span carries no
+/// `span.kind` tag, so it falls back to the Datadog span `type` (`web`/`http`/`server` →
+/// `SERVER`, ...) like the v0.4 mapper does for spans without `span.kind`.
+fn span_kind_v1<T: TraceData>(span: &Span<T>) -> i32 {
+    match span.span_kind {
+        SpanKind::Internal => dd_type_to_otlp_kind(span.r#type.borrow()),
+        // v1's `span_kind` discriminants (Internal=1, Server=2, Client=3, Producer=4,
+        // Consumer=5) already match the OTLP SpanKind enum.
+        kind => kind as i32,
+    }
+}
 
 /// Converts a v1 `AttributeValue` directly to a prost `AnyValue::Value`. Lossless: every variant
 /// (including nested `List`/`KeyValue`) maps onto an OTLP-native shape, unlike the v0.4 downgrade
@@ -381,10 +393,7 @@ fn map_span_v1<T: TraceData>(
         parent_span_id,
         flags,
         name: span.resource.borrow().to_string(),
-        // v1's `span_kind` discriminants (Internal=1, Server=2, Client=3, Producer=4,
-        // Consumer=5) already match the OTLP SpanKind enum, so no meta lookup/fallback is
-        // needed like the v0.4 mapper's `span_kind()`/`tag_to_otlp_kind`/`dd_type_to_otlp_kind`.
-        kind: span.span_kind as i32,
+        kind: span_kind_v1(span),
         // OTLP timestamps are unsigned; a negative value has no valid representation, so fall
         // back to 0 rather than wrapping.
         start_time_unix_nano: u64::try_from(span.start).unwrap_or(0),
@@ -502,6 +511,23 @@ mod tests_v1 {
         let req = map_traces_to_otlp_v1(&[chunk], &OtlpResourceInfo::default(), false);
         let s = &req.resource_spans[0].scope_spans[0].spans[0];
         assert_eq!(s.kind, 5); // OTLP SpanKind CONSUMER
+    }
+
+    #[test]
+    fn internal_span_kind_falls_back_to_dd_type() {
+        let mut span = minimal_span();
+        span.r#type = bs("web");
+        let chunk = minimal_chunk([1; 16], span);
+        let req = map_traces_to_otlp_v1(&[chunk], &OtlpResourceInfo::default(), false);
+        assert_eq!(req.resource_spans[0].scope_spans[0].spans[0].kind, 2); // SERVER
+
+        // An explicit non-Internal kind wins over the type.
+        let mut span = minimal_span();
+        span.r#type = bs("web");
+        span.span_kind = SpanKind::Client;
+        let chunk = minimal_chunk([1; 16], span);
+        let req = map_traces_to_otlp_v1(&[chunk], &OtlpResourceInfo::default(), false);
+        assert_eq!(req.resource_spans[0].scope_spans[0].spans[0].kind, 3); // CLIENT
     }
 
     #[test]
