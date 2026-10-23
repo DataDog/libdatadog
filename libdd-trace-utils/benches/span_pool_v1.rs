@@ -164,8 +164,8 @@ fn enqueue_dequeue<M: Measurement + MeasurementName + 'static>(c: &mut Criterion
 }
 
 criterion_group!(span_pool_v1_benches, enqueue_dequeue,);
-criterion_group!(
-    name = span_pool_v1_alloc_benches;
-    config = memory_allocated_criterion(&super::GLOBAL);
-    targets = enqueue_dequeue,
-);
+// Not `criterion_group!`: its `config =` would be overridden by the command-line flags.
+pub fn span_pool_v1_alloc_benches() {
+    let mut criterion = memory_allocated_criterion(&super::GLOBAL);
+    enqueue_dequeue(&mut criterion);
+}
