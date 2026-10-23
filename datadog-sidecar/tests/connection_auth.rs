@@ -41,6 +41,7 @@ impl Sidecar {
                 init_shm_eagerly: true,
                 authorizer: ConnectionAuthorizer::new(policy),
                 drain_only_own_process: false,
+                enable_cdn_fetching: false,
             };
             let acquire = move || {
                 let async_listener = listener.into_async_listener()?;

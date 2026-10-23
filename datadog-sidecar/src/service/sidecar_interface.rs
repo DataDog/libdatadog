@@ -38,6 +38,8 @@ pub struct SidecarFlushOptions {
 /// session and application state is therefore bound to the connection: it is set by the
 /// `set_*` methods (which the client replays after a reconnect) and implicitly applies to every
 /// other message on the same connection.
+/// CDN subscriptions carry their own complete configuration and may also use a
+/// dedicated connection without session/application messages.
 #[libdd_ipc_macros::service]
 pub trait SidecarInterface {
     /// Enqueues a list of actions for the application of the current request.
@@ -288,10 +290,17 @@ pub trait SidecarInterface {
     /// their target without replacing the session's other transports. Repeated
     /// identical configuration preserves routing and deduplication state.
     /// Targets absent from the batch are unchanged; this is not a full snapshot.
-    ///
-    /// Keep this method last: request variants cross the bincode IPC boundary,
-    /// so appending preserves the ordinals of all existing messages.
     async fn add_session_evp_transports(configs: Vec<EvpTransportConfigWithIdentity>);
+
+    /// Subscribe this connection to CDN configuration; None unsubscribes.
+    /// Returns a handle for RemoteConfigManager. Resubscribe after reconnecting.
+    /// In-process listeners return None. Keep new methods at the end to preserve
+    /// the bincode ordinals of existing requests.
+    #[blocking]
+    #[SerializedHandle]
+    async fn subscribe_cdn_configuration(
+        config: Option<libdd_ffe::cdn::CdnConfig>,
+    ) -> Option<crate::shm_remote_config::RemoteConfigHandle>;
 }
 
 #[cfg(test)]

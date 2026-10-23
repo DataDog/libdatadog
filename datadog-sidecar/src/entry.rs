@@ -46,6 +46,8 @@ pub struct MainLoopConfig {
     /// must not hold up the exit of its host for the connections of other processes, like forked
     /// children: these lose their connection and reconnect to a listener of their own.
     pub drain_only_own_process: bool,
+    /// CDN HTTP is allowed only in a dedicated sidecar process.
+    pub enable_cdn_fetching: bool,
 }
 
 impl Default for MainLoopConfig {
@@ -56,6 +58,7 @@ impl Default for MainLoopConfig {
             init_shm_eagerly: true,
             authorizer: ConnectionAuthorizer::for_spawned_sidecar(),
             drain_only_own_process: false,
+            enable_cdn_fetching: true,
         }
     }
 }
@@ -110,7 +113,7 @@ where
         });
     }
 
-    let server = SidecarServer::default();
+    let server = SidecarServer::default().with_cdn_fetching(loop_config.enable_cdn_fetching);
     if loop_config.init_shm_eagerly {
         server.shm_limiters();
     }

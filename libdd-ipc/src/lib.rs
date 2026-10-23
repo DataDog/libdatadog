@@ -35,4 +35,4 @@ pub use platform::{
     AsyncConn, HANDLE_SUFFIX_SIZE, PeerCredentials, SeqpacketConn, SeqpacketListener,
     max_message_size,
 };
-pub use platform::{recv_raw_async, send_raw_async};
+pub use platform::{recv_raw_async, send_raw_async, send_raw_with_handles_async};

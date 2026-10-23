@@ -107,6 +107,8 @@ pub struct SidecarServer {
     dogstatsd: DogStatsDPool,
     /// All remote config handling
     remote_configs: RemoteConfigs,
+    cdn_configs: super::ffe_config::CdnConfigs,
+    cdn_enabled: bool,
     /// Diagnostics bookkeeper
     debugger_diagnostics_bookkeeper: Arc<DebuggerDiagnosticsBookkeeper>,
     /// Per-env&version SHM span concentrators (global across all sessions).
@@ -171,6 +173,7 @@ impl Drop for ApplicationSlot {
 
 /// Per-connection handler, owning all session and application state of its client.
 struct ConnectionSidecarHandler {
+    cdn_subscription: Option<Arc<super::ffe_config::CdnSubscription>>,
     server: SidecarServer,
     /// Per-connection counter incremented on each received IPC message.
     submitted_payloads: Arc<AtomicU64>,
@@ -206,6 +209,7 @@ impl ConnectionSidecarHandler {
         };
         let session = ConnectionSessionHandle::default();
         Self {
+            cdn_subscription: None,
             server,
             submitted_payloads,
             #[cfg(unix)]
@@ -486,6 +490,11 @@ impl Drop for ConnectionSidecarHandler {
 }
 
 impl SidecarServer {
+    pub(crate) fn with_cdn_fetching(mut self, enabled: bool) -> Self {
+        self.cdn_enabled = enabled;
+        self
+    }
+
     pub(crate) fn shm_limiters(&self) -> &ShmLimiters {
         self.remote_configs.shm_limiters()
     }
@@ -729,11 +738,40 @@ impl SidecarServer {
     }
 
     pub fn shutdown(&self) {
+        self.cdn_configs.shutdown();
         self.remote_configs.shutdown();
     }
 }
 
 impl SidecarInterface for ConnectionSidecarHandler {
+    async fn subscribe_cdn_configuration(
+        &mut self,
+        config: Option<libdd_ffe::cdn::CdnConfig>,
+    ) -> Option<crate::shm_remote_config::RemoteConfigHandle> {
+        let Some(config) = config.filter(|_| self.server.cdn_enabled) else {
+            self.cdn_subscription = None;
+            return None;
+        };
+        if let Some(subscription) = &self.cdn_subscription {
+            if subscription.config == config {
+                return Some(subscription.handle.clone());
+            }
+        }
+        // Drop the previous subscription even if replacement settings fail.
+        self.cdn_subscription = None;
+        match self.server.cdn_configs.subscribe(config) {
+            Ok(subscription) => {
+                let handle = subscription.handle.clone();
+                self.cdn_subscription = Some(subscription);
+                Some(handle)
+            }
+            Err(_) => {
+                warn!("Could not subscribe to CDN configuration");
+                None
+            }
+        }
+    }
+
     fn recv_counter(&self) -> &AtomicU64 {
         &self.submitted_payloads
     }
@@ -1267,6 +1305,10 @@ impl SidecarInterface for ConnectionSidecarHandler {
 #[cfg(all(test, unix))]
 #[path = "flagevaluation_privacy_tests.rs"]
 mod flagevaluation_privacy_tests;
+
+#[cfg(all(test, unix))]
+#[path = "cdn_tests.rs"]
+mod cdn_tests;
 
 #[cfg(test)]
 mod tests {
