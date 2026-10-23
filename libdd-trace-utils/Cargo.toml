@@ -54,7 +54,7 @@ thread_local.workspace = true
 
 libdd-capabilities = { path = "../libdd-capabilities", version = "4.0.1" }
 libdd-common = { version = "9.0.0", path = "../libdd-common", default-features = false, features = ["std"] }
-libdd-trace-normalization = { version = "4.2.0", path = "../libdd-trace-normalization" }
+libdd-trace-normalization = { version = "4.3.0", path = "../libdd-trace-normalization" }
 libdd-trace-protobuf = { version = "5.1.1", path = "../libdd-trace-protobuf" }
 libdd-trace-model = { version = "1.0.0", path = "../libdd-trace-model" }
 libdd-tinybytes = { version = "1.2.0", path = "../libdd-tinybytes", features = [
