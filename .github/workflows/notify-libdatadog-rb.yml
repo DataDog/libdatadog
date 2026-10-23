@@ -28,10 +28,6 @@ jobs:
           scope: DataDog/libdatadog-rb
           policy: libdatadog.notify-libdatadog-rb
 
-      # There appears to be a race condition in token propagation, wait it out
-      - name: Wait for token propagation
-        run: sleep 30
-
       - name: Dispatch to DataDog/libdatadog-rb
         env:
           GH_TOKEN: ${{ steps.generate-token.outputs.token }}
