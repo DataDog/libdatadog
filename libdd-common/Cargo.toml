@@ -18,10 +18,7 @@ bench = false
 [dependencies]
 anyhow = { workspace = true, optional = true }
 arc-swap = { workspace = true, optional = true }
-futures = { workspace = true, features = [
-    "alloc",
-    "executor",
-], optional = true }
+futures = { workspace = true, features = ["alloc", "executor"], optional = true }
 futures-util = { workspace = true, optional = true }
 hex = { workspace = true, default-features = true, optional = true }
 httparse = { workspace = true, features = ["std"], optional = true }
@@ -31,21 +28,14 @@ multer = { workspace = true, optional = true }
 bytes = { workspace = true, features = ["std"], optional = true }
 pin-project = { workspace = true, optional = true }
 rand = { workspace = true, default-features = true, optional = true }
-regex = { workspace = true, features = [
-    "std",
-    "unicode",
-    "perf",
-], optional = true }
+regex = { workspace = true, features = ["std", "unicode", "perf"], optional = true }
 regex-lite = { workspace = true, default-features = true, optional = true }
 # Use hickory-dns instead of the default system DNS resolver to avoid fork safety issues.
 # The default resolver can hold locks or other global state that can cause deadlocks
 # or corruption when the process forks (e.g., in PHP-FPM or other forking environments).
 # Use rustls-no-provider instead of rustls to avoid reqwest forcing aws-lc-rs as the crypto
 # backend. We install the ring provider explicitly in connector/mod.rs instead.
-reqwest = { workspace = true, features = [
-    "rustls-no-provider",
-    "hickory-dns",
-], optional = true }
+reqwest = { workspace = true, features = ["rustls-no-provider", "hickory-dns"], optional = true }
 criterion = { workspace = true, optional = true }
 rustls-platform-verifier = { workspace = true, optional = true }
 thiserror = { workspace = true, default-features = true, optional = true }
@@ -55,11 +45,8 @@ const_format = { workspace = true, optional = true }
 # Declare rustls and hyper-rustls without a crypto provider. The provider is
 # selected via features: `https` enables ring, `fips` enables aws-lc-rs.
 rustls = { workspace = true, optional = true }
-hyper-rustls = { workspace = true, features = [
-    "http1",
-    "tls12",
-], optional = true }
-# Unused; pins a floor on this transitive-only dep since rustls itself only requires ^0.103.16.
+hyper-rustls = { workspace = true, features = ["http1", "tls12"], optional = true }
+# Unused; pins a floor on this transitive-only dep since rustls itself only requires ^0.103.5.
 rustls-webpki = { workspace = true, optional = true }
 webpki-roots = { workspace = true, optional = true }
 webpki-root-certs = { workspace = true, optional = true }
@@ -68,25 +55,13 @@ webpki-root-certs = { workspace = true, optional = true }
 # Target gating keeps these dependencies out of WASM. They are also optional so
 # native callers using host-managed capabilities do not pull in an HTTP runtime.
 hyper = { workspace = true, features = ["http1", "client"], optional = true }
-hyper-util = { workspace = true, features = [
-    "http1",
-    "client",
-    "client-legacy",
-], optional = true }
+hyper-util = { workspace = true, features = ["http1", "client", "client-legacy"], optional = true }
 http-body = { workspace = true, optional = true }
-http-body-util = { workspace = true, optional = true }
+http-body-util = {workspace = true, optional = true }
 tower-service = { workspace = true, optional = true }
 cc = { workspace = true, optional = true }
 libc = { workspace = true, optional = true }
-tokio = { workspace = true, features = [
-    "rt",
-    "rt-multi-thread",
-    "macros",
-    "net",
-    "io-util",
-    "fs",
-    "time",
-], optional = true }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "net", "io-util", "fs", "time"], optional = true }
 
 [target.'cfg(windows)'.dependencies.windows-sys]
 workspace = true
@@ -111,8 +86,10 @@ mime.workspace = true
 multer.workspace = true
 proptest = { workspace = true, default-features = true }
 rand = { workspace = true, default-features = true }
+rcgen.workspace = true
 tempfile.workspace = true
-tokio = { workspace = true, features = ["rt", "macros", "time"] }
+tokio = { workspace = true, features = ["rt", "macros", "time", "net", "io-util"] }
+tokio-rustls.workspace = true
 
 [features]
 default = ["std", "https"]
@@ -150,15 +127,13 @@ http-client = [
     "dep:tokio",
 ]
 # TLS plumbing without a crypto provider. Use `https` or `fips` to select one.
-tls-core = ["http-client", "rustls", "hyper-rustls", "rustls-platform-verifier", "dep:rustls-webpki"]
+tls-core = ["http-client", "dep:rustls", "dep:hyper-rustls", "dep:rustls-platform-verifier"]
+# Expose the compromised-key distrust verifier (RUSTSEC-2026-0382 mitigation)
+# for crates that build their own TLS configurations, without enabling libdd-common's own connector TLS stack.
+tls-distrust = ["std", "dep:rustls", "dep:rustls-platform-verifier"]
 # Default HTTPS: ring as crypto provider
 https = ["tls-core", "rustls/ring", "hyper-rustls/ring"]
-use_webpki_roots = [
-    "std",
-    "hyper-rustls/webpki-roots",
-    "dep:webpki-roots",
-    "dep:webpki-root-certs",
-]
+use_webpki_roots = ["std", "hyper-rustls/webpki-roots", "dep:webpki-roots", "dep:webpki-root-certs"]
 # Enable this feature to enable stubbing of cgroup
 # php directly import this crate and uses functions gated by this feature for their test
 cgroup_testing = ["std"]
