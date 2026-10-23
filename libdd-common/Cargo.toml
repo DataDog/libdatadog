@@ -22,7 +22,6 @@ futures = { workspace = true, features = [
     "alloc",
     "executor",
 ], optional = true }
-futures-util = { workspace = true, optional = true }
 hex = { workspace = true, default-features = true, optional = true }
 httparse = { workspace = true, features = ["std"], optional = true }
 http = { workspace = true, features = ["std"], optional = true }
@@ -121,7 +120,6 @@ std = [
     "dep:arc-swap",
     "dep:bytes",
     "dep:futures",
-    "dep:futures-util",
     "dep:hex",
     "dep:http",
     "dep:libc",

@@ -2774,7 +2774,6 @@ dependencies = [
  "bytes",
  "const_format",
  "futures",
- "futures-util",
  "hex",
  "http 1.1.0",
  "http-body",
