@@ -64,6 +64,7 @@ members = [
   "libdd-log",
   "libdd-log-ffi",
   "libdd-sampling",
+  "libdd-otel-telemetry",
   "libdd-trace-model",
 ]
 
