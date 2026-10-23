@@ -246,26 +246,6 @@ fn redact_path_digits(path: &str) -> Option<String> {
     redacted.then(|| segments.join("/"))
 }
 
-/// Whether a byte before the query may make [`obfuscate_url_string`] change the URL, `?` aside.
-#[allow(
-    clippy::inline_always,
-    reason = "called per byte from three loops, which rustc otherwise leaves out of line"
-)]
-#[inline(always)]
-fn is_path_trigger(b: u8, remove_path_digits: bool) -> bool {
-    // A fragment is always normalized and userinfo always stripped. Returning on the first '#'
-    // guarantees any '@' seen before it precedes the fragment.
-    matches!(b, b'#' | b'@' | b'%')
-        || (remove_path_digits && b.is_ascii_digit())
-        // non-ASCII (>= 0x80) or control char (< 0x20)
-        || !(0x20..0x80).contains(&b)
-        || b == 0x7F
-        // uppercase scheme gets lowercased
-        || b.is_ascii_uppercase()
-        || is_go_url_escape_cat1(b as char)
-        || is_go_url_escape_cat2_path(b as char)
-}
-
 /// Returns whether [`obfuscate_url_string`] could change `url`, letting callers skip building the
 /// obfuscated `String` when there is nothing to do.
 ///
@@ -281,62 +261,20 @@ pub fn should_obfuscate_url(
     // scan bytes directly and avoid UTF-8 decoding. Path and query need different checks, so we
     // split the scan at the first '?'.
     let bytes = url.as_bytes();
-    let mut i = 0;
-
-    // Scheme and authority. With either option on, a URL that fails to parse becomes "?", and a
-    // misplaced ':' is the one failure no byte trigger catches. With both off, a failed parse only
-    // strips userinfo, which '@' already triggers. The path scan resumes where this stops.
-    if remove_query_string || remove_path_digits {
-        let mut is_scheme = bytes.first().is_some_and(u8::is_ascii_alphabetic);
-        while let Some(&b) = bytes.get(i) {
-            if matches!(b, b':' | b'/' | b'?') {
-                break;
-            }
-            if is_path_trigger(b, remove_path_digits) {
-                return true;
-            }
-            is_scheme &= b.is_ascii_alphanumeric() || matches!(b, b'+' | b'-' | b'.');
-            i += 1;
-        }
-        let authority_may_follow = if bytes.get(i) == Some(&b':') {
-            // A relative reference's first segment cannot hold a ':' (RFC 3986 path-noscheme).
-            if !is_scheme {
-                return true;
-            }
-            i += 1;
-            true
-        } else {
-            i == 0
-        };
-        // Only a scheme or the start of the URL can precede an authority: "a//b" is a path.
-        if authority_may_follow && bytes[i..].starts_with(b"//") {
-            i += 2;
-            let mut in_port = false;
-            while let Some(&b) = bytes.get(i) {
-                if matches!(b, b'/' | b'?') {
-                    break;
-                }
-                if is_path_trigger(b, remove_path_digits) {
-                    return true;
-                }
-                if b == b':' {
-                    // A second ':' fails like a non-digit port.
-                    if in_port {
-                        return true;
-                    }
-                    in_port = true;
-                } else if in_port && !b.is_ascii_digit() {
-                    return true;
-                }
-                i += 1;
-            }
-        }
-        // From here a ':' is in a path segment or the query, where it is legal.
-    }
+    // With both options off, a failed parse only strips userinfo, which already triggers on '@'.
+    let check_colons = remove_query_string || remove_path_digits;
+    let mut first_segment = check_colons;
+    let mut valid_scheme = true;
+    let mut authority_start = (check_colons && bytes.starts_with(b"//")).then_some(2);
+    let mut in_port = false;
 
     // Path region.
+    let mut i = 0;
     while i < bytes.len() {
         match bytes[i] {
+            // A fragment is always normalized and userinfo always stripped. Returning on the first
+            // '#' guarantees any '@' seen here precedes the fragment.
+            b'#' | b'@' => return true,
             b'?' => {
                 if remove_query_string {
                     return true;
@@ -344,7 +282,47 @@ pub fn should_obfuscate_url(
                 i += 1;
                 break;
             }
-            b if is_path_trigger(b, remove_path_digits) => return true,
+            b':' if first_segment => {
+                if i == 0 || !valid_scheme {
+                    return true;
+                }
+                first_segment = false;
+                authority_start = bytes[i + 1..].starts_with(b"//").then_some(i + 3);
+            }
+            b':' if authority_start.is_some() => {
+                if in_port {
+                    return true;
+                }
+                in_port = true;
+            }
+            b'/' => {
+                first_segment = false;
+                // The opening "//" does not end the authority.
+                if authority_start.is_some_and(|start| i >= start) {
+                    authority_start = None;
+                    in_port = false;
+                }
+            }
+            b if (remove_path_digits && b.is_ascii_digit())
+                    || (in_port && !b.is_ascii_digit())
+                    // non-ASCII (>= 0x80) or control char (< 0x20)
+                    || !(0x20..0x80).contains(&b)
+                    || b == 0x7F
+                    || b == b'%'
+                    // uppercase scheme gets lowercased
+                    || b.is_ascii_uppercase()
+                    || is_go_url_escape_cat1(b as char)
+                    || is_go_url_escape_cat2_path(b as char) =>
+            {
+                return true;
+            }
+            b if first_segment => {
+                valid_scheme &= if i == 0 {
+                    b.is_ascii_alphabetic()
+                } else {
+                    b.is_ascii_alphanumeric() || matches!(b, b'+' | b'-' | b'.')
+                };
+            }
             _ => {}
         }
         i += 1;
