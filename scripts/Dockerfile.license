@@ -3,6 +3,8 @@
 
 FROM rust:1.84-slim
 
+RUN apt-get update && apt-get install -y --only-upgrade ca-certificates && update-ca-certificates -f
+
 # Keep in sync with: scripts/update_license_3rdparty.sh (TOOL_VERSION) and .github/workflows/lint.yml (cache key + install step)
 ARG TOOL_VERSION=1.0.6
 
