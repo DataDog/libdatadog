@@ -27,6 +27,12 @@ pub enum EvaluationError {
     #[error("targeting key is missing")]
     TargetingKeyMissing,
 
+    /// The enabled experimentation opt-out parameter is not an RFC3339 string.
+    #[error(
+        "dd_experimentation_opt_out_at must be an RFC3339 timestamp string; supply a valid timestamp to opt out, or omit the attribute to permit experimentation"
+    )]
+    InvalidContext,
+
     /// Failed to parse configuration. This should normally never happen and is likely a signal
     /// that you should update SDK.
     #[error("failed to parse configuration")]
