@@ -171,6 +171,12 @@ pub enum SidecarAction {
     /// The sidecar serializes and POSTs the batch to
     /// `/evp_proxy/v2/api/v2/flagevaluation` (fire-and-forget).
     ///
+    /// When all batch context fields are empty, the receiver snapshots service, environment,
+    /// and application version from this connection's current application before coalescing.
+    /// It also fills missing per-event `context.dd.service` on non-degraded rows. Explicit
+    /// context is preserved; without a registered application the batch remains unattributed.
+    /// Send application updates before evaluations, using the sender's normal state ordering.
+    ///
     /// Keep this appended after pre-existing variants: this enum crosses the
     /// bincode sidecar IPC boundary, so inserting a variant before existing
     /// variants changes their wire ordinals.
