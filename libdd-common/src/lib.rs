@@ -29,9 +29,6 @@ pub mod machine_id;
 pub mod mutable_metadata;
 #[cfg(feature = "std")]
 pub mod regex_engine;
-#[cfg(feature = "std")]
-#[macro_use]
-pub mod cstr;
 #[cfg(feature = "bench-utils")]
 pub mod bench_utils;
 #[cfg(feature = "std")]

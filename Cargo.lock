@@ -3167,7 +3167,6 @@ dependencies = [
  "constcat",
  "function_name",
  "libc_alloc",
- "libdd-common",
  "libdd-common-ffi",
  "libdd-library-config",
 ]

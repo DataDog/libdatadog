@@ -1,8 +1,6 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-#[doc(hidden)]
-#[allow(clippy::panic)]
 pub const fn validate_cstr_contents(bytes: &[u8]) {
     // `str_len` is the length excluding the null terminator.
     let str_len = bytes.len() - 1usize;
@@ -22,7 +20,6 @@ pub const fn validate_cstr_contents(bytes: &[u8]) {
     }
 }
 
-#[macro_export]
 macro_rules! cstr {
     ($s:expr) => {{
         let mut bytes = $s.as_bytes();
@@ -35,33 +32,18 @@ macro_rules! cstr {
     }};
 }
 
-#[macro_export]
-macro_rules! cstr_u8 {
-    ($s:literal) => {{
-        $crate::cstr::validate_cstr_contents($s);
-        unsafe { core::ffi::CStr::from_bytes_with_nul_unchecked($s as &[u8]) }
-    }};
-}
-
 #[cfg(test)]
 mod tests {
     #[test]
     fn test_cstr() {
         assert_eq!(b"/dev/null", cstr!("/dev/null").to_bytes());
         assert_eq!(b"/dev/null", cstr!("/dev/null\0").to_bytes());
-        assert_eq!(b"/dev/null", cstr_u8!(b"/dev/null\0").to_bytes());
     }
 
     #[test]
     #[should_panic]
     fn test_invalid_cstr_with_extra_null_character() {
         _ = cstr!("/dev/null\0\0");
-    }
-
-    #[test]
-    #[should_panic]
-    fn test_invalid_cstr_u8_without_terminatid_nul() {
-        _ = cstr_u8!(b"/dev/null");
     }
 
     #[test]
