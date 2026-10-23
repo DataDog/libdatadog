@@ -21,3 +21,10 @@ comes from the compromised-key blocklist and not from missing roots.
 Additional tests exercise blocked leaves, unused blocked intermediates, malformed certificates,
 and preserved hostname, expiry, and signature validation. The data is ported from
 DataDog/saluki#2857.
+
+The integration tests (`../tls_distrust.rs`) reuse `dv-g3b-emudhra.pem` without its roots: a
+local TLS server presents a freshly self-signed certificate plus the chain's first
+intermediate (`EM DV TLS CA - G3B`), whose public key is compromised. The handshake would
+otherwise succeed against the trust store injected through `SSL_CERT_FILE`, so the rejection
+can only come from the compromised-key blocklist. This mirrors the local-server integration
+test from DataDog/saluki (`lib/saluki-io/tests/certificate_distrust.rs`).

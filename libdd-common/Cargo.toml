@@ -86,8 +86,10 @@ mime.workspace = true
 multer.workspace = true
 proptest = { workspace = true, default-features = true }
 rand = { workspace = true, default-features = true }
+rcgen.workspace = true
 tempfile.workspace = true
-tokio = { workspace = true, features = ["rt", "macros", "time"] }
+tokio = { workspace = true, features = ["rt", "macros", "time", "net", "io-util"] }
+tokio-rustls.workspace = true
 
 [features]
 default = ["std", "https"]
