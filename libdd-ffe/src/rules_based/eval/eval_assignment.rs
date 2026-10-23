@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, de::value::StrDeserializer};
 
 use crate::rules_based::{
     Configuration, EvaluationContext, ExpectedFlagType, Timestamp,
     error::EvaluationError,
+    timestamp::OptOutTimestamp,
     ufc::{Allocation, Assignment, AssignmentReason, CompiledFlagsConfig, Flag, Shard, Split},
 };
 
@@ -37,8 +37,15 @@ enum ExperimentationExclusion {
     ActivatedAtOrAfter(Timestamp),
 }
 
+#[cfg(test)]
+thread_local! {
+    static EXCLUSION_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 impl ExperimentationExclusion {
     fn excludes(self, allocation: &Allocation) -> bool {
+        #[cfg(test)]
+        EXCLUSION_CALLS.with(|calls| calls.set(calls.get() + 1));
         if !allocation.do_log {
             return false;
         }
@@ -66,10 +73,9 @@ impl EvaluationOptions {
         let Some(timestamp) = attribute.as_str() else {
             return Err(EvaluationError::InvalidContext);
         };
-        // Use the same timestamp deserializer as allocation startAt and endAt.
-        let cutoff =
-            Timestamp::deserialize(StrDeserializer::<serde::de::value::Error>::new(timestamp))
-                .map_err(|_| EvaluationError::InvalidContext)?;
+        let cutoff = OptOutTimestamp::parse(timestamp)
+            .map_err(|_| EvaluationError::InvalidContext)?
+            .0;
         Ok(match self.experimentation_opt_out_mode {
             ExperimentationOptOutMode::Disabled => ExperimentationExclusion::None,
             ExperimentationOptOutMode::Immediate => ExperimentationExclusion::Immediate,
@@ -184,6 +190,12 @@ impl Flag {
         now: DateTime<Utc>,
         exclusion: ExperimentationExclusion,
     ) -> Result<Assignment, EvaluationError> {
+        // D004: flag-wide activation validity is consumed only by effective future policy.
+        if matches!(exclusion, ExperimentationExclusion::ActivatedAtOrAfter(_))
+            && self.has_invalid_activation
+        {
+            return Err(EvaluationError::FlagConfigurationInvalid);
+        }
         if !expected_type.is_compatible(self.variation_type.into()) {
             return Err(EvaluationError::TypeMismatch {
                 expected: expected_type,
@@ -210,7 +222,7 @@ impl Flag {
         exclusion: ExperimentationExclusion,
     ) -> Result<(&Allocation, &Split, AssignmentReason), EvaluationError> {
         for allocation in &self.allocations {
-            if exclusion.excludes(allocation) {
+            if exclusion != ExperimentationExclusion::None && exclusion.excludes(allocation) {
                 continue;
             }
             if let Some((split, reason)) = allocation.get_matching_split(context, now)? {
@@ -355,7 +367,7 @@ mod opt_out_tests {
     }
 
     #[test]
-    fn opt_out_uses_allocation_timestamp_contract() {
+    fn opt_out_preserves_existing_timestamp_syntax_without_surrounding_whitespace() {
         let immediate = EvaluationOptions {
             experimentation_opt_out_mode: ExperimentationOptOutMode::Immediate,
         };
@@ -532,7 +544,42 @@ mod opt_out_tests {
     }
 
     #[test]
-    fn malformed_activation_is_isolated_in_every_mode() {
+    fn inactive_policy_does_not_call_allocation_exclusion() {
+        // D017: observe the production boundary, not a count inferred from the policy.
+        let config = future_configuration(json!("2026-10-19T12:00:00Z"));
+        for mode in [
+            ExperimentationOptOutMode::Disabled,
+            ExperimentationOptOutMode::Immediate,
+            ExperimentationOptOutMode::FutureExperimentsOnly,
+        ] {
+            for attribute in [None, Some(json!(true)), Some(json!("2026-10-19T12:00:00Z"))] {
+                EXCLUSION_CALLS.with(|calls| calls.set(0));
+                let result = config.eval_flag_with_options(
+                    "feature",
+                    &context(attribute.clone()),
+                    ExpectedFlagType::Boolean,
+                    Utc::now(),
+                    EvaluationOptions {
+                        experimentation_opt_out_mode: mode,
+                    },
+                );
+                let calls = EXCLUSION_CALLS.with(|calls| calls.get());
+                if mode == ExperimentationOptOutMode::Disabled || attribute.is_none() {
+                    assert_eq!(calls, 0);
+                    assert!(result.unwrap().do_log);
+                } else if attribute == Some(json!(true)) {
+                    assert_eq!(calls, 0);
+                    assert_eq!(result.unwrap_err(), EvaluationError::InvalidContext);
+                } else {
+                    assert_eq!(calls, 2);
+                    assert!(!result.unwrap().do_log);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn malformed_activation_is_scoped_to_effective_future_mode() {
         for activation in [json!("bad"), json!(42), json!(true), json!([]), json!({})] {
             let config = future_configuration(activation);
             for mode in [
@@ -543,30 +590,40 @@ mod opt_out_tests {
                 let options = EvaluationOptions {
                     experimentation_opt_out_mode: mode,
                 };
-                let subject = context(Some(json!("2026-10-19T12:00:00Z")));
-                assert_eq!(
-                    config
-                        .eval_flag_with_options(
-                            "feature",
-                            &subject,
-                            ExpectedFlagType::Boolean,
-                            Utc::now(),
-                            options,
-                        )
-                        .unwrap_err(),
-                    EvaluationError::FlagConfigurationInvalid
-                );
-                assert!(
-                    config
-                        .eval_flag_with_options(
-                            "neighbor",
-                            &subject,
-                            ExpectedFlagType::Boolean,
-                            Utc::now(),
-                            options,
-                        )
-                        .is_ok()
-                );
+                for cutoff in [None, Some(json!("2026-10-19T12:00:00Z"))] {
+                    let subject = context(cutoff.clone());
+                    let result = config.eval_flag_with_options(
+                        "feature",
+                        &subject,
+                        ExpectedFlagType::Boolean,
+                        Utc::now(),
+                        options,
+                    );
+                    if mode == ExperimentationOptOutMode::FutureExperimentsOnly && cutoff.is_some()
+                    {
+                        assert_eq!(
+                            result.unwrap_err(),
+                            EvaluationError::FlagConfigurationInvalid
+                        );
+                    } else {
+                        let assignment = result.unwrap();
+                        assert_eq!(
+                            assignment.do_log,
+                            mode != ExperimentationOptOutMode::Immediate || cutoff.is_none()
+                        );
+                    }
+                    assert!(
+                        config
+                            .eval_flag_with_options(
+                                "neighbor",
+                                &subject,
+                                ExpectedFlagType::Boolean,
+                                Utc::now(),
+                                options,
+                            )
+                            .is_ok()
+                    );
+                }
             }
         }
     }

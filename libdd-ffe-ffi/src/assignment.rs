@@ -243,11 +243,18 @@ pub unsafe extern "C" fn ddog_ffe_get_assignment_with_opt_out_mode(
     context: Handle<EvaluationContext>,
     mode: ExperimentationOptOutMode,
 ) -> Handle<ResolutionDetails> {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+    catch_assignment_panic(|| {
         // SAFETY: the caller provides valid handles and a valid string.
         unsafe { get_assignment_with_mode(config, flag_key, expected_type, context, mode) }
-    }))
-    .unwrap_or_else(|_| {
+    })
+}
+
+// Other FFI crates have private catch_panic! macros tied to their own error types.
+// Keep this boundary's handle ownership and redacted error conversion together.
+fn catch_assignment_panic(
+    evaluate: impl FnOnce() -> Handle<ResolutionDetails>,
+) -> Handle<ResolutionDetails> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(evaluate)).unwrap_or_else(|_| {
         Handle::new(
             EvaluationError::Internal(Str::from_static_str("feature flag evaluation failed"))
                 .into(),
@@ -606,6 +613,21 @@ mod tests {
     use std::{collections::HashMap, sync::Arc};
 
     use super::*;
+
+    #[test]
+    fn evaluation_panic_returns_owned_redacted_error() {
+        let mut result = catch_assignment_panic(|| panic!("private context value"));
+        // SAFETY: the returned handle is live until it is freed below.
+        let details = unsafe { result.as_ref() };
+        assert_eq!(ErrorCode::from(details), ErrorCode::General);
+        assert_eq!(
+            details.error_message.as_deref(),
+            Some("internal error: feature flag evaluation failed")
+        );
+        assert!(details.flag_metadata.is_empty());
+        // SAFETY: all borrows ended; free the owned result once.
+        unsafe { ddog_ffe_assignment_drop(&mut result) };
+    }
 
     #[test]
     fn opt_out_modes_cross_the_ffi_boundary() {

@@ -6,6 +6,7 @@ use std::{cmp::Ordering, collections::HashMap, num::NonZeroU32, sync::Arc};
 use libdd_common::regex_engine::Regex;
 use serde::{Deserialize, Serialize};
 
+use crate::rules_based::timestamp::OptOutTimestamp;
 use crate::rules_based::{EvaluationError, FlagType, Str, Timestamp};
 
 /// Universal Flag Configuration attributes. This contains the actual flag configuration data.
@@ -156,7 +157,7 @@ pub(crate) struct AllocationWire {
     #[serde(default)]
     pub end_at: Option<Timestamp>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub randomization_activated_at: Option<Timestamp>,
+    pub randomization_activated_at: Option<TryParse<OptOutTimestamp>>,
     pub splits: Vec<SplitWire>,
     #[serde(default = "default_do_log")]
     pub do_log: bool,
