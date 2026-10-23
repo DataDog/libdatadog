@@ -13,12 +13,49 @@ use std::fmt::{Debug, Formatter};
 use std::io;
 use std::marker::PhantomData;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU8, AtomicU32, AtomicU64, Ordering};
 use std::time::Duration;
+
+/// A type whose values can be stored in, and concurrently accessed from, memory shared with
+/// other processes.
+///
+/// The rate limiter creates `&Inner` references to either zero-filled memory or recycled slots.
+/// Morever, this memory is shared concurrently, and thus not immutable.
+///
+/// This breaks types that maintain validity or concurrency invariants. A `String` may observe
+/// non-UTF-8 bytes, a `Vec` a broken length/pointer pair, etc.
+///
+/// `ShmSafe` encodes that contract at the type level, so that the shared-memory wrappers in this
+/// module and in [`crate::shm_table`] can require it instead of trusting every caller.
+///
+/// # Safety
+///
+/// To implement `ShmSafe` for `T`, the following must hold:
+///
+/// 1. **Every memory bit pattern is a valid value for `T`.**. `T` must therefore not contain
+///    references, raw pointers, `bool`s, `char`s, `enum`s, `NonZero*` or any other type that
+///    carries a validity invariant.
+/// 2. **Every field is interior-mutable.** Peers write the underlying bytes without any
+///    synchronization, so each field must be an atomic, an `UnsafeCell`, or a type that is itself
+///    `ShmSafe`.
+pub unsafe trait ShmSafe: Sized {}
+
+// `()` is the payload for limiters that only share their budget, not a value.
+unsafe impl ShmSafe for () {}
+// SAFETY: every bit pattern is a valid value of an atomic (its operations are defined for any
+// bytes), and its contents are by definition interior-mutable.
+unsafe impl ShmSafe for AtomicU8 {}
+// SAFETY: as for `AtomicU8`.
+unsafe impl ShmSafe for AtomicU32 {}
+// SAFETY: as for `AtomicU8`.
+unsafe impl ShmSafe for AtomicU64 {}
+// SAFETY: an array has no bytes of its own beyond its elements', so it inherits both properties
+// from `T`.
+unsafe impl<T: ShmSafe, const N: usize> ShmSafe for [T; N] {}
 
 #[repr(C)]
 #[derive(Default)]
-struct ShmLimiterData<'a, Inner> {
+struct ShmLimiterData<'a, Inner: ShmSafe> {
     next_free: AtomicU32, // free list
     rc: AtomicI32,
     limiter: LocalLimiter,
@@ -26,7 +63,7 @@ struct ShmLimiterData<'a, Inner> {
     _phantom: PhantomData<&'a ShmLimiterArena<Inner>>,
 }
 
-impl<Inner> ShmLimiterData<'_, Inner> {
+impl<Inner: ShmSafe> ShmLimiterData<'_, Inner> {
     /// Bring this slot into service: reset its limiter, let `init` write the payload, then
     /// publish it.
     ///
@@ -36,12 +73,15 @@ impl<Inner> ShmLimiterData<'_, Inner> {
     /// every scan.
     fn initialise_and_publish(&self, init: impl FnOnce(&Inner)) {
         self.limiter.reset();
+        // SAFETY: the payload is `ShmSafe`, so any bit pattern a fresh or recycled slot may
+        // hold is a valid `Inner`, and handing out a shared reference over the `UnsafeCell`
+        // lets peers' unsynchronized writes stay well-defined.
         init(unsafe { &*self.inner.get() });
         self.rc.store(1, Ordering::Release);
     }
 }
 
-pub struct ShmLimiterMemory<Inner> {
+pub struct ShmLimiterMemory<Inner: ShmSafe> {
     mem: ArcSwapOption<ShmLimiterArena<Inner>>,
     path: Option<ReaderPath>,
 }
@@ -61,12 +101,12 @@ impl ReaderPath {
     }
 }
 
-struct ShmLimiterArena<Inner> {
+struct ShmLimiterArena<Inner: ShmSafe> {
     mem: MappedMem<NamedShmHandle>,
     _phantom: PhantomData<Inner>,
 }
 
-impl<Inner> Clone for ShmLimiterMemory<Inner> {
+impl<Inner: ShmSafe> Clone for ShmLimiterMemory<Inner> {
     fn clone(&self) -> Self {
         ShmLimiterMemory {
             mem: ArcSwapOption::new(self.mem.load_full()),
@@ -75,7 +115,7 @@ impl<Inner> Clone for ShmLimiterMemory<Inner> {
     }
 }
 
-impl<Inner> ShmLimiterMemory<Inner> {
+impl<Inner: ShmSafe> ShmLimiterMemory<Inner> {
     /// Create a fresh arena at `path`.
     ///
     /// Retire previous arenas after initialization. This owner stays on its arena;
@@ -199,7 +239,7 @@ impl<Inner> ShmLimiterMemory<Inner> {
     }
 }
 
-impl<Inner> ShmLimiterArena<Inner> {
+impl<Inner: ShmSafe> ShmLimiterArena<Inner> {
     /// Slot alignment must leave room for the free-list head and retirement flag.
     const START_OFFSET: u32 = {
         assert!(align_of::<ShmLimiterData<Inner>>() >= 2 * size_of::<AtomicU32>());
@@ -381,6 +421,9 @@ impl<Inner> ShmLimiterArena<Inner> {
                     // Acquire, to pair with the release-store that publishes an allocation: it
                     // is what makes "the count is positive" mean "the payload below is this
                     // allocation's, and not the one before it".
+                    // SAFETY: `data.rc > 0` means the payload was published by an
+                    // allocation; being `ShmSafe`, it is valid whatever bytes the peers
+                    // have since written, and the `UnsafeCell` admits their writes.
                     data.rc.load(Ordering::Acquire) > 0 && cond(unsafe { &*data.inner.get() })
                 })?;
                 if hit {
@@ -397,7 +440,7 @@ impl<Inner> ShmLimiterArena<Inner> {
     }
 }
 
-pub struct ShmLimiter<Inner> {
+pub struct ShmLimiter<Inner: ShmSafe> {
     idx: u32,
     /// The process that acquired the reference this handle stands for.
     ///
@@ -409,13 +452,13 @@ pub struct ShmLimiter<Inner> {
     memory: Arc<ShmLimiterArena<Inner>>,
 }
 
-impl<Inner> Debug for ShmLimiter<Inner> {
+impl<Inner: ShmSafe> Debug for ShmLimiter<Inner> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         self.idx.fmt(f)
     }
 }
 
-impl<Inner> ShmLimiter<Inner> {
+impl<Inner: ShmSafe> ShmLimiter<Inner> {
     /// A handle owning one reference to `idx`, stamped with the process taking it.
     fn owning(idx: u32, memory: Arc<ShmLimiterArena<Inner>>) -> Self {
         ShmLimiter {
@@ -435,6 +478,9 @@ impl<Inner> ShmLimiter<Inner> {
     }
 
     pub fn with_data<R>(&self, f: impl FnOnce(&Inner) -> R) -> Option<R> {
+        // SAFETY: the payload is `ShmSafe`, so any bit pattern a fresh or recycled slot may
+        // hold is a valid `Inner`, and handing out a shared reference over the `UnsafeCell`
+        // lets peers' unsynchronized writes stay well-defined.
         self.with_limiter(|limiter| f(unsafe { &*limiter.inner.get() }))
     }
 
@@ -499,7 +545,7 @@ impl<Inner> ShmLimiter<Inner> {
     }
 }
 
-impl<Inner> Drop for ShmLimiter<Inner> {
+impl<Inner: ShmSafe> Drop for ShmLimiter<Inner> {
     fn drop(&mut self) {
         if self.idx == 0 {
             return;
@@ -520,7 +566,9 @@ impl<Inner> Drop for ShmLimiter<Inner> {
 
 #[cfg(test)]
 mod tests {
-    use crate::rate_limiter::{ShmLimiter, ShmLimiterArena, ShmLimiterData, ShmLimiterMemory};
+    use crate::rate_limiter::{
+        ShmLimiter, ShmLimiterArena, ShmLimiterData, ShmLimiterMemory, ShmSafe,
+    };
     use std::ffi::CString;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -532,7 +580,7 @@ mod tests {
         CString::new("/ddlimiters-test".to_string()).unwrap()
     }
 
-    fn arena<Inner>(memory: &ShmLimiterMemory<Inner>) -> Arc<ShmLimiterArena<Inner>> {
+    fn arena<Inner: ShmSafe>(memory: &ShmLimiterMemory<Inner>) -> Arc<ShmLimiterArena<Inner>> {
         memory.mem.load_full().unwrap()
     }
 

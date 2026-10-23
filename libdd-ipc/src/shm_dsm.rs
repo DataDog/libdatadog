@@ -24,7 +24,7 @@ use std::sync::atomic::{AtomicU8, AtomicU32, AtomicU64, Ordering::*};
 use libdd_ddsketch::DDSketch;
 
 use crate::shm_table::{
-    self, Pool, Schema, ShmTable, ShmTableMapping, WireStringRef, alloc_str, pool_string,
+    self, Pool, Schema, ShmSafe, ShmTable, ShmTableMapping, WireStringRef, alloc_str, pool_string,
 };
 
 /// Gamma of the backend's DDSketch mapping, which the Java and Go tracers also use for DSM.
@@ -137,6 +137,9 @@ pub struct ShmDsmStats {
     payload_size: PayloadHistogram,
 }
 
+// SAFETY: `#[repr(C)]` and made only of integer atomics and arrays of them.
+unsafe impl ShmSafe for ShmDsmStats {}
+
 /// Stats group key as stored in the mapping.
 #[repr(C)]
 pub struct ShmDsmKey {
@@ -148,11 +151,13 @@ pub struct ShmDsmKey {
     edge_tag_count: AtomicU8,
 }
 
+// SAFETY: `#[repr(C)]` and made only of integer atomics and `ShmSafe` arrays of them.
+unsafe impl ShmSafe for ShmDsmKey {}
+
 /// Schema of the DSM stats table: one slot per stats group.
 pub struct DataStreams;
 
-// SAFETY: `ShmDsmKey` and `ShmDsmStats` are `#[repr(C)]` and made only of integer atomics.
-unsafe impl Schema for DataStreams {
+impl Schema for DataStreams {
     const ID: u32 = 2;
     const VERSION: u32 = 2;
 

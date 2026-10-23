@@ -200,18 +200,15 @@ jobs:
     if: github.event_name != 'pull_request' || needs.changes.outputs.manifests == 'true'
     runs-on: ubuntu-latest
     name: "Workspace dependency declarations"
+    permissions:
+      id-token: write
+      contents: read
     steps:
       - name: Checkout sources
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
-      - name: Cache [rust]
-        id: rust-cache
-        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
-        with:
-          workspaces: .github/actions
-          cache-targets: true # cache build artifacts
-          shared-key: workspace-deps-lint
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      - run: echo "rust-cache ${{ steps.rust-cache.outputs.cache-hit == 'true' && 'HIT' || 'MISS' }}"
+      - name: sccache
+        id: sccache
+        uses: ./.github/actions/setup-sccache
       # The helper crates under .github/actions pin their own stable toolchain.
       - name: Build the dependency linter
         working-directory: .github/actions
@@ -232,6 +229,9 @@ jobs:
       contains(github.event.pull_request.labels.*.name, 'run-all-tests')
     runs-on: ubuntu-latest
     name: "CI helper crates (fmt, clippy, test)"
+    permissions:
+      id-token: write
+      contents: read
     env:
       CARGO_TERM_COLOR: always
       CARGO_INCREMENTAL: 0
@@ -243,17 +243,9 @@ jobs:
       - name: Read nightly version from nightly-toolchain.toml
         id: nightly-version
         run: echo "version=$(grep -Po '^channel = "\K[^"]+' nightly-toolchain.toml)" >> $GITHUB_OUTPUT
-      - name: Cache [rust]
-        id: rust-cache
-        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
-        with:
-          workspaces: .github/actions
-          # We expect CI executables to be small and reasonably fast to
-          # compile. Let's not pollute the cache for now.
-          cache-targets: false
-          shared-key: ci-helpers
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      - run: echo "rust-cache ${{ steps.rust-cache.outputs.cache-hit == 'true' && 'HIT' || 'MISS' }}"
+      - name: sccache
+        id: sccache
+        uses: ./.github/actions/setup-sccache
       # The helper crates under .github/actions form their own workspace, which
       # is invisible to the root-workspace change report of the `setup` job.
       #

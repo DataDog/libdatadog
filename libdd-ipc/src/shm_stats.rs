@@ -25,7 +25,8 @@ use libdd_trace_stats::span_concentrator::{
 };
 
 use crate::shm_table::{
-    self, Pool, Schema, ShmTable, ShmTableMapping, WireStringRef, alloc_str, pool_eq, pool_string,
+    self, Pool, Schema, ShmSafe, ShmTable, ShmTableMapping, WireStringRef, alloc_str, pool_eq,
+    pool_string,
 };
 pub use crate::shm_table::{RELOAD_FILL_RATIO, StringRef};
 
@@ -126,6 +127,9 @@ pub struct ShmKeyHeader {
     peer_tag_count: AtomicU8,
 }
 
+// SAFETY: `#[repr(C)]` and made only of integer atomics and `ShmSafe` arrays of them.
+unsafe impl ShmSafe for ShmKeyHeader {}
+
 impl ShmKeyHeader {
     /// Snapshot the scalar fields, rejecting any encoding this writer does not produce.
     ///
@@ -199,11 +203,13 @@ pub struct ShmStats {
     error_bins: [AtomicU64; N_BINS],
 }
 
+// SAFETY: `#[repr(C)]` and made only of integer atomics and arrays of them.
+unsafe impl ShmSafe for ShmStats {}
+
 /// Schema of the APM client stats table: one slot per span aggregation key.
 pub struct SpanStats;
 
-// SAFETY: `ShmKeyHeader` and `ShmStats` are `#[repr(C)]` and made only of integer atomics.
-unsafe impl Schema for SpanStats {
+impl Schema for SpanStats {
     const ID: u32 = 1;
     const VERSION: u32 = 1;
 
