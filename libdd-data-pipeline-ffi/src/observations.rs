@@ -95,6 +95,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_send_trace_chunks_observed(
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
     use crate::trace_exporter::{
