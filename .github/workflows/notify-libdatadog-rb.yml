@@ -3,14 +3,16 @@ name: Notify libdatadog-rb of a libdatadog release
 on: # yamllint disable-line rule:truthy
   push:
     tags:
-      - "v*"
+      - "v[0-9]*.[0-9]*.[0-9]*"
 
-# The plain `v*` tags are libdatadog crate releases only (libdd-* crates use
-# prefixed tags like `libdd-telemetry-v10.0.0`), and libdatadog-rb builds
-# from the git tag -- the crate is not published to crates.io -- so a tag push
-# is the first moment downstreams can consume a release. Hotfix releases are
-# tagged on maintenance branches (v46.x is the current one) before reaching main, so only
-# this trigger catches every release flow.
+# The libdatadog crate is released as plain version-shaped tags (libdd-*
+# crates use prefixed tags like `libdd-telemetry-v10.0.0`), and libdatadog-rb
+# builds from the git tag -- the crate is not published to crates.io -- so a
+# tag push is the first moment downstreams can consume a release. The filter
+# matches only `v<major>.<minor>.<patch>`: other plain `v*` tags (internal
+# artifacts, precompiled actions, pre-releases) do not fire the dispatch.
+# Hotfix releases are tagged on maintenance branches (v46.x is the current
+# one) before reaching main, so only this trigger catches every release flow.
 
 permissions: {}
 
