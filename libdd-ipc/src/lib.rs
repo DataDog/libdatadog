@@ -13,6 +13,7 @@ pub mod handles;
 pub mod one_way_shared_memory;
 pub mod platform;
 pub mod rate_limiter;
+pub mod shm_dsm;
 pub mod shm_stats;
 mod shm_table;
 

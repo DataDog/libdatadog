@@ -451,6 +451,9 @@ pub(crate) fn alloc_str(pool: &Pool, cursor: &AtomicU32, s: &str) -> StringRef {
 pub(crate) struct DrainedBucket<T> {
     pub(crate) start: u64,
     pub(crate) duration: u64,
+    /// Whether workers were still writing to this bucket when it was drained: true only for the
+    /// active bucket of a forced drain, whose interval had not ended yet.
+    pub(crate) current: bool,
     pub(crate) groups: Vec<T>,
 }
 
@@ -807,14 +810,15 @@ impl<S: Schema> ShmTableMapping<S> {
         let mut buckets = Vec::new();
 
         if force {
+            let active = self.header().active_idx.load(Acquire);
             for idx in 0u8..2 {
-                if let Some(b) = self.drain_bucket(idx, &mut drain_entry) {
+                if let Some(b) = self.drain_bucket(idx, (idx ^ active) & 1 == 0, &mut drain_entry) {
                     buckets.push(b);
                 }
             }
         } else {
             let old_active = self.header().active_idx.fetch_xor(1, AcqRel);
-            if let Some(b) = self.drain_bucket(old_active, &mut drain_entry) {
+            if let Some(b) = self.drain_bucket(old_active, false, &mut drain_entry) {
                 buckets.push(b);
             }
         }
@@ -832,6 +836,7 @@ impl<S: Schema> ShmTableMapping<S> {
     fn drain_bucket<T>(
         &self,
         bucket_idx: u8,
+        current: bool,
         drain_entry: &mut impl FnMut(&ShmEntry<S>, &Pool, &mut usize) -> Option<T>,
     ) -> Option<DrainedBucket<T>> {
         let bucket = self.bucket(bucket_idx);
@@ -890,6 +895,7 @@ impl<S: Schema> ShmTableMapping<S> {
         Some(DrainedBucket {
             start: bucket_start_ts,
             duration: bucket_size_nanos,
+            current,
             groups,
         })
     }
