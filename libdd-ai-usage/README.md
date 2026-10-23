@@ -81,6 +81,10 @@ caller owns.
   There is one scope per profile, carrying the attribute `trajectory.profile`. Counters are monotonic
   delta sums, and Histograms are delta explicit-bucket histograms using the
   OpenTelemetry GenAI advisory bucket bounds where the conventions give them.
+  `MetricBatch::encode_otlp_with(.., OtlpBinding::Datadog)` is for an export that
+  Datadog stores as it arrives (the Agent's OTLP receiver or Datadog's OTLP
+  intake): `{nanoUSD}` Counters are sent in USD and `{id}@{version}` values use
+  `/`, so metrics store the same values over OTLP as over DogStatsD.
 - **DogStatsD**: `MetricBatch::dogstatsd_lines` returns one line per series
   point under the Datadog binding. Names are unchanged. Counters are Counts. Histograms are
   Distributions, each with `{name}.sum` and `{name}.count` Counts. `{nanoUSD}`

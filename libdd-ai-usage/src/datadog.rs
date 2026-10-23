@@ -19,8 +19,8 @@ use crate::Profile;
 use crate::point::{Attributes, ErrorCode, Instrument, MetricError, MetricPoint, Sum, reject};
 use crate::registry::PROFILE_ATTRIBUTE;
 
-const NANO_USD: &str = "{nanoUSD}";
-const NANO_USD_PER_USD: f64 = 1_000_000_000.0;
+pub(crate) const NANO_USD: &str = "{nanoUSD}";
+pub(crate) const NANO_USD_PER_USD: f64 = 1_000_000_000.0;
 
 /// The type of a Datadog series.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -112,10 +112,15 @@ pub fn datadog_tag_value(value: &str) -> String {
         .collect()
 }
 
+/// Whether an attribute's values are `{id}@{version}` identifiers.
+pub(crate) fn is_versioned(attribute: &str) -> bool {
+    attribute == PROFILE_ATTRIBUTE || attribute == "trajectory.cost.rate_card"
+}
+
 /// The tag value of an attribute: `{id}@{version}` values keep their version
 /// apart with `/`, which Datadog keeps, instead of `@`, which it does not.
 fn tag_value(attribute: &str, value: &str) -> String {
-    if attribute == PROFILE_ATTRIBUTE || attribute == "trajectory.cost.rate_card" {
+    if is_versioned(attribute) {
         datadog_tag_value(&value.replace('@', "/"))
     } else {
         datadog_tag_value(value)

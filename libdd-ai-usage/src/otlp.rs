@@ -12,14 +12,26 @@
 //!   are the OpenTelemetry GenAI advisory bounds where the conventions give them; other histograms
 //!   have a single bucket.
 //!
+//! - With [`OtlpBinding::Datadog`], for an export that Datadog stores as it arrives (the Datadog
+//!   Agent's OTLP receiver or Datadog's OTLP intake), the encoding follows the Datadog binding
+//!   instead: a `{nanoUSD}` counter is summed exactly and sent in USD as a double, divided by 10^9
+//!   once, and `{id}@{version}` attribute values use `/`. Metrics then store the same values
+//!   whether they arrive over OTLP or DogStatsD.
+//!
 //! Only the messages and fields this encoder writes are declared here, with
 //! their field numbers from `opentelemetry/proto/metrics/v1/metrics.proto`.
+
+use std::borrow::Cow;
 
 use prost::Message;
 
 use crate::batch::MetricBatch;
+use crate::datadog::{NANO_USD, NANO_USD_PER_USD, is_versioned};
 use crate::point::{Attributes, Sum};
 use crate::registry::PROFILE_ATTRIBUTE;
+
+/// The unit of a `{nanoUSD}` counter under [`OtlpBinding::Datadog`].
+const USD: &str = "USD";
 
 /// `gen_ai.client.operation.duration` and the other operation durations.
 const DURATION_BOUNDS: &[f64] = &[
@@ -57,6 +69,18 @@ pub struct OtlpScope<'a> {
     pub version: &'a str,
 }
 
+/// Which binding an OTLP export follows.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum OtlpBinding {
+    /// The OpenTelemetry encoding: cost in integer `{nanoUSD}`, versioned
+    /// values as `{id}@{version}`. For collectors and other backends.
+    #[default]
+    OpenTelemetry,
+    /// The Datadog binding, for an export Datadog stores as it arrives: cost
+    /// in USD, versioned values as `{id}/{version}`, as over DogStatsD.
+    Datadog,
+}
+
 /// The time window of an export, in nanoseconds since the Unix epoch. Delta
 /// points start at `start_time_unix_nano` and end at `time_unix_nano`.
 #[derive(Debug, Clone, Copy)]
@@ -66,26 +90,41 @@ pub struct OtlpWindow {
 }
 
 impl MetricBatch {
-    /// Encode the batch as an OTLP `ExportMetricsServiceRequest`.
+    /// Encode the batch as an OTLP `ExportMetricsServiceRequest`, following
+    /// the OpenTelemetry encoding.
     pub fn encode_otlp(&self, scope: OtlpScope, window: OtlpWindow) -> Vec<u8> {
-        self.otlp_request(scope, window).encode_to_vec()
+        self.encode_otlp_with(scope, window, OtlpBinding::OpenTelemetry)
+    }
+
+    /// Encode the batch as an OTLP `ExportMetricsServiceRequest`, following
+    /// `binding`.
+    pub fn encode_otlp_with(
+        &self,
+        scope: OtlpScope,
+        window: OtlpWindow,
+        binding: OtlpBinding,
+    ) -> Vec<u8> {
+        self.otlp_request(scope, window, binding).encode_to_vec()
     }
 
     fn otlp_request(
         &self,
         scope: OtlpScope,
         window: OtlpWindow,
+        binding: OtlpBinding,
     ) -> pb::ExportMetricsServiceRequest {
+        let datadog = binding == OtlpBinding::Datadog;
         let mut resource_metrics: Vec<pb::ResourceMetrics> = Vec::new();
         for ((resource, profile), group) in &self.groups {
             // Groups are sorted by resource, so one resource's profiles are adjacent.
             let same_resource = resource_metrics.last().is_some_and(|last| {
-                last.resource.as_ref().map(|r| &r.attributes) == Some(&key_values(resource))
+                last.resource.as_ref().map(|r| &r.attributes)
+                    == Some(&key_values(resource, binding))
             });
             if !same_resource {
                 resource_metrics.push(pb::ResourceMetrics {
                     resource: Some(pb::Resource {
-                        attributes: key_values(resource),
+                        attributes: key_values(resource, binding),
                         dropped_attributes_count: 0,
                     }),
                     scope_metrics: Vec::new(),
@@ -109,7 +148,12 @@ impl MetricBatch {
             };
             let mut sums: Vec<(usize, pb::NumberDataPoint)> = Vec::new();
             for ((name, attributes), (unit, sum)) in &group.counters {
+                let in_usd = datadog && unit == NANO_USD;
                 let value = match sum {
+                    // One division of the exact sum, converted to a double once.
+                    _ if in_usd => {
+                        pb::number_data_point::Value::AsDouble(sum.value() / NANO_USD_PER_USD)
+                    }
                     Sum::Integer(total) => match i64::try_from(*total) {
                         Ok(total) => pb::number_data_point::Value::AsInt(total),
                         Err(_) => pb::number_data_point::Value::AsDouble(sum.value()),
@@ -117,9 +161,9 @@ impl MetricBatch {
                     Sum::Double(total) => pb::number_data_point::Value::AsDouble(*total),
                 };
                 sums.push((
-                    metric(name, unit),
+                    metric(name, if in_usd { USD } else { unit }),
                     pb::NumberDataPoint {
-                        attributes: key_values(attributes),
+                        attributes: key_values(attributes, binding),
                         start_time_unix_nano: window.start_time_unix_nano,
                         time_unix_nano: window.time_unix_nano,
                         value: Some(value),
@@ -131,7 +175,13 @@ impl MetricBatch {
             for ((name, attributes), (unit, samples)) in &group.histograms {
                 histograms.push((
                     metric(name, unit),
-                    histogram_point(attributes, &samples.values, bounds(name, unit), window),
+                    histogram_point(
+                        attributes,
+                        &samples.values,
+                        bounds(name, unit),
+                        window,
+                        binding,
+                    ),
                 ));
             }
             for (at, point) in sums {
@@ -171,7 +221,10 @@ impl MetricBatch {
                     scope: Some(pb::InstrumentationScope {
                         name: scope.name.to_string(),
                         version: scope.version.to_string(),
-                        attributes: vec![string_key_value(PROFILE_ATTRIBUTE, profile.id())],
+                        attributes: vec![string_key_value(
+                            PROFILE_ATTRIBUTE,
+                            &attribute_value(PROFILE_ATTRIBUTE, profile.id(), binding),
+                        )],
                         dropped_attributes_count: 0,
                     }),
                     metrics,
@@ -189,6 +242,7 @@ fn histogram_point(
     samples: &[f64],
     bounds: &[f64],
     window: OtlpWindow,
+    binding: OtlpBinding,
 ) -> pb::HistogramDataPoint {
     let mut bucket_counts = vec![0_u64; bounds.len() + 1];
     let mut sum = 0.0;
@@ -205,7 +259,7 @@ fn histogram_point(
         max = max.max(*sample);
     }
     pb::HistogramDataPoint {
-        attributes: key_values(attributes),
+        attributes: key_values(attributes, binding),
         start_time_unix_nano: window.start_time_unix_nano,
         time_unix_nano: window.time_unix_nano,
         count: u64::try_from(samples.len()).unwrap_or(u64::MAX),
@@ -227,10 +281,20 @@ fn string_key_value(key: &str, value: &str) -> pb::KeyValue {
     }
 }
 
-fn key_values(attributes: &Attributes) -> Vec<pb::KeyValue> {
+/// An attribute's value under `binding`: the Datadog binding writes
+/// `{id}@{version}` values with `/`, which Datadog keeps, instead of `@`.
+fn attribute_value<'a>(attribute: &str, value: &'a str, binding: OtlpBinding) -> Cow<'a, str> {
+    if binding == OtlpBinding::Datadog && is_versioned(attribute) {
+        Cow::Owned(value.replace('@', "/"))
+    } else {
+        Cow::Borrowed(value)
+    }
+}
+
+fn key_values(attributes: &Attributes, binding: OtlpBinding) -> Vec<pb::KeyValue> {
     attributes
         .iter()
-        .map(|(key, value)| string_key_value(key, value))
+        .map(|(key, value)| string_key_value(key, &attribute_value(key, value, binding)))
         .collect()
 }
 
@@ -463,7 +527,7 @@ mod tests {
 
     #[test]
     fn counters_are_integer_delta_sums_and_histograms_have_buckets() {
-        let request = batch().otlp_request(SCOPE, WINDOW);
+        let request = batch().otlp_request(SCOPE, WINDOW, OtlpBinding::OpenTelemetry);
         let metrics = &request.resource_metrics[0].scope_metrics[0].metrics;
         let find = |name: &str| metrics.iter().find(|m| m.name == name).unwrap();
 
@@ -509,6 +573,7 @@ mod tests {
             &[0.01, 0.0100001, 100.0],
             DURATION_BOUNDS,
             WINDOW,
+            OtlpBinding::OpenTelemetry,
         );
         assert_eq!(point.bucket_counts[0], 1);
         assert_eq!(point.bucket_counts[1], 1);
@@ -517,7 +582,55 @@ mod tests {
 
     #[test]
     fn an_empty_batch_encodes_no_resource() {
-        let request = MetricBatch::new().otlp_request(SCOPE, WINDOW);
+        let request = MetricBatch::new().otlp_request(SCOPE, WINDOW, OtlpBinding::Datadog);
         assert!(request.resource_metrics.is_empty());
+    }
+
+    #[test]
+    fn the_datadog_binding_sends_cost_in_usd_and_versions_with_a_slash() {
+        let batch = batch();
+        let request = batch.otlp_request(SCOPE, WINDOW, OtlpBinding::Datadog);
+        let scope_metrics = &request.resource_metrics[0].scope_metrics[0];
+        let profile = &scope_metrics.scope.as_ref().unwrap().attributes[0];
+        assert_eq!(
+            profile.value.as_ref().unwrap().value,
+            Some(pb::any_value::Value::StringValue(
+                Profile::ProviderAttempt.id().replace('@', "/")
+            ))
+        );
+        let metrics = &scope_metrics.metrics;
+        let cost = metrics
+            .iter()
+            .find(|m| m.name == "trajectory.gen_ai.client.inference.usage.cost")
+            .unwrap();
+        assert_eq!(cost.unit, "USD");
+        let Some(pb::metric::Data::Sum(sum)) = &cost.data else {
+            panic!("cost is not a sum")
+        };
+        // Two calls of 0.02013 USD: the exact nano-USD sum, divided once.
+        assert_eq!(
+            sum.data_points[0].value,
+            Some(pb::number_data_point::Value::AsDouble(0.04026))
+        );
+        // The same cost as the Datadog series DogStatsD sends.
+        let series = batch.datadog_series(false).unwrap();
+        let dogstatsd = series
+            .iter()
+            .find(|s| s.name == "trajectory.gen_ai.client.inference.usage.cost")
+            .unwrap();
+        assert_eq!(dogstatsd.value, 0.04026);
+        // Token counts are unchanged.
+        let tokens = metrics
+            .iter()
+            .find(|m| m.name == "gen_ai.client.inference.usage.input_tokens")
+            .unwrap();
+        assert_eq!(tokens.unit, "{token}");
+        let Some(pb::metric::Data::Sum(sum)) = &tokens.data else {
+            panic!("tokens are not a sum")
+        };
+        assert!(matches!(
+            sum.data_points[0].value,
+            Some(pb::number_data_point::Value::AsInt(_))
+        ));
     }
 }

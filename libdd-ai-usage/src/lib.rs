@@ -78,7 +78,7 @@ pub use observation::{
     is_identifier, is_rate_card,
 };
 #[cfg(feature = "otlp")]
-pub use otlp::{OtlpScope, OtlpWindow};
+pub use otlp::{OtlpBinding, OtlpScope, OtlpWindow};
 pub use point::{
     Attributes, ErrorCode, Instrument, IssueCode, Issues, MetricError, MetricPoint, Projection,
     compare_metric_points, merge_counter_points, sort_metric_points,
