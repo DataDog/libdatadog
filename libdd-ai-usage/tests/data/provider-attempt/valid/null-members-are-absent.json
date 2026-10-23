@@ -1,0 +1,66 @@
+{
+  "$schema": "../../../../schema/provider-attempt-metric-fixture.schema.json",
+  "profile": "gen_ai.client.provider_attempt@0.1.0",
+  "case": "null-members-are-absent",
+  "description": "Every optional member that is null is absent: the cost fields, the band, the models, the error type, the first-chunk time. In the modality object the null part under a key the profile does not define is absent too, so the object reports one audio part and the key raises nothing.",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "exampleai",
+    "request_model": null,
+    "response_model": null,
+    "duration_seconds": 1,
+    "streaming": false,
+    "time_to_first_chunk_seconds": null,
+    "input_tokens": 80,
+    "input_basis": null,
+    "input_tokens_by_modality": {
+      "video": null,
+      "audio": 80
+    },
+    "output_tokens_by_modality": null,
+    "cost_usd": null,
+    "cost_nano_usd": null,
+    "cost_source": null,
+    "cost_rate_card": null,
+    "cost_bound": null,
+    "context_band": null,
+    "error_type": null,
+    "observation_point": "gateway"
+  },
+  "expected_metrics": [
+    {
+      "name": "gen_ai.client.inference.duration",
+      "instrument": "histogram",
+      "unit": "s",
+      "value": 1,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.operation.input_tokens",
+      "instrument": "histogram",
+      "unit": "{token}",
+      "value": 80,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.usage.input_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 80,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.token.modality": "audio",
+        "trajectory.observation.point": "gateway"
+      }
+    }
+  ]
+}

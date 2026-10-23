@@ -1,0 +1,77 @@
+{
+  "$schema": "../../../../schema/provider-attempt-metric-fixture.schema.json",
+  "profile": "gen_ai.client.provider_attempt@0.1.0",
+  "case": "same-call-includes-cache",
+  "description": "The call of anthropic-messages-usage stated on the other basis. Both give an input total of 75.",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "exampleai",
+    "duration_seconds": 1,
+    "streaming": false,
+    "input_tokens": 75,
+    "input_basis": "includes_cache",
+    "output_tokens": 3,
+    "cache_read_input_tokens": 40,
+    "cache_write_input_tokens": 25,
+    "observation_point": "gateway"
+  },
+  "expected_metrics": [
+    {
+      "name": "gen_ai.client.inference.duration",
+      "instrument": "histogram",
+      "unit": "s",
+      "value": 1,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.operation.input_tokens",
+      "instrument": "histogram",
+      "unit": "{token}",
+      "value": 75,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.operation.output_tokens",
+      "instrument": "histogram",
+      "unit": "{token}",
+      "value": 3,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.usage.input_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 75,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.token.modality": "unknown",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.usage.output_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 3,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.token.modality": "unknown",
+        "trajectory.observation.point": "gateway"
+      }
+    }
+  ]
+}

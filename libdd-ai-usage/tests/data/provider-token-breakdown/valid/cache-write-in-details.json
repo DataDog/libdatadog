@@ -1,0 +1,62 @@
+{
+  "$schema": "../../../../schema/provider-token-breakdown-metric-fixture.schema.json",
+  "profile": "trajectory.gen_ai.client.token_breakdown@0.1.0",
+  "case": "cache-write-in-details",
+  "description": "A usage object in a provider's API shape, from the synthetic wire-format corpus (conformance/wire-formats/cases.json, case responses-request-caller-usage-member-ignored): input_tokens 10 with input_tokens_details.cached_tokens 0 and cache_write_tokens 7. Input includes cached tokens, so uncached input is 10 - 0 - 7.",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "openai",
+    "request_model": "gpt-4o-mini",
+    "input_tokens": 10,
+    "input_basis": "includes_cache",
+    "output_tokens": 1,
+    "cache_read_input_tokens": 0,
+    "cache_write_input_tokens": 7,
+    "observation_point": "gateway"
+  },
+  "expected_metrics": [
+    {
+      "name": "gen_ai.client.inference.usage.cache_read.input_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 0,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "openai",
+        "gen_ai.request.model": "gpt-4o-mini",
+        "gen_ai.token.modality": "unknown",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.usage.cache_write.input_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 7,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "openai",
+        "gen_ai.request.model": "gpt-4o-mini",
+        "gen_ai.token.modality": "unknown",
+        "trajectory.cache.lifetime": "unspecified",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "trajectory.gen_ai.client.inference.usage.uncached.input_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 3,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "openai",
+        "gen_ai.request.model": "gpt-4o-mini",
+        "gen_ai.token.modality": "unknown",
+        "trajectory.observation.point": "gateway"
+      }
+    }
+  ],
+  "expected_issues": [
+    "cache_write_lifetime_unknown"
+  ]
+}
