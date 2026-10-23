@@ -65,10 +65,6 @@ mod no_std_support {
 
 pub mod tracer_metadata;
 
-#[cfg(feature = "std")]
-#[macro_use]
-mod cstr;
-
 use libdd_common_ffi::{self as ffi, slice::AsBytes};
 
 #[cfg(not(feature = "std"))]
@@ -306,8 +302,8 @@ mod std_api {
         name: LibraryConfigSource,
     ) -> ffi::CStr<'static> {
         ffi::CStr::from_std(match name {
-            LibraryConfigSource::LocalStableConfig => cstr!("local_stable_config"),
-            LibraryConfigSource::FleetStableConfig => cstr!("fleet_stable_config"),
+            LibraryConfigSource::LocalStableConfig => c"local_stable_config",
+            LibraryConfigSource::FleetStableConfig => c"fleet_stable_config",
         })
     }
 
