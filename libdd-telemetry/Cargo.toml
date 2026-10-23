@@ -78,7 +78,7 @@ bytes = { workspace = true, features = ["std"], optional = true }
 libdd-capabilities = { version = "4.0.1", path = "../libdd-capabilities", optional = true }
 libdd-common = { version = "9.0.0", path = "../libdd-common", default-features = false }
 libdd-shared-runtime = { version = "6.0.0", path = "../libdd-shared-runtime", default-features = false, optional = true }
-libdd-ddsketch = { version = "1.1.3", path = "../libdd-ddsketch", optional = true }
+libdd-ddsketch = { version = "1.1.4", path = "../libdd-ddsketch", optional = true }
 web-time = { workspace = true, optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
