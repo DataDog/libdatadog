@@ -3543,7 +3543,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-obfuscation"
-version = "10.0.0"
+version = "11.0.0"
 dependencies = [
  "anyhow",
  "criterion",
