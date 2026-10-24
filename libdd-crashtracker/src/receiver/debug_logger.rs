@@ -15,6 +15,8 @@ pub(crate) enum ReceiverIssue {
     IncompleteStacktrace,
     UnexpectedLine,
     NoData,
+    TelemetryUploadFailed,
+    ErrorsIntakeUploadFailed,
 }
 
 impl ReceiverIssue {
@@ -27,6 +29,8 @@ impl ReceiverIssue {
             ReceiverIssue::IncompleteStacktrace => "receiver_issue:incomplete_stacktrace",
             ReceiverIssue::UnexpectedLine => "receiver_issue:unexpected_line",
             ReceiverIssue::NoData => "receiver_issue:no_data",
+            ReceiverIssue::TelemetryUploadFailed => "receiver_issue:telemetry_upload_failed",
+            ReceiverIssue::ErrorsIntakeUploadFailed => "receiver_issue:errors_intake_upload_failed",
         }
     }
 }

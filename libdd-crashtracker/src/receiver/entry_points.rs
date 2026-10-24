@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 
+use super::debug_logger::ReceiverIssue;
 use super::receive_report::{ReceiverFileAccess, receive_report_from_stream};
 use crate::CrashtrackerConfiguration;
 #[cfg(target_os = "linux")]
@@ -117,7 +118,7 @@ pub(crate) async fn receiver_entry_point(
     mut stream: impl AsyncBufReadExt + std::marker::Unpin,
     access: ReceiverFileAccess,
 ) -> anyhow::Result<()> {
-    if let Some((config, mut crash_info)) =
+    if let Some((config, mut crash_info, debug_logger)) =
         receive_report_from_stream(timeout, &mut stream, access).await?
     {
         // The symbolizer opens ELF, perf-map and debug paths without our path checks. Restricted
@@ -140,9 +141,29 @@ pub(crate) async fn receiver_entry_point(
                     .push(format!("Error demangling names: {e}"));
             }
         }
-        crash_info
+        let upload_result = crash_info
             .async_upload_to_endpoint(config.endpoint())
             .await?;
+        if let Err(e) = &upload_result.telemetry {
+            debug_logger
+                .emit_and_wait(
+                    ReceiverIssue::TelemetryUploadFailed,
+                    &crash_info.uuid,
+                    format!("Telemetry upload failed: {e:#}"),
+                    libdd_telemetry::data::LogLevel::Error,
+                )
+                .await;
+        }
+        if let Err(e) = &upload_result.errors_intake {
+            debug_logger
+                .emit_and_wait(
+                    ReceiverIssue::ErrorsIntakeUploadFailed,
+                    &crash_info.uuid,
+                    format!("Errors intake upload failed: {e:#}"),
+                    libdd_telemetry::data::LogLevel::Error,
+                )
+                .await;
+        }
     }
     Ok(())
 }
