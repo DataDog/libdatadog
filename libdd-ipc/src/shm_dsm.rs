@@ -286,34 +286,45 @@ impl ShmTable<DataStreams> {
     /// takes the interval still under way. Draining every [`DSM_BUCKET_NANOS`], just after the
     /// interval boundaries, is what makes those the intervals the points were recorded in.
     pub fn drain_buckets(&self, force: bool) -> Vec<DsmStatsBucket> {
-        self.with_current(|mem| mem.drain_dsm_buckets(force, now_nanos()))
+        self.drain_buckets_at(force, now_nanos())
+    }
+
+    /// [`ShmDsmTable::drain_buckets`], dating the buckets as of `now` (nanoseconds since the
+    /// Unix epoch) - for draining the backlog table alongside at the same instant.
+    pub fn drain_buckets_at(&self, force: bool, now: u64) -> Vec<DsmStatsBucket> {
+        self.with_current(|mem| mem.drain_dsm_buckets(force, now))
             .unwrap_or_default()
     }
 }
 
-fn now_nanos() -> u64 {
+/// Nanoseconds since the Unix epoch.
+pub fn now_nanos() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos() as u64
 }
 
+/// Start of a bucket of width `duration` drained at `now`: the interval under way if it is the
+/// `current` one, and the one just ended otherwise. `duration` must be nonzero.
+pub(crate) fn bucket_start(current: bool, duration: u64, now: u64) -> u64 {
+    let start = now - now % duration;
+    if current {
+        start
+    } else {
+        start.saturating_sub(duration)
+    }
+}
+
 impl ShmDsmMapping {
     fn drain_dsm_buckets(&self, force: bool, now: u64) -> Vec<DsmStatsBucket> {
         self.drain_buckets(force, Self::drain_entry)
             .into_iter()
-            .map(|b| {
+            .map(|b| DsmStatsBucket {
                 // The private layout guarantees a nonzero duration.
-                let current = now - now % b.duration;
-                DsmStatsBucket {
-                    start: if b.current {
-                        current
-                    } else {
-                        current.saturating_sub(b.duration)
-                    },
-                    duration: b.duration,
-                    stats: b.groups,
-                }
+                start: bucket_start(b.current, b.duration, now),
+                duration: b.duration,
+                stats: b.groups,
             })
             .collect()
     }

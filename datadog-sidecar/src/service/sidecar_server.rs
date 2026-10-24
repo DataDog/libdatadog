@@ -1156,6 +1156,29 @@ impl SidecarInterface for ConnectionSidecarHandler {
         }
     }
 
+    async fn add_dsm_backlog(
+        &mut self,
+        env: String,
+        version: String,
+        service: String,
+        primary_tag: String,
+        backlog: libdd_ipc::shm_dsm_backlog::OwnedDsmBacklog,
+    ) {
+        let Some(session) = self.session.load() else {
+            return;
+        };
+        let key = DsmTableKey {
+            product: ShmProduct::DataStreams,
+            env,
+            version,
+            service,
+            primary_tag,
+        };
+        if let Some(state) = get_or_create_dsm_table(&self.server.dsm_tables, key, &session) {
+            state.backlogs.add_backlog(&backlog.as_shm_input());
+        }
+    }
+
     async fn flush(&mut self, options: SidecarFlushOptions) {
         let flag_evaluations = options.flag_evaluations;
         let ffe_coalescer = self.server.ffe_flagevaluation_coalescer.clone();
