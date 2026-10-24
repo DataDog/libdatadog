@@ -6,7 +6,7 @@
 //! A backlog is the highest offset seen for a set of tags - a Kafka partition's last produced
 //! offset, or a consumer group's last committed one - within a time bucket. The backend turns
 //! the produce and commit offsets of a partition into consumer lag. PHP workers record offsets
-//! with [`ShmDsmBacklogTable::add_backlog`] and cannot keep the maximum themselves, since they
+//! with `ShmDsmBacklogTable::add_backlog` and cannot keep the maximum themselves, since they
 //! hold no state across requests; the sidecar creates the table alongside the DSM stats table
 //! and drains both into the same payload.
 //!
@@ -21,7 +21,8 @@ use std::sync::atomic::{AtomicI64, AtomicU8, AtomicU32, Ordering::*};
 use zwohash::ZwoHasher;
 
 use crate::shm_table::{
-    self, Pool, Schema, ShmTable, ShmTableMapping, WireStringRef, alloc_str, pool_eq, pool_string,
+    self, Pool, Schema, ShmSafe, ShmTable, ShmTableMapping, WireStringRef, alloc_str, pool_eq,
+    pool_string,
 };
 
 /// A tag a backlog can carry. The discriminant is the tag's position: in the slot, in the key's
@@ -97,6 +98,9 @@ pub struct ShmBacklogKey {
     present: AtomicU8,
 }
 
+// SAFETY: `#[repr(C)]` and made only of integer atomics and `ShmSafe` arrays of them.
+unsafe impl ShmSafe for ShmBacklogKey {}
+
 /// Backlog value, an integer atomic so that zeroed mmap memory is valid.
 #[repr(C, align(8))]
 pub struct ShmBacklogValue {
@@ -104,12 +108,13 @@ pub struct ShmBacklogValue {
     offset: AtomicI64,
 }
 
+// SAFETY: `#[repr(C)]` and made only of an integer atomic.
+unsafe impl ShmSafe for ShmBacklogValue {}
+
 /// Schema of the DSM backlog table: one slot per backlog.
 pub struct DataStreamsBacklogs;
 
-// SAFETY: `ShmBacklogKey` and `ShmBacklogValue` are `#[repr(C)]` and made only of integer
-// atomics.
-unsafe impl Schema for DataStreamsBacklogs {
+impl Schema for DataStreamsBacklogs {
     const ID: u32 = 3;
     const VERSION: u32 = 1;
 
@@ -151,7 +156,7 @@ unsafe impl Schema for DataStreamsBacklogs {
     }
 }
 
-/// One offset, ready to be fed into [`ShmDsmBacklogTable::add_backlog`].
+/// One offset, ready to be fed into `ShmDsmBacklogTable::add_backlog`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DsmBacklogInput<'a> {
     /// The value of each tag naming the backlog, by [`BacklogTag`] position; `None` for a tag
@@ -218,7 +223,7 @@ pub struct OwnedDsmBacklog {
 }
 
 impl OwnedDsmBacklog {
-    /// Borrow as a [`DsmBacklogInput`] for passing to [`ShmDsmBacklogTable::add_backlog`].
+    /// Borrow as a [`DsmBacklogInput`] for passing to `ShmDsmBacklogTable::add_backlog`.
     pub fn as_shm_input(&self) -> DsmBacklogInput<'_> {
         self.tags
             .iter()

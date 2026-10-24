@@ -1168,7 +1168,6 @@ impl SidecarInterface for ConnectionSidecarHandler {
             return;
         };
         let key = DsmTableKey {
-            product: ShmProduct::DataStreams,
             env,
             version,
             service,
