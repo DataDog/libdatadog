@@ -4,9 +4,9 @@
 //! Lock-free shared-memory span stats concentrator.
 //!
 //! All PHP worker processes open the same SHM file and call
-//! [`ShmSpanConcentrator::add_span`].  The sidecar is the creator
-//! ([`ShmSpanConcentrator::create`]) and periodically calls
-//! [`ShmSpanConcentrator::flush`] to drain the inactive bucket.
+//! `ShmSpanConcentrator::add_span`.  The sidecar is the creator
+//! (`ShmSpanConcentrator::create`) and periodically calls
+//! `ShmSpanConcentrator::flush` to drain the inactive bucket.
 //!
 //! The table itself - layout, slot lifecycle, double-buffering, and what may and may not be
 //! trusted in the mapping - is the shared table's (`shm_table`); this module is the [`SpanStats`]
@@ -25,7 +25,8 @@ use libdd_trace_stats::span_concentrator::{
 };
 
 use crate::shm_table::{
-    self, Pool, Schema, ShmTable, ShmTableMapping, WireStringRef, alloc_str, pool_eq, pool_string,
+    self, Pool, Schema, ShmSafe, ShmTable, ShmTableMapping, WireStringRef, alloc_str, pool_eq,
+    pool_string,
 };
 pub use crate::shm_table::{RELOAD_FILL_RATIO, StringRef};
 
@@ -108,7 +109,7 @@ struct KeyScalars {
 /// Integer atomics throughout, which is about validity more than atomicity: a `bool` that is
 /// neither 0 nor 1, or a `Trilean` outside `0..=2`, is an invalid value whose existence as a
 /// typed reference is already undefined behaviour, before anything inspects it. The scalars
-/// travel as raw integers and become Rust types in [`ShmKeyHeader::scalars`], after checking.
+/// travel as raw integers and become Rust types in `ShmKeyHeader::scalars`, after checking.
 #[repr(C)]
 pub struct ShmKeyHeader {
     /// In [`fixed_strs`] order.
@@ -125,6 +126,9 @@ pub struct ShmKeyHeader {
     /// At most [`MAX_PEER_TAGS`].
     peer_tag_count: AtomicU8,
 }
+
+// SAFETY: `#[repr(C)]` and made only of integer atomics and `ShmSafe` arrays of them.
+unsafe impl ShmSafe for ShmKeyHeader {}
 
 impl ShmKeyHeader {
     /// Snapshot the scalar fields, rejecting any encoding this writer does not produce.
@@ -199,11 +203,13 @@ pub struct ShmStats {
     error_bins: [AtomicU64; N_BINS],
 }
 
+// SAFETY: `#[repr(C)]` and made only of integer atomics and arrays of them.
+unsafe impl ShmSafe for ShmStats {}
+
 /// Schema of the APM client stats table: one slot per span aggregation key.
 pub struct SpanStats;
 
-// SAFETY: `ShmKeyHeader` and `ShmStats` are `#[repr(C)]` and made only of integer atomics.
-unsafe impl Schema for SpanStats {
+impl Schema for SpanStats {
     const ID: u32 = 1;
     const VERSION: u32 = 1;
 
@@ -287,7 +293,7 @@ unsafe impl Schema for SpanStats {
     }
 }
 
-/// Pre-extracted span stats for one span, ready to be fed into [`ShmSpanConcentrator::add_span`].
+/// Pre-extracted span stats for one span, ready to be fed into `ShmSpanConcentrator::add_span`.
 pub struct ShmSpanInput<'a> {
     /// Aggregation key fields (everything except peer tags).
     pub fixed: FixedAggregationKey<&'a str>,
@@ -313,7 +319,7 @@ pub struct OwnedShmSpanInput {
 }
 
 impl OwnedShmSpanInput {
-    /// Borrow as a [`ShmSpanInput`] for passing to [`ShmSpanConcentrator::add_span`].
+    /// Borrow as a [`ShmSpanInput`] for passing to `ShmSpanConcentrator::add_span`.
     ///
     /// `peer_tag_buf` is a caller-supplied scratch buffer; it must outlive the returned value.
     pub fn as_shm_input<'a>(

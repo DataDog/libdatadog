@@ -84,27 +84,9 @@ pub(crate) struct DsmConfig {
     pub process_tags: Vec<String>,
 }
 
-/// Products that keep tables in shared memory.
-///
-/// Part of what keys a [`DsmTableKey`], so that a table's path names the product it belongs to.
-/// The span stats concentrators' `ConcentratorKey` predates this and has no product.
-#[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
-pub enum ShmProduct {
-    DataStreams,
-}
-
-impl ShmProduct {
-    fn as_str(self) -> &'static str {
-        match self {
-            ShmProduct::DataStreams => "dsm",
-        }
-    }
-}
-
 /// Map key for the DSM table map: one table per payload the tables are flushed into.
 #[derive(Clone, Debug, Hash, Eq, PartialEq)]
 pub struct DsmTableKey {
-    pub product: ShmProduct,
     pub env: String,
     pub version: String,
     /// The service the points are reported under, including any service override.
@@ -126,7 +108,6 @@ pub fn dsm_backlog_shm_path(key: &DsmTableKey) -> CString {
 /// path what it was.
 fn shm_path(prefix: &str, key: &DsmTableKey) -> CString {
     let mut hasher = ZwoHasher::default();
-    key.product.as_str().hash(&mut hasher);
     key.env.hash(&mut hasher);
     key.version.hash(&mut hasher);
     key.service.hash(&mut hasher);
@@ -504,7 +485,6 @@ mod tests {
 
     fn key() -> DsmTableKey {
         DsmTableKey {
-            product: ShmProduct::DataStreams,
             env: "env-a".into(),
             version: "1.0".into(),
             service: "service-a".into(),
@@ -648,9 +628,11 @@ mod tests {
     #[test]
     fn draining_waits_for_the_next_boundary() {
         let at = |nanos: u64| UNIX_EPOCH + Duration::from_nanos(nanos);
+        // A microsecond rather than a nanosecond past the boundary: Windows keeps SystemTime in
+        // 100 ns ticks, which would round a single nanosecond away.
         assert_eq!(
-            until_next_drain(at(10 * DSM_BUCKET_NANOS + 1)),
-            Duration::from_nanos(DSM_BUCKET_NANOS - 1) + DRAIN_GRACE
+            until_next_drain(at(10 * DSM_BUCKET_NANOS + 1_000)),
+            Duration::from_nanos(DSM_BUCKET_NANOS - 1_000) + DRAIN_GRACE
         );
         assert_eq!(
             until_next_drain(at(10 * DSM_BUCKET_NANOS)),

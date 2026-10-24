@@ -231,7 +231,7 @@ impl SidecarSender {
         }
         let (channel, max_outstanding) = (&mut self.channel, self.max_outstanding);
         self.state.send_pending(|request| {
-            channel.0.outstanding() < max_outstanding && channel.try_send_request(request)
+            channel.0.outstanding() < max_outstanding && channel.try_send_request(request).is_ok()
         })
     }
 
@@ -376,13 +376,22 @@ impl SidecarSender {
     /// Sends a request after the pending state, unless backpressure drops it. Returns whether it
     /// was sent: if not, a closed connection tells that it broke instead.
     pub fn send(&mut self, request: &SidecarInterfaceRequest) -> bool {
-        self.try_drain_outbox() && self.channel.try_send_request(request)
+        self.try_drain_outbox() && self.channel.try_send_request(request).is_ok()
     }
 
     /// Like [`Self::send`], for telemetry actions: when `outstanding > max_outstanding / 2`, 90%
     /// of them are dropped to shed load.
-    pub fn send_actions(&mut self, request: &SidecarInterfaceRequest) -> bool {
-        self.may_enqueue_actions() && self.channel.try_send_request(request)
+    /// Returns the send error so callers can distinguish oversized observations
+    /// from backpressure without bypassing shared state ordering or load shedding.
+    pub fn send_actions(&mut self, request: &SidecarInterfaceRequest) -> io::Result<()> {
+        if !self.may_enqueue_actions() {
+            return Err(io::Error::from(if self.channel.0.is_closed() {
+                io::ErrorKind::NotConnected
+            } else {
+                io::ErrorKind::WouldBlock
+            }));
+        }
+        self.channel.try_send_request(request)
     }
 
     fn may_enqueue_actions(&mut self) -> bool {
@@ -484,6 +493,65 @@ mod tests {
             global_tags: vec![],
             dynamic_instrumentation_state: DynamicInstrumentationConfigState::NotSet,
         }
+    }
+
+    fn request() -> SidecarInterfaceRequest {
+        SidecarInterfaceRequest::EnqueueActions { actions: vec![] }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn pending_configuration_precedes_actions_after_acks_restore_capacity() {
+        let (mut sender, peer) = sender();
+        sender.max_outstanding = 21;
+        for _ in 0..21 {
+            sender.channel.try_send_request(&request()).unwrap();
+            assert_eq!(received(&peer).len(), 1);
+        }
+        sender.set_application(Some(application("configured-service")), 0);
+        assert_eq!(
+            sender.send_actions(&request()).unwrap_err().kind(),
+            io::ErrorKind::WouldBlock
+        );
+        for _ in 0..21 {
+            peer.try_send_raw(vec![0], &[]).unwrap();
+        }
+        sender.send_actions(&request()).unwrap();
+        match received(&peer).as_slice() {
+            [
+                SidecarInterfaceRequest::SetApplication {
+                    application: Some(application),
+                    ..
+                },
+                SidecarInterfaceRequest::EnqueueActions { .. },
+            ] => assert_eq!(application.service_name, "configured-service"),
+            other => panic!("expected configuration before actions: {other:?}"),
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn actions_use_the_existing_shared_load_shedding_policy() {
+        let (mut sender, peer) = sender();
+        sender.max_outstanding = 21;
+        for _ in 0..11 {
+            sender.channel.try_send_request(&request()).unwrap();
+            assert_eq!(received(&peer).len(), 1);
+        }
+        let mut accepted = 0;
+        for _ in 0..20 {
+            match sender.send_actions(&request()) {
+                Ok(()) => {
+                    accepted += 1;
+                    assert!(matches!(
+                        received(&peer).as_slice(),
+                        [SidecarInterfaceRequest::EnqueueActions { .. }]
+                    ));
+                }
+                Err(error) => assert_eq!(error.kind(), io::ErrorKind::WouldBlock),
+            }
+        }
+        assert_eq!(accepted, 2);
     }
 
     #[test]

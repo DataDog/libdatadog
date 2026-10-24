@@ -5,6 +5,7 @@ use super::{
     ApplicationConfig, DynamicInstrumentationConfigState, InstanceId, SerializedTracerHeaderTags,
     SessionConfig, SidecarAction, SidecarFlushOptions,
 };
+use crate::service::ffe_submission::FfeSubmissionStatus;
 use crate::service::sender::SidecarSender;
 use crate::service::sidecar_interface::{
     SidecarInterfaceChannel, SidecarInterfaceClientRequest, SidecarInterfaceRequest,
@@ -29,9 +30,10 @@ use tracing::warn;
 /// `SidecarTransport` wraps a [`SidecarSender`] with transparent reconnection support.
 ///
 /// This transport is used for communication between different parts of the sidecar service.
-/// It is a blocking transport (all operations block the current thread). It is owned by a
-/// single client thread: the sidecar binds the connection state to the connection, so it must
-/// not be shared between threads which process requests concurrently.
+/// It is owned by a single client thread: the sidecar binds state to the connection,
+/// so it must not be shared between threads which process requests concurrently.
+/// Ordinary operations may block and reconnect. FFE submission bypasses reconnection
+/// and never waits for transport capacity or delivery; platform synchronization may wait.
 pub struct SidecarTransport {
     pub inner: SidecarSender,
     /// If provided, whenever a connection error is encountered, the connection will be
@@ -203,6 +205,45 @@ impl From<SeqpacketConn> for SidecarTransport {
     }
 }
 
+/// Best-effort FFE submission through the shared sender without reconnecting.
+/// Uses the exclusively owned transport; platform synchronization may briefly wait.
+/// The caller has already built one observation. A size rejection gets one
+/// immediate retry without identity/context, not another load-shed decision.
+pub fn try_submit_ffe(
+    transport: &mut SidecarTransport,
+    request: &mut SidecarInterfaceRequest,
+) -> FfeSubmissionStatus {
+    let sender = &mut transport.inner;
+    if sender.channel.0.is_closed() {
+        return FfeSubmissionStatus::Unavailable;
+    }
+    let status = sender
+        .send_actions(request)
+        .map_or_else(FfeSubmissionStatus::from, |_| FfeSubmissionStatus::Accepted);
+    if status != FfeSubmissionStatus::PayloadTooLarge {
+        return status;
+    }
+    let SidecarInterfaceRequest::EnqueueActions { actions, .. } = request else {
+        return status;
+    };
+    let [SidecarAction::FfeFlagEvaluationBatch(batch)] = actions.as_mut_slice() else {
+        return status;
+    };
+    let [event] = batch.flag_evaluations.as_mut_slice() else {
+        return status;
+    };
+    if event.is_degraded || (event.targeting_key.is_none() && event.context.is_none()) {
+        return status;
+    }
+    event.targeting_key = None;
+    event.context = None;
+    event.is_degraded = true;
+    sender
+        .channel
+        .try_send_request(request)
+        .map_or_else(FfeSubmissionStatus::from, |_| FfeSubmissionStatus::Accepted)
+}
+
 /// Converts a [`DecodeError`] to an [`io::Error`], preserving the original
 /// [`io::ErrorKind`] when the decode failure was itself an I/O error.
 ///
@@ -220,7 +261,7 @@ pub fn enqueue_actions(
     actions: Vec<SidecarAction>,
 ) -> io::Result<()> {
     let request = SidecarInterfaceRequest::EnqueueActions { actions };
-    transport.with_retry(|s| s.send_actions(&request));
+    let _ = transport.with_retry(|s| s.send_actions(&request));
     Ok(())
 }
 
@@ -236,7 +277,7 @@ pub fn enqueue_actions_for_service(
         env_name,
         actions,
     };
-    transport.with_retry(|s| s.send_actions(&request));
+    let _ = transport.with_retry(|s| s.send_actions(&request));
     Ok(())
 }
 
@@ -600,10 +641,12 @@ pub fn ping(transport: &mut SidecarTransport) -> io::Result<Duration> {
 #[cfg(test)]
 #[cfg(unix)]
 mod tests {
+    use super::try_submit_ffe;
     use crate::service::blocking::{
         SidecarTransport, add_dsm_backlog, add_dsm_stats_point, add_span_to_concentrator,
         send_dogstatsd_actions,
     };
+    use crate::service::ffe_submission::FfeSubmissionStatus;
     use crate::service::sidecar_interface::{
         DynamicInstrumentationConfigState, SidecarInterfaceRequest,
     };
@@ -1018,6 +1061,35 @@ mod tests {
             }));
         }
         (transport, new_peer)
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn ffe_closed_transport_does_not_reconnect() {
+        let (conn, peer) = SeqpacketConn::socketpair().unwrap();
+        let mut transport = SidecarTransport::from(conn);
+        transport.reconnect_fn = Some(Box::new(|| panic!("must not reconnect")));
+        drop(peer);
+        assert!(transport.send_garbage().is_err());
+        assert!(transport.is_closed());
+        let mut request = SidecarInterfaceRequest::EnqueueActions { actions: vec![] };
+        assert_eq!(
+            try_submit_ffe(&mut transport, &mut request),
+            FfeSubmissionStatus::Unavailable
+        );
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn ffe_does_not_reconnect_when_the_send_finds_a_broken_connection() {
+        let (mut transport, new_peer) = broken_transport(true);
+        let mut request = SidecarInterfaceRequest::EnqueueActions { actions: vec![] };
+        assert_eq!(
+            try_submit_ffe(&mut transport, &mut request),
+            FfeSubmissionStatus::Unavailable
+        );
+        assert!(transport.is_closed());
+        assert!(received(&new_peer).is_empty());
     }
 
     #[test]

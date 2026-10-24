@@ -3,8 +3,8 @@
 
 //! Lock-free shared-memory Data Streams Monitoring (DSM) stats table.
 //!
-//! PHP workers record a stats point per checkpoint with [`ShmDsmTable::add_point`]; the sidecar
-//! creates the table and periodically drains it with [`ShmDsmTable::drain_buckets`]. The table
+//! PHP workers record a stats point per checkpoint with `ShmDsmTable::add_point`; the sidecar
+//! creates the table and periodically drains it with `ShmDsmTable::drain_buckets`. The table
 //! itself is the shared one (`shm_table`); this module is the [`DataStreams`] schema it lays
 //! out.
 //!
@@ -24,7 +24,7 @@ use std::sync::atomic::{AtomicU8, AtomicU32, AtomicU64, Ordering::*};
 use libdd_ddsketch::DDSketch;
 
 use crate::shm_table::{
-    self, Pool, Schema, ShmTable, ShmTableMapping, WireStringRef, alloc_str, pool_string,
+    self, Pool, Schema, ShmSafe, ShmTable, ShmTableMapping, WireStringRef, alloc_str, pool_string,
 };
 
 /// Gamma of the backend's DDSketch mapping, which the Java and Go tracers also use for DSM.
@@ -137,6 +137,9 @@ pub struct ShmDsmStats {
     payload_size: PayloadHistogram,
 }
 
+// SAFETY: `#[repr(C)]` and made only of integer atomics and arrays of them.
+unsafe impl ShmSafe for ShmDsmStats {}
+
 /// Stats group key as stored in the mapping.
 #[repr(C)]
 pub struct ShmDsmKey {
@@ -148,11 +151,13 @@ pub struct ShmDsmKey {
     edge_tag_count: AtomicU8,
 }
 
+// SAFETY: `#[repr(C)]` and made only of integer atomics and `ShmSafe` arrays of them.
+unsafe impl ShmSafe for ShmDsmKey {}
+
 /// Schema of the DSM stats table: one slot per stats group.
 pub struct DataStreams;
 
-// SAFETY: `ShmDsmKey` and `ShmDsmStats` are `#[repr(C)]` and made only of integer atomics.
-unsafe impl Schema for DataStreams {
+impl Schema for DataStreams {
     const ID: u32 = 2;
     const VERSION: u32 = 2;
 
@@ -198,7 +203,7 @@ fn nanos_to_seconds(nanos: i64) -> f64 {
     nanos as f64 / 1e9
 }
 
-/// One DSM stats point, ready to be fed into [`ShmDsmTable::add_point`].
+/// One DSM stats point, ready to be fed into `ShmDsmTable::add_point`.
 pub struct DsmStatsPointInput<'a> {
     /// Pathway hash of the checkpoint; points are grouped on it.
     pub hash: u64,
@@ -227,7 +232,7 @@ pub struct OwnedDsmStatsPoint {
 }
 
 impl OwnedDsmStatsPoint {
-    /// Borrow as a [`DsmStatsPointInput`] for passing to [`ShmDsmTable::add_point`].
+    /// Borrow as a [`DsmStatsPointInput`] for passing to `ShmDsmTable::add_point`.
     ///
     /// `edge_tag_buf` is a caller-supplied scratch buffer; it must outlive the returned value.
     pub fn as_shm_input<'a>(

@@ -41,7 +41,7 @@ use crate::appsec::{AppSecConnection, AppSecManager};
 use crate::config::AppSecConfig;
 use crate::service::agent_info::AgentInfos;
 use crate::service::data_streams_flusher::{
-    DsmTableKey, DsmTables, ShmProduct, flush_all_dsm_now, get_or_create_dsm_table,
+    DsmTableKey, DsmTables, flush_all_dsm_now, get_or_create_dsm_table,
 };
 use crate::service::debugger_diagnostics_bookkeeper::{
     DebuggerDiagnosticsBookkeeper, DebuggerDiagnosticsBookkeeperStats,
@@ -1143,7 +1143,6 @@ impl SidecarInterface for ConnectionSidecarHandler {
         };
         // Lazily create the table on the first IPC point for this key.
         let key = DsmTableKey {
-            product: ShmProduct::DataStreams,
             env,
             version,
             service,

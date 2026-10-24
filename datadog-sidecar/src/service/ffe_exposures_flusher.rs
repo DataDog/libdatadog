@@ -38,7 +38,7 @@ pub(crate) async fn send_batch<C: HttpClientCapability + SleepCapability>(
     batch: FfeExposureBatch,
 ) {
     let deduplication_scope = transport.deduplication_scope();
-    let payload = match encode_exposure_batch_in_scope(deduplicator, &deduplication_scope, batch) {
+    let payload = match encode_exposure_batch_in_scope(deduplicator, deduplication_scope, batch) {
         Ok(Some(payload)) => payload,
         Ok(None) => return,
         Err(e) => {
@@ -127,6 +127,41 @@ mod tests {
 
         mock.assert_async().await;
         assert_eq!(mock.calls_async().await, 1);
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn deduplicates_exposures_across_connections() {
+        use crate::service::{ConnectionSession, InstanceId};
+
+        let server = MockServer::start_async().await;
+        let mock = server
+            .mock_async(|when, then| {
+                when.method(httpmock::Method::POST).path(EVP_EXPOSURES_PATH);
+                then.status(202);
+            })
+            .await;
+        let client = NativeCapabilities::new_client();
+        let deduplicator = ExposureDeduplicator::new(4);
+
+        // PHP workers share a sidecar cache but each connection creates its own transport.
+        for runtime in ["worker-1", "worker-2", "worker-3"] {
+            let mut session = ConnectionSession::for_test(InstanceId::new("session", runtime));
+            session.set_default_evp_transport(endpoint_for(&server), EVP_SUBDOMAIN_VALUE);
+            let transport = session.get_evp_transport(EVP_SUBDOMAIN_VALUE).unwrap();
+            send_batch(
+                &client,
+                &transport,
+                &deduplicator,
+                FfeExposureBatch {
+                    context: context(),
+                    exposures: vec![exposure("user", "alloc", "variant")],
+                },
+            )
+            .await;
+        }
+
+        mock.assert_calls_async(1).await;
     }
 
     #[tokio::test]

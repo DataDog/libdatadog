@@ -8,12 +8,16 @@
 //! map. However, since meta and metrics are expected to be typically small (20ish elements or
 //! less), linear scan is usually still competitive with hashmap's `get`.
 
+use crate::stack_alloc::StackBump;
 use hashbrown::{HashMap, hash_map};
+use libdd_trace_model::{AttributeValue, TraceText, ValueMap, ValueMapMut, ValueTypes};
 use serde::ser::{Serialize, Serializer};
 use std::borrow::Borrow;
 use std::hash::Hash;
 use std::slice;
 use std::sync::atomic::{AtomicBool, Ordering};
+
+use allocator_api2::vec::Vec as AllocVec;
 
 /// A Vec-backed map that provides HashMap-like lookup by key.
 ///
@@ -61,17 +65,67 @@ impl<K, V> Default for VecMap<K, V> {
     }
 }
 
-// Only enabled for tests: this allocates (builds two `HashMap`s), which would be surprising
-// behind a plain `==` in production code. Production callers should use `slow_compare` instead,
-// so the cost is visible at the call site.
-#[cfg(any(test, feature = "test-utils"))]
-impl<K: Eq + Hash, V: PartialEq> PartialEq for VecMap<K, V> {
-    fn eq(&self, other: &Self) -> bool {
-        self.slow_compare(other)
+/// Upholds the [ValueMap] contract of yielding each key once: reads skip shadowed duplicates (see
+/// [VecMap::iter_unique]), and mutable traversals first drop them (see [VecMap::dedup]).
+impl<T: ValueTypes> ValueMap<T> for VecMap<T::Text, AttributeValue<T>> {
+    fn get(&self, key: &str) -> Option<&AttributeValue<T>> {
+        VecMap::get(self, key)
+    }
+
+    fn contains_key(&self, key: &str) -> bool {
+        VecMap::contains_key(self, key)
+    }
+
+    fn len(&self) -> usize {
+        self.len_unique()
+    }
+
+    fn iter<'a>(&'a self) -> impl Iterator<Item = (&'a str, &'a AttributeValue<T>)>
+    where
+        T: 'a,
+    {
+        self.iter_unique().map(|(k, v)| (k.as_str(), v))
     }
 }
 
-#[cfg(any(test, feature = "test-utils"))]
+impl<T: ValueTypes> ValueMapMut<T> for VecMap<T::Text, AttributeValue<T>> {
+    fn get_mut(&mut self, key: &str) -> Option<&mut AttributeValue<T>> {
+        VecMap::get_mut(self, key)
+    }
+
+    fn insert(&mut self, key: T::Text, value: AttributeValue<T>) -> Option<AttributeValue<T>> {
+        self.insert_or_replace(key, value)
+    }
+
+    fn remove(&mut self, key: &str) -> Option<AttributeValue<T>> {
+        VecMap::remove(self, key)
+    }
+
+    fn retain(&mut self, mut f: impl FnMut(&str, &mut AttributeValue<T>) -> bool) {
+        self.retain_mut(|k, v| f(k.as_str(), v));
+    }
+
+    fn iter_mut<'a>(&'a mut self) -> impl Iterator<Item = (&'a str, &'a mut AttributeValue<T>)>
+    where
+        T: 'a,
+    {
+        self.dedup();
+        // Keys are only borrowed immutably, so this can't introduce duplicates: iterate `data`
+        // directly rather than through `VecMap::iter_mut`, which dirties the `deduped` flag.
+        self.data.iter_mut().map(|(k, v)| (k.as_str(), v))
+    }
+}
+
+/// Compares two maps for equality, ignoring insertion order and duplicate entries (the last value
+/// for a given key wins on both sides). Note that this allocates two intermediate `HashMap`s.
+impl<K: Eq + Hash, V: PartialEq> PartialEq for VecMap<K, V> {
+    fn eq(&self, other: &Self) -> bool {
+        let lhs: HashMap<&K, &V> = self.data.iter().map(|(k, v)| (k, v)).collect();
+        let rhs: HashMap<&K, &V> = other.data.iter().map(|(k, v)| (k, v)).collect();
+        lhs == rhs
+    }
+}
+
 impl<K: Eq + Hash, V: Eq> Eq for VecMap<K, V> {}
 
 impl<K, V> VecMap<K, V> {
@@ -136,20 +190,6 @@ impl<K, V> VecMap<K, V> {
         self.data.iter().any(|(k, _)| k.borrow() == key)
     }
 
-    /// Compares two maps for equality, ignoring insertion order and duplicate entries (the last
-    /// value for a given key wins on both sides). This allocates two intermediate `HashMap`s, so
-    /// it's exposed as a named method rather than [PartialEq]/[Eq], to keep that cost visible at
-    /// the call site instead of hiding it behind `==`.
-    pub fn slow_compare(&self, other: &Self) -> bool
-    where
-        K: Eq + Hash,
-        V: PartialEq,
-    {
-        let lhs: HashMap<&K, &V> = self.data.iter().map(|(k, v)| (k, v)).collect();
-        let rhs: HashMap<&K, &V> = other.data.iter().map(|(k, v)| (k, v)).collect();
-        lhs == rhs
-    }
-
     /// Remove all entries matching this key from the map. This method uses [Vec::retain], and is
     /// thus potentially costly (like any removal in a vector-like datastructure).
     // Note: we might implement a tombstone or option-based deletion later, if removal is a bit too
@@ -161,6 +201,23 @@ impl<K, V> VecMap<K, V> {
         Q: ?Sized + PartialEq,
     {
         self.data.retain(|(k, _)| k.borrow() != key);
+    }
+
+    /// Remove all entries matching this key from the map, returning the value [VecMap::get] would
+    /// have returned. Like [VecMap::remove_slow], this is linear in the size of the map.
+    pub fn remove<Q>(&mut self, key: &Q) -> Option<V>
+    where
+        K: Borrow<Q>,
+        Q: ?Sized + PartialEq,
+    {
+        // The last match is the shadowing entry, the one `get` returns.
+        let index = self.data.iter().rposition(|(k, _)| k.borrow() == key)?;
+        let (_, removed) = self.data.remove(index);
+        if !self.deduped {
+            // Drop the shadowed duplicates in a single pass.
+            self.data.retain(|(k, _)| k.borrow() != key);
+        }
+        Some(removed)
     }
 
     /// Iterate over the element, including duplicate entries.
@@ -226,7 +283,62 @@ impl<K, V> VecMap<K, V> {
     }
 }
 
+impl<K: PartialEq, V> VecMap<K, V> {
+    /// Returns true if the entry at `index` is shadowed by a later entry with the same key.
+    fn is_shadowed(&self, index: usize) -> bool {
+        !self.deduped
+            && self.data[index + 1..]
+                .iter()
+                .any(|(k, _)| *k == self.data[index].0)
+    }
+
+    /// Iterate over the entries, skipping the ones shadowed by a later entry with the same key, so
+    /// that every key is yielded once with the value [VecMap::get] returns. Free when the map is
+    /// already deduped; quadratic in the size of the map otherwise, but never allocates.
+    pub fn iter_unique(&self) -> impl Iterator<Item = (&K, &V)> {
+        self.data
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !self.is_shadowed(*i))
+            .map(|(_, (k, v))| (k, v))
+    }
+
+    /// The number of distinct keys. See [VecMap::iter_unique] for the cost.
+    pub fn len_unique(&self) -> usize {
+        if self.deduped {
+            self.data.len()
+        } else {
+            (0..self.data.len())
+                .filter(|i| !self.is_shadowed(*i))
+                .count()
+        }
+    }
+
+    /// Set the value for `key`, overwriting the existing entry rather than appending a
+    /// duplicate, and returning the value it replaced. Unlike [VecMap::insert], this keeps a
+    /// deduped map deduped.
+    pub fn insert_or_replace(&mut self, key: K, value: V) -> Option<V> {
+        if let Some((_, existing)) = self.data.iter_mut().rev().find(|(k, _)| *k == key) {
+            return Some(std::mem::replace(existing, value));
+        }
+        self.data.push((key, value));
+        None
+    }
+}
+
+/// Size of the inline [StackBump] buffer used by [VecMap::dedup].
+const DEDUP_STACK_BYTES: usize = 1024;
+
 impl<K: Eq + Hash, V> VecMap<K, V> {
+    /// Retains only the entries for which `f` returns `true`, allowing values to be mutated.
+    /// Shadowed entries are dropped first (see [VecMap::dedup]), so `f` sees each key once with
+    /// the value [VecMap::get] returns, and dropping that value can't expose a shadowed one. Keys
+    /// are borrowed immutably, so the map stays deduped.
+    pub fn retain_mut(&mut self, mut f: impl FnMut(&K, &mut V) -> bool) {
+        self.dedup();
+        self.data.retain_mut(|(k, v)| f(k, v));
+    }
+
     /// Returns a deduped map, that either borrows from `self` without performing any work if the
     /// map is already deduped, or dedup the entries in a new separate vec otherwise. As opposed to
     /// [Self::dedup], `as_deduped_map` takes an immutable reference to `self` but might allocate.
@@ -273,6 +385,7 @@ impl<K: Eq + Hash, V> VecMap<K, V> {
         // - clone the keys in the hashset. Alas, we don't want a `Clone` bound on `SpanText` (which
         //   is the type of keys in practice), as some representations can be expensive to clone,
         //   e.g. requiring to lock the GIL in Python (python-native, reference counted strings)
+        //
         // - a two-pass approach. In a first pass we store seen key references in a HashSet and
         //   build a bitmap of indices to keep. Once built, we can release the set and call
         //   `Vec::retain` without borrowing issues. It's safe but requires an additional pass over
@@ -284,13 +397,19 @@ impl<K: Eq + Hash, V> VecMap<K, V> {
         //
         // We choose the two-pass approach, which is simpler, safe and reasonably fast. If needed in
         // the future, the unsafe one-pass approach can be implemented.
-        let keep: Vec<bool> = {
-            let mut seen = hashbrown::HashSet::with_capacity(self.len());
-            self.data
-                .iter()
-                .rev()
-                .map(|(k, _)| seen.insert(k))
-                .collect()
+        let stack = StackBump::<DEDUP_STACK_BYTES>::new();
+        let keep: AllocVec<bool, _> = {
+            let mut seen =
+                hashbrown::HashSet::<&K, hashbrown::DefaultHashBuilder, _>::with_capacity_in(
+                    self.data.len(),
+                    &stack,
+                );
+            let mut keep = AllocVec::with_capacity_in(self.data.len(), &stack);
+
+            for (k, _) in self.data.iter().rev() {
+                keep.push(seen.insert(k));
+            }
+            keep
         };
 
         let data_len = self.data.len();
@@ -440,6 +559,99 @@ impl<'b, 'a: 'b, K, V> ExactSizeIterator for DedupedVecMapIter<'b, 'a, K, V> {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::span::BytesData;
+    use libdd_tinybytes::BytesString;
+
+    #[test]
+    fn remove_returns_shadowing_value_and_drops_duplicates() {
+        let mut map: VecMap<&str, i32> = VecMap::new();
+        map.insert("a", 1);
+        map.insert("b", 2);
+        map.insert("a", 3);
+        assert_eq!(map.remove("a"), Some(3));
+        assert!(!map.contains_key("a"));
+        assert_eq!(map.len(), 1);
+        assert_eq!(map.remove("a"), None);
+    }
+
+    fn with_duplicates() -> VecMap<BytesString, AttributeValue<BytesData>> {
+        let mut map = VecMap::new();
+        map.insert(BytesString::from_static("a"), AttributeValue::Int(1));
+        map.insert(BytesString::from_static("b"), AttributeValue::Int(2));
+        map.insert(BytesString::from_static("a"), AttributeValue::Int(3));
+        map.insert(BytesString::from_static("c"), AttributeValue::Int(4));
+        map
+    }
+
+    fn entries(map: &VecMap<BytesString, AttributeValue<BytesData>>) -> Vec<(&str, i64)> {
+        ValueMap::iter(map)
+            .map(|(k, v)| match v {
+                AttributeValue::Int(i) => (k, *i),
+                _ => unreachable!(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn value_map_hides_shadowed_duplicates() {
+        let map = with_duplicates();
+        assert!(!map.is_deduped());
+        assert_eq!(entries(&map), vec![("b", 2), ("a", 3), ("c", 4)]);
+        assert_eq!(ValueMap::len(&map), 3);
+        // The raw view is untouched.
+        assert_eq!(map.len(), 4);
+    }
+
+    #[test]
+    fn value_map_mut_traversals_drop_shadowed_duplicates() {
+        let mut map = with_duplicates();
+        let mut seen = Vec::new();
+        for (k, v) in ValueMapMut::iter_mut(&mut map) {
+            seen.push(k.to_owned());
+            *v = AttributeValue::Int(0);
+        }
+        assert_eq!(seen, ["b", "a", "c"]);
+        assert!(map.is_deduped());
+        assert_eq!(map.len(), 3);
+
+        let mut map = with_duplicates();
+        let mut seen = Vec::new();
+        ValueMapMut::retain(&mut map, |k, _| {
+            seen.push(k.to_owned());
+            k != "b"
+        });
+        assert_eq!(seen, ["b", "a", "c"]);
+        assert_eq!(entries(&map), vec![("a", 3), ("c", 4)]);
+    }
+
+    #[test]
+    fn insert_or_replace_keeps_map_deduped() {
+        let mut map: VecMap<&str, i32> = VecMap::new();
+        assert_eq!(map.insert_or_replace("a", 1), None);
+        assert_eq!(map.insert_or_replace("b", 2), None);
+        assert_eq!(map.insert_or_replace("a", 3), Some(1));
+        assert!(map.is_deduped());
+        assert_eq!(
+            map.iter().copied().collect::<Vec<_>>(),
+            [("a", 3), ("b", 2)]
+        );
+    }
+
+    #[test]
+    fn value_map_mut_insert_overwrites() {
+        let mut map: VecMap<BytesString, AttributeValue<BytesData>> = VecMap::new();
+        let key = || BytesString::from_static("k");
+        assert_eq!(
+            ValueMapMut::insert(&mut map, key(), AttributeValue::Int(1)),
+            None
+        );
+        assert_eq!(
+            ValueMapMut::insert(&mut map, key(), AttributeValue::Int(2)),
+            Some(AttributeValue::Int(1))
+        );
+        assert_eq!(map.len(), 1);
+        assert_eq!(ValueMap::get(&map, "k"), Some(&AttributeValue::Int(2)));
+    }
 
     #[test]
     fn get_returns_last_inserted() {
@@ -661,6 +873,30 @@ mod tests {
         let d = DedupedVecMap::Borrowed(&m);
         assert_eq!(d.len(), 0);
         assert_eq!(d.iter().count(), 0);
+    }
+
+    #[test]
+    fn dedup_at_stack_threshold_boundary() {
+        // `dedup` uses a stack-resident scratch allocator whose buffer fits ~32
+        // elements; beyond that, allocations spill to the heap. Exercise the boundary
+        // from both sides: every key is inserted twice, so the later value must
+        // shadow the earlier one on both paths.
+        for n in [32usize, 33, 128] {
+            let mut m = VecMap::new();
+            for i in 0..n {
+                m.insert(i / 2, i);
+            }
+            m.dedup();
+
+            let distinct_keys = n.div_ceil(2);
+            assert_eq!(m.len(), distinct_keys, "unexpected size for n = {n}");
+            for k in 0..distinct_keys {
+                // The last value inserted for key `k` is `2k + 1`, except for the
+                // final key of an odd-sized map, whose shadow never gets inserted.
+                let expected = (2 * k + 1).min(n - 1);
+                assert_eq!(m.get(&k), Some(&expected), "unexpected value for n = {n}");
+            }
+        }
     }
 
     #[test]
