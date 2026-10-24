@@ -89,12 +89,8 @@ windows = { workspace = true, features = ["std", "Win32_System_LibraryLoader"] }
 [build-dependencies]
 # If we use a newer version of cc, CI fails on alpine.
 cc.workspace = true
+cc_utils = { path = "../tools/cc_utils" }
 cxx-build = { workspace = true, optional = true }
-# Use default-features = false to avoid pulling in the `https` feature (rustls/aws-lc-rs/aws-lc-sys)
-# in the build-script context. The build script only needs cc_utils, which has no TLS dependency.
-# Without this, aws-lc-sys gets compiled twice: once for the normal dep graph and once for the
-# build-script dep graph (Cargo resolver v2 keeps these contexts separate).
-libdd-common = { version = "8.0.0", path = "../libdd-common", default-features = false, features = ["std"] }
 
 [lints.clippy]
 std_instead_of_alloc = "warn"

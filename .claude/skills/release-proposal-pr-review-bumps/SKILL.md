@@ -25,8 +25,9 @@ Bump rules (per crate, based on the highest-severity change):
 > **`pub` is not the reachability test.** Classify a rename or removal by whether the item is
 > *externally reachable*, never by the presence of the `pub` token:
 > - A `#[macro_export] macro_rules!` item carries no `pub` yet **is** public API — e.g.
->   `libdd-common`'s `tag!` (`src/tag.rs`), `cstr!` and `cstr_u8!` (`src/cstr.rs`). Renaming or
->   removing one breaks every consumer: **major**.
+>   `libdd-common`'s `tag!` (`src/tag.rs`). Renaming or removing one breaks every consumer:
+>   **major**. For C strings, don't suggest adding such a macro: the workspace MSRV supports
+>   `c"..."` literals, which are checked at compile time, so prefer those.
 > - Conversely, a rename confined to a genuinely private item — or to a `pub` item inside a
 >   non-`pub` module that nothing re-exports with `pub use` — has no public delta: **patch**, not
 >   minor.

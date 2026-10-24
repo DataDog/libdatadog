@@ -19,12 +19,9 @@ bench = false
 anyhow = { workspace = true, optional = true }
 arc-swap = { workspace = true, optional = true }
 futures = { workspace = true, features = ["alloc", "executor"], optional = true }
-futures-util = { workspace = true, optional = true }
 hex = { workspace = true, default-features = true, optional = true }
 httparse = { workspace = true, features = ["std"], optional = true }
 http = { workspace = true, features = ["std"], optional = true }
-mime = { workspace = true, optional = true }
-multer = { workspace = true, optional = true }
 bytes = { workspace = true, features = ["std"], optional = true }
 pin-project = { workspace = true, optional = true }
 rand = { workspace = true, default-features = true, optional = true }
@@ -36,7 +33,6 @@ regex-lite = { workspace = true, default-features = true, optional = true }
 # Use rustls-no-provider instead of rustls to avoid reqwest forcing aws-lc-rs as the crypto
 # backend. We install the ring provider explicitly in connector/mod.rs instead.
 reqwest = { workspace = true, features = ["rustls-no-provider", "hickory-dns"], optional = true }
-criterion = { workspace = true, optional = true }
 rustls-platform-verifier = { workspace = true, optional = true }
 thiserror = { workspace = true, default-features = true, optional = true }
 serde = { workspace = true, features = ["derive"] }
@@ -59,7 +55,6 @@ hyper-util = { workspace = true, features = ["http1", "client", "client-legacy"]
 http-body = { workspace = true, optional = true }
 http-body-util = {workspace = true, optional = true }
 tower-service = { workspace = true, optional = true }
-cc = { workspace = true, optional = true }
 libc = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "net", "io-util", "fs", "time"], optional = true }
 
@@ -68,8 +63,6 @@ workspace = true
 optional = true
 features = [
     "Win32_Foundation",
-    "Win32_System_Diagnostics_ToolHelp",
-    "Win32_System_Performance",
     "Win32_System_Registry",
     "Win32_System_Threading",
 ]
@@ -79,17 +72,15 @@ nix = { workspace = true, features = ["process"], optional = true }
 
 [dev-dependencies]
 bytes = { workspace = true, features = ["std"] }
-httparse = { workspace = true, features = ["std"] }
 indexmap = { workspace = true, default-features = true }
 maplit.workspace = true
-mime.workspace = true
-multer.workspace = true
 proptest = { workspace = true, default-features = true }
 rand = { workspace = true, default-features = true }
 rcgen.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["rt", "macros", "time", "net", "io-util"] }
 tokio-rustls.workspace = true
+tools = { path = "../tools", default-features = false, features = ["test-utils"] }
 
 [features]
 default = ["std", "https"]
@@ -104,9 +95,7 @@ std = [
     "anyhow/std",
     "dep:arc-swap",
     "dep:bytes",
-    "dep:cc",
     "dep:futures",
-    "dep:futures-util",
     "dep:hex",
     "dep:http",
     "dep:libc",
@@ -147,11 +136,7 @@ fips = ["tls-core", "hyper-rustls/fips"]
 # Honor HTTP(S)_PROXY/NO_PROXY environment variables for the hyper connector,
 hyper-proxy = ["http-client", "hyper-util/client-proxy"]
 # Enable reqwest client builder support with file dump debugging
-reqwest = ["http-client", "dep:reqwest", "test-utils"]
-# Enable test utilities for use in other crates
-test-utils = ["std", "dep:httparse", "dep:rand", "dep:mime", "dep:multer"]
-# Enable benchmark utilities (ReportingAllocator, Criterion allocation measurement)
-bench-utils = ["std", "dep:criterion"]
+reqwest = ["http-client", "dep:reqwest", "dep:httparse", "dep:rand"]
 
 [lints.rust]
 # We run coverage checks in our github actions. These checks are run with
