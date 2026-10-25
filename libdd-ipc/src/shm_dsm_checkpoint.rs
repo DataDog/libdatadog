@@ -38,9 +38,10 @@ pub const MAX_EDGE_TAGS: usize = 16;
 /// Width of a DSM time bucket: 10 s, as in the Java and Go tracers.
 pub const DSM_BUCKET_NANOS: u64 = 10_000_000_000;
 /// Default checkpoints per bucket.
-pub const DEFAULT_DSM_CHECKPOINT_SLOT_COUNT: usize = 256;
-/// Default per-bucket string pool size, for edge tags.
-pub const DEFAULT_DSM_CHECKPOINT_STRING_POOL_BYTES: usize = 256 * 1024;
+pub const DEFAULT_DSM_CHECKPOINT_SLOT_COUNT: usize = 128;
+/// Default per-bucket string pool size, for edge tags: 1 KiB per checkpoint.
+pub const DEFAULT_DSM_CHECKPOINT_STRING_POOL_BYTES: usize =
+    DEFAULT_DSM_CHECKPOINT_SLOT_COUNT * 1024;
 
 /// Backend bin of 1 µs, the lowest latency binned on its own.
 const LATENCY_MIN_INDEX: i32 = -890;
