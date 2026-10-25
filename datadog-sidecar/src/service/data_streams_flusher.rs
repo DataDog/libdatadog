@@ -1,12 +1,12 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Periodic flusher for the SHM Data Streams Monitoring (DSM) stats tables.
+//! Periodic flusher for the SHM Data Streams Monitoring (DSM) checkpoint tables.
 //!
 //! The sidecar maintains one `DsmTableState` per [`DsmTableKey`] (globally, across all
-//! sessions) in `SidecarServer::dsm_tables`. Tables are created lazily on the first IPC stats
-//! point for a given key, and removed automatically once idle, the same way as the span stats
-//! concentrators: an empty drain tells PHP workers to stop writing, and a final drain follows
+//! sessions) in `SidecarServer::dsm_tables`. Tables are created lazily on the first IPC
+//! checkpoint for a given key, and removed automatically once idle, the same way as the span
+//! stats concentrators: an empty drain tells PHP workers to stop writing, and a final drain follows
 //! before removal.
 //!
 //! Each table is drained once per [`DSM_BUCKET_NANOS`] interval, just after its boundary, and
@@ -22,9 +22,9 @@ use futures::future::join_all;
 use http::uri::PathAndQuery;
 use libdd_capabilities_impl::{HttpClientCapability, NativeCapabilities};
 use libdd_common::{Endpoint, MutexExt};
-use libdd_ipc::shm_dsm::{
-    DEFAULT_DSM_SLOT_COUNT, DEFAULT_DSM_STRING_POOL_BYTES, DSM_BUCKET_NANOS, DsmStatsBucket,
-    ShmDsmTable,
+use libdd_ipc::shm_dsm_checkpoint::{
+    DEFAULT_DSM_CHECKPOINT_SLOT_COUNT, DEFAULT_DSM_CHECKPOINT_STRING_POOL_BYTES, DSM_BUCKET_NANOS,
+    DsmCheckpointBucket, ShmDsmCheckpointTable,
 };
 use libdd_trace_utils::send_with_retry::{
     CompressionStrategy, RetryBackoffType, RetryStrategy, send_with_retry,
@@ -47,7 +47,7 @@ pub const PIPELINE_STATS_ENDPOINT_PATH: &str = "/v0.1/pipeline_stats";
 const PRODUCT_APM: u64 = 1;
 const PRODUCT_DSM: u64 = 2;
 
-/// How long after an interval boundary its bucket is drained, so that points recorded just
+/// How long after an interval boundary its bucket is drained, so that checkpoints recorded just
 /// before the boundary have reached it.
 const DRAIN_GRACE: Duration = Duration::from_millis(50);
 
@@ -65,7 +65,7 @@ pub(crate) fn dsm_endpoint(endpoint: &Endpoint) -> Option<Endpoint> {
     })
 }
 
-/// The subset of session configuration needed to create and flush a DSM stats table.
+/// The subset of session configuration needed to create and flush a DSM checkpoint table.
 #[derive(Clone)]
 pub(crate) struct DsmConfig {
     /// DSM endpoint with final path already baked in.
@@ -84,13 +84,13 @@ pub(crate) struct DsmConfig {
 pub struct DsmTableKey {
     pub env: String,
     pub version: String,
-    /// The service the points are reported under, including any service override.
+    /// The service the checkpoints are reported under, including any service override.
     pub service: String,
     pub primary_tag: String,
 }
 
 /// Compute the SHM path for a DSM table.
-pub fn dsm_table_shm_path(key: &DsmTableKey) -> CString {
+pub fn dsm_checkpoint_shm_path(key: &DsmTableKey) -> CString {
     let mut hasher = ZwoHasher::default();
     key.env.hash(&mut hasher);
     key.version.hash(&mut hasher);
@@ -112,20 +112,20 @@ pub fn dsm_table_shm_path(key: &DsmTableKey) -> CString {
 
 /// State held per [`DsmTableKey`].
 pub struct DsmTableState {
-    pub table: ShmDsmTable,
+    pub checkpoints: ShmDsmCheckpointTable,
     key: DsmTableKey,
     config: DsmConfig,
 }
 
-// SAFETY: ShmDsmTable is designed for cross-process sharing; all internal state uses atomic
-// operations.
+// SAFETY: ShmDsmCheckpointTable is designed for cross-process sharing; all internal state uses
+// atomic operations.
 unsafe impl Send for DsmTableState {}
 
 pub(crate) type DsmTables = Arc<Mutex<HashMap<DsmTableKey, Arc<DsmTableState>>>>;
 
 /// Look up or create the SHM DSM table for `key`.
 ///
-/// Called lazily when a PHP worker sends a stats point over IPC because it could not write it
+/// Called lazily when a PHP worker sends a checkpoint over IPC because it could not write it
 /// to SHM directly (no table yet). Returns `None` when DSM is not available for the session
 /// (agentless).
 pub(crate) fn get_or_create_dsm_table(
@@ -137,21 +137,21 @@ pub(crate) fn get_or_create_dsm_table(
     let mut guard = tables.lock_or_panic();
 
     if let Some(s) = guard.get(&key) {
-        if !s.table.needs_reload() {
+        if !s.checkpoints.needs_reload() {
             return Some(s.clone());
         }
         // Entry is being retired (reload signalled) — fall through to create a fresh one.
     }
 
-    match ShmDsmTable::create(
-        dsm_table_shm_path(&key),
+    match ShmDsmCheckpointTable::create(
+        dsm_checkpoint_shm_path(&key),
         DSM_BUCKET_NANOS,
-        DEFAULT_DSM_SLOT_COUNT,
-        DEFAULT_DSM_STRING_POOL_BYTES,
+        DEFAULT_DSM_CHECKPOINT_SLOT_COUNT,
+        DEFAULT_DSM_CHECKPOINT_STRING_POOL_BYTES,
     ) {
-        Ok(table) => {
+        Ok(checkpoints) => {
             let state = Arc::new(DsmTableState {
-                table,
+                checkpoints,
                 key: key.clone(),
                 config,
             });
@@ -209,11 +209,11 @@ pub(crate) async fn run_dsm_flush_loop(
             break; // sidecar shutting down
         };
 
-        let buckets = state.table.drain_buckets(false);
+        let buckets = state.checkpoints.drain_buckets(false);
         if !buckets.is_empty() {
             if let Err(e) = send_buckets(&client, &state, buckets).await {
                 warn!(
-                    "Failed to send DSM stats for env={} version={} service={}: {e}",
+                    "Failed to send DSM checkpoints for env={} version={} service={}: {e}",
                     key.env, key.version, key.service
                 );
             }
@@ -225,8 +225,8 @@ pub(crate) async fn run_dsm_flush_loop(
             "Removing idle SHM DSM table for env={} version={} service={}",
             key.env, key.version, key.service
         );
-        state.table.signal_reload();
-        state.table.unlink();
+        state.checkpoints.signal_reload();
+        state.checkpoints.unlink();
         tokio::time::sleep(Duration::from_secs(1)).await;
         {
             let mut guard = arc.lock_or_panic();
@@ -235,10 +235,10 @@ pub(crate) async fn run_dsm_flush_loop(
                 guard.remove(&key);
             }
         }
-        let buckets = state.table.drain_buckets(true);
+        let buckets = state.checkpoints.drain_buckets(true);
         if !buckets.is_empty() {
             if let Err(e) = send_buckets(&client, &state, buckets).await {
-                warn!("Failed final DSM stats flush: {e}");
+                warn!("Failed final DSM checkpoint flush: {e}");
             }
         }
         break;
@@ -249,17 +249,17 @@ pub(crate) async fn run_dsm_flush_loop(
 /// the results to the agent.
 pub async fn flush_all_dsm_now(tables: &DsmTables) {
     let states: Vec<_> = tables.lock_or_panic().values().cloned().collect();
-    debug!("Flushing all DSM stats now: {} tables", states.len());
+    debug!("Flushing all DSM checkpoints now: {} tables", states.len());
     let client = NativeCapabilities::new_client();
     join_all(states.iter().map(|state| {
         let client = &client;
         async move {
-            let buckets = state.table.drain_buckets(true);
+            let buckets = state.checkpoints.drain_buckets(true);
             if buckets.is_empty() {
                 return;
             }
             if let Err(e) = send_buckets(client, state, buckets).await {
-                warn!("flush_all_dsm_now: failed to send DSM stats: {e}");
+                warn!("flush_all_dsm_now: failed to send DSM checkpoints: {e}");
             }
         }
     }))
@@ -269,7 +269,7 @@ pub async fn flush_all_dsm_now(tables: &DsmTables) {
 async fn send_buckets(
     client: &NativeCapabilities,
     state: &DsmTableState,
-    buckets: Vec<DsmStatsBucket>,
+    buckets: Vec<DsmCheckpointBucket>,
 ) -> anyhow::Result<()> {
     let body = gzip(&encode_payload(&state.key, &state.config, &buckets)?)?;
 
@@ -359,7 +359,7 @@ struct StatsPoint<'a> {
 fn encode_payload(
     key: &DsmTableKey,
     config: &DsmConfig,
-    buckets: &[DsmStatsBucket],
+    buckets: &[DsmCheckpointBucket],
 ) -> anyhow::Result<Vec<u8>> {
     let payload = StatsPayload {
         env: &key.env,
@@ -376,7 +376,7 @@ fn encode_payload(
                 start: b.start,
                 duration: b.duration,
                 stats: b
-                    .stats
+                    .checkpoints
                     .iter()
                     .map(|g| StatsPoint {
                         edge_tags: &g.edge_tags,
@@ -396,7 +396,7 @@ fn encode_payload(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use libdd_ipc::shm_dsm::DsmStatsGroup;
+    use libdd_ipc::shm_dsm_checkpoint::DsmCheckpoint;
 
     fn key() -> DsmTableKey {
         DsmTableKey {
@@ -423,7 +423,7 @@ mod tests {
     async fn a_drained_table_is_posted_gzipped_to_the_agent() {
         use flate2::read::GzDecoder;
         use httpmock::prelude::*;
-        use libdd_ipc::shm_dsm::DsmStatsPointInput;
+        use libdd_ipc::shm_dsm_checkpoint::DsmCheckpointInput;
         use std::io::Read;
 
         let server = MockServer::start_async().await;
@@ -453,14 +453,14 @@ mod tests {
             })
             .await;
 
-        let table = ShmDsmTable::create(
+        let checkpoints = ShmDsmCheckpointTable::create(
             CString::new(format!("/dddsm-flush-t-{}", std::process::id())).unwrap(),
             DSM_BUCKET_NANOS,
             8,
             4096,
         )
         .unwrap();
-        table.add_point(&DsmStatsPointInput {
+        checkpoints.add_checkpoint(&DsmCheckpointInput {
             hash: 1,
             parent_hash: 0,
             edge_tags: &["direction:out", "topic:orders"],
@@ -469,7 +469,7 @@ mod tests {
             payload_size_bytes: 100,
         });
         let state = DsmTableState {
-            table,
+            checkpoints,
             key: key(),
             config: DsmConfig {
                 endpoint: dsm_endpoint(&Endpoint::from_slice(&server.url("/"))).unwrap(),
@@ -477,7 +477,7 @@ mod tests {
             },
         };
 
-        let buckets = state.table.drain_buckets(true);
+        let buckets = state.checkpoints.drain_buckets(true);
         assert_eq!(buckets.len(), 1);
         send_buckets(&NativeCapabilities::new_client(), &state, buckets)
             .await
@@ -487,7 +487,7 @@ mod tests {
 
     #[test]
     fn shm_paths_distinguish_tables() {
-        let path = dsm_table_shm_path(&key());
+        let path = dsm_checkpoint_shm_path(&key());
         for other in [
             DsmTableKey {
                 env: "env-b".into(),
@@ -506,7 +506,7 @@ mod tests {
                 ..key()
             },
         ] {
-            assert_ne!(path, dsm_table_shm_path(&other));
+            assert_ne!(path, dsm_checkpoint_shm_path(&other));
         }
         assert_ne!(
             path,
@@ -549,11 +549,11 @@ mod tests {
     /// msgpack `bin`.
     #[test]
     fn the_payload_has_the_fields_the_backend_expects() {
-        let buckets = [DsmStatsBucket {
+        let buckets = [DsmCheckpointBucket {
             start: 30_000_000_000,
             duration: DSM_BUCKET_NANOS,
-            stats: vec![
-                DsmStatsGroup {
+            checkpoints: vec![
+                DsmCheckpoint {
                     hash: u64::MAX,
                     parent_hash: 7,
                     edge_tags: vec!["direction:out".into(), "topic:orders".into()],
@@ -561,7 +561,7 @@ mod tests {
                     edge_latency: vec![3],
                     payload_size: vec![],
                 },
-                DsmStatsGroup {
+                DsmCheckpoint {
                     hash: 1,
                     parent_hash: 0,
                     edge_tags: vec![],
