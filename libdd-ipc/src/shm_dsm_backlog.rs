@@ -77,9 +77,9 @@ const _: () = assert!(BACKLOG_TAG_COUNT <= 8);
 
 /// Default backlogs per bucket: one per partition for each topic produced to, and per consumer
 /// group for each one consumed from.
-pub const DEFAULT_DSM_BACKLOG_SLOT_COUNT: usize = 1024;
-/// Default per-bucket string pool size, for backlog tag values.
-pub const DEFAULT_DSM_BACKLOG_STRING_POOL_BYTES: usize = 128 * 1024;
+pub const DEFAULT_DSM_BACKLOG_SLOT_COUNT: usize = 128;
+/// Default per-bucket string pool size, for backlog tag values: 256 bytes per backlog.
+pub const DEFAULT_DSM_BACKLOG_STRING_POOL_BYTES: usize = DEFAULT_DSM_BACKLOG_SLOT_COUNT * 256;
 
 /// Shared-memory DSM backlog table.
 pub type ShmDsmBacklogTable = ShmTable<DataStreamsBacklogs>;
