@@ -1,15 +1,15 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Periodic flusher for the SHM Data Streams Monitoring (DSM) stats tables.
+//! Periodic flusher for the SHM Data Streams Monitoring (DSM) checkpoint tables.
 //!
 //! The sidecar maintains one `DsmTableState` per [`DsmTableKey`] (globally, across all
-//! sessions) in `SidecarServer::dsm_tables`. Tables are created lazily on the first IPC stats
-//! point for a given key, and removed automatically once idle, the same way as the span stats
+//! sessions) in `SidecarServer::dsm_tables`. Tables are created lazily on the first IPC
+//! checkpoint for a given key, and removed automatically once idle, the same way as the span stats
 //! concentrators: an empty drain tells PHP workers to stop writing, and a final drain follows
 //! before removal.
 //!
-//! Each key has two tables: the stats table, and the backlog table holding the highest offset
+//! Each key has two tables: the checkpoint table, and the backlog table holding the highest offset
 //! seen per backlog (Kafka partition, consumer group). Both are drained once per
 //! [`DSM_BUCKET_NANOS`] interval, just after its boundary, and sent together to the agent's
 //! `/v0.1/pipeline_stats` endpoint as the gzipped msgpack payload the Java and Go tracers send.
@@ -23,13 +23,13 @@ use futures::future::join_all;
 use http::uri::PathAndQuery;
 use libdd_capabilities_impl::{HttpClientCapability, NativeCapabilities};
 use libdd_common::{Endpoint, MutexExt};
-use libdd_ipc::shm_dsm::{
-    DEFAULT_DSM_SLOT_COUNT, DEFAULT_DSM_STRING_POOL_BYTES, DSM_BUCKET_NANOS, DsmStatsBucket,
-    ShmDsmTable, now_nanos,
-};
 use libdd_ipc::shm_dsm_backlog::{
     DEFAULT_DSM_BACKLOG_SLOT_COUNT, DEFAULT_DSM_BACKLOG_STRING_POOL_BYTES, DsmBacklog,
     DsmBacklogBucket, ShmDsmBacklogTable,
+};
+use libdd_ipc::shm_dsm_checkpoint::{
+    DEFAULT_DSM_CHECKPOINT_SLOT_COUNT, DEFAULT_DSM_CHECKPOINT_STRING_POOL_BYTES, DSM_BUCKET_NANOS,
+    DsmCheckpointBucket, ShmDsmCheckpointTable, now_nanos,
 };
 use libdd_trace_utils::send_with_retry::{
     CompressionStrategy, RetryBackoffType, RetryStrategy, send_with_retry,
@@ -52,7 +52,7 @@ pub const PIPELINE_STATS_ENDPOINT_PATH: &str = "/v0.1/pipeline_stats";
 const PRODUCT_APM: u64 = 1;
 const PRODUCT_DSM: u64 = 2;
 
-/// How long after an interval boundary its bucket is drained, so that points recorded just
+/// How long after an interval boundary its bucket is drained, so that checkpoints recorded just
 /// before the boundary have reached it.
 const DRAIN_GRACE: Duration = Duration::from_millis(50);
 
@@ -70,7 +70,7 @@ pub(crate) fn dsm_endpoint(endpoint: &Endpoint) -> Option<Endpoint> {
     })
 }
 
-/// The subset of session configuration needed to create and flush a DSM stats table.
+/// The subset of session configuration needed to create and flush a key's DSM tables.
 #[derive(Clone)]
 pub(crate) struct DsmConfig {
     /// DSM endpoint with final path already baked in.
@@ -89,23 +89,23 @@ pub(crate) struct DsmConfig {
 pub struct DsmTableKey {
     pub env: String,
     pub version: String,
-    /// The service the points are reported under, including any service override.
+    /// The service the checkpoints are reported under, including any service override.
     pub service: String,
     pub primary_tag: String,
 }
 
-/// Compute the SHM path for a DSM stats table.
-pub fn dsm_table_shm_path(key: &DsmTableKey) -> CString {
+/// Compute the SHM path for a DSM checkpoint table.
+pub fn dsm_checkpoint_shm_path(key: &DsmTableKey) -> CString {
     shm_path("dddsm", key)
 }
 
-/// Compute the SHM path for the DSM backlog table kept alongside a stats table.
+/// Compute the SHM path for the DSM backlog table kept alongside a checkpoint table.
 pub fn dsm_backlog_shm_path(key: &DsmTableKey) -> CString {
     shm_path("dddsb", key)
 }
 
-/// `prefix` tells a key's tables apart; it is not hashed, so that it keeps the stats table's
-/// path what it was.
+/// `prefix` tells a key's tables apart; it is not hashed, so that it keeps the checkpoint
+/// table's path what it was.
 fn shm_path(prefix: &str, key: &DsmTableKey) -> CString {
     let mut hasher = ZwoHasher::default();
     key.env.hash(&mut hasher);
@@ -128,13 +128,13 @@ fn shm_path(prefix: &str, key: &DsmTableKey) -> CString {
 
 /// State held per [`DsmTableKey`].
 pub struct DsmTableState {
-    pub table: ShmDsmTable,
+    pub checkpoints: ShmDsmCheckpointTable,
     pub backlogs: ShmDsmBacklogTable,
     key: DsmTableKey,
     config: DsmConfig,
 }
 
-// SAFETY: ShmDsmTable and ShmDsmBacklogTable are designed for cross-process sharing; all
+// SAFETY: ShmDsmCheckpointTable and ShmDsmBacklogTable are designed for cross-process sharing; all
 // internal state uses atomic operations.
 unsafe impl Send for DsmTableState {}
 
@@ -142,7 +142,7 @@ pub(crate) type DsmTables = Arc<Mutex<HashMap<DsmTableKey, Arc<DsmTableState>>>>
 
 /// Look up or create the SHM DSM tables for `key`.
 ///
-/// Called lazily when a PHP worker sends a stats point or a backlog over IPC because it could
+/// Called lazily when a PHP worker sends a checkpoint or a backlog over IPC because it could
 /// not write it to SHM directly (no table yet). Both tables are created together, so that a
 /// worker that can open one can open the other. Returns `None` when DSM is not available for
 /// the session (agentless).
@@ -155,7 +155,7 @@ pub(crate) fn get_or_create_dsm_table(
     let mut guard = tables.lock_or_panic();
 
     if let Some(s) = guard.get(&key) {
-        if !s.table.needs_reload() {
+        if !s.checkpoints.needs_reload() {
             return Some(s.clone());
         }
         // Entry is being retired (reload signalled) — fall through to create a fresh one.
@@ -168,19 +168,19 @@ pub(crate) fn get_or_create_dsm_table(
         DEFAULT_DSM_BACKLOG_STRING_POOL_BYTES,
     )
     .and_then(|backlogs| {
-        let table = ShmDsmTable::create(
-            dsm_table_shm_path(&key),
+        let checkpoints = ShmDsmCheckpointTable::create(
+            dsm_checkpoint_shm_path(&key),
             DSM_BUCKET_NANOS,
-            DEFAULT_DSM_SLOT_COUNT,
-            DEFAULT_DSM_STRING_POOL_BYTES,
+            DEFAULT_DSM_CHECKPOINT_SLOT_COUNT,
+            DEFAULT_DSM_CHECKPOINT_STRING_POOL_BYTES,
         )
         .inspect_err(|_| backlogs.unlink())?;
-        Ok((table, backlogs))
+        Ok((checkpoints, backlogs))
     });
     match created {
-        Ok((table, backlogs)) => {
+        Ok((checkpoints, backlogs)) => {
             let state = Arc::new(DsmTableState {
-                table,
+                checkpoints,
                 backlogs,
                 key: key.clone(),
                 config,
@@ -244,21 +244,21 @@ pub(crate) async fn run_dsm_flush_loop(
         if !drained.is_empty() {
             if let Err(e) = send_buckets(&client, &state, drained).await {
                 warn!(
-                    "Failed to send DSM stats for env={} version={} service={}: {e}",
+                    "Failed to send DSM checkpoints and backlogs for env={} version={} service={}: {e}",
                     key.env, key.version, key.service
                 );
             }
             continue;
         }
 
-        // Empty drain: retire this table.
+        // Empty drain: retire these tables.
         info!(
             "Removing idle SHM DSM table for env={} version={} service={}",
             key.env, key.version, key.service
         );
-        state.table.signal_reload();
+        state.checkpoints.signal_reload();
         state.backlogs.signal_reload();
-        state.table.unlink();
+        state.checkpoints.unlink();
         state.backlogs.unlink();
         tokio::time::sleep(Duration::from_secs(1)).await;
         {
@@ -271,7 +271,7 @@ pub(crate) async fn run_dsm_flush_loop(
         let drained = state.drain(true);
         if !drained.is_empty() {
             if let Err(e) = send_buckets(&client, &state, drained).await {
-                warn!("Failed final DSM stats flush: {e}");
+                warn!("Failed final DSM checkpoint and backlog flush: {e}");
             }
         }
         break;
@@ -282,7 +282,10 @@ pub(crate) async fn run_dsm_flush_loop(
 /// the results to the agent.
 pub async fn flush_all_dsm_now(tables: &DsmTables) {
     let states: Vec<_> = tables.lock_or_panic().values().cloned().collect();
-    debug!("Flushing all DSM stats now: {} tables", states.len());
+    debug!(
+        "Flushing all DSM checkpoints and backlogs now: {} tables",
+        states.len()
+    );
     let client = NativeCapabilities::new_client();
     join_all(states.iter().map(|state| {
         let client = &client;
@@ -292,7 +295,7 @@ pub async fn flush_all_dsm_now(tables: &DsmTables) {
                 return;
             }
             if let Err(e) = send_buckets(client, state, drained).await {
-                warn!("flush_all_dsm_now: failed to send DSM stats: {e}");
+                warn!("flush_all_dsm_now: failed to send DSM checkpoints and backlogs: {e}");
             }
         }
     }))
@@ -301,13 +304,13 @@ pub async fn flush_all_dsm_now(tables: &DsmTables) {
 
 /// What one drain of a key's two tables took out of them.
 struct Drained {
-    stats: Vec<DsmStatsBucket>,
+    checkpoints: Vec<DsmCheckpointBucket>,
     backlogs: Vec<DsmBacklogBucket>,
 }
 
 impl Drained {
     fn is_empty(&self) -> bool {
-        self.stats.is_empty() && self.backlogs.is_empty()
+        self.checkpoints.is_empty() && self.backlogs.is_empty()
     }
 }
 
@@ -316,7 +319,7 @@ impl DsmTableState {
     fn drain(&self, force: bool) -> Drained {
         let now = now_nanos();
         Drained {
-            stats: self.table.drain_buckets_at(force, now),
+            checkpoints: self.checkpoints.drain_buckets_at(force, now),
             backlogs: self.backlogs.drain_buckets_at(force, now),
         }
     }
@@ -443,10 +446,10 @@ fn encode_payload(
                 backlogs: vec![],
             })
     }
-    for b in &drained.stats {
+    for b in &drained.checkpoints {
         bucket(&mut buckets, b.start, b.duration)
             .stats
-            .extend(b.stats.iter().map(|g| StatsPoint {
+            .extend(b.checkpoints.iter().map(|g| StatsPoint {
                 edge_tags: &g.edge_tags,
                 hash: g.hash,
                 parent_hash: g.parent_hash,
@@ -481,7 +484,7 @@ fn encode_payload(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use libdd_ipc::shm_dsm::DsmStatsGroup;
+    use libdd_ipc::shm_dsm_checkpoint::DsmCheckpoint;
 
     fn key() -> DsmTableKey {
         DsmTableKey {
@@ -508,7 +511,7 @@ mod tests {
     async fn a_drained_table_is_posted_gzipped_to_the_agent() {
         use flate2::read::GzDecoder;
         use httpmock::prelude::*;
-        use libdd_ipc::shm_dsm::DsmStatsPointInput;
+        use libdd_ipc::shm_dsm_checkpoint::DsmCheckpointInput;
         use std::io::Read;
 
         let server = MockServer::start_async().await;
@@ -538,7 +541,7 @@ mod tests {
             })
             .await;
 
-        let table = ShmDsmTable::create(
+        let checkpoints = ShmDsmCheckpointTable::create(
             CString::new(format!("/dddsm-flush-t-{}", std::process::id())).unwrap(),
             DSM_BUCKET_NANOS,
             8,
@@ -552,7 +555,7 @@ mod tests {
             4096,
         )
         .unwrap();
-        table.add_point(&DsmStatsPointInput {
+        checkpoints.add_checkpoint(&DsmCheckpointInput {
             hash: 1,
             parent_hash: 0,
             edge_tags: &["direction:out", "topic:orders"],
@@ -561,7 +564,7 @@ mod tests {
             payload_size_bytes: 100,
         });
         let state = DsmTableState {
-            table,
+            checkpoints,
             backlogs,
             key: key(),
             config: DsmConfig {
@@ -571,7 +574,7 @@ mod tests {
         };
 
         let drained = state.drain(true);
-        assert_eq!(drained.stats.len(), 1);
+        assert_eq!(drained.checkpoints.len(), 1);
         send_buckets(&NativeCapabilities::new_client(), &state, drained)
             .await
             .unwrap();
@@ -580,7 +583,7 @@ mod tests {
 
     #[test]
     fn shm_paths_distinguish_tables() {
-        let path = dsm_table_shm_path(&key());
+        let path = dsm_checkpoint_shm_path(&key());
         for other in [
             DsmTableKey {
                 env: "env-b".into(),
@@ -599,7 +602,7 @@ mod tests {
                 ..key()
             },
         ] {
-            assert_ne!(path, dsm_table_shm_path(&other));
+            assert_ne!(path, dsm_checkpoint_shm_path(&other));
             assert_ne!(dsm_backlog_shm_path(&key()), dsm_backlog_shm_path(&other));
         }
         assert_ne!(path, dsm_backlog_shm_path(&key()));
@@ -644,11 +647,11 @@ mod tests {
     /// msgpack `bin`.
     #[test]
     fn the_payload_has_the_fields_the_backend_expects() {
-        let stats = vec![DsmStatsBucket {
+        let checkpoints = vec![DsmCheckpointBucket {
             start: 30_000_000_000,
             duration: DSM_BUCKET_NANOS,
-            stats: vec![
-                DsmStatsGroup {
+            checkpoints: vec![
+                DsmCheckpoint {
                     hash: u64::MAX,
                     parent_hash: 7,
                     edge_tags: vec!["direction:out".into(), "topic:orders".into()],
@@ -656,7 +659,7 @@ mod tests {
                     edge_latency: vec![3],
                     payload_size: vec![],
                 },
-                DsmStatsGroup {
+                DsmCheckpoint {
                     hash: 1,
                     parent_hash: 0,
                     edge_tags: vec![],
@@ -667,7 +670,7 @@ mod tests {
             ],
         }];
         let drained = Drained {
-            stats,
+            checkpoints,
             backlogs: vec![],
         };
         let bytes = encode_payload(&key(), &config(), &drained).unwrap();
@@ -731,11 +734,12 @@ mod tests {
         assert!(!has(bucket, "Backlogs"));
     }
 
-    /// Backlogs go out in the bucket of the interval they were recorded in, next to its stats;
-    /// an interval with only backlogs still gets a bucket, and buckets are ordered by start.
+    /// Backlogs go out in the bucket of the interval they were recorded in, next to its
+    /// checkpoints; an interval with only backlogs still gets a bucket, and buckets are ordered by
+    /// start.
     #[test]
-    fn backlogs_share_their_intervals_bucket_with_its_stats() {
-        let group = || DsmStatsGroup {
+    fn backlogs_share_their_intervals_bucket_with_its_checkpoints() {
+        let checkpoint = || DsmCheckpoint {
             hash: 1,
             parent_hash: 0,
             edge_tags: vec![],
@@ -752,10 +756,10 @@ mod tests {
             value,
         };
         let drained = Drained {
-            stats: vec![DsmStatsBucket {
+            checkpoints: vec![DsmCheckpointBucket {
                 start: 2 * DSM_BUCKET_NANOS,
                 duration: DSM_BUCKET_NANOS,
-                stats: vec![group()],
+                checkpoints: vec![checkpoint()],
             }],
             backlogs: vec![
                 DsmBacklogBucket {

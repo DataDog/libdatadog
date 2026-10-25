@@ -1130,18 +1130,18 @@ impl SidecarInterface for ConnectionSidecarHandler {
         }
     }
 
-    async fn add_dsm_stats_point(
+    async fn add_dsm_checkpoint(
         &mut self,
         env: String,
         version: String,
         service: String,
         primary_tag: String,
-        point: libdd_ipc::shm_dsm::OwnedDsmStatsPoint,
+        checkpoint: libdd_ipc::shm_dsm_checkpoint::OwnedDsmCheckpoint,
     ) {
         let Some(session) = self.session.load() else {
             return;
         };
-        // Lazily create the table on the first IPC point for this key.
+        // Lazily create the table on the first IPC checkpoint for this key.
         let key = DsmTableKey {
             env,
             version,
@@ -1151,8 +1151,8 @@ impl SidecarInterface for ConnectionSidecarHandler {
         if let Some(state) = get_or_create_dsm_table(&self.server.dsm_tables, key, &session) {
             let mut edge_tag_buf = Vec::new();
             state
-                .table
-                .add_point(&point.as_shm_input(&mut edge_tag_buf));
+                .checkpoints
+                .add_checkpoint(&checkpoint.as_shm_input(&mut edge_tag_buf));
         }
     }
 

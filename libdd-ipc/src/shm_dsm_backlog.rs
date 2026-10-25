@@ -7,7 +7,7 @@
 //! offset, or a consumer group's last committed one - within a time bucket. The backend turns
 //! the produce and commit offsets of a partition into consumer lag. PHP workers record offsets
 //! with `ShmDsmBacklogTable::add_backlog` and cannot keep the maximum themselves, since they
-//! hold no state across requests; the sidecar creates the table alongside the DSM stats table
+//! hold no state across requests; the sidecar creates the table alongside the DSM checkpoint table
 //! and drains both into the same payload.
 //!
 //! ## What a slot holds
@@ -263,9 +263,11 @@ impl ShmTable<DataStreamsBacklogs> {
     /// Drain the inactive bucket, or both buckets if `force` is true, dating them as of `now`
     /// (nanoseconds since the Unix epoch).
     ///
-    /// Dated as [`ShmDsmTable::drain_buckets_at`](crate::shm_dsm::ShmDsmTable::drain_buckets_at)
-    /// dates the stats buckets, so that draining both tables at the same `now` gives the
-    /// buckets of an interval the same start.
+    /// Dated as [`ShmDsmCheckpointTable::drain_buckets_at`] dates the checkpoint buckets, so that
+    /// draining both tables at the same `now` gives the buckets of an interval the same start.
+    ///
+    /// [`ShmDsmCheckpointTable::drain_buckets_at`]:
+    ///     crate::shm_dsm_checkpoint::ShmDsmCheckpointTable::drain_buckets_at
     pub fn drain_buckets_at(&self, force: bool, now: u64) -> Vec<DsmBacklogBucket> {
         self.with_current(|mem| mem.drain_backlog_buckets(force, now))
             .unwrap_or_default()
@@ -277,7 +279,7 @@ impl ShmDsmBacklogMapping {
         self.drain_buckets(force, Self::drain_entry)
             .into_iter()
             .map(|b| DsmBacklogBucket {
-                start: crate::shm_dsm::bucket_start(b.current, b.duration, now),
+                start: crate::shm_dsm_checkpoint::bucket_start(b.current, b.duration, now),
                 duration: b.duration,
                 backlogs: b.groups,
             })
@@ -314,7 +316,7 @@ impl ShmDsmBacklogMapping {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::shm_dsm::{DSM_BUCKET_NANOS, ShmDsmTable};
+    use crate::shm_dsm_checkpoint::{DSM_BUCKET_NANOS, ShmDsmCheckpointTable};
     use crate::shm_table::{SLOT_EMPTY, SLOT_INIT};
     use std::ffi::CString;
     use std::sync::Arc;
@@ -560,20 +562,20 @@ mod tests {
         assert_eq!(drain_all(&owner)[0].value, 77);
     }
 
-    /// The backlog table and the stats table are drained into one payload; an opener must
+    /// The backlog table and the checkpoint table are drained into one payload; an opener must
     /// never take one for the other.
     #[test]
     #[cfg_attr(miri, ignore)]
     fn a_segment_opens_only_as_its_own_schema() {
         let path = test_path();
         let _backlogs = table(path.clone());
-        assert!(ShmDsmTable::open(&path).is_err());
+        assert!(ShmDsmCheckpointTable::open(&path).is_err());
         assert!(ShmDsmBacklogTable::open(&path).is_ok());
     }
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn buckets_are_dated_like_the_stats_buckets() {
+    fn buckets_are_dated_like_the_checkpoint_buckets() {
         let t = table(test_path());
         let now = 123 * DSM_BUCKET_NANOS + 4_000;
 

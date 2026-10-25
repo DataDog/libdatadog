@@ -532,28 +532,28 @@ pub fn add_span_to_concentrator(
     Ok(transport.with_retry(|s| s.send(&request)))
 }
 
-/// IPC fallback for DSM. Returns whether the point was sent, so callers can retry a failed
+/// IPC fallback for DSM. Returns whether the checkpoint was sent, so callers can retry a failed
 /// bootstrap.
-pub fn add_dsm_stats_point(
+pub fn add_dsm_checkpoint(
     transport: &mut SidecarTransport,
     env: String,
     version: String,
     service: String,
     primary_tag: String,
-    point: libdd_ipc::shm_dsm::OwnedDsmStatsPoint,
+    checkpoint: libdd_ipc::shm_dsm_checkpoint::OwnedDsmCheckpoint,
 ) -> io::Result<bool> {
-    let request = SidecarInterfaceRequest::AddDsmStatsPoint {
+    let request = SidecarInterfaceRequest::AddDsmCheckpoint {
         env,
         version,
         service,
         primary_tag,
-        point,
+        checkpoint,
     };
     Ok(transport.with_retry(|s| s.send(&request)))
 }
 
 /// IPC fallback for DSM backlogs. Returns whether the offset was sent, as
-/// [`add_dsm_stats_point`] does.
+/// [`add_dsm_checkpoint`] does.
 pub fn add_dsm_backlog(
     transport: &mut SidecarTransport,
     env: String,
@@ -643,7 +643,7 @@ pub fn ping(transport: &mut SidecarTransport) -> io::Result<Duration> {
 mod tests {
     use super::try_submit_ffe;
     use crate::service::blocking::{
-        SidecarTransport, add_dsm_backlog, add_dsm_stats_point, add_span_to_concentrator,
+        SidecarTransport, add_dsm_backlog, add_dsm_checkpoint, add_span_to_concentrator,
         send_dogstatsd_actions,
     };
     use crate::service::ffe_submission::FfeSubmissionStatus;
@@ -921,13 +921,13 @@ mod tests {
             .set_read_timeout(Some(Duration::from_millis(100)))
             .unwrap();
         let send = |transport: &mut SidecarTransport| {
-            add_dsm_stats_point(
+            add_dsm_checkpoint(
                 transport,
                 "env".into(),
                 "v1".into(),
                 "svc".into(),
                 "region:eu".into(),
-                libdd_ipc::shm_dsm::OwnedDsmStatsPoint {
+                libdd_ipc::shm_dsm_checkpoint::OwnedDsmCheckpoint {
                     hash: 2,
                     parent_hash: 3,
                     edge_tags: vec!["topic:orders".into()],
@@ -942,21 +942,21 @@ mod tests {
         let mut buf = [0; 1024];
         let (len, _) = peer.try_recv_raw(&mut buf).unwrap();
         match libdd_ipc::codec::decode::<SidecarInterfaceRequest>(&buf[..len]).unwrap() {
-            SidecarInterfaceRequest::AddDsmStatsPoint {
+            SidecarInterfaceRequest::AddDsmCheckpoint {
                 env,
                 version,
                 service,
                 primary_tag,
-                point,
+                checkpoint,
             } => {
                 assert_eq!(env, "env");
                 assert_eq!(version, "v1");
                 assert_eq!(service, "svc");
                 assert_eq!(primary_tag, "region:eu");
-                assert_eq!(point.hash, 2);
-                assert_eq!(point.edge_tags, ["topic:orders"]);
+                assert_eq!(checkpoint.hash, 2);
+                assert_eq!(checkpoint.edge_tags, ["topic:orders"]);
             }
-            _ => panic!("expected a DSM stats point"),
+            _ => panic!("expected a DSM checkpoint"),
         }
 
         drop(peer);
