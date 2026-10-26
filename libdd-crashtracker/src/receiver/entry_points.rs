@@ -143,6 +143,15 @@ pub(crate) async fn receiver_entry_point(
         crash_info
             .async_upload_to_endpoint(config.endpoint())
             .await?;
+
+        // If the crash report contains an APM span snapshot, submit it as a finished span
+        if let Some(ref apm_span) = crash_info.apm_span {
+            if let Err(e) = super::apm_span_submit::submit_crash_span(apm_span).await {
+                crash_info
+                    .log_messages
+                    .push(format!("Failed to submit crash APM span: {e}"));
+            }
+        }
     }
     Ok(())
 }
