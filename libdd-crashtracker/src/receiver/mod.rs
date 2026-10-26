@@ -3,6 +3,7 @@
 #![cfg(unix)]
 #![allow(clippy::std_instead_of_alloc, clippy::std_instead_of_core)]
 
+mod apm_span_submit;
 mod debug_logger;
 mod entry_points;
 pub use entry_points::{
