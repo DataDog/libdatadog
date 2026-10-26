@@ -22,7 +22,7 @@ use libdd_shared_runtime::{SharedRuntime, WorkerHandle};
 #[cfg(feature = "stats-obfuscation")]
 use libdd_trace_obfuscation::obfuscation_config::SqlConfig;
 pub(crate) use libdd_trace_stats::span_concentrator::default_stats_eligible_span_kinds;
-use libdd_trace_stats::span_concentrator::{ChunkSpanView, SpanConcentrator, StatSpan};
+use libdd_trace_stats::span_concentrator::{ChunkSpanView, SpanConcentrator};
 #[cfg(feature = "stats-obfuscation")]
 use libdd_trace_stats::span_concentrator::{
     SharedStatsComputationObfuscationConfig, StatsComputationObfuscationConfig,
@@ -31,7 +31,6 @@ use libdd_trace_stats::stats_exporter::{
     FlushableStatsExport, SharedStatsExporter, StatsExporter, StatsMetadata,
 };
 use libdd_trace_utils::trace_filter::TraceFilterer;
-use std::collections::BTreeMap;
 use std::fmt::Debug;
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
@@ -329,59 +328,6 @@ pub(crate) async fn handle_stats_enabled(
     }
 }
 
-struct ResourceStatSpan<'a, S> {
-    span: &'a S,
-    defaults: &'a BTreeMap<String, String>,
-    has_attribute: fn(&S, &str) -> bool,
-}
-
-impl<'a, S: StatSpan<'a>> StatSpan<'a> for ResourceStatSpan<'a, S> {
-    fn service(&'a self) -> &'a str {
-        self.span.service()
-    }
-    fn resource(&'a self) -> &'a str {
-        self.span.resource()
-    }
-    fn name(&'a self) -> &'a str {
-        self.span.name()
-    }
-    fn r#type(&'a self) -> &'a str {
-        self.span.r#type()
-    }
-    fn start(&'a self) -> i64 {
-        self.span.start()
-    }
-    fn duration(&'a self) -> i64 {
-        self.span.duration()
-    }
-    fn is_error(&'a self) -> bool {
-        self.span.is_error()
-    }
-    fn is_trace_root(&'a self) -> bool {
-        self.span.is_trace_root()
-    }
-    fn is_measured(&'a self) -> bool {
-        self.span.is_measured()
-    }
-    fn is_partial_snapshot(&'a self) -> bool {
-        self.span.is_partial_snapshot()
-    }
-    fn has_top_level(&'a self) -> bool {
-        self.span.has_top_level()
-    }
-    fn get_meta(&'a self, key: &str) -> Option<&'a str> {
-        self.span.get_meta(key).or_else(|| {
-            if (self.has_attribute)(self.span, key) {
-                return None;
-            }
-            self.defaults.get(key).map(String::as_str)
-        })
-    }
-    fn get_metrics(&'a self, key: &str) -> Option<f64> {
-        self.span.get_metrics(key)
-    }
-}
-
 /// Add all spans from the given iterator into the stats concentrator, optionally obfuscating
 /// resource names for client-side stats.
 ///
@@ -391,7 +337,6 @@ fn add_spans_to_stats<T: libdd_trace_utils::span::TraceData>(
     stats_concentrator: &Mutex<SpanConcentrator>,
     traces: &mut [Vec<libdd_trace_utils::span::v04::Span<T>>],
     client_computed_top_level: bool,
-    resource_defaults: Option<&BTreeMap<String, String>>,
 ) {
     if !client_computed_top_level {
         for trace in traces.iter_mut() {
@@ -401,17 +346,7 @@ fn add_spans_to_stats<T: libdd_trace_utils::span::TraceData>(
 
     let mut stats_concentrator = stats_concentrator.lock_or_panic();
     for span in traces.iter().flatten() {
-        if let Some(defaults) = resource_defaults {
-            stats_concentrator.add_span(&ResourceStatSpan {
-                span,
-                defaults,
-                has_attribute: |s, key| {
-                    s.metrics.contains_key(key) || s.meta_struct.contains_key(key)
-                },
-            });
-        } else {
-            stats_concentrator.add_span(span);
-        }
+        stats_concentrator.add_span(span);
     }
 }
 
@@ -434,7 +369,6 @@ pub(crate) fn process_traces_for_stats<
     client_side_stats: &ArcSwap<StatsComputationStatus>,
     client_computed_top_level: bool,
     trace_filterer: &TraceFilterer,
-    resource_defaults: Option<&BTreeMap<String, String>>,
     #[cfg(feature = "telemetry")] telemetry: Option<&crate::telemetry::TelemetryClient<C>>,
 ) -> bool {
     let status = client_side_stats.load();
@@ -442,17 +376,11 @@ pub(crate) fn process_traces_for_stats<
         stats_concentrator, ..
     } = &**status
     {
-        let dropped_by_trace_filter =
-            trace_filterer.filter_traces_with_defaults(traces, resource_defaults);
+        let dropped_by_trace_filter = trace_filterer.filter_traces(traces);
         #[cfg(not(all(not(target_arch = "wasm32"), feature = "telemetry")))]
         let _ = dropped_by_trace_filter;
 
-        add_spans_to_stats(
-            stats_concentrator,
-            traces,
-            client_computed_top_level,
-            resource_defaults,
-        );
+        add_spans_to_stats(stats_concentrator, traces, client_computed_top_level);
         // Once stats have been computed we can drop all chunks that are not going to be
         // sampled by the agent
         let dropped_p0_stats = libdd_trace_utils::span::trace_utils::drop_chunks(traces);
@@ -491,7 +419,6 @@ pub(crate) fn process_traces_for_stats<
 fn add_spans_to_stats_v1<T: libdd_trace_utils::span::TraceData>(
     stats_concentrator: &Mutex<SpanConcentrator>,
     traces: &[libdd_trace_utils::span::v1::TraceChunk<T>],
-    resource_defaults: Option<&BTreeMap<String, String>>,
 ) {
     let mut stats_concentrator = stats_concentrator.lock_or_panic();
 
@@ -499,18 +426,7 @@ fn add_spans_to_stats_v1<T: libdd_trace_utils::span::TraceData>(
     // stored at the chunk level rather than on individual spans are still visible to stats.
     for chunk in traces {
         for span in &chunk.spans {
-            let view = ChunkSpanView { span, chunk };
-            if let Some(defaults) = resource_defaults {
-                stats_concentrator.add_span(&ResourceStatSpan {
-                    span: &view,
-                    defaults,
-                    has_attribute: |s, key| {
-                        s.span.attributes.contains_key(key) || s.chunk.attributes.contains_key(key)
-                    },
-                });
-            } else {
-                stats_concentrator.add_span(&view);
-            }
+            stats_concentrator.add_span(&ChunkSpanView { span, chunk });
         }
     }
 }
@@ -533,7 +449,6 @@ pub(crate) fn process_traces_for_stats_v1<
     client_side_stats: &ArcSwap<StatsComputationStatus>,
     client_computed_top_level: bool,
     trace_filterer: &TraceFilterer,
-    resource_defaults: Option<&BTreeMap<String, String>>,
     #[cfg(feature = "telemetry")] telemetry: Option<&crate::telemetry::TelemetryClient<C>>,
 ) {
     let status = client_side_stats.load();
@@ -541,8 +456,7 @@ pub(crate) fn process_traces_for_stats_v1<
         stats_concentrator, ..
     } = &**status
     {
-        let dropped_by_trace_filter =
-            trace_filterer.filter_traces_v1_with_defaults(traces, resource_defaults);
+        let dropped_by_trace_filter = trace_filterer.filter_traces_v1(traces);
         #[cfg(not(all(not(target_arch = "wasm32"), feature = "telemetry")))]
         let _ = dropped_by_trace_filter;
 
@@ -551,7 +465,7 @@ pub(crate) fn process_traces_for_stats_v1<
                 libdd_trace_utils::span::trace_utils_v1::compute_top_level_span(&mut chunk.spans);
             }
         }
-        add_spans_to_stats_v1(stats_concentrator, traces, resource_defaults);
+        add_spans_to_stats_v1(stats_concentrator, traces);
         // Once stats have been computed we can drop all chunks that are not going to be
         // sampled by the agent
         let dropped_p0_stats = libdd_trace_utils::span::trace_utils_v1::drop_chunks(traces);
@@ -645,61 +559,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn resource_defaults_feed_stats_without_mutating_spans() {
-        use super::*;
-        use libdd_trace_utils::span::v04::SpanBytes;
-        for (local, numeric, defaults, expected) in [
-            (None, false, Some("core"), Some("team:core")),
-            (Some("other"), false, Some("core"), Some("team:other")),
-            (Some(""), false, Some("core"), None),
-            (None, true, Some("core"), None),
-            (None, false, Some(""), None),
-            (None, false, None, None),
-        ] {
-            let mut span = SpanBytes {
-                service: "svc".into(),
-                name: "op".into(),
-                resource: "op".into(),
-                duration: 1,
-                ..Default::default()
-            };
-            span.metrics.insert("_top_level".into(), 1.0);
-            if let Some(value) = local {
-                span.meta.insert("team".into(), value.into());
-            }
-            if numeric {
-                span.metrics.insert("team".into(), 7.0);
-            }
-            let defaults = defaults.map(|v| BTreeMap::from([("team".into(), v.into())]));
-            let concentrator = Mutex::new(SpanConcentrator::new(
-                Duration::from_secs(10),
-                SystemTime::now(),
-                vec![],
-                vec![],
-                None,
-                vec!["team".into()],
-                #[cfg(feature = "stats-obfuscation")]
-                None,
-            ));
-            let mut traces = vec![vec![span]];
-            add_spans_to_stats(&concentrator, &mut traces, true, defaults.as_ref());
-            assert_eq!(traces[0][0].meta.get("team").map(|v| v.as_str()), local);
-            let buckets = concentrator.lock_or_panic().flush(SystemTime::now(), true);
-            let groups: Vec<_> = buckets
-                .obfuscated_buckets
-                .iter()
-                .chain(buckets.unobfuscated_buckets.iter())
-                .flat_map(|b| &b.stats)
-                .collect();
-            assert_eq!(groups.len(), 1);
-            assert_eq!(
-                groups[0].additional_metric_tags,
-                expected.into_iter().map(String::from).collect::<Vec<_>>()
-            );
-        }
-    }
-
     mod v1 {
         use super::super::*;
         use libdd_trace_utils::span::v1::{AttributeValue, SpanBytes, TraceChunkBytes};
@@ -763,7 +622,7 @@ mod tests {
                 },
             ];
 
-            add_spans_to_stats_v1(&stats_concentrator, &traces, None);
+            add_spans_to_stats_v1(&stats_concentrator, &traces);
 
             assert_eq!(total_hits(&stats_concentrator), 2);
         }
@@ -781,7 +640,7 @@ mod tests {
                 ..Default::default()
             }];
 
-            add_spans_to_stats_v1(&stats_concentrator, &traces, None);
+            add_spans_to_stats_v1(&stats_concentrator, &traces);
 
             assert_eq!(total_hits(&stats_concentrator), 0);
         }
@@ -805,7 +664,7 @@ mod tests {
                 ..Default::default()
             }];
 
-            add_spans_to_stats_v1(&stats_concentrator, &traces, None);
+            add_spans_to_stats_v1(&stats_concentrator, &traces);
 
             assert_eq!(total_hits(&stats_concentrator), 1);
         }
@@ -823,7 +682,7 @@ mod tests {
                 ..Default::default()
             }];
 
-            add_spans_to_stats_v1(&stats_concentrator, &traces, None);
+            add_spans_to_stats_v1(&stats_concentrator, &traces);
 
             let flushed = stats_concentrator
                 .lock_or_panic()
@@ -853,7 +712,7 @@ mod tests {
                 ..Default::default()
             }];
 
-            add_spans_to_stats_v1(&stats_concentrator, &traces, None);
+            add_spans_to_stats_v1(&stats_concentrator, &traces);
 
             assert_eq!(total_hits(&stats_concentrator), 1);
         }
@@ -877,7 +736,6 @@ mod tests {
                 &client_side_stats,
                 false,
                 &trace_filterer,
-                None,
                 #[cfg(feature = "telemetry")]
                 None::<
                     &crate::telemetry::TelemetryClient<libdd_capabilities_impl::NativeCapabilities>,

@@ -327,8 +327,8 @@ impl<
     }
 
     /// Replace the string resource attributes used by subsequent OTLP trace exports.
-    /// An empty map clears them. Span attributes, native payloads, and metric resources are
-    /// unchanged.
+    /// An empty map clears them. Matching span string tags are omitted from OTLP output;
+    /// native payloads and metric resources are unchanged.
     pub fn set_otlp_resource_attributes(&mut self, attributes: BTreeMap<String, String>) {
         self.otlp_resource_info.resource_attributes = attributes;
     }
@@ -1026,9 +1026,6 @@ impl<
             &self.client_side_stats.status,
             self.client_computed_top_level,
             &self.trace_filterer.load(),
-            self.otlp
-                .as_ref()
-                .map(|_| &self.otlp_resource_info.resource_attributes),
             #[cfg(feature = "telemetry")]
             self.telemetry.load_full().as_deref(),
         );
