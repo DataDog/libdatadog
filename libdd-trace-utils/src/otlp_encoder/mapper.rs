@@ -352,6 +352,11 @@ pub fn map_traces_to_otlp<T: TraceData>(
     let resource_attributes = resource
         .attributes
         .iter()
+        .filter(|attribute| {
+            resource_info
+                .resource_attributes
+                .contains_key(&attribute.key)
+        })
         .filter_map(
             |attribute| match attribute.value.as_ref()?.value.as_ref()? {
                 ProtoValue::StringValue(value) => Some((attribute.key.as_str(), value.as_str())),
