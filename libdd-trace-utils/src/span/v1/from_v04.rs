@@ -151,7 +151,7 @@ fn span_event_from_v04<T: TraceData>(event: v04::SpanEvent<T>) -> SpanEvent<T> {
             .map(|(k, v)| {
                 let v = match v {
                     v04::AttributeAnyValue::SingleValue(v) => attribute_from_v04_array_value(v),
-                    v04::AttributeAnyValue::Array(values) => AttributeValue::List(
+                    v04::AttributeAnyValue::Array(values) => AttributeValue::Array(
                         values
                             .into_iter()
                             .map(attribute_from_v04_array_value)
@@ -486,7 +486,7 @@ mod tests {
         assert_eq!(event.attributes.get("s"), Some(&AttributeValue::Int(7)));
         assert_eq!(
             event.attributes.get("a"),
-            Some(&AttributeValue::List(vec![
+            Some(&AttributeValue::Array(vec![
                 AttributeValue::Bool(true),
                 AttributeValue::Float(0.5),
                 AttributeValue::String(bs("x")),

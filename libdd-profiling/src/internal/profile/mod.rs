@@ -680,16 +680,16 @@ impl Profile {
         // Clone to avoid holding an immutable borrow of `self.sample_types` while interning.
         let sample_types = self.sample_types.clone();
         for sample_type in sample_types.iter().copied() {
-            let sample_type = self.intern_sample_type(sample_type);
+            let sample_type = self.intern_sample_type(sample_type)?;
             Record::<_, 1, NO_OPT_ZERO>::from(sample_type).encode(writer)?;
         }
 
         // Period type needs string interning, which must happen before we start moving fields out
         // of `self`. (Many fields below are consumed via `into_iter()`.)
-        let period_type_and_value: Option<(ValueType, i64)> = self
-            .period
-            .map(|period| (self.intern_sample_type(period.sample_type), period.value));
-
+        let period_type_and_value: Option<(ValueType, i64)> = match self.period {
+            Some(period) => Some((self.intern_sample_type(period.sample_type)?, period.value)),
+            None => None,
+        };
         for (offset, item) in self.mappings.into_iter().enumerate() {
             let mapping = protobuf::Mapping {
                 id: Record::from((offset + 1) as u64),
@@ -923,7 +923,10 @@ impl Profile {
     }
 
     #[inline(always)]
-    fn intern_sample_type(&mut self, sample_type: api::SampleType) -> ValueType {
+    fn intern_sample_type(
+        &mut self,
+        sample_type: api::SampleType,
+    ) -> Result<ValueType, string_table::Error> {
         let (type_, unit) = if let Some(value_type) = self.sample_type_overrides.get(&sample_type) {
             (value_type.r#type.as_ref(), value_type.unit.as_ref())
         } else {
@@ -931,10 +934,10 @@ impl Profile {
             (value_type.r#type, value_type.unit)
         };
 
-        ValueType {
-            r#type: Record::from(self.strings.intern(type_)),
-            unit: Record::from(self.strings.intern(unit)),
-        }
+        Ok(ValueType {
+            r#type: Record::from(self.strings.try_intern(type_)?),
+            unit: Record::from(self.strings.try_intern(unit)?),
+        })
     }
 
     /// Fetches the endpoint information for the label. There may be errors,
