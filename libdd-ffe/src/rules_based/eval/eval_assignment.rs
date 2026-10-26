@@ -367,34 +367,26 @@ mod opt_out_tests {
     }
 
     #[test]
-    fn opt_out_preserves_existing_timestamp_syntax_without_surrounding_whitespace() {
+    fn opt_out_timestamp_syntax_is_explicit_and_errors_are_redacted() {
         let immediate = EvaluationOptions {
             experimentation_opt_out_mode: ExperimentationOptOutMode::Immediate,
         };
-        for timestamp in [
-            "2026-10-19T12:00:00Z",
-            "2099-01-01T00:00:00.123456789+05:30",
-            "2026-10-19 12:00:00Z",
-            "2026-10-19t12:00:00z",
-            "2016-12-31T23:59:60Z",
-            "2026-10-19T1:00:00Z",
-            "2026-10-19T12:00:00,123Z",
-            "2026-10-19T12:00:00+24:00",
-            "2026-02-30T00:00:00Z",
-            "2026-10-19T12:00:00",
-            "private-invalid-timestamp",
-            "",
+        for (timestamp, accepted) in [
+            ("2026-10-19T12:00:00Z", true),
+            ("2099-01-01T00:00:00.123456789+05:30", true),
+            ("2026-10-19 12:00:00Z", false),
+            ("2026-10-19t12:00:00z", true),
+            ("2016-12-31T23:59:60Z", false),
+            ("2026-10-19T1:00:00Z", false),
+            ("2026-10-19T12:00:00,123Z", false),
+            ("2026-10-19T12:00:00+24:00", false),
+            ("2026-02-30T00:00:00Z", false),
+            ("2026-10-19T12:00:00", false),
+            ("private-invalid-timestamp", false),
+            ("", false),
         ] {
-            let allocation =
-                serde_json::from_value::<crate::rules_based::ufc::AllocationWire>(json!({
-                    "key": "test",
-                    "startAt": timestamp,
-                    "endAt": timestamp,
-                    "splits": [],
-                    "doLog": true,
-                }));
             let result = immediate.experimentation_exclusion(&context(Some(json!(timestamp))));
-            let expected = if allocation.is_ok() {
+            let expected = if accepted {
                 Ok(ExperimentationExclusion::Immediate)
             } else {
                 Err(EvaluationError::InvalidContext)

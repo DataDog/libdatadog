@@ -3,7 +3,7 @@
 
 use std::{collections::HashMap, sync::Arc};
 
-use chrono::Utc;
+use chrono::{DateTime, Datelike, SecondsFormat, TimeDelta, Utc};
 use libdd_ffe::rules_based::{
     Assignment, Attribute, Configuration, EvaluationContext, EvaluationError, EvaluationOptions,
     ExpectedFlagType, ExperimentationOptOutMode, Str, UniversalFlagConfig,
@@ -282,6 +282,22 @@ fn missing_and_null_activation_have_the_same_conservative_behavior() {
 }
 
 #[test]
+fn opt_out_grammar_does_not_narrow_allocation_schedules() {
+    for (field, timestamp) in [
+        ("startAt", "2000-01-01 00:00:00Z"),
+        ("endAt", "9999-01-01 00:00:00Z"),
+    ] {
+        let mut wire = flag(Value::Null, false);
+        wire["allocations"][0][field] = json!(timestamp);
+        let config = configuration(wire);
+        for mode in MODES {
+            let assignment = evaluate(&config, "feature", mode, "valid").unwrap();
+            assert_eq!(assignment.allocation_key.as_str(), "candidate", "{field}");
+        }
+    }
+}
+
+#[test]
 fn opt_out_timestamps_reject_surrounding_whitespace() {
     for timestamp in [
         " 2026-01-01T00:00:00Z",
@@ -329,4 +345,133 @@ fn opt_out_timestamps_reject_surrounding_whitespace() {
             assert!(evaluate(&config, "neighbor", mode, "valid").is_ok());
         }
     }
+}
+
+#[derive(Deserialize)]
+struct TimestampCase {
+    id: String,
+    input: Value,
+    expected: TimestampResult,
+}
+
+#[derive(Deserialize)]
+struct TimestampResult {
+    accepted: bool,
+    seconds: Option<i64>,
+    nanos: Option<u32>,
+}
+
+fn evaluate_timestamp(
+    config: &Configuration,
+    cutoff: &Value,
+    mode: ExperimentationOptOutMode,
+) -> Result<Assignment, EvaluationError> {
+    let subject = EvaluationContext::new(
+        Some("subject".into()),
+        Arc::new(HashMap::from([(
+            "dd_experimentation_opt_out_at".into(),
+            serde_json::from_value(cutoff.clone()).unwrap(),
+        )])),
+    );
+    config.eval_flag_with_options(
+        "feature",
+        &subject,
+        ExpectedFlagType::String,
+        Utc::now(),
+        EvaluationOptions {
+            experimentation_opt_out_mode: mode,
+        },
+    )
+}
+
+fn assert_timestamp_assignment(result: Assignment, retained: bool, id: &str) {
+    assert_eq!(
+        result.allocation_key.as_str(),
+        if retained { "candidate" } else { "fallback" },
+        "{id}"
+    );
+    assert_eq!(result.do_log, retained, "{id}");
+    assert_eq!(result.serial_id, Some(if retained { 7 } else { 8 }), "{id}");
+}
+
+#[test]
+fn lean_timestamp_cases_use_both_production_paths() {
+    // D005/D006/D007: frozen expected instants, never the host parser, are the oracle.
+    let cases: Vec<TimestampCase> = include_str!("data/experimentation-opt-out-timestamps.jsonl")
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(cases.len(), 50, "complete timestamp profile must execute");
+    let mut evaluations = 0;
+    for case in &cases {
+        let activation_config = configuration(flag(case.input.clone(), true));
+        if case.expected.accepted {
+            let instant = DateTime::from_timestamp(
+                case.expected.seconds.unwrap(),
+                case.expected.nanos.unwrap(),
+            )
+            .unwrap();
+            for delta in [-1, 0, 1] {
+                let adjacent = instant + TimeDelta::nanoseconds(delta);
+                // The UTC boundary itself is covered; its out-of-domain neighbor is not a
+                // valid reference timestamp. Every corpus case still executes both paths.
+                if !(0..=9999).contains(&adjacent.year()) {
+                    continue;
+                }
+                let reference = json!(adjacent.to_rfc3339_opts(SecondsFormat::Nanos, true));
+                let cutoff_config = configuration(flag(reference.clone(), true));
+                assert_timestamp_assignment(
+                    evaluate_timestamp(&cutoff_config, &case.input, MODES[2])
+                        .unwrap_or_else(|error| panic!("{} cutoff: {error}", case.id)),
+                    delta < 0,
+                    &case.id,
+                );
+                assert_timestamp_assignment(
+                    evaluate_timestamp(&activation_config, &reference, MODES[2])
+                        .unwrap_or_else(|error| panic!("{} activation: {error}", case.id)),
+                    delta > 0,
+                    &case.id,
+                );
+                evaluations += 2;
+            }
+        } else {
+            let valid_config = configuration(flag(json!("2025-01-01T00:00:00Z"), true));
+            for mode in MODES {
+                let cutoff = evaluate_timestamp(&valid_config, &case.input, mode);
+                if mode == MODES[0] {
+                    assert_timestamp_assignment(cutoff.unwrap(), true, &case.id);
+                } else {
+                    assert_eq!(
+                        cutoff.err(),
+                        Some(EvaluationError::InvalidContext),
+                        "{} cutoff: {mode:?}",
+                        case.id
+                    );
+                }
+                let activation = evaluate(&activation_config, "feature", mode, "valid");
+                if mode == MODES[2] && !case.input.is_null() {
+                    assert_eq!(
+                        activation.err(),
+                        Some(EvaluationError::FlagConfigurationInvalid),
+                        "{} activation",
+                        case.id
+                    );
+                } else {
+                    // Null remains missing activation, even though it is invalid subject input.
+                    assert_timestamp_assignment(activation.unwrap(), mode == MODES[0], &case.id);
+                }
+                assert_timestamp_assignment(
+                    evaluate(&activation_config, "feature", mode, "absent").unwrap(),
+                    true,
+                    &case.id,
+                );
+                assert!(evaluate(&activation_config, "neighbor", mode, "valid").is_ok());
+                evaluations += 4;
+            }
+        }
+    }
+    eprintln!(
+        "Lean timestamp profile: {} cases, {evaluations} evaluations, 0 failed, 0 excluded cases",
+        cases.len()
+    );
 }

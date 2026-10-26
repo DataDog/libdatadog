@@ -6,7 +6,13 @@ This is an internal DataDog library that supports Feature Flag evaluation. It is
 
 The caller selects `EvaluationOptions.experimentation_opt_out_mode`; the evaluator reads no environment variables.
 Both enabled modes require a valid `dd_experimentation_opt_out_at` timestamp when the attribute is present.
-Cutoff and activation timestamps reject surrounding whitespace and otherwise use the existing Chrono timestamp grammar.
+Cutoff and activation timestamps use `YYYY-MM-DD[Tt]HH:mm:ss[.fraction](Z|z|±HH:mm)`
+with ASCII digits and valid Gregorian calendar fields. Seconds are `00`–`59`;
+numeric offset hours are `00`–`23` and minutes are `00`–`59`.
+Fractions contain at least one digit and truncate after nine digits without rounding.
+Both the written year and the normalized UTC year must be `0000`–`9999`.
+Whitespace, named zones, compact offsets, and leap seconds are rejected.
+The existing `startAt`/`endAt` parsing is unchanged.
 Missing input preserves normal evaluation. Invalid input returns `InvalidContext` before flag lookup.
 
 | Mode | Exposure-logging allocations |
