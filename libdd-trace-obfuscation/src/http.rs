@@ -257,16 +257,25 @@ pub fn should_obfuscate_url(
     remove_query_string: bool,
     remove_path_digits: bool,
 ) -> bool {
+    enum ParsingState {
+        FirstSegment,
+        InPort,
+        Other,
+    }
+
     // Every trigger is single-byte ASCII, and non-ASCII bytes are caught by the range guard, so we
     // scan bytes directly and avoid UTF-8 decoding. Path and query need different checks, so we
     // split the scan at the first '?'.
     let bytes = url.as_bytes();
     // With both options off, a failed parse only strips userinfo, which already triggers on '@'.
     let check_colons = remove_query_string || remove_path_digits;
-    let mut first_segment = check_colons;
+    let mut state = if check_colons {
+        ParsingState::FirstSegment
+    } else {
+        ParsingState::Other
+    };
     let mut valid_scheme = true;
     let mut authority_start = (check_colons && bytes.starts_with(b"//")).then_some(2);
-    let mut in_port = false;
 
     // Path region.
     let mut i = 0;
@@ -282,29 +291,28 @@ pub fn should_obfuscate_url(
                 i += 1;
                 break;
             }
-            b':' if first_segment => {
+            b':' if matches!(state, ParsingState::FirstSegment) => {
                 if i == 0 || !valid_scheme {
                     return true;
                 }
-                first_segment = false;
+                state = ParsingState::Other;
                 authority_start = bytes[i + 1..].starts_with(b"//").then_some(i + 3);
             }
             b':' if authority_start.is_some() => {
-                if in_port {
+                if matches!(state, ParsingState::InPort) {
                     return true;
                 }
-                in_port = true;
+                state = ParsingState::InPort;
             }
             b'/' => {
-                first_segment = false;
+                state = ParsingState::Other;
                 // The opening "//" does not end the authority.
                 if authority_start.is_some_and(|start| i >= start) {
                     authority_start = None;
-                    in_port = false;
                 }
             }
             b if (remove_path_digits && b.is_ascii_digit())
-                    || (in_port && !b.is_ascii_digit())
+                    || (matches!(state, ParsingState::InPort) && !b.is_ascii_digit())
                     // non-ASCII (>= 0x80) or control char (< 0x20)
                     || !(0x20..0x80).contains(&b)
                     || b == 0x7F
@@ -316,7 +324,7 @@ pub fn should_obfuscate_url(
             {
                 return true;
             }
-            b if first_segment => {
+            b if matches!(state, ParsingState::FirstSegment) => {
                 valid_scheme &= if i == 0 {
                     b.is_ascii_alphabetic()
                 } else {
@@ -695,6 +703,9 @@ mod tests {
             "http://a:/x",
             "http://:/x",
             "http://a:8080/x",
+            "http://a:/b:c",
+            "http://a:8080/b:c",
+            "//a:8080/b:c",
             "http://a:99999999999999999999",
         ] {
             assert_eq!(obfuscate_url_string(url, true, false), url, "{url}");
