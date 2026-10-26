@@ -348,6 +348,7 @@ pub fn map_traces_to_otlp<T: TraceData>(
     otel_trace_semantics_enabled: bool,
 ) -> ProtoReq {
     let resource = build_resource(resource_info, otel_trace_semantics_enabled);
+    // Compare configured tags against emitted values, preserving SDK identity precedence.
     let resource_attributes = resource
         .attributes
         .iter()
