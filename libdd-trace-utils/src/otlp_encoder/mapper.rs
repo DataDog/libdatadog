@@ -441,6 +441,14 @@ pub(super) fn build_resource(
             "datadog"
         },
     );
+    for (key, value) in &resource_info.resource_attributes {
+        if !attributes.iter().any(|attribute| attribute.key == *key) {
+            attributes.push(proto_kv(
+                key.clone(),
+                ProtoValue::StringValue(value.clone()),
+            ));
+        }
+    }
     // `entity_refs` is a profiling-signal-only field; explicit default.
     ProtoResource {
         attributes,
@@ -545,6 +553,31 @@ mod tests {
     use super::*;
     use crate::otlp_encoder::OtlpResourceInfo;
     use crate::span::BytesData;
+
+    #[test]
+    fn resource_attributes_preserve_sdk_identity() {
+        let info = OtlpResourceInfo {
+            service: "configured".into(),
+            resource_attributes: [("team", "core"), ("empty", ""), ("service.name", "ignored")]
+                .map(|(key, value)| (key.into(), value.into()))
+                .into(),
+            ..Default::default()
+        };
+        for semantics in [false, true] {
+            let attributes = build_resource(&info, semantics).attributes;
+            for (key, value) in [
+                ("team", "core"),
+                ("empty", ""),
+                ("service.name", "configured"),
+            ] {
+                assert_eq!(attributes.iter().filter(|a| a.key == key).count(), 1);
+                assert!(
+                    attributes
+                        .contains(&proto_kv(key.into(), ProtoValue::StringValue(value.into())))
+                );
+            }
+        }
+    }
 
     #[test]
     fn maps_native_span_to_prost_ir() {

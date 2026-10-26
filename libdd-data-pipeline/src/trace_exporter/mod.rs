@@ -67,6 +67,7 @@ use libdd_trace_utils::span::{SpanText, TraceData, v04::Span};
 use libdd_trace_utils::trace_utils::TracerHeaderTags;
 #[cfg(all(feature = "telemetry", not(target_arch = "wasm32")))]
 use prost::Message;
+use std::collections::BTreeMap;
 use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Once};
@@ -323,6 +324,13 @@ impl<
     #[allow(missing_docs)]
     pub fn builder() -> TraceExporterBuilder<R> {
         TraceExporterBuilder::new()
+    }
+
+    /// Replace the string resource attributes used by subsequent OTLP trace exports.
+    /// An empty map clears them. Span attributes, native payloads, and metric resources are
+    /// unchanged.
+    pub fn set_otlp_resource_attributes(&mut self, attributes: BTreeMap<String, String>) {
+        self.otlp_resource_info.resource_attributes = attributes;
     }
 
     /// Re-point health-metric reporting at a different telemetry worker, or at none.
@@ -1018,6 +1026,9 @@ impl<
             &self.client_side_stats.status,
             self.client_computed_top_level,
             &self.trace_filterer.load(),
+            self.otlp
+                .as_ref()
+                .map(|_| &self.otlp_resource_info.resource_attributes),
             #[cfg(feature = "telemetry")]
             self.telemetry.load_full().as_deref(),
         );
@@ -2518,6 +2529,54 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_otlp_resource_attributes_replace_previous_values() {
+        let server = MockServer::start();
+        let mut builder = TraceExporterBuilder::default();
+        builder.set_otlp_endpoint(&server.url("/v1/traces"));
+        let mut exporter = builder.build::<NativeCapabilities>().unwrap();
+        let data = msgpack_encoder::v04::to_vec_from_v04(&[vec![SpanBytes::default()]]);
+        for attributes in [
+            BTreeMap::from([
+                ("team".into(), "core".into()),
+                ("removed".into(), "old".into()),
+            ]),
+            BTreeMap::from([("team".into(), "updated".into())]),
+            BTreeMap::new(),
+        ] {
+            let expected: Vec<_> = attributes
+                .iter()
+                .map(
+                    |(key, value)| serde_json::json!({"key": key, "value": {"stringValue": value}}),
+                )
+                .collect();
+            let mut mock = server.mock(|when, then| {
+                let expected = expected.clone();
+                when.method(POST)
+                    .path("/v1/traces")
+                    .is_true(move |request| {
+                        let payload: serde_json::Value =
+                            serde_json::from_slice(request.body_ref()).unwrap();
+                        let groups = payload["resourceSpans"].as_array().unwrap();
+                        let custom: Vec<_> = groups[0]["resource"]["attributes"]
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .filter(|kv| kv["key"] == "team" || kv["key"] == "removed")
+                            .cloned()
+                            .collect();
+                        groups.len() == 1 && custom == expected
+                    });
+                then.status(200);
+            });
+            exporter.set_otlp_resource_attributes(attributes);
+            exporter.send(&data).unwrap();
+            mock.assert_calls(1);
+            mock.delete();
+        }
+    }
+
+    #[test]
     fn test_add_native_export_marker() {
         let mut span = SpanBytes::default();
         add_native_export_marker(&mut span);
@@ -2561,6 +2620,10 @@ mod tests {
                     && is_marked(&chunks[0][0])
                     && !chunks[0][1].meta.contains_key(SDK_OTLP_EXPORT_KEY)
                     && is_marked(&chunks[1][0])
+                    && chunks
+                        .iter()
+                        .flatten()
+                        .all(|span| !span.meta.contains_key("team"))
             });
             then.status(200)
                 .header("content-type", "application/json")
@@ -2577,7 +2640,11 @@ mod tests {
             .set_language_interpreter("rustc")
             .set_input_format(TraceExporterInputFormat::V04)
             .set_output_format(TraceExporterOutputFormat::V04);
-        let exporter = builder.build::<NativeCapabilities>().unwrap();
+        let mut exporter = builder.build::<NativeCapabilities>().unwrap();
+        exporter.set_otlp_resource_attributes(BTreeMap::from([(
+            "team".into(),
+            "resource-only".into(),
+        )]));
 
         let span = |trace_id, span_id, parent_id| SpanBytes {
             name: BytesString::from_slice(b"op").unwrap(),

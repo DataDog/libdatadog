@@ -3,6 +3,7 @@
 //! Trace-level filter logic for client-side stats (filter_tags, filter_tags_regex,
 //! ignore_resources as published by the agent's /info endpoint).
 use std::borrow::Borrow as _;
+use std::collections::BTreeMap;
 
 use libdd_common::regex_engine::Regex;
 use libdd_trace_normalization::{normalize_utils, normalizer};
@@ -53,6 +54,11 @@ pub trait Span<'a> {
     fn resource_normalized(&'a self) -> &'a str;
     /// Returns the value of the given meta tag, if present.
     fn get_meta(&'a self, key: &str) -> Option<&'a str>;
+
+    /// Whether a non-string attribute blocks a resource default for this key.
+    fn has_non_string(&self, _key: &str) -> bool {
+        false
+    }
 }
 
 impl TagFilter for TagLiteralFilter {
@@ -100,9 +106,19 @@ impl<'a, T: TraceData> Span<'a> for span::v04::Span<T> {
     fn get_meta(&'a self, key: &str) -> Option<&'a str> {
         self.meta.get(key).map(|v| v.borrow())
     }
+
+    fn has_non_string(&self, key: &str) -> bool {
+        self.metrics.contains_key(key) || self.meta_struct.contains_key(key)
+    }
 }
 
 impl<'a, T: TraceData> Span<'a> for span::v1::Span<T> {
+    fn has_non_string(&self, key: &str) -> bool {
+        self.attributes
+            .get(key)
+            .is_some_and(|v| !matches!(v, AttributeValue::String(_)))
+    }
+
     fn resource_normalized(&'a self) -> &'a str {
         // Normalization
         let span_resource = self.resource.borrow();
@@ -148,6 +164,14 @@ struct ChunkSpanView<'a, T: TraceData> {
 }
 
 impl<'a, T: TraceData> Span<'a> for ChunkSpanView<'a, T> {
+    fn has_non_string(&self, key: &str) -> bool {
+        self.span.has_non_string(key)
+            || self
+                .chunk_attributes
+                .get(key)
+                .is_some_and(|v| !matches!(v, AttributeValue::String(_)))
+    }
+
     fn resource_normalized(&'a self) -> &'a str {
         self.span.resource_normalized()
     }
@@ -276,12 +300,21 @@ impl TraceFilterer {
 
     /// Removes traces that fail filter checks in-place. Returns the number of traces dropped.
     pub fn filter_traces<T: TraceData>(&self, traces: &mut PooledChunks<'_, T>) -> usize {
+        self.filter_traces_with_defaults(traces, None)
+    }
+
+    /// Filters traces with borrowed OTLP resource defaults.
+    pub fn filter_traces_with_defaults<T: TraceData>(
+        &self,
+        traces: &mut PooledChunks<'_, T>,
+        defaults: Option<&BTreeMap<String, String>>,
+    ) -> usize {
         let traces_count_before = traces.len();
         traces.retain_mut(|trace| {
             let Ok(root_span_index) = get_root_span_index(trace) else {
                 return true;
             };
-            let should_drop = self.should_drop(&trace[root_span_index]);
+            let should_drop = self.should_drop_with_defaults(&trace[root_span_index], defaults);
             if should_drop {
                 debug!("Trace rejected as it fails to meet tag requirements. root: %v");
             }
@@ -295,6 +328,15 @@ impl TraceFilterer {
     /// V1 counterpart of [`Self::filter_traces`]: removes chunks that fail filter checks
     /// in-place. Returns the number of chunks dropped.
     pub fn filter_traces_v1<T: TraceData>(&self, traces: &mut Vec<TraceChunk<T>>) -> usize {
+        self.filter_traces_v1_with_defaults(traces, None)
+    }
+
+    /// Filters traces with borrowed OTLP resource defaults.
+    pub fn filter_traces_v1_with_defaults<T: TraceData>(
+        &self,
+        traces: &mut Vec<TraceChunk<T>>,
+        defaults: Option<&BTreeMap<String, String>>,
+    ) -> usize {
         let traces_count_before = traces.len();
         traces.retain(|chunk| {
             let Ok(root_span_index) = trace_utils_v1::get_root_span_index(&chunk.spans) else {
@@ -304,7 +346,7 @@ impl TraceFilterer {
                 span: &chunk.spans[root_span_index],
                 chunk_attributes: &chunk.attributes,
             };
-            let should_drop = self.should_drop(&root_span_view);
+            let should_drop = self.should_drop_with_defaults(&root_span_view, defaults);
             if should_drop {
                 debug!("Trace rejected as it fails to meet tag requirements. root: %v");
             }
@@ -328,6 +370,14 @@ impl TraceFilterer {
     //    filters, all of them must match tags on the root span. If any required filter doesn't
     //    match, reject the trace.
     pub fn should_drop<'a>(&self, root_span: &'a impl Span<'a>) -> bool {
+        self.should_drop_with_defaults(root_span, None)
+    }
+
+    fn should_drop_with_defaults<'a>(
+        &self,
+        root_span: &'a impl Span<'a>,
+        defaults: Option<&'a BTreeMap<String, String>>,
+    ) -> bool {
         if !self.ignore_resources.is_empty() {
             let span_resource = root_span.resource_normalized();
 
@@ -343,7 +393,7 @@ impl TraceFilterer {
         if self
             .reject
             .iter()
-            .any(|filter| Self::check_tag_filter_with_normalization(filter, root_span))
+            .any(|filter| Self::check_tag_filter_with_normalization(filter, root_span, defaults))
         {
             return true;
         }
@@ -351,7 +401,7 @@ impl TraceFilterer {
         if self
             .reject_regex
             .iter()
-            .any(|filter| Self::check_tag_filter_with_normalization(filter, root_span))
+            .any(|filter| Self::check_tag_filter_with_normalization(filter, root_span, defaults))
         {
             return true;
         }
@@ -359,7 +409,7 @@ impl TraceFilterer {
         if !self
             .require
             .iter()
-            .all(|filter| Self::check_tag_filter_with_normalization(filter, root_span))
+            .all(|filter| Self::check_tag_filter_with_normalization(filter, root_span, defaults))
         {
             return true;
         }
@@ -367,7 +417,7 @@ impl TraceFilterer {
         if !self
             .require_regex
             .iter()
-            .all(|filter| Self::check_tag_filter_with_normalization(filter, root_span))
+            .all(|filter| Self::check_tag_filter_with_normalization(filter, root_span, defaults))
         {
             return true;
         }
@@ -378,8 +428,15 @@ impl TraceFilterer {
     fn check_tag_filter_with_normalization<'a>(
         filter: &impl TagFilter,
         root_span: &'a impl Span<'a>,
+        defaults: Option<&'a BTreeMap<String, String>>,
     ) -> bool {
-        let Some(value) = root_span.get_meta(filter.key()) else {
+        let Some(value) = root_span.get_meta(filter.key()).or_else(|| {
+            let defaults = defaults?;
+            if root_span.has_non_string(filter.key()) {
+                return None;
+            }
+            defaults.get(filter.key()).map(String::as_str)
+        }) else {
             return false;
         };
         match filter.key() {
@@ -867,6 +924,72 @@ mod tests {
         assert!(
             traces.is_empty(),
             "dedicated env field should be visible to the filter"
+        );
+    }
+    #[test]
+    fn resource_defaults_preserve_filter_overrides() {
+        use std::collections::BTreeMap;
+        let defaults = BTreeMap::from([("team".into(), "core".into())]);
+        let require = TraceFilterer::new(&["team:core".into()], &[], &[], &[], &[]);
+        let reject = TraceFilterer::new(&[], &["team:core".into()], &[], &[], &[]);
+        for (local, numeric, expected_drop) in [
+            (None, false, false),
+            (Some("other"), false, true),
+            (Some(""), false, true),
+            (None, true, true),
+        ] {
+            let mut span = span_with("op", &[]);
+            if let Some(value) = local {
+                span.meta.insert("team".into(), value.into());
+            }
+            if numeric {
+                span.metrics.insert("team".into(), 7.0);
+            }
+            let mut traces = one_trace(span);
+            assert_eq!(
+                require.filter_traces_with_defaults(&mut traces, Some(&defaults)),
+                usize::from(expected_drop)
+            );
+            if !expected_drop {
+                assert_eq!(
+                    reject.filter_traces_with_defaults(&mut traces, Some(&defaults)),
+                    1
+                );
+            }
+
+            let mut chunk = v1_chunk_with("op", &[]);
+            if let Some(value) = local {
+                chunk.spans[0]
+                    .attributes
+                    .insert("team".into(), AttributeValueV1::String(value.into()));
+            }
+            if numeric {
+                chunk.spans[0]
+                    .attributes
+                    .insert("team".into(), AttributeValueV1::Int(7));
+            }
+            let mut chunks = vec![chunk];
+            assert_eq!(
+                require.filter_traces_v1_with_defaults(&mut chunks, Some(&defaults)),
+                usize::from(expected_drop)
+            );
+        }
+        assert_eq!(
+            require.filter_traces(&mut one_trace(span_with("op", &[]))),
+            1
+        );
+        assert_eq!(
+            require.filter_traces_with_defaults(
+                &mut one_trace(span_with("op", &[])),
+                Some(&BTreeMap::new())
+            ),
+            1
+        );
+        let empty = BTreeMap::from([("team".into(), "".into())]);
+        let present = TraceFilterer::new(&["team".into()], &[], &[], &[], &[]);
+        assert_eq!(
+            present.filter_traces_with_defaults(&mut one_trace(span_with("op", &[])), Some(&empty)),
+            0
         );
     }
 }
