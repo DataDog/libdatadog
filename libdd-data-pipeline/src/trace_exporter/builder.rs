@@ -36,7 +36,6 @@ use libdd_trace_stats::span_concentrator::CardinalityLimitConfig;
 #[cfg(feature = "stats-obfuscation")]
 use libdd_trace_stats::stats_exporter::AgentlessStatsTarget;
 use libdd_trace_utils::trace_filter::TraceFilterer;
-use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::debug;
@@ -77,7 +76,6 @@ pub struct TraceExporterBuilder<R: SharedRuntime> {
     instrumentation_scope_version: String,
     git_commit_sha: String,
     tracer_tags: Vec<String>,
-    otlp_resource_attributes: BTreeMap<String, String>,
     container_id: String,
     input_format: TraceExporterInputFormat,
     output_format: TraceExporterOutputFormat,
@@ -159,7 +157,6 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             instrumentation_scope_version: String::new(),
             git_commit_sha: String::new(),
             tracer_tags: Vec::new(),
-            otlp_resource_attributes: BTreeMap::new(),
             container_id: String::new(),
             input_format: TraceExporterInputFormat::default(),
             output_format: TraceExporterOutputFormat::default(),
@@ -280,16 +277,6 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
     /// Set the `Datadog-Container-Id` header
     pub fn set_container_id(&mut self, container_id: &str) -> &mut Self {
         container_id.clone_into(&mut self.container_id);
-        self
-    }
-
-    /// Set string resource attributes for OTLP traces, captured when the exporter is built.
-    /// Tracer identity and SDK metadata take precedence over conflicting keys.
-    pub fn set_otlp_resource_attributes(
-        &mut self,
-        attributes: BTreeMap<String, String>,
-    ) -> &mut Self {
-        self.otlp_resource_attributes = attributes;
         self
     }
 
@@ -1098,7 +1085,6 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
 
         let otlp_resource_info = if let Some(mode) = otlp.as_ref() {
             let mut r = base_otlp_resource();
-            r.resource_attributes = self.otlp_resource_attributes;
             r.client_computed_stats = metadata.client_computed_stats || otlp_stats_enabled;
             match mode {
                 OtlpExportMode::Http(config) => {
@@ -1719,7 +1705,6 @@ mod tests {
         let mut builder = TraceExporterBuilder::default();
         builder
             .set_otlp_endpoint("http://localhost:4317")
-            .set_otlp_resource_attributes(BTreeMap::from([("team".into(), "core".into())]))
             .set_otlp_protocol(OtlpProtocol::Grpc)
             .set_otlp_instrumentation_scope("dd-trace-js", "7.0.0-pre");
         let exporter = builder.build::<NativeCapabilities>().unwrap();
@@ -1731,14 +1716,6 @@ mod tests {
         assert_eq!(
             exporter.otlp_resource_info.instrumentation_scope_version,
             "7.0.0-pre"
-        );
-        assert_eq!(
-            exporter
-                .otlp_resource_info
-                .resource_attributes
-                .get("team")
-                .map(String::as_str),
-            Some("core")
         );
     }
 

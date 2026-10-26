@@ -380,25 +380,6 @@ pub fn map_traces_to_otlp<T: TraceData>(
     }
 }
 
-fn is_resource_attribute(key: &str, semantics: bool) -> bool {
-    !matches!(
-        key,
-        "service"
-            | "env"
-            | "version"
-            | "service.name"
-            | "deployment.environment.name"
-            | "service.version"
-            | "telemetry.sdk.name"
-            | "telemetry.sdk.language"
-            | "telemetry.sdk.version"
-            | "runtime-id"
-            | "_dd.stats_computed"
-            | "_dd.sdk.otlp_export"
-            | "datadog.sdk.semantics"
-    ) && !(semantics && matches!(key, "error.msg" | "error.message" | "span.kind"))
-}
-
 /// Builds the OTLP Resource from tracer-level metadata.
 ///
 /// Besides the SDK identity attributes, it always carries `_dd.sdk.otlp_export: "true"` (reaching
@@ -461,13 +442,14 @@ pub(super) fn build_resource(
             "datadog"
         },
     );
-    attributes.extend(
-        resource_info
-            .resource_attributes
-            .iter()
-            .filter(|(key, _)| is_resource_attribute(key, otel_trace_semantics_enabled))
-            .map(|(key, value)| proto_kv(key.clone(), ProtoValue::StringValue(value.clone()))),
-    );
+    for (key, value) in &resource_info.resource_attributes {
+        if !attributes.iter().any(|attribute| attribute.key == *key) {
+            attributes.push(proto_kv(
+                key.clone(),
+                ProtoValue::StringValue(value.clone()),
+            ));
+        }
+    }
     // `entity_refs` is a profiling-signal-only field; explicit default.
     ProtoResource {
         attributes,
@@ -574,64 +556,27 @@ mod tests {
     use crate::span::BytesData;
 
     #[test]
-    fn resource_attributes_preserve_span_overrides() {
-        for semantics in [false, true] {
-            let info = OtlpResourceInfo {
-                service: "configured".into(),
-                resource_attributes: [
-                    ("team", "core"),
-                    ("region", "us1"),
-                    ("workers", "7"),
-                    ("empty", ""),
-                    ("service.name", "ignored"),
-                    ("span.kind", "server"),
-                ]
-                .map(|(k, v)| (k.into(), v.into()))
+    fn resource_attributes_preserve_sdk_identity() {
+        let info = OtlpResourceInfo {
+            service: "configured".into(),
+            resource_attributes: [("team", "core"), ("empty", ""), ("service.name", "ignored")]
+                .map(|(key, value)| (key.into(), value.into()))
                 .into(),
-                ..Default::default()
-            };
-            let mut span = Span::<BytesData>::default();
-            for (key, value) in [("team", "core"), ("region", "eu1"), ("empty", "")] {
-                span.meta.insert(key.into(), value.into());
-            }
-            span.metrics.insert("workers".into(), 7.0);
-            let request = map_traces_to_otlp(&[vec![span]], &info, semantics);
-            let resource = &request.resource_spans[0]
-                .resource
-                .as_ref()
-                .unwrap()
-                .attributes;
+            ..Default::default()
+        };
+        for semantics in [false, true] {
+            let attributes = build_resource(&info, semantics).attributes;
             for (key, value) in [
                 ("team", "core"),
-                ("region", "us1"),
-                ("workers", "7"),
                 ("empty", ""),
                 ("service.name", "configured"),
             ] {
-                assert!(
-                    resource.contains(&proto_kv(key.into(), ProtoValue::StringValue(value.into())))
-                );
-            }
-            assert_eq!(
-                resource
-                    .iter()
-                    .filter(|kv| kv.key == "service.name")
-                    .count(),
-                1
-            );
-            assert_eq!(resource.iter().any(|kv| kv.key == "span.kind"), !semantics);
-            let attributes = &request.resource_spans[0].scope_spans[0].spans[0].attributes;
-            for (key, value) in [("team", "core"), ("empty", "")] {
+                assert_eq!(attributes.iter().filter(|a| a.key == key).count(), 1);
                 assert!(
                     attributes
                         .contains(&proto_kv(key.into(), ProtoValue::StringValue(value.into())))
                 );
             }
-            assert!(attributes.contains(&proto_kv(
-                "region".into(),
-                ProtoValue::StringValue("eu1".into())
-            )));
-            assert!(attributes.contains(&proto_kv("workers".into(), ProtoValue::IntValue(7))));
         }
     }
 

@@ -2962,16 +2962,7 @@ mod tests {
         let mut builder = TraceExporterBuilder::default();
         builder.set_otlp_endpoint(&server.url("/v1/traces"));
         let mut exporter = builder.build::<NativeCapabilities>().unwrap();
-        let span = SpanBytes {
-            trace_id: 1,
-            span_id: 1,
-            meta: vec![("team".into(), "core".into())].into(),
-            ..Default::default()
-        };
-        let mut second = span.clone();
-        second.trace_id = 2;
-        second.span_id = 2;
-        let data = msgpack_encoder::v04::to_vec_from_v04(&[vec![span], vec![second]]);
+        let data = msgpack_encoder::v04::to_vec_from_v04(&[vec![SpanBytes::default()]]);
         for attributes in [
             BTreeMap::from([
                 ("team".into(), "core".into()),
@@ -2980,7 +2971,12 @@ mod tests {
             BTreeMap::from([("team".into(), "updated".into())]),
             BTreeMap::new(),
         ] {
-            let expected = attributes.clone();
+            let expected: Vec<_> = attributes
+                .iter()
+                .map(
+                    |(key, value)| serde_json::json!({"key": key, "value": {"stringValue": value}}),
+                )
+                .collect();
             let mut mock = server.mock(|when, then| {
                 let expected = expected.clone();
                 when.method(POST)
@@ -2989,27 +2985,14 @@ mod tests {
                         let payload: serde_json::Value =
                             serde_json::from_slice(request.body_ref()).unwrap();
                         let groups = payload["resourceSpans"].as_array().unwrap();
-                        let custom: BTreeMap<String, String> = groups[0]["resource"]["attributes"]
+                        let custom: Vec<_> = groups[0]["resource"]["attributes"]
                             .as_array()
                             .unwrap()
                             .iter()
                             .filter(|kv| kv["key"] == "team" || kv["key"] == "removed")
-                            .map(|kv| {
-                                (
-                                    kv["key"].as_str().unwrap().into(),
-                                    kv["value"]["stringValue"].as_str().unwrap().into(),
-                                )
-                            })
+                            .cloned()
                             .collect();
-                        let spans = groups[0]["scopeSpans"][0]["spans"].as_array().unwrap();
-                        groups.len() == 1
-                            && custom == expected
-                            && spans.len() == 2
-                            && spans.iter().all(|span| {
-                                span["attributes"].as_array().unwrap().iter().any(|kv| {
-                                    kv["key"] == "team" && kv["value"]["stringValue"] == "core"
-                                })
-                            })
+                        groups.len() == 1 && custom == expected
                     });
                 then.status(200);
             });

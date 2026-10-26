@@ -630,34 +630,6 @@ mod tests_v1 {
     }
 
     #[test]
-    fn resource_attributes_preserve_explicit_span_attributes() {
-        for semantics in [false, true] {
-            let info = OtlpResourceInfo {
-                resource_attributes: [("team", "core"), ("workers", "7"), ("span.kind", "server")]
-                    .map(|(k, v)| (k.into(), v.into()))
-                    .into(),
-                ..Default::default()
-            };
-            let mut span = minimal_span();
-            span.attributes
-                .insert(bs("team"), AttributeValue::String(bs("core")));
-            span.attributes
-                .insert(bs("workers"), AttributeValue::Int(7));
-            span.attributes
-                .insert(bs("span.kind"), AttributeValue::String(bs("server")));
-            let request = map_traces_to_otlp_v1(&[minimal_chunk([1; 16], span)], &info, semantics);
-            let attributes = &request.resource_spans[0].scope_spans[0].spans[0].attributes;
-            assert!(attributes.contains(&proto_kv("team".into(), PV::StringValue("core".into()))));
-            assert!(attributes.contains(&proto_kv("workers".into(), PV::IntValue(7))));
-            assert!(attributes.iter().any(|kv| kv.key == "span.kind"));
-            assert_eq!(
-                request.resource_spans[0].scope_spans[0].spans[0].dropped_attributes_count,
-                0
-            );
-        }
-    }
-
-    #[test]
     fn int_and_float_and_bool_and_bytes_attributes_map_typed() {
         let mut span = minimal_span();
         span.attributes.insert(bs("i"), AttributeValue::Int(42));
