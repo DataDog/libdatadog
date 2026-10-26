@@ -89,7 +89,6 @@ windows = { workspace = true, features = ["std", "Win32_System_LibraryLoader"] }
 [build-dependencies]
 # If we use a newer version of cc, CI fails on alpine.
 cc.workspace = true
-cc_utils = { path = "../tools/cc_utils" }
 cxx-build = { workspace = true, optional = true }
 
 [lints.clippy]

@@ -828,14 +828,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cc_utils"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "cc",
-]
-
-[[package]]
 name = "cesu8"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2832,7 +2824,6 @@ dependencies = [
  "anyhow",
  "blazesym",
  "cc",
- "cc_utils",
  "chrono",
  "criterion",
  "cxx",
@@ -5661,7 +5652,7 @@ name = "spawn_worker"
 version = "0.0.1"
 dependencies = [
  "anyhow",
- "cc_utils",
+ "cc",
  "fastrand",
  "io-lifetimes",
  "libc",
