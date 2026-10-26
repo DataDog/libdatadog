@@ -7,15 +7,14 @@
 pub(crate) mod json_serializer;
 pub mod mapper;
 pub mod mapper_v1;
-mod resources;
 
-pub use mapper::{map_traces_to_otlp, map_traces_to_otlp_with_resources};
-pub use mapper_v1::{map_traces_to_otlp_v1, map_traces_to_otlp_v1_with_resources};
-pub use resources::{OtlpResourceAttributes, OtlpResourceAttributesBySpan};
+pub use mapper::map_traces_to_otlp;
+pub use mapper_v1::map_traces_to_otlp_v1;
 
 use libdd_common::mutable_metadata::MutableMetadataHandle;
 pub use libdd_trace_protobuf::opentelemetry::proto::collector::trace::v1::ExportTraceServiceRequest as ProtoExportTraceServiceRequest;
 use prost::Message;
+use std::collections::BTreeMap;
 
 /// Serialize the prost OTLP request to the HTTP/protobuf wire format.
 pub fn encode_otlp_protobuf(req: &ProtoExportTraceServiceRequest) -> Vec<u8> {
@@ -43,6 +42,8 @@ pub struct OtlpResourceInfo {
     pub mutable_metadata: MutableMetadataHandle,
     pub hostname: String,
     pub tracer_tags: Vec<String>,
+    /// String attributes captured when the trace exporter is built.
+    pub resource_attributes: BTreeMap<String, String>,
     pub instrumentation_scope_name: String,
     pub instrumentation_scope_version: String,
     /// When true, emits `_dd.stats_computed: "true"` on the OTLP resource to prevent
