@@ -7,6 +7,8 @@ AGENTS.md                            @DataDog/apm-common-components-core @DataDo
 CLAUDE.md                            @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 .clang-format                        @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 .pre-commit-config.yaml              @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
+.sg/                                 @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
+sgconfig.yml                         @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 .cargo/*                             @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 .config/nextest.toml                 @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 .config/commitlint.config.js         @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
