@@ -286,6 +286,7 @@ parking_lot,https://github.com/Amanieu/parking_lot,MIT OR Apache-2.0,Amanieu d'A
 parking_lot_core,https://github.com/Amanieu/parking_lot,MIT OR Apache-2.0,Amanieu d'Antras <amanieu@gmail.com>
 paste,https://github.com/dtolnay/paste,MIT OR Apache-2.0,David Tolnay <dtolnay@gmail.com>
 path-tree,https://github.com/viz-rs/path-tree,MIT OR Apache-2.0,Fangdun Tsai <cfddream@gmail.com>
+pem,https://github.com/jcreekmore/pem-rs,MIT,Jonathan Creekmore <jonathan@thecreekmores.org>
 percent-encoding,https://github.com/servo/rust-url,MIT OR Apache-2.0,The rust-url developers
 petgraph,https://github.com/petgraph/petgraph,MIT OR Apache-2.0,"bluss, mitchmindtree"
 pico-args,https://github.com/RazrFalcon/pico-args,MIT,Yevhenii Reizner <razrfalcon@gmail.com>
@@ -533,6 +534,7 @@ write16,https://github.com/hsivonen/write16,Apache-2.0 OR MIT,The write16 Author
 writeable,https://github.com/unicode-org/icu4x,Unicode-3.0,The ICU4X Project Developers
 yaml_serde,https://github.com/yaml/yaml-serde,MIT OR Apache-2.0,YAML Organization <noreply@yaml.org>
 yansi,https://github.com/SergioBenitez/yansi,MIT OR Apache-2.0,Sergio Benitez <sb@sergio.bz>
+yasna,https://github.com/qnighy/yasna.rs,MIT OR Apache-2.0,Masaki Hara <ackie.h.gmai@gmail.com>
 yoke,https://github.com/unicode-org/icu4x,Unicode-3.0,Manish Goregaokar <manishsmail@gmail.com>
 yoke-derive,https://github.com/unicode-org/icu4x,Unicode-3.0,Manish Goregaokar <manishsmail@gmail.com>
 zerocopy,https://github.com/google/zerocopy,BSD-2-Clause OR Apache-2.0 OR MIT,Joshua Liebow-Feeser <joshlf@google.com>

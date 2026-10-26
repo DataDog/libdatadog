@@ -148,7 +148,8 @@ impl<Cap: StatsCap, Con: FlushableConcentrator + Debug + MaybeSend + Sync + 'sta
     }
 }
 
-/// Cloneable handle to a [`StatsExporter`] hosted on a [`SharedRuntime`].
+/// Cloneable handle to a [`StatsExporter`] hosted on a
+/// [`SharedRuntime`](libdd_shared_runtime::SharedRuntime).
 #[derive(Debug, Clone)]
 pub struct SharedStatsExporter<Cap: StatsCap, Con: FlushableConcentrator = SpanConcentrator>(
     Arc<StatsExporter<Cap, Con>>,
