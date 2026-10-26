@@ -153,15 +153,10 @@ fn process_line(
             // Attached as it arrives, so a stream cut short by EOF or the deadline keeps the
             // threads it did deliver. Untrusted like every other line here: a malformed entry
             // ends the report rather than being guessed at.
-            let thread: crate::crash_info::ThreadData = serde_json::from_str(line)?;
-            #[cfg(target_os = "linux")]
-            let thread = {
-                let mut thread = thread;
-                if thread.crashed {
-                    recover_received_stack(builder, config.as_ref(), &mut thread.stack);
-                }
-                thread
-            };
+            let mut thread: crate::crash_info::ThreadData = serde_json::from_str(line)?;
+            if thread.crashed {
+                recover_received_stack(builder, config.as_ref(), &mut thread.stack);
+            }
             builder.with_thread(thread)?;
             StdinState::Threads
         }
@@ -170,13 +165,8 @@ fn process_line(
             StdinState::Waiting
         }
         StdinState::WholeStackTrace => {
-            let stacktrace: StackTrace = serde_json::from_str(line)?;
-            #[cfg(target_os = "linux")]
-            let stacktrace = {
-                let mut stacktrace = stacktrace;
-                recover_received_stack(builder, config.as_ref(), &mut stacktrace);
-                stacktrace
-            };
+            let mut stacktrace: StackTrace = serde_json::from_str(line)?;
+            recover_received_stack(builder, config.as_ref(), &mut stacktrace);
             builder.with_stack(stacktrace)?;
             StdinState::WholeStackTrace
         }
@@ -641,7 +631,7 @@ fn collect_and_add_thread_contexts(
         None
     };
     let mut crashing_stack = None;
-    let collector_stack = builder.error.stack.clone();
+    let collector_stack = builder.error.stack.as_ref();
 
     let incomplete = stream_thread_contexts(
         parent_pid,
@@ -654,8 +644,8 @@ fn collect_and_add_thread_contexts(
             let mut thread =
                 thread_data_from_capture(parent_pid, crashing_tid, crash_site, tid, captured);
             if thread.crashed && used_saved_context {
-                if let Some(fallback) = collector_stack.as_ref() {
-                    recover_collector_callers(&mut thread.stack, fallback);
+                if let Some(collector) = collector_stack {
+                    recover_collector_callers(&mut thread.stack, collector);
                 }
             }
             if thread.crashed
@@ -678,30 +668,36 @@ fn collect_and_add_thread_contexts(
     Ok(())
 }
 
-/// Recover before a collector-emitted replacement overwrites the original stack.
+/// Recover callers before a collector-emitted stack replaces the one that has them.
 #[cfg(target_os = "linux")]
 fn recover_received_stack(
     builder: &CrashInfoBuilder,
     config: Option<&CrashtrackerConfiguration>,
     stack: &mut StackTrace,
 ) {
-    if !config.is_some_and(CrashtrackerConfiguration::unwind_from_ucontext)
-        || builder
+    let saved_context = config.is_some_and(CrashtrackerConfiguration::unwind_from_ucontext)
+        && builder
             .ucontext
             .as_ref()
             .and_then(crash_site_registers)
-            .is_none()
-    {
+            .is_some();
+    let Some(collector) = builder.error.stack.as_ref().filter(|_| saved_context) else {
         return;
+    };
+    if stack.frames.is_empty() && !collector.frames.is_empty() {
+        stack.clone_from(collector);
+        stack.incomplete = true;
+    } else {
+        recover_collector_callers(stack, collector);
     }
-    if let Some(fallback) = builder.error.stack.as_ref() {
-        if stack.frames.is_empty() && !fallback.frames.is_empty() {
-            stack.clone_from(fallback);
-            stack.incomplete = true;
-        } else {
-            recover_collector_callers(stack, fallback);
-        }
-    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn recover_received_stack(
+    _builder: &CrashInfoBuilder,
+    _config: Option<&CrashtrackerConfiguration>,
+    _stack: &mut StackTrace,
+) {
 }
 
 /// Remote unwinding can stop in a libc function without CFI or proc info.
@@ -709,37 +705,34 @@ fn recover_received_stack(
 /// chain after the deepest shared frame. Match in order so recursion keeps its
 /// callers, and compare stack pointers when both unwinders captured them.
 #[cfg(target_os = "linux")]
-fn recover_collector_callers(stack: &mut crate::StackTrace, fallback: &crate::StackTrace) {
-    if stack.frames.is_empty() || stack.frames.len() >= fallback.frames.len() {
+fn recover_collector_callers(stack: &mut StackTrace, collector: &StackTrace) {
+    if stack.frames.is_empty() || stack.frames.len() >= collector.frames.len() {
         return;
     }
-    let address = |frame: &StackFrame| frame.ip.as_deref().and_then(parse_hex_address);
-    let matches = |remote: &StackFrame, collector: &StackFrame| {
-        address(remote).is_some_and(|ip| address(collector) == Some(ip))
-            && match (
-                remote.sp.as_deref().and_then(parse_hex_address),
-                collector.sp.as_deref().and_then(parse_hex_address),
-            ) {
-                (Some(remote_sp), Some(collector_sp)) => remote_sp == collector_sp,
-                _ => true,
-            }
+    let parse = |value: &Option<String>| value.as_deref().and_then(parse_hex_address);
+    let same_frame = |remote: &StackFrame, local: &StackFrame| {
+        let ip = parse(&remote.ip);
+        ip.is_some()
+            && ip == parse(&local.ip)
+            && parse(&remote.sp)
+                .zip(parse(&local.sp))
+                .is_none_or(|(remote_sp, local_sp)| remote_sp == local_sp)
     };
-    if !matches(&stack.frames[0], &fallback.frames[0]) {
+    if !same_frame(&stack.frames[0], &collector.frames[0]) {
         return;
     }
     let mut shared = 0;
     for remote in &stack.frames[1..] {
-        if let Some(offset) = fallback.frames[shared + 1..]
+        if let Some(offset) = collector.frames[shared + 1..]
             .iter()
-            .position(|frame| matches(remote, frame))
+            .position(|local| same_frame(remote, local))
         {
             shared += offset + 1;
         }
     }
-    if shared + 1 < fallback.frames.len() {
-        stack
-            .frames
-            .extend_from_slice(&fallback.frames[shared + 1..]);
+    let callers = &collector.frames[shared + 1..];
+    if !callers.is_empty() {
+        stack.frames.extend_from_slice(callers);
         stack.incomplete = true;
     }
 }
