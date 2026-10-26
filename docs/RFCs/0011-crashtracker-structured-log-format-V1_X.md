@@ -4,7 +4,7 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 
 ## Summary
 
-This document consolidates and describes the complete evolution of the crashinfo data format from version 1.0 through 1.8. It serves as the authoritative specification for the crashtracker structured log format, replacing RFCs 0005-0009. Future minor version modifications will be included in this revisable document.
+This document consolidates and describes the complete evolution of the crashinfo data format from version 1.0 through 1.9. It serves as the authoritative specification for the crashtracker structured log format, replacing RFCs 0005-0009. Future minor version modifications will be included in this revisable document.
 
 ## Motivation
 
@@ -18,9 +18,9 @@ As a structured format, it avoids the ambiguity of standard semi-structured stac
 Due to the use of native extensions, it is possible for a single stack-trace to include frames from multiple languages (e.g. python may call C code, which calls Rust code, etc).
 Having a single structured format allows us to work across languages.
 
-## Current Format (Version 1.8)
+## Current Format (Version 1.9)
 
-This section describes the current format (version 1.8), which incorporates all features from versions 1.0 through 1.8. A natural language description of the json format is given here. An example is given in Appendix A, and the schema is given in Appendix B.
+This section describes the current format (version 1.9), which incorporates all features from versions 1.0 through 1.9. A natural language description of the json format is given here. An example is given in Appendix A, and the schema is given in Appendix B.
 
 Any field not listed as "Required" is optional. Consumers MUST accept json with elided optional fields.
 
@@ -42,15 +42,31 @@ Consumers of the crash data format SHOULD be designed to handle all versions fro
 - Version 1.6+: Root level may include a `ucontext` field for UNIX signal crashes
 - Version 1.7: `error.threads` is a `Threads` wrapper object (with nested `threads`, `count`, and `incomplete` fields) rather than a bare array
 - Version 1.8+: `error.threads` is a bare array of thread objects again; the wrapper is removed. Partial collection is indicated by `counters.threads_incomplete`
+- Version 1.9+: Root level may include an `apm_span` field containing a snapshot of the active APM span at crash time
 
 ### Fields
 
+- `apm_span`: **[optional]** *[Added in v1.9]*
+  A snapshot of the active APM span at crash time. When present, the receiver submits it as a finished span to the Datadog Agent trace intake (`PUT /v0.4/traces`) with `error: 1` and `_dd.was_long_running: 1.0`. See [RFC 0016](0016-crashtracker-apm-span-finish.md) for details.
+  - `schema_version`: **[required]** Integer, currently `2`.
+  - `trace_id`: **[required]** Decimal string, full 128-bit trace ID.
+  - `span_id`: **[required]** Decimal string.
+  - `parent_id`: **[required]** Decimal string.
+  - `start_unix_ns`: **[required]** Decimal string, epoch nanoseconds.
+  - `duration_ns`: **[required]** Decimal string, nanoseconds.
+  - `error`: **[required]** Integer, always `1`.
+  - `has_sampling_priority`: **[required]** Boolean.
+  - `sampling_priority`: **[required]** Integer.
+  - `service`: **[required]** String.
+  - `name`: **[required]** String.
+  - `resource`: **[required]** String.
+  - `type`: **[required]** String.
 - `counters`: **[optional]**
   A map of names to integer values.
   At present, this is used by the profiler to track which operations were active at the time of the crash.
   When multi-thread collection is enabled and stops before all eligible threads are visited, collectors MAY set `threads_incomplete` to `1`.
 - `data_schema_version`: **[required]**
-  A string containing the semver ID of the crashtracker data schema. Current versions: "1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8".
+  A string containing the semver ID of the crashtracker data schema. Current versions: "1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8", "1.9".
 - `experimental`: **[optional]** *[Added in v1.2]*
   Any valid JSON object can be used as the value here.
   Note that the object MUST be valid JSON.
@@ -173,6 +189,14 @@ Consumers of the crash data format SHOULD be designed to handle all versions fro
 - `uuid`: **[required]**
   A UUID v4 which uniquely identifies the crash.
   This will typically be generated at crash-time, and then associated with the uploaded crash.
+
+### APM Span Snapshot (Wire Protocol Only)
+
+*[Added alongside v1.8, see RFC 0016]*
+
+The receiver recognizes an optional `DD_CRASHTRACK_BEGIN_APM_SPAN` / `DD_CRASHTRACK_END_APM_SPAN` block in the pipe protocol. This block is **not** part of the crash report JSON schema — it is consumed by the receiver to submit a finished span to the Datadog Agent's trace intake (`PUT /v0.4/traces`), ensuring that long-running spans interrupted by a crash are properly closed in the APM trace view.
+
+See [RFC 0016](0016-crashtracker-apm-span-finish.md) for the wire format and receiver processing details.
 
 ### Stacktraces
 
@@ -340,15 +364,26 @@ This section documents the evolution of the crashtracker structured log format a
 
 **Motivation:** The v1.7 nested `Threads` object broke downstream pipelines that expect `error.threads` to be a flat array of thread records. Restoring the array shape while moving completeness metadata to `counters` keeps the report compatible with existing consumers and still allows distinguishing partial collection from "collection disabled or empty".
 
+### Version 1.9 (RFC 0016)
+*Added APM span snapshot*
+
+**Changes from v1.8:**
+- Added `apm_span` field at root level (optional `ApmSpanSnapshot` object)
+- Receiver support for `DD_CRASHTRACK_BEGIN_APM_SPAN` / `DD_CRASHTRACK_END_APM_SPAN` block in the pipe protocol
+- When present, receiver submits the captured span as a finished trace to the Datadog Agent (`PUT /v0.4/traces`) with `error: 1` and `_dd.was_long_running: 1.0`
+- Updated `data_schema_version` to "1.9"
+
+**Motivation:** Running spans that are active at crash time are never finished and disappear from the trace view. By including the span snapshot in the crash report, the receiver can close them properly. See [RFC 0016](0016-crashtracker-apm-span-finish.md).
+
 ## Appendix A: Example output
 
 An example crash report in version 1.0 format is [available here](artifacts/0005-crashtracker-example.json).
 
-Note: This example uses version 1.0 format. Version 1.1+ may include additional fields such as `incomplete` in stacktraces, `experimental` at the root level, `comments` in stackframes, `mangled_name` in stackframes, `thread_name` in error objects, `ucontext` at the root level for UNIX signal crashes, (v1.7) `error.threads` as a `Threads` wrapper object, and (v1.8+) `error.threads` as a flat array of thread objects with `counters.threads_incomplete` for partial collection.
+Note: This example uses version 1.0 format. Version 1.1+ may include additional fields such as `incomplete` in stacktraces, `experimental` at the root level, `comments` in stackframes, `mangled_name` in stackframes, `thread_name` in error objects, `ucontext` at the root level for UNIX signal crashes, (v1.7) `error.threads` as a `Threads` wrapper object, (v1.8+) `error.threads` as a flat array of thread objects with `counters.threads_incomplete` for partial collection, and (v1.9+) `apm_span` at the root level for active APM span snapshots.
 
 ## Appendix B: Json Schema
 
-The current JSON schema (version 1.8) is [available here](artifacts/crashtracker-unified-runtime-stack-schema-v1_8.json).
+The current JSON schema (version 1.9) is [available here](artifacts/crashtracker-unified-runtime-stack-schema-v1_9.json).
 
 Historical schemas are also available:
 - [Version 1.0 schema](artifacts/0005-crashtracker-schema.json)
@@ -359,3 +394,4 @@ Historical schemas are also available:
 - [Version 1.5 schema](artifacts/crashtracker-unified-runtime-stack-schema-v1_5.json)
 - [Version 1.6 schema](artifacts/crashtracker-unified-runtime-stack-schema-v1_6.json)
 - [Version 1.7 schema](artifacts/crashtracker-unified-runtime-stack-schema-v1_7.json)
+- [Version 1.8 schema](artifacts/crashtracker-unified-runtime-stack-schema-v1_8.json)

@@ -121,6 +121,7 @@ pub struct CrashInfoBuilder {
     pub os_info: Option<OsInfo>,
     pub proc_info: Option<ProcInfo>,
     pub sig_info: Option<SigInfo>,
+    pub apm_span: Option<ApmSpanSnapshot>,
     pub span_ids: Option<Vec<Span>>,
     pub timestamp: Option<DateTime<Utc>>,
     pub trace_ids: Option<Vec<Span>>,
@@ -131,6 +132,7 @@ pub struct CrashInfoBuilder {
 impl Default for CrashInfoBuilder {
     fn default() -> Self {
         Self {
+            apm_span: None,
             counters: None,
             error: ErrorDataBuilder::default(),
             experimental: None,
@@ -153,6 +155,7 @@ impl Default for CrashInfoBuilder {
 
 impl CrashInfoBuilder {
     pub fn build(self) -> anyhow::Result<CrashInfo> {
+        let apm_span = self.apm_span;
         let counters = self.counters.unwrap_or_default();
         let data_schema_version = CrashInfo::current_schema_version().to_string();
         let (error, incomplete_error) = self.error.build()?;
@@ -171,6 +174,7 @@ impl CrashInfoBuilder {
         let ucontext = self.ucontext;
         let uuid = self.uuid;
         Ok(CrashInfo {
+            apm_span,
             counters,
             data_schema_version,
             error,
@@ -205,6 +209,11 @@ impl CrashInfoBuilder {
 
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn with_apm_span(&mut self, snapshot: ApmSpanSnapshot) -> anyhow::Result<()> {
+        self.apm_span = Some(snapshot);
+        Ok(())
     }
 
     /// Inserts the given counter to the current set of counters in the builder.

@@ -65,6 +65,8 @@ macro_rules! parse_tags {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct CrashInfo {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub apm_span: Option<ApmSpanSnapshot>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub counters: HashMap<String, i64>,
     pub data_schema_version: String,
@@ -96,7 +98,7 @@ pub struct CrashInfo {
 
 impl CrashInfo {
     pub fn current_schema_version() -> String {
-        "1.8".to_string()
+        "1.9".to_string()
     }
 
     pub fn demangle_names(&mut self) -> anyhow::Result<()> {
@@ -236,7 +238,7 @@ mod tests {
     fn test_schema_matches_rfc() {
         let rfc_schema_filename = concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../docs/RFCs/artifacts/crashtracker-unified-runtime-stack-schema-v1_8.json"
+            "/../docs/RFCs/artifacts/crashtracker-unified-runtime-stack-schema-v1_9.json"
         );
         let schema = schemars::schema_for!(CrashInfo);
         let schema_json = serde_json::to_string_pretty(&schema).expect("Schema to serialize");
@@ -308,6 +310,7 @@ mod tests {
             );
 
             Self {
+                apm_span: None,
                 counters,
                 data_schema_version: CrashInfo::current_schema_version(),
                 error: ErrorData::test_instance(seed),
