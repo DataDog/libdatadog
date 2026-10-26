@@ -5,8 +5,11 @@
 //! to execute. Used by .github/workflows/crate-timing.yml. Measures only, never
 //! gates: failures are recorded in the report and the run continues.
 //!
-//! Everything is built upfront, untimed, so timed runs never compile. Two exceptions:
-//! doc tests compile inside `cargo test --doc`, and the bin_tests row includes its
+//! Everything is built untimed before it is timed, but a timed run can still
+//! compile: per-crate cargo invocations unify features differently and overwrite
+//! each other's fingerprints, and libdd-crashtracker's build script reruns on
+//! every invocation (its rerun-if-changed watches files it writes itself).
+//! Doc tests compile inside `cargo test --doc`, and the bin_tests row includes its
 //! nextest `prebuild-bin-tests` setup script -- both match what test.yml pays too.
 //! The timed invocations mirror test.yml's test shapes and run_benchmarks_ci.sh's
 //! bench settings, so the numbers attribute the real CI jobs.
@@ -108,7 +111,7 @@ impl Phase {
 struct Measurement {
     crate_name: Rc<str>,
     phase: Phase,
-    secs: u64,
+    secs: f64,
     ok: bool,
 }
 
@@ -117,7 +120,7 @@ impl fmt::Display for Measurement {
         let status = if self.ok { "ok" } else { "fail" };
         write!(
             f,
-            "{:<9} {:<38} {:>5}s {status}",
+            "{:<9} {:<38} {:>5.1}s {status}",
             self.phase.name(),
             self.crate_name,
             self.secs
@@ -127,21 +130,21 @@ impl fmt::Display for Measurement {
 
 #[derive(Default)]
 struct CrateTimes {
-    secs: [u64; Phase::ALL.len()],
+    secs: [f64; Phase::ALL.len()],
     bench_fns: u64,
     failed: Vec<Phase>,
 }
 
 impl CrateTimes {
-    fn get(&self, phase: Phase) -> u64 {
+    fn get(&self, phase: Phase) -> f64 {
         self.secs[phase as usize]
     }
 
-    fn set(&mut self, phase: Phase, secs: u64) {
+    fn set(&mut self, phase: Phase, secs: f64) {
         self.secs[phase as usize] = secs;
     }
 
-    fn total(&self) -> u64 {
+    fn total(&self) -> f64 {
         self.secs.iter().sum()
     }
 }
@@ -253,7 +256,7 @@ fn with_own_features(cmd: &mut Command, crate_name: &str) {
 }
 
 struct Outcome {
-    secs: u64,
+    secs: f64,
     ok: bool,
 }
 
@@ -264,7 +267,7 @@ fn run(cmd: &mut Command, log: &Path) -> Result<Outcome> {
         .with_context(|| format!("failed to run {cmd:?}"))?;
     write_log(log, &output);
     Ok(Outcome {
-        secs: start.elapsed().as_secs(),
+        secs: start.elapsed().as_secs_f64(),
         ok: output.status.success(),
     })
 }
@@ -450,15 +453,15 @@ fn crate_table(times: &Times) -> doc::Table {
 
     let mut table = doc::Table::new(columns);
     let mut by_total_desc: Vec<(&Rc<str>, &CrateTimes)> = times.iter().collect();
-    by_total_desc.sort_by_key(|&(_, t)| std::cmp::Reverse(t.total()));
+    by_total_desc.sort_by(|(_, a), (_, b)| b.total().total_cmp(&a.total()));
 
-    let grand_total = times.values().map(CrateTimes::total).sum::<u64>();
+    let grand_total = times.values().map(CrateTimes::total).sum::<f64>();
     for (name, t) in by_total_desc {
         let mut cells = vec![name.to_string()];
-        cells.extend(Phase::ALL.iter().map(|p| human(t.get(*p) as f64)));
+        cells.extend(Phase::ALL.iter().map(|p| human(t.get(*p))));
         cells.push(t.bench_fns.to_string());
         cells.push(bench_secs_per_fn(t));
-        cells.push(human(t.total() as f64));
+        cells.push(human(t.total()));
         cells.push(share(t.total(), grand_total));
         cells.push(failed_phases(t));
         table.row(cells);
@@ -468,18 +471,18 @@ fn crate_table(times: &Times) -> doc::Table {
 }
 
 fn totals_row(times: &Times) -> Vec<String> {
-    let sum = |phase: Phase| times.values().map(|t| t.get(phase)).sum::<u64>();
+    let sum = |phase: Phase| times.values().map(|t| t.get(phase)).sum::<f64>();
     let bench_fns = times.values().map(|t| t.bench_fns).sum::<u64>();
-    let grand_total = times.values().map(CrateTimes::total).sum::<u64>();
+    let grand_total = times.values().map(CrateTimes::total).sum::<f64>();
     let mut cells: Vec<String> = vec!["**total**".into()];
-    cells.extend(Phase::ALL.iter().map(|p| human(sum(*p) as f64)));
+    cells.extend(Phase::ALL.iter().map(|p| human(sum(*p))));
     cells.push(bench_fns.to_string());
     cells.push(if bench_fns == 0 {
         String::new()
     } else {
-        human(sum(Phase::Bench) as f64 / bench_fns as f64)
+        human(sum(Phase::Bench) / bench_fns as f64)
     });
-    cells.push(human(grand_total as f64));
+    cells.push(human(grand_total));
     cells.push(share(grand_total, grand_total));
     cells.push(String::new());
     cells
@@ -500,16 +503,16 @@ fn bench_secs_per_fn(t: &CrateTimes) -> String {
     if t.bench_fns == 0 {
         String::new()
     } else {
-        human(t.get(Phase::Bench) as f64 / t.bench_fns as f64)
+        human(t.get(Phase::Bench) / t.bench_fns as f64)
     }
 }
 
 /// The crate's share of all measured time, in percent.
-fn share(secs: u64, grand_total: u64) -> String {
-    if grand_total == 0 {
+fn share(secs: f64, grand_total: f64) -> String {
+    if grand_total == 0.0 {
         String::new()
     } else {
-        format!("{:.1}%", secs as f64 / grand_total as f64 * 100.0)
+        format!("{:.1}%", secs / grand_total * 100.0)
     }
 }
 
