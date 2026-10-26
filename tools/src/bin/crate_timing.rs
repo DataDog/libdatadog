@@ -168,6 +168,9 @@ struct TestResult {
 struct Selection {
     crates: Vec<Rc<str>>,
     bench_crates: Vec<Rc<str>>,
+    /// Packages with a library target; `cargo test --doc` fails on the others
+    /// ("no library targets found in package").
+    doc_crates: BTreeSet<Rc<str>>,
 }
 
 impl Selection {
@@ -177,6 +180,13 @@ impl Selection {
             p.targets
                 .iter()
                 .any(|t| t.kind.iter().any(|k| k.as_str() == "bench"))
+        };
+        let has_lib = |p: &cargo_metadata::Package| {
+            p.targets.iter().any(|t| {
+                t.kind
+                    .iter()
+                    .any(|k| matches!(k.as_str(), "lib" | "rlib" | "dylib" | "proc-macro"))
+            })
         };
 
         let mut crates: Vec<Rc<str>> = metadata
@@ -189,6 +199,12 @@ impl Selection {
             .packages
             .iter()
             .filter(|&p| is_benched(p))
+            .map(|p| Rc::from(p.name.as_str()))
+            .collect();
+        let doc_crates: BTreeSet<Rc<str>> = metadata
+            .packages
+            .iter()
+            .filter(|&p| has_lib(p))
             .map(|p| Rc::from(p.name.as_str()))
             .collect();
 
@@ -204,6 +220,7 @@ impl Selection {
         Ok(Self {
             crates,
             bench_crates,
+            doc_crates,
         })
     }
 }
@@ -685,9 +702,11 @@ fn main() -> Result<()> {
             tests.extend(junit_results(&junit_dir, format!("{}-tracing.xml", c), c));
         }
 
-        let mut cmd = cargo();
-        cmd.args(["test", "-p", c, "--doc", "--quiet"]);
-        measure(&mut times, Phase::Doc, c, &mut cmd, &logs_dir)?;
+        if selection.doc_crates.contains(c) {
+            let mut cmd = cargo();
+            cmd.args(["test", "-p", c, "--doc", "--quiet"]);
+            measure(&mut times, Phase::Doc, c, &mut cmd, &logs_dir)?;
+        }
     }
 
     println!("== Timing benchmarks");
