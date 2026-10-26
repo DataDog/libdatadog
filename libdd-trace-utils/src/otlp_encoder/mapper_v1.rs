@@ -9,7 +9,7 @@
 //! recursively with no flattening or type coercion.
 
 use super::OtlpResourceInfo;
-use super::mapper::{MAX_ATTRIBUTES_PER_SPAN, build_resource, duplicates_resource, proto_kv};
+use super::mapper::{MAX_ATTRIBUTES_PER_SPAN, build_resource, proto_kv};
 use crate::span::trace_utils::SDK_OTLP_EXPORT_KEY;
 use crate::span::v1::{AttributeValue, Span, SpanEvent, SpanLink, TraceChunk};
 use crate::span::{SPAN_LINK_FLAGS_SET_SENTINEL, TraceData};
@@ -144,7 +144,7 @@ fn collect_span_attributes_v1<T: TraceData>(
     span: &Span<T>,
     chunk: &TraceChunk<T>,
     merged: &[(&str, &AttributeValue<T>)],
-    resource_info: &OtlpResourceInfo,
+    resource_service: &str,
     effective_priority: Option<i32>,
     otel_trace_semantics_enabled: bool,
 ) -> (Vec<ProtoKeyValue>, usize) {
@@ -152,7 +152,7 @@ fn collect_span_attributes_v1<T: TraceData>(
     // below, and the `error.msg`/`error.message` compat tags (that information lives in the OTLP
     // Status field instead).
     let span_service = span.service.borrow();
-    let has_per_span_service = !span_service.is_empty() && span_service != resource_info.service;
+    let has_per_span_service = !span_service.is_empty() && span_service != resource_service;
     let operation_name = span.name.borrow();
     let has_operation_name = !operation_name.is_empty();
     let span_type = span.r#type.borrow();
@@ -178,7 +178,7 @@ fn collect_span_attributes_v1<T: TraceData>(
     // when the span's dedicated `env` field is empty, since nothing was promoted under that key),
     // or (under OTel-semantics) duplicates the error-message compat tags that are promoted to the
     // Status message instead.
-    let is_eligible = |key: &&str, value: &&AttributeValue<T>| {
+    let is_eligible = |key: &&str| {
         let promoted_and_set = match *key {
             "service.name" => has_per_span_service && !otel_trace_semantics_enabled,
             "operation.name" => has_operation_name && !otel_trace_semantics_enabled,
@@ -195,14 +195,10 @@ fn collect_span_attributes_v1<T: TraceData>(
             _ => false,
         };
         !(promoted_and_set || (otel_trace_semantics_enabled && ERROR_MESSAGE_KEYS.contains(key)))
-            && !matches!(value, AttributeValue::String(value) if duplicates_resource(resource_info, key, value.borrow(), otel_trace_semantics_enabled))
     };
     // Counted over the full `merged` slice so a cap-truncated span still reports an accurate
     // dropped count.
-    let eligible_count = merged
-        .iter()
-        .filter(|(key, value)| is_eligible(key, value))
-        .count();
+    let eligible_count = merged.iter().filter(|(k, _)| is_eligible(k)).count();
 
     let promoted_compat = if otel_trace_semantics_enabled {
         0
@@ -285,7 +281,7 @@ fn collect_span_attributes_v1<T: TraceData>(
     attrs.extend(
         merged
             .iter()
-            .filter(|(key, value)| is_eligible(key, value))
+            .filter(|(k, _)| is_eligible(k))
             .take(MAX_ATTRIBUTES_PER_SPAN.saturating_sub(attrs.len()))
             .map(|(key, value)| proto_kv(key.to_string(), attr_value_to_proto(value))),
     );
@@ -346,7 +342,7 @@ fn map_span_events_v1<T: TraceData>(events: &[SpanEvent<T>]) -> (Vec<ProtoEvent>
 fn map_span_v1<T: TraceData>(
     span: &Span<T>,
     chunk: &TraceChunk<T>,
-    resource_info: &OtlpResourceInfo,
+    resource_service: &str,
     flags: u32,
     effective_priority: Option<i32>,
     otel_trace_semantics_enabled: bool,
@@ -361,7 +357,7 @@ fn map_span_v1<T: TraceData>(
         span,
         chunk,
         &merged,
-        resource_info,
+        resource_service,
         effective_priority,
         otel_trace_semantics_enabled,
     );
@@ -434,7 +430,7 @@ pub fn map_traces_to_otlp_v1<T: TraceData>(
             all_spans.push(map_span_v1(
                 span,
                 chunk,
-                resource_info,
+                &resource_info.service,
                 flags,
                 effective_priority,
                 otel_trace_semantics_enabled,
@@ -634,7 +630,7 @@ mod tests_v1 {
     }
 
     #[test]
-    fn resource_duplicates_preserve_typed_and_promoted_attributes() {
+    fn resource_attributes_preserve_explicit_span_attributes() {
         for semantics in [false, true] {
             let info = OtlpResourceInfo {
                 resource_attributes: [("team", "core"), ("workers", "7"), ("span.kind", "server")]
@@ -651,9 +647,9 @@ mod tests_v1 {
                 .insert(bs("span.kind"), AttributeValue::String(bs("server")));
             let request = map_traces_to_otlp_v1(&[minimal_chunk([1; 16], span)], &info, semantics);
             let attributes = &request.resource_spans[0].scope_spans[0].spans[0].attributes;
-            assert!(!attributes.iter().any(|kv| kv.key == "team"));
+            assert!(attributes.contains(&proto_kv("team".into(), PV::StringValue("core".into()))));
             assert!(attributes.contains(&proto_kv("workers".into(), PV::IntValue(7))));
-            assert_eq!(attributes.iter().any(|kv| kv.key == "span.kind"), semantics);
+            assert!(attributes.iter().any(|kv| kv.key == "span.kind"));
             assert_eq!(
                 request.resource_spans[0].scope_spans[0].spans[0].dropped_attributes_count,
                 0

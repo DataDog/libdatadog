@@ -42,7 +42,7 @@ pub struct OtlpResourceInfo {
     pub mutable_metadata: MutableMetadataHandle,
     pub hostname: String,
     pub tracer_tags: Vec<String>,
-    /// String attributes captured when the trace exporter is built.
+    /// String resource attributes for OTLP trace exports.
     pub resource_attributes: BTreeMap<String, String>,
     pub instrumentation_scope_name: String,
     pub instrumentation_scope_version: String,

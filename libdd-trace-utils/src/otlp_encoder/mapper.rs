@@ -171,7 +171,7 @@ pub(super) fn proto_kv(key: String, value: ProtoValue) -> ProtoKeyValue {
 /// else double), meta_struct (bytes), capped at `MAX_ATTRIBUTES_PER_SPAN`.
 fn collect_span_attributes<T: TraceData>(
     span: &Span<T>,
-    resource_info: &OtlpResourceInfo,
+    resource_service: &str,
     otel_trace_semantics_enabled: bool,
 ) -> (Vec<ProtoKeyValue>, usize) {
     // Pre-size to avoid reallocations as attributes accumulate. Upper bound is the 4 synthetic
@@ -183,7 +183,7 @@ fn collect_span_attributes<T: TraceData>(
     // below, and the `error.*`/`span.kind` meta tags (that information lives in the OTLP Status
     // and Span.kind fields instead).
     let span_service = span.service.borrow();
-    let has_per_span_service = !span_service.is_empty() && span_service != resource_info.service;
+    let has_per_span_service = !span_service.is_empty() && span_service != resource_service;
     if has_per_span_service && !otel_trace_semantics_enabled {
         attrs.push(proto_kv(
             "service.name".to_string(),
@@ -215,29 +215,13 @@ fn collect_span_attributes<T: TraceData>(
         ));
     }
     let meta = span.meta.defensive_dedup();
-    let resource_duplicates = if resource_info.resource_attributes.is_empty() {
-        0
-    } else {
-        meta.iter()
-            .filter(|(key, value)| {
-                duplicates_resource(
-                    resource_info,
-                    (*key).borrow(),
-                    (*value).borrow(),
-                    otel_trace_semantics_enabled,
-                )
-            })
-            .count()
-    };
-    let meta_len = meta.len() - resource_duplicates;
+    let meta_len = meta.len();
     for (k, v) in meta.iter() {
         if attrs.len() >= MAX_ATTRIBUTES_PER_SPAN {
             break;
         }
         let key = k.borrow();
-        if key == SDK_OTLP_EXPORT_KEY
-            || duplicates_resource(resource_info, key, v.borrow(), otel_trace_semantics_enabled)
-        {
+        if key == SDK_OTLP_EXPORT_KEY {
             continue;
         }
         if otel_trace_semantics_enabled
@@ -371,7 +355,7 @@ pub fn map_traces_to_otlp<T: TraceData>(
             let flags = chunk_flags.unwrap_or_else(|| span_sampling_flags(span));
             all_spans.push(map_span(
                 span,
-                resource_info,
+                &resource_info.service,
                 high,
                 flags,
                 otel_trace_semantics_enabled,
@@ -413,20 +397,6 @@ fn is_resource_attribute(key: &str, semantics: bool) -> bool {
             | "_dd.sdk.otlp_export"
             | "datadog.sdk.semantics"
     ) && !(semantics && matches!(key, "error.msg" | "error.message" | "span.kind"))
-}
-
-pub(super) fn duplicates_resource(
-    info: &OtlpResourceInfo,
-    key: &str,
-    value: &str,
-    semantics: bool,
-) -> bool {
-    !info.resource_attributes.is_empty()
-        && is_resource_attribute(key, semantics)
-        && info
-            .resource_attributes
-            .get(key)
-            .is_some_and(|v| v == value)
 }
 
 /// Builds the OTLP Resource from tracer-level metadata.
@@ -508,7 +478,7 @@ pub(super) fn build_resource(
 
 fn map_span<T: TraceData>(
     span: &Span<T>,
-    resource_info: &OtlpResourceInfo,
+    resource_service: &str,
     chunk_trace_id_high: u64,
     flags: u32,
     otel_trace_semantics_enabled: bool,
@@ -523,7 +493,7 @@ fn map_span<T: TraceData>(
         Vec::new()
     };
     let (attributes, dropped_attributes_count) =
-        collect_span_attributes(span, resource_info, otel_trace_semantics_enabled);
+        collect_span_attributes(span, resource_service, otel_trace_semantics_enabled);
     let (code, message) = span_status(span);
     let trace_state = span
         .meta
@@ -651,11 +621,12 @@ mod tests {
             );
             assert_eq!(resource.iter().any(|kv| kv.key == "span.kind"), !semantics);
             let attributes = &request.resource_spans[0].scope_spans[0].spans[0].attributes;
-            assert!(
-                !attributes
-                    .iter()
-                    .any(|kv| matches!(kv.key.as_str(), "team" | "empty"))
-            );
+            for (key, value) in [("team", "core"), ("empty", "")] {
+                assert!(
+                    attributes
+                        .contains(&proto_kv(key.into(), ProtoValue::StringValue(value.into())))
+                );
+            }
             assert!(attributes.contains(&proto_kv(
                 "region".into(),
                 ProtoValue::StringValue("eu1".into())
@@ -1229,38 +1200,30 @@ mod tests {
 
     #[test]
     fn test_span_level_otlp_export_marker_not_counted_as_dropped() {
-        for inherited in [0, 130] {
-            let mut info = OtlpResourceInfo::default();
-            // Fill meta past the cap; the stripped marker must not inflate the dropped count.
-            let mut span: Span<BytesData> = Span {
-                trace_id: 1,
-                span_id: 2,
-                start: 0,
-                duration: 1,
-                ..Default::default()
-            };
+        // Fill meta past the cap; the stripped marker must not inflate the dropped count.
+        let mut span: Span<BytesData> = Span {
+            trace_id: 1,
+            span_id: 2,
+            start: 0,
+            duration: 1,
+            ..Default::default()
+        };
+        span.meta.insert(
+            libdd_tinybytes::BytesString::from_static("_dd.sdk.otlp_export"),
+            libdd_tinybytes::BytesString::from_static("false"),
+        );
+        let extra = 5;
+        for i in 0..(MAX_ATTRIBUTES_PER_SPAN + extra) {
             span.meta.insert(
-                libdd_tinybytes::BytesString::from_static("_dd.sdk.otlp_export"),
-                libdd_tinybytes::BytesString::from_static("false"),
+                libdd_tinybytes::BytesString::from(format!("k{i}")),
+                libdd_tinybytes::BytesString::from_static("v"),
             );
-            for i in 0..inherited {
-                let key = format!("inherited{i}");
-                info.resource_attributes.insert(key.clone(), "v".into());
-                span.meta.insert(key.into(), "v".into());
-            }
-            let extra = 5;
-            for i in 0..(MAX_ATTRIBUTES_PER_SPAN + extra) {
-                span.meta.insert(
-                    libdd_tinybytes::BytesString::from(format!("k{i}")),
-                    libdd_tinybytes::BytesString::from_static("v"),
-                );
-            }
-            let req = map_traces_to_otlp(&[vec![span]], &info, true);
-            let s = &req.resource_spans[0].scope_spans[0].spans[0];
-            assert_eq!(s.attributes.len(), MAX_ATTRIBUTES_PER_SPAN);
-            assert!(!s.attributes.iter().any(|a| a.key == SDK_OTLP_EXPORT_KEY));
-            assert_eq!(s.dropped_attributes_count as usize, extra);
         }
+        let req = map_traces_to_otlp(&[vec![span]], &OtlpResourceInfo::default(), true);
+        let s = &req.resource_spans[0].scope_spans[0].spans[0];
+        assert_eq!(s.attributes.len(), MAX_ATTRIBUTES_PER_SPAN);
+        assert!(!s.attributes.iter().any(|a| a.key == SDK_OTLP_EXPORT_KEY));
+        assert_eq!(s.dropped_attributes_count as usize, extra);
     }
 
     #[test]
