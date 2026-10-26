@@ -23,6 +23,7 @@ quick-xml.workspace = true
 libdd-common = { path = "../libdd-common", default-features = false, features = ["std"] }
 toml = { workspace = true, features = ["parse"] }
 wait-timeout.workspace = true
+quick-junit = "0.8.0"
 
 [features]
 regex-lite = ["libdd-common/regex-lite"]

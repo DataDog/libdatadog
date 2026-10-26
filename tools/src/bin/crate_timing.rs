@@ -303,6 +303,13 @@ fn write_log(path: &Path, output: &std::process::Output) {
     let _ = fs::write(path, content);
 }
 
+/// nextest rewrites its junit report only on a completed run; clear it first so
+/// a run that dies early cannot be attributed to this crate via the previous
+/// run's report.
+fn clear_junit_report() {
+    let _ = fs::remove_file("target/nextest/ci/junit.xml");
+}
+
 /// Copies nextest's junit report aside and parses it, attributing every test to
 /// `crate_name`.
 fn junit_results(junit_dir: &Path, file_name: String, crate_name: &Rc<str>) -> Vec<TestResult> {
@@ -675,6 +682,7 @@ fn main() -> Result<()> {
 
     println!("== Timing tests");
     for c in &selection.crates {
+        clear_junit_report();
         let mut cmd = nextest(c);
         cmd.args([
             "--profile",
@@ -688,6 +696,7 @@ fn main() -> Result<()> {
         tests.extend(junit_results(&junit_dir, format!("{}.xml", c), c));
 
         if TRACING_CRATES.contains(&c.as_ref()) {
+            clear_junit_report();
             let mut cmd = nextest(c);
             cmd.args([
                 "--profile",
