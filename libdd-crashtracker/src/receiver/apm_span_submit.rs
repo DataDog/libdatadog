@@ -1,0 +1,231 @@
+// Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
+//! Submits a finished APM span to the local Datadog agent when the crashtracker
+//! receiver parses a `DD_CRASHTRACK_BEGIN_APM_SPAN` block. This lets a
+//! long-running span that was active at crash time appear as a finished span in
+//! the Datadog UI.
+
+use crate::crash_info::ApmSpanSnapshot;
+
+use libdd_capabilities_impl::NativeCapabilities;
+use libdd_data_pipeline::trace_exporter::{
+    TraceExporter, TraceExporterInputFormat, TraceExporterOutputFormat,
+};
+use libdd_shared_runtime::BasicRuntime;
+use libdd_tinybytes::BytesString;
+use libdd_trace_utils::span::{span_pool::PooledChunks, v04::SpanBytes};
+use std::sync::Arc;
+
+/// Parse a decimal-encoded 128-bit trace ID string.
+fn parse_trace_id(s: &str) -> anyhow::Result<u128> {
+    Ok(s.parse()?)
+}
+
+/// Resolve the agent URL from the environment or fall back to the default.
+fn agent_url() -> String {
+    if let Ok(url) = std::env::var("DD_TRACE_AGENT_URL") {
+        return url;
+    }
+    if let Ok(url) = std::env::var("DD_AGENT_URL") {
+        return url;
+    }
+    let host = std::env::var("DD_AGENT_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
+    let port = std::env::var("DD_TRACE_AGENT_PORT").unwrap_or_else(|_| "8126".to_string());
+    format!("http://{}:{}", host, port)
+}
+
+/// Build a `SpanBytes` from the crash span snapshot.
+fn build_span(snapshot: &ApmSpanSnapshot) -> anyhow::Result<SpanBytes> {
+    let trace_id = parse_trace_id(&snapshot.trace_id)?;
+    let span_id: u64 = snapshot.span_id.parse()?;
+    let parent_id: u64 = snapshot.parent_id.parse()?;
+    let start: i64 = snapshot.start_unix_ns.parse()?;
+    let duration: i64 = snapshot.duration_ns.parse()?;
+
+    let meta: Vec<(BytesString, BytesString)> = vec![
+        ("error.type".into(), "crash".into()),
+        (
+            "error.message".into(),
+            "Process crashed during this span".into(),
+        ),
+    ];
+
+    // The v0.4 encoder injects `_dd.p.tid` automatically when the upper 64
+    // bits of `trace_id` are non-zero, so we do not need to add it manually.
+
+    let mut metrics: Vec<(BytesString, f64)> = vec![
+        // Mark this as a long-running span terminated by a crash. The agent
+        // uses this to replace any partial snapshots already received.
+        ("_dd.was_long_running".into(), 1.0),
+    ];
+    if snapshot.has_sampling_priority {
+        metrics.push((
+            "_sampling_priority_v1".into(),
+            f64::from(snapshot.sampling_priority),
+        ));
+    }
+
+    Ok(SpanBytes {
+        name: snapshot.name.clone().into(),
+        service: snapshot.service.clone().into(),
+        resource: snapshot.resource.clone().into(),
+        r#type: snapshot.span_type.clone().into(),
+        trace_id,
+        span_id,
+        parent_id,
+        start,
+        duration,
+        error: snapshot.error,
+        meta: meta.into_iter().collect(),
+        metrics: metrics.into_iter().collect(),
+        ..Default::default()
+    })
+}
+
+/// Send a finished span to the local Datadog agent for a crash span snapshot.
+///
+/// This is called from the receiver's async entry point. The TraceExporter needs its
+/// own tokio runtime, but creating or dropping one inside an existing async
+/// context panics. We sidestep this by running the entire export on a blocking
+/// thread with `spawn_blocking`, where runtime lifecycle is safe.
+pub(crate) async fn submit_crash_span(snapshot: &ApmSpanSnapshot) -> anyhow::Result<()> {
+    let span = build_span(snapshot)?;
+    let url = agent_url();
+
+    eprintln!(
+        "crashtracker: submitting finished span \
+         (trace_id={}, span_id={}) via TraceExporter to {}",
+        snapshot.trace_id, snapshot.span_id, url
+    );
+
+    tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+        let rt = Arc::new(
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?,
+        );
+        let shared_runtime = Arc::new(BasicRuntime::from_handle(rt.clone()));
+
+        let mut builder = TraceExporter::<NativeCapabilities, _>::builder();
+        builder
+            .set_url(&url)
+            .set_service("crashtracker")
+            .set_language("native")
+            .set_tracer_version(env!("CARGO_PKG_VERSION"))
+            .set_input_format(TraceExporterInputFormat::V04)
+            .set_output_format(TraceExporterOutputFormat::V04)
+            .set_shared_runtime(shared_runtime);
+
+        let exporter = rt.block_on(builder.build_async::<NativeCapabilities>())?;
+
+        let traces = vec![vec![span]];
+        let resp = rt.block_on(exporter.send_trace_chunks_async(PooledChunks::unpooled(traces)));
+
+        match &resp {
+            Ok(r) => eprintln!("crashtracker: span submitted successfully: {r:?}"),
+            Err(e) => eprintln!("crashtracker: failed to submit span to agent: {e}"),
+        }
+
+        resp?;
+        Ok(())
+    })
+    .await?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_snapshot() -> ApmSpanSnapshot {
+        ApmSpanSnapshot {
+            schema_version: 2,
+            trace_id: "12345".to_string(),
+            span_id: "67890".to_string(),
+            parent_id: "11111".to_string(),
+            start_unix_ns: "1700000000000000000".to_string(),
+            duration_ns: "500000000".to_string(),
+            error: 1,
+            has_sampling_priority: true,
+            sampling_priority: 2,
+            service: "my-service".to_string(),
+            name: "http.request".to_string(),
+            resource: "GET /foo".to_string(),
+            span_type: "web".to_string(),
+        }
+    }
+
+    #[test]
+    fn build_span_basic_fields() {
+        let snapshot = test_snapshot();
+        let span = build_span(&snapshot).unwrap();
+        assert_eq!(span.trace_id, 12345u128);
+        assert_eq!(span.span_id, 67890);
+        assert_eq!(span.parent_id, 11111);
+        assert_eq!(span.start, 1700000000000000000i64);
+        assert_eq!(span.duration, 500000000i64);
+        assert_eq!(span.error, 1);
+        assert_eq!(span.name.as_ref(), "http.request");
+        assert_eq!(span.service.as_ref(), "my-service");
+        assert_eq!(span.resource.as_ref(), "GET /foo");
+        assert_eq!(span.r#type.as_ref(), "web");
+    }
+
+    #[test]
+    fn build_span_128bit_trace_id() {
+        let expected = (u128::from(9876543210u64) << 64) | u128::from(12345u64);
+        let snapshot = ApmSpanSnapshot {
+            trace_id: expected.to_string(),
+            ..test_snapshot()
+        };
+        let span = build_span(&snapshot).unwrap();
+        assert_eq!(span.trace_id, expected);
+    }
+
+    #[test]
+    fn build_span_metrics_include_long_running_marker() {
+        let snapshot = test_snapshot();
+        let span = build_span(&snapshot).unwrap();
+        let was_lr = span
+            .metrics
+            .iter()
+            .find(|(k, _)| k.as_ref() == "_dd.was_long_running")
+            .map(|(_, v)| *v);
+        assert_eq!(was_lr, Some(1.0));
+    }
+
+    #[test]
+    fn build_span_sampling_priority() {
+        let snapshot = test_snapshot();
+        let span = build_span(&snapshot).unwrap();
+        let priority = span
+            .metrics
+            .iter()
+            .find(|(k, _)| k.as_ref() == "_sampling_priority_v1")
+            .map(|(_, v)| *v);
+        assert_eq!(priority, Some(2.0));
+    }
+
+    #[test]
+    fn build_span_no_sampling_priority_when_absent() {
+        let mut snapshot = test_snapshot();
+        snapshot.has_sampling_priority = false;
+        let span = build_span(&snapshot).unwrap();
+        let priority = span
+            .metrics
+            .iter()
+            .find(|(k, _)| k.as_ref() == "_sampling_priority_v1");
+        assert!(priority.is_none());
+    }
+
+    #[test]
+    fn parse_trace_id_64bit() {
+        assert_eq!(parse_trace_id("12345").unwrap(), 12345u128);
+    }
+
+    #[test]
+    fn parse_trace_id_128bit() {
+        let expected = (u128::from(1u64) << 64) | u128::from(42u64);
+        assert_eq!(parse_trace_id(&expected.to_string()).unwrap(), expected);
+    }
+}
