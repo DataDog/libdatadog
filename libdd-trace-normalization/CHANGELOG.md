@@ -2,6 +2,14 @@
 
 
 
+## [4.3.0](https://github.com/datadog/libdatadog/compare/libdd-trace-normalization-v4.2.0..libdd-trace-normalization-v4.3.0) - 2026-10-23
+
+### Fixed
+
+- Most doc warnings ([#2289](https://github.com/datadog/libdatadog/issues/2289)) - ([f52ab62](https://github.com/datadog/libdatadog/commit/f52ab62fdaa1acc0ca9e8812a9e9468cc59af6b5))
+
+
+
 ## [4.2.0](https://github.com/datadog/libdatadog/compare/libdd-trace-normalization-v4.1.0..libdd-trace-normalization-v4.2.0) - 2026-10-02
 
 ### Changed
