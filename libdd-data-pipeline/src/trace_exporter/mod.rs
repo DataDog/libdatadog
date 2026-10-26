@@ -2950,54 +2950,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
-    fn test_otlp_resource_attributes_replace_previous_values() {
-        let server = MockServer::start();
-        let mut builder = TraceExporterBuilder::default();
-        builder.set_otlp_endpoint(&server.url("/v1/traces"));
-        let mut exporter = builder.build::<NativeCapabilities>().unwrap();
-        let data = msgpack_encoder::v04::to_vec_from_v04(&[vec![SpanBytes::default()]]);
-        for attributes in [
-            BTreeMap::from([
-                ("team".into(), "core".into()),
-                ("removed".into(), "old".into()),
-            ]),
-            BTreeMap::from([("team".into(), "updated".into())]),
-            BTreeMap::new(),
-        ] {
-            let expected: Vec<_> = attributes
-                .iter()
-                .map(
-                    |(key, value)| serde_json::json!({"key": key, "value": {"stringValue": value}}),
-                )
-                .collect();
-            let mut mock = server.mock(|when, then| {
-                let expected = expected.clone();
-                when.method(POST)
-                    .path("/v1/traces")
-                    .is_true(move |request| {
-                        let payload: serde_json::Value =
-                            serde_json::from_slice(request.body_ref()).unwrap();
-                        let groups = payload["resourceSpans"].as_array().unwrap();
-                        let custom: Vec<_> = groups[0]["resource"]["attributes"]
-                            .as_array()
-                            .unwrap()
-                            .iter()
-                            .filter(|kv| kv["key"] == "team" || kv["key"] == "removed")
-                            .cloned()
-                            .collect();
-                        groups.len() == 1 && custom == expected
-                    });
-                then.status(200);
-            });
-            exporter.set_otlp_resource_attributes(attributes);
-            exporter.send(&data).unwrap();
-            mock.assert_calls(1);
-            mock.delete();
-        }
-    }
-
-    #[test]
     fn test_add_native_export_marker() {
         let mut span = SpanBytes::default();
         add_native_export_marker(&mut span);

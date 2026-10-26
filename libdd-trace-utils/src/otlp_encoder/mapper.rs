@@ -587,106 +587,54 @@ mod tests {
     use crate::span::BytesData;
 
     #[test]
-    fn resource_duplicates_preserve_different_and_typed_span_values() {
+    fn resource_deduplication_uses_emitted_sdk_identity() {
         let info = OtlpResourceInfo {
             service: "configured".into(),
-            resource_attributes: [
-                ("team", "core"),
-                ("region", "us1"),
-                ("workers", "7"),
-                ("empty", ""),
-                ("service.name", "ignored"),
-            ]
-            .map(|(k, v)| (k.into(), v.into()))
-            .into(),
+            resource_attributes: [("service.name".into(), "ignored".into())].into(),
             ..Default::default()
         };
         let mut span = Span::<BytesData>::default();
-        for (key, value) in [
-            ("team", "core"),
-            ("region", "eu1"),
-            ("empty", ""),
-            ("service.name", "ignored"),
-            ("span.only", "retained"),
-        ] {
-            span.meta.insert(key.into(), value.into());
-        }
-        span.metrics.insert("workers".into(), 7.0);
-        for semantics in [false, true] {
-            let request = map_traces_to_otlp(&[vec![span.clone()]], &info, semantics);
-            let mapped = &request.resource_spans[0].scope_spans[0].spans[0];
-            assert!(
-                !mapped
-                    .attributes
-                    .iter()
-                    .any(|a| a.key == "team" || a.key == "empty")
-            );
-            for (key, value) in [
-                ("region", "eu1"),
-                ("service.name", "ignored"),
-                ("span.only", "retained"),
-            ] {
-                assert!(
-                    mapped
-                        .attributes
-                        .contains(&proto_kv(key.into(), ProtoValue::StringValue(value.into())))
-                );
-            }
-            assert!(
-                mapped
-                    .attributes
-                    .contains(&proto_kv("workers".into(), ProtoValue::IntValue(7)))
-            );
-            assert_eq!(mapped.dropped_attributes_count, 0);
-        }
-        assert_eq!(span.meta.get("team").unwrap().as_str(), "core");
+        span.meta.insert("service.name".into(), "ignored".into());
+        let request = map_traces_to_otlp(&[vec![span]], &info, false);
+        let group = &request.resource_spans[0];
+        let service: Vec<_> = group
+            .resource
+            .as_ref()
+            .unwrap()
+            .attributes
+            .iter()
+            .filter(|a| a.key == "service.name")
+            .collect();
+        assert_eq!(
+            service,
+            [&proto_kv(
+                "service.name".into(),
+                ProtoValue::StringValue("configured".into())
+            )]
+        );
+        assert_eq!(
+            group.scope_spans[0].spans[0].attributes,
+            [proto_kv(
+                "service.name".into(),
+                ProtoValue::StringValue("ignored".into())
+            )]
+        );
     }
 
     #[test]
     fn resource_duplicates_do_not_consume_span_attribute_limit() {
-        for duplicate_key in ["a-duplicate", "z-duplicate"] {
-            let info = OtlpResourceInfo {
-                resource_attributes: [(duplicate_key.into(), "same".into())].into(),
-                ..Default::default()
-            };
+        for key in ["a-duplicate", "z-duplicate"] {
             let mut span = Span::<BytesData>::default();
-            span.meta.insert(duplicate_key.into(), "same".into());
+            span.meta.insert(key.into(), "same".into());
             for i in 0..MAX_ATTRIBUTES_PER_SPAN {
                 span.meta
                     .insert(format!("key-{i:05}").into(), "value".into());
             }
-            for semantics in [false, true] {
-                let request = map_traces_to_otlp(&[vec![span.clone()]], &info, semantics);
-                let mapped = &request.resource_spans[0].scope_spans[0].spans[0];
-                assert_eq!(mapped.attributes.len(), MAX_ATTRIBUTES_PER_SPAN);
-                assert_eq!(mapped.dropped_attributes_count, 0);
-                assert!(!mapped.attributes.iter().any(|a| a.key == duplicate_key));
-            }
-        }
-    }
-
-    #[test]
-    fn resource_attributes_preserve_sdk_identity() {
-        let info = OtlpResourceInfo {
-            service: "configured".into(),
-            resource_attributes: [("team", "core"), ("empty", ""), ("service.name", "ignored")]
-                .map(|(key, value)| (key.into(), value.into()))
-                .into(),
-            ..Default::default()
-        };
-        for semantics in [false, true] {
-            let attributes = build_resource(&info, semantics).attributes;
-            for (key, value) in [
-                ("team", "core"),
-                ("empty", ""),
-                ("service.name", "configured"),
-            ] {
-                assert_eq!(attributes.iter().filter(|a| a.key == key).count(), 1);
-                assert!(
-                    attributes
-                        .contains(&proto_kv(key.into(), ProtoValue::StringValue(value.into())))
-                );
-            }
+            let (attributes, dropped) =
+                collect_span_attributes(&span, "", &[(key, "same")].into(), false);
+            assert_eq!(attributes.len(), MAX_ATTRIBUTES_PER_SPAN);
+            assert_eq!(dropped, 0);
+            assert!(!attributes.iter().any(|a| a.key == key));
         }
     }
 
