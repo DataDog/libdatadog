@@ -10,6 +10,7 @@ members = [
   "libdd-gotter",
   "libdd-profiling-heap-gotter",
   "libdd-profiling-heap-gotter-ffi",
+  "libdd-ai-usage",
   "libdd-crashtracker",
   "libdd-crashtracker-ffi",
   "libdd-ffe",
