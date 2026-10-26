@@ -8,14 +8,9 @@
 
 use crate::crash_info::ApmSpanSnapshot;
 
-use libdd_capabilities_impl::NativeCapabilities;
-use libdd_data_pipeline::trace_exporter::{
-    TraceExporter, TraceExporterInputFormat, TraceExporterOutputFormat,
-};
-use libdd_shared_runtime::BasicRuntime;
 use libdd_tinybytes::BytesString;
-use libdd_trace_utils::span::{span_pool::PooledChunks, v04::SpanBytes};
-use std::sync::Arc;
+use libdd_trace_utils::msgpack_encoder::v04::to_vec_from_v04;
+use libdd_trace_utils::span::v04::SpanBytes;
 
 /// Parse a decimal-encoded 128-bit trace ID string.
 fn parse_trace_id(s: &str) -> anyhow::Result<u128> {
@@ -85,54 +80,45 @@ fn build_span(snapshot: &ApmSpanSnapshot) -> anyhow::Result<SpanBytes> {
     })
 }
 
+/// Encode a single span as a v0.4 msgpack payload: `[[span]]`.
+fn encode_trace_payload(span: SpanBytes) -> Vec<u8> {
+    to_vec_from_v04(&[vec![span]])
+}
+
 /// Send a finished span to the local Datadog agent for a crash span snapshot.
-///
-/// This is called from the receiver's async entry point. The TraceExporter needs its
-/// own tokio runtime, but creating or dropping one inside an existing async
-/// context panics. We sidestep this by running the entire export on a blocking
-/// thread with `spawn_blocking`, where runtime lifecycle is safe.
 pub(crate) async fn submit_crash_span(snapshot: &ApmSpanSnapshot) -> anyhow::Result<()> {
     let span = build_span(snapshot)?;
     let url = agent_url();
 
     eprintln!(
         "crashtracker: submitting finished span \
-         (trace_id={}, span_id={}) via TraceExporter to {}",
+         (trace_id={}, span_id={}) to {}",
         snapshot.trace_id, snapshot.span_id, url
     );
 
-    tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
-        let rt = Arc::new(
-            tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()?,
-        );
-        let shared_runtime = Arc::new(BasicRuntime::from_handle(rt.clone()));
+    let payload = encode_trace_payload(span);
+    let uri: http::Uri = format!("{}/v0.4/traces", url.trim_end_matches('/')).parse()?;
 
-        let mut builder = TraceExporter::<NativeCapabilities, _>::builder();
-        builder
-            .set_url(&url)
-            .set_service("crashtracker")
-            .set_language("native")
-            .set_tracer_version(env!("CARGO_PKG_VERSION"))
-            .set_input_format(TraceExporterInputFormat::V04)
-            .set_output_format(TraceExporterOutputFormat::V04)
-            .set_shared_runtime(shared_runtime);
+    let req = http::Request::builder()
+        .method(http::Method::PUT)
+        .uri(uri)
+        .header(http::header::CONTENT_TYPE, "application/msgpack")
+        .header("X-Datadog-Trace-Count", "1")
+        .body(payload.into())?;
 
-        let exporter = rt.block_on(builder.build_async::<NativeCapabilities>())?;
+    let client = libdd_common::http_common::new_client_periodic();
+    let result = client.request(req).await;
 
-        let traces = vec![vec![span]];
-        let resp = rt.block_on(exporter.send_trace_chunks_async(PooledChunks::unpooled(traces)));
+    match &result {
+        Ok(resp) => eprintln!(
+            "crashtracker: span submitted successfully (status={})",
+            resp.status()
+        ),
+        Err(e) => eprintln!("crashtracker: failed to submit span to agent: {e}"),
+    }
 
-        match &resp {
-            Ok(r) => eprintln!("crashtracker: span submitted successfully: {r:?}"),
-            Err(e) => eprintln!("crashtracker: failed to submit span to agent: {e}"),
-        }
-
-        resp?;
-        Ok(())
-    })
-    .await?
+    result?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -193,7 +179,7 @@ mod tests {
 
     #[test]
     fn build_span_64bit_trace_id_omits_p_tid() {
-        let snapshot = test_snapshot(); // trace_id = "12345", upper bits = 0
+        let snapshot = test_snapshot();
         let span = build_span(&snapshot).unwrap();
         let p_tid = span
             .meta
@@ -247,5 +233,13 @@ mod tests {
     fn parse_trace_id_128bit() {
         let expected = (u128::from(1u64) << 64) | u128::from(42u64);
         assert_eq!(parse_trace_id(&expected.to_string()).unwrap(), expected);
+    }
+
+    #[test]
+    fn encode_trace_payload_produces_non_empty_msgpack() {
+        let snapshot = test_snapshot();
+        let span = build_span(&snapshot).unwrap();
+        let payload = encode_trace_payload(span);
+        assert!(!payload.is_empty());
     }
 }
