@@ -4,7 +4,7 @@
 #[cfg(target_os = "linux")]
 use crate::StacktraceCollection;
 #[cfg(target_os = "linux")]
-use crate::ptrace_collector::crash_site_registers;
+use crate::ptrace_collector::{crash_site_registers, parse_hex_address};
 use crate::{
     CrashtrackerConfiguration, StackTrace,
     crash_info::{CrashInfo, CrashInfoBuilder, ErrorKind, SigInfo, Span, StackFrame, Ucontext},
@@ -626,6 +626,7 @@ fn collect_and_add_thread_contexts(
         None
     };
     let mut crashing_stack = None;
+    let collector_stack = builder.error.stack.clone();
 
     let incomplete = stream_thread_contexts(
         parent_pid,
@@ -635,8 +636,13 @@ fn collect_and_add_thread_contexts(
         crashing_context.as_ref(),
         |tid, captured| {
             let used_saved_context = captured.as_ref().is_some_and(|ctx| ctx.used_saved_context);
-            let thread =
+            let mut thread =
                 thread_data_from_capture(parent_pid, crashing_tid, crash_site, tid, captured);
+            if thread.crashed && used_saved_context {
+                if let Some(fallback) = collector_stack.as_ref() {
+                    recover_collector_callers(&mut thread.stack, fallback);
+                }
+            }
             if thread.crashed
                 && should_promote_crashing_stack(config, used_saved_context)
                 && !thread.stack.frames.is_empty()
@@ -655,6 +661,37 @@ fn collect_and_add_thread_contexts(
     }
     let _ = builder.with_threads(threads);
     Ok(())
+}
+
+/// Remote unwinding can stop in a libc function without CFI or proc info.
+/// Preserve its recovered frames, then append the collector's longer caller
+/// chain after the deepest shared address. Never combine unrelated stacks.
+#[cfg(target_os = "linux")]
+fn recover_collector_callers(stack: &mut crate::StackTrace, fallback: &crate::StackTrace) {
+    if stack.frames.is_empty() || stack.frames.len() >= fallback.frames.len() {
+        return;
+    }
+    let address = |frame: &StackFrame| frame.ip.as_deref().and_then(parse_hex_address);
+    let Some(first) = stack.frames.first().and_then(address) else {
+        return;
+    };
+    if fallback.frames.first().and_then(address) != Some(first) {
+        return;
+    }
+    for remote in stack.frames.iter().rev() {
+        let Some(ip) = address(remote) else { continue };
+        if let Some(index) = fallback
+            .frames
+            .iter()
+            .rposition(|frame| address(frame) == Some(ip))
+        {
+            stack
+                .frames
+                .extend_from_slice(&fallback.frames[index + 1..]);
+            stack.incomplete = true;
+            return;
+        }
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -702,6 +739,51 @@ fn enrich_thread_name(_builder: &mut CrashInfoBuilder) -> anyhow::Result<()> {
 mod tests {
     use super::*;
     use crate::crash_info::ThreadData;
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn truncated_remote_unwind_retains_collector_callers() {
+        let stack = |addresses: &[&str], incomplete| {
+            StackTrace::from_frames(
+                addresses
+                    .iter()
+                    .map(|ip| StackFrame {
+                        ip: Some(ip.to_string()),
+                        ..StackFrame::new()
+                    })
+                    .collect(),
+                incomplete,
+            )
+        };
+        let fallback = stack(
+            &["0x0000000000051ba8", "0x10010", "0x10020", "0x10030"],
+            true,
+        );
+        let mut remote = stack(&["0x51ba8", "0x51d3c"], false);
+        recover_collector_callers(&mut remote, &fallback);
+        assert_eq!(
+            remote
+                .frames
+                .iter()
+                .filter_map(|frame| frame.ip.as_deref())
+                .collect::<Vec<_>>(),
+            ["0x51ba8", "0x51d3c", "0x10010", "0x10020", "0x10030"]
+        );
+        assert!(remote.incomplete);
+
+        let mut complete = stack(
+            &["0x51ba8", "0x10010", "0x10020", "0x10030", "0x10040"],
+            false,
+        );
+        let expected = complete.clone();
+        recover_collector_callers(&mut complete, &fallback);
+        assert_eq!(complete, expected);
+
+        let mut unrelated = stack(&["0x90000"], false);
+        let expected = unrelated.clone();
+        recover_collector_callers(&mut unrelated, &fallback);
+        assert_eq!(unrelated, expected);
+    }
 
     fn stack_with_frames(ip: &str, function: Option<&str>) -> StackTrace {
         let mut stack = StackTrace::new_incomplete();
