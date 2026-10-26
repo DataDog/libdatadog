@@ -25,6 +25,12 @@ pub trait ExampleInterface {
     /// Receives a shared memory handle, maps it, and returns the sum of the first `len` bytes.
     /// Used to verify cross-process handle transfer (Windows DuplicateHandle / Unix SCM_RIGHTS).
     async fn shm_sum(#[SerializedHandle] handle: ShmHandle, len: usize) -> u64;
+    /// Like `shm_sum`, along with a payload which may make the request exceed the message size.
+    async fn shm_sum_padded(
+        #[SerializedHandle] handle: ShmHandle,
+        len: usize,
+        padding: Vec<u8>,
+    ) -> u64;
     /// Receives a byte payload and returns its length.
     /// Used to verify that messages larger than mio's 4 KB internal read buffer are handled
     /// correctly (no ERROR_MORE_DATA panic).
@@ -100,6 +106,10 @@ impl ExampleInterface for ExampleConnectionHandler {
             Ok(mapped) => mapped.as_slice()[..len].iter().map(|&b| b as u64).sum(),
             Err(_) => u64::MAX,
         }
+    }
+
+    async fn shm_sum_padded(&mut self, handle: ShmHandle, len: usize, _padding: Vec<u8>) -> u64 {
+        self.shm_sum(handle, len).await
     }
 
     fn echo_len(&mut self, payload: Vec<u8>) -> impl std::future::Future<Output = u32> + Send + '_ {

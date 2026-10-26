@@ -347,15 +347,16 @@ checksum = "ace50bade8e6234aa140d9a2f552bbee1db4d353f69b8217bc503490fc1a9f26"
 
 [[package]]
 name = "aws-lc-fips-sys"
-version = "0.13.13"
+version = "0.13.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f8bce4948d2520386c6d92a6ea2d472300257702242e5a1d01d6add52bd2e7c1"
+checksum = "00ccb9bd2963c4dbcded8052b5666f329a7ccc75d04dea723eece6077ad5e6dc"
 dependencies = [
  "bindgen 0.72.1",
  "cc",
  "cmake",
  "dunce",
  "fs_extra",
+ "pkg-config",
  "regex",
 ]
 
@@ -372,9 +373,9 @@ dependencies = [
 
 [[package]]
 name = "aws-lc-sys"
-version = "0.39.0"
+version = "0.39.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1fa7e52a4c5c547c741610a2c6f123f3881e409b714cd27e6798ef020c514f0a"
+checksum = "83a25cf98105baa966497416dbd42565ce3a8cf8dbfd59803ec9ad46f3126399"
 dependencies = [
  "cc",
  "cmake",
@@ -2793,6 +2794,7 @@ dependencies = [
  "pin-project",
  "proptest",
  "rand 0.8.8",
+ "rcgen",
  "regex",
  "regex-lite",
  "reqwest",
@@ -2804,7 +2806,10 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.17",
  "tokio",
+ "tokio-rustls",
  "tower-service",
+ "webpki-root-certs",
+ "webpki-roots",
  "windows-sys 0.52.0",
 ]
 
@@ -3014,12 +3019,19 @@ dependencies = [
 name = "libdd-ffe"
 version = "2.0.0"
 dependencies = [
+ "base64 0.22.1",
  "bincode",
  "chrono",
  "derive_more",
+ "fastrand",
  "faststr",
+ "flate2",
+ "futures-util",
  "http 1.1.0",
+ "http-body-util",
+ "httpdate",
  "httpmock",
+ "hyper",
  "libdd-capabilities",
  "libdd-capabilities-impl",
  "libdd-common",
@@ -3028,6 +3040,7 @@ dependencies = [
  "log",
  "lru",
  "md5",
+ "percent-encoding",
  "prost",
  "pyo3",
  "semver",
@@ -3038,6 +3051,8 @@ dependencies = [
  "strum_macros",
  "thiserror 2.0.17",
  "tokio",
+ "tokio-util",
+ "url",
 ]
 
 [[package]]
@@ -3082,11 +3097,14 @@ dependencies = [
  "hyper",
  "hyper-util",
  "libdd-common",
+ "rcgen",
  "reqwest",
  "rustls",
+ "rustls-platform-verifier",
  "tempfile",
  "thiserror 2.0.17",
  "tokio",
+ "tokio-rustls",
 ]
 
 [[package]]
@@ -3279,7 +3297,6 @@ dependencies = [
  "reqwest",
  "rustc-hash",
  "rustls",
- "rustls-platform-verifier",
  "serde",
  "serde_json",
  "strum",
@@ -3498,6 +3515,7 @@ name = "libdd-tinybytes"
 version = "1.1.5"
 dependencies = [
  "libdd-tinybytes",
+ "libdd-trace-model",
  "once_cell",
  "pretty_assertions",
  "proptest",
@@ -3506,6 +3524,10 @@ dependencies = [
  "serde_json",
  "test-case",
 ]
+
+[[package]]
+name = "libdd-trace-model"
+version = "0.1.0"
 
 [[package]]
 name = "libdd-trace-normalization"
@@ -3529,6 +3551,7 @@ dependencies = [
  "fluent-uri",
  "libdd-common",
  "libdd-tinybytes",
+ "libdd-trace-model",
  "libdd-trace-protobuf",
  "libdd-trace-utils",
  "log",
@@ -3611,6 +3634,7 @@ dependencies = [
  "libdd-capabilities-impl",
  "libdd-common",
  "libdd-tinybytes",
+ "libdd-trace-model",
  "libdd-trace-normalization",
  "libdd-trace-protobuf",
  "libdd-trace-utils",
@@ -4331,6 +4355,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "pem"
+version = "3.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d30c53c26bc5b31a98cd02d20f25a7c8567146caf63ed593a9d87b2775291be"
+dependencies = [
+ "base64 0.22.1",
+ "serde_core",
+]
+
+[[package]]
 name = "percent-encoding"
 version = "2.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4886,6 +4920,19 @@ checksum = "1465873a3dfdaa8ae7cb14b4383657caab0b3e8a0aa9ae8e04b044854c8dfce2"
 dependencies = [
  "crossbeam-deque",
  "crossbeam-utils",
+]
+
+[[package]]
+name = "rcgen"
+version = "0.13.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "75e669e5202259b5314d1ea5397316ad400819437857b90861765f24c4cf80a2"
+dependencies = [
+ "pem",
+ "ring",
+ "rustls-pki-types",
+ "time",
+ "yasna",
 ]
 
 [[package]]
@@ -6725,18 +6772,18 @@ dependencies = [
 
 [[package]]
 name = "webpki-root-certs"
-version = "1.0.5"
+version = "1.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "36a29fc0408b113f68cf32637857ab740edfafdf460c326cd2afaa2d84cc05dc"
+checksum = "58ec80e73fd8baf57bf0d9615554c75348bda990d6d5bbeab964dd068319fecb"
 dependencies = [
  "rustls-pki-types",
 ]
 
 [[package]]
 name = "webpki-roots"
-version = "1.0.6"
+version = "1.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "22cfaf3c063993ff62e73cb4311efde4db1efb31ab78a3e5c457939ad5cc0bed"
+checksum = "1c1c8e20c8a38fc7d65abfe74eb7280e4aa667e8eec8bc84996d2874810748d9"
 dependencies = [
  "rustls-pki-types",
 ]
@@ -7257,6 +7304,15 @@ name = "yansi"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cfe53a6657fd280eaa890a3bc59152892ffa3e30101319d168b781ed6529b049"
+
+[[package]]
+name = "yasna"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e17bb3549cc1321ae1296b9cdc2698e2b6cb1992adfa19a8c72e5b7a738f44cd"
+dependencies = [
+ "time",
+]
 
 [[package]]
 name = "yoke"

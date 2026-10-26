@@ -20,7 +20,7 @@ pub const DEFAULT_TIMEOUT_MS: u64 = 2_000;
 ///
 /// Determines how the client connects to the Datadog agent.
 /// Set via [`AgentClientBuilder::transport`] or the convenience helpers
-/// [`AgentClientBuilder::http`], [`AgentClientBuilder::unix_socket`], etc.
+/// [`AgentClientBuilder::http`], `AgentClientBuilder::unix_socket`, etc.
 #[derive(Debug, Clone)]
 pub enum AgentTransport {
     /// HTTP over TCP.
@@ -71,7 +71,7 @@ impl Default for AgentTransport {
 /// # Required fields
 ///
 /// - Transport: one of [`AgentClientBuilder::http`], [`AgentClientBuilder::https`],
-///   [`AgentClientBuilder::unix_socket`], `AgentClientBuilder::windows_named_pipe`,
+///   `AgentClientBuilder::unix_socket`, `AgentClientBuilder::windows_named_pipe`,
 ///   [`AgentClientBuilder::transport`].
 /// - [`AgentClientBuilder::language_metadata`].
 ///
