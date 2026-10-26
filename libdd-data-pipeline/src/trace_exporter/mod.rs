@@ -29,7 +29,7 @@ use crate::otlp::exporter::OTLP_RETRY_DELAY_MS;
 use crate::otlp::exporter::{OTLP_MAX_RETRIES, send_otlp_http_with_observer};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::otlp::{GrpcExportError, OtlpGrpcTransport, send_otlp_traces_grpc};
-use crate::otlp::{OtlpResourceInfo, OtlpTraceConfig, map_traces_to_otlp};
+use crate::otlp::{OtlpResourceInfo, OtlpTraceConfig};
 #[cfg(feature = "telemetry")]
 use crate::telemetry::{SendPayloadTelemetry, TelemetryClient};
 use crate::trace_exporter::agent_response::{
@@ -61,7 +61,10 @@ use libdd_shared_runtime::{SharedRuntime, WorkerHandle};
 use libdd_telemetry::worker::TelemetryWorkerHandle;
 use libdd_trace_utils::msgpack_decoder;
 use libdd_trace_utils::msgpack_encoder;
-use libdd_trace_utils::otlp_encoder::mapper_v1::map_traces_to_otlp_v1;
+use libdd_trace_utils::otlp_encoder::{
+    OtlpResourceAttributesBySpan, map_traces_to_otlp_v1_with_resources,
+    map_traces_to_otlp_with_resources,
+};
 use libdd_trace_utils::send_with_retry::{
     CompressionStrategy, RetryStrategy, SendWithRetryError, SendWithRetryResult, send_with_retry,
 };
@@ -497,11 +500,38 @@ impl<
         self.shared_runtime.block_on(self.send_async(data))?
     }
 
+    /// Sends MessagePack traces with resource snapshots used only by OTLP export.
+    ///
+    /// Snapshots belong to this call and are matched by span identity after sampling. Agent,
+    /// agentless, and log export ignore them. Existing span attributes are never modified.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn send_with_resource_attributes(
+        &self,
+        data: &[u8],
+        resources: &OtlpResourceAttributesBySpan,
+    ) -> Result<AgentResponse, TraceExporterError>
+    where
+        R: BlockingRuntime,
+    {
+        self.shared_runtime
+            .block_on(self.send_with_resource_attributes_async(data, resources))?
+    }
+
     /// Send msgpack serialized traces to the agent.
     ///
     /// `data` must be encoded per the `input_format` given to the builder.
     /// [`Self::send`] is the sync facade over this method.
     pub async fn send_async(&self, data: &[u8]) -> Result<AgentResponse, TraceExporterError> {
+        self.send_with_resource_attributes_async(data, &OtlpResourceAttributesBySpan::new())
+            .await
+    }
+
+    /// Async counterpart of [`Self::send_with_resource_attributes`].
+    pub async fn send_with_resource_attributes_async(
+        &self,
+        data: &[u8],
+        resources: &OtlpResourceAttributesBySpan,
+    ) -> Result<AgentResponse, TraceExporterError> {
         // There is no agent to negotiate with, skip the poll.
         if self.log_output.is_none() && self.agentless_config.is_none() {
             self.check_agent_info().await;
@@ -510,7 +540,7 @@ impl<
         let traces = self.deserialize_traces(data, self.input_format.into())?;
 
         let res = self
-            .process_and_send_trace_chunks(PooledChunks::unpooled(traces))
+            .process_and_send_trace_chunks(PooledChunks::unpooled(traces), resources)
             .await?;
         if matches!(&res, AgentResponse::Changed { body } if body.is_empty()) {
             return Err(TraceExporterError::Agent(
@@ -768,11 +798,25 @@ impl<
         &self,
         trace_chunks: PooledChunks<'_, T>,
     ) -> Result<AgentResponse, TraceExporterError> {
+        self.send_trace_chunks_with_resource_attributes_async(
+            trace_chunks,
+            &OtlpResourceAttributesBySpan::new(),
+        )
+        .await
+    }
+
+    /// Sends native trace chunks with immutable per-span resources used only for OTLP export.
+    pub async fn send_trace_chunks_with_resource_attributes_async<T: TraceData>(
+        &self,
+        trace_chunks: PooledChunks<'_, T>,
+        resources: &OtlpResourceAttributesBySpan,
+    ) -> Result<AgentResponse, TraceExporterError> {
         // There is no agent to negotiate with, skip the poll.
         if self.log_output.is_none() && self.agentless_config.is_none() {
             self.check_agent_info().await;
         }
-        self.process_and_send_trace_chunks(trace_chunks).await
+        self.process_and_send_trace_chunks(trace_chunks, resources)
+            .await
     }
 
     /// Force an immediate flush of client-computed stats if stats computation is currently
@@ -882,13 +926,15 @@ impl<
         &self,
         traces: &[Vec<Span<T>>],
         config: &OtlpTraceConfig,
+        resources: &OtlpResourceAttributesBySpan,
     ) -> Result<AgentResponse, TraceExporterError> {
         #[cfg(feature = "telemetry")]
         let counts = PayloadCounts::from_traces(traces);
-        let request = map_traces_to_otlp(
+        let request = map_traces_to_otlp_with_resources(
             traces,
             &self.otlp_resource_info,
             config.otel_trace_semantics_enabled,
+            resources,
         );
         let body = config
             .protocol
@@ -950,13 +996,15 @@ impl<
         &self,
         traces: &[Vec<Span<T>>],
         transport: &OtlpGrpcTransport,
+        resources: &OtlpResourceAttributesBySpan,
     ) -> Result<AgentResponse, TraceExporterError> {
         #[cfg(feature = "telemetry")]
         let counts = PayloadCounts::from_traces(traces);
-        let request = Arc::new(map_traces_to_otlp(
+        let request = Arc::new(map_traces_to_otlp_with_resources(
             traces,
             &self.otlp_resource_info,
             transport.otel_trace_semantics_enabled,
+            resources,
         ));
         #[cfg(feature = "telemetry")]
         let payload_len = request.encoded_len() + 5;
@@ -997,13 +1045,15 @@ impl<
         &self,
         traces: &[TraceChunk<T>],
         config: &OtlpTraceConfig,
+        resources: &OtlpResourceAttributesBySpan,
     ) -> Result<AgentResponse, TraceExporterError> {
         #[cfg(feature = "telemetry")]
         let counts = PayloadCounts::from_v1_chunks(traces);
-        let request = map_traces_to_otlp_v1(
+        let request = map_traces_to_otlp_v1_with_resources(
             traces,
             &self.otlp_resource_info,
             config.otel_trace_semantics_enabled,
+            resources,
         );
         let body = config
             .protocol
@@ -1064,13 +1114,15 @@ impl<
         &self,
         traces: &[TraceChunk<T>],
         transport: &OtlpGrpcTransport,
+        resources: &OtlpResourceAttributesBySpan,
     ) -> Result<AgentResponse, TraceExporterError> {
         #[cfg(feature = "telemetry")]
         let counts = PayloadCounts::from_v1_chunks(traces);
-        let request = Arc::new(map_traces_to_otlp_v1(
+        let request = Arc::new(map_traces_to_otlp_v1_with_resources(
             traces,
             &self.otlp_resource_info,
             transport.otel_trace_semantics_enabled,
+            resources,
         ));
         #[cfg(feature = "telemetry")]
         let payload_len = request.encoded_len() + 5;
@@ -1162,6 +1214,7 @@ impl<
     async fn process_and_send_trace_chunks<T: TraceData>(
         &self,
         mut traces: PooledChunks<'_, T>,
+        resources: &OtlpResourceAttributesBySpan,
     ) -> Result<AgentResponse, TraceExporterError> {
         // `traces` is a `PooledChunks`: keeping it owned (rather than moving its inner `Vec`
         // into the consuming code paths) is what lets its spans be recycled into the pool when
@@ -1221,10 +1274,14 @@ impl<
                 return Ok(AgentResponse::Unchanged);
             }
             return match otlp {
-                OtlpExportMode::Http(config) => self.send_otlp_traces_inner(&traces, config).await,
+                OtlpExportMode::Http(config) => {
+                    self.send_otlp_traces_inner(&traces, config, resources)
+                        .await
+                }
                 #[cfg(not(target_arch = "wasm32"))]
                 OtlpExportMode::Grpc(transport) => {
-                    self.send_otlp_grpc_inner(&traces, transport).await
+                    self.send_otlp_grpc_inner(&traces, transport, resources)
+                        .await
                 }
             };
         }
@@ -1342,10 +1399,24 @@ impl<
         &self,
         trace_chunks: PooledTraceChunks<'_, T>,
     ) -> Result<AgentResponse, TraceExporterError> {
+        self.send_trace_chunks_with_resource_attributes_async_v1(
+            trace_chunks,
+            &OtlpResourceAttributesBySpan::new(),
+        )
+        .await
+    }
+
+    /// Sends native trace chunks with immutable per-span resources used only for OTLP export.
+    pub async fn send_trace_chunks_with_resource_attributes_async_v1<T: TraceData>(
+        &self,
+        trace_chunks: PooledTraceChunks<'_, T>,
+        resources: &OtlpResourceAttributesBySpan,
+    ) -> Result<AgentResponse, TraceExporterError> {
         if self.log_output.is_none() && self.agentless_config.is_none() {
             self.check_agent_info().await;
         }
-        self.process_and_send_trace_chunks_v1(trace_chunks).await
+        self.process_and_send_trace_chunks_v1(trace_chunks, resources)
+            .await
     }
 
     /// Move `traces`' chunks into a fresh [`libdd_trace_utils::span::v1::TracerPayload`] carrying
@@ -1380,6 +1451,7 @@ impl<
     async fn process_and_send_trace_chunks_v1<T: TraceData>(
         &self,
         mut traces: PooledTraceChunks<'_, T>,
+        resources: &OtlpResourceAttributesBySpan,
     ) -> Result<AgentResponse, TraceExporterError> {
         // TODO(APMSP-3608): log-output silently takes precedence over OTLP/agent here,
         // mirroring `process_and_send_trace_chunks`. The builder should reject conflicting
@@ -1439,11 +1511,13 @@ impl<
             }
             return match otlp {
                 OtlpExportMode::Http(config) => {
-                    self.send_otlp_traces_inner_v1(&traces, config).await
+                    self.send_otlp_traces_inner_v1(&traces, config, resources)
+                        .await
                 }
                 #[cfg(not(target_arch = "wasm32"))]
                 OtlpExportMode::Grpc(transport) => {
-                    self.send_otlp_grpc_inner_v1(&traces, transport).await
+                    self.send_otlp_grpc_inner_v1(&traces, transport, resources)
+                        .await
                 }
             };
         }
@@ -2939,6 +3013,88 @@ mod tests {
             result.err()
         );
         mock_otlp.assert();
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_otlp_resource_sidecars_survive_sampling_and_do_not_leak_between_sends() {
+        use libdd_trace_utils::otlp_encoder::OtlpResourceAttributes;
+        let server = MockServer::start();
+        let with_resources = server.mock(|when, then| {
+            when.method(POST).path("/v1/traces").is_true(|request| {
+                let payload: serde_json::Value =
+                    serde_json::from_slice(request.body_ref()).unwrap();
+                let groups = payload["resourceSpans"].as_array().unwrap();
+                groups.len() == 2
+                    && groups
+                        .iter()
+                        .zip(["second", "third"])
+                        .all(|(group, expected)| {
+                            group["resource"]["attributes"]
+                                .as_array()
+                                .unwrap()
+                                .iter()
+                                .any(|kv| {
+                                    kv["key"] == "team" && kv["value"]["stringValue"] == expected
+                                })
+                                && group["scopeSpans"][0]["spans"][0]["attributes"]
+                                    .as_array()
+                                    .unwrap()
+                                    .iter()
+                                    .all(|kv| kv["key"] != "team")
+                        })
+            });
+            then.status(200);
+        });
+        let without_resources = server.mock(|when, then| {
+            when.method(POST).path("/v1/traces").is_true(|request| {
+                let payload: serde_json::Value =
+                    serde_json::from_slice(request.body_ref()).unwrap();
+                let groups = payload["resourceSpans"].as_array().unwrap();
+                groups.len() == 1
+                    && groups[0]["resource"]["attributes"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .all(|kv| kv["key"] != "team")
+            });
+            then.status(200);
+        });
+        let mut builder = TraceExporterBuilder::default();
+        builder
+            .set_otlp_endpoint(&server.url("/v1/traces"))
+            .set_service("svc")
+            .set_input_format(TraceExporterInputFormat::V04);
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
+        let mut resources = OtlpResourceAttributesBySpan::new();
+        let traces: Vec<Vec<SpanBytes>> = ["dropped", "second", "third"]
+            .into_iter()
+            .zip(1_u64..)
+            .map(|(team, id)| {
+                resources.insert(
+                    (id, id),
+                    Arc::new(OtlpResourceAttributes::from([("team".into(), team.into())])),
+                );
+                let mut span = SpanBytes {
+                    trace_id: u128::from(id),
+                    span_id: id,
+                    ..Default::default()
+                };
+                span.meta.insert("team".into(), team.into());
+                span.metrics.insert(
+                    "_sampling_priority_v1".into(),
+                    if id == 1 { 0.0 } else { 1.0 },
+                );
+                vec![span]
+            })
+            .collect();
+        let data = msgpack_encoder::v04::to_vec_from_v04(&traces);
+        exporter
+            .send_with_resource_attributes(&data, &resources)
+            .unwrap();
+        with_resources.assert_calls(1);
+        exporter.send(&data).unwrap();
+        without_resources.assert_calls(1);
     }
 
     #[test]

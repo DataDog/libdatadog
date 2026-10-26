@@ -9,7 +9,10 @@
 //! `KeyValue`/`AnyValue` in one pass — there is no intermediate value type to keep the two
 //! encoders in sync because there is only one IR.
 
-use super::OtlpResourceInfo;
+use super::resources::{
+    EMPTY_RESOURCE_ATTRIBUTES, ResourceGroups, attributes_for_span, duplicates_resource,
+};
+use super::{OtlpResourceAttributes, OtlpResourceAttributesBySpan, OtlpResourceInfo};
 use crate::span::trace_utils::SDK_OTLP_EXPORT_KEY;
 use crate::span::v04::{Span, SpanEvent, SpanLink};
 use crate::span::{SPAN_LINK_FLAGS_SET_SENTINEL, TraceData};
@@ -172,6 +175,7 @@ pub(super) fn proto_kv(key: String, value: ProtoValue) -> ProtoKeyValue {
 fn collect_span_attributes<T: TraceData>(
     span: &Span<T>,
     resource_service: &str,
+    resource_attributes: &OtlpResourceAttributes,
     otel_trace_semantics_enabled: bool,
 ) -> (Vec<ProtoKeyValue>, usize) {
     // Pre-size to avoid reallocations as attributes accumulate. Upper bound is the 4 synthetic
@@ -215,18 +219,33 @@ fn collect_span_attributes<T: TraceData>(
         ));
     }
     let meta = span.meta.defensive_dedup();
-    let meta_len = meta.len();
+    let eligible_meta = |key: &str, value: &str| {
+        key != SDK_OTLP_EXPORT_KEY
+            && !(otel_trace_semantics_enabled
+                && matches!(key, "error.msg" | "error.message" | "span.kind"))
+            && !duplicates_resource(resource_attributes, key, value)
+    };
+    let meta_len = if resource_attributes.is_empty() {
+        let excluded = usize::from(span.meta.contains_key(SDK_OTLP_EXPORT_KEY))
+            + if otel_trace_semantics_enabled {
+                usize::from(span.meta.contains_key("error.msg"))
+                    + usize::from(span.meta.contains_key("error.message"))
+                    + usize::from(span.meta.contains_key("span.kind"))
+            } else {
+                0
+            };
+        meta.len() - excluded
+    } else {
+        meta.iter()
+            .filter(|(k, v)| eligible_meta((*k).borrow(), (*v).borrow()))
+            .count()
+    };
     for (k, v) in meta.iter() {
         if attrs.len() >= MAX_ATTRIBUTES_PER_SPAN {
             break;
         }
         let key = k.borrow();
-        if key == SDK_OTLP_EXPORT_KEY {
-            continue;
-        }
-        if otel_trace_semantics_enabled
-            && (key == "error.msg" || key == "error.message" || key == "span.kind")
-        {
+        if !eligible_meta(key, v.borrow()) {
             continue;
         }
         attrs.push(proto_kv(
@@ -258,17 +277,6 @@ fn collect_span_attributes<T: TraceData>(
             ProtoValue::BytesValue(v.borrow().to_vec()),
         ));
     }
-    // Dropped-count accounting must mirror what was actually emitted: the stripped
-    // `_dd.sdk.otlp_export` marker never counts, and with OTel-semantics on, the promoted tags
-    // aren't added and the excluded `error.*`/`span.kind` meta tags drop out of the meta total.
-    let excluded_marker = span.meta.contains_key(SDK_OTLP_EXPORT_KEY) as usize;
-    let excluded_compat_tags = if otel_trace_semantics_enabled {
-        span.meta.contains_key("error.msg") as usize
-            + span.meta.contains_key("error.message") as usize
-            + span.meta.contains_key("span.kind") as usize
-    } else {
-        0
-    };
     let promoted = if otel_trace_semantics_enabled {
         0
     } else {
@@ -277,10 +285,7 @@ fn collect_span_attributes<T: TraceData>(
             + (has_span_type as usize)
             + (has_resource_name as usize)
     };
-    let total = promoted
-        + (meta_len - excluded_compat_tags - excluded_marker)
-        + metrics_len
-        + meta_struct_len;
+    let total = promoted + meta_len + metrics_len + meta_struct_len;
     let dropped = total.saturating_sub(attrs.len());
     (attrs, dropped)
 }
@@ -356,6 +361,7 @@ pub fn map_traces_to_otlp<T: TraceData>(
             all_spans.push(map_span(
                 span,
                 &resource_info.service,
+                &EMPTY_RESOURCE_ATTRIBUTES,
                 high,
                 flags,
                 otel_trace_semantics_enabled,
@@ -377,6 +383,49 @@ pub fn map_traces_to_otlp<T: TraceData>(
             }],
             schema_url: String::new(),
         }],
+    }
+}
+
+/// Maps traces with immutable per-span resource snapshots, grouping equal snapshots together.
+/// Only string attributes equal to the emitted resource value are omitted from spans.
+pub fn map_traces_to_otlp_with_resources<T: TraceData>(
+    trace_chunks: &[Vec<Span<T>>],
+    resource_info: &OtlpResourceInfo,
+    otel_trace_semantics_enabled: bool,
+    resources: &OtlpResourceAttributesBySpan,
+) -> ProtoReq {
+    if resources.is_empty() {
+        return map_traces_to_otlp(trace_chunks, resource_info, otel_trace_semantics_enabled);
+    }
+    // Pre-size to the total span count so the per-span push loop never reallocates.
+    let total_spans: usize = trace_chunks.iter().map(|chunk| chunk.len()).sum();
+    let mut groups = ResourceGroups::new(resource_info, otel_trace_semantics_enabled, total_spans);
+    for chunk in trace_chunks {
+        // Resolve the high 64 bits of the 128-bit trace ID once per chunk. For each span,
+        // prefer the native u128 `trace_id` field (e.g. Python's native spans hold the full
+        // 128-bit ID there) and fall back to its RFC #85 `_dd.p.tid` meta tag.
+        let high = chunk_trace_id_high(chunk);
+        // OTel semantics requires one explicit trace-level decision on every span. Outside that
+        // opt-in mode, preserve the existing per-span conversion behavior.
+        let chunk_flags = otel_trace_semantics_enabled.then(|| chunk_sampling_flags(chunk));
+        for span in chunk {
+            let flags = chunk_flags.unwrap_or_else(|| span_sampling_flags(span));
+            let attributes = attributes_for_span(resources, span.trace_id, span.span_id);
+            groups.push(
+                attributes,
+                map_span(
+                    span,
+                    &resource_info.service,
+                    attributes,
+                    high,
+                    flags,
+                    otel_trace_semantics_enabled,
+                ),
+            );
+        }
+    }
+    ProtoReq {
+        resource_spans: groups.finish(),
     }
 }
 
@@ -453,6 +502,7 @@ pub(super) fn build_resource(
 fn map_span<T: TraceData>(
     span: &Span<T>,
     resource_service: &str,
+    resource_attributes: &OtlpResourceAttributes,
     chunk_trace_id_high: u64,
     flags: u32,
     otel_trace_semantics_enabled: bool,
@@ -466,8 +516,12 @@ fn map_span<T: TraceData>(
     } else {
         Vec::new()
     };
-    let (attributes, dropped_attributes_count) =
-        collect_span_attributes(span, resource_service, otel_trace_semantics_enabled);
+    let (attributes, dropped_attributes_count) = collect_span_attributes(
+        span,
+        resource_service,
+        resource_attributes,
+        otel_trace_semantics_enabled,
+    );
     let (code, message) = span_status(span);
     let trace_state = span
         .meta
