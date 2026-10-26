@@ -12,6 +12,35 @@ use core::future::Future;
 use core::pin::Pin;
 use futures_util::StreamExt;
 
+/// Opt-in response collection bound. A capability should stop reading at this limit.
+#[derive(Clone, Copy, Debug)]
+pub struct ResponseBodyLimit(pub usize);
+
+/// Keep received status/headers with an empty body if bounded collection fails.
+/// Useful when the status acknowledges delivery independently of optional feedback.
+#[derive(Clone, Copy, Debug)]
+pub struct PreserveResponseStatus;
+
+/// A 413 is terminal for this request; its body is not needed to decide delivery.
+#[derive(Clone, Copy, Debug)]
+pub struct RejectOversizedPayload;
+
+/// A bounded-feedback request can retain its acknowledgement if body collection
+/// is cancelled by the caller's timeout. This is per request, never shared across retries.
+#[derive(Clone, Debug, Default)]
+pub struct ObservedResponseStatus(std::sync::Arc<std::sync::atomic::AtomicU16>);
+
+impl ObservedResponseStatus {
+    pub fn record(&self, status: http::StatusCode) {
+        self.0
+            .store(status.as_u16(), std::sync::atomic::Ordering::Relaxed);
+    }
+
+    pub fn get(&self) -> Option<http::StatusCode> {
+        http::StatusCode::from_u16(self.0.load(std::sync::atomic::Ordering::Relaxed)).ok()
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum HttpError {
     #[error("Network error: {0}")]

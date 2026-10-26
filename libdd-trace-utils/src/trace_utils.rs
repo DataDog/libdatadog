@@ -602,12 +602,13 @@ pub fn enrich_span_with_azure_function_metadata(span: &mut pb::Span) {
 /// Returns `Err` if any span fails to convert (e.g. unsupported field value); the partial
 /// dictionary built so far is discarded.
 pub fn convert_trace_chunks_v04_to_v05<T: TraceData>(
-    traces: &[Vec<crate::span::v04::Span<T>>],
+    traces: &[impl AsRef<[crate::span::v04::Span<T>]>],
 ) -> anyhow::Result<TraceChunks<T>> {
     let mut shared_dict = SharedDict::default();
     let mut v05_traces: Vec<Vec<v05::Span>> = Vec::with_capacity(traces.len());
     for trace in traces {
         let v05_trace = trace
+            .as_ref()
             .iter()
             .map(|span| v05::from_v04_span(span, &mut shared_dict))
             .collect::<anyhow::Result<Vec<_>>>()?;

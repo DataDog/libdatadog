@@ -114,13 +114,13 @@ pub(super) const FLAT_ATTR_STRIDE: u32 = 3;
 /// their `write_to_slice_from_v04` / `write_to_slice_from_v1` counterparts) call starts with a
 /// fresh table so deduplication is payload-local.
 pub(crate) struct StringTable {
-    seen: HashMap<String, u32>,
+    seen: HashMap<libdd_tinybytes::BytesString, u32>,
 }
 
 impl StringTable {
     fn new() -> Self {
         let mut seen = HashMap::new();
-        seen.insert(String::new(), 0);
+        seen.insert(libdd_tinybytes::BytesString::default(), 0);
         Self { seen }
     }
 
@@ -138,8 +138,24 @@ impl StringTable {
             write_uint(writer, id as u64)?;
         } else {
             let id = self.seen.len() as u32;
-            self.seen.insert(s.to_string(), id);
             write_str(writer, s)?;
+            self.seen
+                .insert(libdd_tinybytes::BytesString::from(s.to_string()), id);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn write_text<W: RmpWrite, S: crate::span::SpanText>(
+        &mut self,
+        writer: &mut W,
+        s: &S,
+    ) -> Result<(), ValueWriteError<W::Error>> {
+        if let Some(&id) = self.seen.get(s.borrow()) {
+            write_uint(writer, u64::from(id))?;
+        } else {
+            let id = self.seen.len() as u32;
+            write_str(writer, s.borrow())?;
+            self.seen.insert(s.to_bytes_string(), id);
         }
         Ok(())
     }
@@ -161,7 +177,8 @@ pub(super) fn normalize_span_start(start: i64) -> u64 {
 }
 
 /// Promoted fields extracted from the payload's spans, written at the top-level map.
-struct PayloadAttrs<'a> {
+#[derive(Clone, Copy, Default)]
+pub struct PayloadAttrs<'a> {
     env: Option<&'a str>,
     hostname: Option<&'a str>,
     app_version: Option<&'a str>,
@@ -171,7 +188,7 @@ struct PayloadAttrs<'a> {
     git_commit_sha: Option<&'a str>,
 }
 
-fn extract_payload_attrs<'a, T: TraceData + 'a, S: AsRef<[Span<T>]>>(
+pub fn extract_payload_attrs<'a, T: TraceData + 'a, S: AsRef<[Span<T>]>>(
     traces: &'a [S],
     metadata: &'a TracerMetadata,
 ) -> PayloadAttrs<'a>
@@ -318,13 +335,66 @@ where
 ///   trace_key::CHUNKS       (11) → Array[Chunk, ...]
 /// }
 /// ```
-fn encode_payload_from_v04<W: RmpWrite, T: TraceData, S: AsRef<[Span<T>]>>(
+/// Encode v0.4 input through a fallible writer, with a payload-local string table.
+pub fn encode_payload_from_v04<W: RmpWrite, T: TraceData, S: AsRef<[Span<T>]>>(
     writer: &mut W,
     traces: &[S],
     metadata: &TracerMetadata,
 ) -> Result<(), ValueWriteError<W::Error>> {
-    let mut table = StringTable::new();
     let payload_attrs = extract_payload_attrs(traces, metadata);
+    encode_payload_from_v04_with_attrs(writer, traces, metadata, payload_attrs)
+}
+
+impl<'a> PayloadAttrs<'a> {
+    /// Builder-provided attributes, including payloads with no spans.
+    pub fn from_metadata(metadata: &'a TracerMetadata) -> Self {
+        Self {
+            env: (!metadata.env.is_empty()).then_some(metadata.env.as_str()),
+            hostname: (!metadata.hostname.is_empty()).then_some(metadata.hostname.as_str()),
+            app_version: (!metadata.app_version.is_empty())
+                .then_some(metadata.app_version.as_str()),
+            git_commit_sha: (!metadata.git_commit_sha.is_empty())
+                .then_some(metadata.git_commit_sha.as_str()),
+            apm_mode: None,
+        }
+    }
+    /// Extract one span's candidates. Builder metadata takes precedence.
+    pub fn from_span<T: TraceData>(span: &'a Span<T>, metadata: &'a TracerMetadata) -> Self {
+        Self {
+            env: (!metadata.env.is_empty())
+                .then_some(metadata.env.as_str())
+                .or_else(|| span.meta.get("env").map(|v| v.borrow())),
+            hostname: (!metadata.hostname.is_empty())
+                .then_some(metadata.hostname.as_str())
+                .or_else(|| span.meta.get("_dd.hostname").map(|v| v.borrow())),
+            app_version: (!metadata.app_version.is_empty())
+                .then_some(metadata.app_version.as_str())
+                .or_else(|| span.meta.get("version").map(|v| v.borrow())),
+            git_commit_sha: (!metadata.git_commit_sha.is_empty())
+                .then_some(metadata.git_commit_sha.as_str())
+                .or_else(|| span.meta.get("_dd.git.commit.sha").map(|v| v.borrow())),
+            apm_mode: span.meta.get("_dd.apm_mode").map(|v| v.borrow()),
+        }
+    }
+
+    /// Combine first-present values in input order, without scanning span metadata again.
+    pub fn merge(&mut self, other: Self) {
+        self.env = self.env.or(other.env);
+        self.hostname = self.hostname.or(other.hostname);
+        self.app_version = self.app_version.or(other.app_version);
+        self.apm_mode = self.apm_mode.or(other.apm_mode);
+        self.git_commit_sha = self.git_commit_sha.or(other.git_commit_sha);
+    }
+}
+
+/// Encode with promoted attributes already extracted for this selection of chunks.
+pub fn encode_payload_from_v04_with_attrs<W: RmpWrite, T: TraceData, S: AsRef<[Span<T>]>>(
+    writer: &mut W,
+    traces: &[S],
+    metadata: &TracerMetadata,
+    payload_attrs: PayloadAttrs<'_>,
+) -> Result<(), ValueWriteError<W::Error>> {
+    let mut table = StringTable::new();
     let mutable_metadata = metadata.mutable_metadata.load();
 
     let attr_count =
@@ -780,6 +850,29 @@ pub fn to_encoded_byte_len_from_v1<T: TraceData>(payload: &TracerPayload<T>) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failed_writes_do_not_intern_oversized_strings() {
+        let value = libdd_tinybytes::BytesString::from("x".repeat(64 * 1024 * 1024));
+        let mut table = StringTable::new();
+        let mut bytes = [0; 16];
+        assert!(table.write_text(&mut &mut bytes[..], &value).is_err());
+        assert_eq!(table.seen.len(), 1);
+    }
+
+    #[test]
+    fn owned_span_text_is_shared_by_the_intern_table() {
+        let value = libdd_tinybytes::BytesString::from("x".repeat(1024));
+        let mut table = StringTable::new();
+        let mut output = Vec::new();
+        table.write_text(&mut output, &value).unwrap();
+        let stored = table
+            .seen
+            .keys()
+            .find(|key| key.as_str().len() == value.as_str().len())
+            .unwrap();
+        assert_eq!(stored.as_str().as_ptr(), value.as_str().as_ptr());
+    }
     use crate::span::v04::SpanBytes;
     use libdd_tinybytes::BytesString;
 
