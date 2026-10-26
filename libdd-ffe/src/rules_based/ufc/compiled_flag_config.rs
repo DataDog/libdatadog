@@ -1,15 +1,15 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use serde::Deserialize;
 
 use crate::rules_based::{Str, Timestamp, error::EvaluationError, sharder::PreSaltedSharder};
 
 use super::{
-    AllocationWire, AssignmentValue, Environment, FlagWire, RuleWire, ShardRange, ShardWire,
-    SplitWire, TryParse, UniversalFlagConfigWire, VariationType,
+    AllocationWire, AssignmentValue, Environment, Feature, FlagWire, RuleWire, ShardRange,
+    ShardWire, SplitWire, TryParse, UniversalFlagConfigWire, VariationType,
 };
 
 #[derive(Debug)]
@@ -61,6 +61,7 @@ pub(crate) struct Split {
     pub variation_key: Str,
     pub value: AssignmentValue,
     pub serial_id: Option<i32>,
+    pub features: Arc<[Feature]>,
 }
 
 #[derive(Debug, Clone)]
@@ -201,6 +202,7 @@ fn compile_split(
         variation_key: split.variation_key,
         value: result,
         serial_id: split.serial_id,
+        features: split.features.into(),
     })
 }
 

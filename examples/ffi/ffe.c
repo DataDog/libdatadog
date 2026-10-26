@@ -109,6 +109,30 @@ const char* error_code_to_string(enum ddog_ffe_ErrorCode code) {
     }
 }
 
+// Helper function to print a BorrowedStr without a trailing newline
+void print_borrowed_str_no_newline(const char* label, struct ddog_ffe_BorrowedStr str) {
+    if (str.ptr != NULL && str.len > 0) {
+        printf("%s%.*s", label, (int)str.len, (const char*)str.ptr);
+    } else {
+        printf("%s(empty)", label);
+    }
+}
+
+// Helper function to print a feature value
+void print_feature_value(struct ddog_ffe_FeatureValue value) {
+    switch (value.tag) {
+        case DDOG_FFE_FEATURE_VALUE_STRING:
+            printf("%.*s", (int)value.string.len, (const char*)value.string.ptr);
+            break;
+        case DDOG_FFE_FEATURE_VALUE_FLOAT:
+            printf("%f", value.float_);
+            break;
+        case DDOG_FFE_FEATURE_VALUE_BOOLEAN:
+            printf("%s", value.boolean ? "true" : "false");
+            break;
+    }
+}
+
 // Helper function to evaluate and print flag results
 void evaluate_and_print_flag(
     ddog_ffe_Handle_Configuration config,
@@ -174,6 +198,27 @@ void evaluate_and_print_flag(
         }
     } else {
         printf("  Flag Metadata: (empty)\n");
+    }
+
+    // Get and print the features attached to the selected split
+    struct ddog_ffe_FeatureArray features = ddog_ffe_assignment_get_features(assignment);
+    if (features.count > 0) {
+        printf("  Features (%zu entries):\n", features.count);
+        for (size_t i = 0; i < features.count; i++) {
+            struct ddog_ffe_Feature feature = features.elements[i];
+            printf("    - ");
+            print_borrowed_str_no_newline("", feature.key);
+            printf(" = ");
+            print_feature_value(feature.value);
+            printf(" [destinations:");
+            for (size_t j = 0; j < feature.destinations.count; j++) {
+                struct ddog_ffe_BorrowedStr destination = feature.destinations.elements[j];
+                printf(" %.*s", (int)destination.len, (const char*)destination.ptr);
+            }
+            printf("]\n");
+        }
+    } else {
+        printf("  Features: (none)\n");
     }
 
     // Clean up

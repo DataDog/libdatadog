@@ -212,6 +212,7 @@ impl Flag {
             reason,
             serial_id: split.serial_id,
             do_log: allocation.do_log,
+            features: split.features.clone(),
         })
     }
 
@@ -649,7 +650,75 @@ mod tests {
     use std::{collections::HashMap, sync::Arc};
 
     use super::*;
-    use crate::rules_based::{AssignmentReason, AssignmentValue, UniversalFlagConfig};
+    use crate::rules_based::{
+        AssignmentReason, AssignmentValue, FeatureValue, UniversalFlagConfig,
+    };
+
+    #[test]
+    fn assignment_carries_features_of_selected_split() {
+        let config = UniversalFlagConfig::from_json(
+            br#"
+            {
+              "createdAt": "2026-08-11T00:00:00Z",
+              "environment": {"name": "test"},
+              "flags": {
+                "with-features": {
+                  "key": "with-features",
+                  "enabled": true,
+                  "variationType": "STRING",
+                  "variations": {"on": {"key": "on", "value": "on"}},
+                  "allocations": [{
+                    "key": "static",
+                    "splits": [{
+                      "variationKey": "on",
+                      "shards": [],
+                      "serialId": 7,
+                      "features": [
+                        {"key": "holdout.key", "value": "abc", "destinations": ["HOOK"]},
+                        {"key": "holdout.fraction", "value": 0.5, "destinations": ["EXPOSURE"]},
+                        {"key": "holdout.enabled", "value": false, "destinations": ["HOOK"]}
+                      ]
+                    }]
+                  }]
+                },
+                "without-features": {
+                  "key": "without-features",
+                  "enabled": true,
+                  "variationType": "STRING",
+                  "variations": {"on": {"key": "on", "value": "on"}},
+                  "allocations": [{
+                    "key": "static",
+                    "splits": [{"variationKey": "on", "shards": []}]
+                  }]
+                }
+              }
+            }
+            "#
+            .to_vec(),
+        )
+        .unwrap();
+        let config = Configuration::from_server_response(config);
+        let context = EvaluationContext::new(None, Arc::new(HashMap::new()));
+        let now = chrono::Utc::now();
+
+        let assignment = config
+            .eval_flag("with-features", &context, ExpectedFlagType::String, now)
+            .unwrap();
+        let features = &assignment.features;
+        assert_eq!(features.len(), 3);
+        assert_eq!(features[0].key.as_str(), "holdout.key");
+        assert_eq!(features[0].value, FeatureValue::String("abc".into()));
+        assert_eq!(features[0].destinations.len(), 1);
+        assert_eq!(features[0].destinations[0].as_str(), "HOOK");
+        assert_eq!(features[1].value, FeatureValue::Number(0.5));
+        assert_eq!(features[2].value, FeatureValue::Boolean(false));
+        assert_eq!(assignment.serial_id, Some(7));
+
+        let assignment = config
+            .eval_flag("without-features", &context, ExpectedFlagType::String, now)
+            .unwrap();
+        assert!(assignment.features.is_empty());
+    }
 
     #[test]
     fn invalid_flag_does_not_poison_valid_neighbor() {

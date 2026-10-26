@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::rules_based::{FlagType, Str, ufc::VariationType};
 
+use super::models::Feature;
+
 /// Reason for assignment evaluation result.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -36,6 +38,9 @@ pub struct Assignment {
     pub serial_id: Option<i32>,
     /// Whether this assignment is part of an experiment and should be logged.
     pub do_log: bool,
+    /// Features attached to the selected split. Shared with the compiled split, so cloning the
+    /// assignment is cheap and allocates nothing when the split has no features.
+    pub features: Arc<[Feature]>,
 }
 
 /// Enum representing values assigned to a subject as a result of feature flag evaluation.
@@ -332,14 +337,31 @@ impl PartialEq<AssignmentValue> for AssignmentValue {
 
 #[cfg(feature = "pyo3")]
 mod pyo3_impl {
-
     use super::*;
+
+    use crate::rules_based::ufc::models::FeatureValue;
 
     use pyo3::{
         exceptions::PyValueError,
         prelude::*,
         types::{PyDict, PyList},
     };
+
+    impl<'py> IntoPyObject<'py> for &FeatureValue {
+        type Target = PyAny;
+        type Output = Bound<'py, PyAny>;
+        type Error = PyErr;
+
+        #[inline]
+        fn into_pyobject(self, py: Python<'py>) -> Result<Self::Output, Self::Error> {
+            let obj = match self {
+                FeatureValue::String(v) => v.into_pyobject(py)?.into_any(),
+                FeatureValue::Number(v) => v.into_pyobject(py)?.into_any(),
+                FeatureValue::Boolean(v) => v.into_pyobject(py)?.to_owned().into_any(),
+            };
+            Ok(obj)
+        }
+    }
 
     impl<'py> IntoPyObject<'py> for &AssignmentValue {
         type Target = PyAny;
