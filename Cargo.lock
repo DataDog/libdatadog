@@ -2854,6 +2854,7 @@ dependencies = [
  "libdd-data-pipeline",
  "libdd-gotter",
  "libdd-libunwind-sys",
+ "libdd-process-utils",
  "libdd-shared-runtime",
  "libdd-telemetry",
  "libdd-tinybytes",
