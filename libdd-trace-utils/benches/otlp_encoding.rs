@@ -8,9 +8,11 @@
 use criterion::{BatchSize, Criterion, black_box, criterion_group};
 use libdd_trace_utils::msgpack_decoder;
 use libdd_trace_utils::otlp_encoder::{
-    OtlpResourceInfo, encode_otlp_json, encode_otlp_protobuf, map_traces_to_otlp,
+    OtlpResourceAttributes, OtlpResourceAttributesBySpan, OtlpResourceInfo, encode_otlp_json,
+    encode_otlp_protobuf, map_traces_to_otlp, map_traces_to_otlp_with_resources,
 };
 use serde_json::{Value, json};
+use std::sync::Arc;
 
 /// A realistic OTLP-bound span: a handful of string `meta` tags and a couple of numeric
 /// `metrics`, so the per-span attribute work (the dominant cost) is exercised.
@@ -86,6 +88,31 @@ pub fn otlp_encoding_benches(c: &mut Criterion) {
         b.iter_batched(
             || spans.clone(),
             |s| black_box(map_traces_to_otlp(black_box(&s), &info, false)),
+            BatchSize::SmallInput,
+        )
+    });
+
+    let attributes = Arc::new(OtlpResourceAttributes::from([
+        ("team".into(), "core".into()),
+        ("deployment.region".into(), "us-east-1".into()),
+        ("component".into(), "net/http".into()),
+    ]));
+    let resources: OtlpResourceAttributesBySpan = spans
+        .iter()
+        .flatten()
+        .map(|span| ((span.trace_id as u64, span.span_id), attributes.clone()))
+        .collect();
+    c.bench_function(&format!("otlp/map_with_resources/{id}"), |b| {
+        b.iter_batched(
+            || spans.clone(),
+            |s| {
+                black_box(map_traces_to_otlp_with_resources(
+                    black_box(&s),
+                    &info,
+                    false,
+                    &resources,
+                ))
+            },
             BatchSize::SmallInput,
         )
     });

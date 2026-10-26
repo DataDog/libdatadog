@@ -199,7 +199,7 @@ fn collect_span_attributes_v1<T: TraceData>(
             _ => false,
         };
         !(promoted_and_set || (otel_trace_semantics_enabled && ERROR_MESSAGE_KEYS.contains(key)))
-            && !matches!(value, AttributeValue::String(v) if duplicates_resource(resource_attributes, key, v.borrow()))
+            && !matches!(value, AttributeValue::String(v) if duplicates_resource(resource_attributes, key, v.borrow(), otel_trace_semantics_enabled))
     };
     // Counted over the full `merged` slice so a cap-truncated span still reports an accurate
     // dropped count.
@@ -477,10 +477,7 @@ pub fn map_traces_to_otlp_v1_with_resources<T: TraceData>(
     let total_spans: usize = trace_chunks.iter().map(|chunk| chunk.spans.len()).sum();
     let mut groups = ResourceGroups::new(resource_info, otel_trace_semantics_enabled, total_spans);
     for chunk in trace_chunks {
-        // Resolve the chunk-level sampling priority once per chunk and apply it to every span's
-        // flags (see the module/function doc for why this differs from v0.4's per-span metric).
-        // `effective_priority_v1` folds in `dropped_trace`, matching the v0.4 downgrade encoder's
-        // `encode_payload_from_v1` so a rejected trace can't be reported as sampled.
+        // Preserve the original chunk sampling decision across resource groups.
         let effective_priority = effective_priority_v1(chunk);
         let flags = effective_priority.map(|p| (p >= 1) as u32).unwrap_or(0);
         for span in &chunk.spans {

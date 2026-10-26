@@ -223,7 +223,12 @@ fn collect_span_attributes<T: TraceData>(
         key != SDK_OTLP_EXPORT_KEY
             && !(otel_trace_semantics_enabled
                 && matches!(key, "error.msg" | "error.message" | "span.kind"))
-            && !duplicates_resource(resource_attributes, key, value)
+            && !duplicates_resource(
+                resource_attributes,
+                key,
+                value,
+                otel_trace_semantics_enabled,
+            )
     };
     let meta_len = if resource_attributes.is_empty() {
         let excluded = usize::from(span.meta.contains_key(SDK_OTLP_EXPORT_KEY))
@@ -401,9 +406,7 @@ pub fn map_traces_to_otlp_with_resources<T: TraceData>(
     let total_spans: usize = trace_chunks.iter().map(|chunk| chunk.len()).sum();
     let mut groups = ResourceGroups::new(resource_info, otel_trace_semantics_enabled, total_spans);
     for chunk in trace_chunks {
-        // Resolve the high 64 bits of the 128-bit trace ID once per chunk. For each span,
-        // prefer the native u128 `trace_id` field (e.g. Python's native spans hold the full
-        // 128-bit ID there) and fall back to its RFC #85 `_dd.p.tid` meta tag.
+        // Resolve trace-wide identity before splitting spans into resource groups.
         let high = chunk_trace_id_high(chunk);
         // OTel semantics requires one explicit trace-level decision on every span. Outside that
         // opt-in mode, preserve the existing per-span conversion behavior.

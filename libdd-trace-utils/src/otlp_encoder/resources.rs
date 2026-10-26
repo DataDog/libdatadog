@@ -13,13 +13,14 @@ use super::OtlpResourceInfo;
 use super::mapper::{build_resource, proto_kv};
 
 /// A snapshot of the caller's string resource attributes.
+/// Exporter identity and its service/env/version aliases take precedence; no aliases are remapped.
+/// Under OTel semantics, promoted error-message and span-kind keys are excluded.
 pub type OtlpResourceAttributes = BTreeMap<String, String>;
 
-/// Resource snapshots for one export, keyed by (low 64 bits of trace ID, span ID).
-///
-/// The low trace ID matches both MessagePack input formats, even when sampling removes the
-/// chunk root carrying the high bits. Share an `Arc` for spans with the same snapshot.
-/// Missing spans use only the exporter identity; an empty snapshot has the same meaning.
+/// Resource snapshots keyed by (low 64 bits of trace ID, span ID), matching MessagePack IDs.
+/// Share an `Arc` for equal snapshots. Missing spans and empty snapshots use exporter identity
+/// only. The lookup remains valid when sampling removes the chunk root carrying the high trace-ID
+/// bits.
 pub type OtlpResourceAttributesBySpan = HashMap<(u64, u64), Arc<OtlpResourceAttributes>>;
 
 pub(super) static EMPTY_RESOURCE_ATTRIBUTES: OtlpResourceAttributes = BTreeMap::new();
@@ -43,13 +44,19 @@ fn is_identity_attribute(key: &str) -> bool {
     )
 }
 
+fn is_resource_attribute(key: &str, semantics: bool) -> bool {
+    !is_identity_attribute(key)
+        && !(semantics && matches!(key, "error.msg" | "error.message" | "span.kind"))
+}
+
 pub(super) fn duplicates_resource(
     resource: &OtlpResourceAttributes,
     key: &str,
     value: &str,
+    semantics: bool,
 ) -> bool {
     !resource.is_empty()
-        && !is_identity_attribute(key)
+        && is_resource_attribute(key, semantics)
         && resource.get(key).is_some_and(|v| v == value)
 }
 
@@ -91,11 +98,7 @@ impl<'a> ResourceGroups<'a> {
         resource.attributes.extend(
             attributes
                 .iter()
-                .filter(|(key, _)| {
-                    !is_identity_attribute(key)
-                        && !(self.semantics
-                            && matches!(key.as_str(), "error.msg" | "error.message" | "span.kind"))
-                })
+                .filter(|(key, _)| is_resource_attribute(key, self.semantics))
                 .map(|(key, value)| proto_kv(key.clone(), Value::StringValue(value.clone()))),
         );
         ResourceSpans {
@@ -347,6 +350,60 @@ mod tests {
             assert_eq!(span.attributes.len(), 128);
             assert_eq!(span.dropped_attributes_count, 1);
             assert!(span.attributes.iter().all(|kv| kv.key.starts_with("local")));
+        }
+    }
+
+    #[test]
+    fn promoted_keys_are_deduplicated_only_when_emitted_on_the_resource() {
+        for v1 in [false, true] {
+            for semantics in [false, true] {
+                let snapshot = snapshot(&[
+                    ("span.kind", "server"),
+                    ("error.msg", "failure"),
+                    ("error.message", "failure"),
+                ]);
+                let mut input = v04::Span::<BytesData> {
+                    trace_id: 1,
+                    span_id: 1,
+                    ..Default::default()
+                };
+                for (key, value) in snapshot.iter() {
+                    input.meta.insert(
+                        BytesString::from_string(key.clone()),
+                        BytesString::from_string(value.clone()),
+                    );
+                }
+                let original = map(
+                    vec![input.clone()],
+                    &OtlpResourceAttributesBySpan::new(),
+                    semantics,
+                    v1,
+                );
+                let resources = OtlpResourceAttributesBySpan::from([((1, 1), snapshot)]);
+                let result = map(vec![input], &resources, semantics, v1);
+                let resource = values(
+                    &result.resource_spans[0]
+                        .resource
+                        .as_ref()
+                        .unwrap()
+                        .attributes,
+                );
+                let span = &result.resource_spans[0].scope_spans[0].spans[0];
+                if semantics {
+                    for key in ["span.kind", "error.msg", "error.message"] {
+                        assert!(!resource.contains_key(key));
+                    }
+                    assert_eq!(
+                        span.attributes,
+                        original.resource_spans[0].scope_spans[0].spans[0].attributes
+                    );
+                } else {
+                    for key in ["span.kind", "error.msg", "error.message"] {
+                        assert!(resource.contains_key(key));
+                        assert!(!values(&span.attributes).contains_key(key));
+                    }
+                }
+            }
         }
     }
 
