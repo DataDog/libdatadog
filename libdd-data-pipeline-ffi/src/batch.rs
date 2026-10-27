@@ -213,7 +213,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_batch_payload(
             failed: payload.error.is_some(),
             error_code: payload.error.unwrap_or(ErrorCode::HttpUnknown),
             body: ByteSlice::from(payload.body.as_deref().unwrap_or_default().as_bytes()),
-            observations: payload.observations,
+            observations: payload.observations.clone(),
         })
 }
 

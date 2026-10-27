@@ -36,7 +36,7 @@ tokio::task_local! {
 /// The struct contains no owned pointers and requires no destructor. It describes
 /// one payload; the batched API returns a separate observation for each outcome.
 #[repr(C)]
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default, Clone)]
 pub struct TraceExporterObservations {
     pub requests_count: u64,
     pub errors_network: u64,
@@ -131,6 +131,21 @@ impl<
 mod tests {
     use super::*;
     use libdd_trace_utils::send_with_retry::SendWithRetryError;
+
+    #[test]
+    fn report_keeps_its_owning_closure_capture() {
+        fn requests(report: TraceExporterObservations) -> u64 {
+            report.requests_count
+        }
+        fn call_static(f: impl FnOnce() -> u64 + 'static) -> u64 {
+            f()
+        }
+        let report = TraceExporterObservations {
+            requests_count: 3,
+            ..Default::default()
+        };
+        assert_eq!(call_static(|| requests(report)), 3);
+    }
 
     fn timeout_payload() -> SendPayloadTelemetry {
         SendPayloadTelemetry::from_retry_result_with_spans(
