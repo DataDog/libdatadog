@@ -19,6 +19,7 @@ anyhow.workspace = true
 cargo_metadata.workspace = true
 clap = { workspace = true, default-features = true, features = ["derive"] }
 colored.workspace = true
+quick-junit.workspace = true
 quick-xml.workspace = true
 libdd-common = { path = "../libdd-common", default-features = false, features = ["std"] }
 toml = { workspace = true, features = ["parse"] }
@@ -37,4 +38,8 @@ bench = false
 
 [[bin]]
 name = "add_junit_file_attributes"
+bench = false
+
+[[bin]]
+name = "crate_timing"
 bench = false

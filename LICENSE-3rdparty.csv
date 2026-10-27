@@ -4,7 +4,6 @@ adler2,https://github.com/oyvindln/adler2,0BSD OR MIT OR Apache-2.0,"Jonas Schie
 ahash,https://github.com/tkaitchuck/ahash,MIT OR Apache-2.0,Tom Kaitchuck <Tom.Kaitchuck@gmail.com>
 aho-corasick,https://github.com/BurntSushi/aho-corasick,Unlicense OR MIT,Andrew Gallant <jamslam@gmail.com>
 allocator-api2,https://github.com/zakarumych/allocator-api2,MIT OR Apache-2.0,Zakarum <zaq.dev@icloud.com>
-android-tzdata,https://github.com/RumovZ/android-tzdata,MIT OR Apache-2.0,RumovZ
 android_system_properties,https://github.com/nical/android_system_properties,MIT OR Apache-2.0,Nicolas Silva <nical@fastmail.com>
 anes,https://github.com/zrzka/anes-rs,MIT OR Apache-2.0,Robert Vojta <rvojta@me.com>
 anstream,https://github.com/rust-cli/anstyle,MIT OR Apache-2.0,The anstream Authors
@@ -252,6 +251,7 @@ moka,https://github.com/moka-rs/moka,(MIT OR Apache-2.0) AND Apache-2.0,The moka
 msvc-demangler,https://github.com/mstange/msvc-demangler-rust,MIT OR NCSA,"Markus Stange <mstange@themasta.com>, Jeff Muizelaar <jrmuizel@gmail.com>"
 multer,https://github.com/rwf2/multer,MIT,Rousan Ali <hello@rousan.io>
 multimap,https://github.com/havarnov/multimap,MIT OR Apache-2.0,Håvar Nøvik <havar.novik@gmail.com>
+newtype-uuid,https://github.com/oxidecomputer/newtype-uuid,MIT OR Apache-2.0,The newtype-uuid Authors
 nix,https://github.com/nix-rust/nix,MIT,The nix-rust Project Developers
 nom,https://github.com/Geal/nom,MIT,contact@geoffroycouprie.com
 ntapi,https://github.com/MSxDOS/ntapi,Apache-2.0 OR MIT,MSxDOS <melcodos@gmail.com>
@@ -327,6 +327,7 @@ pyo3-ffi,https://github.com/pyo3/pyo3,MIT OR Apache-2.0,PyO3 Project and Contrib
 pyo3-macros,https://github.com/pyo3/pyo3,MIT OR Apache-2.0,PyO3 Project and Contributors <https://github.com/PyO3>
 pyo3-macros-backend,https://github.com/pyo3/pyo3,MIT OR Apache-2.0,PyO3 Project and Contributors <https://github.com/PyO3>
 quick-error,http://github.com/tailhook/quick-error,MIT OR Apache-2.0,"Paul Colomiets <paul@colomiets.name>, Colin Kiegel <kiegel@gmx.de>"
+quick-junit,https://github.com/nextest-rs/quick-junit,Apache-2.0 OR MIT,The quick-junit Authors
 quick-xml,https://github.com/tafia/quick-xml,MIT,The quick-xml Authors
 quote,https://github.com/dtolnay/quote,MIT OR Apache-2.0,David Tolnay <dtolnay@gmail.com>
 r-efi,https://github.com/r-efi/r-efi,MIT OR Apache-2.0 OR LGPL-2.1-or-later,The r-efi Authors
@@ -405,6 +406,7 @@ spin,https://github.com/mvdnes/spin-rs,MIT,"Mathijs van de Nes <git@mathijs.vd-n
 stable_deref_trait,https://github.com/storyyeller/stable_deref_trait,MIT OR Apache-2.0,Robert Grosse <n210241048576@gmail.com>
 static_assertions,https://github.com/nvzqz/static-assertions-rs,MIT OR Apache-2.0,Nikolai Vazquez
 stringmetrics,https://github.com/pluots/stringmetrics,MIT,Trevor Gross <tmgross@umich.edu>
+strip-ansi-escapes,https://github.com/luser/strip-ansi-escapes,Apache-2.0 OR MIT,Ted Mielczarek <ted@mielczarek.org>
 strsim,https://github.com/rapidfuzz/strsim-rs,MIT,"Danny Guo <danny@dannyguo.com>, maxbachmann <oss@maxbachmann.de>"
 strum,https://github.com/Peternator7/strum,MIT,Peter Glotfelty <peter.glotfelty@microsoft.com>
 strum_macros,https://github.com/Peternator7/strum,MIT,Peter Glotfelty <peter.glotfelty@microsoft.com>
@@ -486,6 +488,7 @@ value-bag,https://github.com/sval-rs/value-bag,Apache-2.0 OR MIT,Ashley Mannix <
 value-bag-serde1,https://github.com/sval-rs/value-bag,Apache-2.0 OR MIT,Ashley Mannix <ashleymannix@live.com.au>
 value-bag-sval2,https://github.com/sval-rs/value-bag,Apache-2.0 OR MIT,Ashley Mannix <ashleymannix@live.com.au>
 value-trait,https://github.com/simd-lite/value-trait,Apache-2.0 OR MIT,Heinz N. Gies <heinz@licenser.net>
+vte,https://github.com/alacritty/vte,Apache-2.0 OR MIT,"Joe Wilm <joe@jwilm.com>, Christian Duerr <contact@christianduerr.com>"
 wait-timeout,https://github.com/alexcrichton/wait-timeout,MIT OR Apache-2.0,Alex Crichton <alex@alexcrichton.com>
 walkdir,https://github.com/BurntSushi/walkdir,Unlicense OR MIT,Andrew Gallant <jamslam@gmail.com>
 want,https://github.com/seanmonstar/want,MIT,Sean McArthur <sean@seanmonstar.com>
