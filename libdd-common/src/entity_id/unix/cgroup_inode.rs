@@ -2,22 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! This module provides functions to fetch cgroup node path and fetching it's inode
+use super::super::discovery;
+#[cfg(test)]
 use super::CgroupFileParsingError;
-use std::fs::File;
-use std::io::{BufRead, BufReader};
 use std::os::unix::fs::MetadataExt;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(test)]
+use std::path::PathBuf;
 use std::{fs, io};
-
-// Those two variables are unused in tests
-#[cfg(not(test))]
-// From https://github.com/torvalds/linux/blob/5859a2b1991101d6b978f3feb5325dad39421f29/include/linux/proc_ns.h#L41-L49
-// Currently, host namespace inode number are hardcoded, which can be used to detect
-// if we're running in host namespace or not (does not work when running in Docker in Docker)
-const HOST_CGROUP_NAMESPACE_INODE: u64 = 0xEFFFFFFB;
-
-#[cfg(not(test))]
-const DEFAULT_CGROUP_NS_PATH: &str = "/proc/self/ns/cgroup";
 
 /// Returns the inode of file at `path`
 fn get_inode(path: &Path) -> io::Result<u64> {
@@ -27,60 +19,23 @@ fn get_inode(path: &Path) -> io::Result<u64> {
 
 /// Returns the cgroup mount path associated with `cgroup_v1_base_controller` or the default one for
 /// cgroupV2
+#[cfg(test)]
 fn get_cgroup_node_path(
     cgroup_v1_base_controller: &str,
     cgroup_path: &Path,
     cgroup_mount_path: &Path,
 ) -> Result<PathBuf, CgroupFileParsingError> {
-    let file = File::open(cgroup_path).map_err(|_| CgroupFileParsingError::CannotOpenFile)?;
-    let reader = BufReader::new(file);
-
-    let mut node_path: Option<PathBuf> = None;
-
-    for line in reader.lines() {
-        let line_content = &line.map_err(|_| CgroupFileParsingError::InvalidFormat)?;
-        let cgroup_entry: Vec<&str> = line_content.split(':').collect();
-        if cgroup_entry.len() != 3 {
-            continue;
-        }
-        let controllers: Vec<&str> = cgroup_entry[1].split(',').collect();
-        // Only keep empty controller if it is the first line as cgroupV2 uses only one line
-        if controllers.contains(&cgroup_v1_base_controller) || controllers.contains(&"") {
-            let matched_operator = if controllers.contains(&cgroup_v1_base_controller) {
-                cgroup_v1_base_controller
-            } else {
-                ""
-            };
-
-            let mut path = cgroup_mount_path.join(matched_operator);
-            path.push(cgroup_entry[2].strip_prefix('/').unwrap_or(cgroup_entry[2])); // Remove first / as the path is relative
-            node_path = Some(path);
-
-            // if we matched the V1 base controller we can return otherwise we continue until we
-            // find it or default to the empty controller name
-            if matched_operator == cgroup_v1_base_controller {
-                break;
-            }
-        }
-    }
-    node_path.ok_or(CgroupFileParsingError::CgroupNotFound)
-}
-
-#[cfg(not(test))]
-/// Checks if the agent is running in the host cgroup namespace.
-/// This check is disabled when testing
-fn is_host_cgroup_namespace() -> Result<(), ()> {
-    let cgroup_namespace_inode = get_inode(Path::new(DEFAULT_CGROUP_NS_PATH)).map_err(|_| ())?;
-    if cgroup_namespace_inode == HOST_CGROUP_NAMESPACE_INODE {
-        return Err(());
-    }
-    Ok(())
-}
-
-#[cfg(test)]
-/// Mock version used in tests
-fn is_host_cgroup_namespace() -> Result<(), ()> {
-    Ok(())
+    let file = fs::File::open(cgroup_path).map_err(|_| CgroupFileParsingError::CannotOpenFile)?;
+    let cgroup = io::read_to_string(file).map_err(|_| CgroupFileParsingError::InvalidFormat)?;
+    discovery::cgroup_node_path(
+        &cgroup,
+        cgroup_v1_base_controller,
+        cgroup_mount_path
+            .to_str()
+            .ok_or(CgroupFileParsingError::InvalidFormat)?,
+    )
+    .map(PathBuf::from)
+    .ok_or(CgroupFileParsingError::CgroupNotFound)
 }
 
 /// Returns the `cgroup_inode` if available, otherwise `None`
@@ -89,13 +44,22 @@ pub fn get_cgroup_inode(
     cgroup_path: &Path,
     cgroup_mount_path: &Path,
 ) -> Option<String> {
-    // If we're running in the host cgroup namespace, do not get the inode.
-    // This would indicate that we're not in a container and the inode we'd
-    // return is not related to a container.
-    is_host_cgroup_namespace().ok()?;
-    let cgroup_mount_path =
-        get_cgroup_node_path(cgroup_v1_base_controller, cgroup_path, cgroup_mount_path).ok()?;
-    Some(get_inode(&cgroup_mount_path).ok()?.to_string())
+    let cgroup = fs::read_to_string(cgroup_path).ok()?;
+    discovery::cgroup_inode(
+        &cgroup,
+        cgroup_v1_base_controller,
+        cgroup_mount_path.to_str()?,
+        |path| {
+            // Preserve the existing std tests' namespace mock. The alloc-only tests exercise
+            // the real namespace guard with caller-supplied inode values.
+            #[cfg(test)]
+            if path == "/proc/self/ns/cgroup" {
+                return Some(0);
+            }
+            get_inode(Path::new(path)).ok()
+        },
+    )
+    .map(|inode| inode.to_string())
 }
 
 #[cfg(test)]
