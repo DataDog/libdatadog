@@ -188,15 +188,10 @@ pub(crate) async fn run_dsm_flush_loop(
     tables: Weak<Mutex<HashMap<DsmTableKey, Arc<DsmTableState>>>>,
     key: DsmTableKey,
 ) {
-    let Some(arc) = tables.upgrade() else {
-        return;
-    };
-    let state = {
-        let guard = arc.lock_or_panic();
-        guard.get(&key).cloned()
-    };
-    drop(arc);
-    let Some(state) = state else {
+    let Some(state) = tables
+        .upgrade()
+        .and_then(|tables| tables.lock_or_panic().get(&key).cloned())
+    else {
         return;
     };
     let client = NativeCapabilities::new_client();
