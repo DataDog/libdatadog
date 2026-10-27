@@ -366,30 +366,28 @@ pub(crate) fn pool_eq(pool: &Pool, sr: StringRef, expected: &str) -> bool {
 
 /// Copy a pool string into an owned `String`, charging its bytes to `budget`.
 ///
-/// Lossy rather than strict: dropping a whole entry over one bad sequence would lose stats
-/// that are otherwise fine. A reference that does not resolve, or does not fit the budget,
-/// yields an empty string - which is what an absent field looks like anyway.
+/// Lossy rather than strict about UTF-8: dropping a whole entry over one bad sequence would
+/// lose stats that are otherwise fine. A reference that does not resolve, or does not fit the
+/// budget, is not one this writer made, and yields `None`; an empty field is still `Some("")`.
 ///
 /// `budget` is one allowance for a whole bucket. Per-reference bounds alone would still permit
 /// `slots * fields * pool_size` bytes of output, since a peer can repeat one large reference
 /// across every field of every slot; a pool's capacity is the most real data a bucket can
 /// hold, so that is the allowance. Output can still reach a small multiple of it, one invalid
 /// byte expanding to a three-byte replacement character.
-pub(crate) fn pool_string(pool: &Pool, sr: StringRef, budget: &mut usize) -> String {
-    let Some(bytes) = pool_slice(pool, sr) else {
-        return String::new();
-    };
+pub(crate) fn pool_string(pool: &Pool, sr: StringRef, budget: &mut usize) -> Option<String> {
+    let bytes = pool_slice(pool, sr)?;
     if bytes.len() > *budget {
-        return String::new();
+        return None;
     }
     *budget -= bytes.len();
     // Validate only the private copy: a peer can keep rewriting the shared bytes.
     let bytes = unsafe { std::slice::from_raw_parts(bytes.as_ptr().cast::<u8>(), bytes.len()) };
     let owned = bytes.to_vec();
-    match String::from_utf8(owned) {
+    Some(match String::from_utf8(owned) {
         Ok(s) => s,
         Err(e) => String::from_utf8_lossy(e.as_bytes()).into_owned(),
-    }
+    })
 }
 
 /// Keep a schema's hash clear of the two values that mark a slot's state.
