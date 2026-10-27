@@ -63,19 +63,13 @@ impl TraceSerializer {
         traces: &[S],
         metadata: &TracerMetadata,
         format: TraceExporterOutputFormat,
-        attrs: Option<msgpack_encoder::v1::PayloadAttrs<'_>>,
     ) -> Result<(), TraceExporterError> {
         match format {
             TraceExporterOutputFormat::V04 => msgpack_encoder::v04::to_writer(writer, traces)
                 .map_err(|error| TraceExporterError::Io(std::io::Error::other(error))),
             TraceExporterOutputFormat::V1 => {
-                let attrs = attrs.unwrap_or_else(|| {
-                    msgpack_encoder::v1::extract_payload_attrs(traces, metadata)
-                });
-                msgpack_encoder::v1::encode_payload_from_v04_with_attrs(
-                    writer, traces, metadata, attrs,
-                )
-                .map_err(|error| TraceExporterError::Io(std::io::Error::other(error)))
+                msgpack_encoder::v1::encode_payload_from_v04(writer, traces, metadata)
+                    .map_err(|error| TraceExporterError::Io(std::io::Error::other(error)))
             }
             TraceExporterOutputFormat::V05 => {
                 let payload =
@@ -158,7 +152,7 @@ impl TraceSerializer {
             .load(Ordering::Relaxed)
             .max(MIN_BUFFER_CAPACITY);
         let mut buff = Vec::with_capacity(capacity);
-        Self::encode_to_writer(&mut buff, traces, metadata, output_format, None)?;
+        Self::encode_to_writer(&mut buff, traces, metadata, output_format)?;
         self.remember_size(buff.len());
         Ok(buff)
     }

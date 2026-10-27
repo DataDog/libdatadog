@@ -1,0 +1,21 @@
+{
+  "$schema": "../../../../schema/provider-streaming-metric-fixture.schema.json",
+  "profile": "gen_ai.client.provider_streaming@0.1.0",
+  "case": "observation-point-wrong-type",
+  "description": "observation_point is a string.",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "exampleai",
+    "request_model": "ex-large-1",
+    "streaming": true,
+    "output_chunk_intervals_seconds": [
+      0.1,
+      0.15
+    ],
+    "observation_point": [
+      "gateway"
+    ]
+  },
+  "expected_error_code": "field_type_invalid",
+  "expected_error": "observation_point"
+}

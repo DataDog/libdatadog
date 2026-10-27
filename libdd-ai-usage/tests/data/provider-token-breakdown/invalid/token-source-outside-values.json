@@ -1,0 +1,16 @@
+{
+  "$schema": "../../../../schema/provider-token-breakdown-metric-fixture.schema.json",
+  "profile": "trajectory.gen_ai.client.token_breakdown@0.1.0",
+  "case": "token-source-outside-values",
+  "description": "output_token_source is reported or estimated.",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "exampleai",
+    "input_tokens": 10,
+    "output_tokens": 5,
+    "output_token_source": "provider",
+    "observation_point": "gateway"
+  },
+  "expected_error_code": "value_not_allowed",
+  "expected_error": "output_token_source must be"
+}

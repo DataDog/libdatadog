@@ -48,6 +48,8 @@ pub struct TraceExporterBatchSummary {
     pub pending_p0_traces: u64,
     pub pending_p0_spans: u64,
     pub operation_failed: bool,
+    /// The operation stopped because of cancellation or its deadline, not setup failure.
+    pub operation_cancelled: bool,
     pub error_code: ExporterErrorCode,
 }
 
@@ -64,6 +66,7 @@ impl Default for TraceExporterBatchSummary {
             pending_p0_traces: 0,
             pending_p0_spans: 0,
             operation_failed: false,
+            operation_cancelled: false,
             error_code: ErrorCode::HttpUnknown,
         }
     }
@@ -109,6 +112,9 @@ impl From<BatchResult> for TraceExporterBatch {
             pending_p0_traces: result.pending_p0_traces,
             pending_p0_spans: result.pending_p0_spans,
             operation_failed: error.is_some(),
+            operation_cancelled: matches!(&result.error,
+                Some(libdd_data_pipeline::trace_exporter::error::TraceExporterError::Io(error))
+                    if matches!(error.kind(), std::io::ErrorKind::Interrupted | std::io::ErrorKind::TimedOut)),
             error_code: error.unwrap_or(ErrorCode::HttpUnknown),
         };
         let payloads = result
@@ -221,6 +227,31 @@ pub unsafe extern "C" fn ddog_trace_exporter_batch_free(batch: Option<Box<TraceE
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cancellation_is_distinct_from_failed_setup() {
+        for (kind, cancelled) in [
+            (std::io::ErrorKind::Interrupted, true),
+            (std::io::ErrorKind::TimedOut, true),
+            (std::io::ErrorKind::Other, false),
+        ] {
+            let batch = TraceExporterBatch::from(BatchResult {
+                error: Some(std::io::Error::from(kind).into()),
+                unattempted_chunks: 1,
+                unattempted_spans: 2,
+                ..Default::default()
+            });
+            assert!(batch.summary.operation_failed);
+            assert_eq!(batch.summary.operation_cancelled, cancelled);
+            assert_eq!(batch.summary.unattempted_chunks, 1);
+            assert_eq!(batch.summary.unattempted_spans, 2);
+        }
+        assert!(
+            !TraceExporterBatch::from(BatchResult::default())
+                .summary
+                .operation_cancelled
+        );
+    }
     use libdd_data_pipeline::trace_exporter::{
         batch::PayloadResult as NativePayload,
         error::{RequestError, TraceExporterError},

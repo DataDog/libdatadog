@@ -1,6 +1,7 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use super::super::trace_serializer::TraceSerializer;
 use super::*;
 use libdd_tinybytes::BytesString;
 use libdd_trace_utils::span::v04::SpanBytes;
@@ -16,7 +17,7 @@ fn chunk(id: u64, size: usize) -> Vec<SpanBytes> {
 
 fn encoded(traces: &[Vec<SpanBytes>], format: TraceExporterOutputFormat) -> Vec<u8> {
     let mut bytes = Vec::new();
-    TraceSerializer::encode_to_writer(&mut bytes, traces, &TracerMetadata::default(), format, None)
+    TraceSerializer::encode_to_writer(&mut bytes, traces, &TracerMetadata::default(), format)
         .unwrap();
     bytes
 }
@@ -117,7 +118,7 @@ fn exact_limits_include_envelopes() {
 }
 
 #[test]
-fn stops_during_metadata_preparation() {
+fn stops_between_chunks() {
     use std::sync::atomic::{AtomicUsize, Ordering};
     let traces: Vec<_> = (0..1000).map(|id| chunk(id, 8)).collect();
     let checks = AtomicUsize::new(0);
@@ -228,62 +229,26 @@ fn v04_packing_accounts_for_array_header_transitions() {
 }
 
 #[test]
-fn mid_write_stops_are_terminal_for_output_and_counting() {
+fn cancellation_after_a_large_chunk_does_not_retry_writes() {
     use std::sync::atomic::{AtomicUsize, Ordering};
     for format in [
         TraceExporterOutputFormat::V04,
         TraceExporterOutputFormat::V1,
         TraceExporterOutputFormat::V05,
     ] {
-        for keep in [false, true] {
-            let traces: Vec<_> = (0..4).map(|id| chunk(id, 96 * 1024)).collect();
-            let checks = AtomicUsize::new(0);
-            let stop = || {
-                let n = checks.fetch_add(1, Ordering::Relaxed);
-                // Fail promptly if write_all starts retrying a terminal stop.
-                assert!(n < 3, "encoding retried cancellation");
-                n > 0
-            };
-            let limit = Limit {
-                limit: 512 * 1024,
-                exceeded: false,
-                stopped: false,
-                next_check: 64 * 1024,
-                stop: &stop,
-            };
-            let metadata = TracerMetadata::default();
-            let (result, length, limit) = if keep {
-                let mut writer = LimitedBuffer {
-                    bytes: Vec::new(),
-                    limit,
-                };
-                let result = TraceSerializer::encode_to_writer(
-                    &mut writer,
-                    &traces,
-                    &metadata,
-                    format,
-                    None,
-                );
-                (result, writer.bytes.len(), writer.limit)
-            } else {
-                let mut writer = Counter { length: 0, limit };
-                let result = TraceSerializer::encode_to_writer(
-                    &mut writer,
-                    &traces,
-                    &metadata,
-                    format,
-                    None,
-                );
-                (result, writer.length, writer.limit)
-            };
-            assert!(length >= 64 * 1024);
-            assert!(limit.stopped);
-            assert!(matches!(
-                finish_encoding(result, limit, length, Vec::new()),
-                Encoded::Stopped
-            ));
-            assert_eq!(checks.load(Ordering::Relaxed), 2);
-        }
+        let traces: Vec<_> = (0..4).map(|id| chunk(id, 96 * 1024)).collect();
+        let checks = AtomicUsize::new(0);
+        let stop = || {
+            let n = checks.fetch_add(1, Ordering::Relaxed);
+            assert!(n < 3, "encoding retried cancellation");
+            n > 0
+        };
+        let metadata = TracerMetadata::default();
+        let mut planner =
+            Payloads::new(&traces, &metadata, format, 512 * 1024).with_limits(1024, &stop);
+        assert!(matches!(planner.next(), Some(Payload::Stopped)));
+        assert!(planner.packer.encoded_len() >= 64 * 1024);
+        assert_eq!(checks.load(Ordering::Relaxed), 2);
     }
 }
 
@@ -310,12 +275,12 @@ fn exhausted_planners_do_not_report_late_cancellation() {
 #[test]
 fn fallback_only_replans_unsent_survivors() {
     let mut traces: Vec<_> = (0..4).map(|id| chunk(id, 300)).collect();
-    traces.insert(2, chunk(10, 2048));
+    traces.insert(1, chunk(10, 2048));
     let metadata = TracerMetadata::default();
     let mut planner = Payloads::new(&traces, &metadata, TraceExporterOutputFormat::V1, 512);
     assert!(matches!(
         planner.next(),
-        Some(Payload::Oversized { index: 2 })
+        Some(Payload::Oversized { index: 1 })
     ));
     let Some(Payload::Encoded { indices, .. }) = planner.next() else {
         panic!("expected V1 payload")
@@ -332,5 +297,31 @@ fn fallback_only_replans_unsent_survivors() {
         assert!(bytes.len() <= 512);
         seen.extend(indices);
     }
-    assert_eq!(seen, vec![1, 3, 4]);
+    assert_eq!(seen, vec![2, 3, 4]);
+}
+
+#[test]
+fn empty_control_payloads_obey_the_limit() {
+    let metadata = TracerMetadata {
+        env: "x".repeat(2048),
+        ..Default::default()
+    };
+    for format in [
+        TraceExporterOutputFormat::V04,
+        TraceExporterOutputFormat::V05,
+        TraceExporterOutputFormat::V1,
+    ] {
+        let payload = empty(&metadata, format, 4096, &never_stop).unwrap();
+        let size = payload.len();
+        assert_eq!(
+            empty(&metadata, format, size, &never_stop).unwrap(),
+            payload
+        );
+        assert!(
+            matches!(empty(&metadata, format, size - 1, &never_stop), Err(TraceExporterError::Io(error)) if error.kind() == io::ErrorKind::FileTooLarge)
+        );
+        assert!(
+            matches!(empty(&metadata, format, size, &|| true), Err(TraceExporterError::Io(error)) if error.kind() == io::ErrorKind::Interrupted)
+        );
+    }
 }

@@ -331,7 +331,7 @@ impl<
             if stop() {
                 return Err(stopped());
             }
-            let bytes = super::payloads::empty::<T>(&self.metadata, format, limit, &stop)?;
+            let bytes = super::payloads::empty(&self.metadata, format, limit, &stop)?;
             let counts = PayloadCounts {
                 chunks: 0,
                 spans: 0,

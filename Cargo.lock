@@ -2730,6 +2730,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "libdd-ai-usage"
+version = "0.1.0"
+dependencies = [
+ "opentelemetry-proto",
+ "prost",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "libdd-alloc"
 version = "1.0.0"
 dependencies = [
@@ -2753,7 +2763,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-capabilities-impl"
-version = "7.0.0"
+version = "8.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2767,7 +2777,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-common"
-version = "8.0.0"
+version = "9.0.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -2889,7 +2899,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-data-pipeline"
-version = "12.0.0"
+version = "13.0.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -2941,7 +2951,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-data-pipeline-core"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2981,7 +2991,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-ddsketch"
-version = "1.1.3"
+version = "1.1.4"
 dependencies = [
  "criterion",
  "prost",
@@ -3002,7 +3012,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-dogstatsd-client"
-version = "8.0.0"
+version = "9.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3148,7 +3158,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-library-config"
-version = "4.2.0"
+version = "5.0.0"
 dependencies = [
  "anyhow",
  "libc",
@@ -3371,7 +3381,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-profiling-heap-sampler"
-version = "1.1.1"
+version = "1.1.2"
 dependencies = [
  "anyhow",
  "bindgen 0.71.1",
@@ -3390,7 +3400,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-remote-config"
-version = "7.0.0"
+version = "8.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3428,7 +3438,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-sampling"
-version = "8.0.0"
+version = "9.0.0"
 dependencies = [
  "criterion",
  "libdd-common",
@@ -3440,7 +3450,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-shared-runtime"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "async-trait",
  "futures",
@@ -3465,7 +3475,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-telemetry"
-version = "10.0.0"
+version = "11.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3512,7 +3522,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-tinybytes"
-version = "1.1.5"
+version = "1.2.0"
 dependencies = [
  "libdd-tinybytes",
  "libdd-trace-model",
@@ -3527,11 +3537,11 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-model"
-version = "0.1.0"
+version = "1.0.0"
 
 [[package]]
 name = "libdd-trace-normalization"
-version = "4.2.0"
+version = "4.3.0"
 dependencies = [
  "anyhow",
  "arbitrary",
@@ -3543,7 +3553,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-obfuscation"
-version = "10.0.0"
+version = "11.0.0"
 dependencies = [
  "anyhow",
  "criterion",
@@ -3563,7 +3573,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-protobuf"
-version = "5.1.0"
+version = "5.1.1"
 dependencies = [
  "bolero",
  "prost",
@@ -3577,7 +3587,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-stats"
-version = "11.0.0"
+version = "12.0.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -3607,7 +3617,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-utils"
-version = "14.0.0"
+version = "15.0.0"
 dependencies = [
  "allocator-api2",
  "anyhow",
@@ -4281,8 +4291,12 @@ version = "0.33.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cb39533d9d1c912123efd7d41d7e0c29d16917b60ce15b4c8d87cb1af7f67520"
 dependencies = [
+ "futures-channel",
+ "futures-executor",
+ "futures-util",
  "opentelemetry",
  "portable-atomic",
+ "thiserror 2.0.17",
 ]
 
 [[package]]

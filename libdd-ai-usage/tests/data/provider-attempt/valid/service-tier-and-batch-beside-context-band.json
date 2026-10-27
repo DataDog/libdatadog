@@ -1,0 +1,89 @@
+{
+  "$schema": "../../../../schema/provider-attempt-metric-fixture.schema.json",
+  "profile": "gen_ai.client.provider_attempt@0.1.0",
+  "case": "service-tier-and-batch-beside-context-band",
+  "description": "A 250,000-token prompt served as a batch request at the provider's default tier. The token Counters carry the band, the tier and the batch flag together, so a sum of these points has one price. The Histograms carry none of the three.",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "exampleai",
+    "request_model": "ex-long-1",
+    "duration_seconds": 4,
+    "streaming": false,
+    "input_tokens": 250000,
+    "output_tokens": 100,
+    "context_band": "200k-1M",
+    "service_tier": "default",
+    "batch": true,
+    "observation_point": "gateway"
+  },
+  "expected_metrics": [
+    {
+      "name": "gen_ai.client.inference.duration",
+      "instrument": "histogram",
+      "unit": "s",
+      "value": 4,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.request.model": "ex-long-1",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.operation.input_tokens",
+      "instrument": "histogram",
+      "unit": "{token}",
+      "value": 250000,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.request.model": "ex-long-1",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.operation.output_tokens",
+      "instrument": "histogram",
+      "unit": "{token}",
+      "value": 100,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.request.model": "ex-long-1",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.usage.input_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 250000,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.request.model": "ex-long-1",
+        "gen_ai.token.modality": "unknown",
+        "trajectory.context.band": "200k-1M",
+        "trajectory.request.service_tier": "default",
+        "trajectory.request.batch": "true",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.usage.output_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 100,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.request.model": "ex-long-1",
+        "gen_ai.token.modality": "unknown",
+        "trajectory.context.band": "200k-1M",
+        "trajectory.request.service_tier": "default",
+        "trajectory.request.batch": "true",
+        "trajectory.observation.point": "gateway"
+      }
+    }
+  ]
+}
