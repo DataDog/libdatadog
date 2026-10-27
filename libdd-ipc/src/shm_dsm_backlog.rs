@@ -302,13 +302,10 @@ impl ShmDsmBacklogMapping {
             .zip(&k.values)
             .filter(|&(tag, _)| present & 1 << tag as u8 != 0)
             .map(|(tag, wire)| {
-                format!(
-                    "{}:{}",
-                    tag.key(),
-                    pool_string(pool, wire.snapshot(), budget)
-                )
+                let value = pool_string(pool, wire.snapshot(), budget)?;
+                Some(format!("{}:{value}", tag.key()))
             })
-            .collect();
+            .collect::<Option<_>>()?;
         Some(DsmBacklog { tags, value })
     }
 }
@@ -611,5 +608,37 @@ mod tests {
 
         assert_eq!(drain_all(&t).len(), 1);
         assert!(drain_all(&t).is_empty());
+    }
+
+    /// A backlog with a value that does not resolve is dropped rather than exported with that
+    /// value blank, which would merge it with, or pass it off as, another backlog.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn string_references_outside_the_pool_drop_their_backlog() {
+        let t = table(test_path());
+        t.add_backlog(&produce("0", 1));
+        t.add_backlog(&produce("1", 2));
+        let mem = mapping(&t);
+        let bucket = mem.bucket(mem.header().active_idx.load(Relaxed));
+        let entry = bucket
+            .entries
+            .iter()
+            .find(|e| {
+                let h = e.key_hash.load(Relaxed);
+                h != SLOT_EMPTY && h != SLOT_INIT
+            })
+            .unwrap();
+        let wire = &entry.key.values[BacklogTag::Partition as usize];
+        wire.offset
+            .store(DEFAULT_DSM_BACKLOG_STRING_POOL_BYTES as u32 - 2, Relaxed);
+        wire.len.store(1 << 20, Relaxed);
+
+        let backlogs = drain_all(&t);
+        assert_eq!(
+            backlogs.len(),
+            1,
+            "only the untouched backlog should be exported"
+        );
+        assert!(!backlogs[0].tags.contains(&"partition:".to_owned()));
     }
 }
