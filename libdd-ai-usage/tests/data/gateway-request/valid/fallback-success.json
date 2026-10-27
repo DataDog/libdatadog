@@ -1,0 +1,49 @@
+{
+  "$schema": "../../../../schema/gateway-request-metric-fixture.schema.json",
+  "profile": "trajectory.gen_ai.gateway.request@0.1.0",
+  "case": "fallback-success",
+  "observation": {
+    "operation_name": "chat",
+    "request_model": "support-model",
+    "duration_seconds": 1.5,
+    "provider_operations": 4,
+    "provider_operation_coverage": "complete",
+    "fallbacks": 1
+  },
+  "expected_metrics": [
+    {
+      "name": "trajectory.gen_ai.gateway.request.duration",
+      "instrument": "histogram",
+      "unit": "s",
+      "value": 1.5,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.request.model": "support-model",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "trajectory.gen_ai.gateway.request.fallbacks",
+      "instrument": "histogram",
+      "unit": "{fallback}",
+      "value": 1,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.request.model": "support-model",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "trajectory.gen_ai.gateway.request.provider_operations",
+      "instrument": "histogram",
+      "unit": "{operation}",
+      "value": 4,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.request.model": "support-model",
+        "trajectory.provider.operation.coverage": "complete",
+        "trajectory.observation.point": "gateway"
+      }
+    }
+  ]
+}

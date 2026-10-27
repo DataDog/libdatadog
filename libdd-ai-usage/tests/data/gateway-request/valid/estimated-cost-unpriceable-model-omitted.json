@@ -1,0 +1,38 @@
+{
+  "$schema": "../../../../schema/gateway-request-metric-fixture.schema.json",
+  "profile": "trajectory.gen_ai.gateway.request@0.1.0",
+  "case": "estimated-cost-unpriceable-model-omitted",
+  "description": "The gateway could not price the model and wrote 0 for it. That zero is not a figure, so the producer leaves both members out, and no estimated cost point is recorded. The other points are as usual.",
+  "observation": {
+    "operation_name": "chat",
+    "request_model": "unlisted-model",
+    "duration_seconds": 0.9,
+    "provider_operations": 1,
+    "provider_operation_coverage": "complete"
+  },
+  "expected_metrics": [
+    {
+      "name": "trajectory.gen_ai.gateway.request.duration",
+      "instrument": "histogram",
+      "unit": "s",
+      "value": 0.9,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.request.model": "unlisted-model",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "trajectory.gen_ai.gateway.request.provider_operations",
+      "instrument": "histogram",
+      "unit": "{operation}",
+      "value": 1,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.request.model": "unlisted-model",
+        "trajectory.observation.point": "gateway",
+        "trajectory.provider.operation.coverage": "complete"
+      }
+    }
+  ]
+}

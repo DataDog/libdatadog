@@ -1,0 +1,43 @@
+{
+  "$schema": "../../../../schema/provider-streaming-metric-fixture.schema.json",
+  "profile": "gen_ai.client.provider_streaming@0.1.0",
+  "case": "observation-point-network-proxy",
+  "description": "A network proxy states observation_point, and each interval sample carries trajectory.observation.point.",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "exampleai",
+    "request_model": "ex-large-1",
+    "streaming": true,
+    "output_chunk_intervals_seconds": [
+      0.1,
+      0.15
+    ],
+    "observation_point": "network_proxy"
+  },
+  "expected_metrics": [
+    {
+      "name": "gen_ai.client.inference.time_per_output_chunk",
+      "instrument": "histogram",
+      "unit": "s",
+      "value": 0.1,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.request.model": "ex-large-1",
+        "trajectory.observation.point": "network_proxy"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.time_per_output_chunk",
+      "instrument": "histogram",
+      "unit": "s",
+      "value": 0.15,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.request.model": "ex-large-1",
+        "trajectory.observation.point": "network_proxy"
+      }
+    }
+  ]
+}
