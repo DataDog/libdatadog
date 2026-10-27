@@ -92,10 +92,7 @@ pub struct DsmTableKey {
 /// Compute the SHM path for a DSM table.
 pub fn dsm_checkpoint_shm_path(key: &DsmTableKey) -> CString {
     let mut hasher = ZwoHasher::default();
-    key.env.hash(&mut hasher);
-    key.version.hash(&mut hasher);
-    key.service.hash(&mut hasher);
-    key.primary_tag.hash(&mut hasher);
+    key.hash(&mut hasher);
     let hash = hasher.finish();
 
     let mut path = format!(
