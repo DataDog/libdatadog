@@ -248,6 +248,7 @@ pub mod linux {
     ///
     /// If the feature isn't enabled, there is no branch at all and the whole function call should
     /// be entirely eliminated.
+    #[cfg_attr(not(feature = "thread-exit-autoclean"), allow(unused_variables))]
     fn init_autoclean_if_null<T>(prev: *mut T) {
         #[cfg(feature = "thread-exit-autoclean")]
         if prev.is_null() {
