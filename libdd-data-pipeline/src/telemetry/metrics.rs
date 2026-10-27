@@ -204,15 +204,15 @@ mod tests {
     use libdd_telemetry::worker::TelemetryWorkerBuilder;
 
     #[cfg_attr(miri, ignore)]
-    #[tokio::test]
-    async fn new_metrics_test() {
+    #[test]
+    fn new_metrics_test() {
         let (worker, _) = TelemetryWorkerBuilder::new_fetch_host(
             "service".to_string(),
             "language".to_string(),
             "0.1".to_string(),
             "1.0".to_string(),
         )
-        .spawn::<NativeCapabilities>();
+        .build_worker::<NativeCapabilities>();
 
         let metrics = Metrics::new(&worker);
 

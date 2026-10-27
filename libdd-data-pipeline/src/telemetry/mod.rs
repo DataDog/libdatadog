@@ -153,11 +153,7 @@ impl TelemetryClientBuilder {
 
         builder.mutable_metadata = self.mutable_metadata;
 
-        // No cancellation runtime handle: telemetry workers driven by SharedRuntime
-        // handle shutdown via WorkerHandle::stop, not the per-handle deadline path.
-        #[cfg(not(target_arch = "wasm32"))]
-        let (worker_handle, worker) = builder.build_worker::<C>(None);
-        #[cfg(target_arch = "wasm32")]
+        // The worker runs on a SharedRuntime and is shut down via WorkerHandle::stop.
         let (worker_handle, worker) = builder.build_worker::<C>();
 
         Ok((
