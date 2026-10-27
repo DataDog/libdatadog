@@ -107,10 +107,19 @@ impl DDSketch {
     /// Add `count` points to the bin at `index`, as [`Self::bin_index`] numbers them.
     ///
     /// For producers that bin values themselves and only hand the sketch their counts.
-    /// `count` must be positive.
+    /// `count` must be positive, and `index` one that [`Self::bin_index`] can return.
     pub fn add_to_bin(&mut self, index: i32, count: f64) -> Result<(), Box<dyn std::error::Error>> {
         if !count.is_finite() || count <= 0.0 {
             return Err("count must be positive and finite".into());
+        }
+        // An index the mapping could never produce could make the store span past `i32`.
+        let lowest = self.bin_index(self.mapping.min_indexable_value);
+        let highest = self.bin_index(f64::MAX);
+        if !lowest
+            .zip(highest)
+            .is_some_and(|(lo, hi)| (lo..=hi).contains(&index))
+        {
+            return Err("index is outside the sketch's mapping".into());
         }
         *self.store.bin_mut(index) += count;
         Ok(())
@@ -499,6 +508,23 @@ mod test {
         assert_eq!(sketch.count(), 0.0);
         assert!(sketch.add_to_bin(0, 1.0).is_ok());
         assert_eq!(sketch.count(), 1.0);
+    }
+
+    #[test]
+    fn bins_only_take_indices_the_mapping_produces() {
+        let mut sketch = DDSketch::default();
+        let lowest = sketch
+            .bin_index(sketch.mapping.min_indexable_value)
+            .unwrap();
+        let highest = sketch.bin_index(f64::MAX).unwrap();
+        assert!(sketch.add_to_bin(lowest, 1.0).is_ok());
+        assert!(sketch.add_to_bin(highest, 1.0).is_ok());
+        assert!(sketch.add_to_bin(lowest - 1, 1.0).is_err());
+        assert!(sketch.add_to_bin(highest + 1, 1.0).is_err());
+        // Far enough apart that the store's offsets would overflow `i32`.
+        assert!(sketch.add_to_bin(i32::MIN, 1.0).is_err());
+        assert!(sketch.add_to_bin(i32::MAX, 1.0).is_err());
+        assert_eq!(sketch.count(), 2.0);
     }
 
     #[test]
