@@ -103,6 +103,7 @@ pub fn dsm_checkpoint_shm_path(key: &DsmTableKey) -> CString {
     if cfg!(unix) {
         path.truncate(31);
     }
+    // unwrap: CString::new only fails on a NUL byte, and `path` only contains [A-Za-z0-9/_-].
     #[allow(clippy::unwrap_used)]
     CString::new(path).unwrap()
 }
