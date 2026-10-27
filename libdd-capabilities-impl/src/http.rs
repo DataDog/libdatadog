@@ -9,12 +9,16 @@
 /// during collection, including chunked bodies with no declared length. Requests
 /// without this extension retain their existing behavior. This is local client
 /// policy, never an HTTP header sent to the receiver.
-pub use libdd_capabilities::http::ResponseBodyLimit;
+/// If the request also carries [`libdd_capabilities::http::ResponseBodyLimit`],
+/// the smaller limit applies.
+#[derive(Clone, Copy, Debug)]
+pub struct ResponseBodyLimit(pub usize);
 
 mod native {
     use super::ResponseBodyLimit;
     use libdd_capabilities::http::{
         ObservedResponseStatus, PreserveResponseStatus, RejectOversizedPayload,
+        ResponseBodyLimit as CapabilityResponseBodyLimit,
     };
     use std::fs::OpenOptions;
     use std::future::Future;
@@ -34,9 +38,17 @@ mod native {
 
     use http_body_util::{BodyExt, Limited};
 
+    fn response_limit(extensions: &http::Extensions) -> Option<usize> {
+        let native = extensions.get::<ResponseBodyLimit>().map(|limit| limit.0);
+        let capability = extensions
+            .get::<CapabilityResponseBodyLimit>()
+            .map(|limit| limit.0);
+        native.into_iter().chain(capability).min()
+    }
+
     async fn collect_response(
         response: http::Response<Body>,
-        limit: Option<ResponseBodyLimit>,
+        limit: Option<usize>,
         preserve_status: bool,
         reject_413: bool,
     ) -> Result<http::Response<bytes::Bytes>, HttpError> {
@@ -45,7 +57,7 @@ mod native {
             return Ok(http::Response::from_parts(parts, bytes::Bytes::new()));
         }
         let collected = match limit {
-            Some(ResponseBodyLimit(limit)) => Limited::new(body, limit)
+            Some(limit) => Limited::new(body, limit)
                 .collect()
                 .await
                 .map(|body| body.to_bytes())
@@ -201,7 +213,7 @@ mod native {
         {
             let periodic = self.periodic;
             let client_lock = self.client.clone();
-            let response_limit = req.extensions().get::<ResponseBodyLimit>().copied();
+            let response_limit = response_limit(req.extensions());
             let preserve_status = req.extensions().get::<PreserveResponseStatus>().is_some();
             let reject_413 = req.extensions().get::<RejectOversizedPayload>().is_some();
             let observed_status = req.extensions().get::<ObservedResponseStatus>().cloned();
@@ -243,7 +255,7 @@ mod native {
 
         fn request_streamed(&self, req: http::Request<()>) -> (BodySender, ResponseFuture) {
             let client = self.client.get_or_init(new_default_client).clone();
-            let response_limit = req.extensions().get::<ResponseBodyLimit>().copied();
+            let response_limit = response_limit(req.extensions());
             let preserve_status = req.extensions().get::<PreserveResponseStatus>().is_some();
             let reject_413 = req.extensions().get::<RejectOversizedPayload>().is_some();
             let observed_status = req.extensions().get::<ObservedResponseStatus>().cloned();
