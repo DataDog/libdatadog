@@ -42,3 +42,6 @@ cc.workspace = true
 # bindgen is only invoked when LIBDD_PROFILING_HEAP_SAMPLER_REGEN is set
 # (see above); `logging` is purely diagnostic output and is dropped.
 bindgen = { workspace = true, default-features = true }
+
+[lints.clippy]
+collapsible_if = "allow"

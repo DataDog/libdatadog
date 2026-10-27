@@ -52,5 +52,6 @@ memfd = { workspace = true, optional = true }
 libc = { workspace = true, optional = true }
 
 [lints.clippy]
+collapsible_if = "allow"
 std_instead_of_alloc = "warn"
 std_instead_of_core = "warn"
