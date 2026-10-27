@@ -329,6 +329,17 @@ pub(crate) struct Bucket<'a, S: Schema> {
 ///
 /// Comparisons and copies use bulk byte accesses over ranges checked by [`pool_slice`].
 /// Exported bytes are copied into private memory before UTF-8 validation.
+///
+/// Reading through a `&[u8]` while another process may write the same bytes is technically
+/// undefined behaviour. We accept it because the protocol keeps published strings stable: a
+/// writer copies a string in before publishing its key, and nothing overwrites it until the
+/// bucket is drained. The exceptions are a forced flush racing an `add`, a stalled writer, or
+/// a corrupt peer.
+///
+/// There is no cheap sound alternative: Rust has no atomic memcpy, `memcmp` races the same way
+/// under C's memory model, and per-byte atomic loads are too slow for `add`. A race can only
+/// garble bytes inside a bounds-checked range, and those bytes are never used as offsets or
+/// lengths.
 pub type Pool = [AtomicU8];
 
 pub(crate) fn bucket_hdr_size() -> usize {
@@ -354,8 +365,8 @@ pub(crate) fn pool_slice(pool: &Pool, sr: StringRef) -> Option<&Pool> {
 pub(crate) fn pool_eq(pool: &Pool, sr: StringRef, expected: &str) -> bool {
     match pool_slice(pool, sr) {
         Some(bytes) if bytes.len() == expected.len() => {
-            // Deliberately use non-atomic byte equality for this fixed, checked range.
-            // A peer may change the match result; no byte is interpreted as metadata or UTF-8.
+            // SAFETY: the range is in bounds, as just checked; for the race this slice ignores,
+            // see `Pool`. A racing write can only change whether this slot matches.
             let bytes =
                 unsafe { std::slice::from_raw_parts(bytes.as_ptr().cast::<u8>(), bytes.len()) };
             bytes == expected.as_bytes()
@@ -381,7 +392,8 @@ pub(crate) fn pool_string(pool: &Pool, sr: StringRef, budget: &mut usize) -> Opt
         return None;
     }
     *budget -= bytes.len();
-    // Validate only the private copy: a peer can keep rewriting the shared bytes.
+    // SAFETY: the range is in bounds, as just checked; for the race this slice ignores, see
+    // `Pool`. Validate only the private copy: a peer can keep rewriting the shared bytes.
     let bytes = unsafe { std::slice::from_raw_parts(bytes.as_ptr().cast::<u8>(), bytes.len()) };
     let owned = bytes.to_vec();
     Some(match String::from_utf8(owned) {
