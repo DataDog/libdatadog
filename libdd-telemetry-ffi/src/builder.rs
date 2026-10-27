@@ -221,8 +221,11 @@ pub unsafe extern "C" fn ddog_telemetry_builder_spawn_metric_logs(
 /// Stops the worker, blocking until queued actions are processed and the final flush is done.
 ///
 /// When `timeout_ms > 0`, in-flight requests are cancelled after that delay so the stop finishes
-/// promptly. Takes ownership of `worker`. Must not be called from a runtime thread. Returns an
-/// error if the runtime was already shut down; use `ddog_telemetry_worker_drop` then.
+/// promptly. Must not be called from a runtime thread.
+///
+/// Takes ownership of `worker`: the pointer is invalid after every call, including when an
+/// error is returned. Callers that already shut the runtime down must call
+/// `ddog_telemetry_worker_drop` instead of this function.
 pub extern "C" fn ddog_telemetry_worker_stop(
     worker: Box<TelemetryWorkerRuntimeHandle>,
     timeout_ms: u64,
@@ -257,9 +260,17 @@ pub extern "C" fn ddog_telemetry_worker_stop(
 #[unsafe(no_mangle)]
 /// Frees the worker handle without stopping the worker. The worker keeps running until the
 /// shared runtime is shut down (`ddog_shared_runtime_shutdown` also flushes it).
-// allow(ffi-panic-boundary): dropping the handle only releases Arcs and cannot panic.
-pub extern "C" fn ddog_telemetry_worker_drop(worker: Box<TelemetryWorkerRuntimeHandle>) {
-    drop(worker);
+///
+/// Takes ownership of `worker`; the pointer is invalid after this call. Returns an error if
+/// releasing the last runtime reference panicked (e.g. when called from a runtime thread).
+pub extern "C" fn ddog_telemetry_worker_drop(
+    worker: Box<TelemetryWorkerRuntimeHandle>,
+) -> MaybeError {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+        drop(worker);
+        MaybeError::None
+    }))
+    .unwrap_or_else(|_| panic_error("ddog_telemetry_worker_drop"))
 }
 
 /// C-facing companion to [`libdd_telemetry::config::TelemetryEndpoint`]: the same

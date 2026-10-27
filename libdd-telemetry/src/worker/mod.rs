@@ -279,12 +279,17 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Wor
         // enqueued between the last runloop tick and shutdown.
         for _ in 0..self.mailbox.len() {
             if let Ok(action) = self.mailbox.try_recv() {
-                let _ = match self.flavor {
+                let action_result = match self.flavor {
                     TelemetryWorkerFlavor::Full => self.dispatch_action(action).await,
                     TelemetryWorkerFlavor::MetricsLogs => {
                         self.dispatch_metrics_logs_action(action).await
                     }
                 };
+                // A queued terminal Stop already did the final flush: drop what follows it.
+                if action_result.is_break() && !self.config.restartable {
+                    self.terminate();
+                    return;
+                }
             }
         }
 
@@ -2475,6 +2480,61 @@ mod tests {
         );
         handle.send_start().unwrap();
         runtime.block_on(worker_handle.stop()).unwrap().unwrap();
+    }
+
+    /// Actions queued after a terminal Stop must be dropped by `shutdown()`: no stats reply and
+    /// no restart.
+    async fn shutdown_drops_actions_after_terminal_stop(flavor: TelemetryWorkerFlavor) {
+        let mut builder = TelemetryWorkerBuilder::new(
+            "host".into(),
+            "svc".into(),
+            "lang".into(),
+            "1".into(),
+            "tv".into(),
+        );
+        builder
+            .config
+            .set_endpoint(TelemetryEndpoint {
+                url: Some("file:///dev/null".into()),
+                ..Default::default()
+            })
+            .unwrap();
+        builder.flavor = flavor;
+        let (handle, mut worker) = builder.build_worker::<NativeCapabilities>();
+        let start = TelemetryActions::Lifecycle(LifecycleAction::Start);
+        let _ = match flavor {
+            TelemetryWorkerFlavor::Full => worker.dispatch_action(start).await,
+            TelemetryWorkerFlavor::MetricsLogs => worker.dispatch_metrics_logs_action(start).await,
+        };
+        assert!(worker.data.started);
+
+        handle.send_stop().unwrap();
+        let stats = handle.stats().unwrap();
+        handle.send_start().unwrap();
+
+        <TelemetryWorker<_> as libdd_shared_runtime::Worker>::shutdown(&mut worker).await;
+
+        assert!(
+            stats.await.is_err(),
+            "stats queued after Stop must not be answered"
+        );
+        assert!(
+            !worker.data.started,
+            "Start queued after Stop must not restart"
+        );
+        assert!(handle.send_start().is_err(), "mailbox must be closed");
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn shutdown_drops_actions_after_terminal_stop_full() {
+        shutdown_drops_actions_after_terminal_stop(TelemetryWorkerFlavor::Full).await;
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn shutdown_drops_actions_after_terminal_stop_metrics_logs() {
+        shutdown_drops_actions_after_terminal_stop(TelemetryWorkerFlavor::MetricsLogs).await;
     }
 
     /// An action enqueued into the mailbox but not yet processed by the runloop

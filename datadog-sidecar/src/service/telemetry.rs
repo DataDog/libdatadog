@@ -988,6 +988,106 @@ mod tests {
         assert!(output.contains("app-closing"));
     }
 
+    fn file_config(path: &std::path::Path) -> Config {
+        let mut config = Config::default();
+        config
+            .set_endpoint_uri(
+                libdd_common::parse_uri(&format!("file://{}", path.display())).unwrap(),
+            )
+            .unwrap();
+        config
+    }
+
+    /// Waits (bounded) until the worker is no longer registered on its shared runtime.
+    async fn wait_unregistered(worker_handle: &WorkerHandle) {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while worker_handle.set_fork_restart(false).is_ok() {
+                sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("worker must be removed from the shared runtime");
+        assert!(matches!(
+            worker_handle.set_fork_restart(false),
+            Err(libdd_shared_runtime::WorkerHandleError::AlreadyStopped)
+        ));
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)] // Uses OS shared memory and file output.
+    async fn retired_client_releases_runtime_slot() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = file_config(&dir.path().join("telemetry.json"));
+        let clients = TelemetryCachedClientSet::default();
+        let service = format!("telemetry-retire-{}", std::process::id());
+        let client = clients.get_or_create(
+            &service,
+            "test",
+            &InstanceId::new("session", "runtime"),
+            &RuntimeMetadata::new("php", "8", "test"),
+            || config,
+            vec![],
+        );
+        let worker_handle = {
+            let guard = client.lock_or_panic();
+            let telemetry = guard.as_ref().unwrap();
+            telemetry.worker.send_stop().unwrap();
+            telemetry.worker_handle.clone().unwrap()
+        };
+        // Retire like sidecar_server: take the client out, remove it from the cache, drop it.
+        let retired = client.lock_or_panic().take();
+        clients.remove_telemetry_client(&service, "test", &client);
+        drop(retired);
+
+        wait_unregistered(&worker_handle).await;
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)] // Uses OS shared memory and file output.
+    async fn evicted_client_flushes_pending_sends_and_releases_runtime_slot() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("telemetry.json");
+        let config = file_config(&path);
+        let clients = TelemetryCachedClientSet::default();
+        let service = format!("telemetry-evict-{}", std::process::id());
+        let client = clients.get_or_create(
+            &service,
+            "test",
+            &InstanceId::new("session", "runtime"),
+            &RuntimeMetadata::new("php", "8", "test"),
+            || config,
+            vec![],
+        );
+        let worker_handle = {
+            let mut guard = client.lock_or_panic();
+            let telemetry = guard.as_mut().unwrap();
+            // A pending send that only completes after the client is evicted.
+            let worker = telemetry.worker.clone();
+            telemetry.handle = Some(tokio::spawn(async move {
+                sleep(Duration::from_millis(50)).await;
+                worker
+                    .send_msg(TelemetryActions::AddConfig(data::Configuration {
+                        name: "pending-before-eviction".into(),
+                        value: Some("value".into()),
+                        origin: data::ConfigurationOrigin::Code,
+                        config_id: None,
+                        seq_id: None,
+                    }))
+                    .await
+                    .unwrap();
+            }));
+            telemetry.worker_handle.clone().unwrap()
+        };
+        drop(client);
+        // Idle eviction drops the cache entry, as the cleanup task's `retain` does.
+        clients.inner.lock_or_panic().clear();
+
+        wait_unregistered(&worker_handle).await;
+        let output = std::fs::read_to_string(path).unwrap();
+        assert!(output.contains("pending-before-eviction"));
+        assert!(output.contains("app-closing"));
+    }
+
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
     async fn a_new_client_replaces_old_acknowledgements() {

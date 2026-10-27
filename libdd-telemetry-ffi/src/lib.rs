@@ -161,6 +161,29 @@ mod tests {
         ddog_telemetry_handle_drop(handle);
     }
 
+    /// Dropping the last runtime reference from an async context makes tokio panic; the FFI
+    /// must report it as an error instead of unwinding across the boundary.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_worker_drop_in_async_context_is_contained() {
+        unsafe {
+            let builder = Box::new(TelemetryWorkerBuilder::new(
+                "h".into(),
+                "s".into(),
+                "rust".into(),
+                "1".into(),
+                "1".into(),
+            ));
+            let (handle, worker) = spawn_worker(builder, false);
+            let outer = tokio::runtime::Builder::new_current_thread()
+                .build()
+                .unwrap();
+            let res = outer.block_on(async move { ddog_telemetry_worker_drop(worker) });
+            assert!(matches!(res, MaybeError::Some(_)));
+            ddog_telemetry_handle_drop(handle);
+        }
+    }
+
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_spawn_null_runtime_errors() {
