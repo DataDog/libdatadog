@@ -7,6 +7,8 @@ AGENTS.md                            @DataDog/apm-common-components-core @DataDo
 CLAUDE.md                            @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 .clang-format                        @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 .pre-commit-config.yaml              @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
+.sg/                                 @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
+sgconfig.yml                         @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 .cargo/*                             @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 .config/nextest.toml                 @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 .config/commitlint.config.js         @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
@@ -43,6 +45,7 @@ deny.toml                            @DataDog/apm-common-components-core @DataDo
 /docs                                @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 /examples                            @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 libdd-agent-client                   @DataDog/apm-common-components-core
+libdd-ai-usage                       @DataDog/agent-console
 libdd-alloc/                         @DataDog/libdatadog-profiling
 libdd-capabilities*/                 @DataDog/apm-common-components-core
 libdd-common*/                       @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
@@ -93,6 +96,8 @@ scripts/release-excluded-crates-hints.sh  @DataDog/apm-common-components-core
 scripts/release-generate-changelogs.sh  @DataDog/apm-common-components-core
 scripts/release-version-bumps.sh     @DataDog/apm-common-components-core
 scripts/release-version-major-bumps.sh  @DataDog/apm-common-components-core
+scripts/run-ast-grep.sh              @DataDog/apm-common-components-core
+scripts/_add_ffi_panic_allows.py     @DataDog/apm-common-components-core
 scripts/semver-level.sh              @DataDog/apm-common-components-core
 scripts/split_lcov.sh                @DataDog/apm-common-components-core
 scripts/test_sidecar_ffi.sh          @DataDog/libdatadog-php @DataDog/apm-common-components-core-reviewers
@@ -134,6 +139,7 @@ datadog-sidecar/src/service/ffe_metrics_flusher.rs      @DataDog/libdatadog-php 
 # owner for Green CI / test-failure reporting.
 
 libdd-agent-client/Cargo.toml                @DataDog/apm-common-components-core @DataDog/libdatadog-release
+libdd-ai-usage/Cargo.toml                    @DataDog/agent-console @DataDog/libdatadog-release
 libdd-capabilities-impl/CHANGELOG.md         @DataDog/apm-common-components-core @DataDog/libdatadog-release
 libdd-capabilities-impl/Cargo.toml           @DataDog/apm-common-components-core @DataDog/libdatadog-release
 libdd-capabilities/CHANGELOG.md              @DataDog/apm-common-components-core @DataDog/libdatadog-release
