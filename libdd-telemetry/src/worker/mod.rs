@@ -42,17 +42,12 @@ use std::{
 // the wasm runtime doesn't hit `time not implemented on this platform`.
 use web_time as time;
 
-#[cfg(not(target_arch = "wasm32"))]
-use std::sync::{Condvar, Mutex};
-
 use crate::metrics::MetricBucketStats;
 use futures::channel::oneshot;
 use http::{HeaderValue, header};
 use libdd_common::mutable_metadata::{MutableMetadata, MutableMetadataHandle};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
-#[cfg(not(target_arch = "wasm32"))]
-use tokio::{runtime, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
 use tracing::debug;
 
@@ -220,14 +215,16 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Wor
                 "Received telemetry action"
             );
 
-            // When running as a [libdd_shared_runtime::Worker] Shutdown is handled by stopping the
-            // Worker from the handle and not by sending stop action
-            let _action_result = match self.flavor {
+            let action_result = match self.flavor {
                 TelemetryWorkerFlavor::Full => self.dispatch_action(action).await,
                 TelemetryWorkerFlavor::MetricsLogs => {
                     self.dispatch_metrics_logs_action(action).await
                 }
             };
+
+            if action_result.is_break() && !self.config.restartable {
+                self.terminate();
+            }
         }
     }
 
@@ -373,6 +370,19 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
     fn flush_metric_aggregates(&mut self) {
         self.drain_metric_ring();
         self.data.metric_buckets.flush_aggregates();
+    }
+
+    /// Ends the worker's processing after a terminal Stop: the mailbox is closed and anything
+    /// still queued is dropped, so pending replies (e.g. stats) fail and later sends error.
+    /// [`Worker::trigger`] then parks until the worker is stopped through its `WorkerHandle`.
+    fn terminate(&mut self) {
+        debug!(
+            worker.runtime_id = %self.mutable_metadata.load().runtime_id,
+            "Telemetry worker stopped"
+        );
+        self.stopped = true;
+        self.mailbox.close();
+        while self.mailbox.try_recv().is_ok() {}
     }
 
     async fn recv_next_action(&mut self) -> TelemetryActions {
@@ -1037,105 +1047,21 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
             metric_buckets: self.data.metric_buckets.stats(),
         }
     }
-
-    // Runs a state machine that waits for actions, either from the worker's
-    // mailbox, or scheduled actions from the worker's deadline object.
-    async fn run_loop(mut self) {
-        debug!(
-            worker.flavor = ?self.flavor,
-            worker.runtime_id = %self.mutable_metadata.load().runtime_id,
-            "Starting telemetry worker"
-        );
-
-        loop {
-            if self.cancellation_token.is_cancelled() {
-                debug!(
-                    worker.runtime_id = %self.mutable_metadata.load().runtime_id,
-                    "Telemetry worker cancelled, shutting down"
-                );
-                return;
-            }
-
-            let action = self.recv_next_action().await;
-            debug!(
-                worker.runtime_id = %self.mutable_metadata.load().runtime_id,
-                action = ?action,
-                "Received telemetry action"
-            );
-
-            let action_result = match self.flavor {
-                TelemetryWorkerFlavor::Full => self.dispatch_action(action).await,
-                TelemetryWorkerFlavor::MetricsLogs => {
-                    self.dispatch_metrics_logs_action(action).await
-                }
-            };
-
-            match action_result {
-                ControlFlow::Continue(()) => {}
-                ControlFlow::Break(()) => {
-                    debug!(
-                        worker.runtime_id = %self.mutable_metadata.load().runtime_id,
-                        worker.restartable = self.config.restartable,
-                        "Telemetry worker received break signal"
-                    );
-                    if !self.config.restartable {
-                        break;
-                    }
-                }
-            };
-        }
-
-        debug!(
-            worker.runtime_id = %self.mutable_metadata.load().runtime_id,
-            "Telemetry worker stopped"
-        );
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-#[derive(Debug)]
-struct InnerTelemetryShutdown {
-    is_shutdown: Mutex<bool>,
-    condvar: Condvar,
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-impl InnerTelemetryShutdown {
-    fn wait_for_shutdown(&self) {
-        drop(
-            #[allow(clippy::unwrap_used)]
-            self.condvar
-                .wait_while(self.is_shutdown.lock().unwrap(), |is_shutdown| {
-                    !*is_shutdown
-                })
-                .unwrap(),
-        )
-    }
-
-    #[allow(clippy::unwrap_used)]
-    fn shutdown_finished(&self) {
-        *self.is_shutdown.lock().unwrap() = true;
-        self.condvar.notify_all();
-    }
 }
 
 /// TelemetryWorkerHandle is a handle which allows interactions with the telemetry worker.
 /// The handle is safe to use across threads.
 ///
-/// The worker won't send data to the agent until you call `TelemetryWorkerHandle::send_start`
+/// The worker won't send data to the agent until you call `TelemetryWorkerHandle::send_start`.
 ///
-/// To stop the worker, call `TelemetryWorkerHandle::send_stop` which trigger flush asynchronously
-/// then `TelemetryWorkerHandle::wait_for_shutdown` (native only — wasm callers rely on the
-/// SharedRuntime worker JoinHandle instead).
+/// To stop the worker, call [`WorkerHandle::stop`](libdd_shared_runtime::WorkerHandle::stop) on
+/// the handle returned by `SharedRuntime::spawn_worker`: it drains queued actions and performs the
+/// final flush. Call [`TelemetryWorkerHandle::cancel_requests`] to bound how long that takes.
 pub struct TelemetryWorkerHandle<
     C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
 > {
     sender: mpsc::Sender<TelemetryActions>,
-    #[cfg(not(target_arch = "wasm32"))]
-    shutdown: Arc<InnerTelemetryShutdown>,
     cancellation_token: CancellationToken,
-    #[cfg(not(target_arch = "wasm32"))]
-    runtime: Option<runtime::Handle>,
     contexts: MetricContexts,
     /// Shared with the worker: `add_point` publishes here (see `metric_ring`).
     metric_ring: Arc<MetricRing>,
@@ -1148,11 +1074,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Clo
     fn clone(&self) -> Self {
         Self {
             sender: self.sender.clone(),
-            #[cfg(not(target_arch = "wasm32"))]
-            shutdown: self.shutdown.clone(),
             cancellation_token: self.cancellation_token.clone(),
-            #[cfg(not(target_arch = "wasm32"))]
-            runtime: self.runtime.clone(),
             contexts: self.contexts.clone(),
             metric_ring: self.metric_ring.clone(),
             _phantom: PhantomData,
@@ -1169,18 +1091,6 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Deb
             .field("cancellation_token", &self.cancellation_token)
             .finish()
     }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn schedule_deferred_cancel<F>(runtime: Option<&runtime::Handle>, future: F)
-where
-    F: core::future::Future<Output = ()> + Send + 'static,
-{
-    let Some(rt) = runtime else {
-        tracing::error!("Cannot schedule cancellation deadline: no runtime handle available");
-        return;
-    };
-    rt.spawn(future);
 }
 
 impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static>
@@ -1237,25 +1147,12 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static>
             .try_send(TelemetryActions::Lifecycle(LifecycleAction::Stop))?)
     }
 
-    /// Schedule a deferred `CancellationToken::cancel()` to fire after `deadline`.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn cancel_requests_with_deadline(&self, deadline: time::Instant) {
-        let token = self.cancellation_token.clone();
-        let remaining = deadline.saturating_duration_since(time::Instant::now());
-        let sleeper = <C as SleepCapability>::new();
-        let future = async move {
-            sleeper.sleep(remaining).await;
-            token.cancel();
-        };
-        schedule_deferred_cancel(self.runtime.as_ref(), future);
-    }
-
-    /// Sync wrapper: schedule a cancellation deadline and block the current
-    /// thread until shutdown finishes.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn wait_for_shutdown_deadline(&self, deadline: time::Instant) {
-        self.cancel_requests_with_deadline(deadline);
-        self.wait_for_shutdown()
+    /// Cancel in-flight and future HTTP requests of the worker.
+    ///
+    /// Use it to bound [`WorkerHandle::stop`](libdd_shared_runtime::WorkerHandle::stop): the
+    /// final flush then completes without waiting for the agent to answer.
+    pub fn cancel_requests(&self) {
+        self.cancellation_token.cancel();
     }
 
     pub fn add_dependency(
@@ -1350,11 +1247,6 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static>
         Ok(())
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn wait_for_shutdown(&self) {
-        self.shutdown.wait_for_shutdown();
-    }
-
     pub fn stats(&self) -> anyhow::Result<oneshot::Receiver<TelemetryWorkerStats>> {
         let (sender, receiver) = oneshot::channel();
         self.sender
@@ -1376,6 +1268,33 @@ pub enum TelemetryWorkerFlavor {
     MetricsLogs,
 }
 
+/// Builds a telemetry worker.
+///
+/// The worker runs on a [`libdd_shared_runtime::SharedRuntime`]: use
+/// `ForkSafeRuntime` in hosts that may fork, `BasicRuntime` otherwise.
+///
+/// ```no_run
+/// use libdd_capabilities_impl::NativeCapabilities;
+/// use libdd_shared_runtime::{BasicRuntime, BlockingRuntime, SharedRuntime};
+/// use libdd_telemetry::worker::TelemetryWorkerBuilder;
+///
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let builder = TelemetryWorkerBuilder::new(
+///     "host".into(),
+///     "service".into(),
+///     "rust".into(),
+///     "1.0".into(),
+///     "1.0".into(),
+/// );
+/// let runtime = BasicRuntime::new()?;
+/// let (telemetry, worker) = builder.build_worker::<NativeCapabilities>();
+/// let worker_handle = runtime.spawn_worker(worker, false)?;
+/// telemetry.send_start()?;
+/// // ... record telemetry through `telemetry` ...
+/// runtime.block_on(worker_handle.stop())??;
+/// # Ok(())
+/// # }
+/// ```
 pub struct TelemetryWorkerBuilder {
     pub host: Host,
     pub application: Application,
@@ -1448,16 +1367,13 @@ impl TelemetryWorkerBuilder {
     }
 
     /// Build the corresponding worker and its handle.
+    ///
+    /// Spawn the worker with `SharedRuntime::spawn_worker` and stop it with
+    /// `WorkerHandle::stop` (see [`TelemetryWorkerBuilder`]).
     pub fn build_worker<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static>(
         self,
-        #[cfg(not(target_arch = "wasm32"))] tokio_runtime: Option<runtime::Handle>,
     ) -> (TelemetryWorkerHandle<C>, TelemetryWorker<C>) {
         let (tx, mailbox) = mpsc::channel(5000);
-        #[cfg(not(target_arch = "wasm32"))]
-        let shutdown = Arc::new(InnerTelemetryShutdown {
-            is_shutdown: Mutex::new(false),
-            condvar: Condvar::new(),
-        });
         let contexts = MetricContexts::default();
         let metric_ring = Arc::new(MetricRing::new());
         let token = CancellationToken::new();
@@ -1517,50 +1433,13 @@ impl TelemetryWorkerBuilder {
         (
             TelemetryWorkerHandle {
                 sender: tx,
-                #[cfg(not(target_arch = "wasm32"))]
-                shutdown,
                 cancellation_token: token,
-                #[cfg(not(target_arch = "wasm32"))]
-                runtime: tokio_runtime,
                 contexts,
                 metric_ring,
                 _phantom: PhantomData,
             },
             worker,
         )
-    }
-
-    /// Spawns a telemetry worker task in the current tokio runtime.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn spawn<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static>(
-        self,
-    ) -> (TelemetryWorkerHandle<C>, JoinHandle<()>) {
-        let tokio_runtime = tokio::runtime::Handle::current();
-
-        let (worker_handle, worker) = self.build_worker::<C>(Some(tokio_runtime.clone()));
-
-        let join_handle = tokio_runtime.spawn(async move { worker.run_loop().await });
-
-        (worker_handle, join_handle)
-    }
-
-    /// Spawns a telemetry worker in a new thread and returns a handle to interact with it.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn run<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static>(
-        self,
-    ) -> anyhow::Result<TelemetryWorkerHandle<C>> {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()?;
-        let (handle, worker) = self.build_worker::<C>(Some(runtime.handle().clone()));
-        let notify_shutdown = handle.shutdown.clone();
-        std::thread::spawn(move || {
-            runtime.block_on(worker.run_loop());
-            runtime.shutdown_background();
-            notify_shutdown.shutdown_finished();
-        });
-
-        Ok(handle)
     }
 }
 
@@ -1577,7 +1456,6 @@ mod tests {
     };
     use libdd_capabilities_impl::NativeCapabilities;
     use libdd_common::mutable_metadata::MutableMetadataHandle;
-    use tokio::runtime::Runtime;
 
     fn is_send<T: Send>(_: T) {}
     fn is_sync<T: Sync>(_: T) {}
@@ -1612,9 +1490,7 @@ mod tests {
         b.config.session_id = session_id;
         b.config.parent_session_id = parent_session_id;
         b.config.root_session_id = root_session_id;
-        let rt = Runtime::new().unwrap();
-        b.build_worker::<NativeCapabilities>(Some(rt.handle().clone()))
-            .1
+        b.build_worker::<NativeCapabilities>().1
     }
 
     #[cfg_attr(miri, ignore)] // reqwest in build_worker
@@ -1638,8 +1514,7 @@ mod tests {
             .unwrap();
         builder.runtime_id = Some("ignored".into());
         builder.mutable_metadata = Some(metadata.clone());
-        let rt = Runtime::new().unwrap();
-        let (_, worker) = builder.build_worker::<NativeCapabilities>(Some(rt.handle().clone()));
+        let (_, worker) = builder.build_worker::<NativeCapabilities>();
         let first = worker.build_request(&Payload::AppHeartbeat(())).unwrap();
         let first: serde_json::Value = serde_json::from_slice(first.body()).unwrap();
         assert_eq!(first["runtime_id"], "initial");
@@ -1821,8 +1696,7 @@ mod tests {
             .unwrap();
         b.runtime_id = Some("rid".into());
         b.flavor = flavor;
-        b.build_worker::<NativeCapabilities>(Some(tokio::runtime::Handle::current()))
-            .1
+        b.build_worker::<NativeCapabilities>().1
     }
 
     /// `endpoints_message_limit` caps one payload, it does not discard the rest: the overflow has
@@ -2060,7 +1934,7 @@ mod tests {
                 "1.0.0".to_string(),
             );
             // build_worker requires a tokio Handle; tests using this must be #[tokio::test]
-            builder.build_worker::<NativeCapabilities>(Some(tokio::runtime::Handle::current()))
+            builder.build_worker::<NativeCapabilities>()
         }
 
         fn make_log(id: u64, message: &str) -> (LogIdentifier, Log) {
@@ -2113,7 +1987,7 @@ mod tests {
                     ..Default::default()
                 })
                 .unwrap();
-            let (handle, worker) = builder.build_worker::<NativeCapabilities>(None);
+            let (handle, worker) = builder.build_worker::<NativeCapabilities>();
             let _worker = runtime.spawn_worker(worker, true).unwrap();
             handle.send_start().unwrap();
 
@@ -2456,7 +2330,7 @@ mod tests {
     #[test]
     fn test_channel_close_flushes_and_parks_via_shared_runtime() {
         use httpmock::prelude::*;
-        use libdd_shared_runtime::{BlockingRuntime, ForkSafeRuntime, SharedRuntime};
+        use libdd_shared_runtime::{ForkSafeRuntime, SharedRuntime};
         use std::time::Duration;
 
         const TELEMETRY_PATH: &str = "/telemetry/proxy/api/v2/apmtelemetry";
@@ -2484,11 +2358,7 @@ mod tests {
         builder.runtime_id = Some("rid".into());
 
         let shared_runtime = ForkSafeRuntime::new().expect("ForkSafeRuntime::new");
-        let runtime_handle = shared_runtime
-            .block_on(async { tokio::runtime::Handle::current() })
-            .expect("runtime handle");
-        let (telemetry_handle, worker) =
-            builder.build_worker::<NativeCapabilities>(Some(runtime_handle));
+        let (telemetry_handle, worker) = builder.build_worker::<NativeCapabilities>();
 
         let _worker_handle = shared_runtime
             .spawn_worker(worker, false)
@@ -2538,9 +2408,78 @@ mod tests {
         );
     }
 
+    fn spawn_terminal_stop_worker(
+        restartable: bool,
+    ) -> (
+        libdd_shared_runtime::BasicRuntime,
+        TelemetryWorkerHandle<NativeCapabilities>,
+        libdd_shared_runtime::WorkerHandle,
+    ) {
+        use libdd_shared_runtime::{BasicRuntime, SharedRuntime};
+        let mut builder = TelemetryWorkerBuilder::new(
+            "host".into(),
+            "svc".into(),
+            "lang".into(),
+            "1".into(),
+            "tv".into(),
+        );
+        builder
+            .config
+            .set_endpoint(TelemetryEndpoint {
+                url: Some("file:///dev/null".into()),
+                ..Default::default()
+            })
+            .unwrap();
+        builder.config.restartable = restartable;
+        let runtime = BasicRuntime::new().expect("BasicRuntime::new");
+        let (handle, worker) = builder.build_worker::<NativeCapabilities>();
+        let worker_handle = runtime.spawn_worker(worker, false).expect("spawn_worker");
+        (runtime, handle, worker_handle)
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn non_restartable_stop_ends_worker() {
+        use libdd_shared_runtime::BlockingRuntime;
+        let (runtime, handle, worker_handle) = spawn_terminal_stop_worker(false);
+        handle.send_start().unwrap();
+        handle.send_stop().unwrap();
+        // The stats request is either dropped with the mailbox or rejected by the closed channel.
+        let stats = runtime.block_on(async {
+            match handle.stats() {
+                Ok(rx) => rx.await.is_err(),
+                Err(_) => true,
+            }
+        });
+        assert!(stats.unwrap(), "stats must fail after a terminal Stop");
+        assert!(
+            handle
+                .try_send_msg(TelemetryActions::Lifecycle(LifecycleAction::Start))
+                .is_err(),
+            "sends must fail after a terminal Stop"
+        );
+        runtime.block_on(worker_handle.stop()).unwrap().unwrap();
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn restartable_stop_keeps_worker_running() {
+        use libdd_shared_runtime::BlockingRuntime;
+        let (runtime, handle, worker_handle) = spawn_terminal_stop_worker(true);
+        handle.send_start().unwrap();
+        handle.send_stop().unwrap();
+        let stats = runtime.block_on(async { handle.stats().unwrap().await });
+        assert!(
+            stats.unwrap().is_ok(),
+            "restartable worker keeps processing"
+        );
+        handle.send_start().unwrap();
+        runtime.block_on(worker_handle.stop()).unwrap().unwrap();
+    }
+
     /// An action enqueued into the mailbox but not yet processed by the runloop
     /// must still be reflected in the final Stop flush. Drives `shutdown()`
-    /// directly (no `run_loop`) so the assertion is deterministic.
+    /// directly so the assertion is deterministic.
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn shutdown_drains_pending_actions_before_stop() {
@@ -2578,8 +2517,7 @@ mod tests {
             })
             .unwrap();
         builder.runtime_id = Some("rid".into());
-        let (handle, mut worker) =
-            builder.build_worker::<NativeCapabilities>(Some(tokio::runtime::Handle::current()));
+        let (handle, mut worker) = builder.build_worker::<NativeCapabilities>();
 
         let context = handle.register_metric_context(
             METRIC_NAME.into(),

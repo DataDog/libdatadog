@@ -361,7 +361,9 @@ mod tests {
         let _handle = shared_runtime.spawn_worker(worker, false).unwrap();
         assert_eq!(receiver.recv_timeout(Duration::from_secs(1)).unwrap(), 0);
 
-        shared_runtime.block_on(shared_runtime.shutdown_async()).unwrap();
+        shared_runtime
+            .block_on(shared_runtime.shutdown_async())
+            .unwrap();
         let mut last = receiver.recv_timeout(Duration::from_secs(1)).unwrap();
         while let Ok(v) = receiver.try_recv() {
             last = v;

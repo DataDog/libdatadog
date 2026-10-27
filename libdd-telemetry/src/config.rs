@@ -46,8 +46,9 @@ pub struct Config {
     pub telemetry_heartbeat_interval: Duration,
     pub telemetry_extended_heartbeat_interval: Duration,
     pub direct_submission_enabled: bool,
-    /// Prevents LifecycleAction::Stop from terminating the worker (except if the WorkerHandle is
-    /// dropped)
+    /// Prevents `LifecycleAction::Stop` from ending the worker's processing (except if every
+    /// `TelemetryWorkerHandle` is dropped). Without it, Stop closes the mailbox; the worker's
+    /// runtime slot is released by `WorkerHandle::stop`.
     pub restartable: bool,
 
     pub debug_enabled: bool,
