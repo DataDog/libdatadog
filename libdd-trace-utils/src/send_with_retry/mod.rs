@@ -148,6 +148,7 @@ pub async fn send_with_retry_and_size<C: HttpClientCapability + SleepCapability>
 
 /// Send trace data while bounding optional response feedback. Status and headers
 /// survive body errors, so an acknowledged send is not replayed for its feedback.
+#[allow(clippy::result_large_err)]
 pub async fn send_with_bounded_response<C: HttpClientCapability + SleepCapability>(
     capabilities: &C,
     target: &Endpoint,
