@@ -214,6 +214,14 @@ pub(crate) struct ShmHeader {
     pub(crate) flush_seq: AtomicU64,
 }
 
+/// Where `ready` is in the header of every version, so that a creator can retire a segment of
+/// any vintage without trusting the rest of its layout.
+const READY_OFFSET: usize = 4;
+
+// Peers of other versions find these two fields by position, so they must never move.
+const _: () = assert!(std::mem::offset_of!(ShmHeader, version) == 0);
+const _: () = assert!(std::mem::offset_of!(ShmHeader, ready) == READY_OFFSET);
+
 /// Where everything in the mapping is, kept in private memory.
 ///
 /// Every field here also exists in [`ShmHeader`]. The creator takes them from its own
@@ -613,11 +621,17 @@ impl<S: Schema> ShmTableMapping<S> {
         // Retire old segments only after the replacement is ready.
         for old in replaced {
             if let Ok(old) = old.map() {
-                if old.as_slice().len() >= size_of::<ShmHeader>() {
-                    // SAFETY: page-aligned, in bounds, and all fields are integer atomics.
-                    // Touch only `ready`; the old segment's layout is untrusted.
-                    let hdr = unsafe { &*(old.as_slice().as_ptr() as *const ShmHeader) };
-                    hdr.ready.store(0, Release);
+                if old.get_size() > READY_OFFSET {
+                    // SAFETY: in bounds, as just checked, and the pointer is the mapping's own,
+                    // valid for reads and writes; no slice or reference over the shared bytes is
+                    // made. An `AtomicU8` has no alignment requirement, and every process
+                    // accesses `ready` atomically, so this does not race with a non-atomic
+                    // access. Only that byte is touched, not the rest of the old segment's
+                    // untrusted header.
+                    let ready = unsafe {
+                        AtomicU8::from_ptr(old.ptr.as_ptr().cast::<u8>().add(READY_OFFSET))
+                    };
+                    ready.store(0, Release);
                 }
             }
         }
