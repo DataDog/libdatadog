@@ -116,6 +116,10 @@ pub(super) fn recvmsg_raw(
     let mut cmsg_buf = vec![0u8; cmsg_space];
     let mut iov = [io::IoSliceMut::new(buf)];
 
+    // SCM_RIGHTS creates new descriptors; the sender's close-on-exec flag is not
+    // inherited. Set it atomically where the receive API supports it.
+    #[cfg(target_os = "linux")]
+    let flags = flags | MsgFlags::MSG_CMSG_CLOEXEC;
     let msg =
         recvmsg::<UnixAddr>(fd, &mut iov, Some(&mut cmsg_buf), flags).map_err(io::Error::from)?;
 
@@ -131,6 +135,16 @@ pub(super) fn recvmsg_raw(
             for raw_fd in raw_fds {
                 owned_fds.push(unsafe { OwnedFd::from_raw_fd(raw_fd) });
             }
+        }
+    }
+    // Own the whole batch before fallible setup so an error closes every fd.
+    #[cfg(not(target_os = "linux"))]
+    for fd in &owned_fds {
+        let flags = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_GETFD) };
+        if flags < 0
+            || unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_SETFD, flags | libc::FD_CLOEXEC) } < 0
+        {
+            return Err(io::Error::last_os_error());
         }
     }
     Ok((bytes, owned_fds))
