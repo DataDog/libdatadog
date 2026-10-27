@@ -1,8 +1,7 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Splitting a batch several times the payload limit, compared with one unbounded encoding of the
-//! whole batch. Packing should cost about as much as encoding.
+//! Compares encoding a batch as one payload with splitting it into payloads capped at 1 MiB.
 
 use criterion::{Criterion, black_box, criterion_group};
 use libdd_tinybytes::BytesString;
