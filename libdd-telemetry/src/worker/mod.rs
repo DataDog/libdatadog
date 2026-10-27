@@ -2644,14 +2644,14 @@ mod tests {
             MetricNamespace::Tracers,
         );
 
-        // Ten times the capacity of the buffer. Without the drop this loop never ends.
-        let total = 20_480u32;
+        // The worker does not run, so the buffer eventually fills.
         let producer = {
             let handle = handle.clone();
             std::thread::spawn(move || {
-                let accepted = (0..total)
-                    .filter(|_| handle.try_add_point(1.0, &context, Vec::new()))
-                    .count();
+                let mut accepted = 0usize;
+                while handle.try_add_point(1.0, &context, Vec::new()) {
+                    accepted += 1;
+                }
                 let legacy_result = handle.add_point(1.0, &context, Vec::new());
                 (accepted, legacy_result)
             })
@@ -2665,7 +2665,7 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
         let (accepted, legacy_result) = producer.join().unwrap();
-        assert!(accepted > 0 && accepted < total as usize);
+        assert!(accepted > 0);
         assert!(
             legacy_result.is_ok(),
             "a full metric buffer must not turn a best-effort point into an error"
