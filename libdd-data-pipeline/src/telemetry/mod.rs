@@ -421,6 +421,47 @@ mod tests {
             .expect("Failed to spawn worker");
         (client, handle)
     }
+
+    #[cfg_attr(miri, ignore)] // NativeCapabilities uses reqwest.
+    #[test]
+    fn full_metric_buffer_does_not_fail_telemetry_batches() {
+        let check = std::thread::spawn(|| {
+            let (client, _worker) = TelemetryClientBuilder::default()
+                .set_service_name("service")
+                .set_language("rust")
+                .set_language_version("1")
+                .set_tracer_version("1")
+                .build::<NativeCapabilities>()
+                .unwrap();
+            let context = *client.metrics.get(metrics::MetricKind::ApiRequest);
+
+            // The worker does not run, so the ring eventually fills.
+            let mut accepted_any = false;
+            while client.worker.try_add_point(1.0, &context, Vec::new()) {
+                accepted_any = true;
+            }
+            assert!(accepted_any);
+
+            let data = SendPayloadTelemetry {
+                requests_count: 1,
+                errors_timeout: 1,
+                responses_count_per_code: HashMap::from([(503, 1)]),
+                ..Default::default()
+            };
+            assert!(client.send(&data).is_ok());
+            assert!(client.send_client_side_stats_drops(1, 1).is_ok());
+        });
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while !check.is_finished() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "a full metric buffer blocked the telemetry batch"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        check.join().unwrap();
+    }
+
     #[test]
     fn builder_test() {
         let builder = TelemetryClientBuilder::default()
