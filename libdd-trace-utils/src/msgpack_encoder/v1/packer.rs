@@ -75,8 +75,8 @@ impl<'a> ChunkPacker<'a> {
     ///
     /// # Errors
     ///
-    /// [`PushError::Full`] when the chunk does not fit; the payload is left unchanged. The work
-    /// spent on a rejected chunk is bounded by the limit.
+    /// [`PushError::Full`] when the chunk does not fit; the payload is left unchanged.
+    /// The byte limit does not bound metadata scanning or string hashing.
     pub fn push<T: TraceData + 'a>(&mut self, spans: &'a [Span<T>]) -> Result<(), PushError>
     where
         T::Text: 'a,
