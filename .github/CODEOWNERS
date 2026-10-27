@@ -110,7 +110,7 @@ tests/spawn_from_lib/                @DataDog/libdatadog-php @DataDog/apm-common
 tests/wasm/                          @DataDog/libdatadog-profiling @DataDog/serverless @DataDog/apm-common-components-core-reviewers
 tests/windows_package/               @DataDog/apm-common-components-core
 tools/                               @DataDog/apm-common-components-core
-windows/                             @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
+/windows/                            @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 fuzz/                                @DataDog/chaos-engineering
 
 # Nix
