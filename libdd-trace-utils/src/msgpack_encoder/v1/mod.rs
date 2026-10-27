@@ -980,6 +980,20 @@ mod tests {
     use crate::span::v04::SpanBytes;
     use libdd_tinybytes::BytesString;
 
+    #[test]
+    fn rejected_strings_do_not_enter_the_intern_table() {
+        let value = "x".repeat(64 * 1024);
+        let mut table = StringTable::new();
+        let mut bytes = [0; 16];
+        assert!(table.write_interned(&mut &mut bytes[..], &value).is_err());
+        assert_eq!(table.seen.len(), 1);
+
+        let mut bytes = Vec::new();
+        table.write_interned(&mut bytes, "ok").unwrap();
+        table.write_interned(&mut bytes, "ok").unwrap();
+        assert_eq!(bytes, [0xa2, b'o', b'k', 1]);
+    }
+
     fn make_span(
         service: &str,
         name: &str,
