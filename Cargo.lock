@@ -1401,6 +1401,7 @@ dependencies = [
  "libdd-ipc-macros",
  "libdd-live-debugger",
  "libdd-remote-config",
+ "libdd-shared-runtime",
  "libdd-telemetry",
  "libdd-tinybytes",
  "libdd-trace-stats",

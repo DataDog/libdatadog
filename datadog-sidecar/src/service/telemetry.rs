@@ -25,6 +25,7 @@ use zwohash::ZwoHasher;
 
 use libdd_capabilities_impl::NativeCapabilities;
 use libdd_common::tag::Tag;
+use libdd_shared_runtime::{BasicRuntime, SharedRuntime, WorkerHandle};
 use libdd_telemetry::worker::TelemetryWorkerBuilder;
 use serde::{Deserialize, Serialize};
 use std::ops::Sub;
@@ -408,6 +409,8 @@ pub struct TelemetryCachedClient {
     pub telemetry_metrics: HashMap<String, ContextKey>,
     pub handle: Option<JoinHandle<()>>,
     pub shared: TelemetryCachedClientShmData,
+    /// Registration of the worker on the shared runtime; stopped when the client is dropped.
+    worker_handle: Option<WorkerHandle>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -431,6 +434,7 @@ impl Default for TelemetryCachedClientShmData {
 
 impl TelemetryCachedClient {
     fn new(
+        runtime: &BasicRuntime,
         service: &str,
         env: &str,
         instance_id: &InstanceId,
@@ -458,8 +462,12 @@ impl TelemetryCachedClient {
         let config = get_config();
         builder.config = config.clone();
 
-        let (handle, _join) = builder.spawn();
-        info!("spawned telemetry worker {config:?}");
+        let (handle, worker) = builder.build_worker::<NativeCapabilities>();
+        let worker_handle = runtime
+            .spawn_worker(worker, false)
+            .inspect(|_| info!("spawned telemetry worker {config:?}"))
+            .inspect_err(|e| warn!("Could not spawn telemetry worker: {e}. Continuing without it."))
+            .ok();
         // Queue Start before another batch can send Stop to this worker.
         handle.send_start().ok();
 
@@ -479,6 +487,7 @@ impl TelemetryCachedClient {
             shared: TelemetryCachedClientShmData::default(),
             telemetry_metrics: Default::default(),
             handle: None,
+            worker_handle,
         };
         // Reset acknowledgements even if the first batch adds no cacheable data.
         client.write_shm_file();
@@ -643,6 +652,25 @@ impl Drop for TelemetryCachedClient {
         if let Some(shm_writer) = &self.shm_writer {
             shm_writer.write(&[]);
         }
+        // Release the worker from the shared runtime once queued sends ran; stop() drains the
+        // mailbox and performs the final flush.
+        let pending = self.handle.take();
+        let Some(worker_handle) = self.worker_handle.take() else {
+            return;
+        };
+        match tokio::runtime::Handle::try_current() {
+            Ok(rt) => {
+                rt.spawn(async move {
+                    if let Some(pending) = pending {
+                        pending.await.ok();
+                    }
+                    worker_handle.stop().await.ok();
+                });
+            }
+            Err(_) => {
+                warn!("No tokio runtime to stop the telemetry worker; it runs until shutdown")
+            }
+        }
     }
 }
 
@@ -653,6 +681,8 @@ type TelemetryCachedClientKey = (ServiceString, EnvString);
 pub struct TelemetryCachedClientSet {
     pub(crate) inner: Arc<Mutex<HashMap<TelemetryCachedClientKey, TelemetryCachedEntry>>>,
     cleanup_handle: Option<tokio::task::JoinHandle<()>>,
+    /// Shared runtime running every telemetry worker, on top of the sidecar's tokio runtime.
+    runtime: Arc<BasicRuntime>,
 }
 
 impl Default for TelemetryCachedClientSet {
@@ -672,6 +702,9 @@ impl Default for TelemetryCachedClientSet {
         Self {
             inner,
             cleanup_handle: Some(handle),
+            runtime: Arc::new(BasicRuntime::from_tokio_handle(
+                tokio::runtime::Handle::current(),
+            )),
         }
     }
 }
@@ -689,11 +722,17 @@ impl Clone for TelemetryCachedClientSet {
         Self {
             inner: Arc::clone(&self.inner),
             cleanup_handle: None,
+            runtime: Arc::clone(&self.runtime),
         }
     }
 }
 
 impl TelemetryCachedClientSet {
+    /// The shared runtime running the sidecar's telemetry workers.
+    pub(crate) fn runtime(&self) -> &Arc<BasicRuntime> {
+        &self.runtime
+    }
+
     fn get_existing_client(
         &self,
         service: &str,
@@ -737,6 +776,7 @@ impl TelemetryCachedClientSet {
             }
         }
         let client = Arc::new(Mutex::new(Some(TelemetryCachedClient::new(
+            &self.runtime,
             service,
             env,
             instance_id,
@@ -916,7 +956,9 @@ mod tests {
                 libdd_common::parse_uri(&format!("file://{}", path.display())).unwrap(),
             )
             .unwrap();
+        let runtime = BasicRuntime::from_tokio_handle(tokio::runtime::Handle::current());
         let client = TelemetryCachedClient::new(
+            &runtime,
             &format!("telemetry-start-stop-{}", std::process::id()),
             "test",
             &InstanceId::new("session", "runtime"),
@@ -967,7 +1009,9 @@ mod tests {
         assert!(reader.read().0);
         let generation = reader.last_read_generation();
 
+        let runtime = BasicRuntime::from_tokio_handle(tokio::runtime::Handle::current());
         let _new = TelemetryCachedClient::new(
+            &runtime,
             &service,
             "test",
             &InstanceId::new("session", "runtime"),
@@ -1025,11 +1069,14 @@ mod tests {
     }
 
     /// A delayed removal must not evict a newer client stored under the same key.
-    #[test]
-    fn stale_client_removal_preserves_replacement() {
+    #[tokio::test]
+    async fn stale_client_removal_preserves_replacement() {
         let clients = TelemetryCachedClientSet {
             inner: Arc::new(Mutex::new(HashMap::new())),
             cleanup_handle: None,
+            runtime: Arc::new(BasicRuntime::from_tokio_handle(
+                tokio::runtime::Handle::current(),
+            )),
         };
         let stale = Arc::new(Mutex::new(None));
         let replacement = Arc::new(Mutex::new(None));

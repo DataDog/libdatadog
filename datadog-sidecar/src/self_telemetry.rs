@@ -12,9 +12,11 @@ use crate::watchdog::WatchdogHandle;
 use libdd_capabilities_impl::NativeCapabilities;
 use libdd_common::{MutexExt, tag, tag::Tag};
 use libdd_ffe::telemetry::flagevaluation::ContextTruncationReason;
+use libdd_shared_runtime::SharedRuntime;
 use libdd_telemetry::data::metrics::{MetricNamespace, MetricType};
 use libdd_telemetry::metrics::ContextKey;
 use libdd_telemetry::worker::{LifecycleAction, TelemetryActions, TelemetryWorkerBuilder};
+use tracing::warn;
 
 /// The sidecar runs the telemetry worker on native, so its handle is pinned to
 /// [`NativeCapabilities`].
@@ -278,7 +280,19 @@ impl SelfTelemetry {
             crate::sidecar_version!().to_string(),
         );
         builder.config = self.config.clone();
-        let (worker, join_handle) = builder.spawn::<NativeCapabilities>();
+        let (worker, telemetry_worker) = builder.build_worker::<NativeCapabilities>();
+        let worker_handle = match self
+            .server
+            .telemetry_clients
+            .runtime()
+            .spawn_worker(telemetry_worker, false)
+        {
+            Ok(worker_handle) => worker_handle,
+            Err(e) => {
+                warn!("Could not spawn the sidecar self-telemetry worker: {e}");
+                return;
+            }
+        };
 
         let metrics = MetricData {
             worker: &worker,
@@ -404,8 +418,8 @@ impl SelfTelemetry {
                 },
                 _ = self.watchdog_handle.wait_for_shutdown() => {
                     metrics.collect_and_send().await;
-                    let _ = worker.send_msg(TelemetryActions::Lifecycle(LifecycleAction::Stop)).await;
-                    let _ = join_handle.await;
+                    // stop() drains queued actions and performs the final flush.
+                    let _ = worker_handle.stop().await;
                     return
                 },
             }
