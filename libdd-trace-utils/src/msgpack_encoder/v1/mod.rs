@@ -957,7 +957,8 @@ mod tests {
 
     #[test]
     fn failed_writes_do_not_intern_oversized_strings() {
-        let value = libdd_tinybytes::BytesString::from("x".repeat(64 * 1024 * 1024));
+        // 64 KiB is the smallest str32 value and already exceeds this writer.
+        let value = libdd_tinybytes::BytesString::from("x".repeat(64 * 1024));
         let mut table = StringTable::new();
         let mut bytes = [0; 16];
         assert!(table.write_text(&mut &mut bytes[..], &value).is_err());

@@ -223,17 +223,29 @@ fn span(trace: u64, index: u64, tags: &[(&str, &str)]) -> SpanBytes {
 /// Varied chunks: repeated and unique strings, promoted tags appearing late, span links and
 /// events, and a few chunks much larger than the others.
 fn chunks() -> Vec<Chunk> {
-    (0..60u64)
+    // Keep late metadata and link/event cases in the smaller interpreted fixture.
+    let (count, large, env_at, version_at) = if cfg!(miri) {
+        (6, 4, 1, 3)
+    } else {
+        (60, 40, 9, 23)
+    };
+    (0..count)
         .map(|trace| {
-            let spans = if trace % 17 == 5 { 40 } else { 1 + trace % 4 };
+            let spans = if trace % 17 == 5 {
+                large
+            } else if cfg!(miri) {
+                1
+            } else {
+                1 + trace % 4
+            };
             (0..spans)
                 .map(|index| {
                     let mut tags = Vec::new();
-                    if trace == 9 {
+                    if trace == env_at {
                         tags.push(("env", "staging"));
                         tags.push(("_dd.apm_mode", "edge"));
                     }
-                    if trace == 23 {
+                    if trace == version_at {
                         tags.push(("version", "1.2.3"));
                         tags.push(("_dd.hostname", "web"));
                     }
