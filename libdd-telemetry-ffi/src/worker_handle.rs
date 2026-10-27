@@ -93,6 +93,8 @@ pub extern "C" fn ddog_telemetry_handle_clone(
 }
 
 #[unsafe(no_mangle)]
+/// Sends a Stop lifecycle event. A non-restartable worker then stops processing; release its
+/// runtime slot with `ddog_telemetry_worker_stop`.
 pub extern "C" fn ddog_telemetry_handle_stop(handle: &TelemetryWorkerHandle) -> MaybeError {
     crate::try_c!(handle.send_stop());
     MaybeError::None
@@ -142,25 +144,8 @@ pub unsafe extern "C" fn ddog_telemetry_handle_add_point_with_tags(
 }
 
 #[unsafe(no_mangle)]
-/// This function takes ownership of the handle. It should not be used after calling it
-pub extern "C" fn ddog_telemetry_handle_wait_for_shutdown(handle: Box<TelemetryWorkerHandle>) {
-    handle.wait_for_shutdown()
-}
-
-#[unsafe(no_mangle)]
-/// This function takes ownership of the handle. It should not be used after calling it
-pub extern "C" fn ddog_telemetry_handle_wait_for_shutdown_ms(
-    handle: Box<TelemetryWorkerHandle>,
-    wait_for_ms: u64,
-) {
-    handle.wait_for_shutdown_deadline(
-        std::time::Instant::now() + std::time::Duration::from_millis(wait_for_ms),
-    )
-}
-
-#[unsafe(no_mangle)]
-/// Drops the handle without waiting for shutdown. The worker will continue running in the
-/// background until it exits by itself
+/// Drops the handle. The worker keeps running until it is stopped with
+/// `ddog_telemetry_worker_stop` or its shared runtime is shut down.
 pub extern "C" fn ddog_telemetry_handle_drop(handle: Box<TelemetryWorkerHandle>) {
     drop(handle);
 }

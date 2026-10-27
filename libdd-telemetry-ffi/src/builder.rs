@@ -4,11 +4,13 @@
 use ffi::slice::AsBytes;
 use libdd_capabilities_impl::NativeCapabilities;
 use libdd_common_ffi as ffi;
+use libdd_shared_runtime::{BlockingRuntime, ForkSafeRuntime, SharedRuntime, WorkerHandle};
 use libdd_telemetry::{
     config, data,
     worker::{TelemetryWorkerBuilder, TelemetryWorkerFlavor},
 };
 use std::ptr::NonNull;
+use std::sync::Arc;
 
 /// FFI-facing alias: the C ABI surface is native-only, so the worker handle is
 /// always pinned to [`NativeCapabilities`].
@@ -130,41 +132,134 @@ pub unsafe extern "C" fn ddog_telemetry_builder_with_config(
     MaybeError::None
 }
 
-#[unsafe(no_mangle)]
-/// Builds the telemetry worker and return a handle to it
-///
-/// # Safety
-/// * handle should be a non null pointer to a null pointer
-pub unsafe extern "C" fn ddog_telemetry_builder_run(
+/// A telemetry worker running on a shared runtime. Created by `ddog_telemetry_builder_spawn`,
+/// released by `ddog_telemetry_worker_stop` or `ddog_telemetry_worker_drop`.
+pub struct TelemetryWorkerRuntimeHandle {
+    worker: WorkerHandle,
+    telemetry: TelemetryWorkerHandle,
+    runtime: Arc<ForkSafeRuntime>,
+}
+
+fn panic_error(context: &str) -> MaybeError {
+    MaybeError::Some(ffi::Error::from(format!("{context} panicked")))
+}
+
+unsafe fn spawn_on_runtime(
     builder: Box<TelemetryWorkerBuilder>,
+    runtime: *const ForkSafeRuntime,
+    restart_on_fork: bool,
     out_handle: NonNull<Box<TelemetryWorkerHandle>>,
+    out_worker: NonNull<Box<TelemetryWorkerRuntimeHandle>>,
 ) -> MaybeError {
+    let Some(runtime) = NonNull::new(runtime.cast_mut()) else {
+        return MaybeError::Some(ffi::Error::from("runtime must not be null".to_string()));
+    };
+    // SAFETY: runtime was produced by Arc::into_raw (ddog_shared_runtime_new) and is alive.
+    // Take our own strong reference so the caller still owns and frees its handle.
+    let runtime = unsafe {
+        Arc::increment_strong_count(runtime.as_ptr());
+        Arc::from_raw(runtime.as_ptr())
+    };
+    let (telemetry, worker) = builder.build_worker::<NativeCapabilities>();
+    let worker = crate::try_c!(runtime.spawn_worker(worker, restart_on_fork));
     unsafe {
-        out_handle
+        out_handle.as_ptr().write(Box::new(telemetry.clone()));
+        out_worker
             .as_ptr()
-            .write(Box::new(crate::try_c!(builder.run::<NativeCapabilities>())));
-        MaybeError::None
+            .write(Box::new(TelemetryWorkerRuntimeHandle {
+                worker,
+                telemetry,
+                runtime,
+            }));
     }
+    MaybeError::None
 }
 
 #[unsafe(no_mangle)]
-/// Builds the telemetry worker and return a handle to it. The worker will only process and send
-/// telemetry metrics and telemetry logs. Any lifecyle/dependency/configuration event will be
-/// ignored
+/// Builds the telemetry worker, spawns it on `runtime` and returns a handle to send telemetry
+/// (`out_handle`) and a handle to stop the worker (`out_worker`).
+///
+/// The builder is consumed. The caller keeps ownership of `runtime` and must still free it.
 ///
 /// # Safety
-/// * handle should be a non null pointer to a null pointer
-pub unsafe extern "C" fn ddog_telemetry_builder_run_metric_logs(
-    mut builder: Box<TelemetryWorkerBuilder>,
+/// * `runtime` must be a valid handle from `ddog_shared_runtime_new`.
+/// * `out_handle` and `out_worker` should be non null pointers to null pointers.
+pub unsafe extern "C" fn ddog_telemetry_builder_spawn(
+    builder: Box<TelemetryWorkerBuilder>,
+    runtime: *const ForkSafeRuntime,
+    restart_on_fork: bool,
     out_handle: NonNull<Box<TelemetryWorkerHandle>>,
+    out_worker: NonNull<Box<TelemetryWorkerRuntimeHandle>>,
 ) -> MaybeError {
-    unsafe {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
+        spawn_on_runtime(builder, runtime, restart_on_fork, out_handle, out_worker)
+    }))
+    .unwrap_or_else(|_| panic_error("ddog_telemetry_builder_spawn"))
+}
+
+#[unsafe(no_mangle)]
+/// Same as `ddog_telemetry_builder_spawn`, but the worker only processes and sends telemetry
+/// metrics and logs. Any lifecycle/dependency/configuration event is ignored.
+///
+/// # Safety
+/// Same as `ddog_telemetry_builder_spawn`.
+pub unsafe extern "C" fn ddog_telemetry_builder_spawn_metric_logs(
+    mut builder: Box<TelemetryWorkerBuilder>,
+    runtime: *const ForkSafeRuntime,
+    restart_on_fork: bool,
+    out_handle: NonNull<Box<TelemetryWorkerHandle>>,
+    out_worker: NonNull<Box<TelemetryWorkerRuntimeHandle>>,
+) -> MaybeError {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
         builder.flavor = TelemetryWorkerFlavor::MetricsLogs;
-        out_handle
-            .as_ptr()
-            .write(Box::new(crate::try_c!(builder.run::<NativeCapabilities>())));
+        spawn_on_runtime(builder, runtime, restart_on_fork, out_handle, out_worker)
+    }))
+    .unwrap_or_else(|_| panic_error("ddog_telemetry_builder_spawn_metric_logs"))
+}
+
+#[unsafe(no_mangle)]
+/// Stops the worker, blocking until queued actions are processed and the final flush is done.
+///
+/// When `timeout_ms > 0`, in-flight requests are cancelled after that delay so the stop finishes
+/// promptly. Takes ownership of `worker`. Must not be called from a runtime thread. Returns an
+/// error if the runtime was already shut down; use `ddog_telemetry_worker_drop` then.
+pub extern "C" fn ddog_telemetry_worker_stop(
+    worker: Box<TelemetryWorkerRuntimeHandle>,
+    timeout_ms: u64,
+) -> MaybeError {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let TelemetryWorkerRuntimeHandle {
+            worker,
+            telemetry,
+            runtime,
+        } = *worker;
+        let stop = async move {
+            let stop = worker.stop();
+            if timeout_ms == 0 {
+                return stop.await;
+            }
+            tokio::pin!(stop);
+            tokio::select! {
+                res = &mut stop => return res,
+                _ = tokio::time::sleep(std::time::Duration::from_millis(timeout_ms)) => {}
+            }
+            // Never drop the stop future: cancel requests so it completes promptly.
+            telemetry.cancel_requests();
+            stop.await
+        };
+        let res = crate::try_c!(runtime.block_on(stop));
+        crate::try_c!(res);
         MaybeError::None
-    }
+    }))
+    .unwrap_or_else(|_| panic_error("ddog_telemetry_worker_stop"))
+}
+
+#[unsafe(no_mangle)]
+/// Frees the worker handle without stopping the worker. The worker keeps running until the
+/// shared runtime is shut down (`ddog_shared_runtime_shutdown` also flushes it).
+// allow(ffi-panic-boundary): dropping the handle only releases Arcs and cannot panic.
+pub extern "C" fn ddog_telemetry_worker_drop(worker: Box<TelemetryWorkerRuntimeHandle>) {
+    drop(worker);
 }
 
 /// C-facing companion to [`libdd_telemetry::config::TelemetryEndpoint`]: the same

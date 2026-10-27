@@ -3515,10 +3515,12 @@ dependencies = [
  "libdd-capabilities-impl",
  "libdd-common",
  "libdd-common-ffi",
+ "libdd-shared-runtime",
  "libdd-telemetry",
  "paste",
  "serde_json",
  "tempfile",
+ "tokio",
 ]
 
 [[package]]

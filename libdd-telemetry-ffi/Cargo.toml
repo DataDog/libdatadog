@@ -25,6 +25,8 @@ build_common = { path = "../build-common" }
 [dependencies]
 libdd-capabilities-impl = { path = "../libdd-capabilities-impl" }
 libdd-telemetry = { path = "../libdd-telemetry" }
+libdd-shared-runtime = { path = "../libdd-shared-runtime" }
+tokio = { workspace = true, features = ["macros", "time"] }
 libdd-common = { path = "../libdd-common" }
 libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false, features = ["std"] }
 function_name.workspace = true
