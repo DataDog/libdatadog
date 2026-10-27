@@ -10,12 +10,14 @@ pub use thin_vec::ThinVec;
 pub mod span_pool;
 
 /// OpenTelemetry SpanKind values, encoded on the wire as a `uint32`.
-/// Unset or unrecognized kinds are [`SpanKind::Unspecified`] (OTel `SPAN_KIND_UNSPECIFIED`).
+/// Unset or unrecognized kinds default to [`SpanKind::Internal`].
 #[repr(u32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SpanKind {
-    #[default]
+    /// The tracer set no `span.kind`. The sidecar span builder starts spans with it, as the Go
+    /// and Java V1 tracers send 0 for such spans.
     Unspecified = 0,
+    #[default]
     Internal = 1,
     Server = 2,
     Client = 3,
@@ -25,15 +27,14 @@ pub enum SpanKind {
 
 impl SpanKind {
     /// Parses a v0.4 `span.kind` meta value into a [`SpanKind`].
-    /// Unrecognized values map to [`SpanKind::Unspecified`].
+    /// Unrecognized values map to [`SpanKind::Internal`].
     pub fn from_meta(s: &str) -> Self {
         match s {
-            "internal" => SpanKind::Internal,
             "server" => SpanKind::Server,
             "client" => SpanKind::Client,
             "producer" => SpanKind::Producer,
             "consumer" => SpanKind::Consumer,
-            _ => SpanKind::Unspecified,
+            _ => SpanKind::Internal,
         }
     }
 
@@ -52,15 +53,15 @@ impl SpanKind {
 }
 
 impl From<u32> for SpanKind {
-    /// OTEL SpanKind wire value → enum; unset/unknown → Unspecified.
+    /// OTEL SpanKind wire value → enum; 0 → Unspecified, unknown → Internal (per OTEL spec).
     fn from(kind: u32) -> Self {
         match kind {
-            1 => SpanKind::Internal,
+            0 => SpanKind::Unspecified,
             2 => SpanKind::Server,
             3 => SpanKind::Client,
             4 => SpanKind::Producer,
             5 => SpanKind::Consumer,
-            _ => SpanKind::Unspecified,
+            _ => SpanKind::Internal,
         }
     }
 }
@@ -243,11 +244,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn span_kind_default_is_unspecified() {
-        assert_eq!(SpanKind::default(), SpanKind::Unspecified);
+    fn span_kind_default_is_internal() {
+        assert_eq!(SpanKind::default(), SpanKind::Internal);
         assert_eq!(SpanKind::from(0), SpanKind::Unspecified);
         assert_eq!(SpanKind::from(1), SpanKind::Internal);
-        assert_eq!(SpanKind::from(9), SpanKind::Unspecified);
+        assert_eq!(SpanKind::from(9), SpanKind::Internal);
     }
 
     #[test]
@@ -257,8 +258,8 @@ mod tests {
         assert_eq!(SpanKind::from_meta("producer"), SpanKind::Producer);
         assert_eq!(SpanKind::from_meta("consumer"), SpanKind::Consumer);
         assert_eq!(SpanKind::from_meta("internal"), SpanKind::Internal);
-        assert_eq!(SpanKind::from_meta(""), SpanKind::Unspecified);
-        assert_eq!(SpanKind::from_meta("anything-else"), SpanKind::Unspecified);
+        assert_eq!(SpanKind::from_meta(""), SpanKind::Internal);
+        assert_eq!(SpanKind::from_meta("anything-else"), SpanKind::Internal);
     }
 
     #[test]
@@ -272,9 +273,9 @@ mod tests {
     }
 
     #[test]
-    fn span_default_has_unspecified_kind() {
+    fn span_default_has_internal_kind() {
         let s = SpanBytes::default();
-        assert_eq!(s.span_kind, SpanKind::Unspecified);
+        assert_eq!(s.span_kind, SpanKind::Internal);
         assert!(!s.error);
         assert!(s.attributes.is_empty());
     }

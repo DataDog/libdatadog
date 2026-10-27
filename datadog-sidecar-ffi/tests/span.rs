@@ -85,6 +85,16 @@ fn builds_span_with_promoted_and_typed_attributes() {
 }
 
 #[test]
+fn new_span_has_unspecified_kind() {
+    // A span without `span.kind` goes out as 0 on V1, as Go and Java send it.
+    let (b, _, span) = one_span(1);
+    assert_eq!(ddog_v1_get_span_kind(unsafe { &*span }), 0);
+    let encoded = to_vec_from_v1(&b);
+    let (decoded, _) = libdd_trace_utils::msgpack_decoder::v1::from_slice(&encoded).unwrap();
+    assert_eq!(decoded.chunks[0].spans[0].span_kind as u32, 0);
+}
+
+#[test]
 fn getters_round_trip_setters() {
     let mut b = ddog_v1_new_builder();
     let chunk = ddog_new_chunk(&mut b, 0xaabb, 0xccdd);

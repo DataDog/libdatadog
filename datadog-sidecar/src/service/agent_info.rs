@@ -25,6 +25,8 @@ use std::ffi::CString;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use tokio::select;
+use tokio::sync::Notify;
 use tokio::time::sleep;
 use tracing::{error, warn};
 use zwohash::HashMap;
@@ -69,6 +71,26 @@ impl AgentInfoGuard {
     pub fn lacks_debugger_v2_endpoint(&self) -> bool {
         self.fetcher.lacks_debugger_v2.load(Ordering::Relaxed)
     }
+
+    /// Whether a 404 from `/v1.0/traces` turned V1 off since the info last changed.
+    pub fn v1_rejected(&self) -> bool {
+        self.fetcher.v1_rejected.load(Ordering::Relaxed)
+    }
+
+    /// Turns V1 off after a 404 from `/v1.0/traces` until the info changes, and re-fetches it now:
+    /// the agent doesn't change its state on a 404. Returns whether V1 was still on.
+    pub fn reject_v1(&self) -> bool {
+        let was_on = !self.fetcher.v1_rejected.swap(true, Ordering::Relaxed);
+        if was_on {
+            self.refresh();
+        }
+        was_on
+    }
+
+    /// Re-fetches the info now rather than at the next poll.
+    pub(crate) fn refresh(&self) {
+        self.fetcher.refresh.notify_one();
+    }
 }
 
 impl Drop for AgentInfoGuard {
@@ -89,6 +111,10 @@ pub struct AgentInfoFetcher {
     /// are simply directly replacing this with a resolved future.
     infos: ArcSwap<Shared<ManualFuture<AgentInfoStruct>>>,
     lacks_debugger_v2: AtomicBool,
+    /// Set by [`AgentInfoGuard::reject_v1`], cleared by the next new info.
+    v1_rejected: AtomicBool,
+    /// Wakes the fetch loop before its next poll.
+    refresh: Notify,
 }
 
 impl AgentInfoFetcher {
@@ -123,6 +149,7 @@ impl AgentInfoFetcher {
             !agent_info_supports_debugger_v2_endpoint(&info),
             Ordering::Relaxed,
         );
+        self.v1_rejected.store(false, Ordering::Relaxed);
         publish(&json);
         if let Some(completer) = completer.take() {
             completer.complete(info).await;
@@ -140,6 +167,8 @@ impl AgentInfoFetcher {
             last_update_ms: AtomicU64::new(0),
             infos: ArcSwap::from_pointee(future.shared()),
             lacks_debugger_v2: AtomicBool::new(false),
+            v1_rejected: AtomicBool::new(false),
+            refresh: Notify::new(),
         });
         let this = fetcher.clone();
         #[allow(clippy::unwrap_used)]
@@ -199,7 +228,10 @@ impl AgentInfoFetcher {
                         );
                     }
                 }
-                sleep(Duration::from_secs(60)).await;
+                select! {
+                    _ = sleep(Duration::from_secs(60)) => {}
+                    _ = this.refresh.notified() => {}
+                }
             }
         });
 
@@ -347,6 +379,8 @@ mod tests {
             last_update_ms: AtomicU64::new(0),
             infos: ArcSwap::from_pointee(future.shared()),
             lacks_debugger_v2: AtomicBool::new(false),
+            v1_rejected: AtomicBool::new(false),
+            refresh: Notify::new(),
         };
         let endpoints = |list: &[&str]| list.iter().map(|e| e.to_string()).collect::<Vec<_>>();
         let awaited = || {

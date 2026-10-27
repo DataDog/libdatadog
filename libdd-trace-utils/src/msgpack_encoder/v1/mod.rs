@@ -8,12 +8,12 @@ use crate::span::TraceData;
 use crate::span::v1::TracerPayload;
 use crate::span::v04::Span;
 use crate::tracer_metadata::TracerMetadata;
+use hashbrown::{DefaultHashBuilder, HashMap};
 use libdd_common::ResultInfallibleExt;
 use rmp::encode::{
     ByteBuf, RmpWrite, ValueWriteError, write_array_len, write_bin, write_map_len, write_sint,
     write_str, write_uint, write_uint8,
 };
-use rustc_hash::FxHashMap;
 use std::borrow::Borrow;
 
 /// Integer keys for the top-level V1 trace payload map.
@@ -114,8 +114,9 @@ pub(super) const FLAT_ATTR_STRIDE: u32 = 3;
 /// their `write_to_slice_from_v04` / `write_to_slice_from_v1` counterparts) call starts with a
 /// fresh table so deduplication is payload-local.
 pub(crate) struct StringTable<'a> {
-    /// Keys borrow from the payload being encoded, so recording a string doesn't allocate.
-    seen: FxHashMap<&'a str, u32>,
+    /// Keys borrow from the payload being encoded, so recording a string doesn't allocate. The
+    /// hasher is randomly seeded because many of these strings are user-controlled.
+    seen: HashMap<&'a str, u32, DefaultHashBuilder>,
 }
 
 impl<'a> StringTable<'a> {
@@ -123,8 +124,10 @@ impl<'a> StringTable<'a> {
     const INITIAL_CAPACITY: usize = 64;
 
     fn new() -> Self {
-        let mut seen =
-            FxHashMap::with_capacity_and_hasher(Self::INITIAL_CAPACITY, Default::default());
+        let mut seen = HashMap::with_capacity_and_hasher(
+            Self::INITIAL_CAPACITY,
+            DefaultHashBuilder::default(),
+        );
         seen.insert("", 0);
         Self { seen }
     }
@@ -327,9 +330,10 @@ fn encode_payload_from_v04<W: RmpWrite, T: TraceData, S: AsRef<[Span<T>]>>(
     traces: &[S],
     metadata: &TracerMetadata,
 ) -> Result<(), ValueWriteError<W::Error>> {
-    let mut table = StringTable::new();
     let payload_attrs = extract_payload_attrs(traces, metadata);
     let mutable_metadata = metadata.mutable_metadata.load();
+    // Declared last so it drops first: its keys borrow from `mutable_metadata`.
+    let mut table = StringTable::new();
 
     let attr_count =
         payload_attrs.apm_mode.is_some() as u32 + payload_attrs.git_commit_sha.is_some() as u32;
@@ -1292,23 +1296,36 @@ mod v1_payload_tests {
     }
 
     #[test]
-    fn span_kind_unspecified_is_omitted_and_internal_is_emitted() {
-        // Unspecified (0, the default) is left off the wire; an explicit Internal is written as
-        // `kind_key (0x10) | uint 1 (0x01)`, exactly those 2 extra bytes.
-        let encode = |kind: SpanKind| {
-            let span = V1Span {
-                span_kind: kind,
-                ..make_span("svc", "op", 1)
-            };
-            to_vec_from_v1(&TracerPayloadBytes {
-                chunks: vec![make_chunk(vec![span], [0u8; 16])],
-                ..Default::default()
-            })
+    fn span_kind_is_always_emitted_as_uint() {
+        // Default SpanKind (Internal=1) must be emitted. The encoded payload contains
+        // `kind_key (0x10) | uint 1 (0x01)`.
+        let chunk = make_chunk(vec![make_span("svc", "op", 1)], [0u8; 16]);
+        let payload = TracerPayloadBytes {
+            chunks: vec![chunk],
+            ..Default::default()
         };
-        let unspecified = encode(SpanKind::Unspecified);
-        let internal = encode(SpanKind::Internal);
-        assert_eq!(internal.len(), unspecified.len() + 2);
-        assert!(internal.windows(2).any(|w| w == [0x10u8, 0x01u8]));
+        let encoded = to_vec_from_v1(&payload);
+        let pat = [0x10u8, 0x01u8];
+        assert!(
+            encoded.windows(2).any(|w| w == pat),
+            "Kind (key=16) Internal (=1) must be emitted"
+        );
+    }
+
+    #[test]
+    fn span_kind_unspecified_round_trips() {
+        // Unspecified is written as 0 rather than omitted, which would decode as the default.
+        let span = V1Span {
+            span_kind: SpanKind::Unspecified,
+            ..make_span("svc", "op", 1)
+        };
+        let encoded = to_vec_from_v1(&TracerPayloadBytes {
+            chunks: vec![make_chunk(vec![span], [0u8; 16])],
+            ..Default::default()
+        });
+        assert!(encoded.windows(2).any(|w| w == [0x10u8, 0x00u8]));
+        let (decoded, _) = crate::msgpack_decoder::v1::from_bytes(encoded.into()).unwrap();
+        assert_eq!(decoded.chunks[0].spans[0].span_kind, SpanKind::Unspecified);
     }
 
     #[test]

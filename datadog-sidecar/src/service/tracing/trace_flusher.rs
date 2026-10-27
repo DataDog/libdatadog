@@ -3,6 +3,7 @@
 
 use super::TraceSendData;
 use crate::agent_remote_config::AgentRemoteConfigWriter;
+use crate::service::agent_info::AgentInfoGuard;
 use futures::future::join_all;
 use libdd_capabilities_impl::{HttpClientCapability, NativeCapabilities};
 use libdd_common::{Endpoint, MutexExt};
@@ -20,7 +21,7 @@ use std::time::{Duration, Instant};
 use tokio::select;
 use tokio::sync::{Notify, mpsc, oneshot};
 use tokio::task::{JoinError, JoinHandle};
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 const DEFAULT_MIN_FORCE_FLUSH_SIZE_BYTES: u32 = 1_000_000;
 
@@ -49,6 +50,8 @@ struct AgentRemoteConfigs {
 #[derive(Default)]
 struct TraceFlusherData {
     traces: TraceSendData,
+    /// Agent info of the V1 sends in `traces`, by target, for a 404 to turn V1 off.
+    v1_agent_infos: HashMap<Endpoint, Arc<AgentInfoGuard>>,
     flusher: Option<JoinHandle<()>>,
     /// When the buffered traces must be flushed: the earliest `enqueue` time plus the flush
     /// interval of the session that enqueued them.
@@ -124,7 +127,13 @@ impl TraceFlusher {
     /// * `data` - A `SendData` instance that needs to be added to the traces.
     /// * `flush_interval` - The enqueuing session's flush interval: `data` is sent at the latest
     ///   this long from now. The flusher is shared by all sessions, so each keeps its own interval.
-    pub(crate) fn enqueue(self: &Arc<Self>, data: SendData, flush_interval: Duration) {
+    /// * `v1_agent_info` - For a V1 send, the agent info in which a 404 turns V1 off.
+    pub(crate) fn enqueue(
+        self: &Arc<Self>,
+        data: SendData,
+        flush_interval: Duration,
+        v1_agent_info: Option<Arc<AgentInfoGuard>>,
+    ) {
         let mut flush_data = self.inner.lock_or_panic();
         let flush_data = flush_data.deref_mut();
 
@@ -137,16 +146,21 @@ impl TraceFlusher {
             return;
         }
 
+        if let Some(agent_info) = v1_agent_info {
+            flush_data
+                .v1_agent_infos
+                .insert(data.get_target().clone(), agent_info);
+        }
         flush_data.traces.send_data_size += data.len();
         flush_data.traces.send_data.push(data);
 
         let max_interval = Duration::from_millis(self.interval_ms.load(Ordering::Relaxed));
         // An interval too large to represent never expires (explicit flushes only).
-        if let Some(deadline) = Instant::now().checked_add(flush_interval.min(max_interval)) {
-            if flush_data.deadline.is_none_or(|d| deadline < d) {
-                flush_data.deadline = Some(deadline);
-                self.deadline_changed.notify_one();
-            }
+        if let Some(deadline) = Instant::now().checked_add(flush_interval.min(max_interval))
+            && flush_data.deadline.is_none_or(|d| deadline < d)
+        {
+            flush_data.deadline = Some(deadline);
+            self.deadline_changed.notify_one();
         }
 
         if flush_data.flusher.is_none() {
@@ -244,39 +258,60 @@ impl TraceFlusher {
         }
     }
 
+    #[allow(clippy::type_complexity)]
     fn replace_trace_send_data(
         &self,
         force_flush_tx: oneshot::Sender<Option<mpsc::Sender<()>>>,
-    ) -> Vec<SendData> {
-        let trace_buffer = {
+    ) -> (Vec<SendData>, HashMap<Endpoint, Arc<AgentInfoGuard>>) {
+        let (trace_buffer, v1_agent_infos) = {
             let mut data = self.inner.lock_or_panic();
             data.deadline = None;
-            std::mem::replace(
+            let traces = std::mem::replace(
                 &mut data.traces,
                 TraceSendData {
                     send_data: vec![],
                     send_data_size: 0,
                     force_flush: Some(force_flush_tx),
                 },
-            )
-            .send_data
+            );
+            (traces.send_data, std::mem::take(&mut data.v1_agent_infos))
         };
-        trace_utils::coalesce_send_data(trace_buffer)
-            .into_iter()
-            .collect()
+        (
+            trace_utils::coalesce_send_data(trace_buffer)
+                .into_iter()
+                .collect(),
+            v1_agent_infos,
+        )
     }
 
-    async fn send_and_handle_trace(&self, send_data: SendData) {
+    async fn send_and_handle_trace(
+        &self,
+        send_data: SendData,
+        v1_agent_info: Option<Arc<AgentInfoGuard>>,
+    ) {
         let endpoint = send_data.get_target().clone();
         let response = send_data.send(&self.capabilities).await;
         self.metrics.lock_or_panic().update(&response);
         match response.last_result {
-            Ok(response) => {
+            Ok(response) if response.status().is_success() => {
                 if endpoint.api_key.is_none() {
                     // not when intake
                     self.write_remote_configs(endpoint.clone(), response.into_body().to_vec());
                 }
                 info!("Successfully flushed traces to {endpoint:?}");
+            }
+            Ok(response) => {
+                // As in the TraceExporter, the 404'd V1 payload is dropped, not re-sent as v0.4.
+                if response.status() == http::StatusCode::NOT_FOUND
+                    && let Some(agent_info) = v1_agent_info
+                    && agent_info.reject_v1()
+                {
+                    warn!("V1 trace send returned 404; sending v0.4 until the agent info changes");
+                }
+                error!(
+                    "Error sending traces to {endpoint:?}: HTTP status {}",
+                    response.status()
+                );
             }
             Err(e) => {
                 error!("Error sending trace: {e:?}");
@@ -315,8 +350,12 @@ impl TraceFlusher {
                 let (new_force_flush_tx, new_force_flush_rx) = oneshot::channel();
                 force_flush_rx = new_force_flush_rx;
 
-                let send_data = self.replace_trace_send_data(new_force_flush_tx);
-                join_all(send_data.into_iter().map(|d| self.send_and_handle_trace(d))).await;
+                let (send_data, v1_agent_infos) = self.replace_trace_send_data(new_force_flush_tx);
+                join_all(send_data.into_iter().map(|d| {
+                    let v1_agent_info = v1_agent_infos.get(d.get_target()).cloned();
+                    self.send_and_handle_trace(d, v1_agent_info)
+                }))
+                .await;
 
                 drop(flush_done_sender);
 
@@ -341,6 +380,7 @@ impl TraceFlusher {
 mod tests {
     use super::*;
     use httpmock::MockServer;
+    use libdd_trace_utils::send_with_retry::{RetryBackoffType, RetryStrategy};
     use libdd_trace_utils::test_utils::{create_send_data, poll_for_mock_hit};
     use std::sync::Arc;
 
@@ -381,13 +421,13 @@ mod tests {
         let send_data_2 = create_send_data(size, &target_endpoint);
         let send_data_3 = create_send_data(size, &target_endpoint);
 
-        trace_flusher.enqueue(send_data_1, Duration::MAX);
-        trace_flusher.enqueue(send_data_2, Duration::MAX);
+        trace_flusher.enqueue(send_data_1, Duration::MAX, None);
+        trace_flusher.enqueue(send_data_2, Duration::MAX, None);
 
         assert!(poll_for_mock_hit(&mut mock, 10, 150, 0, false).await);
 
         // enqueue a trace that exceeds the min force flush size
-        trace_flusher.enqueue(send_data_3, Duration::MAX);
+        trace_flusher.enqueue(send_data_3, Duration::MAX, None);
 
         assert!(poll_for_mock_hit(&mut mock, 25, 100, 1, true).await);
     }
@@ -419,7 +459,7 @@ mod tests {
         };
         let send_data_1 = create_send_data(size, &target_endpoint);
 
-        trace_flusher.enqueue(send_data_1, Duration::MAX);
+        trace_flusher.enqueue(send_data_1, Duration::MAX, None);
 
         // Sleep for a duration longer than the flush interval
         tokio::time::sleep(Duration::from_millis(
@@ -453,12 +493,14 @@ mod tests {
         trace_flusher.enqueue(
             create_send_data(100, &target_endpoint),
             Duration::from_secs(3000),
+            None,
         );
         assert!(poll_for_mock_hit(&mut mock, 5, 50, 0, false).await);
 
         trace_flusher.enqueue(
             create_send_data(100, &target_endpoint),
             Duration::from_millis(100),
+            None,
         );
         assert!(poll_for_mock_hit(&mut mock, 25, 100, 1, true).await);
     }
@@ -494,8 +536,34 @@ mod tests {
 
         let send_data_1 = create_send_data(size, &target_endpoint);
 
-        trace_flusher.enqueue(send_data_1, Duration::MAX);
+        trace_flusher.enqueue(send_data_1, Duration::MAX, None);
 
         assert!(poll_for_mock_hit(&mut mock, 5, 250, 0, true).await);
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    // Test scenario: the agent answers with an error status. Unlike a successful response, its body
+    // is not stored as the agent's remote config.
+    async fn test_error_response_is_not_stored_as_remote_config() {
+        let trace_flusher = Arc::new(TraceFlusher::default());
+        let server = MockServer::start();
+        let mock = server
+            .mock_async(|_when, then| {
+                then.status(404).body("404 page not found");
+            })
+            .await;
+        let target_endpoint = Endpoint {
+            url: server.url("").to_owned().parse().unwrap(),
+            ..Default::default()
+        };
+        let mut send_data = create_send_data(100, &target_endpoint);
+        send_data.set_retry_strategy(RetryStrategy::new(0, 0, RetryBackoffType::Constant, None));
+
+        trace_flusher.enqueue(send_data, Duration::ZERO, None);
+        trace_flusher.join().await.unwrap();
+
+        mock.assert_async().await;
+        assert_eq!(trace_flusher.stats().agent_config_writers, 0);
     }
 }
