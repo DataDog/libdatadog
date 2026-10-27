@@ -15,29 +15,75 @@ publish = false
 bench = false
 
 [dependencies]
-anyhow.workspace = true
-cargo_metadata.workspace = true
-clap = { workspace = true, default-features = true, features = ["derive"] }
-colored.workspace = true
-quick-xml.workspace = true
-libdd-common = { path = "../libdd-common", default-features = false, features = ["std"] }
-toml = { workspace = true, features = ["parse"] }
-wait-timeout.workspace = true
+anyhow = { workspace = true, optional = true }
+bytes = { workspace = true, features = ["std"], optional = true }
+cargo_metadata = { workspace = true, optional = true }
+clap = { workspace = true, default-features = true, features = ["derive"], optional = true }
+colored = { workspace = true, optional = true }
+criterion = { workspace = true, optional = true }
+futures = { workspace = true, features = [
+    "alloc",
+    "executor",
+], optional = true }
+futures-util = { workspace = true, optional = true }
+httparse = { workspace = true, features = ["std"], optional = true }
+mime = { workspace = true, optional = true }
+multer = { workspace = true, optional = true }
+quick-xml = { workspace = true, optional = true }
+rand = { workspace = true, default-features = true, optional = true }
+libdd-common = { path = "../libdd-common", default-features = false, features = ["std"], optional = true }
+toml = { workspace = true, features = ["parse"], optional = true }
+wait-timeout = { workspace = true, optional = true }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, optional = true, features = ["Win32_Foundation", "Win32_System_Diagnostics_ToolHelp"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros"] }
 
 [features]
+default = ["cli"]
+# Builds the tool binaries and their supporting lib modules. Consumers that only need the
+# test/bench utilities depend on this crate with default-features = false to avoid the
+# heavy CLI dependency tree (clap, cargo_metadata, quick-xml, toml, libdd-common).
+cli = [
+    "dep:anyhow",
+    "dep:cargo_metadata",
+    "dep:clap",
+    "dep:colored",
+    "dep:libdd-common",
+    "dep:quick-xml",
+    "dep:toml",
+    "dep:wait-timeout",
+]
 regex-lite = ["libdd-common/regex-lite"]
+bench-utils = ["dep:criterion"]
+test-utils = [
+    "dep:anyhow",
+    "dep:bytes",
+    "dep:futures",
+    "dep:futures-util",
+    "dep:httparse",
+    "dep:mime",
+    "dep:multer",
+    "dep:rand",
+    "dep:windows-sys",
+]
 
 [[bin]]
 name = "dedup_headers"
 bench = false
+required-features = ["cli"]
 
 [[bin]]
 name = "ffi_test"
 bench = false
+required-features = ["cli"]
 
 [[bin]]
 name = "add_junit_file_attributes"
 bench = false
+required-features = ["cli"]
 
 [lints.clippy]
 # TODO(paullgdc): This fails a lot because of if-let chaining which became
