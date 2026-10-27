@@ -364,7 +364,7 @@ impl ShmDsmCheckpointMapping {
             .iter()
             .take(edge_tag_count)
             .map(|wire| pool_string(pool, wire.snapshot(), budget))
-            .collect();
+            .collect::<Option<_>>()?;
 
         Some(DsmCheckpoint {
             hash: k.hash.load(Relaxed),
@@ -672,50 +672,63 @@ mod tests {
     }
 
     /// Edge tags are copied out of the pool under one allowance for the whole bucket, however
-    /// often a peer repeats a large reference.
+    /// often a peer repeats a large reference; checkpoints past it are dropped.
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn one_large_reference_repeated_across_the_tags_is_bounded() {
+    fn one_large_reference_repeated_across_slots_is_bounded() {
         const POOL: usize = 4096;
         let t = ShmDsmCheckpointTable::create(test_path(), DSM_BUCKET_NANOS, 8, POOL).unwrap();
-        t.add_checkpoint(&checkpoint(1, &["topic:x"]));
-        t.add_checkpoint(&checkpoint(2, &["topic:y"]));
+        for h in 1..=3 {
+            t.add_checkpoint(&checkpoint(h, &["topic:x"]));
+        }
         {
             let mem = mapping(&t);
             for entry in occupied(&mem) {
-                for wire in &entry.key.edge_tags {
-                    wire.offset.store(0, Relaxed);
-                    wire.len.store(POOL as u32, Relaxed);
-                }
-                entry.key.edge_tag_count.store(MAX_EDGE_TAGS as u8, Relaxed);
+                entry.key.edge_tags[0].offset.store(0, Relaxed);
+                entry.key.edge_tags[0].len.store(POOL as u32, Relaxed);
             }
         }
 
-        let exported: usize = drain_all(&t)
+        let checkpoints = drain_all(&t);
+        let exported: usize = checkpoints
             .iter()
             .flat_map(|g| &g.edge_tags)
             .map(String::len)
             .sum();
+        assert_eq!(
+            checkpoints.len(),
+            1,
+            "checkpoints past the budget should be dropped"
+        );
         assert!(
             exported <= 3 * POOL,
             "exported {exported} bytes from a {POOL}-byte pool"
         );
     }
 
+    /// A checkpoint with an edge tag that does not resolve is dropped rather than exported with
+    /// a blank tag next to a hash that was computed over the real one.
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn string_references_outside_the_pool_export_nothing() {
+    fn string_references_outside_the_pool_drop_their_checkpoint() {
         let t = table(test_path());
         t.add_checkpoint(&checkpoint(1, &["topic:x", "type:kafka"]));
+        t.add_checkpoint(&checkpoint(2, &["topic:y", "type:kafka"]));
         {
             let mem = mapping(&t);
             let entries = occupied(&mem);
+            assert_eq!(entries.len(), 2);
             entries[0].key.edge_tags[0]
                 .offset
                 .store(DEFAULT_DSM_CHECKPOINT_STRING_POOL_BYTES as u32 - 2, Relaxed);
             entries[0].key.edge_tags[0].len.store(1 << 20, Relaxed);
         }
-        let g = &drain_all(&t)[0];
-        assert_eq!(g.edge_tags, ["", "type:kafka"]);
+        let checkpoints = drain_all(&t);
+        assert_eq!(
+            checkpoints.len(),
+            1,
+            "only the untouched checkpoint should be exported"
+        );
+        assert_eq!(checkpoints[0].edge_tags[1], "type:kafka");
     }
 }

@@ -108,10 +108,7 @@ pub fn dsm_backlog_shm_path(key: &DsmTableKey) -> CString {
 /// table's path what it was.
 fn shm_path(prefix: &str, key: &DsmTableKey) -> CString {
     let mut hasher = ZwoHasher::default();
-    key.env.hash(&mut hasher);
-    key.version.hash(&mut hasher);
-    key.service.hash(&mut hasher);
-    key.primary_tag.hash(&mut hasher);
+    key.hash(&mut hasher);
     let hash = hasher.finish();
 
     let mut path = format!(
@@ -122,6 +119,7 @@ fn shm_path(prefix: &str, key: &DsmTableKey) -> CString {
     if cfg!(unix) {
         path.truncate(31);
     }
+    // unwrap: CString::new only fails on a NUL byte, and `path` only contains [A-Za-z0-9/_-].
     #[allow(clippy::unwrap_used)]
     CString::new(path).unwrap()
 }
@@ -221,15 +219,10 @@ pub(crate) async fn run_dsm_flush_loop(
     tables: Weak<Mutex<HashMap<DsmTableKey, Arc<DsmTableState>>>>,
     key: DsmTableKey,
 ) {
-    let Some(arc) = tables.upgrade() else {
-        return;
-    };
-    let state = {
-        let guard = arc.lock_or_panic();
-        guard.get(&key).cloned()
-    };
-    drop(arc);
-    let Some(state) = state else {
+    let Some(state) = tables
+        .upgrade()
+        .and_then(|tables| tables.lock_or_panic().get(&key).cloned())
+    else {
         return;
     };
     let client = NativeCapabilities::new_client();

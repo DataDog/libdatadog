@@ -447,17 +447,20 @@ impl ShmTableMapping<SpanStats> {
         let scalars = k.scalars()?;
         // In fixed_strs order.
         let [
-            resource,
-            service,
-            name,
-            span_type,
-            span_kind,
-            http_method,
-            http_endpoint,
-            source,
-        ] = std::array::from_fn::<String, FIXED_STRS, _>(|i| {
+            Some(resource),
+            Some(service),
+            Some(name),
+            Some(span_type),
+            Some(span_kind),
+            Some(http_method),
+            Some(http_endpoint),
+            Some(source),
+        ] = std::array::from_fn::<_, FIXED_STRS, _>(|i| {
             pool_string(pool, k.strs[i].snapshot(), budget)
-        });
+        })
+        else {
+            return None;
+        };
 
         let peer_tags: Vec<String> = k
             .peer_tag_keys
@@ -465,11 +468,11 @@ impl ShmTableMapping<SpanStats> {
             .zip(&k.peer_tag_values)
             .take(scalars.peer_tag_count)
             .map(|(wire_k, wire_v)| {
-                let tag_key = pool_string(pool, wire_k.snapshot(), budget);
-                let tag_value = pool_string(pool, wire_v.snapshot(), budget);
-                format!("{tag_key}:{tag_value}")
+                let tag_key = pool_string(pool, wire_k.snapshot(), budget)?;
+                let tag_value = pool_string(pool, wire_v.snapshot(), budget)?;
+                Some(format!("{tag_key}:{tag_value}"))
             })
-            .collect();
+            .collect::<Option<_>>()?;
 
         Some(pb::ClientGroupedStats {
             service,
@@ -918,32 +921,39 @@ mod tests {
     /// A string reference's offset and length are a peer's to write, and the flush copies the
     /// bytes they name into an owned string bound for the agent. Their bounds are the pool's -
     /// not the mapping's, since a reference landing elsewhere in the segment would still be
-    /// reading another bucket's slots - and a reference that misses yields nothing.
+    /// reading another bucket's slots - and an entry with a reference that misses is dropped
+    /// rather than exported with that field blank.
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn string_references_outside_the_pool_export_nothing() {
+    fn string_references_outside_the_pool_drop_their_entry() {
         let c = default_concentrator(test_path());
-        c.add_span(&span("svc", "res", 1_000_000));
+        for resource in ["a", "b", "c"] {
+            c.add_span(&span("svc", resource, 1_000_000));
+        }
 
         {
             let mem = mapping(&c);
             let bucket = mem.bucket(0);
             let entries = occupied(&bucket);
+            assert_eq!(entries.len(), 3);
             // strs[0] is resource_name and strs[1] service_name; see fixed_strs.
             entries[0].key.strs[0]
                 .offset
                 .store(DEFAULT_STRING_POOL_BYTES as u32 - 2, Relaxed);
             entries[0].key.strs[0].len.store(1 << 20, Relaxed);
-            entries[0].key.strs[1].offset.store(0, Relaxed);
-            entries[0].key.strs[1].len.store(u32::MAX, Relaxed);
+            entries[1].key.strs[1].offset.store(0, Relaxed);
+            entries[1].key.strs[1].len.store(u32::MAX, Relaxed);
         }
 
         let payload = flush_one(&c);
-        let group = &payload.stats[0].stats[0];
-        assert_eq!(group.resource, "");
-        assert_eq!(group.service, "");
-        assert_eq!(group.name, "op", "an untouched field still exports");
-        assert_eq!(group.hits, 1);
+        let groups = &payload.stats[0].stats;
+        assert_eq!(
+            groups.len(),
+            1,
+            "only the untouched entry should be exported"
+        );
+        assert_eq!(groups[0].service, "svc");
+        assert_eq!(groups[0].hits, 1);
     }
 
     #[test]
@@ -955,7 +965,7 @@ mod tests {
         assert_eq!((sr.offset, sr.len), (5, 3));
 
         let mut budget = 3;
-        let owned = pool_string(pool, sr, &mut budget);
+        let owned = pool_string(pool, sr, &mut budget).unwrap();
         assert_eq!(owned, "€");
         assert_eq!(budget, 0);
 
@@ -963,13 +973,24 @@ mod tests {
         pool[6].store(b'x', Relaxed);
         pool[7].store(b'y', Relaxed);
         let mut budget = 3;
-        assert_eq!(pool_string(pool, sr, &mut budget), "\u{fffd}xy");
+        assert_eq!(pool_string(pool, sr, &mut budget).unwrap(), "\u{fffd}xy");
         assert_eq!(budget, 0);
         assert_eq!(owned, "€", "exported strings must own their bytes");
 
         let mut budget = 2;
-        assert!(pool_string(pool, sr, &mut budget).is_empty());
+        assert_eq!(pool_string(pool, sr, &mut budget), None);
         assert_eq!(budget, 2);
+
+        let outside = StringRef { offset: 6, len: 3 };
+        let mut budget = 8;
+        assert_eq!(pool_string(pool, outside, &mut budget), None);
+        assert_eq!(budget, 8);
+
+        let mut budget = 0;
+        assert_eq!(
+            pool_string(pool, StringRef::default(), &mut budget).unwrap(),
+            ""
+        );
 
         assert_eq!(alloc_str(pool, &cursor, "!").len, 0);
         cursor.store(u32::MAX, Relaxed);
@@ -983,51 +1004,55 @@ mod tests {
     }
 
     /// Bounding each reference to the pool still leaves a peer free to repeat one large
-    /// reference across every field of every slot. The pool's capacity is the most real data a
-    /// bucket can hold, so it is also the budget for what one flush copies out of it.
+    /// reference across every slot. The pool's capacity is the most real data a bucket can
+    /// hold, so it is also the budget for what one flush copies out of it; entries past it are
+    /// dropped.
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn one_large_reference_repeated_across_a_key_is_bounded() {
+    fn one_large_reference_repeated_across_slots_is_bounded() {
         const POOL: usize = 4096;
         let c = ShmSpanConcentrator::create(test_path(), 10_000_000_000, 8, POOL).unwrap();
-        c.add_span(&span("svc", "res", 1_000_000));
+        for resource in ["a", "b", "c", "d"] {
+            c.add_span(&span("svc", resource, 1_000_000));
+        }
 
         {
             let mem = mapping(&c);
             let bucket = mem.bucket(0);
             let entries = occupied(&bucket);
-            let key = &entries[0].key;
-            for wire in key
-                .strs
-                .iter()
-                .chain(&key.peer_tag_keys)
-                .chain(&key.peer_tag_values)
-            {
-                wire.offset.store(0, Relaxed);
-                wire.len.store(POOL as u32, Relaxed);
+            assert_eq!(entries.len(), 4);
+            for entry in entries {
+                // strs[0] is resource_name; see fixed_strs.
+                entry.key.strs[0].offset.store(0, Relaxed);
+                entry.key.strs[0].len.store(POOL as u32 / 2, Relaxed);
             }
-            key.peer_tag_count.store(MAX_PEER_TAGS as u8, Relaxed);
         }
 
         let payload = flush_one(&c);
-        let group = &payload.stats[0].stats[0];
-        let exported: usize = [
-            &group.service,
-            &group.name,
-            &group.resource,
-            &group.r#type,
-            &group.span_kind,
-            &group.http_method,
-            &group.http_endpoint,
-            &group.service_source,
-        ]
-        .iter()
-        .map(|s| s.len())
-        .sum::<usize>()
-            + group.peer_tags.iter().map(|t| t.len()).sum::<usize>();
+        let groups = &payload.stats[0].stats;
+        let exported: usize = groups
+            .iter()
+            .flat_map(|g| {
+                [
+                    &g.service,
+                    &g.name,
+                    &g.resource,
+                    &g.r#type,
+                    &g.span_kind,
+                    &g.http_method,
+                    &g.http_endpoint,
+                    &g.service_source,
+                ]
+                .map(String::len)
+                .into_iter()
+                .chain(g.peer_tags.iter().map(String::len))
+            })
+            .sum();
 
-        // Forty references of POOL bytes each would be 160 KiB. One pool's worth may come out,
-        // times the three bytes an invalid byte expands to as a replacement character.
+        // Four references of POOL / 2 bytes each would be two pools' worth. One pool's worth
+        // may come out, times the three bytes an invalid byte expands to as a replacement
+        // character.
+        assert_eq!(groups.len(), 1, "entries past the budget should be dropped");
         assert!(
             exported <= 3 * POOL,
             "exported {exported} bytes from a {POOL}-byte pool"
