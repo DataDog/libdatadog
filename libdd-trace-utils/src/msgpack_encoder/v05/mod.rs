@@ -5,7 +5,7 @@
 
 use crate::msgpack_encoder::flatten_value_write_infallible;
 use crate::msgpack_encoder::packing::{
-    Bounded, PushError, header_len, rotate_tail_to_front, str_len,
+    Bounded, PushError, header_len, rotate_tail_to_front, str_len, total, within,
 };
 use crate::span::v04::Span;
 use crate::span::{SharedDictBytes, TraceData, v05};
@@ -13,7 +13,9 @@ use libdd_common::ResultInfallibleExt;
 use rmp::encode::{ByteBuf, RmpWrite, ValueWriteError, write_array_len, write_str};
 use serde::Serialize;
 
-/// Builds one v0.5 payload from v0.4 chunks, keeping the complete payload within a byte limit.
+/// Builds one v0.5 payload from v0.4 chunks, keeping the complete payload within a byte limit
+/// once a chunk was pushed. An empty payload exceeds limits below its few bytes: see
+/// [`Self::encoded_len`].
 ///
 /// Each accepted chunk is converted and encoded once, span by span, against the payload's
 /// dictionary; no intermediate representation of the whole payload is built. The dictionary
@@ -69,7 +71,8 @@ impl ChunkPacker {
         };
         let (len, strings, strings_len) = (self.buf.len(), self.dict.len(), self.strings_len);
         let result = self.encode_chunk(spans, chunks).and_then(|()| {
-            if self.prefix_len(chunks) + self.buf.len() <= self.limit {
+            let prefix = self.prefix_len(chunks);
+            if prefix.is_some_and(|prefix| within(self.limit, &[prefix, self.buf.len()])) {
                 Ok(())
             } else {
                 Err(PushError::Full)
@@ -91,7 +94,7 @@ impl ChunkPacker {
         spans: &[Span<T>],
         chunks: usize,
     ) -> Result<(), PushError> {
-        let max = self.limit.saturating_sub(self.prefix_len(chunks));
+        let max = remaining(self.limit, self.prefix_len(chunks));
         let mut writer = Bounded::new(&mut self.buf, max, self.limit);
         // A span count beyond u32 cannot fit within a limit that is a usize.
         let count = u32::try_from(spans.len()).map_err(|_| PushError::Full)?;
@@ -102,15 +105,18 @@ impl ChunkPacker {
             if u32::try_from(self.dict.len()).is_err() {
                 return Err(PushError::Full);
             }
-            self.strings_len += self.dict.map.as_slice()[strings..]
+            self.strings_len = self.dict.map.as_slice()[strings..]
                 .keys()
-                .map(|s| str_len(s.as_str().len()))
-                .sum::<usize>();
-            writer.max =
-                self.limit
-                    .saturating_sub(prefix_len(&self.dict, self.strings_len, chunks));
+                .try_fold(self.strings_len, |len, s| {
+                    len.checked_add(str_len(s.as_str().len()))
+                })
+                .ok_or(PushError::Full)?;
+            writer.set_max(remaining(
+                self.limit,
+                prefix_len(&self.dict, self.strings_len, chunks),
+            ));
             if let Err(error) = span.serialize(&mut rmp_serde::Serializer::new(&mut writer)) {
-                return Err(if writer.full {
+                return Err(if writer.is_full() {
                     PushError::Full
                 } else {
                     PushError::Invalid(error.into())
@@ -129,15 +135,22 @@ impl ChunkPacker {
         self.chunks == 0
     }
 
-    /// Size of the payload [`Self::finish`] would return.
+    /// Size of the payload [`Self::finish`] would return, saturating at `usize::MAX`.
+    ///
+    /// Within the limit once a chunk was pushed. For an empty packer, this is the size of the
+    /// bare envelope, which can exceed the limit: check it before sending an empty payload.
     pub fn encoded_len(&self) -> usize {
-        self.prefix_len(self.chunks) + self.buf.len()
+        self.prefix_len(self.chunks)
+            .map_or(usize::MAX, |prefix| prefix.saturating_add(self.buf.len()))
     }
 
-    /// Completes the payload. An empty packer yields a valid payload without chunks.
+    /// Completes the payload. An empty packer yields a valid payload without chunks, which may
+    /// exceed the limit (see [`Self::encoded_len`]).
     pub fn finish(mut self) -> Vec<u8> {
         let body = self.buf.len();
-        self.buf.reserve_exact(self.prefix_len(self.chunks));
+        if let Some(prefix) = self.prefix_len(self.chunks) {
+            self.buf.reserve_exact(prefix);
+        }
         let mut buf = ByteBuf::from_vec(self.buf);
         write_prefix(&mut buf, &self.dict, self.chunks)
             .map_err(flatten_value_write_infallible)
@@ -147,14 +160,19 @@ impl ChunkPacker {
         bytes
     }
 
-    fn prefix_len(&self, chunks: usize) -> usize {
+    fn prefix_len(&self, chunks: usize) -> Option<usize> {
         prefix_len(&self.dict, self.strings_len, chunks)
     }
 }
 
-/// Encoded size of [`write_prefix`].
-fn prefix_len(dict: &SharedDictBytes, strings_len: usize, chunks: usize) -> usize {
-    1 + header_len(dict.len()) + strings_len + header_len(chunks)
+/// Encoded size of [`write_prefix`], or `None` if it cannot be represented.
+fn prefix_len(dict: &SharedDictBytes, strings_len: usize, chunks: usize) -> Option<usize> {
+    total(&[1, header_len(dict.len()), strings_len, header_len(chunks)])
+}
+
+/// Room left for chunks once `prefix` bytes are taken, none if `prefix` is unrepresentable.
+fn remaining(limit: usize, prefix: Option<usize>) -> usize {
+    prefix.map_or(0, |prefix| limit.saturating_sub(prefix))
 }
 
 /// Writes everything that precedes the chunks: the payload header, the dictionary, and the

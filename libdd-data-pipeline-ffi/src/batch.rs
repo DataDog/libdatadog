@@ -186,6 +186,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_send_trace_chunks_batched(
 ///
 /// # Safety
 /// A non-null batch must remain alive for the call.
+// allow(ffi-panic-boundary): Copies scalar fields or returns their constant defaults.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_trace_exporter_batch_summary(
     batch: Option<&TraceExporterBatch>,
@@ -197,6 +198,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_batch_summary(
 ///
 /// # Safety
 /// A non-null batch must remain alive while the returned body is used.
+// allow(ffi-panic-boundary): Bounds-checked lookup and borrowed scalar/string views; no allocation.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_trace_exporter_batch_payload(
     batch: Option<&TraceExporterBatch>,
@@ -219,6 +221,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_batch_payload(
 ///
 /// # Safety
 /// `batch` must be null or an owned pointer returned by the batched send, freed once.
+// allow(ffi-panic-boundary): Drops only standard owned strings and vectors of scalar fields.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_trace_exporter_batch_free(batch: Option<Box<TraceExporterBatch>>) {
     drop(batch);

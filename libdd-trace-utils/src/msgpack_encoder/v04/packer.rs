@@ -7,7 +7,8 @@ use crate::span::TraceData;
 use crate::span::v04::Span;
 use rmp::encode::write_array_len;
 
-/// Builds one v0.4 payload from chunks, keeping the complete payload within a byte limit.
+/// Builds one v0.4 payload from chunks, keeping the complete payload within a byte limit once a
+/// chunk was pushed. An empty payload (one byte) exceeds a zero limit.
 ///
 /// Each accepted chunk is encoded once. The result is byte-for-byte what
 /// [`super::to_vec_from_v04`] produces for the accepted chunks.
@@ -65,12 +66,15 @@ impl ChunkPacker {
         self.chunks == 0
     }
 
-    /// Size of the payload [`Self::finish`] would return.
+    /// Size of the payload [`Self::finish`] would return. Within the limit once a chunk was
+    /// pushed; for an empty packer, check it before sending an empty payload.
     pub fn encoded_len(&self) -> usize {
-        header_len(self.chunks) + self.buf.len()
+        // `push` keeps the buffer within `limit - header_len`.
+        header_len(self.chunks).saturating_add(self.buf.len())
     }
 
-    /// Completes the payload. An empty packer yields a valid payload without chunks.
+    /// Completes the payload. An empty packer yields a valid payload without chunks, which may
+    /// exceed the limit (see [`Self::encoded_len`]).
     pub fn finish(mut self) -> Vec<u8> {
         let body = self.buf.len();
         let mut header = [0u8; 5];
