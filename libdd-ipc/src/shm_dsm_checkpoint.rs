@@ -279,7 +279,7 @@ pub struct DsmCheckpointBucket {
     pub checkpoints: Vec<DsmCheckpoint>,
 }
 
-impl ShmTable<DataStreamsCheckpoints> {
+impl ShmDsmCheckpointTable {
     /// Submit a checkpoint to shared memory. Returns false if no current mapping is available.
     pub fn add_checkpoint(&self, input: &DsmCheckpointInput<'_>) -> bool {
         self.add(input)

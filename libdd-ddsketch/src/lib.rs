@@ -109,8 +109,8 @@ impl DDSketch {
     /// For producers that bin values themselves and only hand the sketch their counts.
     /// `count` must be positive.
     pub fn add_to_bin(&mut self, index: i32, count: f64) -> Result<(), Box<dyn std::error::Error>> {
-        if count.is_nan() || count.is_infinite() {
-            return Err("count is invalid".into());
+        if !count.is_finite() || count <= 0.0 {
+            return Err("count must be positive and finite".into());
         }
         *self.store.bin_mut(index) += count;
         Ok(())
@@ -488,7 +488,17 @@ mod test {
         assert_eq!(sketch.bin_index(f64::NAN), None);
         assert_eq!(sketch.bin_index(f64::INFINITY), None);
         assert!(sketch.bin_index(1.0).is_some());
-        assert!(DDSketch::default().add_to_bin(0, f64::NAN).is_err());
+    }
+
+    #[test]
+    fn bins_only_take_positive_finite_counts() {
+        let mut sketch = DDSketch::default();
+        for count in [f64::NAN, f64::INFINITY, -1.0, 0.0] {
+            assert!(sketch.add_to_bin(0, count).is_err(), "{count}");
+        }
+        assert_eq!(sketch.count(), 0.0);
+        assert!(sketch.add_to_bin(0, 1.0).is_ok());
+        assert_eq!(sketch.count(), 1.0);
     }
 
     #[test]
