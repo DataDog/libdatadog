@@ -77,7 +77,8 @@ mod span_v1;
 pub use packer::ChunkPacker;
 
 #[inline(always)]
-fn to_writer<W: RmpWrite, T: TraceData, S: AsRef<[Span<T>]>>(
+/// Encode v0.4 input through a fallible writer, allowing callers to bound output size.
+pub fn to_writer<W: RmpWrite, T: TraceData, S: AsRef<[Span<T>]>>(
     writer: &mut W,
     traces: &[S],
 ) -> Result<(), ValueWriteError<W::Error>> {

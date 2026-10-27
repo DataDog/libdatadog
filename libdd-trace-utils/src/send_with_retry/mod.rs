@@ -58,7 +58,7 @@ impl std::error::Error for SendWithRetryError {}
 
 /// Send the `payload` with a POST request to `target` using the provided `retry_strategy` if the
 /// request fails.
-/// HTTP 4xx/5xx responses are retried; other non-2xx responses are terminal
+/// HTTP 4xx/5xx responses except 413 are retried; other non-2xx responses are terminal
 /// errors. Redirects are not followed by this helper.
 ///
 /// Standard endpoint headers (user-agent, api-key, test-token, entity headers) are set
@@ -134,6 +134,52 @@ pub async fn send_with_retry_and_size<C: HttpClientCapability + SleepCapability>
     retry_strategy: &RetryStrategy,
     compression_strategy: CompressionStrategy,
 ) -> (SendWithRetryResult, usize) {
+    send_with_response_policy(
+        capabilities,
+        target,
+        payload,
+        headers,
+        retry_strategy,
+        compression_strategy,
+        None,
+    )
+    .await
+}
+
+/// Send trace data while bounding optional response feedback. Status and headers
+/// survive body errors, so an acknowledged send is not replayed for its feedback.
+#[allow(clippy::result_large_err)]
+pub async fn send_with_bounded_response<C: HttpClientCapability + SleepCapability>(
+    capabilities: &C,
+    target: &Endpoint,
+    payload: Vec<u8>,
+    headers: &HeaderMap,
+    retry_strategy: &RetryStrategy,
+    compression_strategy: CompressionStrategy,
+    response_limit: usize,
+) -> SendWithRetryResult {
+    send_with_response_policy(
+        capabilities,
+        target,
+        payload,
+        headers,
+        retry_strategy,
+        compression_strategy,
+        Some(response_limit),
+    )
+    .await
+    .0
+}
+
+async fn send_with_response_policy<C: HttpClientCapability + SleepCapability>(
+    capabilities: &C,
+    target: &Endpoint,
+    payload: Vec<u8>,
+    headers: &HeaderMap,
+    retry_strategy: &RetryStrategy,
+    compression_strategy: CompressionStrategy,
+    response_limit: Option<usize>,
+) -> (SendWithRetryResult, usize) {
     let mut request_attempt = 0;
     let timeout = Duration::from_millis(target.timeout_ms);
 
@@ -158,9 +204,18 @@ pub async fn send_with_retry_and_size<C: HttpClientCapability + SleepCapability>
             "Attempting request"
         );
 
+        let observed_status =
+            response_limit.map(|_| libdd_capabilities::http::ObservedResponseStatus::default());
         let mut builder = http::Request::builder()
             .method(http::Method::POST)
-            .uri(target.url.clone());
+            .uri(target.url.clone())
+            .extension(libdd_capabilities::http::RejectOversizedPayload);
+        if let (Some(limit), Some(status)) = (response_limit, observed_status.as_ref()) {
+            builder = builder
+                .extension(libdd_capabilities::http::ResponseBodyLimit(limit))
+                .extension(libdd_capabilities::http::PreserveResponseStatus)
+                .extension(status.clone());
+        }
         builder = target.set_standard_headers(builder, TRACE_EXPORTER_USER_AGENT);
         for (key, value) in headers {
             builder = builder.header(key, value);
@@ -182,6 +237,17 @@ pub async fn send_with_retry_and_size<C: HttpClientCapability + SleepCapability>
             Either::Left((response, _)) => Ok(response),
             Either::Right(((), _)) => Err(()),
         };
+        let result = match (
+            result,
+            observed_status.as_ref().and_then(|status| status.get()),
+        ) {
+            (Err(()), Some(status)) => {
+                let mut response = http::Response::new(Bytes::new());
+                *response.status_mut() = status;
+                Ok(Ok(response))
+            }
+            (result, _) => result,
+        };
 
         match result {
             Ok(Ok(response)) => {
@@ -193,6 +259,9 @@ pub async fn send_with_retry_and_size<C: HttpClientCapability + SleepCapability>
                     "Received response"
                 );
 
+                if status == http::StatusCode::PAYLOAD_TOO_LARGE {
+                    break Err(SendWithRetryError::Http(response, request_attempt));
+                }
                 if status.is_client_error() || status.is_server_error() {
                     debug!(
                         status = status.as_u16(),
@@ -303,6 +372,91 @@ mod tests {
     use httpmock::MockServer;
     use libdd_capabilities::HttpClientCapability;
     use libdd_capabilities_impl::NativeCapabilities;
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn stalled_optional_feedback_does_not_replay_an_acknowledged_payload() {
+        use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (release, wait) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut reader = BufReader::new(stream);
+            let mut line = String::new();
+            loop {
+                line.clear();
+                reader.read_line(&mut line).await.unwrap();
+                if line == "\r\n" {
+                    break;
+                }
+            }
+            reader.read_exact(&mut [0; 3]).await.unwrap();
+            let mut stream = reader.into_inner();
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\nx")
+                .await
+                .unwrap();
+            let _ = wait.await;
+        });
+        let endpoint = Endpoint {
+            timeout_ms: 1000,
+            ..Endpoint::from_slice(&format!("http://{address}/traces"))
+        };
+        let result = send_with_bounded_response(
+            &NativeCapabilities::new_client(),
+            &endpoint,
+            vec![1, 2, 3],
+            &HeaderMap::new(),
+            &RetryStrategy::new(2, 1, RetryBackoffType::Constant, None),
+            CompressionStrategy::None,
+            1024,
+        )
+        .await;
+        let _ = release.send(());
+        server.await.unwrap();
+        let (response, attempts) = result.unwrap();
+        assert_eq!(response.status(), http::StatusCode::OK);
+        assert_eq!(attempts, 1);
+        assert!(response.body().is_empty());
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn a_truncated_413_body_does_not_hide_the_terminal_status() {
+        use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut reader = BufReader::new(stream);
+            let mut line = String::new();
+            loop {
+                line.clear();
+                reader.read_line(&mut line).await.unwrap();
+                if line == "\r\n" {
+                    break;
+                }
+            }
+            reader.read_exact(&mut [0; 3]).await.unwrap();
+            let mut stream = reader.into_inner();
+            stream.write_all(b"HTTP/1.1 413 Payload Too Large\r\nContent-Length: 100\r\nConnection: close\r\n\r\nx").await.unwrap();
+            stream.shutdown().await.unwrap();
+        });
+        let result = send_with_retry(
+            &NativeCapabilities::new_client(),
+            &Endpoint::from_slice(&format!("http://{address}/traces")),
+            vec![1, 2, 3],
+            &HeaderMap::new(),
+            &RetryStrategy::new(2, 1, RetryBackoffType::Constant, None),
+            CompressionStrategy::None,
+        )
+        .await;
+        assert!(
+            matches!(result, Err(SendWithRetryError::Http(response, 1)) if response.status() == http::StatusCode::PAYLOAD_TOO_LARGE)
+        );
+        server.await.unwrap();
+    }
 
     #[cfg_attr(miri, ignore)]
     #[tokio::test]

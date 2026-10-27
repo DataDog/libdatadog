@@ -117,13 +117,13 @@ pub(super) const FLAT_ATTR_STRIDE: u32 = 3;
 /// their `write_to_slice_from_v04` / `write_to_slice_from_v1` counterparts) call starts with a
 /// fresh table so deduplication is payload-local.
 pub(crate) struct StringTable {
-    seen: HashMap<String, u32>,
+    seen: HashMap<libdd_tinybytes::BytesString, u32>,
 }
 
 impl StringTable {
     fn new() -> Self {
         let mut seen = HashMap::new();
-        seen.insert(String::new(), 0);
+        seen.insert(libdd_tinybytes::BytesString::default(), 0);
         Self { seen }
     }
 
@@ -159,7 +159,23 @@ impl StringTable {
         } else {
             let id = self.seen.len() as u32;
             write_str(writer, s)?;
-            self.seen.insert(s.to_string(), id);
+            self.seen
+                .insert(libdd_tinybytes::BytesString::from(s.to_string()), id);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn write_text<W: RmpWrite, S: crate::span::SpanText>(
+        &mut self,
+        writer: &mut W,
+        s: &S,
+    ) -> Result<(), ValueWriteError<W::Error>> {
+        if let Some(&id) = self.seen.get(s.borrow()) {
+            write_uint(writer, u64::from(id))?;
+        } else {
+            let id = self.seen.len() as u32;
+            write_str(writer, s.borrow())?;
+            self.seen.insert(s.to_bytes_string(), id);
         }
         Ok(())
     }
@@ -354,13 +370,14 @@ where
 ///   trace_key::CHUNKS       (11) → Array[Chunk, ...]
 /// }
 /// ```
-fn encode_payload_from_v04<W: RmpWrite, T: TraceData, S: AsRef<[Span<T>]>>(
+/// Encode v0.4 input through a fallible writer, with a payload-local string table.
+pub fn encode_payload_from_v04<W: RmpWrite, T: TraceData, S: AsRef<[Span<T>]>>(
     writer: &mut W,
     traces: &[S],
     metadata: &TracerMetadata,
 ) -> Result<(), ValueWriteError<W::Error>> {
-    let mut table = StringTable::new();
     let payload_attrs = extract_payload_attrs(traces, metadata);
+    let mut table = StringTable::new();
     let mutable_metadata = metadata.mutable_metadata.load();
     let envelope = Envelope {
         metadata,
@@ -937,6 +954,30 @@ pub fn to_encoded_byte_len_from_v1<T: TraceData>(payload: &TracerPayload<T>) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failed_writes_do_not_intern_oversized_strings() {
+        // 64 KiB is the smallest str32 value and already exceeds this writer.
+        let value = libdd_tinybytes::BytesString::from("x".repeat(64 * 1024));
+        let mut table = StringTable::new();
+        let mut bytes = [0; 16];
+        assert!(table.write_text(&mut &mut bytes[..], &value).is_err());
+        assert_eq!(table.seen.len(), 1);
+    }
+
+    #[test]
+    fn owned_span_text_is_shared_by_the_intern_table() {
+        let value = libdd_tinybytes::BytesString::from("x".repeat(1024));
+        let mut table = StringTable::new();
+        let mut output = Vec::new();
+        table.write_text(&mut output, &value).unwrap();
+        let stored = table
+            .seen
+            .keys()
+            .find(|key| key.as_str().len() == value.as_str().len())
+            .unwrap();
+        assert_eq!(stored.as_str().as_ptr(), value.as_str().as_ptr());
+    }
     use crate::span::v04::SpanBytes;
     use libdd_tinybytes::BytesString;
 

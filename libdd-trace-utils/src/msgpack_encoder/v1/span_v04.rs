@@ -62,15 +62,15 @@ pub fn encode_span_links<W: RmpWrite, T: TraceData>(
             write_uint8(writer, SpanLinkKey::Attributes as u8)?;
             rmp::encode::write_array_len(writer, link.attributes.len() as u32 * 3)?;
             for (k, v) in link.attributes.iter() {
-                table.write_interned(writer, k.borrow())?;
+                table.write_text(writer, k)?;
                 write_uint8(writer, AnyValueKey::String as u8)?;
-                table.write_interned(writer, v.borrow())?;
+                table.write_text(writer, v)?;
             }
         }
 
         if !link.tracestate.borrow().is_empty() {
             write_uint8(writer, SpanLinkKey::TraceState as u8)?;
-            table.write_interned(writer, link.tracestate.borrow())?;
+            table.write_text(writer, &link.tracestate)?;
         }
 
         if link.flags != 0 {
@@ -103,7 +103,7 @@ pub fn encode_span_events<W: RmpWrite, T: TraceData>(
         write_u64(writer, event.time_unix_nano)?;
 
         write_uint8(writer, SpanEventKey::Name as u8)?;
-        table.write_interned(writer, event.name.borrow())?;
+        table.write_text(writer, &event.name)?;
 
         if !event.attributes.is_empty() {
             write_uint8(writer, SpanEventKey::Attributes as u8)?;
@@ -121,7 +121,7 @@ fn encode_span_event_attributes<W: RmpWrite, T: TraceData>(
 ) -> Result<(), ValueWriteError<W::Error>> {
     rmp::encode::write_array_len(writer, event.attributes.len() as u32 * 3)?;
     for (k, attribute) in event.attributes.iter() {
-        table.write_interned(writer, k.borrow())?;
+        table.write_text(writer, k)?;
         encode_attribute_any_value(writer, attribute, table)?;
     }
     Ok(())
@@ -140,7 +140,7 @@ fn encode_attribute_any_value<W: RmpWrite, T: TraceData>(
         match value {
             AttributeArrayValue::String(s) => {
                 write_uint8(writer, AnyValueKey::String as u8)?;
-                table.write_interned(writer, s.borrow())?;
+                table.write_text(writer, s)?;
             }
             AttributeArrayValue::Boolean(b) => {
                 write_uint8(writer, AnyValueKey::Bool as u8)?;
@@ -238,17 +238,17 @@ pub fn encode_span<W: RmpWrite, T: TraceData>(
 
     if !span.service.borrow().is_empty() {
         write_uint8(writer, SpanKey::Service as u8)?;
-        table.write_interned(writer, span.service.borrow())?;
+        table.write_text(writer, &span.service)?;
     }
 
     if !span.name.borrow().is_empty() {
         write_uint8(writer, SpanKey::Name as u8)?;
-        table.write_interned(writer, span.name.borrow())?;
+        table.write_text(writer, &span.name)?;
     }
 
     if !span.resource.borrow().is_empty() {
         write_uint8(writer, SpanKey::Resource as u8)?;
-        table.write_interned(writer, span.resource.borrow())?;
+        table.write_text(writer, &span.resource)?;
     }
 
     write_uint8(writer, SpanKey::SpanId as u8)?;
@@ -278,7 +278,7 @@ pub fn encode_span<W: RmpWrite, T: TraceData>(
 
     if !span.r#type.borrow().is_empty() {
         write_uint8(writer, SpanKey::Type as u8)?;
-        table.write_interned(writer, span.r#type.borrow())?;
+        table.write_text(writer, &span.r#type)?;
     }
 
     if has_attributes {
@@ -291,19 +291,19 @@ pub fn encode_span<W: RmpWrite, T: TraceData>(
             if is_promoted(k) {
                 continue;
             }
-            table.write_interned(writer, (*k).borrow())?;
+            table.write_text(writer, k)?;
             write_uint8(writer, AnyValueKey::String as u8)?;
-            table.write_interned(writer, (*v).borrow())?;
+            table.write_text(writer, v)?;
         }
 
         for (k, v) in metrics_dd.iter() {
-            table.write_interned(writer, (*k).borrow())?;
+            table.write_text(writer, k)?;
             write_uint8(writer, AnyValueKey::Double as u8)?;
             write_f64(writer, *v)?;
         }
 
         for (k, v) in meta_struct_dd.iter() {
-            table.write_interned(writer, (*k).borrow())?;
+            table.write_text(writer, k)?;
             write_uint8(writer, AnyValueKey::Bytes as u8)?;
             write_bin(writer, (*v).borrow())?;
         }

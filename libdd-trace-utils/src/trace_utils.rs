@@ -1131,6 +1131,15 @@ mod tests {
     }
 
     #[test]
+    fn empty_trace_batch_needs_no_collection_type() {
+        let collection = convert_trace_chunks_v04_to_v05::<crate::span::BytesData>(&[]).unwrap();
+        let TraceChunks::V05((_, traces)) = collection else {
+            panic!("expected v0.5 payload");
+        };
+        assert!(traces.is_empty());
+    }
+
+    #[test]
     fn test_convert_trace_chunks_v04_to_v05() {
         let chunk = vec![create_test_no_alloc_span(123, 456, 789, 1, true)];
 

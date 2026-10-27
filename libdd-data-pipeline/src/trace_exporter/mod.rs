@@ -1,12 +1,16 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 pub mod agent_response;
+#[cfg(all(feature = "external-observations", not(target_arch = "wasm32")))]
+pub mod batch;
 pub mod builder;
 pub mod error;
 mod log_writer;
 pub mod metrics;
 #[cfg(feature = "external-observations")]
 pub mod observations;
+#[cfg(all(feature = "external-observations", not(target_arch = "wasm32")))]
+mod payloads;
 pub mod stats;
 mod trace_serializer;
 
@@ -1159,27 +1163,16 @@ impl<
         Ok(AgentResponse::Unchanged)
     }
 
-    async fn process_and_send_trace_chunks<T: TraceData>(
-        &self,
-        mut traces: PooledChunks<'_, T>,
-    ) -> Result<AgentResponse, TraceExporterError> {
-        // `traces` is a `PooledChunks`: keeping it owned (rather than moving its inner `Vec`
-        // into the consuming code paths) is what lets its spans be recycled into the pool when
-        // it is dropped at the end of this function. Paths that must consume the spans use
-        // `into_chunks()` and forgo pooling.
-        //
-        // TODO(APMSP-3608): log-output silently takes precedence over OTLP/agent here.
-        // The builder should reject conflicting destinations at build time instead.
-        if let Some(max_line_size) = self.log_output {
-            return self.send_trace_chunks_to_log(&traces, max_line_size);
-        }
-
+    fn prepare_trace_chunks<'a, T: TraceData>(
+        &'a self,
+        traces: &mut PooledChunks<'_, T>,
+    ) -> (TracerHeaderTags<'a>, bool) {
         let mut header_tags: TracerHeaderTags = self.metadata.borrow().into();
 
         // Process stats computation and drop non-sampled (p0) chunks.
         // This must run before the OTLP path so that unsampled spans are not exported.
         let client_side_stats = stats::process_traces_for_stats(
-            &mut traces,
+            traces,
             &mut header_tags,
             &self.client_side_stats.status,
             self.client_computed_top_level,
@@ -1200,6 +1193,18 @@ impl<
                 span.dedup();
             }
         }
+
+        (header_tags, client_side_stats)
+    }
+
+    async fn process_and_send_trace_chunks<T: TraceData>(
+        &self,
+        mut traces: PooledChunks<'_, T>,
+    ) -> Result<AgentResponse, TraceExporterError> {
+        if let Some(max_line_size) = self.log_output {
+            return self.send_trace_chunks_to_log(&traces, max_line_size);
+        }
+        let (header_tags, client_side_stats) = self.prepare_trace_chunks(&mut traces);
 
         if let Some(ref config) = self.agentless_config {
             if traces.is_empty() {

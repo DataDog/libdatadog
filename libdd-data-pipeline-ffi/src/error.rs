@@ -88,9 +88,9 @@ impl ExporterError {
     }
 }
 
-impl From<TraceExporterError> for ExporterError {
-    fn from(value: TraceExporterError) -> Self {
-        let code = match &value {
+impl From<&TraceExporterError> for ExporterErrorCode {
+    fn from(value: &TraceExporterError) -> Self {
+        match value {
             TraceExporterError::Agent(e) => match e {
                 AgentErrorKind::EmptyResponse => ExporterErrorCode::HttpEmptyBody,
             },
@@ -136,8 +136,13 @@ impl From<TraceExporterError> for ExporterError {
             TraceExporterError::Shutdown(_) => ExporterErrorCode::Shutdown,
             TraceExporterError::Telemetry(_) => ExporterErrorCode::Telemetry,
             TraceExporterError::Serialization(_) => ExporterErrorCode::Serde,
-        };
-        ExporterError::new(code, &value.to_string())
+        }
+    }
+}
+
+impl From<TraceExporterError> for ExporterError {
+    fn from(value: TraceExporterError) -> Self {
+        ExporterError::new(ExporterErrorCode::from(&value), &value.to_string())
     }
 }
 

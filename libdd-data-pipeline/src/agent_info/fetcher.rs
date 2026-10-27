@@ -15,10 +15,38 @@ use libdd_common::Endpoint;
 use libdd_shared_runtime::Worker;
 use sha2::{Digest, Sha256};
 use std::marker::PhantomData;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
+
+type ReceiverLimits = Vec<(Endpoint, Arc<AtomicUsize>)>;
+const MAX_CACHED_RECEIVERS: usize = 64;
+// Retain known caps across exporter replacement without an unbounded endpoint
+// registry or a process-global mutex that a fork could inherit while locked.
+static RECEIVER_LIMITS: LazyLock<arc_swap::ArcSwap<ReceiverLimits>> =
+    LazyLock::new(|| arc_swap::ArcSwap::from_pointee(Vec::new()));
+
+fn receiver_limit(endpoint: &Endpoint) -> Arc<AtomicUsize> {
+    let candidate = Arc::new(AtomicUsize::new(0));
+    RECEIVER_LIMITS.rcu(|current| {
+        if current.iter().any(|(key, _)| key == endpoint) {
+            return Arc::clone(current);
+        }
+        let mut limits = current.as_ref().clone();
+        if limits.len() == MAX_CACHED_RECEIVERS {
+            limits.remove(0);
+        }
+        limits.push((endpoint.clone(), candidate.clone()));
+        Arc::new(limits)
+    });
+    RECEIVER_LIMITS
+        .load()
+        .iter()
+        .find(|(key, _)| key == endpoint)
+        .map_or(candidate, |(_, limit)| limit.clone())
+}
 
 /// Whether the agent reported the same value or not.
 #[derive(Debug)]
@@ -193,8 +221,10 @@ async fn fetch_and_hash_response<C: HttpClientCapability + SleepCapability>(
 #[derive(Debug)]
 pub struct AgentInfoFetcher<C: HttpClientCapability + SleepCapability> {
     info_endpoint: Endpoint,
+    max_request_bytes: Arc<AtomicUsize>,
     refresh_interval: Duration,
     trigger_rx: Option<mpsc::Receiver<()>>,
+    started: bool,
     /// `C` lives on the struct because `Worker::run(&mut self)` (a fixed trait
     /// signature) calls `fetch_info_with_state::<C>()` internally.
     _phantom: PhantomData<C>,
@@ -210,15 +240,19 @@ impl<C: HttpClientCapability + SleepCapability> AgentInfoFetcher<C> {
     pub fn new(info_endpoint: Endpoint, refresh_interval: Duration) -> (Self, ResponseObserver) {
         // The trigger channel stores a single message to avoid multiple triggers.
         let (trigger_tx, trigger_rx) = mpsc::channel(1);
+        let response_observer = ResponseObserver {
+            trigger_tx,
+            max_request_bytes: receiver_limit(&info_endpoint),
+        };
 
         let fetcher = Self {
             info_endpoint,
+            max_request_bytes: response_observer.max_request_bytes.clone(),
             refresh_interval,
             trigger_rx: Some(trigger_rx),
+            started: false,
             _phantom: PhantomData,
         };
-
-        let response_observer = ResponseObserver::new(trigger_tx);
 
         (fetcher, response_observer)
     }
@@ -238,11 +272,13 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Wor
     for AgentInfoFetcher<C>
 {
     async fn initial_trigger(&mut self) {
-        // Skip initial wait if cache is not populated
-        if AGENT_INFO_CACHE.load().is_none() {
-            return;
+        // Replacements refresh their endpoint immediately; fork restarts retain
+        // the fetched state and wait for the usual timer or response trigger.
+        if self.started {
+            self.trigger().await;
+        } else {
+            self.started = true;
         }
-        self.trigger().await
     }
 
     async fn trigger(&mut self) {
@@ -290,16 +326,31 @@ impl<C: HttpClientCapability + SleepCapability> AgentInfoFetcher<C> {
         .await;
         match res {
             Ok(FetchInfoStatus::NewState(new_info)) => {
+                self.update_payload_limit(&new_info);
                 debug!("New /info state received");
                 AGENT_INFO_CACHE.store(Some(Arc::new(*new_info)));
             }
             Ok(FetchInfoStatus::SameState) => {
+                if let Some(info) = current_info.as_ref() {
+                    self.update_payload_limit(info);
+                }
                 debug!("Agent info is up-to-date")
             }
             Err(err) => {
                 warn!(?err, "Error while fetching /info");
             }
         }
+    }
+
+    fn update_payload_limit(&self, info: &AgentInfo) {
+        let limit = info
+            .info
+            .config
+            .as_ref()
+            .and_then(|config| config.max_request_bytes)
+            .and_then(|limit| usize::try_from(limit).ok())
+            .unwrap_or_default();
+        self.max_request_bytes.store(limit, Ordering::Relaxed);
     }
 }
 
@@ -310,12 +361,22 @@ impl<C: HttpClientCapability + SleepCapability> AgentInfoFetcher<C> {
 #[derive(Debug, Clone)]
 pub struct ResponseObserver {
     trigger_tx: mpsc::Sender<()>,
+    max_request_bytes: Arc<AtomicUsize>,
 }
 
 impl ResponseObserver {
     /// Create a new ResponseObserver with the given channel sender.
     pub fn new(trigger_tx: mpsc::Sender<()>) -> Self {
-        Self { trigger_tx }
+        Self {
+            trigger_tx,
+            max_request_bytes: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+
+    /// Positive receiver limit fetched for this observer's endpoint, if available.
+    pub fn max_request_bytes(&self) -> Option<usize> {
+        let limit = self.max_request_bytes.load(Ordering::Relaxed);
+        (limit > 0).then_some(limit)
     }
 
     /// Check the given HTTP response for agent state changes and trigger a fetch if needed.
@@ -356,7 +417,67 @@ mod single_threaded_tests {
     use crate::agent_info;
     use httpmock::prelude::*;
     use libdd_capabilities_impl::NativeCapabilities;
-    use libdd_shared_runtime::{ForkSafeRuntime, SharedRuntime};
+    use libdd_shared_runtime::{BlockingRuntime, ForkSafeRuntime, SharedRuntime};
+
+    #[tokio::test]
+    async fn restart_waits_for_refresh_instead_of_fetching_again() {
+        use std::future::Future;
+        use std::task::{Context, Poll};
+        let (mut fetcher, observer) = AgentInfoFetcher::<NativeCapabilities>::new(
+            Endpoint::from_slice("http://localhost:8126/info"),
+            Duration::from_secs(3600),
+        );
+        fetcher.initial_trigger().await;
+        for _ in 0..5 {
+            let mut trigger = std::pin::pin!(fetcher.initial_trigger());
+            let mut context = Context::from_waker(std::task::Waker::noop());
+            assert!(matches!(trigger.as_mut().poll(&mut context), Poll::Pending));
+            observer.manual_trigger();
+            assert!(matches!(
+                trigger.as_mut().poll(&mut context),
+                Poll::Ready(())
+            ));
+        }
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn payload_limits_remain_scoped_to_the_fetching_endpoint() {
+        let server = MockServer::start_async().await;
+        let _small = server.mock(|when, then| {
+            when.path("/small");
+            then.status(200)
+                .body(r#"{"config":{"max_request_bytes":512}}"#);
+        });
+        let _large = server.mock(|when, then| {
+            when.path("/large");
+            then.status(200)
+                .body(r#"{"config":{"max_request_bytes":2048}}"#);
+        });
+        let (small, small_observer) = AgentInfoFetcher::<NativeCapabilities>::new(
+            Endpoint::from_slice(&server.url("/small")),
+            Duration::from_secs(60),
+        );
+        let (large, large_observer) = AgentInfoFetcher::<NativeCapabilities>::new(
+            Endpoint::from_slice(&server.url("/large")),
+            Duration::from_secs(60),
+        );
+        assert_eq!(small_observer.max_request_bytes(), None);
+        small.fetch_and_update().await;
+        let (mut replacement, replacement_observer) = AgentInfoFetcher::<NativeCapabilities>::new(
+            Endpoint::from_slice(&server.url("/small")),
+            Duration::from_secs(300),
+        );
+        assert_eq!(replacement_observer.max_request_bytes(), Some(512));
+        tokio::time::timeout(Duration::from_secs(1), replacement.initial_trigger())
+            .await
+            .unwrap();
+        replacement.fetch_and_update().await;
+        assert_eq!(replacement_observer.max_request_bytes(), Some(512));
+        large.fetch_and_update().await;
+        assert_eq!(small_observer.max_request_bytes(), Some(512));
+        assert_eq!(large_observer.max_request_bytes(), Some(2048));
+    }
 
     const TEST_INFO: &str = r#"{
         "version": "0.0.0",
@@ -707,12 +828,18 @@ mod single_threaded_tests {
         })));
 
         let endpoint = Endpoint::from_url(server.url("/info").parse().unwrap());
-        let (fetcher, response_observer) =
+        let (mut fetcher, response_observer) =
             // Interval is too long to fetch during the test
             AgentInfoFetcher::<NativeCapabilities>::new(endpoint, Duration::from_secs(3600));
 
         let shared_runtime = ForkSafeRuntime::new().unwrap();
-        let _ = shared_runtime.spawn_worker(fetcher, true).unwrap();
+        shared_runtime
+            .block_on(async {
+                fetcher.initial_trigger().await;
+                fetcher.run().await;
+            })
+            .unwrap();
+        mock.assert_calls(1);
 
         // Create a mock HTTP response with the new agent state
         let response = http::Response::builder()
@@ -724,33 +851,10 @@ mod single_threaded_tests {
         // Use the trigger component to check the response
         response_observer.check_response(&response);
 
-        // Wait for the fetch to complete
-        const MAX_ATTEMPTS: u32 = 500;
-        const SLEEP_DURATION_MS: u64 = 10;
-
-        let mut attempts = 0;
-        while mock.calls() == 0 && attempts < MAX_ATTEMPTS {
-            attempts += 1;
-            std::thread::sleep(Duration::from_millis(SLEEP_DURATION_MS));
-        }
-
-        // Should trigger a fetch since the state is different
-        mock.assert_calls(1);
-
-        // Wait for the cache to be updated with proper timeout
-        let mut attempts = 0;
+        assert!(fetcher.trigger_rx.as_mut().unwrap().try_recv().is_ok());
+        shared_runtime.block_on(fetcher.run()).unwrap();
+        mock.assert_calls(2);
         let expected_hash = calculate_hash(r#"{"version":"triggered"}"#);
-
-        while attempts < MAX_ATTEMPTS {
-            let updated_info = AGENT_INFO_CACHE.load();
-            if let Some(info) = updated_info.as_ref() {
-                if info.state_hash == expected_hash {
-                    break;
-                }
-            }
-            attempts += 1;
-            std::thread::sleep(Duration::from_millis(SLEEP_DURATION_MS));
-        }
 
         // Verify the cache was updated
         let updated_info = AGENT_INFO_CACHE.load();
@@ -789,11 +893,17 @@ mod single_threaded_tests {
         })));
 
         let endpoint = Endpoint::from_url(server.url("/info").parse().unwrap());
-        let (fetcher, response_observer) =
+        let (mut fetcher, response_observer) =
             AgentInfoFetcher::<NativeCapabilities>::new(endpoint, Duration::from_secs(3600)); // Very long interval
 
         let shared_runtime = ForkSafeRuntime::new().unwrap();
-        let _ = shared_runtime.spawn_worker(fetcher, true).unwrap();
+        shared_runtime
+            .block_on(async {
+                fetcher.initial_trigger().await;
+                fetcher.run().await;
+            })
+            .unwrap();
+        mock.assert_calls(1);
 
         // Create a mock HTTP response with the same agent state
         let response = http::Response::builder()
@@ -805,10 +915,9 @@ mod single_threaded_tests {
         // Use the trigger component to check the response
         response_observer.check_response(&response);
 
-        // Wait to ensure no fetch occurs
-        std::thread::sleep(Duration::from_millis(500));
-
-        // Should not trigger a fetch since the state is the same
-        mock.assert_calls(0);
+        assert!(matches!(
+            fetcher.trigger_rx.as_mut().unwrap().try_recv(),
+            Err(mpsc::error::TryRecvError::Empty)
+        ));
     }
 }

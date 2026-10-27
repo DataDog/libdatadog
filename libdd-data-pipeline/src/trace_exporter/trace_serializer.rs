@@ -46,6 +46,53 @@ impl TraceSerializer {
         }
     }
 
+    #[cfg(all(feature = "external-observations", not(target_arch = "wasm32")))]
+    pub(super) fn capacity_hint(&self, limit: usize) -> usize {
+        self.previous_serialised_len
+            .load(Ordering::Relaxed)
+            .max(MIN_BUFFER_CAPACITY)
+            .min(limit)
+    }
+
+    pub(super) fn remember_size(&self, size: usize) {
+        self.previous_serialised_len.store(size, Ordering::Relaxed);
+    }
+
+    pub(super) fn encode_to_writer<W: std::io::Write, T: TraceData>(
+        writer: &mut W,
+        traces: &[Vec<Span<T>>],
+        metadata: &TracerMetadata,
+        format: TraceExporterOutputFormat,
+    ) -> Result<(), TraceExporterError> {
+        match format {
+            TraceExporterOutputFormat::V04 => msgpack_encoder::v04::to_writer(writer, traces)
+                .map_err(|error| TraceExporterError::Io(std::io::Error::other(error))),
+            TraceExporterOutputFormat::V1 => {
+                msgpack_encoder::v1::encode_payload_from_v04(writer, traces, metadata)
+                    .map_err(|error| TraceExporterError::Io(std::io::Error::other(error)))
+            }
+            TraceExporterOutputFormat::V05 => {
+                let payload =
+                    trace_utils::convert_trace_chunks_v04_to_v05(traces).map_err(|error| {
+                        TraceExporterError::Deserialization(DecodeError::InvalidFormat(
+                            error.to_string(),
+                        ))
+                    })?;
+                match payload {
+                    tracer_payload::TraceChunks::V05(payload) => {
+                        rmp_serde::encode::write(writer, &payload)
+                            .map_err(TraceExporterError::Serialization)
+                    }
+                    _ => Err(TraceExporterError::Deserialization(
+                        DecodeError::InvalidFormat(
+                            "v0.5 conversion produced an unexpected payload variant".to_owned(),
+                        ),
+                    )),
+                }
+            }
+        }
+    }
+
     /// Prepare traces payload and HTTP headers for sending to agent
     pub(super) fn prepare_traces_payload<T: TraceData>(
         &self,
@@ -104,43 +151,9 @@ impl TraceSerializer {
             .previous_serialised_len
             .load(Ordering::Relaxed)
             .max(MIN_BUFFER_CAPACITY);
-        let buff = match output_format {
-            TraceExporterOutputFormat::V04 => {
-                msgpack_encoder::v04::to_vec_with_capacity_from_v04(traces, capacity as u32)
-            }
-            // v0.4 spans cross-encoded as V1 on the wire (used when the agent advertises
-            // /v1.0/traces).
-            TraceExporterOutputFormat::V1 => msgpack_encoder::v1::to_vec_with_capacity_from_v04(
-                traces,
-                capacity as u32,
-                metadata,
-            ),
-            TraceExporterOutputFormat::V05 => {
-                let map_err = |e: anyhow::Error| {
-                    TraceExporterError::Deserialization(DecodeError::InvalidFormat(e.to_string()))
-                };
-                let payload =
-                    trace_utils::convert_trace_chunks_v04_to_v05(traces).map_err(map_err)?;
-                match payload {
-                    tracer_payload::TraceChunks::V05(p) => {
-                        let mut buff = Vec::with_capacity(capacity);
-                        rmp_serde::encode::write(&mut buff, &p)
-                            .map_err(TraceExporterError::Serialization)?;
-                        buff
-                    }
-                    // `convert_trace_chunks_v04_to_v05` always returns `V05`.
-                    _ => {
-                        return Err(TraceExporterError::Deserialization(
-                            DecodeError::InvalidFormat(
-                                "v0.5 conversion produced an unexpected payload variant".to_owned(),
-                            ),
-                        ));
-                    }
-                }
-            }
-        };
-        self.previous_serialised_len
-            .store(buff.len(), Ordering::Relaxed);
+        let mut buff = Vec::with_capacity(capacity);
+        Self::encode_to_writer(&mut buff, traces, metadata, output_format)?;
+        self.remember_size(buff.len());
         Ok(buff)
     }
 }

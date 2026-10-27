@@ -120,7 +120,8 @@ impl RetryStrategy {
     }
 
     /// Returns the maximum number of retries.
-    pub(crate) fn max_retries(&self) -> u32 {
+    /// Maximum retries after the first request attempt.
+    pub fn max_retries(&self) -> u32 {
         self.max_retries
     }
 }

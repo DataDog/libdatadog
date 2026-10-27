@@ -4,10 +4,9 @@
 //! External observations: exporter measurements returned to the caller instead of being
 //! delivered by the native telemetry client.
 //!
-//! This whole module is the `external-observations` feature, for hosts that run their own
-//! telemetry client. The only other places that know about it are the gated calls in
-//! `emit_retry_result` and `process_traces_for_stats`, the builder switch, and the FFI
-//! crate's `observations` module.
+//! This module belongs to `external-observations`, for hosts with their own
+//! telemetry client. Batched sends build per-payload reports explicitly; this
+//! task-local collector is only the legacy single-result observation facade.
 //!
 //! A report is scoped to one observed call through a task-local, so the send path needs no
 //! extra parameters and concurrent callers cannot consume each other's observations.
@@ -34,10 +33,10 @@ tokio::task_local! {
 /// Caller-owned observations from one send. All counts are unsigned and zero-suppressed.
 /// `bytes_sent` is one successful payload-size distribution sample. Status zero means no
 /// terminal HTTP response; otherwise `responses_count` belongs to `status_code`.
-/// The struct contains no owned pointers and requires no destructor. Each exporter send currently
-/// prepares at most one payload, including V1 fallback.
+/// The struct contains no owned pointers and requires no destructor. It describes
+/// one payload; the batched API returns a separate observation for each outcome.
 #[repr(C)]
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct TraceExporterObservations {
     pub requests_count: u64,
     pub errors_network: u64,
@@ -56,7 +55,7 @@ pub struct TraceExporterObservations {
 
 impl TraceExporterObservations {
     /// Replace the payload measurements.
-    fn set_payload(&mut self, payload: SendPayloadTelemetry) {
+    pub(super) fn set_payload(&mut self, payload: SendPayloadTelemetry) {
         let (status_code, responses_count) = payload
             .responses_count_per_code
             .into_iter()
@@ -132,6 +131,21 @@ impl<
 mod tests {
     use super::*;
     use libdd_trace_utils::send_with_retry::SendWithRetryError;
+
+    #[test]
+    fn report_keeps_its_owning_closure_capture() {
+        fn requests(report: TraceExporterObservations) -> u64 {
+            report.requests_count
+        }
+        fn call_static(f: impl FnOnce() -> u64 + 'static) -> u64 {
+            f()
+        }
+        let report = TraceExporterObservations {
+            requests_count: 3,
+            ..Default::default()
+        };
+        assert_eq!(call_static(|| requests(report)), 3);
+    }
 
     fn timeout_payload() -> SendPayloadTelemetry {
         SendPayloadTelemetry::from_retry_result_with_spans(
