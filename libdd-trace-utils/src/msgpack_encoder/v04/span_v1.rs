@@ -18,31 +18,34 @@
 //! | `AttributeValue::KeyValueList`        | flattened into `meta`/`metrics[k.a]`, `[k.a.b]`, ... (per member, recursively) |
 //! | `error: bool`                         | `error: i32` (`true → 1`, `false → 0`)      |
 //! | `span_links`                          | native `span_links` (attributes stringified) |
-//! | `span_events`                         | `meta["events"]` (JSON; native `span_events` needs agent 7.63+) |
+//! | `span_events`                         | native `span_events` (nested members under dotted keys, `Bytes` as text); `meta["events"]` JSON when [`V1DowngradeOptions::native_span_events`] is off |
 //! | Chunk `trace_id: [u8; 16]`            | `trace_id: u64` (low 64) + `meta["_dd.p.tid"]` (hex of high 64, when non-zero) |
 //! | Chunk `origin`                        | `meta["_dd.origin"]`                        |
 //! | Chunk `priority`                      | `metrics["_sampling_priority_v1"]`          |
 //! | Chunk `sampling_mechanism`            | `meta["_dd.p.dm"]` (`"-{mechanism}"`)       |
 //! | Chunk `attributes`                    | Applied to every span in the chunk          |
 //! | Payload `env` / `app_version`         | Fallback for `meta["env"]` / `meta["version"]` when the span leaves them unset |
-//! | Payload `hostname`                    | `meta["_dd.hostname"]` on the local root    |
-//! | Payload `attributes`                  | Applied to every span, lowest precedence (span > chunk > payload); `_dd.tags.process` / `_dd.sdk.otlp_export` only to the first span of each chunk, `_dd.git.*` only to its local root |
+//! | Payload `hostname`                    | `meta["_dd.hostname"]` on the root span     |
+//! | Payload `attributes`                  | Applied to every span, lowest precedence (span > chunk > payload); `_dd.tags.process` / `_dd.sdk.otlp_export` only to the first span of each chunk, `_dd.git.*` only to its root span |
 //! | Chunk `dropped_trace: true`           | Preserves the chunk's `metrics["_sampling_priority_v1"]`, defaulting to `-1` (USER_REJECT) only when no priority is set |
+//!
+//! The root span is the one `trace_utils::get_root_span_index` picks (the agent's `GetRoot`).
 //!
 //! An attribute sharing a name with one of the dedicated fields above (`env`, `version`,
 //! `component`, `span.kind`, `_dd.p.tid`, `_dd.origin`, `_dd.p.dm`, `_sampling_priority_v1`,
-//! `_dd.hostname`) is dropped when that field is set, so each key is written at most once. When
-//! the field is unset, the attribute is written as is.
+//! `_dd.hostname`, and `events` for the JSON fallback) is dropped when that field is set, so each
+//! key is written at most once. When the field is unset, the attribute is written as is.
 
+use super::V1DowngradeOptions;
 use crate::span::TraceData;
 use crate::span::v1::{AttributeValue, Span, SpanEvent, SpanKind, SpanLink};
 use crate::span::vec_map::{DedupedVecMap, VecMap};
 use rmp::encode::{
-    RmpWrite, ValueWriteError, write_bin, write_f64, write_i64, write_map_len, write_sint,
-    write_str, write_u64,
+    RmpWrite, ValueWriteError, write_array_len, write_bin, write_bool, write_f64, write_i64,
+    write_map_len, write_sint, write_str, write_str_len, write_u8, write_u64,
 };
 use serde::ser::{Serialize, SerializeStruct, Serializer};
-use std::borrow::Borrow;
+use std::borrow::{Borrow, Cow};
 use std::collections::HashSet;
 use std::fmt::Write as _;
 
@@ -50,7 +53,7 @@ use std::fmt::Write as _;
 /// them before V1 (process tags, the OTLP export marker), rather than on every span.
 const FIRST_SPAN_PAYLOAD_ATTR_KEYS: &[&str] = &["_dd.tags.process", "_dd.sdk.otlp_export"];
 
-/// Payload attributes that v0.4 carries on the local-root span of each trace only (git metadata).
+/// Payload attributes that v0.4 carries on the root span of each trace only (git metadata).
 const ROOT_SPAN_PAYLOAD_ATTR_KEYS: &[&str] = &["_dd.git.commit.sha", "_dd.git.repository_url"];
 
 /// Chunk-level context propagated into the spans of a chunk when downgrading to v0.4. Built once
@@ -63,8 +66,8 @@ const ROOT_SPAN_PAYLOAD_ATTR_KEYS: &[&str] = &["_dd.git.commit.sha", "_dd.git.re
 /// Generic chunk/payload attributes (and env/version fallbacks) collapse onto every span, but the
 /// trace-level tags `trace_id` high half (`_dd.p.tid`), `origin` (`_dd.origin`),
 /// `sampling_mechanism` (`_dd.p.dm`), `priority` (`_sampling_priority_v1`) and the payload
-/// `hostname` (`_dd.hostname`, where pre-V1 agents read it) are emitted only on the local-root span
-/// — see `encode_span`'s `is_root` argument.
+/// `hostname` (`_dd.hostname`, where pre-V1 agents read it) are emitted only on the root span —
+/// see `encode_span`'s `is_root` argument.
 ///
 /// `chunk_attrs_dd` / `payload_attrs_dd` are deduped once here rather than per span: unlike the
 /// span's own attributes, they're identical for every span in the chunk.
@@ -134,17 +137,6 @@ fn split_trace_id(trace_id: &[u8; 16]) -> (u64, u64) {
     )
 }
 
-/// Index of the chunk's local root: the first span whose parent isn't in the chunk (none, or
-/// remote), else `0`. Trace-level context (`_dd.p.tid`, `_dd.origin`, ...) belongs on it only.
-pub(super) fn local_root_idx<'a, T: TraceData + 'a>(
-    mut spans: impl Iterator<Item = &'a Span<T>> + Clone,
-) -> usize {
-    let ids: HashSet<u64> = spans.clone().map(|s| s.span_id).collect();
-    spans
-        .position(|s| s.parent_id == 0 || !ids.contains(&s.parent_id))
-        .unwrap_or(0)
-}
-
 /// Per-bucket counts for the v0.4 `meta`, `metrics`, and `meta_struct` maps.
 #[derive(Default)]
 struct BucketCounts {
@@ -158,14 +150,14 @@ struct BucketCounts {
 /// `List` attribute named `"a"`, whose first element also flattens to `"a.0"`); msgpack doesn't
 /// forbid duplicate map keys, but doesn't define decoder precedence for them either, so we
 /// enforce "each key written at most once" ourselves rather than leaving it to chance.
-fn dedup_first_wins<V>(mut leaves: Vec<(String, V)>) -> Vec<(String, V)> {
+fn dedup_first_wins<K: AsRef<str>, V>(mut leaves: Vec<(K, V)>) -> Vec<(K, V)> {
     // Same two-pass technique as `VecMap::dedup`: collect a keep/drop bitmap using borrowed
     // `&str`s (no per-key clone), then `retain` in place (no full re-collect into a new `Vec`).
     let keep: Vec<bool> = {
         let mut seen: HashSet<&str> = HashSet::with_capacity(leaves.len());
         leaves
             .iter()
-            .map(|(k, _)| seen.insert(k.as_str()))
+            .map(|(k, _)| seen.insert(k.as_ref()))
             .collect()
     };
     let mut keep = keep.into_iter();
@@ -240,9 +232,9 @@ fn flatten_attr_into<T: TraceData>(
 ///
 /// This function will return any error emitted by the writer.
 ///
-/// `is_root` marks the chunk's local-root span. Trace-level context (`_dd.p.tid`, `_dd.origin`,
+/// `is_root` marks the chunk's root span. Trace-level context (`_dd.p.tid`, `_dd.origin`,
 /// `_dd.p.dm`, `_sampling_priority_v1`, `_dd.hostname`) is emitted only for it — in v0.4 those tags
-/// live on the local root, never on child spans. Generic chunk/payload attributes still propagate
+/// live on the root, never on child spans. Generic chunk/payload attributes still propagate
 /// to every span (v0.4 has no chunk concept, so they collapse onto each span), except
 /// `FIRST_SPAN_PAYLOAD_ATTR_KEYS`, which only `is_first` (the chunk's first span) gets, and
 /// `ROOT_SPAN_PAYLOAD_ATTR_KEYS`, which only `is_root` gets.
@@ -252,6 +244,7 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
     chunk: &ChunkContext<'_, T>,
     is_root: bool,
     is_first: bool,
+    opts: V1DowngradeOptions,
 ) -> Result<(), ValueWriteError<W::Error>> {
     let span_attrs_dd = span.attributes.defensive_dedup();
     let hostname: &str = if is_root {
@@ -261,6 +254,10 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
     };
     let (trace_id_low, trace_id_high) = split_trace_id(chunk.trace_id);
     let kind_meta = span_kind_to_meta(span.span_kind);
+    let native_events = opts.native_span_events && !span.span_events.is_empty();
+    // Legacy `events` meta JSON, for agents without native v0.4 `span_events`.
+    let span_events_json = (!opts.native_span_events && !span.span_events.is_empty())
+        .then(|| span_events_to_legacy_json(&span.span_events));
 
     // `env`/`version` fall back to the payload-level value when the span doesn't set its own —
     // mirrors how a v1 tracer can set these once at the payload level instead of duplicating
@@ -278,7 +275,7 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
 
     // An attribute named like a dedicated field is dropped only when that field is set (the
     // field wins); otherwise it is written as a regular attribute. Trace-level fields count as
-    // set for every span of the chunk, as they belong on the local root only.
+    // set for every span of the chunk, as they belong on the root only.
     let is_dedicated = |k: &str| match k {
         "env" => !env.is_empty(),
         "version" => !version.is_empty(),
@@ -289,6 +286,7 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
         "_dd.p.dm" => chunk.sampling_mechanism.is_some(),
         "_sampling_priority_v1" => chunk.priority.is_some(),
         "_dd.hostname" => !chunk.payload_hostname.borrow().is_empty(),
+        "events" => span_events_json.is_some(),
         _ => false,
     };
 
@@ -340,10 +338,6 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
     let meta_leaves = dedup_first_wins(meta_leaves);
     let metrics_leaves = dedup_first_wins(metrics_leaves);
 
-    // Span events go to the legacy `events` meta JSON: native v0.4 `span_events` needs agent 7.63+.
-    let span_events_json =
-        (!span.span_events.is_empty()).then(|| span_events_to_legacy_json(&span.span_events));
-
     // First pass: count bucket sizes so each msgpack map header carries the exact length.
     let mut counts = BucketCounts::default();
     counts.meta += !env.is_empty() as u32;
@@ -367,7 +361,8 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
         + (counts.meta > 0) as u32
         + (counts.metrics > 0) as u32
         + (counts.meta_struct > 0) as u32
-        + (!span.span_links.is_empty()) as u32;
+        + (!span.span_links.is_empty()) as u32
+        + native_events as u32;
 
     write_map_len(writer, span_len)?;
 
@@ -438,8 +433,16 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
         }
         if let Some(mechanism) = chunk.sampling_mechanism.filter(|_| is_root) {
             write_const_msgpack_str!(writer, "_dd.p.dm")?;
-            // Always emit a leading '-' so mechanism 0 serializes as "-0", not "0".
-            write_str(writer, &format!("-{mechanism}"))?;
+            // The tag is `-<mechanism>` (the part before the dash once held a hash), so 0 is "-0".
+            let mut buf = itoa::Buffer::new();
+            let digits = buf.format(mechanism);
+            write_str_len(writer, 1 + digits.len() as u32)?;
+            writer
+                .write_bytes(b"-")
+                .map_err(ValueWriteError::InvalidDataWrite)?;
+            writer
+                .write_bytes(digits.as_bytes())
+                .map_err(ValueWriteError::InvalidDataWrite)?;
         }
         if !hostname.is_empty() {
             write_const_msgpack_str!(writer, "_dd.hostname")?;
@@ -486,6 +489,9 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
 
     if !span.span_links.is_empty() {
         encode_span_links(writer, &span.span_links)?;
+    }
+    if native_events {
+        encode_span_events(writer, &span.span_events)?;
     }
 
     Ok(())
@@ -539,6 +545,175 @@ fn encode_span_links<W: RmpWrite, T: TraceData>(
         if link.flags != 0 {
             write_const_msgpack_str!(writer, "flags")?;
             rmp::encode::write_u32(writer, link.flags)?;
+        }
+    }
+    Ok(())
+}
+
+/// Writes the native v0.4 `span_events` field. Attributes take the v0.4
+/// `{"type": <u8>, "<kind>_value": ...}` shape (see `write_event_attr_value`); `Bytes` become
+/// (lossy UTF-8) text.
+fn encode_span_events<W: RmpWrite, T: TraceData>(
+    writer: &mut W,
+    span_events: &[SpanEvent<T>],
+) -> Result<(), ValueWriteError<W::Error>> {
+    write_const_msgpack_str!(writer, "span_events")?;
+    write_array_len(writer, span_events.len() as u32)?;
+
+    for event in span_events {
+        let attrs = event_attrs(event);
+        write_map_len(writer, 2 + (!attrs.is_empty()) as u32)?;
+
+        write_const_msgpack_str!(writer, "time_unix_nano")?;
+        write_u64(writer, event.time_unix_nano)?;
+
+        write_const_msgpack_str!(writer, "name")?;
+        write_str(writer, event.name.borrow())?;
+
+        if !attrs.is_empty() {
+            write_const_msgpack_str!(writer, "attributes")?;
+            write_map_len(writer, attrs.len() as u32)?;
+            for (k, v) in &attrs {
+                write_str(writer, k)?;
+                write_event_attr_value(writer, v)?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// The event's attributes as native v0.4 event attributes: scalars and arrays of scalars as they
+/// are; v0.4 has no nested values, so `KeyValueList` members and the elements of other arrays go
+/// under dotted keys (`k.a`, `k.0`), first key wins on a collision.
+fn event_attrs<T: TraceData>(event: &SpanEvent<T>) -> Vec<(Cow<'_, str>, &AttributeValue<T>)> {
+    let mut attrs = Vec::new();
+    let mut key = String::new();
+    let mut flattened = false;
+    for (k, v) in event.attributes.defensive_dedup().iter() {
+        if is_native_event_attr(v) {
+            attrs.push((Cow::Borrowed(k.borrow()), v));
+        } else {
+            key.clear();
+            key.push_str(k.borrow());
+            flatten_event_attr(&mut key, v, &mut attrs);
+            flattened = true;
+        }
+    }
+    if flattened {
+        attrs = dedup_first_wins(attrs);
+    }
+    attrs
+}
+
+/// Pushes `v` under `key`, or its members / elements under dotted keys if it is nested.
+fn flatten_event_attr<'a, T: TraceData>(
+    key: &mut String,
+    v: &'a AttributeValue<T>,
+    out: &mut Vec<(Cow<'a, str>, &'a AttributeValue<T>)>,
+) {
+    let base_len = key.len();
+    match v {
+        AttributeValue::KeyValueList(map) => {
+            for (k, v) in map.defensive_dedup().iter() {
+                key.push('.');
+                key.push_str(k.borrow());
+                flatten_event_attr(key, v, out);
+                key.truncate(base_len);
+            }
+        }
+        AttributeValue::Array(items) if !is_native_event_attr(v) => {
+            for (i, item) in items.iter().enumerate() {
+                key.push('.');
+                let _ = write!(key, "{i}");
+                flatten_event_attr(key, item, out);
+                key.truncate(base_len);
+            }
+        }
+        _ => out.push((Cow::Owned(key.clone()), v)),
+    }
+}
+
+/// Whether `v` has a native v0.4 event-attribute form: a scalar or an array of scalars.
+fn is_native_event_attr<T: TraceData>(v: &AttributeValue<T>) -> bool {
+    match v {
+        AttributeValue::KeyValueList(_) => false,
+        AttributeValue::Array(items) => items.iter().all(is_scalar_array_elem),
+        _ => true,
+    }
+}
+
+macro_rules! write_type {
+    ($writer:expr, $int_type:expr, $str_type:expr) => {{
+        write_map_len($writer, 2)?;
+        write_const_msgpack_str!($writer, "type")?;
+        write_u8($writer, $int_type)?;
+        write_str($writer, $str_type)?;
+    }};
+}
+
+/// Writes a v0.4 event-attribute value as `{"type": <u8>, "..._value": ...}`. Scalars produce a
+/// 2-entry map; `Array` produces `{"type": 4, "array_value": {"values": [...]}}` with each
+/// element written via `write_event_array_element`.
+fn write_event_attr_value<W: RmpWrite, T: TraceData>(
+    writer: &mut W,
+    v: &AttributeValue<T>,
+) -> Result<(), ValueWriteError<W::Error>> {
+    match v {
+        AttributeValue::Array(items) => {
+            write_type!(writer, 4, "array_value");
+            write_map_len(writer, 1)?;
+            write_const_msgpack_str!(writer, "values")?;
+            write_array_len(writer, items.len() as u32)?;
+            for item in items {
+                write_event_array_element(writer, item)?;
+            }
+        }
+        _ => write_event_array_element(writer, v)?,
+    }
+    Ok(())
+}
+
+/// Returns `true` when `v` is a scalar that fits in a v0.4 `AttributeArrayValue` (no nesting).
+fn is_scalar_array_elem<T: TraceData>(v: &AttributeValue<T>) -> bool {
+    !matches!(
+        v,
+        AttributeValue::Array(_) | AttributeValue::KeyValueList(_)
+    )
+}
+
+/// Writes a scalar as a v0.4 `AttributeArrayValue`, the `{"type", "..._value"}` shape that
+/// scalar event attributes use too.
+fn write_event_array_element<W: RmpWrite, T: TraceData>(
+    writer: &mut W,
+    v: &AttributeValue<T>,
+) -> Result<(), ValueWriteError<W::Error>> {
+    match v {
+        AttributeValue::String(s) => {
+            write_type!(writer, 0, "string_value");
+            write_str(writer, s.borrow())?;
+        }
+        AttributeValue::Bytes(b) => {
+            write_type!(writer, 0, "string_value");
+            write_str(writer, &String::from_utf8_lossy(b.borrow()))?;
+        }
+        AttributeValue::Bool(b) => {
+            write_type!(writer, 1, "bool_value");
+            write_bool(writer, *b).map_err(ValueWriteError::InvalidDataWrite)?;
+        }
+        AttributeValue::Int(i) => {
+            write_type!(writer, 2, "int_value");
+            write_sint(writer, *i)?;
+        }
+        AttributeValue::Float(f) => {
+            write_type!(writer, 3, "double_value");
+            write_f64(writer, *f)?;
+        }
+        AttributeValue::Array(_) | AttributeValue::KeyValueList(_) => {
+            // `event_attrs` flattens nested values; reachable only on a bug. Keep the map valid.
+            debug_assert!(false, "nested value reached the event attribute writer");
+            write_type!(writer, 0, "string_value");
+            write_str(writer, "")?;
         }
     }
     Ok(())
@@ -607,6 +782,7 @@ mod tests {
     //! `TracerPayload` via [`super::super::to_vec_from_v1`] and decodes the bytes with
     //! `rmpv` to assert on the resulting v0.4 shape — this implicitly checks that the output
     //! is also valid msgpack consumable by any standard v0.4 decoder (test-agent, agent, etc.).
+    use super::super::V1DowngradeOptions;
     use crate::span::v1::{
         AttributeValue, AttributeValueBytes, SpanBytes, SpanEventBytes, SpanKind, SpanLinkBytes,
         TraceChunkBytes, TracerPayloadBytes,
@@ -623,7 +799,18 @@ mod tests {
     /// Encodes `payload` and decodes back into `rmpv::Value`. The top level of v0.4 is an
     /// array of traces; this helper returns it as a `Vec<Value>` so tests can index in.
     fn encode_and_decode(payload: &TracerPayloadBytes) -> Vec<Value> {
-        let bytes = super::super::to_vec_from_v1(payload);
+        decode(&super::super::to_vec_from_v1(payload))
+    }
+
+    /// [`encode_and_decode`] with span events in the legacy `events` meta JSON.
+    fn encode_and_decode_legacy_events(payload: &TracerPayloadBytes) -> Vec<Value> {
+        let opts = V1DowngradeOptions {
+            native_span_events: false,
+        };
+        decode(&super::super::to_vec_from_v1_with(payload, opts))
+    }
+
+    fn decode(bytes: &[u8]) -> Vec<Value> {
         let value = rmpv::decode::read_value(&mut &bytes[..]).expect("decode failed");
         match value {
             Value::Array(traces) => traces,
@@ -686,6 +873,8 @@ mod tests {
             span_id: 1,
             start: 1_000,
             duration: 500,
+            // As the sidecar builder starts spans: no `span.kind` set.
+            span_kind: SpanKind::Unspecified,
             ..Default::default()
         }
     }
@@ -847,7 +1036,7 @@ mod tests {
 
     #[test]
     fn span_kind_unspecified_is_not_emitted() {
-        // Unspecified is the default and is implied by the absence of `meta["span.kind"]`.
+        // Unspecified (no `span.kind` set) is implied by the absence of `meta["span.kind"]`.
         let payload = minimal_payload([0u8; 16], minimal_span());
         let traces = encode_and_decode(&payload);
         // meta is None overall since no other field forces it.
@@ -1297,7 +1486,7 @@ mod tests {
         assert_eq!(
             map_get(meta, "_dd.p.dm").unwrap().as_str(),
             Some("-4"),
-            "sampling_mechanism is encoded as `-{{n}}` per the agent's convention"
+            "sampling_mechanism is encoded as the `-<mechanism>` tag format"
         );
 
         let metrics = map_get(span, "metrics").expect("metrics carries sampling_priority_v1");
@@ -1471,6 +1660,52 @@ mod tests {
     }
 
     #[test]
+    fn trace_level_tags_land_on_the_parentless_root_not_an_earlier_orphan() {
+        // Like the agent's GetRoot, a span with parent_id 0 is the root even when an orphan (its
+        // parent missing from the chunk) comes first.
+        let orphan = SpanBytes {
+            span_id: 5,
+            parent_id: 99,
+            ..minimal_span()
+        };
+        let root = SpanBytes {
+            span_id: 1,
+            parent_id: 0,
+            ..minimal_span()
+        };
+        let payload = TracerPayloadBytes {
+            chunks: vec![TraceChunkBytes {
+                trace_id: [0u8; 16],
+                origin: bs("synthetics"),
+                priority: Some(2),
+                spans: vec![orphan, root],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let traces = encode_and_decode(&payload);
+        let trace = traces[0].as_array().expect("trace is array");
+
+        assert!(
+            map_get(&trace[0], "meta").is_none(),
+            "the orphan is not the root"
+        );
+        assert!(map_get(&trace[0], "metrics").is_none());
+        let root_meta = map_get(&trace[1], "meta").expect("root has meta");
+        assert_eq!(
+            map_get(root_meta, "_dd.origin").unwrap().as_str(),
+            Some("synthetics")
+        );
+        let root_metrics = map_get(&trace[1], "metrics").expect("root has metrics");
+        assert_eq!(
+            map_get(root_metrics, "_sampling_priority_v1")
+                .unwrap()
+                .as_f64(),
+            Some(2.0)
+        );
+    }
+
+    #[test]
     fn sampling_mechanism_zero_encodes_as_negative_zero() {
         let payload = TracerPayloadBytes {
             chunks: vec![TraceChunkBytes {
@@ -1486,7 +1721,7 @@ mod tests {
         assert_eq!(
             map_get(meta, "_dd.p.dm").unwrap().as_str(),
             Some("-0"),
-            "mechanism 0 must serialize as `-0`, not `0`, per the agent's convention"
+            "the `-<mechanism>` tag format writes mechanism 0 as `-0`, not `0`"
         );
     }
 
@@ -1922,7 +2157,7 @@ mod tests {
     }
 
     #[test]
-    fn span_event_attributes_are_downgraded_to_v04_anyvalue_shape() {
+    fn span_event_attributes_fall_back_to_legacy_events_meta_json() {
         let mut event_attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
         event_attrs.insert(bs("kind"), AttributeValue::String(bs("exception")));
         event_attrs.insert(bs("escaped"), AttributeValue::Bool(true));
@@ -1941,11 +2176,11 @@ mod tests {
             },
         );
 
-        let traces = encode_and_decode(&payload);
+        let traces = encode_and_decode_legacy_events(&payload);
         let span = &traces[0][0];
-        // No native span_events field on the v0.4 downgrade — events go to the legacy `events`
-        // meta as JSON (native attribute types preserved: bool/int/float stay JSON bool/number,
-        // NOT the native `{"type":..}` shape).
+        // Without native span_events, events go to the legacy `events` meta as JSON (native
+        // attribute types preserved: bool/int/float stay JSON bool/number, NOT the native
+        // `{"type":..}` shape).
         assert!(map_get(span, "span_events").is_none());
         let meta = map_get(span, "meta").expect("meta present");
         assert_eq!(
@@ -2022,7 +2257,7 @@ mod tests {
             },
         );
 
-        let traces = encode_and_decode(&payload);
+        let traces = encode_and_decode_legacy_events(&payload);
         let span = &traces[0][0];
         assert!(map_get(span, "span_events").is_none());
         let meta = map_get(span, "meta").expect("meta present");
@@ -2034,5 +2269,199 @@ mod tests {
                 "attributes": {"arg1": "value1", "int_array": [3, 4], "string_array": ["5", "6"]},
             }])
         );
+    }
+
+    #[test]
+    fn legacy_events_meta_wins_over_an_events_attribute() {
+        let mut attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        attrs.insert(bs("events"), AttributeValue::String(bs("user value")));
+        let payload = minimal_payload(
+            [0u8; 16],
+            SpanBytes {
+                attributes: attrs,
+                span_events: ThinVec::from_iter([SpanEventBytes {
+                    time_unix_nano: 1,
+                    name: bs("e"),
+                    attributes: VecMap::new(),
+                }]),
+                ..minimal_span()
+            },
+        );
+
+        let traces = encode_and_decode_legacy_events(&payload);
+        let meta = map_get(&traces[0][0], "meta").expect("meta present");
+        let events_keys = meta
+            .as_map()
+            .expect("meta is a map")
+            .iter()
+            .filter(|(k, _)| k.as_str() == Some("events"))
+            .count();
+        assert_eq!(
+            events_keys, 1,
+            "duplicate \"events\" key written to the wire"
+        );
+        assert_eq!(
+            json_meta(meta, "events"),
+            serde_json::json!([{"name": "e", "time_unix_nano": 1}])
+        );
+
+        // With native span_events, the attribute is a plain meta entry.
+        let traces = encode_and_decode(&payload);
+        let meta = map_get(&traces[0][0], "meta").expect("meta present");
+        assert_eq!(
+            map_get(meta, "events").unwrap().as_str(),
+            Some("user value")
+        );
+    }
+
+    #[test]
+    fn span_event_attributes_are_downgraded_to_v04_anyvalue_shape() {
+        let mut event_attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        event_attrs.insert(bs("kind"), AttributeValue::String(bs("exception")));
+        event_attrs.insert(bs("escaped"), AttributeValue::Bool(true));
+        event_attrs.insert(bs("count"), AttributeValue::Int(3));
+        event_attrs.insert(bs("ratio"), AttributeValue::Float(0.75));
+
+        let payload = minimal_payload(
+            [0u8; 16],
+            SpanBytes {
+                span_events: ThinVec::from_iter([SpanEventBytes {
+                    time_unix_nano: 1_700_000_000_000_000_000,
+                    name: bs("oops"),
+                    attributes: event_attrs,
+                }]),
+                ..minimal_span()
+            },
+        );
+
+        let traces = encode_and_decode(&payload);
+        // Native span_events replace the legacy `events` meta.
+        assert!(map_get(&traces[0][0], "meta").is_none());
+        let events = map_get(&traces[0][0], "span_events").expect("span_events present");
+        let events_arr = events.as_array().expect("span_events is array");
+        assert_eq!(events_arr.len(), 1);
+        let event = &events_arr[0];
+
+        assert_eq!(map_get(event, "name").unwrap().as_str(), Some("oops"));
+        assert_eq!(
+            map_get(event, "time_unix_nano").unwrap().as_u64(),
+            Some(1_700_000_000_000_000_000)
+        );
+
+        // Each typed attribute decodes to a `{"type": <u8>, "<kind>_value": value}` map.
+        let attrs = map_get(event, "attributes").expect("event attributes present");
+        let kind = map_get(attrs, "kind").unwrap();
+        assert_eq!(map_get(kind, "type").unwrap().as_u64(), Some(0));
+        assert_eq!(
+            map_get(kind, "string_value").unwrap().as_str(),
+            Some("exception")
+        );
+
+        let escaped = map_get(attrs, "escaped").unwrap();
+        assert_eq!(map_get(escaped, "type").unwrap().as_u64(), Some(1));
+        assert_eq!(
+            map_get(escaped, "bool_value").unwrap().as_bool(),
+            Some(true)
+        );
+
+        let count = map_get(attrs, "count").unwrap();
+        assert_eq!(map_get(count, "type").unwrap().as_u64(), Some(2));
+        assert_eq!(map_get(count, "int_value").unwrap().as_i64(), Some(3));
+
+        let ratio = map_get(attrs, "ratio").unwrap();
+        assert_eq!(map_get(ratio, "type").unwrap().as_u64(), Some(3));
+        assert_eq!(map_get(ratio, "double_value").unwrap().as_f64(), Some(0.75));
+    }
+
+    #[test]
+    fn span_event_nested_attributes_flatten_to_dotted_keys() {
+        // v0.4 event attributes can't nest: map members and the elements of arrays holding
+        // nested values go under dotted keys, arrays of scalars stay native, bytes become text.
+        let mut inner: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        inner.insert(bs("c"), AttributeValue::String(bs("x")));
+        let mut obj: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        obj.insert(bs("a"), AttributeValue::Int(1));
+        obj.insert(bs("b"), AttributeValue::KeyValueList(inner));
+        obj.insert(
+            bs("list"),
+            AttributeValue::Array(vec![AttributeValue::Float(1e-5)]),
+        );
+        let mut pair: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        pair.insert(bs("k"), AttributeValue::Bool(true));
+        let mut attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        // Written first, so it wins over `obj.a` flattened from the map below.
+        attrs.insert(bs("obj.a"), AttributeValue::Int(7));
+        attrs.insert(bs("obj"), AttributeValue::KeyValueList(obj));
+        attrs.insert(
+            bs("mixed"),
+            AttributeValue::Array(vec![
+                AttributeValue::String(bs("s")),
+                AttributeValue::KeyValueList(pair),
+            ]),
+        );
+        attrs.insert(
+            bs("raw"),
+            AttributeValue::Bytes(Bytes::from_static(b"bytes")),
+        );
+        // Deduped maps iterate in insertion order, which first-wins relies on.
+        attrs.dedup();
+
+        let payload = minimal_payload(
+            [0u8; 16],
+            SpanBytes {
+                span_events: ThinVec::from_iter([SpanEventBytes {
+                    time_unix_nano: 1,
+                    name: bs("e"),
+                    attributes: attrs,
+                }]),
+                ..minimal_span()
+            },
+        );
+
+        let traces = encode_and_decode(&payload);
+        let event = &map_get(&traces[0][0], "span_events").unwrap()[0];
+        let attrs = sort_maps(map_get(event, "attributes").unwrap().clone());
+        let typed = |ty: u64, field: &str, v: Value| {
+            Value::Map(vec![
+                (Value::from(field), v),
+                (Value::from("type"), Value::from(ty)),
+            ])
+        };
+        let entry = |k: &str, v: Value| (Value::from(k), v);
+        assert_eq!(
+            attrs,
+            Value::Map(vec![
+                entry("mixed.0", typed(0, "string_value", Value::from("s"))),
+                entry("mixed.1.k", typed(1, "bool_value", Value::from(true))),
+                entry("obj.a", typed(2, "int_value", Value::from(7))),
+                entry("obj.b.c", typed(0, "string_value", Value::from("x"))),
+                entry(
+                    "obj.list",
+                    Value::Map(vec![
+                        (
+                            Value::from("array_value"),
+                            Value::Map(vec![(
+                                Value::from("values"),
+                                Value::Array(vec![typed(3, "double_value", Value::from(1e-5))]),
+                            )]),
+                        ),
+                        (Value::from("type"), Value::from(4)),
+                    ]),
+                ),
+                entry("raw", typed(0, "string_value", Value::from("bytes"))),
+            ])
+        );
+
+        // The sidecar re-decodes the downgraded payload: the v0.4 decoder must accept it.
+        let bytes = super::super::to_vec_from_v1(&payload);
+        let (decoded, _) = crate::tracer_payload::decode_to_trace_chunks(
+            Bytes::from(bytes),
+            crate::tracer_payload::TraceEncoding::V04,
+        )
+        .expect("the v0.4 decoder accepts native span_events");
+        let crate::tracer_payload::TraceChunks::V04(traces) = decoded else {
+            panic!("expected v0.4 traces");
+        };
+        assert_eq!(traces[0][0].span_events[0].attributes.len(), 6);
     }
 }

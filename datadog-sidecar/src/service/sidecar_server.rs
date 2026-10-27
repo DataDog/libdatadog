@@ -21,6 +21,7 @@ use libdd_ipc::platform::{FileBackedHandle, ShmHandle};
 use libdd_telemetry::metrics::MetricContext;
 use libdd_telemetry::worker::{LifecycleAction, TelemetryActions, TelemetryWorkerStats};
 use libdd_trace_utils::msgpack_encoder;
+use libdd_trace_utils::msgpack_encoder::v04::V1DowngradeOptions;
 use libdd_trace_utils::send_with_retry::{RetryBackoffType, RetryStrategy};
 use libdd_trace_utils::span::BytesData;
 use libdd_trace_utils::trace_utils::SendData;
@@ -42,7 +43,7 @@ use tracing::{debug, error, info, trace, warn};
 use crate::appsec::{AppSecConnection, AppSecManager};
 #[cfg(unix)]
 use crate::config::AppSecConfig;
-use crate::service::agent_info::AgentInfos;
+use crate::service::agent_info::{AgentInfoGuard, AgentInfos};
 use crate::service::data_streams_flusher::{
     DsmTableKey, DsmTables, flush_all_dsm_now, get_or_create_dsm_table,
 };
@@ -736,6 +737,7 @@ impl SidecarServer {
                         v1_target,
                         retry_interval,
                         flush_interval,
+                        session.agent_info().cloned(),
                     );
                     return;
                 }
@@ -745,7 +747,13 @@ impl SidecarServer {
                 let TraceChunks::V1(tracer_payload) = &payload else {
                     unreachable!("payload is still TraceChunks::V1");
                 };
-                let v04_bytes = msgpack_encoder::v04::to_vec_from_v1(tracer_payload);
+                // Native span events only once `/info` advertises them.
+                let opts = V1DowngradeOptions {
+                    native_span_events: session.agent_info().is_some_and(|info| {
+                        Self::peek_agent_info(info, |info| info.span_events == Some(true))
+                    }),
+                };
+                let v04_bytes = msgpack_encoder::v04::to_vec_from_v1_with(tracer_payload, opts);
                 match decode_to_trace_chunks(tinybytes::Bytes::from(v04_bytes), TraceEncoding::V04)
                 {
                     Ok((v04_payload, v04_size)) => {
@@ -760,6 +768,7 @@ impl SidecarServer {
                             v04_target,
                             retry_interval,
                             flush_interval,
+                            None,
                         );
                     }
                     Err(e) => error!(
@@ -778,24 +787,27 @@ impl SidecarServer {
     }
 
     /// Whether the agent accepts V1 (non-blocking). Fails closed to v0.4 until `/info` advertises
-    /// `/v1.0/traces`, so we never send V1 to an agent that can't decode it. Agentless is always
-    /// V1.
+    /// `/v1.0/traces`, so we never send V1 to an agent that can't decode it, and after a 404 from
+    /// it until `/info` changes. Agentless is always V1.
     fn agent_supports_v1(session: &ConnectionSession, v04_target: &Endpoint) -> bool {
         if v04_target.api_key.is_some() {
             return true;
         }
-        // Peek the session's `/info` (fetched since `set_connection_config`) without blocking the
-        // send path. A fetcher keyed by the trace endpoint would be a separate, cold one.
-        let Some(info) = session.agent_info().map(|g| g.get()) else {
-            return false;
-        };
+        // The session's `/info` is fetched since `set_connection_config`. A fetcher keyed by the
+        // trace endpoint would be a separate, cold one.
+        session.agent_info().is_some_and(|info| {
+            !info.v1_rejected() && Self::peek_agent_info(info, agent_info_advertises_v1)
+        })
+    }
+
+    /// Applies `f` to the agent info without blocking the send path; false until it is fetched.
+    fn peek_agent_info(info: &AgentInfoGuard, f: impl Fn(&AgentInfoStruct) -> bool) -> bool {
+        let info = info.get();
         // `peek` borrows the resolved info; polling (which clones the whole struct) is only
         // needed until the first poll resolves it.
         match info.peek() {
-            Some(info) => agent_info_advertises_v1(info),
-            None => info
-                .now_or_never()
-                .is_some_and(|info| agent_info_advertises_v1(&info)),
+            Some(info) => f(info),
+            None => info.now_or_never().is_some_and(|info| f(&info)),
         }
     }
 
@@ -825,6 +837,7 @@ impl SidecarServer {
                     target,
                     retry_interval,
                     flush_interval,
+                    None,
                 );
             }
             Err(e) => {
@@ -836,6 +849,8 @@ impl SidecarServer {
         }
     }
 
+    /// `v1_agent_info`: for a V1 send, the agent info in which a 404 turns V1 off.
+    #[allow(clippy::too_many_arguments)]
     fn enqueue_trace(
         &self,
         payload: TraceChunks<BytesData>,
@@ -844,6 +859,7 @@ impl SidecarServer {
         target: &Endpoint,
         retry_interval: u64,
         flush_interval: Duration,
+        v1_agent_info: Option<Arc<AgentInfoGuard>>,
     ) {
         let mut data = SendData::new(
             size,
@@ -853,7 +869,8 @@ impl SidecarServer {
         );
         let strategy = RetryStrategy::new(5, retry_interval, RetryBackoffType::Exponential, None);
         data.set_retry_strategy(strategy);
-        self.trace_flusher.enqueue(data, flush_interval);
+        self.trace_flusher
+            .enqueue(data, flush_interval, v1_agent_info);
     }
 
     pub async fn compute_stats(&self) -> SidecarStats {
@@ -3021,6 +3038,14 @@ mod tests {
     }
 
     fn sample_v1_trace_payload_bytes() -> Vec<u8> {
+        sample_v1_trace_payload_bytes_with_events(Default::default())
+    }
+
+    fn sample_v1_trace_payload_bytes_with_events(
+        span_events: libdd_trace_utils::span::v1::ThinVec<
+            libdd_trace_utils::span::v1::SpanEventBytes,
+        >,
+    ) -> Vec<u8> {
         use libdd_tinybytes::BytesString;
         use libdd_trace_utils::msgpack_encoder::v1::to_vec_from_v1;
         use libdd_trace_utils::span::v1::{
@@ -3040,6 +3065,7 @@ mod tests {
             duration: 1_500,
             // The tracer marks top-level spans itself.
             attributes: vec![(bs("_dd.top_level"), AttributeValue::Float(1.0))].into(),
+            span_events,
             ..Default::default()
         };
 
@@ -3067,8 +3093,22 @@ mod tests {
         http_server: &MockServer,
         server: &SidecarServer,
         endpoints: &[&str],
-    ) -> crate::service::agent_info::AgentInfoGuard {
-        let body = serde_json::json!({ "endpoints": endpoints }).to_string();
+    ) -> AgentInfoGuard {
+        prime_agent_info_body(
+            http_server,
+            server,
+            serde_json::json!({ "endpoints": endpoints }),
+        )
+        .await
+    }
+
+    /// [`prime_agent_info`] with a whole `/info` body.
+    async fn prime_agent_info_body(
+        http_server: &MockServer,
+        server: &SidecarServer,
+        body: serde_json::Value,
+    ) -> AgentInfoGuard {
+        let body = body.to_string();
         http_server
             .mock_async(|when, then| {
                 when.path("/info");
@@ -3333,6 +3373,169 @@ mod tests {
         v1_mock.assert_async().await;
         // One fetcher per agent: sending must not start a second `/info` poller.
         assert_eq!(info_mock.calls_async().await, 1);
+    }
+
+    /// Sends one V1 payload through `handler` and waits for the flusher to send it.
+    async fn send_v1_and_flush(handler: &mut ConnectionSidecarHandler, payload: Vec<u8>) {
+        handler
+            .send_trace_v1_bytes(
+                payload,
+                TracerGenericTags::default(),
+                "cpython".to_owned(),
+                "cpython-vendor".to_owned(),
+            )
+            .await;
+        sleep(TokioDuration::from_millis(50)).await;
+        handler.server.trace_flusher.join().await.unwrap();
+    }
+
+    fn sample_span_event() -> libdd_trace_utils::span::v1::SpanEventBytes {
+        libdd_trace_utils::span::v1::SpanEventBytes {
+            time_unix_nano: 1_700_000_000_000_000_000,
+            name: libdd_tinybytes::BytesString::from_static("exception"),
+            ..Default::default()
+        }
+    }
+
+    /// The downgrade writes native v0.4 `span_events` only when `/info` advertises them, and
+    /// falls back to the legacy `events` meta JSON otherwise.
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn downgrade_uses_native_span_events_only_when_info_advertises_them() {
+        for span_events in [Some(true), None] {
+            let http_server = MockServer::start_async().await;
+            let native = span_events == Some(true);
+            let v04_mock = http_server
+                .mock_async(|when, then| {
+                    let when = when.method(POST).path("/v0.4/traces");
+                    // msgpack strings are unquoted; the JSON in the `events` meta quotes its keys.
+                    if native {
+                        when.body_includes("span_events")
+                            .body_excludes("\"time_unix_nano\"");
+                    } else {
+                        when.body_excludes("span_events")
+                            .body_includes("\"time_unix_nano\"");
+                    }
+                    then.status(200);
+                })
+                .await;
+
+            let mut handler = test_handler(SidecarServer::default());
+            let agent_info = prime_agent_info_body(
+                &http_server,
+                &handler.server,
+                serde_json::json!({ "endpoints": ["/v0.4/traces"], "span_events": span_events }),
+            )
+            .await;
+            configure_session(&handler, InstanceId::new("session", "runtime"), |session| {
+                set_trace_endpoint(session, http_server.url("/"));
+                session.set_agent_info(agent_info);
+            });
+
+            send_v1_and_flush(
+                &mut handler,
+                sample_v1_trace_payload_bytes_with_events(
+                    libdd_trace_utils::span::v1::ThinVec::from_iter([sample_span_event()]),
+                ),
+            )
+            .await;
+
+            v04_mock.assert_async().await;
+        }
+    }
+
+    /// A 404 from `/v1.0/traces` turns V1 off and re-fetches `/info` right away. The 404'd payload
+    /// is not re-sent, the next one goes to v0.4, and V1 comes back once `/info` changes.
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn v1_404_falls_back_to_v04_until_info_changes() {
+        let http_server = MockServer::start_async().await;
+        let info_body = |version: &str| {
+            serde_json::json!({
+                "version": version,
+                "endpoints": ["/v0.4/traces", "/v1.0/traces"],
+            })
+            .to_string()
+        };
+        let info_mock = http_server
+            .mock_async(|when, then| {
+                when.path("/info");
+                then.status(200).body(info_body("7.70.0"));
+            })
+            .await;
+        let v1_mock = http_server
+            .mock_async(|when, then| {
+                when.method(POST).path("/v1.0/traces");
+                then.status(404).body("404 page not found");
+            })
+            .await;
+        let v04_mock = http_server
+            .mock_async(|when, then| {
+                when.method(POST).path("/v0.4/traces");
+                then.status(200);
+            })
+            .await;
+
+        let mut handler = test_handler(SidecarServer::default());
+        let endpoint = Endpoint {
+            url: http_server.url("/").parse().unwrap(),
+            ..Endpoint::default()
+        };
+        let agent_info = handler.server.agent_infos.query_for(endpoint.clone());
+        agent_info.get().await;
+        // A second guard on the same fetcher, to observe it.
+        let probe = handler.server.agent_infos.query_for(endpoint);
+        configure_session(&handler, InstanceId::new("session", "runtime"), |session| {
+            set_trace_endpoint(session, http_server.url("/"));
+            session.set_agent_info(agent_info);
+        });
+
+        send_v1_and_flush(&mut handler, sample_v1_trace_payload_bytes()).await;
+        assert!(probe.v1_rejected());
+        let v1_calls = v1_mock.calls_async().await;
+        assert!(v1_calls > 0);
+        // Re-fetched without waiting for the next poll; unchanged, so V1 stays off.
+        for _ in 0..100 {
+            if info_mock.calls_async().await >= 2 {
+                break;
+            }
+            sleep(TokioDuration::from_millis(10)).await;
+        }
+        assert_eq!(info_mock.calls_async().await, 2);
+
+        send_v1_and_flush(&mut handler, sample_v1_trace_payload_bytes()).await;
+        v04_mock.assert_calls_async(1).await;
+        assert_eq!(v1_mock.calls_async().await, v1_calls);
+        assert!(probe.v1_rejected());
+
+        // The agent now serves V1 and a changed `/info`.
+        info_mock.delete_async().await;
+        v1_mock.delete_async().await;
+        let info_mock = http_server
+            .mock_async(|when, then| {
+                when.path("/info");
+                then.status(200).body(info_body("7.71.0"));
+            })
+            .await;
+        let v1_mock = http_server
+            .mock_async(|when, then| {
+                when.method(POST).path("/v1.0/traces");
+                then.status(200);
+            })
+            .await;
+        probe.refresh();
+        for _ in 0..100 {
+            if !probe.v1_rejected() {
+                break;
+            }
+            sleep(TokioDuration::from_millis(10)).await;
+        }
+        assert!(!probe.v1_rejected());
+        info_mock.assert_async().await;
+
+        send_v1_and_flush(&mut handler, sample_v1_trace_payload_bytes()).await;
+        v1_mock.assert_async().await;
+        v04_mock.assert_calls_async(1).await;
     }
 }
 

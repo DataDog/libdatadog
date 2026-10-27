@@ -437,8 +437,8 @@ impl ConnectionSession {
     }
 
     /// The agent info of this session's endpoint; `None` when agentless.
-    pub(crate) fn agent_info(&self) -> Option<&AgentInfoGuard> {
-        self.agent_info.as_deref()
+    pub(crate) fn agent_info(&self) -> Option<&Arc<AgentInfoGuard>> {
+        self.agent_info.as_ref()
     }
 
     /// Replaces the agent info, for tests that prime it from a mock agent.

@@ -166,10 +166,15 @@ pub extern "C" fn ddog_chunk_span_count(chunk: &TraceChunkBytes) -> usize {
     chunk.spans.len()
 }
 
-/// Appends an empty span to `chunk`.
+/// Appends an empty span to `chunk`. Its kind starts as `Unspecified`, so a span without
+/// `span.kind` goes out as 0 on V1, as Go and Java send it.
 #[unsafe(no_mangle)]
 pub extern "C" fn ddog_new_span(chunk: &mut TraceChunkBytes) -> *mut SpanBytes {
-    push_item(&mut chunk.spans, SpanBytes::default())
+    let span = SpanBytes {
+        span_kind: SpanKind::Unspecified,
+        ..Default::default()
+    };
+    push_item(&mut chunk.spans, span)
 }
 
 /// Appends an empty link to `span`.
@@ -258,7 +263,7 @@ pub extern "C" fn ddog_set_span_component(span: &mut SpanBytes, value: CharSlice
     set_field(&mut span.component, value);
 }
 
-/// Sets the span kind from an OTEL wire value (unset/unknown → Unspecified).
+/// Sets the span kind from an OTEL wire value (0 → Unspecified, unknown → Internal).
 #[unsafe(no_mangle)]
 pub extern "C" fn ddog_set_span_kind(span: &mut SpanBytes, kind: u32) {
     span.span_kind = SpanKind::from(kind);

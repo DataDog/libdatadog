@@ -1983,14 +1983,17 @@ pub unsafe extern "C" fn ddog_send_traces_to_sidecar_v1(
 /// sender (DD_TRACE_SIDECAR_TRACE_SENDER=0). Consumes `builder`. Returns the collection (not one
 /// whole-payload CharSlice) so `auto_flush` can frame each trace individually; a single CharSlice
 /// would drop extra traces of a multi-trace payload. Empty collection on error; free with
-/// [`crate::span_v04::ddog_free_traces`].
+/// [`crate::span_v04::ddog_free_traces`]. Pass `native_span_events` when the agent info
+/// advertises `span_events`; otherwise span events go to the legacy `events` meta JSON.
 #[unsafe(no_mangle)]
 pub extern "C" fn ddog_downgrade_v1_builder_to_v04_traces(
     builder: Box<TracerPayloadBytes>,
+    native_span_events: bool,
 ) -> Box<TracesBytes> {
     let mut payload = *builder;
     payload.dedup();
-    let v04_bytes = msgpack_encoder::v04::to_vec_from_v1(&payload);
+    let opts = msgpack_encoder::v04::V1DowngradeOptions { native_span_events };
+    let v04_bytes = msgpack_encoder::v04::to_vec_from_v1_with(&payload, opts);
     match libdd_trace_utils::tracer_payload::decode_to_trace_chunks(
         libdd_tinybytes::Bytes::from(v04_bytes),
         libdd_trace_utils::tracer_payload::TraceEncoding::V04,
@@ -2171,7 +2174,7 @@ mod tests {
             ddog_span_set_id(span, id);
         }
 
-        let mut traces = ddog_downgrade_v1_builder_to_v04_traces(builder);
+        let mut traces = ddog_downgrade_v1_builder_to_v04_traces(builder, true);
         assert_eq!(traces.len(), 2, "both traces must survive the downgrade");
         assert_eq!(traces[0].len(), 1);
         assert_eq!(traces[1].len(), 1);
@@ -2187,6 +2190,43 @@ mod tests {
             unsafe { crate::span::ddog_free_charslice(slice) };
         }
 
+        ddog_free_traces(traces);
+    }
+
+    #[test]
+    fn downgrade_v1_builder_to_v04_traces_gates_native_span_events() {
+        use crate::span::{
+            ddog_event_set_name, ddog_new_chunk, ddog_new_event, ddog_new_span, ddog_v1_new_builder,
+        };
+        use crate::span_v04::ddog_free_traces;
+
+        let builder_with_event = || {
+            let mut builder = ddog_v1_new_builder();
+            // Safety: each pointer was just returned and nothing was pushed since.
+            let chunk = unsafe { &mut *ddog_new_chunk(&mut builder, 0, 1) };
+            let span = unsafe { &mut *ddog_new_span(chunk) };
+            let event = unsafe { &mut *ddog_new_event(span) };
+            ddog_event_set_name(event, CharSlice::from("exception"));
+            builder
+        };
+
+        let traces = ddog_downgrade_v1_builder_to_v04_traces(builder_with_event(), true);
+        let span = &traces[0][0];
+        assert_eq!(span.span_events.len(), 1);
+        assert_eq!(span.span_events[0].name.as_str(), "exception");
+        assert!(!span.meta.contains_key("events"));
+        ddog_free_traces(traces);
+
+        let traces = ddog_downgrade_v1_builder_to_v04_traces(builder_with_event(), false);
+        let span = &traces[0][0];
+        assert!(span.span_events.is_empty());
+        assert!(
+            span.meta
+                .get("events")
+                .unwrap()
+                .as_str()
+                .contains("\"exception\"")
+        );
         ddog_free_traces(traces);
     }
 
