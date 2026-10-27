@@ -3,7 +3,7 @@
 
 [package]
 name = "libdd-common"
-version = "8.0.0"
+version = "9.0.0"
 description = "Shared utilities for Datadog libraries including HTTP/HTTPS connectors, container entity detection, tag validation, rate limiting, and Unix/Windows platform helpers"
 homepage = "https://github.com/DataDog/libdatadog/tree/main/datadog-common"
 repository = "https://github.com/DataDog/libdatadog/tree/main/datadog-common"
@@ -86,8 +86,10 @@ mime.workspace = true
 multer.workspace = true
 proptest = { workspace = true, default-features = true }
 rand = { workspace = true, default-features = true }
+rcgen.workspace = true
 tempfile.workspace = true
-tokio = { workspace = true, features = ["rt", "macros", "time"] }
+tokio = { workspace = true, features = ["rt", "macros", "time", "net", "io-util"] }
+tokio-rustls.workspace = true
 
 [features]
 default = ["std", "https"]
@@ -125,7 +127,10 @@ http-client = [
     "dep:tokio",
 ]
 # TLS plumbing without a crypto provider. Use `https` or `fips` to select one.
-tls-core = ["http-client", "rustls", "hyper-rustls", "rustls-platform-verifier"]
+tls-core = ["http-client", "dep:rustls", "dep:hyper-rustls", "dep:rustls-platform-verifier"]
+# Expose the compromised-key distrust verifier (RUSTSEC-2026-0382 mitigation)
+# for crates that build their own TLS configurations, without enabling libdd-common's own connector TLS stack.
+tls-distrust = ["std", "dep:rustls", "dep:rustls-platform-verifier"]
 # Default HTTPS: ring as crypto provider
 https = ["tls-core", "rustls/ring", "hyper-rustls/ring"]
 use_webpki_roots = ["std", "hyper-rustls/webpki-roots", "dep:webpki-roots", "dep:webpki-root-certs"]

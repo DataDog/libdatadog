@@ -1,0 +1,14 @@
+{
+  "$schema": "../../../../schema/provider-streaming-metric-fixture.schema.json",
+  "profile": "gen_ai.client.provider_streaming@0.1.0",
+  "case": "interval-too-large-for-double",
+  "description": "An interval of 1e400 seconds, which no double holds. It is a number, so it is a bad duration, never a wrong type. This file holds the literal 1e400 and must be read, not re-written, by tools.",
+  "observation": {
+    "observation_point": "gateway",
+    "operation_name": "chat",
+    "provider_name": "exampleai",
+    "streaming": true,
+    "output_chunk_intervals_seconds": [0.1, 1e400]
+  },
+  "expected_error_code": "duration_invalid"
+}

@@ -41,7 +41,7 @@ hashbrown.workspace = true
 http = { workspace = true, features = ["std"] }
 indexmap = { workspace = true, default-features = true }
 libdd-alloc = { version = "1.0.0", path = "../libdd-alloc" }
-libdd-common = { version = "8.0.0", path = "../libdd-common", default-features = false, features = ["reqwest", "test-utils"] }
+libdd-common = { version = "9.0.0", path = "../libdd-common", default-features = false, features = ["reqwest", "test-utils", "tls-distrust"] }
 libdd-profiling-protobuf = { version = "2.0.0", path = "../libdd-profiling-protobuf", features = ["prost_impls"] }
 opentelemetry-proto = { workspace = true, optional = true, features = ["profiles", "gen-tonic-messages"] }
 parking_lot.workspace = true
@@ -56,7 +56,6 @@ prost = { workspace = true, features = ["std"] }
 # Use rustls-no-provider instead of rustls to avoid reqwest forcing aws-lc-rs as the crypto
 # backend. We install the ring provider explicitly via tls.rs / libdd-common instead.
 reqwest = { workspace = true, features = ["multipart", "rustls-no-provider", "hickory-dns"] }
-rustls-platform-verifier.workspace = true
 rustc-hash.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true

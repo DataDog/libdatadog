@@ -1,0 +1,30 @@
+{
+  "$schema": "../../../../schema/gateway-request-metric-fixture.schema.json",
+  "profile": "trajectory.gen_ai.gateway.request@0.1.0",
+  "case": "route-wildcard-dropped",
+  "description": "A wildcard route name is not an identifier under the deployment value grammar: '*' is outside it. The route is dropped with the issue, and the points and the other attribute are kept.",
+  "deployment_attributes": {
+    "trajectory.gateway.route": "exampleai/*",
+    "trajectory.gateway.key.alias": "search-team-prod"
+  },
+  "observation": {
+    "operation_name": "chat",
+    "duration_seconds": 0.2
+  },
+  "expected_metrics": [
+    {
+      "name": "trajectory.gen_ai.gateway.request.duration",
+      "instrument": "histogram",
+      "unit": "s",
+      "value": 0.2,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "trajectory.observation.point": "gateway",
+        "trajectory.gateway.key.alias": "search-team-prod"
+      }
+    }
+  ],
+  "expected_issues": [
+    "deployment_attribute_dropped"
+  ]
+}
