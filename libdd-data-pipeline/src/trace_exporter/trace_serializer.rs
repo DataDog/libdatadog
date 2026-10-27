@@ -58,9 +58,9 @@ impl TraceSerializer {
         self.previous_serialised_len.store(size, Ordering::Relaxed);
     }
 
-    pub(super) fn encode_to_writer<W: std::io::Write, T: TraceData, S: AsRef<[Span<T>]>>(
+    pub(super) fn encode_to_writer<W: std::io::Write, T: TraceData>(
         writer: &mut W,
-        traces: &[S],
+        traces: &[Vec<Span<T>>],
         metadata: &TracerMetadata,
         format: TraceExporterOutputFormat,
     ) -> Result<(), TraceExporterError> {
