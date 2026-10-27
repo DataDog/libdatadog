@@ -557,12 +557,13 @@ impl<'a> Envelope<'a> {
         Ok(())
     }
 
-    /// Encoded size of [`Self::write_trailer`] after the strings already in `table`.
-    fn trailer_len(&self, table: &StringTable) -> usize {
-        let mut counter = super::CountLength(0);
-        // `CountLength` never fails.
-        let _ = self.write_trailer(&mut counter, &mut Lookahead::new(table));
-        counter.0 as usize
+    /// Encoded size of [`Self::write_trailer`] after the strings already in `table`, or `None`
+    /// if it cannot be represented.
+    fn trailer_len(&self, table: &StringTable) -> Option<usize> {
+        let mut measure = super::packing::Measure::new();
+        self.write_trailer(&mut measure, &mut Lookahead::new(table))
+            .ok()
+            .and(measure.len())
     }
 }
 

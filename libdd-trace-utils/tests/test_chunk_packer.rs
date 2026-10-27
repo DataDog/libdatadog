@@ -327,6 +327,55 @@ fn empty_packers_finish_as_empty_payloads() {
     V05.assert_matches(&v05::ChunkPacker::new(0).finish(), &[]);
 }
 
+/// The limit binds pushes only: an empty payload is the bare envelope, which can exceed it.
+/// `encoded_len` reports that before `finish`, so callers can check.
+#[test]
+fn empty_payloads_are_not_capped_by_the_limit() {
+    let chunk = vec![span(1, 0, &[])];
+
+    let mut packer = v04::ChunkPacker::new(0);
+    assert!(matches!(packer.push(&chunk), Err(PushError::Full)));
+    assert_eq!(packer.encoded_len(), 1);
+    assert_eq!(packer.finish().len(), 1);
+
+    let mut packer = v05::ChunkPacker::new(0);
+    assert!(matches!(packer.push(&chunk), Err(PushError::Full)));
+    let len = packer.encoded_len();
+    assert!(len > 0);
+    assert_eq!(packer.finish().len(), len);
+
+    let metadata = TracerMetadata {
+        container_id: "c".repeat(1024),
+        ..Default::default()
+    };
+    let limit = 100;
+    let mut packer = v1::ChunkPacker::new(&metadata, limit);
+    assert!(matches!(packer.push(&chunk), Err(PushError::Full)));
+    let len = packer.encoded_len();
+    assert!(len > limit);
+    assert_eq!(packer.finish().len(), len);
+}
+
+/// A limit of exactly the payload size is enough, one byte less is not.
+#[test]
+fn limits_are_inclusive() {
+    let chunk = vec![span(1, 0, &[])];
+    let metadata = metadata();
+    let len = V1(&metadata).reference(&[&chunk]).len();
+    assert!(v1::ChunkPacker::new(&metadata, len).push(&chunk).is_ok());
+    assert!(
+        v1::ChunkPacker::new(&metadata, len - 1)
+            .push(&chunk)
+            .is_err()
+    );
+    let len = V05.reference(&[&chunk]).len();
+    assert!(v05::ChunkPacker::new(len).push(&chunk).is_ok());
+    assert!(v05::ChunkPacker::new(len - 1).push(&chunk).is_err());
+    let len = V04.reference(&[&chunk]).len();
+    assert!(v04::ChunkPacker::new(len).push(&chunk).is_ok());
+    assert!(v04::ChunkPacker::new(len - 1).push(&chunk).is_err());
+}
+
 /// A rejected chunk leaves no strings, nor promoted payload metadata, behind.
 #[test]
 fn v1_rejected_chunk_is_rolled_back() {

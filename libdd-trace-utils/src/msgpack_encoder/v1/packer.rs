@@ -3,7 +3,7 @@
 
 use super::{Envelope, PayloadAttrs, StringTable, encode_chunk_from_v04};
 use crate::msgpack_encoder::flatten_value_write_infallible;
-use crate::msgpack_encoder::packing::{Bounded, PushError, rotate_tail_to_front};
+use crate::msgpack_encoder::packing::{Bounded, PushError, rotate_tail_to_front, total, within};
 use crate::span::TraceData;
 use crate::span::v04::Span;
 use crate::tracer_metadata::TracerMetadata;
@@ -12,7 +12,9 @@ use libdd_common::mutable_metadata::MutableMetadata;
 use rmp::encode::ByteBuf;
 use std::sync::Arc;
 
-/// Builds one V1 payload from v0.4 chunks, keeping the complete payload within a byte limit.
+/// Builds one V1 payload from v0.4 chunks, keeping the complete payload within a byte limit
+/// once a chunk was pushed. An empty payload is the bare envelope, whose metadata can exceed
+/// the limit: see [`Self::encoded_len`].
 ///
 /// Each accepted chunk is encoded once, against the payload's string table, and the promoted
 /// payload metadata follows the chunks in push order. The result is byte-for-byte what
@@ -94,7 +96,8 @@ impl<'a> ChunkPacker<'a> {
         let mut writer = Bounded::new(&mut self.buf, max, self.limit);
         if encode_chunk_from_v04(&mut writer, spans, &mut self.table).is_ok() {
             let trailer = self.envelope().trailer_len(&self.table);
-            if header + self.buf.len() + trailer <= self.limit {
+            if trailer.is_some_and(|trailer| within(self.limit, &[header, self.buf.len(), trailer]))
+            {
                 self.chunks = chunks;
                 return Ok(());
             }
@@ -115,18 +118,22 @@ impl<'a> ChunkPacker<'a> {
         self.chunks == 0
     }
 
-    /// Size of the payload [`Self::finish`] would return.
+    /// Size of the payload [`Self::finish`] would return, saturating at `usize::MAX`.
+    ///
+    /// Within the limit once a chunk was pushed. For an empty packer, this is the size of the
+    /// bare envelope, which can exceed the limit: check it before sending an empty payload.
     pub fn encoded_len(&self) -> usize {
-        Envelope::header_len(self.chunks)
-            + self.buf.len()
-            + self.envelope().trailer_len(&self.table)
+        self.envelope_len().map_or(usize::MAX, |envelope| {
+            envelope.saturating_add(self.buf.len())
+        })
     }
 
-    /// Completes the payload. An empty packer yields a valid payload without chunks.
+    /// Completes the payload. An empty packer yields a valid payload without chunks, which may
+    /// exceed the limit (see [`Self::encoded_len`]).
     pub fn finish(mut self) -> Vec<u8> {
-        let envelope_len =
-            Envelope::header_len(self.chunks) + self.envelope().trailer_len(&self.table);
-        self.buf.reserve_exact(envelope_len);
+        if let Some(envelope_len) = self.envelope_len() {
+            self.buf.reserve_exact(envelope_len);
+        }
         let envelope = Envelope {
             metadata: self.metadata,
             runtime_id: &self.mutable_metadata.runtime_id,
@@ -146,6 +153,12 @@ impl<'a> ChunkPacker<'a> {
         let mut bytes = buf.into_vec();
         rotate_tail_to_front(&mut bytes, body);
         bytes
+    }
+
+    /// Encoded size of the header and trailer, or `None` if it cannot be represented.
+    fn envelope_len(&self) -> Option<usize> {
+        let trailer = self.envelope().trailer_len(&self.table)?;
+        total(&[Envelope::header_len(self.chunks), trailer])
     }
 
     fn envelope(&self) -> Envelope<'_> {
@@ -200,7 +213,7 @@ mod tests {
             let expected = envelope.trailer_len(&table);
             let mut counter = CountLength(0);
             envelope.write_trailer(&mut counter, &mut table).unwrap();
-            assert_eq!(counter.0 as usize, expected);
+            assert_eq!(Some(counter.0 as usize), expected);
         }
     }
 }
