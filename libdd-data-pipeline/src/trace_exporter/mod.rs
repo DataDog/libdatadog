@@ -419,7 +419,7 @@ impl<
     /// Workers from other components sharing the same `R` runtime are unaffected.
     ///
     /// # Errors
-    /// Returns [`TraceExporterError::Shutdown(ShutdownError::TimedOut)`] if a timeout was
+    /// Returns [`TraceExporterError::Shutdown`] with [`ShutdownError::TimedOut`] if a timeout was
     /// given and elapsed before all workers finished.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn shutdown(self, timeout: Option<Duration>) -> Result<(), TraceExporterError>
@@ -433,7 +433,7 @@ impl<
     /// Async version of [`Self::shutdown`].
     ///
     /// # Errors
-    /// Returns [`TraceExporterError::Shutdown(ShutdownError::TimedOut)`] if a timeout was
+    /// Returns [`TraceExporterError::Shutdown`] with [`ShutdownError::TimedOut`] if a timeout was
     /// given and elapsed before all workers finished.
     pub async fn shutdown_async(self, timeout: Option<Duration>) -> Result<(), TraceExporterError> {
         let Some(timeout) = timeout else {
