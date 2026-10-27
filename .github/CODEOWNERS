@@ -121,7 +121,6 @@ flake.*                              @DataDog/nix-guild @DataDog/apm-common-comp
 examples/ffi/ffe.c                  @DataDog/feature-flagging-and-experimentation-sdk
 bin_tests/tests/test_the_tests.rs    @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 bin_tests/src/bin/test_the_tests.rs  @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
-tools/cc_utils/                      @DataDog/libdatadog-php
 tools/sidecar_mockgen/               @DataDog/libdatadog-php
 libdd-data-pipeline/src/otlp/                           @DataDog/apm-sdk-capabilities @DataDog/apm-common-components-core
 libdd-data-pipeline/tests/test_trace_exporter_otlp_export.rs @DataDog/apm-sdk-capabilities @DataDog/apm-common-components-core
@@ -206,7 +205,6 @@ libdd-ipc-macros/CHANGELOG.md                @DataDog/libdatadog-php @DataDog/li
 libdd-ipc-macros/Cargo.toml                  @DataDog/libdatadog-php @DataDog/libdatadog-release
 libdd-ipc/CHANGELOG.md                       @DataDog/libdatadog-php @DataDog/libdatadog-release
 libdd-ipc/Cargo.toml                         @DataDog/libdatadog-php @DataDog/libdatadog-release
-tools/cc_utils/Cargo.toml                    @DataDog/libdatadog-php @DataDog/libdatadog-release
 tools/sidecar_mockgen/Cargo.toml             @DataDog/libdatadog-php @DataDog/libdatadog-release
 
 datadog-sidecar-ffi/Cargo.toml               @DataDog/libdatadog-php @DataDog/libdatadog-release @DataDog/apm-common-components-core-reviewers

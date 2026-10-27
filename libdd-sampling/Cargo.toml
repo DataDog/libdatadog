@@ -43,4 +43,4 @@ bench-internals = []
 
 [dev-dependencies]
 criterion.workspace = true
-libdd-common = { path = "../libdd-common", version = "9.0.0", features = ["bench-utils"] }
+tools = { path = "../tools", default-features = false, features = ["bench-utils"] }

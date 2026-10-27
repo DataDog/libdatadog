@@ -828,14 +828,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cc_utils"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "cc",
-]
-
-[[package]]
 name = "cesu8"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2782,11 +2774,8 @@ dependencies = [
  "anyhow",
  "arc-swap",
  "bytes",
- "cc",
  "const_format",
- "criterion",
  "futures",
- "futures-util",
  "hex",
  "http 1.1.0",
  "http-body",
@@ -2798,8 +2787,6 @@ dependencies = [
  "indexmap 2.12.1",
  "libc",
  "maplit",
- "mime",
- "multer",
  "nix 0.29.0",
  "pin-project",
  "proptest",
@@ -2817,6 +2804,7 @@ dependencies = [
  "thiserror 2.0.17",
  "tokio",
  "tokio-rustls",
+ "tools",
  "tower-service",
  "webpki-root-certs",
  "webpki-roots",
@@ -3182,7 +3170,6 @@ dependencies = [
  "constcat",
  "function_name",
  "libc_alloc",
- "libdd-common",
  "libdd-common-ffi",
  "libdd-library-config",
 ]
@@ -3297,7 +3284,6 @@ dependencies = [
  "indexmap 2.12.1",
  "libdd-alloc",
  "libdd-common",
- "libdd-profiling",
  "libdd-profiling-protobuf",
  "opentelemetry-proto",
  "parking_lot",
@@ -3315,6 +3301,7 @@ dependencies = [
  "thiserror 2.0.17",
  "tokio",
  "tokio-util",
+ "tools",
  "zrip",
  "zstd",
 ]
@@ -3446,6 +3433,7 @@ dependencies = [
  "lru",
  "serde",
  "serde_json",
+ "tools",
 ]
 
 [[package]]
@@ -3498,6 +3486,7 @@ dependencies = [
  "sys-info",
  "tokio",
  "tokio-util",
+ "tools",
  "tracing",
  "tracing-subscriber",
  "uuid",
@@ -3661,6 +3650,7 @@ dependencies = [
  "thin-vec",
  "thread_local",
  "tokio",
+ "tools",
  "tracing",
  "urlencoding",
  "zrip",
@@ -5676,7 +5666,7 @@ name = "spawn_worker"
 version = "0.0.1"
 dependencies = [
  "anyhow",
- "cc_utils",
+ "cc",
  "fastrand",
  "io-lifetimes",
  "libc",
@@ -6309,13 +6299,23 @@ name = "tools"
 version = "46.0.0"
 dependencies = [
  "anyhow",
+ "bytes",
  "cargo_metadata",
  "clap",
  "colored",
+ "criterion",
+ "futures",
+ "futures-util",
+ "httparse",
  "libdd-common",
+ "mime",
+ "multer",
  "quick-xml",
+ "rand 0.8.8",
+ "tokio",
  "toml",
  "wait-timeout",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
