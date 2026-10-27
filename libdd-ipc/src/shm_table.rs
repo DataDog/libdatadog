@@ -214,6 +214,14 @@ pub(crate) struct ShmHeader {
     pub(crate) flush_seq: AtomicU64,
 }
 
+/// Where `ready` is in the header of every version, so that a creator can retire a segment of
+/// any vintage without trusting the rest of its layout.
+const READY_OFFSET: usize = 4;
+
+// Peers of other versions find these two fields by position, so they must never move.
+const _: () = assert!(std::mem::offset_of!(ShmHeader, version) == 0);
+const _: () = assert!(std::mem::offset_of!(ShmHeader, ready) == READY_OFFSET);
+
 /// Where everything in the mapping is, kept in private memory.
 ///
 /// Every field here also exists in [`ShmHeader`]. The creator takes them from its own
@@ -329,6 +337,17 @@ pub(crate) struct Bucket<'a, S: Schema> {
 ///
 /// Comparisons and copies use bulk byte accesses over ranges checked by [`pool_slice`].
 /// Exported bytes are copied into private memory before UTF-8 validation.
+///
+/// Reading through a `&[u8]` while another process may write the same bytes is technically
+/// undefined behaviour. We accept it because the protocol keeps published strings stable: a
+/// writer copies a string in before publishing its key, and nothing overwrites it until the
+/// bucket is drained. The exceptions are a forced flush racing an `add`, a stalled writer, or
+/// a corrupt peer.
+///
+/// There is no cheap sound alternative: Rust has no atomic memcpy, `memcmp` races the same way
+/// under C's memory model, and per-byte atomic loads are too slow for `add`. A race can only
+/// garble bytes inside a bounds-checked range, and those bytes are never used as offsets or
+/// lengths.
 pub type Pool = [AtomicU8];
 
 pub(crate) fn bucket_hdr_size() -> usize {
@@ -354,8 +373,8 @@ pub(crate) fn pool_slice(pool: &Pool, sr: StringRef) -> Option<&Pool> {
 pub(crate) fn pool_eq(pool: &Pool, sr: StringRef, expected: &str) -> bool {
     match pool_slice(pool, sr) {
         Some(bytes) if bytes.len() == expected.len() => {
-            // Deliberately use non-atomic byte equality for this fixed, checked range.
-            // A peer may change the match result; no byte is interpreted as metadata or UTF-8.
+            // SAFETY: the range is in bounds, as just checked; for the race this slice ignores,
+            // see `Pool`. A racing write can only change whether this slot matches.
             let bytes =
                 unsafe { std::slice::from_raw_parts(bytes.as_ptr().cast::<u8>(), bytes.len()) };
             bytes == expected.as_bytes()
@@ -366,30 +385,29 @@ pub(crate) fn pool_eq(pool: &Pool, sr: StringRef, expected: &str) -> bool {
 
 /// Copy a pool string into an owned `String`, charging its bytes to `budget`.
 ///
-/// Lossy rather than strict: dropping a whole entry over one bad sequence would lose stats
-/// that are otherwise fine. A reference that does not resolve, or does not fit the budget,
-/// yields an empty string - which is what an absent field looks like anyway.
+/// Lossy rather than strict about UTF-8: dropping a whole entry over one bad sequence would
+/// lose stats that are otherwise fine. A reference that does not resolve, or does not fit the
+/// budget, is not one this writer made, and yields `None`; an empty field is still `Some("")`.
 ///
 /// `budget` is one allowance for a whole bucket. Per-reference bounds alone would still permit
 /// `slots * fields * pool_size` bytes of output, since a peer can repeat one large reference
 /// across every field of every slot; a pool's capacity is the most real data a bucket can
 /// hold, so that is the allowance. Output can still reach a small multiple of it, one invalid
 /// byte expanding to a three-byte replacement character.
-pub(crate) fn pool_string(pool: &Pool, sr: StringRef, budget: &mut usize) -> String {
-    let Some(bytes) = pool_slice(pool, sr) else {
-        return String::new();
-    };
+pub(crate) fn pool_string(pool: &Pool, sr: StringRef, budget: &mut usize) -> Option<String> {
+    let bytes = pool_slice(pool, sr)?;
     if bytes.len() > *budget {
-        return String::new();
+        return None;
     }
     *budget -= bytes.len();
-    // Validate only the private copy: a peer can keep rewriting the shared bytes.
+    // SAFETY: the range is in bounds, as just checked; for the race this slice ignores, see
+    // `Pool`. Validate only the private copy: a peer can keep rewriting the shared bytes.
     let bytes = unsafe { std::slice::from_raw_parts(bytes.as_ptr().cast::<u8>(), bytes.len()) };
     let owned = bytes.to_vec();
-    match String::from_utf8(owned) {
+    Some(match String::from_utf8(owned) {
         Ok(s) => s,
         Err(e) => String::from_utf8_lossy(e.as_bytes()).into_owned(),
-    }
+    })
 }
 
 /// Keep a schema's hash clear of the two values that mark a slot's state.
@@ -606,11 +624,17 @@ impl<S: Schema> ShmTableMapping<S> {
         // Retire old segments only after the replacement is ready.
         for old in replaced {
             if let Ok(old) = old.map() {
-                if old.as_slice().len() >= size_of::<ShmHeader>() {
-                    // SAFETY: page-aligned, in bounds, and all fields are integer atomics.
-                    // Touch only `ready`; the old segment's layout is untrusted.
-                    let hdr = unsafe { &*(old.as_slice().as_ptr() as *const ShmHeader) };
-                    hdr.ready.store(0, Release);
+                if old.get_size() > READY_OFFSET {
+                    // SAFETY: in bounds, as just checked, and the pointer is the mapping's own,
+                    // valid for reads and writes; no slice or reference over the shared bytes is
+                    // made. An `AtomicU8` has no alignment requirement, and every process
+                    // accesses `ready` atomically, so this does not race with a non-atomic
+                    // access. Only that byte is touched, not the rest of the old segment's
+                    // untrusted header.
+                    let ready = unsafe {
+                        AtomicU8::from_ptr(old.ptr.as_ptr().cast::<u8>().add(READY_OFFSET))
+                    };
+                    ready.store(0, Release);
                 }
             }
         }
