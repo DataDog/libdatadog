@@ -336,7 +336,7 @@ windows-sys = { version = "0.52", default-features = false }
 winver = { version = "1.0.0", default-features = false }
 zip = { version = "4.0.0", default-features = false }
 zrip = { version = "=0.6.0", default-features = false }
-zstd = { version = "0.13", default-features = false }
+zstd = { version = "0.14.3", default-features = false }
 zwohash = { version = "0.1.2", default-features = false }
 
 [profile.dev]

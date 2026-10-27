@@ -553,7 +553,7 @@ zrip,https://github.com/paddor/zrip,MIT,The zrip Authors
 zrip-core,https://github.com/paddor/zrip,MIT,The zrip-core Authors
 zrip-decode,https://github.com/paddor/zrip,MIT,The zrip-decode Authors
 zrip-encode,https://github.com/paddor/zrip,MIT,The zrip-encode Authors
-zstd,https://github.com/gyscos/zstd-rs,MIT,Alexandre Bury <alexandre.bury@gmail.com>
-zstd-safe,https://github.com/gyscos/zstd-rs,MIT OR Apache-2.0,Alexandre Bury <alexandre.bury@gmail.com>
-zstd-sys,https://github.com/gyscos/zstd-rs,MIT OR Apache-2.0,Alexandre Bury <alexandre.bury@gmail.com>
+zstd,https://github.com/gyscos/zstd-rs,BSD-3-Clause,Alexandre Bury <alexandre.bury@gmail.com>
+zstd-safe,https://github.com/gyscos/zstd-rs,BSD-3-Clause,Alexandre Bury <alexandre.bury@gmail.com>
+zstd-sys,https://github.com/gyscos/zstd-rs,BSD-3-Clause,Alexandre Bury <alexandre.bury@gmail.com>
 zwohash,https://github.com/jix/zwohash,0BSD,Jannis Harder <me@jix.one>

@@ -78,6 +78,7 @@ urlencoding = { workspace = true, optional = true }
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 libdd-capabilities-impl = { version = "8.0.0", path = "../libdd-capabilities-impl", default-features = false, optional = true }
 tokio = { workspace = true, features = ["time"], optional = true }
+# zstd >= 0.14.3 required for RUSTSEC-2026-0391
 zstd = {workspace = true, optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
