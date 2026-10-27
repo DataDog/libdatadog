@@ -1,8 +1,11 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+mod packer;
 mod span_v04;
 mod span_v1;
+
+pub use packer::ChunkPacker;
 
 use crate::span::TraceData;
 use crate::span::v1::TracerPayload;
@@ -124,6 +127,23 @@ impl StringTable {
         Self { seen }
     }
 
+    fn len(&self) -> usize {
+        self.seen.len()
+    }
+
+    fn id(&self, s: &str) -> Option<u32> {
+        self.seen.get(s).copied()
+    }
+
+    /// Forgets the strings interned after the table held `len` of them. IDs are assigned in
+    /// insertion order, so the remaining ones stay valid. Scanning the whole table stays linear
+    /// overall: chunks are rejected once per finished payload, whose encoding already scaled
+    /// with its table, or once per oversized chunk, whose retry alone costs up to the limit.
+    fn truncate(&mut self, len: usize) {
+        self.seen
+            .retain(|_, id| usize::try_from(*id).is_ok_and(|id| id < len));
+    }
+
     /// Writes `s` to `writer` using string interning.
     ///
     /// - First occurrence of `s` → msgpack `str`, ID recorded for future references
@@ -161,6 +181,7 @@ pub(super) fn normalize_span_start(start: i64) -> u64 {
 }
 
 /// Promoted fields extracted from the payload's spans, written at the top-level map.
+#[derive(Clone, Copy)]
 struct PayloadAttrs<'a> {
     env: Option<&'a str>,
     hostname: Option<&'a str>,
@@ -171,6 +192,59 @@ struct PayloadAttrs<'a> {
     git_commit_sha: Option<&'a str>,
 }
 
+impl<'a> PayloadAttrs<'a> {
+    // Prefer TracerMetadata (set once on the builder) over span scanning. Fall back to
+    // span meta only when the builder-level value is missing — e.g. v04 payloads where
+    // the SDK propagated these as span tags.
+    fn new(metadata: &'a TracerMetadata) -> Self {
+        Self {
+            env: (!metadata.env.is_empty()).then_some(metadata.env.as_str()),
+            hostname: (!metadata.hostname.is_empty()).then_some(metadata.hostname.as_str()),
+            app_version: (!metadata.app_version.is_empty())
+                .then_some(metadata.app_version.as_str()),
+            apm_mode: None,
+            git_commit_sha: (!metadata.git_commit_sha.is_empty())
+                .then_some(metadata.git_commit_sha.as_str()),
+        }
+    }
+
+    fn is_complete(&self) -> bool {
+        self.env.is_some()
+            && self.hostname.is_some()
+            && self.app_version.is_some()
+            && self.apm_mode.is_some()
+            && self.git_commit_sha.is_some()
+    }
+
+    /// Fills the missing fields from the first span carrying them. Filling chunk by chunk
+    /// therefore yields the same values as filling from all the chunks at once.
+    fn fill<T: TraceData + 'a>(&mut self, spans: &'a [Span<T>])
+    where
+        T::Text: 'a,
+    {
+        for span in spans {
+            if self.is_complete() {
+                return;
+            }
+            if self.env.is_none() {
+                self.env = span.meta.get("env").map(|v| v.borrow());
+            }
+            if self.hostname.is_none() {
+                self.hostname = span.meta.get("_dd.hostname").map(|v| v.borrow());
+            }
+            if self.app_version.is_none() {
+                self.app_version = span.meta.get("version").map(|v| v.borrow());
+            }
+            if self.apm_mode.is_none() {
+                self.apm_mode = span.meta.get("_dd.apm_mode").map(|v| v.borrow());
+            }
+            if self.git_commit_sha.is_none() {
+                self.git_commit_sha = span.meta.get("_dd.git.commit.sha").map(|v| v.borrow());
+            }
+        }
+    }
+}
+
 fn extract_payload_attrs<'a, T: TraceData + 'a, S: AsRef<[Span<T>]>>(
     traces: &'a [S],
     metadata: &'a TracerMetadata,
@@ -178,52 +252,14 @@ fn extract_payload_attrs<'a, T: TraceData + 'a, S: AsRef<[Span<T>]>>(
 where
     T::Text: 'a,
 {
-    // Prefer TracerMetadata (set once on the builder) over span scanning. Fall back to
-    // span meta only when the builder-level value is missing — e.g. v04 payloads where
-    // the SDK propagated these as span tags.
-    let mut env = (!metadata.env.is_empty()).then_some(metadata.env.as_str());
-    let mut hostname = (!metadata.hostname.is_empty()).then_some(metadata.hostname.as_str());
-    let mut app_version =
-        (!metadata.app_version.is_empty()).then_some(metadata.app_version.as_str());
-    let mut git_commit_sha =
-        (!metadata.git_commit_sha.is_empty()).then_some(metadata.git_commit_sha.as_str());
-    let mut apm_mode = None;
-
-    'outer: for trace in traces {
-        for span in trace.as_ref() {
-            if env.is_none() {
-                env = span.meta.get("env").map(|v| v.borrow());
-            }
-            if hostname.is_none() {
-                hostname = span.meta.get("_dd.hostname").map(|v| v.borrow());
-            }
-            if app_version.is_none() {
-                app_version = span.meta.get("version").map(|v| v.borrow());
-            }
-            if apm_mode.is_none() {
-                apm_mode = span.meta.get("_dd.apm_mode").map(|v| v.borrow());
-            }
-            if git_commit_sha.is_none() {
-                git_commit_sha = span.meta.get("_dd.git.commit.sha").map(|v| v.borrow());
-            }
-            if env.is_some()
-                && hostname.is_some()
-                && app_version.is_some()
-                && apm_mode.is_some()
-                && git_commit_sha.is_some()
-            {
-                break 'outer;
-            }
+    let mut attrs = PayloadAttrs::new(metadata);
+    for trace in traces {
+        if attrs.is_complete() {
+            break;
         }
+        attrs.fill(trace.as_ref());
     }
-
-    PayloadAttrs {
-        env,
-        hostname,
-        app_version,
-        apm_mode,
-        git_commit_sha,
-    }
+    attrs
 }
 
 /// Promoted fields extracted from spans and written at the chunk level.
@@ -326,88 +362,208 @@ fn encode_payload_from_v04<W: RmpWrite, T: TraceData, S: AsRef<[Span<T>]>>(
     let mut table = StringTable::new();
     let payload_attrs = extract_payload_attrs(traces, metadata);
     let mutable_metadata = metadata.mutable_metadata.load();
+    let envelope = Envelope {
+        metadata,
+        runtime_id: &mutable_metadata.runtime_id,
+        attrs: payload_attrs,
+    };
 
-    let attr_count =
-        payload_attrs.apm_mode.is_some() as u32 + payload_attrs.git_commit_sha.is_some() as u32;
-    let has_attributes = attr_count > 0;
-
-    let map_len = 1u32 // chunks always present
-        + (!metadata.language.is_empty()) as u32
-        + (!metadata.language_version.is_empty()) as u32
-        + (!metadata.tracer_version.is_empty()) as u32
-        + (!mutable_metadata.runtime_id.is_empty()) as u32
-        + (!metadata.container_id.is_empty()) as u32
-        + payload_attrs.env.is_some() as u32
-        + payload_attrs.hostname.is_some() as u32
-        + payload_attrs.app_version.is_some() as u32
-        + has_attributes as u32;
-
-    write_map_len(writer, map_len)?;
-
-    write_uint8(writer, trace_key::CHUNKS)?;
-    write_array_len(writer, traces.len() as u32)?;
+    envelope.write_header(writer, traces.len() as u32)?;
     for trace in traces {
         encode_chunk_from_v04(writer, trace.as_ref(), &mut table)?;
     }
+    envelope.write_trailer(writer, &mut table)
+}
 
-    if !metadata.language.is_empty() {
-        write_uint8(writer, trace_key::LANGUAGE_NAME)?;
-        table.write_interned(writer, &metadata.language)?;
+/// Writes interned strings, so that the payload trailer can be either written or measured.
+trait Interner<'s> {
+    fn write_interned<W: RmpWrite>(
+        &mut self,
+        writer: &mut W,
+        s: &'s str,
+    ) -> Result<(), ValueWriteError<W::Error>>;
+}
+
+impl Interner<'_> for StringTable {
+    fn write_interned<W: RmpWrite>(
+        &mut self,
+        writer: &mut W,
+        s: &str,
+    ) -> Result<(), ValueWriteError<W::Error>> {
+        StringTable::write_interned(self, writer, s)
     }
+}
 
-    if !metadata.language_version.is_empty() {
-        write_uint8(writer, trace_key::LANGUAGE_VERSION)?;
-        table.write_interned(writer, &metadata.language_version)?;
-    }
+/// Encodes like a [`StringTable`] would, without interning into it.
+struct Lookahead<'t, 's> {
+    table: &'t StringTable,
+    /// Strings that writing would have added to `table`, in order. A trailer interns at most
+    /// [`Envelope::MAX_TRAILER_STRINGS`].
+    pending: [&'s str; Envelope::MAX_TRAILER_STRINGS],
+    len: usize,
+}
 
-    if !metadata.tracer_version.is_empty() {
-        write_uint8(writer, trace_key::TRACER_VERSION)?;
-        table.write_interned(writer, &metadata.tracer_version)?;
-    }
-
-    if !mutable_metadata.runtime_id.is_empty() {
-        write_uint8(writer, trace_key::RUNTIME_ID)?;
-        table.write_interned(writer, &mutable_metadata.runtime_id)?;
-    }
-
-    if !metadata.container_id.is_empty() {
-        write_uint8(writer, trace_key::CONTAINER_ID)?;
-        table.write_interned(writer, &metadata.container_id)?;
-    }
-
-    if let Some(env) = payload_attrs.env {
-        write_uint8(writer, trace_key::ENV_REF)?;
-        table.write_interned(writer, env)?;
-    }
-
-    if let Some(hostname) = payload_attrs.hostname {
-        write_uint8(writer, trace_key::HOSTNAME_REF)?;
-        table.write_interned(writer, hostname)?;
-    }
-
-    if let Some(app_version) = payload_attrs.app_version {
-        write_uint8(writer, trace_key::APP_VERSION_REF)?;
-        table.write_interned(writer, app_version)?;
-    }
-
-    if has_attributes {
-        // Encoded as a flat array of triplets: [key, type_uint, value, ...]
-        // String values use type discriminant 1.
-        write_uint8(writer, trace_key::ATTRIBUTES)?;
-        write_array_len(writer, attr_count * FLAT_ATTR_STRIDE)?;
-        if let Some(v) = payload_attrs.apm_mode {
-            table.write_interned(writer, "_dd.apm_mode")?;
-            write_uint8(writer, AnyValueKey::String as u8)?;
-            table.write_interned(writer, v)?;
-        }
-        if let Some(v) = payload_attrs.git_commit_sha {
-            table.write_interned(writer, "_dd.git.commit.sha")?;
-            write_uint8(writer, AnyValueKey::String as u8)?;
-            table.write_interned(writer, v)?;
+impl<'t> Lookahead<'t, '_> {
+    fn new(table: &'t StringTable) -> Self {
+        Self {
+            table,
+            pending: [""; Envelope::MAX_TRAILER_STRINGS],
+            len: 0,
         }
     }
+}
 
-    Ok(())
+impl<'s> Interner<'s> for Lookahead<'_, 's> {
+    fn write_interned<W: RmpWrite>(
+        &mut self,
+        writer: &mut W,
+        s: &'s str,
+    ) -> Result<(), ValueWriteError<W::Error>> {
+        let id = self.table.id(s).map(|id| id as usize).or_else(|| {
+            self.pending[..self.len]
+                .iter()
+                .position(|pending| *pending == s)
+                .map(|position| self.table.len() + position)
+        });
+        match id {
+            // usize is at most 64 bits wide on supported targets.
+            Some(id) => {
+                write_uint(writer, id as u64)?;
+            }
+            None => {
+                if let Some(slot) = self.pending.get_mut(self.len) {
+                    *slot = s;
+                    self.len += 1;
+                }
+                write_str(writer, s)?;
+            }
+        };
+        Ok(())
+    }
+}
+
+/// Payload-level fields around the chunks: the map header leading to them, and the metadata
+/// trailer after them.
+struct Envelope<'a> {
+    metadata: &'a TracerMetadata,
+    runtime_id: &'a str,
+    attrs: PayloadAttrs<'a>,
+}
+
+impl<'a> Envelope<'a> {
+    const MAX_TRAILER_STRINGS: usize = 12;
+
+    /// Encoded size of [`Self::write_header`]: a fixmap marker (at most 10 fields), the chunks
+    /// key as a positive fixint, then the chunks array header.
+    fn header_len(chunks: usize) -> usize {
+        1 + 1 + super::packing::header_len(chunks)
+    }
+
+    fn write_header<W: RmpWrite>(
+        &self,
+        writer: &mut W,
+        chunks: u32,
+    ) -> Result<(), ValueWriteError<W::Error>> {
+        let metadata = self.metadata;
+        let attrs = &self.attrs;
+        let has_attributes = attrs.apm_mode.is_some() || attrs.git_commit_sha.is_some();
+
+        let map_len = 1u32 // chunks always present
+            + (!metadata.language.is_empty()) as u32
+            + (!metadata.language_version.is_empty()) as u32
+            + (!metadata.tracer_version.is_empty()) as u32
+            + (!self.runtime_id.is_empty()) as u32
+            + (!metadata.container_id.is_empty()) as u32
+            + attrs.env.is_some() as u32
+            + attrs.hostname.is_some() as u32
+            + attrs.app_version.is_some() as u32
+            + has_attributes as u32;
+
+        write_map_len(writer, map_len)?;
+
+        write_uint8(writer, trace_key::CHUNKS)?;
+        write_array_len(writer, chunks)?;
+        Ok(())
+    }
+
+    fn write_trailer<W: RmpWrite>(
+        &self,
+        writer: &mut W,
+        table: &mut impl Interner<'a>,
+    ) -> Result<(), ValueWriteError<W::Error>> {
+        let metadata = self.metadata;
+        let payload_attrs = &self.attrs;
+        let attr_count =
+            payload_attrs.apm_mode.is_some() as u32 + payload_attrs.git_commit_sha.is_some() as u32;
+        let has_attributes = attr_count > 0;
+
+        if !metadata.language.is_empty() {
+            write_uint8(writer, trace_key::LANGUAGE_NAME)?;
+            table.write_interned(writer, &metadata.language)?;
+        }
+
+        if !metadata.language_version.is_empty() {
+            write_uint8(writer, trace_key::LANGUAGE_VERSION)?;
+            table.write_interned(writer, &metadata.language_version)?;
+        }
+
+        if !metadata.tracer_version.is_empty() {
+            write_uint8(writer, trace_key::TRACER_VERSION)?;
+            table.write_interned(writer, &metadata.tracer_version)?;
+        }
+
+        if !self.runtime_id.is_empty() {
+            write_uint8(writer, trace_key::RUNTIME_ID)?;
+            table.write_interned(writer, self.runtime_id)?;
+        }
+
+        if !metadata.container_id.is_empty() {
+            write_uint8(writer, trace_key::CONTAINER_ID)?;
+            table.write_interned(writer, &metadata.container_id)?;
+        }
+
+        if let Some(env) = payload_attrs.env {
+            write_uint8(writer, trace_key::ENV_REF)?;
+            table.write_interned(writer, env)?;
+        }
+
+        if let Some(hostname) = payload_attrs.hostname {
+            write_uint8(writer, trace_key::HOSTNAME_REF)?;
+            table.write_interned(writer, hostname)?;
+        }
+
+        if let Some(app_version) = payload_attrs.app_version {
+            write_uint8(writer, trace_key::APP_VERSION_REF)?;
+            table.write_interned(writer, app_version)?;
+        }
+
+        if has_attributes {
+            // Encoded as a flat array of triplets: [key, type_uint, value, ...]
+            // String values use type discriminant 1.
+            write_uint8(writer, trace_key::ATTRIBUTES)?;
+            write_array_len(writer, attr_count * FLAT_ATTR_STRIDE)?;
+            if let Some(v) = payload_attrs.apm_mode {
+                table.write_interned(writer, "_dd.apm_mode")?;
+                write_uint8(writer, AnyValueKey::String as u8)?;
+                table.write_interned(writer, v)?;
+            }
+            if let Some(v) = payload_attrs.git_commit_sha {
+                table.write_interned(writer, "_dd.git.commit.sha")?;
+                write_uint8(writer, AnyValueKey::String as u8)?;
+                table.write_interned(writer, v)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Encoded size of [`Self::write_trailer`] after the strings already in `table`.
+    fn trailer_len(&self, table: &StringTable) -> usize {
+        let mut counter = super::CountLength(0);
+        // `CountLength` never fails.
+        let _ = self.write_trailer(&mut counter, &mut Lookahead::new(table));
+        counter.0 as usize
+    }
 }
 
 /// Encodes one chunk (a group of spans sharing a trace ID).
