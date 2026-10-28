@@ -75,6 +75,61 @@ fn install_keeps_heap_functional() {
     }
 }
 
+#[cfg(target_env = "gnu")]
+#[test]
+#[serial]
+fn pthread_getattr_np_initializes_tls_on_preexisting_thread() {
+    use std::mem::MaybeUninit;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, mpsc};
+    use std::time::Duration;
+
+    use libdd_profiling_heap_sampler::dd_tl_state_get;
+
+    warn_if_not_isolated();
+    let ready = Arc::new(AtomicBool::new(false));
+    let start = Arc::new(AtomicBool::new(false));
+    let (done_tx, done_rx) = mpsc::channel();
+    let thread_ready = Arc::clone(&ready);
+    let thread_start = Arc::clone(&start);
+
+    // This thread must predate the pthread_create hook, leaving its sampler TLS cold.
+    let thread = std::thread::spawn(move || unsafe {
+        thread_ready.store(true, Ordering::Release);
+        while !thread_start.load(Ordering::Acquire) {
+            std::hint::spin_loop();
+        }
+        assert!(dd_tl_state_get().is_null());
+
+        // glibc reallocates while holding this thread's lock.
+        let mut attributes = MaybeUninit::uninit();
+        assert_eq!(
+            libc::pthread_getattr_np(libc::pthread_self(), attributes.as_mut_ptr()),
+            0
+        );
+        let state = dd_tl_state_get();
+        let initialized =
+            !state.is_null() && (*state).remaining_bytes_initialized && !(*state).reentry_guard;
+        assert_eq!(libc::pthread_attr_destroy(attributes.as_mut_ptr()), 0);
+        assert!(
+            initialized,
+            "pthread_getattr_np must exercise lazy sampler init"
+        );
+        done_tx.send(()).unwrap();
+    });
+
+    while !ready.load(Ordering::Acquire) {
+        std::thread::yield_now();
+    }
+    assert!(libdd_profiling_heap_gotter::install_heap_overrides());
+    unsafe { dd_test_set_profiler_active(true) };
+    start.store(true, Ordering::Release);
+    let completed = done_rx.recv_timeout(Duration::from_secs(10));
+    unsafe { dd_test_set_profiler_active(false) };
+    completed.expect("pthread_getattr_np deadlocked or its thread failed");
+    thread.join().unwrap();
+}
+
 /// Confirm that after install, allocations actually flow through the
 /// sampler and produce tagged pointers. We force sampling_interval=1
 /// so every allocation is sampled, then check that libc::malloc returns
