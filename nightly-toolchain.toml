@@ -7,4 +7,4 @@
 # Format mirrors `rust-toolchain.toml` so a single parser handles both files.
 
 [toolchain]
-channel = "nightly-2026-07-26"
+channel = "nightly-2026-09-23"
