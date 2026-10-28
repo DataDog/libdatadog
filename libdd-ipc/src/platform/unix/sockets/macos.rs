@@ -556,4 +556,28 @@ mod tests {
             .expect("expected the queued message, not BrokenPipe");
         assert_eq!(got, b"final");
     }
+
+    /// Both ends of a connection get the same buffer size, but macOS queues a datagram on the
+    /// receiving socket along with an address record. A message of the advertised size must still
+    /// fit there, or the send fails with ENOBUFS and the client drops the connection.
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn test_message_of_max_send_size_is_received() {
+        let tmpdir = tempfile::tempdir().expect("tempdir");
+        let path = tmpdir.path().join("test.sock");
+        let listener = SeqpacketListener::bind(&path).expect("bind");
+        let client = SeqpacketConn::connect(&path).expect("connect");
+        let server = listener.try_accept().expect("try_accept");
+        let server = server.into_async_conn().expect("into_async_conn");
+
+        let mut client = crate::IpcClientConn::new(client);
+        let limit = client.max_send_size();
+        client.try_send(vec![7; limit], &[]).expect("send at limit");
+        assert!(!client.is_closed());
+
+        let (got, _) = crate::recv_raw_async(&server, |buf: &[u8]| buf.len())
+            .await
+            .expect("recv");
+        assert_eq!(got, limit);
+    }
 }
