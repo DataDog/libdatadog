@@ -10,6 +10,7 @@ use crate::rules_based::{
 };
 
 impl RuleWire {
+    #[cfg(test)]
     pub(super) fn eval(&self, subject: &EvaluationContext) -> bool {
         self.conditions
             .iter()
@@ -18,7 +19,7 @@ impl RuleWire {
 }
 
 impl Condition {
-    fn eval(&self, subject: &EvaluationContext) -> bool {
+    pub(super) fn eval(&self, subject: &EvaluationContext) -> bool {
         let attribute = subject.get_attribute(self.attribute.as_ref());
         self.check.eval(attribute)
     }
@@ -33,6 +34,8 @@ impl ConditionCheck {
     /// Try applying `Operator` to the values, returning `None` if the operator cannot be applied.
     fn try_eval(&self, attribute: Option<&Attribute>) -> Option<bool> {
         let result = match self {
+            // Dependency conditions require the root evaluation session and never read attributes.
+            ConditionCheck::FlagEvaluation { .. } => return None,
             ConditionCheck::Comparison {
                 operator,
                 comparand,

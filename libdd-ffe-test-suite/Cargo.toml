@@ -23,3 +23,8 @@ serde_json = { workspace = true, features = ["std", "raw_value"] }
 name = "ffe-eval"
 harness = false
 path = "benches/eval.rs"
+
+[[bench]]
+name = "dependent-flags"
+harness = false
+path = "benches/dependent_flags.rs"

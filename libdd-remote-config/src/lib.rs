@@ -130,4 +130,7 @@ pub enum RemoteConfigCapabilities {
     FfeFlagConfigurationRules = 46,
     DdDataStreamsTransactionExtractors = 47,
     LlmObsActivation = 48,
+    /// The consumer evaluates prerequisite conditions against a flag's selected variant key.
+    /// Register only when the evaluator implements the dependent-flag variant-key contract.
+    FfeFlagDependentFlagVariantKeyV1 = 50,
 }
