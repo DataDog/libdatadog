@@ -38,6 +38,7 @@ pub(crate) struct CompiledFlagsConfig {
 
 #[derive(Debug)]
 pub(crate) struct Flag {
+    pub has_dependencies: bool,
     pub variation_type: VariationType,
     pub allocations: Box<[Allocation]>,
     // Activation errors apply only when an opted-out subject uses future mode.
@@ -142,6 +143,18 @@ fn compile_flag(flag: FlagWire) -> Result<Flag, EvaluationError> {
             Some(TryParse::ParseFailed(_))
         )
     });
+    let has_dependencies = flag
+        .allocations
+        .iter()
+        .filter_map(|allocation| allocation.rules.as_ref())
+        .flat_map(|rules| rules.iter())
+        .flat_map(|rule| &rule.conditions)
+        .any(|condition| {
+            matches!(
+                condition.check,
+                super::ConditionCheck::FlagEvaluation { .. }
+            )
+        });
     let allocations = flag
         .allocations
         .into_iter()
@@ -149,6 +162,7 @@ fn compile_flag(flag: FlagWire) -> Result<Flag, EvaluationError> {
         .collect::<Result<_, _>>()?;
 
     Ok(Flag {
+        has_dependencies,
         variation_type: flag.variation_type,
         allocations,
         has_invalid_activation,

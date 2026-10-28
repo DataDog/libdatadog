@@ -411,3 +411,25 @@ fn dependencies_reuse_context_timestamp_and_experimentation_policy() {
         assert_eq!(result.result.unwrap().variation_key.as_str(), expected);
     }
 }
+
+#[test]
+fn later_allocations_still_evaluate_dependencies() {
+    let mut root = flag(vec![dependency("parent")]);
+    root["allocations"]
+        .as_array_mut()
+        .unwrap()
+        .insert(0, allocation(vec![fails()], "off"));
+    let result = eval(wire(json!({"root": root, "parent": flag(vec![])})));
+    assert_eq!(result.result.unwrap().variation_key.as_str(), "on");
+    assert_eq!(result.evaluations.len(), 1);
+    assert!(result.evaluations[0].exposure_eligible);
+}
+
+#[test]
+fn independent_flags_ignore_unrelated_dependency_graphs() {
+    let mut w = wire(json!({"root":flag(vec![]), "cycle":flag(vec![dependency("cycle")])}));
+    w["evaluatorParams"] = json!({"maxDependencyDepth":0});
+    let result = eval(w);
+    assert_eq!(result.result.unwrap().variation_key.as_str(), "on");
+    assert!(result.evaluations.is_empty());
+}

@@ -10,7 +10,6 @@ use crate::rules_based::{
 };
 
 impl RuleWire {
-    #[cfg(test)]
     pub(super) fn eval(&self, subject: &EvaluationContext) -> bool {
         self.conditions
             .iter()
