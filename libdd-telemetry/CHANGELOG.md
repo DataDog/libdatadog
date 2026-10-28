@@ -2,6 +2,14 @@
 
 
 
+## [12.0.0](https://github.com/datadog/libdatadog/compare/libdd-telemetry-v11.0.0..libdd-telemetry-v12.0.0) - 2026-10-28
+
+### Changed
+
+- Preparatory cleanup for restructure ([#2722](https://github.com/datadog/libdatadog/issues/2722)) - ([87970b5](https://github.com/datadog/libdatadog/commit/87970b50f5b7c6cf4379ad5c461811336513d300))
+
+
+
 ## [11.0.0](https://github.com/datadog/libdatadog/compare/libdd-telemetry-v10.0.0..libdd-telemetry-v11.0.0) - 2026-10-23
 
 ### Added
