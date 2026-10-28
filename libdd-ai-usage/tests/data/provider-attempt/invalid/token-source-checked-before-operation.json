@@ -1,0 +1,16 @@
+{
+  "$schema": "../../../../schema/provider-attempt-metric-fixture.schema.json",
+  "profile": "gen_ai.client.provider_attempt@0.1.0",
+  "case": "token-source-checked-before-operation",
+  "description": "The token sources are checked with the bases, before operation_name: an observation with both faults gets value_not_allowed for the token source.",
+  "observation": {
+    "operation_name": "rerank",
+    "provider_name": "exampleai",
+    "duration_seconds": 1,
+    "streaming": false,
+    "input_token_source": "guessed",
+    "observation_point": "gateway"
+  },
+  "expected_error_code": "value_not_allowed",
+  "expected_error": "input_token_source must be"
+}

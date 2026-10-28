@@ -1,0 +1,21 @@
+{
+  "$schema": "../../../../schema/provider-attempt-metric-fixture.schema.json",
+  "profile": "gen_ai.client.provider_attempt@0.1.0",
+  "case": "two-faults-priced-as-before-error-type",
+  "description": "The cost rules come before error_type.",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "exampleai",
+    "duration_seconds": 1,
+    "streaming": false,
+    "input_tokens": 10,
+    "canonical_model": "ex-large-1-20270101",
+    "cost_priced_as_model": "ex-large-1",
+    "cost_usd": 0.01,
+    "cost_source": "calculated",
+    "error_type": "Bad Type",
+    "observation_point": "gateway"
+  },
+  "expected_error_code": "fields_contradict",
+  "expected_error": "cost_priced_as_model requires cost_source estimated"
+}

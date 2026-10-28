@@ -113,10 +113,10 @@ pub fn parse_crate_info(manifest: &Path) -> Result<CrateInfo> {
 pub fn get_crate_for_file(file_path: &str) -> String {
     let path = Path::new(file_path);
 
-    if let Some(cargo_toml_path) = find_closest_cargo_toml(path) {
-        if let Ok(info) = parse_crate_info(&cargo_toml_path) {
-            return info.name;
-        }
+    if let Some(cargo_toml_path) = find_closest_cargo_toml(path)
+        && let Ok(info) = parse_crate_info(&cargo_toml_path)
+    {
+        return info.name;
     }
 
     log::error!(

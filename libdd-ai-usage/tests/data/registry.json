@@ -1,0 +1,3714 @@
+{
+  "$schema": "../../schema/portable-metric-registry.schema.json",
+  "registry_version": "0.1.0",
+  "status": "experimental",
+  "upstream_pins": {
+    "otel_genai": {
+      "repository": "open-telemetry/semantic-conventions-genai",
+      "revision": "4f85037ef86e92c510d2ef881a58f1076f6fc0e4",
+      "source": "model/gen-ai/metrics.yaml"
+    },
+    "otel_semconv": {
+      "repository": "open-telemetry/semantic-conventions",
+      "revision": "838e414e11e30bc4f67d733b2b0baf2887d12d31",
+      "source": "model/vcs/registry.yaml"
+    }
+  },
+  "profiles": [
+    {
+      "id": "gen_ai.client.provider_attempt",
+      "version": "0.1.0",
+      "status": "experimental",
+      "input": "normalized_observation",
+      "metric_names": [
+        "gen_ai.client.inference.duration",
+        "gen_ai.client.inference.operation.input_tokens",
+        "gen_ai.client.inference.operation.output_tokens",
+        "gen_ai.client.inference.usage.input_tokens",
+        "gen_ai.client.inference.usage.output_tokens",
+        "gen_ai.client.inference.time_to_first_chunk",
+        "gen_ai.client.operation.duration",
+        "trajectory.gen_ai.client.inference.usage.server_tool.requests",
+        "trajectory.gen_ai.client.inference.usage.cost",
+        "trajectory.gen_ai.client.operation.cost"
+      ]
+    },
+    {
+      "id": "gen_ai.client.provider_streaming",
+      "version": "0.1.0",
+      "status": "experimental",
+      "input": "normalized_observation",
+      "metric_names": [
+        "gen_ai.client.inference.time_per_output_chunk"
+      ]
+    },
+    {
+      "id": "trajectory.gen_ai.client.token_breakdown",
+      "version": "0.1.0",
+      "status": "experimental",
+      "input": "normalized_observation",
+      "metric_names": [
+        "gen_ai.client.inference.usage.cache_read.input_tokens",
+        "gen_ai.client.inference.usage.cache_write.input_tokens",
+        "gen_ai.client.inference.usage.reasoning.output_tokens",
+        "trajectory.gen_ai.client.inference.usage.uncached.input_tokens"
+      ]
+    },
+    {
+      "id": "trajectory.gen_ai.gateway.request",
+      "version": "0.1.0",
+      "status": "experimental",
+      "input": "normalized_observation",
+      "metric_names": [
+        "trajectory.gen_ai.gateway.request.duration",
+        "trajectory.gen_ai.gateway.request.provider_operations",
+        "trajectory.gen_ai.gateway.request.retries",
+        "trajectory.gen_ai.gateway.request.fallbacks",
+        "trajectory.gen_ai.gateway.cache.operations",
+        "trajectory.gen_ai.gateway.request.estimated_cost"
+      ]
+    },
+    {
+      "id": "trajectory.gen_ai.agent.run",
+      "version": "0.1.0",
+      "status": "experimental",
+      "input": "canonical_events",
+      "metric_names": [
+        "gen_ai.invoke_agent.duration",
+        "gen_ai.invoke_agent.inference_calls",
+        "gen_ai.invoke_agent.tool_calls",
+        "gen_ai.execute_tool.duration",
+        "trajectory.gen_ai.invoke_agent.cost",
+        "trajectory.gen_ai.invoke_agent.usage.cost",
+        "trajectory.gen_ai.invoke_agent.usage.input_tokens",
+        "trajectory.gen_ai.invoke_agent.usage.output_tokens",
+        "trajectory.gen_ai.invoke_agent.usage.cache_read.input_tokens",
+        "trajectory.gen_ai.invoke_agent.usage.cache_write.input_tokens",
+        "trajectory.gen_ai.invoke_agent.usage.reasoning.output_tokens",
+        "trajectory.gen_ai.skill.invocations",
+        "trajectory.gen_ai.permission.wait.duration",
+        "trajectory.gen_ai.compactions",
+        "trajectory.gen_ai.subagent.starts",
+        "trajectory.gen_ai.session.starts"
+      ]
+    },
+    {
+      "id": "trajectory.gen_ai.session.segment",
+      "version": "0.1.0",
+      "status": "experimental",
+      "input": "canonical_events",
+      "metric_names": [
+        "trajectory.gen_ai.session.segment.turns",
+        "trajectory.gen_ai.session.segment.inference_calls",
+        "trajectory.gen_ai.session.segment.tool_calls",
+        "trajectory.gen_ai.session.segment.cost",
+        "trajectory.gen_ai.session.segment.usage.cost"
+      ]
+    },
+    {
+      "id": "trajectory.coding_agent.changes",
+      "version": "0.1.0",
+      "status": "experimental",
+      "input": "agent_coding_effects",
+      "metric_names": [
+        "trajectory.coding_agent.commits",
+        "trajectory.coding_agent.pull_requests",
+        "trajectory.coding_agent.lines_changed",
+        "trajectory.coding_agent.file_operations"
+      ]
+    }
+  ],
+  "deployment_attributes": [
+    {
+      "name": "user.id",
+      "origin": "opentelemetry",
+      "identifies": "The person the work was done for. A hashed or pseudonymous identifier is allowed.",
+      "carrier": "point"
+    },
+    {
+      "name": "trajectory.team.id",
+      "origin": "open_trajectory",
+      "identifies": "A team, group, or cost center.",
+      "carrier": "point"
+    },
+    {
+      "name": "service.name",
+      "origin": "opentelemetry",
+      "identifies": "The service that made the calls.",
+      "carrier": "resource"
+    },
+    {
+      "name": "trajectory.client_source",
+      "origin": "open_trajectory",
+      "identifies": "The client application.",
+      "carrier": "point"
+    },
+    {
+      "name": "host.name",
+      "origin": "opentelemetry",
+      "identifies": "The machine.",
+      "carrier": "resource"
+    },
+    {
+      "name": "trajectory.request.provider_account_id",
+      "origin": "open_trajectory",
+      "identifies": "The account at the provider.",
+      "carrier": "point"
+    },
+    {
+      "name": "trajectory.request.project_id",
+      "origin": "open_trajectory",
+      "identifies": "The provider's project or workspace.",
+      "carrier": "point"
+    },
+    {
+      "name": "trajectory.request.api_key_id",
+      "origin": "open_trajectory",
+      "identifies": "The provider's identifier of the API key. Never the key or a value derived from it.",
+      "carrier": "point"
+    },
+    {
+      "name": "trajectory.gateway.route",
+      "origin": "open_trajectory",
+      "identifies": "The route, model group, or alias a caller asked a gateway for.",
+      "carrier": "point"
+    },
+    {
+      "name": "trajectory.gateway.destination.id",
+      "origin": "open_trajectory",
+      "identifies": "The gateway's own identifier of the destination an operation was sent to. On a gateway-request point, the destination of the request's last provider operation.",
+      "carrier": "point"
+    },
+    {
+      "name": "trajectory.gateway.key.alias",
+      "origin": "open_trajectory",
+      "identifies": "The label an operator gave the gateway key the caller used. Never the key, a part of it, or a value derived from it.",
+      "carrier": "point"
+    }
+  ],
+  "metrics": [
+    {
+      "name": "gen_ai.client.inference.duration",
+      "origin": {
+        "kind": "opentelemetry",
+        "specification": "open-telemetry/semantic-conventions-genai:model/gen-ai/metrics.yaml",
+        "revision": "4f85037ef86e92c510d2ef881a58f1076f6fc0e4"
+      },
+      "stability": "development",
+      "producer_roles": [
+        "client",
+        "gateway"
+      ],
+      "observation_grain": "provider_attempt",
+      "instrument": "histogram",
+      "unit": "s",
+      "value_type": "double",
+      "derivations": [
+        "direct_observation"
+      ],
+      "recording_boundary": {
+        "start": "Immediately before issuing one resolved provider inference operation (chat or text_completion).",
+        "end": "When the complete response returns, the response stream terminates, or the operation raises a terminal error.",
+        "error": "Record the duration on terminal errors and add error.type using a documented low-cardinality error identifier."
+      },
+      "source_authorities": [
+        "observed"
+      ],
+      "missing_value": "omit",
+      "zero_value": "valid_if_authoritative",
+      "aggregation_role": "completed_sample",
+      "attributes": [
+        {
+          "name": "gen_ai.operation.name",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "chat",
+            "text_completion"
+          ]
+        },
+        {
+          "name": "gen_ai.provider.name",
+          "requirement": "required",
+          "cardinality": "low"
+        },
+        {
+          "name": "gen_ai.request.model",
+          "requirement": "recommended",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "gen_ai.response.model",
+          "requirement": "recommended",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "error.type",
+          "requirement": "conditional",
+          "cardinality": "low"
+        },
+        {
+          "name": "trajectory.observation.point",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "harness",
+            "harness_transcript",
+            "agent_framework",
+            "gateway",
+            "network_proxy",
+            "provider",
+            "telemetry_import"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "gen_ai.client.inference.operation.input_tokens",
+      "origin": {
+        "kind": "opentelemetry",
+        "specification": "open-telemetry/semantic-conventions-genai:model/gen-ai/token-metrics.yaml",
+        "revision": "4f85037ef86e92c510d2ef881a58f1076f6fc0e4"
+      },
+      "stability": "development",
+      "producer_roles": [
+        "client",
+        "gateway"
+      ],
+      "observation_grain": "provider_attempt",
+      "instrument": "histogram",
+      "unit": "{token}",
+      "value_type": "integer",
+      "derivations": [
+        "upstream_reported"
+      ],
+      "recording_boundary": {
+        "start": "No point is recorded until terminal provider usage is available.",
+        "end": "Record one sample with the operation's reported input tokens, including cached input, after it terminates. Record it once per provider operation, from that operation's own reported usage; never from a turn, invocation, or session total. A count the provider did not report is added only with trajectory.token.source estimated, when the observation marks its side estimated.",
+        "error": "Record reported billable usage on an error only when the provider returns authoritative terminal usage; otherwise omit it."
+      },
+      "source_authorities": [
+        "reported",
+        "estimated"
+      ],
+      "missing_value": "omit",
+      "zero_value": "valid_if_authoritative",
+      "aggregation_role": "completed_sample",
+      "attributes": [
+        {
+          "name": "gen_ai.operation.name",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "chat",
+            "text_completion",
+            "embeddings"
+          ]
+        },
+        {
+          "name": "gen_ai.provider.name",
+          "requirement": "required",
+          "cardinality": "low"
+        },
+        {
+          "name": "gen_ai.request.model",
+          "requirement": "recommended",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "gen_ai.response.model",
+          "requirement": "recommended",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "trajectory.observation.point",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "harness",
+            "harness_transcript",
+            "agent_framework",
+            "gateway",
+            "network_proxy",
+            "provider",
+            "telemetry_import"
+          ]
+        },
+        {
+          "name": "trajectory.token.source",
+          "requirement": "conditional",
+          "cardinality": "low",
+          "allowed_values": [
+            "estimated"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "gen_ai.client.inference.operation.output_tokens",
+      "origin": {
+        "kind": "opentelemetry",
+        "specification": "open-telemetry/semantic-conventions-genai:model/gen-ai/token-metrics.yaml",
+        "revision": "4f85037ef86e92c510d2ef881a58f1076f6fc0e4"
+      },
+      "stability": "development",
+      "producer_roles": [
+        "client",
+        "gateway"
+      ],
+      "observation_grain": "provider_attempt",
+      "instrument": "histogram",
+      "unit": "{token}",
+      "value_type": "integer",
+      "derivations": [
+        "upstream_reported"
+      ],
+      "recording_boundary": {
+        "start": "No point is recorded until terminal provider usage is available.",
+        "end": "Record one sample with the operation's reported output tokens, including reasoning tokens, after it terminates. Record it once per provider operation, from that operation's own reported usage; never from a turn, invocation, or session total. A count the provider did not report is added only with trajectory.token.source estimated, when the observation marks its side estimated.",
+        "error": "Record reported billable usage on an error only when the provider returns authoritative terminal usage; otherwise omit it."
+      },
+      "source_authorities": [
+        "reported",
+        "estimated"
+      ],
+      "missing_value": "omit",
+      "zero_value": "valid_if_authoritative",
+      "aggregation_role": "completed_sample",
+      "attributes": [
+        {
+          "name": "gen_ai.operation.name",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "chat",
+            "text_completion",
+            "embeddings"
+          ]
+        },
+        {
+          "name": "gen_ai.provider.name",
+          "requirement": "required",
+          "cardinality": "low"
+        },
+        {
+          "name": "gen_ai.request.model",
+          "requirement": "recommended",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "gen_ai.response.model",
+          "requirement": "recommended",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "trajectory.observation.point",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "harness",
+            "harness_transcript",
+            "agent_framework",
+            "gateway",
+            "network_proxy",
+            "provider",
+            "telemetry_import"
+          ]
+        },
+        {
+          "name": "trajectory.token.source",
+          "requirement": "conditional",
+          "cardinality": "low",
+          "allowed_values": [
+            "estimated"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "gen_ai.client.inference.usage.input_tokens",
+      "origin": {
+        "kind": "opentelemetry",
+        "specification": "open-telemetry/semantic-conventions-genai:model/gen-ai/token-metrics.yaml",
+        "revision": "4f85037ef86e92c510d2ef881a58f1076f6fc0e4"
+      },
+      "stability": "development",
+      "producer_roles": [
+        "client",
+        "gateway"
+      ],
+      "observation_grain": "provider_attempt",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value_type": "integer",
+      "derivations": [
+        "upstream_reported"
+      ],
+      "recording_boundary": {
+        "start": "No point is recorded until terminal provider usage is available.",
+        "end": "Add the operation's reported input tokens, including cached input, after it terminates, one increment per reported modality part and the remainder as gen_ai.token.modality unknown. Record it once per provider operation, from that operation's own reported usage; never from a turn, invocation, or session total. A count the provider did not report is added only with trajectory.token.source estimated, when the observation marks its side estimated.",
+        "error": "Record reported billable usage on an error only when the provider returns authoritative terminal usage; otherwise omit it."
+      },
+      "source_authorities": [
+        "reported",
+        "estimated"
+      ],
+      "missing_value": "omit",
+      "zero_value": "valid_if_authoritative",
+      "aggregation_role": "additive_delta",
+      "attributes": [
+        {
+          "name": "gen_ai.operation.name",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "chat",
+            "text_completion",
+            "embeddings"
+          ]
+        },
+        {
+          "name": "gen_ai.provider.name",
+          "requirement": "required",
+          "cardinality": "low"
+        },
+        {
+          "name": "gen_ai.request.model",
+          "requirement": "recommended",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "gen_ai.response.model",
+          "requirement": "recommended",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "gen_ai.token.modality",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "text",
+            "image",
+            "audio",
+            "unknown"
+          ]
+        },
+        {
+          "name": "trajectory.context.band",
+          "requirement": "conditional",
+          "cardinality": "low"
+        },
+        {
+          "name": "trajectory.request.service_tier",
+          "requirement": "conditional",
+          "cardinality": "low"
+        },
+        {
+          "name": "trajectory.request.batch",
+          "requirement": "conditional",
+          "cardinality": "low",
+          "allowed_values": [
+            "true"
+          ]
+        },
+        {
+          "name": "trajectory.observation.point",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "harness",
+            "harness_transcript",
+            "agent_framework",
+            "gateway",
+            "network_proxy",
+            "provider",
+            "telemetry_import"
+          ]
+        },
+        {
+          "name": "trajectory.token.source",
+          "requirement": "conditional",
+          "cardinality": "low",
+          "allowed_values": [
+            "estimated"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "gen_ai.client.inference.usage.output_tokens",
+      "origin": {
+        "kind": "opentelemetry",
+        "specification": "open-telemetry/semantic-conventions-genai:model/gen-ai/token-metrics.yaml",
+        "revision": "4f85037ef86e92c510d2ef881a58f1076f6fc0e4"
+      },
+      "stability": "development",
+      "producer_roles": [
+        "client",
+        "gateway"
+      ],
+      "observation_grain": "provider_attempt",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value_type": "integer",
+      "derivations": [
+        "upstream_reported"
+      ],
+      "recording_boundary": {
+        "start": "No point is recorded until terminal provider usage is available.",
+        "end": "Add the operation's reported output tokens, including reasoning tokens, after it terminates, one increment per reported modality part and the remainder as gen_ai.token.modality unknown. Record it once per provider operation, from that operation's own reported usage; never from a turn, invocation, or session total. A count the provider did not report is added only with trajectory.token.source estimated, when the observation marks its side estimated.",
+        "error": "Record reported billable usage on an error only when the provider returns authoritative terminal usage; otherwise omit it."
+      },
+      "source_authorities": [
+        "reported",
+        "estimated"
+      ],
+      "missing_value": "omit",
+      "zero_value": "valid_if_authoritative",
+      "aggregation_role": "additive_delta",
+      "attributes": [
+        {
+          "name": "gen_ai.operation.name",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "chat",
+            "text_completion",
+            "embeddings"
+          ]
+        },
+        {
+          "name": "gen_ai.provider.name",
+          "requirement": "required",
+          "cardinality": "low"
+        },
+        {
+          "name": "gen_ai.request.model",
+          "requirement": "recommended",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "gen_ai.response.model",
+          "requirement": "recommended",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "gen_ai.token.modality",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "text",
+            "image",
+            "audio",
+            "unknown"
+          ]
+        },
+        {
+          "name": "trajectory.context.band",
+          "requirement": "conditional",
+          "cardinality": "low"
+        },
+        {
+          "name": "trajectory.request.service_tier",
+          "requirement": "conditional",
+          "cardinality": "low"
+        },
+        {
+          "name": "trajectory.request.batch",
+          "requirement": "conditional",
+          "cardinality": "low",
+          "allowed_values": [
+            "true"
+          ]
+        },
+        {
+          "name": "trajectory.observation.point",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "harness",
+            "harness_transcript",
+            "agent_framework",
+            "gateway",
+            "network_proxy",
+            "provider",
+            "telemetry_import"
+          ]
+        },
+        {
+          "name": "trajectory.token.source",
+          "requirement": "conditional",
+          "cardinality": "low",
+          "allowed_values": [
+            "estimated"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "gen_ai.client.inference.time_to_first_chunk",
+      "origin": {
+        "kind": "opentelemetry",
+        "specification": "open-telemetry/semantic-conventions-genai:model/gen-ai/metrics.yaml",
+        "revision": "4f85037ef86e92c510d2ef881a58f1076f6fc0e4"
+      },
+      "stability": "development",
+      "producer_roles": [
+        "client",
+        "gateway"
+      ],
+      "observation_grain": "provider_attempt",
+      "instrument": "histogram",
+      "unit": "s",
+      "value_type": "double",
+      "derivations": [
+        "direct_observation"
+      ],
+      "recording_boundary": {
+        "start": "At the same instant as the provider attempt's duration metric, for a streaming provider attempt.",
+        "end": "When the first response chunk is received from the provider.",
+        "error": "Omit the point when the stream terminates before a first chunk is received."
+      },
+      "source_authorities": [
+        "observed"
+      ],
+      "missing_value": "omit",
+      "zero_value": "valid_if_authoritative",
+      "aggregation_role": "completed_sample",
+      "attributes": [
+        {
+          "name": "gen_ai.operation.name",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "chat",
+            "text_completion",
+            "embeddings"
+          ]
+        },
+        {
+          "name": "gen_ai.provider.name",
+          "requirement": "required",
+          "cardinality": "low"
+        },
+        {
+          "name": "gen_ai.request.model",
+          "requirement": "recommended",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "gen_ai.response.model",
+          "requirement": "recommended",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "trajectory.observation.point",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "harness",
+            "harness_transcript",
+            "agent_framework",
+            "gateway",
+            "network_proxy",
+            "provider",
+            "telemetry_import"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "gen_ai.client.operation.duration",
+      "origin": {
+        "kind": "opentelemetry",
+        "specification": "open-telemetry/semantic-conventions-genai:model/gen-ai/metrics.yaml",
+        "revision": "4f85037ef86e92c510d2ef881a58f1076f6fc0e4"
+      },
+      "stability": "development",
+      "producer_roles": [
+        "client",
+        "gateway"
+      ],
+      "observation_grain": "provider_attempt",
+      "instrument": "histogram",
+      "unit": "s",
+      "value_type": "double",
+      "derivations": [
+        "direct_observation"
+      ],
+      "recording_boundary": {
+        "start": "Immediately before issuing one resolved provider client operation that is not an inference operation (embeddings).",
+        "end": "When the complete response returns, the response stream terminates, or the operation raises a terminal error.",
+        "error": "Record the duration on terminal errors and add error.type using a documented low-cardinality error identifier."
+      },
+      "source_authorities": [
+        "observed"
+      ],
+      "missing_value": "omit",
+      "zero_value": "valid_if_authoritative",
+      "aggregation_role": "completed_sample",
+      "attributes": [
+        {
+          "name": "gen_ai.operation.name",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "embeddings"
+          ]
+        },
+        {
+          "name": "gen_ai.provider.name",
+          "requirement": "required",
+          "cardinality": "low"
+        },
+        {
+          "name": "gen_ai.request.model",
+          "requirement": "recommended",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "gen_ai.response.model",
+          "requirement": "recommended",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "error.type",
+          "requirement": "conditional",
+          "cardinality": "low"
+        },
+        {
+          "name": "trajectory.observation.point",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "harness",
+            "harness_transcript",
+            "agent_framework",
+            "gateway",
+            "network_proxy",
+            "provider",
+            "telemetry_import"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "trajectory.gen_ai.client.inference.usage.server_tool.requests",
+      "origin": {
+        "kind": "open_trajectory",
+        "specification": "spec/interop/telemetry/PORTABLE-METRICS.md",
+        "revision": "0.1.0"
+      },
+      "stability": "experimental",
+      "producer_roles": [
+        "client",
+        "gateway"
+      ],
+      "observation_grain": "provider_attempt",
+      "instrument": "counter",
+      "unit": "{request}",
+      "value_type": "integer",
+      "derivations": [
+        "upstream_reported"
+      ],
+      "recording_boundary": {
+        "start": "No point is recorded until terminal provider usage is available.",
+        "end": "Add the requests of one server-tool kind that the provider ran and bills per request for the operation, after it terminates. Record it once per provider operation, from that operation's own reported usage; never from a turn, invocation, or session total.",
+        "error": "Record a reported count on an error only when the provider returns authoritative terminal usage; otherwise omit it."
+      },
+      "source_authorities": [
+        "reported"
+      ],
+      "missing_value": "omit",
+      "zero_value": "valid_if_authoritative",
+      "aggregation_role": "additive_delta",
+      "attributes": [
+        {
+          "name": "gen_ai.operation.name",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "chat",
+            "text_completion",
+            "embeddings"
+          ]
+        },
+        {
+          "name": "gen_ai.provider.name",
+          "requirement": "required",
+          "cardinality": "low"
+        },
+        {
+          "name": "gen_ai.request.model",
+          "requirement": "recommended",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "gen_ai.response.model",
+          "requirement": "recommended",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "trajectory.server_tool.kind",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "web_search"
+          ]
+        },
+        {
+          "name": "trajectory.observation.point",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "harness",
+            "harness_transcript",
+            "agent_framework",
+            "gateway",
+            "network_proxy",
+            "provider",
+            "telemetry_import"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "trajectory.gen_ai.client.inference.usage.cost",
+      "origin": {
+        "kind": "open_trajectory",
+        "specification": "spec/interop/telemetry/PORTABLE-METRICS.md",
+        "revision": "0.1.0"
+      },
+      "stability": "experimental",
+      "producer_roles": [
+        "client",
+        "gateway"
+      ],
+      "observation_grain": "provider_attempt",
+      "instrument": "counter",
+      "unit": "{nanoUSD}",
+      "value_type": "integer",
+      "derivations": [
+        "upstream_reported",
+        "deterministic_arithmetic"
+      ],
+      "recording_boundary": {
+        "start": "No point is recorded until a provider-attempt cost with a source (reported, calculated, or estimated) is available.",
+        "end": "Add the operation's cost in integer nano-USD after the provider attempt terminates: cost_nano_usd when stated, otherwise the nano-USD value of cost_usd. Authoritative for spend totals; never added to the cost histogram.",
+        "error": "Add a terminal-error cost when it is a reported billing amount or a deterministic calculation over authoritative terminal usage and a public price list; otherwise omit it. Never add zero for a cost that could not be calculated."
+      },
+      "source_authorities": [
+        "reported",
+        "calculated",
+        "estimated"
+      ],
+      "missing_value": "omit",
+      "zero_value": "valid_if_authoritative",
+      "aggregation_role": "additive_delta",
+      "attributes": [
+        {
+          "name": "gen_ai.operation.name",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "chat",
+            "text_completion",
+            "embeddings"
+          ]
+        },
+        {
+          "name": "gen_ai.provider.name",
+          "requirement": "required",
+          "cardinality": "low"
+        },
+        {
+          "name": "gen_ai.request.model",
+          "requirement": "recommended",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "gen_ai.response.model",
+          "requirement": "recommended",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "trajectory.cost.source",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "reported",
+            "calculated",
+            "estimated"
+          ]
+        },
+        {
+          "name": "trajectory.cost.rate_card",
+          "requirement": "conditional",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "trajectory.cost.bound",
+          "requirement": "conditional",
+          "cardinality": "low",
+          "allowed_values": [
+            "lower"
+          ]
+        },
+        {
+          "name": "trajectory.context.band",
+          "requirement": "conditional",
+          "cardinality": "low"
+        },
+        {
+          "name": "trajectory.request.service_tier",
+          "requirement": "conditional",
+          "cardinality": "low"
+        },
+        {
+          "name": "trajectory.request.batch",
+          "requirement": "conditional",
+          "cardinality": "low",
+          "allowed_values": [
+            "true"
+          ]
+        },
+        {
+          "name": "trajectory.canonical.provider",
+          "requirement": "conditional",
+          "cardinality": "low"
+        },
+        {
+          "name": "trajectory.canonical.model",
+          "requirement": "conditional",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "trajectory.canonical.family",
+          "requirement": "conditional",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "trajectory.cost.priced_as",
+          "requirement": "conditional",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "trajectory.observation.point",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "harness",
+            "harness_transcript",
+            "agent_framework",
+            "gateway",
+            "network_proxy",
+            "provider",
+            "telemetry_import"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "trajectory.gen_ai.client.operation.cost",
+      "origin": {
+        "kind": "open_trajectory",
+        "specification": "spec/interop/telemetry/PORTABLE-METRICS.md",
+        "revision": "0.1.0"
+      },
+      "stability": "experimental",
+      "producer_roles": [
+        "client",
+        "gateway"
+      ],
+      "observation_grain": "provider_attempt",
+      "instrument": "histogram",
+      "unit": "{USD}",
+      "value_type": "double",
+      "derivations": [
+        "upstream_reported",
+        "deterministic_arithmetic"
+      ],
+      "recording_boundary": {
+        "start": "No point is recorded until a provider-attempt cost with a source (reported, calculated, or estimated) is available.",
+        "end": "Record one non-negative USD sample after the provider attempt terminates.",
+        "error": "Record a non-negative terminal-error cost when it is a reported billing amount or a deterministic calculation over authoritative terminal usage and a public price list; otherwise omit it."
+      },
+      "source_authorities": [
+        "reported",
+        "calculated",
+        "estimated"
+      ],
+      "missing_value": "omit",
+      "zero_value": "valid_if_authoritative",
+      "aggregation_role": "completed_sample",
+      "attributes": [
+        {
+          "name": "gen_ai.operation.name",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "chat",
+            "text_completion",
+            "embeddings"
+          ]
+        },
+        {
+          "name": "gen_ai.provider.name",
+          "requirement": "required",
+          "cardinality": "low"
+        },
+        {
+          "name": "gen_ai.request.model",
+          "requirement": "recommended",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "gen_ai.response.model",
+          "requirement": "recommended",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "trajectory.cost.source",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "reported",
+            "calculated",
+            "estimated"
+          ]
+        },
+        {
+          "name": "trajectory.canonical.provider",
+          "requirement": "conditional",
+          "cardinality": "low"
+        },
+        {
+          "name": "trajectory.canonical.model",
+          "requirement": "conditional",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "trajectory.canonical.family",
+          "requirement": "conditional",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "trajectory.observation.point",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "harness",
+            "harness_transcript",
+            "agent_framework",
+            "gateway",
+            "network_proxy",
+            "provider",
+            "telemetry_import"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "gen_ai.client.inference.time_per_output_chunk",
+      "origin": {
+        "kind": "opentelemetry",
+        "specification": "open-telemetry/semantic-conventions-genai:model/gen-ai/metrics.yaml",
+        "revision": "4f85037ef86e92c510d2ef881a58f1076f6fc0e4"
+      },
+      "stability": "development",
+      "producer_roles": [
+        "client",
+        "gateway"
+      ],
+      "observation_grain": "provider_attempt",
+      "instrument": "histogram",
+      "unit": "s",
+      "value_type": "double",
+      "derivations": [
+        "direct_observation"
+      ],
+      "recording_boundary": {
+        "start": "At the end of the preceding provider response chunk.",
+        "end": "At the end of the current provider response chunk, for every chunk after the first.",
+        "error": "Retain intervals for chunks received before a terminal stream error; emit no interval before a second chunk."
+      },
+      "source_authorities": [
+        "observed"
+      ],
+      "missing_value": "omit",
+      "zero_value": "valid_if_authoritative",
+      "aggregation_role": "completed_sample",
+      "attributes": [
+        {
+          "name": "gen_ai.operation.name",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "chat",
+            "text_completion"
+          ]
+        },
+        {
+          "name": "gen_ai.provider.name",
+          "requirement": "required",
+          "cardinality": "low"
+        },
+        {
+          "name": "gen_ai.request.model",
+          "requirement": "recommended",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "gen_ai.response.model",
+          "requirement": "recommended",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "trajectory.observation.point",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "harness",
+            "harness_transcript",
+            "agent_framework",
+            "gateway",
+            "network_proxy",
+            "provider",
+            "telemetry_import"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "gen_ai.client.inference.usage.cache_read.input_tokens",
+      "origin": {
+        "kind": "opentelemetry",
+        "specification": "open-telemetry/semantic-conventions-genai:model/gen-ai/token-metrics.yaml",
+        "revision": "4f85037ef86e92c510d2ef881a58f1076f6fc0e4"
+      },
+      "stability": "development",
+      "producer_roles": [
+        "client",
+        "gateway"
+      ],
+      "observation_grain": "provider_attempt",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value_type": "integer",
+      "derivations": [
+        "upstream_reported"
+      ],
+      "recording_boundary": {
+        "start": "No point is recorded until terminal provider usage is available.",
+        "end": "Add the operation's reported cache-read input tokens after it terminates, with gen_ai.token.modality unknown. Record it once per provider operation, from that operation's own reported usage; never from a turn, invocation, or session total. A count the provider did not report is added only with trajectory.token.source estimated, when the observation marks its side estimated.",
+        "error": "Record reported billable usage on an error only when the provider returns authoritative terminal usage; otherwise omit it."
+      },
+      "source_authorities": [
+        "reported",
+        "estimated"
+      ],
+      "missing_value": "omit",
+      "zero_value": "valid_if_authoritative",
+      "aggregation_role": "additive_delta",
+      "attributes": [
+        {
+          "name": "gen_ai.operation.name",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "chat",
+            "text_completion",
+            "embeddings"
+          ]
+        },
+        {
+          "name": "gen_ai.provider.name",
+          "requirement": "required",
+          "cardinality": "low"
+        },
+        {
+          "name": "gen_ai.request.model",
+          "requirement": "recommended",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "gen_ai.response.model",
+          "requirement": "recommended",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "gen_ai.token.modality",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "text",
+            "image",
+            "audio",
+            "unknown"
+          ]
+        },
+        {
+          "name": "trajectory.context.band",
+          "requirement": "conditional",
+          "cardinality": "low"
+        },
+        {
+          "name": "trajectory.request.service_tier",
+          "requirement": "conditional",
+          "cardinality": "low"
+        },
+        {
+          "name": "trajectory.request.batch",
+          "requirement": "conditional",
+          "cardinality": "low",
+          "allowed_values": [
+            "true"
+          ]
+        },
+        {
+          "name": "trajectory.observation.point",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "harness",
+            "harness_transcript",
+            "agent_framework",
+            "gateway",
+            "network_proxy",
+            "provider",
+            "telemetry_import"
+          ]
+        },
+        {
+          "name": "trajectory.token.source",
+          "requirement": "conditional",
+          "cardinality": "low",
+          "allowed_values": [
+            "estimated"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "gen_ai.client.inference.usage.cache_write.input_tokens",
+      "origin": {
+        "kind": "opentelemetry",
+        "specification": "open-telemetry/semantic-conventions-genai:model/gen-ai/token-metrics.yaml",
+        "revision": "4f85037ef86e92c510d2ef881a58f1076f6fc0e4"
+      },
+      "stability": "development",
+      "producer_roles": [
+        "client",
+        "gateway"
+      ],
+      "observation_grain": "provider_attempt",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value_type": "integer",
+      "derivations": [
+        "upstream_reported"
+      ],
+      "recording_boundary": {
+        "start": "No point is recorded until terminal provider usage is available.",
+        "end": "Add the operation's reported cache-write input tokens after it terminates, with gen_ai.token.modality unknown: one increment per reported cache lifetime, and the remainder as unspecified when it is above zero or no lifetime is reported. Record it once per provider operation, from that operation's own reported usage; never from a turn, invocation, or session total. A count the provider did not report is added only with trajectory.token.source estimated, when the observation marks its side estimated.",
+        "error": "Record reported billable usage on an error only when the provider returns authoritative terminal usage; otherwise omit it."
+      },
+      "source_authorities": [
+        "reported",
+        "estimated"
+      ],
+      "missing_value": "omit",
+      "zero_value": "valid_if_authoritative",
+      "aggregation_role": "additive_delta",
+      "attributes": [
+        {
+          "name": "gen_ai.operation.name",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "chat",
+            "text_completion",
+            "embeddings"
+          ]
+        },
+        {
+          "name": "gen_ai.provider.name",
+          "requirement": "required",
+          "cardinality": "low"
+        },
+        {
+          "name": "gen_ai.request.model",
+          "requirement": "recommended",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "gen_ai.response.model",
+          "requirement": "recommended",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "gen_ai.token.modality",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "text",
+            "image",
+            "audio",
+            "unknown"
+          ]
+        },
+        {
+          "name": "trajectory.cache.lifetime",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "5m",
+            "1h",
+            "unspecified"
+          ]
+        },
+        {
+          "name": "trajectory.context.band",
+          "requirement": "conditional",
+          "cardinality": "low"
+        },
+        {
+          "name": "trajectory.request.service_tier",
+          "requirement": "conditional",
+          "cardinality": "low"
+        },
+        {
+          "name": "trajectory.request.batch",
+          "requirement": "conditional",
+          "cardinality": "low",
+          "allowed_values": [
+            "true"
+          ]
+        },
+        {
+          "name": "trajectory.observation.point",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "harness",
+            "harness_transcript",
+            "agent_framework",
+            "gateway",
+            "network_proxy",
+            "provider",
+            "telemetry_import"
+          ]
+        },
+        {
+          "name": "trajectory.token.source",
+          "requirement": "conditional",
+          "cardinality": "low",
+          "allowed_values": [
+            "estimated"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "gen_ai.client.inference.usage.reasoning.output_tokens",
+      "origin": {
+        "kind": "opentelemetry",
+        "specification": "open-telemetry/semantic-conventions-genai:model/gen-ai/token-metrics.yaml",
+        "revision": "4f85037ef86e92c510d2ef881a58f1076f6fc0e4"
+      },
+      "stability": "development",
+      "producer_roles": [
+        "client",
+        "gateway"
+      ],
+      "observation_grain": "provider_attempt",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value_type": "integer",
+      "derivations": [
+        "upstream_reported"
+      ],
+      "recording_boundary": {
+        "start": "No point is recorded until terminal provider usage is available.",
+        "end": "Add the operation's reported reasoning output tokens after it terminates, with gen_ai.token.modality unknown. Record it once per provider operation, from that operation's own reported usage; never from a turn, invocation, or session total. A count the provider did not report is added only with trajectory.token.source estimated, when the observation marks its side estimated.",
+        "error": "Record reported billable usage on an error only when the provider returns authoritative terminal usage; otherwise omit it."
+      },
+      "source_authorities": [
+        "reported",
+        "estimated"
+      ],
+      "missing_value": "omit",
+      "zero_value": "valid_if_authoritative",
+      "aggregation_role": "additive_delta",
+      "attributes": [
+        {
+          "name": "gen_ai.operation.name",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "chat",
+            "text_completion",
+            "embeddings"
+          ]
+        },
+        {
+          "name": "gen_ai.provider.name",
+          "requirement": "required",
+          "cardinality": "low"
+        },
+        {
+          "name": "gen_ai.request.model",
+          "requirement": "recommended",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "gen_ai.response.model",
+          "requirement": "recommended",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "gen_ai.token.modality",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "text",
+            "image",
+            "audio",
+            "unknown"
+          ]
+        },
+        {
+          "name": "trajectory.context.band",
+          "requirement": "conditional",
+          "cardinality": "low"
+        },
+        {
+          "name": "trajectory.request.service_tier",
+          "requirement": "conditional",
+          "cardinality": "low"
+        },
+        {
+          "name": "trajectory.request.batch",
+          "requirement": "conditional",
+          "cardinality": "low",
+          "allowed_values": [
+            "true"
+          ]
+        },
+        {
+          "name": "trajectory.observation.point",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "harness",
+            "harness_transcript",
+            "agent_framework",
+            "gateway",
+            "network_proxy",
+            "provider",
+            "telemetry_import"
+          ]
+        },
+        {
+          "name": "trajectory.token.source",
+          "requirement": "conditional",
+          "cardinality": "low",
+          "allowed_values": [
+            "estimated"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "trajectory.gen_ai.client.inference.usage.uncached.input_tokens",
+      "origin": {
+        "kind": "open_trajectory",
+        "specification": "spec/interop/telemetry/PORTABLE-METRICS.md",
+        "revision": "0.1.0"
+      },
+      "stability": "experimental",
+      "producer_roles": [
+        "client",
+        "gateway"
+      ],
+      "observation_grain": "provider_attempt",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value_type": "integer",
+      "derivations": [
+        "upstream_reported",
+        "deterministic_arithmetic"
+      ],
+      "recording_boundary": {
+        "start": "No point is recorded until terminal provider usage is available.",
+        "end": "Add input tokens minus cache reads minus cache writes after the operation terminates, only when both cache parts are reported, with gen_ai.token.modality unknown. Record it once per provider operation, from that operation's own reported usage; never from a turn, invocation, or session total. A count the provider did not report is added only with trajectory.token.source estimated, when the observation marks its side estimated.",
+        "error": "Record reported billable usage on an error only when the provider returns authoritative terminal usage; otherwise omit it."
+      },
+      "source_authorities": [
+        "reported",
+        "estimated"
+      ],
+      "missing_value": "omit",
+      "zero_value": "valid_if_authoritative",
+      "aggregation_role": "additive_delta",
+      "attributes": [
+        {
+          "name": "gen_ai.operation.name",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "chat",
+            "text_completion",
+            "embeddings"
+          ]
+        },
+        {
+          "name": "gen_ai.provider.name",
+          "requirement": "required",
+          "cardinality": "low"
+        },
+        {
+          "name": "gen_ai.request.model",
+          "requirement": "recommended",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "gen_ai.response.model",
+          "requirement": "recommended",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "gen_ai.token.modality",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "text",
+            "image",
+            "audio",
+            "unknown"
+          ]
+        },
+        {
+          "name": "trajectory.context.band",
+          "requirement": "conditional",
+          "cardinality": "low"
+        },
+        {
+          "name": "trajectory.request.service_tier",
+          "requirement": "conditional",
+          "cardinality": "low"
+        },
+        {
+          "name": "trajectory.request.batch",
+          "requirement": "conditional",
+          "cardinality": "low",
+          "allowed_values": [
+            "true"
+          ]
+        },
+        {
+          "name": "trajectory.observation.point",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "harness",
+            "harness_transcript",
+            "agent_framework",
+            "gateway",
+            "network_proxy",
+            "provider",
+            "telemetry_import"
+          ]
+        },
+        {
+          "name": "trajectory.token.source",
+          "requirement": "conditional",
+          "cardinality": "low",
+          "allowed_values": [
+            "estimated"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "trajectory.gen_ai.gateway.request.duration",
+      "origin": {
+        "kind": "open_trajectory",
+        "specification": "spec/interop/telemetry/GATEWAY-METRICS.md",
+        "revision": "0.1.0"
+      },
+      "stability": "experimental",
+      "producer_roles": [
+        "gateway"
+      ],
+      "observation_grain": "gateway_request",
+      "instrument": "histogram",
+      "unit": "s",
+      "value_type": "double",
+      "derivations": [
+        "direct_observation"
+      ],
+      "recording_boundary": {
+        "start": "Immediately before the gateway begins one logical generation request.",
+        "end": "When the logical response returns, its stream terminates, or the gateway request raises a terminal error.",
+        "error": "Record terminal errors and add error.type using a documented low-cardinality identifier."
+      },
+      "source_authorities": [
+        "observed"
+      ],
+      "missing_value": "omit",
+      "zero_value": "valid_if_authoritative",
+      "aggregation_role": "completed_sample",
+      "attributes": [
+        {
+          "name": "gen_ai.operation.name",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "chat",
+            "text_completion",
+            "embeddings"
+          ]
+        },
+        {
+          "name": "gen_ai.request.model",
+          "requirement": "recommended",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "error.type",
+          "requirement": "conditional",
+          "cardinality": "low"
+        },
+        {
+          "name": "trajectory.observation.point",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "gateway"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "trajectory.gen_ai.gateway.request.provider_operations",
+      "origin": {
+        "kind": "open_trajectory",
+        "specification": "spec/interop/telemetry/GATEWAY-METRICS.md",
+        "revision": "0.1.0"
+      },
+      "stability": "experimental",
+      "producer_roles": [
+        "gateway"
+      ],
+      "observation_grain": "gateway_request",
+      "instrument": "histogram",
+      "unit": "{operation}",
+      "value_type": "integer",
+      "derivations": [
+        "deterministic_arithmetic"
+      ],
+      "recording_boundary": {
+        "start": "Count zero observed resolved provider client operations at gateway request start.",
+        "end": "Record one terminal sample containing the observed operation count and its coverage.",
+        "error": "Include observed failed provider operations; mark coverage partial when resolved operations such as mid-stream fallbacks may be opaque."
+      },
+      "source_authorities": [
+        "observed"
+      ],
+      "missing_value": "omit",
+      "zero_value": "valid_if_authoritative",
+      "aggregation_role": "completed_sample",
+      "attributes": [
+        {
+          "name": "gen_ai.operation.name",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "chat",
+            "text_completion",
+            "embeddings"
+          ]
+        },
+        {
+          "name": "gen_ai.request.model",
+          "requirement": "recommended",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "trajectory.provider.operation.coverage",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "complete",
+            "partial"
+          ]
+        },
+        {
+          "name": "trajectory.observation.point",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "gateway"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "trajectory.gen_ai.gateway.request.retries",
+      "origin": {
+        "kind": "open_trajectory",
+        "specification": "spec/interop/telemetry/GATEWAY-METRICS.md",
+        "revision": "0.1.0"
+      },
+      "stability": "experimental",
+      "producer_roles": [
+        "gateway"
+      ],
+      "observation_grain": "gateway_request",
+      "instrument": "histogram",
+      "unit": "{retry}",
+      "value_type": "integer",
+      "derivations": [
+        "direct_observation"
+      ],
+      "recording_boundary": {
+        "start": "No point is recorded until the gateway supplies an authoritative request-scoped retry count.",
+        "end": "Record one terminal sample containing the number of gateway routing retries when the count covers the complete logical request.",
+        "error": "Omit a branch-scoped retry count after fallback and omit terminal-error counts when fallback execution makes their request scope ambiguous."
+      },
+      "source_authorities": [
+        "observed"
+      ],
+      "missing_value": "omit",
+      "zero_value": "valid_if_authoritative",
+      "aggregation_role": "completed_sample",
+      "attributes": [
+        {
+          "name": "gen_ai.operation.name",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "chat",
+            "text_completion",
+            "embeddings"
+          ]
+        },
+        {
+          "name": "gen_ai.request.model",
+          "requirement": "recommended",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "trajectory.observation.point",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "gateway"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "trajectory.gen_ai.gateway.request.fallbacks",
+      "origin": {
+        "kind": "open_trajectory",
+        "specification": "spec/interop/telemetry/GATEWAY-METRICS.md",
+        "revision": "0.1.0"
+      },
+      "stability": "experimental",
+      "producer_roles": [
+        "gateway"
+      ],
+      "observation_grain": "gateway_request",
+      "instrument": "histogram",
+      "unit": "{fallback}",
+      "value_type": "integer",
+      "derivations": [
+        "direct_observation"
+      ],
+      "recording_boundary": {
+        "start": "No point is recorded until the gateway supplies an authoritative request-scoped fallback count.",
+        "end": "Record one terminal sample containing the number of gateway destination or model fallbacks.",
+        "error": "Record an authoritative terminal-error count when available; otherwise omit it."
+      },
+      "source_authorities": [
+        "observed"
+      ],
+      "missing_value": "omit",
+      "zero_value": "valid_if_authoritative",
+      "aggregation_role": "completed_sample",
+      "attributes": [
+        {
+          "name": "gen_ai.operation.name",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "chat",
+            "text_completion",
+            "embeddings"
+          ]
+        },
+        {
+          "name": "gen_ai.request.model",
+          "requirement": "recommended",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "trajectory.observation.point",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "gateway"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "trajectory.gen_ai.gateway.cache.operations",
+      "origin": {
+        "kind": "open_trajectory",
+        "specification": "spec/interop/telemetry/GATEWAY-METRICS.md",
+        "revision": "0.1.0"
+      },
+      "stability": "experimental",
+      "producer_roles": [
+        "gateway"
+      ],
+      "observation_grain": "gateway_request",
+      "instrument": "counter",
+      "unit": "{operation}",
+      "value_type": "integer",
+      "derivations": [
+        "direct_observation"
+      ],
+      "recording_boundary": {
+        "start": "When the gateway reports an explicit cache lookup or write outcome.",
+        "end": "Add one for each authoritative hit, miss, or write outcome.",
+        "error": "Do not infer a miss from the absence of a hit and do not emit a cache outcome when no lookup or write fact is available."
+      },
+      "source_authorities": [
+        "observed"
+      ],
+      "missing_value": "omit",
+      "zero_value": "valid_if_authoritative",
+      "aggregation_role": "additive_delta",
+      "attributes": [
+        {
+          "name": "gen_ai.operation.name",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "chat",
+            "text_completion",
+            "embeddings"
+          ]
+        },
+        {
+          "name": "gen_ai.request.model",
+          "requirement": "recommended",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "trajectory.cache.outcome",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "hit",
+            "miss",
+            "write"
+          ]
+        },
+        {
+          "name": "trajectory.observation.point",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "gateway"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "trajectory.gen_ai.gateway.request.estimated_cost",
+      "origin": {
+        "kind": "open_trajectory",
+        "specification": "spec/interop/telemetry/GATEWAY-METRICS.md",
+        "revision": "0.1.0"
+      },
+      "stability": "experimental",
+      "producer_roles": [
+        "gateway"
+      ],
+      "observation_grain": "gateway_request",
+      "instrument": "counter",
+      "unit": "{nanoUSD}",
+      "value_type": "integer",
+      "derivations": [
+        "upstream_reported"
+      ],
+      "recording_boundary": {
+        "start": "No point is recorded until the gateway states its own cost figure for the logical request.",
+        "end": "Add the gateway's figure for the request in integer nano-USD when the request ends: estimated_cost_nano_usd when stated, otherwise the nano-USD value of estimated_cost_usd. It is the amount the gateway charged the request against its budgets, whatever that covers (the gateway may charge only the attempt that succeeded), and whatever the gateway folds in. Never added to a provider-level cost.",
+        "error": "Add a failed request's figure when the gateway charged one. Never add zero for a figure the gateway could not compute."
+      },
+      "source_authorities": [
+        "estimated"
+      ],
+      "missing_value": "omit",
+      "zero_value": "valid_if_authoritative",
+      "aggregation_role": "additive_delta",
+      "attributes": [
+        {
+          "name": "gen_ai.operation.name",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "chat",
+            "text_completion",
+            "embeddings"
+          ]
+        },
+        {
+          "name": "gen_ai.request.model",
+          "requirement": "recommended",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "trajectory.observation.point",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "gateway"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "gen_ai.invoke_agent.duration",
+      "origin": {
+        "kind": "opentelemetry",
+        "specification": "open-telemetry/semantic-conventions-genai:model/gen-ai/metrics.yaml",
+        "revision": "4f85037ef86e92c510d2ef881a58f1076f6fc0e4"
+      },
+      "stability": "development",
+      "producer_roles": [
+        "agent",
+        "local_observer"
+      ],
+      "observation_grain": "turn",
+      "instrument": "histogram",
+      "unit": "s",
+      "value_type": "double",
+      "derivations": [
+        "direct_observation"
+      ],
+      "recording_boundary": {
+        "start": "At the turn's input_prompt, or at a subagent_start that opens an inline activation.",
+        "end": "At the matching turn_end, or subagent_stop for an inline activation. turn_end.duration_ms (subagent_stop.agent_duration) takes precedence over the timestamp difference.",
+        "error": "Record failed turns with error.type _OTHER; a turn without an observed end produces no sample."
+      },
+      "source_authorities": [
+        "observed"
+      ],
+      "missing_value": "omit",
+      "zero_value": "valid_if_authoritative",
+      "aggregation_role": "completed_sample",
+      "attributes": [
+        {
+          "name": "gen_ai.agent.name",
+          "requirement": "conditional",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "trajectory.client_source",
+          "requirement": "conditional",
+          "cardinality": "low"
+        },
+        {
+          "name": "gen_ai.provider.name",
+          "requirement": "recommended",
+          "cardinality": "low"
+        },
+        {
+          "name": "gen_ai.request.model",
+          "requirement": "recommended",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "trajectory.turn.outcome",
+          "requirement": "conditional",
+          "cardinality": "low",
+          "allowed_values": [
+            "completed",
+            "incomplete",
+            "failed",
+            "cancelled",
+            "_OTHER"
+          ]
+        },
+        {
+          "name": "error.type",
+          "requirement": "conditional",
+          "cardinality": "low"
+        },
+        {
+          "name": "trajectory.observation.point",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "harness",
+            "harness_transcript",
+            "agent_framework",
+            "gateway",
+            "network_proxy",
+            "provider",
+            "telemetry_import"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "gen_ai.invoke_agent.inference_calls",
+      "origin": {
+        "kind": "opentelemetry",
+        "specification": "open-telemetry/semantic-conventions-genai:model/gen-ai/metrics.yaml",
+        "revision": "4f85037ef86e92c510d2ef881a58f1076f6fc0e4"
+      },
+      "stability": "development",
+      "producer_roles": [
+        "agent",
+        "local_observer"
+      ],
+      "observation_grain": "turn",
+      "instrument": "histogram",
+      "unit": "{inference_call}",
+      "value_type": "integer",
+      "derivations": [
+        "deterministic_arithmetic"
+      ],
+      "recording_boundary": {
+        "start": "At the start of an invocation (turn or inline activation).",
+        "end": "At its end: the number of the invocation's own llm_call records with observation_scope provider_operation, including failed and abandoned calls.",
+        "error": "Omit for every invocation when the stream contains no provider_operation llm_call; the count is then unknown, not zero."
+      },
+      "source_authorities": [
+        "observed",
+        "correlated"
+      ],
+      "missing_value": "omit",
+      "zero_value": "valid_if_authoritative",
+      "aggregation_role": "completed_sample",
+      "attributes": [
+        {
+          "name": "gen_ai.agent.name",
+          "requirement": "conditional",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "trajectory.client_source",
+          "requirement": "conditional",
+          "cardinality": "low"
+        },
+        {
+          "name": "gen_ai.provider.name",
+          "requirement": "recommended",
+          "cardinality": "low"
+        },
+        {
+          "name": "gen_ai.request.model",
+          "requirement": "recommended",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "trajectory.observation.point",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "harness",
+            "harness_transcript",
+            "agent_framework",
+            "gateway",
+            "network_proxy",
+            "provider",
+            "telemetry_import"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "gen_ai.invoke_agent.tool_calls",
+      "origin": {
+        "kind": "opentelemetry",
+        "specification": "open-telemetry/semantic-conventions-genai:model/gen-ai/metrics.yaml",
+        "revision": "4f85037ef86e92c510d2ef881a58f1076f6fc0e4"
+      },
+      "stability": "development",
+      "producer_roles": [
+        "agent",
+        "local_observer"
+      ],
+      "observation_grain": "turn",
+      "instrument": "histogram",
+      "unit": "{tool_call}",
+      "value_type": "integer",
+      "derivations": [
+        "deterministic_arithmetic"
+      ],
+      "recording_boundary": {
+        "start": "At the start of an invocation (turn or inline activation).",
+        "end": "At its end: the number of distinct tool_call_id values among the invocation's own tool_call events, including failed and unfinished calls and excluding calls that were not executed (no post observed and the last permission_result for the call is deny).",
+        "error": "Record for failed turns; a turn without an observed end produces no sample."
+      },
+      "source_authorities": [
+        "observed",
+        "correlated"
+      ],
+      "missing_value": "omit",
+      "zero_value": "valid_if_authoritative",
+      "aggregation_role": "completed_sample",
+      "attributes": [
+        {
+          "name": "gen_ai.agent.name",
+          "requirement": "conditional",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "trajectory.client_source",
+          "requirement": "conditional",
+          "cardinality": "low"
+        },
+        {
+          "name": "gen_ai.provider.name",
+          "requirement": "recommended",
+          "cardinality": "low"
+        },
+        {
+          "name": "gen_ai.request.model",
+          "requirement": "recommended",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "trajectory.observation.point",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "harness",
+            "harness_transcript",
+            "agent_framework",
+            "gateway",
+            "network_proxy",
+            "provider",
+            "telemetry_import"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "gen_ai.execute_tool.duration",
+      "origin": {
+        "kind": "opentelemetry",
+        "specification": "open-telemetry/semantic-conventions-genai:model/gen-ai/metrics.yaml",
+        "revision": "4f85037ef86e92c510d2ef881a58f1076f6fc0e4"
+      },
+      "stability": "development",
+      "producer_roles": [
+        "agent",
+        "local_observer"
+      ],
+      "observation_grain": "tool_call",
+      "instrument": "histogram",
+      "unit": "s",
+      "value_type": "double",
+      "derivations": [
+        "direct_observation"
+      ],
+      "recording_boundary": {
+        "start": "At the tool_call pre event, or at the call's allowing permission_result when the harness reported the call before it was allowed; the approval wait is not tool time.",
+        "end": "At the tool_call post event. post.duration_ms takes precedence over the timestamp difference.",
+        "error": "Record failed calls with error.type from tool_call.error_type, else _OTHER. Omit when no post was observed, when neither duration_ms nor a pre event is available, or when the post states no tool_name."
+      },
+      "source_authorities": [
+        "observed"
+      ],
+      "missing_value": "omit",
+      "zero_value": "valid_if_authoritative",
+      "aggregation_role": "completed_sample",
+      "attributes": [
+        {
+          "name": "gen_ai.tool.name",
+          "requirement": "required",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "error.type",
+          "requirement": "conditional",
+          "cardinality": "low"
+        },
+        {
+          "name": "trajectory.tool.source",
+          "requirement": "conditional",
+          "cardinality": "low"
+        },
+        {
+          "name": "trajectory.tool.source_name",
+          "requirement": "conditional",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "trajectory.observation.point",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "harness",
+            "harness_transcript",
+            "agent_framework",
+            "gateway",
+            "network_proxy",
+            "provider",
+            "telemetry_import"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "trajectory.gen_ai.invoke_agent.cost",
+      "origin": {
+        "kind": "open_trajectory",
+        "specification": "spec/interop/telemetry/AGENT-METRICS.md",
+        "revision": "0.1.0"
+      },
+      "stability": "experimental",
+      "producer_roles": [
+        "agent",
+        "local_observer"
+      ],
+      "observation_grain": "turn",
+      "instrument": "histogram",
+      "unit": "{USD}",
+      "value_type": "double",
+      "derivations": [
+        "deterministic_arithmetic"
+      ],
+      "recording_boundary": {
+        "start": "At the start of an invocation (turn or inline activation).",
+        "end": "At its end: the sum, in sequence order, of cost_usd over the invocation's own provider_operation llm_call records, including failed and abandoned calls.",
+        "error": "Omit when the invocation has no such call or any of them lacks cost_usd with cost_source reported or calculated. Never re-price summed tokens."
+      },
+      "source_authorities": [
+        "reported",
+        "calculated",
+        "estimated",
+        "correlated"
+      ],
+      "missing_value": "omit",
+      "zero_value": "valid_if_authoritative",
+      "aggregation_role": "completed_sample",
+      "attributes": [
+        {
+          "name": "gen_ai.agent.name",
+          "requirement": "conditional",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "trajectory.client_source",
+          "requirement": "conditional",
+          "cardinality": "low"
+        },
+        {
+          "name": "gen_ai.provider.name",
+          "requirement": "recommended",
+          "cardinality": "low"
+        },
+        {
+          "name": "gen_ai.request.model",
+          "requirement": "recommended",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "trajectory.cost.source",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "reported",
+            "calculated",
+            "estimated",
+            "mixed"
+          ]
+        },
+        {
+          "name": "trajectory.observation.point",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "harness",
+            "harness_transcript",
+            "agent_framework",
+            "gateway",
+            "network_proxy",
+            "provider",
+            "telemetry_import"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "trajectory.gen_ai.invoke_agent.usage.cost",
+      "origin": {
+        "kind": "open_trajectory",
+        "specification": "spec/interop/telemetry/AGENT-METRICS.md",
+        "revision": "0.1.0"
+      },
+      "stability": "experimental",
+      "producer_roles": [
+        "agent",
+        "local_observer"
+      ],
+      "observation_grain": "provider_attempt",
+      "instrument": "counter",
+      "unit": "{nanoUSD}",
+      "value_type": "integer",
+      "derivations": [
+        "deterministic_arithmetic"
+      ],
+      "recording_boundary": {
+        "start": "Recorded per call, when the call is seen; it does not wait for the turn or activation to end, so an unfinished turn or session loses no spend.",
+        "end": "One increment per provider_operation llm_call in the stream, in every lane, including failed and abandoned calls, that has cost_usd with cost_source reported, calculated, or estimated: the nano-USD value of that call's cost_usd. Authoritative for spend totals; never added to the cost histogram.",
+        "error": "A call without a usable cost adds nothing. Never re-price summed tokens."
+      },
+      "source_authorities": [
+        "reported",
+        "calculated",
+        "estimated",
+        "correlated"
+      ],
+      "missing_value": "omit",
+      "zero_value": "valid_if_authoritative",
+      "aggregation_role": "additive_delta",
+      "attributes": [
+        {
+          "name": "gen_ai.agent.name",
+          "requirement": "conditional",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "trajectory.client_source",
+          "requirement": "conditional",
+          "cardinality": "low"
+        },
+        {
+          "name": "gen_ai.provider.name",
+          "requirement": "recommended",
+          "cardinality": "low"
+        },
+        {
+          "name": "gen_ai.request.model",
+          "requirement": "recommended",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "trajectory.cost.source",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "reported",
+            "calculated",
+            "estimated"
+          ]
+        },
+        {
+          "name": "trajectory.cost.rate_card",
+          "requirement": "conditional",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "trajectory.observation.point",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "harness",
+            "harness_transcript",
+            "agent_framework",
+            "gateway",
+            "network_proxy",
+            "provider",
+            "telemetry_import"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "trajectory.gen_ai.invoke_agent.usage.input_tokens",
+      "origin": {
+        "kind": "open_trajectory",
+        "specification": "spec/interop/telemetry/AGENT-METRICS.md",
+        "revision": "0.1.0"
+      },
+      "stability": "experimental",
+      "producer_roles": [
+        "agent",
+        "local_observer"
+      ],
+      "observation_grain": "turn",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value_type": "integer",
+      "derivations": [
+        "upstream_reported"
+      ],
+      "recording_boundary": {
+        "start": "At the start of an invocation (turn or inline activation).",
+        "end": "At its end: one increment of input_tokens, including cached input, from turn_end.token_usage for a turn or subagent_stop.token_usage for an inline activation. A turn total; never recorded under a gen_ai.client.inference name, never added to the per-operation counters, and never priced as one request.",
+        "error": "Omit when the invocation has no usage object, the object is null, or the count is not a non-negative integer of at most 2^53-1."
+      },
+      "source_authorities": [
+        "reported",
+        "correlated"
+      ],
+      "missing_value": "omit",
+      "zero_value": "valid_if_authoritative",
+      "aggregation_role": "overlapping_rollup",
+      "attributes": [
+        {
+          "name": "gen_ai.agent.name",
+          "requirement": "conditional",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "trajectory.client_source",
+          "requirement": "conditional",
+          "cardinality": "low"
+        },
+        {
+          "name": "gen_ai.provider.name",
+          "requirement": "recommended",
+          "cardinality": "low"
+        },
+        {
+          "name": "gen_ai.request.model",
+          "requirement": "recommended",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "trajectory.observation.point",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "harness",
+            "harness_transcript",
+            "agent_framework",
+            "gateway",
+            "network_proxy",
+            "provider",
+            "telemetry_import"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "trajectory.gen_ai.invoke_agent.usage.output_tokens",
+      "origin": {
+        "kind": "open_trajectory",
+        "specification": "spec/interop/telemetry/AGENT-METRICS.md",
+        "revision": "0.1.0"
+      },
+      "stability": "experimental",
+      "producer_roles": [
+        "agent",
+        "local_observer"
+      ],
+      "observation_grain": "turn",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value_type": "integer",
+      "derivations": [
+        "upstream_reported"
+      ],
+      "recording_boundary": {
+        "start": "At the start of an invocation (turn or inline activation).",
+        "end": "At its end: one increment of output_tokens, including reasoning, from turn_end.token_usage for a turn or subagent_stop.token_usage for an inline activation. A turn total; never recorded under a gen_ai.client.inference name, never added to the per-operation counters, and never priced as one request.",
+        "error": "Omit when the invocation has no usage object, the object is null, or the count is not a non-negative integer of at most 2^53-1."
+      },
+      "source_authorities": [
+        "reported",
+        "correlated"
+      ],
+      "missing_value": "omit",
+      "zero_value": "valid_if_authoritative",
+      "aggregation_role": "overlapping_rollup",
+      "attributes": [
+        {
+          "name": "gen_ai.agent.name",
+          "requirement": "conditional",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "trajectory.client_source",
+          "requirement": "conditional",
+          "cardinality": "low"
+        },
+        {
+          "name": "gen_ai.provider.name",
+          "requirement": "recommended",
+          "cardinality": "low"
+        },
+        {
+          "name": "gen_ai.request.model",
+          "requirement": "recommended",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "trajectory.observation.point",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "harness",
+            "harness_transcript",
+            "agent_framework",
+            "gateway",
+            "network_proxy",
+            "provider",
+            "telemetry_import"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "trajectory.gen_ai.invoke_agent.usage.cache_read.input_tokens",
+      "origin": {
+        "kind": "open_trajectory",
+        "specification": "spec/interop/telemetry/AGENT-METRICS.md",
+        "revision": "0.1.0"
+      },
+      "stability": "experimental",
+      "producer_roles": [
+        "agent",
+        "local_observer"
+      ],
+      "observation_grain": "turn",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value_type": "integer",
+      "derivations": [
+        "upstream_reported"
+      ],
+      "recording_boundary": {
+        "start": "At the start of an invocation (turn or inline activation).",
+        "end": "At its end: one increment of cache_read_input_tokens, when the object states it, from turn_end.token_usage for a turn or subagent_stop.token_usage for an inline activation. A turn total; never recorded under a gen_ai.client.inference name, never added to the per-operation counters, and never priced as one request.",
+        "error": "Omit when the invocation has no usage object, the object is null, or the count is not a non-negative integer of at most 2^53-1."
+      },
+      "source_authorities": [
+        "reported",
+        "correlated"
+      ],
+      "missing_value": "omit",
+      "zero_value": "valid_if_authoritative",
+      "aggregation_role": "overlapping_rollup",
+      "attributes": [
+        {
+          "name": "gen_ai.agent.name",
+          "requirement": "conditional",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "trajectory.client_source",
+          "requirement": "conditional",
+          "cardinality": "low"
+        },
+        {
+          "name": "gen_ai.provider.name",
+          "requirement": "recommended",
+          "cardinality": "low"
+        },
+        {
+          "name": "gen_ai.request.model",
+          "requirement": "recommended",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "trajectory.observation.point",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "harness",
+            "harness_transcript",
+            "agent_framework",
+            "gateway",
+            "network_proxy",
+            "provider",
+            "telemetry_import"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "trajectory.gen_ai.invoke_agent.usage.cache_write.input_tokens",
+      "origin": {
+        "kind": "open_trajectory",
+        "specification": "spec/interop/telemetry/AGENT-METRICS.md",
+        "revision": "0.1.0"
+      },
+      "stability": "experimental",
+      "producer_roles": [
+        "agent",
+        "local_observer"
+      ],
+      "observation_grain": "turn",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value_type": "integer",
+      "derivations": [
+        "upstream_reported"
+      ],
+      "recording_boundary": {
+        "start": "At the start of an invocation (turn or inline activation).",
+        "end": "At its end: one increment of cache_write_input_tokens, when the object states it, from turn_end.token_usage for a turn or subagent_stop.token_usage for an inline activation. A turn total; never recorded under a gen_ai.client.inference name, never added to the per-operation counters, and never priced as one request.",
+        "error": "Omit when the invocation has no usage object, the object is null, or the count is not a non-negative integer of at most 2^53-1."
+      },
+      "source_authorities": [
+        "reported",
+        "correlated"
+      ],
+      "missing_value": "omit",
+      "zero_value": "valid_if_authoritative",
+      "aggregation_role": "overlapping_rollup",
+      "attributes": [
+        {
+          "name": "gen_ai.agent.name",
+          "requirement": "conditional",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "trajectory.client_source",
+          "requirement": "conditional",
+          "cardinality": "low"
+        },
+        {
+          "name": "gen_ai.provider.name",
+          "requirement": "recommended",
+          "cardinality": "low"
+        },
+        {
+          "name": "gen_ai.request.model",
+          "requirement": "recommended",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "trajectory.observation.point",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "harness",
+            "harness_transcript",
+            "agent_framework",
+            "gateway",
+            "network_proxy",
+            "provider",
+            "telemetry_import"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "trajectory.gen_ai.invoke_agent.usage.reasoning.output_tokens",
+      "origin": {
+        "kind": "open_trajectory",
+        "specification": "spec/interop/telemetry/AGENT-METRICS.md",
+        "revision": "0.1.0"
+      },
+      "stability": "experimental",
+      "producer_roles": [
+        "agent",
+        "local_observer"
+      ],
+      "observation_grain": "turn",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value_type": "integer",
+      "derivations": [
+        "upstream_reported"
+      ],
+      "recording_boundary": {
+        "start": "At the start of an invocation (turn or inline activation).",
+        "end": "At its end: one increment of reasoning_output_tokens, when the object states it, from turn_end.token_usage for a turn or subagent_stop.token_usage for an inline activation. A turn total; never recorded under a gen_ai.client.inference name, never added to the per-operation counters, and never priced as one request.",
+        "error": "Omit when the invocation has no usage object, the object is null, or the count is not a non-negative integer of at most 2^53-1."
+      },
+      "source_authorities": [
+        "reported",
+        "correlated"
+      ],
+      "missing_value": "omit",
+      "zero_value": "valid_if_authoritative",
+      "aggregation_role": "overlapping_rollup",
+      "attributes": [
+        {
+          "name": "gen_ai.agent.name",
+          "requirement": "conditional",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "trajectory.client_source",
+          "requirement": "conditional",
+          "cardinality": "low"
+        },
+        {
+          "name": "gen_ai.provider.name",
+          "requirement": "recommended",
+          "cardinality": "low"
+        },
+        {
+          "name": "gen_ai.request.model",
+          "requirement": "recommended",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "trajectory.observation.point",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "harness",
+            "harness_transcript",
+            "agent_framework",
+            "gateway",
+            "network_proxy",
+            "provider",
+            "telemetry_import"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "trajectory.gen_ai.skill.invocations",
+      "origin": {
+        "kind": "open_trajectory",
+        "specification": "spec/interop/telemetry/AGENT-METRICS.md",
+        "revision": "0.1.0"
+      },
+      "stability": "experimental",
+      "producer_roles": [
+        "agent",
+        "local_observer"
+      ],
+      "observation_grain": "lifecycle_event",
+      "instrument": "counter",
+      "unit": "{invocation}",
+      "value_type": "integer",
+      "derivations": [
+        "direct_observation"
+      ],
+      "recording_boundary": {
+        "start": "At a tool_call carrying skill_name (once per tool call, not per phase), or an input_prompt carrying skill_name.",
+        "end": "Add one per explicit skill invocation.",
+        "error": "Count only harness-reported invocations; never infer a skill from file reads, prompt text, or similarity."
+      },
+      "source_authorities": [
+        "observed",
+        "correlated"
+      ],
+      "missing_value": "omit",
+      "zero_value": "valid_if_authoritative",
+      "aggregation_role": "additive_delta",
+      "attributes": [
+        {
+          "name": "gen_ai.skill.name",
+          "requirement": "required",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "trajectory.skill.invoked_by",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "agent",
+            "user"
+          ]
+        },
+        {
+          "name": "trajectory.observation.point",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "harness",
+            "harness_transcript",
+            "agent_framework",
+            "gateway",
+            "network_proxy",
+            "provider",
+            "telemetry_import"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "trajectory.gen_ai.permission.wait.duration",
+      "origin": {
+        "kind": "open_trajectory",
+        "specification": "spec/interop/telemetry/AGENT-METRICS.md",
+        "revision": "0.1.0"
+      },
+      "stability": "experimental",
+      "producer_roles": [
+        "agent",
+        "local_observer"
+      ],
+      "observation_grain": "permission_request",
+      "instrument": "histogram",
+      "unit": "s",
+      "value_type": "double",
+      "derivations": [
+        "direct_observation"
+      ],
+      "recording_boundary": {
+        "start": "At the permission event.",
+        "end": "At the permission_result with the same permission_id in the same lane.",
+        "error": "Omit for a permission_result with no observed request, for an unresolved request, and for a permission_result that states no tool."
+      },
+      "source_authorities": [
+        "observed"
+      ],
+      "missing_value": "omit",
+      "zero_value": "valid_if_authoritative",
+      "aggregation_role": "completed_sample",
+      "attributes": [
+        {
+          "name": "gen_ai.tool.name",
+          "requirement": "required",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "trajectory.tool.call.decision.outcome",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "allow",
+            "deny"
+          ]
+        },
+        {
+          "name": "trajectory.tool.call.decision.source",
+          "requirement": "conditional",
+          "cardinality": "low",
+          "allowed_values": [
+            "user",
+            "policy",
+            "hook",
+            "classifier",
+            "_OTHER"
+          ]
+        },
+        {
+          "name": "trajectory.observation.point",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "harness",
+            "harness_transcript",
+            "agent_framework",
+            "gateway",
+            "network_proxy",
+            "provider",
+            "telemetry_import"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "trajectory.gen_ai.compactions",
+      "origin": {
+        "kind": "open_trajectory",
+        "specification": "spec/interop/telemetry/AGENT-METRICS.md",
+        "revision": "0.1.0"
+      },
+      "stability": "experimental",
+      "producer_roles": [
+        "agent",
+        "local_observer"
+      ],
+      "observation_grain": "lifecycle_event",
+      "instrument": "counter",
+      "unit": "{compaction}",
+      "value_type": "integer",
+      "derivations": [
+        "direct_observation"
+      ],
+      "recording_boundary": {
+        "start": "At a compaction event.",
+        "end": "Add one per compaction.",
+        "error": "Every compaction event counts, whether or not a compaction_result follows."
+      },
+      "source_authorities": [
+        "observed"
+      ],
+      "missing_value": "omit",
+      "zero_value": "valid_if_authoritative",
+      "aggregation_role": "additive_delta",
+      "attributes": [
+        {
+          "name": "trajectory.compaction.trigger",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "auto",
+            "manual"
+          ]
+        },
+        {
+          "name": "trajectory.observation.point",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "harness",
+            "harness_transcript",
+            "agent_framework",
+            "gateway",
+            "network_proxy",
+            "provider",
+            "telemetry_import"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "trajectory.gen_ai.subagent.starts",
+      "origin": {
+        "kind": "open_trajectory",
+        "specification": "spec/interop/telemetry/AGENT-METRICS.md",
+        "revision": "0.1.0"
+      },
+      "stability": "experimental",
+      "producer_roles": [
+        "agent",
+        "local_observer"
+      ],
+      "observation_grain": "lifecycle_event",
+      "instrument": "counter",
+      "unit": "{subagent}",
+      "value_type": "integer",
+      "derivations": [
+        "direct_observation"
+      ],
+      "recording_boundary": {
+        "start": "At a subagent_start event.",
+        "end": "Add one per activation the parent starts; driving the same sub-agent again counts again.",
+        "error": "A detach does not add a start."
+      },
+      "source_authorities": [
+        "observed",
+        "correlated"
+      ],
+      "missing_value": "omit",
+      "zero_value": "valid_if_authoritative",
+      "aggregation_role": "additive_delta",
+      "attributes": [
+        {
+          "name": "trajectory.subagent.mode",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "foreground",
+            "background"
+          ]
+        },
+        {
+          "name": "trajectory.subagent.type",
+          "requirement": "recommended",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "trajectory.observation.point",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "harness",
+            "harness_transcript",
+            "agent_framework",
+            "gateway",
+            "network_proxy",
+            "provider",
+            "telemetry_import"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "trajectory.gen_ai.session.starts",
+      "origin": {
+        "kind": "open_trajectory",
+        "specification": "spec/interop/telemetry/AGENT-METRICS.md",
+        "revision": "0.1.0"
+      },
+      "stability": "experimental",
+      "producer_roles": [
+        "agent",
+        "local_observer"
+      ],
+      "observation_grain": "lifecycle_event",
+      "instrument": "counter",
+      "unit": "{session}",
+      "value_type": "integer",
+      "derivations": [
+        "direct_observation"
+      ],
+      "recording_boundary": {
+        "start": "At a session_start event.",
+        "end": "Add one per session_start, including resumes and restarts.",
+        "error": "Absent start_trigger means fresh. Inline child activations have no session_start and do not count here."
+      },
+      "source_authorities": [
+        "observed",
+        "correlated"
+      ],
+      "missing_value": "omit",
+      "zero_value": "valid_if_authoritative",
+      "aggregation_role": "additive_delta",
+      "attributes": [
+        {
+          "name": "trajectory.session.kind",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "root",
+            "subagent"
+          ]
+        },
+        {
+          "name": "trajectory.session.start_trigger",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "fresh",
+            "resume",
+            "restart"
+          ]
+        },
+        {
+          "name": "trajectory.observation.point",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "harness",
+            "harness_transcript",
+            "agent_framework",
+            "gateway",
+            "network_proxy",
+            "provider",
+            "telemetry_import"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "trajectory.gen_ai.session.segment.turns",
+      "origin": {
+        "kind": "open_trajectory",
+        "specification": "spec/interop/telemetry/SESSION-SEGMENT-METRICS.md",
+        "revision": "0.1.0"
+      },
+      "stability": "experimental",
+      "producer_roles": [
+        "agent",
+        "local_observer"
+      ],
+      "observation_grain": "session_segment",
+      "instrument": "histogram",
+      "unit": "{turn}",
+      "value_type": "integer",
+      "derivations": [
+        "direct_observation"
+      ],
+      "recording_boundary": {
+        "start": "No point is recorded until the segment finishes at a session_end or at the session_start that opens the next segment.",
+        "end": "Record one sample per finished segment: the number of turn_end events in the stream's own lane within the segment. Zero is valid.",
+        "error": "A segment still open when the stream ends records nothing."
+      },
+      "source_authorities": [
+        "observed",
+        "correlated"
+      ],
+      "missing_value": "omit",
+      "zero_value": "valid_if_authoritative",
+      "aggregation_role": "completed_sample",
+      "attributes": [
+        {
+          "name": "trajectory.session.kind",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "root",
+            "subagent"
+          ]
+        },
+        {
+          "name": "trajectory.session.start_trigger",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "fresh",
+            "resume",
+            "restart"
+          ]
+        },
+        {
+          "name": "trajectory.session.segment.end",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "closed",
+            "reopened"
+          ]
+        },
+        {
+          "name": "trajectory.observation.point",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "harness",
+            "harness_transcript",
+            "agent_framework",
+            "gateway",
+            "network_proxy",
+            "provider",
+            "telemetry_import"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "trajectory.gen_ai.session.segment.inference_calls",
+      "origin": {
+        "kind": "open_trajectory",
+        "specification": "spec/interop/telemetry/SESSION-SEGMENT-METRICS.md",
+        "revision": "0.1.0"
+      },
+      "stability": "experimental",
+      "producer_roles": [
+        "agent",
+        "local_observer"
+      ],
+      "observation_grain": "session_segment",
+      "instrument": "histogram",
+      "unit": "{inference_call}",
+      "value_type": "integer",
+      "derivations": [
+        "direct_observation"
+      ],
+      "recording_boundary": {
+        "start": "No point is recorded until the segment finishes at a session_end or at the session_start that opens the next segment.",
+        "end": "Record one sample per finished segment: the number of llm_call events at provider_operation scope within the segment, in every lane, including failed and abandoned calls.",
+        "error": "Omit for every segment when the stream holds no llm_call at provider_operation scope; the count is then unknown."
+      },
+      "source_authorities": [
+        "observed",
+        "correlated"
+      ],
+      "missing_value": "omit",
+      "zero_value": "valid_if_authoritative",
+      "aggregation_role": "completed_sample",
+      "attributes": [
+        {
+          "name": "trajectory.session.kind",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "root",
+            "subagent"
+          ]
+        },
+        {
+          "name": "trajectory.session.start_trigger",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "fresh",
+            "resume",
+            "restart"
+          ]
+        },
+        {
+          "name": "trajectory.session.segment.end",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "closed",
+            "reopened"
+          ]
+        },
+        {
+          "name": "trajectory.observation.point",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "harness",
+            "harness_transcript",
+            "agent_framework",
+            "gateway",
+            "network_proxy",
+            "provider",
+            "telemetry_import"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "trajectory.gen_ai.session.segment.tool_calls",
+      "origin": {
+        "kind": "open_trajectory",
+        "specification": "spec/interop/telemetry/SESSION-SEGMENT-METRICS.md",
+        "revision": "0.1.0"
+      },
+      "stability": "experimental",
+      "producer_roles": [
+        "agent",
+        "local_observer"
+      ],
+      "observation_grain": "session_segment",
+      "instrument": "histogram",
+      "unit": "{tool_call}",
+      "value_type": "integer",
+      "derivations": [
+        "direct_observation"
+      ],
+      "recording_boundary": {
+        "start": "No point is recorded until the segment finishes at a session_end or at the session_start that opens the next segment.",
+        "end": "Record one sample per finished segment: the number of distinct tool_call_id values per lane among tool_call events within the segment. Zero is valid.",
+        "error": "A segment still open when the stream ends records nothing."
+      },
+      "source_authorities": [
+        "observed",
+        "correlated"
+      ],
+      "missing_value": "omit",
+      "zero_value": "valid_if_authoritative",
+      "aggregation_role": "completed_sample",
+      "attributes": [
+        {
+          "name": "trajectory.session.kind",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "root",
+            "subagent"
+          ]
+        },
+        {
+          "name": "trajectory.session.start_trigger",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "fresh",
+            "resume",
+            "restart"
+          ]
+        },
+        {
+          "name": "trajectory.session.segment.end",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "closed",
+            "reopened"
+          ]
+        },
+        {
+          "name": "trajectory.observation.point",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "harness",
+            "harness_transcript",
+            "agent_framework",
+            "gateway",
+            "network_proxy",
+            "provider",
+            "telemetry_import"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "trajectory.gen_ai.session.segment.cost",
+      "origin": {
+        "kind": "open_trajectory",
+        "specification": "spec/interop/telemetry/SESSION-SEGMENT-METRICS.md",
+        "revision": "0.1.0"
+      },
+      "stability": "experimental",
+      "producer_roles": [
+        "agent",
+        "local_observer"
+      ],
+      "observation_grain": "session_segment",
+      "instrument": "histogram",
+      "unit": "{USD}",
+      "value_type": "double",
+      "derivations": [
+        "deterministic_arithmetic"
+      ],
+      "recording_boundary": {
+        "start": "No point is recorded until the segment finishes at a session_end or at the session_start that opens the next segment.",
+        "end": "Record one sample per finished segment: the sum of cost_usd over the segment's counted calls, in sequence_number order.",
+        "error": "Omit when the segment has no counted call or any counted call lacks cost_usd with cost_source reported or calculated. Costs are summed, never re-priced."
+      },
+      "source_authorities": [
+        "reported",
+        "calculated",
+        "estimated",
+        "correlated"
+      ],
+      "missing_value": "omit",
+      "zero_value": "valid_if_authoritative",
+      "aggregation_role": "completed_sample",
+      "attributes": [
+        {
+          "name": "trajectory.session.kind",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "root",
+            "subagent"
+          ]
+        },
+        {
+          "name": "trajectory.session.start_trigger",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "fresh",
+            "resume",
+            "restart"
+          ]
+        },
+        {
+          "name": "trajectory.session.segment.end",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "closed",
+            "reopened"
+          ]
+        },
+        {
+          "name": "trajectory.cost.source",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "reported",
+            "calculated",
+            "estimated",
+            "mixed"
+          ]
+        },
+        {
+          "name": "trajectory.observation.point",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "harness",
+            "harness_transcript",
+            "agent_framework",
+            "gateway",
+            "network_proxy",
+            "provider",
+            "telemetry_import"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "trajectory.gen_ai.session.segment.usage.cost",
+      "origin": {
+        "kind": "open_trajectory",
+        "specification": "spec/interop/telemetry/SESSION-SEGMENT-METRICS.md",
+        "revision": "0.1.0"
+      },
+      "stability": "experimental",
+      "producer_roles": [
+        "agent",
+        "local_observer"
+      ],
+      "observation_grain": "provider_attempt",
+      "instrument": "counter",
+      "unit": "{nanoUSD}",
+      "value_type": "integer",
+      "derivations": [
+        "deterministic_arithmetic"
+      ],
+      "recording_boundary": {
+        "start": "Recorded per call, when the call is seen; it does not wait for the segment to finish, so an unfinished segment loses no spend.",
+        "end": "One increment per provider_operation llm_call in the stream, in every lane, that has cost_usd with cost_source reported, calculated, or estimated: the nano-USD value of that call's cost_usd. Authoritative for spend totals; never added to the cost histogram. It carries no segment-end attribute.",
+        "error": "A call without a usable cost adds nothing. Costs are summed, never re-priced."
+      },
+      "source_authorities": [
+        "reported",
+        "calculated",
+        "estimated",
+        "correlated"
+      ],
+      "missing_value": "omit",
+      "zero_value": "valid_if_authoritative",
+      "aggregation_role": "additive_delta",
+      "attributes": [
+        {
+          "name": "trajectory.session.kind",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "root",
+            "subagent"
+          ]
+        },
+        {
+          "name": "trajectory.session.start_trigger",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "fresh",
+            "resume",
+            "restart"
+          ]
+        },
+        {
+          "name": "trajectory.cost.source",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "reported",
+            "calculated",
+            "estimated"
+          ]
+        },
+        {
+          "name": "trajectory.cost.rate_card",
+          "requirement": "conditional",
+          "cardinality": "bounded"
+        },
+        {
+          "name": "trajectory.observation.point",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "harness",
+            "harness_transcript",
+            "agent_framework",
+            "gateway",
+            "network_proxy",
+            "provider",
+            "telemetry_import"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "trajectory.coding_agent.commits",
+      "origin": {
+        "kind": "open_trajectory",
+        "specification": "spec/interop/telemetry/CODING-AGENT-METRICS.md",
+        "revision": "0.1.0"
+      },
+      "stability": "experimental",
+      "producer_roles": [
+        "agent",
+        "local_observer"
+      ],
+      "observation_grain": "effect",
+      "instrument": "counter",
+      "unit": "{commit}",
+      "value_type": "integer",
+      "derivations": [
+        "direct_observation"
+      ],
+      "recording_boundary": {
+        "start": "At a git_commit effect.",
+        "end": "Add one per distinct commit, identified by detail.revision, else target.",
+        "error": "A commit reported more than once counts once."
+      },
+      "source_authorities": [
+        "observed"
+      ],
+      "missing_value": "omit",
+      "zero_value": "valid_if_authoritative",
+      "aggregation_role": "additive_delta",
+      "attributes": [
+        {
+          "name": "trajectory.observation.point",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "harness",
+            "harness_transcript",
+            "agent_framework",
+            "gateway",
+            "network_proxy",
+            "provider",
+            "telemetry_import"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "trajectory.coding_agent.pull_requests",
+      "origin": {
+        "kind": "open_trajectory",
+        "specification": "spec/interop/telemetry/CODING-AGENT-METRICS.md",
+        "revision": "0.1.0"
+      },
+      "stability": "experimental",
+      "producer_roles": [
+        "agent",
+        "local_observer"
+      ],
+      "observation_grain": "effect",
+      "instrument": "counter",
+      "unit": "{pull_request}",
+      "value_type": "integer",
+      "derivations": [
+        "direct_observation"
+      ],
+      "recording_boundary": {
+        "start": "At a pr_created effect.",
+        "end": "Add one per distinct target.",
+        "error": "A pull request reported more than once counts once."
+      },
+      "source_authorities": [
+        "observed"
+      ],
+      "missing_value": "omit",
+      "zero_value": "valid_if_authoritative",
+      "aggregation_role": "additive_delta",
+      "attributes": [
+        {
+          "name": "vcs.provider.name",
+          "requirement": "conditional",
+          "cardinality": "low"
+        },
+        {
+          "name": "trajectory.observation.point",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "harness",
+            "harness_transcript",
+            "agent_framework",
+            "gateway",
+            "network_proxy",
+            "provider",
+            "telemetry_import"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "trajectory.coding_agent.lines_changed",
+      "origin": {
+        "kind": "open_trajectory",
+        "specification": "spec/interop/telemetry/CODING-AGENT-METRICS.md",
+        "revision": "0.1.0"
+      },
+      "stability": "experimental",
+      "producer_roles": [
+        "agent",
+        "local_observer"
+      ],
+      "observation_grain": "effect",
+      "instrument": "counter",
+      "unit": "{line}",
+      "value_type": "integer",
+      "derivations": [
+        "direct_observation"
+      ],
+      "recording_boundary": {
+        "start": "At a file_modified effect with detail.lines_added or detail.lines_removed.",
+        "end": "Add lines_added with vcs.line_change.type added and lines_removed with removed.",
+        "error": "Omit a side when its count is absent; never estimate it from line ranges or byte counts."
+      },
+      "source_authorities": [
+        "observed"
+      ],
+      "missing_value": "omit",
+      "zero_value": "valid_if_authoritative",
+      "aggregation_role": "additive_delta",
+      "attributes": [
+        {
+          "name": "vcs.line_change.type",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "added",
+            "removed"
+          ]
+        },
+        {
+          "name": "trajectory.observation.point",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "harness",
+            "harness_transcript",
+            "agent_framework",
+            "gateway",
+            "network_proxy",
+            "provider",
+            "telemetry_import"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "trajectory.coding_agent.file_operations",
+      "origin": {
+        "kind": "open_trajectory",
+        "specification": "spec/interop/telemetry/CODING-AGENT-METRICS.md",
+        "revision": "0.1.0"
+      },
+      "stability": "experimental",
+      "producer_roles": [
+        "agent",
+        "local_observer"
+      ],
+      "observation_grain": "effect",
+      "instrument": "counter",
+      "unit": "{operation}",
+      "value_type": "integer",
+      "derivations": [
+        "direct_observation"
+      ],
+      "recording_boundary": {
+        "start": "At a file_modified effect.",
+        "end": "Add one per operation. This counts operations, not distinct files.",
+        "error": "Reject actions other than create, modify, and delete."
+      },
+      "source_authorities": [
+        "observed"
+      ],
+      "missing_value": "omit",
+      "zero_value": "valid_if_authoritative",
+      "aggregation_role": "additive_delta",
+      "attributes": [
+        {
+          "name": "trajectory.file.operation",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "create",
+            "modify",
+            "delete"
+          ]
+        },
+        {
+          "name": "trajectory.observation.point",
+          "requirement": "required",
+          "cardinality": "low",
+          "allowed_values": [
+            "harness",
+            "harness_transcript",
+            "agent_framework",
+            "gateway",
+            "network_proxy",
+            "provider",
+            "telemetry_import"
+          ]
+        }
+      ]
+    }
+  ]
+}

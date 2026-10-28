@@ -2,6 +2,14 @@
 
 
 
+## [1.1.2](https://github.com/datadog/libdatadog/compare/libdd-profiling-heap-sampler-v1.1.1..libdd-profiling-heap-sampler-v1.1.2) - 2026-10-23
+
+### Changed
+
+- Fix last doc lints ([#2694](https://github.com/datadog/libdatadog/issues/2694)) - ([3e4a453](https://github.com/datadog/libdatadog/commit/3e4a4532fb7f79eebfb6daef022a2d0c6772a560))
+
+
+
 ## [1.1.1](https://github.com/datadog/libdatadog/compare/libdd-profiling-heap-sampler-v1.1.0..libdd-profiling-heap-sampler-v1.1.1) - 2026-10-02
 
 ### Changed

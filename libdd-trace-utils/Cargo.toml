@@ -1,6 +1,6 @@
 [package]
 name = "libdd-trace-utils"
-version = "14.0.0"
+version = "15.0.0"
 description = "Trace utilities including span processing, MessagePack encoding/decoding, payload handling, and HTTP transport with retry logic for Datadog APM"
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-trace-utils"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-trace-utils"
@@ -53,12 +53,14 @@ crossbeam-channel = { workspace = true, features = ["std"] }
 thread_local.workspace = true 
 
 libdd-capabilities = { path = "../libdd-capabilities", version = "4.0.1" }
-libdd-common = { version = "8.0.0", path = "../libdd-common", default-features = false, features = ["std"] }
-libdd-trace-normalization = { version = "4.2.0", path = "../libdd-trace-normalization" }
-libdd-trace-protobuf = { version = "5.1.0", path = "../libdd-trace-protobuf" }
-libdd-tinybytes = { version = "1.1.5", path = "../libdd-tinybytes", features = [
+libdd-common = { version = "9.0.0", path = "../libdd-common", default-features = false, features = ["std"] }
+libdd-trace-normalization = { version = "4.3.0", path = "../libdd-trace-normalization" }
+libdd-trace-protobuf = { version = "5.1.1", path = "../libdd-trace-protobuf" }
+libdd-trace-model = { version = "1.0.0", path = "../libdd-trace-model" }
+libdd-tinybytes = { version = "1.2.0", path = "../libdd-tinybytes", features = [
     "bytes_string",
     "serialization",
+    "trace-model",
 ] }
 indexmap = { workspace = true, default-features = true }
 thin-vec = { workspace = true, default-features = true }
@@ -74,8 +76,9 @@ httpmock = { workspace = true, optional = true }
 urlencoding = { workspace = true, optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-libdd-capabilities-impl = { version = "7.0.0", path = "../libdd-capabilities-impl", default-features = false, optional = true }
+libdd-capabilities-impl = { version = "8.0.0", path = "../libdd-capabilities-impl", default-features = false, optional = true }
 tokio = { workspace = true, features = ["time"], optional = true }
+# zstd >= 0.14.3 required for RUSTSEC-2026-0391
 zstd = {workspace = true, optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
@@ -83,10 +86,8 @@ getrandom = { workspace = true, features = ["js"] }
 zrip = { workspace = true, features = ["frame"], optional = true }
 
 [dev-dependencies]
-libdd-capabilities-impl = { version = "7.0.0", path = "../libdd-capabilities-impl" }
-libdd-common = { path = "../libdd-common", default-features = false, features = [
-    "bench-utils",
-] }
+libdd-capabilities-impl = { version = "8.0.0", path = "../libdd-capabilities-impl" }
+tools = { path = "../tools", default-features = false, features = ["bench-utils"] }
 bolero = { workspace = true, features = ["std"] }
 criterion.workspace = true
 httpmock.workspace = true
@@ -122,3 +123,10 @@ compression = ["zstd"]
 zstd = ["dep:zstd", "dep:zrip"]
 # FIPS mode uses the FIPS-compliant cryptographic provider (Unix only)
 fips = ["libdd-common/fips", "dep:libdd-capabilities-impl", "libdd-capabilities-impl/fips"]
+
+[lints.clippy]
+# TODO(paullgdc): This fails a lot because of if-let chaining which became
+# allowed with the 1.91.1 MSRV bump.
+# I am planning to fix each crate as an individual PR in order to not have 
+# too many conflicts
+collapsible_if = "allow"

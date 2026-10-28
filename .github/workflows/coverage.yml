@@ -9,7 +9,53 @@ on:
     - cron: '0 6 * * *'
 
 jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      mode: ${{ steps.coverage-scope.outputs.mode }}
+      packages: ${{ steps.coverage-scope.outputs.packages }}
+      crates-json: ${{ steps.coverage-scope.outputs.crates-json }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+        with:
+          fetch-depth: 0
+      - name: Get crates report
+        id: changed-crates
+        uses: ./.github/actions/crates-reporter
+      - name: Set coverage scope
+        id: coverage-scope
+        env:
+          CHANGED_CRATES_STATUS: ${{ steps.changed-crates.outputs.status }}
+          AFFECTED_CRATES: ${{ steps.changed-crates.outputs.affected_crates }}
+        run: |
+          if [[ "$CHANGED_CRATES_STATUS" == "success" ]]; then
+            COUNT=$(echo "$AFFECTED_CRATES" | jq 'length')
+            if [[ "$COUNT" == "0" ]]; then
+              MODE="skip"
+              PACKAGES=""
+            else
+              MODE="crates"
+              PACKAGES=$(echo "$AFFECTED_CRATES" | jq -r 'map("-p " + .) | join(" ")')
+              CRATES_JSON="$AFFECTED_CRATES"
+            fi
+          else
+            # Push, schedule, the run-all-tests label, or a reporter failure:
+            # cover everything so the baseline stays complete.
+            MODE="workspace"
+            PACKAGES=""
+            CRATES_JSON=""
+          fi
+          {
+            echo "mode=$MODE"
+            echo "packages=$PACKAGES"
+            echo "crates-json<<EOF"
+            echo "$CRATES_JSON"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
   coverage:
+    needs: setup
+    if: needs.setup.outputs.mode != 'skip'
     runs-on:
       labels: ubuntu-latest-16-cores
       group: APM Larger Runners
@@ -52,10 +98,31 @@ jobs:
           # Override rust-toolchain.toml so cargo-llvm-cov runs on the dated
           # nightly (doc-test coverage needs nightly) instead of the workspace MSRV.
           RUSTUP_TOOLCHAIN: ${{ steps.nightly-version.outputs.version }}
+          MODE: ${{ needs.setup.outputs.mode }}
+          PACKAGES: ${{ needs.setup.outputs.packages }}
+          CRATES_JSON: ${{ needs.setup.outputs.crates-json }}
         run: |
-          cargo llvm-cov --all-features --workspace --no-report nextest --no-tests=pass
-          cargo llvm-cov --all-features --workspace --no-report --doc
-          cargo llvm-cov report --doctests --lcov --output-path lcov.info
+          if [[ "$MODE" == "crates" ]]; then
+            # Word splitting on $PACKAGES is intentional: one -p flag per crate.
+            # shellcheck disable=SC2086
+            cargo llvm-cov --all-features --no-report nextest $PACKAGES --no-tests=pass
+            # shellcheck disable=SC2086
+            cargo llvm-cov --all-features --no-report --doc $PACKAGES
+          else
+            cargo llvm-cov --all-features --workspace --no-report nextest --no-tests=pass
+            cargo llvm-cov --all-features --workspace --no-report --doc
+          fi
+          # One lcov file per crate, in both modes, so pull requests and the
+          # main baseline are always split the same way. A single report pass;
+          # split_lcov.sh explains why not one `--package` report per crate.
+          # In crates mode only the affected crates are emitted (others would
+          # be undercounted).
+          cargo llvm-cov report --doctests --lcov --output-path /tmp/lcov-all.info
+          if [[ "$MODE" == "crates" ]]; then
+            ./scripts/split_lcov.sh /tmp/lcov-all.info . "$CRATES_JSON"
+          else
+            ./scripts/split_lcov.sh /tmp/lcov-all.info .
+          fi
       # Forked PRs get no id-token permission, so on failure the upload below
       # runs with an empty key and is itself continue-on-error.
       - name: Get Datadog credentials via dd-sts
@@ -71,7 +138,7 @@ jobs:
         uses: DataDog/coverage-upload-github-action@d2cf302a39c05e0ad22063360a2bf6ce0cc4906c # v1
         with:
           api_key: ${{ steps.dd-sts.outputs.api_key }}
-          files: lcov.info
+          files: lcov-*.info
           format: lcov
       - name: sccache statistics
         if: always() && steps.sccache.outputs.enabled == 'true'
