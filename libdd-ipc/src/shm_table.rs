@@ -44,6 +44,10 @@
 //! A writer CAS(0→MAX) to claim, writes key + strings (no concurrent readers
 //! yet), issues a **Release** fence, then stores `key_hash = H` (Release).
 //!
+//! ## Drops
+//! An input that cannot be recorded is counted in its bucket's header, by [`DropReason`], and
+//! the count is drained with the bucket's slots, so that it is dated by the same interval.
+//!
 //! ## Double-buffering
 //! `ShmHeader::active_idx` tells which bucket PHP workers write to.
 //! The sidecar swaps it, waits for `in_flight` to reach 0, then reads + clears.
@@ -71,7 +75,7 @@ use crate::platform::{FileBackedHandle, MappedMem, NamedShmHandle};
 pub(crate) use crate::rate_limiter::ShmSafe;
 
 /// Version of everything here that is not a schema's: the header and the bucket regions.
-pub(crate) const SHM_VERSION: u32 = 4;
+pub(crate) const SHM_VERSION: u32 = 5;
 
 pub(crate) const SLOT_EMPTY: u64 = 0;
 pub(crate) const SLOT_INIT: u64 = u64::MAX;
@@ -84,7 +88,8 @@ pub(crate) const SLOT_INIT: u64 = u64::MAX;
 /// recreated or grown, since the "Table growth" steps in the module docs are not implemented, and
 /// the sidecar always creates tables with `DEFAULT_SLOT_COUNT` slots, so acting on the warning
 /// needs a code change. A bucket that does fill up keeps recording inputs for the keys it already
-/// holds and silently drops inputs with new keys until the next bucket swap.
+/// holds and drops inputs with new keys until the next bucket swap, counting them as
+/// [`DropReason::TableFull`].
 pub const RELOAD_FILL_RATIO: f64 = 0.80;
 
 /// Max iterations when waiting for `in_flight` to reach zero (~100 µs).
@@ -116,7 +121,11 @@ pub trait Schema: 'static {
     fn hash(input: &Self::Input<'_>) -> u64;
 
     /// Write the input's key into a slot the caller has just claimed.
-    fn write_key(key: &Self::Key, pool: &Pool, cursor: &AtomicU32, input: &Self::Input<'_>);
+    ///
+    /// Returns false when a string did not fit in the pool and was stored empty; see
+    /// [`alloc_str`].
+    fn write_key(key: &Self::Key, pool: &Pool, cursor: &AtomicU32, input: &Self::Input<'_>)
+    -> bool;
 
     /// Does this slot hold the input's key? A key that does not decode never matches.
     fn key_matches(key: &Self::Key, pool: &Pool, input: &Self::Input<'_>) -> bool;
@@ -161,6 +170,14 @@ impl WireStringRef {
         self.offset.store(sr.offset, Relaxed);
         self.len.store(sr.len, Relaxed);
     }
+
+    /// Copy `s` into the pool and point at it, or store the empty reference if it does not fit.
+    /// Returns whether it fit.
+    pub(crate) fn store_alloc(&self, pool: &Pool, cursor: &AtomicU32, s: &str) -> bool {
+        let sr = alloc_str(pool, cursor, s);
+        self.store(sr.unwrap_or_default());
+        sr.is_some()
+    }
 }
 
 /// One slot in the hash table.
@@ -177,6 +194,80 @@ pub(crate) struct ShmBucketHeader {
     pub(crate) start_nanos: AtomicU64,
     pub(crate) in_flight: AtomicI64,
     pub(crate) string_cursor: AtomicU32,
+    /// Inputs written to this bucket that it could not record, by [`DropReason`].
+    pub(crate) drops: [AtomicU64; DropReason::COUNT],
+}
+
+/// Why an input written to a table was not recorded as given.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DropReason {
+    /// Every slot held another key, so the input was dropped.
+    TableFull,
+    /// The slots the input could have gone into were still being written by another writer
+    /// past `add`'s wait budget, so the input was dropped.
+    SlotContention,
+    /// The string pool ran out while the input's key was written. The input was recorded, but
+    /// under a key whose strings that did not fit are empty.
+    StringPoolFull,
+}
+
+impl DropReason {
+    const COUNT: usize = 3;
+
+    /// Every reason, in the order the counters are stored.
+    pub const ALL: [DropReason; DropReason::COUNT] = [
+        DropReason::TableFull,
+        DropReason::SlotContention,
+        DropReason::StringPoolFull,
+    ];
+
+    /// The reason as a metric tag value.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            DropReason::TableFull => "table_full",
+            DropReason::SlotContention => "slot_contention",
+            DropReason::StringPoolFull => "string_pool_full",
+        }
+    }
+}
+
+/// Inputs a drain found its buckets could not record, by [`DropReason`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Drops([u64; DropReason::COUNT]);
+
+impl Drops {
+    pub fn get(&self, reason: DropReason) -> u64 {
+        self.0[reason as usize]
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.iter().all(|&n| n == 0)
+    }
+
+    /// The nonzero counts, by reason.
+    pub fn iter(&self) -> impl Iterator<Item = (DropReason, u64)> + '_ {
+        DropReason::ALL
+            .into_iter()
+            .map(|r| (r, self.get(r)))
+            .filter(|&(_, n)| n > 0)
+    }
+}
+
+impl std::ops::AddAssign for Drops {
+    fn add_assign(&mut self, other: Drops) {
+        for (a, b) in self.0.iter_mut().zip(other.0) {
+            *a = a.saturating_add(b);
+        }
+    }
+}
+
+impl<'a> std::iter::Sum<&'a Drops> for Drops {
+    fn sum<I: Iterator<Item = &'a Drops>>(iter: I) -> Drops {
+        iter.fold(Drops::default(), |mut acc, d| {
+            acc += *d;
+            acc
+        })
+    }
 }
 
 /// Global SHM header (first page of the mapping).
@@ -333,6 +424,12 @@ pub(crate) struct Bucket<'a, S: Schema> {
     pub(crate) pool: &'a Pool,
 }
 
+impl<S: Schema> Bucket<'_, S> {
+    fn count_drop(&self, reason: DropReason) {
+        self.hdr.drops[reason as usize].fetch_add(1, Relaxed);
+    }
+}
+
 /// A bucket's string pool.
 ///
 /// Comparisons and copies use bulk byte accesses over ranges checked by [`pool_slice`].
@@ -419,33 +516,33 @@ fn slot_hash(hash: u64) -> u64 {
     }
 }
 
-/// Bump-allocate `s` in the pool, returning an empty reference if it does not fit.
+/// Bump-allocate `s` in the pool, returning `None` if it does not fit. An empty string needs no
+/// room and is always the empty reference.
 ///
 /// `cursor` lives in the mapping, so a peer can set it to anything; a forged value can only
 /// make the reservation fail, because the copy goes through [`pool_slice`] at the exact offset
 /// the successful exchange returned rather than at whatever the cursor says by then.
-pub(crate) fn alloc_str(pool: &Pool, cursor: &AtomicU32, s: &str) -> StringRef {
+pub(crate) fn alloc_str(pool: &Pool, cursor: &AtomicU32, s: &str) -> Option<StringRef> {
     let Ok(len) = u32::try_from(s.len()) else {
-        return StringRef::default();
+        return None;
     };
     if len == 0 {
-        return StringRef::default();
+        return Some(StringRef::default());
     }
     let pool_size = pool.len() as u32;
     let mut spins = 0u32;
     loop {
         let old = cursor.load(Relaxed);
         if old.saturating_add(len) > pool_size {
-            return StringRef::default();
+            return None;
         }
         if cursor
             .compare_exchange_weak(old, old + len, Relaxed, Relaxed)
             .is_ok()
         {
             let sr = StringRef { offset: old, len };
-            let Some(dst) = pool_slice(pool, sr) else {
-                return StringRef::default();
-            };
+            // A forged cursor can make the reservation miss the pool; that is lost room too.
+            let dst = pool_slice(pool, sr)?;
             // Copy into the checked reservation before publishing the key.
             unsafe {
                 std::ptr::copy_nonoverlapping(
@@ -454,7 +551,7 @@ pub(crate) fn alloc_str(pool: &Pool, cursor: &AtomicU32, s: &str) -> StringRef {
                     dst.len(),
                 );
             }
-            return sr;
+            return Some(sr);
         }
         spins += 1;
         if spins.is_multiple_of(YIELD_AFTER_SPINS) {
@@ -473,6 +570,7 @@ pub(crate) struct DrainedBucket<T> {
     /// active bucket of a forced drain, whose interval had not ended yet.
     pub(crate) current: bool,
     pub(crate) groups: Vec<T>,
+    pub(crate) drops: Drops,
 }
 
 /// Shared-memory aggregation table.
@@ -759,11 +857,19 @@ impl<S: Schema> ShmTableMapping<S> {
                             .compare_exchange(SLOT_EMPTY, SLOT_INIT, Acquire, Relaxed)
                             .is_ok()
                         {
-                            S::write_key(&entry.key, bucket.pool, &bucket.hdr.string_cursor, input);
+                            let fit = S::write_key(
+                                &entry.key,
+                                bucket.pool,
+                                &bucket.hdr.string_cursor,
+                                input,
+                            );
                             // Release on the store synchronises the key write with any
                             // subsequent Acquire load of the hash — no separate fence needed.
                             entry.key_hash.store(hash, Release);
                             S::record(&entry.value, input);
+                            if !fit {
+                                bucket.count_drop(DropReason::StringPoolFull);
+                            }
                             done = true;
                             break;
                         }
@@ -803,6 +909,16 @@ impl<S: Schema> ShmTableMapping<S> {
                 break;
             }
             slot = (slot + 1) % slots;
+        }
+
+        if !done {
+            // Once the budget is spent, slots being written are skipped rather than waited on,
+            // and one of them may have been about to take this key.
+            bucket.count_drop(if waits >= MAX_SLOT_WAIT_ITERS {
+                DropReason::SlotContention
+            } else {
+                DropReason::TableFull
+            });
         }
 
         bucket.hdr.in_flight.fetch_sub(1, Release);
@@ -900,6 +1016,13 @@ impl<S: Schema> ShmTableMapping<S> {
 
         bucket.hdr.string_cursor.store(0, Release);
 
+        // Swapped, not loaded and cleared, for the same reason as the slots' values: a writer
+        // that missed the wait above can still be counting.
+        let mut drops = Drops::default();
+        for (n, counter) in drops.0.iter_mut().zip(&bucket.hdr.drops) {
+            *n = counter.swap(0, Relaxed);
+        }
+
         let now_ns = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -912,7 +1035,7 @@ impl<S: Schema> ShmTableMapping<S> {
             .start_nanos
             .store(now_ns - (now_ns % bucket_size_nanos), Release);
 
-        if groups.is_empty() {
+        if groups.is_empty() && drops.is_empty() {
             return None;
         }
 
@@ -921,6 +1044,7 @@ impl<S: Schema> ShmTableMapping<S> {
             duration: bucket_size_nanos,
             current,
             groups,
+            drops,
         })
     }
 }
@@ -957,8 +1081,9 @@ mod tests {
             *input
         }
 
-        fn write_key(key: &AtomicU64, _pool: &Pool, _cursor: &AtomicU32, input: &u64) {
+        fn write_key(key: &AtomicU64, _pool: &Pool, _cursor: &AtomicU32, input: &u64) -> bool {
             key.store(*input, Relaxed);
+            true
         }
 
         fn key_matches(key: &AtomicU64, _pool: &Pool, input: &u64) -> bool {
@@ -1019,5 +1144,86 @@ mod tests {
             .collect();
         drained.sort();
         assert_eq!(drained, [(3, 2), (5, 1)]);
+    }
+
+    fn drain_drops(table: &ShmTable<Counter>, force: bool) -> Drops {
+        table
+            .mem
+            .load_full()
+            .unwrap()
+            .drain_buckets(force, |entry, _pool, _budget| {
+                Some(entry.value.swap(0, Relaxed))
+            })
+            .iter()
+            .map(|b| &b.drops)
+            .sum()
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn a_new_key_in_a_full_table_is_counted_as_dropped() {
+        let table = ShmTable::<Counter>::create(test_path(), 10, 4, 64).unwrap();
+        for input in 1..=6 {
+            assert!(table.add(&input));
+        }
+        // Keys already held are still recorded.
+        assert!(table.add(&1));
+
+        let drops = drain_drops(&table, true);
+        assert_eq!(drops.get(DropReason::TableFull), 2);
+        assert_eq!(drops.iter().count(), 1);
+        assert!(
+            drain_drops(&table, true).is_empty(),
+            "drained drops are cleared"
+        );
+    }
+
+    /// Drops are drained with the bucket they were written to, even when it recorded nothing.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn drops_are_drained_with_their_bucket() {
+        let table = ShmTable::<Counter>::create(test_path(), 10, 1, 64).unwrap();
+        let mem = table.mem.load_full().unwrap();
+        mem.bucket(mem.header().active_idx.load(Relaxed)).hdr.drops[DropReason::TableFull as usize]
+            .store(3, Relaxed);
+        let buckets = mem.drain_buckets(false, |_, _, _| Some(()));
+        assert_eq!(buckets.len(), 1);
+        assert!(buckets[0].groups.is_empty());
+        assert_eq!(buckets[0].drops.get(DropReason::TableFull), 3);
+    }
+
+    /// Slots left marked as being written - by a writer that died mid-claim - are given up on
+    /// after the wait budget, and the input counted as dropped rather than as a full table.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn inputs_blocked_by_slots_being_written_are_counted_as_contention() {
+        let table = ShmTable::<Counter>::create(test_path(), 10, 4, 64).unwrap();
+        let mem = table.mem.load_full().unwrap();
+        for entry in mem.bucket(mem.header().active_idx.load(Relaxed)).entries {
+            entry.key_hash.store(SLOT_INIT, Relaxed);
+        }
+        assert!(table.add(&1));
+
+        let drops = drain_drops(&table, true);
+        assert_eq!(drops.get(DropReason::SlotContention), 1);
+        assert_eq!(drops.get(DropReason::TableFull), 0);
+    }
+
+    #[test]
+    fn a_string_that_does_not_fit_is_reported() {
+        let pool = [const { AtomicU8::new(0) }; 4];
+        let cursor = AtomicU32::new(0);
+        let wire = WireStringRef {
+            offset: AtomicU32::new(0),
+            len: AtomicU32::new(0),
+        };
+        assert!(wire.store_alloc(&pool, &cursor, "abc"));
+        assert_eq!(wire.snapshot(), StringRef { offset: 0, len: 3 });
+        assert!(!wire.store_alloc(&pool, &cursor, "de"));
+        assert_eq!(wire.snapshot(), StringRef::default());
+        assert!(
+            wire.store_alloc(&pool, &cursor, ""),
+            "an empty string needs no room"
+        );
     }
 }

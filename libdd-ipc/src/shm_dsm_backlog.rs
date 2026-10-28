@@ -21,7 +21,7 @@ use std::sync::atomic::{AtomicI64, AtomicU8, AtomicU32, Ordering::*};
 use zwohash::ZwoHasher;
 
 use crate::shm_table::{
-    self, Pool, Schema, ShmSafe, ShmTable, ShmTableMapping, WireStringRef, alloc_str, pool_eq,
+    self, Drops, Pool, Schema, ShmSafe, ShmTable, ShmTableMapping, WireStringRef, pool_eq,
     pool_string,
 };
 
@@ -132,13 +132,20 @@ impl Schema for DataStreamsBacklogs {
         h.finish()
     }
 
-    fn write_key(k: &ShmBacklogKey, pool: &Pool, cursor: &AtomicU32, input: &DsmBacklogInput<'_>) {
+    fn write_key(
+        k: &ShmBacklogKey,
+        pool: &Pool,
+        cursor: &AtomicU32,
+        input: &DsmBacklogInput<'_>,
+    ) -> bool {
+        let mut fit = true;
         for (wire, value) in k.values.iter().zip(input.tags) {
             if let Some(value) = value {
-                wire.store(alloc_str(pool, cursor, value));
+                fit &= wire.store_alloc(pool, cursor, value);
             }
         }
         k.present.store(input.present(), Relaxed);
+        fit
     }
 
     /// The values are compared one by one, so that a hash collision cannot merge two
@@ -249,6 +256,8 @@ pub struct DsmBacklogBucket {
     pub start: u64,
     pub duration: u64,
     pub backlogs: Vec<DsmBacklog>,
+    /// Offsets written to the bucket that it could not record as given.
+    pub drops: Drops,
 }
 
 impl ShmTable<DataStreamsBacklogs> {
@@ -282,6 +291,7 @@ impl ShmDsmBacklogMapping {
                 start: crate::shm_dsm_checkpoint::bucket_start(b.current, b.duration, now),
                 duration: b.duration,
                 backlogs: b.groups,
+                drops: b.drops,
             })
             .collect()
     }

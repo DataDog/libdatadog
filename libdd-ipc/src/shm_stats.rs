@@ -25,10 +25,9 @@ use libdd_trace_stats::span_concentrator::{
 };
 
 use crate::shm_table::{
-    self, Pool, Schema, ShmSafe, ShmTable, ShmTableMapping, WireStringRef, alloc_str, pool_eq,
-    pool_string,
+    self, Pool, Schema, ShmSafe, ShmTable, ShmTableMapping, WireStringRef, pool_eq, pool_string,
 };
-pub use crate::shm_table::{RELOAD_FILL_RATIO, StringRef};
+pub use crate::shm_table::{DropReason, Drops, RELOAD_FILL_RATIO, StringRef};
 
 /// Maximum peer-tag (key, value) pairs per aggregation slot.
 pub const MAX_PEER_TAGS: usize = 16;
@@ -228,9 +227,15 @@ impl Schema for SpanStats {
     }
 
     /// Write `input`'s key into a slot this thread has just claimed.
-    fn write_key(k: &ShmKeyHeader, pool: &Pool, cursor: &AtomicU32, input: &ShmSpanInput<'_>) {
+    fn write_key(
+        k: &ShmKeyHeader,
+        pool: &Pool,
+        cursor: &AtomicU32,
+        input: &ShmSpanInput<'_>,
+    ) -> bool {
+        let mut fit = true;
         for (wire, s) in k.strs.iter().zip(fixed_strs(&input.fixed)) {
-            wire.store(alloc_str(pool, cursor, s));
+            fit &= wire.store_alloc(pool, cursor, s);
         }
         // Zipped rather than indexed by a count, so the arrays themselves are the limit and
         // a caller passing more tags than there is room for simply loses the surplus.
@@ -240,11 +245,12 @@ impl Schema for SpanStats {
             .iter()
             .zip(k.peer_tag_keys.iter().zip(&k.peer_tag_values))
         {
-            wire_k.store(alloc_str(pool, cursor, tk));
-            wire_v.store(alloc_str(pool, cursor, tv));
+            fit &= wire_k.store_alloc(pool, cursor, tk);
+            fit &= wire_v.store_alloc(pool, cursor, tv);
             stored += 1;
         }
         k.store_scalars(&input.fixed, stored);
+        fit
     }
 
     /// Does this slot hold `input`'s key?
@@ -372,6 +378,8 @@ impl ShmTableMapping<SpanStats> {
             Self::drain_entry(entry, pool, budget).filter(|gs| gs.hits > 0)
         })
         .into_iter()
+        // A bucket can come back with drops and no stats; the drops are not reported here.
+        .filter(|b| !b.groups.is_empty())
         .map(|b| pb::ClientStatsBucket {
             start: b.start,
             duration: b.duration,
@@ -519,7 +527,7 @@ impl FlushableConcentrator for ShmSpanConcentrator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::shm_table::{SLOT_EMPTY, SLOT_INIT, bucket_hdr_size};
+    use crate::shm_table::{SLOT_EMPTY, SLOT_INIT, alloc_str, bucket_hdr_size};
     use std::ffi::CString;
     use std::sync::Arc;
 
@@ -961,7 +969,7 @@ mod tests {
         let storage = [const { AtomicU8::new(b'?') }; 16];
         let pool = &storage[4..12];
         let cursor = AtomicU32::new(5);
-        let sr = alloc_str(pool, &cursor, "€");
+        let sr = alloc_str(pool, &cursor, "€").unwrap();
         assert_eq!((sr.offset, sr.len), (5, 3));
 
         let mut budget = 3;
@@ -992,9 +1000,9 @@ mod tests {
             ""
         );
 
-        assert_eq!(alloc_str(pool, &cursor, "!").len, 0);
+        assert_eq!(alloc_str(pool, &cursor, "!"), None);
         cursor.store(u32::MAX, Relaxed);
-        assert_eq!(alloc_str(pool, &cursor, "!").len, 0);
+        assert_eq!(alloc_str(pool, &cursor, "!"), None);
         assert!(
             storage[..9]
                 .iter()

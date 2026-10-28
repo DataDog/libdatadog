@@ -13,6 +13,10 @@
 //! seen per backlog (Kafka partition, consumer group). Both are drained once per
 //! [`DSM_BUCKET_NANOS`] interval, just after its boundary, and sent together to the agent's
 //! `/v0.1/pipeline_stats` endpoint as the gzipped msgpack payload the Java and Go tracers send.
+//!
+//! Checkpoints and offsets the tables could not record are counted in shared memory and drained
+//! with them. Each drain that found any logs a warning and, with health metrics on, sends them to
+//! DogStatsD as the Go tracer reports the points its processor drops.
 
 use crate::service::connection_session::ConnectionSession;
 use base64::Engine;
@@ -22,15 +26,18 @@ use flate2::write::GzEncoder;
 use futures::future::join_all;
 use http::uri::PathAndQuery;
 use libdd_capabilities_impl::{HttpClientCapability, NativeCapabilities};
+use libdd_common::tag::Tag;
 use libdd_common::{Endpoint, MutexExt};
+use libdd_dogstatsd_client::{DogStatsDActionOwned, DogStatsDClient};
 use libdd_ipc::shm_dsm_backlog::{
     DEFAULT_DSM_BACKLOG_SLOT_COUNT, DEFAULT_DSM_BACKLOG_STRING_POOL_BYTES, DsmBacklog,
     DsmBacklogBucket, ShmDsmBacklogTable,
 };
 use libdd_ipc::shm_dsm_checkpoint::{
     DEFAULT_DSM_CHECKPOINT_SLOT_COUNT, DEFAULT_DSM_CHECKPOINT_STRING_POOL_BYTES, DSM_BUCKET_NANOS,
-    DsmCheckpointBucket, ShmDsmCheckpointTable, now_nanos,
+    Drops, DsmCheckpointBucket, ShmDsmCheckpointTable, now_nanos,
 };
+use libdd_ipc::shm_stats::RELOAD_FILL_RATIO;
 use libdd_trace_utils::send_with_retry::{
     CompressionStrategy, RetryBackoffType, RetryStrategy, send_with_retry,
 };
@@ -55,6 +62,9 @@ const PRODUCT_DSM: u64 = 2;
 /// How long after an interval boundary its bucket is drained, so that checkpoints recorded just
 /// before the boundary have reached it.
 const DRAIN_GRACE: Duration = Duration::from_millis(50);
+
+/// What the Go tracer counts the points its processor drops as.
+const DROPPED_PAYLOADS_METRIC: &str = "datadog.datastreams.processor.dropped_payloads";
 
 /// Build the DSM endpoint by appending `/v0.1/pipeline_stats` to the agent base URL.
 /// Returns `None` for agentless mode (API key present): DSM is only sent through the agent.
@@ -82,6 +92,8 @@ pub(crate) struct DsmConfig {
     pub tracer_version: String,
     /// `key:value` process tags, as the payload's `ProcessTags` carries them.
     pub process_tags: Vec<String>,
+    /// Where drops are counted; `None` unless health metrics are enabled.
+    pub dogstatsd: Option<Arc<DogStatsDClient>>,
 }
 
 /// Map key for the DSM table map: one table per payload the tables are flushed into.
@@ -233,8 +245,13 @@ pub(crate) async fn run_dsm_flush_loop(
             break; // sidecar shutting down
         };
 
+        state.warn_if_nearly_full();
         let drained = state.drain(false);
         if !drained.is_empty() {
+            state.report_drops(&drained);
+            if !drained.has_data() {
+                continue;
+            }
             if let Err(e) = send_buckets(&client, &state, drained).await {
                 warn!(
                     "Failed to send DSM checkpoints and backlogs for env={} version={} service={}: {e}",
@@ -262,7 +279,8 @@ pub(crate) async fn run_dsm_flush_loop(
             }
         }
         let drained = state.drain(true);
-        if !drained.is_empty() {
+        state.report_drops(&drained);
+        if drained.has_data() {
             if let Err(e) = send_buckets(&client, &state, drained).await {
                 warn!("Failed final DSM checkpoint and backlog flush: {e}");
             }
@@ -284,7 +302,8 @@ pub async fn flush_all_dsm_now(tables: &DsmTables) {
         let client = &client;
         async move {
             let drained = state.drain(true);
-            if drained.is_empty() {
+            state.report_drops(&drained);
+            if !drained.has_data() {
                 return;
             }
             if let Err(e) = send_buckets(client, state, drained).await {
@@ -302,8 +321,23 @@ struct Drained {
 }
 
 impl Drained {
+    /// Whether neither table was written to: no data, and nothing dropped either.
     fn is_empty(&self) -> bool {
         self.checkpoints.is_empty() && self.backlogs.is_empty()
+    }
+
+    /// Whether there is anything to send to the agent. A bucket can come back with drops alone.
+    fn has_data(&self) -> bool {
+        self.checkpoints.iter().any(|b| !b.checkpoints.is_empty())
+            || self.backlogs.iter().any(|b| !b.backlogs.is_empty())
+    }
+
+    fn checkpoint_drops(&self) -> Drops {
+        self.checkpoints.iter().map(|b| &b.drops).sum()
+    }
+
+    fn backlog_drops(&self) -> Drops {
+        self.backlogs.iter().map(|b| &b.drops).sum()
     }
 }
 
@@ -316,6 +350,72 @@ impl DsmTableState {
             backlogs: self.backlogs.drain_buckets_at(force, now),
         }
     }
+
+    /// Warn when either table's active bucket is nearly full, as the span stats flusher does.
+    fn warn_if_nearly_full(&self) {
+        let key = &self.key;
+        for (table, (used, total)) in [
+            ("checkpoints", self.checkpoints.slot_usage()),
+            ("backlogs", self.backlogs.slot_usage()),
+        ] {
+            if total > 0 && (used as f64 / total as f64) > RELOAD_FILL_RATIO {
+                warn!(
+                    "SHM DSM {table} table for env={} version={} service={} is {:.0}% full \
+                     ({used}/{total} slots); new keys are dropped once it is full",
+                    key.env,
+                    key.version,
+                    key.service,
+                    (used as f64 / total as f64) * 100.0
+                );
+            }
+        }
+    }
+
+    /// Log what a drain found dropped, and count it in DogStatsD if health metrics are on.
+    fn report_drops(&self, drained: &Drained) {
+        let key = &self.key;
+        let mut actions = Vec::new();
+        for (table, drops) in [
+            ("checkpoints", drained.checkpoint_drops()),
+            ("backlogs", drained.backlog_drops()),
+        ] {
+            for (reason, count) in drops.iter() {
+                warn!(
+                    "SHM DSM {table} table for env={} version={} service={}: {count} inputs \
+                     not recorded as given ({})",
+                    key.env,
+                    key.version,
+                    key.service,
+                    reason.as_str()
+                );
+                if self.config.dogstatsd.is_some() {
+                    actions.push(DogStatsDActionOwned::Count(
+                        DROPPED_PAYLOADS_METRIC.to_owned(),
+                        i64::try_from(count).unwrap_or(i64::MAX),
+                        drop_tags(key, table, reason.as_str()),
+                    ));
+                }
+            }
+        }
+        if let (Some(client), false) = (&self.config.dogstatsd, actions.is_empty()) {
+            client.send_owned(actions);
+        }
+    }
+}
+
+/// Tags for a drop count. The client adds none of its own, so the key's are given here.
+fn drop_tags(key: &DsmTableKey, table: &str, reason: &str) -> Vec<Tag> {
+    [
+        ("env", key.env.as_str()),
+        ("service", key.service.as_str()),
+        ("version", key.version.as_str()),
+        ("table", table),
+        ("reason", reason),
+    ]
+    .into_iter()
+    // An empty or invalid value is left out rather than failing the count.
+    .filter_map(|(k, v)| Tag::new(k, v).ok())
+    .collect()
 }
 
 async fn send_buckets(
@@ -439,7 +539,12 @@ fn encode_payload(
                 backlogs: vec![],
             })
     }
-    for b in &drained.checkpoints {
+    // A bucket that only dropped inputs has nothing to send.
+    for b in drained
+        .checkpoints
+        .iter()
+        .filter(|b| !b.checkpoints.is_empty())
+    {
         bucket(&mut buckets, b.start, b.duration)
             .stats
             .extend(b.checkpoints.iter().map(|g| StatsPoint {
@@ -451,7 +556,7 @@ fn encode_payload(
                 payload_size: Bin(&g.payload_size),
             }));
     }
-    for b in &drained.backlogs {
+    for b in drained.backlogs.iter().filter(|b| !b.backlogs.is_empty()) {
         bucket(&mut buckets, b.start, b.duration)
             .backlogs
             .extend(b.backlogs.iter().map(|DsmBacklog { tags, value }| Backlog {
@@ -477,7 +582,7 @@ fn encode_payload(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use libdd_ipc::shm_dsm_checkpoint::DsmCheckpoint;
+    use libdd_ipc::shm_dsm_checkpoint::{DropReason, DsmCheckpoint, DsmCheckpointInput};
 
     fn key() -> DsmTableKey {
         DsmTableKey {
@@ -495,6 +600,7 @@ mod tests {
             language_version: "8.3".into(),
             tracer_version: "1.0.0".into(),
             process_tags: vec!["entrypoint.name:php".into()],
+            dogstatsd: None,
         }
     }
 
@@ -661,6 +767,7 @@ mod tests {
                     payload_size: vec![],
                 },
             ],
+            drops: Drops::default(),
         }];
         let drained = Drained {
             checkpoints,
@@ -753,17 +860,20 @@ mod tests {
                 start: 2 * DSM_BUCKET_NANOS,
                 duration: DSM_BUCKET_NANOS,
                 checkpoints: vec![checkpoint()],
+                drops: Drops::default(),
             }],
             backlogs: vec![
                 DsmBacklogBucket {
                     start: 2 * DSM_BUCKET_NANOS,
                     duration: DSM_BUCKET_NANOS,
                     backlogs: vec![backlog("0", 41)],
+                    drops: Drops::default(),
                 },
                 DsmBacklogBucket {
                     start: DSM_BUCKET_NANOS,
                     duration: DSM_BUCKET_NANOS,
                     backlogs: vec![backlog("1", 7)],
+                    drops: Drops::default(),
                 },
             ],
         };
@@ -799,5 +909,139 @@ mod tests {
             .collect();
         assert_eq!(tags, ["topic:orders", "type:kafka_produce", "partition:0"]);
         assert_eq!(field(backlog, "Value").as_i64(), Some(41));
+    }
+
+    /// A table that drops inputs counts them in the bucket it drains them with.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn a_full_table_counts_what_it_drops() {
+        let path = |n| CString::new(format!("/dddsm-drop-t-{}-{n}", std::process::id())).unwrap();
+        let state = DsmTableState {
+            checkpoints: ShmDsmCheckpointTable::create(path(0), DSM_BUCKET_NANOS, 1, 64).unwrap(),
+            backlogs: ShmDsmBacklogTable::create(path(1), DSM_BUCKET_NANOS, 1, 64).unwrap(),
+            key: key(),
+            config: config(),
+        };
+        let input = |hash| DsmCheckpointInput {
+            hash,
+            parent_hash: 0,
+            edge_tags: &[],
+            pathway_latency_ns: 0,
+            edge_latency_ns: 0,
+            payload_size_bytes: 0,
+        };
+        assert!(state.checkpoints.add_checkpoint(&input(1)));
+        assert!(state.checkpoints.add_checkpoint(&input(2)));
+
+        let drained = state.drain(true);
+        assert!(drained.has_data());
+        assert_eq!(drained.checkpoint_drops().get(DropReason::TableFull), 1);
+        assert!(drained.backlog_drops().is_empty());
+    }
+
+    /// A bucket can come back with drops and nothing recorded. A drain of only those keeps the
+    /// tables alive, since they are still being written to, but has nothing to send, and such
+    /// buckets stay out of a payload that does have data.
+    #[test]
+    fn buckets_with_only_drops_are_not_sent() {
+        let mut drops_only = DsmCheckpointBucket {
+            start: DSM_BUCKET_NANOS,
+            duration: DSM_BUCKET_NANOS,
+            checkpoints: vec![],
+            drops: Drops::default(),
+        };
+        drops_only.drops += {
+            let state = DsmTableState {
+                checkpoints: ShmDsmCheckpointTable::create(
+                    CString::new(format!("/dddsm-drop-o-{}", std::process::id())).unwrap(),
+                    DSM_BUCKET_NANOS,
+                    1,
+                    64,
+                )
+                .unwrap(),
+                backlogs: ShmDsmBacklogTable::create(
+                    CString::new(format!("/dddsb-drop-o-{}", std::process::id())).unwrap(),
+                    DSM_BUCKET_NANOS,
+                    1,
+                    64,
+                )
+                .unwrap(),
+                key: key(),
+                config: config(),
+            };
+            for hash in [1, 2] {
+                state.checkpoints.add_checkpoint(&DsmCheckpointInput {
+                    hash,
+                    parent_hash: 0,
+                    edge_tags: &[],
+                    pathway_latency_ns: 0,
+                    edge_latency_ns: 0,
+                    payload_size_bytes: 0,
+                });
+            }
+            state.drain(true).checkpoint_drops()
+        };
+        assert!(!drops_only.drops.is_empty());
+        let drained = Drained {
+            checkpoints: vec![drops_only.clone()],
+            backlogs: vec![],
+        };
+        assert!(!drained.is_empty());
+        assert!(!drained.has_data());
+
+        let with_data = Drained {
+            checkpoints: vec![
+                drops_only,
+                DsmCheckpointBucket {
+                    start: 2 * DSM_BUCKET_NANOS,
+                    duration: DSM_BUCKET_NANOS,
+                    checkpoints: vec![DsmCheckpoint {
+                        hash: 1,
+                        parent_hash: 0,
+                        edge_tags: vec![],
+                        pathway_latency: vec![],
+                        edge_latency: vec![],
+                        payload_size: vec![],
+                    }],
+                    drops: Drops::default(),
+                },
+            ],
+            backlogs: vec![],
+        };
+        let bytes = encode_payload(&key(), &config(), &with_data).unwrap();
+        let value = rmpv::decode::read_value(&mut bytes.as_slice()).unwrap();
+        let field = |v: &rmpv::Value, name: &str| -> rmpv::Value {
+            v.as_map()
+                .unwrap()
+                .iter()
+                .find(|(k, _)| k.as_str() == Some(name))
+                .map(|(_, v)| v.clone())
+                .unwrap_or_else(|| panic!("missing {name}"))
+        };
+        let buckets = field(&value, "Stats");
+        let buckets = buckets.as_array().unwrap();
+        assert_eq!(buckets.len(), 1);
+        assert_eq!(
+            field(&buckets[0], "Start").as_u64(),
+            Some(2 * DSM_BUCKET_NANOS)
+        );
+    }
+
+    #[test]
+    fn drop_counts_are_tagged_with_their_key_table_and_reason() {
+        let tags: Vec<String> = drop_tags(&key(), "checkpoints", DropReason::TableFull.as_str())
+            .iter()
+            .map(|t| t.to_string())
+            .collect();
+        assert_eq!(
+            tags,
+            [
+                "env:env-a",
+                "service:service-a",
+                "version:1.0",
+                "table:checkpoints",
+                "reason:table_full"
+            ]
+        );
     }
 }

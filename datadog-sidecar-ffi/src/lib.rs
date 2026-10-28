@@ -633,6 +633,9 @@ pub struct RemoteConfigNotification {
 ///
 /// `default_service_name` is the process-stable service name the tracer resolves when `DD_SERVICE`
 /// is not set, reported as `svc.auto:<name>`. Pass an empty `CharSlice` if it is not reported.
+///
+/// `health_metrics_enabled` lets the sidecar send health metrics about what it does for the
+/// tracer, such as Data Streams Monitoring points it could not record, to `dogstatsd_endpoint`.
 #[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_set_connection_config(
@@ -665,6 +668,7 @@ pub unsafe extern "C" fn ddog_sidecar_set_connection_config(
     root_service: ffi::CharSlice,
     root_session_id: ffi::CharSlice,
     parent_session_id: ffi::CharSlice,
+    health_metrics_enabled: bool,
 ) -> MaybeError {
     unsafe {
         let otlp_metrics_endpoint: Option<Endpoint> = otlp_metrics_endpoint.as_ref().cloned();
@@ -729,6 +733,7 @@ pub unsafe extern "C" fn ddog_sidecar_set_connection_config(
                 Some(parent_session_id.to_utf8_lossy().into())
             },
             retry_interval: Duration::from_millis(retry_interval_milliseconds as u64),
+            health_metrics_enabled,
         };
         #[cfg(unix)]
         let _ = win_remote_config_notification;
