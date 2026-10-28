@@ -2,6 +2,15 @@
 
 
 
+## [10.0.0](https://github.com/datadog/libdatadog/compare/libdd-common-v9.0.0..libdd-common-v10.0.0) - 2026-10-28
+
+### Changed
+
+- Preparatory cleanup for restructure ([#2722](https://github.com/datadog/libdatadog/issues/2722)) - ([87970b5](https://github.com/datadog/libdatadog/commit/87970b50f5b7c6cf4379ad5c461811336513d300))
+- Bump MSRV from 1.87.0 to 1.91.1 ([#2734](https://github.com/datadog/libdatadog/issues/2734)) - ([1c6b398](https://github.com/datadog/libdatadog/commit/1c6b398b6caf0cfa2deaf1f493c08248719f2dc4))
+
+
+
 ## [9.0.0](https://github.com/datadog/libdatadog/compare/libdd-common-v8.0.0..libdd-common-v9.0.0) - 2026-10-23
 
 ### Added
