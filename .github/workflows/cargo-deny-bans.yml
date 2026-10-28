@@ -14,7 +14,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
-    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
     - name: Read stable version from ci-toolchain.toml
       id: stable-version
       run: echo "version=$(grep -Po '^stable = "\K[^"]+' ci-toolchain.toml)" >> $GITHUB_OUTPUT
