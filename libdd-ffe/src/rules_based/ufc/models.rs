@@ -6,12 +6,15 @@ use std::{cmp::Ordering, collections::HashMap, num::NonZeroU32, sync::Arc};
 use libdd_common::regex_engine::Regex;
 use serde::{Deserialize, Serialize};
 
+use crate::rules_based::timestamp::OptOutTimestamp;
 use crate::rules_based::{EvaluationError, FlagType, Str, Timestamp};
 
 /// Universal Flag Configuration attributes. This contains the actual flag configuration data.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct UniversalFlagConfigWire {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evaluator_params: Option<EvaluatorParams>,
     /// When configuration was last updated.
     pub created_at: Timestamp,
     /// Environment this configuration belongs to.
@@ -28,6 +31,13 @@ pub(crate) struct UniversalFlagConfigWire {
     /// Value is wrapped in `TryParse` so that if we fail to parse one flag (e.g., new server
     /// format), we can still serve other flags.
     pub flags: HashMap<Str, TryParse<FlagWire>>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct EvaluatorParams {
+    // u8 rejects negative, fractional, and >255 limits; zero explicitly forbids dependencies.
+    pub max_dependency_depth: Option<u8>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -155,6 +165,8 @@ pub(crate) struct AllocationWire {
     pub start_at: Option<Timestamp>,
     #[serde(default)]
     pub end_at: Option<Timestamp>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub randomization_activated_at: Option<TryParse<OptOutTimestamp>>,
     pub splits: Vec<SplitWire>,
     #[serde(default = "default_do_log")]
     pub do_log: bool,
@@ -182,6 +194,11 @@ pub(crate) struct Condition {
 
 #[derive(Debug, Clone)]
 pub(crate) enum ConditionCheck {
+    FlagEvaluation {
+        key: Str,
+        expected_membership: bool,
+        values: Box<[Box<str>]>,
+    },
     Comparison {
         operator: ComparisonOperator,
         comparand: f64,
@@ -252,14 +269,40 @@ impl From<SemverComparisonOperator> for ConditionOperator {
 #[serde(rename_all = "camelCase")]
 #[allow(missing_docs)]
 pub(crate) struct ConditionWire {
-    pub attribute: Box<str>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attribute: Option<Box<str>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flag_evaluation: Option<FlagEvaluationWire>,
     pub operator: ConditionOperator,
     pub value: ConditionValue,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub(crate) struct FlagEvaluationWire {
+    pub key: Str,
+}
+
 impl From<Condition> for ConditionWire {
     fn from(condition: Condition) -> Self {
+        if let ConditionCheck::FlagEvaluation {
+            key,
+            expected_membership,
+            values,
+        } = condition.check
+        {
+            return Self {
+                attribute: None,
+                flag_evaluation: Some(FlagEvaluationWire { key }),
+                operator: if expected_membership {
+                    ConditionOperator::OneOf
+                } else {
+                    ConditionOperator::NotOneOf
+                },
+                value: ConditionValue::Multiple(values),
+            };
+        }
         let (operator, value) = match condition.check {
+            ConditionCheck::FlagEvaluation { .. } => unreachable!("handled above"),
             ConditionCheck::Comparison {
                 operator,
                 comparand,
@@ -300,7 +343,8 @@ impl From<Condition> for ConditionWire {
             ),
         };
         ConditionWire {
-            attribute: condition.attribute,
+            attribute: Some(condition.attribute),
+            flag_evaluation: None,
             operator,
             value,
         }
@@ -317,7 +361,38 @@ impl TryFrom<ConditionWire> for Condition {
     type Error = EvaluationError;
 
     fn try_from(condition: ConditionWire) -> Result<Self, Self::Error> {
-        let attribute = condition.attribute;
+        if let Some(reference) = condition.flag_evaluation {
+            if condition
+                .attribute
+                .as_ref()
+                .is_some_and(|attribute| !attribute.is_empty())
+                || reference.key.is_empty()
+            {
+                return Err(EvaluationError::ConfigurationParseError);
+            }
+            let expected_membership = match condition.operator {
+                ConditionOperator::OneOf => true,
+                ConditionOperator::NotOneOf => false,
+                _ => return Err(EvaluationError::ConfigurationParseError),
+            };
+            let ConditionValue::Multiple(values) = condition.value else {
+                return Err(EvaluationError::ConfigurationParseError);
+            };
+            if values.is_empty() {
+                return Err(EvaluationError::ConfigurationParseError);
+            }
+            return Ok(Self {
+                attribute: "".into(),
+                check: ConditionCheck::FlagEvaluation {
+                    key: reference.key,
+                    expected_membership,
+                    values,
+                },
+            });
+        }
+        let attribute = condition
+            .attribute
+            .ok_or(EvaluationError::ConfigurationParseError)?;
         let check = match condition.operator {
             ConditionOperator::Matches | ConditionOperator::NotMatches => {
                 let expected_match = condition.operator == ConditionOperator::Matches;

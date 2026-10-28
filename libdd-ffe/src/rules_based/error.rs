@@ -14,6 +14,22 @@ use crate::rules_based::{ExpectedFlagType, FlagType, Str};
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 #[non_exhaustive]
 pub enum EvaluationError {
+    /// A prerequisite failed. Its cause is preserved, while SDKs can distinguish this from
+    /// a directly requested flag's normal disabled/default result.
+    #[error("prerequisite {flag_key} failed: {source}")]
+    DependencyEvaluationFailed {
+        /// Referenced prerequisite key.
+        flag_key: Str,
+        /// Original prerequisite failure.
+        source: Box<EvaluationError>,
+    },
+    /// A reached prerequisite references a flag already being evaluated.
+    #[error("flag dependency cycle")]
+    DependencyCycle,
+
+    /// A reached prerequisite exceeds the configuration's dependency depth limit.
+    #[error("flag dependency depth exceeded")]
+    DependencyDepthExceeded,
     /// Requested flag has unexpected type.
     #[error("invalid flag type (expected: {expected:?}, found: {found:?})")]
     TypeMismatch {
@@ -26,6 +42,12 @@ pub enum EvaluationError {
     /// Targeting key is required for evaluation but is missing.
     #[error("targeting key is missing")]
     TargetingKeyMissing,
+
+    /// The enabled experimentation opt-out parameter is not an RFC3339 string.
+    #[error(
+        "dd_experimentation_opt_out_at must be an RFC3339 timestamp string; supply a valid timestamp to opt out, or omit the attribute to permit experimentation"
+    )]
+    InvalidContext,
 
     /// Failed to parse configuration. This should normally never happen and is likely a signal
     /// that you should update SDK.

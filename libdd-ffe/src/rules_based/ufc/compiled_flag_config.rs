@@ -9,7 +9,7 @@ use crate::rules_based::{Str, Timestamp, error::EvaluationError, sharder::PreSal
 
 use super::{
     AllocationWire, AssignmentValue, Environment, FlagWire, RuleWire, ShardRange, ShardWire,
-    SplitWire, UniversalFlagConfigWire, VariationType,
+    SplitWire, TryParse, UniversalFlagConfigWire, VariationType,
 };
 
 #[derive(Debug)]
@@ -22,6 +22,7 @@ pub struct UniversalFlagConfig {
 #[derive(Debug, Deserialize)]
 #[serde(from = "UniversalFlagConfigWire")]
 pub(crate) struct CompiledFlagsConfig {
+    pub max_dependency_depth: u8,
     /// When configuration was last updated.
     pub created_at: Timestamp,
     /// Environment this configuration belongs to.
@@ -37,8 +38,11 @@ pub(crate) struct CompiledFlagsConfig {
 
 #[derive(Debug)]
 pub(crate) struct Flag {
+    pub has_dependencies: bool,
     pub variation_type: VariationType,
     pub allocations: Box<[Allocation]>,
+    // Activation errors apply only when an opted-out subject uses future mode.
+    pub has_invalid_activation: bool,
 }
 
 #[derive(Debug)]
@@ -46,6 +50,7 @@ pub(crate) struct Allocation {
     pub key: Str,
     pub start_at: Option<Timestamp>,
     pub end_at: Option<Timestamp>,
+    pub randomization_activated_at: Option<Timestamp>,
     pub rules: Box<[RuleWire]>,
     pub splits: Box<[Split]>,
     pub do_log: bool,
@@ -97,6 +102,10 @@ impl From<UniversalFlagConfigWire> for CompiledFlagsConfig {
             .collect();
 
         CompiledFlagsConfig {
+            max_dependency_depth: config
+                .evaluator_params
+                .and_then(|params| params.max_dependency_depth)
+                .unwrap_or(10),
             created_at: config.created_at,
             environment: config.environment,
             observe_full_evaluation_data: config.observe_full_evaluation_data,
@@ -128,6 +137,24 @@ fn compile_flag(flag: FlagWire) -> Result<Flag, EvaluationError> {
         })
         .collect::<Result<HashMap<_, _>, EvaluationError>>()?;
 
+    let has_invalid_activation = flag.allocations.iter().any(|allocation| {
+        matches!(
+            allocation.randomization_activated_at,
+            Some(TryParse::ParseFailed(_))
+        )
+    });
+    let has_dependencies = flag
+        .allocations
+        .iter()
+        .filter_map(|allocation| allocation.rules.as_ref())
+        .flat_map(|rules| rules.iter())
+        .flat_map(|rule| &rule.conditions)
+        .any(|condition| {
+            matches!(
+                condition.check,
+                super::ConditionCheck::FlagEvaluation { .. }
+            )
+        });
     let allocations = flag
         .allocations
         .into_iter()
@@ -135,8 +162,10 @@ fn compile_flag(flag: FlagWire) -> Result<Flag, EvaluationError> {
         .collect::<Result<_, _>>()?;
 
     Ok(Flag {
+        has_dependencies,
         variation_type: flag.variation_type,
         allocations,
+        has_invalid_activation,
     })
 }
 
@@ -153,6 +182,12 @@ fn compile_allocation(
         key: allocation.key,
         start_at: allocation.start_at,
         end_at: allocation.end_at,
+        randomization_activated_at: allocation
+            .randomization_activated_at
+            .and_then(|activation| match activation {
+                TryParse::Parsed(timestamp) => Some(timestamp.0),
+                TryParse::ParseFailed(_) => None,
+            }),
         rules: allocation.rules.unwrap_or_default(),
         splits,
         do_log: allocation.do_log,
