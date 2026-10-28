@@ -5,8 +5,8 @@ use crate::log::{MULTI_LOG_FILTER, MULTI_LOG_WRITER, TemporarilyRetainedMapStats
 use crate::service::{
     ApplicationConfig, ConnectionSessionHandle, ContextDD, EvpTransportConfigWithIdentity,
     FfeFlagEvaluationBatch, FfeTelemetryContext, FlagEvalEventContext, InstanceId,
-    SerializedTracerHeaderTags, SessionConfig, SidecarAction, SidecarFlushOptions,
-    SidecarInterface,
+    MAX_FIELD_LENGTH, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
+    SidecarFlushOptions, SidecarInterface,
     application::ActiveApplication,
     connection_session::ConnectionSession,
     dogstatsd_pool::DogStatsDPool,
@@ -234,10 +234,19 @@ impl ConnectionSidecarHandler {
         let Some(app) = self.application.app.as_ref() else {
             return;
         };
+        let config = &app.config;
+        // Bound identity before copying it into the batch, each row, and aggregation keys.
+        // Keep counts unattributed rather than copying or truncating oversized identities.
+        if [&config.service_name, &config.env_name, &config.app_version]
+            .into_iter()
+            .any(|field| field.chars().nth(MAX_FIELD_LENGTH).is_some())
+        {
+            return;
+        }
         batch.context = FfeTelemetryContext {
-            service: app.config.service_name.clone(),
-            env: app.config.env_name.clone(),
-            version: app.config.app_version.clone(),
+            service: config.service_name.clone(),
+            env: config.env_name.clone(),
+            version: config.app_version.clone(),
         };
         if batch.context.service.is_empty() {
             return;
@@ -265,9 +274,7 @@ impl ConnectionSidecarHandler {
             info!("Dropping actions sent on a connection without configuration");
             return;
         };
-        let connection_metric_registrations = self.metric_registrations.clone();
         let trace_config = &session.tracer_config;
-        let runtime_metadata = session.runtime_metadata();
         let instance_id = &session.instance_id;
         let evp_transport = session.get_evp_transport(evp_proxy::EVENT_PLATFORM_INTAKE_SUBDOMAIN);
         let explicit_evp_transport =
@@ -297,7 +304,9 @@ impl ConnectionSidecarHandler {
                     None
                 }
                 SidecarAction::FfeFlagEvaluationBatch(mut batch) => {
-                    self.attach_flagevaluation_application(&mut batch);
+                    if target.is_none() {
+                        self.attach_flagevaluation_application(&mut batch);
+                    }
                     if let Some(transport) = explicit_evp_transport.clone() {
                         self.server.ffe_flagevaluation_coalescer.enqueue_with_transport(
                             ffe_http_client.clone(),
@@ -354,6 +363,7 @@ impl ConnectionSidecarHandler {
             return;
         };
         let (service, env) = (service.as_str(), env.as_str());
+        let runtime_metadata = session.runtime_metadata();
 
         {
             let process_tags = session.process_tags_with_svc_source();
@@ -391,7 +401,7 @@ impl ConnectionSidecarHandler {
             for action in &actions {
                 if let SidecarAction::AddTelemetryMetricPoint((name, _, _)) = action {
                     if !telemetry.telemetry_metrics.contains_key(name) {
-                        if let Some(metric) = connection_metric_registrations.get(name) {
+                        if let Some(metric) = self.metric_registrations.get(name) {
                             telemetry.register_metric(metric.clone());
                         }
                     }
@@ -1890,6 +1900,220 @@ mod tests {
         {
             assert!(error.is_cancelled(), "server task panicked: {error}");
         }
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn flagevaluation_application_identity_is_bounded_before_copying() {
+        let mut handler = test_handler(SidecarServer::default());
+        for character in ["a", "é"] {
+            for (length, attributed) in [(256, true), (257, false)] {
+                let value = character.repeat(length);
+                for application in [
+                    test_application(&value),
+                    ApplicationConfig {
+                        env_name: value.clone(),
+                        ..test_application("svc")
+                    },
+                    ApplicationConfig {
+                        app_version: value.clone(),
+                        ..test_application("svc")
+                    },
+                ] {
+                    handler.set_application(Some(application.clone()), 0).await;
+                    let mut batch = ffe_flag_evaluation_batch();
+                    batch.context = FfeTelemetryContext::default();
+                    handler.attach_flagevaluation_application(&mut batch);
+                    if attributed {
+                        assert_eq!(batch.context.service, application.service_name);
+                        assert_eq!(batch.context.env, application.env_name);
+                        assert_eq!(batch.context.version, application.app_version);
+                        assert_eq!(
+                            batch.flag_evaluations[0]
+                                .context
+                                .as_ref()
+                                .unwrap()
+                                .dd
+                                .as_ref()
+                                .unwrap()
+                                .service,
+                            application.service_name,
+                        );
+                    } else {
+                        assert_eq!(batch.context, FfeTelemetryContext::default());
+                        assert!(batch.flag_evaluations[0].context.is_none());
+                    }
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn flagevaluation_oversized_identity_preserves_counts_across_batches() {
+        let http = MockServer::start_async().await;
+        let output = http
+            .mock_async(|when, then| {
+                when.method(POST).path(EVP_FLAGEVALUATION_PATH).json_body(serde_json::json!({
+                "context": {},
+                "flagEvaluations": [{"timestamp": 123, "flag": {"key": "flag"},
+                    "first_evaluation": 100, "last_evaluation": 123, "evaluation_count": 32}]
+            }));
+                then.status(202);
+            })
+            .await;
+        let mut handler = test_handler(SidecarServer::default());
+        configure_session(&handler, InstanceId::new("session", "runtime"), |session| {
+            set_trace_endpoint(session, http.url("/"));
+        });
+        handler
+            .set_application(Some(test_application(&"s".repeat(257))), 0)
+            .await;
+        let mut batch = ffe_flag_evaluation_batch();
+        batch.context = FfeTelemetryContext::default();
+        let mut large_batch = batch.clone();
+        large_batch.flag_evaluations = vec![batch.flag_evaluations[0].clone(); 16];
+        handler
+            .enqueue_actions(vec![SidecarAction::FfeFlagEvaluationBatch(large_batch)])
+            .await;
+        for _ in 0..16 {
+            handler
+                .enqueue_actions(vec![SidecarAction::FfeFlagEvaluationBatch(batch.clone())])
+                .await;
+        }
+        handler
+            .flush(SidecarFlushOptions {
+                flag_evaluations: true,
+                ..Default::default()
+            })
+            .await;
+        output.assert_calls_async(1).await;
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn flagevaluation_fill_skips_degraded_rows_and_replaces_empty_service() {
+        let mut handler = test_handler(SidecarServer::default());
+        handler
+            .set_application(Some(test_application("checkout")), 0)
+            .await;
+        let mut batch = ffe_flag_evaluation_batch();
+        batch.context = FfeTelemetryContext::default();
+        let mut degraded = batch.flag_evaluations[0].clone();
+        degraded.is_degraded = true;
+        batch.flag_evaluations[0].context = Some(FlagEvalEventContext {
+            evaluation: None,
+            dd: Some(ContextDD {
+                service: String::new(),
+            }),
+        });
+        batch.flag_evaluations.push(degraded);
+        handler.attach_flagevaluation_application(&mut batch);
+        // Check before normalization, which also clears degraded context.
+        assert!(batch.flag_evaluations[1].context.is_none());
+        assert_eq!(
+            batch.flag_evaluations[0]
+                .context
+                .as_ref()
+                .unwrap()
+                .dd
+                .as_ref()
+                .unwrap()
+                .service,
+            "checkout",
+        );
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn flagevaluation_empty_application_service_only_attributes_the_batch() {
+        let http = MockServer::start_async().await;
+        let output = http
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path(EVP_FLAGEVALUATION_PATH)
+                    .json_body(serde_json::json!({
+                        "context": {"env": "prod"},
+                        "flagEvaluations": [{"timestamp": 123, "flag": {"key": "flag"},
+                            "first_evaluation": 100, "last_evaluation": 123, "evaluation_count": 2}]
+                    }));
+                then.status(202);
+            })
+            .await;
+        let mut handler = test_handler(SidecarServer::default());
+        configure_session(&handler, InstanceId::new("session", "runtime"), |session| {
+            set_trace_endpoint(session, http.url("/"));
+        });
+        handler
+            .set_application(
+                Some(ApplicationConfig {
+                    env_name: "prod".into(),
+                    ..test_application("")
+                }),
+                0,
+            )
+            .await;
+        for context in [
+            FfeTelemetryContext::default(),
+            FfeTelemetryContext {
+                env: "prod".into(),
+                ..Default::default()
+            },
+        ] {
+            let mut batch = ffe_flag_evaluation_batch();
+            batch.context = context;
+            handler
+                .enqueue_actions(vec![SidecarAction::FfeFlagEvaluationBatch(batch)])
+                .await;
+        }
+        handler
+            .flush(SidecarFlushOptions {
+                flag_evaluations: true,
+                ..Default::default()
+            })
+            .await;
+        output.assert_calls_async(1).await;
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn flagevaluation_for_explicit_service_is_not_attributed_to_the_connection() {
+        let http = MockServer::start_async().await;
+        let output = http
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path(EVP_FLAGEVALUATION_PATH)
+                    .json_body(serde_json::json!({
+                        "context": {},
+                        "flagEvaluations": [{"timestamp": 123, "flag": {"key": "flag"},
+                            "first_evaluation": 100, "last_evaluation": 123, "evaluation_count": 1}]
+                    }));
+                then.status(202);
+            })
+            .await;
+        let mut handler = test_handler(SidecarServer::default());
+        configure_session(&handler, InstanceId::new("session", "runtime"), |session| {
+            set_trace_endpoint(session, http.url("/"));
+        });
+        handler
+            .set_application(Some(test_application("checkout")), 0)
+            .await;
+        let mut batch = ffe_flag_evaluation_batch();
+        batch.context = FfeTelemetryContext::default();
+        handler
+            .enqueue_actions_for_service(
+                "billing".into(),
+                "staging".into(),
+                vec![SidecarAction::FfeFlagEvaluationBatch(batch)],
+            )
+            .await;
+        handler
+            .flush(SidecarFlushOptions {
+                flag_evaluations: true,
+                ..Default::default()
+            })
+            .await;
+        output.assert_calls_async(1).await;
     }
 
     #[tokio::test]

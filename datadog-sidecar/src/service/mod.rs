@@ -175,6 +175,9 @@ pub enum SidecarAction {
     /// and application version from this connection's current application before coalescing.
     /// It also fills missing per-event `context.dd.service` on non-degraded rows. Explicit
     /// context is preserved; without a registered application the batch remains unattributed.
+    /// If any application identity field exceeds [`MAX_FIELD_LENGTH`] characters, the batch
+    /// remains unattributed and its evaluation counts are preserved. Batches submitted through
+    /// `enqueue_actions_for_service` do not inherit the connection's application identity.
     /// Send application updates before evaluations, using the sender's normal state ordering.
     ///
     /// Keep this appended after pre-existing variants: this enum crosses the
