@@ -209,7 +209,7 @@ pub(crate) fn mmap_handle<T: FileBackedHandle>(handle: T) -> io::Result<MappedMe
     let reserved = MAPPING_RESERVED_SIZE.max(page_aligned_size(size.get()));
     #[allow(clippy::unwrap_used)] // a max() with a non-zero constant is non-zero
     let reserve = NonZeroUsize::new(reserved).unwrap();
-    Ok(MappedMem {
+    let mapped = MappedMem {
         ptr: unsafe {
             mmap(
                 None,
@@ -225,7 +225,19 @@ pub(crate) fn mmap_handle<T: FileBackedHandle>(handle: T) -> io::Result<MappedMe
         // until something commits it.
         usable: AtomicUsize::new(size.get().min(reserved)),
         mem: handle,
-    })
+    };
+    // Dumping sparse shared files can fault their entire capacity into RAM. Omit IPC
+    // contents, including the reserved tail, while retaining ordinary heap and stacks.
+    #[cfg(target_os = "linux")]
+    // SAFETY: these are the address and full length of the mapping just created above.
+    if unsafe { libc::madvise(mapped.ptr.as_ptr(), mapped.mapped_len, libc::MADV_DONTDUMP) } != 0 {
+        // Best effort: a host may restrict madvise without preventing ordinary IPC.
+        tracing::debug!(
+            "Could not exclude IPC mapping from core dump: {}",
+            io::Error::last_os_error()
+        );
+    }
+    Ok(mapped)
 }
 
 pub(crate) fn munmap_handle<T: MemoryHandle>(mapped: &mut MappedMem<T>) {

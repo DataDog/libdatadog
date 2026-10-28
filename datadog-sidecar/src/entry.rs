@@ -191,6 +191,8 @@ where
     // The listener can also exit on a signal or an error. Its cancellation callback
     // must not run later against a closed (and potentially reused) listener handle.
     idle_shutdown.abort();
+    listener_result?;
+
     // Wait for the drained connections independently of the watchdog. Outgoing work can
     // still hold substantial memory after the listener and the last client have closed.
     drop(shutdown_complete_tx);
@@ -203,7 +205,7 @@ where
     drop(watchdog_shutdown_tx);
     _ = telemetry_handle.await;
 
-    listener_result
+    Ok(())
 }
 
 struct ConnectionActivity {
