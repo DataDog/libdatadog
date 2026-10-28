@@ -20,7 +20,8 @@
 //! Because `PIPE_READMODE_MESSAGE` delivers the entire message in one `ReadFile` call, the
 //! receiver can read directly into the caller-provided buffer, then strip the suffix in-place -
 //! no intermediate copy needed.  The caller's buffer must have at least `HANDLE_SUFFIX_SIZE`
-//! bytes beyond the maximum expected payload size.
+//! bytes beyond the maximum expected payload size. [`recv_raw_async`] instead reads into a small
+//! buffer and continues into a larger one when a message doesn't fit (`ERROR_MORE_DATA`).
 
 mod reader;
 mod writer;
@@ -76,9 +77,12 @@ pub const HANDLE_SUFFIX_SIZE: usize = 4 + 8 * MAX_FDS;
 /// before binding a listener or creating a socketpair.
 static PIPE_BUFFER_SIZE: AtomicUsize = AtomicUsize::new(4 * 1024 * 1024 + HANDLE_SUFFIX_SIZE);
 
-/// Maximum IPC message payload size, equal to the pipe buffer minus the handle suffix.
+/// Maximum IPC message payload size, equal to the pipe buffer minus the handle suffix (zero if
+/// the pipe buffer is smaller than the suffix).
 pub fn max_message_size() -> usize {
-    PIPE_BUFFER_SIZE.load(Ordering::Relaxed) - HANDLE_SUFFIX_SIZE
+    PIPE_BUFFER_SIZE
+        .load(Ordering::Relaxed)
+        .saturating_sub(HANDLE_SUFFIX_SIZE)
 }
 
 /// Set the named-pipe send/receive buffer size used for all future [`SeqpacketListener::bind`]
@@ -888,37 +892,42 @@ impl SeqpacketListener {
     }
 }
 
-/// Async receive on a Windows named pipe IPC connection.
+/// Size of the per-thread buffer of [`recv_raw_async`]. Larger messages get a buffer of their
+/// own for the time it takes to decode them.
+const RECV_BUF_SIZE: usize = 64 * 1024;
+
+thread_local! {
+    /// Reusable receive buffer of [`recv_raw_async`], allocated on first use.
+    static RECV_BUF: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Bytes currently allocated for this thread's [`recv_raw_async`] buffer.
+#[cfg(test)]
+fn recv_buf_capacity() -> usize {
+    RECV_BUF.with_borrow(|buf| buf.capacity())
+}
+
+/// Async receive on a Windows named pipe IPC connection: receive one IPC message and decode it
+/// in-place using the supplied callback.
 ///
-/// Uses `block_in_place` + raw `ReadFile` to avoid mio's 4 KB internal read-
-/// buffer limit.  For message-mode pipes a single `ReadFile` delivers the
-/// entire message.
-/// Receive one IPC message and decode it in-place using the supplied callback.
-///
-/// Uses a thread-local buffer sized to `max_message_size() + HANDLE_SUFFIX_SIZE` so that
-/// the per-call heap allocation for the receive buffer is eliminated once the thread-local
-/// has grown to full size.  `decode` is called synchronously inside `block_in_place` with
-/// a slice of the received bytes before the buffer is made available for the next receive.
+/// Uses `block_in_place` + raw `ReadFile` to avoid mio's 4 KB internal read-buffer limit.
+/// Messages are read into a small thread-local buffer. When one doesn't fit (`ERROR_MORE_DATA`),
+/// the rest is read into a buffer sized for that message, freed once decoded. Messages beyond
+/// `max_message_size() + HANDLE_SUFFIX_SIZE` bytes fail with `ERROR_MORE_DATA`. `decode` is
+/// called synchronously inside `block_in_place` with a slice of the received payload.
 pub async fn recv_raw_async<F, T>(conn: &AsyncConn, decode: F) -> io::Result<(T, Vec<OwnedHandle>)>
 where
     F: FnOnce(&[u8]) -> T,
 {
-    thread_local! {
-        /// Reusable receive buffer. Grows on first use; never shrinks.
-        static RECV_BUF: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
-    }
     let raw = conn.as_raw_handle() as HANDLE;
     tokio::task::block_in_place(|| {
         conn.check_write_error()?;
         RECV_BUF.with_borrow_mut(|buf| {
-            let size = max_message_size() + HANDLE_SUFFIX_SIZE;
-            if buf.len() < size {
-                buf.resize(size, 0u8);
+            if buf.len() < RECV_BUF_SIZE {
+                buf.resize(RECV_BUF_SIZE, 0u8);
             }
-            match conn.reader.read(raw, buf, true) {
-                Err(e) => Err(e),
-                Ok((payload_len, handles)) => Ok((decode(&buf[..payload_len]), handles)),
-            }
+            let max_wire = max_message_size().saturating_add(HANDLE_SUFFIX_SIZE);
+            conn.reader.recv(raw, buf, max_wire, decode)
         })
     })
 }
@@ -931,4 +940,66 @@ where
 /// bypass mio.
 pub async fn send_raw_async(conn: &AsyncConn, data: Vec<u8>) -> io::Result<()> {
     tokio::task::block_in_place(|| conn.writer()?.send(data, &[], conn.peer_pid, true))
+}
+
+#[cfg(test)]
+mod pipe_buffer_tests {
+    use super::*;
+
+    fn patterned(len: usize) -> Vec<u8> {
+        (0..len).map(|i| (i % 251) as u8).collect()
+    }
+
+    /// The server's per-thread receive buffer must not be a full-size (4 MiB) allocation held
+    /// forever: small messages keep it small, and a message beyond it, within
+    /// `max_message_size()`, is received intact with its handles, its buffer released once
+    /// decoded.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn recv_buffer_stays_small() {
+        let (server, client) = SeqpacketConn::socketpair().unwrap();
+        for i in 0..10u8 {
+            client.send_raw_blocking(vec![i; 100], &[]).unwrap();
+            let (payload, handles) = recv_raw_async(&server, |b| b.to_vec()).await.unwrap();
+            assert_eq!(payload, vec![i; 100]);
+            assert!(handles.is_empty());
+        }
+        let capacity = recv_buf_capacity();
+        assert!(
+            capacity <= RECV_BUF_SIZE,
+            "receive buffer holds {capacity} bytes after small messages only"
+        );
+
+        let event = unsafe { CreateEventA(null(), 1, 0, null()) };
+        assert_ne!(event, 0);
+        let event = unsafe { OwnedHandle::from_raw_handle(event as RawHandle) };
+        let len = 1024 * 1024;
+        assert!(len <= max_message_size());
+        let expected = patterned(len);
+        let sender = std::thread::spawn({
+            let data = expected.clone();
+            let raw = event.as_raw_handle() as usize;
+            move || {
+                client
+                    .send_raw_blocking(data, &[raw as RawHandle])
+                    .map(|()| client)
+            }
+        });
+        let (received, handles) = recv_raw_async(&server, |b| b == expected.as_slice())
+            .await
+            .unwrap();
+        let _client = sender.join().unwrap().unwrap();
+        assert!(received, "large message corrupted");
+        assert_eq!(handles.len(), 1);
+        // The received handle is a duplicate of `event`.
+        assert_ne!(unsafe { SetEvent(handles[0].as_raw_handle() as HANDLE) }, 0);
+        assert_eq!(
+            unsafe { WaitForSingleObject(event.as_raw_handle() as HANDLE, 0) },
+            WAIT_OBJECT_0
+        );
+        let capacity = recv_buf_capacity();
+        assert!(
+            capacity <= RECV_BUF_SIZE,
+            "receive buffer holds {capacity} bytes after a {len}-byte message"
+        );
+    }
 }
