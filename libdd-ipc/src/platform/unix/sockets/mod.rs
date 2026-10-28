@@ -472,6 +472,12 @@ impl SeqpacketConn {
         // unix_dgram_sendmsg() rejects messages larger than sk_sndbuf - 32 with EMSGSIZE.
         #[cfg(target_os = "linux")]
         let size = size - 32;
+        // macOS queues a datagram on the receiving socket along with a 16-byte record of the
+        // sender's address, and fails the send with ENOBUFS when both don't fit in its receive
+        // buffer. Both ends of a connection get the same buffer size (see `set_dgram_buffers`),
+        // so the largest datagram is 16 bytes smaller than our send buffer.
+        #[cfg(target_os = "macos")]
+        let size = size - 16;
         usize::try_from(size).unwrap_or(0).min(max_message_size())
     }
 
