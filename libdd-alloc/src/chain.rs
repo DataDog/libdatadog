@@ -66,7 +66,10 @@ impl<A: Allocator> ChainNode<A> {
     }
 }
 
-unsafe impl<A: Allocator + Clone> Send for ChainAllocator<A> {}
+// SAFETY: the allocator (and the chain of chunks it manages) may be moved to
+// and used on another thread, which requires the inner allocator `A` to be
+// `Send` as well.
+unsafe impl<A: Allocator + Clone + Send> Send for ChainAllocator<A> {}
 
 impl<A: Allocator> ChainNode<A> {
     fn remaining_capacity(&self) -> usize {

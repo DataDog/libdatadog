@@ -85,14 +85,11 @@ impl fmt::Debug for ThinStr<'_> {
 // arena/storage remains alive. The caller must ensure the arena outlives all
 // ThinStr references. This is the design trade-off for better performance
 // than individual reference counting.
-unsafe impl<T: Copy> Send for ThinPtr<T> {}
-unsafe impl<T: Copy> Sync for ThinPtr<T> {}
+unsafe impl<T: Copy + Send> Send for ThinPtr<T> {}
+unsafe impl<T: Copy + Send + Sync> Sync for ThinPtr<T> {}
 
-unsafe impl<T: Copy> Send for ThinSlice<'_, T> {}
-unsafe impl<T: Copy> Sync for ThinSlice<'_, T> {}
-
-unsafe impl Send for ThinStr<'_> {}
-unsafe impl Sync for ThinStr<'_> {}
+unsafe impl<T: Copy + Send> Send for ThinSlice<'_, T> {}
+unsafe impl<T: Copy + Send + Sync> Sync for ThinSlice<'_, T> {}
 
 impl ThinStr<'static> {
     pub const fn new() -> ThinStr<'static> {
