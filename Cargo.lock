@@ -3000,7 +3000,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-dogstatsd-client"
-version = "9.0.0"
+version = "9.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
