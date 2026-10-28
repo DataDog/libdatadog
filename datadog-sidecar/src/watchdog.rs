@@ -44,6 +44,7 @@ impl Watchdog {
     }
 
     pub fn spawn_watchdog(mut self, server: SidecarServer) -> WatchdogHandle {
+        let mut memory = ProcessMemory::new();
         let mem_usage_bytes = Arc::new(AtomicUsize::new(0));
         let handle_mem_usage_bytes = mem_usage_bytes.clone();
 
@@ -102,9 +103,10 @@ impl Watchdog {
                     _ = self.interval.tick() => {
                         still_alive.fetch_add(1, Ordering::Relaxed);
 
-                        let current_mem_usage_bytes = memory_stats::memory_stats()
-                        .map(|s| s.physical_mem)
-                        .unwrap_or(0);
+                        let Some(current_mem_usage_bytes) = memory.resident_bytes() else {
+                            error!("Could not read sidecar memory usage");
+                            continue;
+                        };
                         mem_usage_bytes.store(current_mem_usage_bytes, Ordering::Relaxed);
 
                         if current_mem_usage_bytes > self.max_memory_usage_bytes {
@@ -132,5 +134,72 @@ impl Watchdog {
             handle: join_handle.map(Result::ok).boxed().shared(),
             mem_usage_bytes: handle_mem_usage_bytes,
         }
+    }
+}
+
+#[cfg(target_os = "linux")]
+struct ProcessMemory {
+    statm: Option<std::fs::File>,
+    page_size: Option<usize>,
+}
+
+#[cfg(not(target_os = "linux"))]
+struct ProcessMemory;
+
+impl ProcessMemory {
+    #[cfg(target_os = "linux")]
+    fn new() -> Self {
+        Self {
+            // Keep the descriptor: trace buffers can exhaust the descriptor table later.
+            statm: std::fs::File::open("/proc/self/statm").ok(),
+            page_size: usize::try_from(unsafe { libc::sysconf(libc::_SC_PAGESIZE) })
+                .ok()
+                .filter(|size| *size > 0),
+        }
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn new() -> Self {
+        Self
+    }
+
+    #[cfg(target_os = "linux")]
+    fn resident_bytes(&mut self) -> Option<usize> {
+        if let Some(bytes) = self.statm_resident_bytes() {
+            return Some(bytes);
+        }
+
+        // getrusage needs no descriptor. Its peak RSS is a conservative fallback if /proc
+        // is unavailable, including when the descriptor table was already full at startup.
+        let mut usage = std::mem::MaybeUninit::<libc::rusage>::uninit();
+        if unsafe { libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) } != 0 {
+            return None;
+        }
+        let peak_kib = usize::try_from(unsafe { usage.assume_init() }.ru_maxrss).ok()?;
+        tracing::warn!("Could not read current sidecar RSS; using peak RSS from getrusage");
+        peak_kib.checked_mul(1024)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn statm_resident_bytes(&mut self) -> Option<usize> {
+        use std::os::unix::fs::FileExt;
+
+        if self.statm.is_none() {
+            self.statm = std::fs::File::open("/proc/self/statm").ok();
+        }
+        let mut buffer = [0; 128];
+        let len = self.statm.as_ref()?.read_at(&mut buffer, 0).ok()?;
+        let resident_pages: usize = std::str::from_utf8(&buffer[..len])
+            .ok()?
+            .split_ascii_whitespace()
+            .nth(1)?
+            .parse()
+            .ok()?;
+        resident_pages.checked_mul(self.page_size?)
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn resident_bytes(&mut self) -> Option<usize> {
+        memory_stats::memory_stats().map(|stats| stats.physical_mem)
     }
 }
