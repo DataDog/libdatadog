@@ -131,17 +131,16 @@ impl SeqpacketListener {
     /// Silently discards messages without SCM_RIGHTS (liveness probes from `is_listening`).
     pub fn try_accept(&self) -> io::Result<SeqpacketConn> {
         loop {
-            // Use an 8-byte buffer rather than 1 byte: macOS SOCK_DGRAM uses
-            // non-truncating semantics and returns EMSGSIZE if the data doesn't
-            // fit, even for fractionally larger-than-expected payloads.
+            // Use an 8-byte buffer rather than 1 byte: `recvmsg_raw` rejects a datagram
+            // that doesn't fit with EMSGSIZE, even a fractionally larger-than-expected one.
             let mut buf = [0u8; 8];
             let (_, owned_fds) = match super::recvmsg_raw(
                 self.inner.as_raw_fd(),
                 &mut buf,
                 MsgFlags::MSG_DONTWAIT,
             ) {
-                // macOS SOCK_DGRAM returns EMSGSIZE when the received datagram exceeds
-                // the caller's iov or cmsg buffer — the kernel discards the message.
+                // `recvmsg_raw` returns EMSGSIZE when the kernel truncated the datagram to
+                // the buffer, discarding the rest and closing the fds received with it.
                 // Treat it as a discarded handshake: log and continue so the accept loop
                 // does not die. The client will retry via the reconnect mechanism.
                 Err(ref e) if e.raw_os_error() == Some(libc::EMSGSIZE) => {
