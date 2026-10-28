@@ -3606,7 +3606,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-utils"
-version = "15.0.0"
+version = "15.1.0"
 dependencies = [
  "allocator-api2",
  "anyhow",
