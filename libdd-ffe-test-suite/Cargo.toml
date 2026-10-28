@@ -30,3 +30,8 @@ path = "benches/eval.rs"
 # I am planning to fix each crate as an individual PR in order to not have 
 # too many conflicts
 collapsible_if = "allow"
+
+[[bench]]
+name = "dependent-flags"
+harness = false
+path = "benches/dependent_flags.rs"
