@@ -1,0 +1,54 @@
+id: unsafe-fn-missing-safety-doc
+snapshots:
+  "/// Does a thing with pointers.\npub unsafe fn no_safety_section(x: *mut u8) -> u8 {\n    unsafe { *x }\n}\n":
+    labels:
+    - source: |-
+        pub unsafe fn no_safety_section(x: *mut u8) -> u8 {
+            unsafe { *x }
+        }
+      style: primary
+      start: 32
+      end: 103
+    - source: unsafe
+      style: secondary
+      start: 36
+      end: 42
+  "pub unsafe fn direct_unsafe_fn(x: *mut u8) -> u8 {\n    unsafe { *x }\n}\n":
+    labels:
+    - source: |-
+        pub unsafe fn direct_unsafe_fn(x: *mut u8) -> u8 {
+            unsafe { *x }
+        }
+      style: primary
+      start: 0
+      end: 70
+    - source: unsafe
+      style: secondary
+      start: 4
+      end: 10
+  "pub(crate) unsafe fn crate_visible_no_doc(x: *mut u8) -> u8 {\n    unsafe { *x }\n}\n":
+    labels:
+    - source: |-
+        pub(crate) unsafe fn crate_visible_no_doc(x: *mut u8) -> u8 {
+            unsafe { *x }
+        }
+      style: primary
+      start: 0
+      end: 81
+    - source: unsafe
+      style: secondary
+      start: 11
+      end: 17
+  "unsafe fn private_unsafe_fn_no_doc(x: *mut u8) -> u8 {\n    unsafe { *x }\n}\n":
+    labels:
+    - source: |-
+        unsafe fn private_unsafe_fn_no_doc(x: *mut u8) -> u8 {
+            unsafe { *x }
+        }
+      style: primary
+      start: 0
+      end: 74
+    - source: unsafe
+      style: secondary
+      start: 0
+      end: 6

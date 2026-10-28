@@ -1,0 +1,74 @@
+id: unsafe-block-missing-safety-comment
+language: rust
+severity: warning
+message: >-
+  `unsafe` block is missing a `// SAFETY:` comment explaining why the
+  operation is sound. Add a `// SAFETY: <justification>` comment on the
+  line directly above the statement (attributes may sit in between).
+note: |
+  This repo's convention (see libdd-common-ffi/src/handle.rs) is a
+  `// SAFETY:` comment immediately above an `unsafe { ... }` block
+  explaining the invariants the caller/author is relying on. An empty
+  or unrelated comment does not count; the comment must start with
+  `SAFETY:` and have content after it.
+
+  This rule only looks at the line directly above the block's enclosing
+  statement (an expression statement or a `let` binding), matching how
+  safety comments are written in this codebase today. A comment higher
+  up, or one attached to a different sibling, does not satisfy it.
+
+  Limitation: when the `unsafe` block sits inside a larger expression
+  that is not itself a bare statement or `let` binding (e.g. a function
+  call argument like `foo(unsafe { .. })`), the rule checks the comment
+  immediately above the `unsafe` block itself rather than above the
+  enclosing statement. Pulling such a block into its own `let` binding
+  with a safety comment above it is the simplest fix.
+
+  Severity is `warning` (non-blocking): the repo currently has existing
+  `unsafe` blocks without a safety comment. See AGENTS.md "Reliability
+  & integrability".
+files:
+  - "**/*.rs"
+ignores:
+  - "**/tests/**"
+  - "**/examples/**"
+rule:
+  any:
+    # Form 1: `unsafe { ... }` (or `let x = unsafe { ... };`) as its own
+    # statement. Check the comment directly above the statement.
+    - all:
+        - any:
+            - kind: expression_statement
+            - kind: let_declaration
+        - has:
+            kind: unsafe_block
+        - not:
+            follows:
+              stopBy:
+                not:
+                  any:
+                    - kind: attribute_item
+                    - kind: line_comment
+              kind: line_comment
+              regex: "^//\\s*SAFETY:\\s*\\S"
+    # Form 2: `unsafe { ... }` nested inside a larger expression (match
+    # arm, function argument, tail expression, etc.) that is not itself
+    # wrapped in one of the statement kinds above. Check the comment
+    # directly above the unsafe block itself.
+    - all:
+        - kind: unsafe_block
+        - not:
+            inside:
+              stopBy: neighbor
+              any:
+                - kind: expression_statement
+                - kind: let_declaration
+        - not:
+            follows:
+              stopBy:
+                not:
+                  any:
+                    - kind: attribute_item
+                    - kind: line_comment
+              kind: line_comment
+              regex: "^//\\s*SAFETY:\\s*\\S"
