@@ -131,10 +131,6 @@ impl<S: SetOps, const N: usize> Sharded<S, N> {
     }
 }
 
-// SAFETY: relies on safety requirements of `SetOps`.
-unsafe impl<S: SetOps, const N: usize> Send for Sharded<S, N> {}
-unsafe impl<S: SetOps, const N: usize> Sync for Sharded<S, N> {}
-
 unsafe impl<T: Hash + Eq + 'static> SetOps for Set<T> {
     type Lookup<'a> = &'a T;
     type Owned<'a> = T;

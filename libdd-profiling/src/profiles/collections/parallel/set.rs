@@ -116,12 +116,12 @@ impl<T: hash::Hash + Eq + 'static, const N: usize> ParallelSet<T, N> {
     }
 }
 
-// SAFETY: uses `RwLock<Set<T>>` to synchronize access. All reads/writes in
-// this wrapper go through those locks. All non-mut methods of
-// `ParallelSetStorage` and `Set` are safe to call under a read-lock, and all
-// mut methods are safe to call under a write-lock.
-unsafe impl<T: hash::Hash + Eq + 'static, const N: usize> Send for ParallelSet<T, N> {}
-unsafe impl<T: hash::Hash + Eq + 'static, const N: usize> Sync for ParallelSet<T, N> {}
+// SAFETY: This type wraps an `Arc`, so the same requirements are propagated. `T: Send` is required
+// because stored values may be moved to and dropped on other threads. Similarly, `T: Sync` is
+// required because stored values can be read through shared references from any thread holding a
+// handle.
+unsafe impl<T: hash::Hash + Eq + Send + Sync + 'static, const N: usize> Send for ParallelSet<T, N> {}
+unsafe impl<T: hash::Hash + Eq + Send + Sync + 'static, const N: usize> Sync for ParallelSet<T, N> {}
 
 #[cfg(test)]
 mod tests {
