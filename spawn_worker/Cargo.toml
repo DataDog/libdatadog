@@ -56,5 +56,8 @@ tempfile.workspace = true
 [target.'cfg(not(windows))'.dev-dependencies]
 rlimit.workspace = true
 
+[lints.clippy]
+collapsible_if = "allow"
+
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage,coverage_nightly)'] }
