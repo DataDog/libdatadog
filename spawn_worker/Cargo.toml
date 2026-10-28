@@ -21,7 +21,7 @@ fastrand = { workspace = true, features = ["std"] }
 libc.workspace = true
 
 [build-dependencies]
-cc_utils = { path = "../tools/cc_utils" }
+cc.workspace = true
 
 # allow(workspace-deps): this crate is still on the windows 0.51 bindings,
 # while the workspace entry tracks 0.59 for the crashtracker crates. Moving
@@ -55,6 +55,9 @@ tempfile.workspace = true
 
 [target.'cfg(not(windows))'.dev-dependencies]
 rlimit.workspace = true
+
+[lints.clippy]
+collapsible_if = "allow"
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage,coverage_nightly)'] }

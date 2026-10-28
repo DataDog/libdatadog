@@ -1,0 +1,12 @@
+{
+  "$schema": "../../../../schema/gateway-request-metric-fixture.schema.json",
+  "profile": "trajectory.gen_ai.gateway.request@0.1.0",
+  "case": "embeddings-duration-negative",
+  "description": "Order of checks: embeddings is an operation of the profile, so the next check, the duration, decides.",
+  "observation": {
+    "operation_name": "embeddings",
+    "duration_seconds": -1
+  },
+  "expected_error_code": "duration_invalid",
+  "expected_error": "duration_seconds must be"
+}

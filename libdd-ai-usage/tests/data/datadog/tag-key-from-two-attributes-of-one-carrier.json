@@ -1,0 +1,43 @@
+{
+  "binding": "0.1.0",
+  "case": "tag-key-from-two-attributes-of-one-carrier",
+  "description": "The point carries service.name beside an attribute named service, and the resource carries host.name beside an attribute named host. Each pair gives one tag key. The attribute the binding renames is used and the other is not submitted: service is the value of service.name, and host is the value of host.name.",
+  "profile": "gen_ai.client.provider_attempt@0.1.0",
+  "historical": false,
+  "points": [
+    {
+      "name": "gen_ai.client.inference.usage.input_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 12,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.token.modality": "unknown",
+        "service": "from-plain-name",
+        "service.name": "checkout",
+        "trajectory.observation.point": "gateway"
+      }
+    }
+  ],
+  "resource_attributes": {
+    "host": "from-plain-name",
+    "host.name": "build-17"
+  },
+  "expected_series": [
+    {
+      "name": "gen_ai.client.inference.usage.input_tokens",
+      "type": "count",
+      "value": 12,
+      "tags": [
+        "gen_ai.operation.name:chat",
+        "gen_ai.provider.name:exampleai",
+        "gen_ai.token.modality:unknown",
+        "host:build-17",
+        "service:checkout",
+        "trajectory.observation.point:gateway",
+        "trajectory.profile:gen_ai.client.provider_attempt/0.1.0"
+      ]
+    }
+  ]
+}

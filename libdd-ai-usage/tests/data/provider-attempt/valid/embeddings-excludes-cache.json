@@ -1,0 +1,55 @@
+{
+  "$schema": "../../../../schema/provider-attempt-metric-fixture.schema.json",
+  "profile": "gen_ai.client.provider_attempt@0.1.0",
+  "case": "embeddings-excludes-cache",
+  "description": "Embeddings with excludes_cache and no cache part. For embeddings an absent cache part counts as zero, so the inclusive input is 50 and no issue is raised. Before this rule the 50 tokens were dropped with no issue.",
+  "observation": {
+    "operation_name": "embeddings",
+    "provider_name": "openai",
+    "request_model": "text-embedding-3-small",
+    "duration_seconds": 1,
+    "streaming": false,
+    "input_tokens": 50,
+    "input_basis": "excludes_cache",
+    "observation_point": "gateway"
+  },
+  "expected_metrics": [
+    {
+      "name": "gen_ai.client.inference.operation.input_tokens",
+      "instrument": "histogram",
+      "unit": "{token}",
+      "value": 50,
+      "attributes": {
+        "gen_ai.operation.name": "embeddings",
+        "gen_ai.provider.name": "openai",
+        "gen_ai.request.model": "text-embedding-3-small",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.usage.input_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 50,
+      "attributes": {
+        "gen_ai.operation.name": "embeddings",
+        "gen_ai.provider.name": "openai",
+        "gen_ai.request.model": "text-embedding-3-small",
+        "gen_ai.token.modality": "unknown",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "gen_ai.client.operation.duration",
+      "instrument": "histogram",
+      "unit": "s",
+      "value": 1,
+      "attributes": {
+        "gen_ai.operation.name": "embeddings",
+        "gen_ai.provider.name": "openai",
+        "gen_ai.request.model": "text-embedding-3-small",
+        "trajectory.observation.point": "gateway"
+      }
+    }
+  ]
+}
