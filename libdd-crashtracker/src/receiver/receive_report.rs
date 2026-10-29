@@ -101,6 +101,7 @@ pub(crate) enum StdinState {
     RuntimeStackFrame(Vec<StackFrame>),
     RuntimeStackString(Vec<String>),
     Message,
+    OtelThreadCtxPtr(Option<u64>),
 }
 
 /// A state machine that processes data from the crash-tracker collector line by
@@ -336,6 +337,40 @@ fn process_line(
         }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_WHOLE_STACKTRACE) => {
             StdinState::WholeStackTrace
+        }
+        StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_OTEL_THREAD_CTX_PTR) => {
+            StdinState::OtelThreadCtxPtr(None)
+        }
+        StdinState::OtelThreadCtxPtr(addr)
+            if line.starts_with(DD_CRASHTRACK_END_OTEL_THREAD_CTX_PTR) =>
+        {
+            #[cfg(target_os = "linux")]
+            if let Some(record_addr) = addr {
+                let tid = builder
+                    .proc_info
+                    .as_ref()
+                    .map(|p| p.tid.unwrap_or(p.pid) as i32)
+                    .unwrap_or(0);
+                let pid = builder.proc_info.as_ref().map(|p| p.pid).unwrap_or(0);
+                match crate::otel_tls_reader::read_otel_thread_context(pid, tid, record_addr) {
+                    Ok(Some(mut ctx)) => {
+                        ctx.thread_name = crate::otel_tls_reader::read_thread_name(pid, tid);
+                        let _ = builder.with_otel_thread_contexts(vec![ctx]);
+                    }
+                    Ok(None) => {}
+                    Err(e) => {
+                        let _ = builder.with_log_message(
+                            format!("Failed to read OTel thread context: {e}"),
+                            true,
+                        );
+                    }
+                }
+            }
+            StdinState::Waiting
+        }
+        StdinState::OtelThreadCtxPtr(_) => {
+            let addr = line.trim().parse::<u64>().ok();
+            StdinState::OtelThreadCtxPtr(addr)
         }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_DONE) => {
             builder.with_incomplete(false)?;

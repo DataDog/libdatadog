@@ -2854,6 +2854,7 @@ dependencies = [
  "libdd-common",
  "libdd-gotter",
  "libdd-libunwind-sys",
+ "libdd-otel-thread-ctx",
  "libdd-process-utils",
  "libdd-telemetry",
  "nix 0.29.0",

@@ -149,6 +149,9 @@ pub(crate) fn emit_crashreport(
         );
     }
 
+    #[cfg(all(target_os = "linux", feature = "otel-thread-ctx"))]
+    emit_otel_thread_ctx_ptr(pipe)?;
+
     writeln!(pipe, "{DD_CRASHTRACK_DONE}")?;
     pipe.flush()?;
     Ok(())
@@ -966,6 +969,25 @@ fn emit_text_file(w: &mut impl Write, path: &str) -> Result<(), EmitterError> {
         }
     }
     writeln!(w, "\n{DD_CRASHTRACK_END_FILE} \"{path}\"")?;
+    w.flush()?;
+    Ok(())
+}
+
+/// Emit the address of the crashing thread's OTel `ThreadContextRecord`.
+///
+/// The collector is forked from the crashing process, so its TLS is a copy of the
+/// crashing thread's TLS. `attached_record_address()` reads the inherited TLS slot
+/// to get the record's virtual address in the crashing process's address space.
+/// The receiver then reads the actual record from `/proc/<pid>/mem`.
+#[cfg(all(target_os = "linux", feature = "otel-thread-ctx"))]
+fn emit_otel_thread_ctx_ptr(w: &mut impl Write) -> Result<(), EmitterError> {
+    let addr = libdd_otel_thread_ctx::linux::attached_record_address();
+    if addr == 0 {
+        return Ok(()); // No context attached on the crashing thread.
+    }
+    writeln!(w, "{DD_CRASHTRACK_BEGIN_OTEL_THREAD_CTX_PTR}")?;
+    writeln!(w, "{addr}")?;
+    writeln!(w, "{DD_CRASHTRACK_END_OTEL_THREAD_CTX_PTR}")?;
     w.flush()?;
     Ok(())
 }

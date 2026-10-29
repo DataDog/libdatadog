@@ -59,6 +59,10 @@ mod collector_windows;
 #[cfg(unix)]
 mod common;
 mod crash_info;
+/// Read OTel thread-level context from a remote (crashing) process via ptrace
+/// and `/proc/<pid>/mem`.
+#[cfg(all(target_os = "linux", feature = "receiver"))]
+mod otel_tls_reader;
 /// Ptrace-based thread collection. Used by the collector, which unwinds the crashing process
 /// with that process's own privileges, and by the receiver for trusted reports only.
 #[cfg(all(target_os = "linux", any(feature = "collector", feature = "receiver")))]
