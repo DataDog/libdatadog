@@ -1,0 +1,15 @@
+{
+  "$schema": "../../../../schema/gateway-request-metric-fixture.schema.json",
+  "profile": "trajectory.gen_ai.gateway.request@0.1.0",
+  "case": "estimated-cost-amounts-disagree",
+  "description": "Two usable amounts that differ: 0.001 USD is 1000000 nano-USD, not 2000000.",
+  "observation": {
+    "operation_name": "chat",
+    "request_model": "support-model",
+    "duration_seconds": 0.5,
+    "estimated_cost_usd": 0.001,
+    "estimated_cost_nano_usd": 2000000
+  },
+  "expected_error_code": "fields_contradict",
+  "expected_error": "estimated_cost_usd and estimated_cost_nano_usd disagree"
+}

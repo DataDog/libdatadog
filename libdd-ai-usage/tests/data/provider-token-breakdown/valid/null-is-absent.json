@@ -1,0 +1,21 @@
+{
+  "$schema": "../../../../schema/provider-token-breakdown-metric-fixture.schema.json",
+  "profile": "trajectory.gen_ai.client.token_breakdown@0.1.0",
+  "case": "null-is-absent",
+  "description": "A JSON null is the same as absent: this is the no-breakdown case.",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "exampleai",
+    "input_tokens": 12,
+    "input_basis": null,
+    "output_tokens": 2,
+    "cache_read_input_tokens": null,
+    "reasoning_output_tokens": null,
+    "observation_point": "gateway"
+  },
+  "expected_metrics": [],
+  "expected_issues": [
+    "cache_read_missing",
+    "cache_write_missing"
+  ]
+}

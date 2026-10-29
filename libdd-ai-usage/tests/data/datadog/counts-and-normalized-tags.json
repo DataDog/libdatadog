@@ -1,0 +1,62 @@
+{
+  "binding": "0.1.0",
+  "case": "counts-and-normalized-tags",
+  "description": "Two token increments with the same tags are one Count of their sum. Tag values are normalized: upper case becomes lower case, and a space, an at sign, and a letter outside ASCII each become one underscore. The resource attributes host.name and service.name use the tag keys host and service.",
+  "profile": "gen_ai.client.provider_attempt@0.1.0",
+  "historical": false,
+  "points": [
+    {
+      "name": "gen_ai.client.inference.usage.input_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 12,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.token.modality": "unknown",
+        "gen_ai.request.model": "Example Model v2",
+        "gen_ai.response.model": "Mod\u00e8le-1",
+        "user.id": "Ada@Example.com",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.usage.input_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 30,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.token.modality": "unknown",
+        "gen_ai.request.model": "Example Model v2",
+        "gen_ai.response.model": "Mod\u00e8le-1",
+        "user.id": "Ada@Example.com",
+        "trajectory.observation.point": "gateway"
+      }
+    }
+  ],
+  "resource_attributes": {
+    "host.name": "Build-17",
+    "service.name": "checkout-assistant"
+  },
+  "expected_series": [
+    {
+      "name": "gen_ai.client.inference.usage.input_tokens",
+      "type": "count",
+      "value": 42,
+      "tags": [
+        "gen_ai.operation.name:chat",
+        "gen_ai.provider.name:exampleai",
+        "gen_ai.request.model:example_model_v2",
+        "gen_ai.response.model:mod_le-1",
+        "gen_ai.token.modality:unknown",
+        "host:build-17",
+        "service:checkout-assistant",
+        "trajectory.observation.point:gateway",
+        "trajectory.profile:gen_ai.client.provider_attempt/0.1.0",
+        "user.id:ada_example.com"
+      ]
+    }
+  ]
+}

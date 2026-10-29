@@ -1,0 +1,59 @@
+{
+  "$schema": "../../../../schema/provider-token-breakdown-metric-fixture.schema.json",
+  "profile": "trajectory.gen_ai.client.token_breakdown@0.1.0",
+  "case": "input-basis-missing",
+  "description": "Cache parts without an input basis. Whether the 100 input tokens include the 40 cached ones is not known, so the uncached input is withheld and the issue is raised. The cache parts do not depend on the basis and are recorded, as is the output group.",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "exampleai",
+    "input_tokens": 100,
+    "output_tokens": 5,
+    "output_basis": "includes_reasoning",
+    "cache_read_input_tokens": 40,
+    "cache_write_input_tokens": 0,
+    "reasoning_output_tokens": 2,
+    "observation_point": "gateway"
+  },
+  "expected_metrics": [
+    {
+      "name": "gen_ai.client.inference.usage.cache_read.input_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 40,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.token.modality": "unknown",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.usage.cache_write.input_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 0,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.token.modality": "unknown",
+        "trajectory.cache.lifetime": "unspecified",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.usage.reasoning.output_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 2,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.token.modality": "unknown",
+        "trajectory.observation.point": "gateway"
+      }
+    }
+  ],
+  "expected_issues": [
+    "input_basis_missing"
+  ]
+}

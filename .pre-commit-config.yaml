@@ -6,6 +6,7 @@
 #
 # Mirrors CI checks from .github/workflows/lint.yml:
 #   pre-commit: cargo +<nightly from nightly-toolchain.toml> fmt --all
+#   pre-commit: bash scripts/run-ast-grep.sh (downloads pinned ast-grep on first use)
 #   pre-push:   cargo clippy --workspace --all-targets --all-features -- -D warnings
 #   pre-commit: dd-rust-license-tool check (on dependency/license file changes)
 repos:
@@ -18,6 +19,13 @@ repos:
         # which is the single source of truth for CI and local tooling.
         entry: bash -c 'NIGHTLY=$(awk -F"\"" "/^channel[[:space:]]*=/ {print \$2}" nightly-toolchain.toml) && cargo +$NIGHTLY fmt --all --'
         types: [rust]
+        pass_filenames: false
+
+      - id: ast-grep
+        name: ast-grep
+        language: system
+        # First run downloads the pinned binary into ~/.cache; no global install.
+        entry: bash scripts/run-ast-grep.sh
         pass_filenames: false
 
       - id: cargo-clippy

@@ -26,7 +26,8 @@
 #[cfg(unix)]
 use crate::platform::lock_shm;
 use crate::platform::{FileBackedHandle, MappedMem, NamedShmHandle, ShmHandle};
-use libdd_common::{MutexExt, rate_limiter::now};
+use crate::rate_limiter::now;
+use libdd_common::MutexExt;
 use std::ffi::{CStr, CString};
 use std::io;
 use std::sync::Mutex;
