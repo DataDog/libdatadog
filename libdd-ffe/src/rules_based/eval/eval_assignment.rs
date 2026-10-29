@@ -9,8 +9,8 @@ use crate::rules_based::{
     error::EvaluationError,
     timestamp::OptOutTimestamp,
     ufc::{
-        Allocation, Assignment, AssignmentReason, CompiledFlagsConfig, ConditionCheck, RuleWire,
-        Shard, Split,
+        Allocation, Assignment, AssignmentReason, CompiledFlagsConfig, ConditionCheck, Flag,
+        RuleWire, Shard, Split,
     },
 };
 
@@ -181,6 +181,23 @@ impl Configuration {
                 };
             }
         };
+        // Most evaluations have no dependencies. Preserve their allocation-only path rather
+        // than initializing memoization and exposure bookkeeping for every SDK call.
+        match self.flags.compiled.get_flag(flag_key) {
+            Ok(flag) if !flag.has_dependencies => {
+                return EvaluationResult {
+                    result: flag.evaluate_independent(context, expected_type, now, exclusion),
+                    evaluations: Vec::new(),
+                };
+            }
+            Err(error) => {
+                return EvaluationResult {
+                    result: Err(error),
+                    evaluations: Vec::new(),
+                };
+            }
+            Ok(_) => {}
+        }
         let mut session = EvaluationSession {
             config: &self.flags.compiled,
             root_key: flag_key,
@@ -246,12 +263,57 @@ struct EvaluationSession<'a> {
 }
 
 impl CompiledFlagsConfig {
-    fn get_flag(&self, flag_key: &str) -> Result<&super::super::ufc::Flag, EvaluationError> {
+    fn get_flag(&self, flag_key: &str) -> Result<&Flag, EvaluationError> {
         self.flags
             .get(flag_key)
             .ok_or(EvaluationError::FlagUnrecognizedOrDisabled)?
             .as_ref()
             .map_err(Clone::clone)
+    }
+}
+
+impl Flag {
+    fn validate(
+        &self,
+        expected_type: ExpectedFlagType,
+        exclusion: ExperimentationExclusion,
+    ) -> Result<(), EvaluationError> {
+        if matches!(exclusion, ExperimentationExclusion::ActivatedAtOrAfter(_))
+            && self.has_invalid_activation
+        {
+            return Err(EvaluationError::FlagConfigurationInvalid);
+        }
+        if !expected_type.is_compatible(self.variation_type.into()) {
+            return Err(EvaluationError::TypeMismatch {
+                expected: expected_type,
+                found: self.variation_type.into(),
+            });
+        }
+        Ok(())
+    }
+
+    fn evaluate_independent(
+        &self,
+        context: &EvaluationContext,
+        expected_type: ExpectedFlagType,
+        now: Timestamp,
+        exclusion: ExperimentationExclusion,
+    ) -> Result<Assignment, EvaluationError> {
+        self.validate(expected_type, exclusion)?;
+        for allocation in &self.allocations {
+            if !allocation.is_active(now, exclusion) {
+                continue;
+            }
+            if !allocation.rules.is_empty()
+                && !allocation.rules.iter().any(|rule| rule.eval(context))
+            {
+                continue;
+            }
+            if let Some(split) = allocation.find_split(context)? {
+                return Ok(allocation.assignment(split));
+            }
+        }
+        Err(EvaluationError::DefaultAllocationNull)
     }
 }
 
@@ -263,19 +325,7 @@ impl EvaluationSession<'_> {
         depth: u16,
     ) -> Result<EvaluatedFlag, EvaluationError> {
         let flag = self.config.get_flag(flag_key)?;
-        if matches!(
-            self.exclusion,
-            ExperimentationExclusion::ActivatedAtOrAfter(_)
-        ) && flag.has_invalid_activation
-        {
-            return Err(EvaluationError::FlagConfigurationInvalid);
-        }
-        if !expected_type.is_compatible(flag.variation_type.into()) {
-            return Err(EvaluationError::TypeMismatch {
-                expected: expected_type,
-                found: flag.variation_type.into(),
-            });
-        }
+        flag.validate(expected_type, self.exclusion)?;
         if depth > 0 {
             self.active.push(flag_key.into());
         }
@@ -293,14 +343,7 @@ impl EvaluationSession<'_> {
     ) -> Result<EvaluatedFlag, EvaluationError> {
         let mut height = 0;
         for allocation in allocations {
-            if self.exclusion != ExperimentationExclusion::None
-                && self.exclusion.excludes(allocation)
-            {
-                continue;
-            }
-            if allocation.start_at.is_some_and(|t| self.now < t)
-                || allocation.end_at.is_some_and(|t| self.now > t)
-            {
+            if !allocation.is_active(self.now, self.exclusion) {
                 continue;
             }
             let mut selected_exposures = None;
@@ -321,14 +364,7 @@ impl EvaluationSession<'_> {
                 continue;
             };
             return Ok(EvaluatedFlag {
-                assignment: Assignment {
-                    value: split.value.clone(),
-                    variation_key: split.variation_key.clone(),
-                    allocation_key: allocation.key.clone(),
-                    reason: allocation.assignment_reason(split),
-                    serial_id: split.serial_id,
-                    do_log: allocation.do_log,
-                },
+                assignment: allocation.assignment(split),
                 height,
                 exposures,
             });
@@ -419,6 +455,23 @@ impl EvaluationSession<'_> {
 }
 
 impl Allocation {
+    fn is_active(&self, now: Timestamp, exclusion: ExperimentationExclusion) -> bool {
+        !(exclusion != ExperimentationExclusion::None && exclusion.excludes(self)
+            || self.start_at.is_some_and(|t| now < t)
+            || self.end_at.is_some_and(|t| now > t))
+    }
+
+    fn assignment(&self, split: &Split) -> Assignment {
+        Assignment {
+            value: split.value.clone(),
+            variation_key: split.variation_key.clone(),
+            allocation_key: self.key.clone(),
+            reason: self.assignment_reason(split),
+            serial_id: split.serial_id,
+            do_log: self.do_log,
+        }
+    }
+
     fn assignment_reason(&self, split: &Split) -> AssignmentReason {
         let has_time_bounds = self.start_at.is_some() || self.end_at.is_some();
         if !self.rules.is_empty() {
