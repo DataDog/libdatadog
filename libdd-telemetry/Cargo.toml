@@ -1,6 +1,6 @@
 [package]
 name = "libdd-telemetry"
-version= "11.0.0"
+version= "12.0.0"
 description = "Telemetry client allowing to send data as described in https://docs.datadoghq.com/tracing/configure_data_security/?tab=net#telemetry-collection"
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-telemetry"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-telemetry"
@@ -76,8 +76,8 @@ uuid = { workspace = true, features = ["v4", "std"], optional = true }
 hashbrown = { workspace = true, default-features = true, optional = true }
 bytes = { workspace = true, features = ["std"], optional = true }
 libdd-capabilities = { version = "4.0.1", path = "../libdd-capabilities", optional = true }
-libdd-common = { version = "9.0.0", path = "../libdd-common", default-features = false }
-libdd-shared-runtime = { version = "7.0.0", path = "../libdd-shared-runtime", default-features = false, optional = true }
+libdd-common = { version = "10.0.0", path = "../libdd-common", default-features = false }
+libdd-shared-runtime = { version = "8.0.0", path = "../libdd-shared-runtime", default-features = false, optional = true }
 libdd-ddsketch = { version = "1.1.4", path = "../libdd-ddsketch", optional = true }
 web-time = { workspace = true, optional = true }
 

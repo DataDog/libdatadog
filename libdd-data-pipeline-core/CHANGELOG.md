@@ -2,6 +2,12 @@
 
 
 
+## [5.0.0](https://github.com/datadog/libdatadog/compare/libdd-data-pipeline-core-v4.0.0..libdd-data-pipeline-core-v5.0.0) - 2026-10-28
+
+### Changed
+
+- Bump `libdd-common` to a new major version (`^9.0.0` → `^10.0.0`)
+
 ## [4.0.0](https://github.com/datadog/libdatadog/compare/libdd-data-pipeline-core-v3.0.0..libdd-data-pipeline-core-v4.0.0) - 2026-10-23
 
 ### Added
