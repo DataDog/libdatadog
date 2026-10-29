@@ -56,14 +56,12 @@ fn load_test_cases() -> Vec<TestCase> {
 
     if let Ok(entries) = fs::read_dir(EVALUATION_CASES_DIR) {
         for entry in entries.flatten() {
-            if let Some(path_str) = entry.path().to_str() {
-                if path_str.ends_with(".json") {
-                    if let Ok(content) = fs::read_to_string(entry.path()) {
-                        if let Ok(cases) = serde_json::from_str::<Vec<TestCase>>(&content) {
-                            test_cases.extend(cases);
-                        }
-                    }
-                }
+            if let Some(path_str) = entry.path().to_str()
+                && path_str.ends_with(".json")
+                && let Ok(content) = fs::read_to_string(entry.path())
+                && let Ok(cases) = serde_json::from_str::<Vec<TestCase>>(&content)
+            {
+                test_cases.extend(cases);
             }
         }
     }
