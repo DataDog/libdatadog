@@ -19,6 +19,3 @@ libc.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
-
-[lints.clippy]
-collapsible_if = "allow"

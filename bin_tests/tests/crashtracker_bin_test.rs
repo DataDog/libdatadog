@@ -1892,13 +1892,13 @@ fn validate_runtime_callback_string_data(crash_payload: &Value) {
 
     // Ensure frames array is empty for string mode
     let frames = runtime_stack.get("frames");
-    if let Some(frames_array) = frames {
-        if let Some(array) = frames_array.as_array() {
-            assert!(
-                array.is_empty(),
-                "Frames array should be empty for string mode"
-            );
-        }
+    if let Some(frames_array) = frames
+        && let Some(array) = frames_array.as_array()
+    {
+        assert!(
+            array.is_empty(),
+            "Frames array should be empty for string mode"
+        );
     }
 }
 
@@ -2778,12 +2778,12 @@ fn test_crash_tracking_bin_with_errors_intake_uds(
     let socket_path = std::path::Path::new("/var/run/datadog/apm.socket");
 
     // Create directory if it doesn't exist
-    if let Some(parent) = socket_path.parent() {
-        if std::fs::create_dir_all(parent).is_err() {
-            // Skip test if we can't create the directory
-            eprintln!("Skipping UDS test - cannot create /var/run/datadog directory");
-            return;
-        }
+    if let Some(parent) = socket_path.parent()
+        && std::fs::create_dir_all(parent).is_err()
+    {
+        // Skip test if we can't create the directory
+        eprintln!("Skipping UDS test - cannot create /var/run/datadog directory");
+        return;
     }
 
     // Remove socket if it exists from a previous run

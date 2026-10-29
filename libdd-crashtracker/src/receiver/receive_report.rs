@@ -499,18 +499,18 @@ pub(crate) async fn receive_report_from_stream(
     // privileged host instead of the worker.
     if let ReceiverFileAccess::Restricted { peer_pid } = access {
         let claimed = builder.proc_info.as_ref().map(|p| p.pid);
-        if let Some(claimed) = claimed {
-            if claimed != peer_pid {
-                builder.with_log_message(
-                    format!(
-                        "Restricting crash process inspection to the authenticated peer pid \
+        if let Some(claimed) = claimed
+            && claimed != peer_pid
+        {
+            builder.with_log_message(
+                format!(
+                    "Restricting crash process inspection to the authenticated peer pid \
                          {peer_pid} (report claimed {claimed})"
-                    ),
-                    false,
-                )?;
-                if let Some(proc_info) = builder.proc_info.as_mut() {
-                    proc_info.pid = peer_pid;
-                }
+                ),
+                false,
+            )?;
+            if let Some(proc_info) = builder.proc_info.as_mut() {
+                proc_info.pid = peer_pid;
             }
         }
     }
