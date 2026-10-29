@@ -24,7 +24,7 @@ harness = false
 path = "benches/main.rs"
 
 [features]
-default = ["collector", "receiver", "collector_windows"]
+default = ["collector", "receiver", "collector_windows", "otel-thread-ctx"]
 # Enables the in-process collection of crash-info
 collector = []
 # Enables the use of this library to receiver crash-info from a suitable collector
@@ -34,6 +34,8 @@ collector_windows = []
 generate-unit-test-files = []
 # Enables benchmark functionality
 benchmarking = ["generate-unit-test-files"]
+# Enables reading OTel thread context from the crashing process
+otel-thread-ctx = ["dep:libdd-otel-thread-ctx"]
 # Enables C++ bindings via cxx
 cxx = ["dep:cxx", "dep:cxx-build"]
 
@@ -46,6 +48,7 @@ page_size.workspace = true
 [target.'cfg(target_os = "linux")'.dependencies]
 libdd-gotter = { version = "1.1.0", path = "../libdd-gotter" }
 libdd-libunwind-sys.workspace = true
+libdd-otel-thread-ctx = { version = "2.0.0", path = "../libdd-otel-thread-ctx", default-features = false, features = ["owned-context"], optional = true }
 
 [dependencies]
 anyhow.workspace = true

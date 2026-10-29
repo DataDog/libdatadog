@@ -343,13 +343,18 @@ fn handle_posix_signal_impl(
 
     let receiver = Receiver::from_crashtracker_config(config)?;
 
-    // Enable ptrace permissions for receiver if multi-thread collection is enabled.
+    // Enable ptrace permissions for the receiver so it can read /proc/<pid>/mem.
+    // Needed for multi-thread collection (remote unwinding) and for reading the
+    // OTel thread context record from the crashing process's heap.
     // For fork/exec receivers, we have the child PID directly (trusted: we spawned it).
     // For socket-based receivers (PHP sidecar), verify the peer PID matches the
     // expected receiver PID that was registered during trusted initialization
     #[cfg(target_os = "linux")]
-    if config.collect_all_threads() {
-        grant_ptracer_permission(&receiver);
+    {
+        let needs_ptracer = config.collect_all_threads() || cfg!(feature = "otel-thread-ctx");
+        if needs_ptracer {
+            grant_ptracer_permission(&receiver);
+        }
     }
 
     collect_and_finish(
@@ -510,8 +515,11 @@ pub fn report_unhandled_exception(
     let receiver = Receiver::from_crashtracker_config(&config)?;
 
     #[cfg(target_os = "linux")]
-    if config.collect_all_threads() {
-        grant_ptracer_permission(&receiver);
+    {
+        let needs_ptracer = config.collect_all_threads() || cfg!(feature = "otel-thread-ctx");
+        if needs_ptracer {
+            grant_ptracer_permission(&receiver);
+        }
     }
 
     let timeout_manager = TimeoutManager::new(config.timeout());
