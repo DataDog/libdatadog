@@ -133,6 +133,8 @@ fn invalid_dependency_conditions_are_isolated_to_the_containing_flag() {
         json!({"flagEvaluation": {"key": "parent"}, "operator": "ONE_OF", "value": []}),
         json!({"flagEvaluation": {"key": "parent"}, "operator": "NOT_ONE_OF", "value": []}),
         json!({"flagEvaluation": {"key": "parent"}, "attribute": "country", "operator": "ONE_OF", "value": ["on"]}),
+        json!({"flagEvaluation": {"key": "parent"}, "attribute": "", "operator": "ONE_OF", "value": ["on"]}),
+        json!({"flagEvaluation": {"key": "parent", "unexpected": true}, "operator": "ONE_OF", "value": ["on"]}),
         json!({"flagEvaluation": {"key": ""}, "operator": "ONE_OF", "value": ["on"]}),
         json!({"flagEvaluation": {"key": "parent"}, "operator": "IS_NULL", "value": false}),
         json!({"flagEvaluation": {"key": "parent"}, "operator": "ONE_OF", "value": "on"}),
