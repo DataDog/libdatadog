@@ -1,7 +1,8 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Computes all crates affected (direct + transitive) by changes in a PR or push.
+//! Computes all crates affected (direct + transitive) by changes in a PR,
+//! or by the combined PR + rebase delta of a Devflow merge-queue push.
 //!
 //! Reads env vars following the GitHub Actions INPUT_* convention and writes
 //! to $GITHUB_OUTPUT.
@@ -11,7 +12,7 @@
 //!   affected_crates        – JSON array of {name, version, path, manifest}
 //!   affected_crates_count  – integer
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use cargo_metadata::Package;
 use cargo_metadata::camino::Utf8Path;
 use ci_shared::crate_detection::CrateInfo;
@@ -22,24 +23,52 @@ use clap::Parser;
 use std::collections::HashSet;
 
 #[derive(Parser)]
-#[command(about = "Computes all crates affected by changes in a PR or push")]
+#[command(about = "Computes all crates affected by a PR, or by a Devflow merge-queue push")]
 struct Args {
     /// Base reference to compare against (e.g. origin/main)
-    base_ref: String,
+    base_ref: Option<String>,
+
+    /// Run in merge-queue mode: derive the scope from the mq ref geometry
+    /// instead of a base ref. Requires HEAD to be a Devflow mq merge commit.
+    #[arg(long)]
+    mq_ref: bool,
+}
+
+/// A push to a Devflow merge-queue ref (`mq-working-branch-*`) points at a
+/// merge commit whose first parent is an empty commit on main and whose
+/// second parent is the PR head. The merge-base of the two parents is where
+/// the PR branched off main, so the tree diff `merge-base..HEAD` covers both
+/// the PR's own changes and everything main gained since the PR branched —
+/// exactly what the queue re-run has to re-test.
+fn mq_merge_base() -> Result<String> {
+    let main_side = git::rev_parse("HEAD^1").context("not a Devflow mq ref (no first parent)")?;
+    let pr_head = git::rev_parse("HEAD^2").context("not a Devflow mq ref (no second parent)")?;
+    git::merge_base(&main_side, &pr_head)
 }
 
 fn main() -> Result<()> {
     env_logger::init();
     let args = Args::parse();
-    let base_ref = args
-        .base_ref
-        .strip_prefix("origin/")
-        .unwrap_or(&args.base_ref)
-        .to_string();
 
-    git::fetch_base(&base_ref)?;
+    let (range, base_ref) = if args.mq_ref {
+        let base = mq_merge_base()?;
+        let range = format!("{base}..HEAD");
+        log::info!("mq diff range: {range}");
+        (range, base)
+    } else {
+        let base_ref = args
+            .base_ref
+            .context("a base ref is required unless --mq-ref is given")?;
+        let base_ref = base_ref
+            .strip_prefix("origin/")
+            .unwrap_or(&base_ref)
+            .to_string();
 
-    let changed_files = git::changed_files(&base_ref)?;
+        git::fetch_base(&base_ref)?;
+        (format!("origin/{base_ref}...HEAD"), base_ref)
+    };
+
+    let changed_files = git::changed_files_in_range(&range)?;
     log::info!("Changed files: {:?}", changed_files);
 
     let workspace = workspace::load()?;
@@ -51,7 +80,7 @@ fn main() -> Result<()> {
 
     if changed_crates.is_empty() {
         log::info!("Changed crates is empty");
-        if git::has_workflow_changes(&base_ref)? {
+        if git::has_workflow_changes_in_range(&range)? {
             log::info!("Workflow files changed, running all tests");
             return set_output("status", "skipped");
         }

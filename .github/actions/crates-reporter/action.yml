@@ -38,7 +38,7 @@ runs:
         git branch -a
 
     - name: Build change reporter
-      if: ${{ github.event_name == 'pull_request' }}
+      if: ${{ github.event_name == 'pull_request' || startsWith(github.ref, 'refs/heads/mq-working-branch-') }}
       shell: bash
       run: |
         cd ${{ github.action_path }}/..
@@ -49,9 +49,24 @@ runs:
       shell: bash
       env:
         EVENT_NAME: ${{ github.event_name }}
+        GITHUB_REF: ${{ github.ref }}
         PR_BASE_REF: ${{ github.base_ref }}
         PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
       run: |
+        IS_MQ_REF=false
+        if [[ "$GITHUB_REF" == refs/heads/mq-working-branch-* ]]; then
+          IS_MQ_REF=true
+        fi
+        # On merge-queue refs, scope the suite to what the rebase can
+        # invalidate (the PR's own affected crates plus those of the commits
+        # main gained since the PR branched). Any failure here, or a non-mq
+        # push, falls back to status=skipped, i.e. the full suite.
+        if [[ "$IS_MQ_REF" == "true" ]]; then
+          if ! RUST_LOG=debug ${{ github.action_path }}/../target/release/crates-reporter --mq-ref; then
+            echo "status=skipped" >> $GITHUB_OUTPUT
+          fi
+          exit 0
+        fi
         if [[ "$EVENT_NAME" != "pull_request" ]]; then
           echo "status=skipped" >> $GITHUB_OUTPUT
           exit 0

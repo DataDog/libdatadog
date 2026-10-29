@@ -4,6 +4,28 @@
 use anyhow::{Context, Result, bail};
 use std::process::Command;
 
+fn run_git(args: &[&str]) -> Result<String> {
+    let output = Command::new("git")
+        .args(args)
+        .output()
+        .context("Failed to run git")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!("git {} failed: {}", args.join(" "), stderr);
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+pub fn rev_parse(rev: &str) -> Result<String> {
+    Ok(run_git(&["rev-parse", rev])?.trim().to_string())
+}
+
+pub fn merge_base(a: &str, b: &str) -> Result<String> {
+    Ok(run_git(&["merge-base", a, b])?.trim().to_string())
+}
+
 pub fn fetch_base(base_ref: &str) -> Result<()> {
     log::info!("Fetching base branch: {base_ref}");
 
@@ -23,39 +45,29 @@ pub fn fetch_base(base_ref: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn changed_files(base_ref: &str) -> Result<Vec<String>> {
-    let output = Command::new("git")
-        .args(["diff", "--name-only", &format!("origin/{base_ref}...HEAD")])
-        .output()
-        .context("Failed to run git diff")?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("git diff failed against origin/{base_ref}: {stderr}");
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let files: Vec<String> = stdout
+fn diff_files(range: &str) -> Result<Vec<String>> {
+    let stdout = run_git(&["diff", "--name-only", range])?;
+    Ok(stdout
         .lines()
         .map(|l| l.to_string())
         .filter(|l| !l.is_empty())
         .filter(|l| !l.contains(".github/"))
-        .collect();
+        .collect())
+}
 
-    Ok(files)
+pub fn changed_files(base_ref: &str) -> Result<Vec<String>> {
+    diff_files(&format!("origin/{base_ref}...HEAD"))
+}
+
+pub fn changed_files_in_range(range: &str) -> Result<Vec<String>> {
+    diff_files(range)
 }
 
 pub fn has_workflow_changes(base_ref: &str) -> Result<bool> {
-    let output = Command::new("git")
-        .args(["diff", "--name-only", &format!("origin/{base_ref}...HEAD")])
-        .output()
-        .context("Failed to run git diff")?;
+    has_workflow_changes_in_range(&format!("origin/{base_ref}...HEAD"))
+}
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("git diff failed against origin/{base_ref}: {stderr}");
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
+pub fn has_workflow_changes_in_range(range: &str) -> Result<bool> {
+    let stdout = run_git(&["diff", "--name-only", range])?;
     Ok(stdout.lines().any(|l| l.starts_with(".github/workflows/")))
 }
