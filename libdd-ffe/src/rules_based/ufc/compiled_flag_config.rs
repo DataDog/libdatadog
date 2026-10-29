@@ -9,7 +9,7 @@ use crate::rules_based::{Str, Timestamp, error::EvaluationError, sharder::PreSal
 
 use super::{
     AllocationWire, AssignmentValue, Environment, FlagWire, RuleWire, ShardRange, ShardWire,
-    SplitWire, UniversalFlagConfigWire, VariationType,
+    SplitWire, TryParse, UniversalFlagConfigWire, VariationType,
 };
 
 #[derive(Debug)]
@@ -39,6 +39,8 @@ pub(crate) struct CompiledFlagsConfig {
 pub(crate) struct Flag {
     pub variation_type: VariationType,
     pub allocations: Box<[Allocation]>,
+    // Activation errors apply only when an opted-out subject uses future mode.
+    pub has_invalid_activation: bool,
 }
 
 #[derive(Debug)]
@@ -46,6 +48,7 @@ pub(crate) struct Allocation {
     pub key: Str,
     pub start_at: Option<Timestamp>,
     pub end_at: Option<Timestamp>,
+    pub randomization_activated_at: Option<Timestamp>,
     pub rules: Box<[RuleWire]>,
     pub splits: Box<[Split]>,
     pub do_log: bool,
@@ -128,6 +131,12 @@ fn compile_flag(flag: FlagWire) -> Result<Flag, EvaluationError> {
         })
         .collect::<Result<HashMap<_, _>, EvaluationError>>()?;
 
+    let has_invalid_activation = flag.allocations.iter().any(|allocation| {
+        matches!(
+            allocation.randomization_activated_at,
+            Some(TryParse::ParseFailed(_))
+        )
+    });
     let allocations = flag
         .allocations
         .into_iter()
@@ -137,6 +146,7 @@ fn compile_flag(flag: FlagWire) -> Result<Flag, EvaluationError> {
     Ok(Flag {
         variation_type: flag.variation_type,
         allocations,
+        has_invalid_activation,
     })
 }
 
@@ -153,6 +163,12 @@ fn compile_allocation(
         key: allocation.key,
         start_at: allocation.start_at,
         end_at: allocation.end_at,
+        randomization_activated_at: allocation
+            .randomization_activated_at
+            .and_then(|activation| match activation {
+                TryParse::Parsed(timestamp) => Some(timestamp.0),
+                TryParse::ParseFailed(_) => None,
+            }),
         rules: allocation.rules.unwrap_or_default(),
         splits,
         do_log: allocation.do_log,

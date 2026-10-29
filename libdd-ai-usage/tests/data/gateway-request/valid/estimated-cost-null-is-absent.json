@@ -1,0 +1,26 @@
+{
+  "$schema": "../../../../schema/gateway-request-metric-fixture.schema.json",
+  "profile": "trajectory.gen_ai.gateway.request@0.1.0",
+  "case": "estimated-cost-null-is-absent",
+  "description": "A null member reads as absent: no estimated cost point and no issue.",
+  "observation": {
+    "operation_name": "chat",
+    "request_model": "support-model",
+    "duration_seconds": 0.6,
+    "estimated_cost_usd": null,
+    "estimated_cost_nano_usd": null
+  },
+  "expected_metrics": [
+    {
+      "name": "trajectory.gen_ai.gateway.request.duration",
+      "instrument": "histogram",
+      "unit": "s",
+      "value": 0.6,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.request.model": "support-model",
+        "trajectory.observation.point": "gateway"
+      }
+    }
+  ]
+}

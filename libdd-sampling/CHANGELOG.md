@@ -2,6 +2,22 @@
 
 
 
+## [9.0.0](https://github.com/datadog/libdatadog/compare/libdd-sampling-v8.0.0..libdd-sampling-v9.0.0) - 2026-10-23
+
+### Added
+
+- Add basic no_std to libdd-common ([#2638](https://github.com/datadog/libdatadog/issues/2638)) - ([d0dd0a2](https://github.com/datadog/libdatadog/commit/d0dd0a21ffca664d7c6a0798dd8c178234fd6750))
+
+### Changed
+
+- Remove hot-path allocations in the sample decision ([#2646](https://github.com/datadog/libdatadog/issues/2646)) - ([ed0def3](https://github.com/datadog/libdatadog/commit/ed0def30d0fbd6f8518c66bed1a0b331fcde003f))
+
+### Fixed
+
+- Most doc warnings ([#2289](https://github.com/datadog/libdatadog/issues/2289)) - ([f52ab62](https://github.com/datadog/libdatadog/commit/f52ab62fdaa1acc0ca9e8812a9e9468cc59af6b5))
+
+
+
 ## [8.0.0](https://github.com/datadog/libdatadog/compare/libdd-sampling-v7.0.0..libdd-sampling-v8.0.0) - 2026-10-02
 
 ### Changed

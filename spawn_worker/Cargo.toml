@@ -21,7 +21,7 @@ fastrand = { workspace = true, features = ["std"] }
 libc.workspace = true
 
 [build-dependencies]
-cc_utils = { path = "../tools/cc_utils" }
+cc.workspace = true
 
 # allow(workspace-deps): this crate is still on the windows 0.51 bindings,
 # while the workspace entry tracks 0.59 for the crashtracker crates. Moving

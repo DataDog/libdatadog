@@ -703,6 +703,12 @@ impl SeqpacketConn {
         Ok(())
     }
 
+    /// Largest message accepted on this connection. Message-mode pipes block on messages
+    /// exceeding the pipe buffer instead of rejecting them.
+    pub fn max_send_size(&self) -> usize {
+        max_message_size()
+    }
+
     fn writer(&self) -> io::Result<&PipeWriter> {
         self.writer
             .get_or_init(|| PipeWriter::new(self.raw_handle()))

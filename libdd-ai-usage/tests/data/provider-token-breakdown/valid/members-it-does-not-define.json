@@ -1,0 +1,26 @@
+{
+  "$schema": "../../../../schema/provider-token-breakdown-metric-fixture.schema.json",
+  "profile": "trajectory.gen_ai.client.token_breakdown@0.1.0",
+  "case": "members-it-does-not-define",
+  "description": "The token-breakdown observation does not define the server-tool counts, the modality objects, or a duration. A member the profile does not define is ignored: it is not type-checked and is not an error. This is the no-breakdown case.",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "exampleai",
+    "input_tokens": 100,
+    "output_tokens": 5,
+    "web_search_requests": "two",
+    "input_tokens_by_modality": {
+      "video": 1
+    },
+    "duration_seconds": "long",
+    "something_else": {
+      "a": 1
+    },
+    "observation_point": "gateway"
+  },
+  "expected_metrics": [],
+  "expected_issues": [
+    "cache_read_missing",
+    "cache_write_missing"
+  ]
+}
