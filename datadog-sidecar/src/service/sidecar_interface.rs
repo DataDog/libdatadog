@@ -238,6 +238,17 @@ pub trait SidecarInterface {
         span: libdd_ipc::shm_stats::OwnedShmSpanInput,
     );
 
+    /// IPC fallback: add a DSM checkpoint directly to the sidecar's SHM DSM table for
+    /// (env, version, service, primary tag). Creates the table if needed, retiring any stale
+    /// segment.
+    async fn add_dsm_checkpoint(
+        env: String,
+        version: String,
+        service: String,
+        primary_tag: String,
+        checkpoint: libdd_ipc::shm_dsm_checkpoint::OwnedDsmCheckpoint,
+    );
+
     /// Starts the AppSec backend if it has not already been initialized.
     ///
     /// Returns only after initialization finishes, so subsequent AppSec messages

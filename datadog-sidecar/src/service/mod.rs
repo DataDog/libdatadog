@@ -38,6 +38,7 @@ pub mod agent_info;
 mod application;
 pub mod blocking;
 mod connection_session;
+pub mod data_streams_flusher;
 mod debugger_diagnostics_bookkeeper;
 mod dogstatsd_pool;
 pub(crate) mod evp_proxy;

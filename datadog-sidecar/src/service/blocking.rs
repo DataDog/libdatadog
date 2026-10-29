@@ -532,6 +532,26 @@ pub fn add_span_to_concentrator(
     Ok(transport.with_retry(|s| s.send(&request)))
 }
 
+/// IPC fallback for DSM. Returns whether the checkpoint was sent, so callers can retry a failed
+/// bootstrap.
+pub fn add_dsm_checkpoint(
+    transport: &mut SidecarTransport,
+    env: String,
+    version: String,
+    service: String,
+    primary_tag: String,
+    checkpoint: libdd_ipc::shm_dsm_checkpoint::OwnedDsmCheckpoint,
+) -> io::Result<bool> {
+    let request = SidecarInterfaceRequest::AddDsmCheckpoint {
+        env,
+        version,
+        service,
+        primary_tag,
+        checkpoint,
+    };
+    Ok(transport.with_retry(|s| s.send(&request)))
+}
+
 /// Starts the AppSec backend in the sidecar and waits for initialization to
 /// complete before returning.
 pub fn ensure_appsec_started(
@@ -604,7 +624,8 @@ mod tests {
     use super::try_submit_ffe;
     use crate::service::SidecarAction;
     use crate::service::blocking::{
-        SidecarTransport, add_span_to_concentrator, enqueue_actions, send_dogstatsd_actions,
+        SidecarTransport, add_dsm_checkpoint, add_span_to_concentrator, enqueue_actions,
+        send_dogstatsd_actions,
     };
     use crate::service::ffe_submission::FfeSubmissionStatus;
     use crate::service::sidecar_interface::{
@@ -868,6 +889,57 @@ mod tests {
                 assert_eq!(span.peer_tags, [("db.hostname".into(), "db".into())]);
             }
             _ => panic!("expected a span"),
+        }
+
+        drop(peer);
+        assert!(!send(&mut transport));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn dsm_fallback_reports_whether_the_point_was_sent() {
+        let (conn, peer) = SeqpacketConn::socketpair().unwrap();
+        let mut transport = SidecarTransport::from(conn);
+        transport
+            .set_read_timeout(Some(Duration::from_millis(100)))
+            .unwrap();
+        let send = |transport: &mut SidecarTransport| {
+            add_dsm_checkpoint(
+                transport,
+                "env".into(),
+                "v1".into(),
+                "svc".into(),
+                "region:eu".into(),
+                libdd_ipc::shm_dsm_checkpoint::OwnedDsmCheckpoint {
+                    hash: 2,
+                    parent_hash: 3,
+                    edge_tags: vec!["topic:orders".into()],
+                    pathway_latency_ns: 4,
+                    edge_latency_ns: 5,
+                    payload_size_bytes: 6,
+                },
+            )
+            .unwrap()
+        };
+        assert!(send(&mut transport));
+        let mut buf = [0; 1024];
+        let (len, _) = peer.try_recv_raw(&mut buf).unwrap();
+        match libdd_ipc::codec::decode::<SidecarInterfaceRequest>(&buf[..len]).unwrap() {
+            SidecarInterfaceRequest::AddDsmCheckpoint {
+                env,
+                version,
+                service,
+                primary_tag,
+                checkpoint,
+            } => {
+                assert_eq!(env, "env");
+                assert_eq!(version, "v1");
+                assert_eq!(service, "svc");
+                assert_eq!(primary_tag, "region:eu");
+                assert_eq!(checkpoint.hash, 2);
+                assert_eq!(checkpoint.edge_tags, ["topic:orders"]);
+            }
+            _ => panic!("expected a DSM checkpoint"),
         }
 
         drop(peer);
