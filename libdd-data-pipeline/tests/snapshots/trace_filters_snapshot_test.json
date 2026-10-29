@@ -9,6 +9,7 @@
       "start": 0,
       "duration": 5,
       "meta": {
+        "env": "staging",
         "_dd.sdk.otlp_export": "false",
         "my_require_tag": "true"
       },
@@ -27,6 +28,7 @@
       "start": 0,
       "duration": 5,
       "meta": {
+        "env": "staging",
         "_dd.sdk.otlp_export": "false",
         "my_require_tag": "true"
       },

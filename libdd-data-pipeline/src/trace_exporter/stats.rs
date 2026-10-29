@@ -8,8 +8,6 @@
 //! and processing traces for stats collection.
 
 pub use libdd_trace_stats::span_concentrator::CardinalityLimitConfig;
-use libdd_trace_utils::span::span_pool::PooledChunks;
-use libdd_trace_utils::span::trace_utils::compute_top_level_span;
 
 use super::TracerMetadata;
 use super::add_path;
@@ -328,88 +326,7 @@ pub(crate) async fn handle_stats_enabled(
     }
 }
 
-/// Add all spans from the given iterator into the stats concentrator, optionally obfuscating
-/// resource names for client-side stats.
-///
-/// # Panic
-/// Will panic if another thread panicked while holding the lock on `stats_concentrator`
-fn add_spans_to_stats<T: libdd_trace_utils::span::TraceData>(
-    stats_concentrator: &Mutex<SpanConcentrator>,
-    traces: &mut [Vec<libdd_trace_utils::span::v04::Span<T>>],
-    client_computed_top_level: bool,
-) {
-    if !client_computed_top_level {
-        for trace in traces.iter_mut() {
-            compute_top_level_span(trace);
-        }
-    }
-
-    let mut stats_concentrator = stats_concentrator.lock_or_panic();
-    for span in traces.iter().flatten() {
-        stats_concentrator.add_span(span);
-    }
-}
-
-/// Process traces for stats computation and update header tags accordingly.
-///
-/// If a telemetry client is provided and stats are enabled, dropped P0 counts
-/// will be sent to telemetry.
-///
-/// Returns true if stats were computed for the traces passed
-pub(crate) fn process_traces_for_stats<
-    T: libdd_trace_utils::span::TraceData,
-    #[cfg(feature = "telemetry")] C: libdd_capabilities::HttpClientCapability
-        + libdd_capabilities::SleepCapability
-        + libdd_capabilities::MaybeSend
-        + Sync
-        + 'static,
->(
-    traces: &mut PooledChunks<'_, T>,
-    header_tags: &mut libdd_trace_utils::trace_utils::TracerHeaderTags,
-    client_side_stats: &ArcSwap<StatsComputationStatus>,
-    client_computed_top_level: bool,
-    trace_filterer: &TraceFilterer,
-    #[cfg(feature = "telemetry")] telemetry: Option<&crate::telemetry::TelemetryClient<C>>,
-) -> bool {
-    let status = client_side_stats.load();
-    if let StatsComputationStatus::Enabled {
-        stats_concentrator, ..
-    } = &**status
-    {
-        let dropped_by_trace_filter = trace_filterer.filter_traces(traces);
-        #[cfg(not(all(not(target_arch = "wasm32"), feature = "telemetry")))]
-        let _ = dropped_by_trace_filter;
-
-        add_spans_to_stats(stats_concentrator, traces, client_computed_top_level);
-        // Once stats have been computed we can drop all chunks that are not going to be
-        // sampled by the agent
-        let dropped_p0_stats = libdd_trace_utils::span::trace_utils::drop_chunks(traces);
-
-        // Update the headers to indicate that stats have been computed and forward dropped
-        // traces counts
-        header_tags.generic.client_computed_top_level = true;
-        header_tags.generic.client_computed_stats = true;
-        header_tags.generic.dropped_p0_traces = dropped_p0_stats.dropped_p0_traces;
-        header_tags.generic.dropped_p0_spans = dropped_p0_stats.dropped_p0_spans;
-
-        // Send dropped P0 stats directly to telemetry if available
-        #[cfg(feature = "telemetry")]
-        if let Some(telemetry_client) = telemetry {
-            if let Err(e) = telemetry_client.send_client_side_stats_drops(
-                dropped_p0_stats.dropped_p0_traces,
-                dropped_by_trace_filter,
-            ) {
-                tracing::error!(?e, "Error sending dropped P0 stats to telemetry");
-            }
-        }
-        true
-    } else {
-        false
-    }
-}
-
-/// V1 counterpart of [`add_spans_to_stats`], operating on
-/// [`libdd_trace_utils::span::v1::TraceChunk`] chunks instead of flat v0.4 span vectors.
+/// Add all spans of the given chunks into the stats concentrator.
 ///
 /// # Panic
 /// Will panic if another thread panicked while holding the lock on `stats_concentrator`
@@ -428,8 +345,10 @@ fn add_spans_to_stats_v1<T: libdd_trace_utils::span::TraceData>(
     }
 }
 
-/// V1 counterpart of [`process_traces_for_stats`], operating on
-/// [`libdd_trace_utils::span::v1::TraceChunk`] chunks instead of flat v0.4 span vectors.
+/// Process traces for stats computation and update header tags accordingly.
+///
+/// If a telemetry client is provided and stats are enabled, dropped P0 counts
+/// will be sent to telemetry.
 ///
 /// Returns true if stats were computed for the traces passed.
 pub(crate) fn process_traces_for_stats_v1<

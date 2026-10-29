@@ -135,7 +135,7 @@ fn tag_to_otlp_kind(t: &str) -> i32 {
 }
 
 /// Maps the Datadog span type field (set by DD-instrumented tracers) to an OTLP SpanKind.
-fn dd_type_to_otlp_kind(t: &str) -> i32 {
+pub(super) fn dd_type_to_otlp_kind(t: &str) -> i32 {
     // Case-insensitive match without allocating (see `tag_to_otlp_kind`).
     if t.eq_ignore_ascii_case("server")
         || t.eq_ignore_ascii_case("web")

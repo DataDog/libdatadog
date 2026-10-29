@@ -6,6 +6,7 @@ use crate::span::{BytesData, SliceData, TraceData};
 pub use libdd_trace_model::AttributeValue;
 pub use thin_vec::ThinVec;
 
+pub mod from_v04;
 pub mod span_pool;
 
 /// OpenTelemetry SpanKind values, encoded on the wire as a `uint32`.
