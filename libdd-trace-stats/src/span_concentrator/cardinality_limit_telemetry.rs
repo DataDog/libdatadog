@@ -123,7 +123,12 @@ impl CollapsedFieldsMetrics {
 
     /// Increment the telemetry counter corresponding to this collapsed field combination
     pub fn increment(&mut self, field_set: CollapsedFieldSet) {
-        self.0[field_set.0] += 1;
+        self.add(field_set, 1);
+    }
+
+    /// Add `count` to the telemetry counter corresponding to this collapsed field combination
+    pub fn add(&mut self, field_set: CollapsedFieldSet, count: usize) {
+        self.0[field_set.0] += count;
     }
 }
 

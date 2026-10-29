@@ -34,7 +34,9 @@ const TAG_METHOD: &str = "http.method";
 // http.endpoint is Datadog-only and retained in that mode.
 const TAG_STATUS_CODE_OTEL: &str = "http.response.status_code";
 const TAG_METHOD_OTEL: &str = "http.request.method";
-const ADDITIONAL_METRIC_TAG_VALUE_MAX_LEN: usize = 200;
+/// Maximum number of characters of an additional metric tag value, longer values are replaced by
+/// [`TRACER_BLOCKED_VALUE`].
+pub const ADDITIONAL_METRIC_TAG_VALUE_MAX_LEN: usize = 200;
 const TAG_SYNTHETICS: &str = "synthetics";
 const TAG_SPANKIND: &str = "span.kind";
 const TAG_BASE_SERVICE: &str = "_dd.base_service";
@@ -172,6 +174,17 @@ fn float_to_u32(f: f64) -> Option<u32> {
     }
     // The checks above guarantee the finite integral value is representable without loss.
     Some(f as u32)
+}
+
+/// Return true if `value` has more than [`ADDITIONAL_METRIC_TAG_VALUE_MAX_LEN`] characters.
+pub fn additional_metric_tag_value_too_long(value: &str) -> bool {
+    // Byte length >= char count, so skip the char walk when byte length alone is within the max
+    // character length, otherwise stop as soon as we pass the max character length.
+    value.len() > ADDITIONAL_METRIC_TAG_VALUE_MAX_LEN
+        && value
+            .chars()
+            .nth(ADDITIONAL_METRIC_TAG_VALUE_MAX_LEN)
+            .is_some()
 }
 
 fn is_valid_http_status_code(code: &u32) -> bool {
@@ -374,11 +387,7 @@ impl<'a> BorrowedAggregationKey<'a> {
             .iter()
             .filter_map(|key| match span.get_meta(key.as_str()) {
                 Some(v) if !v.is_empty() => {
-                    // Byte length >= char count, so skip the char walk when byte length alone
-                    // is within the max character length, otherwise stop as soon as we pass the max character length.
-                    if v.len() > ADDITIONAL_METRIC_TAG_VALUE_MAX_LEN
-                        && v.chars().nth(ADDITIONAL_METRIC_TAG_VALUE_MAX_LEN).is_some()
-                    {
+                    if additional_metric_tag_value_too_long(v) {
                         warn!(
                             "additional_metric_tags: value for key '{}' exceeds {} characters; substituting tracer_blocked_value",
                             key, ADDITIONAL_METRIC_TAG_VALUE_MAX_LEN,
