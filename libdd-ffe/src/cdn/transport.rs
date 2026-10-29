@@ -436,8 +436,11 @@ mod tests {
         });
         let cancellation = CancellationToken::new();
         let stop = cancellation.clone();
+        // Client initialization can be slow under Miri. Complete it before
+        // starting the deadlines that exercise the in-flight request.
+        let transport = HyperTransport::new("php".into(), "1.27".into());
         let request = tokio::spawn(async move {
-            HyperTransport::new("php".into(), "1.27".into())
+            transport
                 .get(&endpoint, Duration::from_secs(30), None, &stop)
                 .await
         });
