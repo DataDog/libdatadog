@@ -23,7 +23,7 @@
 //! ## Untrusted contents
 //! Every byte of the segment is writable by every process that holds it, workers included, so
 //! nothing read out of it may authorise an access. The dimensions are validated once against
-//! the length actually mapped and then kept privately; string references are
+//! the length actually mapped and then kept privately ([`Layout`]); string references are
 //! checked against their own pool and copied out under a per-bucket budget; mutable fields are
 //! integer atomics that get decoded rather than loaded as Rust types. A peer can corrupt its
 //! own telemetry - that much is inherent in a buffer everyone may write - but it cannot make

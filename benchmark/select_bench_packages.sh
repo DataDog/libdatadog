@@ -21,12 +21,11 @@ set -eu
 node_index="${1:-1}"
 node_total="${2:-1}"
 
-# Approximate per-crate benchmark cost (~30 s of criterion time per pass) used
-# to balance the shards.
-# 
+# Approximate per-crate benchmark cost (~30 s of criterion time per pass) used to balance the shards.
+# Measured 2026-09-04 from main pipeline 8134078c4, with the allocation benchmarks discounted to
+# their cost once their sampling settings are no longer overridden. The three crates that fall
+# through to the default are ~1 unit (ipc ~35 s, trace-normalization ~30 s, trace-stats ~25 s).
 # Retune as benchmarks are added/removed; unknown crates default to 1.
-# 
-# Latest re-evaluation of weights: 2026-10-13
 crate_weight() {
   case "$1" in
     libdd-trace-utils) echo 15 ;;
@@ -35,9 +34,9 @@ crate_weight() {
     libdd-ddsketch) echo 5 ;;
     libdd-data-pipeline) echo 5 ;;
     libdd-ffe-test-suite) echo 4 ;;
-    libdd-crashtracker) echo 4 ;;
+    libdd-crashtracker) echo 2 ;;
     libdd-profiling) echo 2 ;;
-    libdd-trace-obfuscation) echo 3 ;;
+    libdd-trace-obfuscation) echo 2 ;;
     *) echo 1 ;;
   esac
 }

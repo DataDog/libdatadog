@@ -470,7 +470,7 @@ fn oversized_ipc_warning_does_not_log_exposure_data() {
 #[test]
 #[cfg(target_os = "linux")]
 #[cfg_attr(miri, ignore = "requires native IPC sockets")]
-fn kernel_size_excess_is_delivered_intact_via_shared_memory_without_reshedding() {
+fn kernel_size_rejection_retries_one_reduced_observation_without_reshedding() {
     use crate::service::blocking::{SidecarTransport, try_submit_ffe};
     use crate::service::ffe_submission::FfeSubmissionStatus;
 
@@ -519,13 +519,8 @@ fn kernel_size_excess_is_delivered_intact_via_shared_memory_without_reshedding()
         try_submit_ffe(&mut transport, &mut observation),
         FfeSubmissionStatus::Accepted
     );
-    let (len, fds) = peer.try_recv_raw(&mut bytes).unwrap();
-    let envelope: SidecarInterfaceRequest = decode(&bytes[..len]).unwrap();
-    assert!(
-        matches!(envelope, SidecarInterfaceRequest::_Oversized { .. }),
-        "expected the observation in shared memory"
-    );
-    let decoded = envelope.with_handles(fds).unwrap();
+    let (len, _) = peer.try_recv_raw(&mut bytes).unwrap();
+    let decoded: SidecarInterfaceRequest = decode(&bytes[..len]).unwrap();
     let SidecarInterfaceRequest::EnqueueActions { actions, .. } = decoded else {
         panic!("wrong request")
     };
@@ -535,11 +530,8 @@ fn kernel_size_excess_is_delivered_intact_via_shared_memory_without_reshedding()
     let [row] = batch.flag_evaluations.as_slice() else {
         panic!("wrong row count")
     };
-    assert!(!row.is_degraded);
-    assert_eq!(
-        row.targeting_key.as_deref(),
-        Some("x".repeat(16 * 1024).as_str())
-    );
+    assert!(row.is_degraded);
+    assert!(row.targeting_key.is_none() && row.context.is_none());
     assert_eq!(row.evaluation_count, 1);
     assert_eq!(transport.inner.channel.0.outstanding(), 12);
     assert_eq!(

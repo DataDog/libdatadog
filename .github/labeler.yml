@@ -25,7 +25,6 @@ mini-agent:
 - changed-files:
   - any-glob-to-any-file: [
       'datadog-trace-normalization/**/*',
-      'libdd-trace-model/**/*',
       'libdd-trace-obfuscation/**/*',
       'libdd-trace-utils/**/*',
     ]

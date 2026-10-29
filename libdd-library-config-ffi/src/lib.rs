@@ -302,8 +302,8 @@ mod std_api {
         name: LibraryConfigSource,
     ) -> ffi::CStr<'static> {
         ffi::CStr::from_std(match name {
-            LibraryConfigSource::LocalStableConfig => c"local_stable_config",
-            LibraryConfigSource::FleetStableConfig => c"fleet_stable_config",
+            LibraryConfigSource::LocalStableConfig => libdd_common::cstr!("local_stable_config"),
+            LibraryConfigSource::FleetStableConfig => libdd_common::cstr!("fleet_stable_config"),
         })
     }
 

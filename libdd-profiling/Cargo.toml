@@ -20,6 +20,7 @@ bench = false
 default = []
 cxx = ["dep:cxx", "dep:cxx-build"]
 otel = ["dep:opentelemetry-proto"]
+test-utils = ["libdd-common/test-utils"]
 
 [[bench]]
 name = "main"
@@ -40,7 +41,7 @@ hashbrown.workspace = true
 http = { workspace = true, features = ["std"] }
 indexmap = { workspace = true, default-features = true }
 libdd-alloc = { version = "1.0.0", path = "../libdd-alloc" }
-libdd-common = { version = "9.0.0", path = "../libdd-common", default-features = false, features = ["reqwest", "tls-distrust"] }
+libdd-common = { version = "8.0.0", path = "../libdd-common", default-features = false, features = ["reqwest", "test-utils"] }
 libdd-profiling-protobuf = { version = "2.0.0", path = "../libdd-profiling-protobuf", features = ["prost_impls"] }
 opentelemetry-proto = { workspace = true, optional = true, features = ["profiles", "gen-tonic-messages"] }
 parking_lot.workspace = true
@@ -55,6 +56,7 @@ prost = { workspace = true, features = ["std"] }
 # Use rustls-no-provider instead of rustls to avoid reqwest forcing aws-lc-rs as the crypto
 # backend. We install the ring provider explicitly via tls.rs / libdd-common instead.
 reqwest = { workspace = true, features = ["multipart", "rustls-no-provider", "hickory-dns"] }
+rustls-platform-verifier.workspace = true
 rustc-hash.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
@@ -75,7 +77,8 @@ zrip = { workspace = true, features = ["frame"] }
 [dev-dependencies]
 bolero = { workspace = true, features = ["std"] }
 criterion.workspace = true
-tools = { path = "../tools", default-features = false, features = ["test-utils"] }
+libdd-common = { path = "../libdd-common", features = ["test-utils"] }
+libdd-profiling = { path = ".", features = ["test-utils"] }
 # rand is only used by tests/exporter_e2e.rs (rand::random), never by the
 # library itself, so it lives in dev-dependencies. `rand::random` needs the
 # thread RNG, i.e. both `std` and `std_rng` defaults.
@@ -86,10 +89,3 @@ tempfile.workspace = true
 
 [build-dependencies]
 cxx-build = { workspace = true, optional = true }
-
-[lints.clippy]
-# TODO(paullgdc): This fails a lot because of if-let chaining which became
-# allowed with the 1.91.1 MSRV bump.
-# I am planning to fix each crate as an individual PR in order to not have 
-# too many conflicts
-collapsible_if = "allow"

@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 #[cfg(feature = "generate-unit-test-files")]
 use std::process::Command;
 
+pub use libdd_common::cc_utils::cc;
+
 // Build CXX bridge - cross-platform function
 #[cfg(feature = "cxx")]
 fn build_cxx_bridge(target_os: &str) {
@@ -35,42 +37,6 @@ fn get_tests_folder_path() -> PathBuf {
         .expect("Failed to canonicalize base path for libtest")
 }
 
-/// Links `src` into a shared library at `dst`, linking against libdl.
-///
-/// `cc::Build::compile` only produces static libraries, so test fixtures that
-/// must be `.so` files invoke the detected compiler directly.
-#[cfg(feature = "generate-unit-test-files")]
-fn compile_shared_lib(src: &Path, dst: &str, cpp: bool, flags: &[&str]) {
-    let mut build = cc::Build::new();
-    if cpp {
-        build.cpp(true);
-    }
-    for flag in flags {
-        build.flag(flag);
-    }
-    build
-        .warnings(true)
-        .warnings_into_errors(true)
-        .emit_rerun_if_env_changed(true);
-
-    println!("cargo:rerun-if-changed={}", src.display());
-    let compiler = build.try_get_compiler().expect("no C/C++ compiler found");
-
-    let mut cmd = compiler.to_command();
-    if !compiler.is_like_msvc() {
-        cmd.arg("-shared");
-    }
-    cmd.arg("-o").arg(dst).arg(src).arg("-ldl");
-    println!("compiling: {cmd:?}");
-
-    let status = cmd
-        .spawn()
-        .expect("failed to spawn compiler")
-        .wait()
-        .expect("failed to wait for compiler");
-    assert!(status.success(), "compilation failed for {dst}");
-}
-
 #[cfg(feature = "generate-unit-test-files")]
 fn build_c_file() {
     let base_path = get_tests_folder_path();
@@ -82,20 +48,21 @@ fn build_c_file() {
         .expect("Failed to convert dst file path to str");
 
     println!("cargo:rerun-if-changed={}", dst_file);
-    // this is needed for the cross compile (cargo cross)
-    // Fix build id to ease in testing.
-    compile_shared_lib(
-        &src,
-        dst_file,
-        false,
-        &[
-            "-std=c99",
-            "-Wl,--build-id=0xaaaabbbbccccddddeeeeffff0011223344556677",
-            "-O0",
-            "-gdwarf-4",
-            "-Wl,--compress-debug-sections=zlib",
-        ],
-    );
+    libdd_common::cc_utils::ImprovedBuild::new()
+        .file(&src)
+        .link_dynamically("dl")
+        // this is needed for the cross compile (cargo cross)
+        .flag("-std=c99")
+        // Fix build id to ease in testing.
+        .flag("-Wl,--build-id=0xaaaabbbbccccddddeeeeffff0011223344556677")
+        .flag("-O0")
+        .flag("-gdwarf-4")
+        .flag("-Wl,--compress-debug-sections=zlib")
+        .warnings(true)
+        .warnings_into_errors(true)
+        .emit_rerun_if_env_changed(true)
+        .try_compile_shared_lib(dst_file)
+        .unwrap();
 
     // We use objcopy to change the alignment of the debug_abbrev ELF section.
     // By setting the alignment to 1 we make sure that the section is misaligned.
@@ -125,18 +92,20 @@ fn build_cpp_file() {
         .expect("Failed to convert dst file path to str");
 
     println!("cargo:rerun-if-changed={}", dst_file);
-    // Fix build id to ease in testing.
-    compile_shared_lib(
-        &src,
-        dst_file,
-        true,
-        &[
-            "-std=c++11",
-            "-Wl,--build-id=0x0011223344556677aaaabbbbccccddddeeeeffff",
-            "-O0",
-            "-gdwarf-4",
-        ],
-    );
+    libdd_common::cc_utils::ImprovedBuild::new()
+        .cpp(true)
+        .file(&src)
+        .link_dynamically("dl")
+        .flag("-std=c++11")
+        // Fix build id to ease in testing.
+        .flag("-Wl,--build-id=0x0011223344556677aaaabbbbccccddddeeeeffff")
+        .flag("-O0")
+        .flag("-gdwarf-4")
+        .warnings(true)
+        .warnings_into_errors(true)
+        .emit_rerun_if_env_changed(true)
+        .try_compile_shared_lib(dst_file)
+        .unwrap();
 }
 
 fn main() {

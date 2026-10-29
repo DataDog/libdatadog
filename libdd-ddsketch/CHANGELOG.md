@@ -2,14 +2,6 @@
 
 
 
-## [1.1.4](https://github.com/datadog/libdatadog/compare/libdd-ddsketch-v1.1.3..libdd-ddsketch-v1.1.4) - 2026-10-23
-
-### Fixed
-
-- Most doc warnings - semantic changes ([#2547](https://github.com/datadog/libdatadog/issues/2547)) - ([a887c16](https://github.com/datadog/libdatadog/commit/a887c1644be7b7b44829fcf71ed5e6058ae8d67e))
-
-
-
 ## [1.1.3](https://github.com/datadog/libdatadog/compare/libdd-ddsketch-v1.1.2..libdd-ddsketch-v1.1.3) - 2026-10-02
 
 ### Changed

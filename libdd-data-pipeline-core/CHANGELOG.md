@@ -2,20 +2,6 @@
 
 
 
-## [4.0.0](https://github.com/datadog/libdatadog/compare/libdd-data-pipeline-core-v3.0.0..libdd-data-pipeline-core-v4.0.0) - 2026-10-23
-
-### Added
-
-- Add basic no_std to libdd-common ([#2638](https://github.com/datadog/libdatadog/issues/2638)) - ([d0dd0a2](https://github.com/datadog/libdatadog/commit/d0dd0a21ffca664d7c6a0798dd8c178234fd6750))
-- Add v1-native span obfuscation ([#2565](https://github.com/datadog/libdatadog/issues/2565)) - ([75d4447](https://github.com/datadog/libdatadog/commit/75d4447eb19cac5b1f0337fccf85f34d08af6c36))
-- Wire v1 payload to the trace exporter and add v1 pooling ([#2558](https://github.com/datadog/libdatadog/issues/2558)) - ([1967b81](https://github.com/datadog/libdatadog/commit/1967b8144736556a245d4f4b55eba41372752f45))
-
-### Fixed
-
-- Reject unfollowed redirects ([#2651](https://github.com/datadog/libdatadog/issues/2651)) - ([bbe81f7](https://github.com/datadog/libdatadog/commit/bbe81f75ae8dc58c607d6d5b1af1c3649d372d26))
-
-
-
 ## [3.0.0](https://github.com/datadog/libdatadog/compare/libdd-data-pipeline-core-v2.0.0..libdd-data-pipeline-core-v3.0.0) - 2026-10-02
 
 ### Added

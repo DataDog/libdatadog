@@ -7,13 +7,13 @@
 
 mod common;
 
+use libdd_common::test_utils::{parse_http_request, parse_http_request_sync};
 use libdd_profiling::exporter::config;
 use libdd_profiling::exporter::{File, ProfileExporter};
 use libdd_profiling::internal::EncodedProfile;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use tools::test_utils::{parse_http_request, parse_http_request_sync};
 
 /// Shared state for test HTTP servers
 #[derive(Debug, Clone)]

@@ -274,8 +274,7 @@ impl Endpoint {
     /// Creates a reqwest ClientBuilder configured for this endpoint.
     ///
     /// This method handles various endpoint schemes:
-    /// - `http`/`https`: Standard HTTP(S) endpoints. HTTPS requests use the same TLS configuration
-    ///   as the hyper connector, including the compromised-key distrust check.
+    /// - `http`/`https`: Standard HTTP(S) endpoints
     /// - `unix`: Unix domain sockets (Unix only)
     /// - `windows`: Windows named pipes (Windows only)
     /// - `file`: File dump endpoints for debugging (spawns a local server to capture requests)
@@ -308,24 +307,8 @@ impl Endpoint {
             .no_proxy();
 
         let request_url = match self.url.scheme_str() {
-            // HTTPS endpoints: route reqwest through the same TLS configuration
-            // as the hyper connector, so the compromised-key distrust check and
-            // the selected crypto provider apply to both clients. Without this,
-            // reqwest would build its own platform verifier, bypassing the
-            // distrust wrapper.
-            Some("https") => {
-                #[cfg(feature = "tls-core")]
-                {
-                    builder = builder
-                        .tls_backend_preconfigured(crate::connector::https::build_tls_config()?);
-                }
-                self.url.to_string()
-            }
-            // Plain-HTTP endpoints never negotiate TLS, so don't preconfigure a
-            // TLS backend: building the configuration eagerly loads the system
-            // CA roots, which fails in minimal container environments that have
-            // no CA certificates installed.
-            Some("http") => self.url.to_string(),
+            // HTTP/HTTPS endpoints
+            Some("http") | Some("https") => self.url.to_string(),
 
             // File dump endpoint (debugging) - uses platform-specific local transport
             Some("file") => {

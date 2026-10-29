@@ -9,7 +9,7 @@
 //! <https://docs.datadoghq.com/getting_started/tagging/#define-tags>. Enforcing rules that tracing
 //! and profiling do not apply consistently would produce a worse user experience, so runtime
 //! validation currently rejects only empty tags and likely colon-related mistakes. Compile-time
-//! validation by the [`tag!`](crate::tag!) macro is intentionally stricter.
+//! validation by the [`tag!`] macro is intentionally stricter.
 
 use core::fmt::{Display, Formatter};
 #[cfg(feature = "alloc")]

@@ -323,7 +323,7 @@ fn collect_event_attributes<T: TraceData>(ev: &SpanEvent<T>) -> Vec<ProtoKeyValu
 /// directly from the native span fields (no hex/decimal round trip — the prost types are the IR).
 ///
 /// Resource: SDK-level attributes (service.name, deployment.environment.name, telemetry.sdk.*,
-/// runtime-id, `_dd.sdk.otlp_export`, `datadog.sdk.semantics`).
+/// runtime-id, `_dd.sdk.otlp_export`, `datadog.sdk.semantics`); see [`build_resource`].
 /// InstrumentationScope: optional tracer scope name/version.
 /// All analogous DD span fields are mapped; meta→attributes (string), metrics→attributes
 /// (int/double), links and events mapped to OTLP links and events. Status from span.error and
@@ -333,7 +333,6 @@ fn collect_event_attributes<T: TraceData>(ev: &SpanEvent<T>) -> Vec<ProtoKeyValu
 /// present) as the `_dd.p.tid` meta tag, which per RFC #85 is set on the chunk root only.
 /// We resolve it once per chunk and apply it to every span so OTLP receivers see the full 128-bit
 /// trace_id on every span in the trace.
-// Resource attributes are built by `build_resource`.
 pub fn map_traces_to_otlp<T: TraceData>(
     trace_chunks: &[Vec<Span<T>>],
     resource_info: &OtlpResourceInfo,

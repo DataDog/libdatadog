@@ -120,9 +120,6 @@ jobs:
     needs: [check-skip, detect-changes]
     if: ${{ needs.check-skip.outputs.skip != 'true' && needs.detect-changes.outputs.has_rust_changes == 'true' }}
     runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-      contents: read
     outputs:
       result_json: ${{ steps.semver.outputs.result_json }}
     steps:
@@ -142,12 +139,14 @@ jobs:
           # Link the dated nightly as 'nightly' for tools (like cargo-public-api) that expect it
           ln -sf ~/.rustup/toolchains/${{ steps.nightly-version.outputs.version }}-x86_64-unknown-linux-gnu ~/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu
 
-      - name: sccache
-        # Compiles with the explicit RUST_VERSION (not the workspace MSRV),
-        # so entries written by main's MSRV jobs mostly miss; this frees the
-        # saturated GHA cache more than it speeds the job up.
-        id: sccache
-        uses: ./.github/actions/setup-sccache
+      - name: Cache [rust]
+        id: rust-cache
+        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
+        with:
+          cache-targets: true
+          shared-key: default
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: echo "rust-cache ${{ steps.rust-cache.outputs.cache-hit == 'true' && 'HIT' || 'MISS' }}"
 
       - name: Install dependencies
         run: |

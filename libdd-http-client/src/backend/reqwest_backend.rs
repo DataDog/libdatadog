@@ -13,8 +13,6 @@ use crate::{HttpClientError, HttpRequest, HttpResponse};
 #[derive(Debug)]
 pub(crate) struct ReqwestBackend {
     client: reqwest::Client,
-    /// Whether the client's base URL uses `https`, recorded at construction.
-    base_url_is_https: bool,
 }
 
 impl super::Backend for ReqwestBackend {
@@ -24,41 +22,6 @@ impl super::Backend for ReqwestBackend {
         transport: TransportConfig,
     ) -> Result<Self, HttpClientError> {
         let mut builder = reqwest::Client::builder().timeout(client_config.timeout());
-        let base_url_is_https = is_https_url(client_config.base_url());
-
-        // Route reqwest HTTPS through the shared TLS configuration so the
-        // compromised-key distrust check and the selected crypto provider apply
-        // (see `crate::tls`). Without this, reqwest would build its own platform
-        // verifier, bypassing the distrust wrapper.
-        //
-        // Only HTTPS base URLs get the preconfigured TLS backend: building the
-        // configuration eagerly loads the system CA roots, which must not happen
-        // for plain-HTTP clients in minimal environments that have no CA
-        // certificates installed.
-        #[cfg(any(feature = "https", feature = "fips"))]
-        if base_url_is_https {
-            builder = builder.tls_backend_preconfigured(crate::tls::build_tls_config()?);
-        } else {
-            // Plain-HTTP clients have no preconfigured TLS backend (see above),
-            // so a redirect to an `https` URL would negotiate TLS on reqwest's
-            // default verifier, bypassing the compromised-key distrust check.
-            // Stop such redirects instead of following them: the redirect
-            // response itself is returned to the caller and no TLS connection
-            // to the redirected URL is ever made.
-            builder = builder.redirect(reqwest::redirect::Policy::custom(|attempt| {
-                // Custom policies do not inherit the default hop limit, so keep
-                // parity with reqwest's default (`Policy::limited(10)`) to bound
-                // loops: `previous()` includes the initial URL, so the default
-                // allows 10 redirects and errors on the 11th.
-                if attempt.previous().len() > 10 {
-                    attempt.error("too many redirects")
-                } else if attempt.url().scheme().eq_ignore_ascii_case("http") {
-                    attempt.follow()
-                } else {
-                    attempt.stop()
-                }
-            }));
-        }
 
         match transport {
             TransportConfig::Tcp => {}
@@ -84,11 +47,8 @@ impl super::Backend for ReqwestBackend {
 
         let client = builder
             .build()
-            .map_err(|e| HttpClientError::InvalidConfig(error_chain(&e)))?;
-        Ok(Self {
-            client,
-            base_url_is_https,
-        })
+            .map_err(|e| HttpClientError::InvalidConfig(e.to_string()))?;
+        Ok(Self { client })
     }
 
     async fn send(
@@ -96,14 +56,6 @@ impl super::Backend for ReqwestBackend {
         request: HttpRequest,
         config: &HttpClientConfig,
     ) -> Result<HttpResponse, HttpClientError> {
-        if is_https_url(&request.url) != self.base_url_is_https {
-            return Err(HttpClientError::InvalidConfig(format!(
-                "request URL '{}' does not use the same scheme as the client's base URL: \
-                 requests are only accepted over the scheme the client was configured with",
-                request.url
-            )));
-        }
-
         let method = match request.method {
             HttpMethod::Get => reqwest::Method::GET,
             HttpMethod::Post => reqwest::Method::POST,
@@ -194,90 +146,13 @@ fn build_multipart_form(
         })
 }
 
-/// Returns whether `url` is parsed with an `https` scheme.
-fn is_https_url(url: &str) -> bool {
-    reqwest::Url::parse(url)
-        .map(|url| url.scheme().eq_ignore_ascii_case("https"))
-        .unwrap_or(false)
-}
-
 /// Map a `reqwest::Error` to our `HttpClientError` variants.
-///
-/// The message includes the whole error source chain, since relevant details
-/// (e.g. TLS rejection reasons) only appear in nested sources.
 fn map_reqwest_error(e: reqwest::Error) -> HttpClientError {
     if e.is_timeout() {
         HttpClientError::TimedOut
     } else if e.is_connect() {
-        HttpClientError::ConnectionFailed(error_chain(&e))
+        HttpClientError::ConnectionFailed(e.to_string())
     } else {
-        HttpClientError::IoError(error_chain(&e))
-    }
-}
-
-/// Renders an error together with its whole source chain.
-fn error_chain(error: &dyn std::error::Error) -> String {
-    let mut chain = error.to_string();
-    let mut source = error.source();
-    while let Some(error) = source {
-        chain.push_str(": ");
-        chain.push_str(&error.to_string());
-        source = error.source();
-    }
-    chain
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::HttpRequest;
-    use crate::backend::Backend;
-    use crate::config::{HttpClientConfig, TransportConfig};
-    use crate::request::HttpMethod;
-    use core::time::Duration;
-
-    fn backend(base_url: &str) -> (ReqwestBackend, HttpClientConfig) {
-        let _ = rustls::crypto::ring::default_provider().install_default();
-        let config = HttpClientConfig::new(base_url.to_owned(), Duration::from_secs(5));
-        let backend = ReqwestBackend::new(&config, TransportConfig::Tcp).expect("valid config");
-        (backend, config)
-    }
-
-    /// Asserts that `request_url` through a client built with `base_url` is
-    /// rejected as a non-retryable scheme-mismatch configuration error.
-    async fn assert_scheme_mismatch(base_url: &str, request_url: &str) {
-        let (backend, config) = backend(base_url);
-        let request = HttpRequest::new(HttpMethod::Get, request_url.to_owned());
-        let error = backend.send(request, &config).await.expect_err(&format!(
-            "request URL '{request_url}' must be rejected by a '{base_url}' client"
-        ));
-        assert!(
-            matches!(error, HttpClientError::InvalidConfig(ref message) if message.contains("scheme")),
-            "unexpected error: {error}"
-        );
-    }
-
-    #[tokio::test]
-    #[cfg_attr(miri, ignore)]
-    async fn rejects_request_urls_that_mismatch_the_base_scheme() {
-        // HTTPS requests through a plain-HTTP client.
-        assert_scheme_mismatch("http://localhost:8126", "https://example.com/").await;
-        assert_scheme_mismatch("http://localhost:8126", " https://example.com/").await;
-        assert_scheme_mismatch("http://localhost:8126", "ht	tps://example.com/").await;
-        // Plain-HTTP requests through an HTTPS-based client.
-        assert_scheme_mismatch("https://localhost:8126", "http://localhost:8126/ping").await;
-        assert_scheme_mismatch("https://localhost:8126", " http://localhost:8126/ping").await;
-    }
-
-    #[tokio::test]
-    #[cfg_attr(miri, ignore)]
-    async fn matching_scheme_request_urls_pass_url_validation() {
-        let (backend, config) = backend("http://localhost:8126");
-        // Port 1 (discard protocol) is not served; the request must pass URL
-        // validation and proceed to the refused connection.
-        let request = HttpRequest::new(HttpMethod::Get, "http://127.0.0.1:1/ping".to_owned());
-        if let Err(HttpClientError::InvalidConfig(message)) = backend.send(request, &config).await {
-            panic!("request with a matching scheme must pass URL validation: {message}");
-        }
+        HttpClientError::IoError(e.to_string())
     }
 }

@@ -8,10 +8,10 @@ use std::alloc::System;
 use std::hint::black_box;
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use libdd_sampling::glob_matcher::GlobMatcher;
-use tools::bench_utils::{
+use libdd_common::bench_utils::{
     AllocatedBytesMeasurement, ReportingAllocator, memory_allocated_criterion,
 };
+use libdd_sampling::glob_matcher::GlobMatcher;
 
 #[global_allocator]
 static GLOBAL: ReportingAllocator<System> = ReportingAllocator::new(System);

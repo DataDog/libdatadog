@@ -154,31 +154,3 @@ pub fn get_peer_credentials(fd: RawFd) -> io::Result<PeerCredentials> {
         gid: cred.gid,
     })
 }
-
-#[cfg(test)]
-mod tests {
-    // These tests drive real sockets, which Miri does not support.
-    use super::*;
-
-    /// A client exiting right after its last messages usually leaves acks unread. Closing a
-    /// SOCK_SEQPACKET socket with unread data resets the connection, and Linux reports that
-    /// before the messages the client sent earlier: the server must still receive them.
-    #[tokio::test]
-    #[cfg_attr(miri, ignore)]
-    async fn test_recv_async_drains_queued_messages_after_reset() {
-        let (client, server) = SeqpacketConn::socketpair().expect("socketpair");
-        let server = server.into_async_conn().expect("into_async_conn");
-
-        client.try_send_raw(b"first".to_vec(), &[]).expect("send");
-        client.try_send_raw(b"final".to_vec(), &[]).expect("send");
-        crate::send_raw_async(&server, vec![1]).await.expect("ack");
-        drop(client);
-
-        for expected in [&b"first"[..], b"final"] {
-            let (got, _) = crate::recv_raw_async(&server, |buf: &[u8]| buf.to_vec())
-                .await
-                .expect("expected the queued message, not ECONNRESET");
-            assert_eq!(got, expected);
-        }
-    }
-}

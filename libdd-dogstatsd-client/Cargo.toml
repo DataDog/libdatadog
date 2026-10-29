@@ -5,20 +5,20 @@ homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-dogstatsd-clie
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-dogstatsd-client"
 rust-version.workspace = true
 edition.workspace = true
-version = "9.0.0"
+version = "8.0.0"
 license.workspace = true
 
 [lib]
 bench = false
 
 [dependencies]
-libdd-common = { version = "9.0.0", path = "../libdd-common", default-features = false, features = ["std"] }
+libdd-common = { version = "8.0.0", path = "../libdd-common", default-features = false, features = ["std"] }
 cadence.workspace = true
 serde = { workspace = true, features = ["derive", "rc"] }
 tracing.workspace = true
 anyhow.workspace = true
 http = { workspace = true, features = ["std"] }
-libdd-shared-runtime = { version = "7.0.0", path = "../libdd-shared-runtime", default-features = false, optional = true }
+libdd-shared-runtime = { version = "6.0.0", path = "../libdd-shared-runtime", default-features = false, optional = true }
 tokio = { workspace = true, features = ["sync"], optional = true }
 async-trait = { workspace = true, optional = true }
 
@@ -30,10 +30,3 @@ shared-runtime = ["dep:libdd-shared-runtime", "dep:tokio", "dep:async-trait"]
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "time", "test-util", "rt-multi-thread"] }
-
-[lints.clippy]
-# TODO(paullgdc): This fails a lot because of if-let chaining which became
-# allowed with the 1.91.1 MSRV bump.
-# I am planning to fix each crate as an individual PR in order to not have 
-# too many conflicts
-collapsible_if = "allow"

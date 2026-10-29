@@ -2,28 +2,6 @@
 
 
 
-## [9.0.0](https://github.com/datadog/libdatadog/compare/libdd-common-v8.0.0..libdd-common-v9.0.0) - 2026-10-23
-
-### Added
-
-- Add basic no_std to libdd-common ([#2638](https://github.com/datadog/libdatadog/issues/2638)) - ([d0dd0a2](https://github.com/datadog/libdatadog/commit/d0dd0a21ffca664d7c6a0798dd8c178234fd6750))
-- Add reusable CDN configuration fetching ([#2675](https://github.com/datadog/libdatadog/issues/2675)) - ([34a9776](https://github.com/datadog/libdatadog/commit/34a97764af909100bab3fe4d84659fee736cca08))
-- Expose Azure region and deployment slots ([#2629](https://github.com/datadog/libdatadog/issues/2629)) - ([4f9a48e](https://github.com/datadog/libdatadog/commit/4f9a48e3f3bfd638205ffa8bf50d9ecb6f37b260))
-- Support fork identity updates ([#2611](https://github.com/datadog/libdatadog/issues/2611)) - ([7857308](https://github.com/datadog/libdatadog/commit/7857308d8d5a3f8c4188f29cdc5fdfe9189d1ef4))
-
-### Changed
-
-- Fix last doc lints ([#2694](https://github.com/datadog/libdatadog/issues/2694)) - ([3e4a453](https://github.com/datadog/libdatadog/commit/3e4a4532fb7f79eebfb6daef022a2d0c6772a560))
-
-### Fixed
-
-- Gate platform-specific utilities on AIX ([#2628](https://github.com/datadog/libdatadog/issues/2628)) - ([2b4587e](https://github.com/datadog/libdatadog/commit/2b4587ed49cbc539ff861ef549c9689baf86b920))
-- Distrust compromised eMudhra CAs without bumping rustls-webpki ([#2713](https://github.com/datadog/libdatadog/issues/2713)) - ([71d4b6b](https://github.com/datadog/libdatadog/commit/71d4b6b24594abe233b667b8d4b12789e6fbd8c4))
-- Bump to exclude compromised CAs ([#2702](https://github.com/datadog/libdatadog/issues/2702)) - ([3c8dd86](https://github.com/datadog/libdatadog/commit/3c8dd86025220da8eac559622153bc670b47170a))
-- Most doc warnings ([#2289](https://github.com/datadog/libdatadog/issues/2289)) - ([f52ab62](https://github.com/datadog/libdatadog/commit/f52ab62fdaa1acc0ca9e8812a9e9468cc59af6b5))
-
-
-
 ## [8.0.0](https://github.com/datadog/libdatadog/compare/libdd-common-v7.0.0..libdd-common-v8.0.0) - 2026-10-02
 
 ### Added

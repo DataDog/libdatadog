@@ -2,15 +2,6 @@
 
 
 
-## [5.0.0](https://github.com/datadog/libdatadog/compare/libdd-library-config-v4.2.0..libdd-library-config-v5.0.0) - 2026-10-23
-
-### Added
-
-- Make libdd-library-config no_std compatible ([#1770](https://github.com/datadog/libdatadog/issues/1770)) - ([7717de8](https://github.com/datadog/libdatadog/commit/7717de8e376cb43ef3f592ea9531036e06867299))
-- Expose OTel thread-context metadata opt-in ([#2622](https://github.com/datadog/libdatadog/issues/2622)) - ([7e9697d](https://github.com/datadog/libdatadog/commit/7e9697df19593e77e6d8a4df567eaa66003cb286))
-
-
-
 ## [4.2.0](https://github.com/datadog/libdatadog/compare/libdd-library-config-v4.1.0..libdd-library-config-v4.2.0) - 2026-10-02
 
 ### Changed

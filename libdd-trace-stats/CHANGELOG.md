@@ -2,24 +2,6 @@
 
 
 
-## [12.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-stats-v11.0.0..libdd-trace-stats-v12.0.0) - 2026-10-23
-
-### Added
-
-- Add basic no_std to libdd-common ([#2638](https://github.com/datadog/libdatadog/issues/2638)) - ([d0dd0a2](https://github.com/datadog/libdatadog/commit/d0dd0a21ffca664d7c6a0798dd8c178234fd6750))
-- Follow the full sql config in CSS obfuscation ([#2535](https://github.com/datadog/libdatadog/issues/2535)) - ([278117f](https://github.com/datadog/libdatadog/commit/278117feead185ad0f97863ee19af7e2b99ddfca))
-- Add basic no_std support to telemetry ([#2647](https://github.com/datadog/libdatadog/issues/2647)) - ([4e6f509](https://github.com/datadog/libdatadog/commit/4e6f5096ae1d5a0dafbe28f9002bc1be49c7d8bb))
-
-### Changed
-
-- Fix last doc lints ([#2694](https://github.com/datadog/libdatadog/issues/2694)) - ([3e4a453](https://github.com/datadog/libdatadog/commit/3e4a4532fb7f79eebfb6daef022a2d0c6772a560))
-
-### Fixed
-
-- Most doc warnings ([#2289](https://github.com/datadog/libdatadog/issues/2289)) - ([f52ab62](https://github.com/datadog/libdatadog/commit/f52ab62fdaa1acc0ca9e8812a9e9468cc59af6b5))
-
-
-
 ## [11.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-stats-v10.0.0..libdd-trace-stats-v11.0.0) - 2026-10-02
 
 ### Added

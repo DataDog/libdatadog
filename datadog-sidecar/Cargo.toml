@@ -98,13 +98,6 @@ httpmock.workspace = true
 libdd-remote-config = { path = "../libdd-remote-config", features = ["test"] }
 libdd-trace-utils = { path = "../libdd-trace-utils", features = ["test-utils"] }
 
-[lints.clippy]
-# TODO(paullgdc): This fails a lot because of if-let chaining which became
-# allowed with the 1.91.1 MSRV bump.
-# I am planning to fix each crate as an individual PR in order to not have 
-# too many conflicts
-collapsible_if = "allow"
-
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = [
     'cfg(tokio_unstable,windows_seh_wrapper)',

@@ -95,7 +95,7 @@ const STN_UNDEF: u32 = 0;
 /// and rewrite GOT entries.
 ///
 /// Slice fields (`strtab`, `symtab`, `rels`, `relas`, `jmprels`) are
-/// validated once in [`Self::from_phdr`] so all subsequent access is safe.
+/// validated once in [`from_phdr`] so all subsequent access is safe.
 /// The hash table pointers remain raw because the hash lookup functions
 /// need arithmetic into their variable-layout internal structure.
 pub struct DynamicInfo<'a> {

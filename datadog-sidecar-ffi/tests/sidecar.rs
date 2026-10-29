@@ -156,14 +156,6 @@ fn test_ddog_sidecar_connection() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
-// On Windows the spawn trampoline must GetProcAddress `ddog_daemon_entry_point` from the module
-// containing it - here the test .exe, which (unlike a DLL) exports no symbols. The daemon thus
-// exits immediately and connecting only succeeds when it wins the race against that exit.
-// Spawning from Windows needs the entrypoint in a dylib, see test_ddog_sidecar_connection.
-#[cfg_attr(
-    windows,
-    ignore = "sidecar daemon cannot start from a test exe on Windows (no exported entrypoint)"
-)]
 fn test_ddog_sidecar_register_app() {
     set_sidecar_per_process();
 

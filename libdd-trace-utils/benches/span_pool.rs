@@ -3,11 +3,11 @@
 
 use criterion::measurement::Measurement;
 use criterion::{Criterion, Throughput, black_box, criterion_group};
+use libdd_common::bench_utils::{MeasurementName, memory_allocated_criterion};
 use libdd_tinybytes::BytesString;
 use libdd_trace_utils::span::BytesData;
 use libdd_trace_utils::span::span_pool::SpanPool;
 use libdd_trace_utils::span::v04::Span;
-use tools::bench_utils::{MeasurementName, memory_allocated_criterion};
 
 /// Configurations exercised by the benchmarks: `(number of chunks, spans per chunk)`.
 /// The small one resembles a single trace flush; the large one resembles a full payload.
@@ -162,9 +162,8 @@ fn enqueue_dequeue<M: Measurement + MeasurementName + 'static>(c: &mut Criterion
 }
 
 criterion_group!(span_pool_benches, enqueue_dequeue,);
-
-// Not `criterion_group!`: its `config =` would be overridden by the command-line flags.
-pub fn span_pool_alloc_benches() {
-    let mut criterion = memory_allocated_criterion(&super::GLOBAL);
-    enqueue_dequeue(&mut criterion);
-}
+criterion_group!(
+    name = span_pool_alloc_benches;
+    config = memory_allocated_criterion(&super::GLOBAL);
+    targets = enqueue_dequeue,
+);

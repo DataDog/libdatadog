@@ -2,21 +2,6 @@
 
 
 
-## [11.0.0](https://github.com/datadog/libdatadog/compare/libdd-telemetry-v10.0.0..libdd-telemetry-v11.0.0) - 2026-10-23
-
-### Added
-
-- Add basic no_std to libdd-common ([#2638](https://github.com/datadog/libdatadog/issues/2638)) - ([d0dd0a2](https://github.com/datadog/libdatadog/commit/d0dd0a21ffca664d7c6a0798dd8c178234fd6750))
-- Add the debugger metric namespace ([#2678](https://github.com/datadog/libdatadog/issues/2678)) - ([bfe1a89](https://github.com/datadog/libdatadog/commit/bfe1a8935c021a1dc8162266da291f4c3dad5f45))
-- Add basic no_std support to telemetry ([#2647](https://github.com/datadog/libdatadog/issues/2647)) - ([4e6f509](https://github.com/datadog/libdatadog/commit/4e6f5096ae1d5a0dafbe28f9002bc1be49c7d8bb))
-- Support fork identity updates ([#2611](https://github.com/datadog/libdatadog/issues/2611)) - ([7857308](https://github.com/datadog/libdatadog/commit/7857308d8d5a3f8c4188f29cdc5fdfe9189d1ef4))
-
-### Changed
-
-- Fix last doc lints ([#2694](https://github.com/datadog/libdatadog/issues/2694)) - ([3e4a453](https://github.com/datadog/libdatadog/commit/3e4a4532fb7f79eebfb6daef022a2d0c6772a560))
-
-
-
 ## [10.0.0](https://github.com/datadog/libdatadog/compare/libdd-telemetry-v9.0.0..libdd-telemetry-v10.0.0) - 2026-10-02
 
 ### Added

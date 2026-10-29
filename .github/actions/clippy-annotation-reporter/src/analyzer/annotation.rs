@@ -22,25 +22,25 @@ pub(super) fn find_annotations(
     let file_rc = Rc::new(file.to_owned());
 
     for line in content.lines() {
-        if let Some(captures) = regex.captures(line)
-            && let Some(rule_match) = captures.get(1)
-        {
-            let rule_str = rule_match.as_str().to_owned();
+        if let Some(captures) = regex.captures(line) {
+            if let Some(rule_match) = captures.get(1) {
+                let rule_str = rule_match.as_str().to_owned();
 
-            // Get or create Rc for this rule
-            let rule_rc = match rule_cache.get(&rule_str) {
-                Some(cached) => Rc::clone(cached),
-                None => {
-                    let rc = Rc::new(rule_str.clone());
-                    rule_cache.insert(rule_str, Rc::clone(&rc));
-                    rc
-                }
-            };
+                // Get or create Rc for this rule
+                let rule_rc = match rule_cache.get(&rule_str) {
+                    Some(cached) => Rc::clone(cached),
+                    None => {
+                        let rc = Rc::new(rule_str.clone());
+                        rule_cache.insert(rule_str, Rc::clone(&rc));
+                        rc
+                    }
+                };
 
-            annotations.push(ClippyAnnotation {
-                file: Rc::clone(&file_rc),
-                rule: rule_rc,
-            });
+                annotations.push(ClippyAnnotation {
+                    file: Rc::clone(&file_rc),
+                    rule: rule_rc,
+                });
+            }
         }
     }
 }

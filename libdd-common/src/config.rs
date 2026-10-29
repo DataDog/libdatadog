@@ -3,7 +3,10 @@
 
 pub mod parse_env {
     use core::{str::FromStr, time::Duration};
+    use http::Uri;
     use std::env;
+
+    use crate::parse_uri;
 
     pub fn duration(name: &str) -> Option<Duration> {
         Some(Duration::from_secs_f32(
@@ -22,5 +25,9 @@ pub mod parse_env {
 
     pub fn str_not_empty(name: &str) -> Option<String> {
         env::var(name).ok().filter(|s| !s.is_empty())
+    }
+
+    pub fn uri(name: &str) -> Option<Uri> {
+        parse_uri(&str_not_empty(name)?).ok()
     }
 }

@@ -2,33 +2,6 @@
 
 
 
-## [15.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v14.0.0..libdd-trace-utils-v15.0.0) - 2026-10-23
-
-### Added
-
-- Add basic no_std to libdd-common ([#2638](https://github.com/datadog/libdatadog/issues/2638)) - ([d0dd0a2](https://github.com/datadog/libdatadog/commit/d0dd0a21ffca664d7c6a0798dd8c178234fd6750))
-- Mark native trace exports with _dd.sdk.otlp_export ([#2636](https://github.com/datadog/libdatadog/issues/2636)) - ([7032fc6](https://github.com/datadog/libdatadog/commit/7032fc62f94e56de36a3915e694b1e998f7ac6d0))
-- Add v1-native span obfuscation ([#2565](https://github.com/datadog/libdatadog/issues/2565)) - ([75d4447](https://github.com/datadog/libdatadog/commit/75d4447eb19cac5b1f0337fccf85f34d08af6c36))
-- Wire v1 payload to the trace exporter and add v1 pooling ([#2558](https://github.com/datadog/libdatadog/issues/2558)) - ([1967b81](https://github.com/datadog/libdatadog/commit/1967b8144736556a245d4f4b55eba41372752f45))
-- Adjust bechmark job for vecmap ([#2664](https://github.com/datadog/libdatadog/issues/2664)) - ([9475588](https://github.com/datadog/libdatadog/commit/9475588aadbc8121cc557a2cc33399f97a6b99b3))
-
-### Changed
-
-- Check doc warnings in ci ([#2695](https://github.com/datadog/libdatadog/issues/2695)) - ([84bd289](https://github.com/datadog/libdatadog/commit/84bd289eeeba579f1a619acbac67de23800ee0ee))
-- Move AttributeValue into new libdd-trace-model crate ([#2644](https://github.com/datadog/libdatadog/issues/2644)) - ([ce77b3f](https://github.com/datadog/libdatadog/commit/ce77b3f5a60fa61f4bb4394f917b5d9d8949dc0a))
-- Optimize the deduplication operation ([#2661](https://github.com/datadog/libdatadog/issues/2661)) - ([55c03c1](https://github.com/datadog/libdatadog/commit/55c03c162cb7c7cc6eec37ad051b509b2dd1be3c))
-- Use stack allocation instead of the global allocator for small maps ([#2672](https://github.com/datadog/libdatadog/issues/2672)) - ([a5d1168](https://github.com/datadog/libdatadog/commit/a5d1168a84f888ce40032ee82d40f034ba63d3a2))
-- Fix last doc lints ([#2694](https://github.com/datadog/libdatadog/issues/2694)) - ([3e4a453](https://github.com/datadog/libdatadog/commit/3e4a4532fb7f79eebfb6daef022a2d0c6772a560))
-
-### Fixed
-
-- Reject unfollowed redirects ([#2651](https://github.com/datadog/libdatadog/issues/2651)) - ([bbe81f7](https://github.com/datadog/libdatadog/commit/bbe81f75ae8dc58c607d6d5b1af1c3649d372d26))
-- Span_pool allocation benches were running at ci sampling defaults ([#2718](https://github.com/datadog/libdatadog/issues/2718)) - ([8903b3b](https://github.com/datadog/libdatadog/commit/8903b3bd61cdddd17e8abe441867db38335e9ef5))
-- Most doc warnings - semantic changes ([#2547](https://github.com/datadog/libdatadog/issues/2547)) - ([a887c16](https://github.com/datadog/libdatadog/commit/a887c1644be7b7b44829fcf71ed5e6058ae8d67e))
-- Most doc warnings ([#2289](https://github.com/datadog/libdatadog/issues/2289)) - ([f52ab62](https://github.com/datadog/libdatadog/commit/f52ab62fdaa1acc0ca9e8812a9e9468cc59af6b5))
-
-
-
 ## [14.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v13.0.0..libdd-trace-utils-v14.0.0) - 2026-10-02
 
 ### Added

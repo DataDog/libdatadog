@@ -53,7 +53,7 @@ impl DogStatsDClient {
         })
     }
 
-    /// Create a [`DogStatsDClient`] backed by a background worker running on the
+    /// Create a [`DogStatsDClient`] backed by a [`MetricSinkWorker`] running on the
     /// provided [`SharedRuntime`].
     ///
     /// Returns the client and a [`WorkerHandle`] that can be used to stop the
@@ -61,7 +61,6 @@ impl DogStatsDClient {
     ///
     /// # Errors
     /// Returns an error if the endpoint is invalid or the worker cannot be spawned.
-    // The background worker is a `MetricSinkWorker`.
     #[cfg(feature = "shared-runtime")]
     pub fn new_with_shared_runtime(
         endpoint: Endpoint,

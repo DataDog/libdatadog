@@ -1,16 +1,8 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-#[cfg(feature = "bench-utils")]
-pub mod bench_utils;
-
-#[cfg(feature = "cli")]
 pub mod junit_file_attributes;
 
-#[cfg(feature = "test-utils")]
-pub mod test_utils;
-
-#[cfg(feature = "cli")]
 pub mod headers {
     use libdd_common::regex_engine::{Regex, RegexBuilder};
     use std::collections::HashSet;

@@ -257,25 +257,10 @@ pub fn should_obfuscate_url(
     remove_query_string: bool,
     remove_path_digits: bool,
 ) -> bool {
-    enum ParsingState {
-        FirstSegment,
-        InPort,
-        Other,
-    }
-
     // Every trigger is single-byte ASCII, and non-ASCII bytes are caught by the range guard, so we
     // scan bytes directly and avoid UTF-8 decoding. Path and query need different checks, so we
     // split the scan at the first '?'.
     let bytes = url.as_bytes();
-    // With both options off, a failed parse only strips userinfo, which already triggers on '@'.
-    let check_colons = remove_query_string || remove_path_digits;
-    let mut state = if check_colons {
-        ParsingState::FirstSegment
-    } else {
-        ParsingState::Other
-    };
-    let mut valid_scheme = true;
-    let mut authority_start = (check_colons && bytes.starts_with(b"//")).then_some(2);
 
     // Path region.
     let mut i = 0;
@@ -291,28 +276,7 @@ pub fn should_obfuscate_url(
                 i += 1;
                 break;
             }
-            b':' if matches!(state, ParsingState::FirstSegment) => {
-                if i == 0 || !valid_scheme {
-                    return true;
-                }
-                state = ParsingState::Other;
-                authority_start = bytes[i + 1..].starts_with(b"//").then_some(i + 3);
-            }
-            b':' if authority_start.is_some() => {
-                if matches!(state, ParsingState::InPort) {
-                    return true;
-                }
-                state = ParsingState::InPort;
-            }
-            b'/' => {
-                state = ParsingState::Other;
-                // The opening "//" does not end the authority.
-                if authority_start.is_some_and(|start| i >= start) {
-                    authority_start = None;
-                }
-            }
             b if (remove_path_digits && b.is_ascii_digit())
-                    || (matches!(state, ParsingState::InPort) && !b.is_ascii_digit())
                     // non-ASCII (>= 0x80) or control char (< 0x20)
                     || !(0x20..0x80).contains(&b)
                     || b == 0x7F
@@ -323,13 +287,6 @@ pub fn should_obfuscate_url(
                     || is_go_url_escape_cat2_path(b as char) =>
             {
                 return true;
-            }
-            b if matches!(state, ParsingState::FirstSegment) => {
-                valid_scheme &= if i == 0 {
-                    b.is_ascii_alphabetic()
-                } else {
-                    b.is_ascii_alphanumeric() || matches!(b, b'+' | b'-' | b'.')
-                };
             }
             _ => {}
         }
@@ -642,159 +599,5 @@ mod tests {
             obfuscate_url("http://foo.com/a[b", true, false),
             Some("http://foo.com/a[b".to_string())
         );
-    }
-
-    /// URLs that fail to parse are replaced with `?`, so the precheck has to admit them. The colon
-    /// they trip over is the only byte in them that is not a legal URL character.
-    #[test]
-    fn should_obfuscate_url_admits_unparsable_authorities() {
-        use super::should_obfuscate_url;
-
-        for url in [
-            "https://example.com:port/x",
-            "http://foo.com:abc/x",
-            "http://foo:bar.com/x",
-            ":",
-            "0:",
-            "$-:b",
-            "http://foo.com:8o80/x",
-            "http://a:b:c/d",
-            "//foo.com:port/x",
-            "1http://x",
-            "a_b:c",
-            "http://a:1:2/x",
-            "http://a::/x",
-            "http://a:1a/x",
-            "//a:b",
-        ] {
-            assert_eq!(obfuscate_url_string(url, true, false), "?", "{url}");
-            assert!(should_obfuscate_url(url, true, false), "{url}");
-            assert!(should_obfuscate_url(url, false, true), "{url}");
-            // With both options off a failed parse only strips userinfo, so there is nothing to
-            // admit: these have none.
-            assert_eq!(obfuscate_url_string(url, false, false), url, "{url}");
-            assert!(!should_obfuscate_url(url, false, false), "{url}");
-        }
-        // A scheme's colon, and a colon in a path segment or a query, still parse.
-        assert!(!should_obfuscate_url("http://foo.com/path", true, false));
-        assert!(!should_obfuscate_url(
-            "http://foo.com/path?a=b",
-            false,
-            true
-        ));
-    }
-
-    /// A `:` that parses leaves the URL unchanged, so the precheck passes it.
-    #[test]
-    fn should_obfuscate_url_passes_parsable_colons() {
-        use super::should_obfuscate_url;
-
-        for url in [
-            "http:a:b",
-            "x:y:z",
-            "a+b-c.d:x",
-            "http:/a:b",
-            "http:////a:b",
-            "/a:b",
-            "a/b:c",
-            "a//b:c",
-            "//a/b:c",
-            "http://a/b:c",
-            "http://a:/x",
-            "http://:/x",
-            "http://a:8080/x",
-            "http://a:/b:c",
-            "http://a:8080/b:c",
-            "//a:8080/b:c",
-            "http://a:99999999999999999999",
-        ] {
-            assert_eq!(obfuscate_url_string(url, true, false), url, "{url}");
-            assert!(!should_obfuscate_url(url, true, false), "{url}");
-        }
-        // The query is not parsed, so its colons never matter.
-        assert_eq!(
-            obfuscate_url_string("http://a?b:c", false, true),
-            "http://a?b:c"
-        );
-        assert!(!should_obfuscate_url("http://a?b:c", false, true));
-    }
-
-    /// The precheck contract over every short URL built from these pieces.
-    #[test]
-    fn should_obfuscate_url_never_skips_a_short_rewrite() {
-        use super::should_obfuscate_url;
-
-        const PIECES: [&str; 10] = ["", "a", "1", "_", ":", "/", "//", "?", "#", "http:"];
-        let mut url = String::new();
-        for n in 0..PIECES.len().pow(4) {
-            url.clear();
-            let mut k = n;
-            for _ in 0..4 {
-                url.push_str(PIECES[k % PIECES.len()]);
-                k /= PIECES.len();
-            }
-            for (remove_query_string, remove_path_digits) in
-                [(false, false), (true, false), (false, true), (true, true)]
-            {
-                if !should_obfuscate_url(&url, remove_query_string, remove_path_digits) {
-                    assert_eq!(
-                        obfuscate_url_string(&url, remove_query_string, remove_path_digits),
-                        url,
-                        "{url:?} query={remove_query_string}, digits={remove_path_digits}"
-                    );
-                }
-            }
-        }
-    }
-
-    /// The precheck promises that `false` means the rewrite would not change the URL. Anything the
-    /// rewrite can reach belongs in this list.
-    #[test]
-    fn should_obfuscate_url_never_skips_a_rewrite() {
-        use super::should_obfuscate_url;
-
-        for url in [
-            "",
-            "http://foo.com/",
-            "http://foo.com/id/123/page/1?search=bar&page=2",
-            "http://user:password@foo.com/1/2/3?q=james",
-            "http://foo.com/foo%20bar/",
-            "http://foo.com/p?q=1",
-            "http://foo.com:8080/p",
-            "https://example.com:port/x",
-            "http://foo:bar.com/x",
-            "http://[::1]:8080/x",
-            "http://[fe80::1%25eth0]/1",
-            "http://foo bar.com/x",
-            "http://foo.com/items[1]",
-            "http://foo.com/x#a[b",
-            "../relative/path",
-            "a/b:c/d",
-            "mailto:someone@example.com",
-            "this is not a valid url",
-            ":",
-            "%",
-            "#",
-            "?",
-            "/",
-            "//",
-            "\u{10}",
-            "\u{10}ჸ",
-            "ჸ?ჸ#ჸ",
-            "C:#",
-            "http://example.com?email=a@b\u{0}",
-        ] {
-            for (remove_query_string, remove_path_digits) in
-                [(false, false), (true, false), (false, true), (true, true)]
-            {
-                if !should_obfuscate_url(url, remove_query_string, remove_path_digits) {
-                    assert_eq!(
-                        obfuscate_url_string(url, remove_query_string, remove_path_digits),
-                        url,
-                        "precheck skipped a rewrite of {url:?} (query={remove_query_string}, digits={remove_path_digits})"
-                    );
-                }
-            }
-        }
     }
 }

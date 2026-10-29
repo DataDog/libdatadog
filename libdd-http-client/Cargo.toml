@@ -15,19 +15,8 @@ bench = false
 [features]
 default = ["https", "reqwest-backend"]
 # Use rustls-no-provider to avoid reqwest forcing aws-lc-rs. Ring provider is
-# installed explicitly by libdd-common's connector init, or by this crate's own
-# TLS configuration when libdd-common is not in the dependency graph.
-# rustls-platform-verifier and the compromised-key distrust wrapper mirror
-# libdd-common's `connector::https::build_tls_config` (see src/tls.rs).
-https = [
-  "dep:reqwest",
-  "reqwest?/rustls-no-provider",
-  "libdd-common?/https",
-  "dep:rustls",
-  "rustls?/ring",
-  "rustls?/tls12",
-  "dep:rustls-platform-verifier",
-]
+# installed explicitly by libdd-common's connector init.
+https = ["dep:reqwest", "reqwest?/rustls-no-provider", "libdd-common?/https"]
 reqwest-backend = ["dep:reqwest", "reqwest?/hickory-dns", "reqwest?/multipart"]
 hyper-backend = [
     "dep:libdd-common",
@@ -38,15 +27,7 @@ hyper-backend = [
 ]
 # Honor HTTPS_PROXY/NO_PROXY environment variables in the hyper backend.
 hyper-proxy = ["hyper-backend", "libdd-common?/hyper-proxy"]
-fips = [
-  "dep:reqwest",
-  "reqwest?/rustls-no-provider",
-  "dep:rustls",
-  "rustls?/aws-lc-rs",
-  "rustls?/tls12",
-  "libdd-common?/fips",
-  "dep:rustls-platform-verifier",
-]
+fips = ["dep:reqwest", "reqwest?/rustls-no-provider", "dep:rustls", "rustls?/aws-lc-rs", "libdd-common?/fips"]
 
 [dependencies]
 bytes = { workspace = true, features = ["std"] }
@@ -55,16 +36,13 @@ fastrand = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["rt", "time"] }
 reqwest = { workspace = true, optional = true }
 rustls = { workspace = true, optional = true }
-rustls-platform-verifier = { workspace = true, optional = true }
-libdd-common = { version = "9.0.0", path = "../libdd-common", default-features = false, features = ["std"], optional = true }
+libdd-common = { version = "8.0.0", path = "../libdd-common", default-features = false, features = ["std"], optional = true }
 hyper = { workspace = true, optional = true, features = ["http1", "client"] }
 hyper-util = { workspace = true, optional = true, features = ["http1", "client", "client-legacy", "tokio"] }
 http-body-util = { workspace = true, optional = true }
 
 [dev-dependencies]
 httpmock.workspace = true
-rcgen.workspace = true
 rustls = { workspace = true, features = ["ring"] }
 tokio = { workspace = true, features = ["rt", "macros", "io-util", "net"] }
-tokio-rustls.workspace = true
 tempfile.workspace = true

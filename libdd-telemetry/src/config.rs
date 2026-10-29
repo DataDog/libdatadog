@@ -628,8 +628,8 @@ mod tests {
 
     #[test]
     fn test_extended_heartbeat_interval_from_env() {
+        use libdd_common::test_utils::EnvGuard;
         use std::time::Duration;
-        use tools::test_utils::EnvGuard;
 
         let _guard = EnvGuard::set("DD_TELEMETRY_EXTENDED_HEARTBEAT_INTERVAL", "5");
         let settings = Settings::from_env();

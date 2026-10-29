@@ -194,11 +194,11 @@ where
             for _ in 0..n {
                 items.push(read_typed_attribute_value(buf, table)?);
             }
-            Ok(AttributeValue::Array(items))
+            Ok(AttributeValue::List(items))
         }
-        ANY_VALUE_KEY_KEY_VALUE_LIST => Ok(AttributeValue::KeyValueList(read_attributes_map(
-            buf, table,
-        )?)),
+        ANY_VALUE_KEY_KEY_VALUE_LIST => {
+            Ok(AttributeValue::KeyValue(read_attributes_map(buf, table)?))
+        }
         unknown => Err(DecodeError::InvalidFormat(format!(
             "Unknown V1 AnyValue type discriminant: {unknown}"
         ))),

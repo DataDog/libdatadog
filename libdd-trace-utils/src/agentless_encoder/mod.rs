@@ -554,7 +554,7 @@ fn flatten_attr_into_v1<'a, T: TraceData>(
         v1::AttributeValue::Int(i) => metrics_out.push((Cow::Owned(key.clone()), *i as f64)),
         v1::AttributeValue::Float(f) => metrics_out.push((Cow::Owned(key.clone()), *f)),
         v1::AttributeValue::Bytes(b) => bytes_out.push((Cow::Owned(key.clone()), b.clone())),
-        v1::AttributeValue::Array(items) => {
+        v1::AttributeValue::List(items) => {
             let base_len = key.len();
             for (i, item) in items.iter().enumerate() {
                 key.push('.');
@@ -563,7 +563,7 @@ fn flatten_attr_into_v1<'a, T: TraceData>(
                 key.truncate(base_len);
             }
         }
-        v1::AttributeValue::KeyValueList(map) => {
+        v1::AttributeValue::KeyValue(map) => {
             let base_len = key.len();
             for (k, v) in map.defensive_dedup().iter() {
                 key.push('.');
@@ -626,7 +626,7 @@ fn collect_attrs_v1<'a, T: TraceData>(
             }
             // Nested case: the leaf key has to be built (`key.0`, `key.a.b`, ...), so it can no
             // longer borrow the original attribute name alone.
-            v1::AttributeValue::Array(_) | v1::AttributeValue::KeyValueList(_) => {
+            v1::AttributeValue::List(_) | v1::AttributeValue::KeyValue(_) => {
                 key_buf.clear();
                 key_buf.push_str(k.borrow());
                 flatten_attr_into_v1(
@@ -658,14 +658,14 @@ fn collect_attrs_v1<'a, T: TraceData>(
 
 /// V1-native analog of [`encode_payload`]. Downgrades v1's unified attribute model back to the
 /// same `meta`/`metrics`/`meta_struct`-shaped wire fields, so the emitted JSON body is
-/// equivalent to what a v0.4 tracer would produce for the same trace. Chunk-level
+/// equivalent to what a v0.4 tracer would produce for the same trace — see
+/// [`crate::msgpack_encoder::v04::span_v1`] for the mapping table this mirrors. Chunk-level
 /// context (`trace_id`, `origin`, `priority`, `sampling_mechanism`, `dropped_trace`, chunk
 /// attributes) is propagated into every span, matching the [`v1::TraceChunk`]-level granularity v1
 /// operates at.
 ///
 /// `client_side_stats` has the same meaning as in [`encode_payload`]: when `true`, the encoder
 /// will **not** inject `meta["_dd.compute_stats"]="1"` on the first span of each chunk.
-// See `crate::msgpack_encoder::v04::span_v1` for the mapping table this mirrors.
 pub fn encode_payload_from_v1<T: TraceData>(
     chunks: &[v1::TraceChunk<T>],
     metadata: &TracerMetadata,
@@ -1005,7 +1005,7 @@ fn is_supported_event_attr_v1<T: TraceData>(v: &v1::AttributeValue<T>) -> bool {
             | v1::AttributeValue::Bool(_)
             | v1::AttributeValue::Int(_)
             | v1::AttributeValue::Float(_)
-            | v1::AttributeValue::Array(_)
+            | v1::AttributeValue::List(_)
     )
 }
 
@@ -1057,7 +1057,7 @@ fn encode_event_attr_value_v1<T: TraceData, S: Serializer>(
     v: &v1::AttributeValue<T>,
 ) -> Result<S::Ok, S::Error> {
     match v {
-        v1::AttributeValue::Array(items) => {
+        v1::AttributeValue::List(items) => {
             let scalars: Vec<_> = items
                 .iter()
                 .filter(|e| is_scalar_array_elem_v1(e))

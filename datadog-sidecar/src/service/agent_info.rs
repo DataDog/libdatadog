@@ -21,7 +21,7 @@ use libdd_data_pipeline::agent_info::{FetchInfoStatus, fetch_info_with_state};
 use libdd_ipc::one_way_shared_memory::{OneWayShmReader, OneWayShmWriter, open_named_shm};
 use libdd_ipc::platform::NamedShmHandle;
 use libdd_live_debugger::sender::agent_info_supports_debugger_v2_endpoint;
-use manual_future::{ManualFuture, ManualFutureCompleter};
+use manual_future::ManualFuture;
 use std::ffi::CString;
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
@@ -110,30 +110,6 @@ impl AgentInfoFetcher {
             ))
     }
 
-    /// Sets the debugger v2 flag from `info` before handing the info to `publish`, then to
-    /// awaiters. The SHM publish is a Release, so work a tracer triggers after observing the
-    /// new info (e.g. IPC to the sidecar) sees the flag; Relaxed is enough.
-    async fn update(
-        &self,
-        info: AgentInfoStruct,
-        completer: &mut Option<ManualFutureCompleter<AgentInfoStruct>>,
-        publish: impl FnOnce(&[u8]),
-    ) {
-        #[allow(clippy::unwrap_used)]
-        let json = serde_json::to_vec(&info).unwrap();
-        self.lacks_debugger_v2.store(
-            !agent_info_supports_debugger_v2_endpoint(&info),
-            Ordering::Relaxed,
-        );
-        publish(&json);
-        if let Some(completer) = completer.take() {
-            completer.complete(info).await;
-        } else {
-            self.infos
-                .store(Arc::new(ManualFuture::new_completed(info).shared()));
-        }
-    }
-
     fn start(agent_infos: AgentInfos, endpoint: Endpoint) -> Arc<AgentInfoFetcher> {
         let (future, completer) = ManualFuture::new();
         let fetcher = Arc::new(AgentInfoFetcher {
@@ -168,6 +144,7 @@ impl AgentInfoFetcher {
                         break;
                     }
                 }
+                let mut complete_fut = None;
                 match fetched {
                     Ok(FetchInfoStatus::SameState) => {}
                     Ok(FetchInfoStatus::NewState(status)) => {
@@ -183,14 +160,22 @@ impl AgentInfoFetcher {
                                 }
                             };
                         }
-                        this.update(status.info, &mut completer, |info| {
-                            if let Some(ref writer) = writer {
-                                // A payload that does not fit is logged and dropped by the
-                                // writer; the previously published info stays readable.
-                                _ = writer.write(info);
-                            }
-                        })
-                        .await;
+                        if let Some(ref writer) = writer {
+                            // A payload that does not fit is logged and dropped by the
+                            // writer; the previously published info stays readable.
+                            _ = writer.write(&serde_json::to_vec(&status.info).unwrap());
+                        }
+                        this.lacks_debugger_v2.store(
+                            !agent_info_supports_debugger_v2_endpoint(&status.info),
+                            Ordering::Relaxed,
+                        );
+                        if let Some(completer) = completer {
+                            complete_fut = Some(completer.complete(status.info));
+                        } else {
+                            this.infos
+                                .store(Arc::new(ManualFuture::new_completed(status.info).shared()));
+                        }
+                        completer = None;
                     }
                     Err(e) => {
                         // We'll just return the old values as long as the endpoint is
@@ -200,6 +185,9 @@ impl AgentInfoFetcher {
                             fetch_endpoint.url, e
                         );
                     }
+                }
+                if let Some(complete_fut) = complete_fut.take() {
+                    complete_fut.await;
                 }
                 sleep(Duration::from_secs(60)).await;
             }
@@ -346,56 +334,6 @@ mod tests {
             info_path(&Endpoint::from_slice("http://agent-a:8126")),
             info_path(&Endpoint::from_slice("http://agent-b:8126")),
         );
-    }
-
-    #[cfg_attr(miri, ignore)]
-    #[tokio::test]
-    async fn the_debugger_flag_is_set_before_the_info_is_published() {
-        let endpoint = Endpoint::from_slice("http://derived-state.invalid:8126");
-        let writer = OneWayShmWriter::<NamedShmHandle>::new(info_path(&endpoint)).unwrap();
-        let mut reader = AgentInfoReader::new(&endpoint);
-        let (future, completer) = ManualFuture::new();
-        let fetcher = AgentInfoFetcher {
-            rc: AtomicU32::new(1),
-            created_at: Instant::now(),
-            last_update_ms: AtomicU64::new(0),
-            infos: ArcSwap::from_pointee(future.shared()),
-            lacks_debugger_v2: AtomicBool::new(false),
-        };
-        let endpoints = |list: &[&str]| list.iter().map(|e| e.to_string()).collect::<Vec<_>>();
-        let awaited = || {
-            (**fetcher.infos.load())
-                .clone()
-                .now_or_never()
-                .and_then(|info| info.endpoints)
-        };
-        let mut completer = Some(completer);
-
-        // The first info completes the future, a later one replaces it. As soon as either can be
-        // read from SHM, the flag matches it; the future only gets it afterwards.
-        for (list, lacks_v2) in [
-            (&["/debugger/v1/diagnostics"][..], true),
-            (
-                &["/debugger/v1/diagnostics", "/debugger/v2/input"][..],
-                false,
-            ),
-        ] {
-            let new = AgentInfoStruct {
-                endpoints: Some(endpoints(list)),
-                ..Default::default()
-            };
-            let mut observed = false;
-            fetcher
-                .update(new, &mut completer, |info| {
-                    assert!(writer.write(info));
-                    observed = reader.read().0;
-                    assert_eq!(fetcher.lacks_debugger_v2.load(Ordering::Relaxed), lacks_v2);
-                    assert_ne!(awaited(), Some(endpoints(list)));
-                })
-                .await;
-            assert!(observed);
-            assert_eq!(awaited(), Some(endpoints(list)));
-        }
     }
 
     const TEST_INFO: &str = r#"{

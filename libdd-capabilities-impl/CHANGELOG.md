@@ -2,14 +2,6 @@
 
 
 
-## [8.0.0](https://github.com/datadog/libdatadog/compare/libdd-capabilities-impl-v7.0.0..libdd-capabilities-impl-v8.0.0) - 2026-10-23
-
-### Added
-
-- Add shared Agentless EVP fallback transport [FFLSDK-185] ([#2517](https://github.com/datadog/libdatadog/issues/2517)) - ([90697d0](https://github.com/datadog/libdatadog/commit/90697d0a1eb94480791da46697a3de1ba1887d72))
-
-
-
 ## [7.0.0](https://github.com/datadog/libdatadog/compare/libdd-capabilities-impl-v6.0.0..libdd-capabilities-impl-v7.0.0) - 2026-10-02
 
 ### Added

@@ -17,10 +17,8 @@
 //! list that matches the build under test rather than assume both are always
 //! present.
 //!
-//! Call [`sanity_check`](crate::usdt_check::sanity_check) from within a shared
-//! object or statically linked executable, or point
-//! [`check_usdt_probes_in`](crate::usdt_check::check_usdt_probes_in) at a built
-//! artifact.
+//! Call [`sanity_check`] from within a shared object or statically linked
+//! executable, or point [`check_usdt_probes_in`] at a built artifact.
 //!
 //! Only available on Linux (USDT/SystemTap notes are Linux-only) and only when
 //! the `sanity-check` feature is enabled.

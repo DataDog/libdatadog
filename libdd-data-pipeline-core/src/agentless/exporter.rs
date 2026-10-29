@@ -12,8 +12,7 @@ use libdd_trace_utils::send_with_retry::{
     send_with_retry_and_size,
 };
 use libdd_trace_utils::span::span_pool::PooledChunks;
-use libdd_trace_utils::span::v1::span_pool::PooledTraceChunks;
-use libdd_trace_utils::span::{TraceData, trace_utils::compute_top_level_span, trace_utils_v1};
+use libdd_trace_utils::span::{TraceData, trace_utils::compute_top_level_span};
 use libdd_trace_utils::tracer_metadata::TracerMetadata;
 use thiserror::Error;
 
@@ -105,80 +104,6 @@ where
     let json_body =
         libdd_trace_utils::agentless_encoder::encode_payload(&traces, metadata, client_side_stats)
             .map_err(AgentlessError::Serialization)?;
-    let headers = build_agentless_headers(metadata, trace_count);
-    send_agentless_json(capabilities, config, headers, json_body, observer).await
-}
-
-/// Encodes and sends already-decoded v1 trace chunks.
-///
-/// V1-native counterpart of [`send_agentless_traces`].
-pub async fn send_agentless_traces_v1<C, T>(
-    capabilities: &C,
-    traces: PooledTraceChunks<'_, T>,
-    metadata: &TracerMetadata,
-    config: &AgentlessTraceConfig,
-    client_side_stats: bool,
-) -> Result<(), AgentlessError>
-where
-    C: HttpClientCapability + SleepCapability,
-    T: TraceData,
-{
-    send_agentless_traces_with_observer_v1(
-        capabilities,
-        traces,
-        metadata,
-        config,
-        client_side_stats,
-        |_, _| {},
-    )
-    .await
-}
-
-/// Encodes and sends already-decoded v1 trace chunks, reporting the final send result.
-///
-/// The observer is invoked once after the retry loop with the post-compression payload size.
-pub async fn send_agentless_traces_with_observer_v1<C, T, F>(
-    capabilities: &C,
-    mut traces: PooledTraceChunks<'_, T>,
-    metadata: &TracerMetadata,
-    config: &AgentlessTraceConfig,
-    client_side_stats: bool,
-    observer: F,
-) -> Result<(), AgentlessError>
-where
-    C: HttpClientCapability + SleepCapability,
-    T: TraceData,
-    F: FnOnce(&SendWithRetryResult, usize),
-{
-    // Top-level tagging is already done before sending when client-side stats are active.
-    if !metadata.client_computed_top_level && !client_side_stats {
-        for chunk in traces.iter_mut() {
-            trace_utils_v1::compute_top_level_span(&mut chunk.spans);
-        }
-    }
-    for chunk in traces.iter_mut() {
-        // Chunk-level attributes are merged into every span at encode time, so they need
-        // scrubbing too, not just the spans' own attributes below.
-        libdd_trace_obfuscation::obfuscate::obfuscate_v1_chunk_attributes(
-            chunk,
-            &config.obfuscation_config,
-        );
-        for span in &mut chunk.spans {
-            // Obfuscate every span we are about to send to the intake
-            libdd_trace_obfuscation::obfuscate::obfuscate_v1_span(span, &config.obfuscation_config);
-            // Remove duplicate attributes before serialization
-            span.dedup();
-        }
-        chunk.attributes.dedup();
-    }
-
-    let trace_count = traces.len();
-    let json_body = libdd_trace_utils::agentless_encoder::encode_payload_from_v1(
-        &traces,
-        metadata,
-        client_side_stats,
-    )
-    .map_err(AgentlessError::Serialization)?;
     let headers = build_agentless_headers(metadata, trace_count);
     send_agentless_json(capabilities, config, headers, json_body, observer).await
 }

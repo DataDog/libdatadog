@@ -9,6 +9,3 @@ members = [
     "workspace-deps-lint",
 ]
 resolver = "2"
-
-[workspace.package]
-rust-version = "1.91.1"

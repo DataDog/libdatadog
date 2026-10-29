@@ -26,8 +26,6 @@ unsafe impl Value for &str {
 ///
 /// A value of 0 means "no string" or "empty string" (they are synonymous).
 /// cbindgen:field-names=[offset]
-// The cbindgen annotation above is not an intra-doc link.
-#[allow(rustdoc::broken_intra_doc_links)]
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "bolero", derive(bolero::generator::TypeGenerator))]

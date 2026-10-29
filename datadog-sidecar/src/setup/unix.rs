@@ -274,15 +274,14 @@ impl SharedDirLiaison {
     /// listener's own workers and those may have dropped to another uid - a stock php-fpm keeps
     /// its master as root and runs its pools as somebody else. Every uid-keyed location is
     /// therefore unusable, including `env::temp_dir()`, which on macOS resolves through
-    /// `_CS_DARWIN_USER_TEMP_DIR` to a per-uid `/var/folders/<hash>/T`. /tmp is the one path a
+    /// `_CS_DARWIN_USER_TEMP_DIR` to a per-uid /var/folders/<hash>/T. /tmp is the one path a
     /// root master and a dropped worker are guaranteed to spell the same way.
     ///
     /// Anyone may create a file in /tmp, so this trades the private directory's guarantee for a
-    /// check on the socket's own ownership. A hostile user can
+    /// check on the socket's own ownership - see [`verify_socket_owner`]. A hostile user can
     /// still take the name first and thereby keep the listener from starting; that is a denial
     /// of service, in a namespace shared with every other user on the host, and it is visible
     /// as a refusal rather than silently served.
-    // The ownership check is `verify_socket_owner`.
     pub fn ipc_for_pid(pid: u32) -> Self {
         Self::at(
             PathBuf::from("/tmp"),

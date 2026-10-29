@@ -30,32 +30,17 @@ pub struct IpcClientConn {
     recv_buf: Vec<u8>,
     /// Set to true when a fatal I/O error occurs on send or receive.
     closed: bool,
-    /// Largest message the connection accepts, cached from [`SeqpacketConn::max_send_size`].
-    max_send_size: usize,
 }
 
 impl IpcClientConn {
     pub fn new(conn: SeqpacketConn) -> Self {
         Self {
-            max_send_size: conn.max_send_size(),
             conn,
             send_count: 0,
             ack_count: 0,
             recv_buf: vec![0u8; max_message_size() + HANDLE_SUFFIX_SIZE],
             closed: false,
         }
-    }
-
-    /// Requests a send buffer size, and adopts the message size limit the kernel actually grants.
-    pub fn set_sndbuf_size(&mut self, size: usize) -> io::Result<()> {
-        let result = self.conn.set_sndbuf_size(size);
-        self.max_send_size = self.conn.max_send_size();
-        result
-    }
-
-    /// Largest message which can be sent on this connection.
-    pub fn max_send_size(&self) -> usize {
-        self.max_send_size
     }
 
     pub fn set_read_timeout(&mut self, d: Option<Duration>) -> io::Result<()> {
@@ -99,7 +84,7 @@ impl IpcClientConn {
     /// including macOS ENOBUFS. Only accepted sends advance ACK accounting.
     /// `data` is consumed even when the message is rejected.
     pub fn try_send(&mut self, data: Vec<u8>, fds: &[RawFd]) -> io::Result<()> {
-        if data.len() > self.max_send_size {
+        if data.len() > max_message_size() {
             return Err(io::Error::from(io::ErrorKind::FileTooLarge));
         }
         match self.conn.try_send_raw(data, fds) {
@@ -179,9 +164,22 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn oversized_packet_preserves_connection_and_ack_accounting() {
         let (conn, peer) = SeqpacketConn::socketpair().unwrap();
+        let bytes: libc::c_int = 4096;
+        // SAFETY: valid socket and pointer/length for a live integer. Do not
+        // change the process-wide configured packet limit for this kernel test.
+        assert_eq!(
+            unsafe {
+                libc::setsockopt(
+                    conn.as_raw_fd(),
+                    libc::SOL_SOCKET,
+                    libc::SO_SNDBUF,
+                    (&bytes as *const libc::c_int).cast(),
+                    std::mem::size_of_val(&bytes).try_into().unwrap(),
+                )
+            },
+            0
+        );
         let mut client = IpcClientConn::new(conn);
-        // Shrink after construction, so that the kernel, not the cached limit, rejects it.
-        set_sndbuf_raw(&client.conn, 4096);
         let err = client.try_send(vec![0; 16 * 1024], &[]).unwrap_err();
         assert_eq!(err.raw_os_error(), Some(libc::EMSGSIZE));
         assert_eq!(client.outstanding(), 0);
@@ -195,44 +193,6 @@ mod tests {
         client.drain_acks();
         assert_eq!(client.outstanding(), 0);
         assert!(!client.is_closed());
-    }
-
-    /// Sets SO_SNDBUF without changing the process-wide configured packet limit.
-    #[cfg(target_os = "linux")]
-    fn set_sndbuf_raw(conn: &SeqpacketConn, bytes: libc::c_int) {
-        // SAFETY: valid socket and pointer/length for a live integer.
-        assert_eq!(
-            unsafe {
-                libc::setsockopt(
-                    conn.as_raw_fd(),
-                    libc::SOL_SOCKET,
-                    libc::SO_SNDBUF,
-                    (&bytes as *const libc::c_int).cast(),
-                    std::mem::size_of_val(&bytes).try_into().unwrap(),
-                )
-            },
-            0
-        );
-    }
-
-    #[test]
-    #[cfg(target_os = "linux")]
-    #[cfg_attr(miri, ignore)]
-    fn send_limit_follows_granted_socket_buffer() {
-        let (conn, peer) = SeqpacketConn::socketpair().unwrap();
-        // Linux doubles the requested size, as it does when capping at net.core.wmem_max.
-        set_sndbuf_raw(&conn, 16 * 1024);
-        let mut client = IpcClientConn::new(conn);
-        let limit = client.max_send_size();
-        assert_eq!(limit, 32 * 1024 - 32);
-
-        let err = client.try_send(vec![0; limit + 1], &[]).unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::FileTooLarge);
-        assert!(!client.is_closed());
-
-        client.try_send(vec![7; limit], &[]).unwrap();
-        let mut buf = vec![0; limit + 1];
-        assert_eq!(peer.try_recv_raw(&mut buf).unwrap().0, limit);
     }
 
     #[test]

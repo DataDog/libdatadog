@@ -56,8 +56,6 @@ mod request;
 mod response;
 /// Retry configuration for automatic request retries.
 pub mod retry;
-#[cfg(all(feature = "reqwest-backend", any(feature = "https", feature = "fips")))]
-mod tls;
 
 pub use client::HttpClient;
 pub use config::{HttpClientBuilder, HttpClientConfig};

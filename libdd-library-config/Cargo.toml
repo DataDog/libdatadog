@@ -3,7 +3,7 @@
 
 [package]
 name = "libdd-library-config"
-version = "5.0.0"
+version = "4.2.0"
 description = "Configuration management library for Datadog products."
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-library-config"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-library-config"
@@ -41,7 +41,7 @@ anyhow.workspace = true
 rand = { workspace = true, default-features = true, optional = true }
 rmp-serde = { workspace = true, optional = true }
 
-libdd-trace-protobuf = { version = "5.1.1", path = "../libdd-trace-protobuf", optional = true }
+libdd-trace-protobuf = { version = "5.1.0", path = "../libdd-trace-protobuf", optional = true }
 
 [dev-dependencies]
 tempfile.workspace = true
@@ -52,6 +52,5 @@ memfd = { workspace = true, optional = true }
 libc = { workspace = true, optional = true }
 
 [lints.clippy]
-collapsible_if = "allow"
 std_instead_of_alloc = "warn"
 std_instead_of_core = "warn"

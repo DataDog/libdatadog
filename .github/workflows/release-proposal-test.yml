@@ -87,7 +87,7 @@ jobs:
             echo "Skipping cargo package: no crates had a version bump vs the base ref (PKG_ARGS is empty)."
             exit 0
           fi
-          # cargo 1.92+ required: earlier versions (incl. the workspace MSRV 1.91.1) fail to
+          # cargo 1.92+ required: earlier versions (incl. the workspace MSRV 1.87) fail to
           # resolve sibling crates by version requirement when those versions are not yet on
           # crates.io
           cargo +1.92.0 package "${PKG_ARGS[@]}" --all-features

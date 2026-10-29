@@ -4,10 +4,10 @@
 use std::alloc::System;
 
 use criterion::{Criterion, black_box, criterion_group};
+use libdd_common::bench_utils::{AllocatedBytesMeasurement, memory_allocated_criterion};
 use libdd_trace_utils::msgpack_decoder;
 use libdd_trace_utils::tracer_payload::{TraceEncoding, decode_to_trace_chunks};
 use serde_json::{Value, json};
-use tools::bench_utils::{AllocatedBytesMeasurement, memory_allocated_criterion};
 
 fn generate_spans(num_spans: usize, trace_id: u64) -> Vec<Value> {
     let mut spans = Vec::with_capacity(num_spans);

@@ -1,113 +1,11 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+pub use cc_utils::cc;
+
 #[cfg(feature = "trampoline-host-loader")]
 #[path = "src/unix/elf_interp.rs"]
 mod elf_interp;
-
-use std::path::PathBuf;
-
-/// Builds executables and shared libraries with the compiler the `cc` crate
-/// detects, which `cc::Build::compile` cannot produce (it only links static
-/// libraries).
-struct ImprovedBuild {
-    files: Vec<PathBuf>,
-    libs: Vec<String>,
-    cc_build: cc::Build,
-    emit_rerun_if_env_changed: bool,
-}
-
-impl ImprovedBuild {
-    fn new() -> Self {
-        Self {
-            files: Default::default(),
-            libs: Default::default(),
-            cc_build: cc::Build::new(),
-            emit_rerun_if_env_changed: false,
-        }
-    }
-
-    fn file<P: AsRef<std::path::Path>>(&mut self, file: P) -> &mut Self {
-        self.files.push(file.as_ref().to_path_buf());
-        self
-    }
-
-    fn flag(&mut self, flag: &str) -> &mut Self {
-        self.cc_build.flag(flag);
-        self
-    }
-
-    fn cpp(&mut self, is_cpp: bool) -> &mut Self {
-        self.cc_build.cpp(is_cpp);
-        self
-    }
-
-    fn warnings(&mut self, warnings: bool) -> &mut Self {
-        self.cc_build.warnings(warnings);
-        self
-    }
-
-    fn warnings_into_errors(&mut self, warnings_into_errors: bool) -> &mut Self {
-        self.cc_build.warnings_into_errors(warnings_into_errors);
-        self
-    }
-
-    fn emit_rerun_if_env_changed(&mut self, emit: bool) -> &mut Self {
-        self.cc_build.emit_rerun_if_env_changed(emit);
-        self.emit_rerun_if_env_changed = emit;
-        self
-    }
-
-    fn link_dynamically(&mut self, name: &str) -> &mut Self {
-        self.libs.push(name.to_owned());
-        self
-    }
-
-    fn try_compile_executable(&self, output: &str) {
-        self.try_compile(false, output)
-    }
-
-    fn try_compile_shared_lib(&self, output: &str) {
-        self.try_compile(true, output)
-    }
-
-    fn try_compile(&self, shared: bool, output: &str) {
-        if self.emit_rerun_if_env_changed {
-            for file in &self.files {
-                println!("cargo:rerun-if-changed={}", file.display());
-            }
-        }
-
-        let compiler = self
-            .cc_build
-            .try_get_compiler()
-            .expect("no C compiler found");
-        let output_path = std::env::var_os("OUT_DIR")
-            .map(|dir| PathBuf::from(dir).join(output))
-            .unwrap_or_else(|| output.into());
-
-        let mut cmd = compiler.to_command();
-        // MSVC produces DLLs from /LD passed by the caller instead.
-        if shared && !compiler.is_like_msvc() {
-            cmd.arg("-shared");
-        }
-        cmd.arg("-o").arg(&output_path);
-        for file in &self.files {
-            cmd.arg(file);
-        }
-        for lib in &self.libs {
-            cmd.arg(format!("-l{lib}"));
-        }
-        println!("compiling: {cmd:?}");
-
-        let status = cmd
-            .spawn()
-            .expect("failed to spawn compiler")
-            .wait()
-            .expect("failed to wait for compiler");
-        assert!(status.success(), "compilation failed for {output}");
-    }
-}
 
 fn main() {
     let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
@@ -137,7 +35,7 @@ fn main() {
         // -Wl,-e,ddog_spawn_direct_entry
     }
 
-    let mut builder = ImprovedBuild::new();
+    let mut builder = cc_utils::ImprovedBuild::new();
     builder
         .file("src/trampoline.c")
         .warnings(true)
@@ -158,7 +56,7 @@ fn main() {
         builder.flag("-wd4996"); // disable deprecation warnings
     }
 
-    builder.try_compile_executable("trampoline.bin");
+    builder.try_compile_executable("trampoline.bin").unwrap();
 
     #[cfg(feature = "trampoline-host-loader")]
     if target_os == "linux" {
@@ -166,15 +64,16 @@ fn main() {
     }
 
     if target_os != "windows" {
-        ImprovedBuild::new()
+        cc_utils::ImprovedBuild::new()
             .file("src/ld_preload_trampoline.c")
             .link_dynamically("dl")
             .warnings(true)
             .warnings_into_errors(true)
             .emit_rerun_if_env_changed(true)
-            .try_compile_shared_lib("ld_preload_trampoline.shared_lib");
+            .try_compile_shared_lib("ld_preload_trampoline.shared_lib")
+            .unwrap();
     } else {
-        let mut builder = ImprovedBuild::new();
+        let mut builder = cc_utils::ImprovedBuild::new();
         builder
             .cpp(true)
             .file("src/crashtracking_trampoline.cpp")
@@ -188,7 +87,9 @@ fn main() {
             builder.flag("-std=c++17");
         }
 
-        builder.try_compile_shared_lib("crashtracking_trampoline.bin");
+        builder
+            .try_compile_shared_lib("crashtracking_trampoline.bin")
+            .unwrap();
     }
 }
 
@@ -196,7 +97,7 @@ fn main() {
 /// `elf_interp::INTERP_CAPACITY` bytes, so that the spawner can replace it
 /// with the running process's own loader. See `src/unix/elf_interp.rs`.
 #[cfg(feature = "trampoline-host-loader")]
-fn pad_trampoline_interpreter(builder: &mut ImprovedBuild) {
+fn pad_trampoline_interpreter(builder: &mut cc_utils::ImprovedBuild) {
     let path = std::path::Path::new(&std::env::var("OUT_DIR").unwrap()).join("trampoline.bin");
     let elf = std::fs::read(&path).unwrap();
     let Some(interp) = elf_interp::interp_path(&elf) else {
@@ -207,7 +108,7 @@ fn pad_trampoline_interpreter(builder: &mut ImprovedBuild) {
     let padded = String::from_utf8(padded).expect("non-UTF-8 trampoline interpreter path");
 
     builder.flag(&format!("-Wl,--dynamic-linker={padded}"));
-    builder.try_compile_executable("trampoline.bin");
+    builder.try_compile_executable("trampoline.bin").unwrap();
 
     let elf = std::fs::read(&path).unwrap();
     assert_eq!(
