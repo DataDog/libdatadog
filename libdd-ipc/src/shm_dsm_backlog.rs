@@ -124,11 +124,7 @@ impl Schema for DataStreamsBacklogs {
 
     fn hash(input: &DsmBacklogInput<'_>) -> u64 {
         let mut h = ZwoHasher::default();
-        // The mask says which position each value that follows is at.
-        h.write_u8(input.present());
-        for value in input.tags.iter().flatten() {
-            value.hash(&mut h);
-        }
+        input.tags.hash(&mut h);
         h.finish()
     }
 
