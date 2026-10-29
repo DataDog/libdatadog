@@ -1,6 +1,6 @@
 [package]
 name = "libdd-trace-utils"
-version = "15.0.0"
+version = "16.0.0"
 description = "Trace utilities including span processing, MessagePack encoding/decoding, payload handling, and HTTP transport with retry logic for Datadog APM"
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-trace-utils"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-trace-utils"
@@ -53,8 +53,8 @@ crossbeam-channel = { workspace = true, features = ["std"] }
 thread_local.workspace = true 
 
 libdd-capabilities = { path = "../libdd-capabilities", version = "4.0.1" }
-libdd-common = { version = "9.0.0", path = "../libdd-common", default-features = false, features = ["std"] }
-libdd-trace-normalization = { version = "4.3.0", path = "../libdd-trace-normalization" }
+libdd-common = { version = "10.0.0", path = "../libdd-common", default-features = false, features = ["std"] }
+libdd-trace-normalization = { version = "4.3.1", path = "../libdd-trace-normalization" }
 libdd-trace-protobuf = { version = "5.1.1", path = "../libdd-trace-protobuf" }
 libdd-trace-model = { version = "1.0.0", path = "../libdd-trace-model" }
 libdd-tinybytes = { version = "1.2.0", path = "../libdd-tinybytes", features = [
@@ -76,7 +76,7 @@ httpmock = { workspace = true, optional = true }
 urlencoding = { workspace = true, optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-libdd-capabilities-impl = { version = "8.0.0", path = "../libdd-capabilities-impl", default-features = false, optional = true }
+libdd-capabilities-impl = { version = "9.0.0", path = "../libdd-capabilities-impl", default-features = false, optional = true }
 tokio = { workspace = true, features = ["time"], optional = true }
 # zstd >= 0.14.3 required for RUSTSEC-2026-0391
 zstd = {workspace = true, optional = true }
@@ -86,7 +86,7 @@ getrandom = { workspace = true, features = ["js"] }
 zrip = { workspace = true, features = ["frame"], optional = true }
 
 [dev-dependencies]
-libdd-capabilities-impl = { version = "8.0.0", path = "../libdd-capabilities-impl" }
+libdd-capabilities-impl = { version = "9.0.0", path = "../libdd-capabilities-impl" }
 tools = { path = "../tools", default-features = false, features = ["bench-utils"] }
 bolero = { workspace = true, features = ["std"] }
 criterion.workspace = true
