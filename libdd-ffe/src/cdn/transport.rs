@@ -21,6 +21,8 @@ pub(super) const MAX_RESPONSE_BODY_BYTES: usize = 10 << 20;
 const INTERNAL_UNTRACED_HEADER: &str = "DD-Internal-Untraced-Request";
 const API_KEY_HEADER: &str = "DD-API-KEY";
 const AUTHORIZATION_HEADER: &str = "Authorization";
+const FEATURE_FLAGS_CAPABILITIES_HEADER: &str = "X-DD-FEATURE-FLAGS-CAPABILITIES";
+const DEPENDENT_FLAG_CAPABILITY: &str = "dependent-flag-variant-key-v1";
 
 pub(super) type FetchFuture<'a> =
     Pin<Box<dyn Future<Output = Result<PollResponse, TransportFailure>> + Send + 'a>>;
@@ -157,6 +159,7 @@ fn build_request(
         .header(ACCEPT_ENCODING, "gzip")
         .header("DD-Client-Library-Language", language)
         .header("DD-Client-Library-Version", version)
+        .header(FEATURE_FLAGS_CAPABILITIES_HEADER, DEPENDENT_FLAG_CAPABILITY)
         .header(INTERNAL_UNTRACED_HEADER, "1");
 
     if let Some(etag) = etag {
@@ -324,6 +327,10 @@ mod tests {
         );
         assert_eq!(managed_request.headers()[IF_NONE_MATCH], "etag");
         assert_eq!(managed_request.headers()[INTERNAL_UNTRACED_HEADER], "1");
+        assert_eq!(
+            managed_request.headers()[FEATURE_FLAGS_CAPABILITIES_HEADER],
+            DEPENDENT_FLAG_CAPABILITY
+        );
 
         let custom_request = build_request(&custom, None, "php", "1.27").expect("custom request");
         assert!(!custom_request.headers().contains_key(API_KEY_HEADER));
@@ -358,6 +365,7 @@ mod tests {
             "accept-encoding"
                 | "dd-client-library-language"
                 | "dd-client-library-version"
+                | "x-dd-feature-flags-capabilities"
                 | "dd-internal-untraced-request"
                 | "authorization"
         )));

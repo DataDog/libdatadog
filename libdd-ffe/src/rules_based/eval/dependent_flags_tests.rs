@@ -170,6 +170,52 @@ fn dnf_expansion_memoizes_but_restores_exposure_eligibility_for_the_winning_rule
     assert_eq!(result.result.unwrap().variation_key.as_str(), "on");
     assert_eq!(result.evaluations.len(), 1);
     assert!(result.evaluations[0].exposure_eligible);
+    assert_eq!(
+        result
+            .exposure_trace
+            .iter()
+            .map(|key| key.as_str())
+            .collect::<Vec<_>>(),
+        ["parent"]
+    );
+}
+
+#[test]
+fn memoized_exposure_trace_replays_the_winning_authored_order() {
+    let mut root = flag(vec![]);
+    root["allocations"][0]["rules"] = json!([
+        {"conditions": [dependency("first"), fails()]},
+        {"conditions": [dependency("second"), dependency("first")]}
+    ]);
+    let result = eval(wire(json!({
+        "root": root,
+        "first": flag(vec![]),
+        "second": flag(vec![])
+    })));
+
+    assert_eq!(result.result.unwrap().variation_key.as_str(), "on");
+    assert_eq!(
+        result
+            .evaluations
+            .iter()
+            .map(|record| record.flag_key.as_str())
+            .collect::<Vec<_>>(),
+        ["first", "second"]
+    );
+    assert_eq!(
+        result
+            .exposure_trace
+            .iter()
+            .map(|key| key.as_str())
+            .collect::<Vec<_>>(),
+        ["second", "first"]
+    );
+    assert!(
+        result
+            .evaluations
+            .iter()
+            .all(|record| record.exposure_eligible)
+    );
 }
 
 #[test]
@@ -181,6 +227,7 @@ fn rejected_rules_retain_evaluations_without_exposures() {
     assert_eq!(result.evaluations.len(), 1);
     assert!(result.evaluations[0].result.is_ok());
     assert!(!result.evaluations[0].exposure_eligible);
+    assert!(result.exposure_trace.is_empty());
 }
 
 #[test]
@@ -191,6 +238,29 @@ fn rejected_split_does_not_expose_prerequisites() {
     let result = eval(wire(json!({"root": root, "parent": flag(vec![])})));
     assert_eq!(result.result.unwrap().variation_key.as_str(), "off");
     assert!(!result.evaluations[0].exposure_eligible);
+    assert!(result.exposure_trace.is_empty());
+}
+
+#[test]
+fn later_allocation_replays_memoized_exposure_after_no_split() {
+    let mut root = flag(vec![dependency("parent")]);
+    root["allocations"][0]["splits"][0]["shards"] =
+        json!([{"salt":"salt", "totalShards":100,"ranges":[]}]);
+    root["allocations"][1]["rules"] = json!([{"conditions": [dependency("parent")]}]);
+    let result = eval(wire(json!({"root": root, "parent": flag(vec![])})));
+
+    assert_eq!(result.result.unwrap().variation_key.as_str(), "off");
+    assert_eq!(result.evaluations.len(), 1);
+    assert_eq!(result.evaluations[0].flag_key.as_str(), "parent");
+    assert!(result.evaluations[0].exposure_eligible);
+    assert_eq!(
+        result
+            .exposure_trace
+            .iter()
+            .map(|key| key.as_str())
+            .collect::<Vec<_>>(),
+        ["parent"]
+    );
 }
 
 #[test]
@@ -201,6 +271,7 @@ fn root_failure_suppresses_all_prerequisite_exposures() {
     assert!(result.result.is_err());
     assert_eq!(result.evaluations.len(), 2);
     assert!(result.evaluations.iter().all(|r| !r.exposure_eligible));
+    assert!(result.exposure_trace.is_empty());
 }
 
 #[test]
@@ -221,6 +292,14 @@ fn shared_transitive_dependencies_are_reported_once_and_keep_do_log() {
         ["leaf", "a", "b"]
     );
     assert!(result.evaluations.iter().all(|r| r.exposure_eligible));
+    assert_eq!(
+        result
+            .exposure_trace
+            .iter()
+            .map(|key| key.as_str())
+            .collect::<Vec<_>>(),
+        ["leaf", "a", "b"]
+    );
     assert!(!result.evaluations[1].result.as_ref().unwrap().do_log);
 }
 

@@ -178,6 +178,7 @@ impl Configuration {
                 return EvaluationResult {
                     result: Err(error),
                     evaluations: Vec::new(),
+                    exposure_trace: Vec::new(),
                 };
             }
         };
@@ -188,12 +189,14 @@ impl Configuration {
                 return EvaluationResult {
                     result: flag.evaluate_independent(context, expected_type, now, exclusion),
                     evaluations: Vec::new(),
+                    exposure_trace: Vec::new(),
                 };
             }
             Err(error) => {
                 return EvaluationResult {
                     result: Err(error),
                     evaluations: Vec::new(),
+                    exposure_trace: Vec::new(),
                 };
             }
             Ok(_) => {}
@@ -209,14 +212,19 @@ impl Configuration {
             evaluations: Vec::new(),
         };
         let evaluated = session.evaluate_flag(flag_key, expected_type, 0);
-        if let Ok(root) = &evaluated {
+        let exposure_trace = if let Ok(root) = &evaluated {
+            let eligible: HashSet<_> = root.exposures.iter().collect();
             for record in &mut session.evaluations {
-                record.exposure_eligible = root.exposures.contains(&record.flag_key);
+                record.exposure_eligible = eligible.contains(&record.flag_key);
             }
-        }
+            root.exposures.clone()
+        } else {
+            Vec::new()
+        };
         EvaluationResult {
             result: evaluated.map(|result| result.assignment),
             evaluations: session.evaluations,
+            exposure_trace,
         }
     }
 }
@@ -228,6 +236,12 @@ pub struct EvaluationResult {
     pub result: Result<Assignment, EvaluationError>,
     /// Unique prerequisite evaluations, in completion order; excludes the root.
     pub evaluations: Vec<EvaluationRecord>,
+    /// Unique prerequisite keys on the successful root path, in depth-first authored order.
+    ///
+    /// This trace is empty when the root fails. SDKs can use it to replay memoized prerequisite
+    /// exposures in the position where the winning path referenced them while retaining
+    /// `evaluations` in completion order for evaluation telemetry.
+    pub exposure_trace: Vec<Str>,
 }
 
 /// Telemetry for a prerequisite reached within one root evaluation.
@@ -248,7 +262,7 @@ struct EvaluatedFlag {
     // Includes all reached branches, even rejected rules, to keep memoization depth-safe.
     height: u16,
     // Only dependencies on the selected rule/split path, not every successful evaluation.
-    exposures: HashSet<Str>,
+    exposures: Vec<Str>,
 }
 
 struct EvaluationSession<'a> {
@@ -348,7 +362,7 @@ impl EvaluationSession<'_> {
             }
             let mut selected_exposures = None;
             if allocation.rules.is_empty() {
-                selected_exposures = Some(HashSet::new());
+                selected_exposures = Some(Vec::new());
             } else {
                 for rule in &allocation.rules {
                     if let Some(exposures) = self.evaluate_rule(rule, depth, &mut height)? {
@@ -377,8 +391,8 @@ impl EvaluationSession<'_> {
         rule: &RuleWire,
         depth: u16,
         height: &mut u16,
-    ) -> Result<Option<HashSet<Str>>, EvaluationError> {
-        let mut exposures = HashSet::new();
+    ) -> Result<Option<Vec<Str>>, EvaluationError> {
+        let mut exposures = Vec::new();
         for condition in &rule.conditions {
             let matched = if let ConditionCheck::FlagEvaluation {
                 key,
@@ -398,8 +412,8 @@ impl EvaluationSession<'_> {
                     .any(|value| value.as_ref() == dependency.assignment.variation_key.as_str())
                     == *expected_membership;
                 if matched {
-                    exposures.insert(key.clone());
-                    exposures.extend(dependency.exposures);
+                    append_unique(&mut exposures, dependency.exposures.iter().cloned());
+                    append_unique(&mut exposures, std::iter::once(key.clone()));
                 }
                 matched
             } else {
@@ -451,6 +465,14 @@ impl EvaluationSession<'_> {
             self.memo.insert(key.clone(), result.clone());
         }
         result
+    }
+}
+
+fn append_unique(target: &mut Vec<Str>, values: impl IntoIterator<Item = Str>) {
+    for value in values {
+        if !target.contains(&value) {
+            target.push(value);
+        }
     }
 }
 
