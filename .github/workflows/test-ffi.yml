@@ -86,11 +86,13 @@ jobs:
       - name: Setup output dir
         shell: bash
         run: |
-          WORKSPACE_PATH=${{ github.workspace }}
           if [[ "${{ matrix.platform }}" == "windows-latest" ]]; then
+             # ffi_test.rs expects the built libraries under `release/`
              WORKSPACE_PATH=$(cygpath -ua '${{ github.workspace }}')
+             echo "LIBDD_OUTPUT_FOLDER=$WORKSPACE_PATH/release" >> $GITHUB_ENV
+          else
+             echo "LIBDD_OUTPUT_FOLDER=${{ github.workspace }}/artifacts" >> $GITHUB_ENV
           fi
-          echo "LIBDD_OUTPUT_FOLDER=$WORKSPACE_PATH/artifacts" >> $GITHUB_ENV
       - name: Free Disk Space (Ubuntu only)
         if: runner.os == 'Linux' && matrix.platform == 'ubuntu-latest'
         uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # 1.3.1
@@ -132,16 +134,17 @@ jobs:
         with:
           if-no-files-found: error
           name: libdatadog.${{ matrix.platform }}
-          path: ${{ github.workspace }}/artifacts
+          path: ${{ env.LIBDD_OUTPUT_FOLDER }}
           retention-days: 1
+      # Doubles as the examples build for `(Windows) Run FFI examples` below.
       - name: "(Windows) Test building Profiling C bindings - dynamic link vc runtime"
         if: matrix.platform == 'windows-latest'
         shell: bash
         run: |
           set -e
-          rm -rf examples/ffi/build_dll
-          mkdir examples/ffi/build_dll
-          cd examples/ffi/build_dll
+          rm -rf examples/ffi/build
+          mkdir examples/ffi/build
+          cd examples/ffi/build
           cmake -S .. -DDatadog_ROOT=$LIBDD_OUTPUT_FOLDER -DVCRUNTIME_LINK_TYPE=DLL
           cmake --build .
       - name: "(Windows) Test building Profiling C bindings - static link vc runtime"
@@ -176,10 +179,8 @@ jobs:
       - name: "(Windows) Run FFI examples"
         shell: bash
         if: matrix.platform == 'windows-latest'
-        env:
-          RUSTFLAGS: "${{ matrix.flags }}"
         run: |
-          cargo ffi-test
+          cargo ffi-test --skip-build
       - name: "Test sidecar C bindings (Unix)"
         if: runner.os != 'Windows' && (needs.setup.outputs.crates-json == '' || contains(needs.setup.outputs.crates-json, 'datadog-sidecar-ffi'))
         shell: bash
@@ -210,24 +211,46 @@ jobs:
           set -e
           cd examples/cxx
           ./build-profiling-dictionary.sh
+      - name: sccache statistics
+        if: always() && steps.sccache.outputs.enabled == 'true'
+        shell: bash
+        run: sccache --show-stats
+
+  # Builds its own crates, independent of the profiling FFI, so it can run parallel to the ffi matrix.
+  ffi-cxx:
+    name: "FFI #windows-latest (CXX)"
+    needs: setup
+    if: needs.setup.outputs.packages-count != '0'
+    runs-on: windows-latest
+    permissions:
+      # id-token is needed to mint the GitHub OIDC token for the sccache S3 role
+      id-token: write
+      contents: read
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: 0
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+        with:
+          submodules: recursive
+      - name: sccache
+        id: sccache
+        uses: ./.github/actions/setup-sccache
       - name: "Setup MSVC (Windows)"
-        if: matrix.platform == 'windows-latest'
         uses: ilammy/msvc-dev-cmd@v1
       - name: "Test building CXX bindings - Crashinfo (Windows)"
         shell: pwsh
-        if: matrix.platform == 'windows-latest'
         run: |
           cd examples/cxx
           .\build-and-run-crashinfo.ps1
       - name: "Test building CXX bindings - Profiling (Windows)"
         shell: pwsh
-        if: matrix.platform == 'windows-latest'
         run: |
           cd examples/cxx
           .\build-profiling.ps1
       - name: "Test building CXX bindings - Profiling Dictionary (Windows)"
         shell: pwsh
-        if: matrix.platform == 'windows-latest'
         run: |
           cd examples/cxx
           .\build-profiling-dictionary.ps1
