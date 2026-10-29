@@ -26,14 +26,15 @@ use crate::shm_table::{
     pool_string,
 };
 
-/// A tag a backlog can carry. The discriminant is the tag's position: in the slot, in the key's
-/// hash, and in the `Tags` reported for the backlog.
+/// A tag a backlog can carry.
 ///
-/// Positions are durable. A new tag is appended at the end, after the last one; none is ever
-/// reordered, removed or reused, so adding one leaves every existing backlog's `Tags` as they
-/// were. (Appending one changes the slot, so it also bumps [`DataStreamsBacklogs`]'s version.)
-/// The order of the first five is the Java tracer's (`DataStreamsTags`), so that a backlog is
-/// reported with the same `Tags` whichever tracer sent it.
+/// The discriminant is an index: it says where the tag's value and presence bit go in a slot
+/// ([`ShmBacklogKey`]), and the `Tags` reported for a backlog come out in discriminant order.
+/// So a new tag is appended after the last one, and bumps [`DataStreamsBacklogs`]'s version
+/// since the slot grows; none is ever reordered, removed or reused, which keeps every existing
+/// backlog's `Tags` as they were. The first five are in the Java tracer's order
+/// (`DataStreamsTags`), so that a backlog is reported with the same `Tags` whichever tracer
+/// sent it.
 ///
 /// A tag's key, as it is written before the `:` in `Tags`, is its name in snake case
 /// (`as_ref`, `from_str`); `iter` goes through the tags by position.
