@@ -1068,10 +1068,8 @@ fn test_collector_no_allocations_stacktrace_modes() {
                 log_exists,
                 "Expected allocation detection log for mode {env_value}"
             );
-            if log_exists {
-                if let Ok(bytes) = fs::read(&detector_log_path) {
-                    eprintln!("{}", String::from_utf8_lossy(&bytes));
-                }
+            if log_exists && let Ok(bytes) = fs::read(&detector_log_path) {
+                eprintln!("{}", String::from_utf8_lossy(&bytes));
             }
         } else {
             result.unwrap();
