@@ -1,0 +1,50 @@
+{"decision_ids": ["D005", "D006", "D007"], "expected": {"accepted": true, "nanos": 0, "seconds": 1767225600}, "id": "timestamp/utc", "input": "2026-01-01T00:00:00Z", "kind": "timestamp"}
+{"decision_ids": ["D005", "D006", "D007"], "expected": {"accepted": true, "nanos": 0, "seconds": 1767225600}, "id": "timestamp/lower-t", "input": "2026-01-01t00:00:00Z", "kind": "timestamp"}
+{"decision_ids": ["D005", "D006", "D007"], "expected": {"accepted": true, "nanos": 0, "seconds": 1767225600}, "id": "timestamp/lower-z", "input": "2026-01-01T00:00:00z", "kind": "timestamp"}
+{"decision_ids": ["D005", "D006", "D007"], "expected": {"accepted": true, "nanos": 0, "seconds": 1767225600}, "id": "timestamp/lower-both", "input": "2026-01-01t00:00:00z", "kind": "timestamp"}
+{"decision_ids": ["D005", "D006", "D007"], "expected": {"accepted": true, "nanos": 123456789, "seconds": 1792411200}, "id": "timestamp/nanos", "input": "2026-10-19T12:00:00.123456789Z", "kind": "timestamp"}
+{"decision_ids": ["D005", "D006", "D007"], "expected": {"accepted": true, "nanos": 123456789, "seconds": 1792411200}, "id": "timestamp/ten-digits-zero", "input": "2026-10-19T12:00:00.1234567890Z", "kind": "timestamp"}
+{"decision_ids": ["D005", "D006", "D007"], "expected": {"accepted": true, "nanos": 123456789, "seconds": 1792411200}, "id": "timestamp/ten-digits-nine", "input": "2026-10-19T12:00:00.1234567899Z", "kind": "timestamp"}
+{"decision_ids": ["D005", "D006", "D007"], "expected": {"accepted": true, "nanos": 123456789, "seconds": 1792411200}, "id": "timestamp/twelve-digits", "input": "2026-10-19T12:00:00.123456789999Z", "kind": "timestamp"}
+{"decision_ids": ["D005", "D006", "D007"], "expected": {"accepted": true, "nanos": 0, "seconds": 1767225600}, "id": "timestamp/fraction-zero", "input": "2026-01-01T00:00:00.000000000000Z", "kind": "timestamp"}
+{"decision_ids": ["D005", "D006", "D007"], "expected": {"accepted": true, "nanos": 100000000, "seconds": 1767225600}, "id": "timestamp/fraction-one", "input": "2026-01-01T00:00:00.1Z", "kind": "timestamp"}
+{"decision_ids": ["D005", "D006", "D007"], "expected": {"accepted": true, "nanos": 123456789, "seconds": 1792411200}, "id": "timestamp/offset-negative", "input": "2026-10-19T08:00:00.123456789-04:00", "kind": "timestamp"}
+{"decision_ids": ["D005", "D006", "D007"], "expected": {"accepted": true, "nanos": 123456789, "seconds": 1792411200}, "id": "timestamp/offset-positive", "input": "2026-10-19T14:00:00.123456789+02:00", "kind": "timestamp"}
+{"decision_ids": ["D005", "D006", "D007"], "expected": {"accepted": true, "nanos": 0, "seconds": 1767225600}, "id": "timestamp/offset-negative-zero", "input": "2026-01-01T00:00:00-00:00", "kind": "timestamp"}
+{"decision_ids": ["D005", "D006", "D007"], "expected": {"accepted": true, "nanos": 0, "seconds": 1767139260}, "id": "timestamp/offset-max", "input": "2026-01-01T00:00:00+23:59", "kind": "timestamp"}
+{"decision_ids": ["D005", "D006", "D007"], "expected": {"accepted": false}, "id": "timestamp/space", "input": "2026-01-01 00:00:00Z", "kind": "timestamp"}
+{"decision_ids": ["D005", "D006", "D007"], "expected": {"accepted": false}, "id": "timestamp/comma", "input": "2026-01-01T00:00:00,123Z", "kind": "timestamp"}
+{"decision_ids": ["D005", "D006", "D007"], "expected": {"accepted": false}, "id": "timestamp/leap-second", "input": "2016-12-31T23:59:60Z", "kind": "timestamp"}
+{"decision_ids": ["D005", "D006", "D007"], "expected": {"accepted": false}, "id": "timestamp/unicode-minus", "input": "2026-01-01T00:00:00\u221205:00", "kind": "timestamp"}
+{"decision_ids": ["D005", "D006", "D007"], "expected": {"accepted": false}, "id": "timestamp/offset-compact", "input": "2026-01-01T00:00:00+0000", "kind": "timestamp"}
+{"decision_ids": ["D005", "D006", "D007"], "expected": {"accepted": false}, "id": "timestamp/named-zone", "input": "2026-01-01T00:00:00 UTC", "kind": "timestamp"}
+{"decision_ids": ["D005", "D006", "D007"], "expected": {"accepted": false}, "id": "timestamp/offset-hour24", "input": "2026-01-01T00:00:00+24:00", "kind": "timestamp"}
+{"decision_ids": ["D005", "D006", "D007"], "expected": {"accepted": false}, "id": "timestamp/offset-minute60", "input": "2026-01-01T00:00:00+01:60", "kind": "timestamp"}
+{"decision_ids": ["D005", "D006", "D007"], "expected": {"accepted": false}, "id": "timestamp/one-digit-hour", "input": "2026-01-01T0:00:00Z", "kind": "timestamp"}
+{"decision_ids": ["D005", "D006", "D007"], "expected": {"accepted": true, "nanos": 0, "seconds": -62167219200}, "id": "timestamp/year-zero", "input": "0000-01-01T00:00:00Z", "kind": "timestamp"}
+{"decision_ids": ["D005", "D006", "D007"], "expected": {"accepted": false}, "id": "timestamp/utc-year-underflow", "input": "0000-01-01T00:00:00+01:00", "kind": "timestamp"}
+{"decision_ids": ["D005", "D006", "D007"], "expected": {"accepted": true, "nanos": 999999999, "seconds": 253402300799}, "id": "timestamp/year-max", "input": "9999-12-31T23:59:59.999999999Z", "kind": "timestamp"}
+{"decision_ids": ["D005", "D006", "D007"], "expected": {"accepted": false}, "id": "timestamp/utc-year-overflow", "input": "9999-12-31T23:59:59-01:00", "kind": "timestamp"}
+{"decision_ids": ["D005", "D006", "D007"], "expected": {"accepted": false}, "id": "timestamp/julian-leap", "input": "1500-02-29T00:00:00Z", "kind": "timestamp"}
+{"decision_ids": ["D005", "D006", "D007"], "expected": {"accepted": true, "nanos": 0, "seconds": -12219724800}, "id": "timestamp/gregorian-cutover", "input": "1582-10-10T00:00:00Z", "kind": "timestamp"}
+{"decision_ids": ["D005", "D006", "D007"], "expected": {"accepted": true, "nanos": 0, "seconds": 951782400}, "id": "timestamp/leap-2000", "input": "2000-02-29T00:00:00Z", "kind": "timestamp"}
+{"decision_ids": ["D005", "D006", "D007"], "expected": {"accepted": false}, "id": "timestamp/nonleap-1900", "input": "1900-02-29T00:00:00Z", "kind": "timestamp"}
+{"decision_ids": ["D005", "D006", "D007"], "expected": {"accepted": false}, "id": "timestamp/bad-month", "input": "2026-13-01T00:00:00Z", "kind": "timestamp"}
+{"decision_ids": ["D005", "D006", "D007"], "expected": {"accepted": false}, "id": "timestamp/bad-day", "input": "2026-04-31T00:00:00Z", "kind": "timestamp"}
+{"decision_ids": ["D005", "D006", "D007"], "expected": {"accepted": false}, "id": "timestamp/hour24", "input": "2026-01-01T24:00:00Z", "kind": "timestamp"}
+{"decision_ids": ["D005", "D006", "D007"], "expected": {"accepted": false}, "id": "timestamp/empty-fraction", "input": "2026-01-01T00:00:00.Z", "kind": "timestamp"}
+{"decision_ids": ["D005", "D006", "D007"], "expected": {"accepted": false}, "id": "timestamp/leading-space", "input": " 2026-01-01T00:00:00Z", "kind": "timestamp"}
+{"decision_ids": ["D005", "D006", "D007"], "expected": {"accepted": false}, "id": "timestamp/trailing-space", "input": "2026-01-01T00:00:00Z ", "kind": "timestamp"}
+{"decision_ids": ["D005", "D006", "D007"], "expected": {"accepted": false}, "id": "timestamp/trailing-newline", "input": "2026-01-01T00:00:00Z\n", "kind": "timestamp"}
+{"decision_ids": ["D005", "D006", "D007"], "expected": {"accepted": false}, "id": "timestamp/no-zone", "input": "2026-01-01T00:00:00", "kind": "timestamp"}
+{"decision_ids": ["D005", "D006", "D007"], "expected": {"accepted": false}, "id": "timestamp/empty", "input": "", "kind": "timestamp"}
+{"decision_ids": ["D005", "D006", "D007"], "expected": {"accepted": false}, "id": "timestamp/null", "input": null, "kind": "timestamp"}
+{"decision_ids": ["D005", "D006", "D007"], "expected": {"accepted": true, "nanos": 0, "seconds": 0}, "id": "timestamp/epoch", "input": "1970-01-01T00:00:00Z", "kind": "timestamp"}
+{"decision_ids": ["D005", "D006", "D007"], "expected": {"accepted": true, "nanos": 999999999, "seconds": -1}, "id": "timestamp/pre-epoch-nanos", "input": "1969-12-31T23:59:59.999999999Z", "kind": "timestamp"}
+{"decision_ids": ["D005", "D006", "D007"], "expected": {"accepted": true, "nanos": 0, "seconds": 1792497600}, "id": "timestamp/libdatadog-2698/utc", "input": "2026-10-20T12:00:00Z", "kind": "timestamp"}
+{"decision_ids": ["D005", "D006", "D007"], "expected": {"accepted": false}, "id": "timestamp/libdatadog-2698/space", "input": "2026-10-20 12:00:00Z", "kind": "timestamp"}
+{"decision_ids": ["D005", "D006", "D007"], "expected": {"accepted": true, "nanos": 0, "seconds": 1792497600}, "id": "timestamp/libdatadog-2698/lowercase", "input": "2026-10-20t12:00:00z", "kind": "timestamp"}
+{"decision_ids": ["D005", "D006", "D007"], "expected": {"accepted": false}, "id": "timestamp/libdatadog-2698/short-fields", "input": "2026-1-5T1:2:3Z", "kind": "timestamp"}
+{"decision_ids": ["D005", "D006", "D007"], "expected": {"accepted": false}, "id": "timestamp/libdatadog-2698/named-zone", "input": "2026-10-20T12:00:00UTC", "kind": "timestamp"}
+{"decision_ids": ["D005", "D006", "D007"], "expected": {"accepted": false}, "id": "timestamp/libdatadog-2698/compact-offset", "input": "2026-10-20T12:00:00+0000", "kind": "timestamp"}
+{"decision_ids": ["D005", "D006", "D007"], "expected": {"accepted": false}, "id": "timestamp/libdatadog-2698/internal-spaces", "input": "2026 - 10 - 20T12:00:00Z", "kind": "timestamp"}

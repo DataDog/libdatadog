@@ -145,7 +145,7 @@ impl SidecarTransport {
     fn apply_backpressure(&mut self, max_bytes: usize, max_queue: u64) -> io::Result<()> {
         self.inner.max_outstanding = max_queue.max(21);
         #[cfg(unix)]
-        self.inner.channel.0.conn.set_sndbuf_size(max_bytes)?;
+        self.inner.channel.0.set_sndbuf_size(max_bytes)?;
         #[cfg(not(unix))]
         let _ = max_bytes; // handled on pipe creation
         Ok(())
@@ -642,9 +642,10 @@ pub fn ping(transport: &mut SidecarTransport) -> io::Result<Duration> {
 #[cfg(unix)]
 mod tests {
     use super::try_submit_ffe;
+    use crate::service::SidecarAction;
     use crate::service::blocking::{
         SidecarTransport, add_dsm_backlog, add_dsm_checkpoint, add_span_to_concentrator,
-        send_dogstatsd_actions,
+        enqueue_actions, send_dogstatsd_actions,
     };
     use crate::service::ffe_submission::FfeSubmissionStatus;
     use crate::service::sidecar_interface::{
@@ -656,6 +657,8 @@ mod tests {
     };
     use libdd_common::Endpoint;
     use libdd_ipc::{SeqpacketConn, SeqpacketListener};
+    use libdd_telemetry::data;
+    use libdd_telemetry::worker::TelemetryActions;
     use std::cell::RefCell;
     use std::time::Duration;
 
@@ -1021,8 +1024,9 @@ mod tests {
     fn received(peer: &SeqpacketConn) -> Vec<SidecarInterfaceRequest> {
         let mut buf = vec![0; libdd_ipc::max_message_size()];
         let mut requests = vec![];
-        while let Ok((len, _)) = peer.try_recv_raw(&mut buf) {
-            requests.push(libdd_ipc::codec::decode(&buf[..len]).unwrap());
+        while let Ok((len, fds)) = peer.try_recv_raw(&mut buf) {
+            let request: SidecarInterfaceRequest = libdd_ipc::codec::decode(&buf[..len]).unwrap();
+            requests.push(request.with_handles(fds).unwrap());
         }
         requests
     }
@@ -1121,6 +1125,96 @@ mod tests {
 
         assert!(transport.is_closed());
         assert!(received(&new_peer).is_empty());
+    }
+
+    /// A transport whose socket grants a small send buffer, like one capped by
+    /// `net.core.wmem_max`, without changing the process-wide configured packet limit.
+    fn small_buffer_transport() -> (SidecarTransport, SeqpacketConn) {
+        let (conn, peer) = SeqpacketConn::socketpair().unwrap();
+        let bytes: libc::c_int = 16 * 1024;
+        // SAFETY: valid socket and pointer/length for a live integer.
+        assert_eq!(
+            unsafe {
+                libc::setsockopt(
+                    conn.as_raw_fd(),
+                    libc::SOL_SOCKET,
+                    libc::SO_SNDBUF,
+                    (&bytes as *const libc::c_int).cast(),
+                    std::mem::size_of_val(&bytes).try_into().unwrap(),
+                )
+            },
+            0
+        );
+        let transport = SidecarTransport::from(conn);
+        assert!(transport.inner.channel.0.max_send_size() < libdd_ipc::max_message_size());
+        (transport, peer)
+    }
+
+    fn endpoint(path: String) -> SidecarAction {
+        SidecarAction::Telemetry(TelemetryActions::AddEndpoint(data::Endpoint {
+            method: Some(data::Method::Get),
+            path: Some(path),
+            operation_name: "laravel.request".to_owned(),
+            resource_name: "GET /route".to_owned(),
+            response_code: None,
+            request_body_type: None,
+            response_body_type: None,
+        }))
+    }
+
+    fn endpoint_path(action: &SidecarAction) -> &str {
+        match action {
+            SidecarAction::Telemetry(TelemetryActions::AddEndpoint(data::Endpoint {
+                path: Some(path),
+                ..
+            })) => path,
+            other => panic!("unexpected action: {other:?}"),
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn actions_exceeding_the_granted_message_size_are_sent_in_shared_memory() {
+        let (mut transport, peer) = small_buffer_transport();
+        let paths: Vec<String> = (0..2000).map(|i| format!("/route/{i}")).collect();
+        enqueue_actions(
+            &mut transport,
+            paths.iter().cloned().map(endpoint).collect(),
+        )
+        .unwrap();
+
+        match received(&peer).as_slice() {
+            [SidecarInterfaceRequest::EnqueueActions { actions }] => {
+                assert_eq!(actions.iter().map(endpoint_path).collect::<Vec<_>>(), paths);
+            }
+            other => panic!("expected a single request, got {}", other.len()),
+        }
+        assert!(!transport.is_closed());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    #[serial_test::serial(log_counter)]
+    fn actions_exceeding_the_configured_message_size_are_dropped() {
+        let (mut transport, peer) = small_buffer_transport();
+        let huge = "x".repeat(libdd_ipc::max_message_size());
+        enqueue_actions(
+            &mut transport,
+            vec![endpoint("/a".to_owned()), endpoint(huge)],
+        )
+        .unwrap();
+        enqueue_actions(&mut transport, vec![endpoint("/b".to_owned())]).unwrap();
+
+        match received(&peer).as_slice() {
+            [SidecarInterfaceRequest::EnqueueActions { actions }] => {
+                assert_eq!(
+                    actions.iter().map(endpoint_path).collect::<Vec<_>>(),
+                    ["/b"]
+                );
+            }
+            other => panic!("unexpected requests: {other:?}"),
+        }
+        assert!(!transport.is_closed());
     }
 
     #[test]

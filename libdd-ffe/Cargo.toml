@@ -16,7 +16,7 @@ description = "Feature Flagging and Experimentation"
 bench = false
 
 [dependencies]
-libdd-remote-config = { version = "7.0.0", path = "../libdd-remote-config", default-features = false, optional = true }
+libdd-remote-config = { version = "8.0.0", path = "../libdd-remote-config", default-features = false, optional = true }
 faststr = { workspace = true, features = ["serde"] }
 serde = { workspace = true, features = ["derive", "rc"] }
 serde_json = { workspace = true, features = ["std", "raw_value"] }
@@ -27,7 +27,7 @@ md5.workspace = true
 sha2 = { workspace = true, optional = true }
 strum = { workspace = true, optional = true }
 strum_macros = { workspace = true, optional = true }
-libdd-common = { version = "8.0.0", path = "../libdd-common", default-features = false, features = ["require-regex-full"] }
+libdd-common = { version = "9.0.0", path = "../libdd-common", default-features = false, features = ["require-regex-full"] }
 libdd-capabilities = { path = "../libdd-capabilities", version = "4.0.1", optional = true }
 http = { workspace = true, features = ["std"], optional = true }
 tokio = { workspace = true, features = ["time"], optional = true }
@@ -35,7 +35,7 @@ tokio = { workspace = true, features = ["time"], optional = true }
 semver.workspace = true
 thiserror.workspace = true
 lru = { workspace = true, default-features = true, optional = true }
-libdd-trace-protobuf = { version = "5.1.0", path = "../libdd-trace-protobuf", optional = true }
+libdd-trace-protobuf = { version = "5.1.1", path = "../libdd-trace-protobuf", optional = true }
 prost = { workspace = true, default-features = true, optional = true }
 pyo3 = { workspace = true, features = ["macros"], optional = true }
 
