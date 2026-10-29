@@ -772,13 +772,13 @@ impl ShmStatsMapping {
 
         // Retire old segments only after the replacement is ready.
         for old in replaced {
-            if let Ok(old) = old.map() {
-                if old.as_slice().len() >= size_of::<ShmHeader>() {
-                    // SAFETY: page-aligned, in bounds, and all fields are integer atomics.
-                    // Touch only `ready`; the old segment's layout is untrusted.
-                    let hdr = unsafe { &*(old.as_slice().as_ptr() as *const ShmHeader) };
-                    hdr.ready.store(0, Release);
-                }
+            if let Ok(old) = old.map()
+                && old.as_slice().len() >= size_of::<ShmHeader>()
+            {
+                // SAFETY: page-aligned, in bounds, and all fields are integer atomics.
+                // Touch only `ready`; the old segment's layout is untrusted.
+                let hdr = unsafe { &*(old.as_slice().as_ptr() as *const ShmHeader) };
+                hdr.ready.store(0, Release);
             }
         }
 
@@ -1106,10 +1106,10 @@ impl ShmStatsMapping {
                 continue;
             }
 
-            if let Some(gs) = Self::drain_entry(entry, bucket.pool, &mut budget) {
-                if gs.hits > 0 {
-                    grouped.push(gs);
-                }
+            if let Some(gs) = Self::drain_entry(entry, bucket.pool, &mut budget)
+                && gs.hits > 0
+            {
+                grouped.push(gs);
             }
             entry.key_hash.store(SLOT_EMPTY, Release);
         }
