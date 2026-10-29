@@ -184,10 +184,10 @@ fn is_valid_http_status_code(code: &u32) -> bool {
 /// are present.
 fn get_http_method<'a>(span: &'a impl StatSpan<'a>) -> &'a str {
     for key in [TAG_METHOD, TAG_METHOD_OTEL] {
-        if let Some(value) = span.get_meta(key) {
-            if !value.is_empty() {
-                return value;
-            }
+        if let Some(value) = span.get_meta(key)
+            && !value.is_empty()
+        {
+            return value;
         }
     }
 
@@ -227,18 +227,18 @@ fn get_http_status_code<'a>(span: &'a impl StatSpan<'a>) -> u32 {
 
 fn get_grpc_status_code<'a>(span: &'a impl StatSpan<'a>) -> Option<u8> {
     for key in GRPC_STATUS_CODE_FIELD {
-        if let Some(val) = span.get_meta(key) {
-            if let Some(code) = grpc_status_str_to_int_value(val) {
-                return Some(code);
-            }
+        if let Some(val) = span.get_meta(key)
+            && let Some(code) = grpc_status_str_to_int_value(val)
+        {
+            return Some(code);
         }
     }
 
     for key in GRPC_STATUS_CODE_FIELD {
-        if let Some(val) = span.get_metrics(key) {
-            if let Some(code) = float_to_int(val) {
-                return Some(code);
-            }
+        if let Some(val) = span.get_metrics(key)
+            && let Some(code) = float_to_int(val)
+        {
+            return Some(code);
         }
     }
 
