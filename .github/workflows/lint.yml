@@ -435,8 +435,10 @@ jobs:
 
   cargo-doc-lints:
     needs: setup
-    name: "cargo doc lints #${{ matrix.platform }}"
+    name: "cargo doc lints #${{ matrix.platform }} (${{ matrix.features }})"
     runs-on: ${{ matrix.platform }}
+    timeout-minutes: 20
+    if: needs.setup.outputs.crates-count != '0'
     permissions:
       id-token: write
       contents: read
@@ -444,6 +446,7 @@ jobs:
       fail-fast: false
       matrix:
         platform: [windows-latest, ubuntu-latest, macos-15]
+        features: [all-features, default]
     steps:
       - name: Checkout sources
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
@@ -469,8 +472,11 @@ jobs:
       - name: Run cargo doc on ${{ matrix.platform }}
         shell: bash
         run: |
-          RUSTDOCFLAGS='-D warnings' cargo doc --all-features --keep-going
-          RUSTDOCFLAGS='-D warnings' cargo doc --keep-going
+          if [[ "${{ matrix.features }}" == "all-features" ]]; then
+            RUSTDOCFLAGS='-D warnings' cargo doc --all-features --no-deps --keep-going
+          else
+            RUSTDOCFLAGS='-D warnings' cargo doc --no-deps --keep-going
+          fi
       - name: sccache statistics
         if: always() && steps.sccache.outputs.enabled == 'true'
         shell: bash
