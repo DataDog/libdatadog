@@ -119,6 +119,7 @@ pub struct CrashInfoBuilder {
     pub log_messages: Option<Vec<String>>,
     pub metadata: Option<Metadata>,
     pub os_info: Option<OsInfo>,
+    pub otel_thread_contexts: Option<Vec<OtelThreadContext>>,
     pub proc_info: Option<ProcInfo>,
     pub sig_info: Option<SigInfo>,
     pub span_ids: Option<Vec<Span>>,
@@ -140,6 +141,7 @@ impl Default for CrashInfoBuilder {
             log_messages: None,
             metadata: None,
             os_info: None,
+            otel_thread_contexts: None,
             proc_info: None,
             sig_info: None,
             span_ids: None,
@@ -163,6 +165,7 @@ impl CrashInfoBuilder {
         let log_messages = self.log_messages.unwrap_or_default();
         let metadata = self.metadata.unwrap_or_else(Metadata::unknown_value);
         let os_info = self.os_info.unwrap_or_else(OsInfo::unknown_value);
+        let otel_thread_contexts = self.otel_thread_contexts.unwrap_or_default();
         let proc_info = self.proc_info;
         let sig_info = self.sig_info;
         let span_ids = self.span_ids.unwrap_or_default();
@@ -181,6 +184,7 @@ impl CrashInfoBuilder {
             log_messages,
             metadata,
             os_info,
+            otel_thread_contexts,
             proc_info,
             sig_info,
             span_ids,
@@ -328,6 +332,14 @@ impl CrashInfoBuilder {
 
     pub fn with_os_info_this_machine(&mut self) -> anyhow::Result<()> {
         self.with_os_info(::os_info::get().into())?;
+        Ok(())
+    }
+
+    pub fn with_otel_thread_contexts(
+        &mut self,
+        contexts: Vec<OtelThreadContext>,
+    ) -> anyhow::Result<()> {
+        self.otel_thread_contexts = Some(contexts);
         Ok(())
     }
 
