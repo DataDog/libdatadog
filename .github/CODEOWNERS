@@ -19,7 +19,7 @@ sgconfig.yml                         @DataDog/apm-common-components-core @DataDo
 .gitmodules                          @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 .gitlab-ci.yml                       @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 .gitlab/benchmarks.yml               @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
-.gitlab/fuzz.yml                     @DataDog/chaos-engineering @DataDog/apm-common-components-reviewers
+.gitlab/fuzz.yml                     @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 .gitlab/impacted-crates.yml          @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 benchmark/                           @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 bin_tests/                           @DataDog/libdatadog-profiling @DataDog/libdatadog-crashtracking-reviewers
