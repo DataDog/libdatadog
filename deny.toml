@@ -1,10 +1,8 @@
 [advisories]
 unmaintained = "workspace"
 ignore = [
-  { id = "RUSTSEC-2026-0009", reason = "the fixed version requires rust >=1.88.0. TODO: remove this after bumping MSRV"},
   { id = "RUSTSEC-2026-0382", reason = "the fixed rustls-webpki 0.103.16 requires aws-lc-rs ^1.18, which conflicts with the aws-lc-rs <1.18 FIPS constraint. The distrusted keys are rejected at the application level by the compromised-key distrust verifier in libdd-common. TODO: remove this once aws-lc-rs >=1.18 is FIPS certified"},
 ]
-
 [bans]
 multiple-versions = "warn"
 

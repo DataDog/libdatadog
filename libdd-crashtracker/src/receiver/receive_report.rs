@@ -4,7 +4,7 @@
 #[cfg(target_os = "linux")]
 use crate::StacktraceCollection;
 #[cfg(target_os = "linux")]
-use crate::ptrace_collector::crash_site_registers;
+use crate::ptrace_collector::{crash_site_registers, parse_hex_address};
 use crate::{
     CrashtrackerConfiguration, StackTrace,
     crash_info::{CrashInfo, CrashInfoBuilder, ErrorKind, SigInfo, Span, StackFrame, Ucontext},
@@ -153,7 +153,11 @@ fn process_line(
             // Attached as it arrives, so a stream cut short by EOF or the deadline keeps the
             // threads it did deliver. Untrusted like every other line here: a malformed entry
             // ends the report rather than being guessed at.
-            builder.with_thread(serde_json::from_str(line)?)?;
+            let mut thread: crate::crash_info::ThreadData = serde_json::from_str(line)?;
+            if thread.crashed {
+                recover_received_stack(builder, config.as_ref(), &mut thread.stack);
+            }
+            builder.with_thread(thread)?;
             StdinState::Threads
         }
 
@@ -161,7 +165,8 @@ fn process_line(
             StdinState::Waiting
         }
         StdinState::WholeStackTrace => {
-            let stacktrace: StackTrace = serde_json::from_str(line)?;
+            let mut stacktrace: StackTrace = serde_json::from_str(line)?;
+            recover_received_stack(builder, config.as_ref(), &mut stacktrace);
             builder.with_stack(stacktrace)?;
             StdinState::WholeStackTrace
         }
@@ -626,6 +631,7 @@ fn collect_and_add_thread_contexts(
         None
     };
     let mut crashing_stack = None;
+    let collector_stack = builder.error.stack.as_ref();
 
     let incomplete = stream_thread_contexts(
         parent_pid,
@@ -635,8 +641,13 @@ fn collect_and_add_thread_contexts(
         crashing_context.as_ref(),
         |tid, captured| {
             let used_saved_context = captured.as_ref().is_some_and(|ctx| ctx.used_saved_context);
-            let thread =
+            let mut thread =
                 thread_data_from_capture(parent_pid, crashing_tid, crash_site, tid, captured);
+            if thread.crashed && used_saved_context {
+                if let Some(collector) = collector_stack {
+                    recover_collector_callers(&mut thread.stack, collector);
+                }
+            }
             if thread.crashed
                 && should_promote_crashing_stack(config, used_saved_context)
                 && !thread.stack.frames.is_empty()
@@ -655,6 +666,75 @@ fn collect_and_add_thread_contexts(
     }
     let _ = builder.with_threads(threads);
     Ok(())
+}
+
+/// Recover callers before a collector-emitted stack replaces the one that has them.
+#[cfg(target_os = "linux")]
+fn recover_received_stack(
+    builder: &CrashInfoBuilder,
+    config: Option<&CrashtrackerConfiguration>,
+    stack: &mut StackTrace,
+) {
+    let saved_context = config.is_some_and(CrashtrackerConfiguration::unwind_from_ucontext)
+        && builder
+            .ucontext
+            .as_ref()
+            .and_then(crash_site_registers)
+            .is_some();
+    let Some(collector) = builder.error.stack.as_ref().filter(|_| saved_context) else {
+        return;
+    };
+    if stack.frames.is_empty() && !collector.frames.is_empty() {
+        stack.clone_from(collector);
+        stack.incomplete = true;
+    } else {
+        recover_collector_callers(stack, collector);
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn recover_received_stack(
+    _builder: &CrashInfoBuilder,
+    _config: Option<&CrashtrackerConfiguration>,
+    _stack: &mut StackTrace,
+) {
+}
+
+/// Remote unwinding can stop in a libc function without CFI or proc info.
+/// Preserve its recovered frames, then append the collector's longer caller
+/// chain after the deepest shared frame. Match in order so recursion keeps its
+/// callers, and compare stack pointers when both unwinders captured them.
+#[cfg(target_os = "linux")]
+fn recover_collector_callers(stack: &mut StackTrace, collector: &StackTrace) {
+    if stack.frames.is_empty() || stack.frames.len() >= collector.frames.len() {
+        return;
+    }
+    let parse = |value: &Option<String>| value.as_deref().and_then(parse_hex_address);
+    let same_frame = |remote: &StackFrame, local: &StackFrame| {
+        let ip = parse(&remote.ip);
+        ip.is_some()
+            && ip == parse(&local.ip)
+            && parse(&remote.sp)
+                .zip(parse(&local.sp))
+                .is_none_or(|(remote_sp, local_sp)| remote_sp == local_sp)
+    };
+    if !same_frame(&stack.frames[0], &collector.frames[0]) {
+        return;
+    }
+    let mut shared = 0;
+    for remote in &stack.frames[1..] {
+        if let Some(offset) = collector.frames[shared + 1..]
+            .iter()
+            .position(|local| same_frame(remote, local))
+        {
+            shared += offset + 1;
+        }
+    }
+    let callers = &collector.frames[shared + 1..];
+    if !callers.is_empty() {
+        stack.frames.extend_from_slice(callers);
+        stack.incomplete = true;
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -702,6 +782,198 @@ fn enrich_thread_name(_builder: &mut CrashInfoBuilder) -> anyhow::Result<()> {
 mod tests {
     use super::*;
     use crate::crash_info::ThreadData;
+
+    #[cfg(target_os = "linux")]
+    fn stack_from_addresses(addresses: &[&str], incomplete: bool) -> StackTrace {
+        StackTrace::from_frames(
+            addresses
+                .iter()
+                .map(|ip| StackFrame {
+                    ip: Some(ip.to_string()),
+                    ..StackFrame::new()
+                })
+                .collect(),
+            incomplete,
+        )
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn truncated_remote_unwind_retains_collector_callers() {
+        let fallback = stack_from_addresses(
+            &["0x0000000000051ba8", "0x10010", "0x10020", "0x10030"],
+            true,
+        );
+        let mut remote = stack_from_addresses(&["0x51ba8", "0x51d3c"], false);
+        recover_collector_callers(&mut remote, &fallback);
+        assert_eq!(
+            remote
+                .frames
+                .iter()
+                .filter_map(|frame| frame.ip.as_deref())
+                .collect::<Vec<_>>(),
+            ["0x51ba8", "0x51d3c", "0x10010", "0x10020", "0x10030"]
+        );
+        assert!(remote.incomplete);
+
+        let mut complete = stack_from_addresses(
+            &["0x51ba8", "0x10010", "0x10020", "0x10030", "0x10040"],
+            false,
+        );
+        let expected = complete.clone();
+        recover_collector_callers(&mut complete, &fallback);
+        assert_eq!(complete, expected);
+
+        let mut unrelated = stack_from_addresses(&["0x90000"], false);
+        let expected = unrelated.clone();
+        recover_collector_callers(&mut unrelated, &fallback);
+        assert_eq!(unrelated, expected);
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn repeated_instruction_addresses_are_matched_in_order() {
+        let fallback =
+            stack_from_addresses(&["0x1000", "0x2000", "0x2000", "0x2000", "0x3000"], true);
+        for length in [2, 3] {
+            let mut remote = StackTrace::from_frames(fallback.frames[..length].to_vec(), false);
+            remote.frames[1].function = Some("remote recursive frame".to_string());
+            let prefix = remote.frames.clone();
+
+            recover_collector_callers(&mut remote, &fallback);
+
+            assert_eq!(remote.frames.len(), fallback.frames.len());
+            assert_eq!(remote.frames[..length], prefix);
+            assert_eq!(remote.frames[length..], fallback.frames[length..]);
+            assert!(remote.incomplete);
+        }
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn repeated_instruction_addresses_use_stack_pointers_when_available() {
+        let mut fallback =
+            stack_from_addresses(&["0x1000", "0x2000", "0x2000", "0x2000", "0x3000"], true);
+        for (frame, sp) in fallback
+            .frames
+            .iter_mut()
+            .zip(["0x100", "0x200", "0x300", "0x400", "0x500"])
+        {
+            frame.sp = Some(sp.to_string());
+        }
+        let mut remote = StackTrace::from_frames(
+            vec![fallback.frames[0].clone(), fallback.frames[2].clone()],
+            false,
+        );
+        remote.frames[1].sp = Some("0x00000300".to_string());
+        let prefix = remote.frames.clone();
+
+        recover_collector_callers(&mut remote, &fallback);
+
+        assert_eq!(remote.frames[..2], prefix);
+        assert_eq!(remote.frames[2..], fallback.frames[3..]);
+        assert!(remote.incomplete);
+
+        let mut unrelated = StackTrace::from_frames(vec![fallback.frames[0].clone()], false);
+        unrelated.frames[0].sp = Some("0x900".to_string());
+        let expected = unrelated.clone();
+        recover_collector_callers(&mut unrelated, &fallback);
+        assert_eq!(unrelated, expected);
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn collector_emitted_stacks_recover_callers_before_promotion() {
+        let config = CrashtrackerConfiguration::builder()
+            .collect_all_threads(true)
+            .resolve_frames(StacktraceCollection::EnabledWithSymbolsInReceiver)
+            .unwind_from_ucontext(true)
+            .build()
+            .unwrap();
+        let collector = stack_from_addresses(&["0x51ba8", "0x10010", "0x10020", "0x10030"], false);
+        let remote = stack_from_addresses(&["0x51ba8", "0x51d3c"], false);
+        let mut expected = remote.clone();
+        expected.frames.extend_from_slice(&collector.frames[1..]);
+        expected.incomplete = true;
+        let crashed = ThreadData {
+            crashed: true,
+            name: "main".to_string(),
+            stack: remote.clone(),
+            state: Some("R".to_string()),
+        };
+        let sleeper = ThreadData {
+            crashed: false,
+            name: "sleeper".to_string(),
+            stack: stack_from_addresses(&["0x51ba8"], false),
+            state: None,
+        };
+        let ucontext = Ucontext::test_instance(0);
+        // The collector promotes a symbolized main stack before emitting its thread.
+        let (builder, _) = parse_test_lines(&[
+            DD_CRASHTRACK_BEGIN_CONFIG,
+            &serde_json::to_string(&config).unwrap(),
+            DD_CRASHTRACK_END_CONFIG,
+            DD_CRASHTRACK_BEGIN_UCONTEXT,
+            &serde_json::to_string(&ucontext).unwrap(),
+            DD_CRASHTRACK_END_UCONTEXT,
+            DD_CRASHTRACK_BEGIN_WHOLE_STACKTRACE,
+            &serde_json::to_string(&collector).unwrap(),
+            DD_CRASHTRACK_END_WHOLE_STACKTRACE,
+            DD_CRASHTRACK_BEGIN_WHOLE_STACKTRACE,
+            &serde_json::to_string(&remote).unwrap(),
+            DD_CRASHTRACK_END_WHOLE_STACKTRACE,
+            DD_CRASHTRACK_BEGIN_THREADS,
+            &serde_json::to_string(&crashed).unwrap(),
+            &serde_json::to_string(&sleeper).unwrap(),
+            DD_CRASHTRACK_END_THREADS,
+        ])
+        .unwrap();
+
+        assert_eq!(builder.error.stack.as_ref(), Some(&expected));
+        let threads = builder.error.threads.unwrap();
+        assert_eq!(threads[0].stack, expected);
+        assert_eq!(threads[0].name, crashed.name);
+        assert_eq!(threads[0].state, crashed.state);
+        assert_eq!(threads[1], sleeper);
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn empty_collector_emitted_crashing_stack_retains_collector_callers() {
+        let config = CrashtrackerConfiguration::builder()
+            .collect_all_threads(true)
+            .resolve_frames(StacktraceCollection::EnabledWithSymbolsInReceiver)
+            .unwind_from_ucontext(true)
+            .build()
+            .unwrap();
+        let collector = stack_from_addresses(&["0x1000", "0x2000"], false);
+        let crashed = ThreadData {
+            crashed: true,
+            name: "main".to_string(),
+            stack: StackTrace::new_incomplete(),
+            state: None,
+        };
+        let (builder, _) = parse_test_lines(&[
+            DD_CRASHTRACK_BEGIN_CONFIG,
+            &serde_json::to_string(&config).unwrap(),
+            DD_CRASHTRACK_END_CONFIG,
+            DD_CRASHTRACK_BEGIN_UCONTEXT,
+            &serde_json::to_string(&Ucontext::test_instance(0)).unwrap(),
+            DD_CRASHTRACK_END_UCONTEXT,
+            DD_CRASHTRACK_BEGIN_WHOLE_STACKTRACE,
+            &serde_json::to_string(&collector).unwrap(),
+            DD_CRASHTRACK_END_WHOLE_STACKTRACE,
+            DD_CRASHTRACK_BEGIN_THREADS,
+            &serde_json::to_string(&crashed).unwrap(),
+            DD_CRASHTRACK_END_THREADS,
+        ])
+        .unwrap();
+
+        assert_eq!(builder.error.stack, Some(collector.clone()));
+        let mut expected = collector;
+        expected.incomplete = true;
+        assert_eq!(builder.error.threads.unwrap()[0].stack, expected);
+    }
 
     fn stack_with_frames(ip: &str, function: Option<&str>) -> StackTrace {
         let mut stack = StackTrace::new_incomplete();

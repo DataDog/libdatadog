@@ -1,11 +1,11 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use super::local::LocalLimiter;
 #[cfg(unix)]
 use crate::platform::lock_shm;
 use crate::platform::{FileBackedHandle, MappedMem, NamedShmHandle};
 use arc_swap::ArcSwapOption;
-use libdd_common::rate_limiter::LocalLimiter;
 use std::borrow::Cow;
 use std::cell::UnsafeCell;
 use std::ffi::{CStr, CString};
@@ -559,9 +559,7 @@ impl<Inner: ShmSafe> Drop for ShmLimiter<Inner> {
 
 #[cfg(test)]
 mod tests {
-    use crate::rate_limiter::{
-        ShmLimiter, ShmLimiterArena, ShmLimiterData, ShmLimiterMemory, ShmSafe,
-    };
+    use super::{ShmLimiter, ShmLimiterArena, ShmLimiterData, ShmLimiterMemory, ShmSafe};
     use std::ffi::CString;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicU64, Ordering};

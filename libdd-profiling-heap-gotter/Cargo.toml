@@ -33,3 +33,6 @@ libc.workspace = true
 libdd-profiling-heap-sampler = { version = "1.1.2", path = "../libdd-profiling-heap-sampler" }
 # Only sync #[serial] is used; `logging`/`async` defaults are unneeded.
 serial_test.workspace = true
+
+[lints.clippy]
+collapsible_if = "allow"
