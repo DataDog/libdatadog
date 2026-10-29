@@ -445,6 +445,30 @@ impl SeqpacketConn {
         self.setsockopt_int(libc::SO_RCVBUF, size)
     }
 
+    /// Largest message the kernel accepts on this connection, derived from the actual send
+    /// buffer size. That may be lower than requested: Linux caps it at twice
+    /// `net.core.wmem_max`.
+    pub fn max_send_size(&self) -> usize {
+        let mut size: libc::c_int = 0;
+        let mut len = std::mem::size_of::<libc::c_int>() as libc::socklen_t;
+        let ret = unsafe {
+            libc::getsockopt(
+                self.inner.as_raw_fd(),
+                libc::SOL_SOCKET,
+                libc::SO_SNDBUF,
+                &mut size as *mut _ as *mut libc::c_void,
+                &mut len,
+            )
+        };
+        if ret < 0 {
+            return max_message_size();
+        }
+        // unix_dgram_sendmsg() rejects messages larger than sk_sndbuf - 32 with EMSGSIZE.
+        #[cfg(target_os = "linux")]
+        let size = size - 32;
+        usize::try_from(size).unwrap_or(0).min(max_message_size())
+    }
+
     /// Convert to an async connection for use in async server dispatch loops.
     pub fn into_async_conn(self) -> io::Result<AsyncConn> {
         AsyncFd::new(self)

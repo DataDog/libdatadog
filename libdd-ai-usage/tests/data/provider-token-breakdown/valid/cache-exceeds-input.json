@@ -1,0 +1,21 @@
+{
+  "$schema": "../../../../schema/provider-token-breakdown-metric-fixture.schema.json",
+  "profile": "trajectory.gen_ai.client.token_breakdown@0.1.0",
+  "case": "cache-exceeds-input",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "anthropic",
+    "request_model": "claude-sonnet-4-5",
+    "input_tokens": 100,
+    "input_basis": "includes_cache",
+    "output_tokens": 1,
+    "cache_read_input_tokens": 80,
+    "cache_write_input_tokens": 30,
+    "observation_point": "gateway"
+  },
+  "description": "Cache reads (80) plus cache writes (30) exceed input tokens (100). The input group is inconsistent and records nothing. A rejection in 0.2.0.",
+  "expected_metrics": [],
+  "expected_issues": [
+    "usage_inconsistent"
+  ]
+}

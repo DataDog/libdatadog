@@ -1,0 +1,16 @@
+{
+  "$schema": "../../../../schema/provider-attempt-metric-fixture.schema.json",
+  "profile": "gen_ai.client.provider_attempt@0.1.0",
+  "case": "server-tool-fractional",
+  "description": "A request count is a whole number.",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "exampleai",
+    "duration_seconds": 0.5,
+    "streaming": false,
+    "web_search_requests": 1.5,
+    "observation_point": "gateway"
+  },
+  "expected_error_code": "count_invalid",
+  "expected_error": "web_search_requests must be a non-negative integer"
+}

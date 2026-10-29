@@ -1,0 +1,30 @@
+{
+  "$schema": "../../../../schema/provider-attempt-metric-fixture.schema.json",
+  "profile": "gen_ai.client.provider_attempt@0.1.0",
+  "case": "server-tool-out-of-range",
+  "description": "A request count of 2^53 is above the bound: no server-tool point.",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "exampleai",
+    "duration_seconds": 1,
+    "streaming": false,
+    "web_search_requests": 9007199254740992,
+    "observation_point": "gateway"
+  },
+  "expected_metrics": [
+    {
+      "name": "gen_ai.client.inference.duration",
+      "instrument": "histogram",
+      "unit": "s",
+      "value": 1,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "trajectory.observation.point": "gateway"
+      }
+    }
+  ],
+  "expected_issues": [
+    "count_out_of_range"
+  ]
+}

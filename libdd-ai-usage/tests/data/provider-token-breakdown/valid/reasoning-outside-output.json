@@ -1,0 +1,49 @@
+{
+  "$schema": "../../../../schema/provider-token-breakdown-metric-fixture.schema.json",
+  "profile": "trajectory.gen_ai.client.token_breakdown@0.1.0",
+  "case": "reasoning-outside-output",
+  "description": "A usage object in a provider's API shape, from the synthetic interop corpus (conformance/interop/provider-observations.json, case \"Vertex thoughts and missing tool ID\"): 3 candidate tokens with 2 thought tokens reported outside them. With excludes_reasoning the reasoning part is recorded as given, and the inclusive output is 5.",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "gcp.vertex_ai",
+    "request_model": "example-model",
+    "input_tokens": 33,
+    "input_basis": "includes_cache",
+    "output_tokens": 3,
+    "output_basis": "excludes_reasoning",
+    "cache_read_input_tokens": 20,
+    "reasoning_output_tokens": 2,
+    "observation_point": "gateway"
+  },
+  "expected_metrics": [
+    {
+      "name": "gen_ai.client.inference.usage.cache_read.input_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 20,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "gcp.vertex_ai",
+        "gen_ai.request.model": "example-model",
+        "gen_ai.token.modality": "unknown",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.usage.reasoning.output_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 2,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "gcp.vertex_ai",
+        "gen_ai.request.model": "example-model",
+        "gen_ai.token.modality": "unknown",
+        "trajectory.observation.point": "gateway"
+      }
+    }
+  ],
+  "expected_issues": [
+    "cache_write_missing"
+  ]
+}

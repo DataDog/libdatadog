@@ -1,0 +1,33 @@
+{
+  "$schema": "../../../../schema/gateway-request-metric-fixture.schema.json",
+  "profile": "trajectory.gen_ai.gateway.request@0.1.0",
+  "case": "count-above-2-53",
+  "description": "A retry count of 2^53. The gateway profile has no bound and no issue codes: a finite count is accepted as the double a JSON reader gives.",
+  "observation": {
+    "operation_name": "chat",
+    "duration_seconds": 1,
+    "retries": 9007199254740992
+  },
+  "expected_metrics": [
+    {
+      "name": "trajectory.gen_ai.gateway.request.duration",
+      "instrument": "histogram",
+      "unit": "s",
+      "value": 1,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "trajectory.gen_ai.gateway.request.retries",
+      "instrument": "histogram",
+      "unit": "{retry}",
+      "value": 9007199254740992,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "trajectory.observation.point": "gateway"
+      }
+    }
+  ]
+}

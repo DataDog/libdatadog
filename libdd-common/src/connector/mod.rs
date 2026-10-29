@@ -29,8 +29,22 @@ mod conn_stream;
 #[cfg(feature = "http-client")]
 use conn_stream::{ConnStream, ConnStreamError};
 
+#[cfg(any(
+    all(feature = "tls-core", not(feature = "use_webpki_roots")),
+    feature = "tls-distrust"
+))]
+mod certificate_distrust;
+
+#[cfg(feature = "tls-distrust")]
+pub use certificate_distrust::platform_verifier_with_distrust;
+
 #[cfg(feature = "hyper-proxy")]
 mod proxy;
+
+// Skipped under Miri: the certificate distrust tests exercise ring-backed
+// signature verification, whose FFI cannot execute there.
+#[cfg(all(test, feature = "https", not(feature = "use_webpki_roots"), not(miri)))]
+mod certificate_distrust_tests;
 
 #[cfg(feature = "http-client")]
 #[derive(Clone)]
@@ -112,7 +126,7 @@ impl Connector {
 }
 
 #[cfg(feature = "tls-core")]
-mod https {
+pub(crate) mod https {
     #[cfg(feature = "use_webpki_roots")]
     use hyper_rustls::ConfigBuilderExt;
 
@@ -149,8 +163,11 @@ mod https {
         Ok(())
     }
 
+    /// Builds the TLS configuration shared by every libdd-common HTTPS client:
+    /// the hyper connector, the hyper-proxy tunnel and dialer, and the reqwest
+    /// client builder (see `Endpoint::to_reqwest_client_builder`).
     #[cfg(feature = "use_webpki_roots")]
-    pub(super) fn build_tls_config() -> anyhow::Result<ClientConfig> {
+    pub(crate) fn build_tls_config() -> anyhow::Result<ClientConfig> {
         ensure_crypto_provider_initialized(); // One-time initialization of a crypto provider if needed
         require_crypto_provider()?;
 
@@ -163,14 +180,24 @@ mod https {
     /// Builds the client TLS config using the system trust roots.
     /// `SSL_CERT_FILE` and `SSL_CERT_DIR` variable are only supported on linux, see
     /// `rustls_platform_verifier` doc for details.
-    pub(super) fn build_tls_config() -> anyhow::Result<ClientConfig> {
-        use rustls_platform_verifier::BuilderVerifierExt;
+    ///
+    /// The platform verifier is wrapped with an application-level distrust check that
+    /// rejects known-compromised public keys, until `rustls-webpki` can be updated to
+    /// a version carrying the upstream fix (see `certificate_distrust`).
+    pub(crate) fn build_tls_config() -> anyhow::Result<ClientConfig> {
+        use alloc::sync::Arc;
+
+        use super::certificate_distrust::DistrustServerCertVerifier;
 
         ensure_crypto_provider_initialized(); // One-time initialization of a crypto provider if needed
         require_crypto_provider()?;
 
-        Ok(ClientConfig::builder()
-            .with_platform_verifier()?
+        let builder = ClientConfig::builder();
+        let verifier =
+            DistrustServerCertVerifier::platform_with_distrust(builder.crypto_provider().clone())?;
+        Ok(builder
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(verifier))
             .with_no_client_auth())
     }
 

@@ -1,0 +1,58 @@
+{
+  "$schema": "../../../../schema/provider-token-breakdown-metric-fixture.schema.json",
+  "profile": "trajectory.gen_ai.client.token_breakdown@0.1.0",
+  "case": "inclusive-sum-out-of-range",
+  "description": "With excludes_cache the inclusive input is 2^53-1 + 1 + 0, above the bound. This profile records no input total, and raises count_out_of_range all the same. The parts are recorded; the uncached input is the reported input.",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "exampleai",
+    "input_tokens": 9007199254740991,
+    "input_basis": "excludes_cache",
+    "output_tokens": 5,
+    "cache_read_input_tokens": 1,
+    "cache_write_input_tokens": 0,
+    "observation_point": "gateway"
+  },
+  "expected_metrics": [
+    {
+      "name": "gen_ai.client.inference.usage.cache_read.input_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 1,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.token.modality": "unknown",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.usage.cache_write.input_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 0,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.token.modality": "unknown",
+        "trajectory.cache.lifetime": "unspecified",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "trajectory.gen_ai.client.inference.usage.uncached.input_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 9007199254740991,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.token.modality": "unknown",
+        "trajectory.observation.point": "gateway"
+      }
+    }
+  ],
+  "expected_issues": [
+    "count_out_of_range"
+  ]
+}

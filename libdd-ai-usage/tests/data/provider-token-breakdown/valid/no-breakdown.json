@@ -1,0 +1,18 @@
+{
+  "$schema": "../../../../schema/provider-token-breakdown-metric-fixture.schema.json",
+  "profile": "trajectory.gen_ai.client.token_breakdown@0.1.0",
+  "case": "no-breakdown",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "openai",
+    "request_model": "gpt-4o-mini",
+    "input_tokens": 12,
+    "output_tokens": 2,
+    "observation_point": "gateway"
+  },
+  "expected_metrics": [],
+  "expected_issues": [
+    "cache_read_missing",
+    "cache_write_missing"
+  ]
+}
