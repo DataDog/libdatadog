@@ -3,14 +3,16 @@
 
 use libdd_common::Endpoint;
 use libdd_ipc::one_way_shared_memory::{OneWayShmReader, OneWayShmWriter, open_named_shm};
-use libdd_ipc::platform::{FileBackedHandle, MappedMem, NamedShmHandle, ShmHandle};
+use libdd_ipc::platform::{
+    FileBackedHandle, MappedMem, NamedShmHandle, ShmHandle, WritableMemoryHandle,
+};
 use std::ffi::CString;
 use std::hash::{Hash, Hasher};
 use std::io;
 use tracing::{trace, warn};
 use zwohash::ZwoHasher;
 
-pub struct AgentRemoteConfigWriter<T: FileBackedHandle>(OneWayShmWriter<T>);
+pub struct AgentRemoteConfigWriter<T: FileBackedHandle + WritableMemoryHandle>(OneWayShmWriter<T>);
 pub struct AgentRemoteConfigReader<T: FileBackedHandle>(OneWayShmReader<T, Option<Endpoint>>);
 
 fn path_for_endpoint(endpoint: &Endpoint) -> CString {
@@ -87,7 +89,7 @@ impl AgentRemoteConfigReader<NamedShmHandle> {
     }
 }
 
-impl<T: FileBackedHandle> AgentRemoteConfigWriter<T> {
+impl<T: FileBackedHandle + WritableMemoryHandle> AgentRemoteConfigWriter<T> {
     /// Returns `false` if the segment could not be grown to hold `contents`, in which case
     /// nothing was published and the previous payload stays current.
     pub fn write(&self, contents: &[u8]) -> bool {

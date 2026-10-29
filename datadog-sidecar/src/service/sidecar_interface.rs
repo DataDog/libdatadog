@@ -32,6 +32,45 @@ pub struct SidecarFlushOptions {
     pub telemetry: bool,
 }
 
+/// A rejected CDN subscription. Variants contain no endpoint or credential data.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum CdnSubscriptionError {
+    InvalidEndpoint,
+    InvalidPollInterval,
+    InvalidRequestTimeout,
+    InvalidLanguage,
+    InvalidVersion,
+    PublicationUnavailable,
+}
+
+impl From<libdd_ffe::cdn::InvalidConfig> for CdnSubscriptionError {
+    fn from(error: libdd_ffe::cdn::InvalidConfig) -> Self {
+        use libdd_ffe::cdn::InvalidConfig;
+        match error {
+            InvalidConfig::Endpoint => Self::InvalidEndpoint,
+            InvalidConfig::PollInterval => Self::InvalidPollInterval,
+            InvalidConfig::RequestTimeout => Self::InvalidRequestTimeout,
+            InvalidConfig::Language => Self::InvalidLanguage,
+            InvalidConfig::Version => Self::InvalidVersion,
+        }
+    }
+}
+
+impl std::fmt::Display for CdnSubscriptionError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::InvalidEndpoint => "invalid CDN endpoint",
+            Self::InvalidPollInterval => "invalid CDN polling interval",
+            Self::InvalidRequestTimeout => "invalid CDN request timeout",
+            Self::InvalidLanguage => "invalid CDN client language",
+            Self::InvalidVersion => "invalid CDN client version",
+            Self::PublicationUnavailable => "CDN configuration publication unavailable",
+        })
+    }
+}
+
+impl std::error::Error for CdnSubscriptionError {}
+
 /// The `SidecarInterface` trait defines the necessary methods for the sidecar service.
 ///
 /// A connection serves a single client thread, which processes one request at a time. All
@@ -293,14 +332,16 @@ pub trait SidecarInterface {
     async fn add_session_evp_transports(configs: Vec<EvpTransportConfigWithIdentity>);
 
     /// Subscribe this connection to CDN configuration; None unsubscribes.
-    /// Returns a handle for RemoteConfigManager. Resubscribe after reconnecting.
-    /// In-process listeners return None. Keep new methods at the end to preserve
-    /// the bincode ordinals of existing requests.
+    /// Returns a handle for RemoteConfigManager, Ok(None) for in-process listeners
+    /// or explicit unsubscribe, and Err if subscription setup fails. Resubscribe
+    /// after reconnecting. Appending methods preserves existing method-request
+    /// ordinals, but moves the generated `_Oversized` envelope.
+    /// Sender and sidecar must use matching builds in the same versioned IPC namespace.
     #[blocking]
     #[SerializedHandle]
     async fn subscribe_cdn_configuration(
         config: Option<libdd_ffe::cdn::CdnConfig>,
-    ) -> Option<crate::shm_remote_config::RemoteConfigHandle>;
+    ) -> Result<Option<crate::shm_remote_config::RemoteConfigHandle>, CdnSubscriptionError>;
 }
 
 #[cfg(test)]

@@ -6,7 +6,8 @@ use crate::platform::mem_handle::page_aligned_size;
 use crate::platform::private_dir;
 use crate::platform::shm_guard::{self, shm_owner_uid};
 use crate::platform::{
-    FileBackedHandle, MappedMem, MemoryHandle, NamedShmHandle, PlatformHandle, ShmHandle, ShmPath,
+    FileBackedHandle, MappedMem, MemoryHandle, NamedShmHandle, PlatformHandle, ReadOnlyShmHandle,
+    ShmHandle, ShmPath,
 };
 use io_lifetimes::OwnedFd;
 use libc::off_t;
@@ -158,6 +159,11 @@ pub(crate) fn sys_open_existing(name: &CStr) -> nix::Result<std::os::unix::io::O
     Ok(fd)
 }
 
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn sys_open_read_only(name: &CStr) -> nix::Result<std::os::fd::OwnedFd> {
+    shm_open(name, OFlag::O_RDONLY | OFlag::O_CLOEXEC, Mode::empty())
+}
+
 /// Device and inode identify the segment while its descriptor stays open.
 pub(crate) fn sys_identity(fd: &impl AsRawFd) -> Option<shm_names::SegmentIdentity> {
     let stat = nix::sys::stat::fstat(fd.as_raw_fd()).ok()?;
@@ -214,7 +220,11 @@ pub(crate) fn mmap_handle<T: FileBackedHandle>(handle: T) -> io::Result<MappedMe
             mmap(
                 None,
                 reserve,
-                ProtFlags::PROT_READ | ProtFlags::PROT_WRITE,
+                if T::READ_ONLY {
+                    ProtFlags::PROT_READ
+                } else {
+                    ProtFlags::PROT_READ | ProtFlags::PROT_WRITE
+                },
                 MapFlags::MAP_SHARED,
                 fd,
                 0,
@@ -235,6 +245,66 @@ pub(crate) fn munmap_handle<T: MemoryHandle>(mapped: &mut MappedMem<T>) {
 static ANON_SHM_ID: AtomicI32 = AtomicI32::new(0);
 
 impl ShmHandle {
+    #[cfg(target_os = "linux")]
+    pub(crate) fn new_read_only_pair(
+        size: usize,
+    ) -> anyhow::Result<(MappedMem<Self>, ReadOnlyShmHandle)> {
+        let memfd = memfd::MemfdOptions::default()
+            .allow_sealing(true)
+            .create("rc-publication")?;
+        let fd: OwnedFd = memfd.into_file().into();
+        ftruncate(&fd, off_t::try_from(size)?)?;
+        let reader = std::fs::OpenOptions::new()
+            .read(true)
+            .open(format!("/proc/self/fd/{}", fd.as_raw_fd()))?;
+        let writer = ShmHandle {
+            handle: fd.into(),
+            size,
+        }
+        .map()?;
+        // Keep this existing writable mapping, but deny future writes, writable mappings,
+        // shrinking, and additional seals even if a reader reopens its fd as O_RDWR.
+        // Fail closed on kernels without these seals; an unsealed fallback is unsafe.
+        let seals = libc::F_SEAL_SHRINK | libc::F_SEAL_FUTURE_WRITE | libc::F_SEAL_SEAL;
+        let result = unsafe {
+            libc::fcntl(
+                writer.mem.handle.as_owned_fd()?.as_raw_fd(),
+                libc::F_ADD_SEALS,
+                seals,
+            )
+        };
+        if result == -1 {
+            return Err(io::Error::last_os_error().into());
+        }
+        Ok((
+            writer,
+            ReadOnlyShmHandle(ShmHandle {
+                handle: OwnedFd::from(reader).into(),
+                size,
+            }),
+        ))
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub(crate) fn new_read_only_pair(
+        size: usize,
+    ) -> anyhow::Result<(MappedMem<Self>, ReadOnlyShmHandle)> {
+        let (writer, reader) = shm_names::create_anonymous_read_only_pair()?;
+        ftruncate(&writer, off_t::try_from(size)?)?;
+        let writer = ShmHandle {
+            handle: writer.into(),
+            size,
+        }
+        .map()?;
+        Ok((
+            writer,
+            ReadOnlyShmHandle(ShmHandle {
+                handle: reader.into(),
+                size,
+            }),
+        ))
+    }
+
     #[cfg(target_os = "linux")]
     fn open_anon_shm(name: &str) -> anyhow::Result<OwnedFd> {
         if let Ok(memfd) = memfd::MemfdOptions::default().create(name) {
@@ -420,6 +490,9 @@ impl<T: FileBackedHandle> MappedMem<T> {
     /// there was no space to allocate - and nothing may be written past what it already has.
     #[must_use = "a segment that could not be grown is still too short to write to"]
     pub fn ensure_space(&self, expected_size: usize) -> bool {
+        if T::READ_ONLY {
+            return self.refresh_size() >= expected_size;
+        }
         if expected_size <= self.get_size() {
             return true;
         }

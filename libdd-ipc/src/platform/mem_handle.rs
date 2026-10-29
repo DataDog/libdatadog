@@ -16,6 +16,20 @@ pub struct ShmHandle {
     pub(crate) size: usize,
 }
 
+/// A shared-memory descriptor opened read-only. Its mappings observe publication and
+/// growth without modifying the backing memory.
+#[cfg(unix)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
+#[serde(transparent)]
+pub struct ReadOnlyShmHandle(pub(crate) ShmHandle);
+
+#[cfg(unix)]
+impl From<ReadOnlyShmHandle> for PlatformHandle<OwnedFileHandle> {
+    fn from(handle: ReadOnlyShmHandle) -> Self {
+        handle.0.into()
+    }
+}
+
 #[derive(Debug)]
 #[allow(dead_code)]
 pub struct AnonHandle {
@@ -147,9 +161,53 @@ pub trait FileBackedHandle
 where
     Self: Sized,
 {
+    const READ_ONLY: bool = false;
+
     fn map(self) -> io::Result<MappedMem<Self>>;
     fn get_shm(&self) -> &ShmHandle;
     fn get_shm_mut(&mut self) -> &mut ShmHandle;
+}
+
+mod writable_handle {
+    pub trait Sealed {}
+    impl Sealed for super::AnonHandle {}
+    impl Sealed for super::ShmHandle {}
+    impl Sealed for super::NamedShmHandle {}
+}
+
+/// Handles whose mappings permit writes.
+pub trait WritableMemoryHandle: MemoryHandle + writable_handle::Sealed {}
+
+impl WritableMemoryHandle for AnonHandle {}
+impl WritableMemoryHandle for ShmHandle {}
+impl WritableMemoryHandle for NamedShmHandle {}
+
+#[cfg(unix)]
+impl FileBackedHandle for ReadOnlyShmHandle {
+    const READ_ONLY: bool = true;
+
+    fn map(self) -> io::Result<MappedMem<Self>> {
+        mmap_handle(self)
+    }
+
+    fn get_shm(&self) -> &ShmHandle {
+        &self.0
+    }
+
+    fn get_shm_mut(&mut self) -> &mut ShmHandle {
+        &mut self.0
+    }
+}
+
+#[cfg(unix)]
+impl TransferHandles for ReadOnlyShmHandle {
+    fn copy_handles<T: HandlesTransport>(&self, transport: T) -> Result<(), T::Error> {
+        self.0.copy_handles(transport)
+    }
+
+    fn receive_handles<T: HandlesTransport>(&mut self, transport: T) -> Result<(), T::Error> {
+        self.0.receive_handles(transport)
+    }
 }
 
 impl FileBackedHandle for ShmHandle {
@@ -193,16 +251,18 @@ impl<T: MemoryHandle> MappedMem<T> {
         unsafe { std::slice::from_raw_parts(self.ptr.as_ptr().cast(), self.get_size()) }
     }
 
-    pub fn as_slice_mut(&mut self) -> &mut [u8] {
-        let len = self.get_size();
-        // SAFETY: as above, and `&mut self` is the caller's guarantee of exclusivity within
-        // this process.
-        unsafe { std::slice::from_raw_parts_mut(self.ptr.as_ptr().cast(), len) }
-    }
-
     /// How much of the mapping is backed and safe to touch.
     pub fn get_size(&self) -> usize {
         self.usable.load(Ordering::Acquire)
+    }
+}
+
+impl<T: WritableMemoryHandle> MappedMem<T> {
+    pub fn as_slice_mut(&mut self) -> &mut [u8] {
+        let len = self.get_size();
+        // SAFETY: these mappings permit writes, `len` bytes are backed, and `&mut self`
+        // is the caller's guarantee of exclusivity within this process.
+        unsafe { std::slice::from_raw_parts_mut(self.ptr.as_ptr().cast(), len) }
     }
 }
 
@@ -600,5 +660,40 @@ mod tests {
 
         assert!(mapped.as_slice().len() >= 1 << 20);
         assert_eq!(mapped.as_slice().as_ptr(), base, "the mapping moved");
+    }
+}
+
+#[cfg(all(test, unix))]
+mod read_only_tests {
+    use super::*;
+    use crate::one_way_shared_memory::{OneWayShmReader, create_anon_read_only_pair};
+    use std::os::fd::AsRawFd;
+
+    #[test]
+    #[cfg_attr(miri, ignore = "requires native shared memory")]
+    fn read_only_mapping_observes_growth_without_allocating() {
+        let (writer, handle) = create_anon_read_only_pair().unwrap();
+        let mapped = handle.clone().map().unwrap();
+        let initial = mapped.get_size();
+        let fd = handle.0.handle.as_raw_fd();
+        let before = nix::sys::stat::fstat(fd).unwrap().st_size;
+        assert!(!mapped.ensure_space(initial + 4096));
+        assert_eq!(mapped.get_size(), initial);
+        assert_eq!(nix::sys::stat::fstat(fd).unwrap().st_size, before);
+
+        let mut first = OneWayShmReader::new(mapped, ());
+        let mut second = OneWayShmReader::new(handle.map().unwrap(), ());
+        for size in [8192, 1 << 20] {
+            let bytes = vec![42; size];
+            assert!(
+                writer.write(&bytes),
+                "publisher must still grow sealed memory"
+            );
+            for reader in [&mut first, &mut second] {
+                let (changed, actual) = reader.read();
+                assert!(changed);
+                assert_eq!(actual, bytes);
+            }
+        }
     }
 }

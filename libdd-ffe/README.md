@@ -68,6 +68,17 @@ external I/O, such as the sidecar; constructing it does not spawn a worker.
 `CdnConfig::validate` identifies the invalid setting through `InvalidConfig`
 variants without including URLs, credentials, or rejected values in diagnostics.
 
+Sidecar subscriptions return a structured rejection for invalid configuration or
+unavailable publication memory. `Ok(None)` means unsubscribe or CDN fetching is
+disabled for the listener. Replacing a subscription releases the previous one
+even when the replacement is rejected.
+
+Unix publication handles are read-only. Linux additionally seals the backing
+memory against shrinking and new writes, including through a reopened descriptor.
+This requires Linux 5.1+ memfd seals and `/proc/self/fd`; unavailable protections
+reject subscription setup instead of exporting an unsealed fallback. Existing
+publisher mappings can still grow and publish new snapshots.
+
 `CdnEndpoint` wraps `libdd_common::Endpoint` while retaining CDN validation,
 credential isolation and redacted diagnostics. URL credentials remain
 case-sensitive in subscription identity. The endpoint IPC representation is
@@ -104,9 +115,11 @@ Build the C caller against matching generated headers and native artifacts.
 The added consent and internal metadata change C/event layouts; bincode is
 positional and `serde(default)` does not provide old/new IPC compatibility.
 Update native sender and sidecar receiver together, as existing integrations
-do. PHP builds both from its pinned native source, sets `SIDECAR_VERSION` to
-its release `VERSION`, and uses version-specific socket/pipe names. Custom
-builds sharing a release label must not reuse an incompatible stale sidecar.
+do. PHP builds both from its pinned native source; its Unix build sets
+`SIDECAR_VERSION` to its release `VERSION` for version-specific socket names.
+Every build path must supply a distinct version label for incompatible builds;
+do not assume that a Windows package or custom build overrides the fallback
+label. Builds sharing a label must not reuse an incompatible stale sidecar.
 No new protocol negotiation is introduced here.
 
 This library change does not enable PHP EVP emission or change flag evaluation

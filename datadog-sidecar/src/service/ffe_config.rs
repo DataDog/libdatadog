@@ -1,11 +1,11 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::service::sidecar_interface::CdnSubscriptionError;
 use crate::shm_remote_config::{RemoteConfigHandle, cdn::CdnPublisher};
 use libdd_common::MutexExt;
 use libdd_ffe::cdn::{CdnConfig, CdnFetcher};
 use std::collections::HashMap;
-use std::io;
 use std::sync::{Arc, Mutex, Weak};
 use tokio_util::sync::CancellationToken;
 
@@ -37,17 +37,20 @@ impl Drop for CdnSubscription {
 }
 
 impl CdnConfigs {
-    pub(crate) fn subscribe(&self, config: CdnConfig) -> io::Result<Arc<CdnSubscription>> {
-        config.validate().map_err(io::Error::other)?;
+    pub(crate) fn subscribe(
+        &self,
+        config: CdnConfig,
+    ) -> Result<Arc<CdnSubscription>, CdnSubscriptionError> {
+        config.validate()?;
         let mut subscriptions = self.0.lock_or_panic();
         // Expired keys own credentials too; remove them before admitting work.
         subscriptions.retain(|_, value| value.strong_count() != 0);
         if let Some(subscription) = subscriptions.get(&config).and_then(Weak::upgrade) {
             return Ok(subscription);
         }
-        let (publisher, handle) = CdnPublisher::new()?;
-        let mut fetcher =
-            CdnFetcher::new(config.clone(), publisher.clone()).map_err(io::Error::other)?;
+        let (publisher, handle) =
+            CdnPublisher::new().map_err(|_| CdnSubscriptionError::PublicationUnavailable)?;
+        let mut fetcher = CdnFetcher::new(config.clone(), publisher.clone())?;
         let cancellation = CancellationToken::new();
         let subscription = Arc::new(CdnSubscription {
             config: config.clone(),

@@ -887,9 +887,26 @@ impl RemoteConfigManager {
         })
     }
 
-    /// A bounded wait on the local source, or on the active agent directory.
+    /// Wait at most `timeout` before the caller polls with `fetch_update` again.
+    /// With both sources active, check pending agent notifications and cap the
+    /// local wait at 50 ms so agent changes cannot be hidden by an idle local
+    /// source. The wait may return without a change and never consumes updates.
     pub fn wait_for_change(&mut self, timeout: Duration) {
         if let Some(reader) = &mut self.local_reader {
+            let timeout = if let Some(target) = &self.active_target {
+                let started = std::time::Instant::now();
+                let agent = self
+                    .active_reader
+                    .get_or_insert_with(|| RemoteConfigReader::new(&self.invariants, target));
+                if agent.0.wait_for_change(Duration::ZERO) {
+                    return;
+                }
+                timeout
+                    .min(Duration::from_millis(50))
+                    .saturating_sub(started.elapsed())
+            } else {
+                timeout
+            };
             reader.wait_for_change(timeout);
         } else if let Some(reader) = &mut self.active_reader {
             reader.0.wait_for_change(timeout);

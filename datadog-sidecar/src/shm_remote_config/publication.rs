@@ -13,9 +13,11 @@ use bincode::Options;
 use libdd_common::MutexExt;
 use libdd_ipc::handles::{HandlesTransport, TransferHandles};
 #[cfg(unix)]
-use libdd_ipc::one_way_shared_memory::{OneWayShmReader, OneWayShmWriter, create_anon_pair};
+use libdd_ipc::one_way_shared_memory::{
+    OneWayShmReader, OneWayShmWriter, create_anon_read_only_pair,
+};
 #[cfg(unix)]
-use libdd_ipc::platform::{FileBackedHandle, ShmHandle};
+use libdd_ipc::platform::{FileBackedHandle, ReadOnlyShmHandle, ShmHandle};
 use libdd_remote_config::RemoteConfigPath;
 use serde::{Deserialize, Serialize};
 #[cfg(windows)]
@@ -48,7 +50,7 @@ pub(super) struct PublicationSnapshot {
 pub struct RemoteConfigHandle {
     config_path: String,
     #[cfg(unix)]
-    pub(super) handle: ShmHandle,
+    pub(super) handle: ReadOnlyShmHandle,
     #[cfg(windows)]
     path: String,
 }
@@ -76,7 +78,7 @@ impl TransferHandles for RemoteConfigHandle {
 }
 
 #[cfg(unix)]
-type SnapshotReader = OneWayShmReader<ShmHandle, ()>;
+type SnapshotReader = OneWayShmReader<ReadOnlyShmHandle, ()>;
 #[cfg(windows)]
 type SnapshotReader = RemoteConfigReader;
 #[cfg(unix)]
@@ -152,7 +154,7 @@ impl RemoteConfigPublisher {
         let config_path = path.to_string();
         #[cfg(unix)]
         let (writer, handle) = {
-            let (writer, handle) = create_anon_pair().map_err(io::Error::other)?;
+            let (writer, handle) = create_anon_read_only_pair().map_err(io::Error::other)?;
             (
                 writer,
                 RemoteConfigHandle {
@@ -227,5 +229,33 @@ impl RemoteConfigPublisher {
                 snapshot.state = RemoteConfigDeliveryState::Ready;
             }
         });
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[cfg_attr(miri, ignore = "requires native shared memory")]
+    fn read_only_publication_grows_and_preserves_terminal_snapshot() {
+        let (publisher, handle) = RemoteConfigPublisher::new(
+            RemoteConfigPath::parse("datadog/0/FFE_FLAGS/cdn/config").unwrap(),
+        )
+        .unwrap();
+        let mut reader = PublicationReader::new(handle).unwrap();
+        for (revision, size) in [(1, 8192), (2, 1 << 20)] {
+            let configuration = vec![42; size];
+            publisher.publish(configuration.clone()).unwrap();
+            let snapshot = reader.read().unwrap().unwrap();
+            assert_eq!(snapshot.revision, revision);
+            assert_eq!(snapshot.configuration, configuration);
+            assert_eq!(snapshot.state, RemoteConfigDeliveryState::Ready);
+        }
+        publisher.stopped();
+        let stopped = reader.read().unwrap().unwrap();
+        assert_eq!(stopped.state, RemoteConfigDeliveryState::Stopped);
+        assert_eq!(stopped.revision, 2);
+        assert_eq!(stopped.configuration, vec![42; 1 << 20]);
     }
 }

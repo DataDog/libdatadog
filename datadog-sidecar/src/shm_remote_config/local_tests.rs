@@ -92,6 +92,134 @@ fn assert_none(manager: &mut RemoteConfigManager) {
 
 const CDN_PATH: &str = "datadog/0/FFE_FLAGS/cdn/config";
 
+fn mixed_source_wait_fixture() -> (RemoteConfigManager, RemoteConfigWriter, CdnPublisher) {
+    let mut manager = manager();
+    let target = target("mixed-source-wait");
+    let writer = RemoteConfigWriter::new(&manager.invariants, &target).unwrap();
+    publish(&writer, &[]);
+    manager.track_target(&target);
+    let (publisher, handle) = CdnPublisher::new().unwrap();
+    manager.set_local_configuration(Some(handle)).unwrap();
+    (manager, writer, publisher)
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "requires native shared memory and timed waits")]
+fn mixed_source_wait_observes_pending_agent_changes_without_consuming_updates() {
+    let (mut manager, writer, _publisher) = mixed_source_wait_fixture();
+    let apm_path = path("APM_TRACING");
+    let apm = store_shm(
+        1,
+        &apm_path,
+        serde_json::to_vec(&dummy_dynamic_config(true)).unwrap(),
+    )
+    .unwrap();
+    publish(&writer, &[(&apm_path, &apm)]);
+
+    // The first wait must also discover an agent target not yet fetched.
+    let started = std::time::Instant::now();
+    manager.wait_for_change(Duration::from_secs(2));
+    assert!(started.elapsed() < Duration::from_millis(500));
+    let RemoteConfigUpdate::Add { value, .. } = manager.fetch_update() else {
+        panic!("wait must leave the pending agent add for fetch_update");
+    };
+    assert_eq!(value.path.as_str(), apm_path.as_str());
+    assert_none(&mut manager);
+
+    // A subsequent generation must be observed too, even without futex support.
+    publish(&writer, &[]);
+    manager.wait_for_change(Duration::ZERO);
+    assert_remove(manager.fetch_update(), apm_path.as_str());
+    assert_none(&mut manager);
+}
+
+#[test]
+#[cfg_attr(
+    miri,
+    ignore = "requires native shared memory, threads, and timed waits"
+)]
+fn mixed_source_wait_bounds_agent_delivery_while_local_source_is_idle() {
+    for state in [
+        RemoteConfigDeliveryState::Starting,
+        RemoteConfigDeliveryState::Ready,
+        RemoteConfigDeliveryState::Stopped,
+    ] {
+        let (mut manager, writer, publisher) = mixed_source_wait_fixture();
+        if state != RemoteConfigDeliveryState::Starting {
+            apply(&publisher, "unchanged-cdn");
+            assert_ffe(manager.fetch_update(), CDN_PATH, "unchanged-cdn");
+        }
+        if state == RemoteConfigDeliveryState::Stopped {
+            publisher.stopped();
+        }
+        assert_none(&mut manager);
+        assert_eq!(manager.local_configuration_state(), Some(state));
+        // Prime each notification cursor directly: the first wait can otherwise
+        // return immediately for the initial generation and mask the regression.
+        manager
+            .active_reader
+            .as_mut()
+            .unwrap()
+            .0
+            .wait_for_change(Duration::ZERO);
+        manager
+            .local_reader
+            .as_mut()
+            .unwrap()
+            .wait_for_change(Duration::ZERO);
+
+        let apm_path = path("APM_TRACING");
+        let apm = store_shm(
+            1,
+            &apm_path,
+            serde_json::to_vec(&dummy_dynamic_config(true)).unwrap(),
+        )
+        .unwrap();
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                std::thread::sleep(Duration::from_millis(20));
+                publish(&writer, &[(&apm_path, &apm)]);
+            });
+            let started = std::time::Instant::now();
+            manager.wait_for_change(Duration::from_secs(2));
+            assert!(
+                started.elapsed() < Duration::from_millis(500),
+                "idle {state:?} local source must not hide the agent update"
+            );
+        });
+        let RemoteConfigUpdate::Add { value, .. } = manager.fetch_update() else {
+            panic!("wait must leave the new agent config for fetch_update");
+        };
+        assert_eq!(value.path.as_str(), apm_path.as_str());
+        assert_none(&mut manager);
+        assert_eq!(manager.local_configuration_state(), Some(state));
+    }
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "requires native shared memory and timed waits")]
+fn mixed_source_wait_honors_zero_and_short_timeouts_without_spinning() {
+    let (mut manager, _writer, _publisher) = mixed_source_wait_fixture();
+    assert_none(&mut manager);
+    manager.wait_for_change(Duration::ZERO);
+
+    for (timeout, minimum_elapsed) in [
+        (Duration::ZERO, Duration::ZERO),
+        (Duration::from_millis(5), Duration::from_millis(20)),
+    ] {
+        let started = std::time::Instant::now();
+        for _ in 0..8 {
+            manager.wait_for_change(timeout);
+        }
+        let elapsed = started.elapsed();
+        // Eight short waits allow scheduler slack while distinguishing a fixed
+        // 50 ms sleep, and the idle positive waits must not become a busy loop.
+        assert!(elapsed < Duration::from_millis(200), "{elapsed:?}");
+        assert!(elapsed >= minimum_elapsed, "{elapsed:?}");
+        assert_none(&mut manager);
+    }
+}
+
 #[test]
 #[cfg_attr(miri, ignore = "requires native shared memory")]
 fn local_ffe_overrides_only_ffe_and_detach_restores_latest_agent_config() {
