@@ -88,7 +88,6 @@ libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false, fea
 libdd-crashtracker-ffi = { path = "../libdd-crashtracker-ffi", default-features = false, features = ["collector", "collector_windows"] }
 windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Threading"] }
 
-
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util", "macros"] }
 libc.workspace = true
@@ -97,13 +96,6 @@ tempfile.workspace = true
 httpmock.workspace = true
 libdd-remote-config = { path = "../libdd-remote-config", features = ["test"] }
 libdd-trace-utils = { path = "../libdd-trace-utils", features = ["test-utils"] }
-
-[lints.clippy]
-# TODO(paullgdc): This fails a lot because of if-let chaining which became
-# allowed with the 1.91.1 MSRV bump.
-# I am planning to fix each crate as an individual PR in order to not have 
-# too many conflicts
-collapsible_if = "allow"
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = [
