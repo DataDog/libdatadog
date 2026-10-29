@@ -32,12 +32,53 @@ pub struct SidecarFlushOptions {
     pub telemetry: bool,
 }
 
+/// A rejected CDN subscription. Variants contain no endpoint or credential data.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum CdnSubscriptionError {
+    InvalidEndpoint,
+    InvalidPollInterval,
+    InvalidRequestTimeout,
+    InvalidLanguage,
+    InvalidVersion,
+    PublicationUnavailable,
+}
+
+impl From<libdd_ffe::cdn::InvalidConfig> for CdnSubscriptionError {
+    fn from(error: libdd_ffe::cdn::InvalidConfig) -> Self {
+        use libdd_ffe::cdn::InvalidConfig;
+        match error {
+            InvalidConfig::Endpoint => Self::InvalidEndpoint,
+            InvalidConfig::PollInterval => Self::InvalidPollInterval,
+            InvalidConfig::RequestTimeout => Self::InvalidRequestTimeout,
+            InvalidConfig::Language => Self::InvalidLanguage,
+            InvalidConfig::Version => Self::InvalidVersion,
+        }
+    }
+}
+
+impl std::fmt::Display for CdnSubscriptionError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::InvalidEndpoint => "invalid CDN endpoint",
+            Self::InvalidPollInterval => "invalid CDN polling interval",
+            Self::InvalidRequestTimeout => "invalid CDN request timeout",
+            Self::InvalidLanguage => "invalid CDN client language",
+            Self::InvalidVersion => "invalid CDN client version",
+            Self::PublicationUnavailable => "CDN configuration publication unavailable",
+        })
+    }
+}
+
+impl std::error::Error for CdnSubscriptionError {}
+
 /// The `SidecarInterface` trait defines the necessary methods for the sidecar service.
 ///
 /// A connection serves a single client thread, which processes one request at a time. All
 /// session and application state is therefore bound to the connection: it is set by the
 /// `set_*` methods (which the client replays after a reconnect) and implicitly applies to every
 /// other message on the same connection.
+/// CDN subscriptions carry their own complete configuration and may also use a
+/// dedicated connection without session/application messages.
 #[libdd_ipc_macros::service]
 pub trait SidecarInterface {
     /// Enqueues a list of actions for the application of the current request.
@@ -288,10 +329,19 @@ pub trait SidecarInterface {
     /// their target without replacing the session's other transports. Repeated
     /// identical configuration preserves routing and deduplication state.
     /// Targets absent from the batch are unchanged; this is not a full snapshot.
-    ///
-    /// Keep this method last: request variants cross the bincode IPC boundary,
-    /// so appending preserves the ordinals of all existing messages.
     async fn add_session_evp_transports(configs: Vec<EvpTransportConfigWithIdentity>);
+
+    /// Subscribe this connection to CDN configuration; None unsubscribes.
+    /// Returns a handle for RemoteConfigManager, Ok(None) for in-process listeners
+    /// or explicit unsubscribe, and Err if subscription setup fails. Resubscribe
+    /// after reconnecting. Appending methods preserves existing method-request
+    /// ordinals, but moves the generated `_Oversized` envelope.
+    /// Sender and sidecar must use matching builds in the same versioned IPC namespace.
+    #[blocking]
+    #[SerializedHandle]
+    async fn subscribe_cdn_configuration(
+        config: Option<libdd_ffe::cdn::CdnConfig>,
+    ) -> Result<Option<crate::shm_remote_config::RemoteConfigHandle>, CdnSubscriptionError>;
 }
 
 #[cfg(test)]

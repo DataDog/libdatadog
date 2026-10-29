@@ -5,7 +5,8 @@ use super::shm_names;
 use crate::platform::mem_handle::page_aligned_size;
 use crate::platform::shm_guard::{self, shm_owner_uid};
 use crate::platform::{
-    FileBackedHandle, MappedMem, MemoryHandle, NamedShmHandle, ShmHandle, ShmPath,
+    FileBackedHandle, MappedMem, MemoryHandle, NamedShmHandle, ReadOnlyShmHandle, ShmHandle,
+    ShmPath,
 };
 use libc::off_t;
 use nix::fcntl::OFlag;
@@ -61,7 +62,11 @@ pub(crate) fn mmap_handle<T: FileBackedHandle>(mut handle: T) -> io::Result<Mapp
             mmap(
                 None,
                 reserve,
-                ProtFlags::PROT_READ | ProtFlags::PROT_WRITE,
+                if T::READ_ONLY {
+                    ProtFlags::PROT_READ
+                } else {
+                    ProtFlags::PROT_READ | ProtFlags::PROT_WRITE
+                },
                 MapFlags::MAP_SHARED,
                 fd,
                 0,
@@ -71,7 +76,9 @@ pub(crate) fn mmap_handle<T: FileBackedHandle>(mut handle: T) -> io::Result<Mapp
 
     // SAFETY: the mapping is MAPPING_MAX_SIZE long, as just requested above.
     let committed = unsafe { committed_len(ptr) };
-    let usable = if declared & NOT_COMMITTED == 0 {
+    let usable = if T::READ_ONLY {
+        committed.load(Ordering::Acquire).min(usable_max())
+    } else if declared & NOT_COMMITTED == 0 {
         declared.min(usable_max())
     } else {
         match declared & !NOT_COMMITTED {
@@ -115,6 +122,25 @@ pub(crate) fn munmap_handle<T: MemoryHandle>(mapped: &MappedMem<T>) {
 static ANON_SHM_ID: AtomicI32 = AtomicI32::new(0);
 
 impl ShmHandle {
+    pub(crate) fn new_read_only_pair(
+        size: usize,
+    ) -> anyhow::Result<(MappedMem<Self>, ReadOnlyShmHandle)> {
+        let (writer, reader) = shm_names::create_anonymous_read_only_pair()?;
+        ftruncate(&writer, MAPPING_MAX_SIZE as off_t)?;
+        let writer = ShmHandle {
+            handle: writer.into(),
+            size: size | NOT_COMMITTED,
+        }
+        .map()?;
+        Ok((
+            writer,
+            ReadOnlyShmHandle(ShmHandle {
+                handle: reader.into(),
+                size: NOT_COMMITTED,
+            }),
+        ))
+    }
+
     pub fn new(size: usize) -> anyhow::Result<ShmHandle> {
         // Predictable names may already exist; skip them without touching their segments.
         let fd = shm_names::create_anonymous(
@@ -155,6 +181,11 @@ pub(crate) fn sys_open_existing(name: &CStr) -> nix::Result<OwnedFd> {
     let fd = shm_open(path_slice(name), OFlag::O_RDWR, Mode::empty())?;
     shm_guard::verify_owner(&fd, || name.to_string_lossy().into_owned())?;
     Ok(fd)
+}
+
+pub(crate) fn sys_open_read_only(name: &CStr) -> nix::Result<OwnedFd> {
+    // POSIX shm_open sets FD_CLOEXEC; use only the access flags supported by macOS.
+    shm_open(path_slice(name), OFlag::O_RDONLY, Mode::empty())
 }
 
 /// macOS SHM has no device/inode identity. Store a token after the committed length in the
@@ -315,6 +346,9 @@ impl<T: FileBackedHandle> MappedMem<T> {
     /// past what it already has.
     #[must_use = "a segment that could not be grown is still too short to write to"]
     pub fn ensure_space(&self, expected_size: usize) -> bool {
+        if T::READ_ONLY {
+            return self.refresh_size() >= expected_size;
+        }
         if expected_size <= self.get_size() {
             return true;
         }

@@ -25,7 +25,9 @@
 
 #[cfg(unix)]
 use crate::platform::lock_shm;
-use crate::platform::{FileBackedHandle, MappedMem, NamedShmHandle, ShmHandle};
+use crate::platform::{
+    FileBackedHandle, MappedMem, NamedShmHandle, ShmHandle, WritableMemoryHandle,
+};
 use crate::rate_limiter::now;
 use libdd_common::MutexExt;
 use std::ffi::{CStr, CString};
@@ -44,12 +46,12 @@ pub const ENDED: u64 = u64::MAX - 1;
 
 pub struct OneWayShmWriter<T>
 where
-    T: FileBackedHandle,
+    T: FileBackedHandle + WritableMemoryHandle,
 {
     state: Mutex<WriterState<T>>,
 }
 
-struct WriterState<T: FileBackedHandle> {
+struct WriterState<T: FileBackedHandle + WritableMemoryHandle> {
     mapped: MappedMem<T>,
     /// Retired after the first publication, or on drop if nothing was published.
     replaced: Vec<MappedMem<NamedShmHandle>>,
@@ -58,7 +60,7 @@ struct WriterState<T: FileBackedHandle> {
     owner_pid: Option<u32>,
 }
 
-impl<T: FileBackedHandle> WriterState<T> {
+impl<T: FileBackedHandle + WritableMemoryHandle> WriterState<T> {
     fn retire_replaced(&mut self) {
         for old in self.replaced.drain(..) {
             retire(&old);
@@ -66,7 +68,7 @@ impl<T: FileBackedHandle> WriterState<T> {
     }
 }
 
-impl<T: FileBackedHandle> Drop for OneWayShmWriter<T> {
+impl<T: FileBackedHandle + WritableMemoryHandle> Drop for OneWayShmWriter<T> {
     fn drop(&mut self) {
         let state = self.state.get_mut().unwrap_or_else(|e| e.into_inner());
         if state.owner_pid != Some(std::process::id()) {
@@ -247,6 +249,19 @@ pub fn create_anon_pair() -> anyhow::Result<(OneWayShmWriter<ShmHandle>, ShmHand
     Ok((OneWayShmWriter::from_mapping(handle.clone().map()?), handle))
 }
 
+/// Create an anonymous publication whose transferable descriptor permits only reads.
+///
+/// Linux requires memfd seals (including `F_SEAL_FUTURE_WRITE`, Linux 5.1+) and
+/// `/proc/self/fd`: failure returns an error rather than exposing a writable fallback.
+#[cfg(unix)]
+pub fn create_anon_read_only_pair() -> anyhow::Result<(
+    OneWayShmWriter<ShmHandle>,
+    crate::platform::ReadOnlyShmHandle,
+)> {
+    let (mapped, reader) = ShmHandle::new_read_only_pair(4096)?;
+    Ok((OneWayShmWriter::from_mapping(mapped), reader))
+}
+
 impl<T: FileBackedHandle, D> OneWayShmReader<T, D> {
     /// Create a reader over an already-mapped segment.
     ///
@@ -374,7 +389,7 @@ impl OneWayShmWriter<ShmHandle> {
     }
 }
 
-impl<T: FileBackedHandle> OneWayShmWriter<T> {
+impl<T: FileBackedHandle + WritableMemoryHandle> OneWayShmWriter<T> {
     fn from_mapping(mapped: MappedMem<T>) -> Self {
         OneWayShmWriter {
             state: Mutex::new(WriterState {
@@ -599,7 +614,7 @@ impl<T: FileBackedHandle, D> OneWayShmReader<T, D> {
     }
 }
 
-impl<T: FileBackedHandle> OneWayShmWriter<T> {
+impl<T: FileBackedHandle + WritableMemoryHandle> OneWayShmWriter<T> {
     /// Publish `contents` as the new current buffer, replacing the previous one.
     ///
     /// Writers are single-producer: the generation counter is bumped to odd

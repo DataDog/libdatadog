@@ -24,6 +24,40 @@ use std::sync::atomic::{AtomicU32, Ordering};
 /// Bound retries if another process repeatedly recreates the name after unlink.
 const MAX_REPLACEMENTS: usize = 4;
 
+/// Open the reader before unlinking the fresh segment. Linux uses sealed memfd instead:
+/// an unsealed file could be reopened with write access through `/proc/self/fd`.
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn create_anonymous_read_only_pair() -> io::Result<(OwnedFd, OwnedFd)> {
+    use std::fmt::Write;
+    use std::io::Read;
+    for _ in 0..16 {
+        // The temporary name must not let a peer predict and open the writer before unlink.
+        // 96 random bits also keep the complete name below macOS's 31-byte limit.
+        let mut random = [0; 12];
+        std::fs::File::open("/dev/urandom")?.read_exact(&mut random)?;
+        let mut name = String::with_capacity(30);
+        name.push_str("/ddrc-");
+        for byte in random {
+            write!(name, "{byte:02x}").map_err(io::Error::other)?;
+        }
+        let name = CString::new(name).map_err(io::Error::other)?;
+        match sys_create_exclusive(&name, Mode::S_IRUSR | Mode::S_IWUSR) {
+            Ok(writer) => {
+                let reader = super::sys_open_read_only(&name);
+                // Also unlink when opening the reader failed; never leave a published name.
+                sys_shm_unlink(&name)?;
+                return Ok((writer, reader?));
+            }
+            Err(Errno::EEXIST) => continue,
+            Err(e) => return Err(e.into()),
+        }
+    }
+    Err(io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        "no unused publication name",
+    ))
+}
+
 pub(crate) type SegmentIdentity = (u64, u64);
 
 // Serialize name changes and reader detachment. A forked child can reclaim a lock

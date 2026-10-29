@@ -31,6 +31,7 @@ struct MethodInfo {
     variant: Ident,
     is_blocking: bool,
     is_oneway: bool,
+    response_handles: bool,
     return_type: Option<Box<Type>>,
     params: Vec<ParamInfo>,
     handle_param_indices: Vec<usize>,
@@ -48,6 +49,7 @@ fn collect_methods(item: &ItemTrait) -> Vec<MethodInfo> {
         let variant = Ident::new(&name.to_string().to_pascal_case(), Span::mixed_site());
         let is_blocking = has_attr(&func.attrs, "blocking");
         let is_oneway = has_attr(&func.attrs, "oneway");
+        let response_handles = has_attr(&func.attrs, "SerializedHandle");
 
         let return_type = match &func.sig.output {
             ReturnType::Default => None,
@@ -63,6 +65,10 @@ fn collect_methods(item: &ItemTrait) -> Vec<MethodInfo> {
         assert!(
             !is_oneway || (!is_blocking && return_type.is_none()),
             "oneway methods cannot return a response"
+        );
+        assert!(
+            !response_handles || return_type.is_some(),
+            "SerializedHandle on a method requires a return value"
         );
         let mut params: Vec<ParamInfo> = Vec::new();
         let mut handle_param_indices: Vec<usize> = Vec::new();
@@ -113,6 +119,7 @@ fn collect_methods(item: &ItemTrait) -> Vec<MethodInfo> {
             variant,
             is_blocking,
             is_oneway,
+            response_handles,
             return_type,
             params,
             handle_param_indices,
@@ -446,6 +453,19 @@ fn gen_serve_fn(
             let response_code = if m.is_oneway {
                 quote! { handler.#name(#(#field_names),*).await; }
             } else if m.return_type.is_some() {
+                let send = if m.response_handles {
+                    quote! {
+                        libdd_ipc::send_raw_with_handles_async(
+                            handler.connection().async_conn(), __resp_data, &result,
+                        ).await.ok();
+                    }
+                } else {
+                    quote! {
+                        libdd_ipc::send_raw_async(
+                            handler.connection().async_conn(), __resp_data,
+                        ).await.ok();
+                    }
+                };
                 // Flush any buffered acks before sending the typed response, so the client's
                 // send_count/ack_count loop processes them before reading the real reply.
                 quote! {
@@ -463,10 +483,7 @@ fn gen_serve_fn(
                         &result,
                         __suffix_size,
                     );
-                    libdd_ipc::send_raw_async(
-                        handler.connection().async_conn(),
-                        __resp_data,
-                    ).await.ok();
+                    #send
                 }
             } else {
                 // On Linux, buffer up to 20 acks and flush in a single
@@ -621,13 +638,20 @@ fn gen_channel(
                 }
             } else if let Some(ret_ty) = &m.return_type {
                 let method_name = format_ident!("call_{}", name);
+                let receive = if m.response_handles {
+                    quote! { self.0.call_with_handles::<#ret_ty>(__encoded.data, &__encoded.fds) }
+                } else {
+                    quote! {
+                        let (__resp, _) = self.0.call(__encoded.data, &__encoded.fds)
+                            .map_err(libdd_ipc::codec::DecodeError::Io)?;
+                        libdd_ipc::codec::decode::<#ret_ty>(&__resp)
+                    }
+                };
                 quote! {
                     pub fn #method_name(&mut self, #(#params),*) -> ::std::result::Result<#ret_ty, libdd_ipc::codec::DecodeError> {
                         #build_req_and_fds
                         let __encoded = __encoded.map_err(libdd_ipc::codec::DecodeError::Io)?;
-                        let (__resp, _) = self.0.call(__encoded.data, &__encoded.fds)
-                            .map_err(libdd_ipc::codec::DecodeError::Io)?;
-                        libdd_ipc::codec::decode::<#ret_ty>(&__resp)
+                        #receive
                     }
                 }
             } else if m.is_blocking {
@@ -713,8 +737,14 @@ fn gen_channel(
             {
                 let __encoded = libdd_ipc::oversized::encode_request(req, self.0.max_send_size())
                     .map_err(libdd_ipc::codec::DecodeError::Io)?;
-                let (__resp, _) = self.0.call(__encoded.data, &__encoded.fds)
+                let (__resp, __handles) = self.0.call(__encoded.data, &__encoded.fds)
                     .map_err(libdd_ipc::codec::DecodeError::Io)?;
+                if !__handles.is_empty() {
+                    return Err(libdd_ipc::codec::DecodeError::Io(::std::io::Error::new(
+                        ::std::io::ErrorKind::InvalidInput,
+                        "handle-bearing replies require the generated typed call method",
+                    )));
+                }
                 libdd_ipc::codec::decode::<__Response>(&__resp)
             }
 
@@ -735,6 +765,8 @@ fn gen_channel(
 /// Method attributes recognized (stripped before emission):
 /// - `#[blocking]` — `-> ()` method where client waits for ack (vs fire-and-forget)
 /// - `#[oneway]` — sends no reply and does not participate in client reply accounting
+/// - `#[SerializedHandle]` on a method — transfer OS handles in the return value. The return type
+///   must implement `TransferHandles + Sync`; use the generated typed `call_*` method.
 /// - `#[SerializedHandle]` on a parameter — transfer the value's OS handles separately from its
 ///   serialized bytes. The parameter type must implement `TransferHandles`; wrapper structs
 ///   implement it by forwarding to their contained handle-bearing value.
