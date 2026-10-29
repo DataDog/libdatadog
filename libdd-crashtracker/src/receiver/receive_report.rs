@@ -529,25 +529,27 @@ pub(crate) async fn receive_report_from_stream(
     // crashing thread's stack supplied by the worker is retained.
     // Use this fallback only when the collector supplied no threads.
     #[cfg(target_os = "linux")]
-    if config.collect_all_threads() && !access.is_restricted() && builder.error.threads.is_none() {
-        if let Some(proc_info) = builder.proc_info.as_ref() {
-            let parent_pid = proc_info.pid;
-            let crashing_tid = proc_info.tid;
-            // If we never received a first line (deadline is None) use zero so
-            // collection is skipped; there is nothing to attach to anyway.
-            let remaining_budget = deadline
-                .map(|d| d.saturating_duration_since(Instant::now()))
-                .unwrap_or(Duration::ZERO);
-            if let Err(e) = collect_and_add_thread_contexts(
-                &mut builder,
-                &config,
-                parent_pid,
-                crashing_tid,
-                remaining_budget,
-            ) {
-                let _ = builder
-                    .with_log_message(format!("Failed to collect thread contexts: {e}"), true);
-            }
+    if config.collect_all_threads()
+        && !access.is_restricted()
+        && builder.error.threads.is_none()
+        && let Some(proc_info) = builder.proc_info.as_ref()
+    {
+        let parent_pid = proc_info.pid;
+        let crashing_tid = proc_info.tid;
+        // If we never received a first line (deadline is None) use zero so
+        // collection is skipped; there is nothing to attach to anyway.
+        let remaining_budget = deadline
+            .map(|d| d.saturating_duration_since(Instant::now()))
+            .unwrap_or(Duration::ZERO);
+        if let Err(e) = collect_and_add_thread_contexts(
+            &mut builder,
+            &config,
+            parent_pid,
+            crashing_tid,
+            remaining_budget,
+        ) {
+            let _ =
+                builder.with_log_message(format!("Failed to collect thread contexts: {e}"), true);
         }
     }
 
@@ -643,10 +645,11 @@ fn collect_and_add_thread_contexts(
             let used_saved_context = captured.as_ref().is_some_and(|ctx| ctx.used_saved_context);
             let mut thread =
                 thread_data_from_capture(parent_pid, crashing_tid, crash_site, tid, captured);
-            if thread.crashed && used_saved_context {
-                if let Some(collector) = collector_stack {
-                    recover_collector_callers(&mut thread.stack, collector);
-                }
+            if thread.crashed
+                && used_saved_context
+                && let Some(collector) = collector_stack
+            {
+                recover_collector_callers(&mut thread.stack, collector);
             }
             if thread.crashed
                 && should_promote_crashing_stack(config, used_saved_context)
