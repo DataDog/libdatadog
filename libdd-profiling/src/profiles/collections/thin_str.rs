@@ -490,8 +490,14 @@ impl hash::Hash for ThinStr<'_> {
     }
 }
 
-impl<'a> From<ThinSlice<'a, u8>> for ThinStr<'a> {
-    fn from(inner: ThinSlice<'a, u8>) -> Self {
+impl<'a> ThinStr<'a> {
+    /// Creates a [`ThinStr`] from a [`ThinSlice`] of bytes without checking
+    /// that the bytes are valid UTF-8.
+    ///
+    /// # Safety
+    ///
+    /// The bytes of `inner` must be valid UTF-8.
+    pub unsafe fn from_utf8_unchecked(inner: ThinSlice<'a, u8>) -> Self {
         ThinStr { inner }
     }
 }
