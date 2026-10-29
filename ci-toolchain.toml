@@ -1,0 +1,15 @@
+# Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+# Source of truth for the Rust toolchain versions CI uses beyond the workspace
+# MSRV: the pinned latest stable (cargo-deny, clippy matrix, cargo-public-api,
+# ...) and the dated nightly (rustfmt unstable_features, cargo-miri,
+# cargo-bolero, cargo-llvm-cov doc tests, cargo-public-api). NOT read by
+# rustup — workflows parse these keys with the same grep pattern as
+# `rust-toolchain.toml` and pass the value through `RUSTUP_TOOLCHAIN` or as an
+# explicit toolchain arg. The MSRV itself stays in `rust-toolchain.toml`,
+# which rustup reads for local development.
+
+[toolchain]
+stable = "1.99.0"
+nightly = "nightly-2026-07-26"

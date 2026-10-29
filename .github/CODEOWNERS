@@ -76,7 +76,7 @@ LICENSE*                             @DataDog/apm-common-components-core @DataDo
 license-tool.toml                    @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 local-linux.Dockerfile               @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 NOTICE                               @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
-nightly-toolchain.toml               @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
+ci-toolchain.toml                    @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 /README.md                           @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 # Placeholder for a deprecated crate, owned by libdatadog as a fallback
 ruby/README.md                       @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
