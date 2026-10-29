@@ -433,7 +433,18 @@ impl EvaluationSession<'_> {
     ) -> Result<EvaluatedFlag, EvaluationError> {
         let limit = u16::from(self.config.max_dependency_depth);
         if depth > limit {
-            return Err(EvaluationError::DependencyDepthExceeded);
+            let error = EvaluationError::DependencyDepthExceeded;
+            if key.as_str() != self.root_key
+                && !self.active.contains(key)
+                && !self.memo.contains_key(key)
+            {
+                self.evaluations.push(EvaluationRecord {
+                    flag_key: key.clone(),
+                    result: Err(error.clone()),
+                    exposure_eligible: false,
+                });
+            }
+            return Err(error);
         }
         if key.as_str() == self.root_key || self.active.contains(key) {
             return Err(EvaluationError::DependencyCycle);

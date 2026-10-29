@@ -385,6 +385,54 @@ fn depth_counts_edges_defaults_to_ten_and_preserves_explicit_zero() {
 }
 
 #[test]
+fn depth_failures_record_the_terminal_dependency_and_ancestors_in_completion_order() {
+    let mut w = chain(1);
+    w["evaluatorParams"] = json!({"maxDependencyDepth": 0});
+    let result = eval(w);
+    assert_eq!(
+        cause(result.result.as_ref().unwrap_err()),
+        &EvaluationError::DependencyDepthExceeded
+    );
+    assert_eq!(result.evaluations.len(), 1);
+    assert_eq!(result.evaluations[0].flag_key.as_str(), "f1");
+    assert_eq!(
+        result.evaluations[0].result.as_ref().unwrap_err(),
+        &EvaluationError::DependencyDepthExceeded
+    );
+
+    let mut w = chain(2);
+    w["evaluatorParams"] = json!({"maxDependencyDepth": 1});
+    let result = eval(w);
+    assert_eq!(
+        cause(result.result.as_ref().unwrap_err()),
+        &EvaluationError::DependencyDepthExceeded
+    );
+    assert_eq!(
+        result
+            .evaluations
+            .iter()
+            .map(|record| record.flag_key.as_str())
+            .collect::<Vec<_>>(),
+        ["f2", "f1"]
+    );
+    assert_eq!(
+        result.evaluations[0].result.as_ref().unwrap_err(),
+        &EvaluationError::DependencyDepthExceeded
+    );
+    assert!(matches!(
+        result.evaluations[1].result.as_ref().unwrap_err(),
+        EvaluationError::DependencyEvaluationFailed { flag_key, source }
+            if flag_key.as_str() == "f2" && **source == EvaluationError::DependencyDepthExceeded
+    ));
+    assert!(
+        result
+            .evaluations
+            .iter()
+            .all(|record| !record.exposure_eligible)
+    );
+}
+
+#[test]
 fn rejects_invalid_depth_limits_and_preserves_wire_parameters() {
     for limit in [json!(-1), json!(256), json!(1.5), json!("10"), json!(true)] {
         let mut w = chain(0);

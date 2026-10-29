@@ -1060,6 +1060,70 @@ mod tests {
     }
 
     #[test]
+    fn returned_batch_ffi_exposes_depth_terminal_before_its_ancestor() {
+        let wire = ffe::UniversalFlagConfig::from_json(
+            br#"{
+                "createdAt":"2026-10-28T00:00:00Z",
+                "environment":{"name":"test"},
+                "evaluatorParams":{"maxDependencyDepth":1},
+                "flags":{
+                    "root":{"key":"root","enabled":true,"variationType":"BOOLEAN","variations":{"on":{"key":"on","value":true}},"allocations":[{"key":"root-a","rules":[{"conditions":[{"flagEvaluation":{"key":"f1"},"operator":"ONE_OF","value":["on"]}]}],"splits":[{"variationKey":"on","shards":[]}]}]},
+                    "f1":{"key":"f1","enabled":true,"variationType":"BOOLEAN","variations":{"on":{"key":"on","value":true}},"allocations":[{"key":"f1-a","rules":[{"conditions":[{"flagEvaluation":{"key":"f2"},"operator":"ONE_OF","value":["on"]}]}],"splits":[{"variationKey":"on","shards":[]}]}]},
+                    "f2":{"key":"f2","enabled":true,"variationType":"BOOLEAN","variations":{"on":{"key":"on","value":true}},"allocations":[{"key":"f2-a","splits":[{"variationKey":"on","shards":[]}]}]}
+                }
+            }"#
+            .to_vec(),
+        )
+        .unwrap();
+        let config = Configuration::from_server_response(wire);
+        let result = config.eval_flag_with_trace(
+            "root",
+            &EvaluationContext::new(Some("subject".into()), Default::default()),
+            ffe::ExpectedFlagType::Boolean,
+            now(),
+            ffe::EvaluationOptions::default(),
+        );
+        let mut handle = Handle::new(ResolutionDetails::from_evaluation_result(result));
+
+        assert_eq!(
+            call_handle(&handle, ddog_ffe_assignment_get_dependency_evaluation_count),
+            2
+        );
+        let terminal = call_handle_at(&handle, 0, ddog_ffe_assignment_get_dependency_evaluation);
+        let ancestor = call_handle_at(&handle, 1, ddog_ffe_assignment_get_dependency_evaluation);
+        assert_eq!(
+            borrowed_str(call_evaluation(
+                terminal,
+                ddog_ffe_dependency_evaluation_get_flag_key,
+            )),
+            "f2"
+        );
+        assert_eq!(
+            borrowed_str(call_evaluation(
+                terminal,
+                ddog_ffe_dependency_evaluation_get_error_message,
+            )),
+            "flag dependency depth exceeded"
+        );
+        assert_eq!(
+            borrowed_str(call_evaluation(
+                ancestor,
+                ddog_ffe_dependency_evaluation_get_flag_key,
+            )),
+            "f1"
+        );
+        assert_eq!(
+            borrowed_str(call_evaluation(
+                ancestor,
+                ddog_ffe_dependency_evaluation_get_error_message,
+            )),
+            "prerequisite f2 failed: flag dependency depth exceeded"
+        );
+        // SAFETY: all child borrows ended before the sole owner is freed.
+        unsafe { ddog_ffe_assignment_drop(&mut handle) };
+    }
+
+    #[test]
     fn failed_root_retains_dependency_records_and_has_no_exposure_trace() {
         let result = EvaluationResult {
             result: Err(EvaluationError::DependencyCycle),
