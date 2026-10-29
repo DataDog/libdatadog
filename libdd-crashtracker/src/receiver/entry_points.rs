@@ -122,23 +122,23 @@ pub(crate) async fn receiver_entry_point(
     {
         // The symbolizer opens ELF, perf-map and debug paths without our path checks. Restricted
         // reports keep the symbols supplied by the worker instead of resolving them here.
-        if !access.is_restricted() {
-            if let Err(e) = resolve_frames(&config, &mut crash_info) {
-                crash_info
-                    .log_messages
-                    .push(format!("Error resolving frames: {e}"));
-            }
+        if !access.is_restricted()
+            && let Err(e) = resolve_frames(&config, &mut crash_info)
+        {
+            crash_info
+                .log_messages
+                .push(format!("Error resolving frames: {e}"));
         }
         // The crashing process waits for POLLHUP. Keep it alive for inspection, then release it
         // before uploading so a slow endpoint does not prolong the crash pause.
         drop(stream);
 
-        if config.demangle_names() {
-            if let Err(e) = crash_info.demangle_names() {
-                crash_info
-                    .log_messages
-                    .push(format!("Error demangling names: {e}"));
-            }
+        if config.demangle_names()
+            && let Err(e) = crash_info.demangle_names()
+        {
+            crash_info
+                .log_messages
+                .push(format!("Error demangling names: {e}"));
         }
         crash_info
             .async_upload_to_endpoint(config.endpoint())
@@ -149,10 +149,10 @@ pub(crate) async fn receiver_entry_point(
 
 fn receiver_timeout() -> Duration {
     // https://github.com/DataDog/libdatadog/issues/717
-    if let Ok(s) = std::env::var("DD_CRASHTRACKER_RECEIVER_TIMEOUT_MS") {
-        if let Ok(v) = s.parse() {
-            return Duration::from_millis(v);
-        }
+    if let Ok(s) = std::env::var("DD_CRASHTRACKER_RECEIVER_TIMEOUT_MS")
+        && let Ok(v) = s.parse()
+    {
+        return Duration::from_millis(v);
     }
     // Default value
     Duration::from_millis(4000)
