@@ -634,7 +634,8 @@ fn hash_key(key: &SlotKey<'_>) -> u64 {
     }
 }
 
-/// Spend one of `waits` on a slot that is being written, or return false once they are spent.
+/// Spend one of `waits` on a slot that is being written - a spin-loop hint, or a thread yield
+/// every [`YIELD_AFTER_SPINS`] of them - or return false once [`MAX_SLOT_WAIT_ITERS`] are spent.
 fn wait_for_slot(waits: &mut u32) -> bool {
     if *waits >= MAX_SLOT_WAIT_ITERS {
         return false;
@@ -698,8 +699,8 @@ fn alloc_str(pool: &Pool, cursor: &AtomicU32, s: &str) -> StringRef {
 pub struct ShmSpanInput<'a> {
     /// Aggregation key fields (everything except peer tags).
     pub fixed: FixedAggregationKey<&'a str>,
-    /// (key, value) peer-tag pairs. Only the first `MAX_PEER_TAGS - additional_tags.len()` are
-    /// kept.
+    /// (key, value) peer-tag pairs. Only the first `MAX_PEER_TAGS - n` are kept, `n` being the
+    /// number of additional metric tags kept.
     pub peer_tags: &'a [(&'a str, &'a str)],
     /// (key, value) additional metric tag pairs, sorted by key without duplicate keys. Values may
     /// be empty. Only the first `MAX_ADDITIONAL_TAGS` are kept. Not checked: tags breaking this
@@ -708,7 +709,7 @@ pub struct ShmSpanInput<'a> {
     /// How many entries with unmasked additional metric tags a bucket admits. Once reached, the
     /// values of a new key's additional metric tags are replaced by [`TRACER_BLOCKED_VALUE`].
     /// Note that different callers may technically have different limits. Callers shouldn't.
-    /// But it let's it work seamlessly if they do.
+    /// But it lets it work seamlessly if they do.
     pub additional_tags_cardinality_limit: u32,
     // stats
     pub duration_ns: i64,
@@ -1092,13 +1093,14 @@ impl ShmStatsMapping {
         };
         let limited = key.is_cardinality_limited();
         let limit = limited.then_some(input.additional_tags_cardinality_limit);
-        let masked = match Self::insert(&bucket, &key, input, limit, &mut waits) {
+        let inserted = Self::insert(&bucket, &key, input, limit, &mut waits);
+        let masked = match inserted {
             Insert::Done => false,
             Insert::OverLimit => true,
             // A full table is no reason to drop the span when its masked entry exists.
             Insert::Lost => limited,
         };
-        if masked {
+        let recorded = if masked {
             // The span still counts, under its additional metric tag keys with masked values.
             for tag in &mut additional_tags[..additional_tag_count] {
                 tag.1 = TRACER_BLOCKED_VALUE;
@@ -1108,17 +1110,25 @@ impl ShmStatsMapping {
                 peer_tags,
                 additional_tags: &additional_tags[..additional_tag_count],
             };
-            Self::insert(&bucket, &key, input, None, &mut waits);
-        }
+            matches!(
+                Self::insert(&bucket, &key, input, None, &mut waits),
+                Insert::Done
+            )
+        } else {
+            matches!(inserted, Insert::Done)
+        };
 
-        if masked {
-            bucket.hdr.additional_tag_collapsed.fetch_add(1, Relaxed);
+        // A span the table could not take at all had no value substituted either.
+        let mut log_blocked = false;
+        if recorded && (masked || oversized_key.is_some()) {
+            if masked {
+                bucket.hdr.additional_tag_collapsed.fetch_add(1, Relaxed);
+            }
+            if oversized_key.is_some() {
+                bucket.hdr.additional_tag_oversized.fetch_add(1, Relaxed);
+            }
+            log_blocked = bucket.hdr.additional_tag_warned.swap(1, Relaxed) == 0;
         }
-        if oversized_key.is_some() {
-            bucket.hdr.additional_tag_oversized.fetch_add(1, Relaxed);
-        }
-        let log_blocked = (masked || oversized_key.is_some())
-            && bucket.hdr.additional_tag_warned.swap(1, Relaxed) == 0;
 
         bucket.hdr.in_flight.fetch_sub(1, Release);
 
@@ -1136,13 +1146,21 @@ impl ShmStatsMapping {
                     .iter()
                     .map(|&(k, _)| k)
                     .collect();
-                warn!(
-                    "additional_metric_tags: the stats bucket has no room left for another entry \
-                     with additional metric tags (at most {} of them); substituting \
-                     {TRACER_BLOCKED_VALUE} for the values of {keys:?}. Further blocked values in \
-                     this stats bucket are not logged",
-                    input.additional_tags_cardinality_limit
-                );
+                if matches!(inserted, Insert::Lost) {
+                    warn!(
+                        "additional_metric_tags: the stats bucket has no free slot left for a new \
+                         entry; substituting {TRACER_BLOCKED_VALUE} for the values of {keys:?}. \
+                         Further blocked values in this stats bucket are not logged"
+                    );
+                } else {
+                    warn!(
+                        "additional_metric_tags: the stats bucket holds its limit of {} entries \
+                         with additional metric tags, or waiting for room timed out; \
+                         substituting {TRACER_BLOCKED_VALUE} for the values of {keys:?}. Further \
+                         blocked values in this stats bucket are not logged",
+                        input.additional_tags_cardinality_limit
+                    );
+                }
             }
         }
     }
@@ -1151,8 +1169,9 @@ impl ShmStatsMapping {
     ///
     /// A new key must fit under `limit` entries with unmasked additional metric tags, unless
     /// `limit` is `None`. A key already in the bucket is found before any free slot, so it keeps
-    /// counting whatever the limit. `waits` is the caller's budget for waiting on slots that
-    /// are being written.
+    /// counting whatever the limit. `waits` counts the iterations spent waiting on slots that are
+    /// being written, out of a budget of [`MAX_SLOT_WAIT_ITERS`] for the whole `add_span` call
+    /// (see [`wait_for_slot`]).
     fn insert(
         bucket: &Bucket<'_>,
         key: &SlotKey<'_>,
@@ -1183,7 +1202,7 @@ impl ShmStatsMapping {
                                         continue;
                                     }
                                     // Technically we may extremely rarely not get a slot due to a
-                                    // rgeular timeout, but generally, this is a protection against
+                                    // regular timeout, but generally, this is a protection against
                                     // a killed concurrent writer.
                                     return Insert::OverLimit;
                                 }
@@ -2386,6 +2405,23 @@ mod tests {
             ]
         );
         assert_eq!(blocked(&drained), (2, 0));
+    }
+
+    /// A span the full table cannot take even masked was dropped, so it blocked no value.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn a_span_a_full_table_drops_is_not_counted_as_blocked() {
+        let c = ShmSpanConcentrator::create(test_path(), 10_000_000_000, 4, 4096).unwrap();
+        for resource in ["a", "b", "c", "d"] {
+            c.add_span(&tagged(resource, &[], 100));
+        }
+        let too_long = "x".repeat(ADDITIONAL_METRIC_TAG_VALUE_MAX_LEN + 1);
+        c.add_span(&tagged("res", &[("tenant", "a")], 100));
+        c.add_span(&tagged("res", &[("tenant", &too_long)], 100));
+
+        let drained = c.drain(true);
+        assert_eq!(additional_tags_of(&drained), ["[] x1"; 4]);
+        assert_eq!(blocked(&drained), (0, 0));
     }
 
     /// Writers racing to add the same new key must all count into it: room another writer has
