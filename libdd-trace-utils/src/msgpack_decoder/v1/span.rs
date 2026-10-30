@@ -80,6 +80,10 @@ where
                 })?;
             }
             span_key::TYPE => span.r#type = read_interned_string(buf, table)?,
+            // TODO: move promoted tags (`libdd_trace_model::PROMOTED_SPAN_TAGS`) found in the
+            // attributes to their dedicated fields, so decoded spans uphold the model's contract
+            // that promoted tags never live in `attributes`. A dedicated field set on the wire
+            // should win over an attribute of the same name.
             span_key::ATTRIBUTES => span.attributes = read_attributes_map(buf, table)?,
             span_key::SPAN_LINKS => span.span_links = read_span_links(buf, table)?,
             span_key::SPAN_EVENTS => span.span_events = read_span_events(buf, table)?,

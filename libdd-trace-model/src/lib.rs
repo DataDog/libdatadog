@@ -51,6 +51,7 @@ pub trait TraceBytes: Borrow<[u8]> + Clone + Debug + PartialEq {}
 
 impl<T: Borrow<[u8]> + Clone + Debug + PartialEq> TraceBytes for T {}
 
+/// The attribute value type of `A`.
 pub type Value<A> = AttributeValue<<A as Attributes>::Values>;
 
 /// Metric set to 1 by the tracer on top-level spans.
@@ -93,10 +94,11 @@ pub const PROMOTED_CHUNK_TAGS: [&str; 3] = [ORIGIN_KEY, SAMPLING_PRIORITY_KEY, D
 /// # Promoted tags
 ///
 /// Tags with a dedicated field (see [`PROMOTED_SPAN_TAGS`] and [`PROMOTED_CHUNK_TAGS`]) live only
-/// in that field, never in the attributes: the attribute getters don't see them. Where a span tag
-/// must be looked up by its v0.4 name wherever it is stored (e.g. user-configured tag keys), wrap
-/// the span in a [`CompatSpan`]. The chunk tags have no such compatibility: read them from their
-/// [`TraceChunk`] getters.
+/// in that field, never in the attributes: the attribute getters don't see them, and
+/// [`AttributesMut`] writes don't reach them. Where a span tag must be looked up or written by its
+/// v0.4 name wherever it is stored (e.g. user-configured tag keys), wrap the span in a
+/// [`CompatSpan`]. The chunk tags have no such compatibility: use their [`TraceChunk`] getters and
+/// [`TraceChunkMut`] setters.
 pub trait Attributes {
     type Text: TraceText;
     type Bytes: TraceBytes;
@@ -143,6 +145,25 @@ pub trait AttributesIter: Attributes {
     fn has_attribute(&self, key: &str) -> bool {
         self.attributes().any(|(k, _)| k == key)
     }
+}
+
+/// Write access to the attributes of a span, span event, or trace chunk.
+///
+/// Like the getters, span, span event and chunk implementations only touch the attributes, never
+/// the fields of promoted tags (see [`Attributes`]). The [`CompatSpan`] view is the exception: it
+/// redirects writes to promoted span tags to their fields, and its
+/// [`retain_attributes`](AttributesMut::retain_attributes) and
+/// [`attribute_mut`](AttributesMut::attribute_mut) skip them.
+pub trait AttributesMut: Attributes {
+    /// Keep only the attributes for which `f` returns `true`; `f` may mutate the values it keeps.
+    /// Like [`AttributesIter::attributes`], `f` sees each key once.
+    fn retain_attributes(&mut self, f: impl FnMut(&str, &mut Value<Self>) -> bool);
+    /// Get a mutable reference to the value for a given key, `None` if it is missing
+    fn attribute_mut(&mut self, key: &str) -> Option<&mut Value<Self>>;
+    /// Set the attribute for `key`, replacing any existing value for that key
+    fn set_attribute(&mut self, key: impl Into<Self::Text>, value: Value<Self>);
+    /// Remove the attribute for `key`, returning its value if it was present
+    fn remove_attribute(&mut self, key: &str) -> Option<Value<Self>>;
 }
 
 /// A timestamped event attached to a span, carrying its own attributes.
@@ -231,6 +252,46 @@ pub trait Span: Attributes {
     }
 }
 
+/// Write access to a span.
+///
+/// Setting `env`, `version` or `component` to the empty string, or the span kind to an
+/// unrecognized value, unsets it.
+pub trait SpanMut: Span<SpanEvent: AttributesMut, SpanLink: AttributesMut> + AttributesMut {
+    fn set_service(&mut self, value: impl Into<Self::Text>);
+    fn set_resource(&mut self, value: impl Into<Self::Text>);
+    /// Set the operation name
+    fn set_name(&mut self, value: impl Into<Self::Text>);
+    /// Set the span type (e.g. "web", "db")
+    fn set_type(&mut self, value: impl Into<Self::Text>);
+    /// Set the span id of this span's parent, 0 for a trace root
+    fn set_parent_id(&mut self, value: u64);
+    /// Set the start timestamp, in nanoseconds since the unix epoch
+    fn set_start(&mut self, value: i64);
+    /// Set the duration, in nanoseconds
+    fn set_duration(&mut self, value: i64);
+    fn set_error(&mut self, value: bool);
+    /// Set the span kind (e.g. "server", "client"). Implementations storing the kind as an enum
+    /// map unrecognized values to their default kind.
+    fn set_span_kind(&mut self, value: &str);
+    fn set_env(&mut self, value: impl Into<Self::Text>);
+    fn set_version(&mut self, value: impl Into<Self::Text>);
+    fn set_component(&mut self, value: impl Into<Self::Text>);
+
+    /// View this span mutably the way v0.4 `meta`/`metrics` would hold its attributes, promoted
+    /// tags included. See [`CompatSpan`].
+    fn compat_mut(&mut self) -> &mut CompatSpan<Self>
+    where
+        Self: Sized,
+    {
+        CompatSpan::from_mut(self)
+    }
+
+    /// Iterate mutably over the events attached to this span
+    fn span_events_mut(&mut self) -> impl Iterator<Item = &mut Self::SpanEvent>;
+    /// Iterate mutably over the links attached to this span
+    fn span_links_mut(&mut self) -> impl Iterator<Item = &mut Self::SpanLink>;
+}
+
 /// Read access to a trace chunk: a group of spans sharing the same trace id, plus chunk-level
 /// attributes common to all of them.
 pub trait TraceChunk: Attributes {
@@ -249,6 +310,24 @@ pub trait TraceChunk: Attributes {
     /// Returns true if the tracer dropped this trace, keeping only some of its spans (e.g. for
     /// single span sampling). Such a chunk must be treated as rejected whatever its priority.
     fn dropped_trace(&self) -> bool;
+}
+
+/// Write access to a trace chunk.
+///
+/// The sampling priority and mechanism can be set but not unset.
+pub trait TraceChunkMut: TraceChunk<Span: SpanMut> + AttributesMut {
+    /// Set the `_dd.origin` value shared by every span in the chunk, empty to unset it
+    fn set_origin(&mut self, value: impl Into<Self::Text>);
+    /// Set the sampling priority of the chunk
+    fn set_priority(&mut self, priority: i32);
+    /// Set the sampling mechanism (decision maker) of the chunk
+    fn set_sampling_mechanism(&mut self, mechanism: u32);
+    /// Mark the chunk as dropped by the tracer, see [`TraceChunk::dropped_trace`]
+    fn set_dropped_trace(&mut self, value: bool);
+    /// Iterate mutably over the spans of this chunk
+    fn spans_mut(&mut self) -> impl Iterator<Item = &mut Self::Span>;
+    /// Keep only the spans for which `f` returns `true`; `f` may mutate the spans it keeps.
+    fn retain_spans(&mut self, f: impl FnMut(&mut Self::Span) -> bool);
 }
 
 /// Read access to a map of attribute values (the payload of [`AttributeValue::KeyValueList`]).
