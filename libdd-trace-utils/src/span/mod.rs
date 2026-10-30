@@ -1,6 +1,7 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+mod root_span_chunk;
 pub mod span_pool;
 pub mod trace_utils;
 pub mod trace_utils_v1;
@@ -15,6 +16,7 @@ use crate::span::v04::VecMap;
 use crate::span::v05::dict::SharedDict;
 use libdd_tinybytes::{Bytes, BytesString};
 use libdd_trace_model::{AttributeValue, ValueTypes};
+pub use root_span_chunk::{RootSpanChunk, SpanWithTraceId};
 use serde::Serialize;
 use std::borrow::{Borrow, Cow};
 use std::fmt::Debug;

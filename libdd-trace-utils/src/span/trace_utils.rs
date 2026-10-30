@@ -70,10 +70,12 @@ where
     }
 }
 
-pub fn get_root_span_index<T>(trace: &[Span<T>]) -> anyhow::Result<usize>
-where
-    T: TraceData,
-{
+/// Returns the index of the root span in `trace`.
+///
+/// The last span without a parent wins, since some clients put the root span last. Failing that,
+/// a span whose parent isn't part of the trace is the root, and the last span is used as a final
+/// fallback.
+pub fn get_root_span_index<S: libdd_trace_model::Span>(trace: &[S]) -> anyhow::Result<usize> {
     if trace.is_empty() {
         anyhow::bail!("Cannot find root span index in an empty trace.");
     }
@@ -81,22 +83,27 @@ where
     // Do a first pass to find if we have an obvious root span (starting from the end) since some
     // clients put the root span last.
     for (i, span) in trace.iter().enumerate().rev() {
-        if span.parent_id == 0 {
+        if span.parent_id() == 0 {
             return Ok(i);
         }
     }
 
-    let span_ids: HashSet<_> = trace.iter().map(|span| span.span_id).collect();
+    // Most traces are small: for them, a linear search for the parent is cheaper than allocating
+    // a set of the span ids.
+    const MAX_LINEAR_SEARCH_LEN: usize = 32;
+    let span_ids: Option<HashSet<_>> = (trace.len() > MAX_LINEAR_SEARCH_LEN)
+        .then(|| trace.iter().map(|span| span.span_id()).collect());
+    let has_span = |id| match &span_ids {
+        Some(span_ids) => span_ids.contains(&id),
+        None => trace.iter().any(|span| span.span_id() == id),
+    };
 
     let mut root_span_id = None;
     for (i, span) in trace.iter().enumerate() {
         // If a span's parent is not in the trace, it is a root
-        if !span_ids.contains(&span.parent_id) {
+        if !has_span(span.parent_id()) {
             if root_span_id.is_some() {
-                debug!(
-                    trace_id = &trace[0].trace_id,
-                    "trace has multiple root spans"
-                );
+                debug!("trace has multiple root spans");
             }
             root_span_id = Some(i);
         }
@@ -104,10 +111,7 @@ where
     Ok(match root_span_id {
         Some(i) => i,
         None => {
-            debug!(
-                trace_id = &trace[0].trace_id,
-                "Could not find the root span for trace"
-            );
+            debug!("Could not find the root span for trace");
             trace.len() - 1
         }
     })
@@ -265,6 +269,21 @@ mod tests {
                 .insert("functionname".into(), "dummy_function_name".into());
         }
         span
+    }
+
+    #[test]
+    fn root_span_is_the_one_whose_parent_is_missing() {
+        // Both sides of the linear-search threshold.
+        for len in [3, 100] {
+            // A chain 1 <- 2 <- ... whose first span's parent isn't in the trace.
+            let mut trace: Vec<_> = (1..=len)
+                .map(|id| create_test_span(1, id, id - 1, 0, false))
+                .collect();
+            trace[0].parent_id = 1000;
+            // Neither first nor last, so no fallback can pick it by chance.
+            trace.swap(0, 1);
+            assert_eq!(get_root_span_index(&trace).unwrap(), 1, "len {len}");
+        }
     }
 
     #[test]

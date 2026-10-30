@@ -14,7 +14,8 @@ use std::{
 };
 use tracing::warn;
 
-use crate::span_concentrator::{StatSpan, cardinality_limit_telemetry::CollapsedFieldSet};
+use crate::span_concentrator::cardinality_limit_telemetry::CollapsedFieldSet;
+use libdd_trace_model::{Attributes as _, ChunkSpanView, Span, TraceChunk};
 
 use super::{
     CardinalityLimitConfig,
@@ -36,9 +37,7 @@ const TAG_STATUS_CODE_OTEL: &str = "http.response.status_code";
 const TAG_METHOD_OTEL: &str = "http.request.method";
 const ADDITIONAL_METRIC_TAG_VALUE_MAX_LEN: usize = 200;
 const TAG_SYNTHETICS: &str = "synthetics";
-const TAG_SPANKIND: &str = "span.kind";
 const TAG_BASE_SERVICE: &str = "_dd.base_service";
-const TAG_ORIGIN: &str = "_dd.origin";
 const TAG_SVC_SRC: &str = "_dd.svc_src";
 const GRPC_STATUS_CODE_FIELD: &[&str] = &[
     "rpc.grpc.status_code",
@@ -182,9 +181,9 @@ fn is_valid_http_status_code(code: &u32) -> bool {
 ///
 /// The Datadog name is canonical in the Agent semantic registry and is preferred when both names
 /// are present.
-fn get_http_method<'a>(span: &'a impl StatSpan<'a>) -> &'a str {
+fn get_http_method(span: &impl Span) -> &str {
     for key in [TAG_METHOD, TAG_METHOD_OTEL] {
-        if let Some(value) = span.get_meta(key)
+        if let Some(value) = span.attribute_str(key)
             && !value.is_empty()
         {
             return value;
@@ -199,9 +198,9 @@ fn get_http_method<'a>(span: &'a impl StatSpan<'a>) -> &'a str {
 /// `metrics` is checked before `meta` for each name because a numeric attribute is routed there
 /// by the tracer's own setter, and OTel types `http.response.status_code` as an int. The Datadog
 /// key retains its existing conversion and precedence behavior. Invalid OTel values are ignored.
-fn get_http_status_code<'a>(span: &'a impl StatSpan<'a>) -> u32 {
+fn get_http_status_code(span: &impl Span) -> u32 {
     for key in [TAG_STATUS_CODE, TAG_STATUS_CODE_OTEL] {
-        if let Some(value) = span.get_metrics(key) {
+        if let Some(value) = span.attribute_f64(key) {
             if key == TAG_STATUS_CODE {
                 // Preserve the existing Datadog-key conversion behavior.
                 return value as u32;
@@ -211,7 +210,7 @@ fn get_http_status_code<'a>(span: &'a impl StatSpan<'a>) -> u32 {
             }
         }
 
-        if let Some(value) = span.get_meta(key) {
+        if let Some(value) = span.attribute_str(key) {
             if key == TAG_STATUS_CODE {
                 // Preserve the existing Datadog-key parse-or-zero behavior.
                 return value.parse().unwrap_or_default();
@@ -225,9 +224,9 @@ fn get_http_status_code<'a>(span: &'a impl StatSpan<'a>) -> u32 {
     0
 }
 
-fn get_grpc_status_code<'a>(span: &'a impl StatSpan<'a>) -> Option<u8> {
+fn get_grpc_status_code(span: &impl Span) -> Option<u8> {
     for key in GRPC_STATUS_CODE_FIELD {
-        if let Some(val) = span.get_meta(key)
+        if let Some(val) = span.attribute_str(key)
             && let Some(code) = grpc_status_str_to_int_value(val)
         {
             return Some(code);
@@ -235,7 +234,7 @@ fn get_grpc_status_code<'a>(span: &'a impl StatSpan<'a>) -> Option<u8> {
     }
 
     for key in GRPC_STATUS_CODE_FIELD {
-        if let Some(val) = span.get_metrics(key)
+        if let Some(val) = span.attribute_f64(key)
             && let Some(code) = float_to_int(val)
         {
             return Some(code);
@@ -297,8 +296,8 @@ impl<'a> BorrowedAggregationKey<'a> {
     /// key.
     /// If `additional_metric_tags` is not empty then matching span tags keys are included in the
     /// key.
-    pub(super) fn from_span<T: StatSpan<'a>>(
-        span: &'a T,
+    pub(super) fn from_span<C: TraceChunk>(
+        span: &'a ChunkSpanView<'a, C>,
         peer_tag_keys: &'a [String],
         additional_metric_tag_keys: &'a [String],
     ) -> Self {
@@ -310,19 +309,22 @@ impl<'a> BorrowedAggregationKey<'a> {
         )
     }
 
-    pub(crate) fn from_obfuscated_span<'b, T>(
+    pub(crate) fn from_obfuscated_span<'b, C>(
         resource_name: &'a str,
-        span: &'b T,
+        span: &'b ChunkSpanView<'b, C>,
         peer_tag_keys: &'b [String],
         additional_metric_tag_keys: &'b [String],
     ) -> BorrowedAggregationKey<'a>
     where
-        T: StatSpan<'b>,
+        C: TraceChunk,
         // resource_name is a temporary string on the stack the span will outlive it
         'b: 'a,
     {
-        let span_kind = span.get_meta(TAG_SPANKIND).unwrap_or_default();
-        let base_service = span.get_meta(TAG_BASE_SERVICE).unwrap_or_default();
+        // Peer tag and additional metric tag keys are user-configured v0.4 tag names, which may
+        // name a promoted tag.
+        let compat = span.compat();
+        let span_kind = span.span_kind().unwrap_or_default();
+        let base_service = span.attribute_str(TAG_BASE_SERVICE).unwrap_or_default();
         // Mirrors the Go trace-agent's peerTagKeysToAggregateForSpan: peer tags are collected
         // only when peer-tag aggregation is configured, and then either from the configured
         // keys (client/producer/consumer spans) or, for internal spans (or spans without a
@@ -338,7 +340,7 @@ impl<'a> BorrowedAggregationKey<'a> {
             peer_tag_keys
                 .iter()
                 .filter_map(|key| {
-                    let value = span.get_meta(key.as_str())?;
+                    let value = compat.attribute_str(key.as_str())?;
                     Some((key.as_str(), quantize_peer_ip_addresses(value)))
                 })
                 .collect()
@@ -357,10 +359,10 @@ impl<'a> BorrowedAggregationKey<'a> {
         let http_method = get_http_method(span);
 
         let http_endpoint = span
-            .get_meta("http.endpoint")
+            .attribute_str("http.endpoint")
             .filter(|value| !value.is_empty())
             .or_else(|| {
-                span.get_meta("http.route")
+                span.attribute_str("http.route")
                     .filter(|value| !value.is_empty())
             })
             .unwrap_or_default();
@@ -368,11 +370,11 @@ impl<'a> BorrowedAggregationKey<'a> {
         let status_code = get_http_status_code(span);
 
         let grpc_status_code = get_grpc_status_code(span);
-        let service_source = span.get_meta(TAG_SVC_SRC).unwrap_or_default();
+        let service_source = span.attribute_str(TAG_SVC_SRC).unwrap_or_default();
 
         let additional_metric_tags: Vec<(&'a str, &'a str)> = additional_metric_tag_keys
             .iter()
-            .filter_map(|key| match span.get_meta(key.as_str()) {
+            .filter_map(|key| match compat.attribute_str(key.as_str()) {
                 Some(v) if !v.is_empty() => {
                     // Byte length >= char count, so skip the char walk when byte length alone
                     // is within the max character length, otherwise stop as soon as we pass the max character length.
@@ -397,16 +399,14 @@ impl<'a> BorrowedAggregationKey<'a> {
                 resource_name,
                 service_name: span.service(),
                 operation_name: span.name(),
-                span_type: span.r#type(),
+                span_type: span.typ(),
                 span_kind,
                 http_method,
                 http_endpoint,
                 service_source,
                 http_status_code: status_code,
                 grpc_status_code,
-                is_synthetics_request: span
-                    .get_meta(TAG_ORIGIN)
-                    .is_some_and(|origin| origin.starts_with(TAG_SYNTHETICS)),
+                is_synthetics_request: span.chunk.origin().starts_with(TAG_SYNTHETICS),
                 is_trace_root: if span.is_trace_root() {
                     pb::Trilean::True
                 } else {
@@ -840,11 +840,49 @@ fn encode_grouped_stats(key: OwnedAggregationKey, group: GroupedStats) -> pb::Cl
 
 #[cfg(test)]
 mod tests {
-    use libdd_trace_utils::span::v04::{SpanBytes, SpanSlice};
+    use libdd_trace_utils::span::v04::{self, SpanBytes, SpanSlice};
+    use libdd_trace_utils::span::{RootSpanChunk, TraceData};
 
     use super::*;
     use libdd_trace_protobuf::pb;
     use std::hash::Hash;
+
+    /// Builds the aggregation key of `view`, checking that the borrowed and owned keys hash alike.
+    fn key_of<C: TraceChunk>(
+        view: &ChunkSpanView<'_, C>,
+        peer_tag_keys: &[String],
+    ) -> OwnedAggregationKey {
+        let borrowed = BorrowedAggregationKey::from_span(view, peer_tag_keys, &[]);
+        let owned = OwnedAggregationKey::from(&borrowed);
+        assert_eq!(
+            get_hash(&borrowed),
+            get_hash(&owned),
+            "borrowed/owned hash mismatch"
+        );
+        owned
+    }
+
+    /// [`key_of`] for a v0.4 span, wrapped as a single-span chunk.
+    fn v04_key_of<T: TraceData>(
+        span: &v04::Span<T>,
+        peer_tag_keys: &[String],
+    ) -> OwnedAggregationKey {
+        let chunk = RootSpanChunk::new(std::slice::from_ref(span));
+        key_of(
+            &ChunkSpanView {
+                span,
+                chunk: &chunk,
+            },
+            peer_tag_keys,
+        )
+    }
+
+    fn owned_pairs(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
 
     fn get_hash(v: &impl Hash) -> u64 {
         use std::hash::Hasher;
@@ -1744,26 +1782,11 @@ mod tests {
         ];
 
         for (span, expected_key) in test_cases {
-            let borrowed_key = BorrowedAggregationKey::from_span(&span, &[], &[]);
-            assert_eq!(
-                OwnedAggregationKey::from(&borrowed_key),
-                expected_key,
-                "for span {span:?}"
-            );
-            assert_eq!(
-                get_hash(&borrowed_key),
-                get_hash(&OwnedAggregationKey::from(&borrowed_key))
-            );
+            assert_eq!(v04_key_of(&span, &[]), expected_key, "for span {span:?}");
         }
 
         for (span, expected_key) in test_cases_with_peer_tags {
-            let borrowed_key =
-                BorrowedAggregationKey::from_span(&span, test_peer_tags.as_slice(), &[]);
-            assert_eq!(OwnedAggregationKey::from(&borrowed_key), expected_key);
-            assert_eq!(
-                get_hash(&borrowed_key),
-                get_hash(&OwnedAggregationKey::from(&borrowed_key))
-            );
+            assert_eq!(v04_key_of(&span, &test_peer_tags), expected_key);
         }
     }
 
@@ -1954,24 +1977,113 @@ mod tests {
             };
             let peer_tag_keys: Vec<String> =
                 peer_tag_keys.iter().map(|key| key.to_string()).collect();
-            let borrowed_key = BorrowedAggregationKey::from_span(&span, &peer_tag_keys, &[]);
-            let owned_key = OwnedAggregationKey::from(&borrowed_key);
-            let expected: Vec<(String, String)> = expected_peer_tags
-                .into_iter()
-                .map(|(k, v)| (k.to_string(), v.to_string()))
-                .collect();
+            let owned_key = v04_key_of(&span, &peer_tag_keys);
             assert_eq!(
-                owned_key.peer_tags, expected,
+                owned_key.peer_tags,
+                owned_pairs(&expected_peer_tags),
                 "unexpected peer tags for case {case_index}"
             );
             assert_eq!(
                 owned_key.fixed.span_kind, expected_kind,
                 "span kind must be stored with its original casing for case {case_index}"
             );
+        }
+    }
+
+    /// V1 counterpart of `test_base_service_peer_tag_selection_in_aggregation_key`, covering what
+    /// differs from v0.4: the kind is the dedicated `span_kind` field (`Internal` reads as unset),
+    /// and both the kind and `_dd.base_service` fall back to the chunk's attributes.
+    #[test]
+    fn test_base_service_peer_tag_selection_v1() {
+        use libdd_trace_utils::span::v1::{
+            AttributeValue, SpanBytes as SpanBytesV1, SpanKind, TraceChunkBytes,
+        };
+
+        type Tags = &'static [(&'static str, &'static str)];
+        // (span kind, span attributes, chunk attributes, expected peer tags, expected stored
+        // span kind)
+        let test_cases: &[(SpanKind, Tags, Tags, Tags, &str)] = &[
+            // Internal kind reads as unset: the base-service fallback applies.
+            (
+                SpanKind::Internal,
+                &[("_dd.base_service", "svc-a"), ("db.instance", "i-1")],
+                &[],
+                &[("_dd.base_service", "svc-a")],
+                "",
+            ),
+            // The base service may come from the chunk...
+            (
+                SpanKind::Internal,
+                &[],
+                &[("_dd.base_service", "svc-chunk")],
+                &[("_dd.base_service", "svc-chunk")],
+                "",
+            ),
+            // ...but the span's own value wins.
+            (
+                SpanKind::Internal,
+                &[("_dd.base_service", "svc-span")],
+                &[("_dd.base_service", "svc-chunk")],
+                &[("_dd.base_service", "svc-span")],
+                "",
+            ),
+            // An unset span kind falls back to the chunk's, here selecting the configured keys.
+            (
+                SpanKind::Internal,
+                &[("_dd.base_service", "svc-a"), ("db.instance", "i-1")],
+                &[("span.kind", "client")],
+                &[("db.instance", "i-1")],
+                "client",
+            ),
+            // Server spans get no peer tags.
+            (
+                SpanKind::Server,
+                &[("_dd.base_service", "svc-a"), ("db.instance", "i-1")],
+                &[],
+                &[],
+                "server",
+            ),
+            // Client spans use the configured keys.
+            (
+                SpanKind::Client,
+                &[("_dd.base_service", "svc-a"), ("db.instance", "i-1")],
+                &[],
+                &[("db.instance", "i-1")],
+                "client",
+            ),
+        ];
+
+        let attributes = |tags: Tags| {
+            tags.iter()
+                .map(|&(k, v)| (k.into(), AttributeValue::String(v.into())))
+                .collect()
+        };
+        let peer_tag_keys = vec!["db.instance".to_string()];
+        for (case_index, &(kind, span_tags, chunk_tags, expected_peer_tags, expected_kind)) in
+            test_cases.iter().enumerate()
+        {
+            let chunk = TraceChunkBytes {
+                spans: vec![SpanBytesV1 {
+                    span_kind: kind,
+                    attributes: attributes(span_tags),
+                    ..Default::default()
+                }],
+                attributes: attributes(chunk_tags),
+                ..Default::default()
+            };
+            let view = ChunkSpanView {
+                span: &chunk.spans[0],
+                chunk: &chunk,
+            };
+            let owned_key = key_of(&view, &peer_tag_keys);
             assert_eq!(
-                get_hash(&borrowed_key),
-                get_hash(&owned_key),
-                "borrowed/owned hash mismatch for case {case_index}"
+                owned_key.peer_tags,
+                owned_pairs(expected_peer_tags),
+                "unexpected peer tags for case {case_index}"
+            );
+            assert_eq!(
+                owned_key.fixed.span_kind, expected_kind,
+                "unexpected span kind for case {case_index}"
             );
         }
     }
@@ -1995,17 +2107,13 @@ mod tests {
             .into(),
             ..Default::default()
         };
-        let key = BorrowedAggregationKey::from_span(&span_ipv4, &peer_tag_keys, &[]);
-        let owned = OwnedAggregationKey::from(&key);
+        let owned = v04_key_of(&span_ipv4, &peer_tag_keys);
         assert_eq!(
             owned.peer_tags,
-            vec![
-                (
-                    "peer.hostname".to_string(),
-                    "blocked-ip-address".to_string()
-                ),
-                ("db.instance".to_string(), "my-db".to_string()),
-            ]
+            owned_pairs(&[
+                ("peer.hostname", "blocked-ip-address"),
+                ("db.instance", "my-db"),
+            ])
         );
 
         // IPv6 address peer tag gets replaced with blocked-ip-address
@@ -2026,14 +2134,10 @@ mod tests {
             ..Default::default()
         };
         let ipv6_keys = vec!["peer.hostname".to_string()];
-        let key = BorrowedAggregationKey::from_span(&span_ipv6, &ipv6_keys, &[]);
-        let owned = OwnedAggregationKey::from(&key);
+        let owned = v04_key_of(&span_ipv6, &ipv6_keys);
         assert_eq!(
             owned.peer_tags,
-            vec![(
-                "peer.hostname".to_string(),
-                "blocked-ip-address".to_string()
-            )]
+            owned_pairs(&[("peer.hostname", "blocked-ip-address")])
         );
 
         // Non-IP peer tags pass through unchanged
@@ -2054,11 +2158,10 @@ mod tests {
             ..Default::default()
         };
         let non_ip_keys = vec!["db.instance".to_string()];
-        let key = BorrowedAggregationKey::from_span(&span_non_ip, &non_ip_keys, &[]);
-        let owned = OwnedAggregationKey::from(&key);
+        let owned = v04_key_of(&span_non_ip, &non_ip_keys);
         assert_eq!(
             owned.peer_tags,
-            vec![("db.instance".to_string(), "dynamo.test.us1".to_string())]
+            owned_pairs(&[("db.instance", "dynamo.test.us1")])
         );
     }
 
