@@ -3247,6 +3247,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "libdd-otel-telemetry"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "http 1.1.0",
+ "libdd-capabilities",
+ "libdd-capabilities-impl",
+ "libdd-common",
+ "libdd-shared-runtime",
+ "libdd-trace-protobuf",
+ "libdd-trace-utils",
+ "prost",
+ "tokio",
+]
+
+[[package]]
 name = "libdd-otel-thread-ctx"
 version = "2.0.0"
 dependencies = [
