@@ -164,10 +164,10 @@ impl<T, A: Allocator> Arc<T, A> {
     }
 }
 
-// SAFETY: `Arc<T, A>` is Send and Sync iff `T` is Send and Sync and `A` is Send and Sync. Exactly
-// as in `std`.
-unsafe impl<T: Send + Sync, A: Allocator + Send + Sync> Send for Arc<T, A> {}
-unsafe impl<T: Send + Sync, A: Allocator + Send + Sync> Sync for Arc<T, A> {}
+// SAFETY: as in `std`, both impls require `T: Send + Sync`. Moving the Arc
+// requires `A: Send`, while sharing it requires `A: Sync`.
+unsafe impl<T: Send + Sync, A: Allocator + Send> Send for Arc<T, A> {}
+unsafe impl<T: Send + Sync, A: Allocator + Sync> Sync for Arc<T, A> {}
 
 impl<T, A: Allocator> Arc<T, A> {
     #[inline]

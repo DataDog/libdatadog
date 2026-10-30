@@ -12,17 +12,12 @@ use parking_lot::RwLock;
 /// Operations a set must provide for so that a sharded set can be built on
 /// top of it.
 ///
-/// # Safety
-///
-/// Implementors must uphold the safety contracts documented on the `unsafe`
-/// methods below.
-///
-/// Thread-safety is not part of this contract: [`Sharded`] wraps each shard
+/// Thread-safety is handled by the auto traits: [`Sharded`] wraps each shard
 /// in a [`RwLock`], so it is `Send` when `Self: Send` and `Sync` when
 /// `Self: Send + Sync`, as derived automatically by the compiler. Types that
 /// are thread-safe but hold raw pointers should implement `Send`/`Sync`
 /// themselves (see [`Set`] and [`SliceSet`]).
-pub unsafe trait SetOps {
+pub trait SetOps {
     type Lookup<'a>: Copy
     where
         Self: 'a;
@@ -136,7 +131,7 @@ impl<S: SetOps, const N: usize> Sharded<S, N> {
     }
 }
 
-unsafe impl<T: Hash + Eq + 'static> SetOps for Set<T> {
+impl<T: Hash + Eq + 'static> SetOps for Set<T> {
     type Lookup<'a> = &'a T;
     type Owned<'a> = T;
     type Id = SetId<T>;
@@ -162,7 +157,7 @@ unsafe impl<T: Hash + Eq + 'static> SetOps for Set<T> {
     }
 }
 
-unsafe impl<T: Copy + Hash + Eq + 'static> SetOps for SliceSet<T> {
+impl<T: Copy + Hash + Eq + 'static> SetOps for SliceSet<T> {
     type Lookup<'a> = &'a [T];
     type Owned<'a> = &'a [T];
     type Id = ThinSlice<'static, T>;
