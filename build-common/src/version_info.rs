@@ -48,15 +48,16 @@ const RELEASE_VERSION: &str = env!("CARGO_PKG_VERSION");
 ///
 /// # Failure handling
 ///
-/// Never fails the build. Cross-compiling to a Windows target from Linux/macOS CI
-/// without a resource compiler on `PATH` (`llvm-rc` for the `msvc` ABI,
-/// `*-windres` for the `gnu` ABI) is expected; embedding a version resource is a
-/// nice-to-have, so a missing toolchain degrades to a `cargo:warning` instead of
-/// aborting the build. Likewise, a `RELEASE_VERSION` that fails to parse as
-/// `major.minor.patch` degrades to a warning rather than aborting; the string
-/// table fields are still set correctly in that case, only the binary
-/// `VS_FIXEDFILEINFO` fields fall back to whatever `WindowsResource::new()`
-/// defaulted them to.
+/// Fails the build, by design. Once the early return above has established that
+/// the *target* is Windows, every remaining failure is a broken build
+/// environment rather than something a caller can be expected to tolerate: we
+/// build all Windows artifacts natively on Windows runners, and a resource
+/// compiler is part of the same toolchain that links the artifact in the first
+/// place, so it is present whenever linking can succeed at all. Degrading to a
+/// `cargo:warning` here would silently produce exactly the artifact this helper
+/// exists to prevent — one that an MSI upgrade compares by timestamp and may
+/// skip replacing — and a warning scrolling past a green build is not a signal
+/// anyone acts on.
 ///
 /// # Arguments
 ///
@@ -68,7 +69,7 @@ const RELEASE_VERSION: &str = env!("CARGO_PKG_VERSION");
 ///   `InternalName`.
 /// * `description` - human-readable `FileDescription`, e.g. `"Datadog libdatadog FFI"`.
 pub fn embed_windows_version_info(name: &str, description: &str) {
-    if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
+    if !matches!(env::var("CARGO_CFG_TARGET_OS").as_deref(), Ok("windows")) {
         return;
     }
 
@@ -90,26 +91,20 @@ pub fn embed_windows_version_info(name: &str, description: &str) {
             res.set_version_info(VersionInfo::FILEVERSION, packed);
             res.set_version_info(VersionInfo::PRODUCTVERSION, packed);
         }
-        None => {
-            println!(
-                "cargo:warning={name}: could not parse release version {RELEASE_VERSION:?} \
-                 as major.minor.patch; the binary VERSIONINFO struct will report 0.0.0.0 \
-                 even though the FileVersion/ProductVersion strings are correct."
-            );
-        }
+        None => panic!(
+            "{name}: could not parse the libdatadog release version {RELEASE_VERSION:?} as \
+             major.minor.patch, so the binary VS_FIXEDFILEINFO fields would report 0.0.0.0 — \
+             the very comparison Windows Installer makes, leaving it unable to tell this \
+             build apart from any other."
+        ),
     }
 
     if let Err(err) = res.compile() {
-        if cfg!(windows) {
-            panic!(
-                "{name}: failed to embed the Windows VERSIONINFO resource on a native Windows \
-                 build ({err}); refusing to ship the artifact without it."
-            );
-        }
-        println!(
-            "cargo:warning={name}: failed to embed the Windows VERSIONINFO resource, continuing \
-             without it ({err}). This is expected when cross-compiling to Windows without a \
-             resource compiler (llvm-rc for the msvc ABI, *-windres for the gnu ABI) on PATH."
+        panic!(
+            "{name}: failed to embed the Windows VERSIONINFO resource ({err}); refusing to \
+             ship a Windows artifact without one. A resource compiler must be on PATH: \
+             `rc.exe`/`llvm-rc` (shipped with the Windows SDK) for the `msvc` ABI, \
+             `*-windres` (shipped with mingw) for the `gnu` ABI."
         );
     }
 }
