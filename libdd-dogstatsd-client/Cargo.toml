@@ -13,7 +13,7 @@ bench = false
 
 [dependencies]
 libdd-common = { version = "9.0.0", path = "../libdd-common", default-features = false, features = ["std"] }
-libdd-networking = { version = "1.0.0", path = "../libdd-networking" }
+libdd-networking = { version = "1.0.0", path = "../libdd-networking", default-features = false }
 cadence.workspace = true
 serde = { workspace = true, features = ["derive", "rc"] }
 tracing.workspace = true

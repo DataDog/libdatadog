@@ -42,6 +42,7 @@ std = [
     "dep:libc",
     "dep:libdd-capabilities",
     "dep:libdd-ddsketch",
+    "dep:libdd-networking",
     "dep:libdd-shared-runtime",
     "dep:sys-info",
     "dep:tokio",
@@ -80,7 +81,7 @@ libdd-common = { version = "9.0.0", path = "../libdd-common", default-features =
 libdd-shared-runtime = { version = "7.0.0", path = "../libdd-shared-runtime", default-features = false, optional = true }
 libdd-ddsketch = { version = "1.1.4", path = "../libdd-ddsketch", optional = true }
 web-time = { workspace = true, optional = true }
-libdd-networking = { version = "1.0.0", path = "../libdd-networking" }
+libdd-networking = { version = "1.0.0", path = "../libdd-networking", default-features = false, optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 sys-info = { workspace = true, optional = true }

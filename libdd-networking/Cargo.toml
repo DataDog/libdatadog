@@ -14,10 +14,10 @@ bytes = { workspace = true, features = ["std"] }
 hex.workspace = true
 pin-project = { workspace = true}
 http.workspace = true
-httparse.workspace = true
+httparse = { workspace = true, optional = true }
 hyper-rustls = { workspace = true, features = ["http1", "tls12"], optional = true }
 libdd-common = { path = "../libdd-common", version = "9.0.0" }
-rand = { workspace = true, default-features = true }
+rand = { workspace = true, default-features = true, optional = true }
 # Use hickory-dns instead of the default system DNS resolver to avoid fork safety issues.
 # The default resolver can hold locks or other global state that can cause deadlocks
 # or corruption when the process forks (e.g., in PHP-FPM or other forking environments).
@@ -48,6 +48,7 @@ tokio = { workspace = true, features = ["fs", "io-util", "macros", "net", "rt", 
 tower-service = { workspace = true, optional = true }
 
 [dev-dependencies]
+rand = { workspace = true, default-features = true }
 rcgen.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["rt", "macros", "time", "net", "io-util"] }
@@ -55,6 +56,7 @@ tokio-rustls.workspace = true
 tools = { path = "../tools", default-features = false, features = ["test-utils"] }
 
 [features]
+default = ["https"]
 # FIPS mode uses the FIPS-compliant cryptographic provider (Unix only)
 fips = ["hyper-rustls/fips", "tls-core"]
 http-client = [
@@ -69,7 +71,7 @@ http-client = [
 https = ["hyper-rustls/ring", "rustls/ring", "tls-core"]
 # Honor HTTP(S)_PROXY/NO_PROXY environment variables for the hyper connector,
 hyper-proxy = ["http-client", "hyper-util/client-proxy"]
-reqwest = ["dep:reqwest"]
+reqwest = ["http-client", "dep:reqwest", "dep:httparse", "dep:rand"]
 # TLS plumbing without a crypto provider. Use `https` or `fips` to select one.
 tls-core = ["dep:hyper-rustls", "dep:rustls", "dep:rustls-platform-verifier", "http-client"]
 # Expose the compromised-key distrust verifier (RUSTSEC-2026-0382 mitigation)

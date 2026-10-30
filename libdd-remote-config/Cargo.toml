@@ -83,7 +83,7 @@ hyper-util = { workspace = true, features = [
     "client-legacy",
     "service",
 ], optional = true }
-libdd-networking = { version = "1.0.0", path = "../libdd-networking" }
+libdd-networking = { version = "1.0.0", path = "../libdd-networking", default-features = false }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { workspace = true, features = ["js"] }

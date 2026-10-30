@@ -58,7 +58,7 @@ reqwest = { workspace = true, optional = true }
 rustls = { workspace = true, optional = true }
 rustls-platform-verifier = { workspace = true, optional = true }
 libdd-common = { version = "9.0.0", path = "../libdd-common", default-features = false, features = ["std"], optional = true }
-libdd-networking = { version = "1.0.0", path = "../libdd-networking", optional = true }
+libdd-networking = { version = "1.0.0", path = "../libdd-networking", default-features = false, optional = true }
 hyper = { workspace = true, optional = true, features = ["http1", "client"] }
 hyper-util = { workspace = true, optional = true, features = ["http1", "client", "client-legacy", "tokio"] }
 http-body-util = { workspace = true, optional = true }
