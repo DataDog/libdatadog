@@ -12,9 +12,9 @@ repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-networking"
 license.workspace = true
 
 [dependencies]
-anyhow.workspace = true
+anyhow = { workspace = true, features = ["std"] }
 bytes = { workspace = true, features = ["std"] }
-hex.workspace = true
+hex = { workspace = true, features = ["alloc"] }
 pin-project = { workspace = true}
 http.workspace = true
 httparse = { workspace = true, optional = true }
