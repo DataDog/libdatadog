@@ -629,7 +629,7 @@ impl From<Vec<String>> for ConditionValue {
 
 /// Value of a feature attached to a split. The server emits string, number or boolean values;
 /// other value types are rejected during parsing.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(untagged)]
 pub enum FeatureValue {
     String(Str),
@@ -638,7 +638,7 @@ pub enum FeatureValue {
 }
 
 /// A feature attached to a split.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Feature {
     pub key: Str,
     pub value: FeatureValue,

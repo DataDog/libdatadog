@@ -962,6 +962,21 @@ mod tests {
                 assert_eq!(borrowed(destination), *expected);
             }
         }
+
+        let expected_elements = details.features.as_ptr();
+        let mut handle = Handle::new(details);
+        // SAFETY: Handle is a plain pointer wrapper; a bitwise copy is sound.
+        let handle_copy = unsafe { std::ptr::read(&handle) };
+        // SAFETY: the handle is valid; it is freed below.
+        let features = unsafe { ddog_ffe_assignment_get_features(handle_copy) };
+        assert_eq!(features.count, 3);
+        assert_eq!(features.elements, expected_elements);
+        // SAFETY: elements points at `count` live features owned by the handle.
+        let first = unsafe { &*features.elements };
+        assert_eq!(borrowed(&first.key), "holdout.key");
+
+        // SAFETY: freeing the test handle.
+        unsafe { ddog_ffe_assignment_drop(&mut handle) };
     }
 
     #[test]
