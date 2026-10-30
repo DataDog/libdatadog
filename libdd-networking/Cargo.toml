@@ -14,7 +14,7 @@ license.workspace = true
 [dependencies]
 anyhow = { workspace = true, features = ["std"] }
 bytes = { workspace = true, features = ["std"] }
-hex = { workspace = true, features = ["alloc"] }
+hex = { workspace = true, features = ["std"] }
 pin-project = { workspace = true}
 http.workspace = true
 httparse = { workspace = true, optional = true }
