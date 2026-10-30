@@ -39,6 +39,14 @@
 //! A writer CAS(0→MAX) to claim, writes key + strings (no concurrent readers
 //! yet), issues a **Release** fence, then stores `key_hash = H` (Release).
 //!
+//! ## Additional metric tags
+//! They share the peer tag arrays of a slot. A bucket admits at most
+//! `additional_tags_cardinality_limit` entries with unmasked additional metric tags: a writer
+//! takes room under that limit before it claims a free slot. Finding none left, it waits while
+//! other writers still fill slots they took room for - one may be filling in its very key - and
+//! then replaces the values with `TRACER_BLOCKED_VALUE` and probes again. It does the same when
+//! no free slot is left. Masked keys are always admitted.
+//!
 //! ## Double-buffering
 //! `ShmHeader::active_idx` tells which bucket PHP workers write to.
 //! The sidecar swaps it, waits for `in_flight` to reach 0, then reads + clears.
@@ -66,16 +74,24 @@ use zwohash::ZwoHasher;
 use libdd_ddsketch::DDSketch;
 use libdd_trace_protobuf::pb;
 use libdd_trace_stats::span_concentrator::{
-    FixedAggregationKey, FlushResult, FlushableConcentrator,
-    cardinality_limit_telemetry::CollapsedFieldsMetrics,
+    ADDITIONAL_METRIC_TAG_VALUE_MAX_LEN, ADDITIONAL_METRIC_TAGS_MAX_KEYS, FixedAggregationKey,
+    FlushResult, FlushableConcentrator, TRACER_BLOCKED_VALUE, additional_metric_tag_value_too_long,
+    cardinality_limit_telemetry::{CollapsedFieldSet, CollapsedFieldsMetrics},
 };
+use tracing::warn;
 
 use crate::platform::{FileBackedHandle, MappedMem, NamedShmHandle};
 
-const SHM_VERSION: u32 = 3;
+const SHM_VERSION: u32 = 4;
 
-/// Maximum peer-tag (key, value) pairs per aggregation slot.
+/// Maximum (key, value) tag pairs per aggregation slot: peer tags and additional metric tags
+/// share the same arrays.
 pub const MAX_PEER_TAGS: usize = 16;
+
+/// Maximum additional metric tag (key, value) pairs per aggregation slot. Peer tags get the
+/// slots they leave free.
+pub const MAX_ADDITIONAL_TAGS: usize = ADDITIONAL_METRIC_TAGS_MAX_KEYS;
+const _: () = assert!(MAX_ADDITIONAL_TAGS <= MAX_PEER_TAGS);
 
 /// Number of histogram bins (ok + error each) per aggregation group.
 pub const N_BINS: usize = 256;
@@ -188,8 +204,9 @@ struct KeyScalars {
     grpc_status_code: Option<u8>,
     is_synthetics_request: bool,
     is_trace_root: pb::Trilean,
-    /// At most [`MAX_PEER_TAGS`].
+    /// Together with `additional_tag_count` at most [`MAX_PEER_TAGS`].
     peer_tag_count: usize,
+    additional_tag_count: usize,
 }
 
 /// Aggregation key as stored in the mapping - position-independent, no raw pointers.
@@ -202,8 +219,9 @@ struct KeyScalars {
 struct ShmKeyHeader {
     /// In [`fixed_strs`] order.
     strs: [WireStringRef; FIXED_STRS],
-    peer_tag_keys: [WireStringRef; MAX_PEER_TAGS],
-    peer_tag_values: [WireStringRef; MAX_PEER_TAGS],
+    /// `peer_tag_count` peer tags, followed by `additional_tag_count` additional metric tags.
+    tag_keys: [WireStringRef; MAX_PEER_TAGS],
+    tag_values: [WireStringRef; MAX_PEER_TAGS],
     http_status_code: AtomicU32,
     /// [`GRPC_STATUS_NONE`], or a code in `0..=255`.
     grpc_status_code: AtomicU32,
@@ -211,18 +229,27 @@ struct ShmKeyHeader {
     is_synthetics_request: AtomicU8,
     /// A [`pb::Trilean`] discriminant: 0 not set, 1 true, 2 false.
     is_trace_root: AtomicU8,
-    /// At most [`MAX_PEER_TAGS`].
+    /// Together with `additional_tag_count` at most [`MAX_PEER_TAGS`].
     peer_tag_count: AtomicU8,
+    /// At most [`MAX_ADDITIONAL_TAGS`].
+    additional_tag_count: AtomicU8,
 }
 
 impl ShmKeyHeader {
     /// Snapshot the scalar fields, rejecting any encoding this writer does not produce.
     ///
     /// `None` means the slot is not a key we wrote, so its key cannot be reported and cannot
-    /// match an input either. Nothing here decides where memory is accessed - `peer_tag_count`
-    /// included, since the arrays it counts are zipped rather than indexed - so this is about
+    /// match an input either. Nothing here decides where memory is accessed - the tag counts
+    /// included, since the arrays they count are zipped rather than indexed - so this is about
     /// not fabricating invalid Rust values, not about bounds.
     fn scalars(&self) -> Option<KeyScalars> {
+        let peer_tag_count = self.peer_tag_count.load(Relaxed) as usize;
+        let additional_tag_count = self.additional_tag_count.load(Relaxed) as usize;
+        if additional_tag_count > MAX_ADDITIONAL_TAGS
+            || peer_tag_count + additional_tag_count > MAX_PEER_TAGS
+        {
+            return None;
+        }
         Some(KeyScalars {
             http_status_code: self.http_status_code.load(Relaxed),
             grpc_status_code: match self.grpc_status_code.load(Relaxed) {
@@ -240,15 +267,18 @@ impl ShmKeyHeader {
                 2 => pb::Trilean::False,
                 _ => return None,
             },
-            peer_tag_count: match self.peer_tag_count.load(Relaxed) as usize {
-                n if n <= MAX_PEER_TAGS => n,
-                _ => return None,
-            },
+            peer_tag_count,
+            additional_tag_count,
         })
     }
 
     /// Publish the scalar fields in the encoding [`ShmKeyHeader::scalars`] accepts.
-    fn store_scalars(&self, f: &FixedAggregationKey<&str>, peer_tag_count: usize) {
+    fn store_scalars(
+        &self,
+        f: &FixedAggregationKey<&str>,
+        peer_tag_count: usize,
+        additional_tag_count: usize,
+    ) {
         self.http_status_code.store(f.http_status_code, Relaxed);
         self.grpc_status_code.store(
             f.grpc_status_code.map_or(GRPC_STATUS_NONE, u32::from),
@@ -266,6 +296,8 @@ impl ShmKeyHeader {
         );
         self.peer_tag_count
             .store(peer_tag_count.min(MAX_PEER_TAGS) as u8, Relaxed);
+        self.additional_tag_count
+            .store(additional_tag_count.min(MAX_ADDITIONAL_TAGS) as u8, Relaxed);
     }
 }
 
@@ -301,7 +333,94 @@ struct ShmEntry {
 struct ShmBucketHeader {
     start_nanos: AtomicU64,
     in_flight: AtomicI64,
+    /// Room taken under the additional metric tags cardinality limit, see
+    /// [`ShmBucketHeader::take_room`].
+    additional_tag_room: AtomicU64,
     string_cursor: AtomicU32,
+    /// Spans whose additional metric tag values were replaced by [`TRACER_BLOCKED_VALUE`] for
+    /// lack of room under the cardinality limit, or in the table.
+    additional_tag_collapsed: AtomicU32,
+    /// Spans with additional metric tag values replaced for being too long.
+    additional_tag_oversized: AtomicU32,
+    /// Set by the first writer blocking additional metric tag values, which alone logs it.
+    additional_tag_warned: AtomicU8,
+}
+
+/// What [`ShmBucketHeader::take_room`] found under the cardinality limit.
+enum Room {
+    /// Taken: to be kept with [`ShmBucketHeader::commit_room`] once the slot is filled, or given
+    /// back with [`ShmBucketHeader::release_room`].
+    Taken,
+    /// None left, but writers that took some are still filling their slots.
+    Pending,
+    /// None left.
+    Full,
+}
+
+/// `additional_tag_room` holds the room taken in its low half, and in its high half how much of
+/// it writers are still filling slots for. One word, so that a writer finding no room left also
+/// learns whether another writer might be about to add its very key.
+fn pack_room(taken: u32, pending: u32) -> u64 {
+    u64::from(pending) << 32 | u64::from(taken)
+}
+
+fn unpack_room(room: u64) -> (u32, u32) {
+    // Truncating to the low half is the point.
+    (room as u32, (room >> 32) as u32)
+}
+
+impl ShmBucketHeader {
+    fn take_room(&self, limit: u32) -> Room {
+        let taken = self.update_room(|taken, pending| {
+            (taken < limit).then(|| (taken + 1, pending.saturating_add(1)))
+        });
+        match taken {
+            Ok(()) => Room::Taken,
+            Err((_, pending)) if pending > 0 => Room::Pending,
+            Err(_) => Room::Full,
+        }
+    }
+
+    /// Keep room whose slot is filled. Release, so that a writer seeing the room no longer
+    /// pending also sees the key in the slot.
+    fn commit_room(&self) {
+        let _ = self.update_room(|taken, pending| Some((taken, pending.saturating_sub(1))));
+    }
+
+    /// Give back room whose slot another writer claimed first.
+    fn release_room(&self) {
+        let _ = self.update_room(|taken, pending| {
+            Some((taken.saturating_sub(1), pending.saturating_sub(1)))
+        });
+    }
+
+    /// Replace `(taken, pending)` with what `update` makes of it, or return the value it
+    /// refused. Updates saturate, since a flush resets the word even under a writer that missed
+    /// its deadline.
+    ///
+    /// A loop of its own, as `fetch_update` is deprecated in favor of `try_update`, which the
+    /// MSRV does not have yet.
+    fn update_room(
+        &self,
+        update: impl Fn(u32, u32) -> Option<(u32, u32)>,
+    ) -> Result<(), (u32, u32)> {
+        let mut room = self.additional_tag_room.load(Acquire);
+        loop {
+            let (taken, pending) = unpack_room(room);
+            let Some((new_taken, new_pending)) = update(taken, pending) else {
+                return Err((taken, pending));
+            };
+            match self.additional_tag_room.compare_exchange_weak(
+                room,
+                pack_room(new_taken, new_pending),
+                AcqRel,
+                Acquire,
+            ) {
+                Ok(_) => return Ok(()),
+                Err(current) => room = current,
+            }
+        }
+    }
 }
 
 /// Global SHM header (first page of the mapping).
@@ -500,10 +619,11 @@ fn pool_string(pool: &Pool, sr: StringRef, budget: &mut usize) -> String {
     }
 }
 
-fn hash_key(input: &ShmSpanInput<'_>) -> u64 {
+fn hash_key(key: &SlotKey<'_>) -> u64 {
     let mut h = ZwoHasher::default();
-    input.fixed.hash(&mut h);
-    for &(k, v) in input.peer_tags {
+    key.fixed.hash(&mut h);
+    key.peer_tags.len().hash(&mut h);
+    for &(k, v) in key.tags() {
         k.hash(&mut h);
         v.hash(&mut h);
     }
@@ -512,6 +632,21 @@ fn hash_key(input: &ShmSpanInput<'_>) -> u64 {
         SLOT_INIT => SLOT_INIT - 1,
         v => v,
     }
+}
+
+/// Spend one of `waits` on a slot that is being written - a spin-loop hint, or a thread yield
+/// every [`YIELD_AFTER_SPINS`] of them - or return false once [`MAX_SLOT_WAIT_ITERS`] are spent.
+fn wait_for_slot(waits: &mut u32) -> bool {
+    if *waits >= MAX_SLOT_WAIT_ITERS {
+        return false;
+    }
+    *waits += 1;
+    if waits.is_multiple_of(YIELD_AFTER_SPINS) {
+        thread::yield_now();
+    } else {
+        hint::spin_loop();
+    }
+    true
 }
 
 /// Bump-allocate `s` in the pool, returning an empty reference if it does not fit.
@@ -564,8 +699,18 @@ fn alloc_str(pool: &Pool, cursor: &AtomicU32, s: &str) -> StringRef {
 pub struct ShmSpanInput<'a> {
     /// Aggregation key fields (everything except peer tags).
     pub fixed: FixedAggregationKey<&'a str>,
-    /// (key, value) peer-tag pairs (capped at `MAX_PEER_TAGS` by the caller).
+    /// (key, value) peer-tag pairs. Only the first `MAX_PEER_TAGS - n` are kept, `n` being the
+    /// number of additional metric tags kept.
     pub peer_tags: &'a [(&'a str, &'a str)],
+    /// (key, value) additional metric tag pairs, sorted by key without duplicate keys. Values may
+    /// be empty. Only the first `MAX_ADDITIONAL_TAGS` are kept. Not checked: tags breaking this
+    /// only split the caller's entries or repeat keys in them.
+    pub additional_tags: &'a [(&'a str, &'a str)],
+    /// How many entries with unmasked additional metric tags a bucket admits. Once reached, the
+    /// values of a new key's additional metric tags are replaced by [`TRACER_BLOCKED_VALUE`].
+    /// Note that different callers may technically have different limits. Callers shouldn't.
+    /// But it lets it work seamlessly if they do.
+    pub additional_tags_cardinality_limit: u32,
     // stats
     pub duration_ns: i64,
     pub is_error: bool,
@@ -580,6 +725,8 @@ pub struct ShmSpanInput<'a> {
 pub struct OwnedShmSpanInput {
     pub fixed: FixedAggregationKey<String>,
     pub peer_tags: Vec<(String, String)>,
+    pub additional_tags: Vec<(String, String)>,
+    pub additional_tags_cardinality_limit: u32,
     pub duration_ns: i64,
     pub is_error: bool,
     pub is_top_level: bool,
@@ -588,23 +735,61 @@ pub struct OwnedShmSpanInput {
 impl OwnedShmSpanInput {
     /// Borrow as a [`ShmSpanInput`] for passing to [`ShmSpanConcentrator::add_span`].
     ///
-    /// `peer_tag_buf` is a caller-supplied scratch buffer; it must outlive the returned value.
+    /// `tag_buf` is a caller-supplied scratch buffer; it must outlive the returned value.
     pub fn as_shm_input<'a>(
         &'a self,
-        peer_tag_buf: &'a mut Vec<(&'a str, &'a str)>,
+        tag_buf: &'a mut Vec<(&'a str, &'a str)>,
     ) -> ShmSpanInput<'a> {
-        peer_tag_buf.clear();
-        for (k, v) in &self.peer_tags {
-            peer_tag_buf.push((k.as_str(), v.as_str()));
+        tag_buf.clear();
+        for (k, v) in self.peer_tags.iter().chain(&self.additional_tags) {
+            tag_buf.push((k.as_str(), v.as_str()));
         }
+        let tag_buf: &'a [(&'a str, &'a str)] = tag_buf;
+        let (peer_tags, additional_tags) = tag_buf.split_at(self.peer_tags.len());
         ShmSpanInput {
             fixed: self.fixed.convert(|s: &str| s),
-            peer_tags: peer_tag_buf.as_slice(),
+            peer_tags,
+            additional_tags,
+            additional_tags_cardinality_limit: self.additional_tags_cardinality_limit,
             duration_ns: self.duration_ns,
             is_error: self.is_error,
             is_top_level: self.is_top_level,
         }
     }
+}
+
+/// The aggregation key of a span as a slot stores it: tag counts within the arrays, and
+/// additional metric tag values already masked where they have to be.
+struct SlotKey<'a> {
+    fixed: &'a FixedAggregationKey<&'a str>,
+    peer_tags: &'a [(&'a str, &'a str)],
+    additional_tags: &'a [(&'a str, &'a str)],
+}
+
+impl<'a> SlotKey<'a> {
+    /// Peer tags followed by additional metric tags, the order the slot arrays store them in.
+    fn tags(&self) -> impl Iterator<Item = &'a (&'a str, &'a str)> + use<'a> {
+        self.peer_tags.iter().chain(self.additional_tags)
+    }
+
+    /// Whether a new key has to fit under the additional metric tags cardinality limit. Keys
+    /// whose values are all masked never do, they are what a key over the limit turns into.
+    fn is_cardinality_limited(&self) -> bool {
+        self.additional_tags
+            .iter()
+            .any(|&(_, v)| v != TRACER_BLOCKED_VALUE)
+    }
+}
+
+/// How [`ShmStatsMapping::insert`] ended.
+enum Insert {
+    /// The span was counted.
+    Done,
+    /// No slot could take the span.
+    Lost,
+    /// The key is new and the bucket has no room left for another key with unmasked additional
+    /// metric tags.
+    OverLimit,
 }
 
 /// Shared-memory span stats concentrator.
@@ -718,6 +903,10 @@ impl ShmSpanConcentrator {
 
     /// Drain the inactive bucket, or both buckets if `force` is true.
     pub fn drain_buckets(&self, force: bool) -> Vec<pb::ClientStatsBucket> {
+        self.drain(force).buckets
+    }
+
+    fn drain(&self, force: bool) -> Drained {
         self.with_current(|mem| mem.drain_buckets(force))
             .unwrap_or_default()
     }
@@ -859,6 +1048,23 @@ impl ShmStatsMapping {
 
     /// Add a span to the currently-active bucket.  Thread-safe.
     fn add_span(&self, input: &ShmSpanInput<'_>) {
+        let mut additional_tags = [("", ""); MAX_ADDITIONAL_TAGS];
+        let mut additional_tag_count = 0;
+        let mut oversized_key = None;
+        for (tag, &(k, v)) in additional_tags.iter_mut().zip(input.additional_tags) {
+            if additional_metric_tag_value_too_long(v) {
+                oversized_key.get_or_insert(k);
+                *tag = (k, TRACER_BLOCKED_VALUE);
+            } else {
+                *tag = (k, v);
+            }
+            additional_tag_count += 1;
+        }
+        let peer_tags = &input.peer_tags[..input
+            .peer_tags
+            .len()
+            .min(MAX_PEER_TAGS - additional_tag_count)];
+
         let hdr = self.header();
 
         // Claim in-flight on the active bucket, with double-check against swap.
@@ -873,12 +1079,6 @@ impl ShmStatsMapping {
             bucket.hdr.in_flight.fetch_add(1, Acquire);
         }
 
-        let hash = hash_key(input);
-        let slots = bucket.entries.len();
-        // `Layout` guarantees a nonzero slot count, so this is not a division by zero, and
-        // every index below stays inside the entry slice.
-        let mut slot = (hash % slots as u64) as usize;
-        let mut done = false;
         // Waiting on a slot that is being written is only worth it while somebody is actually
         // writing it. A stale SLOT_INIT is never cleared - the flush skips markers rather than
         // reclaiming slots it may not own - so an unbounded wait can be held open by one write
@@ -886,50 +1086,167 @@ impl ShmStatsMapping {
         // Past the budget the probe keeps looking but stops waiting; a span is lost, not the
         // caller. The budget spans the whole call, so it also bounds a table poisoned throughout.
         let mut waits = 0u32;
+        let key = SlotKey {
+            fixed: &input.fixed,
+            peer_tags,
+            additional_tags: &additional_tags[..additional_tag_count],
+        };
+        let limited = key.is_cardinality_limited();
+        let limit = limited.then_some(input.additional_tags_cardinality_limit);
+        let inserted = Self::insert(&bucket, &key, input, limit, &mut waits);
+        let masked = match inserted {
+            Insert::Done => false,
+            Insert::OverLimit => true,
+            // A full table is no reason to drop the span when its masked entry exists.
+            Insert::Lost => limited,
+        };
+        let recorded = if masked {
+            // The span still counts, under its additional metric tag keys with masked values.
+            for tag in &mut additional_tags[..additional_tag_count] {
+                tag.1 = TRACER_BLOCKED_VALUE;
+            }
+            let key = SlotKey {
+                fixed: &input.fixed,
+                peer_tags,
+                additional_tags: &additional_tags[..additional_tag_count],
+            };
+            matches!(
+                Self::insert(&bucket, &key, input, None, &mut waits),
+                Insert::Done
+            )
+        } else {
+            matches!(inserted, Insert::Done)
+        };
+
+        // A span the table could not take at all had no value substituted either.
+        let mut log_blocked = false;
+        if recorded && (masked || oversized_key.is_some()) {
+            if masked {
+                bucket.hdr.additional_tag_collapsed.fetch_add(1, Relaxed);
+            }
+            if oversized_key.is_some() {
+                bucket.hdr.additional_tag_oversized.fetch_add(1, Relaxed);
+            }
+            log_blocked = bucket.hdr.additional_tag_warned.swap(1, Relaxed) == 0;
+        }
+
+        bucket.hdr.in_flight.fetch_sub(1, Release);
+
+        // Logged after leaving the bucket, so that a flush does not wait on the log.
+        if log_blocked {
+            if let Some(key) = oversized_key {
+                warn!(
+                    "additional_metric_tags: value for key '{key}' exceeds \
+                     {ADDITIONAL_METRIC_TAG_VALUE_MAX_LEN} characters; substituting \
+                     {TRACER_BLOCKED_VALUE}. Further blocked values in this stats bucket are not \
+                     logged"
+                );
+            } else {
+                let keys: Vec<&str> = additional_tags[..additional_tag_count]
+                    .iter()
+                    .map(|&(k, _)| k)
+                    .collect();
+                if matches!(inserted, Insert::Lost) {
+                    warn!(
+                        "additional_metric_tags: the stats bucket has no free slot left for a new \
+                         entry; substituting {TRACER_BLOCKED_VALUE} for the values of {keys:?}. \
+                         Further blocked values in this stats bucket are not logged"
+                    );
+                } else {
+                    warn!(
+                        "additional_metric_tags: the stats bucket holds its limit of {} entries \
+                         with additional metric tags, or waiting for room timed out; \
+                         substituting {TRACER_BLOCKED_VALUE} for the values of {keys:?}. Further \
+                         blocked values in this stats bucket are not logged",
+                        input.additional_tags_cardinality_limit
+                    );
+                }
+            }
+        }
+    }
+
+    /// Count `input` into the slot holding `key`, claiming a free slot when the key is new.
+    ///
+    /// A new key must fit under `limit` entries with unmasked additional metric tags, unless
+    /// `limit` is `None`. A key already in the bucket is found before any free slot, so it keeps
+    /// counting whatever the limit. `waits` counts the iterations spent waiting on slots that are
+    /// being written, out of a budget of [`MAX_SLOT_WAIT_ITERS`] for the whole `add_span` call
+    /// (see [`wait_for_slot`]).
+    fn insert(
+        bucket: &Bucket<'_>,
+        key: &SlotKey<'_>,
+        input: &ShmSpanInput<'_>,
+        limit: Option<u32>,
+        waits: &mut u32,
+    ) -> Insert {
+        let hash = hash_key(key);
+        let slots = bucket.entries.len();
+        // `Layout` guarantees a nonzero slot count, so this is not a division by zero, and
+        // every index below stays inside the entry slice.
+        let mut slot = (hash % slots as u64) as usize;
         for _ in 0..slots {
             let entry = &bucket.entries[slot];
 
             loop {
                 match entry.key_hash.load(Acquire) {
                     SLOT_EMPTY => {
+                        // A claimed slot has to be filled with this key, so take the room under
+                        // the limit first, and give it back if another writer claims the slot.
+                        if let Some(limit) = limit {
+                            match bucket.hdr.take_room(limit) {
+                                Room::Taken => {}
+                                // The writer holding the last room may be about to fill this
+                                // very slot with this very key: look again once it had a chance.
+                                Room::Pending => {
+                                    if wait_for_slot(waits) {
+                                        continue;
+                                    }
+                                    // Technically we may extremely rarely not get a slot due to a
+                                    // regular timeout, but generally, this is a protection against
+                                    // a killed concurrent writer.
+                                    return Insert::OverLimit;
+                                }
+                                // Unless the last room went to this key, in this slot: room is
+                                // committed after the key is stored, so the slot shows it now.
+                                Room::Full => {
+                                    if entry.key_hash.load(Acquire) == SLOT_EMPTY {
+                                        return Insert::OverLimit;
+                                    }
+                                    continue;
+                                }
+                            }
+                        }
                         if entry
                             .key_hash
                             .compare_exchange(SLOT_EMPTY, SLOT_INIT, Acquire, Relaxed)
                             .is_ok()
                         {
-                            Self::write_key(&bucket, entry, input);
+                            Self::write_key(bucket, entry, key);
                             // Release on the store synchronises the key write with any
                             // subsequent Acquire load of the hash — no separate fence needed.
                             entry.key_hash.store(hash, Release);
+                            if limit.is_some() {
+                                bucket.hdr.commit_room();
+                            }
                             Self::update_stats(entry, input);
-                            done = true;
-                            break;
+                            return Insert::Done;
                         }
-                        if waits >= MAX_SLOT_WAIT_ITERS {
-                            break;
+                        if limit.is_some() {
+                            bucket.hdr.release_room();
                         }
-                        waits += 1;
-                        if waits.is_multiple_of(YIELD_AFTER_SPINS) {
-                            thread::yield_now();
-                        } else {
-                            hint::spin_loop();
+                        if !wait_for_slot(waits) {
+                            break;
                         }
                     }
                     SLOT_INIT => {
-                        if waits >= MAX_SLOT_WAIT_ITERS {
+                        if !wait_for_slot(waits) {
                             break;
-                        }
-                        waits += 1;
-                        if waits.is_multiple_of(YIELD_AFTER_SPINS) {
-                            thread::yield_now();
-                        } else {
-                            hint::spin_loop();
                         }
                     }
                     h if h == hash => {
-                        if Self::key_matches(&bucket, entry, input) {
+                        if Self::key_matches(bucket, entry, key) {
                             Self::update_stats(entry, input);
-                            done = true;
+                            return Insert::Done;
                         }
                         break;
                     }
@@ -937,65 +1254,54 @@ impl ShmStatsMapping {
                 }
             }
 
-            if done {
-                break;
-            }
             slot = (slot + 1) % slots;
         }
-
-        bucket.hdr.in_flight.fetch_sub(1, Release);
+        Insert::Lost
     }
 
-    /// Write `input`'s key into a slot this thread has just claimed.
-    fn write_key(bucket: &Bucket<'_>, entry: &ShmEntry, input: &ShmSpanInput<'_>) {
+    /// Write `key` into a slot this thread has just claimed.
+    fn write_key(bucket: &Bucket<'_>, entry: &ShmEntry, key: &SlotKey<'_>) {
         let k = &entry.key;
         let cursor = &bucket.hdr.string_cursor;
-        for (wire, s) in k.strs.iter().zip(fixed_strs(&input.fixed)) {
+        for (wire, s) in k.strs.iter().zip(fixed_strs(key.fixed)) {
             wire.store(alloc_str(bucket.pool, cursor, s));
         }
-        // Zipped rather than indexed by a count, so the arrays themselves are the limit and
-        // a caller passing more tags than there is room for simply loses the surplus.
-        let mut stored = 0usize;
-        for (&(tk, tv), (wire_k, wire_v)) in input
-            .peer_tags
-            .iter()
-            .zip(k.peer_tag_keys.iter().zip(&k.peer_tag_values))
-        {
+        // `add_span` keeps both tag counts within the arrays; zipped rather than indexed all
+        // the same, so the arrays themselves are the limit.
+        for (&(tk, tv), (wire_k, wire_v)) in key.tags().zip(k.tag_keys.iter().zip(&k.tag_values)) {
             wire_k.store(alloc_str(bucket.pool, cursor, tk));
             wire_v.store(alloc_str(bucket.pool, cursor, tv));
-            stored += 1;
         }
-        k.store_scalars(&input.fixed, stored);
+        k.store_scalars(key.fixed, key.peer_tags.len(), key.additional_tags.len());
     }
 
-    /// Does this slot hold `input`'s key?
+    /// Does this slot hold `key`?
     ///
     /// A slot whose scalars do not decode, or whose strings do not resolve inside the pool,
     /// does not match: `add_span` then probes on rather than folding its span into an entry
     /// whose key it could not read.
-    fn key_matches(bucket: &Bucket<'_>, entry: &ShmEntry, input: &ShmSpanInput<'_>) -> bool {
+    fn key_matches(bucket: &Bucket<'_>, entry: &ShmEntry, key: &SlotKey<'_>) -> bool {
         let k = &entry.key;
         let Some(scalars) = k.scalars() else {
             return false;
         };
-        let f = &input.fixed;
+        let f = key.fixed;
         scalars.http_status_code == f.http_status_code
             && scalars.grpc_status_code == f.grpc_status_code
             && scalars.is_synthetics_request == f.is_synthetics_request
             && scalars.is_trace_root == f.is_trace_root
-            && scalars.peer_tag_count == input.peer_tags.len()
+            && scalars.peer_tag_count == key.peer_tags.len()
+            && scalars.additional_tag_count == key.additional_tags.len()
             && k.strs
                 .iter()
                 .zip(fixed_strs(f))
                 .all(|(wire, s)| pool_eq(bucket.pool, wire.snapshot(), s))
-            && input
-                .peer_tags
-                .iter()
-                .zip(k.peer_tag_keys.iter().zip(&k.peer_tag_values))
-                .all(|(&(ik, iv), (wire_k, wire_v))| {
+            && key.tags().zip(k.tag_keys.iter().zip(&k.tag_values)).all(
+                |(&(ik, iv), (wire_k, wire_v))| {
                     pool_eq(bucket.pool, wire_k.snapshot(), ik)
                         && pool_eq(bucket.pool, wire_v.snapshot(), iv)
-                })
+                },
+            )
     }
 
     fn update_stats(entry: &ShmEntry, input: &ShmSpanInput<'_>) {
@@ -1030,23 +1336,24 @@ impl ShmStatsMapping {
         (used, bucket.entries.len())
     }
 
-    fn drain_buckets(&self, force: bool) -> Vec<pb::ClientStatsBucket> {
-        let mut stat_buckets: Vec<pb::ClientStatsBucket> = Vec::new();
+    fn drain_buckets(&self, force: bool) -> Drained {
+        let mut drained = Drained::default();
+        let blocked = &mut drained.blocked_additional_tags;
 
         if force {
             for idx in 0u8..2 {
-                if let Some(b) = self.drain_bucket(idx) {
-                    stat_buckets.push(b);
+                if let Some(b) = self.drain_bucket(idx, blocked) {
+                    drained.buckets.push(b);
                 }
             }
         } else {
             let old_active = self.header().active_idx.fetch_xor(1, AcqRel);
-            if let Some(b) = self.drain_bucket(old_active) {
-                stat_buckets.push(b);
+            if let Some(b) = self.drain_bucket(old_active, blocked) {
+                drained.buckets.push(b);
             }
         }
 
-        stat_buckets
+        drained
     }
 
     fn flush(
@@ -1058,7 +1365,7 @@ impl ShmStatsMapping {
         service: String,
         runtime_id: String,
     ) -> Option<pb::ClientStatsPayload> {
-        let stat_buckets = self.drain_buckets(force);
+        let stat_buckets = self.drain_buckets(force).buckets;
         if stat_buckets.is_empty() {
             return None;
         }
@@ -1076,7 +1383,13 @@ impl ShmStatsMapping {
         })
     }
 
-    fn drain_bucket(&self, bucket_idx: u8) -> Option<pb::ClientStatsBucket> {
+    /// Drain one bucket, adding its spans with blocked additional metric tag values to
+    /// `blocked_additional_tags`.
+    fn drain_bucket(
+        &self,
+        bucket_idx: u8,
+        blocked_additional_tags: &mut BlockedAdditionalTags,
+    ) -> Option<pb::ClientStatsBucket> {
         let bucket = self.bucket(bucket_idx);
 
         // Wait for in-flight writers (bounded to tolerate dead workers).
@@ -1114,6 +1427,13 @@ impl ShmStatsMapping {
             entry.key_hash.store(SLOT_EMPTY, Release);
         }
 
+        // The cardinality limit and its warning apply per bucket: the next one starts afresh.
+        bucket.hdr.additional_tag_room.store(0, Relaxed);
+        bucket.hdr.additional_tag_warned.store(0, Relaxed);
+        let take =
+            |counter: &AtomicU32| usize::try_from(counter.swap(0, Relaxed)).unwrap_or(usize::MAX);
+        blocked_additional_tags.collapsed += take(&bucket.hdr.additional_tag_collapsed);
+        blocked_additional_tags.oversized += take(&bucket.hdr.additional_tag_oversized);
         bucket.hdr.string_cursor.store(0, Release);
 
         let now_ns = std::time::SystemTime::now()
@@ -1191,17 +1511,17 @@ impl ShmStatsMapping {
             pool_string(pool, k.strs[i].snapshot(), budget)
         });
 
-        let peer_tags: Vec<String> = k
-            .peer_tag_keys
+        let mut tags = k
+            .tag_keys
             .iter()
-            .zip(&k.peer_tag_values)
-            .take(scalars.peer_tag_count)
+            .zip(&k.tag_values)
             .map(|(wire_k, wire_v)| {
                 let tag_key = pool_string(pool, wire_k.snapshot(), budget);
                 let tag_value = pool_string(pool, wire_v.snapshot(), budget);
                 format!("{tag_key}:{tag_value}")
-            })
-            .collect();
+            });
+        let peer_tags: Vec<String> = tags.by_ref().take(scalars.peer_tag_count).collect();
+        let additional_metric_tags: Vec<String> = tags.take(scalars.additional_tag_count).collect();
 
         Some(pb::ClientGroupedStats {
             service,
@@ -1228,19 +1548,43 @@ impl ShmStatsMapping {
                 .unwrap_or_default(),
             service_source: source,
             span_derived_primary_tags: vec![],
-            additional_metric_tags: vec![],
+            additional_metric_tags,
         })
     }
 }
 
+/// Spans whose additional metric tag values were replaced by [`TRACER_BLOCKED_VALUE`].
+#[derive(Default)]
+struct BlockedAdditionalTags {
+    /// For lack of room under the cardinality limit, or in the table.
+    collapsed: usize,
+    /// For being too long.
+    oversized: usize,
+}
+
+/// What draining yields: the buckets, and the spans in them with blocked additional metric tags.
+#[derive(Default)]
+struct Drained {
+    buckets: Vec<pb::ClientStatsBucket>,
+    blocked_additional_tags: BlockedAdditionalTags,
+}
+
 impl FlushableConcentrator for ShmSpanConcentrator {
     fn flush_buckets(&mut self, force: bool) -> FlushResult<pb::ClientStatsBucket> {
-        // The SHM concentrator does not perform client-side obfuscation nor emits telemetry.
+        // The SHM concentrator does not perform client-side obfuscation, and of the cardinality
+        // limits it only applies the additional metric tags ones.
+        let drained = self.drain(force);
+        let mut collapsed_fields_metrics = CollapsedFieldsMetrics::zero();
+        let mut additional_tags = CollapsedFieldSet::empty();
+        additional_tags.add(CollapsedFieldSet::ADDITIONAL_TAGS);
+        collapsed_fields_metrics.add(additional_tags, drained.blocked_additional_tags.collapsed);
+        collapsed_fields_metrics
+            .add_oversized_additional_tags(drained.blocked_additional_tags.oversized);
         FlushResult {
             obfuscated_buckets: vec![],
-            unobfuscated_buckets: self.drain_buckets(force),
+            unobfuscated_buckets: drained.buckets,
             collapsed_spans: 0,
-            collapsed_fields_metrics: CollapsedFieldsMetrics::zero(),
+            collapsed_fields_metrics,
         }
     }
 }
@@ -1281,6 +1625,8 @@ mod tests {
                 grpc_status_code: None,
             },
             peer_tags: &[],
+            additional_tags: &[],
+            additional_tags_cardinality_limit: 100,
             duration_ns: dur,
             is_error: false,
             is_top_level: true,
@@ -1619,18 +1965,31 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn malformed_scalars_drop_only_their_own_entry() {
         let c = default_concentrator(test_path());
-        for resource in ["a", "b", "c", "d", "e"] {
+        for resource in ["a", "b", "c", "d", "e", "f", "g"] {
             c.add_span(&span("svc", resource, 1_000_000));
         }
 
         let mem = mapping(&c);
         let bucket = mem.bucket(0);
         let entries = occupied(&bucket);
-        assert_eq!(entries.len(), 5);
+        assert_eq!(entries.len(), 7);
         entries[0].key.is_trace_root.store(7, Relaxed);
         entries[1].key.is_synthetics_request.store(9, Relaxed);
         entries[2].key.peer_tag_count.store(200, Relaxed);
         entries[3].key.grpc_status_code.store(300, Relaxed);
+        entries[4]
+            .key
+            .additional_tag_count
+            .store(MAX_ADDITIONAL_TAGS as u8 + 1, Relaxed);
+        // Each count is fine on its own, but together they overrun the shared arrays.
+        entries[5]
+            .key
+            .peer_tag_count
+            .store((MAX_PEER_TAGS - MAX_ADDITIONAL_TAGS + 1) as u8, Relaxed);
+        entries[5]
+            .key
+            .additional_tag_count
+            .store(MAX_ADDITIONAL_TAGS as u8, Relaxed);
 
         let payload = flush_one(&c);
         assert_eq!(
@@ -1722,12 +2081,7 @@ mod tests {
             let bucket = mem.bucket(0);
             let entries = occupied(&bucket);
             let key = &entries[0].key;
-            for wire in key
-                .strs
-                .iter()
-                .chain(&key.peer_tag_keys)
-                .chain(&key.peer_tag_values)
-            {
+            for wire in key.strs.iter().chain(&key.tag_keys).chain(&key.tag_values) {
                 wire.offset.store(0, Relaxed);
                 wire.len.store(POOL as u32, Relaxed);
             }
@@ -1806,6 +2160,8 @@ mod tests {
                 grpc_status_code: Some(7),
             },
             peer_tags: &[("peer.service", "upstream")],
+            additional_tags: &[],
+            additional_tags_cardinality_limit: 100,
             duration_ns: 1_000_000,
             is_error: true,
             is_top_level: true,
@@ -1835,5 +2191,275 @@ mod tests {
         assert_eq!(group.peer_tags, vec!["peer.service:upstream"]);
         assert_eq!(group.hits, 2);
         assert_eq!(group.errors, 2);
+    }
+
+    fn tagged<'a>(
+        resource: &'a str,
+        additional_tags: &'a [(&'a str, &'a str)],
+        additional_tags_cardinality_limit: u32,
+    ) -> ShmSpanInput<'a> {
+        ShmSpanInput {
+            additional_tags,
+            additional_tags_cardinality_limit,
+            ..span("svc", resource, 1_000_000)
+        }
+    }
+
+    /// Spans blocked as `(collapsed, oversized)`.
+    fn blocked(drained: &Drained) -> (usize, usize) {
+        let blocked = &drained.blocked_additional_tags;
+        (blocked.collapsed, blocked.oversized)
+    }
+
+    /// Every group as "[its additional metric tags] x<hits>", sorted.
+    fn additional_tags_of(drained: &Drained) -> Vec<String> {
+        let mut groups: Vec<String> = drained
+            .buckets
+            .iter()
+            .flat_map(|b| &b.stats)
+            .map(|g| format!("[{}] x{}", g.additional_metric_tags.join(", "), g.hits))
+            .collect();
+        groups.sort();
+        groups
+    }
+
+    /// The memory budget for additional metric tags is nil: they share the peer tag arrays, and
+    /// their count sits in what used to be the key's tail padding.
+    #[test]
+    fn additional_tags_do_not_grow_a_slot() {
+        assert_eq!(size_of::<ShmKeyHeader>(), 332);
+        assert_eq!(size_of::<ShmEntry>(), 4472);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn additional_tags_are_part_of_the_key() {
+        let c = default_concentrator(test_path());
+        let tags = [("region", "eu"), ("tenant", "acme")];
+        c.add_span(&tagged("res", &tags, 100));
+        c.add_span(&tagged("res", &tags, 100));
+        c.add_span(&tagged("res", &[("region", "us")], 100));
+        c.add_span(&tagged("res", &[], 100));
+
+        let drained = c.drain(true);
+        assert_eq!(
+            additional_tags_of(&drained),
+            ["[] x1", "[region:eu, tenant:acme] x2", "[region:us] x1"]
+        );
+        assert_eq!(blocked(&drained), (0, 0));
+    }
+
+    /// Peer tags get whatever room the additional metric tags leave in the shared arrays, and
+    /// each kind drains back into its own field.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn peer_tags_and_additional_tags_share_the_slot_arrays() {
+        let c = default_concentrator(test_path());
+        let peer_tags: Vec<String> = (0..MAX_PEER_TAGS).map(|i| format!("peer.{i:02}")).collect();
+        let peer_tags: Vec<(&str, &str)> = peer_tags.iter().map(|k| (k.as_str(), "v")).collect();
+        let input = ShmSpanInput {
+            peer_tags: &peer_tags,
+            additional_tags: &[("region", "eu"), ("tenant", "acme")],
+            ..span("svc", "res", 1_000_000)
+        };
+        c.add_span(&input);
+        c.add_span(&input);
+
+        let payload = flush_one(&c);
+        assert_eq!(payload.stats[0].stats.len(), 1);
+        let group = &payload.stats[0].stats[0];
+        assert_eq!(group.hits, 2);
+        assert_eq!(group.peer_tags.len(), MAX_PEER_TAGS - 2);
+        assert_eq!(group.peer_tags[0], "peer.00:v");
+        assert_eq!(group.additional_metric_tags, ["region:eu", "tenant:acme"]);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn oversized_additional_tag_values_are_blocked() {
+        let c = default_concentrator(test_path());
+        // The limit counts characters, not bytes.
+        let longest = "é".repeat(ADDITIONAL_METRIC_TAG_VALUE_MAX_LEN);
+        let too_long = "x".repeat(ADDITIONAL_METRIC_TAG_VALUE_MAX_LEN + 1);
+        c.add_span(&tagged("a", &[("tenant", &longest)], 100));
+        c.add_span(&tagged(
+            "b",
+            &[("region", "eu"), ("tenant", &too_long)],
+            100,
+        ));
+
+        let drained = c.drain(true);
+        assert_eq!(
+            additional_tags_of(&drained),
+            [
+                format!("[region:eu, tenant:{TRACER_BLOCKED_VALUE}] x1"),
+                format!("[tenant:{longest}] x1"),
+            ]
+        );
+        assert_eq!(blocked(&drained), (0, 1));
+    }
+
+    /// Past the limit a new key keeps its additional metric tag keys with masked values, while
+    /// keys admitted earlier in the bucket keep counting as themselves.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn the_cardinality_limit_masks_only_new_keys() {
+        let c = default_concentrator(test_path());
+        for tenant in ["a", "b", "c", "a", "d"] {
+            c.add_span(&tagged("res", &[("tenant", tenant)], 2));
+        }
+        // Another set of keys over the limit is masked into an entry of its own.
+        c.add_span(&tagged("res", &[("region", "eu"), ("tenant", "e")], 2));
+        // Keys without additional metric tags are not subject to the limit.
+        c.add_span(&tagged("res", &[], 2));
+        c.add_span(&tagged("other", &[], 2));
+
+        let drained = c.drain(true);
+        assert_eq!(
+            additional_tags_of(&drained),
+            [
+                "[] x1".to_owned(),
+                "[] x1".to_owned(),
+                format!("[region:{TRACER_BLOCKED_VALUE}, tenant:{TRACER_BLOCKED_VALUE}] x1"),
+                "[tenant:a] x2".to_owned(),
+                "[tenant:b] x1".to_owned(),
+                format!("[tenant:{TRACER_BLOCKED_VALUE}] x2"),
+            ]
+        );
+        assert_eq!(blocked(&drained), (3, 0));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn the_cardinality_limit_resets_with_each_bucket() {
+        let c = default_concentrator(test_path());
+        c.add_span(&tagged("res", &[("tenant", "a")], 1));
+        c.add_span(&tagged("res", &[("tenant", "b")], 1));
+        let first = c.drain(false);
+        assert_eq!(
+            additional_tags_of(&first),
+            [
+                "[tenant:a] x1".to_owned(),
+                format!("[tenant:{TRACER_BLOCKED_VALUE}] x1"),
+            ]
+        );
+        assert_eq!(blocked(&first), (1, 0));
+
+        // The other bucket, then the drained one again: both start with the whole limit.
+        c.add_span(&tagged("res", &[("tenant", "b")], 1));
+        let second = c.drain(false);
+        assert_eq!(additional_tags_of(&second), ["[tenant:b] x1"]);
+        assert_eq!(blocked(&second), (0, 0));
+
+        c.add_span(&tagged("res", &[("tenant", "c")], 1));
+        let third = c.drain(true);
+        assert_eq!(additional_tags_of(&third), ["[tenant:c] x1"]);
+        assert_eq!(blocked(&third), (0, 0));
+    }
+
+    /// The telemetry for blocked values travels with the flushed buckets: values over the limit
+    /// as collapsed, and values too long as oversized, which is no cardinality limit.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn blocked_additional_tags_are_reported_with_the_flush() {
+        let mut c = default_concentrator(test_path());
+        let too_long = "x".repeat(ADDITIONAL_METRIC_TAG_VALUE_MAX_LEN + 1);
+        c.add_span(&tagged("res", &[("tenant", "a")], 1));
+        c.add_span(&tagged("res", &[("tenant", "b")], 1));
+        c.add_span(&tagged("res", &[("tenant", &too_long)], 1));
+        c.add_span(&tagged("res", &[("tenant", &too_long)], 1));
+        let flushed = c.flush_buckets(true);
+        assert_eq!(flushed.unobfuscated_buckets[0].stats.len(), 2);
+        let mut expected = CollapsedFieldsMetrics::zero();
+        let mut additional_tags = CollapsedFieldSet::empty();
+        additional_tags.add(CollapsedFieldSet::ADDITIONAL_TAGS);
+        expected.add(additional_tags, 1);
+        expected.add_oversized_additional_tags(2);
+        assert_eq!(
+            format!("{:?}", flushed.collapsed_fields_metrics),
+            format!("{expected:?}")
+        );
+    }
+
+    /// A key no free slot is left for is masked like one over the limit, so it still counts if
+    /// its masked entry exists.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn a_full_table_masks_new_keys_rather_than_dropping_them() {
+        let c = ShmSpanConcentrator::create(test_path(), 10_000_000_000, 4, 4096).unwrap();
+        for tenant in ["a", "b", "c"] {
+            c.add_span(&tagged("res", &[("tenant", tenant)], 2));
+        }
+        c.add_span(&tagged("other", &[], 2));
+        // All four slots are taken, one of them by the masked entry.
+        c.add_span(&tagged("res", &[("tenant", "d")], 2));
+
+        let drained = c.drain(true);
+        assert_eq!(
+            additional_tags_of(&drained),
+            [
+                "[] x1".to_owned(),
+                "[tenant:a] x1".to_owned(),
+                "[tenant:b] x1".to_owned(),
+                format!("[tenant:{TRACER_BLOCKED_VALUE}] x2"),
+            ]
+        );
+        assert_eq!(blocked(&drained), (2, 0));
+    }
+
+    /// A span the full table cannot take even masked was dropped, so it blocked no value.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn a_span_a_full_table_drops_is_not_counted_as_blocked() {
+        let c = ShmSpanConcentrator::create(test_path(), 10_000_000_000, 4, 4096).unwrap();
+        for resource in ["a", "b", "c", "d"] {
+            c.add_span(&tagged(resource, &[], 100));
+        }
+        let too_long = "x".repeat(ADDITIONAL_METRIC_TAG_VALUE_MAX_LEN + 1);
+        c.add_span(&tagged("res", &[("tenant", "a")], 100));
+        c.add_span(&tagged("res", &[("tenant", &too_long)], 100));
+
+        let drained = c.drain(true);
+        assert_eq!(additional_tags_of(&drained), ["[] x1"; 4]);
+        assert_eq!(blocked(&drained), (0, 0));
+    }
+
+    /// Writers racing to add the same new key must all count into it: room another writer has
+    /// taken under the limit, but not used yet, is not the limit being reached.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn concurrent_writers_of_one_new_key_are_not_masked() {
+        const WRITERS: usize = 8;
+        let c = default_concentrator(test_path());
+        for _ in 0..1000 {
+            let start = std::sync::Barrier::new(WRITERS);
+            std::thread::scope(|scope| {
+                for _ in 0..WRITERS {
+                    scope.spawn(|| {
+                        start.wait();
+                        c.add_span(&tagged("res", &[("tenant", "a")], 1));
+                    });
+                }
+            });
+            assert_eq!(additional_tags_of(&c.drain(false)), ["[tenant:a] x8"]);
+        }
+    }
+
+    #[test]
+    fn an_owned_input_lends_out_both_kinds_of_tags() {
+        let owned = OwnedShmSpanInput {
+            fixed: Default::default(),
+            peer_tags: vec![("peer.service".into(), "upstream".into())],
+            additional_tags: vec![("tenant".into(), "acme".into())],
+            additional_tags_cardinality_limit: 7,
+            duration_ns: 1,
+            is_error: false,
+            is_top_level: true,
+        };
+        let mut tag_buf = Vec::new();
+        let input = owned.as_shm_input(&mut tag_buf);
+        assert_eq!(input.peer_tags, [("peer.service", "upstream")]);
+        assert_eq!(input.additional_tags, [("tenant", "acme")]);
+        assert_eq!(input.additional_tags_cardinality_limit, 7);
     }
 }

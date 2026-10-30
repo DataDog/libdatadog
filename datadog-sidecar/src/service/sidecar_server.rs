@@ -1118,8 +1118,8 @@ impl SidecarInterface for ConnectionSidecarHandler {
             session_id,
             &session,
         ) {
-            let mut peer_tag_buf = Vec::new();
-            let input = span.as_shm_input(&mut peer_tag_buf);
+            let mut tag_buf = Vec::new();
+            let input = span.as_shm_input(&mut tag_buf);
             state.concentrator.add_span(&input);
         }
     }
