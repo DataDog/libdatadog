@@ -1,0 +1,42 @@
+name: Notify libdatadog-rb of a libdatadog release
+
+on: # yamllint disable-line rule:truthy
+  push:
+    tags:
+      - "v[0-9]*.[0-9]*.[0-9]*"
+
+# The libdatadog crate is released as plain version-shaped tags (libdd-*
+# crates use prefixed tags like `libdd-telemetry-v10.0.0`), and libdatadog-rb
+# builds from the git tag -- the crate is not published to crates.io -- so a
+# tag push is the first moment downstreams can consume a release. The filter
+# matches only `v<major>.<minor>.<patch>`: other plain `v*` tags (internal
+# artifacts, precompiled actions, pre-releases) do not fire the dispatch.
+# Hotfix releases are tagged on maintenance branches (v46.x is the current
+# one) before reaching main, so only this trigger catches every release flow.
+
+permissions: {}
+
+jobs:
+  notify-libdatadog-rb:
+    name: "Notify DataDog/libdatadog-rb"
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    steps:
+      - name: Get GitHub Token via dd-octo-sts
+        id: generate-token
+        uses: DataDog/dd-octo-sts-action@acaa02eee7e3bb0839e4272dacb37b8f3b58ba80 # v1.0.3
+        with:
+          scope: DataDog/libdatadog-rb
+          policy: libdatadog.notify-libdatadog-rb
+
+      - name: Dispatch to DataDog/libdatadog-rb
+        env:
+          GH_TOKEN: ${{ steps.generate-token.outputs.token }}
+          VERSION: ${{ github.ref_name }}
+        run: |
+          gh api "repos/DataDog/libdatadog-rb/dispatches" \
+            -f event_type=libdatadog-released \
+            -f "client_payload[version]=${VERSION#v}" \
+            -f "client_payload[triggered_by]=${{ github.repository }}" \
+            -f "client_payload[source_run_url]=${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
