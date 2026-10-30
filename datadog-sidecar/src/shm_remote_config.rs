@@ -911,7 +911,8 @@ mod tests {
             vec![],
         ));
         assert_ne!(path, path_for_remote_config(&invariants, &target));
-        invariants.endpoint = libdd_networking::endpoint::Endpoint::from_slice("http://agent-b:8126");
+        invariants.endpoint =
+            libdd_networking::endpoint::Endpoint::from_slice("http://agent-b:8126");
         assert_ne!(path, path_for_remote_config(&invariants, &DUMMY_TARGET));
     }
 

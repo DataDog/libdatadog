@@ -291,7 +291,7 @@ impl DatadogTestAgent {
     }
 
     pub async fn get_base_uri(&self) -> http::Uri {
-        libdd_common::parse_uri(&if let Some(path) = &self.socket_path {
+        libdd_networking::endpoint::parse_uri(&if let Some(path) = &self.socket_path {
             format!("unix://{path}")
         } else {
             self.container.trace_agent_uri().unwrap()

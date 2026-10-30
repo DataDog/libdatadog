@@ -83,7 +83,9 @@ pub async fn fetch_info_with_state<C: HttpClientCapability + SleepCapability>(
 /// # #[tokio::main]
 /// # async fn main() -> Result<()> {
 /// // Define the endpoint
-/// let endpoint = libdd_networking::endpoint::Endpoint::from_url("http://localhost:8126/info".parse().unwrap());
+/// let endpoint = libdd_networking::endpoint::Endpoint::from_url(
+///     "http://localhost:8126/info".parse().unwrap(),
+/// );
 /// // Fetch the info
 /// let agent_info = libdd_data_pipeline::agent_info::fetch_info::<NativeCapabilities>(&endpoint)
 ///     .await
@@ -164,7 +166,9 @@ async fn fetch_and_hash_response<C: HttpClientCapability + SleepCapability>(
 /// # #[tokio::main]
 /// # async fn main() -> Result<()> {
 /// // Define the endpoint
-/// let endpoint = libdd_networking::endpoint::Endpoint::from_url("http://localhost:8126/info".parse().unwrap());
+/// let endpoint = libdd_networking::endpoint::Endpoint::from_url(
+///     "http://localhost:8126/info".parse().unwrap(),
+/// );
 /// // Create the fetcher
 /// let (mut fetcher, _response_observer) = libdd_data_pipeline::agent_info::AgentInfoFetcher::<
 ///     NativeCapabilities,

@@ -7,9 +7,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use arc_swap::ArcSwapOption;
-use libdd_common::{Endpoint, tag::Tag};
+use libdd_common::tag::Tag;
 use libdd_dogstatsd_client::DogStatsDClient;
 use libdd_live_debugger::sender::{DebuggerType, PayloadSender};
+use libdd_networking::endpoint::Endpoint;
 use libdd_remote_config::fetch::{ConfigInvariants, ConfigOptions};
 use libdd_telemetry::config::TelemetryEndpoint;
 use tracing::{debug, error, trace, warn};

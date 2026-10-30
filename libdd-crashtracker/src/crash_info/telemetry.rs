@@ -187,7 +187,7 @@ impl TelemetryCrashUploader {
             if endpoint.url.scheme_str() == Some("file") {
                 // Write telemetry alongside the crash file. Rebuild from the
                 // decoded path so the file path is re-encoded exactly once.
-                let path = libdd_common::decode_uri_path_in_authority(&endpoint.url)
+                let path = libdd_networking::endpoint::decode_uri_path_in_authority(&endpoint.url)
                     .context("file path is not valid")?;
                 let _ = cfg.set_endpoint(libdd_telemetry::config::TelemetryEndpoint {
                     url: Some(format!("file://{}.telemetry", path.display())),

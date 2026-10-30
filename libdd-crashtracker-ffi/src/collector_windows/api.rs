@@ -3,9 +3,9 @@
 
 use crate::Metadata;
 use anyhow::Result;
-use libdd_networking::endpoint::Endpoint;
 use libdd_common_ffi::CharSlice;
 use libdd_common_ffi::slice::AsBytes;
+use libdd_networking::endpoint::Endpoint;
 use std::ffi::c_void;
 use windows::Win32::Foundation::{BOOL, E_FAIL, S_OK};
 use windows::Win32::System::Diagnostics::Debug::OutputDebugStringW;

@@ -127,7 +127,7 @@ where
     let Some(config) = stats_config else {
         return Ok(None);
     };
-    let url = libdd_common::parse_uri(&config.endpoint_url)
+    let url = libdd_networking::endpoint::parse_uri(&config.endpoint_url)
         .map_err(|error| AgentlessV04Error::InvalidStatsEndpoint(error.to_string()))?;
     if !matches!(url.scheme_str(), Some("http" | "https")) || url.host().is_none() {
         return Err(AgentlessV04Error::InvalidStatsEndpoint(config.endpoint_url));

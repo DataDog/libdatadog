@@ -913,7 +913,8 @@ mod tests {
         let mut config = Config::default();
         config
             .set_endpoint_uri(
-                libdd_common::parse_uri(&format!("file://{}", path.display())).unwrap(),
+                libdd_networking::endpoint::parse_uri(&format!("file://{}", path.display()))
+                    .unwrap(),
             )
             .unwrap();
         let client = TelemetryCachedClient::new(

@@ -40,8 +40,8 @@ use core::time::Duration;
 use std::{env, fs, path::Path};
 
 use hyper::Request;
-use libdd_networking::endpoint::Endpoint;
 use libdd_common::http_common::{self, Body};
+use libdd_networking::endpoint::Endpoint;
 use rustls::{
     ServerConfig,
     pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, pem::PemObject as _},

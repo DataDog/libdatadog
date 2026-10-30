@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use function_name::named;
-use libdd_networking::endpoint::Endpoint;
 use libdd_common_ffi::{Handle, ToInner, VoidResult, wrap_with_void_ffi_result};
 use libdd_crashtracker::CrashInfo;
+use libdd_networking::endpoint::Endpoint;
 
 /// # Safety
 /// The `crash_info` can be null, but if non-null it must point to a Builder made by this module,

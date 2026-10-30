@@ -3,7 +3,8 @@
 
 use bytes::Bytes;
 use http::Method;
-use libdd_common::{Endpoint, MutexExt, http_common};
+use libdd_common::{MutexExt, http_common};
+use libdd_networking::endpoint::Endpoint;
 use libdd_remote_config::config::agent_task::AgentTaskFile;
 use std::{
     collections::HashMap,

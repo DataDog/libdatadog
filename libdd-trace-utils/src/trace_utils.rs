@@ -724,7 +724,8 @@ mod tests {
         test_utils::{create_test_no_alloc_span, create_test_span},
     };
     use http::Request;
-    use libdd_common::{Endpoint, http_common};
+    use libdd_common::http_common;
+    use libdd_networking::endpoint::Endpoint;
     use serde_json::json;
 
     fn find_index_in_dict(dict: &SharedDictBytes, value: &str) -> Option<u32> {

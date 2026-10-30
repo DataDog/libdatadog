@@ -35,6 +35,7 @@ tokio-util.workspace = true
 libdd-capabilities = { path = "../libdd-capabilities", version = "4.0.1" }
 libdd-data-pipeline-core = { path = "../libdd-data-pipeline-core", version = "4.0.0" }
 libdd-common = { version = "9.0.0", path = "../libdd-common", default-features = false, features = ["std"] }
+libdd-networking = { version = "1.0.0", path = "../libdd-networking" }
 libdd-shared-runtime = { version = "7.0.0", path = "../libdd-shared-runtime", default-features = false }
 libdd-telemetry = { version = "11.0.0", path = "../libdd-telemetry", default-features = false, features = ["std"], optional = true}
 libdd-trace-protobuf = { version = "5.1.1", path = "../libdd-trace-protobuf" }

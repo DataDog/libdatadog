@@ -11,7 +11,8 @@ use hashbrown::HashMap;
 use http::StatusCode;
 use http::uri::PathAndQuery;
 use libdd_capabilities::{HttpClientCapability, SleepCapability};
-use libdd_common::{Endpoint, MutexExt};
+use libdd_common::MutexExt;
+use libdd_networking::endpoint::Endpoint;
 use libdd_trace_protobuf::remoteconfig::{
     ClientGetConfigsRequest, ClientGetConfigsResponse, ClientState, ClientTracer, ConfigState,
     ConfigStatus, TargetFileHash, TargetFileMeta,

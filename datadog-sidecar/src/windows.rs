@@ -6,10 +6,10 @@ use libdd_ipc::platform::ProcessIdentityGuard;
 use libdd_ipc::{AsyncConn, SeqpacketListener};
 
 use futures::FutureExt;
-use libdd_networking::endpoint::Endpoint;
 use libdd_common::MutexExt;
 use libdd_common_ffi::CharSlice;
 use libdd_crashtracker_ffi::{Metadata, ddog_crasht_init_windows};
+use libdd_networking::endpoint::Endpoint;
 use manual_future::ManualFuture;
 use spawn_worker::{SpawnWorker, Stdio, TrampolineData, write_crashtracking_trampoline};
 use std::ffi::CStr;

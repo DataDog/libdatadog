@@ -460,7 +460,9 @@ pub mod tests {
                 ConfigInvariants {
                     language: "php".into(),
                     tracer_version: "test".into(),
-                    endpoint: libdd_networking::endpoint::Endpoint::from_slice("http://localhost:8126"),
+                    endpoint: libdd_networking::endpoint::Endpoint::from_slice(
+                        "http://localhost:8126",
+                    ),
                     agentless: None,
                 },
                 NativeCapabilities::new_periodic(),

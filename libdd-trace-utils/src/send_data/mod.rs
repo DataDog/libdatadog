@@ -15,13 +15,10 @@ use futures::StreamExt;
 use futures::stream::FuturesUnordered;
 use http::{HeaderMap, HeaderValue, header::CONTENT_TYPE};
 use libdd_capabilities::{HttpClientCapability, SleepCapability};
-use libdd_common::{
-    Endpoint,
-    header::{
-        APPLICATION_MSGPACK, APPLICATION_PROTOBUF, DATADOG_SEND_REAL_HTTP_STATUS,
-        DATADOG_TRACE_COUNT,
-    },
+use libdd_common::header::{
+    APPLICATION_MSGPACK, APPLICATION_PROTOBUF, DATADOG_SEND_REAL_HTTP_STATUS, DATADOG_TRACE_COUNT,
 };
+use libdd_networking::endpoint::Endpoint;
 use libdd_trace_protobuf::pb::{AgentPayload, TracerPayload};
 use send_data_result::SendDataResult;
 use std::collections::HashMap;

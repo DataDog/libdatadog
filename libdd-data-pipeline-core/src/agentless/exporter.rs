@@ -201,7 +201,7 @@ where
         http::HeaderValue::from_str(&config.api_key).map_err(|_| AgentlessError::InvalidApiKey)?;
     headers.insert(http::HeaderName::from_static("dd-api-key"), api_key);
 
-    let url = libdd_common::parse_uri(&config.endpoint_url)
+    let url = libdd_networking::endpoint::parse_uri(&config.endpoint_url)
         .map_err(|error| AgentlessError::InvalidEndpoint(error.to_string()))?;
     let target = Endpoint {
         url,

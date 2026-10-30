@@ -1,9 +1,9 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use libdd_networking::endpoint::Endpoint;
 use libdd_ipc::one_way_shared_memory::{OneWayShmReader, OneWayShmWriter, open_named_shm};
 use libdd_ipc::platform::{FileBackedHandle, MappedMem, NamedShmHandle, ShmHandle};
+use libdd_networking::endpoint::Endpoint;
 use std::ffi::CString;
 use std::hash::{Hash, Hasher};
 use std::io;
