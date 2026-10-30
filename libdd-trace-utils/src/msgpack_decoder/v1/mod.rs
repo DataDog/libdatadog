@@ -403,6 +403,10 @@ where
                 })?);
             }
             chunk_key::ATTRIBUTES => {
+                // TODO: move promoted tags (`libdd_trace_model::PROMOTED_CHUNK_TAGS`) found in the
+                // attributes to their dedicated fields, so decoded chunks uphold the model's
+                // contract that promoted tags never live in `attributes`. A dedicated field set on
+                // the wire should win over an attribute of the same name.
                 chunk.attributes = span::read_attributes_map(buf, table)?;
             }
             chunk_key::DROPPED_TRACE => {

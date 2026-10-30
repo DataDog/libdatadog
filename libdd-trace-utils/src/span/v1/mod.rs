@@ -92,8 +92,9 @@ pub struct Span<T: TraceData> {
     pub span_events: ThinVec<SpanEvent<T>>,
 }
 
-/// Implements [`libdd_trace_model::Attributes`] and [`libdd_trace_model::AttributesIter`] for a v1
-/// type storing its attributes in an `attributes: VecMap<T::Text, AttributeValue<T>>` field.
+/// Implements [`libdd_trace_model::Attributes`], [`libdd_trace_model::AttributesIter`] and
+/// [`libdd_trace_model::AttributesMut`] for a v1 type storing its attributes in an
+/// `attributes: VecMap<T::Text, AttributeValue<T>>` field.
 macro_rules! impl_vec_map_attributes {
     ($ty:ident) => {
         impl<T: TraceData> libdd_trace_model::Attributes for $ty<T> {
@@ -125,6 +126,31 @@ macro_rules! impl_vec_map_attributes {
 
             fn has_attribute(&self, key: &str) -> bool {
                 self.attributes.contains_key(key)
+            }
+        }
+
+        impl<T: TraceData> libdd_trace_model::AttributesMut for $ty<T> {
+            fn retain_attributes(
+                &mut self,
+                f: impl FnMut(&str, &mut libdd_trace_model::Value<Self>) -> bool,
+            ) {
+                libdd_trace_model::ValueMapMut::retain(&mut self.attributes, f);
+            }
+
+            fn attribute_mut(&mut self, key: &str) -> Option<&mut libdd_trace_model::Value<Self>> {
+                self.attributes.get_mut(key)
+            }
+
+            fn set_attribute(
+                &mut self,
+                key: impl Into<Self::Text>,
+                value: libdd_trace_model::Value<Self>,
+            ) {
+                self.attributes.insert_or_replace(key.into(), value);
+            }
+
+            fn remove_attribute(&mut self, key: &str) -> Option<libdd_trace_model::Value<Self>> {
+                self.attributes.remove(key)
             }
         }
     };
@@ -204,6 +230,64 @@ impl<T: TraceData> libdd_trace_model::Span for Span<T> {
     }
 }
 
+impl<T: TraceData> libdd_trace_model::SpanMut for Span<T> {
+    fn set_service(&mut self, value: impl Into<Self::Text>) {
+        self.service = value.into();
+    }
+
+    fn set_resource(&mut self, value: impl Into<Self::Text>) {
+        self.resource = value.into();
+    }
+
+    fn set_name(&mut self, value: impl Into<Self::Text>) {
+        self.name = value.into();
+    }
+
+    fn set_type(&mut self, value: impl Into<Self::Text>) {
+        self.r#type = value.into();
+    }
+
+    fn set_parent_id(&mut self, value: u64) {
+        self.parent_id = value;
+    }
+
+    fn set_start(&mut self, value: i64) {
+        self.start = value;
+    }
+
+    fn set_duration(&mut self, value: i64) {
+        self.duration = value;
+    }
+
+    fn set_error(&mut self, value: bool) {
+        self.error = value;
+    }
+
+    fn set_span_kind(&mut self, value: &str) {
+        self.span_kind = SpanKind::from_meta(value);
+    }
+
+    fn set_env(&mut self, value: impl Into<Self::Text>) {
+        self.env = value.into();
+    }
+
+    fn set_version(&mut self, value: impl Into<Self::Text>) {
+        self.version = value.into();
+    }
+
+    fn set_component(&mut self, value: impl Into<Self::Text>) {
+        self.component = value.into();
+    }
+
+    fn span_events_mut(&mut self) -> impl Iterator<Item = &mut Self::SpanEvent> {
+        self.span_events.iter_mut()
+    }
+
+    fn span_links_mut(&mut self) -> impl Iterator<Item = &mut Self::SpanLink> {
+        self.span_links.iter_mut()
+    }
+}
+
 /// Returns `text` as a `&str`, or `None` if it is empty.
 fn non_empty<T: TraceText>(text: &T) -> Option<&str> {
     Some(text.as_str()).filter(|s| !s.is_empty())
@@ -244,6 +328,32 @@ impl<T: TraceData> libdd_trace_model::TraceChunk for TraceChunk<T> {
 
     fn dropped_trace(&self) -> bool {
         self.dropped_trace
+    }
+}
+
+impl<T: TraceData> libdd_trace_model::TraceChunkMut for TraceChunk<T> {
+    fn set_origin(&mut self, value: impl Into<Self::Text>) {
+        self.origin = value.into();
+    }
+
+    fn set_priority(&mut self, priority: i32) {
+        self.priority = Some(priority);
+    }
+
+    fn set_sampling_mechanism(&mut self, mechanism: u32) {
+        self.sampling_mechanism = Some(mechanism);
+    }
+
+    fn set_dropped_trace(&mut self, value: bool) {
+        self.dropped_trace = value;
+    }
+
+    fn spans_mut(&mut self) -> impl Iterator<Item = &mut Self::Span> {
+        self.spans.iter_mut()
+    }
+
+    fn retain_spans(&mut self, f: impl FnMut(&mut Self::Span) -> bool) {
+        self.spans.retain_mut(f);
     }
 }
 
@@ -355,8 +465,9 @@ mod tests {
     use super::*;
     use libdd_tinybytes::BytesString;
     use libdd_trace_model::{
-        AttributeRef, Attributes as _, AttributesIter as _, ChunkSpanView, Span as _,
-        SpanEvent as _, SpanLink as _, TraceChunk as _,
+        AttributeRef, Attributes as _, AttributesIter as _, AttributesMut as _, ChunkSpanView,
+        Span as _, SpanEvent as _, SpanLink as _, SpanMut as _, TraceChunk as _,
+        TraceChunkMut as _,
     };
 
     #[test]
@@ -494,6 +605,241 @@ mod tests {
         assert_eq!(span.compat().attribute_f64("env"), None);
         // Empty text is unset.
         assert_eq!(SpanBytes::default().env(), None);
+    }
+
+    #[test]
+    fn model_mut_traits_write_v1_fields() {
+        let mut span = SpanBytes {
+            span_id: 1,
+            ..Default::default()
+        };
+        span.span_links.push(SpanLinkBytes::default());
+        span.span_events.push(SpanEventBytes::default());
+        for link in span.span_links_mut() {
+            link.set_attribute(BytesString::from_static("k"), AttributeValue::Bool(true));
+        }
+        for event in span.span_events_mut() {
+            event.set_attribute(BytesString::from_static("k"), AttributeValue::Int(1));
+        }
+        assert_eq!(
+            span.span_links[0].attributes.get("k"),
+            Some(&AttributeValue::Bool(true))
+        );
+        assert_eq!(span.span_events[0].attribute_i64("k"), Some(1));
+
+        span.set_service(BytesString::from_static("svc"));
+        span.set_resource(BytesString::from_static("GET /"));
+        span.set_name(BytesString::from_static("http.request"));
+        span.set_type(BytesString::from_static("web"));
+        span.set_parent_id(9);
+        span.set_start(10);
+        span.set_duration(20);
+        span.set_env(BytesString::from_static("prod"));
+        span.set_version(BytesString::from_static("1.2"));
+        span.set_component(BytesString::from_static("http"));
+        assert_eq!(
+            (span.service(), span.resource(), span.name(), span.typ()),
+            ("svc", "GET /", "http.request", "web")
+        );
+        assert_eq!(
+            (span.parent_id(), span.start(), span.duration()),
+            (9, 10, 20)
+        );
+        assert_eq!(
+            (span.env(), span.version(), span.component()),
+            (Some("prod"), Some("1.2"), Some("http"))
+        );
+        // The empty string unsets a text field.
+        span.set_env(BytesString::from_static(""));
+        assert_eq!(span.env(), None);
+
+        span.set_attribute(BytesString::from_static("big"), AttributeValue::Int(1));
+        if let Some(value) = span.attribute_mut("big") {
+            *value = AttributeValue::Int(i64::MAX);
+        }
+        assert_eq!(span.attribute_i64("big"), Some(i64::MAX));
+        assert_eq!(
+            span.remove_attribute("big"),
+            Some(AttributeValue::Int(i64::MAX))
+        );
+        assert_eq!(span.remove_attribute("big"), None);
+
+        let mut chunk = TraceChunkBytes {
+            spans: vec![span, SpanBytes::default()],
+            ..Default::default()
+        };
+        chunk.set_origin(BytesString::from_static("synthetics"));
+        chunk.set_priority(2);
+        chunk.set_sampling_mechanism(4);
+        chunk.set_dropped_trace(true);
+        assert_eq!(
+            (
+                chunk.origin(),
+                chunk.priority(),
+                chunk.sampling_mechanism(),
+                chunk.dropped_trace()
+            ),
+            ("synthetics", Some(2), Some(4), true)
+        );
+        // Chunk setters don't touch the attributes.
+        assert!(chunk.attributes.is_empty());
+
+        for span in chunk.spans_mut() {
+            span.set_error(true);
+        }
+        chunk.retain_spans(|span| span.span_id() == 1);
+        assert_eq!(chunk.spans.len(), 1);
+        assert!(chunk.spans[0].is_error());
+    }
+
+    #[test]
+    fn retain_attributes_sees_each_key_once() {
+        let mut span = SpanBytes::default();
+        // A shadowed duplicate, as a decoder may produce.
+        span.attributes
+            .insert(BytesString::from_static("k"), AttributeValue::Int(1));
+        span.attributes
+            .insert(BytesString::from_static("k"), AttributeValue::Int(2));
+        span.attributes
+            .insert(BytesString::from_static("drop"), AttributeValue::Int(3));
+        let mut seen = Vec::new();
+        span.retain_attributes(|key, value| {
+            seen.push((key.to_owned(), value.as_i64()));
+            if let AttributeValue::Int(i) = value {
+                *i += 10;
+            }
+            key != "drop"
+        });
+        seen.sort_unstable();
+        assert_eq!(
+            seen,
+            [("drop".to_owned(), Some(3)), ("k".to_owned(), Some(2))]
+        );
+        assert_eq!(span.attribute_i64("k"), Some(12));
+        assert!(!span.has_attribute("drop"));
+    }
+
+    #[test]
+    fn set_span_kind_maps_to_enum() {
+        let mut span = SpanBytes::default();
+        span.set_span_kind("client");
+        assert_eq!(span.span_kind, SpanKind::Client);
+        assert_eq!(span.span_kind(), Some("client"));
+        // Kinds outside the OTel ones read as unset.
+        span.set_span_kind("custom");
+        assert_eq!(span.span_kind(), None);
+    }
+
+    #[test]
+    fn plain_attribute_writes_skip_promoted_fields() {
+        let s = |v: &'static str| AttributeValue::String(BytesString::from_static(v));
+        let mut span = SpanBytes {
+            env: BytesString::from_static("prod"),
+            ..Default::default()
+        };
+        span.set_attribute(BytesString::from_static("env"), s("staging"));
+        assert_eq!(span.env(), Some("prod"));
+        assert_eq!(span.attribute_str("env"), Some("staging"));
+        assert_eq!(span.remove_attribute("env"), Some(s("staging")));
+        assert_eq!(span.env(), Some("prod"));
+    }
+
+    #[test]
+    fn compat_mut_redirects_promoted_span_tags_to_fields() {
+        let s = |v: &'static str| AttributeValue::String(BytesString::from_static(v));
+        let mut span = SpanBytes::default();
+        let compat = span.compat_mut();
+        compat.set_attribute(BytesString::from_static("span.kind"), s("server"));
+        compat.set_attribute(BytesString::from_static("env"), s("prod"));
+        compat.set_attribute(BytesString::from_static("version"), s("1.2"));
+        compat.set_attribute(BytesString::from_static("component"), s("http"));
+        // Values the field can't hold are dropped rather than stored as attributes.
+        compat.set_attribute(BytesString::from_static("env"), AttributeValue::Int(1));
+        compat.set_attribute(
+            BytesString::from_static("span.kind"),
+            AttributeValue::Bool(true),
+        );
+        // Other keys are plain attributes.
+        compat.set_attribute(BytesString::from_static("peer.service"), s("db"));
+        assert_eq!(compat.attribute_str("env"), Some("prod"));
+        assert_eq!(span.attributes.len(), 1);
+        assert_eq!(span.attribute_str("peer.service"), Some("db"));
+        assert_eq!(
+            (
+                span.span_kind,
+                span.env.as_str(),
+                span.version.as_str(),
+                span.component.as_str()
+            ),
+            (SpanKind::Server, "prod", "1.2", "http")
+        );
+        // The plain attribute getters still don't see promoted tags.
+        assert_eq!(span.attribute_str("env"), None);
+
+        let compat = span.compat_mut();
+        assert_eq!(compat.remove_attribute("span.kind"), Some(s("server")));
+        assert_eq!(compat.remove_attribute("env"), Some(s("prod")));
+        assert_eq!(compat.remove_attribute("env"), None);
+        assert_eq!(compat.remove_attribute("peer.service"), Some(s("db")));
+        assert_eq!((span.span_kind(), span.env()), (None, None));
+        assert_eq!(span.version(), Some("1.2"));
+        assert!(span.attributes.is_empty());
+
+        let compat = span.compat_mut();
+        assert_eq!(compat.remove_attribute("version"), Some(s("1.2")));
+        assert_eq!(compat.remove_attribute("component"), Some(s("http")));
+        assert_eq!((span.version(), span.component()), (None, None));
+    }
+
+    #[test]
+    fn compat_mut_writes_drop_hidden_attributes_of_promoted_tags() {
+        let s = |v: &'static str| AttributeValue::String(BytesString::from_static(v));
+        // Stale attributes, e.g. from a tracer whose tags weren't promoted.
+        let mut span = SpanBytes::default();
+        for key in ["env", "version", "component"] {
+            span.attributes
+                .insert(BytesString::from_static(key), s("stale"));
+        }
+
+        let compat = span.compat_mut();
+        compat.set_attribute(BytesString::from_static("env"), s("prod"));
+        // The field was unset: compat reads ignore the hidden attribute, so nothing is returned.
+        assert_eq!(compat.remove_attribute("version"), None);
+        // A value the field can't hold is dropped, and leaves the hidden attribute alone.
+        compat.set_attribute(
+            BytesString::from_static("component"),
+            AttributeValue::Int(1),
+        );
+        assert_eq!(span.env(), Some("prod"));
+        assert!(!span.has_attribute("env"));
+        assert!(!span.has_attribute("version"));
+        assert_eq!(span.attribute_str("component"), Some("stale"));
+    }
+
+    #[test]
+    fn compat_mut_hides_attributes_named_like_promoted_tags() {
+        let s = |v: &'static str| AttributeValue::String(BytesString::from_static(v));
+        let mut span = SpanBytes {
+            env: BytesString::from_static("prod"),
+            ..Default::default()
+        };
+        // A stale attribute, e.g. from a tracer that didn't promote it.
+        span.attributes
+            .insert(BytesString::from_static("env"), s("stale"));
+        span.attributes
+            .insert(BytesString::from_static("team"), s("core"));
+
+        let compat = span.compat_mut();
+        assert!(compat.attribute_mut("env").is_none());
+        let mut seen = Vec::new();
+        compat.retain_attributes(|key, _| {
+            seen.push(key.to_owned());
+            false
+        });
+        assert_eq!(seen, ["team"]);
+        // The hidden attribute is kept untouched.
+        assert_eq!(span.attribute_str("env"), Some("stale"));
+        assert!(!span.has_attribute("team"));
     }
 
     #[test]
