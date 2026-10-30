@@ -15,8 +15,7 @@
 //! `/v0.1/pipeline_stats` endpoint as the gzipped msgpack payload the Java and Go tracers send.
 
 use crate::service::connection_session::ConnectionSession;
-use base64::Engine;
-use base64::prelude::BASE64_URL_SAFE_NO_PAD;
+use crate::shm_path::keyed_shm_path;
 use flate2::Compression;
 use flate2::write::GzEncoder;
 use futures::future::join_all;
@@ -38,12 +37,11 @@ use libdd_trace_utils::tracer_header_tags::TracerHeaderTags;
 use serde::{Serialize, Serializer};
 use std::collections::{BTreeMap, HashMap};
 use std::ffi::CString;
-use std::hash::{Hash, Hasher};
+use std::hash::Hash;
 use std::io::Write;
 use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tracing::{debug, error, info, warn};
-use zwohash::ZwoHasher;
 
 /// Path of the agent's DSM endpoint.
 pub const PIPELINE_STATS_ENDPOINT_PATH: &str = "/v0.1/pipeline_stats";
@@ -96,32 +94,12 @@ pub struct DsmTableKey {
 
 /// Compute the SHM path for a DSM checkpoint table.
 pub fn dsm_checkpoint_shm_path(key: &DsmTableKey) -> CString {
-    shm_path("dddsm", key)
+    keyed_shm_path("dddsm", key)
 }
 
 /// Compute the SHM path for the DSM backlog table kept alongside a checkpoint table.
 pub fn dsm_backlog_shm_path(key: &DsmTableKey) -> CString {
-    shm_path("dddsb", key)
-}
-
-/// `prefix` tells a key's tables apart; it is not hashed, so that it keeps the checkpoint
-/// table's path what it was.
-fn shm_path(prefix: &str, key: &DsmTableKey) -> CString {
-    let mut hasher = ZwoHasher::default();
-    key.hash(&mut hasher);
-    let hash = hasher.finish();
-
-    let mut path = format!(
-        "/{prefix}{}-{}",
-        crate::shm_namespace(),
-        BASE64_URL_SAFE_NO_PAD.encode(hash.to_ne_bytes()),
-    );
-    if cfg!(unix) {
-        path.truncate(31);
-    }
-    // unwrap: CString::new only fails on a NUL byte, and `path` only contains [A-Za-z0-9/_-].
-    #[allow(clippy::unwrap_used)]
-    CString::new(path).unwrap()
+    keyed_shm_path("dddsb", key)
 }
 
 /// State held per [`DsmTableKey`].

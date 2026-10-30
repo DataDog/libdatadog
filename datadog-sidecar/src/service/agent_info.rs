@@ -8,9 +8,8 @@
 //! It writes the raw agent response to shared memory at a fixed per-endpoint location, to be
 //! consumed be tracers.
 
+use crate::shm_path::keyed_shm_path;
 use arc_swap::ArcSwap;
-use base64::Engine;
-use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use futures::FutureExt;
 use futures::future::Shared;
 use http::uri::PathAndQuery;
@@ -23,13 +22,12 @@ use libdd_ipc::platform::NamedShmHandle;
 use libdd_live_debugger::sender::agent_info_supports_debugger_v2_endpoint;
 use manual_future::{ManualFuture, ManualFutureCompleter};
 use std::ffi::CString;
-use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
 use tracing::{error, warn};
-use zwohash::{HashMap, ZwoHasher};
+use zwohash::HashMap;
 
 /// The map lock is only taken when a guard is created and when an idle fetcher retires; guards
 /// and readers of the fetched info never touch it, so per-connection guards stay uncontended.
@@ -210,19 +208,7 @@ impl AgentInfoFetcher {
 }
 
 fn info_path(endpoint: &Endpoint) -> CString {
-    let mut hasher = ZwoHasher::default();
-    endpoint.hash(&mut hasher);
-    let mut path = format!(
-        "/ddinf{}-{}",
-        crate::shm_namespace(),
-        BASE64_URL_SAFE_NO_PAD.encode(hasher.finish().to_ne_bytes()),
-    );
-    if cfg!(unix) {
-        path.truncate(31);
-    }
-
-    #[allow(clippy::unwrap_used)]
-    CString::new(path).unwrap()
+    keyed_shm_path("ddinf", endpoint)
 }
 
 pub struct AgentInfoReader {

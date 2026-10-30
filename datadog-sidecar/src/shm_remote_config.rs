@@ -2,6 +2,7 @@
 // License Version 2.0. This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
 use crate::service::{DynamicInstrumentationConfigState, InstanceId};
+use crate::shm_path::keyed_shm_path;
 use base64::Engine;
 use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use libdd_capabilities_impl::{HttpClientCapability, NativeCapabilities};
@@ -26,7 +27,6 @@ use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::default::Default;
 use std::ffi::{CStr, CString};
-use std::hash::{Hash, Hasher};
 use std::io;
 #[cfg(windows)]
 use std::io::Write;
@@ -37,7 +37,6 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::time::Instant;
 use tracing::{debug, error, trace, warn};
-use zwohash::ZwoHasher;
 
 pub struct RemoteConfigWriter {
     writer: OneWayShmWriter<NamedShmHandle>,
@@ -88,21 +87,7 @@ pub unsafe extern "C" fn ddog_set_rc_notify_fn(notify_fn: Option<InProcNotifyFn>
 }
 
 pub fn path_for_remote_config(id: &ConfigInvariants, target: &Arc<Target>) -> CString {
-    // We need a stable hash so that the outcome is independent of the process
-    let mut hasher = ZwoHasher::default();
-    id.hash(&mut hasher);
-    target.hash(&mut hasher);
-    let mut path = format!(
-        "/ddrc{}-{}",
-        crate::shm_namespace(),
-        BASE64_URL_SAFE_NO_PAD.encode(hasher.finish().to_ne_bytes()),
-    );
-    if cfg!(unix) {
-        path.truncate(31);
-    }
-
-    #[allow(clippy::unwrap_used)]
-    CString::new(path).unwrap()
+    keyed_shm_path("ddrc", &(id, target))
 }
 
 impl RemoteConfigReader {
@@ -870,6 +855,7 @@ mod tests {
     };
     use libdd_remote_config::fetch::test_server::RemoteConfigServer;
     use manual_future::ManualFuture;
+    use std::hash::{Hash, Hasher};
     use std::sync::LazyLock;
 
     static PATH_FIRST: LazyLock<RemoteConfigPath> = LazyLock::new(|| {

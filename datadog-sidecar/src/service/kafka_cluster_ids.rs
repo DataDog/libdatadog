@@ -26,13 +26,7 @@ const MAX_VALUE_LEN: usize = 1024;
 const MAX_CLUSTERS: usize = 64;
 
 fn shm_path() -> CString {
-    let mut path = format!("/dddkc{}", crate::shm_namespace());
-    if cfg!(unix) {
-        path.truncate(31);
-    }
-
-    #[allow(clippy::unwrap_used)]
-    CString::new(path).unwrap()
+    crate::shm_path::shm_path("dddkc", "")
 }
 
 fn is_keepable(bootstrap_servers: &str, cluster_id: &str) -> bool {
