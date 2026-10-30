@@ -126,7 +126,7 @@ pub struct ConfigFetcherState<S, C: HttpClientCapability + SleepCapability> {
     pub invariants: ConfigInvariants,
     endpoint: Endpoint,
     pub expire_unused_files: bool,
-    pub(in crate::fetch) http_client: C,
+    pub(super) http_client: C,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -259,7 +259,7 @@ pub struct ConfigClientState {
     last_error: Option<String>,
     /// Services discovered at runtime. Sent to the agent on each poll so it can route configs
     /// targeting those services to this client. Updated out-of-band by the consumer
-    pub(in crate::fetch) extra_services: Vec<String>,
+    pub(super) extra_services: Vec<String>,
     /// Server-recommended interval between consecutive polls.
     refresh_interval: Option<Duration>,
 }
