@@ -260,6 +260,11 @@ pub trait SidecarInterface {
         backlog: libdd_ipc::shm_dsm_backlog::OwnedDsmBacklog,
     );
 
+    /// Records that Kafka clients with `bootstrap_servers` reach the cluster `cluster_id`, and
+    /// shares it with the sidecar's other processes through the map in
+    /// [`kafka_cluster_ids`](crate::service::kafka_cluster_ids).
+    async fn set_kafka_cluster_id(bootstrap_servers: String, cluster_id: String);
+
     /// Starts the AppSec backend if it has not already been initialized.
     ///
     /// Returns only after initialization finishes, so subsequent AppSec messages

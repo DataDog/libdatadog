@@ -50,6 +50,7 @@ use crate::service::evp_proxy;
 use crate::service::ffe_exposures_flusher;
 use crate::service::ffe_flagevaluation_flusher;
 use crate::service::ffe_metrics_flusher;
+use crate::service::kafka_cluster_ids::KafkaClusterIds;
 #[cfg(windows)]
 use crate::service::remote_configs::RemoteConfigNotifyTarget;
 use crate::service::remote_configs::RemoteConfigs;
@@ -116,6 +117,9 @@ pub struct SidecarServer {
     pub(crate) span_concentrators: Arc<Mutex<HashMap<ConcentratorKey, Arc<SpanConcentratorState>>>>,
     /// Per-(env, version, service, primary tag) SHM DSM tables (global across all sessions).
     pub(crate) dsm_tables: DsmTables,
+    /// Kafka cluster ids by bootstrap servers, published for all processes (global across all
+    /// sessions).
+    pub(crate) kafka_cluster_ids: KafkaClusterIds,
     /// HTTP client shared by FFE fire-and-forget forwarders for connection reuse.
     pub(crate) ffe_http_client: NativeCapabilities,
     /// Sidecar-owned exposure cache, shared across sessions/connections.
@@ -1176,6 +1180,12 @@ impl SidecarInterface for ConnectionSidecarHandler {
         if let Some(state) = get_or_create_dsm_table(&self.server.dsm_tables, key, &session) {
             state.backlogs.add_backlog(&backlog.as_shm_input());
         }
+    }
+
+    async fn set_kafka_cluster_id(&mut self, bootstrap_servers: String, cluster_id: String) {
+        self.server
+            .kafka_cluster_ids
+            .set(bootstrap_servers, cluster_id);
     }
 
     async fn flush(&mut self, options: SidecarFlushOptions) {

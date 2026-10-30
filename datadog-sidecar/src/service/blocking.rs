@@ -572,6 +572,20 @@ pub fn add_dsm_backlog(
     Ok(transport.with_retry(|s| s.send(&request)))
 }
 
+/// Shares a Kafka cluster id with the sidecar's other processes. Returns whether it was sent, as
+/// [`add_dsm_checkpoint`] does.
+pub fn set_kafka_cluster_id(
+    transport: &mut SidecarTransport,
+    bootstrap_servers: String,
+    cluster_id: String,
+) -> io::Result<bool> {
+    let request = SidecarInterfaceRequest::SetKafkaClusterId {
+        bootstrap_servers,
+        cluster_id,
+    };
+    Ok(transport.with_retry(|s| s.send(&request)))
+}
+
 /// Starts the AppSec backend in the sidecar and waits for initialization to
 /// complete before returning.
 pub fn ensure_appsec_started(
@@ -645,7 +659,7 @@ mod tests {
     use crate::service::SidecarAction;
     use crate::service::blocking::{
         SidecarTransport, add_dsm_backlog, add_dsm_checkpoint, add_span_to_concentrator,
-        enqueue_actions, send_dogstatsd_actions,
+        enqueue_actions, send_dogstatsd_actions, set_kafka_cluster_id,
     };
     use crate::service::ffe_submission::FfeSubmissionStatus;
     use crate::service::sidecar_interface::{
@@ -1014,6 +1028,40 @@ mod tests {
                 assert_eq!(backlog.offset, 42);
             }
             _ => panic!("expected a DSM backlog"),
+        }
+
+        drop(peer);
+        assert!(!send(&mut transport));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn kafka_cluster_id_reports_whether_the_id_was_sent() {
+        let (conn, peer) = SeqpacketConn::socketpair().unwrap();
+        let mut transport = SidecarTransport::from(conn);
+        transport
+            .set_read_timeout(Some(Duration::from_millis(100)))
+            .unwrap();
+        let send = |transport: &mut SidecarTransport| {
+            set_kafka_cluster_id(
+                transport,
+                "kafka:9092".into(),
+                "5L6g3nShT-eMCtK--X86sw".into(),
+            )
+            .unwrap()
+        };
+        assert!(send(&mut transport));
+        let mut buf = [0; 1024];
+        let (len, _) = peer.try_recv_raw(&mut buf).unwrap();
+        match libdd_ipc::codec::decode::<SidecarInterfaceRequest>(&buf[..len]).unwrap() {
+            SidecarInterfaceRequest::SetKafkaClusterId {
+                bootstrap_servers,
+                cluster_id,
+            } => {
+                assert_eq!(bootstrap_servers, "kafka:9092");
+                assert_eq!(cluster_id, "5L6g3nShT-eMCtK--X86sw");
+            }
+            _ => panic!("expected a Kafka cluster id"),
         }
 
         drop(peer);
