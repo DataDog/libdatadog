@@ -13,7 +13,7 @@
 
 use libdd_common::MutexExt;
 use libdd_ipc::one_way_shared_memory::{OneWayShmReader, OneWayShmWriter, open_named_shm};
-use libdd_ipc::platform::{MappedMem, NamedShmHandle};
+use libdd_ipc::platform::NamedShmHandle;
 use std::collections::BTreeMap;
 use std::ffi::CString;
 use std::sync::{Arc, Mutex};
@@ -100,38 +100,31 @@ impl KafkaClusterIds {
 /// A process's side: the map the sidecar published, and the ids the process learned itself and
 /// the sidecar has not published yet.
 pub struct KafkaClusterIdReader {
-    /// `extra` names the segment to read in tests; `None` is the sidecar's segment.
-    reader: OneWayShmReader<NamedShmHandle, Option<CString>>,
+    /// `extra` gives the path of the segment to read, called again on each reconnect since the
+    /// sidecar's depends on which one the process talks to.
+    reader: OneWayShmReader<NamedShmHandle, fn() -> CString>,
     ids: BTreeMap<String, String>,
-}
-
-fn open(path: &Option<CString>) -> Option<MappedMem<NamedShmHandle>> {
-    match path {
-        Some(path) => open_named_shm(path).ok(),
-        None => open_named_shm(&shm_path()).ok(),
-    }
 }
 
 impl Default for KafkaClusterIdReader {
     fn default() -> Self {
-        Self::at(None)
+        Self::at(shm_path)
     }
 }
 
 impl KafkaClusterIdReader {
-    fn at(path: Option<CString>) -> Self {
+    fn at(path: fn() -> CString) -> Self {
         KafkaClusterIdReader {
-            reader: OneWayShmReader::new_with_opener(open(&path), path, open),
+            reader: OneWayShmReader::new_with_opener(open_named_shm(&path()).ok(), path, |path| {
+                open_named_shm(&path()).ok()
+            }),
             ids: BTreeMap::new(),
         }
     }
 
     /// Moves to the segment of the sidecar the process now talks to, if it changed.
     pub fn reconnect(&self) {
-        match &self.reader.extra {
-            Some(path) => self.reader.reconnect(path),
-            None => self.reader.reconnect(&shm_path()),
-        }
+        self.reader.reconnect(&(self.reader.extra)());
     }
 
     /// The cluster id of the clients with `bootstrap_servers`, if a process learned it.
@@ -190,7 +183,7 @@ mod tests {
     }
 
     fn reader() -> KafkaClusterIdReader {
-        KafkaClusterIdReader::at(Some(test_path()))
+        KafkaClusterIdReader::at(test_path)
     }
 
     #[test]
