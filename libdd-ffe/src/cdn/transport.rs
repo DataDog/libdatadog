@@ -54,7 +54,7 @@ pub(super) struct PollResponse {
 }
 
 pub(super) struct HyperTransport {
-    client: libdd_common::HttpClient,
+    client: http_common::HttpClient,
     language: String,
     version: String,
 }
