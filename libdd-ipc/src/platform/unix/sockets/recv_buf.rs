@@ -67,7 +67,15 @@ impl RecvBuf {
         if ptr == libc::MAP_FAILED {
             return Err(io::Error::last_os_error());
         }
-        let ptr = NonNull::new(ptr.cast()).ok_or_else(|| io::Error::other("mmap returned null"))?;
+        let ptr: NonNull<u8> =
+            NonNull::new(ptr.cast()).ok_or_else(|| io::Error::other("mmap returned null"))?;
+        // With transparent huge pages enabled system-wide, the first write would fault in a whole
+        // 2 MiB page, and keep it resident. Kernels without THP reject this, which is harmless.
+        #[cfg(target_os = "linux")]
+        // SAFETY: advises on the mapping just created.
+        unsafe {
+            libc::madvise(ptr.as_ptr().cast(), len, libc::MADV_NOHUGEPAGE)
+        };
         Ok(Self { ptr, len })
     }
 
