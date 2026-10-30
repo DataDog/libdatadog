@@ -133,6 +133,8 @@ fn invalid_dependency_conditions_are_isolated_to_the_containing_flag() {
         json!({"flagEvaluation": {"key": "parent"}, "operator": "ONE_OF", "value": []}),
         json!({"flagEvaluation": {"key": "parent"}, "operator": "NOT_ONE_OF", "value": []}),
         json!({"flagEvaluation": {"key": "parent"}, "attribute": "country", "operator": "ONE_OF", "value": ["on"]}),
+        json!({"flagEvaluation": {"key": "parent"}, "attribute": "", "operator": "ONE_OF", "value": ["on"]}),
+        json!({"flagEvaluation": {"key": "parent", "unexpected": true}, "operator": "ONE_OF", "value": ["on"]}),
         json!({"flagEvaluation": {"key": ""}, "operator": "ONE_OF", "value": ["on"]}),
         json!({"flagEvaluation": {"key": "parent"}, "operator": "IS_NULL", "value": false}),
         json!({"flagEvaluation": {"key": "parent"}, "operator": "ONE_OF", "value": "on"}),
@@ -301,6 +303,51 @@ fn depth_counts_edges_defaults_to_ten_and_preserves_explicit_zero() {
             );
         }
     }
+}
+
+#[test]
+fn depth_failures_record_the_terminal_dependency_and_ancestors() {
+    let mut w = chain(1);
+    w["evaluatorParams"] = json!({"maxDependencyDepth": 0});
+    let result = eval(w);
+    assert_eq!(
+        cause(result.result.as_ref().unwrap_err()),
+        &EvaluationError::DependencyDepthExceeded
+    );
+    assert_eq!(result.evaluations.len(), 1);
+    assert_eq!(result.evaluations[0].flag_key.as_str(), "f1");
+    assert_eq!(
+        result.evaluations[0].result.as_ref().unwrap_err(),
+        &EvaluationError::DependencyDepthExceeded
+    );
+
+    let mut w = chain(2);
+    w["evaluatorParams"] = json!({"maxDependencyDepth": 1});
+    let result = eval(w);
+    assert_eq!(
+        cause(result.result.as_ref().unwrap_err()),
+        &EvaluationError::DependencyDepthExceeded
+    );
+    assert_eq!(result.evaluations.len(), 2);
+    assert!(result.evaluations.iter().any(|record| {
+        record.flag_key.as_str() == "f2"
+            && record.result.as_ref().unwrap_err() == &EvaluationError::DependencyDepthExceeded
+    }));
+    assert!(result.evaluations.iter().any(|record| {
+        record.flag_key.as_str() == "f1"
+            && matches!(
+                record.result.as_ref().unwrap_err(),
+                EvaluationError::DependencyEvaluationFailed { flag_key, source }
+                    if flag_key.as_str() == "f2"
+                        && **source == EvaluationError::DependencyDepthExceeded
+            )
+    }));
+    assert!(
+        result
+            .evaluations
+            .iter()
+            .all(|record| !record.exposure_eligible)
+    );
 }
 
 #[test]

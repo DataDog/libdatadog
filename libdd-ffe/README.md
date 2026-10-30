@@ -135,3 +135,7 @@ successful rule/split path; a failed root has no eligible prerequisite exposures
 also apply each assignment's `do_log`, consent, and ordinary exposure deduplication policy.
 The trace does not emit telemetry itself. SDKs should advertise dependent-flag support only
 after integrating and testing both evaluation and exposure reporting.
+
+Prerequisite records are returned after the root evaluation completes and have no ordering
+contract. Evaluation records are non-transactional and remain available when a later condition
+or the root fails. The C FFI exposes them as borrowed records owned by the root result handle.

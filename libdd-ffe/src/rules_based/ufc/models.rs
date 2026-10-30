@@ -278,6 +278,7 @@ pub(crate) struct ConditionWire {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct FlagEvaluationWire {
     pub key: Str,
 }
@@ -362,12 +363,7 @@ impl TryFrom<ConditionWire> for Condition {
 
     fn try_from(condition: ConditionWire) -> Result<Self, Self::Error> {
         if let Some(reference) = condition.flag_evaluation {
-            if condition
-                .attribute
-                .as_ref()
-                .is_some_and(|attribute| !attribute.is_empty())
-                || reference.key.is_empty()
-            {
+            if condition.attribute.is_some() || reference.key.is_empty() {
                 return Err(EvaluationError::ConfigurationParseError);
             }
             let expected_membership = match condition.operator {
