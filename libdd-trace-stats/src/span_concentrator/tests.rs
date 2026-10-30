@@ -97,6 +97,61 @@ fn assert_counts_equal(expected: Vec<pb::ClientGroupedStats>, actual: Vec<pb::Cl
     assert_eq!(expected_map, actual_map)
 }
 
+#[test]
+fn formal_counterexample_nonzero_bucket_must_not_become_zero() {
+    SpanConcentrator::new(
+        Duration::new(18_446_744_073, 709_551_616),
+        UNIX_EPOCH,
+        vec![],
+        vec![],
+        None,
+        vec![],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
+    );
+}
+
+#[test]
+fn formal_counterexample_flush_at_epoch_must_not_underflow() {
+    let mut concentrator = SpanConcentrator::new(
+        Duration::from_nanos(1),
+        UNIX_EPOCH,
+        vec![],
+        vec![],
+        None,
+        vec![],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
+    );
+
+    concentrator.flush(UNIX_EPOCH, false);
+    assert_eq!(concentrator.oldest_timestamp, 0);
+}
+
+#[test]
+fn formal_counterexample_span_end_must_not_overflow() {
+    let mut concentrator = SpanConcentrator::new(
+        Duration::from_nanos(1),
+        UNIX_EPOCH,
+        vec!["server".to_owned()],
+        vec![],
+        None,
+        vec![],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
+    );
+    let mut span = SpanSlice {
+        start: i64::MAX,
+        duration: 1,
+        ..Default::default()
+    };
+    span.meta
+        .insert(Cow::Borrowed("span.kind"), Cow::Borrowed("server"));
+
+    concentrator.add_span(&span);
+    assert!(concentrator.buckets.is_empty());
+}
+
 /// Test that the SpanConcentrator does not create buckets older than the exporter initialization
 #[test]
 fn test_concentrator_oldest_timestamp_cold() {
