@@ -580,10 +580,10 @@ mod tests {
 
         let mut field_names = Vec::new();
         for line in payload_str.split("\r\n") {
-            if let Some(rest) = line.strip_prefix("Content-Disposition: form-data; name=\"") {
-                if let Some(end) = rest.find('"') {
-                    field_names.push(rest[..end].to_string());
-                }
+            if let Some(rest) = line.strip_prefix("Content-Disposition: form-data; name=\"")
+                && let Some(end) = rest.find('"')
+            {
+                field_names.push(rest[..end].to_string());
             }
         }
         assert_eq!(

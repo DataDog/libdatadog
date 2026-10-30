@@ -594,11 +594,11 @@ impl TelemetryCachedClient {
             };
 
             let now = SystemTime::now();
-            if let Some((last_update, actions)) = cache.get(&path) {
-                if modification < *last_update {
-                    completer.complete(actions.clone()).await;
-                    return;
-                }
+            if let Some((last_update, actions)) = cache.get(&path)
+                && modification < *last_update
+            {
+                completer.complete(actions.clone()).await;
+                return;
             }
 
             async fn parse(mut file: tokio::fs::File) -> anyhow::Result<Vec<data::Dependency>> {

@@ -37,6 +37,10 @@ pub struct Profiling {
     pub target_lib: Rc<str>,
     pub target_pkconfig: Rc<str>,
     pub version: Rc<str>,
+    /// Overrides the `FileVersion` embedded in the Windows artifacts' `VERSIONINFO`
+    /// resource. Forwarded to the build script through `LIBDATADOG_PACKAGE_VERSION`;
+    /// `None` leaves it at the libdatadog release version.
+    pub file_version: Option<Rc<str>>,
 }
 
 impl Profiling {
@@ -169,12 +173,15 @@ impl Module for Profiling {
             let mut args = cargo_args.clone();
             args.append(&mut vec!["--crate-type", crate_type]);
 
-            let cargo = Command::new("cargo")
+            let mut cargo = Command::new("cargo");
+            cargo
                 .env("RUSTFLAGS", arch::RUSTFLAGS.join(" "))
                 .current_dir(project_root())
-                .args(args)
-                .spawn()
-                .expect("failed to spawn cargo");
+                .args(args);
+            if let Some(file_version) = &self.file_version {
+                cargo.env("LIBDATADOG_PACKAGE_VERSION", file_version.as_ref());
+            }
+            let cargo = cargo.spawn().expect("failed to spawn cargo");
 
             wait_for_success(cargo, "Cargo");
         }

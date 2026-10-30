@@ -92,6 +92,5 @@ require-regex-full = ["std"]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage)'] }
 
 [lints.clippy]
-collapsible_if = "allow"
 std_instead_of_alloc = "warn"
 std_instead_of_core = "warn"

@@ -56,10 +56,10 @@ impl<T> SmallSegmentMap<T> {
     /// Get an immutable reference to a segment by ID.
     #[inline]
     pub fn get(&self, key: &u64) -> Option<&Segment<T>> {
-        if let Some(ref val) = self.inline_val {
-            if self.inline_key == *key {
-                return Some(val);
-            }
+        if let Some(ref val) = self.inline_val
+            && self.inline_key == *key
+        {
+            return Some(val);
         }
         self.overflow
             .iter()
@@ -70,10 +70,10 @@ impl<T> SmallSegmentMap<T> {
     /// Get a mutable reference to a segment by ID.
     #[inline]
     pub fn get_mut(&mut self, key: &u64) -> Option<&mut Segment<T>> {
-        if let Some(ref mut val) = self.inline_val {
-            if self.inline_key == *key {
-                return Some(val);
-            }
+        if let Some(ref mut val) = self.inline_val
+            && self.inline_key == *key
+        {
+            return Some(val);
         }
         self.overflow
             .iter_mut()

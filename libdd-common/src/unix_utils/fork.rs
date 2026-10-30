@@ -73,21 +73,22 @@ fn is_being_traced_internal(mut file: File) -> io::Result<bool> {
     }
 
     // Check remaining data without newline at EOF
-    if offset < data_len {
-        if let Some(result) = check_tracer_pid_line(&buffer[offset..data_len], TRACER_PID_MARKER)? {
-            return Ok(result);
-        }
+    if offset < data_len
+        && let Some(result) = check_tracer_pid_line(&buffer[offset..data_len], TRACER_PID_MARKER)?
+    {
+        return Ok(result);
     }
     Ok(false)
 }
 
 #[cfg(target_os = "linux")]
 fn check_tracer_pid_line(line: &[u8], marker: &[u8]) -> io::Result<Option<bool>> {
-    if line.starts_with(marker) && line.len() > marker.len() {
-        if let Ok(line_str) = core::str::from_utf8(line) {
-            let tracer_pid = line_str.split_whitespace().nth(1).unwrap_or("0");
-            return Ok(Some(tracer_pid != "0"));
-        }
+    if line.starts_with(marker)
+        && line.len() > marker.len()
+        && let Ok(line_str) = core::str::from_utf8(line)
+    {
+        let tracer_pid = line_str.split_whitespace().nth(1).unwrap_or("0");
+        return Ok(Some(tracer_pid != "0"));
     }
     Ok(None)
 }

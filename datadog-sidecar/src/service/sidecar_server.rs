@@ -354,12 +354,11 @@ impl ConnectionSidecarHandler {
             // Auto-register any metrics known to this connection but not yet registered
             // in this telemetry client (e.g., the client was just created for a new service/env).
             for action in &actions {
-                if let SidecarAction::AddTelemetryMetricPoint((name, _, _)) = action {
-                    if !telemetry.telemetry_metrics.contains_key(name) {
-                        if let Some(metric) = connection_metric_registrations.get(name) {
-                            telemetry.register_metric(metric.clone());
-                        }
-                    }
+                if let SidecarAction::AddTelemetryMetricPoint((name, _, _)) = action
+                    && !telemetry.telemetry_metrics.contains_key(name)
+                    && let Some(metric) = connection_metric_registrations.get(name)
+                {
+                    telemetry.register_metric(metric.clone());
                 }
             }
 
@@ -884,15 +883,15 @@ impl SidecarInterface for ConnectionSidecarHandler {
                 }
                 None => current.insert(ActiveApplication::new(config)),
             };
-            if let Some(session) = session {
-                if let Some(notify_target) = session.notify_target() {
-                    app.update_remote_config(
-                        &self.server.remote_configs,
-                        &session,
-                        remote_config_generation,
-                        notify_target,
-                    );
-                }
+            if let Some(session) = session
+                && let Some(notify_target) = session.notify_target()
+            {
+                app.update_remote_config(
+                    &self.server.remote_configs,
+                    &session,
+                    remote_config_generation,
+                    notify_target,
+                );
             }
         });
     }
@@ -1387,10 +1386,10 @@ mod tests {
 
             let deadline = Instant::now() + Duration::from_secs(5);
             let retired_before_removal = loop {
-                if let Ok(guard) = client.try_lock() {
-                    if guard.is_none() {
-                        break true;
-                    }
+                if let Ok(guard) = client.try_lock()
+                    && guard.is_none()
+                {
+                    break true;
                 }
                 if Instant::now() >= deadline {
                     break false;

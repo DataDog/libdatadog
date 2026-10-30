@@ -601,10 +601,11 @@ fn visit_dirs(dir: &Path, cb: &mut dyn FnMut(&Path)) {
                 cb(&path);
             } else if path.is_dir() {
                 // Skip CMake internal directories
-                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                    if name != "CMakeFiles" && name != "_deps" {
-                        visit_dirs(&path, cb);
-                    }
+                if let Some(name) = path.file_name().and_then(|n| n.to_str())
+                    && name != "CMakeFiles"
+                    && name != "_deps"
+                {
+                    visit_dirs(&path, cb);
                 }
             }
         }
@@ -656,10 +657,10 @@ fn run_examples(
         };
 
         // Apply filter
-        if let Some(f) = filter {
-            if !name.contains(f) {
-                continue;
-            }
+        if let Some(f) = filter
+            && !name.contains(f)
+        {
+            continue;
         }
 
         // Check skip list

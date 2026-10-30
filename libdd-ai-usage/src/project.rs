@@ -221,13 +221,13 @@ fn check_token_sources(
         ("input_token_source", input),
         ("output_token_source", output),
     ] {
-        if let Some(value) = value.as_deref() {
-            if !TOKEN_SOURCES.contains(&value) {
-                return reject(
-                    ErrorCode::ValueNotAllowed,
-                    format!("{name} must be reported or estimated"),
-                );
-            }
+        if let Some(value) = value.as_deref()
+            && !TOKEN_SOURCES.contains(&value)
+        {
+            return reject(
+                ErrorCode::ValueNotAllowed,
+                format!("{name} must be reported or estimated"),
+            );
         }
     }
     Ok((estimated_side(input), estimated_side(output)))
@@ -335,13 +335,13 @@ fn check_cost(o: &ProviderAttemptObservation) -> Result<Option<Cost<'_>>, Metric
     };
     let from_nano = o.cost_nano_usd.map(nano_usd_from_number);
     let from_usd = o.cost_usd.map(nano_usd_from_usd);
-    if let (Some(Some(nano)), Some(Some(usd))) = (from_nano, from_usd) {
-        if nano != usd {
-            return reject(
-                ErrorCode::FieldsContradict,
-                "cost_usd and cost_nano_usd state different amounts",
-            );
-        }
+    if let (Some(Some(nano)), Some(Some(usd))) = (from_nano, from_usd)
+        && nano != usd
+    {
+        return reject(
+            ErrorCode::FieldsContradict,
+            "cost_usd and cost_nano_usd state different amounts",
+        );
     }
     // A calculated cost is arithmetic over reported usage, which an
     // estimated side is not.
@@ -781,13 +781,13 @@ pub fn project_gateway_request(o: &GatewayRequestObservation) -> Result<Projecti
     }
     let estimated_from_nano = o.estimated_cost_nano_usd.map(nano_usd_from_number);
     let estimated_from_usd = o.estimated_cost_usd.map(nano_usd_from_usd);
-    if let (Some(Some(nano)), Some(Some(usd))) = (estimated_from_nano, estimated_from_usd) {
-        if nano != usd {
-            return reject(
-                ErrorCode::FieldsContradict,
-                "estimated_cost_usd and estimated_cost_nano_usd disagree",
-            );
-        }
+    if let (Some(Some(nano)), Some(Some(usd))) = (estimated_from_nano, estimated_from_usd)
+        && nano != usd
+    {
+        return reject(
+            ErrorCode::FieldsContradict,
+            "estimated_cost_usd and estimated_cost_nano_usd disagree",
+        );
     }
     let error_type = check_error_type(&o.error_type)?;
     // Only a gateway observes a logical gateway request.

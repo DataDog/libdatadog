@@ -357,10 +357,10 @@ impl ConnectionSession {
             if let Ok(tag) = Tag::new("svc.user", "true") {
                 tags.push(tag);
             }
-        } else if let Some(name) = self.auto_resolved_service_name.as_ref() {
-            if let Ok(tag) = Tag::new("svc.auto", name.clone()) {
-                tags.push(tag);
-            }
+        } else if let Some(name) = self.auto_resolved_service_name.as_ref()
+            && let Ok(tag) = Tag::new("svc.auto", name.clone())
+        {
+            tags.push(tag);
         }
         tags
     }
@@ -450,12 +450,10 @@ impl ConnectionSession {
             }
 
             let mut sender = guard.lock().await;
-            if new_tags {
-                if let Some(sender) = sender.take() {
-                    spawn_map_err!(finish_sender(debugger_type, sender), |e| {
-                        error!("Error sending to live debugger {debugger_type:?} endpoint: {e:?}");
-                    });
-                }
+            if new_tags && let Some(sender) = sender.take() {
+                spawn_map_err!(finish_sender(debugger_type, sender), |e| {
+                    error!("Error sending to live debugger {debugger_type:?} endpoint: {e:?}");
+                });
             }
             if sender.is_none() {
                 *sender = Some(PayloadSender::new(
