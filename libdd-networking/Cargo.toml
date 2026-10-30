@@ -1,23 +1,74 @@
 [package]
 name = "libdd-networking"
 version = "1.0.0"
+edition.workspace = true
+rust-version.workspace = true
 description = "Shared networking utilities for Datadog libraries"
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-networking"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-networking"
-edition.workspace = true
-rust-version.workspace = true
 license.workspace = true
-
 
 [dependencies]
 anyhow.workspace = true
+bytes = { workspace = true, features = ["std"] }
 hex.workspace = true
+pin-project = { workspace = true}
 http.workspace = true
 httparse.workspace = true
+hyper-rustls = { workspace = true, features = ["http1", "tls12"], optional = true }
 libdd-common = { path = "../libdd-common", version = "9.0.0" }
 rand = { workspace = true, default-features = true }
+# Use hickory-dns instead of the default system DNS resolver to avoid fork safety issues.
+# The default resolver can hold locks or other global state that can cause deadlocks
+# or corruption when the process forks (e.g., in PHP-FPM or other forking environments).
+# Use rustls-no-provider instead of rustls to avoid reqwest forcing aws-lc-rs as the crypto
+# backend. We install the ring provider explicitly in connector/mod.rs instead.
+reqwest = { workspace = true, features = ["hickory-dns", "rustls-no-provider"], optional = true }
+# Declare rustls and hyper-rustls without a crypto provider. The provider is
+# selected via features: `https` enables ring, `fips` enables aws-lc-rs.
+rustls = { workspace = true, optional = true }
+rustls-platform-verifier = { workspace = true, optional = true }
+# Unused; pins a floor on this transitive-only dep since rustls itself only requires ^0.103.5.
+rustls-webpki = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"] }
 tokio.workspace = true
+webpki-root-certs = { workspace = true, optional = true }
+webpki-roots = { workspace = true, optional = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+futures = { workspace = true, features = ["alloc", "executor"] }
+http-body = { workspace = true, optional = true }
+http-body-util = { workspace = true, optional = true }
+# Target gating keeps these dependencies out of WASM. They are also optional so
+# native callers using host-managed capabilities do not pull in an HTTP runtime.
+hyper = { workspace = true, features = ["client", "http1"], optional = true }
+hyper-util = { workspace = true, features = ["client", "client-legacy", "http1"], optional = true }
+thiserror = { workspace = true, default-features = true }
+tokio = { workspace = true, features = ["fs", "io-util", "macros", "net", "rt", "rt-multi-thread", "time"], optional = true }
+tower-service = { workspace = true, optional = true }
 
 [features]
-reqwest = []
+# FIPS mode uses the FIPS-compliant cryptographic provider (Unix only)
+fips = ["hyper-rustls/fips", "tls-core"]
+http-client = [
+  "dep:http-body",
+  "dep:http-body-util",
+  "dep:hyper",
+  "dep:hyper-util",
+  "dep:tokio",
+  "dep:tower-service",
+]
+# Default HTTPS: ring as crypto provider
+https = ["hyper-rustls/ring", "rustls/ring", "tls-core"]
+# Honor HTTP(S)_PROXY/NO_PROXY environment variables for the hyper connector,
+hyper-proxy = ["http-client", "hyper-util/client-proxy"]
+reqwest = ["dep:reqwest"]
+# TLS plumbing without a crypto provider. Use `https` or `fips` to select one.
+tls-core = ["dep:hyper-rustls", "dep:rustls", "dep:rustls-platform-verifier", "http-client"]
+# Expose the compromised-key distrust verifier (RUSTSEC-2026-0382 mitigation)
+# for crates that build their own TLS configurations, without enabling libdd-common's own connector TLS stack.
+tls-distrust = ["dep:rustls", "dep:rustls-platform-verifier"]
+use_webpki_roots = ["dep:webpki-root-certs", "dep:webpki-roots", "hyper-rustls/webpki-roots"]
+
+# [package.metadata.cargo-machete]
+# ignored = ["webpki-roots", "webpki-root-certs"]

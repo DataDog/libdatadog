@@ -22,7 +22,7 @@ default = ["https", "reqwest-backend"]
 https = [
   "dep:reqwest",
   "reqwest?/rustls-no-provider",
-  "libdd-common?/https",
+  # "libdd-networking?/https",
   "dep:rustls",
   "rustls?/ring",
   "rustls?/tls12",
@@ -31,20 +31,23 @@ https = [
 reqwest-backend = ["dep:reqwest", "reqwest?/hickory-dns", "reqwest?/multipart"]
 hyper-backend = [
     "dep:libdd-common",
-    "libdd-common/http-client",
+    # "libdd-networking/http-client",
     "dep:hyper",
     "dep:hyper-util",
     "dep:http-body-util",
 ]
 # Honor HTTPS_PROXY/NO_PROXY environment variables in the hyper backend.
-hyper-proxy = ["hyper-backend", "libdd-common?/hyper-proxy"]
+hyper-proxy = [
+    "hyper-backend",
+    # "libdd-networking?/hyper-proxy" # FIXME
+]
 fips = [
   "dep:reqwest",
   "reqwest?/rustls-no-provider",
   "dep:rustls",
   "rustls?/aws-lc-rs",
   "rustls?/tls12",
-  "libdd-common?/fips",
+  # "libdd-networking?/fips",
   "dep:rustls-platform-verifier",
 ]
 

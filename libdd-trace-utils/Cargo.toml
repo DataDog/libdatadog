@@ -99,16 +99,14 @@ tempfile.workspace = true
 
 [features]
 default = ["https"]
-https = ["libdd-common/https", "dep:libdd-capabilities-impl", "libdd-capabilities-impl/https"]
+https = ["libdd-networking/https", "dep:libdd-capabilities-impl", "libdd-capabilities-impl/https"]
 mini_agent = [
     "compression",
-    "libdd-common/http-client",
-    "libdd-common/use_webpki_roots",
+    "libdd-networking/use_webpki_roots",
     "dep:flate2",
 ]
 test-utils = [
     "dep:tokio",
-    "libdd-common/http-client",
     "hyper/server",
     "httpmock",
     "cargo_metadata",
@@ -123,7 +121,7 @@ compression = ["zstd"]
 # target: zstd on native platforms and zrip on WASM.
 zstd = ["dep:zstd", "dep:zrip"]
 # FIPS mode uses the FIPS-compliant cryptographic provider (Unix only)
-fips = ["libdd-common/fips", "dep:libdd-capabilities-impl", "libdd-capabilities-impl/fips"]
+fips = ["libdd-networking/fips", "dep:libdd-capabilities-impl", "libdd-capabilities-impl/fips"]
 
 [lints.clippy]
 # TODO(paullgdc): This fails a lot because of if-let chaining which became

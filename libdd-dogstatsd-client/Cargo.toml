@@ -25,8 +25,8 @@ async-trait = { workspace = true, optional = true }
 
 [features]
 default = ["https"]
-https = ["libdd-common/https"]
-fips = ["libdd-common/fips"]
+https = ["libdd-networking/https"]
+fips = ["libdd-networking/fips"]
 shared-runtime = ["dep:libdd-shared-runtime", "dep:tokio", "dep:async-trait"]
 
 [dev-dependencies]

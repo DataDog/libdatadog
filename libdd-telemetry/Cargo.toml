@@ -55,8 +55,8 @@ std = [
     "serde_json/std",
 ]
 tracing = ["std", "tracing/std"]
-https = ["std", "libdd-common/https", "libdd-shared-runtime/https"]
-fips = ["std", "libdd-common/fips", "libdd-shared-runtime/fips"]
+https = ["std", "libdd-networking/https", "libdd-shared-runtime/https"]
+fips = ["std", "libdd-networking/fips", "libdd-shared-runtime/fips"]
 
 [dependencies]
 anyhow = { workspace = true, optional = true }

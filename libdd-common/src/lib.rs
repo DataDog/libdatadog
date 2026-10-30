@@ -14,14 +14,10 @@ extern crate alloc;
 pub mod azure_app_services;
 #[cfg(feature = "std")]
 pub mod config;
-#[cfg(all(feature = "std", not(target_arch = "wasm32")))]
-pub mod connector;
 #[cfg(feature = "std")]
 pub mod entity_id;
 #[cfg(feature = "std")]
 pub mod error;
-#[cfg(feature = "http-client")]
-pub mod http_common;
 #[cfg(feature = "std")]
 mod lock_ext;
 #[cfg(feature = "std")]
@@ -98,21 +94,6 @@ pub mod header {
         HeaderValue::from_static(APPLICATION_PROTOBUF_STR);
     pub const X_DATADOG_TEST_SESSION_TOKEN: HeaderName =
         HeaderName::from_static("x-datadog-test-session-token");
-}
-
-#[cfg(all(not(target_arch = "wasm32"), feature = "http-client"))]
-pub type HttpClient = http_common::GenericHttpClient<connector::Connector>;
-#[cfg(all(not(target_arch = "wasm32"), feature = "http-client"))]
-pub type HttpResponse = http_common::HttpResponse;
-#[cfg(all(not(target_arch = "wasm32"), feature = "http-client"))]
-pub trait Connect:
-    hyper_util::client::legacy::connect::Connect + Clone + Send + Sync + 'static
-{
-}
-#[cfg(all(not(target_arch = "wasm32"), feature = "http-client"))]
-impl<C: hyper_util::client::legacy::connect::Connect + Clone + Send + Sync + 'static> Connect
-    for C
-{
 }
 
 #[cfg(feature = "std")]

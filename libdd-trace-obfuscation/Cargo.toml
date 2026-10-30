@@ -26,8 +26,8 @@ libdd-common = { version = "9.0.0", path = "../libdd-common", default-features =
 
 [features]
 default = ["https"]
-https = ["libdd-common/https", "libdd-trace-utils/https"]
-fips = ["libdd-common/fips", "libdd-trace-utils/fips"]
+https = ["libdd-trace-utils/https"]
+fips = ["libdd-trace-utils/fips"]
 regex-lite = ["libdd-common/regex-lite"]
 
 [dev-dependencies]

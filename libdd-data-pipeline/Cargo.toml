@@ -115,7 +115,7 @@ required-features = ["stats-obfuscation"]
 default = ["https", "telemetry"]
 telemetry = ["libdd-telemetry", "libdd-trace-stats/telemetry"]
 https = [
-    "libdd-common/https",
+    "libdd-networking/https",
     "libdd-capabilities-impl/https",
     "libdd-shared-runtime/https",
     "libdd-telemetry?/https",
@@ -136,7 +136,7 @@ stats-obfuscation = [
 ]
 
 fips = [
-    "libdd-common/fips",
+    "libdd-networking/fips",
     "libdd-capabilities-impl/fips",
     "libdd-shared-runtime/fips",
     "libdd-telemetry?/fips",
