@@ -13,8 +13,6 @@ publish = false
 bench = false
 
 [features]
-default = ["tracing"]
-tracing = ["tracing/std", "tracing-log", "tracing-subscriber"]
 tokio-console = ["tokio/full", "tokio/tracing", "console-subscriber"]
 stats-obfuscation = ["libdd-trace-stats/stats-obfuscation", "libdd-data-pipeline/stats-obfuscation"]
 
@@ -58,9 +56,9 @@ tokio-util = { workspace = true, features = ["codec"] }
 
 prctl.workspace = true
 sys-info.workspace = true
-tracing.workspace = true
-tracing-log = { workspace = true, default-features = true, optional = true }
-tracing-subscriber = { workspace = true, features = ["std", "fmt", "env-filter"], optional = true }
+tracing = { workspace = true, features = ["std"] }
+tracing-log = { workspace = true, default-features = true }
+tracing-subscriber = { workspace = true, features = ["std", "fmt", "env-filter"] }
 chrono = { workspace = true, features = ["clock", "std"] }
 console-subscriber = { workspace = true, default-features = true, optional = true }
 crossbeam-utils = { workspace = true, default-features = true }

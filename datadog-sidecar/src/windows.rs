@@ -34,7 +34,6 @@ pub mod remote_config_notification;
 /// cbindgen:ignore
 #[unsafe(no_mangle)]
 pub extern "C" fn ddog_daemon_entry_point(_trampoline_data: &TrampolineData) {
-    #[cfg(feature = "tracing")]
     crate::log::enable_logging().ok();
 
     // Restore the pipe buffer size the PHP parent process configured before spawning us,

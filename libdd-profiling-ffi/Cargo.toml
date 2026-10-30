@@ -59,7 +59,8 @@ crashtracker-collector = ["crashtracker-ffi", "libdd-crashtracker-ffi/collector"
 crashtracker-receiver = ["crashtracker-ffi", "libdd-crashtracker-ffi/receiver"]
 demangler = ["crashtracker-ffi", "libdd-crashtracker-ffi/demangler"]
 datadog-library-config-ffi = ["dep:libdd-library-config-ffi", "libdd-library-config-ffi/std"]
-ddcommon-ffi = ["dep:libdd-common-ffi", "libdd-common-ffi/std"]
+# Re-exports `libdd-common-ffi`; the dependency itself is always required.
+ddcommon-ffi = []
 ddsketch-ffi = ["dep:libdd-ddsketch-ffi"]
 libdd-ffe-ffi = ["dep:libdd-ffe-ffi"]
 shared-runtime = ["dep:libdd-shared-runtime-ffi"]
@@ -77,7 +78,7 @@ libdd-crashtracker-ffi = { path = "../libdd-crashtracker-ffi", default-features 
 libdd-library-config-ffi = {  path = "../libdd-library-config-ffi", default-features = false, optional = true }
 libdd-profiling = { path = "../libdd-profiling" }
 libdd-common = { path = "../libdd-common" }
-libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false, optional = true, features = ["std"] }
+libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false, features = ["std"] }
 libdd-telemetry-ffi = { path = "../libdd-telemetry-ffi", default-features = false, optional = true, features = ["expanded_builder_macros"] }
 libdd-ddsketch-ffi = { path = "../libdd-ddsketch-ffi", default-features = false, optional = true }
 libdd-log-ffi = { path = "../libdd-log-ffi", default-features = false, optional = true }
