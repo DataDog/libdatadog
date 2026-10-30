@@ -1,7 +1,12 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{cmp::Ordering, collections::HashMap, num::NonZeroU32, sync::Arc};
+use std::{
+    cmp::Ordering,
+    collections::{HashMap, HashSet},
+    num::NonZeroU32,
+    sync::Arc,
+};
 
 use libdd_common::regex_engine::Regex;
 use serde::{Deserialize, Serialize};
@@ -622,6 +627,93 @@ impl From<Vec<String>> for ConditionValue {
     }
 }
 
+/// Value of a feature attached to a split. The server emits string, number or boolean values;
+/// other value types are rejected during parsing.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum FeatureValue {
+    String(Str),
+    Number(f64),
+    Boolean(bool),
+}
+
+/// A feature attached to a split.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Feature {
+    pub key: Str,
+    pub value: FeatureValue,
+    pub destinations: Box<[Str]>,
+}
+
+/// Deserializes split `features` leniently: a missing, `null`, non-list or malformed field never
+/// fails the flag. Entries with an unsupported value type, an empty key or no non-empty
+/// destination are skipped; on a repeated key the first valid feature wins.
+fn deserialize_features<'de, D>(deserializer: D) -> Result<Box<[Feature]>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde_json::{Value, value::RawValue};
+
+    // Entries stay raw until each is parsed on its own: a number serde_json cannot represent,
+    // such as 1e400, then skips its entry instead of failing the whole flag.
+    let Some(raw) = Option::<Box<RawValue>>::deserialize(deserializer)? else {
+        return Ok(Box::default());
+    };
+    let Ok(entries) = serde_json::from_str::<Vec<&RawValue>>(raw.get()) else {
+        return Ok(Box::default());
+    };
+
+    let mut features = Vec::new();
+    let mut seen_keys = HashSet::new();
+    for entry in entries {
+        let Ok(Value::Object(entry)) = serde_json::from_str::<Value>(entry.get()) else {
+            continue;
+        };
+
+        let Some(key) = entry
+            .get("key")
+            .and_then(Value::as_str)
+            .filter(|key| !key.is_empty())
+        else {
+            continue;
+        };
+
+        let value = match entry.get("value") {
+            Some(Value::String(s)) => FeatureValue::String(Str::from(s.as_str())),
+            Some(Value::Number(n)) => match n.as_f64() {
+                Some(n) => FeatureValue::Number(n),
+                None => continue,
+            },
+            Some(Value::Bool(b)) => FeatureValue::Boolean(*b),
+            _ => continue,
+        };
+
+        let destinations: Vec<Str> = match entry.get("destinations") {
+            Some(Value::Array(destinations)) => destinations
+                .iter()
+                .filter_map(Value::as_str)
+                .filter(|destination| !destination.is_empty())
+                .map(Str::from)
+                .collect(),
+            _ => Vec::new(),
+        };
+        if destinations.is_empty() {
+            continue;
+        }
+
+        let key = Str::from(key);
+        if seen_keys.insert(key.clone()) {
+            features.push(Feature {
+                key,
+                value,
+                destinations: destinations.into(),
+            });
+        }
+    }
+
+    Ok(features.into())
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 #[allow(missing_docs)]
@@ -630,6 +722,8 @@ pub(crate) struct SplitWire {
     pub variation_key: Str,
     #[serde(default)]
     pub serial_id: Option<i32>,
+    #[serde(default, deserialize_with = "deserialize_features")]
+    pub features: Box<[Feature]>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -656,7 +750,138 @@ impl ShardRange {
 
 #[cfg(test)]
 mod tests {
-    use super::{TryParse, UniversalFlagConfigWire};
+    use super::{Feature, FeatureValue, TryParse, UniversalFlagConfigWire};
+
+    fn parse_features(features_json: &str) -> Vec<Feature> {
+        let json = format!(
+            r#"{{
+              "createdAt": "2024-07-18T00:00:00Z",
+              "environment": {{ "name": "test" }},
+              "flags": {{ "my_flag": {{
+                "key": "my_flag",
+                "enabled": true,
+                "variationType": "BOOLEAN",
+                "variations": {{}},
+                "allocations": [{{
+                  "key": "static",
+                  "splits": [{{
+                    "variationKey": "on",
+                    "shards": [],
+                    "features": {features_json}
+                  }}]
+                }}]
+              }} }}
+            }}"#
+        );
+        let ufc: UniversalFlagConfigWire =
+            serde_json::from_str(&json).unwrap_or_else(|e| panic!("must parse: {e}"));
+        match ufc.flags.get("my_flag").unwrap() {
+            TryParse::Parsed(flag) => flag.allocations[0].splits[0].features.clone().into(),
+            TryParse::ParseFailed(_) => panic!("flag must parse"),
+        }
+    }
+
+    #[test]
+    fn features_parse_with_mixed_value_types() {
+        let features = parse_features(
+            r#"[
+                { "key": "holdout.key", "value": "abc", "destinations": ["HOOK"] },
+                { "key": "holdout.fraction", "value": 0.25,
+                  "destinations": ["EXPOSURE", "not-a-known-destination"] },
+                { "key": "holdout.enabled", "value": false, "destinations": ["HOOK"] },
+                { "key": "holdout.count", "value": 3, "destinations": ["EVALUATION"] }
+            ]"#,
+        );
+
+        assert_eq!(features.len(), 4);
+        assert_eq!(
+            &features[0],
+            &Feature {
+                key: "holdout.key".into(),
+                value: FeatureValue::String("abc".into()),
+                destinations: ["HOOK"].into_iter().map(|d: &str| d.into()).collect(),
+            }
+        );
+        assert_eq!(features[1].value, FeatureValue::Number(0.25));
+        // Unknown destinations pass through; language SDKs decide what to do with them.
+        assert_eq!(features[1].destinations.len(), 2);
+        assert_eq!(features[2].value, FeatureValue::Boolean(false));
+        assert_eq!(features[3].value, FeatureValue::Number(3.0));
+    }
+
+    #[test]
+    fn features_field_is_lenient() {
+        // A missing, `null`, non-list or malformed `features` field never fails the flag.
+        for features_json in [
+            r#"null"#,
+            r#""text""#,
+            r#"3"#,
+            r#"{}"#,
+            r#"[0, "text", null]"#,
+            r#"1e400"#,
+        ] {
+            let features = parse_features(features_json);
+            assert!(
+                features.is_empty(),
+                "features {features_json} must parse leniently to nothing"
+            );
+        }
+    }
+
+    #[test]
+    fn features_skip_entries_with_unrepresentable_numbers() {
+        let features = parse_features(
+            r#"[
+                { "key": "too-large", "value": 1e400, "destinations": ["HOOK"] },
+                { "key": "valid", "value": "v", "destinations": ["HOOK"] }
+            ]"#,
+        );
+
+        assert_eq!(features.len(), 1);
+        assert_eq!(features[0].key.as_str(), "valid");
+    }
+
+    #[test]
+    fn features_skip_invalid_entries() {
+        let features = parse_features(
+            r#"[
+                { "key": "unsupported-value", "value": [1, 2], "destinations": ["HOOK"] },
+                { "key": "unsupported-value-object", "value": {}, "destinations": ["HOOK"] },
+                { "key": "null-value", "value": null, "destinations": ["HOOK"] },
+                { "key": "", "value": "empty-key", "destinations": ["HOOK"] },
+                { "key": "no-destinations", "value": "v" },
+                { "key": "empty-destinations", "value": "v", "destinations": [] },
+                { "key": "blank-destinations", "value": "v", "destinations": ["", ""] },
+                { "key": "non-string-destinations", "value": "v", "destinations": [1, true] },
+                { "key": "non-list-destinations", "value": "v", "destinations": "HOOK" },
+                { "key": "valid", "value": "v", "destinations": ["HOOK", ""] }
+            ]"#,
+        );
+
+        assert_eq!(features.len(), 1);
+        assert_eq!(features[0].key.as_str(), "valid");
+        assert_eq!(features[0].destinations.len(), 1);
+    }
+
+    #[test]
+    fn features_keep_first_valid_entry_on_repeated_key() {
+        let features = parse_features(
+            r#"[
+                { "key": "repeated", "value": "first", "destinations": ["HOOK"] },
+                { "key": "repeated", "value": "second", "destinations": ["EXPOSURE"] },
+                { "key": "invalid-first", "value": [], "destinations": ["HOOK"] },
+                { "key": "invalid-first", "value": "valid-after-invalid", "destinations": ["HOOK"] }
+            ]"#,
+        );
+
+        assert_eq!(features.len(), 2);
+        assert_eq!(features[0].value, FeatureValue::String("first".into()));
+        assert_eq!(features[0].destinations.len(), 1);
+        assert_eq!(
+            features[1].value,
+            FeatureValue::String("valid-after-invalid".into())
+        );
+    }
 
     #[test]
     fn observe_full_evaluation_data_defaults_to_false_when_absent() {
