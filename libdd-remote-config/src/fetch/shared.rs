@@ -10,7 +10,6 @@ use crate::{RemoteConfigPath, Target};
 use libdd_capabilities::{HttpClientCapability, SleepCapability};
 use libdd_common::MutexExt;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::ops::Add;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -22,8 +21,8 @@ use tracing::error;
 
 /// Fetcher which does a run-loop and carefully manages state around files, with the following
 /// guarantees:
-///  - A file at a given RemoteConfigPath will not be recreated as long as it exists I.e. it will
-///    always be drop()'ed before recreation.
+///  - A file is not recreated as long as it exists. A new version of a path is stored as a new
+///    file, while targets which haven't fetched it yet keep the previous version alive.
 ///  - It does not leak files which are no longer in use, i.e. it refcounts across all remote config
 ///    clients sharing the same RefcountingStorage.
 ///  - The state is always valid, i.e. there will be no intermittently expired files.
@@ -139,8 +138,8 @@ where
     /// the remote config server that we know about these files. Thus, as long as these requests
     /// are being processed, we must retain the files, as these would not be resent, leaving us
     /// with a potentially incomplete configuration.
-    #[allow(clippy::type_complexity)]
-    inactive: Arc<Mutex<HashMap<Arc<RemoteConfigPath>, Arc<S::StoredFile>>>>,
+    /// Several versions of a path may be inactive at once.
+    inactive: Arc<Mutex<Vec<Arc<S::StoredFile>>>>,
     /// times `ConfigFetcher::<S>::fetch_once()` is currently being run
     run_id: Arc<RunnersGeneration>,
 }
@@ -197,14 +196,14 @@ where
         if file.refcount().rc.load(Ordering::Relaxed) != 0 {
             return; // Don't do anything if refcount was increased while acquiring the lock
         }
-        expire_lock.mark_expiring(&file.refcount().path);
+        expire_lock.mark_expiring(&file);
         let (runners, run_id) = self.run_id.runners_and_run_id();
         if runners > 0 {
             file.setref(runners);
             file.set_expiring_run_id(run_id);
-            inactive.insert(file.refcount().path.clone(), file);
+            inactive.push(file);
         } else {
-            expire_lock.expire_file(&file.refcount().path);
+            expire_lock.expire_file(&file);
         }
     }
 
@@ -313,9 +312,9 @@ impl SharedFetcher {
                 // Match expire_file's lock order.
                 let mut files = fetcher.file_storage.state.files_lock();
                 let mut inactive = fetcher.file_storage.inactive.lock_or_panic();
-                inactive.retain(|_, v| {
+                inactive.retain(|v| {
                     if run_range.contains(&v.get_expiring_run_id()) && v.delref() == 1 {
-                        files.expire_file(&v.refcount().path);
+                        files.expire_file(v);
                         false
                     } else {
                         true
@@ -332,7 +331,9 @@ impl SharedFetcher {
                         for file in files.iter() {
                             if file.get_expiring_run_id() != 0 {
                                 let mut inactive = fetcher.file_storage.inactive.lock_or_panic();
-                                if inactive.remove(&file.refcount().path).is_some() {
+                                if let Some(i) = inactive.iter().position(|f| Arc::ptr_eq(f, file))
+                                {
+                                    inactive.swap_remove(i);
                                     file.setref(0);
                                     file.set_expiring_run_id(0);
                                 }
@@ -450,6 +451,64 @@ pub mod tests {
         ) -> anyhow::Result<()> {
             self.0.update(&file.store, version, contents)
         }
+    }
+
+    /// Targets sharing a path see a new version at different times: each receives it with its own
+    /// next fetch. Until then a target's listing keeps naming the version it has, so that version
+    /// must stay intact when another target receives the new one.
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn new_version_leaves_other_targets_their_file() {
+        let server = RemoteConfigServer::spawn();
+        let both = vec![DUMMY_TARGET.clone(), OTHER_TARGET.clone()];
+        server
+            .files
+            .lock()
+            .unwrap()
+            .insert(PATH_FIRST.clone(), (both.clone(), 1, "v1".to_string()));
+
+        let storage = RefcountingStorage::new(
+            RcFileStorage::default(),
+            ConfigFetcherState::with_client(
+                server.dummy_options().invariants,
+                NativeCapabilities::new_periodic(),
+            ),
+        );
+        let mut fetcher = ConfigFetcher::new(storage.clone(), storage.state.clone())
+            .await
+            .unwrap();
+        let capabilities = server.dummy_product_capabilities();
+        let mut state_a = ConfigClientState::default();
+        let mut state_b = ConfigClientState::default();
+        let runtime_id = "1b8c1a0c-4c7f-4d33-9e44-7c1f3d1bd2a1";
+
+        let held_by_a = fetcher
+            .fetch_once(runtime_id, &DUMMY_TARGET, &capabilities, "a", &mut state_a)
+            .await
+            .unwrap()
+            .unwrap();
+        fetcher
+            .fetch_once(runtime_id, &OTHER_TARGET, &capabilities, "b", &mut state_b)
+            .await
+            .unwrap()
+            .unwrap();
+
+        server
+            .files
+            .lock()
+            .unwrap()
+            .insert(PATH_FIRST.clone(), (both, 2, "v2".to_string()));
+        let fetched_by_b = fetcher
+            .fetch_once(runtime_id, &OTHER_TARGET, &capabilities, "b", &mut state_b)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched_by_b[0].store.data.lock().unwrap().contents, "v2");
+        assert_eq!(
+            held_by_a[0].store.data.lock().unwrap().contents,
+            "v1",
+            "the file the other target still lists was changed under it"
+        );
     }
 
     #[tokio::test]

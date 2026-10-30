@@ -3,6 +3,7 @@
 
 #[cfg(feature = "agentless")]
 use super::agentless;
+use super::shared::RefcountedFile;
 
 use crate::targets::{Root, TargetsList};
 use crate::{RemoteConfigCapabilities, RemoteConfigPath, RemoteConfigProduct, Target};
@@ -148,12 +149,15 @@ pub struct ConfigFetcherFilesLock<'a, S> {
     inner: MutexGuard<'a, HashMap<Arc<RemoteConfigPath>, StoredTargetFile<S>>>,
 }
 
-impl<S> ConfigFetcherFilesLock<'_, S> {
+// A path's entry may already hold a newer version than the file being expired: these only act on
+// the entry if it still holds that very file.
+impl<S: RefcountedFile> ConfigFetcherFilesLock<'_, S> {
     /// Actually remove the file from the known files.
     /// It may only be expired if already marked as expiring.
-    pub fn expire_file(&mut self, path: &RemoteConfigPath) {
+    pub fn expire_file(&mut self, file: &Arc<S>) {
+        let path = &file.refcount().path;
         if let Some(target_file) = self.inner.get(path) {
-            if !target_file.expiring {
+            if !target_file.expiring || !Arc::ptr_eq(&target_file.handle, file) {
                 return;
             }
         } else {
@@ -163,8 +167,10 @@ impl<S> ConfigFetcherFilesLock<'_, S> {
     }
 
     /// Stop advertising the file as known. It's the predecessor to expire_file().
-    pub fn mark_expiring(&mut self, path: &RemoteConfigPath) {
-        if let Some(target_file) = self.inner.get_mut(path) {
+    pub fn mark_expiring(&mut self, file: &Arc<S>) {
+        if let Some(target_file) = self.inner.get_mut(&file.refcount().path)
+            && Arc::ptr_eq(&target_file.handle, file)
+        {
             target_file.expiring = true;
         }
     }
@@ -632,13 +638,18 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
 
             let parsed_path: Arc<RemoteConfigPath> = Arc::new(parsed_path.into());
             let length = decoded.len() as i64;
-            let stored = if let Some(handle) = handle {
-                self.file_storage
+            let stored = match handle {
+                // Only this fetcher's target uses the file: replace its contents.
+                Some(handle) if self.state.expire_unused_files => self
+                    .file_storage
                     .update(&handle, version, decoded)
-                    .map(|()| handle)
-            } else {
-                self.file_storage
-                    .store(version, parsed_path.clone(), decoded)
+                    .map(|()| handle),
+                // With shared state, other targets may still list the previous version until
+                // their own next fetch. Store the new version as a new file; the previous one
+                // expires once no target holds it anymore.
+                _ => self
+                    .file_storage
+                    .store(version, parsed_path.clone(), decoded),
             };
             let handle = match stored {
                 Ok(handle) => handle,
@@ -844,7 +855,14 @@ pub mod tests {
 
     impl Drop for PathStore {
         fn drop(&mut self) {
-            self.storage.files.lock().unwrap().remove(&self.path);
+            let mut files = self.storage.files.lock().unwrap();
+            // A newer version of the path may have been stored while this one was alive.
+            if files
+                .get(&self.path)
+                .is_some_and(|data| Arc::ptr_eq(data, &self.data))
+            {
+                files.remove(&self.path);
+            }
         }
     }
 
@@ -861,13 +879,12 @@ pub mod tests {
                 version,
                 contents: String::from_utf8(contents).unwrap(),
             }));
-            assert!(
-                self.files
-                    .lock()
-                    .unwrap()
-                    .insert(path.clone(), data.clone())
-                    .is_none()
-            );
+            // A previous version may still be alive, held by targets that haven't fetched
+            // the new one yet; the map tracks the latest version of each path.
+            self.files
+                .lock()
+                .unwrap()
+                .insert(path.clone(), data.clone());
             Ok(Arc::new(PathStore {
                 path: path.clone(),
                 storage: self.clone(),
