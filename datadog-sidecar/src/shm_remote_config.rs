@@ -333,17 +333,16 @@ impl<N: NotifyTarget + 'static> MultiTargetHandlers<N, Self, NativeCapabilities>
             }
         }
 
-        if old_dynamic_instrumentation != writer.dynamic_instrumentation {
-            if let Some(info) = self.targets.lock_or_panic().get(target) {
-                let was_enabled =
-                    dynamic_instrumentation_is_enabled(old_dynamic_instrumentation, info);
-                let now_enabled =
-                    dynamic_instrumentation_is_enabled(writer.dynamic_instrumentation, info);
-                if was_enabled && !now_enabled {
-                    fetcher.unforce_product(target, RemoteConfigProduct::LiveDebugging);
-                } else if !was_enabled && now_enabled {
-                    fetcher.force_product(target, RemoteConfigProduct::LiveDebugging);
-                }
+        if old_dynamic_instrumentation != writer.dynamic_instrumentation
+            && let Some(info) = self.targets.lock_or_panic().get(target)
+        {
+            let was_enabled = dynamic_instrumentation_is_enabled(old_dynamic_instrumentation, info);
+            let now_enabled =
+                dynamic_instrumentation_is_enabled(writer.dynamic_instrumentation, info);
+            if was_enabled && !now_enabled {
+                fetcher.unforce_product(target, RemoteConfigProduct::LiveDebugging);
+            } else if !was_enabled && now_enabled {
+                fetcher.force_product(target, RemoteConfigProduct::LiveDebugging);
             }
         }
 
@@ -515,14 +514,14 @@ impl<N: NotifyTarget + 'static> ShmRemoteConfigs<N> {
         );
 
         let writers = self.0.storage.storage.writers.lock_or_panic();
-        if let Some(writer) = writers.get(&target) {
-            if writer.current_generation() > remote_config_generation {
-                debug!(
-                    "Notify {:?} about newer remote config changes existing",
-                    notify_target
-                );
-                notify_target.notify();
-            }
+        if let Some(writer) = writers.get(&target)
+            && writer.current_generation() > remote_config_generation
+        {
+            debug!(
+                "Notify {:?} about newer remote config changes existing",
+                notify_target
+            );
+            notify_target.notify();
         }
         if dynamic_instrumentation_state != DynamicInstrumentationConfigState::Disabled {
             let mut targets = self.0.storage.storage.targets.lock_or_panic();
@@ -780,24 +779,24 @@ impl RemoteConfigManager {
 
     fn set_target(&mut self, target: Option<Arc<Target>>) {
         let mut current_configs = std::mem::take(&mut self.last_read_configs);
-        if let Some(old_target) = std::mem::replace(&mut self.active_target, target) {
-            if let Some(reader) = self.active_reader.take() {
-                // Reconstruct currently active configurations
-                if self.check_configs.is_empty() {
-                    current_configs.extend(self.active_configs.keys().cloned());
-                }
-                self.encountered_targets
-                    .insert(old_target.clone(), (reader, current_configs));
-                self.unexpired_targets
-                    .push(old_target, Reverse(Instant::now()));
+        if let Some(old_target) = std::mem::replace(&mut self.active_target, target)
+            && let Some(reader) = self.active_reader.take()
+        {
+            // Reconstruct currently active configurations
+            if self.check_configs.is_empty() {
+                current_configs.extend(self.active_configs.keys().cloned());
             }
+            self.encountered_targets
+                .insert(old_target.clone(), (reader, current_configs));
+            self.unexpired_targets
+                .push(old_target, Reverse(Instant::now()));
         }
-        if let Some(ref target) = self.active_target {
-            if let Some((reader, last_fetch)) = self.encountered_targets.remove(target) {
-                self.active_reader = Some(reader);
-                self.last_read_configs = last_fetch;
-                self.unexpired_targets.remove(target);
-            }
+        if let Some(ref target) = self.active_target
+            && let Some((reader, last_fetch)) = self.encountered_targets.remove(target)
+        {
+            self.active_reader = Some(reader);
+            self.last_read_configs = last_fetch;
+            self.unexpired_targets.remove(target);
         }
     }
 

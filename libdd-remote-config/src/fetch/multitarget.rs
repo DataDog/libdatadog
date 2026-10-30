@@ -719,34 +719,34 @@ where
     }
 
     pub fn force_product(&self, target: &Target, product: RemoteConfigProduct) {
-        if let Some(known_target) = self.services.lock_or_panic().get_mut(target) {
-            if addref_hashmap(&mut known_target.active_products, product) {
-                known_target.update_product_capabilities();
-            }
+        if let Some(known_target) = self.services.lock_or_panic().get_mut(target)
+            && addref_hashmap(&mut known_target.active_products, product)
+        {
+            known_target.update_product_capabilities();
         }
     }
 
     pub fn force_capabilities(&self, target: &Target, capabilities: RemoteConfigCapabilities) {
-        if let Some(known_target) = self.services.lock_or_panic().get_mut(target) {
-            if addref_hashmap(&mut known_target.active_capabilities, capabilities) {
-                known_target.update_product_capabilities();
-            }
+        if let Some(known_target) = self.services.lock_or_panic().get_mut(target)
+            && addref_hashmap(&mut known_target.active_capabilities, capabilities)
+        {
+            known_target.update_product_capabilities();
         }
     }
 
     pub fn unforce_product(&self, target: &Target, product: RemoteConfigProduct) {
-        if let Some(known_target) = self.services.lock_or_panic().get_mut(target) {
-            if decref_hashmap(&mut known_target.active_products, product) {
-                known_target.update_product_capabilities();
-            }
+        if let Some(known_target) = self.services.lock_or_panic().get_mut(target)
+            && decref_hashmap(&mut known_target.active_products, product)
+        {
+            known_target.update_product_capabilities();
         }
     }
 
     pub fn unforce_capabilities(&self, target: &Target, capabilities: RemoteConfigCapabilities) {
-        if let Some(known_target) = self.services.lock_or_panic().get_mut(target) {
-            if decref_hashmap(&mut known_target.active_capabilities, capabilities) {
-                known_target.update_product_capabilities();
-            }
+        if let Some(known_target) = self.services.lock_or_panic().get_mut(target)
+            && decref_hashmap(&mut known_target.active_capabilities, capabilities)
+        {
+            known_target.update_product_capabilities();
         }
     }
 

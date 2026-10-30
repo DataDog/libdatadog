@@ -90,7 +90,6 @@ libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false, fea
 libdd-crashtracker-ffi = { path = "../libdd-crashtracker-ffi", default-features = false, features = ["collector", "collector_windows"] }
 windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Threading"] }
 
-
 [dev-dependencies]
 rmpv.workspace = true
 tokio = { workspace = true, features = ["test-util", "macros"] }

@@ -735,12 +735,12 @@ mod tests {
             value: &'e Val,
             index: IntermediateValue<'e, Val>,
         ) -> ResultValue<&'e Val> {
-            if let Val::Vec(vec) = value {
-                if let Val::Num(idx) = index.into() {
-                    let idx = idx as usize;
-                    if idx < vec.len() {
-                        return Ok(&vec[idx]);
-                    }
+            if let Val::Vec(vec) = value
+                && let Val::Num(idx) = index.into()
+            {
+                let idx = idx as usize;
+                if idx < vec.len() {
+                    return Ok(&vec[idx]);
                 }
             }
 
@@ -752,10 +752,10 @@ mod tests {
             value: &'e Val,
             member: IntermediateValue<'e, Val>,
         ) -> ResultValue<&'e Val> {
-            if let Val::Obj(obj) = value {
-                if let Val::Str(str) = member.into() {
-                    return obj.0.get(&str).ok_or(ResultError::Undefined);
-                }
+            if let Val::Obj(obj) = value
+                && let Val::Str(str) = member.into()
+            {
+                return obj.0.get(&str).ok_or(ResultError::Undefined);
             }
 
             Err(ResultError::Undefined)
@@ -821,10 +821,10 @@ mod tests {
         }
 
         fn instanceof(&mut self, value: &'e Val, class: &str) -> bool {
-            if let Val::Obj(o) = value {
-                if let Some(Val::Str(s)) = o.0.get("class") {
-                    return s == class;
-                }
+            if let Val::Obj(o) = value
+                && let Some(Val::Str(s)) = o.0.get("class")
+            {
+                return s == class;
             }
             false
         }

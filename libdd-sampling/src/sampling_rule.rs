@@ -97,10 +97,10 @@ impl SamplingRule {
         let name = span.operation_name();
 
         // Check name using glob matcher if specified
-        if let Some(ref matcher) = self.name_matcher {
-            if !matcher.matches(name.as_ref()) {
-                return false;
-            }
+        if let Some(ref matcher) = self.name_matcher
+            && !matcher.matches(name.as_ref())
+        {
+            return false;
         }
 
         // Check service if specified using glob matcher
@@ -155,12 +155,12 @@ impl SamplingRule {
                 // OTel key (e.g., "http.request.method")
                 if rule_tag_key_str.starts_with("http.") {
                     let tag_match = span.attributes().any(|attr| {
-                        if let Some(alternate_key) = span.get_alternate_key(attr.key()) {
-                            if alternate_key == rule_tag_key_str {
-                                return self
-                                    .match_attribute_value(attr.value(), matcher)
-                                    .unwrap_or(false);
-                            }
+                        if let Some(alternate_key) = span.get_alternate_key(attr.key())
+                            && alternate_key == rule_tag_key_str
+                        {
+                            return self
+                                .match_attribute_value(attr.value(), matcher)
+                                .unwrap_or(false);
                         }
                         false
                     });

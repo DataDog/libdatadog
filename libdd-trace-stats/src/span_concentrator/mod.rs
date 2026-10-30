@@ -17,14 +17,18 @@ use libdd_trace_utils::span::v1::SpanKind;
 use aggregation::StatsBucket;
 
 use aggregation::BorrowedAggregationKey;
-pub use aggregation::{FixedAggregationKey, OtlpExactCell, OtlpExactGroup, OtlpStatsBucket};
+pub use aggregation::{
+    ADDITIONAL_METRIC_TAG_VALUE_MAX_LEN, FixedAggregationKey, OtlpExactCell, OtlpExactGroup,
+    OtlpStatsBucket, TRACER_BLOCKED_VALUE, additional_metric_tag_value_too_long,
+};
 use cardinality_limit_telemetry::CollapsedFieldsMetrics;
 #[cfg(feature = "stats-obfuscation")]
 use libdd_trace_obfuscation::obfuscation_config::SqlConfig;
 
 pub use stat_span::{ChunkSpanView, StatSpan};
 
-const ADDITIONAL_METRIC_TAGS_MAX_KEYS: usize = 4;
+/// Maximum number of additional metric tag keys, excess keys are dropped.
+pub const ADDITIONAL_METRIC_TAGS_MAX_KEYS: usize = 4;
 
 const DEFAULT_STATS_ELIGIBLE_SPAN_KINDS: [SpanKind; 4] = [
     SpanKind::Client,

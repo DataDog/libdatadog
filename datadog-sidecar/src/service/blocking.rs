@@ -905,6 +905,8 @@ mod tests {
                 libdd_ipc::shm_stats::OwnedShmSpanInput {
                     fixed: Default::default(),
                     peer_tags: vec![("db.hostname".into(), "db".into())],
+                    additional_tags: vec![],
+                    additional_tags_cardinality_limit: 100,
                     duration_ns: 42,
                     is_error: false,
                     is_top_level: true,

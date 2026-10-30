@@ -49,10 +49,10 @@ impl Behavior for Test {
 
         // Register the expected receiver PID so the crash handler authenticates
         // the socket peer before granting ptrace permission.
-        if let Ok(pid_str) = std::env::var("DD_TEST_RECEIVER_PID") {
-            if let Ok(pid) = pid_str.parse::<i32>() {
-                libdd_crashtracker::set_expected_receiver_pid(pid);
-            }
+        if let Ok(pid_str) = std::env::var("DD_TEST_RECEIVER_PID")
+            && let Ok(pid) = pid_str.parse::<i32>()
+        {
+            libdd_crashtracker::set_expected_receiver_pid(pid);
         }
 
         Ok(())

@@ -164,6 +164,7 @@ impl Schema for DataStreamsCheckpoints {
 
     type Key = ShmCheckpointKey;
     type Value = ShmCheckpointValue;
+    type BucketState = ();
     type Input<'a> = DsmCheckpointInput<'a>;
 
     fn hash(input: &DsmCheckpointInput<'_>) -> u64 {

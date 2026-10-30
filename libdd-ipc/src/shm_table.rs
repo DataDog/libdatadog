@@ -44,6 +44,14 @@
 //! A writer CAS(0→MAX) to claim, writes key + strings (no concurrent readers
 //! yet), issues a **Release** fence, then stores `key_hash = H` (Release).
 //!
+//! ## Limiting new keys
+//! A writer may cap how many keys of some kind a bucket admits ([`ShmTableMapping::insert`]'s
+//! `limit`): it takes room under the limit before it claims a free slot. Finding none left, it
+//! waits while other writers still fill slots they took room for - one may be filling in its
+//! very key - and then gives up with [`Insert::OverLimit`], leaving the schema to decide what
+//! becomes of the input. A key already in the bucket is found before any free slot, so it keeps
+//! counting whatever the limit.
+//!
 //! ## Double-buffering
 //! `ShmHeader::active_idx` tells which bucket PHP workers write to.
 //! The sidecar swaps it, waits for `in_flight` to reach 0, then reads + clears.
@@ -78,7 +86,7 @@ use crate::platform::{FileBackedHandle, MappedMem, NamedShmHandle};
 pub(crate) use crate::rate_limiter::ShmSafe;
 
 /// Version of everything here that is not a schema's: the header and the bucket regions.
-pub(crate) const SHM_VERSION: u32 = 4;
+pub(crate) const SHM_VERSION: u32 = 5;
 
 pub(crate) const SLOT_EMPTY: u64 = 0;
 pub(crate) const SLOT_INIT: u64 = u64::MAX;
@@ -117,6 +125,9 @@ pub trait Schema: 'static {
 
     type Key: ShmSafe;
     type Value: ShmSafe;
+    /// Kept in each bucket's header for the schema's own use, and handed to it when the bucket
+    /// is drained; `()` for a schema that needs none.
+    type BucketState: ShmSafe;
     type Input<'a>;
 
     /// Hash of the input's key. Any value is fine; the table remaps the two it reserves.
@@ -180,10 +191,100 @@ pub(crate) struct ShmEntry<S: Schema> {
 
 /// Per-bucket control header.
 #[repr(C)]
-pub(crate) struct ShmBucketHeader {
+pub(crate) struct ShmBucketHeader<S: Schema> {
     pub(crate) start_nanos: AtomicU64,
     pub(crate) in_flight: AtomicI64,
+    /// Room taken under a limit on new keys, see [`ShmBucketHeader::take_room`].
+    pub(crate) room: AtomicU64,
     pub(crate) string_cursor: AtomicU32,
+    pub(crate) schema: S::BucketState,
+}
+
+/// What [`ShmBucketHeader::take_room`] found under the limit.
+enum Room {
+    /// Taken: to be kept with [`ShmBucketHeader::commit_room`] once the slot is filled, or given
+    /// back with [`ShmBucketHeader::release_room`].
+    Taken,
+    /// None left, but writers that took some are still filling their slots.
+    Pending,
+    /// None left.
+    Full,
+}
+
+/// `room` holds the room taken in its low half, and in its high half how much of it writers are
+/// still filling slots for. One word, so that a writer finding no room left also learns whether
+/// another writer might be about to add its very key.
+fn pack_room(taken: u32, pending: u32) -> u64 {
+    u64::from(pending) << 32 | u64::from(taken)
+}
+
+fn unpack_room(room: u64) -> (u32, u32) {
+    // Truncating to the low half is the point.
+    (room as u32, (room >> 32) as u32)
+}
+
+impl<S: Schema> ShmBucketHeader<S> {
+    fn take_room(&self, limit: u32) -> Room {
+        let taken = self.update_room(|taken, pending| {
+            (taken < limit).then(|| (taken + 1, pending.saturating_add(1)))
+        });
+        match taken {
+            Ok(()) => Room::Taken,
+            Err((_, pending)) if pending > 0 => Room::Pending,
+            Err(_) => Room::Full,
+        }
+    }
+
+    /// Keep room whose slot is filled. Release, so that a writer seeing the room no longer
+    /// pending also sees the key in the slot.
+    fn commit_room(&self) {
+        let _ = self.update_room(|taken, pending| Some((taken, pending.saturating_sub(1))));
+    }
+
+    /// Give back room whose slot another writer claimed first.
+    fn release_room(&self) {
+        let _ = self.update_room(|taken, pending| {
+            Some((taken.saturating_sub(1), pending.saturating_sub(1)))
+        });
+    }
+
+    /// Replace `(taken, pending)` with what `update` makes of it, or return the value it
+    /// refused. Updates saturate, since a drain resets the word even under a writer that missed
+    /// its deadline.
+    ///
+    /// A loop of its own, as `fetch_update` is deprecated in favor of `try_update`, which the
+    /// MSRV does not have yet.
+    fn update_room(
+        &self,
+        update: impl Fn(u32, u32) -> Option<(u32, u32)>,
+    ) -> Result<(), (u32, u32)> {
+        let mut room = self.room.load(Acquire);
+        loop {
+            let (taken, pending) = unpack_room(room);
+            let Some((new_taken, new_pending)) = update(taken, pending) else {
+                return Err((taken, pending));
+            };
+            match self.room.compare_exchange_weak(
+                room,
+                pack_room(new_taken, new_pending),
+                AcqRel,
+                Acquire,
+            ) {
+                Ok(_) => return Ok(()),
+                Err(current) => room = current,
+            }
+        }
+    }
+}
+
+/// How [`ShmTableMapping::insert`] ended.
+pub(crate) enum Insert {
+    /// The input was recorded.
+    Done,
+    /// No slot could take the input.
+    Lost,
+    /// The key is new and the bucket has no room left under the limit.
+    OverLimit,
 }
 
 /// Global SHM header (first page of the mapping).
@@ -275,7 +376,7 @@ impl<S: Schema> Layout<S> {
         mapped_len: usize,
     ) -> Option<Self> {
         let bucket0_start = page_size::get();
-        let entries_offset = bucket_hdr_size();
+        let entries_offset = bucket_hdr_size::<S>();
         let pool_offset = entries_offset
             .checked_add((slot_count as usize).checked_mul(size_of::<ShmEntry<S>>())?)?;
         let needed = pool_offset.checked_add(string_pool_size as usize)?;
@@ -290,8 +391,10 @@ impl<S: Schema> Layout<S> {
             // access is undefined behaviour, not a slow one.
             || !(bucket_region_size as usize).is_multiple_of(align_of::<ShmEntry<S>>())
             // Each region starts on a multiple of `bucket_hdr_size`'s 8-byte rounding, which
-            // only lines the entries up for schemas whose alignment divides it.
+            // only lines the entries up for schemas whose alignment divides it. The same goes
+            // for the bucket header, which holds the schema's own state.
             || !8usize.is_multiple_of(align_of::<ShmEntry<S>>())
+            || !8usize.is_multiple_of(align_of::<ShmBucketHeader<S>>())
             || (bucket_region_size as usize) < needed
             || total > mapped_len
         {
@@ -316,7 +419,7 @@ impl<S: Schema> Layout<S> {
         slot_count: u32,
         string_pool_size: u32,
     ) -> Option<(Self, usize)> {
-        let raw = bucket_hdr_size()
+        let raw = bucket_hdr_size::<S>()
             .checked_add((slot_count as usize).checked_mul(size_of::<ShmEntry<S>>())?)?
             .checked_add(string_pool_size as usize)?;
         let page = page_size::get();
@@ -335,7 +438,7 @@ impl<S: Schema> Layout<S> {
 
 /// One bucket region, resolved against the private [`Layout`].
 pub(crate) struct Bucket<'a, S: Schema> {
-    pub(crate) hdr: &'a ShmBucketHeader,
+    pub(crate) hdr: &'a ShmBucketHeader<S>,
     pub(crate) entries: &'a [ShmEntry<S>],
     pub(crate) pool: &'a Pool,
 }
@@ -357,9 +460,9 @@ pub(crate) struct Bucket<'a, S: Schema> {
 /// lengths.
 pub type Pool = [AtomicU8];
 
-pub(crate) fn bucket_hdr_size() -> usize {
+pub(crate) fn bucket_hdr_size<S: Schema>() -> usize {
     // Align to 8 bytes (AtomicU64 alignment).
-    let s = size_of::<ShmBucketHeader>();
+    let s = size_of::<ShmBucketHeader<S>>();
     (s + 7) & !7
 }
 
@@ -424,6 +527,21 @@ fn slot_hash(hash: u64) -> u64 {
         SLOT_INIT => SLOT_INIT - 1,
         v => v,
     }
+}
+
+/// Spend one of `waits` on a slot that is being written - a spin-loop hint, or a thread yield
+/// every [`YIELD_AFTER_SPINS`] of them - or return false once [`MAX_SLOT_WAIT_ITERS`] are spent.
+fn wait_for_slot(waits: &mut u32) -> bool {
+    if *waits >= MAX_SLOT_WAIT_ITERS {
+        return false;
+    }
+    *waits += 1;
+    if waits.is_multiple_of(YIELD_AFTER_SPINS) {
+        thread::yield_now();
+    } else {
+        hint::spin_loop();
+    }
+    true
 }
 
 /// Bump-allocate `s` in the pool, returning an empty reference if it does not fit.
@@ -630,19 +748,17 @@ impl<S: Schema> ShmTableMapping<S> {
 
         // Retire old segments only after the replacement is ready.
         for old in replaced {
-            if let Ok(old) = old.map() {
-                if old.get_size() > READY_OFFSET {
-                    // SAFETY: in bounds, as just checked, and the pointer is the mapping's own,
-                    // valid for reads and writes; no slice or reference over the shared bytes is
-                    // made. An `AtomicU8` has no alignment requirement, and every process
-                    // accesses `ready` atomically, so this does not race with a non-atomic
-                    // access. Only that byte is touched, not the rest of the old segment's
-                    // untrusted header.
-                    let ready = unsafe {
-                        AtomicU8::from_ptr(old.ptr.as_ptr().cast::<u8>().add(READY_OFFSET))
-                    };
-                    ready.store(0, Release);
-                }
+            if let Ok(old) = old.map()
+                && old.get_size() > READY_OFFSET
+            {
+                // SAFETY: in bounds, as just checked, and the pointer is the mapping's own, valid
+                // for reads and writes; no slice or reference over the shared bytes is made. An
+                // `AtomicU8` has no alignment requirement, and every process accesses `ready`
+                // atomically, so this does not race with a non-atomic access. Only that byte is
+                // touched, not the rest of the old segment's untrusted header.
+                let ready =
+                    unsafe { AtomicU8::from_ptr(old.ptr.as_ptr().cast::<u8>().add(READY_OFFSET)) };
+                ready.store(0, Release);
             }
         }
 
@@ -709,7 +825,7 @@ impl<S: Schema> ShmTableMapping<S> {
         // `Schema`'s safety contract extends to the key and value.
         unsafe {
             Bucket {
-                hdr: &*(base.add(start) as *const ShmBucketHeader),
+                hdr: &*(base.add(start) as *const ShmBucketHeader<S>),
                 entries: std::slice::from_raw_parts(
                     base.add(start + l.entries_offset) as *const ShmEntry<S>,
                     l.slot_count as usize,
@@ -728,6 +844,15 @@ impl<S: Schema> ShmTableMapping<S> {
 
     /// Add an input to the currently-active bucket.  Thread-safe.
     pub(crate) fn add(&self, input: &S::Input<'_>) {
+        self.with_active_bucket(|bucket| {
+            let mut waits = 0;
+            Self::insert(bucket, input, None, &mut waits);
+        });
+    }
+
+    /// Run `f` on the currently-active bucket, counted among its writers so that a drain waits
+    /// for it to finish.
+    pub(crate) fn with_active_bucket<R>(&self, f: impl FnOnce(&Bucket<'_, S>) -> R) -> R {
         let hdr = self.header();
 
         // Claim in-flight on the active bucket, with double-check against swap.
@@ -742,25 +867,65 @@ impl<S: Schema> ShmTableMapping<S> {
             bucket.hdr.in_flight.fetch_add(1, Acquire);
         }
 
+        let result = f(&bucket);
+        bucket.hdr.in_flight.fetch_sub(1, Release);
+        result
+    }
+
+    /// Record `input` into the slot holding its key, claiming a free slot when the key is new.
+    ///
+    /// A new key must fit under `limit` (see the module docs on limiting new keys), unless
+    /// `limit` is `None`. `waits` counts the iterations spent waiting on slots that are being
+    /// written, out of a budget of [`MAX_SLOT_WAIT_ITERS`] that the caller may share between
+    /// several inserts (see [`wait_for_slot`]).
+    pub(crate) fn insert(
+        bucket: &Bucket<'_, S>,
+        input: &S::Input<'_>,
+        limit: Option<u32>,
+        waits: &mut u32,
+    ) -> Insert {
         let hash = slot_hash(S::hash(input));
         let slots = bucket.entries.len();
         // `Layout` guarantees a nonzero slot count, so this is not a division by zero, and
         // every index below stays inside the entry slice.
         let mut slot = (hash % slots as u64) as usize;
-        let mut done = false;
         // Waiting on a slot that is being written is only worth it while somebody is actually
         // writing it. A stale SLOT_INIT is never cleared - the flush skips markers rather than
         // reclaiming slots it may not own - so an unbounded wait can be held open by one write
         // a peer performs once, and in the sidecar this runs on the IPC handler's own thread.
         // Past the budget the probe keeps looking but stops waiting; an input is lost, not the
         // caller. The budget spans the whole call, so it also bounds a table poisoned throughout.
-        let mut waits = 0u32;
         for _ in 0..slots {
             let entry = &bucket.entries[slot];
 
             loop {
                 match entry.key_hash.load(Acquire) {
                     SLOT_EMPTY => {
+                        // A claimed slot has to be filled with this key, so take the room under
+                        // the limit first, and give it back if another writer claims the slot.
+                        if let Some(limit) = limit {
+                            match bucket.hdr.take_room(limit) {
+                                Room::Taken => {}
+                                // The writer holding the last room may be about to fill this
+                                // very slot with this very key: look again once it had a chance.
+                                Room::Pending => {
+                                    if wait_for_slot(waits) {
+                                        continue;
+                                    }
+                                    // Rarely a plain timeout, but mostly a guard against a
+                                    // writer killed while holding room.
+                                    return Insert::OverLimit;
+                                }
+                                // Unless the last room went to this key, in this slot: room is
+                                // committed after the key is stored, so the slot shows it now.
+                                Room::Full => {
+                                    if entry.key_hash.load(Acquire) == SLOT_EMPTY {
+                                        return Insert::OverLimit;
+                                    }
+                                    continue;
+                                }
+                            }
+                        }
                         if entry
                             .key_hash
                             .compare_exchange(SLOT_EMPTY, SLOT_INIT, Acquire, Relaxed)
@@ -770,35 +935,28 @@ impl<S: Schema> ShmTableMapping<S> {
                             // Release on the store synchronises the key write with any
                             // subsequent Acquire load of the hash — no separate fence needed.
                             entry.key_hash.store(hash, Release);
+                            if limit.is_some() {
+                                bucket.hdr.commit_room();
+                            }
                             S::record(&entry.value, input);
-                            done = true;
-                            break;
+                            return Insert::Done;
                         }
-                        if waits >= MAX_SLOT_WAIT_ITERS {
-                            break;
+                        if limit.is_some() {
+                            bucket.hdr.release_room();
                         }
-                        waits += 1;
-                        if waits.is_multiple_of(YIELD_AFTER_SPINS) {
-                            thread::yield_now();
-                        } else {
-                            hint::spin_loop();
+                        if !wait_for_slot(waits) {
+                            break;
                         }
                     }
                     SLOT_INIT => {
-                        if waits >= MAX_SLOT_WAIT_ITERS {
+                        if !wait_for_slot(waits) {
                             break;
-                        }
-                        waits += 1;
-                        if waits.is_multiple_of(YIELD_AFTER_SPINS) {
-                            thread::yield_now();
-                        } else {
-                            hint::spin_loop();
                         }
                     }
                     h if h == hash => {
                         if S::key_matches(&entry.key, bucket.pool, input) {
                             S::record(&entry.value, input);
-                            done = true;
+                            return Insert::Done;
                         }
                         break;
                     }
@@ -806,13 +964,9 @@ impl<S: Schema> ShmTableMapping<S> {
                 }
             }
 
-            if done {
-                break;
-            }
             slot = (slot + 1) % slots;
         }
-
-        bucket.hdr.in_flight.fetch_sub(1, Release);
+        Insert::Lost
     }
 
     pub(crate) fn slot_usage(&self) -> (usize, usize) {
@@ -839,20 +993,35 @@ impl<S: Schema> ShmTableMapping<S> {
     pub(crate) fn drain_buckets<T>(
         &self,
         force: bool,
+        drain_entry: impl FnMut(&ShmEntry<S>, &Pool, &mut usize) -> Option<T>,
+    ) -> Vec<DrainedBucket<T>> {
+        self.drain_buckets_with_state(force, drain_entry, |_| {})
+    }
+
+    /// [`ShmTableMapping::drain_buckets`], also handing `drain_state` the schema's state in each
+    /// bucket drained, to take what it needs and reset it for the bucket's next interval.
+    pub(crate) fn drain_buckets_with_state<T>(
+        &self,
+        force: bool,
         mut drain_entry: impl FnMut(&ShmEntry<S>, &Pool, &mut usize) -> Option<T>,
+        mut drain_state: impl FnMut(&S::BucketState),
     ) -> Vec<DrainedBucket<T>> {
         let mut buckets = Vec::new();
 
         if force {
             let active = self.header().active_idx.load(Acquire);
             for idx in 0u8..2 {
-                if let Some(b) = self.drain_bucket(idx, (idx ^ active) & 1 == 0, &mut drain_entry) {
+                let current = (idx ^ active) & 1 == 0;
+                if let Some(b) = self.drain_bucket(idx, current, &mut drain_entry, &mut drain_state)
+                {
                     buckets.push(b);
                 }
             }
         } else {
             let old_active = self.header().active_idx.fetch_xor(1, AcqRel);
-            if let Some(b) = self.drain_bucket(old_active, false, &mut drain_entry) {
+            if let Some(b) =
+                self.drain_bucket(old_active, false, &mut drain_entry, &mut drain_state)
+            {
                 buckets.push(b);
             }
         }
@@ -872,6 +1041,7 @@ impl<S: Schema> ShmTableMapping<S> {
         bucket_idx: u8,
         current: bool,
         drain_entry: &mut impl FnMut(&ShmEntry<S>, &Pool, &mut usize) -> Option<T>,
+        drain_state: &mut impl FnMut(&S::BucketState),
     ) -> Option<DrainedBucket<T>> {
         let bucket = self.bucket(bucket_idx);
 
@@ -908,6 +1078,9 @@ impl<S: Schema> ShmTableMapping<S> {
             entry.key_hash.store(SLOT_EMPTY, Release);
         }
 
+        // A limit on new keys applies per bucket: the next interval starts afresh.
+        bucket.hdr.room.store(0, Relaxed);
+        drain_state(&bucket.hdr.schema);
         bucket.hdr.string_cursor.store(0, Release);
 
         let now_ns = std::time::SystemTime::now()
@@ -961,6 +1134,7 @@ mod tests {
 
         type Key = AtomicU64;
         type Value = AtomicU64;
+        type BucketState = ();
         type Input<'a> = u64;
 
         fn hash(input: &u64) -> u64 {
@@ -1029,5 +1203,30 @@ mod tests {
             .collect();
         drained.sort();
         assert_eq!(drained, [(3, 2), (5, 1)]);
+    }
+
+    /// A limit stops only new keys, and each bucket gets the whole limit again once drained.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn a_limit_on_new_keys_spares_known_keys_and_resets_with_the_bucket() {
+        let table = ShmTable::<Counter>::create(test_path(), 10, 8, 64).unwrap();
+        let mem = table.mem.load_full().unwrap();
+        let insert = |input: u64, limit: Option<u32>| {
+            mem.with_active_bucket(|bucket| {
+                let mut waits = 0;
+                ShmTableMapping::insert(bucket, &input, limit, &mut waits)
+            })
+        };
+        assert!(matches!(insert(3, Some(1)), Insert::Done));
+        assert!(matches!(insert(5, Some(1)), Insert::OverLimit));
+        assert!(matches!(insert(3, Some(1)), Insert::Done));
+        // A writer without a limit is not held to another's.
+        assert!(matches!(insert(5, None), Insert::Done));
+
+        let drained = mem.drain_buckets(true, |entry, _pool, _budget| {
+            Some(entry.value.swap(0, Relaxed))
+        });
+        assert_eq!(drained.iter().map(|b| b.groups.len()).sum::<usize>(), 2);
+        assert!(matches!(insert(7, Some(1)), Insert::Done));
     }
 }

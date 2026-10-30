@@ -130,11 +130,11 @@ pub(crate) fn get_or_create_dsm_table(
     let config = session.dsm_config.clone()?;
     let mut guard = tables.lock_or_panic();
 
-    if let Some(s) = guard.get(&key) {
-        if !s.checkpoints.needs_reload() {
-            return Some(s.clone());
-        }
-        // Entry is being retired (reload signalled) — fall through to create a fresh one.
+    // An entry being retired (reload signalled) falls through to create a fresh one.
+    if let Some(s) = guard.get(&key)
+        && !s.checkpoints.needs_reload()
+    {
+        return Some(s.clone());
     }
 
     let created = ShmDsmBacklogTable::create(
@@ -245,10 +245,10 @@ pub(crate) async fn run_dsm_flush_loop(
             }
         }
         let drained = state.drain(true);
-        if !drained.is_empty() {
-            if let Err(e) = send_buckets(&client, &state, drained).await {
-                warn!("Failed final DSM checkpoint and backlog flush: {e}");
-            }
+        if !drained.is_empty()
+            && let Err(e) = send_buckets(&client, &state, drained).await
+        {
+            warn!("Failed final DSM checkpoint and backlog flush: {e}");
         }
         break;
     }

@@ -113,6 +113,7 @@ impl Schema for DataStreamsBacklogs {
 
     type Key = ShmBacklogKey;
     type Value = ShmBacklogValue;
+    type BucketState = ();
     type Input<'a> = DsmBacklogInput<'a>;
 
     fn hash(input: &DsmBacklogInput<'_>) -> u64 {

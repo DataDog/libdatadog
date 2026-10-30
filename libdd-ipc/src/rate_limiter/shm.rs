@@ -126,10 +126,10 @@ impl<Inner: ShmSafe> ShmLimiterMemory<Inner> {
         mem.first_free_ref()
             .store(ShmLimiterArena::<Inner>::START_OFFSET, Ordering::Relaxed);
         for old in replaced {
-            if let Ok(old) = old.map() {
-                if let Some(retired) = ShmLimiterArena::<Inner>::retired_flag(old.as_slice()) {
-                    retired.store(1, Ordering::Release);
-                }
+            if let Ok(old) = old.map()
+                && let Some(retired) = ShmLimiterArena::<Inner>::retired_flag(old.as_slice())
+            {
+                retired.store(1, Ordering::Release);
             }
         }
         Ok(Self {
@@ -194,10 +194,10 @@ impl<Inner: ShmSafe> ShmLimiterMemory<Inner> {
 
     /// Unlink this arena if it still belongs to the current process.
     pub fn unlink(&self) {
-        if self.path.is_none() {
-            if let Some(mem) = self.mem.load().as_ref() {
-                mem.mem.unlink();
-            }
+        if self.path.is_none()
+            && let Some(mem) = self.mem.load().as_ref()
+        {
+            mem.mem.unlink();
         }
     }
 
@@ -426,12 +426,11 @@ impl<Inner: ShmSafe> ShmLimiterArena<Inner> {
                     // have since written, and the `UnsafeCell` admits their writes.
                     data.rc.load(Ordering::Acquire) > 0 && cond(unsafe { &*data.inner.get() })
                 })?;
-                if hit {
-                    if let Some(limiter) = self.get(cur) {
-                        if limiter.with_data(&cond).unwrap_or(false) {
-                            return Some(limiter);
-                        }
-                    }
+                if hit
+                    && let Some(limiter) = self.get(cur)
+                    && limiter.with_data(&cond).unwrap_or(false)
+                {
+                    return Some(limiter);
                 }
                 cur = cur.checked_add(Self::STRIDE)?;
             }

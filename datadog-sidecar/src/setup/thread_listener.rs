@@ -147,10 +147,10 @@ pub struct MasterListener {
 /// error, which matters because more than one path can reach this.
 fn reap(bound_files: &[std::path::PathBuf]) {
     for path in bound_files {
-        if let Err(e) = std::fs::remove_file(path) {
-            if e.kind() != io::ErrorKind::NotFound {
-                warn!("Could not remove {} on shutdown: {e}", path.display());
-            }
+        if let Err(e) = std::fs::remove_file(path)
+            && e.kind() != io::ErrorKind::NotFound
+        {
+            warn!("Could not remove {} on shutdown: {e}", path.display());
         }
     }
 }

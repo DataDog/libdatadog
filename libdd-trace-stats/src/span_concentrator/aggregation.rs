@@ -34,7 +34,9 @@ const TAG_METHOD: &str = "http.method";
 // http.endpoint is Datadog-only and retained in that mode.
 const TAG_STATUS_CODE_OTEL: &str = "http.response.status_code";
 const TAG_METHOD_OTEL: &str = "http.request.method";
-const ADDITIONAL_METRIC_TAG_VALUE_MAX_LEN: usize = 200;
+/// Maximum number of characters of an additional metric tag value, longer values are replaced by
+/// [`TRACER_BLOCKED_VALUE`].
+pub const ADDITIONAL_METRIC_TAG_VALUE_MAX_LEN: usize = 200;
 const TAG_SYNTHETICS: &str = "synthetics";
 const TAG_SPANKIND: &str = "span.kind";
 const TAG_BASE_SERVICE: &str = "_dd.base_service";
@@ -174,6 +176,17 @@ fn float_to_u32(f: f64) -> Option<u32> {
     Some(f as u32)
 }
 
+/// Return true if `value` has more than [`ADDITIONAL_METRIC_TAG_VALUE_MAX_LEN`] characters.
+pub fn additional_metric_tag_value_too_long(value: &str) -> bool {
+    // Byte length >= char count, so skip the char walk when byte length alone is within the max
+    // character length, otherwise stop as soon as we pass the max character length.
+    value.len() > ADDITIONAL_METRIC_TAG_VALUE_MAX_LEN
+        && value
+            .chars()
+            .nth(ADDITIONAL_METRIC_TAG_VALUE_MAX_LEN)
+            .is_some()
+}
+
 fn is_valid_http_status_code(code: &u32) -> bool {
     (100..600).contains(code)
 }
@@ -184,10 +197,10 @@ fn is_valid_http_status_code(code: &u32) -> bool {
 /// are present.
 fn get_http_method<'a>(span: &'a impl StatSpan<'a>) -> &'a str {
     for key in [TAG_METHOD, TAG_METHOD_OTEL] {
-        if let Some(value) = span.get_meta(key) {
-            if !value.is_empty() {
-                return value;
-            }
+        if let Some(value) = span.get_meta(key)
+            && !value.is_empty()
+        {
+            return value;
         }
     }
 
@@ -227,18 +240,18 @@ fn get_http_status_code<'a>(span: &'a impl StatSpan<'a>) -> u32 {
 
 fn get_grpc_status_code<'a>(span: &'a impl StatSpan<'a>) -> Option<u8> {
     for key in GRPC_STATUS_CODE_FIELD {
-        if let Some(val) = span.get_meta(key) {
-            if let Some(code) = grpc_status_str_to_int_value(val) {
-                return Some(code);
-            }
+        if let Some(val) = span.get_meta(key)
+            && let Some(code) = grpc_status_str_to_int_value(val)
+        {
+            return Some(code);
         }
     }
 
     for key in GRPC_STATUS_CODE_FIELD {
-        if let Some(val) = span.get_metrics(key) {
-            if let Some(code) = float_to_int(val) {
-                return Some(code);
-            }
+        if let Some(val) = span.get_metrics(key)
+            && let Some(code) = float_to_int(val)
+        {
+            return Some(code);
         }
     }
 
@@ -374,11 +387,7 @@ impl<'a> BorrowedAggregationKey<'a> {
             .iter()
             .filter_map(|key| match span.get_meta(key.as_str()) {
                 Some(v) if !v.is_empty() => {
-                    // Byte length >= char count, so skip the char walk when byte length alone
-                    // is within the max character length, otherwise stop as soon as we pass the max character length.
-                    if v.len() > ADDITIONAL_METRIC_TAG_VALUE_MAX_LEN
-                        && v.chars().nth(ADDITIONAL_METRIC_TAG_VALUE_MAX_LEN).is_some()
-                    {
+                    if additional_metric_tag_value_too_long(v) {
                         warn!(
                             "additional_metric_tags: value for key '{}' exceeds {} characters; substituting tracer_blocked_value",
                             key, ADDITIONAL_METRIC_TAG_VALUE_MAX_LEN,

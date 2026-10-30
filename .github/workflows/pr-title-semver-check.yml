@@ -11,7 +11,6 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  RUST_VERSION: 1.92.0
 
 jobs:
   # Automation that opens a PR and labels it in two steps (`gh pr create
@@ -131,13 +130,16 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Read nightly version from nightly-toolchain.toml
+      - name: Read stable version from ci-toolchain.toml
+        id: stable-version
+        run: echo "version=$(grep -Po '^stable = "\K[^"]+' ci-toolchain.toml)" >> $GITHUB_OUTPUT
+      - name: Read nightly version from ci-toolchain.toml
         id: nightly-version
-        run: echo "version=$(grep -Po '^channel = "\K[^"]+' nightly-toolchain.toml)" >> $GITHUB_OUTPUT
-      - name: Install Rust ${{ env.RUST_VERSION }}
+        run: echo "version=$(grep -Po '^nightly = "\K[^"]+' ci-toolchain.toml)" >> $GITHUB_OUTPUT
+      - name: Install Rust ${{ steps.stable-version.outputs.version }}
         run: |
           rustup set profile minimal
-          rustup install ${{ env.RUST_VERSION }} && rustup default ${{ env.RUST_VERSION }}
+          rustup install ${{ steps.stable-version.outputs.version }} && rustup default ${{ steps.stable-version.outputs.version }}
           rustup toolchain install ${{ steps.nightly-version.outputs.version }}
           # Link the dated nightly as 'nightly' for tools (like cargo-public-api) that expect it
           ln -sf ~/.rustup/toolchains/${{ steps.nightly-version.outputs.version }}-x86_64-unknown-linux-gnu ~/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu
@@ -156,17 +158,17 @@ jobs:
       - name: Install cargo-public-api
         uses: taiki-e/install-action@2c41309d51ede152b6f2ee6bf3b71e6dc9a8b7df # 2.49.27
         with:
-          tool: cargo-public-api@0.52.0, cargo-semver-checks@0.48.0
+          tool: cargo-public-api@0.52.0, cargo-semver-checks@0.51.0
         env:
-          RUSTUP_TOOLCHAIN: ${{ env.RUST_VERSION }}
+          RUSTUP_TOOLCHAIN: ${{ steps.stable-version.outputs.version }}
 
       - name: Run semver checks on changed crates
         id: semver
         env:
           # Override rust-toolchain.toml so cargo-semver-checks / cargo-public-api
-          # run on the explicit RUST_VERSION (1.92.0) the workflow installed,
+          # run on the pinned stable from ci-toolchain.toml the workflow installed,
           # instead of the workspace MSRV from rust-toolchain.toml.
-          RUSTUP_TOOLCHAIN: ${{ env.RUST_VERSION }}
+          RUSTUP_TOOLCHAIN: ${{ steps.stable-version.outputs.version }}
         run: |
           set -euo pipefail
 

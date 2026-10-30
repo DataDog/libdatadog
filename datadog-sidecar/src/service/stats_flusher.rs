@@ -219,12 +219,12 @@ pub(crate) fn get_or_create_concentrator(
     };
     let mut guard = concentrators.lock_or_panic();
 
-    if let Some(s) = guard.get(&map_key) {
-        if !s.concentrator.needs_reload() {
-            return Some(s.clone());
-        }
-        // Entry is being retired (reload signalled) — fall through to create a fresh one.
+    if let Some(s) = guard.get(&map_key)
+        && !s.concentrator.needs_reload()
+    {
+        return Some(s.clone());
     }
+    // Entry is being retired (reload signalled) — fall through to create a fresh one.
 
     let path = env_stats_shm_path(env, version, &service_name);
 

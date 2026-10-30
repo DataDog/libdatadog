@@ -23,10 +23,10 @@ pub fn get_machine_id_impl_paths(dmi_path: &Path, etc_path: &Path, boot_path: &P
     }
     // agent compatibility:
     // gopsutil only accepts /etc/machine-id when it's exactly 32 chars (bare hex)
-    if let Some(id) = read_trimmed(etc_path) {
-        if id.len() == 32 {
-            return id;
-        }
+    if let Some(id) = read_trimmed(etc_path)
+        && id.len() == 32
+    {
+        return id;
     }
     read_trimmed(boot_path).unwrap_or_default()
 }
