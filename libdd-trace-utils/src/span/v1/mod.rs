@@ -522,6 +522,12 @@ mod tests {
             span: &chunk.spans[0],
             chunk: &chunk,
         };
+        // Without compat, chunk attributes named like promoted tags are only seen by the getters.
+        assert_eq!(view.attribute_str("env"), None);
+        assert_eq!(view.attribute_str("version"), None);
+        assert!(!view.has_attribute("version"));
+        assert_eq!((view.env(), view.version()), (Some("staging"), Some("1.2")));
+        assert_eq!(view.attribute_str("team"), Some("core"));
         let compat = view.compat();
         let mut attributes: Vec<(&str, &str)> = compat
             .attributes()

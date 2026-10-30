@@ -840,8 +840,8 @@ fn encode_grouped_stats(key: OwnedAggregationKey, group: GroupedStats) -> pb::Cl
 
 #[cfg(test)]
 mod tests {
-    use libdd_trace_utils::span::TraceData;
     use libdd_trace_utils::span::v04::{self, SpanBytes, SpanSlice};
+    use libdd_trace_utils::span::{RootSpanChunk, TraceData};
 
     use super::*;
     use libdd_trace_protobuf::pb;
@@ -867,7 +867,7 @@ mod tests {
         span: &v04::Span<T>,
         peer_tag_keys: &[String],
     ) -> OwnedAggregationKey {
-        let chunk = v04::TraceChunk::new(std::slice::from_ref(span));
+        let chunk = RootSpanChunk::new(std::slice::from_ref(span));
         key_of(
             &ChunkSpanView {
                 span,

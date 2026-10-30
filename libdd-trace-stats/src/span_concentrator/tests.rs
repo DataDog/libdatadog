@@ -6,14 +6,14 @@ use crate::span_concentrator::aggregation::{OwnedAggregationKey, TRACER_BLOCKED_
 use super::*;
 use libdd_trace_utils::span::v04::VecMap;
 use libdd_trace_utils::span::{
-    TraceData, trace_utils::compute_top_level_span, v04, v04::SpanSlice,
+    RootSpanChunk, SpanWithTraceId, trace_utils::compute_top_level_span, v04::SpanSlice,
 };
 use rand::{Rng, thread_rng};
 use std::borrow::Cow;
 
-/// Adds `span` to the concentrator as its own single-span v04 chunk.
-fn add_v04_span<T: TraceData>(concentrator: &mut SpanConcentrator, span: &v04::Span<T>) {
-    let chunk = v04::TraceChunk::new(std::slice::from_ref(span));
+/// Adds `span` to the concentrator as its own single-span chunk.
+fn add_span_as_chunk<S: SpanWithTraceId>(concentrator: &mut SpanConcentrator, span: &S) {
+    let chunk = RootSpanChunk::new(std::slice::from_ref(span));
     concentrator.add_span(&ChunkSpanView {
         span,
         chunk: &chunk,
@@ -132,7 +132,7 @@ fn test_concentrator_oldest_timestamp_cold() {
     ];
     compute_top_level_span(spans.as_mut_slice());
     for span in &spans {
-        add_v04_span(&mut concentrator, span);
+        add_span_as_chunk(&mut concentrator, span);
     }
 
     let mut flushtime = now;
@@ -198,7 +198,7 @@ fn test_concentrator_oldest_timestamp_hot() {
         * concentrator.bucket_size;
 
     for span in &spans {
-        add_v04_span(&mut concentrator, span);
+        add_span_as_chunk(&mut concentrator, span);
     }
 
     for _ in 0..(concentrator.buffer_len - 1) {
@@ -287,7 +287,7 @@ fn test_concentrator_stats_totals() {
     let mut total_top_level_hits = 0;
 
     for span in &spans {
-        add_v04_span(&mut concentrator, span);
+        add_span_as_chunk(&mut concentrator, span);
     }
 
     let mut flushtime = now;
@@ -538,7 +538,7 @@ fn test_concentrator_stats_counts() {
     compute_top_level_span(spans.as_mut_slice());
 
     for span in &spans {
-        add_v04_span(&mut concentrator, span);
+        add_span_as_chunk(&mut concentrator, span);
     }
 
     let mut flushtime = now;
@@ -629,7 +629,7 @@ fn test_span_should_be_included_in_stats() {
         None,
     );
     for span in &spans {
-        add_v04_span(&mut concentrator, span);
+        add_span_as_chunk(&mut concentrator, span);
     }
 
     let expected = vec![
@@ -713,7 +713,7 @@ fn test_ignore_partial_spans() {
         None,
     );
     for span in &spans {
-        add_v04_span(&mut concentrator, span);
+        add_span_as_chunk(&mut concentrator, span);
     }
 
     let stats = concentrator
@@ -742,7 +742,7 @@ fn test_force_flush() {
         None,
     );
     for span in &spans {
-        add_v04_span(&mut concentrator, span);
+        add_span_as_chunk(&mut concentrator, span);
     }
 
     // flushtime is 1h before now to make sure the bucket is not old enough to be flushed
@@ -837,10 +837,10 @@ fn test_peer_tags_aggregation() {
         None,
     );
     for span in &spans {
-        add_v04_span(&mut concentrator_without_peer_tags, span);
+        add_span_as_chunk(&mut concentrator_without_peer_tags, span);
     }
     for span in &spans {
-        add_v04_span(&mut concentrator_with_peer_tags, span);
+        add_span_as_chunk(&mut concentrator_with_peer_tags, span);
     }
 
     let flushtime = now
@@ -1026,7 +1026,7 @@ fn test_peer_tags_quantization_aggregation() {
         None,
     );
     for span in &spans {
-        add_v04_span(&mut concentrator_with_peer_tags, span);
+        add_span_as_chunk(&mut concentrator_with_peer_tags, span);
     }
 
     let flushtime = now
@@ -1157,7 +1157,7 @@ fn test_base_service_peer_tag() {
     );
 
     for span in &spans {
-        add_v04_span(&mut concentrator, span);
+        add_span_as_chunk(&mut concentrator, span);
     }
 
     let flushtime =
@@ -1426,7 +1426,7 @@ fn test_base_service_peer_tag_kind_selection() {
     );
 
     for span in &spans {
-        add_v04_span(&mut concentrator, span);
+        add_span_as_chunk(&mut concentrator, span);
     }
 
     let flushtime =
@@ -1643,7 +1643,7 @@ fn test_base_service_peer_tag_empty_key_list() {
     );
 
     for span in &spans {
-        add_v04_span(&mut concentrator, span);
+        add_span_as_chunk(&mut concentrator, span);
     }
 
     let flushtime =
@@ -1823,6 +1823,348 @@ fn test_compute_stats_for_span_kind() {
 /// Verify the OTLP exact-scalar sidecar tracks per-cell (ok/error) duration/min/max in nanos
 /// independently and that ok_duration + error_duration matches the combined group duration
 /// (which the agent /v0.6/stats path uses).
+/// v0.4 spans carry the origin as a tag, which only the root is guaranteed to have: a child span
+/// of a synthetics trace must be counted as synthetics too, from its trace's root.
+#[test]
+fn test_v04_trace_synthetics_from_root() {
+    let now = SystemTime::now();
+    let mut concentrator = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        vec![],
+        vec![],
+        None,
+        vec![],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
+    );
+    let mut trace = vec![
+        get_test_span_with_meta(
+            now,
+            1,
+            0,
+            100,
+            5,
+            "A",
+            "resource",
+            0,
+            &[("_dd.origin", "synthetics-browser")],
+            &[],
+        ),
+        // A different service, so the child is top-level as well.
+        get_test_span(now, 2, 1, 50, 5, "B", "resource", 0),
+    ];
+    compute_top_level_span(trace.as_mut_slice());
+    let chunk = RootSpanChunk::new(&trace);
+    for span in &trace {
+        concentrator.add_span(&ChunkSpanView {
+            span,
+            chunk: &chunk,
+        });
+    }
+
+    let flushtime =
+        now + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
+    let stats = concentrator.flush(flushtime, false).all_buckets();
+    let mut synthetics: Vec<_> = stats
+        .iter()
+        .flat_map(|bucket| &bucket.stats)
+        .map(|group| (group.service.as_str(), group.synthetics))
+        .collect();
+    synthetics.sort_unstable();
+    assert_eq!(synthetics, [("A", true), ("B", true)]);
+}
+
+#[test]
+fn test_pb_span() {
+    let now = SystemTime::now();
+    let mut concentrator = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        get_span_kinds(),
+        vec!["db.instance".to_string(), "db.system".to_string()],
+        None,
+        vec!["custom.primary".to_string()],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
+    );
+    let aligned_now = align_timestamp(
+        system_time_to_unix_duration(now).as_nanos() as u64,
+        concentrator.bucket_size,
+    );
+
+    let mut pb_spans = vec![
+        // Root span
+        pb::Span {
+            service: "service1".to_string(),
+            name: "query".to_string(),
+            resource: "GET /users".to_string(),
+            trace_id: 1,
+            span_id: 1,
+            parent_id: 0,
+            start: (aligned_now - BUCKET_SIZE) as i64,
+            duration: 100,
+            error: 0,
+            r#type: "db".to_string(),
+            meta: std::collections::HashMap::new(),
+            metrics: std::collections::HashMap::new(),
+            meta_struct: std::collections::HashMap::new(),
+            span_links: vec![],
+            span_events: vec![],
+        },
+        // Child span not measured
+        pb::Span {
+            service: "service1".to_string(),
+            name: "query".to_string(),
+            resource: "GET /users".to_string(),
+            trace_id: 1,
+            span_id: 2,
+            parent_id: 1,
+            start: (aligned_now - BUCKET_SIZE + 10) as i64,
+            duration: 50,
+            error: 0,
+            r#type: "db".to_string(),
+            meta: std::collections::HashMap::new(),
+            metrics: std::collections::HashMap::new(),
+            meta_struct: std::collections::HashMap::new(),
+            span_links: vec![],
+            span_events: vec![],
+        },
+        // Span with span.kind = client and peer tags
+        {
+            let mut meta = std::collections::HashMap::new();
+            meta.insert("span.kind".to_string(), "client".to_string());
+            meta.insert("db.instance".to_string(), "i-1234".to_string());
+            meta.insert("db.system".to_string(), "postgres".to_string());
+
+            pb::Span {
+                service: "service1".to_string(),
+                name: "query".to_string(),
+                resource: "GET /users".to_string(),
+                trace_id: 1,
+                span_id: 3,
+                parent_id: 1,
+                start: (aligned_now - BUCKET_SIZE + 20) as i64,
+                duration: 75,
+                error: 0,
+                r#type: "db".to_string(),
+                meta,
+                metrics: std::collections::HashMap::new(),
+                meta_struct: std::collections::HashMap::new(),
+                span_links: vec![],
+                span_events: vec![],
+            }
+        },
+        // Span with span.kind = server
+        {
+            let mut meta = std::collections::HashMap::new();
+            meta.insert("span.kind".to_string(), "server".to_string());
+
+            let mut metrics = std::collections::HashMap::new();
+            metrics.insert("http.status_code".to_string(), 200.0);
+
+            pb::Span {
+                service: "service2".to_string(),
+                name: "query".to_string(),
+                resource: "POST /api/users".to_string(),
+                trace_id: 1,
+                span_id: 4,
+                parent_id: 1,
+                start: (aligned_now - BUCKET_SIZE + 30) as i64,
+                duration: 200,
+                error: 0,
+                r#type: "db".to_string(),
+                meta,
+                metrics,
+                meta_struct: std::collections::HashMap::new(),
+                span_links: vec![],
+                span_events: vec![],
+            }
+        },
+        // Span with measured flag
+        {
+            let mut metrics = std::collections::HashMap::new();
+            metrics.insert("_dd.measured".to_string(), 1.0);
+
+            pb::Span {
+                service: "service1".to_string(),
+                name: "query".to_string(),
+                resource: "database_query".to_string(),
+                trace_id: 1,
+                span_id: 5,
+                parent_id: 1,
+                start: (aligned_now - BUCKET_SIZE + 40) as i64,
+                duration: 150,
+                error: 1,
+                r#type: "db".to_string(),
+                meta: std::collections::HashMap::new(),
+                metrics,
+                meta_struct: std::collections::HashMap::new(),
+                span_links: vec![],
+                span_events: vec![],
+            }
+        },
+        // Span with measured flag and additional metric tags
+        {
+            let mut meta = std::collections::HashMap::new();
+            meta.insert("custom.primary".to_string(), "val".to_string());
+
+            let mut metrics = std::collections::HashMap::new();
+            metrics.insert("_dd.measured".to_string(), 1.0);
+
+            pb::Span {
+                service: "service1".to_string(),
+                name: "query".to_string(),
+                resource: "database_query".to_string(),
+                trace_id: 1,
+                span_id: 6,
+                parent_id: 1,
+                start: (aligned_now - BUCKET_SIZE + 40) as i64,
+                duration: 150,
+                error: 1,
+                r#type: "db".to_string(),
+                meta,
+                metrics,
+                meta_struct: std::collections::HashMap::new(),
+                span_links: vec![],
+                span_events: vec![],
+            }
+        },
+        // Grpc span
+        {
+            let mut meta = std::collections::HashMap::new();
+            meta.insert("span.kind".to_string(), "client".to_string());
+            meta.insert("rpc.grpc.status_code".to_string(), "aborted".to_string());
+
+            pb::Span {
+                service: "service1".to_string(),
+                name: "rpc.grpc".to_string(),
+                resource: "serviceName.methodName".to_string(),
+                trace_id: 1,
+                span_id: 3,
+                parent_id: 1,
+                start: (aligned_now - BUCKET_SIZE + 50) as i64,
+                duration: 300,
+                error: 0,
+                r#type: "rpc".to_string(),
+                meta,
+                metrics: std::collections::HashMap::new(),
+                meta_struct: std::collections::HashMap::new(),
+                span_links: vec![],
+                span_events: vec![],
+            }
+        },
+    ];
+
+    libdd_trace_utils::trace_utils::compute_top_level_span(pb_spans.as_mut_slice());
+
+    // Add spans to concentrator
+    for span in &pb_spans {
+        add_span_as_chunk(&mut concentrator, span);
+    }
+
+    // Flush and get stats
+    let flushtime =
+        now + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
+    let stats = concentrator.flush(flushtime, false).all_buckets();
+
+    assert_eq!(stats.len(), 1, "Should get exactly one time bucket");
+    let bucket = &stats[0];
+
+    // Validate the stats content
+    let expected_stats = vec![
+        // Root span stats
+        pb::ClientGroupedStats {
+            service: "service1".to_string(),
+            resource: "GET /users".to_string(),
+            r#type: "db".to_string(),
+            name: "query".to_string(),
+            duration: 100,
+            hits: 1,
+            top_level_hits: 1,
+            errors: 0,
+            is_trace_root: pb::Trilean::True.into(),
+            ..Default::default()
+        },
+        // Client span with peer tags
+        pb::ClientGroupedStats {
+            service: "service1".to_string(),
+            resource: "GET /users".to_string(),
+            r#type: "db".to_string(),
+            name: "query".to_string(),
+            span_kind: "client".to_string(),
+            peer_tags: vec![
+                "db.instance:i-1234".to_string(),
+                "db.system:postgres".to_string(),
+            ],
+            duration: 75,
+            hits: 1,
+            top_level_hits: 0,
+            errors: 0,
+            is_trace_root: pb::Trilean::False.into(),
+            ..Default::default()
+        },
+        // Server span
+        pb::ClientGroupedStats {
+            service: "service2".to_string(),
+            resource: "POST /api/users".to_string(),
+            r#type: "db".to_string(),
+            name: "query".to_string(),
+            span_kind: "server".to_string(),
+            http_status_code: 200,
+            duration: 200,
+            hits: 1,
+            top_level_hits: 1,
+            errors: 0,
+            is_trace_root: pb::Trilean::False.into(),
+            ..Default::default()
+        },
+        // Measured span
+        pb::ClientGroupedStats {
+            service: "service1".to_string(),
+            resource: "database_query".to_string(),
+            r#type: "db".to_string(),
+            name: "query".to_string(),
+            duration: 150,
+            hits: 1,
+            top_level_hits: 0,
+            errors: 1,
+            is_trace_root: pb::Trilean::False.into(),
+            ..Default::default()
+        },
+        // Measured span with additional metric tags
+        pb::ClientGroupedStats {
+            service: "service1".to_string(),
+            resource: "database_query".to_string(),
+            r#type: "db".to_string(),
+            name: "query".to_string(),
+            duration: 150,
+            hits: 1,
+            top_level_hits: 0,
+            errors: 1,
+            is_trace_root: pb::Trilean::False.into(),
+            additional_metric_tags: vec!["custom.primary:val".to_string()],
+            ..Default::default()
+        },
+        pb::ClientGroupedStats {
+            service: "service1".to_string(),
+            name: "rpc.grpc".to_string(),
+            resource: "serviceName.methodName".to_string(),
+            http_status_code: 0,
+            r#type: "rpc".to_string(),
+            hits: 1,
+            errors: 0,
+            duration: 300,
+            span_kind: "client".to_string(),
+            grpc_status_code: "10".to_string(),
+            is_trace_root: pb::Trilean::False.into(),
+            ..Default::default()
+        },
+    ];
+
+    assert_counts_equal(expected_stats, bucket.stats.clone());
+}
+
 #[test]
 fn test_flush_with_otlp_exact_per_cell_scalars() {
     let now = SystemTime::now();
@@ -1846,7 +2188,7 @@ fn test_flush_with_otlp_exact_per_cell_scalars() {
     ];
     compute_top_level_span(spans.as_mut_slice());
     for s in &spans {
-        add_v04_span(&mut concentrator, s);
+        add_span_as_chunk(&mut concentrator, s);
     }
 
     let flushed = concentrator.flush_with_otlp_exact(now, true);
@@ -1916,7 +2258,7 @@ fn test_whole_key_cardinality_limit_collapse() {
             &[],
             &[("_dd.measured", 1.0)],
         );
-        add_v04_span(&mut concentrator, &span);
+        add_span_as_chunk(&mut concentrator, &span);
     }
 
     let buckets = concentrator.flush(SystemTime::now(), true).all_buckets();
@@ -1983,7 +2325,7 @@ fn test_per_key_cardinality_limit_collapse_http_endpoint() {
             &meta,
             &[("_dd.measured", 1.0)],
         );
-        add_v04_span(&mut concentrator, &span);
+        add_span_as_chunk(&mut concentrator, &span);
     }
     // Insert a distinct `resource` root span, this one won't get collapsed
     {
@@ -2000,7 +2342,7 @@ fn test_per_key_cardinality_limit_collapse_http_endpoint() {
             &meta,
             &[("_dd.measured", 1.0)],
         );
-        add_v04_span(&mut concentrator, &span);
+        add_span_as_chunk(&mut concentrator, &span);
     }
 
     let buckets = concentrator.flush(SystemTime::now(), true).all_buckets();
@@ -2078,7 +2420,7 @@ fn test_per_key_cardinality_limit_collapse_before_whole_key() {
             &meta,
             &[("_dd.measured", 1.0)],
         );
-        add_v04_span(&mut concentrator, &span);
+        add_span_as_chunk(&mut concentrator, &span);
     }
 
     let buckets = concentrator.flush(SystemTime::now(), true).all_buckets();
@@ -2147,7 +2489,7 @@ fn test_overflow_bucket_counts() {
             &[],
             &[("_dd.measured", 1.0)],
         );
-        add_v04_span(&mut concentrator, &span);
+        add_span_as_chunk(&mut concentrator, &span);
     }
 
     let buckets = concentrator.flush(SystemTime::now(), true).all_buckets();
@@ -2199,7 +2541,7 @@ fn test_no_collapse_within_limit() {
             &[],
             &[("_dd.measured", 1.0)],
         );
-        add_v04_span(&mut concentrator, &span);
+        add_span_as_chunk(&mut concentrator, &span);
     }
 
     let buckets = concentrator.flush(SystemTime::now(), true).all_buckets();
@@ -2254,8 +2596,8 @@ fn test_overflow_bucket_key_sentinel_values() {
         &[("_dd.measured", 1.0)],
     );
 
-    add_v04_span(&mut concentrator, &first);
-    add_v04_span(&mut concentrator, &second);
+    add_span_as_chunk(&mut concentrator, &first);
+    add_span_as_chunk(&mut concentrator, &second);
 
     let buckets = concentrator.flush(SystemTime::now(), true).all_buckets();
     assert!(!buckets.is_empty());
@@ -2371,8 +2713,8 @@ fn test_additional_metric_tags_aggregation() {
         None,
     );
     for span in &spans {
-        add_v04_span(&mut concentrator_without_additional_metric_tags, span);
-        add_v04_span(&mut concentrator_with_additional_metric_tags, span);
+        add_span_as_chunk(&mut concentrator_without_additional_metric_tags, span);
+        add_span_as_chunk(&mut concentrator_with_additional_metric_tags, span);
     }
 
     let flushtime = now
@@ -2474,7 +2816,7 @@ fn test_additional_metric_tag_value_length_cap_substitutes_blocked_value() {
         #[cfg(feature = "stats-obfuscation")]
         None,
     );
-    add_v04_span(&mut concentrator, &spans[0]);
+    add_span_as_chunk(&mut concentrator, &spans[0]);
 
     let flushtime =
         now + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
@@ -2512,7 +2854,7 @@ fn test_additional_metric_tag_value_at_length_cap_passes_through() {
         #[cfg(feature = "stats-obfuscation")]
         None,
     );
-    add_v04_span(&mut concentrator, &spans[0]);
+    add_span_as_chunk(&mut concentrator, &spans[0]);
 
     let flushtime =
         now + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
@@ -2551,7 +2893,7 @@ fn test_additional_metric_tag_value_multibyte_at_length_cap_passes_through() {
         #[cfg(feature = "stats-obfuscation")]
         None,
     );
-    add_v04_span(&mut concentrator, &spans[0]);
+    add_span_as_chunk(&mut concentrator, &spans[0]);
 
     let flushtime =
         now + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
@@ -2589,7 +2931,7 @@ fn test_additional_metric_tag_value_multibyte_over_length_cap_substitutes_blocke
         #[cfg(feature = "stats-obfuscation")]
         None,
     );
-    add_v04_span(&mut concentrator, &spans[0]);
+    add_span_as_chunk(&mut concentrator, &spans[0]);
 
     let flushtime =
         now + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
@@ -2680,7 +3022,7 @@ fn test_additional_metric_tags_max_entries_masks_overflow_entries() {
     );
     concentrator.cardinality_limits.additional_tags_limit = 1;
     for span in &spans {
-        add_v04_span(&mut concentrator, span);
+        add_span_as_chunk(&mut concentrator, span);
     }
 
     let flushtime =
@@ -2754,7 +3096,7 @@ fn test_additional_metric_tags_max_entries_existing_keys_merge_after_limit() {
     );
     concentrator.cardinality_limits.additional_tags_limit = 1;
     for span in &spans {
-        add_v04_span(&mut concentrator, span);
+        add_span_as_chunk(&mut concentrator, span);
     }
 
     let flushtime =
@@ -2817,7 +3159,7 @@ fn test_additional_metric_tags_max_entries_resets_on_flush() {
 
     // First bucket: cap of 1 means only us-east-1 is admitted unmasked.
     for span in &spans {
-        add_v04_span(&mut concentrator, span);
+        add_span_as_chunk(&mut concentrator, span);
     }
     let flush1_time =
         now + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
@@ -2839,7 +3181,7 @@ fn test_additional_metric_tags_max_entries_resets_on_flush() {
         &[("_dd.measured", 1.0)],
     )];
     compute_top_level_span(spans2.as_mut_slice());
-    add_v04_span(&mut concentrator, &spans2[0]);
+    add_span_as_chunk(&mut concentrator, &spans2[0]);
 
     let flush2_time =
         later + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
@@ -2904,7 +3246,7 @@ fn test_additional_metric_tags_new_key_collapses_into_overflow_before_masking() 
     );
     concentrator.cardinality_limits.additional_tags_limit = 5;
     for span in &spans {
-        add_v04_span(&mut concentrator, span);
+        add_span_as_chunk(&mut concentrator, span);
     }
 
     let flushtime =
@@ -2974,7 +3316,7 @@ fn test_additional_metric_tags_masked_entry_collapses_into_overflow() {
     );
     concentrator.cardinality_limits.additional_tags_limit = 1;
     for span in &spans {
-        add_v04_span(&mut concentrator, span);
+        add_span_as_chunk(&mut concentrator, span);
     }
 
     let flushtime =
@@ -3052,7 +3394,7 @@ fn test_additional_metric_tags_multiple_masked_entries_merge() {
     );
     concentrator.cardinality_limits.additional_tags_limit = 1;
     for span in &spans {
-        add_v04_span(&mut concentrator, span);
+        add_span_as_chunk(&mut concentrator, span);
     }
 
     let flushtime =
@@ -3117,7 +3459,7 @@ fn test_concentrator_truncate_fields_helper(big_resource: bool, obfuscation: boo
     let mut spans = vec![span];
     compute_top_level_span(spans.as_mut_slice());
     for span in &spans {
-        add_v04_span(&mut concentrator, span);
+        add_span_as_chunk(&mut concentrator, span);
     }
 
     let stats = concentrator.flush(SystemTime::now(), true).all_buckets();

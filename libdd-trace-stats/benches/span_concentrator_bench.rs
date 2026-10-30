@@ -5,7 +5,8 @@ use std::time::{self, Duration, SystemTime};
 use criterion::{Criterion, criterion_group};
 use libdd_trace_model::TraceChunk as _;
 use libdd_trace_stats::span_concentrator::{ChunkSpanView, SpanConcentrator};
-use libdd_trace_utils::span::v04::{SpanBytes, TraceChunk, VecMap};
+use libdd_trace_utils::span::RootSpanChunk;
+use libdd_trace_utils::span::v04::{SpanBytes, VecMap};
 
 fn get_bucket_start(now: SystemTime, n: u64) -> i64 {
     let start = now.duration_since(time::UNIX_EPOCH).unwrap() + Duration::from_secs(10 * n);
@@ -57,7 +58,10 @@ pub fn criterion_benchmark(c: &mut Criterion) {
                 .collect()
         })
         .collect();
-    let chunks: Vec<_> = traces.iter().map(|trace| TraceChunk::new(trace)).collect();
+    let chunks: Vec<_> = traces
+        .iter()
+        .map(|trace| RootSpanChunk::new(trace))
+        .collect();
     group.bench_function("add_spans_to_concentrator", |b| {
         b.iter_batched_ref(
             || concentrator.clone(),

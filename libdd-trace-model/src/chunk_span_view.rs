@@ -3,16 +3,26 @@
 
 //! A read-only view of a span that falls back to its enclosing chunk.
 
-use crate::{AttributeRef, Attributes, AttributesIter, Span, TraceChunk};
+use crate::{AttributeRef, Attributes, AttributesIter, Span, TraceChunk, is_promoted};
 
 /// Wraps a span together with its enclosing chunk.
 ///
 /// Chunk attributes hold values common to every span in the chunk (e.g. peer tags). Attribute
-/// lookups fall back to the chunk whenever the span doesn't have its own value for a given key.
-/// Chunk-level fields (e.g. [`TraceChunk::origin`]) are read from [`ChunkSpanView::chunk`].
+/// lookups fall back to the chunk whenever the span doesn't have its own value for a given key,
+/// except for the promoted span tags (see [`crate::PROMOTED_SPAN_TAGS`]): like on a span, the
+/// attribute getters don't see those, and the dedicated getters (e.g. [`Span::env`]) fall back to
+/// the chunk attribute instead. Chunk-level fields (e.g. [`TraceChunk::origin`]) are read from
+/// [`ChunkSpanView::chunk`].
 pub struct ChunkSpanView<'a, C: TraceChunk> {
     pub span: &'a C::Span,
     pub chunk: &'a C,
+}
+
+impl<C: TraceChunk> ChunkSpanView<'_, C> {
+    /// The chunk to fall back to for `key`, `None` for the promoted span tags.
+    fn chunk_fallback(&self, key: &str) -> Option<&C> {
+        (!is_promoted(key)).then_some(self.chunk)
+    }
 }
 
 impl<C: TraceChunk> Attributes for ChunkSpanView<'_, C> {
@@ -25,23 +35,24 @@ impl<C: TraceChunk> Attributes for ChunkSpanView<'_, C> {
     fn attribute_str(&self, key: &str) -> Option<&str> {
         self.span
             .attribute_str(key)
-            .or_else(|| self.chunk.attribute_str(key))
+            .or_else(|| self.chunk_fallback(key)?.attribute_str(key))
     }
 
     fn attribute_f64(&self, key: &str) -> Option<f64> {
         self.span
             .attribute_f64(key)
-            .or_else(|| self.chunk.attribute_f64(key))
+            .or_else(|| self.chunk_fallback(key)?.attribute_f64(key))
     }
 
     fn attribute_i64(&self, key: &str) -> Option<i64> {
         self.span
             .attribute_i64(key)
-            .or_else(|| self.chunk.attribute_i64(key))
+            .or_else(|| self.chunk_fallback(key)?.attribute_i64(key))
     }
 }
 
-/// Yields the span attributes, then the chunk attributes whose key the span doesn't have.
+/// Yields the span attributes, then the chunk attributes whose key the span doesn't have (promoted
+/// span tags excepted).
 impl<C> AttributesIter for ChunkSpanView<'_, C>
 where
     C: TraceChunk + AttributesIter,
@@ -51,12 +62,15 @@ where
         self.span.attributes().chain(
             self.chunk
                 .attributes()
-                .filter(|(k, _)| !self.span.has_attribute(k)),
+                .filter(|(k, _)| !is_promoted(k) && !self.span.has_attribute(k)),
         )
     }
 
     fn has_attribute(&self, key: &str) -> bool {
-        self.span.has_attribute(key) || self.chunk.has_attribute(key)
+        self.span.has_attribute(key)
+            || self
+                .chunk_fallback(key)
+                .is_some_and(|chunk| chunk.has_attribute(key))
     }
 }
 

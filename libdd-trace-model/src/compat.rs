@@ -5,7 +5,7 @@
 
 use crate::{
     AttributeRef, Attributes, AttributesIter, COMPONENT_KEY, ENV_KEY, PROMOTED_SPAN_TAGS,
-    SPAN_KIND_KEY, Span, VERSION_KEY,
+    SPAN_KIND_KEY, Span, VERSION_KEY, is_promoted,
 };
 
 /// Wraps a span so that its attributes include the promoted span tags (see
@@ -30,10 +30,6 @@ impl<S> CompatSpan<S> {
         // `&CompatSpan<S>` have the same layout, and the lifetime is carried over.
         unsafe { &*core::ptr::from_ref(span).cast::<Self>() }
     }
-}
-
-fn is_promoted(key: &str) -> bool {
-    PROMOTED_SPAN_TAGS.contains(&key)
 }
 
 impl<S: Span> CompatSpan<S> {
@@ -86,8 +82,8 @@ impl<S: Span + AttributesIter> AttributesIter for CompatSpan<S> {
             let value = self.promoted(key)?;
             Some((key, AttributeRef::String(value)))
         });
-        // Spans never hold promoted tags in their attributes, but a `ChunkSpanView` may expose
-        // chunk attributes under those names: the getters already take them into account.
+        // v0.4 spans also hold the promoted tags in their attributes: yield them once, from the
+        // getters.
         self.0
             .attributes()
             .filter(|(key, _)| !is_promoted(key))

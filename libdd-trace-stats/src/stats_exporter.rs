@@ -273,7 +273,7 @@ impl<Cap: HttpClientCapability + SleepCapability> AgentlessStatsExporter<Cap> {
 
         let mut concentrator = self.concentrator.lock_or_panic();
         for trace in traces.iter() {
-            let chunk = libdd_trace_utils::span::v04::TraceChunk::new(trace);
+            let chunk = libdd_trace_utils::span::RootSpanChunk::new(trace);
             for span in trace {
                 concentrator.add_span(&ChunkSpanView {
                     span,
@@ -990,7 +990,7 @@ mod tests {
 
         trace_utils::compute_top_level_span(trace.as_mut_slice());
 
-        let chunk = libdd_trace_utils::span::v04::TraceChunk::new(&trace);
+        let chunk = libdd_trace_utils::span::RootSpanChunk::new(&trace);
         for span in trace.iter() {
             concentrator.add_span(&ChunkSpanView {
                 span,
@@ -1479,7 +1479,7 @@ mod tests {
             },
         ];
         trace_utils::compute_top_level_span(trace.as_mut_slice());
-        let chunk = libdd_trace_utils::span::v04::TraceChunk::new(&trace);
+        let chunk = libdd_trace_utils::span::RootSpanChunk::new(&trace);
         for span in &trace {
             concentrator.add_span(&ChunkSpanView {
                 span,

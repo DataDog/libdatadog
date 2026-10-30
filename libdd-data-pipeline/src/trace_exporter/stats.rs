@@ -346,7 +346,7 @@ fn add_spans_to_stats<T: libdd_trace_utils::span::TraceData>(
 
     let mut stats_concentrator = stats_concentrator.lock_or_panic();
     for trace in traces.iter() {
-        let chunk = libdd_trace_utils::span::v04::TraceChunk::new(trace);
+        let chunk = libdd_trace_utils::span::RootSpanChunk::new(trace);
         for span in trace {
             stats_concentrator.add_span(&ChunkSpanView {
                 span,

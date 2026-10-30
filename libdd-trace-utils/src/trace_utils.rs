@@ -19,9 +19,9 @@ use rmp::decode::read_array_len;
 use rmpv::decode::read_value;
 use rmpv::{Integer, Value};
 use std::cmp::Ordering;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::env;
-use tracing::{debug, error};
+use tracing::error;
 
 /// The maximum payload size for a single request that can be sent to the trace agent. Payloads
 /// larger than this size will be dropped and the agent will return a 413 error if
@@ -379,44 +379,10 @@ pub fn coalesce_send_data(mut data: Vec<SendData>) -> Vec<SendData> {
     data
 }
 
+/// Returns the index of the root span in `trace`, see
+/// [`crate::span::trace_utils::get_root_span_index`].
 pub fn get_root_span_index(trace: &[pb::Span]) -> anyhow::Result<usize> {
-    if trace.is_empty() {
-        anyhow::bail!("Cannot find root span index in an empty trace.");
-    }
-
-    // Do a first pass to find if we have an obvious root span (starting from the end) since some
-    // clients put the root span last.
-    for (i, span) in trace.iter().enumerate().rev() {
-        if span.parent_id == 0 {
-            return Ok(i);
-        }
-    }
-
-    let span_ids: HashSet<_> = trace.iter().map(|span| span.span_id).collect();
-
-    let mut root_span_id = None;
-    for (i, span) in trace.iter().enumerate() {
-        // If a span's parent is not in the trace, it is a root
-        if !span_ids.contains(&span.parent_id) {
-            if root_span_id.is_some() {
-                debug!(
-                    trace_id = &trace[0].trace_id,
-                    "trace has multiple root spans"
-                );
-            }
-            root_span_id = Some(i);
-        }
-    }
-    Ok(match root_span_id {
-        Some(i) => i,
-        None => {
-            debug!(
-                trace_id = &trace[0].trace_id,
-                "Could not find the root span for trace"
-            );
-            trace.len() - 1
-        }
-    })
+    crate::span::trace_utils::get_root_span_index(trace)
 }
 
 /// Updates all the spans top-level attribute.

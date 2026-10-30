@@ -72,6 +72,11 @@ pub const COMPONENT_KEY: &str = "component";
 /// The span tags promoted to dedicated fields, see [`Attributes`].
 pub const PROMOTED_SPAN_TAGS: [&str; 4] = [SPAN_KIND_KEY, ENV_KEY, VERSION_KEY, COMPONENT_KEY];
 
+/// Whether `key` is one of the [`PROMOTED_SPAN_TAGS`].
+pub(crate) fn is_promoted(key: &str) -> bool {
+    PROMOTED_SPAN_TAGS.contains(&key)
+}
+
 /// Tag name of the origin, promoted to [`TraceChunk::origin`].
 pub const ORIGIN_KEY: &str = "_dd.origin";
 /// Tag name of the sampling priority, promoted to [`TraceChunk::priority`].
@@ -403,6 +408,18 @@ pub trait ValueTypes: Sized {
     type Map: ValueMapMut<Self> + Clone + Debug + PartialEq;
 }
 
+/// [`ValueTypes`] backed by owned `String`s, `Vec`s and `HashMap`s, for span types that store
+/// plain owned strings (e.g. protobuf spans).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StringData;
+
+impl ValueTypes for StringData {
+    type Text = String;
+    type Bytes = Vec<u8>;
+    type Array = Vec<AttributeValue<Self>>;
+    type Map = HashMap<String, AttributeValue<Self>>;
+}
+
 /// The value in a map of attributes
 pub enum AttributeValue<T: ValueTypes> {
     String(T::Text),
@@ -590,16 +607,7 @@ impl<T: ValueTypes> Debug for AttributeRef<'_, T> {
 mod tests {
     use super::*;
 
-    #[derive(Clone, Debug, PartialEq)]
-    struct HashData;
-    impl ValueTypes for HashData {
-        type Text = String;
-        type Bytes = Vec<u8>;
-        type Array = Vec<AttributeValue<Self>>;
-        type Map = HashMap<String, AttributeValue<Self>>;
-    }
-
-    type V = AttributeValue<HashData>;
+    type V = AttributeValue<StringData>;
     type Map = HashMap<String, V>;
 
     fn str_value(s: &str) -> V {
