@@ -61,7 +61,7 @@ pub(crate) struct Split {
     pub variation_key: Str,
     pub value: AssignmentValue,
     pub serial_id: Option<i32>,
-    pub features: Arc<[Feature]>,
+    pub features: Option<Arc<[Feature]>>,
 }
 
 #[derive(Debug, Clone)]
@@ -202,7 +202,7 @@ fn compile_split(
         variation_key: split.variation_key,
         value: result,
         serial_id: split.serial_id,
-        features: split.features.into(),
+        features: (!split.features.is_empty()).then(|| split.features.into()),
     })
 }
 

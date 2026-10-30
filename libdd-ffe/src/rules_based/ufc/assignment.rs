@@ -38,9 +38,16 @@ pub struct Assignment {
     pub serial_id: Option<i32>,
     /// Whether this assignment is part of an experiment and should be logged.
     pub do_log: bool,
-    /// Features attached to the selected split. Shared with the compiled split, so cloning the
-    /// assignment is cheap and allocates nothing when the split has no features.
-    pub features: Arc<[Feature]>,
+    /// Features attached to the selected split, shared with the compiled split. `None` when the
+    /// split has none, so an assignment without features costs no reference count update.
+    pub features: Option<Arc<[Feature]>>,
+}
+
+impl Assignment {
+    /// The features of the selected split; empty when it has none.
+    pub fn features_slice(&self) -> &[Feature] {
+        self.features.as_deref().unwrap_or(&[])
+    }
 }
 
 /// Enum representing values assigned to a subject as a result of feature flag evaluation.

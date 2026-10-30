@@ -66,12 +66,12 @@ impl ResolutionDetails {
         let Ok(assignment) = result else {
             return (Vec::new(), Vec::new());
         };
-        if assignment.features.is_empty() {
+        let source = assignment.features_slice();
+        if source.is_empty() {
             return (Vec::new(), Vec::new());
         }
 
-        let total_destinations: usize = assignment
-            .features
+        let total_destinations: usize = source
             .iter()
             .map(|feature| feature.destinations.len())
             .sum();
@@ -79,7 +79,7 @@ impl ResolutionDetails {
         // All destination strings are borrowed up front, so the pointers handed out below stay
         // valid: the Vec is never reallocated after this loop.
         let mut feature_destinations = Vec::with_capacity(total_destinations);
-        for feature in assignment.features.iter() {
+        for feature in source.iter() {
             for destination in feature.destinations.iter() {
                 // SAFETY: borrows from the pinned assignment, which ResolutionDetails owns.
                 feature_destinations
@@ -88,8 +88,7 @@ impl ResolutionDetails {
         }
 
         let mut offset = 0;
-        let features = assignment
-            .features
+        let features = source
             .iter()
             .map(|feature| {
                 let count = feature.destinations.len();
@@ -766,7 +765,7 @@ mod tests {
             reason: AssignmentReason::Static,
             serial_id: Some(7),
             do_log: true,
-            features: features.into(),
+            features: (!features.is_empty()).then(|| features.into()),
         })
     }
 
@@ -972,7 +971,7 @@ mod tests {
         assert!(details.features.is_empty());
         assert!(details.feature_destinations.is_empty());
 
-        let handle = Handle::new(details);
+        let mut handle = Handle::new(details);
         // SAFETY: Handle is a plain pointer wrapper; a bitwise copy is sound.
         let handle_copy = unsafe { std::ptr::read(&handle) };
         // SAFETY: the handle is valid; the original is freed below.
@@ -981,12 +980,12 @@ mod tests {
         assert!(features.elements.is_null());
 
         // SAFETY: freeing the test handle.
-        unsafe { ddog_ffe_assignment_drop(Box::into_raw(Box::new(handle))) };
+        unsafe { ddog_ffe_assignment_drop(&mut handle) };
     }
 
     #[test]
     fn error_result_exposes_an_empty_array() {
-        let handle = Handle::new(ResolutionDetails::from(
+        let mut handle = Handle::new(ResolutionDetails::from(
             EvaluationError::ConfigurationMissing,
         ));
         // SAFETY: Handle is a plain pointer wrapper; a bitwise copy is sound.
@@ -997,6 +996,6 @@ mod tests {
         assert!(features.elements.is_null());
 
         // SAFETY: freeing the test handle.
-        unsafe { ddog_ffe_assignment_drop(Box::into_raw(Box::new(handle))) };
+        unsafe { ddog_ffe_assignment_drop(&mut handle) };
     }
 }

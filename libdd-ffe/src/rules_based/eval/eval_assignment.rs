@@ -704,7 +704,7 @@ mod tests {
         let assignment = config
             .eval_flag("with-features", &context, ExpectedFlagType::String, now)
             .unwrap();
-        let features = &assignment.features;
+        let features = assignment.features_slice();
         assert_eq!(features.len(), 3);
         assert_eq!(features[0].key.as_str(), "holdout.key");
         assert_eq!(features[0].value, FeatureValue::String("abc".into()));
@@ -717,7 +717,8 @@ mod tests {
         let assignment = config
             .eval_flag("without-features", &context, ExpectedFlagType::String, now)
             .unwrap();
-        assert!(assignment.features.is_empty());
+        assert!(assignment.features.is_none());
+        assert!(assignment.features_slice().is_empty());
     }
 
     #[test]
