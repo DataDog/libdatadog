@@ -89,6 +89,7 @@ libdd-crashtracker-ffi = { path = "../libdd-crashtracker-ffi", default-features 
 windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Threading"] }
 
 [dev-dependencies]
+tracing-subscriber = { workspace = true, features = ["std", "fmt"] }
 tokio = { workspace = true, features = ["test-util", "macros"] }
 libc.workspace = true
 serial_test.workspace = true
