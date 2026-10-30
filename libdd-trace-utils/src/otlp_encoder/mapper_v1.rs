@@ -181,13 +181,11 @@ fn collect_span_attributes_v1<T: TraceData>(
     // or (under OTel-semantics) duplicates the error-message compat tags that are promoted to the
     // Status message instead.
     let is_eligible = |key: &&str, value: &AttributeValue<T>| {
-        if let AttributeValue::String(value) = value {
-            if resource_attributes
+        if matches!(value, AttributeValue::String(value) if resource_attributes
                 .get(*key)
-                .is_some_and(|resource| resource.as_str() == value.borrow())
-            {
-                return false;
-            }
+                .is_some_and(|resource| resource.as_str() == value.borrow()))
+        {
+            return false;
         }
         let promoted_and_set = match *key {
             "service.name" => has_per_span_service && !otel_trace_semantics_enabled,
