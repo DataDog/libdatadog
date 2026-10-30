@@ -79,5 +79,6 @@ tls-core = ["dep:hyper-rustls", "dep:rustls", "dep:rustls-platform-verifier", "h
 tls-distrust = ["dep:rustls", "dep:rustls-platform-verifier"]
 use_webpki_roots = ["dep:webpki-root-certs", "dep:webpki-roots", "hyper-rustls/webpki-roots"]
 
-# [package.metadata.cargo-machete]
-# ignored = ["webpki-roots", "webpki-root-certs"]
+[lints.clippy]
+std_instead_of_alloc = "warn"
+std_instead_of_core = "warn"
