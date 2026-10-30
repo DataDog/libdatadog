@@ -1000,6 +1000,26 @@ mod tests {
         Ok((builder, state))
     }
 
+    #[test]
+    fn formal_counterexample_runtime_stack_string_preserves_marker_prefix() {
+        let stack_line = format!("{DD_CRASHTRACK_END_RUNTIME_STACK_STRING} is user data");
+        let (builder, _) = parse_test_lines(&[
+            DD_CRASHTRACK_BEGIN_RUNTIME_STACK_STRING,
+            &stack_line,
+            DD_CRASHTRACK_END_RUNTIME_STACK_STRING,
+        ])
+        .unwrap();
+
+        let runtime_stack = builder
+            .experimental
+            .and_then(|experimental| experimental.runtime_stack)
+            .unwrap();
+        assert_eq!(
+            runtime_stack.stacktrace_string.as_deref(),
+            Some(&*stack_line)
+        );
+    }
+
     /// Keep the primary stack and completed threads when the stream stops inside a section.
     #[test]
     fn threads_delivered_before_a_truncated_stream_are_kept() {
