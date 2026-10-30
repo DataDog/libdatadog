@@ -14,9 +14,14 @@ use parking_lot::RwLock;
 ///
 /// # Safety
 ///
-/// Implementors must ensure that all methods which take `&self` are safe to
-/// call under a read-lock, and all `&mut self` methods are safe to call under
-/// a write-lock, and are safe for `Send` and `Sync`.
+/// Implementors must uphold the safety contracts documented on the `unsafe`
+/// methods below.
+///
+/// Thread-safety is not part of this contract: [`Sharded`] wraps each shard
+/// in a [`RwLock`], so it is `Send` when `Self: Send` and `Sync` when
+/// `Self: Send + Sync`, as derived automatically by the compiler. Types that
+/// are thread-safe but hold raw pointers should implement `Send`/`Sync`
+/// themselves (see [`Set`] and [`SliceSet`]).
 pub unsafe trait SetOps {
     type Lookup<'a>: Copy
     where
@@ -130,10 +135,6 @@ impl<S: SetOps, const N: usize> Sharded<S, N> {
         unsafe { guard.insert_unique_uncontended_with_hash(hash, owned) }
     }
 }
-
-// SAFETY: relies on safety requirements of `SetOps`.
-unsafe impl<S: SetOps, const N: usize> Send for Sharded<S, N> {}
-unsafe impl<S: SetOps, const N: usize> Sync for Sharded<S, N> {}
 
 unsafe impl<T: Hash + Eq + 'static> SetOps for Set<T> {
     type Lookup<'a> = &'a T;

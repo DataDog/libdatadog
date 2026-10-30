@@ -22,6 +22,21 @@ pub struct SliceSet<T: Copy + Hash + Eq + 'static> {
     pub(crate) slices: HashTable<ThinSlice<'static, T>>,
 }
 
+// SAFETY: a `SliceSet<T>` owns the `T`s it stores (they live in `arena`, which
+// it owns, and `slices` only points into it), and moving it moves those values,
+// so `T: Send` is required. In addition, views into the set escape as
+// `ThinSlice<'static, T>` (e.g. from `try_insert`), which can be kept by the
+// thread the set is moved away from, so both threads may read the same `T`s:
+// `T: Sync` is required too.
+unsafe impl<T: Copy + Hash + Eq + Send + Sync + 'static> Send for SliceSet<T> {}
+
+// SAFETY: the `&self` methods only read `slices` and never touch `arena`
+// (whose non-thread-safe interior mutability is only used from `&mut self`
+// methods). Through `&SliceSet<T>`, other threads can obtain views of the
+// stored `[T]` (e.g. via `iter`), so `T: Sync` is required, like for
+// `&Vec<T>`.
+unsafe impl<T: Copy + Hash + Eq + Sync + 'static> Sync for SliceSet<T> {}
+
 impl<T: Copy + Hash + Eq + 'static> SliceSet<T> {
     const SIZE_HINT: usize = 1024 * 1024;
 

@@ -116,13 +116,6 @@ impl<T: hash::Hash + Eq + 'static, const N: usize> ParallelSet<T, N> {
     }
 }
 
-// SAFETY: uses `RwLock<Set<T>>` to synchronize access. All reads/writes in
-// this wrapper go through those locks. All non-mut methods of
-// `ParallelSetStorage` and `Set` are safe to call under a read-lock, and all
-// mut methods are safe to call under a write-lock.
-unsafe impl<T: hash::Hash + Eq + 'static, const N: usize> Send for ParallelSet<T, N> {}
-unsafe impl<T: hash::Hash + Eq + 'static, const N: usize> Sync for ParallelSet<T, N> {}
-
 #[cfg(test)]
 mod tests {
     use super::*;

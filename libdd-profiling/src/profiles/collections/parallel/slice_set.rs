@@ -41,13 +41,6 @@ pub struct ParallelSliceSet<T: Copy + hash::Hash + Eq + 'static> {
     pub(crate) arc: Arc<ParallelSliceStorage<T>>,
 }
 
-// SAFETY: uses `RwLock<SliceSet<T>>` to synchronize access. All reads/writes
-// in this wrapper go through those locks. All non-mut methods of
-// `ParallelSliceStorage` and `Set` are safe to call under a read-lock, and all
-// mut methods are safe to call under a write-lock.
-unsafe impl<T: Copy + hash::Hash + Eq + 'static> Send for ParallelSliceSet<T> {}
-unsafe impl<T: Copy + hash::Hash + Eq + 'static> Sync for ParallelSliceSet<T> {}
-
 impl<T: Copy + hash::Hash + Eq + 'static> Deref for ParallelSliceSet<T> {
     type Target = ParallelSliceStorage<T>;
     fn deref(&self) -> &Self::Target {
