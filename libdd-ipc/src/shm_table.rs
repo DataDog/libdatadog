@@ -53,9 +53,7 @@
 //! best-effort salvage, not a consistent snapshot. A writer that matched a slot before the drain
 //! cleared it can still record into it afterwards, and the value then goes to whichever key
 //! claims the slot next, if any. A key written while the drain resets the string pool can have
-//! its strings overwritten by later keys. A normal drain is exposed the same way to a writer that
-//! outlasts the bounded wait for `in_flight`. Either way, only the few values caught in the race
-//! are affected.
+//! its strings overwritten by later keys. Only the few values caught in the race are affected.
 //!
 //! ## Table growth
 //! When the active bucket is nearly full the sidecar:
