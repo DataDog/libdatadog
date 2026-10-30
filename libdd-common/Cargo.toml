@@ -19,9 +19,7 @@ bench = false
 anyhow = { workspace = true, optional = true }
 arc-swap = { workspace = true, optional = true }
 hex = { workspace = true, default-features = true, optional = true }
-httparse = { workspace = true, features = ["std"], optional = true }
 http = { workspace = true, features = ["std"], optional = true }
-rand = { workspace = true, default-features = true, optional = true }
 regex = { workspace = true, features = ["std", "unicode", "perf"], optional = true }
 regex-lite = { workspace = true, default-features = true, optional = true }
 thiserror = { workspace = true, default-features = true, optional = true }
