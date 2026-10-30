@@ -102,11 +102,13 @@ default = ["https"]
 https = ["libdd-networking/https", "dep:libdd-capabilities-impl", "libdd-capabilities-impl/https"]
 mini_agent = [
     "compression",
+    "libdd-networking/http-client",
     "libdd-networking/use_webpki_roots",
     "dep:flate2",
 ]
 test-utils = [
     "dep:tokio",
+    "libdd-networking/http-client",
     "hyper/server",
     "httpmock",
     "cargo_metadata",
