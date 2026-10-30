@@ -1,5 +1,5 @@
 /*
- * USDT probe emission functions for the ddheap provider.
+ * USDT probe emission functions for the otel_memory provider.
  *
  * Defined in probes.c as regular non-inline functions so that each probe
  * site has a single, stable address in the final binary. This matters
@@ -20,18 +20,18 @@
     * the variadic USDT() macro that emits the same v3 ELF-note format
     * that bpftrace, systemtap, and BPF tracers all consume. */
 #  include <usdt.h>
-   /* Shared explicit semaphore for the ddheap provider. Defined in probes.c;
+   /* Shared explicit semaphore for the otel_memory provider. Defined in probes.c;
     * declared here so that other TUs (e.g. allocation_requested.h) can check
-    * USDT_SEMA_IS_ACTIVE(ddheap_alloc) without emitting their own implicit
+    * USDT_SEMA_IS_ACTIVE(otel_memory_alloc) without emitting their own implicit
     * semaphore definitions. */
-   USDT_DECLARE_SEMA(ddheap_alloc);
+   USDT_DECLARE_SEMA(otel_memory_alloc);
 #else
 #  define USDT(provider, name, ...) ((void)0)
 #  define USDT_SEMA_IS_ACTIVE(sema) (1)
 #endif
 
 /*
- * Emits the `ddheap:alloc` USDT.
+ * Emits the `otel_memory:alloc` USDT.
  *   user   - user-visible allocation pointer
  *   size   - allocation size in bytes
  *   weight - unbiased size estimator (nsamples * interval)
@@ -39,11 +39,11 @@
 void dd_probe_alloc(void *user, uint64_t size, uint64_t weight);
 
 /*
- * Emits the `ddheap:free` USDT.
+ * Emits the `otel_memory:free` USDT.
  *   ptr - user-visible pointer being freed
  *
  * The symbol always exists, but the USDT is only emitted when compiled
- * with live-heap tracking. The absence of the `ddheap:free` note in
+ * with live-heap tracking. The absence of the `otel_memory:free` note in
  * .note.stapsdt signals to external profilers that this binary does not
  * support live-heap correlation.
  */
@@ -51,7 +51,7 @@ void dd_probe_free(void *ptr);
 
 /*
  * Returns true when an external profiler is currently attached to the
- * ddheap:alloc USDT in this object file.
+ * otel_memory:alloc USDT in this object file.
  *
  * This is a point-in-time read of the alloc probe's USDT semaphore. A profiler
  * can attach or detach immediately after this returns. Use it as a
@@ -60,7 +60,7 @@ void dd_probe_free(void *ptr);
 bool dd_heap_profiler_attached(void);
 
 /*
- * Test-only: manually activate the ddheap:alloc USDT semaphore so that
+ * Test-only: manually activate the otel_memory:alloc USDT semaphore so that
  * dd_allocation_requested's fast-path guard allows sampling in a process
  * where no real profiler is attached. Call with `active=true` before
  * exercising the sampler and `active=false` to restore the default state.
