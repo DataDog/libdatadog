@@ -226,17 +226,7 @@ pub(crate) fn mmap_handle<T: FileBackedHandle>(handle: T) -> io::Result<MappedMe
         usable: AtomicUsize::new(size.get().min(reserved)),
         mem: handle,
     };
-    // Dumping sparse shared files can fault their entire capacity into RAM. Omit IPC
-    // contents, including the reserved tail, while retaining ordinary heap and stacks.
-    #[cfg(target_os = "linux")]
-    // SAFETY: these are the address and full length of the mapping just created above.
-    if unsafe { libc::madvise(mapped.ptr.as_ptr(), mapped.mapped_len, libc::MADV_DONTDUMP) } != 0 {
-        // Best effort: a host may restrict madvise without preventing ordinary IPC.
-        tracing::debug!(
-            "Could not exclude IPC mapping from core dump: {}",
-            io::Error::last_os_error()
-        );
-    }
+    mapped.exclude_from_core_dump();
     Ok(mapped)
 }
 
@@ -404,7 +394,23 @@ impl<T: FileBackedHandle> MappedMem<T> {
             tracing::error!("Failed to privately remap shared memory: {error}");
             std::process::abort();
         }
+        // The replacement mapping does not inherit the previous one's madvise state.
+        self.exclude_from_core_dump();
         Ok(())
+    }
+
+    /// Dumping sparse shared files can fault their entire capacity into RAM. Omit IPC
+    /// contents, including the reserved tail, while retaining ordinary heap and stacks.
+    fn exclude_from_core_dump(&self) {
+        #[cfg(target_os = "linux")]
+        // SAFETY: these are the address and full length of this mapping.
+        if unsafe { libc::madvise(self.ptr.as_ptr(), self.mapped_len, libc::MADV_DONTDUMP) } != 0 {
+            // Best effort: a host may restrict madvise without preventing ordinary IPC.
+            tracing::debug!(
+                "Could not exclude IPC mapping from core dump: {}",
+                io::Error::last_os_error()
+            );
+        }
     }
 
     /// Pick up backing that somebody else committed, without committing any.
