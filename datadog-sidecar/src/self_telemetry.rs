@@ -418,7 +418,6 @@ impl SelfTelemetry {
                 },
                 _ = self.watchdog_handle.wait_for_shutdown() => {
                     metrics.collect_and_send().await;
-                    // stop() drains queued actions and performs the final flush.
                     let _ = worker_handle.stop().await;
                     return
                 },

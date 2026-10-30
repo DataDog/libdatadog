@@ -409,7 +409,7 @@ pub struct TelemetryCachedClient {
     pub telemetry_metrics: HashMap<String, ContextKey>,
     pub handle: Option<JoinHandle<()>>,
     pub shared: TelemetryCachedClientShmData,
-    /// Registration of the worker on the shared runtime; stopped when the client is dropped.
+    /// Registration of the worker on the shared runtime; released by [`Self::shutdown`].
     worker_handle: Option<WorkerHandle>,
 }
 
@@ -492,6 +492,17 @@ impl TelemetryCachedClient {
         // Reset acknowledgements even if the first batch adds no cacheable data.
         client.write_shm_file();
         client
+    }
+
+    /// Waits for queued sends, then stops the worker: it drains its mailbox, performs the final
+    /// flush and releases its slot on the shared runtime. Call it when retiring or evicting.
+    pub async fn shutdown(mut self) {
+        if let Some(pending) = self.handle.take() {
+            pending.await.ok();
+        }
+        if let Some(worker_handle) = self.worker_handle.take() {
+            worker_handle.stop().await.ok();
+        }
     }
 
     pub fn write_shm_file(&self) {
@@ -652,26 +663,32 @@ impl Drop for TelemetryCachedClient {
         if let Some(shm_writer) = &self.shm_writer {
             shm_writer.write(&[]);
         }
-        // Release the worker from the shared runtime once queued sends ran; stop() drains the
-        // mailbox and performs the final flush.
-        let pending = self.handle.take();
-        let Some(worker_handle) = self.worker_handle.take() else {
-            return;
-        };
-        match tokio::runtime::Handle::try_current() {
-            Ok(rt) => {
-                rt.spawn(async move {
-                    if let Some(pending) = pending {
-                        pending.await.ok();
-                    }
-                    worker_handle.stop().await.ok();
-                });
-            }
-            Err(_) => {
-                warn!("No tokio runtime to stop the telemetry worker; it runs until shutdown")
-            }
-        }
     }
+}
+
+/// Removes clients idle for at least `max_idle` and shuts them down.
+async fn evict_idle_clients(
+    clients: &Mutex<HashMap<TelemetryCachedClientKey, TelemetryCachedEntry>>,
+    max_idle: Duration,
+) {
+    let evicted: Vec<_> = {
+        let mut lock = clients.lock_or_panic();
+        let mut evicted = Vec::new();
+        lock.retain(|_, c| {
+            let keep = c.last_used.elapsed() < max_idle;
+            if !keep {
+                evicted.push(c.client.clone());
+            }
+            keep
+        });
+        evicted
+    };
+    // Retire each client (others observe `None`) before shutting it down outside the lock.
+    let retired: Vec<_> = evicted
+        .iter()
+        .filter_map(|client| client.lock_or_panic().take())
+        .collect();
+    futures::future::join_all(retired.into_iter().map(TelemetryCachedClient::shutdown)).await;
 }
 
 type ServiceString = String;
@@ -694,8 +711,7 @@ impl Default for TelemetryCachedClientSet {
         let handle = tokio::spawn(async move {
             loop {
                 sleep(Duration::from_secs(60)).await;
-                let mut lock = clients.lock_or_panic();
-                lock.retain(|_, c| c.last_used.elapsed() < Duration::from_secs(1800));
+                evict_idle_clients(&clients, Duration::from_secs(1800)).await;
             }
         });
 
@@ -998,17 +1014,10 @@ mod tests {
         config
     }
 
-    /// Waits (bounded) until the worker is no longer registered on its shared runtime.
-    async fn wait_unregistered(worker_handle: &WorkerHandle) {
-        tokio::time::timeout(Duration::from_secs(5), async {
-            while worker_handle.set_fork_restart(false).is_ok() {
-                sleep(Duration::from_millis(10)).await;
-            }
-        })
-        .await
-        .expect("worker must be removed from the shared runtime");
+    /// A stopped worker is no longer registered: stopping it again reports `AlreadyStopped`.
+    async fn assert_unregistered(worker_handle: WorkerHandle) {
         assert!(matches!(
-            worker_handle.set_fork_restart(false),
+            worker_handle.stop().await,
             Err(libdd_shared_runtime::WorkerHandleError::AlreadyStopped)
         ));
     }
@@ -1034,12 +1043,12 @@ mod tests {
             telemetry.worker.send_stop().unwrap();
             telemetry.worker_handle.clone().unwrap()
         };
-        // Retire like sidecar_server: take the client out, remove it from the cache, drop it.
-        let retired = client.lock_or_panic().take();
+        // Retire like sidecar_server: take the client out, remove it from the cache, shut down.
+        let retired = client.lock_or_panic().take().unwrap();
         clients.remove_telemetry_client(&service, "test", &client);
-        drop(retired);
+        retired.shutdown().await;
 
-        wait_unregistered(&worker_handle).await;
+        assert_unregistered(worker_handle).await;
     }
 
     #[tokio::test]
@@ -1078,11 +1087,14 @@ mod tests {
             }));
             telemetry.worker_handle.clone().unwrap()
         };
-        drop(client);
-        // Idle eviction drops the cache entry, as the cleanup task's `retain` does.
-        clients.inner.lock_or_panic().clear();
+        evict_idle_clients(&clients.inner, Duration::ZERO).await;
+        assert!(
+            client.lock_or_panic().is_none(),
+            "evicted client is retired"
+        );
+        assert!(clients.inner.lock_or_panic().is_empty());
 
-        wait_unregistered(&worker_handle).await;
+        assert_unregistered(worker_handle).await;
         let output = std::fs::read_to_string(path).unwrap();
         assert!(output.contains("pending-before-eviction"));
         assert!(output.contains("app-closing"));

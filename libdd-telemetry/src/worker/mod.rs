@@ -1273,10 +1273,7 @@ pub enum TelemetryWorkerFlavor {
     MetricsLogs,
 }
 
-/// Builds a telemetry worker.
-///
-/// The worker runs on a [`libdd_shared_runtime::SharedRuntime`]: use
-/// `ForkSafeRuntime` in hosts that may fork, `BasicRuntime` otherwise.
+/// Builds a telemetry worker, which runs on a [`libdd_shared_runtime::SharedRuntime`].
 ///
 /// ```no_run
 /// use libdd_capabilities_impl::NativeCapabilities;
