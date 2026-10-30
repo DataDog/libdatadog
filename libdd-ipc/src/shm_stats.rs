@@ -701,11 +701,14 @@ pub struct ShmSpanInput<'a> {
     /// (key, value) peer-tag pairs. Only the first `MAX_PEER_TAGS - additional_tags.len()` are
     /// kept.
     pub peer_tags: &'a [(&'a str, &'a str)],
-    /// (key, value) additional metric tag pairs, sorted by key. Only the first
-    /// `MAX_ADDITIONAL_TAGS` are kept.
+    /// (key, value) additional metric tag pairs, sorted by key without duplicate keys. Values may
+    /// be empty. Only the first `MAX_ADDITIONAL_TAGS` are kept. Not checked: tags breaking this
+    /// only split the caller's entries or repeat keys in them.
     pub additional_tags: &'a [(&'a str, &'a str)],
     /// How many entries with unmasked additional metric tags a bucket admits. Once reached, the
     /// values of a new key's additional metric tags are replaced by [`TRACER_BLOCKED_VALUE`].
+    /// Note that different callers may technically have different limits. Callers shouldn't.
+    /// But it let's it work seamlessly if they do.
     pub additional_tags_cardinality_limit: u32,
     // stats
     pub duration_ns: i64,
@@ -1179,6 +1182,9 @@ impl ShmStatsMapping {
                                     if wait_for_slot(waits) {
                                         continue;
                                     }
+                                    // Technically we may extremely rarely not get a slot due to a
+                                    // rgeular timeout, but generally, this is a protection against
+                                    // a killed concurrent writer.
                                     return Insert::OverLimit;
                                 }
                                 // Unless the last room went to this key, in this slot: room is
