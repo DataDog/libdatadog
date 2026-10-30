@@ -47,6 +47,13 @@ thiserror = { workspace = true, default-features = true }
 tokio = { workspace = true, features = ["fs", "io-util", "macros", "net", "rt", "rt-multi-thread", "time"], optional = true }
 tower-service = { workspace = true, optional = true }
 
+[dev-dependencies]
+rcgen.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["rt", "macros", "time", "net", "io-util"] }
+tokio-rustls.workspace = true
+tools = { path = "../tools", default-features = false, features = ["test-utils"] }
+
 [features]
 # FIPS mode uses the FIPS-compliant cryptographic provider (Unix only)
 fips = ["hyper-rustls/fips", "tls-core"]

@@ -9,7 +9,7 @@ use http::header::{
 };
 use http::{Method, Request};
 use http_body_util::BodyExt;
-use libdd_common::http_common::{self, Body};
+use libdd_networking::http_common::{self, Body};
 use percent_encoding::percent_decode_str;
 use std::future::Future;
 use std::io::Read;

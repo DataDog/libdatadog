@@ -22,7 +22,7 @@ default = ["https", "reqwest-backend"]
 https = [
   "dep:reqwest",
   "reqwest?/rustls-no-provider",
-  # "libdd-networking?/https",
+  "libdd-networking?/https",
   "dep:rustls",
   "rustls?/ring",
   "rustls?/tls12",
@@ -31,23 +31,21 @@ https = [
 reqwest-backend = ["dep:reqwest", "reqwest?/hickory-dns", "reqwest?/multipart"]
 hyper-backend = [
     "dep:libdd-common",
-    # "libdd-networking/http-client",
+    "dep:libdd-networking",
+    "libdd-networking/http-client",
     "dep:hyper",
     "dep:hyper-util",
     "dep:http-body-util",
 ]
 # Honor HTTPS_PROXY/NO_PROXY environment variables in the hyper backend.
-hyper-proxy = [
-    "hyper-backend",
-    # "libdd-networking?/hyper-proxy" # FIXME
-]
+hyper-proxy = ["hyper-backend", "libdd-networking?/hyper-proxy"]
 fips = [
   "dep:reqwest",
   "reqwest?/rustls-no-provider",
   "dep:rustls",
   "rustls?/aws-lc-rs",
   "rustls?/tls12",
-  # "libdd-networking?/fips",
+  "libdd-networking?/fips",
   "dep:rustls-platform-verifier",
 ]
 
@@ -60,6 +58,7 @@ reqwest = { workspace = true, optional = true }
 rustls = { workspace = true, optional = true }
 rustls-platform-verifier = { workspace = true, optional = true }
 libdd-common = { version = "9.0.0", path = "../libdd-common", default-features = false, features = ["std"], optional = true }
+libdd-networking = { version = "1.0.0", path = "../libdd-networking", optional = true }
 hyper = { workspace = true, optional = true, features = ["http1", "client"] }
 hyper-util = { workspace = true, optional = true, features = ["http1", "client", "client-legacy", "tokio"] }
 http-body-util = { workspace = true, optional = true }

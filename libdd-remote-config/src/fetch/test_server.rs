@@ -18,8 +18,8 @@ use base64::Engine;
 use http::Response;
 use http_body_util::BodyExt;
 use hyper::service::service_fn;
-use libdd_common::http_common;
 use libdd_networking::endpoint::Endpoint;
+use libdd_networking::http_common;
 use libdd_trace_protobuf::remoteconfig::{
     ClientGetConfigsRequest, ClientGetConfigsResponse, ConfigStatus, File,
 };

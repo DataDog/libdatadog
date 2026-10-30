@@ -398,9 +398,9 @@ mod tests {
     use std::path::Path;
 
     #[cfg(unix)]
-    use libdd_common::connector::uds;
+    use libdd_networking::connector::uds;
 
-    use libdd_common::connector::named_pipe;
+    use libdd_networking::connector::named_pipe;
 
     use super::{Config, Settings, TelemetryEndpoint};
 

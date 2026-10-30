@@ -6,7 +6,7 @@ use cargo_metadata::MetadataCommand;
 use http_body_util::BodyExt;
 use hyper::body::Incoming;
 use hyper::{Request, Response, Uri};
-use libdd_common::http_common;
+use libdd_networking::http_common;
 use std::collections::HashMap;
 use std::fmt::Write;
 use std::path::Path;
