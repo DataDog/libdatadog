@@ -134,7 +134,8 @@ jobs:
         with:
           if-no-files-found: error
           name: libdatadog.${{ matrix.platform }}
-          path: ${{ env.LIBDD_OUTPUT_FOLDER }}
+          # LIBDD_OUTPUT_FOLDER is MSYS-form (/d/...) on windows: not usable by node actions
+          path: ${{ github.workspace }}${{ matrix.platform == 'windows-latest' && '/release' || '/artifacts' }}
           retention-days: 1
       # Doubles as the examples build for `(Windows) Run FFI examples` below.
       - name: "(Windows) Test building Profiling C bindings - dynamic link vc runtime"
