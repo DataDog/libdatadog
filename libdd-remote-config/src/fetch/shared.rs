@@ -493,6 +493,11 @@ pub mod tests {
             .unwrap()
             .unwrap();
 
+        // Applying v1 failed; the targets holding v1 report that until they get v2.
+        storage.state.set_config_state(
+            &PATH_FIRST,
+            ConfigApplyState::Error("invalid data".to_string()),
+        );
         server
             .files
             .lock()
@@ -509,6 +514,35 @@ pub mod tests {
             "v1",
             "the file the other target still lists was changed under it"
         );
+
+        // The lagging target reports the version it holds, so it is sent the new one.
+        let fetched = fetcher
+            .fetch_once(runtime_id, &DUMMY_TARGET, &capabilities, "a", &mut state_a)
+            .await
+            .unwrap();
+        let reported: Vec<(u64, u64, String)> = server
+            .last_request
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .client
+            .as_ref()
+            .unwrap()
+            .state
+            .as_ref()
+            .unwrap()
+            .config_states
+            .iter()
+            .map(|state| (state.version, state.apply_state, state.apply_error.clone()))
+            .collect();
+        assert_eq!(
+            reported,
+            vec![(1, 3, "invalid data".to_string())],
+            "the lagging target must report the state of the version it holds"
+        );
+        let fetched_by_a = fetched.expect("the lagging target must be sent the new version");
+        assert!(Arc::ptr_eq(&fetched_by_a[0], &fetched_by_b[0]));
     }
 
     #[tokio::test]
