@@ -1,0 +1,27 @@
+{
+  "$schema": "../../../../schema/provider-attempt-metric-fixture.schema.json",
+  "profile": "gen_ai.client.provider_attempt@0.1.0",
+  "case": "missing-usage",
+  "observation": {
+    "operation_name": "text_completion",
+    "provider_name": "cohere",
+    "request_model": "command-r",
+    "duration_seconds": 0.31,
+    "streaming": false,
+    "observation_point": "gateway"
+  },
+  "expected_metrics": [
+    {
+      "name": "gen_ai.client.inference.duration",
+      "instrument": "histogram",
+      "unit": "s",
+      "value": 0.31,
+      "attributes": {
+        "gen_ai.operation.name": "text_completion",
+        "gen_ai.provider.name": "cohere",
+        "gen_ai.request.model": "command-r",
+        "trajectory.observation.point": "gateway"
+      }
+    }
+  ]
+}

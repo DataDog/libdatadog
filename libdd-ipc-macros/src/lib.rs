@@ -157,9 +157,45 @@ fn gen_request_enum(enum_name: &Ident, methods: &[MethodInfo]) -> proc_macro2::T
     quote! {
         #[derive(::serde::Serialize, ::serde::Deserialize, Debug)]
         pub enum #enum_name {
-            #(#variants),*
+            #(#variants,)*
+            /// A request too large for a message, encoded in shared memory.
+            #[doc(hidden)]
+            _Oversized {
+                shm: libdd_ipc::platform::ShmHandle,
+                len: usize,
+            },
         }
         #response_predicate
+
+        impl libdd_ipc::oversized::OversizedEnvelope for #enum_name {
+            fn oversized(shm: libdd_ipc::platform::ShmHandle, len: usize) -> Self {
+                Self::_Oversized { shm, len }
+            }
+        }
+
+        impl #enum_name {
+            /// Completes a decoded request with the handles received along with it. Resolves a
+            /// request sent in shared memory: its handles follow the one of the shared memory.
+            pub fn with_handles(
+                mut self,
+                fds: ::std::vec::Vec<libdd_ipc::oversized::OwnedFd>,
+            ) -> ::std::result::Result<Self, libdd_ipc::codec::DecodeError> {
+                let mut __source = libdd_ipc::handles::FdSource::new(fds);
+                libdd_ipc::handles::TransferHandles::receive_handles(&mut self, &mut __source)
+                    .map_err(libdd_ipc::codec::DecodeError::Io)?;
+                let Self::_Oversized { shm, len } = self else {
+                    return Ok(self);
+                };
+                let mut __req: Self = libdd_ipc::oversized::decode(shm, len)?;
+                if let Self::_Oversized { .. } = __req {
+                    return Err(libdd_ipc::codec::DecodeError::Io(::std::io::Error::new(
+                        ::std::io::ErrorKind::InvalidData, "nested oversized request")));
+                }
+                libdd_ipc::handles::TransferHandles::receive_handles(&mut __req, &mut __source)
+                    .map_err(libdd_ipc::codec::DecodeError::Io)?;
+                Ok(__req)
+            }
+        }
     }
 }
 
@@ -190,9 +226,21 @@ fn gen_client_request_enum(enum_name: &Ident, methods: &[MethodInfo]) -> proc_ma
     quote! {
         #[derive(::serde::Serialize, Debug)]
         pub enum #enum_name<'request> {
-            #(#variants),*
+            #(#variants,)*
+            /// Serialized like the variant of the request enum.
+            #[doc(hidden)]
+            _Oversized {
+                shm: libdd_ipc::platform::ShmHandle,
+                len: usize,
+            },
         }
         #response_predicate
+
+        impl libdd_ipc::oversized::OversizedEnvelope for #enum_name<'_> {
+            fn oversized(shm: libdd_ipc::platform::ShmHandle, len: usize) -> Self {
+                Self::_Oversized { shm, len }
+            }
+        }
     }
 }
 
@@ -293,6 +341,9 @@ fn gen_transfer_handles(
             ) -> ::std::result::Result<(), Transport::Error> {
                 match self {
                     #(#copy_arms,)*
+                    #enum_name::_Oversized { shm, .. } => {
+                        libdd_ipc::handles::TransferHandles::copy_handles(shm, __transport)
+                    }
                     _ => Ok(()),
                 }
             }
@@ -303,6 +354,9 @@ fn gen_transfer_handles(
             ) -> ::std::result::Result<(), Transport::Error> {
                 match self {
                     #(#recv_arms,)*
+                    #enum_name::_Oversized { shm, .. } => {
+                        libdd_ipc::handles::TransferHandles::receive_handles(shm, __transport)
+                    }
                     _ => Ok(()),
                 }
             }
@@ -338,7 +392,7 @@ fn gen_handler_trait(
             };
             quote! {
                 fn #name(
-                    &self,
+                    &mut self,
                     #(#params),*
                 ) -> impl ::std::future::Future<Output = #ret> + Send + '_;
             }
@@ -346,7 +400,8 @@ fn gen_handler_trait(
         .collect();
 
     quote! {
-        #vis trait #trait_name: Send + Sync + 'static {
+        /// Requests are handled one at a time, so the methods have exclusive access to the handler.
+        #vis trait #trait_name: Send {
             /// Returns the counter incremented on each received IPC message.
             /// The serve loop uses this to track received payloads.
             fn recv_counter(&self) -> &::std::sync::atomic::AtomicU64;
@@ -453,13 +508,13 @@ fn gen_serve_fn(
 
     quote! {
         pub async fn #serve_fn<H: #trait_name>(
-            handler: ::std::sync::Arc<H>,
+            handler: &mut H,
         ) {
             // Pending 1-byte acks for fire-and-forget methods, flushed via sendmmsg(2) on Linux.
             #[cfg(target_os = "linux")]
             let mut __pending_acks: u32 = 0;
             loop {
-                let (mut req, fds) = match libdd_ipc::recv_raw_async(
+                let (req, fds) = match libdd_ipc::recv_raw_async(
                     &handler.connection().async_conn(),
                     |buf| libdd_ipc::codec::decode::<#enum_name>(buf),
                 ).await {
@@ -473,19 +528,20 @@ fn gen_serve_fn(
                         break;
                     }
                 };
-                let mut __source = libdd_ipc::handles::FdSource::new(fds);
-                if libdd_ipc::handles::TransferHandles::receive_handles(
-                    &mut req,
-                    &mut __source,
-                ).is_err() {
-                    ::tracing::warn!("IPC serve: failed to receive handles");
-                    break;
-                }
+                let req = match req.with_handles(fds) {
+                    Ok(req) => req,
+                    Err(e) => {
+                        ::tracing::warn!("IPC serve: failed to receive handles: {e}");
+                        break;
+                    }
+                };
                 let recv_counter = handler.recv_counter().load(::std::sync::atomic::Ordering::Relaxed) + 1;
                 ::tracing::trace!(recv_counter, ?req, pid = handler.connection().peer().pid, "IPC recv");
 
                 match req {
                     #(#match_arms)*
+                    // Resolved by with_handles().
+                    #enum_name::_Oversized { .. } => {}
                 }
                 handler.recv_counter().fetch_add(1, ::std::sync::atomic::Ordering::Relaxed);
             }
@@ -548,28 +604,10 @@ fn gen_channel(
                 .collect();
             let variant = &m.variant;
 
-            // Build the request and collect fds via TransferHandles.
+            // Build and encode the request, along with the fds to transfer.
             let build_req_and_fds = quote! {
                 let __req = #enum_name::#variant { #(#field_names),* };
-                let mut __sink = libdd_ipc::handles::FdSink::new();
-                libdd_ipc::handles::TransferHandles::copy_handles(
-                    &__req, &mut __sink
-                ).ok();
-                let __fds = __sink.into_fds();
-                #[cfg(windows)]
-                let __suffix_size = 4 + 8 * __fds.len();
-                #[cfg(not(windows))]
-                let __suffix_size = 0;
-                let __data = libdd_ipc::codec::encode_with_reserve(
-                    &__req,
-                    __suffix_size,
-                );
-                {
-                    let __max = libdd_ipc::max_message_size();
-                    if __data.len() > __max {
-                        ::tracing::warn!(?__req, len = __data.len(), max = __max, "IPC message too large");
-                    }
-                }
+                let __encoded = libdd_ipc::oversized::encode_request(&__req, self.0.max_send_size());
             };
 
             if m.is_oneway {
@@ -577,7 +615,8 @@ fn gen_channel(
                 quote! {
                     pub fn #method_name(&mut self, #(#params),*) -> bool {
                         #build_req_and_fds
-                        self.0.conn.try_send_raw(__data, &__fds).is_ok()
+                        let Ok(__encoded) = __encoded else { return false };
+                        self.0.conn.try_send_raw(__encoded.data, &__encoded.fds).is_ok()
                     }
                 }
             } else if let Some(ret_ty) = &m.return_type {
@@ -585,7 +624,8 @@ fn gen_channel(
                 quote! {
                     pub fn #method_name(&mut self, #(#params),*) -> ::std::result::Result<#ret_ty, libdd_ipc::codec::DecodeError> {
                         #build_req_and_fds
-                        let (__resp, _) = self.0.call(__data, &__fds)
+                        let __encoded = __encoded.map_err(libdd_ipc::codec::DecodeError::Io)?;
+                        let (__resp, _) = self.0.call(__encoded.data, &__encoded.fds)
                             .map_err(libdd_ipc::codec::DecodeError::Io)?;
                         libdd_ipc::codec::decode::<#ret_ty>(&__resp)
                     }
@@ -595,7 +635,8 @@ fn gen_channel(
                 quote! {
                     pub fn #method_name(&mut self, #(#params),*) -> ::std::io::Result<()> {
                         #build_req_and_fds
-                        self.0.call(__data, &__fds)?;
+                        let __encoded = __encoded?;
+                        self.0.call(__encoded.data, &__encoded.fds)?;
                         Ok(())
                     }
                 }
@@ -604,7 +645,8 @@ fn gen_channel(
                 quote! {
                     pub fn #method_name(&mut self, #(#params),*) -> bool {
                         #build_req_and_fds
-                        self.0.try_send(__data, &__fds)
+                        let Ok(__encoded) = __encoded else { return false };
+                        self.0.try_send(__encoded.data, &__encoded.fds).is_ok()
                     }
                 }
             }
@@ -622,23 +664,12 @@ fn gen_channel(
             #(#channel_methods)*
 
             /// Generic fire-and-forget send (used by SidecarSender outbox drain).
-            pub fn try_send_request(&mut self, req: &#enum_name) -> bool {
-                let mut __sink = libdd_ipc::handles::FdSink::new();
-                libdd_ipc::handles::TransferHandles::copy_handles(req, &mut __sink).ok();
-                let __fds = __sink.into_fds();
-                #[cfg(windows)]
-                let __suffix_size = 4 + 8 * __fds.len();
-                #[cfg(not(windows))]
-                let __suffix_size = 0;
-                let __data = libdd_ipc::codec::encode_with_reserve(req, __suffix_size);
-                let __max = libdd_ipc::max_message_size();
-                if __data.len() > __max {
-                    ::tracing::warn!(?req, len = __data.len(), max = __max, "IPC message too large");
-                }
+            pub fn try_send_request(&mut self, req: &#enum_name) -> ::std::io::Result<()> {
+                let __encoded = libdd_ipc::oversized::encode_request(req, self.0.max_send_size())?;
                 if req.expects_response() {
-                    self.0.try_send(__data, &__fds)
+                    self.0.try_send(__encoded.data, &__encoded.fds)
                 } else {
-                    self.0.conn.try_send_raw(__data, &__fds).is_ok()
+                    self.0.conn.try_send_raw(__encoded.data, &__encoded.fds)
                 }
             }
 
@@ -647,22 +678,11 @@ fn gen_channel(
                 &mut self,
                 req: &#enum_name,
             ) -> ::std::io::Result<()> {
-                let mut __sink = libdd_ipc::handles::FdSink::new();
-                libdd_ipc::handles::TransferHandles::copy_handles(req, &mut __sink).ok();
-                let __fds = __sink.into_fds();
-                #[cfg(windows)]
-                let __suffix_size = 4 + 8 * __fds.len();
-                #[cfg(not(windows))]
-                let __suffix_size = 0;
-                let __data = libdd_ipc::codec::encode_with_reserve(req, __suffix_size);
-                let __max = libdd_ipc::max_message_size();
-                if __data.len() > __max {
-                    ::tracing::warn!(?req, len = __data.len(), max = __max, "IPC message too large");
-                }
+                let __encoded = libdd_ipc::oversized::encode_request(req, self.0.max_send_size())?;
                 if req.expects_response() {
-                    self.0.send_blocking(__data, &__fds)
+                    self.0.send_blocking(__encoded.data, &__encoded.fds)
                 } else {
-                    self.0.conn.send_raw_blocking(__data, &__fds)
+                    self.0.conn.send_raw_blocking(__encoded.data, &__encoded.fds)
                 }
             }
 
@@ -687,23 +707,13 @@ fn gen_channel(
             ) -> ::std::result::Result<__Response, libdd_ipc::codec::DecodeError>
             where
                 __Request: ::serde::Serialize
-                    + ::std::fmt::Debug
-                    + libdd_ipc::handles::TransferHandles,
+                    + libdd_ipc::handles::TransferHandles
+                    + libdd_ipc::oversized::OversizedEnvelope,
                 __Response: ::serde::de::DeserializeOwned,
             {
-                let mut __sink = libdd_ipc::handles::FdSink::new();
-                libdd_ipc::handles::TransferHandles::copy_handles(req, &mut __sink).ok();
-                let __fds = __sink.into_fds();
-                #[cfg(windows)]
-                let __suffix_size = 4 + 8 * __fds.len();
-                #[cfg(not(windows))]
-                let __suffix_size = 0;
-                let __data = libdd_ipc::codec::encode_with_reserve(req, __suffix_size);
-                let __max = libdd_ipc::max_message_size();
-                if __data.len() > __max {
-                    ::tracing::warn!(?req, len = __data.len(), max = __max, "IPC message too large");
-                }
-                let (__resp, _) = self.0.call(__data, &__fds)
+                let __encoded = libdd_ipc::oversized::encode_request(req, self.0.max_send_size())
+                    .map_err(libdd_ipc::codec::DecodeError::Io)?;
+                let (__resp, _) = self.0.call(__encoded.data, &__encoded.fds)
                     .map_err(libdd_ipc::codec::DecodeError::Io)?;
                 libdd_ipc::codec::decode::<__Response>(&__resp)
             }

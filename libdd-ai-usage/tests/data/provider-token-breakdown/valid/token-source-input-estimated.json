@@ -1,0 +1,63 @@
+{
+  "$schema": "../../../../schema/provider-token-breakdown-metric-fixture.schema.json",
+  "profile": "trajectory.gen_ai.client.token_breakdown@0.1.0",
+  "case": "token-source-input-estimated",
+  "description": "The input side was estimated: the cache-read, cache-write and uncached Counters carry trajectory.token.source estimated. Uncached is 2000 - 1024 - 0 = 976; the cache-write zero has no lifetime part, so its lifetime is unspecified.",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "exampleai",
+    "request_model": "ex-large-1",
+    "input_tokens": 2000,
+    "input_basis": "includes_cache",
+    "output_tokens": 800,
+    "cache_read_input_tokens": 1024,
+    "cache_write_input_tokens": 0,
+    "input_token_source": "estimated",
+    "observation_point": "gateway"
+  },
+  "expected_metrics": [
+    {
+      "name": "gen_ai.client.inference.usage.cache_read.input_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 1024,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.request.model": "ex-large-1",
+        "gen_ai.token.modality": "unknown",
+        "trajectory.token.source": "estimated",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.usage.cache_write.input_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 0,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.request.model": "ex-large-1",
+        "gen_ai.token.modality": "unknown",
+        "trajectory.cache.lifetime": "unspecified",
+        "trajectory.token.source": "estimated",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "trajectory.gen_ai.client.inference.usage.uncached.input_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 976,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.request.model": "ex-large-1",
+        "gen_ai.token.modality": "unknown",
+        "trajectory.token.source": "estimated",
+        "trajectory.observation.point": "gateway"
+      }
+    }
+  ]
+}

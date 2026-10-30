@@ -147,7 +147,7 @@ pub fn build_target_lookup(manifest_path: Option<&Path>) -> Result<(TargetLookup
             let src_path = target.src_path.into_std_path_buf();
 
             match kind {
-                "lib" | "proc-macro" => {
+                "lib" | "rlib" | "dylib" | "cdylib" | "staticlib" | "proc-macro" => {
                     lookup.insert_lib(&package.name, &target.name, src_path);
                 }
                 "test" => {
@@ -342,12 +342,11 @@ fn resolve_unit_test_path(
     // Try to find the module file from the test name
     // Test name is like "trace_utils::tests::test_compute_top_level"
     // We want to find src/trace_utils.rs or src/trace_utils/mod.rs
-    if let Some(test_name) = testcase_name {
-        if let Some(src_dir) = src_path.parent() {
-            if let Some(file_path) = resolve_module_file(test_name, src_dir, workspace_root) {
-                return file_path;
-            }
-        }
+    if let Some(test_name) = testcase_name
+        && let Some(src_dir) = src_path.parent()
+        && let Some(file_path) = resolve_module_file(test_name, src_dir, workspace_root)
+    {
+        return file_path;
     }
     // Fallback to lib.rs
     to_relative_path(src_path, workspace_root)
@@ -484,6 +483,24 @@ mod tests {
         let result = process_junit_xml(input, &lookup, &workspace_root).unwrap();
 
         assert!(result.contains(r#"file="my-crate/src/lib.rs""#));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_process_junit_xml_ffi_library() {
+        let manifest_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
+        let (lookup, workspace_root) = build_target_lookup(Some(&manifest_path)).unwrap();
+
+        let input = r#"<?xml version="1.0" encoding="UTF-8"?>
+<testsuites>
+  <testsuite name="libdd-library-config-ffi">
+    <testcase classname="libdd-library-config-ffi" name="tracer_metadata::tests::include_otel_thread_context_rejects_null" />
+  </testsuite>
+</testsuites>"#;
+
+        let result = process_junit_xml(input, &lookup, &workspace_root).unwrap();
+
+        assert!(result.contains(r#"file="libdd-library-config-ffi/src/tracer_metadata.rs""#));
     }
 
     #[test]

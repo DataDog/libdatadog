@@ -82,7 +82,7 @@ const MAX_BATCH_SIZE: usize = 20;
 /// Split a chunk into pieces of at most [`MAX_BATCH_SIZE`] spans, keeping each piece's spans'
 /// buffer capacity for reuse
 fn split_chunk<T: TraceData>(chunk: Vec<Span<T>>) -> impl Iterator<Item = Vec<Span<T>>> {
-    let pieces = (chunk.len() / 20) + 1;
+    let pieces = (chunk.len() / MAX_BATCH_SIZE) + 1;
     let batch_len = chunk.len() / pieces;
     let mut remaining = chunk;
     std::iter::from_fn(move || {
@@ -205,18 +205,18 @@ impl<T: TraceData> SpanPool<T> {
             let cell = self.inner.thread_cache.get_or_default();
             {
                 let mut slot = cell.borrow_mut();
-                if let Some(cache) = slot.last_cache.as_mut() {
-                    if let Some(span) = cache.0.pop() {
-                        if cache.0.is_empty() {
-                            // Recycle the now-empty `Vec` for `pull_empty_chunk`.
-                            let empty = std::mem::take(cache);
-                            slot.last_cache = None;
-                            if slot.empty_chunk.is_none() {
-                                slot.empty_chunk = Some(empty.0);
-                            }
+                if let Some(cache) = slot.last_cache.as_mut()
+                    && let Some(span) = cache.0.pop()
+                {
+                    if cache.0.is_empty() {
+                        // Recycle the now-empty `Vec` for `pull_empty_chunk`.
+                        let empty = std::mem::take(cache);
+                        slot.last_cache = None;
+                        if slot.empty_chunk.is_none() {
+                            slot.empty_chunk = Some(empty.0);
                         }
-                        return span;
                     }
+                    return span;
                 }
             }
             match self.inner.receiver.try_recv() {

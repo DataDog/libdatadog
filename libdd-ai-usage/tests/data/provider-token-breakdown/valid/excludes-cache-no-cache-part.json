@@ -1,0 +1,19 @@
+{
+  "$schema": "../../../../schema/provider-token-breakdown-metric-fixture.schema.json",
+  "profile": "trajectory.gen_ai.client.token_breakdown@0.1.0",
+  "case": "excludes-cache-no-cache-part",
+  "description": "excludes_cache stated and no cache part reported. The basis changes nothing, so this is the no-breakdown case: no point, and the two cache parts are named as missing. Uncached input is not recorded, because the cache parts are not known.",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "exampleai",
+    "input_tokens": 100,
+    "input_basis": "excludes_cache",
+    "output_tokens": 10,
+    "observation_point": "gateway"
+  },
+  "expected_metrics": [],
+  "expected_issues": [
+    "cache_read_missing",
+    "cache_write_missing"
+  ]
+}

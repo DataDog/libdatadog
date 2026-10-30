@@ -11,7 +11,10 @@ macro_rules! assert_maybe_no_error {
     };
 }
 
+use datadog_sidecar::service::DynamicInstrumentationConfigState;
 use libdd_common::Endpoint;
+use std::path::PathBuf;
+use std::process::Command;
 use std::ptr::{null, null_mut};
 use std::time::Duration;
 #[cfg(unix)]
@@ -21,6 +24,90 @@ use std::{
     io::Write,
     os::unix::prelude::{AsRawFd, FromRawFd},
 };
+
+#[test]
+#[cfg_attr(
+    miri,
+    ignore = "header generation and C compilation spawn native processes"
+)]
+fn generated_header_exposes_native_evp_transport_abi() {
+    let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    let generated = tempfile::tempdir().unwrap();
+    build_common::generate_header(
+        workspace.join("libdd-common-ffi"),
+        "common.h",
+        generated.path().to_path_buf(),
+    );
+    // Seed shared option types with telemetry's unconditional definitions before
+    // deduplicating platform-specific sidecar declarations, as in release builds.
+    build_common::generate_header(
+        workspace.join("libdd-telemetry-ffi"),
+        "telemetry.h",
+        generated.path().to_path_buf(),
+    );
+    // Windows-only sidecar declarations use crashtracker metadata. Include
+    // those definitions in the shared header just as the release builder does.
+    build_common::generate_header(
+        workspace.join("libdd-crashtracker-ffi"),
+        "crashtracker.h",
+        generated.path().to_path_buf(),
+    );
+    build_common::generate_header(
+        workspace.join("datadog-sidecar-ffi"),
+        "sidecar.h",
+        generated.path().to_path_buf(),
+    );
+
+    let include_dir = generated.path().join(build_common::HEADER_PATH);
+    let common_header = include_dir.join("common.h");
+    let telemetry_header = include_dir.join("telemetry.h");
+    let crashtracker_header = include_dir.join("crashtracker.h");
+    let sidecar_header = include_dir.join("sidecar.h");
+    tools::headers::dedup_headers(
+        common_header.to_str().unwrap(),
+        &[
+            telemetry_header.to_str().unwrap(),
+            crashtracker_header.to_str().unwrap(),
+            sidecar_header.to_str().unwrap(),
+        ],
+    );
+
+    let rustc = std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
+    let version = Command::new(rustc).arg("-vV").output().unwrap();
+    assert!(version.status.success());
+    let host = String::from_utf8(version.stdout)
+        .unwrap()
+        .lines()
+        .find_map(|line| line.strip_prefix("host: "))
+        .unwrap()
+        .to_owned();
+
+    let mut compiler = cc::Build::new();
+    compiler
+        .cargo_metadata(false)
+        .out_dir(generated.path())
+        .host(&host)
+        .target(&host)
+        .opt_level(0)
+        .debug(false)
+        .include(include_dir)
+        .file(
+            workspace
+                .join("datadog-sidecar-ffi")
+                .join("tests/evp_transport_abi.c"),
+        )
+        .warnings(true)
+        .warnings_into_errors(true);
+    if compiler.get_compiler().is_like_msvc() {
+        // Match examples/ffi/CMakeLists.txt: generated headers deliberately
+        // use anonymous structs/unions; keep all other warnings as errors.
+        compiler.flag("/wd4201");
+    }
+    compiler.try_compile("sidecar_evp_transport_abi").unwrap();
+}
 
 fn set_sidecar_per_process() {
     unsafe { std::env::set_var("_DD_DEBUG_SIDECAR_IPC_MODE", "instance_per_process") }
@@ -69,6 +156,14 @@ fn test_ddog_sidecar_connection() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
+// On Windows the spawn trampoline must GetProcAddress `ddog_daemon_entry_point` from the module
+// containing it - here the test .exe, which (unlike a DLL) exports no symbols. The daemon thus
+// exits immediately and connecting only succeeds when it wins the race against that exit.
+// Spawning from Windows needs the entrypoint in a dylib, see test_ddog_sidecar_connection.
+#[cfg_attr(
+    windows,
+    ignore = "sidecar daemon cannot start from a test exe on Windows (no exported entrypoint)"
+)]
 fn test_ddog_sidecar_register_app() {
     set_sidecar_per_process();
 
@@ -93,9 +188,11 @@ fn test_ddog_sidecar_register_app() {
             url: http::Uri::from_static("http://localhost:4318/v1/metrics"),
             ..Default::default()
         };
-        ddog_sidecar_session_set_config(
+        let instance_id = ddog_sidecar_instanceId_build("session_id".into(), "runtime_id".into());
+
+        ddog_sidecar_set_connection_config(
             &mut transport,
-            "session_id".into(),
+            &instance_id,
             &agent_endpoint,
             &Endpoint::default(),
             &otlp_metrics_endpoint,
@@ -117,14 +214,62 @@ fn test_ddog_sidecar_register_app() {
             null(),
             0,
             false,
-            false,
             &process_tags,
+            "".into(),
             "".into(),
             "".into(),
             "".into(),
             "".into(),
         )
         .unwrap_none();
+
+        let direct_endpoint = Endpoint {
+            url: http::Uri::from_static("https://event-platform-intake.datadoghq.com/"),
+            api_key: Some("test-api-key".into()),
+            ..Endpoint::default()
+        };
+
+        let producer = EvpProducerIdentity {
+            origin: "dd-trace-rb".into(),
+            version: "3.0.0".into(),
+        };
+
+        // Bind direct credentials to the consumer's declared intake target.
+        match ddog_sidecar_session_set_evp_transport(
+            &mut transport,
+            EvpTransportMode::PreferLocalThenDirect,
+            &agent_endpoint,
+            &direct_endpoint,
+            "errors-intake".into(),
+            &producer,
+        ) {
+            libdd_common_ffi::Option::Some(error) => assert!(
+                error
+                    .to_string()
+                    .contains("host must be errors-intake.<site>")
+            ),
+            libdd_common_ffi::Option::None => {
+                panic!("EVP transport accepted a mismatched direct intake")
+            }
+        }
+
+        // Clients stay Agent-only unless they explicitly select fallback.
+        assert_maybe_no_error!(ddog_sidecar_session_set_evp_transport(
+            &mut transport,
+            EvpTransportMode::AgentOnly,
+            &agent_endpoint,
+            null(),
+            "event-platform-intake".into(),
+            &producer,
+        ));
+        assert_maybe_no_error!(ddog_sidecar_session_set_evp_transport(
+            &mut transport,
+            EvpTransportMode::PreferLocalThenDirect,
+            &agent_endpoint,
+            &direct_endpoint,
+            "event-platform-intake".into(),
+            &producer,
+        ));
 
         let meta = ddog_sidecar_runtimeMeta_build(
             "language_name".into(),
@@ -132,25 +277,31 @@ fn test_ddog_sidecar_register_app() {
             "tracer_version".into(),
         );
 
-        let instance_id = ddog_sidecar_instanceId_build("session_id".into(), "runtime_id".into());
-        let queue_id = ddog_sidecar_queueId_generate();
+        ddog_sidecar_set_application(
+            &mut transport,
+            "service".into(),
+            "env".into(),
+            "version".into(),
+            &libdd_common_ffi::Vec::default(),
+            DynamicInstrumentationConfigState::NotSet,
+            0,
+        )
+        .unwrap_none();
 
         ddog_sidecar_telemetry_addDependency(
             &mut transport,
-            &instance_id,
-            &queue_id,
             "dependency_name".into(),
             "dependency_version".into(),
         )
         .unwrap_none();
 
-        // ddog_sidecar_telemetry_addIntegration(&mut transport, instance_id, &queue_id,
-        // integration_name, integration_version) TODO add ability to add configuration
+        // ddog_sidecar_telemetry_addIntegration(&mut transport, integration_name,
+        // integration_version) TODO add ability to add configuration
 
-        // reset session config - and cause shutdown of all existing instances
-        ddog_sidecar_session_set_config(
+        // reconfigure the connection
+        ddog_sidecar_set_connection_config(
             &mut transport,
-            "session_id".into(),
+            &instance_id,
             &Endpoint {
                 url: http::Uri::from_static("http://localhost:8083/"),
                 ..Default::default()
@@ -175,8 +326,8 @@ fn test_ddog_sidecar_register_app() {
             null(),
             0,
             false,
-            false,
             &process_tags,
+            "".into(),
             "".into(),
             "".into(),
             "".into(),

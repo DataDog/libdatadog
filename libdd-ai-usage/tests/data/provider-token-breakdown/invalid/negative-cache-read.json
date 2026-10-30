@@ -1,0 +1,16 @@
+{
+  "$schema": "../../../../schema/provider-token-breakdown-metric-fixture.schema.json",
+  "profile": "trajectory.gen_ai.client.token_breakdown@0.1.0",
+  "case": "negative-cache-read",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "openai",
+    "request_model": "gpt-4o-mini",
+    "input_tokens": 10,
+    "output_tokens": 5,
+    "cache_read_input_tokens": -1,
+    "observation_point": "gateway"
+  },
+  "expected_error_code": "count_invalid",
+  "expected_error": "cache_read_input_tokens must be a non-negative integer"
+}

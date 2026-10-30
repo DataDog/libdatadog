@@ -109,6 +109,7 @@ const FFI_FEATURES: &[&str] = &[
     "profiling",
     "telemetry",
     "data-pipeline",
+    "data-pipeline-external-observations",
     "symbolizer",
     "crashtracker",
     "library-config",
@@ -330,6 +331,7 @@ fn build_examples(project_root: &Path) -> Result<()> {
             "-B",
             path_str!(&build_dir)?,
             "-DCMAKE_BUILD_TYPE=Release",
+            "-DDDOG_EXTERNAL_OBSERVATIONS=ON",
             &format!("-DDatadog_ROOT={}", release_dir.display()),
         ]),
         "CMake configure",
@@ -599,10 +601,11 @@ fn visit_dirs(dir: &Path, cb: &mut dyn FnMut(&Path)) {
                 cb(&path);
             } else if path.is_dir() {
                 // Skip CMake internal directories
-                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                    if name != "CMakeFiles" && name != "_deps" {
-                        visit_dirs(&path, cb);
-                    }
+                if let Some(name) = path.file_name().and_then(|n| n.to_str())
+                    && name != "CMakeFiles"
+                    && name != "_deps"
+                {
+                    visit_dirs(&path, cb);
                 }
             }
         }
@@ -654,10 +657,10 @@ fn run_examples(
         };
 
         // Apply filter
-        if let Some(f) = filter {
-            if !name.contains(f) {
-                continue;
-            }
+        if let Some(f) = filter
+            && !name.contains(f)
+        {
+            continue;
         }
 
         // Check skip list

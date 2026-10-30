@@ -196,12 +196,12 @@ impl CrashInfo {
         endpoint: &Option<Endpoint>,
     ) -> anyhow::Result<()> {
         // If we're debugging to a file, dump the actual crashinfo into a json
-        if let Some(endpoint) = endpoint {
-            if Some("file") == endpoint.url.scheme_str() {
-                let path = libdd_common::decode_uri_path_in_authority(&endpoint.url)
-                    .context("crash output file path was not correctly formatted")?;
-                self.to_file(&path)?;
-            }
+        if let Some(endpoint) = endpoint
+            && Some("file") == endpoint.url.scheme_str()
+        {
+            let path = libdd_common::decode_uri_path_in_authority(&endpoint.url)
+                .context("crash output file path was not correctly formatted")?;
+            self.to_file(&path)?;
         }
 
         let telemetry_future = self.upload_to_telemetry(endpoint);

@@ -1402,4 +1402,27 @@ pub mod tests {
             (2u32 | (1 << 24) | (1 << 31)).to_be_bytes()
         );
     }
+
+    #[test]
+    fn test_dependent_flag_capability_encoding() {
+        let legacy = ConfigProductCapabilities::new(
+            vec![RemoteConfigProduct::FfeFlags],
+            vec![RemoteConfigCapabilities::FfeFlagConfigurationRules],
+        );
+        assert_eq!(legacy.encoded_capabilities, [0x40, 0, 0, 0, 0, 0]);
+
+        let capable = ConfigProductCapabilities::new(
+            vec![RemoteConfigProduct::FfeFlags],
+            vec![
+                RemoteConfigCapabilities::FfeFlagConfigurationRules,
+                RemoteConfigCapabilities::FfeFlagDependentFlagVariantKeyV1,
+            ],
+        );
+        assert_eq!(capable.encoded_capabilities, [0x04, 0x40, 0, 0, 0, 0, 0]);
+        assert_eq!(
+            serde_json::to_string(&RemoteConfigCapabilities::FfeFlagDependentFlagVariantKeyV1)
+                .unwrap(),
+            r#""FFE_FLAG_DEPENDENT_FLAG_VARIANT_KEY_V1""#,
+        );
+    }
 }

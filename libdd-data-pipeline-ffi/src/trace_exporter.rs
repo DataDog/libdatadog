@@ -77,6 +77,8 @@ pub struct TraceExporterConfig {
     client_computed_stats: bool,
     client_computed_top_level: bool,
     telemetry_cfg: Option<TelemetryConfig>,
+    #[cfg(feature = "external-observations")]
+    pub(crate) observations: bool,
     telemetry_instrumentation_sessions: TelemetryInstrumentationSessions,
     health_metrics_enabled: bool,
     process_tags: Option<String>,
@@ -877,6 +879,10 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
 
                 if let Some(cfg) = &config.telemetry_cfg {
                     builder.enable_telemetry(cfg.clone());
+                }
+                #[cfg(feature = "external-observations")]
+                if config.observations {
+                    builder.enable_observations();
                 }
 
                 if let Some(handle) = &config.mutable_metadata {

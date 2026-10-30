@@ -18,20 +18,11 @@ pub fn encode<T: Serialize>(value: &T) -> Vec<u8> {
 
 /// Encode data as a bincode payload, reserving additional capacity after it.
 pub fn encode_with_reserve<T: Serialize>(value: &T, additional_capacity: usize) -> Vec<u8> {
-    #[allow(clippy::expect_used)]
-    let encoded_len = usize::try_from(
-        bincode::serialized_size(value)
-            .expect("Calculating the encoded message size failed. This should never happen"),
-    )
-    .expect("The encoded message size does not fit in memory");
-    #[allow(clippy::expect_used)]
-    let capacity = encoded_len
-        .checked_add(additional_capacity)
-        .expect("The encoded message capacity overflowed");
-    let mut encoded = Vec::with_capacity(capacity);
+    let mut encoded = Vec::new();
     #[allow(clippy::expect_used)]
     bincode::serialize_into(&mut encoded, value)
         .expect("Encoding the response failed. This should never happen");
+    encoded.reserve(additional_capacity);
     encoded
 }
 
@@ -60,6 +51,20 @@ impl std::error::Error for DecodeError {}
 #[cfg(test)]
 mod tests {
     use super::{encode, encode_with_reserve};
+
+    #[test]
+    fn encode_with_reserve_serializes_once() {
+        struct Counted(std::cell::Cell<usize>);
+        impl serde::Serialize for Counted {
+            fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                self.0.set(self.0.get() + 1);
+                serializer.serialize_u8(7)
+            }
+        }
+        let value = Counted(std::cell::Cell::new(0));
+        assert_eq!(encode_with_reserve(&value, 164), vec![7]);
+        assert_eq!(value.0.get(), 1);
+    }
 
     #[test]
     fn encode_with_reserve_preserves_encoding_and_headroom() {

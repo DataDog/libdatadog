@@ -140,16 +140,16 @@ impl Logger {
                 layers.clear();
 
                 // Add file layer if configured
-                if let Some(file_config) = &self.file_config {
-                    if let Ok(file_layer) = file_layer(file_config) {
-                        layers.push(file_layer);
-                    }
+                if let Some(file_config) = &self.file_config
+                    && let Ok(file_layer) = file_layer(file_config)
+                {
+                    layers.push(file_layer);
                 }
 
-                if let Some(std_config) = &self.std_config {
-                    if let Ok(std_layer) = std_layer(std_config) {
-                        layers.push(std_layer);
-                    }
+                if let Some(std_config) = &self.std_config
+                    && let Ok(std_layer) = std_layer(std_config)
+                {
+                    layers.push(std_layer);
                 }
             })
             .map_err(|e| Error::from(format!("Failed to update logger configuration: {e}")))?;

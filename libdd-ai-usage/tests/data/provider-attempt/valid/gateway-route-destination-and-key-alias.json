@@ -1,0 +1,136 @@
+{
+  "$schema": "../../../../schema/provider-attempt-metric-fixture.schema.json",
+  "profile": "gen_ai.client.provider_attempt@0.1.0",
+  "case": "gateway-route-destination-and-key-alias",
+  "description": "A provider operation a gateway made for the route chat-default. gen_ai.request.model is the model the operation asked the provider for; the route, the destination the operation was sent to, and the caller's key alias are deployment attributes on every point, the token Counters and the spend Counter included.",
+  "deployment_attributes": {
+    "trajectory.gateway.route": "chat-default",
+    "trajectory.gateway.destination.id": "dest-7c1e",
+    "trajectory.gateway.key.alias": "search-team-prod"
+  },
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "exampleai",
+    "request_model": "ex-large-1",
+    "duration_seconds": 0.9,
+    "streaming": false,
+    "input_tokens": 1000,
+    "output_tokens": 500,
+    "cost_nano_usd": 10500000,
+    "cost_source": "calculated",
+    "cost_rate_card": "synthetic-basic@1",
+    "observation_point": "gateway"
+  },
+  "expected_metrics": [
+    {
+      "name": "gen_ai.client.inference.duration",
+      "instrument": "histogram",
+      "unit": "s",
+      "value": 0.9,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.request.model": "ex-large-1",
+        "trajectory.observation.point": "gateway",
+        "trajectory.gateway.route": "chat-default",
+        "trajectory.gateway.destination.id": "dest-7c1e",
+        "trajectory.gateway.key.alias": "search-team-prod"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.operation.input_tokens",
+      "instrument": "histogram",
+      "unit": "{token}",
+      "value": 1000,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.request.model": "ex-large-1",
+        "trajectory.observation.point": "gateway",
+        "trajectory.gateway.route": "chat-default",
+        "trajectory.gateway.destination.id": "dest-7c1e",
+        "trajectory.gateway.key.alias": "search-team-prod"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.operation.output_tokens",
+      "instrument": "histogram",
+      "unit": "{token}",
+      "value": 500,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.request.model": "ex-large-1",
+        "trajectory.observation.point": "gateway",
+        "trajectory.gateway.route": "chat-default",
+        "trajectory.gateway.destination.id": "dest-7c1e",
+        "trajectory.gateway.key.alias": "search-team-prod"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.usage.input_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 1000,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.request.model": "ex-large-1",
+        "trajectory.observation.point": "gateway",
+        "trajectory.gateway.route": "chat-default",
+        "trajectory.gateway.destination.id": "dest-7c1e",
+        "trajectory.gateway.key.alias": "search-team-prod",
+        "gen_ai.token.modality": "unknown"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.usage.output_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 500,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.request.model": "ex-large-1",
+        "trajectory.observation.point": "gateway",
+        "trajectory.gateway.route": "chat-default",
+        "trajectory.gateway.destination.id": "dest-7c1e",
+        "trajectory.gateway.key.alias": "search-team-prod",
+        "gen_ai.token.modality": "unknown"
+      }
+    },
+    {
+      "name": "trajectory.gen_ai.client.inference.usage.cost",
+      "instrument": "counter",
+      "unit": "{nanoUSD}",
+      "value": 10500000,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.request.model": "ex-large-1",
+        "trajectory.observation.point": "gateway",
+        "trajectory.gateway.route": "chat-default",
+        "trajectory.gateway.destination.id": "dest-7c1e",
+        "trajectory.gateway.key.alias": "search-team-prod",
+        "trajectory.cost.rate_card": "synthetic-basic@1",
+        "trajectory.cost.source": "calculated"
+      }
+    },
+    {
+      "name": "trajectory.gen_ai.client.operation.cost",
+      "instrument": "histogram",
+      "unit": "{USD}",
+      "value": 0.0105,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.request.model": "ex-large-1",
+        "trajectory.observation.point": "gateway",
+        "trajectory.gateway.route": "chat-default",
+        "trajectory.gateway.destination.id": "dest-7c1e",
+        "trajectory.gateway.key.alias": "search-team-prod",
+        "trajectory.cost.source": "calculated"
+      }
+    }
+  ]
+}

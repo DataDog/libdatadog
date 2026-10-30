@@ -30,17 +30,32 @@ pub struct IpcClientConn {
     recv_buf: Vec<u8>,
     /// Set to true when a fatal I/O error occurs on send or receive.
     closed: bool,
+    /// Largest message the connection accepts, cached from [`SeqpacketConn::max_send_size`].
+    max_send_size: usize,
 }
 
 impl IpcClientConn {
     pub fn new(conn: SeqpacketConn) -> Self {
         Self {
+            max_send_size: conn.max_send_size(),
             conn,
             send_count: 0,
             ack_count: 0,
             recv_buf: vec![0u8; max_message_size() + HANDLE_SUFFIX_SIZE],
             closed: false,
         }
+    }
+
+    /// Requests a send buffer size, and adopts the message size limit the kernel actually grants.
+    pub fn set_sndbuf_size(&mut self, size: usize) -> io::Result<()> {
+        let result = self.conn.set_sndbuf_size(size);
+        self.max_send_size = self.conn.max_send_size();
+        result
+    }
+
+    /// Largest message which can be sent on this connection.
+    pub fn max_send_size(&self) -> usize {
+        self.max_send_size
     }
 
     pub fn set_read_timeout(&mut self, d: Option<Duration>) -> io::Result<()> {
@@ -77,21 +92,27 @@ impl IpcClientConn {
         }
     }
 
-    /// Attempt a non-blocking send.
+    /// Attempt a non-blocking send and return its outcome.
     ///
-    /// Returns `false` if the socket would block (EAGAIN). `data` is consumed
-    /// regardless of whether the transport accepts it.
-    pub fn try_send(&mut self, data: Vec<u8>, fds: &[RawFd]) -> bool {
+    /// A full socket or oversized packet rejects this message without closing
+    /// the connection. Other transport errors retain the existing fatal policy,
+    /// including macOS ENOBUFS. Only accepted sends advance ACK accounting.
+    /// `data` is consumed even when the message is rejected.
+    pub fn try_send(&mut self, data: Vec<u8>, fds: &[RawFd]) -> io::Result<()> {
+        if data.len() > self.max_send_size {
+            return Err(io::Error::from(io::ErrorKind::FileTooLarge));
+        }
         match self.conn.try_send_raw(data, fds) {
             Ok(()) => {
                 self.send_count += 1;
-                true
+                Ok(())
             }
-            Err(e) if e.kind() == io::ErrorKind::WouldBlock => false,
-            Err(_) => {
-                // Fatal error (e.g. EPIPE): mark connection as closed.
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => Err(e),
+            #[cfg(unix)]
+            Err(e) if e.raw_os_error() == Some(libc::EMSGSIZE) => Err(e),
+            Err(e) => {
                 self.closed = true;
-                false
+                Err(e)
             }
         }
     }
@@ -146,5 +167,90 @@ impl IpcClientConn {
             }
             // Intermediate ack for a prior fire-and-forget message — continue.
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    #[cfg_attr(miri, ignore)]
+    fn oversized_packet_preserves_connection_and_ack_accounting() {
+        let (conn, peer) = SeqpacketConn::socketpair().unwrap();
+        let mut client = IpcClientConn::new(conn);
+        // Shrink after construction, so that the kernel, not the cached limit, rejects it.
+        set_sndbuf_raw(&client.conn, 4096);
+        let err = client.try_send(vec![0; 16 * 1024], &[]).unwrap_err();
+        assert_eq!(err.raw_os_error(), Some(libc::EMSGSIZE));
+        assert_eq!(client.outstanding(), 0);
+        assert!(!client.is_closed());
+        client.try_send(vec![7], &[]).unwrap();
+        assert_eq!(client.outstanding(), 1);
+        let mut buf = [0; 1];
+        assert_eq!(peer.try_recv_raw(&mut buf).unwrap().0, 1);
+        assert_eq!(buf, [7]);
+        peer.try_send_raw(vec![0], &[]).unwrap();
+        client.drain_acks();
+        assert_eq!(client.outstanding(), 0);
+        assert!(!client.is_closed());
+    }
+
+    /// Sets SO_SNDBUF without changing the process-wide configured packet limit.
+    #[cfg(target_os = "linux")]
+    fn set_sndbuf_raw(conn: &SeqpacketConn, bytes: libc::c_int) {
+        // SAFETY: valid socket and pointer/length for a live integer.
+        assert_eq!(
+            unsafe {
+                libc::setsockopt(
+                    conn.as_raw_fd(),
+                    libc::SOL_SOCKET,
+                    libc::SO_SNDBUF,
+                    (&bytes as *const libc::c_int).cast(),
+                    std::mem::size_of_val(&bytes).try_into().unwrap(),
+                )
+            },
+            0
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    #[cfg_attr(miri, ignore)]
+    fn send_limit_follows_granted_socket_buffer() {
+        let (conn, peer) = SeqpacketConn::socketpair().unwrap();
+        // Linux doubles the requested size, as it does when capping at net.core.wmem_max.
+        set_sndbuf_raw(&conn, 16 * 1024);
+        let mut client = IpcClientConn::new(conn);
+        let limit = client.max_send_size();
+        assert_eq!(limit, 32 * 1024 - 32);
+
+        let err = client.try_send(vec![0; limit + 1], &[]).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::FileTooLarge);
+        assert!(!client.is_closed());
+
+        client.try_send(vec![7; limit], &[]).unwrap();
+        let mut buf = vec![0; limit + 1];
+        assert_eq!(peer.try_recv_raw(&mut buf).unwrap().0, limit);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn configured_packet_limit_rejects_without_sending_or_closing() {
+        let (conn, peer) = SeqpacketConn::socketpair().unwrap();
+        let mut client = IpcClientConn::new(conn);
+        let err = client
+            .try_send(vec![0; max_message_size() + 1], &[])
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::FileTooLarge);
+        assert_eq!(client.outstanding(), 0);
+        assert!(!client.is_closed());
+        assert_eq!(
+            peer.try_recv_raw(&mut [0; 1]).unwrap_err().kind(),
+            io::ErrorKind::WouldBlock
+        );
+        client.try_send(vec![7], &[]).unwrap();
+        assert_eq!(client.outstanding(), 1);
     }
 }

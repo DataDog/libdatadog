@@ -1,0 +1,19 @@
+{
+  "$schema": "../../../../schema/provider-attempt-metric-fixture.schema.json",
+  "profile": "gen_ai.client.provider_attempt@0.1.0",
+  "case": "cost-usd-negative-too-large-for-double",
+  "description": "A cost of -1e400 USD. The token keeps its sign: it is a negative amount, and unusable. This file holds the literal -1e400 and must be read, not re-written, by tools.",
+  "observation": {
+    "observation_point": "gateway",
+    "operation_name": "chat",
+    "provider_name": "exampleai",
+    "duration_seconds": 0.5,
+    "streaming": false,
+    "cost_usd": -1e400,
+    "cost_source": "calculated"
+  },
+  "expected_metrics": [
+    {"name": "gen_ai.client.inference.duration", "instrument": "histogram", "unit": "s", "value": 0.5, "attributes": {"gen_ai.operation.name": "chat", "gen_ai.provider.name": "exampleai", "trajectory.observation.point": "gateway"}}
+  ],
+  "expected_issues": ["cost_unusable"]
+}

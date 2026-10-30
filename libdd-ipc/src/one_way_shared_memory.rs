@@ -26,7 +26,8 @@
 #[cfg(unix)]
 use crate::platform::lock_shm;
 use crate::platform::{FileBackedHandle, MappedMem, NamedShmHandle, ShmHandle};
-use libdd_common::{MutexExt, rate_limiter::now};
+use crate::rate_limiter::now;
+use libdd_common::MutexExt;
 use std::ffi::{CStr, CString};
 use std::io;
 use std::sync::Mutex;
@@ -473,10 +474,11 @@ impl<T: FileBackedHandle, D> OneWayShmReader<T, D> {
                 Some(new) if new & 1 == 0 => generation = new,
                 _ => return self.cached(),
             }
-        } else if generation == ENDED && self.consumed_end() {
-            if let Some(new) = self.follow_end() {
-                generation = new;
-            }
+        } else if generation == ENDED
+            && self.consumed_end()
+            && let Some(new) = self.follow_end()
+        {
+            generation = new;
         }
 
         let wanted = generation != 0
