@@ -81,15 +81,16 @@ impl fmt::Debug for ThinStr<'_> {
     }
 }
 
-// SAFETY: ThinStr is safe to send between threads as long as the underlying
-// arena/storage remains alive. The caller must ensure the arena outlives all
-// ThinStr references. This is the design trade-off for better performance
-// than individual reference counting.
-unsafe impl<T: Copy + Send> Send for ThinPtr<T> {}
-unsafe impl<T: Copy + Send + Sync> Sync for ThinPtr<T> {}
-
-unsafe impl<T: Copy + Send> Send for ThinSlice<'_, T> {}
-unsafe impl<T: Copy + Send + Sync> Sync for ThinSlice<'_, T> {}
+// SAFETY: a `ThinPtr<T>` is a non-owning, `Copy` view that is only used to read
+// the `[T]` it points to (the backing storage, e.g. an arena, owns the data and
+// must outlive the views). It thus behaves like a `&[T]`: sending or sharing a
+// view lets several threads read the same `T`s concurrently, so both `Send` and
+// `Sync` require `T: Sync`, exactly like `&[T]`.
+//
+// `ThinSlice` and `ThinStr` derive `Send`/`Sync` from this (and from
+// `PhantomData<&'a [T]>`, which has the same bounds).
+unsafe impl<T: Copy + Sync> Send for ThinPtr<T> {}
+unsafe impl<T: Copy + Sync> Sync for ThinPtr<T> {}
 
 impl ThinStr<'static> {
     pub const fn new() -> ThinStr<'static> {
