@@ -186,6 +186,8 @@ impl ConnectionSession {
             tracer_version: config.tracer_version.clone(),
         });
 
+        let dogstatsd = dogstatsd.client_for(&config.dogstatsd_endpoint);
+
         // Process tags are filled in by `refresh_stats_process_tags`, as for stats.
         let dsm_config = dsm_endpoint(&config.endpoint).map(|endpoint| DsmConfig {
             endpoint,
@@ -193,6 +195,7 @@ impl ConnectionSession {
             language_version: config.language_version.clone(),
             tracer_version: config.tracer_version.clone(),
             process_tags: vec![],
+            dogstatsd: dogstatsd.clone().filter(|_| config.health_metrics_enabled),
         });
 
         let mut session = ConnectionSession {
@@ -200,7 +203,7 @@ impl ConnectionSession {
             telemetry_config,
             tracer_config,
             debugger_config,
-            dogstatsd: dogstatsd.client_for(&config.dogstatsd_endpoint),
+            dogstatsd,
             remote_config_options: ConfigOptions {
                 invariants: ConfigInvariants {
                     language: config.language,

@@ -100,6 +100,8 @@ pub struct SessionConfig {
     pub parent_session_id: Option<String>,
     /// Optional OTLP metrics intake endpoint.
     pub otlp_metrics_endpoint: Option<Endpoint>,
+    /// Whether the sidecar sends the tracer's own health metrics to DogStatsD on its behalf.
+    pub health_metrics_enabled: bool,
 }
 
 #[cfg(test)]
@@ -138,6 +140,7 @@ impl SessionConfig {
             root_session_id: None,
             parent_session_id: None,
             otlp_metrics_endpoint: None,
+            health_metrics_enabled: false,
         }
     }
 }

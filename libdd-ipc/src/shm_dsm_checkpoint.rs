@@ -24,7 +24,7 @@ use std::sync::atomic::{AtomicU8, AtomicU32, AtomicU64, Ordering::*};
 use libdd_ddsketch::DDSketch;
 
 use crate::shm_table::{
-    self, Pool, Schema, ShmSafe, ShmTable, ShmTableMapping, WireStringRef, alloc_str, pool_string,
+    self, Pool, Schema, ShmSafe, ShmTable, ShmTableMapping, WireStringRef, pool_string,
 };
 
 /// Gamma of the backend's DDSketch mapping, which the Java and Go tracers also use for DSM.
@@ -53,6 +53,8 @@ const PAYLOAD_MIN_INDEX: i32 = 1;
 const PAYLOAD_BINS: usize = 1338;
 
 /// Shared-memory DSM checkpoint table.
+pub use crate::shm_table::{DropReason, Drops};
+
 pub type ShmDsmCheckpointTable = ShmTable<DataStreamsCheckpoints>;
 
 type ShmDsmCheckpointMapping = ShmTableMapping<DataStreamsCheckpoints>;
@@ -175,16 +177,18 @@ impl Schema for DataStreamsCheckpoints {
         pool: &Pool,
         cursor: &AtomicU32,
         input: &DsmCheckpointInput<'_>,
-    ) {
+    ) -> bool {
         k.hash.store(input.hash, Relaxed);
         k.parent_hash.store(input.parent_hash, Relaxed);
         // Zipped, so a caller passing more tags than there is room for loses the surplus.
         let mut stored = 0u8;
+        let mut fit = true;
         for (wire, tag) in k.edge_tags.iter().zip(input.edge_tags) {
-            wire.store(alloc_str(pool, cursor, tag));
+            fit &= wire.store_alloc(pool, cursor, tag);
             stored += 1;
         }
         k.edge_tag_count.store(stored, Relaxed);
+        fit
     }
 
     /// Only the pathway hash is compared: a checkpoint is its pathway hash, which already folds in
@@ -277,6 +281,8 @@ pub struct DsmCheckpointBucket {
     pub start: u64,
     pub duration: u64,
     pub checkpoints: Vec<DsmCheckpoint>,
+    /// Checkpoints written to the bucket that it could not record as given.
+    pub drops: Drops,
 }
 
 impl ShmDsmCheckpointTable {
@@ -331,6 +337,7 @@ impl ShmDsmCheckpointMapping {
                 start: bucket_start(b.current, b.duration, now),
                 duration: b.duration,
                 checkpoints: b.groups,
+                drops: b.drops,
             })
             .collect()
     }
@@ -577,6 +584,27 @@ mod tests {
         let tags: Vec<&str> = tags.iter().map(String::as_str).collect();
         t.add_checkpoint(&checkpoint(3, &tags));
         assert_eq!(drain_all(&t)[0].edge_tags, &tags[..MAX_EDGE_TAGS]);
+    }
+
+    /// A checkpoint whose tags do not fit in the pool is still recorded, with the tags that did
+    /// not fit left empty, and counted.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn checkpoints_whose_tags_overflow_the_pool_are_counted() {
+        let t = ShmDsmCheckpointTable::create(test_path(), DSM_BUCKET_NANOS, 8, 16).unwrap();
+        assert!(t.add_checkpoint(&checkpoint(1, &["topic:orders", "type:kafka"])));
+        assert!(t.add_checkpoint(&checkpoint(1, &["topic:orders", "type:kafka"])));
+
+        let buckets = t.drain_buckets(true);
+        let drops: Drops = buckets.iter().map(|b| &b.drops).sum();
+        assert_eq!(
+            drops.get(DropReason::StringPoolFull),
+            1,
+            "counted once, when keyed"
+        );
+        let checkpoints: Vec<_> = buckets.into_iter().flat_map(|b| b.checkpoints).collect();
+        assert_eq!(checkpoints.len(), 1);
+        assert_eq!(checkpoints[0].edge_tags, ["topic:orders", ""]);
     }
 
     #[test]
