@@ -1,0 +1,12 @@
+{
+  "$schema": "../../../../schema/gateway-request-metric-fixture.schema.json",
+  "profile": "trajectory.gen_ai.gateway.request@0.1.0",
+  "case": "operation-without-a-conventional-name",
+  "description": "The conventions name no operation for image generation, so a request of that kind records no point of this profile, and a made-up name is rejected.",
+  "observation": {
+    "operation_name": "image_generation",
+    "duration_seconds": 1
+  },
+  "expected_error_code": "value_not_allowed",
+  "expected_error": "operation_name must be"
+}

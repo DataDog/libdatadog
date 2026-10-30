@@ -1,0 +1,25 @@
+{
+  "$schema": "../../../../schema/gateway-request-metric-fixture.schema.json",
+  "profile": "trajectory.gen_ai.gateway.request@0.1.0",
+  "case": "observation-point-stated",
+  "description": "A gateway-request observation may state observation_point: gateway. The points are the same as when it does not: every point of this profile carries trajectory.observation.point: gateway.",
+  "observation": {
+    "operation_name": "chat",
+    "request_model": "routed-model",
+    "duration_seconds": 0.4,
+    "observation_point": "gateway"
+  },
+  "expected_metrics": [
+    {
+      "name": "trajectory.gen_ai.gateway.request.duration",
+      "instrument": "histogram",
+      "unit": "s",
+      "value": 0.4,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.request.model": "routed-model",
+        "trajectory.observation.point": "gateway"
+      }
+    }
+  ]
+}

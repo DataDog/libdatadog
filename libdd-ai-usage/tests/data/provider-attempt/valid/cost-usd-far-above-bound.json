@@ -1,0 +1,31 @@
+{
+  "$schema": "../../../../schema/provider-attempt-metric-fixture.schema.json",
+  "profile": "gen_ai.client.provider_attempt@0.1.0",
+  "case": "cost-usd-far-above-bound",
+  "description": "A cost of 10^21 USD. It is compared with the bound before any conversion and is unusable; it is never expanded into digits. A JSON writer may print this number with a positive exponent, 1e+21.",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "exampleai",
+    "duration_seconds": 0.5,
+    "streaming": false,
+    "cost_usd": 1e+21,
+    "cost_source": "reported",
+    "observation_point": "gateway"
+  },
+  "expected_metrics": [
+    {
+      "name": "gen_ai.client.inference.duration",
+      "instrument": "histogram",
+      "unit": "s",
+      "value": 0.5,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "trajectory.observation.point": "gateway"
+      }
+    }
+  ],
+  "expected_issues": [
+    "cost_unusable"
+  ]
+}

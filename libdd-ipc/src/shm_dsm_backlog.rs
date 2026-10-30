@@ -18,6 +18,7 @@
 
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicI64, AtomicU8, AtomicU32, Ordering::*};
+use strum::{EnumCount, IntoEnumIterator};
 use zwohash::ZwoHasher;
 
 use crate::shm_table::{
@@ -25,15 +26,33 @@ use crate::shm_table::{
     pool_string,
 };
 
-/// A tag a backlog can carry. The discriminant is the tag's position: in the slot, in the key's
-/// hash, and in the `Tags` reported for the backlog.
+/// A tag a backlog can carry.
 ///
-/// Positions are durable. A new tag is appended at the end, after the last one; none is ever
-/// reordered, removed or reused, so adding one leaves every existing backlog's `Tags` as they
-/// were. (Appending one changes the slot, so it also bumps [`DataStreamsBacklogs`]'s version.)
-/// The order of the first five is the Java tracer's (`DataStreamsTags`), so that a backlog is
-/// reported with the same `Tags` whichever tracer sent it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+/// The discriminant is an index: it says where the tag's value and presence bit go in a slot
+/// ([`ShmBacklogKey`]), and the `Tags` reported for a backlog come out in discriminant order.
+/// So a new tag is appended after the last one, and bumps [`DataStreamsBacklogs`]'s version
+/// since the slot grows; none is ever reordered, removed or reused, which keeps every existing
+/// backlog's `Tags` as they were. The first five are in the Java tracer's order
+/// (`DataStreamsTags`), so that a backlog is reported with the same `Tags` whichever tracer
+/// sent it.
+///
+/// A tag's key, as it is written before the `:` in `Tags`, is its name in snake case
+/// (`as_ref`, `from_str`); `iter` goes through the tags by position.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+    strum_macros::AsRefStr,
+    strum_macros::EnumCount,
+    strum_macros::EnumIter,
+    strum_macros::EnumString,
+)]
+#[strum(serialize_all = "snake_case")]
 #[repr(u8)]
 pub enum BacklogTag {
     Topic = 0,
@@ -43,34 +62,8 @@ pub enum BacklogTag {
     Partition = 4,
 }
 
-impl BacklogTag {
-    /// Every tag, by position.
-    pub const ALL: [BacklogTag; 5] = [
-        BacklogTag::Topic,
-        BacklogTag::Type,
-        BacklogTag::KafkaClusterId,
-        BacklogTag::ConsumerGroup,
-        BacklogTag::Partition,
-    ];
-
-    /// The tag's key, as it is written before the `:` in `Tags`.
-    pub const fn key(self) -> &'static str {
-        match self {
-            BacklogTag::Topic => "topic",
-            BacklogTag::Type => "type",
-            BacklogTag::KafkaClusterId => "kafka_cluster_id",
-            BacklogTag::ConsumerGroup => "consumer_group",
-            BacklogTag::Partition => "partition",
-        }
-    }
-
-    pub fn from_key(key: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|tag| tag.key() == key)
-    }
-}
-
 /// Number of [`BacklogTag`]s, and of tag positions in a slot.
-pub const BACKLOG_TAG_COUNT: usize = BacklogTag::ALL.len();
+pub const BACKLOG_TAG_COUNT: usize = BacklogTag::COUNT;
 
 // Which tags a key carries is a bitmask in one byte.
 const _: () = assert!(BACKLOG_TAG_COUNT <= 8);
@@ -124,11 +117,7 @@ impl Schema for DataStreamsBacklogs {
 
     fn hash(input: &DsmBacklogInput<'_>) -> u64 {
         let mut h = ZwoHasher::default();
-        // The mask says which position each value that follows is at.
-        h.write_u8(input.present());
-        for value in input.tags.iter().flatten() {
-            value.hash(&mut h);
-        }
+        input.tags.hash(&mut h);
         h.finish()
     }
 
@@ -187,7 +176,7 @@ impl<'a> DsmBacklogInput<'a> {
     pub fn parse(tags: &[&'a str], offset: i64) -> Option<Self> {
         tags.iter().try_fold(Self::new(offset), |input, tag| {
             let (key, value) = tag.split_once(':')?;
-            Some(input.with(BacklogTag::from_key(key)?, value))
+            Some(input.with(key.parse().ok()?, value))
         })
     }
 
@@ -202,8 +191,7 @@ impl<'a> DsmBacklogInput<'a> {
     /// The owned version, for sending over IPC.
     pub fn to_owned_backlog(&self) -> OwnedDsmBacklog {
         OwnedDsmBacklog {
-            tags: BacklogTag::ALL
-                .into_iter()
+            tags: BacklogTag::iter()
                 .zip(self.tags)
                 .filter_map(|(tag, value)| Some((tag, value?.to_owned())))
                 .collect(),
@@ -297,13 +285,12 @@ impl ShmDsmBacklogMapping {
         if present >> BACKLOG_TAG_COUNT != 0 {
             return None;
         }
-        let tags = BacklogTag::ALL
-            .into_iter()
+        let tags = BacklogTag::iter()
             .zip(&k.values)
             .filter(|&(tag, _)| present & 1 << tag as u8 != 0)
             .map(|(tag, wire)| {
                 let value = pool_string(pool, wire.snapshot(), budget)?;
-                Some(format!("{}:{value}", tag.key()))
+                Some(format!("{}:{value}", tag.as_ref()))
             })
             .collect::<Option<_>>()?;
         Some(DsmBacklog { tags, value })
@@ -367,7 +354,7 @@ mod tests {
     /// The positions are part of the payload; this pins them, so that a reordering fails here.
     #[test]
     fn tag_positions_are_fixed() {
-        let keys: Vec<_> = BacklogTag::ALL.iter().map(|t| t.key()).collect();
+        let keys: Vec<_> = BacklogTag::iter().map(|t| t.as_ref().to_owned()).collect();
         assert_eq!(
             keys,
             [
@@ -378,9 +365,9 @@ mod tests {
                 "partition"
             ]
         );
-        for (i, tag) in BacklogTag::ALL.into_iter().enumerate() {
+        for (i, tag) in BacklogTag::iter().enumerate() {
             assert_eq!(tag as usize, i);
-            assert_eq!(BacklogTag::from_key(tag.key()), Some(tag));
+            assert_eq!(tag.as_ref().parse(), Ok(tag));
         }
     }
 

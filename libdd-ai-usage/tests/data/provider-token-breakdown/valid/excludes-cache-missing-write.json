@@ -1,0 +1,44 @@
+{
+  "$schema": "../../../../schema/provider-token-breakdown-metric-fixture.schema.json",
+  "profile": "trajectory.gen_ai.client.token_breakdown@0.1.0",
+  "case": "excludes-cache-missing-write",
+  "description": "With excludes_cache the reported input is the uncached input, so it is recorded although cache writes are not known.",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "exampleai",
+    "input_basis": "excludes_cache",
+    "input_tokens": 50,
+    "output_tokens": 4,
+    "cache_read_input_tokens": 10,
+    "observation_point": "gateway"
+  },
+  "expected_metrics": [
+    {
+      "name": "gen_ai.client.inference.usage.cache_read.input_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 10,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.token.modality": "unknown",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "trajectory.gen_ai.client.inference.usage.uncached.input_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 50,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.token.modality": "unknown",
+        "trajectory.observation.point": "gateway"
+      }
+    }
+  ],
+  "expected_issues": [
+    "cache_write_missing"
+  ]
+}
