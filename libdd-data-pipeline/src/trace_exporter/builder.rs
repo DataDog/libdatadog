@@ -1152,7 +1152,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
                 .agent_rates_payload_version_enabled
                 .then(AgentResponsePayloadVersion::new),
             otlp,
-            otlp_resource_info,
+            otlp_resource_info: ArcSwap::from_pointee(otlp_resource_info),
             agentless_config,
             trace_filterer: ArcSwap::from_pointee(TraceFilterer::with_empty_conf()),
             otlp_stats_enabled,
@@ -1710,11 +1710,17 @@ mod tests {
         let exporter = builder.build::<NativeCapabilities>().unwrap();
         assert!(matches!(exporter.otlp, Some(OtlpExportMode::Grpc(_))));
         assert_eq!(
-            exporter.otlp_resource_info.instrumentation_scope_name,
+            exporter
+                .otlp_resource_info
+                .load()
+                .instrumentation_scope_name,
             "dd-trace-js"
         );
         assert_eq!(
-            exporter.otlp_resource_info.instrumentation_scope_version,
+            exporter
+                .otlp_resource_info
+                .load()
+                .instrumentation_scope_version,
             "7.0.0-pre"
         );
     }

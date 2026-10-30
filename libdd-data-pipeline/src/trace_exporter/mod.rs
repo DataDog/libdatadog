@@ -309,7 +309,7 @@ pub struct TraceExporter<
     /// When set, traces are exported via OTLP instead of the Datadog agent.
     otlp: Option<OtlpExportMode>,
     /// OTLP Resource attributes derived from tracer metadata.
-    otlp_resource_info: OtlpResourceInfo,
+    otlp_resource_info: ArcSwap<OtlpResourceInfo>,
     /// When set, APM trace spans are exported directly to the Datadog HTTP intake (agentless)
     /// instead of via the Datadog Agent
     agentless_config: Option<AgentlessTraceConfig>,
@@ -340,11 +340,16 @@ impl<
         TraceExporterBuilder::new()
     }
 
-    /// Replace the string resource attributes used by subsequent OTLP trace exports.
+    /// Atomically replace custom string resource attributes for subsequent OTLP trace exports.
     /// An empty map clears them. Matching span string tags are omitted from OTLP output;
     /// native payloads and metric resources are unchanged.
-    pub fn set_otlp_resource_attributes(&mut self, attributes: BTreeMap<String, String>) {
-        self.otlp_resource_info.resource_attributes = attributes;
+    /// SDK-generated values take precedence for service.name, deployment.environment.name,
+    /// service.version, telemetry.sdk.{name,language,version}, runtime-id, _dd.stats_computed,
+    /// _dd.sdk.otlp_export, and datadog.sdk.semantics when emitted. Each export uses one snapshot.
+    pub fn set_otlp_resource_attributes(&self, attributes: BTreeMap<String, String>) {
+        let mut resource_info = (**self.otlp_resource_info.load()).clone();
+        resource_info.resource_attributes = attributes;
+        self.otlp_resource_info.store(Arc::new(resource_info));
     }
 
     /// Re-point health-metric reporting at a different telemetry worker, or at none.
@@ -895,7 +900,7 @@ impl<
         let counts = PayloadCounts::from_traces(traces);
         let request = map_traces_to_otlp(
             traces,
-            &self.otlp_resource_info,
+            &self.otlp_resource_info.load(),
             config.otel_trace_semantics_enabled,
         );
         let body = config
@@ -963,7 +968,7 @@ impl<
         let counts = PayloadCounts::from_traces(traces);
         let request = Arc::new(map_traces_to_otlp(
             traces,
-            &self.otlp_resource_info,
+            &self.otlp_resource_info.load(),
             transport.otel_trace_semantics_enabled,
         ));
         #[cfg(feature = "telemetry")]
@@ -1010,7 +1015,7 @@ impl<
         let counts = PayloadCounts::from_v1_chunks(traces);
         let request = map_traces_to_otlp_v1(
             traces,
-            &self.otlp_resource_info,
+            &self.otlp_resource_info.load(),
             config.otel_trace_semantics_enabled,
         );
         let body = config
@@ -1077,7 +1082,7 @@ impl<
         let counts = PayloadCounts::from_v1_chunks(traces);
         let request = Arc::new(map_traces_to_otlp_v1(
             traces,
-            &self.otlp_resource_info,
+            &self.otlp_resource_info.load(),
             transport.otel_trace_semantics_enabled,
         ));
         #[cfg(feature = "telemetry")]
@@ -2950,6 +2955,40 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_otlp_resource_updates_preserve_in_flight_snapshot() {
+        let exporter = Arc::new(
+            TraceExporterBuilder::default()
+                .build::<NativeCapabilities>()
+                .unwrap(),
+        );
+        exporter.set_otlp_resource_attributes(BTreeMap::from([("team".into(), "old".into())]));
+        let snapshot = exporter.otlp_resource_info.load_full();
+        let shared = exporter.clone();
+        std::thread::spawn(move || {
+            shared.set_otlp_resource_attributes(BTreeMap::from([("region".into(), "new".into())]));
+        })
+        .join()
+        .unwrap();
+        assert_eq!(
+            snapshot.resource_attributes,
+            BTreeMap::from([("team".into(), "old".into())])
+        );
+        assert_eq!(
+            exporter.otlp_resource_info.load().resource_attributes,
+            BTreeMap::from([("region".into(), "new".into())])
+        );
+        exporter.set_otlp_resource_attributes(BTreeMap::new());
+        assert!(
+            exporter
+                .otlp_resource_info
+                .load()
+                .resource_attributes
+                .is_empty()
+        );
+    }
+
+    #[test]
     fn test_add_native_export_marker() {
         let mut span = SpanBytes::default();
         add_native_export_marker(&mut span);
@@ -3013,7 +3052,7 @@ mod tests {
             .set_language_interpreter("rustc")
             .set_input_format(TraceExporterInputFormat::V04)
             .set_output_format(TraceExporterOutputFormat::V04);
-        let mut exporter = builder.build::<NativeCapabilities>().unwrap();
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
         exporter.set_otlp_resource_attributes(BTreeMap::from([(
             "team".into(),
             "resource-only".into(),

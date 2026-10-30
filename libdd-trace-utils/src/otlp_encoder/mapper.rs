@@ -13,8 +13,8 @@ use super::OtlpResourceInfo;
 use crate::span::trace_utils::SDK_OTLP_EXPORT_KEY;
 use crate::span::v04::{Span, SpanEvent, SpanLink};
 use crate::span::{SPAN_LINK_FLAGS_SET_SENTINEL, TraceData};
+use hashbrown::HashMap;
 use std::borrow::Borrow;
-use std::collections::BTreeMap;
 
 use libdd_trace_protobuf::opentelemetry::proto::collector::trace::v1::ExportTraceServiceRequest as ProtoReq;
 use libdd_trace_protobuf::opentelemetry::proto::common::v1::{
@@ -173,7 +173,7 @@ pub(super) fn proto_kv(key: String, value: ProtoValue) -> ProtoKeyValue {
 fn collect_span_attributes<T: TraceData>(
     span: &Span<T>,
     resource_service: &str,
-    resource_attributes: &BTreeMap<&str, &str>,
+    resource_attributes: &HashMap<String, String>,
     otel_trace_semantics_enabled: bool,
 ) -> (Vec<ProtoKeyValue>, usize) {
     // Pre-size to avoid reallocations as attributes accumulate. Upper bound is the 4 synthetic
@@ -231,7 +231,7 @@ fn collect_span_attributes<T: TraceData>(
         }
         if resource_attributes
             .get(key)
-            .is_some_and(|value| *value == v.borrow())
+            .is_some_and(|value| value.as_str() == v.borrow())
         {
             resource_duplicates += 1;
             continue;
@@ -348,23 +348,8 @@ pub fn map_traces_to_otlp<T: TraceData>(
     resource_info: &OtlpResourceInfo,
     otel_trace_semantics_enabled: bool,
 ) -> ProtoReq {
-    let resource = build_resource(resource_info, otel_trace_semantics_enabled);
-    // Compare configured tags against emitted values, preserving SDK identity precedence.
-    let resource_attributes = resource
-        .attributes
-        .iter()
-        .filter(|attribute| {
-            resource_info
-                .resource_attributes
-                .contains_key(&attribute.key)
-        })
-        .filter_map(
-            |attribute| match attribute.value.as_ref()?.value.as_ref()? {
-                ProtoValue::StringValue(value) => Some((attribute.key.as_str(), value.as_str())),
-                _ => None,
-            },
-        )
-        .collect();
+    let (resource, resource_attributes) =
+        build_resource(resource_info, otel_trace_semantics_enabled);
     // Pre-size to the total span count so the per-span push loop never reallocates.
     let total_spans: usize = trace_chunks.iter().map(|chunk| chunk.len()).sum();
     let mut all_spans: Vec<ProtoSpan> = Vec::with_capacity(total_spans);
@@ -414,7 +399,7 @@ pub fn map_traces_to_otlp<T: TraceData>(
 pub(super) fn build_resource(
     resource_info: &OtlpResourceInfo,
     otel_trace_semantics_enabled: bool,
-) -> ProtoResource {
+) -> (ProtoResource, HashMap<String, String>) {
     fn push_str_attr(attrs: &mut Vec<ProtoKeyValue>, k: &str, v: &str) {
         if !v.is_empty() {
             attrs.push(proto_kv(
@@ -476,18 +461,36 @@ pub(super) fn build_resource(
             ));
         }
     }
+    // Compare configured tags with emitted values, including SDK identity overrides.
+    let resource_attributes = attributes
+        .iter()
+        .filter(|attribute| {
+            resource_info
+                .resource_attributes
+                .contains_key(&attribute.key)
+        })
+        .filter_map(
+            |attribute| match attribute.value.as_ref()?.value.as_ref()? {
+                ProtoValue::StringValue(value) => Some((attribute.key.clone(), value.clone())),
+                _ => None,
+            },
+        )
+        .collect();
     // `entity_refs` is a profiling-signal-only field; explicit default.
-    ProtoResource {
-        attributes,
-        dropped_attributes_count: 0,
-        entity_refs: Vec::new(),
-    }
+    (
+        ProtoResource {
+            attributes,
+            dropped_attributes_count: 0,
+            entity_refs: Vec::new(),
+        },
+        resource_attributes,
+    )
 }
 
 fn map_span<T: TraceData>(
     span: &Span<T>,
     resource_service: &str,
-    resource_attributes: &BTreeMap<&str, &str>,
+    resource_attributes: &HashMap<String, String>,
     chunk_trace_id_high: u64,
     flags: u32,
     otel_trace_semantics_enabled: bool,
@@ -631,7 +634,7 @@ mod tests {
                     .insert(format!("key-{i:05}").into(), "value".into());
             }
             let (attributes, dropped) =
-                collect_span_attributes(&span, "", &[(key, "same")].into(), false);
+                collect_span_attributes(&span, "", &[(key.into(), "same".into())].into(), false);
             assert_eq!(attributes.len(), MAX_ATTRIBUTES_PER_SPAN);
             assert_eq!(dropped, 0);
             assert!(!attributes.iter().any(|a| a.key == key));
