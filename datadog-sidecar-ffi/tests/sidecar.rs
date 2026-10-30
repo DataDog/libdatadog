@@ -12,7 +12,7 @@ macro_rules! assert_maybe_no_error {
 }
 
 use datadog_sidecar::service::DynamicInstrumentationConfigState;
-use libdd_common::Endpoint;
+use libdd_networking::endpoint::Endpoint;
 use std::path::PathBuf;
 use std::process::Command;
 use std::ptr::{null, null_mut};

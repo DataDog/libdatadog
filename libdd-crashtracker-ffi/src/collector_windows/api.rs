@@ -3,7 +3,7 @@
 
 use crate::Metadata;
 use anyhow::Result;
-use libdd_common::Endpoint;
+use libdd_networking::endpoint::Endpoint;
 use libdd_common_ffi::CharSlice;
 use libdd_common_ffi::slice::AsBytes;
 use std::ffi::c_void;

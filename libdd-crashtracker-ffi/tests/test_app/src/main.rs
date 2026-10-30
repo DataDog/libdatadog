@@ -37,7 +37,7 @@ fn main() {
 
 #[cfg(windows)]
 fn init_crashtracking(crash_path: &str, module_name: &str) -> bool {
-    use libdd_common::Endpoint;
+    use libdd_networking::endpoint::Endpoint;
     use libdd_common_ffi::CharSlice;
     use libdd_crashtracker_ffi::Metadata;
     use std::path::Path;

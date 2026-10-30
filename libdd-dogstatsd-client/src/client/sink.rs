@@ -5,7 +5,7 @@ use anyhow::anyhow;
 use cadence::UdpMetricSink;
 #[cfg(unix)]
 use cadence::{MetricSink, SinkStats, UnixMetricSink};
-use libdd_common::Endpoint;
+use libdd_networking::endpoint::Endpoint;
 #[cfg(unix)]
 use libdd_common::connector::uds::socket_path_from_uri;
 use std::net::{ToSocketAddrs, UdpSocket};
@@ -82,7 +82,7 @@ mod tests {
     use super::*;
     #[cfg(unix)]
     use http::Uri;
-    use libdd_common::Endpoint;
+    use libdd_networking::endpoint::Endpoint;
     #[cfg(unix)]
     use libdd_common::connector::uds::socket_path_to_uri;
 

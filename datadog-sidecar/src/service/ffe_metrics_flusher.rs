@@ -7,7 +7,7 @@
 use crate::service::{FfeEvaluationMetric, FfeTelemetryContext};
 use http::Method;
 use libdd_capabilities::{Bytes, HttpClientCapability, SleepCapability};
-use libdd_common::Endpoint;
+use libdd_networking::endpoint::Endpoint;
 use libdd_ffe::telemetry::evaluation_metrics::encode_metrics_payload;
 use std::time::Duration;
 use tracing::{debug, warn};

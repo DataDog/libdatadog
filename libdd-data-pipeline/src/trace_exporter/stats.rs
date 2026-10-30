@@ -16,7 +16,7 @@ use super::add_path;
 use crate::agent_info::schema::AgentInfo;
 use arc_swap::ArcSwap;
 use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
-use libdd_common::Endpoint;
+use libdd_networking::endpoint::Endpoint;
 use libdd_common::MutexExt;
 use libdd_shared_runtime::{SharedRuntime, WorkerHandle};
 #[cfg(feature = "stats-obfuscation")]

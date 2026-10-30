@@ -3,7 +3,7 @@
 
 use super::{Metadata, OsInfo, ProcInfo, SigInfo, Span, ThreadData};
 use function_name::named;
-use libdd_common::Endpoint;
+use libdd_networking::endpoint::Endpoint;
 use libdd_common_ffi::{
     CharSlice, Error, Handle, Slice, Timespec, ToInner, VoidResult, slice::AsBytes,
     wrap_with_ffi_result, wrap_with_void_ffi_result,

@@ -34,7 +34,7 @@
 //! Without `DD_API_KEY` / `DD_SITE`, this example exits — agentless mode is required.
 
 use libdd_capabilities::HttpClientCapability as _;
-use libdd_common::Endpoint;
+use libdd_networking::endpoint::Endpoint;
 use libdd_remote_config::RemoteConfigProduct::ApmTracing;
 use libdd_remote_config::Target;
 use libdd_remote_config::fetch::{ConfigInvariants, ConfigOptions, SingleChangesFetcher};

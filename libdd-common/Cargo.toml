@@ -4,7 +4,7 @@
 [package]
 name = "libdd-common"
 version = "9.0.0"
-description = "Shared utilities for Datadog libraries including HTTP/HTTPS connectors, container entity detection, tag validation, rate limiting, and Unix/Windows platform helpers"
+description = "Shared utilities for Datadog libraries including container entity detection, tag validation, rate limiting, and Unix/Windows platform helpers"
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-common"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-common"
 edition.workspace = true

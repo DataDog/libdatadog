@@ -1,7 +1,7 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use libdd_common::Endpoint;
+use libdd_networking::endpoint::Endpoint;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use url::Url;

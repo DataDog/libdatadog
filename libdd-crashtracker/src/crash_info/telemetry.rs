@@ -10,7 +10,7 @@ use anyhow::Context;
 use chrono::{DateTime, Utc};
 use libdd_capabilities::HttpClientCapability;
 use libdd_capabilities_impl::NativeCapabilities;
-use libdd_common::Endpoint;
+use libdd_networking::endpoint::Endpoint;
 use libdd_telemetry::{
     build_host,
     data::{self, Application, LogLevel},
@@ -421,7 +421,7 @@ mod tests {
         ErrorKind,
         crash_info::{CrashInfo, CrashInfoBuilder, Metadata, test_utils::TestInstance},
     };
-    use libdd_common::Endpoint;
+    use libdd_networking::endpoint::Endpoint;
     use libdd_telemetry::data::LogLevel;
     use std::{collections::HashSet, fs};
     use uuid::Uuid;

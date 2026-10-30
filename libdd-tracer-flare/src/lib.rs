@@ -26,7 +26,7 @@ use crate::error::FlareError;
 #[cfg(feature = "listener")]
 use {
     libdd_capabilities_impl::{HttpClientCapability, NativeCapabilities},
-    libdd_common::Endpoint,
+    libdd_networking::endpoint::Endpoint,
     libdd_remote_config::{
         RemoteConfigParsed, RemoteConfigProduct, Target,
         fetch::{ConfigInvariants, ConfigOptions, SingleChangesFetcher},

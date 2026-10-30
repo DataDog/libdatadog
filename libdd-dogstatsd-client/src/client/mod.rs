@@ -4,7 +4,7 @@
 use crate::action::{DogStatsDAction, DogStatsDActionOwned};
 use cadence::prelude::*;
 use cadence::{Metric, MetricBuilder, QueuingMetricSink, StatsdClient};
-use libdd_common::Endpoint;
+use libdd_networking::endpoint::Endpoint;
 use libdd_common::tag::Tag;
 #[cfg(feature = "shared-runtime")]
 use libdd_shared_runtime::{SharedRuntime, WorkerHandle};

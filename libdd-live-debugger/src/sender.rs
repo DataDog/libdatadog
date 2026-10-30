@@ -9,7 +9,7 @@ use http::uri::PathAndQuery;
 use http::{Method, Uri};
 use libdd_capabilities::{BodySender, HttpClientCapability, ResponseFuture};
 use libdd_capabilities_impl::NativeHttpClient;
-use libdd_common::Endpoint;
+use libdd_networking::endpoint::Endpoint;
 use libdd_common::tag::Tag;
 use libdd_data_pipeline::agent_info::schema::AgentInfoStruct;
 use percent_encoding::{CONTROLS, percent_encode};

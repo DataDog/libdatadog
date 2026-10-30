@@ -37,7 +37,7 @@ use datadog_sidecar::service::{
 };
 use datadog_sidecar::shm_remote_config::{RemoteConfigReader, path_for_remote_config};
 use libc::c_char;
-use libdd_common::Endpoint;
+use libdd_networking::endpoint::Endpoint;
 use libdd_common::tag::Tag;
 use libdd_common_ffi::slice::{AsBytes, CharSlice, Slice};
 use libdd_common_ffi::{self as ffi, MaybeError};

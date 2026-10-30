@@ -3,7 +3,7 @@
 use crate::{default_signals, shared::constants, signal_from_signum};
 use alloc::borrow::Cow;
 use core::time::Duration;
-use libdd_common::Endpoint;
+use libdd_networking::endpoint::Endpoint;
 
 use super::{CrashtrackerConfiguration, StacktraceCollection, default_max_threads};
 

@@ -300,7 +300,7 @@ mod tests {
     use crate::service::{
         EvpProducerIdentity, EvpTransportConfig, EvpTransportConfigWithIdentity, EvpTransportMode,
     };
-    use libdd_common::Endpoint;
+    use libdd_networking::endpoint::Endpoint;
 
     #[test]
     fn appsec_client_request_decodes_as_server_request() {

@@ -5,11 +5,10 @@ use alloc::borrow::Cow;
 use anyhow::Context;
 use core::{ops::Deref, str::FromStr};
 use http::uri::{self, PathAndQuery, Uri};
+use libdd_common::entity_id;
 use serde::de::Error;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::path::PathBuf;
-
-use crate::HttpRequestBuilder;
 
 #[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Endpoint {
@@ -198,7 +197,7 @@ impl Endpoint {
         for (name, value) in self.get_optional_headers() {
             builder = builder.header(name, value);
         }
-        for (name, value) in crate::entity_id::get_entity_headers() {
+        for (name, value) in entity_id::get_entity_headers() {
             builder = builder.header(name, value);
         }
         builder
@@ -208,7 +207,7 @@ impl Endpoint {
     /// - User agent
     /// - Api key
     /// - Container Id/Entity Id
-    pub fn to_request_builder(&self, user_agent: &str) -> anyhow::Result<HttpRequestBuilder> {
+    pub fn to_request_builder(&self, user_agent: &str) -> anyhow::Result<http::request::Builder> {
         let mut builder = http::Request::builder()
             .uri(self.url.clone())
             .header(http::header::USER_AGENT, user_agent);
@@ -219,7 +218,7 @@ impl Endpoint {
         }
 
         // Add entity-related headers (container-id, entity-id, external-env)
-        for (name, value) in crate::entity_id::get_entity_headers() {
+        for (name, value) in entity_id::get_entity_headers() {
             builder = builder.header(name, value);
         }
 

@@ -65,7 +65,7 @@ mod tests {
     use httpmock::MockServer;
     use libdd_capabilities::{Bytes, HttpError, MaybeSend};
     use libdd_capabilities_impl::NativeCapabilities;
-    use libdd_common::Endpoint;
+    use libdd_networking::endpoint::Endpoint;
     use std::future;
     use std::time::Duration;
 

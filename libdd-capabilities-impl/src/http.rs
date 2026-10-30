@@ -80,7 +80,7 @@ mod native {
         uri: &http::Uri,
         body: bytes::Bytes,
     ) -> Result<http::Response<bytes::Bytes>, HttpError> {
-        let path = libdd_common::decode_uri_path_in_authority(uri)
+        let path = libdd_networking::endpoint::decode_uri_path_in_authority(uri)
             .map_err(|e| HttpError::Other(anyhow::anyhow!("invalid file:// URI: {e}")))?;
 
         // Worker endpoints need constrained file opens. Directory mode also creates and renames

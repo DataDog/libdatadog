@@ -1,0 +1,23 @@
+[package]
+name = "libdd-networking"
+version = "1.0.0"
+description = "Shared networking utilities for Datadog libraries"
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-networking"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-networking"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+
+[dependencies]
+anyhow.workspace = true
+hex.workspace = true
+http.workspace = true
+httparse.workspace = true
+libdd-common = { path = "../libdd-common", version = "9.0.0" }
+rand = { workspace = true, default-features = true }
+serde = { workspace = true, features = ["derive"] }
+tokio.workspace = true
+
+[features]
+reqwest = []

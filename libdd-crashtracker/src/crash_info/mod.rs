@@ -25,7 +25,7 @@ pub use builder::*;
 pub use error_data::*;
 pub use errors_intake::*;
 pub use experimental::*;
-use libdd_common::Endpoint;
+use libdd_networking::endpoint::Endpoint;
 pub use metadata::Metadata;
 pub use os_info::*;
 pub use proc_info::*;

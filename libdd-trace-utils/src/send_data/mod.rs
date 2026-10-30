@@ -38,7 +38,7 @@ use std::collections::HashMap;
 /// use libdd_trace_utils::send_data::{
 ///     SendData,
 /// };
-/// use libdd_common::Endpoint;
+/// use libdd_networking::endpoint::Endpoint;
 /// use libdd_trace_utils::send_with_retry::{RetryBackoffType, RetryStrategy};
 /// use libdd_trace_utils::trace_utils::TracerHeaderTags;
 /// use libdd_trace_utils::tracer_payload::TracerPayloadCollection;
@@ -448,7 +448,7 @@ mod tests {
     use httpmock::prelude::*;
     use libdd_capabilities::HttpClientCapability;
     use libdd_capabilities_impl::NativeCapabilities;
-    use libdd_common::Endpoint;
+    use libdd_networking::endpoint::Endpoint;
     use libdd_trace_protobuf::pb::Span;
     use std::collections::HashMap;
     use std::time::Duration;

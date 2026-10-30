@@ -2763,6 +2763,7 @@ dependencies = [
  "http-body-util",
  "libdd-capabilities",
  "libdd-common",
+ "libdd-networking",
  "tempfile",
  "tokio",
 ]
@@ -3246,6 +3247,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "libdd-networking"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "hex",
+ "http 1.1.0",
+ "httparse",
+ "libdd-common",
+ "rand 0.8.8",
+ "serde",
+ "tokio",
+]
+
+[[package]]
 name = "libdd-otel-thread-ctx"
 version = "2.0.0"
 dependencies = [
@@ -3284,6 +3299,7 @@ dependencies = [
  "indexmap 2.12.1",
  "libdd-alloc",
  "libdd-common",
+ "libdd-networking",
  "libdd-profiling-protobuf",
  "opentelemetry-proto",
  "parking_lot",
@@ -3404,6 +3420,7 @@ dependencies = [
  "libdd-capabilities",
  "libdd-capabilities-impl",
  "libdd-common",
+ "libdd-networking",
  "libdd-remote-config",
  "libdd-trace-protobuf",
  "libdd-tuf",
@@ -3478,6 +3495,7 @@ dependencies = [
  "libdd-capabilities-impl",
  "libdd-common",
  "libdd-ddsketch",
+ "libdd-networking",
  "libdd-shared-runtime",
  "serde",
  "serde_json",
@@ -3632,6 +3650,7 @@ dependencies = [
  "libdd-capabilities",
  "libdd-capabilities-impl",
  "libdd-common",
+ "libdd-networking",
  "libdd-tinybytes",
  "libdd-trace-model",
  "libdd-trace-normalization",

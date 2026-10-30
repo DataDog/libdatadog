@@ -4,7 +4,7 @@
 use crate::service::exception_hash_rate_limiter::ManagedExceptionHashRateLimiter;
 use crossbeam_utils::atomic::AtomicCell;
 use http::uri::PathAndQuery;
-use libdd_common::Endpoint;
+use libdd_networking::endpoint::Endpoint;
 use libdd_ipc::rate_limiter::ShmLimiterMemory;
 use libdd_trace_utils::config_utils::trace_intake_url_prefixed;
 use std::borrow::Cow;

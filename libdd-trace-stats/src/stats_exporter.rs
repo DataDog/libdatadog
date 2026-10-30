@@ -1497,7 +1497,7 @@ mod tests {
         let addr = socket.local_addr().unwrap().to_string();
 
         let dogstatsd_client =
-            libdd_dogstatsd_client::DogStatsDClient::new(libdd_common::Endpoint::from_slice(&addr))
+            libdd_dogstatsd_client::DogStatsDClient::new(libdd_networking::endpoint::Endpoint::from_slice(&addr))
                 .expect("failed to create dogstatsd client");
 
         // get_test_concentrator() has no cardinality collapse: collapsed_spans will be 0.
@@ -1547,7 +1547,7 @@ mod tests {
         let addr = socket.local_addr().unwrap().to_string();
 
         let dogstatsd_client =
-            libdd_dogstatsd_client::DogStatsDClient::new(libdd_common::Endpoint::from_slice(&addr))
+            libdd_dogstatsd_client::DogStatsDClient::new(libdd_networking::endpoint::Endpoint::from_slice(&addr))
                 .expect("failed to create dogstatsd client");
 
         let stats_exporter = StatsExporter::<NativeCapabilities>::new(
@@ -1598,7 +1598,7 @@ mod tests {
         let addr = socket.local_addr().unwrap().to_string();
 
         let dogstatsd_client =
-            libdd_dogstatsd_client::DogStatsDClient::new(libdd_common::Endpoint::from_slice(&addr))
+            libdd_dogstatsd_client::DogStatsDClient::new(libdd_networking::endpoint::Endpoint::from_slice(&addr))
                 .expect("failed to create dogstatsd client");
 
         let stats_exporter = StatsExporter::<NativeCapabilities>::new(

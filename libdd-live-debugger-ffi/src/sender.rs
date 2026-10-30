@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::send_data::serialize_debugger_payload;
-use libdd_common::Endpoint;
+use libdd_networking::endpoint::Endpoint;
 use libdd_common::tag::Tag;
 use libdd_common_ffi::slice::AsBytes;
 use libdd_common_ffi::{CharSlice, MaybeError};

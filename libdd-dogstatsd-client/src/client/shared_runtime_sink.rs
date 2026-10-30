@@ -6,7 +6,7 @@
 use anyhow::anyhow;
 use async_trait::async_trait;
 use cadence::{MetricSink, SinkStats};
-use libdd_common::Endpoint;
+use libdd_networking::endpoint::Endpoint;
 use libdd_shared_runtime::{SharedRuntime, WorkerHandle, worker::Worker};
 use std::fmt;
 use std::io;

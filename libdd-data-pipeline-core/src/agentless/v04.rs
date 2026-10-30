@@ -4,7 +4,7 @@
 use std::time::Duration;
 
 use libdd_capabilities::{HttpClientCapability, SleepCapability};
-use libdd_common::Endpoint;
+use libdd_networking::endpoint::Endpoint;
 use libdd_trace_stats::stats_exporter::{
     AgentlessStatsExporter, AgentlessStatsExporterError, AgentlessStatsTarget, StatsMetadata,
 };

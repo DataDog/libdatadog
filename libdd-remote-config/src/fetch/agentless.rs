@@ -14,7 +14,7 @@ use http::{
     uri::{Authority, PathAndQuery},
 };
 use libdd_capabilities::{Bytes, HttpClientCapability, SleepCapability};
-use libdd_common::Endpoint;
+use libdd_networking::endpoint::Endpoint;
 use libdd_trace_protobuf::remoteconfig;
 use prost::Message;
 use serde_json::Value;
@@ -1498,7 +1498,7 @@ pub fn debug_latest_configs_response(
 
 #[cfg(test)]
 mod tests {
-    use libdd_common::Endpoint;
+    use libdd_networking::endpoint::Endpoint;
 
     use crate::fetch::AgentlessConfig;
     use crate::fetch::NativeAgentlessFetcher;

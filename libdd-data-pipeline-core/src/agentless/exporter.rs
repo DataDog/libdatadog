@@ -6,7 +6,7 @@
 use super::config::AgentlessTraceConfig;
 use http::HeaderMap;
 use libdd_capabilities::{HttpClientCapability, SleepCapability};
-use libdd_common::Endpoint;
+use libdd_networking::endpoint::Endpoint;
 use libdd_trace_utils::send_with_retry::{
     CompressionStrategy, RetryBackoffType, RetryStrategy, SendWithRetryError, SendWithRetryResult,
     send_with_retry_and_size,

@@ -40,7 +40,7 @@ use core::time::Duration;
 use std::{env, fs, path::Path};
 
 use hyper::Request;
-use libdd_common::Endpoint;
+use libdd_networking::endpoint::Endpoint;
 use libdd_common::http_common::{self, Body};
 use rustls::{
     ServerConfig,

@@ -210,7 +210,7 @@ impl DatadogAgentContainerBuilder {
 /// ```no_run
 /// use libdd_capabilities::HttpClientCapability;
 /// use libdd_capabilities_impl::NativeCapabilities;
-/// use libdd_common::Endpoint;
+/// use libdd_networking::endpoint::Endpoint;
 /// use libdd_trace_utils::send_data::SendData;
 /// use libdd_trace_utils::test_utils::datadog_test_agent::DatadogTestAgent;
 /// use libdd_trace_utils::trace_utils::TracerHeaderTags;

@@ -3,7 +3,7 @@
 
 // imports for structs defined in this file
 use crate::config;
-use libdd_common::Endpoint;
+use libdd_networking::endpoint::Endpoint;
 use libdd_common::tag::Tag;
 pub use libdd_ffe::telemetry::FfeTelemetryContext;
 pub use libdd_ffe::telemetry::evaluation_metrics::FfeEvaluationMetric;
