@@ -34,7 +34,6 @@ rustls-platform-verifier = { workspace = true, optional = true }
 # Unused; pins a floor on this transitive-only dep since rustls itself only requires ^0.103.5.
 rustls-webpki = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"] }
-tokio.workspace = true
 webpki-root-certs = { workspace = true, optional = true }
 webpki-roots = { workspace = true, optional = true }
 
