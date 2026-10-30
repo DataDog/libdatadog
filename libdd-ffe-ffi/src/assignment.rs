@@ -720,6 +720,7 @@ pub unsafe extern "C" fn ddog_ffe_assignnment_get_flag_metadata(
 ///
 /// # Safety
 /// `assignment` must be a valid handle.
+// allow(ffi-panic-boundary): only reads a pointer and a length from the handle.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_ffe_assignment_get_features(
     assignment: Handle<ResolutionDetails>,

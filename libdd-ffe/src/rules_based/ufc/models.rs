@@ -652,17 +652,21 @@ fn deserialize_features<'de, D>(deserializer: D) -> Result<Box<[Feature]>, D::Er
 where
     D: serde::Deserializer<'de>,
 {
-    use serde_json::Value;
+    use serde_json::{Value, value::RawValue};
 
-    let value = Option::<Value>::deserialize(deserializer)?;
-    let Value::Array(entries) = value.unwrap_or(Value::Null) else {
+    // Entries stay raw until each is parsed on its own: a number serde_json cannot represent,
+    // such as 1e400, then skips its entry instead of failing the whole flag.
+    let Some(raw) = Option::<Box<RawValue>>::deserialize(deserializer)? else {
+        return Ok(Box::default());
+    };
+    let Ok(entries) = serde_json::from_str::<Vec<&RawValue>>(raw.get()) else {
         return Ok(Box::default());
     };
 
     let mut features = Vec::new();
     let mut seen_keys = HashSet::new();
     for entry in entries {
-        let Value::Object(entry) = entry else {
+        let Ok(Value::Object(entry)) = serde_json::from_str::<Value>(entry.get()) else {
             continue;
         };
 
@@ -814,6 +818,7 @@ mod tests {
             r#"3"#,
             r#"{}"#,
             r#"[0, "text", null]"#,
+            r#"1e400"#,
         ] {
             let features = parse_features(features_json);
             assert!(
@@ -821,6 +826,19 @@ mod tests {
                 "features {features_json} must parse leniently to nothing"
             );
         }
+    }
+
+    #[test]
+    fn features_skip_entries_with_unrepresentable_numbers() {
+        let features = parse_features(
+            r#"[
+                { "key": "too-large", "value": 1e400, "destinations": ["HOOK"] },
+                { "key": "valid", "value": "v", "destinations": ["HOOK"] }
+            ]"#,
+        );
+
+        assert_eq!(features.len(), 1);
+        assert_eq!(features[0].key.as_str(), "valid");
     }
 
     #[test]
