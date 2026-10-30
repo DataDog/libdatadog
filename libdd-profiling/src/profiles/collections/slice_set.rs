@@ -22,6 +22,16 @@ pub struct SliceSet<T: Copy + Hash + Eq + 'static> {
     pub(crate) slices: HashTable<ThinSlice<'static, T>>,
 }
 
+// `Send` is auto-derived (`ChainAllocator` and `ThinSlice<T>` are `Send` when
+// `T: Send`).
+
+// SAFETY: the `&self` methods only read `slices` and never touch `arena`
+// (whose non-thread-safe interior mutability is only used from `&mut self`
+// methods). Through `&SliceSet<T>`, other threads can obtain views of the
+// stored `[T]` (e.g. via `iter`), so `T: Sync` is required, like for
+// `&Vec<T>`.
+unsafe impl<T: Copy + Hash + Eq + Sync + 'static> Sync for SliceSet<T> {}
+
 impl<T: Copy + Hash + Eq + 'static> SliceSet<T> {
     const SIZE_HINT: usize = 1024 * 1024;
 
