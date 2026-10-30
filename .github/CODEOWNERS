@@ -57,6 +57,7 @@ libdd-gotter/                        @DataDog/libdatadog-profiling @DataDog/libd
 libdd-http-client                    @DataDog/apm-common-components-core
 libdd-library-config*/               @DataDog/apm-sdk-capabilities
 libdd-log*/                          @DataDog/apm-common-components-core
+libdd-networking/                    @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 libdd-otel-thread-ctx/               @DataDog/apm-common-components-core
 libdd-otel-thread-ctx-ffi/           @DataDog/apm-common-components-core
 libdd-profiling*/                    @DataDog/libdatadog-profiling
