@@ -67,6 +67,11 @@ harness = false
 name = "ipc"
 path = "benches/ipc.rs"
 
+[[bench]]
+harness = false
+name = "shm_dsm"
+path = "benches/shm_dsm.rs"
+
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(polyfill_glibc_memfd)'] }
 
