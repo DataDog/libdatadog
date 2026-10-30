@@ -27,6 +27,39 @@ use winresource::VersionInfo;
 /// function.
 const RELEASE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// Environment variable through which a packaging layer that redistributes these
+/// artifacts under a version of its own overrides `FileVersion`.
+///
+/// `libdatadog-dotnet` is the motivating case: it pins an upstream libdatadog
+/// version in a file and tags its own releases independently, so two of its
+/// releases can ship genuinely different DLLs — different feature sets, different
+/// code — built from the same upstream version. Those DLLs would be
+/// indistinguishable by [`RELEASE_VERSION`], and Windows Installer's default
+/// `REINSTALLMODE` of `omus` only overwrites a file whose version is *older*, so
+/// it would decline to replace one with the other.
+///
+/// Only `FileVersion` is overridden, since that is the field Windows Installer
+/// compares; `ProductVersion` keeps [`RELEASE_VERSION`] so the upstream libdatadog
+/// version a DLL was built from stays recoverable from the shipped file.
+///
+/// # Setting it
+///
+/// Nothing needs to be set to build libdatadog, including for Windows: unset means
+/// `FileVersion` is [`RELEASE_VERSION`], which is what every libdatadog release
+/// ships and what CI builds. It is only for redistributors, who have two equivalent
+/// entry points — `builder` does nothing more than forward the flag to the cargo
+/// invocation that builds the artifacts:
+///
+/// ```text
+/// # through the release binary, which is what redistributors invoke
+/// release --out <dir> --target x86_64-pc-windows-msvc --file-version 1.3.5
+///
+/// # or through the environment, when driving cargo directly
+/// LIBDATADOG_PACKAGE_VERSION=1.3.5 cargo build -p libdd-profiling-ffi \
+///     --target x86_64-pc-windows-msvc
+/// ```
+const FILE_VERSION_VAR: &str = "LIBDATADOG_PACKAGE_VERSION";
+
 /// Embeds a Windows `VERSIONINFO` resource (`FileVersion`/`ProductVersion` — both
 /// the string table and the binary `VS_FIXEDFILEINFO` fields `MsiGetFileVersion`
 /// actually compares — plus the company/product/description string table) into
@@ -36,6 +69,15 @@ const RELEASE_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// `<File>` with no `VERSIONINFO` resource makes it fall back to comparing
 /// created-vs-modified timestamps, which can preserve a stale DLL across an
 /// in-place upgrade.
+///
+/// # Which version goes where
+///
+/// `ProductVersion` is always [`RELEASE_VERSION`], identifying the libdatadog
+/// release the artifact was built from. `FileVersion` is the same by default, but
+/// a redistributor that ships these artifacts under its own version can override
+/// it by setting `LIBDATADOG_PACKAGE_VERSION` (see [`FILE_VERSION_VAR`]) — that is
+/// the field Windows Installer compares, so it has to be whichever version
+/// actually changes whenever the shipped bytes do.
 ///
 /// # Cross-compilation
 ///
@@ -73,8 +115,12 @@ pub fn embed_windows_version_info(name: &str, description: &str) {
         return;
     }
 
+    println!("cargo:rerun-if-env-changed={FILE_VERSION_VAR}");
+    let override_var = env::var(FILE_VERSION_VAR);
+    let (file_version, file_version_source) = select_file_version(override_var.as_deref().ok());
+
     let mut res = winresource::WindowsResource::new();
-    res.set("FileVersion", RELEASE_VERSION)
+    res.set("FileVersion", file_version)
         .set("ProductVersion", RELEASE_VERSION)
         .set("CompanyName", "Datadog")
         .set("ProductName", "libdatadog")
@@ -86,18 +132,14 @@ pub fn embed_windows_version_info(name: &str, description: &str) {
             "Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/",
         );
 
-    match pack_version(RELEASE_VERSION) {
-        Some(packed) => {
-            res.set_version_info(VersionInfo::FILEVERSION, packed);
-            res.set_version_info(VersionInfo::PRODUCTVERSION, packed);
-        }
-        None => panic!(
-            "{name}: could not parse the libdatadog release version {RELEASE_VERSION:?} as \
-             major.minor.patch, so the binary VS_FIXEDFILEINFO fields would report 0.0.0.0 — \
-             the very comparison Windows Installer makes, leaving it unable to tell this \
-             build apart from any other."
-        ),
-    }
+    res.set_version_info(
+        VersionInfo::FILEVERSION,
+        pack_or_fail(name, file_version, file_version_source),
+    );
+    res.set_version_info(
+        VersionInfo::PRODUCTVERSION,
+        pack_or_fail(name, RELEASE_VERSION, "the libdatadog release version"),
+    );
 
     if let Err(err) = res.compile() {
         panic!(
@@ -106,6 +148,32 @@ pub fn embed_windows_version_info(name: &str, description: &str) {
              `rc.exe`/`llvm-rc` (shipped with the Windows SDK) for the `msvc` ABI, \
              `*-windres` (shipped with mingw) for the `gnu` ABI."
         );
+    }
+}
+
+/// Picks the `FileVersion` from the raw value of [`FILE_VERSION_VAR`], returning it
+/// alongside a description of where it came from for use in error messages. An
+/// exported-but-empty variable is how CI spells "unset", so it is treated as such
+/// rather than failing the build on an unparseable empty version.
+fn select_file_version(raw_override: Option<&str>) -> (&str, &str) {
+    match raw_override {
+        Some(version) if !version.is_empty() => (version, FILE_VERSION_VAR),
+        _ => (RELEASE_VERSION, "the libdatadog release version"),
+    }
+}
+
+/// Packs `version` for one of the binary `VS_FIXEDFILEINFO` fields, failing the
+/// build if it is not `major.minor.patch`. `source` names where the version came
+/// from, so the error points at the workspace version or at the overriding
+/// environment variable rather than leaving the caller to guess.
+fn pack_or_fail(name: &str, version: &str, source: &str) -> u64 {
+    match pack_version(version) {
+        Some(packed) => packed,
+        None => panic!(
+            "{name}: could not parse {source} ({version:?}) as major.minor.patch. The binary \
+             VS_FIXEDFILEINFO fields are what Windows Installer compares to decide whether to \
+             replace this file on upgrade, so they cannot be left to default to 0.0.0.0."
+        ),
     }
 }
 
@@ -147,7 +215,25 @@ fn pack_version(version: &str) -> Option<u64> {
 
 #[cfg(test)]
 mod tests {
-    use super::{internal_name, pack_version};
+    use super::{
+        FILE_VERSION_VAR, RELEASE_VERSION, internal_name, pack_version, select_file_version,
+    };
+
+    #[test]
+    fn file_version_falls_back_to_the_release_version() {
+        let release = (RELEASE_VERSION, "the libdatadog release version");
+        assert_eq!(select_file_version(None), release);
+        // An exported-but-empty variable must not be mistaken for an override.
+        assert_eq!(select_file_version(Some("")), release);
+    }
+
+    #[test]
+    fn file_version_prefers_a_redistributor_override() {
+        assert_eq!(
+            select_file_version(Some("1.3.5")),
+            ("1.3.5", FILE_VERSION_VAR)
+        );
+    }
 
     #[test]
     fn internal_name_strips_whatever_extension_is_present() {

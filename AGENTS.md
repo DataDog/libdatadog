@@ -134,4 +134,6 @@ All code source files (e.g. `.rs`, `.sh`) and TOML files (e.g. `Cargo.toml`) mus
   cargo run --bin release -- --out output-folder
   ```
   Feature flags control what's built: `crashtracker`, `profiling`, `telemetry`, `data-pipeline`, `symbolizer`, `library-config`, `log`, `ddsketch`, `ffe`
+
+  `--file-version <major.minor.patch>` overrides the `FileVersion` embedded in the Windows artifacts' `VERSIONINFO` resource, forwarded to the build as `LIBDATADOG_PACKAGE_VERSION`. It exists for redistributors that ship these artifacts under a version of their own (libdatadog-dotnet), because `FileVersion` is what Windows Installer compares when deciding whether to replace a file on upgrade. Omit it — as every libdatadog build and all of CI does — and both `FileVersion` and `ProductVersion` are the workspace release version. It has no effect on non-Windows targets.
 - **tools** — dev binaries: header dedup, FFI test runner, JUnit attribute injection
