@@ -122,6 +122,7 @@ pub extern "C" fn ddog_create_exception_snapshot<'a>(
                     } else {
                         Some(type_name.to_utf8_lossy())
                     },
+                    ..Default::default()
                 },
             }),
             language: language.to_utf8_lossy(),
