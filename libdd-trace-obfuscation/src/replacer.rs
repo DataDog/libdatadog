@@ -2,9 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use libdd_common::regex_engine::{Regex, Replacer};
-use libdd_trace_model::ValueArrayMut;
+use libdd_trace_model::{
+    AttributeValue, Attributes, AttributesMut, PROMOTED_SPAN_TAGS, SpanMut, TraceChunkMut,
+    TraceText, ValueArrayMut, ValueMapMut, ValueTypes,
+};
 use libdd_trace_protobuf::pb;
-use libdd_trace_utils::span::{SpanText, TraceData, v1, v1::AttributeValue, v04};
+use libdd_trace_utils::span::{SpanText, TraceData, v1, v04};
 use serde::{Deserialize, Deserializer, Serialize};
 
 // Agent-facing representation. `re` and `no_expansion` are derived runtime state.
@@ -92,7 +95,8 @@ pub fn replace_trace_tags(trace: &mut [pb::Span], rules: &[ReplaceRule]) {
 ///
 /// Fields are the immutable [`SpanText`] type, so matches are written back through
 /// [`SpanText::from_owned`]. `replace_all_opt` returns `None` on no match, so untouched fields
-/// don't allocate.
+/// don't allocate. Like the Datadog Agent, `"*"` rules skip hidden (`_`-prefixed) tags; named rules
+/// still apply to them.
 pub fn replace_span_tags_v04<T: TraceData>(span: &mut v04::Span<T>, rules: &[ReplaceRule]) {
     fn apply_rule<S: SpanText>(rule: &ReplaceRule, field: &mut S) {
         if let Some(new) = replace_all_opt(&rule.re, &rule.repl, rule.no_expansion, field.borrow())
@@ -104,8 +108,10 @@ pub fn replace_span_tags_v04<T: TraceData>(span: &mut v04::Span<T>, rules: &[Rep
     for rule in rules {
         match rule.name.as_ref() {
             "*" => {
-                for (_, tag_value) in &mut span.meta {
-                    apply_rule(rule, tag_value);
+                for (key, tag_value) in &mut span.meta {
+                    if !is_hidden_tag(key.as_str()) {
+                        apply_rule(rule, tag_value);
+                    }
                 }
                 // The "*" wildcard intentionally applies to `span.resource` as well as
                 // meta tags, matching the Datadog Agent reference implementation in
@@ -125,75 +131,70 @@ pub fn replace_span_tags_v04<T: TraceData>(span: &mut v04::Span<T>, rules: &[Rep
     }
 }
 
-/// Replaces the tag values of a [`v1::Span`] using the given rules.
+/// Replaces the tag values of a span using the given rules, through the trace model traits.
 ///
-/// V1 counterpart of [`replace_span_tags_v04`]: rules apply to `String`-valued entries of the
-/// span's `attributes` map instead of a dedicated `meta` map.
-pub fn replace_span_tags_v1<T: TraceData>(span: &mut v1::Span<T>, rules: &[ReplaceRule]) {
+/// Rules apply to the string leaves of attributes, including nested arrays and maps, and to
+/// booleans in their `"true"`/`"false"` form. The promoted span tags (`env`, `version`,
+/// `component`, `span.kind`), which v0.4 holds in `meta`, are reached through the
+/// [`CompatSpan`](libdd_trace_model::CompatSpan) view, both by name and by `"*"` rules, matching
+/// [`replace_span_tags_v04`]. Like a tag missing from v0.4 `meta`, an unset promoted tag is never
+/// matched, even by a pattern matching the empty string. A replaced `span.kind` that isn't a known
+/// kind unsets it. Like the Datadog Agent, `"*"` rules skip hidden (`_`-prefixed) attributes.
+pub fn replace_span_tags_trait<S: SpanMut>(span: &mut S, rules: &[ReplaceRule]) {
     for rule in rules {
         match rule.name.as_ref() {
             "*" => {
-                for (_, value) in &mut span.attributes {
-                    apply_rule_to_attr_value(rule, value);
-                }
+                span.retain_attributes(|key, value| {
+                    if !is_hidden_tag(key) {
+                        apply_rule_to_attr_value(rule, value);
+                    }
+                    true
+                });
                 // The "*" wildcard intentionally applies to `span.resource` as well as
                 // meta tags, matching the Datadog Agent reference implementation in
                 // `pkg/trace/filters/replacer.go` (see the `Replace` and `ReplaceV1`
                 // functions, which apply "*" rules to both span meta and `s.Resource`).
-                apply_rule(rule, &mut span.resource);
-                // `env`/`version`/`component` were plain meta tags in v0.4 (and thus already
-                // covered by the loop above); v1 promoted them to dedicated fields, so the
-                // wildcard needs to reach them explicitly to keep the same behavior.
-                apply_rule(rule, &mut span.env);
-                apply_rule(rule, &mut span.version);
-                apply_rule(rule, &mut span.component);
-            }
-            "resource.name" => {
-                apply_rule(rule, &mut span.resource);
-            }
-            // `env`/`version`/`component` are dedicated v1 fields; in v0.4 they were ordinary
-            // meta tags reachable by name, so mirror that here for backward compatibility.
-            "env" => {
-                apply_rule(rule, &mut span.env);
-            }
-            "version" => {
-                apply_rule(rule, &mut span.version);
-            }
-            "component" => {
-                apply_rule(rule, &mut span.component);
-            }
-            _ => {
-                if let Some(value) = span.attributes.get_mut(rule.name.as_str()) {
-                    apply_rule_to_attr_value(rule, value);
+                replace_resource(rule, span);
+                for key in PROMOTED_SPAN_TAGS {
+                    replace_promoted_tag(rule, span, key);
                 }
             }
+            "resource.name" => replace_resource(rule, span),
+            name => match PROMOTED_SPAN_TAGS.into_iter().find(|key| *key == name) {
+                Some(key) => replace_promoted_tag(rule, span, key),
+                None => {
+                    if let Some(value) = span.attribute_mut(name) {
+                        apply_rule_to_attr_value(rule, value);
+                    }
+                }
+            },
         }
     }
 }
 
-/// Replaces the tag values of a [`v1::TraceChunk`]'s own `attributes` using the given rules.
+/// Replaces the tag values of a [`v1::Span`] using the given rules, see
+/// [`replace_span_tags_trait`].
+pub fn replace_span_tags_v1<T: TraceData>(span: &mut v1::Span<T>, rules: &[ReplaceRule]) {
+    replace_span_tags_trait(span, rules);
+}
+
+/// Replaces the values of a trace chunk's own attributes using the given rules.
 ///
 /// Chunk-level attributes are merged into every emitted span at encode time (see
 /// `collect_attrs_v1` in the agentless encoder), so they need the same scrubbing as span-level
-/// attributes. There is no `resource`/`env`/`version`/`component` field at the chunk level, but
-/// `origin` is a dedicated field (a plain `_dd.origin` meta tag in v0.4), so the wildcard and the
-/// `_dd.origin` name need to reach it explicitly, mirroring how [`replace_span_tags_v1`] handles
-/// `env`/`version`/`component`.
-pub fn replace_chunk_tags_v1<T: TraceData>(chunk: &mut v1::TraceChunk<T>, rules: &[ReplaceRule]) {
+/// attributes. Like the Datadog Agent, the chunk fields (e.g. the origin) are left untouched.
+pub fn replace_chunk_tags<C: TraceChunkMut>(chunk: &mut C, rules: &[ReplaceRule]) {
     for rule in rules {
         match rule.name.as_ref() {
-            "*" => {
-                for (_, value) in &mut chunk.attributes {
+            "*" => chunk.retain_attributes(|key, value| {
+                if !is_hidden_tag(key) {
                     apply_rule_to_attr_value(rule, value);
                 }
-                apply_rule(rule, &mut chunk.origin);
-            }
+                true
+            }),
             "resource.name" => {}
-            "_dd.origin" => {
-                apply_rule(rule, &mut chunk.origin);
-            }
-            _ => {
-                if let Some(value) = chunk.attributes.get_mut(rule.name.as_str()) {
+            name => {
+                if let Some(value) = chunk.attribute_mut(name) {
                     apply_rule_to_attr_value(rule, value);
                 }
             }
@@ -201,26 +202,58 @@ pub fn replace_chunk_tags_v1<T: TraceData>(chunk: &mut v1::TraceChunk<T>, rules:
     }
 }
 
-fn apply_rule<S: SpanText>(rule: &ReplaceRule, field: &mut S) {
-    if let Some(new) = replace_all_opt(&rule.re, &rule.repl, rule.no_expansion, field.borrow()) {
-        *field = S::from_owned(new);
+/// Replaces the values of a [`v1::TraceChunk`]'s own attributes using the given rules, see
+/// [`replace_chunk_tags`].
+pub fn replace_chunk_tags_v1<T: TraceData>(chunk: &mut v1::TraceChunk<T>, rules: &[ReplaceRule]) {
+    replace_chunk_tags(chunk, rules);
+}
+
+/// Whether `key` is a hidden (`_`-prefixed) tag, which `"*"` rules skip, like the Datadog Agent.
+fn is_hidden_tag(key: &str) -> bool {
+    key.starts_with('_')
+}
+
+fn replace_resource<S: SpanMut>(rule: &ReplaceRule, span: &mut S) {
+    if let Some(new) = replace_all_opt(&rule.re, &rule.repl, rule.no_expansion, span.resource()) {
+        span.set_resource(S::Text::from(new));
     }
+}
+
+/// Applies `rule` to the promoted span tag `key`, read and written by name through the compat
+/// view so that the dedicated field is the one replaced.
+fn replace_promoted_tag<S: SpanMut>(rule: &ReplaceRule, span: &mut S, key: &'static str) {
+    let Some(new) = span
+        .compat()
+        .attribute_str(key)
+        .and_then(|value| replace_all_opt(&rule.re, &rule.repl, rule.no_expansion, value))
+    else {
+        return;
+    };
+    span.compat_mut().set_attribute(
+        S::Text::from_static(key),
+        AttributeValue::String(S::Text::from(new)),
+    );
 }
 
 /// Applies `rule` to `value`, recursing into `Array`/`KeyValueList` so nested string leaves are
 /// scrubbed too: the agentless encoder flattens those into plain dotted tags before sending, so
 /// leaving them out here would let matching data (e.g. a `payment: {number: "..."}` attribute)
 /// reach the intake unredacted.
-fn apply_rule_to_attr_value<T: TraceData>(rule: &ReplaceRule, value: &mut AttributeValue<T>) {
+fn apply_rule_to_attr_value<V: ValueTypes>(rule: &ReplaceRule, value: &mut AttributeValue<V>) {
     match value {
-        AttributeValue::String(s) => apply_rule(rule, s),
+        AttributeValue::String(s) => {
+            if let Some(new) = replace_all_opt(&rule.re, &rule.repl, rule.no_expansion, s.as_str())
+            {
+                *s = V::Text::from(new);
+            }
+        }
         AttributeValue::Array(values) => {
-            for v in values.iter_mut() {
+            for v in ValueArrayMut::iter_mut(values) {
                 apply_rule_to_attr_value(rule, v);
             }
         }
         AttributeValue::KeyValueList(map) => {
-            for (_, v) in map.iter_mut() {
+            for (_, v) in ValueMapMut::iter_mut(map) {
                 apply_rule_to_attr_value(rule, v);
             }
         }
@@ -231,7 +264,7 @@ fn apply_rule_to_attr_value<T: TraceData>(rule: &ReplaceRule, value: &mut Attrib
         AttributeValue::Bool(b) => {
             let s = if *b { "true" } else { "false" };
             if let Some(new) = replace_all_opt(&rule.re, &rule.repl, rule.no_expansion, s) {
-                *value = AttributeValue::String(T::Text::from_owned(new));
+                *value = AttributeValue::String(V::Text::from(new));
             }
         }
         AttributeValue::Int(_) | AttributeValue::Float(_) | AttributeValue::Bytes(_) => {}
@@ -239,12 +272,17 @@ fn apply_rule_to_attr_value<T: TraceData>(rule: &ReplaceRule, value: &mut Attrib
 }
 
 /// `replace_span_tags` replaces the tag values of a span with a given set of rules.
+///
+/// Like the Datadog Agent, `"*"` rules skip hidden (`_`-prefixed) tags; named rules still apply to
+/// them.
 pub fn replace_span_tags(span: &mut pb::Span, rules: &[ReplaceRule], scratch_space: &mut String) {
     for rule in rules {
         match rule.name.as_ref() {
             "*" => {
-                for tag_value in span.meta.values_mut() {
-                    rule.apply(tag_value, scratch_space);
+                for (key, tag_value) in &mut span.meta {
+                    if !is_hidden_tag(key) {
+                        rule.apply(tag_value, scratch_space);
+                    }
                 }
                 // The "*" wildcard intentionally applies to `span.resource` as well as
                 // meta tags, matching the Datadog Agent reference implementation in
@@ -398,7 +436,10 @@ mod tests {
     use super::Regex;
     use crate::replacer;
     use duplicate::duplicate_item;
+    use libdd_tinybytes::BytesString;
+    use libdd_trace_model::{Attributes as _, AttributesIter as _, Span as _, TraceChunk as _};
     use libdd_trace_protobuf::pb;
+    use libdd_trace_utils::span::{BytesData, v1, v04};
     use std::collections::HashMap;
 
     fn new_test_span_with_tags(tags: HashMap<&str, &str>) -> pb::Span {
@@ -553,5 +594,191 @@ mod tests {
             no_expansion: false,
         };
         assert_ne!(rule1, rule2);
+    }
+
+    fn bs(s: &str) -> BytesString {
+        BytesString::from_string(s.to_owned())
+    }
+
+    fn str_attr(s: &str) -> v1::AttributeValue<BytesData> {
+        v1::AttributeValue::String(bs(s))
+    }
+
+    fn rules(json: &str) -> Vec<replacer::ReplaceRule> {
+        replacer::parse_rules_from_string(json).unwrap()
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn star_rule_skips_hidden_tags_in_every_format() {
+        let rules = rules(r#"[{"name": "*", "pattern": "secret", "repl": "?"}]"#);
+
+        let mut pb_span = new_test_span_with_tags(HashMap::from([
+            ("_dd.hidden", "secret"),
+            ("visible", "secret"),
+        ]));
+        replacer::replace_trace_tags(core::slice::from_mut(&mut pb_span), &rules);
+        assert_eq!(pb_span.meta["_dd.hidden"], "secret");
+        assert_eq!(pb_span.meta["visible"], "?");
+
+        let mut v04_span = v04::SpanBytes::default();
+        v04_span.meta.insert(bs("_dd.hidden"), bs("secret"));
+        v04_span.meta.insert(bs("visible"), bs("secret"));
+        replacer::replace_span_tags_v04(&mut v04_span, &rules);
+        assert_eq!(v04_span.meta.get("_dd.hidden").unwrap().as_str(), "secret");
+        assert_eq!(v04_span.meta.get("visible").unwrap().as_str(), "?");
+
+        let mut v1_span = v1::SpanBytes::default();
+        v1_span
+            .attributes
+            .insert(bs("_dd.hidden"), str_attr("secret"));
+        v1_span.attributes.insert(bs("visible"), str_attr("secret"));
+        replacer::replace_span_tags_v1(&mut v1_span, &rules);
+        assert_eq!(v1_span.attribute_str("_dd.hidden"), Some("secret"));
+        assert_eq!(v1_span.attribute_str("visible"), Some("?"));
+
+        let mut chunk = v1::TraceChunkBytes::default();
+        chunk
+            .attributes
+            .insert(bs("_dd.hidden"), str_attr("secret"));
+        chunk.attributes.insert(bs("visible"), str_attr("secret"));
+        replacer::replace_chunk_tags_v1(&mut chunk, &rules);
+        assert_eq!(chunk.attribute_str("_dd.hidden"), Some("secret"));
+        assert_eq!(chunk.attribute_str("visible"), Some("?"));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn named_rules_can_target_hidden_tags() {
+        let rules = rules(r#"[{"name": "_dd.hidden", "pattern": "secret", "repl": "?"}]"#);
+        let mut span = v1::SpanBytes::default();
+        span.attributes.insert(bs("_dd.hidden"), str_attr("secret"));
+        replacer::replace_span_tags_v1(&mut span, &rules);
+        assert_eq!(span.attribute_str("_dd.hidden"), Some("?"));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn star_rule_replaces_promoted_span_tags_v1() {
+        let rules = rules(
+            r#"[
+                {"name": "*", "pattern": "secret", "repl": "redacted"},
+                {"name": "*", "pattern": "^server$", "repl": "client"}
+            ]"#,
+        );
+        let mut span = v1::SpanBytes {
+            env: bs("env-secret"),
+            version: bs("1.0-secret"),
+            component: bs("comp-secret"),
+            span_kind: v1::SpanKind::Server,
+            ..Default::default()
+        };
+        // A stale attribute named like a promoted tag, e.g. one the decoder didn't promote.
+        span.attributes.insert(bs("env"), str_attr("stale-secret"));
+        replacer::replace_span_tags_v1(&mut span, &rules);
+        assert_eq!(
+            (
+                span.env(),
+                span.version(),
+                span.component(),
+                span.span_kind()
+            ),
+            (
+                Some("env-redacted"),
+                Some("1.0-redacted"),
+                Some("comp-redacted"),
+                Some("client")
+            )
+        );
+        // The replaced field is left as the only value.
+        assert!(!span.has_attribute("env"));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn named_rules_replace_promoted_span_tag_fields_v1() {
+        let rules = rules(
+            r#"[
+                {"name": "env", "pattern": "prod", "repl": "staging"},
+                {"name": "span.kind", "pattern": "server", "repl": "custom"}
+            ]"#,
+        );
+        let mut span = v1::SpanBytes {
+            env: bs("prod"),
+            span_kind: v1::SpanKind::Server,
+            ..Default::default()
+        };
+        replacer::replace_span_tags_v1(&mut span, &rules);
+        assert_eq!(span.env(), Some("staging"));
+        // A span kind outside the OTel ones can't be stored: it reads as unset.
+        assert_eq!(span.span_kind(), None);
+        assert!(span.attributes.is_empty());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn star_rule_can_unset_the_span_kind_v1() {
+        let rules = rules(r#"[{"name": "*", "pattern": "^client$", "repl": "custom"}]"#);
+        let mut span = v1::SpanBytes {
+            span_kind: v1::SpanKind::Client,
+            ..Default::default()
+        };
+        replacer::replace_span_tags_v1(&mut span, &rules);
+        assert_eq!(span.span_kind(), None);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn unset_promoted_tags_are_never_matched_v1() {
+        // Like a tag missing from v0.4 `meta`, even a pattern matching the empty string.
+        let rules = rules(
+            r#"[
+                {"name": "env", "pattern": "^$", "repl": "none"},
+                {"name": "*", "pattern": "^$", "repl": "empty"}
+            ]"#,
+        );
+        let mut span = v1::SpanBytes::default();
+        replacer::replace_span_tags_v1(&mut span, &rules);
+        assert_eq!(
+            (
+                span.env(),
+                span.version(),
+                span.component(),
+                span.span_kind()
+            ),
+            (None, None, None, None)
+        );
+        assert_eq!(span.resource(), "empty");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn star_rule_scrubs_stale_promoted_attribute_when_field_is_unset_v1() {
+        let rules = rules(r#"[{"name": "*", "pattern": "secret", "repl": "?"}]"#);
+        let mut span = v1::SpanBytes::default();
+        span.attributes.insert(bs("env"), str_attr("secret"));
+        replacer::replace_span_tags_v1(&mut span, &rules);
+        // The field stays unset, and the plain attribute is scrubbed like any other.
+        assert_eq!(span.env(), None);
+        assert_eq!(span.attribute_str("env"), Some("?"));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn chunk_rules_leave_the_origin_field_untouched() {
+        let rules = rules(
+            r#"[
+                {"name": "*", "pattern": "synthetics", "repl": "?"},
+                {"name": "_dd.origin", "pattern": "synthetics", "repl": "?"}
+            ]"#,
+        );
+        let mut chunk = v1::TraceChunkBytes {
+            origin: bs("synthetics"),
+            ..Default::default()
+        };
+        chunk.attributes.insert(bs("team"), str_attr("synthetics"));
+        replacer::replace_chunk_tags_v1(&mut chunk, &rules);
+        assert_eq!(chunk.origin(), "synthetics");
+        assert_eq!(chunk.attribute_str("team"), Some("?"));
     }
 }
