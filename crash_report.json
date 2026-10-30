@@ -1,0 +1,266 @@
+{
+  "counters": {
+    "profiler_collecting_sample": 1,
+    "profiler_serializing": 0,
+    "profiler_inactive": 0,
+    "profiler_unwinding": 0
+  },
+  "data_schema_version": "1.8",
+  "error": {
+    "is_crash": true,
+    "kind": "UnixSignal",
+    "message": "Process terminated with SEGV_MAPERR (SIGSEGV)",
+    "thread_name": "otel_ctx_crash_",
+    "source_type": "Crashtracking",
+    "stack": {
+      "format": "Datadog Crashtracker 1.0",
+      "frames": [
+        {
+          "ip": "0x5555556ca1f7",
+          "module_base_address": "0x555555554000",
+          "sp": "0x7fffffffb350",
+          "build_id": "090204d13f60938ea745e393506b0a90166a4554",
+          "build_id_type": "GNU",
+          "file_type": "ELF",
+          "path": "/home/bits/go/src/github.com/DataDog/libdatadog/target/debug/examples/otel_ctx_crash_demo",
+          "relative_address": "0x00000000001761f7",
+          "column": 9,
+          "file": "/home/bits/go/src/github.com/DataDog/libdatadog/libdd-crashtracker/examples/otel_ctx_crash_demo.rs",
+          "function": "otel_ctx_crash_demo::main",
+          "line": 111
+        },
+        {
+          "ip": "0x5555556cab6b",
+          "module_base_address": "0x555555554000",
+          "sp": "0x7fffffffc8a0",
+          "build_id": "090204d13f60938ea745e393506b0a90166a4554",
+          "build_id_type": "GNU",
+          "file_type": "ELF",
+          "path": "/home/bits/go/src/github.com/DataDog/libdatadog/target/debug/examples/otel_ctx_crash_demo",
+          "relative_address": "0x0000000000176b6b",
+          "column": 5,
+          "file": "/home/bits/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ops/function.rs",
+          "function": "<fn() -> core::result::Result<(), anyhow::Error> as core::ops::function::FnOnce<()>>::call_once",
+          "line": 250
+        },
+        {
+          "ip": "0x5555556ca6ad",
+          "module_base_address": "0x555555554000",
+          "sp": "0x7fffffffc8c0",
+          "build_id": "090204d13f60938ea745e393506b0a90166a4554",
+          "build_id_type": "GNU",
+          "file_type": "ELF",
+          "path": "/home/bits/go/src/github.com/DataDog/libdatadog/target/debug/examples/otel_ctx_crash_demo",
+          "relative_address": "0x00000000001766ad",
+          "column": 18,
+          "file": "/home/bits/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/sys/backtrace.rs",
+          "function": "std::sys::backtrace::__rust_begin_short_backtrace::<fn() -> core::result::Result<(), anyhow::Error>, core::result::Result<(), anyhow::Error>>",
+          "line": 166
+        },
+        {
+          "ip": "0x5555556ca681",
+          "module_base_address": "0x555555554000",
+          "sp": "0x7fffffffc8e0",
+          "build_id": "090204d13f60938ea745e393506b0a90166a4554",
+          "build_id_type": "GNU",
+          "file_type": "ELF",
+          "path": "/home/bits/go/src/github.com/DataDog/libdatadog/target/debug/examples/otel_ctx_crash_demo",
+          "relative_address": "0x0000000000176681",
+          "column": 18,
+          "file": "/home/bits/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/rt.rs",
+          "function": "std::rt::lang_start::<core::result::Result<(), anyhow::Error>>::{closure#0}",
+          "line": 206
+        },
+        {
+          "ip": "0x5555559a5677",
+          "module_base_address": "0x555555554000",
+          "sp": "0x7fffffffc900",
+          "build_id": "090204d13f60938ea745e393506b0a90166a4554",
+          "build_id_type": "GNU",
+          "file_type": "ELF",
+          "path": "/home/bits/go/src/github.com/DataDog/libdatadog/target/debug/examples/otel_ctx_crash_demo",
+          "relative_address": "0x0000000000451677",
+          "column": 5,
+          "file": "/rustc/8bab26f4f68e0e26f0bb7960be334d5b520ea452/library/std/src/rt.rs",
+          "function": "std::rt::lang_start_internal",
+          "line": 171
+        },
+        {
+          "ip": "0x5555556ca667",
+          "module_base_address": "0x555555554000",
+          "sp": "0x7fffffffca10",
+          "build_id": "090204d13f60938ea745e393506b0a90166a4554",
+          "build_id_type": "GNU",
+          "file_type": "ELF",
+          "path": "/home/bits/go/src/github.com/DataDog/libdatadog/target/debug/examples/otel_ctx_crash_demo",
+          "relative_address": "0x0000000000176667",
+          "column": 2,
+          "file": "/home/bits/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/rt.rs",
+          "function": "std::rt::lang_start::<core::result::Result<(), anyhow::Error>>",
+          "line": 211
+        },
+        {
+          "ip": "0x5555556ca48e",
+          "module_base_address": "0x555555554000",
+          "sp": "0x7fffffffca40",
+          "build_id": "090204d13f60938ea745e393506b0a90166a4554",
+          "build_id_type": "GNU",
+          "file_type": "ELF",
+          "path": "/home/bits/go/src/github.com/DataDog/libdatadog/target/debug/examples/otel_ctx_crash_demo",
+          "relative_address": "0x000000000017648e",
+          "function": "main"
+        },
+        {
+          "ip": "0x7ffff7d93d90",
+          "module_base_address": "0x7ffff7d6a000",
+          "sp": "0x7fffffffca50",
+          "build_id": "4f7b0c955c3d81d7cac1501a2498b69d1d82bfe7",
+          "build_id_type": "GNU",
+          "file_type": "ELF",
+          "path": "/usr/lib/x86_64-linux-gnu/libc.so.6",
+          "relative_address": "0x0000000000029d90",
+          "column": 16,
+          "file": "./csu/../sysdeps/nptl/libc_start_call_main.h",
+          "function": "__libc_start_call_main",
+          "line": 58
+        },
+        {
+          "ip": "0x7ffff7d93e40",
+          "module_base_address": "0x7ffff7d6a000",
+          "sp": "0x7fffffffcaf0",
+          "symbol_address": "0x7ffff7d93dc0",
+          "build_id": "4f7b0c955c3d81d7cac1501a2498b69d1d82bfe7",
+          "build_id_type": "GNU",
+          "file_type": "ELF",
+          "path": "/usr/lib/x86_64-linux-gnu/libc.so.6",
+          "relative_address": "0x0000000000029e40",
+          "column": 5,
+          "file": "./csu/../csu/libc-start.c",
+          "function": "__libc_start_main_impl",
+          "line": 379
+        },
+        {
+          "ip": "0x5555556c8195",
+          "module_base_address": "0x555555554000",
+          "sp": "0x7fffffffcb40",
+          "build_id": "090204d13f60938ea745e393506b0a90166a4554",
+          "build_id_type": "GNU",
+          "file_type": "ELF",
+          "path": "/home/bits/go/src/github.com/DataDog/libdatadog/target/debug/examples/otel_ctx_crash_demo",
+          "relative_address": "0x0000000000174195",
+          "function": "_start"
+        }
+      ],
+      "incomplete": false
+    }
+  },
+  "experimental": {},
+  "files": {
+    "/proc/self/maps": [
+      "555555554000-5555556c8000 r--p 00000000 103:03 19180719                  /home/bits/go/src/github.com/DataDog/libdatadog/target/debug/examples/otel_ctx_crash_demo",
+      "5555556c8000-5555559c4000 r-xp 00173000 103:03 19180719                  /home/bits/go/src/github.com/DataDog/libdatadog/target/debug/examples/otel_ctx_crash_demo",
+      "5555559c4000-5555559f7000 r--p 0046e000 103:03 19180719                  /home/bits/go/src/github.com/DataDog/libdatadog/target/debug/examples/otel_ctx_crash_demo",
+      "5555559f7000-5555559f8000 rw-p 004a0000 103:03 19180719                  /home/bits/go/src/github.com/DataDog/libdatadog/target/debug/examples/otel_ctx_crash_demo",
+      "5555559f8000-555555a22000 rw-p 00000000 00:00 0 ",
+      "555555a22000-555555a43000 rw-p 00000000 00:00 0                          [heap]",
+      "7ffff7d57000-7ffff7d58000 ---p 00000000 00:00 0 ",
+      "7ffff7d58000-7ffff7d6a000 rw-p 00000000 00:00 0 ",
+      "7ffff7d6a000-7ffff7d92000 r--p 00000000 00:2d 18157632                   /usr/lib/x86_64-linux-gnu/libc.so.6",
+      "7ffff7d92000-7ffff7f27000 r-xp 00028000 00:2d 18157632                   /usr/lib/x86_64-linux-gnu/libc.so.6",
+      "7ffff7f27000-7ffff7f7f000 r--p 001bd000 00:2d 18157632                   /usr/lib/x86_64-linux-gnu/libc.so.6",
+      "7ffff7f7f000-7ffff7f80000 ---p 00215000 00:2d 18157632                   /usr/lib/x86_64-linux-gnu/libc.so.6",
+      "7ffff7f80000-7ffff7f84000 r--p 00215000 00:2d 18157632                   /usr/lib/x86_64-linux-gnu/libc.so.6",
+      "7ffff7f84000-7ffff7f86000 rw-p 00219000 00:2d 18157632                   /usr/lib/x86_64-linux-gnu/libc.so.6",
+      "7ffff7f86000-7ffff7f93000 rw-p 00000000 00:00 0 ",
+      "7ffff7f93000-7ffff7f96000 r--p 00000000 00:2d 18163153                   /usr/lib/x86_64-linux-gnu/libgcc_s.so.1",
+      "7ffff7f96000-7ffff7fad000 r-xp 00003000 00:2d 18163153                   /usr/lib/x86_64-linux-gnu/libgcc_s.so.1",
+      "7ffff7fad000-7ffff7fb1000 r--p 0001a000 00:2d 18163153                   /usr/lib/x86_64-linux-gnu/libgcc_s.so.1",
+      "7ffff7fb1000-7ffff7fb2000 r--p 0001d000 00:2d 18163153                   /usr/lib/x86_64-linux-gnu/libgcc_s.so.1",
+      "7ffff7fb2000-7ffff7fb3000 rw-p 0001e000 00:2d 18163153                   /usr/lib/x86_64-linux-gnu/libgcc_s.so.1",
+      "7ffff7fb8000-7ffff7fb9000 ---p 00000000 00:00 0 ",
+      "7ffff7fb9000-7ffff7fbb000 rw-p 00000000 00:00 0 ",
+      "7ffff7fbb000-7ffff7fbd000 rw-p 00000000 00:00 0 ",
+      "7ffff7fbd000-7ffff7fc1000 r--p 00000000 00:00 0                          [vvar]",
+      "7ffff7fc1000-7ffff7fc3000 r-xp 00000000 00:00 0                          [vdso]",
+      "7ffff7fc3000-7ffff7fc5000 r--p 00000000 00:2d 18157629                   /usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",
+      "7ffff7fc5000-7ffff7fef000 r-xp 00002000 00:2d 18157629                   /usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",
+      "7ffff7fef000-7ffff7ffa000 r--p 0002c000 00:2d 18157629                   /usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",
+      "7ffff7ffb000-7ffff7ffd000 r--p 00037000 00:2d 18157629                   /usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",
+      "7ffff7ffd000-7ffff7fff000 rw-p 00039000 00:2d 18157629                   /usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",
+      "7ffffffdc000-7ffffffff000 rw-p 00000000 00:00 0                          [stack]",
+      "ffffffffff600000-ffffffffff601000 --xp 00000000 00:00 0                  [vsyscall]",
+      ""
+    ]
+  },
+  "incomplete": false,
+  "metadata": {
+    "library_name": "otel-ctx-crash-demo",
+    "library_version": "0.1.0",
+    "family": "native"
+  },
+  "os_info": {
+    "architecture": "x86_64",
+    "bitness": "64-bit",
+    "os_type": "Ubuntu",
+    "version": "22.4.0"
+  },
+  "proc_info": {
+    "pid": 2361070,
+    "tid": 2361070
+  },
+  "otel_thread_contexts": [
+    {
+      "tid": 2361070,
+      "thread_name": "otel_ctx_crash_",
+      "trace_id": "0123456789abcdeffedcba9876543210",
+      "span_id": "aabbccdd11223344",
+      "trace_flags": 1,
+      "attributes": [
+        {
+          "key_index": 0,
+          "value": "deadbeefcafebabe"
+        },
+        {
+          "key_index": 1,
+          "value": "GET"
+        },
+        {
+          "key_index": 2,
+          "value": "/api/v1/traces"
+        }
+      ]
+    }
+  ],
+  "sig_info": {
+    "si_addr": "0x0000000000000000",
+    "si_code": 1,
+    "si_code_human_readable": "SEGV_MAPERR",
+    "si_signo": 11,
+    "si_signo_human_readable": "SIGSEGV"
+  },
+  "timestamp": "2026-10-29 18:00:29.472035479 UTC",
+  "ucontext": {
+    "arch": "x86_64",
+    "registers": {
+      "r15": "0x0000000000000000",
+      "rsi": "0x0000555555a21c40",
+      "r14": "0x00007fffff7fe000",
+      "rbx": "0x0000000000000000",
+      "rcx": "0x0000000000000001",
+      "r10": "0x00005555556307d4",
+      "rdi": "0x0000000000000002",
+      "rbp": "0x00007fffffffca00",
+      "r11": "0x0000000000000246",
+      "r9": "0x0000555555a2b440",
+      "rdx": "0x0000000000000010",
+      "rip": "0x00005555556ca1f7",
+      "rax": "0x0000000000000000",
+      "rsp": "0x00007fffffffb350",
+      "r8": "0x0000000000000000",
+      "r12": "0x0000000000001000",
+      "r13": "0x00007fffff7ff000"
+    },
+    "raw": "ucontext_t { uc_flags: 7, uc_link: 0x0, uc_stack: stack_t { ss_sp: 0x7ffff7d58000, ss_flags: 0, ss_size: 65536 }, uc_mcontext: mcontext_t { gregs: [0, 93824997307456, 93824993134548, 582, 4096, 140737479962624, 140737479958528, 0, 2, 93824997268544, 140737488341504, 0, 16, 0, 1, 140737488335696, 93824993763831, 66054, 12103423998558259, 4, 14, 0, 0], fpregs: 0x7ffff7d67540, __private: [0, 0, 0, 0, 0, 0, 0, 0] }, uc_sigmask: sigset_t { __val: [0, 11, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] }, __private: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 127, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 128, 31, 0, 0, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 35, 69, 103, 137, 171, 205, 239, 254, 220, 186, 152, 118, 84, 50, 16, 224, 76, 248, 247, 255, 127, 0, 0, 224, 76, 248, 247, 255, 127, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 255, 0, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 100, 100, 45, 108, 105, 98, 117, 110, 119, 105, 110, 100, 45, 115, 121, 115, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 83, 88, 80, 70, 140, 10, 0, 0, 255, 2, 0, 0, 0, 0, 0, 0, 136, 10, 0, 0, 0, 0, 0, 0], __ssp: [0, 0, 0, 675] }"
+  },
+  "uuid": "60f17d8d-6927-4474-b8a1-be204c7bc460"
+}
