@@ -83,6 +83,48 @@ impl DDSketch {
         Ok(())
     }
 
+    /// A sketch whose logarithmic mapping has the given `gamma` and `index_offset` rather than
+    /// the default ones, or `None` if they do not describe a mapping.
+    ///
+    /// Bins only line up between sketches whose mappings agree on both, so a producer whose
+    /// consumer expects a particular mapping has to build its sketches with that mapping.
+    pub fn with_log_mapping(gamma: f64, index_offset: f64) -> Option<Self> {
+        Some(Self {
+            mapping: LogMapping::new(gamma, index_offset)?,
+            ..Default::default()
+        })
+    }
+
+    /// Index of the bin `point` falls into, or `None` for a point the sketch would count as
+    /// zero or does not accept.
+    pub fn bin_index(&self, point: f64) -> Option<i32> {
+        if point < self.mapping.min_indexable_value || point.is_nan() || point.is_infinite() {
+            return None;
+        }
+        Some(self.mapping.index(point))
+    }
+
+    /// Add `count` points to the bin at `index`, as [`Self::bin_index`] numbers them.
+    ///
+    /// For producers that bin values themselves and only hand the sketch their counts.
+    /// `count` must be positive, and `index` one that [`Self::bin_index`] can return.
+    pub fn add_to_bin(&mut self, index: i32, count: f64) -> Result<(), Box<dyn std::error::Error>> {
+        if !count.is_finite() || count <= 0.0 {
+            return Err("count must be positive and finite".into());
+        }
+        // An index the mapping could never produce could make the store span past `i32`.
+        let lowest = self.bin_index(self.mapping.min_indexable_value);
+        let highest = self.bin_index(f64::MAX);
+        if !lowest
+            .zip(highest)
+            .is_some_and(|(lo, hi)| (lo..=hi).contains(&index))
+        {
+            return Err("index is outside the sketch's mapping".into());
+        }
+        *self.store.bin_mut(index) += count;
+        Ok(())
+    }
+
     /// Return a protobuf of the sketch
     pub fn into_pb(self) -> pb::DdSketch {
         let contiguous_bins: Vec<f64> = self.store.bins.into();
@@ -417,6 +459,72 @@ mod test {
         }
 
         assert_within!(sketch.count(), 21.0, f64::EPSILON);
+    }
+
+    #[test]
+    fn a_custom_mapping_is_what_the_protobuf_reports() {
+        let mut sketch = DDSketch::with_log_mapping(1.015625, 1.8761281912861705).unwrap();
+        assert!(sketch.add(1.0).is_ok());
+        let mapping = sketch.into_pb().mapping.unwrap();
+        assert_eq!(mapping.gamma, 1.015625);
+        assert_eq!(mapping.index_offset, 1.8761281912861705);
+
+        assert!(DDSketch::with_log_mapping(1.0, 0.0).is_none());
+        assert!(DDSketch::with_log_mapping(0.5, 0.0).is_none());
+    }
+
+    /// Counting a point into the bin `bin_index` names has to leave the sketch exactly as
+    /// adding the point itself would.
+    #[test]
+    fn adding_to_a_bin_matches_adding_its_points() {
+        let points: &[f64] = &[1e-6, 0.003, 0.1, 2.0, 10.0, 25.0, 10000.0];
+        let mut by_point = DDSketch::with_log_mapping(1.015625, 1.8761281912861705).unwrap();
+        let mut by_bin = by_point.clone();
+        for (i, &point) in points.iter().enumerate() {
+            let count = (i + 1) as f64;
+            assert!(by_point.add_with_count(point, count).is_ok());
+            let index = by_bin.bin_index(point).unwrap();
+            assert!(by_bin.add_to_bin(index, count).is_ok());
+        }
+        assert_eq!(by_point.into_pb(), by_bin.into_pb());
+    }
+
+    #[test]
+    fn points_counted_as_zero_have_no_bin() {
+        let sketch = DDSketch::default();
+        assert_eq!(sketch.bin_index(0.0), None);
+        assert_eq!(sketch.bin_index(-1.0), None);
+        assert_eq!(sketch.bin_index(f64::NAN), None);
+        assert_eq!(sketch.bin_index(f64::INFINITY), None);
+        assert!(sketch.bin_index(1.0).is_some());
+    }
+
+    #[test]
+    fn bins_only_take_positive_finite_counts() {
+        let mut sketch = DDSketch::default();
+        for count in [f64::NAN, f64::INFINITY, -1.0, 0.0] {
+            assert!(sketch.add_to_bin(0, count).is_err(), "{count}");
+        }
+        assert_eq!(sketch.count(), 0.0);
+        assert!(sketch.add_to_bin(0, 1.0).is_ok());
+        assert_eq!(sketch.count(), 1.0);
+    }
+
+    #[test]
+    fn bins_only_take_indices_the_mapping_produces() {
+        let mut sketch = DDSketch::default();
+        let lowest = sketch
+            .bin_index(sketch.mapping.min_indexable_value)
+            .unwrap();
+        let highest = sketch.bin_index(f64::MAX).unwrap();
+        assert!(sketch.add_to_bin(lowest, 1.0).is_ok());
+        assert!(sketch.add_to_bin(highest, 1.0).is_ok());
+        assert!(sketch.add_to_bin(lowest - 1, 1.0).is_err());
+        assert!(sketch.add_to_bin(highest + 1, 1.0).is_err());
+        // Far enough apart that the store's offsets would overflow `i32`.
+        assert!(sketch.add_to_bin(i32::MIN, 1.0).is_err());
+        assert!(sketch.add_to_bin(i32::MAX, 1.0).is_err());
+        assert_eq!(sketch.count(), 2.0);
     }
 
     #[test]

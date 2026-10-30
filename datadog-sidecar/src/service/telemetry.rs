@@ -4,24 +4,21 @@
 use crate::service::{
     ConnectionSessionHandle, InstanceId, RuntimeMetadata, SidecarAction, SidecarServer,
 };
+use crate::shm_path::keyed_shm_path;
 use anyhow::Result;
 use libdd_common::MutexExt;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
-use base64::Engine;
-use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use libdd_ipc::one_way_shared_memory::OneWayShmWriter;
 use libdd_ipc::platform::NamedShmHandle;
 use std::collections::{HashMap, HashSet, VecDeque, hash_map::Entry};
 use std::ffi::CString;
-use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 use tokio::task::JoinHandle;
-use zwohash::ZwoHasher;
 
 use libdd_capabilities_impl::NativeCapabilities;
 use libdd_common::tag::Tag;
@@ -774,22 +771,7 @@ impl TelemetryCachedClientSet {
 }
 
 pub fn path_for_telemetry(service: &str, env: &str) -> CString {
-    let mut hasher = ZwoHasher::default();
-    service.hash(&mut hasher);
-    env.hash(&mut hasher);
-    let hash = hasher.finish();
-
-    let mut path = format!(
-        "/ddtl{}-{}",
-        crate::shm_namespace(),
-        BASE64_URL_SAFE_NO_PAD.encode(hash.to_ne_bytes()),
-    );
-    if cfg!(unix) {
-        path.truncate(31);
-    }
-
-    #[allow(clippy::unwrap_used)]
-    CString::new(path).unwrap()
+    keyed_shm_path("ddtl", &(service, env))
 }
 
 pub(crate) fn init_telemetry_sender() -> (

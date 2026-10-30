@@ -238,6 +238,33 @@ pub trait SidecarInterface {
         span: libdd_ipc::shm_stats::OwnedShmSpanInput,
     );
 
+    /// IPC fallback: add a DSM checkpoint directly to the sidecar's SHM DSM table for
+    /// (env, version, service, primary tag). Creates the table if needed, retiring any stale
+    /// segment.
+    async fn add_dsm_checkpoint(
+        env: String,
+        version: String,
+        service: String,
+        primary_tag: String,
+        checkpoint: libdd_ipc::shm_dsm_checkpoint::OwnedDsmCheckpoint,
+    );
+
+    /// IPC fallback: add a DSM backlog offset directly to the sidecar's SHM DSM backlog table
+    /// for (env, version, service, primary tag). Creates the tables if needed, as
+    /// `add_dsm_checkpoint` does.
+    async fn add_dsm_backlog(
+        env: String,
+        version: String,
+        service: String,
+        primary_tag: String,
+        backlog: libdd_ipc::shm_dsm_backlog::OwnedDsmBacklog,
+    );
+
+    /// Records that Kafka clients with `bootstrap_servers` reach the cluster `cluster_id`, and
+    /// shares it with the sidecar's other processes through the map in
+    /// [`kafka_cluster_ids`](crate::service::kafka_cluster_ids).
+    async fn set_kafka_cluster_id(bootstrap_servers: String, cluster_id: String);
+
     /// Starts the AppSec backend if it has not already been initialized.
     ///
     /// Returns only after initialization finishes, so subsequent AppSec messages

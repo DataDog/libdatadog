@@ -13,7 +13,7 @@ use std::fmt::{Debug, Formatter};
 use std::io;
 use std::marker::PhantomData;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicI32, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU8, AtomicU32, AtomicU64, Ordering};
 use std::time::Duration;
 
 /// A type whose values can be stored in, and concurrently accessed from, memory shared with
@@ -26,7 +26,7 @@ use std::time::Duration;
 /// non-UTF-8 bytes, a `Vec` a broken length/pointer pair, etc.
 ///
 /// `ShmSafe` encodes that contract at the type level, so that the shared-memory wrappers in this
-/// module can require it instead of trusting every caller.
+/// module and in `crate::shm_table` can require it instead of trusting every caller.
 ///
 /// # Safety
 ///
@@ -44,7 +44,14 @@ pub unsafe trait ShmSafe: Sized {}
 unsafe impl ShmSafe for () {}
 // SAFETY: every bit pattern is a valid value of an atomic (its operations are defined for any
 // bytes), and its contents are by definition interior-mutable.
+unsafe impl ShmSafe for AtomicU8 {}
+// SAFETY: as for `AtomicU8`.
+unsafe impl ShmSafe for AtomicU32 {}
+// SAFETY: as for `AtomicU8`.
 unsafe impl ShmSafe for AtomicU64 {}
+// SAFETY: an array has no bytes of its own beyond its elements', so it inherits both properties
+// from `T`.
+unsafe impl<T: ShmSafe, const N: usize> ShmSafe for [T; N] {}
 
 #[repr(C)]
 #[derive(Default)]
