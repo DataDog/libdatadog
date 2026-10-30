@@ -58,8 +58,16 @@ so reuse from a deeper path cannot bypass the limit.
 
 `Configuration::eval_flag_with_trace` additionally returns unique prerequisite evaluation
 records, excluding the requested root. SDKs can log these evaluations even if a later
-condition rejects their rule. Only records marked `exposure_eligible` belong to the root's
-successful rule/split path; a failed root has no eligible prerequisite exposures. SDKs must
-also apply each assignment's `do_log`, consent, and ordinary exposure deduplication policy.
-The trace does not emit telemetry itself. SDKs should advertise dependent-flag support only
-after integrating and testing both evaluation and exposure reporting.
+condition rejects their rule. `exposure_trace` lists the successful rule/split path in
+depth-first authored order, including the replay position of memoized prerequisites. Only
+records marked `exposure_eligible` appear in that trace; a failed root has no eligible
+prerequisite exposures. SDKs must also apply each assignment's `do_log`, consent, and ordinary
+exposure deduplication policy. The trace does not emit telemetry itself. SDKs should advertise
+dependent-flag support only after integrating and testing both evaluation and exposure
+reporting.
+
+This API returns prerequisite evaluation records after the root evaluation completes. That is
+the intended integration boundary: FFI consumers may accumulate and publish the returned records
+as a batch once the root result is available. Evaluation records are retained even when the root
+fails; unlike exposure candidates, they are not rolled back. Traversal-time callbacks are not
+required.
