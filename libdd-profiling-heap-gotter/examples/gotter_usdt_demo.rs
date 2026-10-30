@@ -404,10 +404,10 @@ mod linux {
         let mut cpu_state = 0x1234_5678_9abc_def0u64;
         let mut tick = 0u64;
         loop {
-            if let Some(d) = deadline {
-                if Instant::now() >= d {
-                    break;
-                }
+            if let Some(d) = deadline
+                && Instant::now() >= d
+            {
+                break;
             }
             if stress {
                 cpu_state = burn_cpu_for(Duration::from_secs(1), cpu_state ^ tick);

@@ -1,0 +1,12 @@
+{
+  "$schema": "../../../../schema/provider-attempt-metric-fixture.schema.json",
+  "profile": "gen_ai.client.provider_attempt@0.1.0",
+  "case": "two-faults-duration-before-streaming",
+  "description": "Neither the duration nor the streaming flag is stated. The duration is checked first, so the code is duration_invalid and not the required_field_missing of the absent flag.",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "exampleai",
+    "observation_point": "gateway"
+  },
+  "expected_error_code": "duration_invalid"
+}

@@ -7,13 +7,13 @@
 
 mod common;
 
-use libdd_common::test_utils::{parse_http_request, parse_http_request_sync};
 use libdd_profiling::exporter::config;
 use libdd_profiling::exporter::{File, ProfileExporter};
 use libdd_profiling::internal::EncodedProfile;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use tools::test_utils::{parse_http_request, parse_http_request_sync};
 
 /// Shared state for test HTTP servers
 #[derive(Debug, Clone)]
@@ -160,27 +160,27 @@ async fn read_and_capture_request<S>(
             Ok(n) => {
                 buffer.extend_from_slice(&temp_buf[..n]);
 
-                if !headers_complete {
-                    if let Some(pos) = buffer.windows(4).position(|window| window == b"\r\n\r\n") {
-                        headers_end_pos = Some(pos + 4);
-                        headers_complete = true;
+                if !headers_complete
+                    && let Some(pos) = buffer.windows(4).position(|window| window == b"\r\n\r\n")
+                {
+                    headers_end_pos = Some(pos + 4);
+                    headers_complete = true;
 
-                        if let Ok(header_str) = std::str::from_utf8(&buffer[..pos]) {
-                            for line in header_str.lines() {
-                                if line.to_lowercase().starts_with("content-length:") {
-                                    if let Some(len_str) = line.split(':').nth(1) {
-                                        content_length = len_str.trim().parse().ok();
-                                    }
-                                }
+                    if let Ok(header_str) = std::str::from_utf8(&buffer[..pos]) {
+                        for line in header_str.lines() {
+                            if line.to_lowercase().starts_with("content-length:")
+                                && let Some(len_str) = line.split(':').nth(1)
+                            {
+                                content_length = len_str.trim().parse().ok();
                             }
                         }
                     }
                 }
 
-                if let (Some(headers_end), Some(expected_len)) = (headers_end_pos, content_length) {
-                    if buffer.len() - headers_end >= expected_len {
-                        break;
-                    }
+                if let (Some(headers_end), Some(expected_len)) = (headers_end_pos, content_length)
+                    && buffer.len() - headers_end >= expected_len
+                {
+                    break;
                 }
             }
             Err(_) => break,

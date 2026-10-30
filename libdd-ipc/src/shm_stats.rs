@@ -23,7 +23,7 @@
 //! ## Untrusted contents
 //! Every byte of the segment is writable by every process that holds it, workers included, so
 //! nothing read out of it may authorise an access. The dimensions are validated once against
-//! the length actually mapped and then kept privately ([`Layout`]); string references are
+//! the length actually mapped and then kept privately; string references are
 //! checked against their own pool and copied out under a per-bucket budget; mutable fields are
 //! integer atomics that get decoded rather than loaded as Rust types. A peer can corrupt its
 //! own telemetry - that much is inherent in a buffer everyone may write - but it cannot make
@@ -772,13 +772,13 @@ impl ShmStatsMapping {
 
         // Retire old segments only after the replacement is ready.
         for old in replaced {
-            if let Ok(old) = old.map() {
-                if old.as_slice().len() >= size_of::<ShmHeader>() {
-                    // SAFETY: page-aligned, in bounds, and all fields are integer atomics.
-                    // Touch only `ready`; the old segment's layout is untrusted.
-                    let hdr = unsafe { &*(old.as_slice().as_ptr() as *const ShmHeader) };
-                    hdr.ready.store(0, Release);
-                }
+            if let Ok(old) = old.map()
+                && old.as_slice().len() >= size_of::<ShmHeader>()
+            {
+                // SAFETY: page-aligned, in bounds, and all fields are integer atomics.
+                // Touch only `ready`; the old segment's layout is untrusted.
+                let hdr = unsafe { &*(old.as_slice().as_ptr() as *const ShmHeader) };
+                hdr.ready.store(0, Release);
             }
         }
 
@@ -1106,10 +1106,10 @@ impl ShmStatsMapping {
                 continue;
             }
 
-            if let Some(gs) = Self::drain_entry(entry, bucket.pool, &mut budget) {
-                if gs.hits > 0 {
-                    grouped.push(gs);
-                }
+            if let Some(gs) = Self::drain_entry(entry, bucket.pool, &mut budget)
+                && gs.hits > 0
+            {
+                grouped.push(gs);
             }
             entry.key_hash.store(SLOT_EMPTY, Release);
         }

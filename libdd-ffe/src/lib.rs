@@ -14,3 +14,6 @@ pub mod rules_based;
 pub mod telemetry;
 
 pub use flag_type::{ExpectedFlagType, FlagType};
+
+#[cfg(feature = "cdn")]
+pub mod cdn;

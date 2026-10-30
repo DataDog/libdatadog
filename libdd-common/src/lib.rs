@@ -12,8 +12,8 @@ extern crate alloc;
 
 #[cfg(feature = "std")]
 pub mod azure_app_services;
-#[cfg(all(feature = "std", not(target_arch = "wasm32")))]
-pub mod cc_utils;
+#[cfg(feature = "std")]
+pub mod config;
 #[cfg(all(feature = "std", not(target_arch = "wasm32")))]
 pub mod connector;
 #[cfg(feature = "reqwest")]
@@ -24,31 +24,20 @@ mod endpoint;
 #[cfg(feature = "std")]
 pub mod entity_id;
 #[cfg(feature = "std")]
-mod lock_ext;
-#[cfg(feature = "std")]
-pub mod machine_id;
-#[cfg(feature = "std")]
-pub mod mutable_metadata;
-#[cfg(feature = "std")]
-pub mod regex_engine;
-#[cfg(feature = "std")]
-#[macro_use]
-pub mod cstr;
-#[cfg(feature = "bench-utils")]
-pub mod bench_utils;
-#[cfg(feature = "std")]
-pub mod config;
-#[cfg(feature = "std")]
 pub mod error;
 #[cfg(feature = "http-client")]
 pub mod http_common;
 #[cfg(feature = "std")]
+mod lock_ext;
+#[cfg(feature = "std")]
+pub mod machine_id;
+#[cfg(feature = "std")]
 pub mod multipart;
-#[cfg(all(feature = "std", not(target_arch = "wasm32")))]
-pub mod rate_limiter;
+#[cfg(feature = "std")]
+pub mod mutable_metadata;
+#[cfg(feature = "std")]
+pub mod regex_engine;
 pub mod tag;
-#[cfg(all(feature = "std", any(test, feature = "test-utils")))]
-pub mod test_utils;
 #[cfg(all(feature = "std", not(target_arch = "wasm32"), not(target_os = "aix")))]
 pub mod threading;
 #[cfg(all(feature = "std", not(target_arch = "wasm32")))]

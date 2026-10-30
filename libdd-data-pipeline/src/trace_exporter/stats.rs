@@ -400,13 +400,13 @@ pub(crate) fn process_traces_for_stats<
 
         // Send dropped P0 stats directly to telemetry if available
         #[cfg(feature = "telemetry")]
-        if let Some(telemetry_client) = telemetry {
-            if let Err(e) = telemetry_client.send_client_side_stats_drops(
+        if let Some(telemetry_client) = telemetry
+            && let Err(e) = telemetry_client.send_client_side_stats_drops(
                 dropped_p0_stats.dropped_p0_traces,
                 dropped_by_trace_filter,
-            ) {
-                tracing::error!(?e, "Error sending dropped P0 stats to telemetry");
-            }
+            )
+        {
+            tracing::error!(?e, "Error sending dropped P0 stats to telemetry");
         }
         true
     } else {
@@ -419,9 +419,6 @@ pub(crate) fn process_traces_for_stats<
 ///
 /// # Panic
 /// Will panic if another thread panicked while holding the lock on `stats_concentrator`
-// Not yet called from the live pipeline; will be wired in once the exporter's public API is
-// swapped to v1 native structs.
-#[allow(dead_code)]
 fn add_spans_to_stats_v1<T: libdd_trace_utils::span::TraceData>(
     stats_concentrator: &Mutex<SpanConcentrator>,
     traces: &[libdd_trace_utils::span::v1::TraceChunk<T>],
@@ -439,9 +436,8 @@ fn add_spans_to_stats_v1<T: libdd_trace_utils::span::TraceData>(
 
 /// V1 counterpart of [`process_traces_for_stats`], operating on
 /// [`libdd_trace_utils::span::v1::TraceChunk`] chunks instead of flat v0.4 span vectors.
-// Not yet called from the live pipeline; will be wired in once the exporter's public API is
-// swapped to v1 native structs.
-#[allow(dead_code)]
+///
+/// Returns true if stats were computed for the traces passed.
 pub(crate) fn process_traces_for_stats_v1<
     T: libdd_trace_utils::span::TraceData,
     #[cfg(feature = "telemetry")] C: libdd_capabilities::HttpClientCapability
@@ -450,13 +446,13 @@ pub(crate) fn process_traces_for_stats_v1<
         + Sync
         + 'static,
 >(
-    traces: &mut Vec<libdd_trace_utils::span::v1::TraceChunk<T>>,
+    traces: &mut libdd_trace_utils::span::v1::span_pool::PooledTraceChunks<'_, T>,
     header_tags: &mut libdd_trace_utils::trace_utils::TracerHeaderTags,
     client_side_stats: &ArcSwap<StatsComputationStatus>,
     client_computed_top_level: bool,
     trace_filterer: &TraceFilterer,
     #[cfg(feature = "telemetry")] telemetry: Option<&crate::telemetry::TelemetryClient<C>>,
-) {
+) -> bool {
     let status = client_side_stats.load();
     if let StatsComputationStatus::Enabled {
         stats_concentrator, ..
@@ -485,14 +481,17 @@ pub(crate) fn process_traces_for_stats_v1<
 
         // Send dropped P0 stats directly to telemetry if available
         #[cfg(all(not(target_arch = "wasm32"), feature = "telemetry"))]
-        if let Some(telemetry_client) = telemetry {
-            if let Err(e) = telemetry_client.send_client_side_stats_drops(
+        if let Some(telemetry_client) = telemetry
+            && let Err(e) = telemetry_client.send_client_side_stats_drops(
                 dropped_p0_stats.dropped_p0_traces,
                 dropped_by_trace_filter,
-            ) {
-                tracing::error!(?e, "Error sending dropped P0 stats to telemetry");
-            }
+            )
+        {
+            tracing::error!(?e, "Error sending dropped P0 stats to telemetry");
         }
+        true
+    } else {
+        false
     }
 }
 
@@ -750,13 +749,16 @@ mod tests {
         #[test]
         fn process_traces_for_stats_v1_is_noop_when_disabled() {
             let client_side_stats = ArcSwap::new(Arc::new(StatsComputationStatus::Disabled));
-            let mut traces = vec![TraceChunkBytes {
-                spans: vec![top_level_span(1, 10)],
-                // Negative priority would normally make `drop_chunks` remove this chunk, so
-                // this also verifies drop_chunks is never reached while disabled.
-                priority: Some(-1),
-                ..Default::default()
-            }];
+            let mut traces =
+                libdd_trace_utils::span::v1::span_pool::PooledTraceChunks::unpooled(vec![
+                    TraceChunkBytes {
+                        spans: vec![top_level_span(1, 10)],
+                        // Negative priority would normally make `drop_chunks` remove this chunk,
+                        // so this also verifies drop_chunks is never reached while disabled.
+                        priority: Some(-1),
+                        ..Default::default()
+                    },
+                ]);
             let mut header_tags = TracerHeaderTags::default();
             let trace_filterer = TraceFilterer::default();
 
@@ -775,6 +777,70 @@ mod tests {
             assert_eq!(traces.len(), 1);
             assert!(!header_tags.generic.client_computed_top_level);
             assert!(!header_tags.generic.client_computed_stats);
+        }
+
+        /// `process_traces_for_stats_v1` reports that stats were computed, and flips both
+        /// `client_computed_*` header tags, when stats computation is enabled.
+        #[test]
+        #[cfg_attr(miri, ignore)]
+        fn process_traces_for_stats_v1_enabled() {
+            use libdd_shared_runtime::{ForkSafeRuntime, SharedRuntime, Worker};
+
+            #[derive(Debug)]
+            struct NoopWorker;
+
+            #[async_trait::async_trait]
+            impl Worker for NoopWorker {
+                async fn run(&mut self) {}
+                async fn trigger(&mut self) {
+                    std::future::pending::<()>().await;
+                }
+            }
+
+            #[derive(Debug)]
+            struct NoopFlusher;
+
+            #[async_trait::async_trait]
+            impl FlushableStatsExport for NoopFlusher {
+                async fn force_flush(&self) {}
+            }
+
+            let runtime = ForkSafeRuntime::new().unwrap();
+            let worker_handle = runtime.spawn_worker(NoopWorker, false).unwrap();
+            let flush_handle =
+                Arc::downgrade(&Arc::new(NoopFlusher)) as Weak<dyn FlushableStatsExport>;
+            let client_side_stats = ArcSwap::new(Arc::new(StatsComputationStatus::Enabled {
+                stats_concentrator: Arc::new(new_concentrator()),
+                worker_handle,
+                flush_handle,
+            }));
+            let trace_filterer = TraceFilterer::default();
+
+            let mut traces =
+                libdd_trace_utils::span::v1::span_pool::PooledTraceChunks::unpooled(vec![
+                    TraceChunkBytes {
+                        spans: vec![top_level_span(1, 10)],
+                        ..Default::default()
+                    },
+                ]);
+            let mut header_tags = TracerHeaderTags::default();
+            let result = process_traces_for_stats_v1(
+                &mut traces,
+                &mut header_tags,
+                &client_side_stats,
+                false,
+                &trace_filterer,
+                #[cfg(feature = "telemetry")]
+                None::<
+                    &crate::telemetry::TelemetryClient<libdd_capabilities_impl::NativeCapabilities>,
+                >,
+            );
+
+            assert!(result);
+            assert!(header_tags.generic.client_computed_top_level);
+            assert!(header_tags.generic.client_computed_stats);
+
+            let _ = runtime.shutdown(None);
         }
     }
 }

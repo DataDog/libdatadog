@@ -86,20 +86,14 @@ fn collect_changed_crates(
                 continue;
             };
             let relative_dir_str = relative_dir.as_str();
-            if (file == relative_dir_str || file.starts_with(&format!("{relative_dir_str}/")))
-                && crate_inventory.insert(member.name.to_string())
-            {
-                crates.push(CrateInfo {
-                    name: member.name.to_string(),
-                    version: member.version.to_string(),
-                    manifest: member.manifest_path.clone().into(),
-                    path: member.manifest_path.parent().unwrap().into(),
-                    publish: if let Some(publishable) = &member.publish {
-                        !publishable.is_empty()
-                    } else {
-                        true
-                    },
-                });
+            // A toolchain bump can change how every crate builds, formats or
+            // lints, so a change to the CI toolchain pins counts as a change
+            // to all crates.
+            let touches_crate = file == relative_dir_str
+                || file.starts_with(&format!("{relative_dir_str}/"))
+                || file == "ci-toolchain.toml";
+            if touches_crate && crate_inventory.insert(member.name.to_string()) {
+                crates.push(member.into());
             }
         }
     }

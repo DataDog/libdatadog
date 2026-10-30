@@ -342,12 +342,11 @@ fn resolve_unit_test_path(
     // Try to find the module file from the test name
     // Test name is like "trace_utils::tests::test_compute_top_level"
     // We want to find src/trace_utils.rs or src/trace_utils/mod.rs
-    if let Some(test_name) = testcase_name {
-        if let Some(src_dir) = src_path.parent() {
-            if let Some(file_path) = resolve_module_file(test_name, src_dir, workspace_root) {
-                return file_path;
-            }
-        }
+    if let Some(test_name) = testcase_name
+        && let Some(src_dir) = src_path.parent()
+        && let Some(file_path) = resolve_module_file(test_name, src_dir, workspace_root)
+    {
+        return file_path;
     }
     // Fallback to lib.rs
     to_relative_path(src_path, workspace_root)

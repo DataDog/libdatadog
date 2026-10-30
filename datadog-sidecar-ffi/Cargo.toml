@@ -29,7 +29,6 @@ tracing.workspace = true
 rmp-serde.workspace = true
 serde_json.workspace = true
 
-
 [target.'cfg(unix)'.dependencies]
 libdd-crashtracker = { path = "../libdd-crashtracker", default-features = false, features = ["collector"] }
 

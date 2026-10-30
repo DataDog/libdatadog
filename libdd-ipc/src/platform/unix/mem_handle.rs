@@ -404,11 +404,11 @@ impl<T: FileBackedHandle> MappedMem<T> {
     ///
     /// Returns the usable length afterwards.
     pub fn refresh_size(&self) -> usize {
-        if let Ok(fd) = self.mem.get_shm().handle.as_owned_fd() {
-            if let Ok(stat) = nix::sys::stat::fstat(fd.as_raw_fd()) {
-                let backed = (stat.st_size as usize).min(self.mapped_len);
-                self.usable.fetch_max(backed, Ordering::AcqRel);
-            }
+        if let Ok(fd) = self.mem.get_shm().handle.as_owned_fd()
+            && let Ok(stat) = nix::sys::stat::fstat(fd.as_raw_fd())
+        {
+            let backed = (stat.st_size as usize).min(self.mapped_len);
+            self.usable.fetch_max(backed, Ordering::AcqRel);
         }
         self.get_size()
     }

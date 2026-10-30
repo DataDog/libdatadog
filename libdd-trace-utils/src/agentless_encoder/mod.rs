@@ -291,15 +291,17 @@ fn encode_span<T: TraceData>(
             &hex_u64(upper_bits),
         )?;
     }
-    if !span_links_seen && !span.span_links.is_empty() {
-        if let Some(value) = serialize_span_links(&span.span_links) {
-            serialize_fixed_entry(bytes, &mut first_meta, br#""_dd.span_links":"#, &value)?;
-        }
+    if !span_links_seen
+        && !span.span_links.is_empty()
+        && let Some(value) = serialize_span_links(&span.span_links)
+    {
+        serialize_fixed_entry(bytes, &mut first_meta, br#""_dd.span_links":"#, &value)?;
     }
-    if !events_seen && !span.span_events.is_empty() {
-        if let Some(value) = serialize_span_events(&span.span_events) {
-            serialize_fixed_entry(bytes, &mut first_meta, br#""events":"#, &value)?;
-        }
+    if !events_seen
+        && !span.span_events.is_empty()
+        && let Some(value) = serialize_span_events(&span.span_events)
+    {
+        serialize_fixed_entry(bytes, &mut first_meta, br#""events":"#, &value)?;
     }
     if !compute_stats_seen && is_first_in_trace && !client_side_stats {
         serialize_fixed_entry(bytes, &mut first_meta, br#""_dd.compute_stats":"#, "1")?;
@@ -658,14 +660,14 @@ fn collect_attrs_v1<'a, T: TraceData>(
 
 /// V1-native analog of [`encode_payload`]. Downgrades v1's unified attribute model back to the
 /// same `meta`/`metrics`/`meta_struct`-shaped wire fields, so the emitted JSON body is
-/// equivalent to what a v0.4 tracer would produce for the same trace — see
-/// [`crate::msgpack_encoder::v04::span_v1`] for the mapping table this mirrors. Chunk-level
+/// equivalent to what a v0.4 tracer would produce for the same trace. Chunk-level
 /// context (`trace_id`, `origin`, `priority`, `sampling_mechanism`, `dropped_trace`, chunk
 /// attributes) is propagated into every span, matching the [`v1::TraceChunk`]-level granularity v1
 /// operates at.
 ///
 /// `client_side_stats` has the same meaning as in [`encode_payload`]: when `true`, the encoder
 /// will **not** inject `meta["_dd.compute_stats"]="1"` on the first span of each chunk.
+// See `crate::msgpack_encoder::v04::span_v1` for the mapping table this mirrors.
 pub fn encode_payload_from_v1<T: TraceData>(
     chunks: &[v1::TraceChunk<T>],
     metadata: &TracerMetadata,
@@ -847,16 +849,14 @@ fn encode_span_v1<'a, T: TraceData, S: Serializer>(
             if !p_tid_seen && trace_id_high != 0 {
                 meta.serialize_entry("_dd.p.tid", &hex_u64(trace_id_high))?;
             }
-            if !span_links_seen && !span.span_links.is_empty() {
-                if let Some(s) = serialize_span_links_v1(&span.span_links) {
+            if !span_links_seen && !span.span_links.is_empty()
+                && let Some(s) = serialize_span_links_v1(&span.span_links) {
                     meta.serialize_entry("_dd.span_links", &s)?;
                 }
-            }
-            if !events_seen && !span.span_events.is_empty() {
-                if let Some(s) = serialize_span_events_v1(&span.span_events) {
+            if !events_seen && !span.span_events.is_empty()
+                && let Some(s) = serialize_span_events_v1(&span.span_events) {
                     meta.serialize_entry("events", &s)?;
                 }
-            }
             if !compute_stats_seen && is_first_in_trace && !client_side_stats {
                 meta.serialize_entry("_dd.compute_stats", "1")?;
             }
