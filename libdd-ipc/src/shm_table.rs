@@ -48,6 +48,13 @@
 //! `ShmHeader::active_idx` tells which bucket PHP workers write to.
 //! The sidecar swaps it, waits for `in_flight` to reach 0, then reads + clears.
 //!
+//! A forced drain (a flush on request, such as on SIGTERM, or retiring a table) also takes the
+//! active bucket, without swapping it, so workers keep writing while it is cleared. It is a
+//! best-effort salvage, not a consistent snapshot. A writer that matched a slot before the drain
+//! cleared it can still record into it afterwards, and the value then goes to whichever key
+//! claims the slot next, if any. A key written while the drain resets the string pool can have
+//! its strings overwritten by later keys. Only the few values caught in the race are affected.
+//!
 //! ## Table growth
 //! When the active bucket is nearly full the sidecar:
 //! 1. Creates a new SHM file at the *same path* (the old file is unlinked from the filesystem but
@@ -823,6 +830,9 @@ impl<S: Schema> ShmTableMapping<S> {
     }
 
     /// Drain the inactive bucket, or both buckets if `force` is true.
+    ///
+    /// A forced drain races with workers still writing to the active bucket; see the module docs
+    /// on double-buffering.
     ///
     /// `drain_entry` takes one occupied slot's value and turns it into a group, or `None` to
     /// leave it out; see [`ShmTableMapping::drain_bucket`].

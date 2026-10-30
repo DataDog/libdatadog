@@ -3130,6 +3130,8 @@ dependencies = [
  "page_size",
  "serde",
  "spawn_worker",
+ "strum",
+ "strum_macros",
  "tempfile",
  "tokio",
  "tracing",
