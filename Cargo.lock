@@ -2778,7 +2778,6 @@ dependencies = [
  "anyhow",
  "arc-swap",
  "const_format",
- "hex",
  "http 1.1.0",
  "indexmap 2.12.1",
  "libc",

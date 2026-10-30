@@ -18,7 +18,6 @@ bench = false
 [dependencies]
 anyhow = { workspace = true, optional = true }
 arc-swap = { workspace = true, optional = true }
-hex = { workspace = true, default-features = true, optional = true }
 http = { workspace = true, features = ["std"], optional = true }
 regex = { workspace = true, features = ["std", "unicode", "perf"], optional = true }
 regex-lite = { workspace = true, default-features = true, optional = true }
@@ -60,7 +59,6 @@ std = [
     "alloc",
     "anyhow/std",
     "dep:arc-swap",
-    "dep:hex",
     "dep:http",
     "dep:libc",
     "dep:nix",
