@@ -258,7 +258,7 @@ jobs:
       - name: Install cargo tools
         uses: taiki-e/install-action@2c41309d51ede152b6f2ee6bf3b71e6dc9a8b7df # 2.49.27
         with:
-          tool: cargo-public-api@0.52.0, cargo-release@1.1.5, git-cliff@2.14.1, cargo-semver-checks@0.48.0
+          tool: cargo-public-api@0.52.0, cargo-release@1.1.5, git-cliff@2.14.1, cargo-semver-checks@0.51.0
       
       - uses: DataDog/dd-octo-sts-action@acaa02eee7e3bb0839e4272dacb37b8f3b58ba80 # v1.0.3
         id: octo-sts
