@@ -76,7 +76,7 @@ impl ConfigInvariants {
 pub(crate) struct StoredTargetFile<S> {
     pub(crate) hash: String,
     pub(crate) handle: Arc<S>,
-    pub(crate) state: ConfigState,
+    pub(crate) state: Arc<Mutex<ConfigState>>,
     pub(crate) meta: TargetFileMeta,
     pub(crate) expiring: bool,
 }
@@ -226,18 +226,19 @@ impl<S, C: HttpClientCapability + SleepCapability> ConfigFetcherState<S, C> {
     /// Sets the apply state on a stored file.
     pub fn set_config_state(&self, file: &RemoteConfigPath, state: ConfigApplyState) {
         if let Some(target_file) = self.target_files_by_path.lock_or_panic().get_mut(file) {
+            let mut target_state = target_file.state.lock_or_panic();
             match state {
                 ConfigApplyState::Unacknowledged => {
-                    target_file.state.apply_state = 1;
-                    target_file.state.apply_error = "".to_string();
+                    target_state.apply_state = 1;
+                    target_state.apply_error = "".to_string();
                 }
                 ConfigApplyState::Acknowledged => {
-                    target_file.state.apply_state = 2;
-                    target_file.state.apply_error = "".to_string();
+                    target_state.apply_state = 2;
+                    target_state.apply_error = "".to_string();
                 }
                 ConfigApplyState::Error(error) => {
-                    target_file.state.apply_state = 3;
-                    target_file.state.apply_error = error;
+                    target_state.apply_state = 3;
+                    target_state.apply_error = error;
                 }
             }
         }
@@ -265,7 +266,7 @@ pub struct ConfigFetcher<S: FileStorage, C: HttpClientCapability + SleepCapabili
 
 pub struct ConfigClientState {
     opaque_backend_state: Vec<u8>,
-    last_config_paths: HashSet<RemoteConfigPath>,
+    last_configs: HashMap<RemoteConfigPath, Arc<Mutex<ConfigState>>>,
     targets_version: u64,
     root_version: u64,
     last_error: Option<String>,
@@ -280,7 +281,7 @@ impl Default for ConfigClientState {
     fn default() -> Self {
         ConfigClientState {
             opaque_backend_state: vec![],
-            last_config_paths: Default::default(),
+            last_configs: Default::default(),
             targets_version: 0,
             root_version: 1,
             last_error: None,
@@ -378,10 +379,8 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
                 }
             }
 
-            for config in client_state.last_config_paths.iter() {
-                if let Some(StoredTargetFile { state, .. }) = target_files.get(config) {
-                    config_states.push(state.clone());
-                }
+            for state in client_state.last_configs.values() {
+                config_states.push(state.lock_or_panic().clone());
             }
         }
         let extra_services = client_state.extra_services.clone();
@@ -465,7 +464,7 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
                 if self.state.expire_unused_files {
                     self.state.target_files_by_path.lock_or_panic().clear();
                 }
-                client_state.last_config_paths.clear();
+                client_state.last_configs.clear();
                 client_state.targets_version = 0;
                 client_state.opaque_backend_state.clear();
                 return Ok(Some(vec![]));
@@ -507,7 +506,7 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
             if self.state.expire_unused_files {
                 self.state.target_files_by_path.lock_or_panic().clear();
             }
-            client_state.last_config_paths.clear();
+            client_state.last_configs.clear();
             return Ok(Some(vec![]));
         }
 
@@ -668,13 +667,13 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
                 parsed_path.clone(),
                 StoredTargetFile {
                     hash: computed_hash,
-                    state: ConfigState {
+                    state: Arc::new(Mutex::new(ConfigState {
                         id: parsed_path.config_id().to_string(),
                         version,
                         product: parsed_path.product().to_string(),
                         apply_state: 2, // Acknowledged
                         apply_error: "".to_string(),
-                    },
+                    })),
                     meta: TargetFileMeta {
                         path: path.to_string(),
                         length,
@@ -694,10 +693,12 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
         }
 
         let mut configs = Vec::with_capacity(config_paths.len());
+        let mut last_configs = HashMap::with_capacity(config_paths.len());
         for config in config_paths.iter() {
             if let Some(target_file) = target_files.get_mut(config) {
                 target_file.expiring = false;
                 configs.push(target_file.handle.clone());
+                last_configs.insert(config.clone(), target_file.state.clone());
             } else if !failed_paths.contains(config.as_str()) {
                 anyhow::bail!("Found {config} in client_configs response, but it isn't stored.");
             }
@@ -707,7 +708,7 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
             client_state.last_error = Some(errors.join("\n"));
         }
         client_state.targets_version = targets_list.signed.version as u64;
-        client_state.last_config_paths = config_paths;
+        client_state.last_configs = last_configs;
         Ok(Some(configs))
     }
 
@@ -770,15 +771,10 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
                 }
                 client_state.last_error = None;
 
-                let config_paths: HashSet<RemoteConfigPath> = res
-                    .targets
-                    .iter()
-                    .map(|target_ref| target_ref.path.clone())
-                    .collect();
-
                 let configs = cache.lock().collect_handles(&res.targets)?;
 
-                client_state.last_config_paths = config_paths;
+                // The agentless cache keeps its own files, whose states aren't reported.
+                client_state.last_configs.clear();
                 Ok(Some(configs))
             }
         }

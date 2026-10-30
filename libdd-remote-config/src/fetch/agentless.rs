@@ -1296,13 +1296,13 @@ mod cache {
                 };
                 let file = StoredTargetFile {
                     hash: primary_hash,
-                    state: ConfigState {
+                    state: Arc::new(std::sync::Mutex::new(ConfigState {
                         id: path.config_id().to_string(),
                         version,
                         product: path.product().to_string(),
                         apply_state: 2, // Acknowledged
                         apply_error: String::new(),
-                    },
+                    })),
                     meta: TargetFileMeta {
                         path: path.to_string(),
                         length,
