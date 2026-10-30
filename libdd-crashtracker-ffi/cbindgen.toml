@@ -70,5 +70,5 @@ must_use = "DDOG_CHECK_RETURN"
 
 [parse]
 parse_deps = true
-include = ["libdd-common", "libdd-common-ffi", "libdd-crashtracker", "ux"]
+include = ["libdd-common", "libdd-common-ffi", "libdd-networking", "libdd-crashtracker", "ux"]
 exclude = ["libdd_crashtracker::crash_info::cxx"]
