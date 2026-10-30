@@ -163,7 +163,7 @@ pub(crate) mod https {
         Ok(())
     }
 
-    /// Builds the TLS configuration shared by every libdd-common HTTPS client:
+    /// Builds the TLS configuration shared by every libdd-networking HTTPS client:
     /// the hyper connector, the hyper-proxy tunnel and dialer, and the reqwest
     /// client builder (see `Endpoint::to_reqwest_client_builder`).
     #[cfg(feature = "use_webpki_roots")]

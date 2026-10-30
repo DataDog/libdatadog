@@ -39,9 +39,9 @@ client = [
 ]
 
 regex-lite = ["libdd-common/regex-lite"]
-# Enable HTTPS support in the fetcher (rustls + ring via libdd-common).
+# Enable HTTPS support in the fetcher (rustls + ring via libdd-networking).
 https = ["libdd-networking?/https", "libdd-capabilities-impl/https"]
-# FIPS-compliant crypto provider (aws-lc-rs via libdd-common). Unix only.
+# FIPS-compliant crypto provider (aws-lc-rs via libdd-networking). Unix only.
 fips = ["libdd-networking?/fips", "libdd-capabilities-impl/fips"]
 test = ["hyper/server", "hyper-util"]
 

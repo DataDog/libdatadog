@@ -77,7 +77,7 @@ reqwest = ["http-client", "dep:reqwest", "dep:httparse", "dep:rand"]
 # TLS plumbing without a crypto provider. Use `https` or `fips` to select one.
 tls-core = ["dep:hyper-rustls", "dep:rustls", "dep:rustls-platform-verifier", "http-client"]
 # Expose the compromised-key distrust verifier (RUSTSEC-2026-0382 mitigation)
-# for crates that build their own TLS configurations, without enabling libdd-common's own connector TLS stack.
+# for crates that build their own TLS configurations, without enabling libdd-networking's own connector TLS stack.
 tls-distrust = ["dep:rustls", "dep:rustls-platform-verifier"]
 use_webpki_roots = ["dep:webpki-root-certs", "dep:webpki-roots", "hyper-rustls/webpki-roots"]
 
