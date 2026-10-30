@@ -206,7 +206,7 @@ fn root_failure_suppresses_all_prerequisite_exposures() {
 }
 
 #[test]
-fn shared_transitive_dependencies_are_reported_once_and_keep_do_log() {
+fn shared_transitive_dependencies_are_reported_once_and_apply_do_log_to_eligibility() {
     let mut parent = flag(vec![dependency("leaf")]);
     parent["allocations"][0]["doLog"] = json!(false);
     let result = eval(wire(
@@ -222,7 +222,9 @@ fn shared_transitive_dependencies_are_reported_once_and_keep_do_log() {
             .collect::<Vec<_>>(),
         ["leaf", "a", "b"]
     );
-    assert!(result.evaluations.iter().all(|r| r.exposure_eligible));
+    assert!(result.evaluations[0].exposure_eligible);
+    assert!(!result.evaluations[1].exposure_eligible);
+    assert!(result.evaluations[2].exposure_eligible);
     assert!(!result.evaluations[1].result.as_ref().unwrap().do_log);
 }
 

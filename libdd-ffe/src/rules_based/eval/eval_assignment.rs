@@ -163,7 +163,7 @@ impl Configuration {
     /// Evaluate with the prerequisite records needed for SDK evaluation and exposure logging.
     /// Records exclude the requested root flag and occur once per evaluated prerequisite.
     /// An unsuccessful root has no eligible prerequisite exposures. SDKs must additionally
-    /// honor each assignment's `do_log`, consent, and exposure deduplication policy.
+    /// honor consent and exposure deduplication policy.
     pub fn eval_flag_with_trace(
         &self,
         flag_key: &str,
@@ -211,7 +211,8 @@ impl Configuration {
         let evaluated = session.evaluate_flag(flag_key, expected_type, 0);
         if let Ok(root) = &evaluated {
             for record in &mut session.evaluations {
-                record.exposure_eligible = root.exposures.contains(&record.flag_key);
+                record.exposure_eligible = root.exposures.contains(&record.flag_key)
+                    && matches!(record.result.as_ref(), Ok(assignment) if assignment.do_log);
             }
         }
         EvaluationResult {
@@ -237,8 +238,8 @@ pub struct EvaluationRecord {
     pub flag_key: Str,
     /// The prerequisite result, including failures.
     pub result: Result<Assignment, EvaluationError>,
-    /// Whether this result belongs to the root's successful assignment path.
-    /// This does not override `do_log` or the SDK's ordinary exposure policy.
+    /// Whether this result belongs to the root's successful assignment path and its selected
+    /// assignment permits exposure logging. SDKs still apply their ordinary exposure policy.
     pub exposure_eligible: bool,
 }
 

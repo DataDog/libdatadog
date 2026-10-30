@@ -132,7 +132,8 @@ so reuse from a deeper path cannot bypass the limit.
 records, excluding the requested root. SDKs can log these evaluations even if a later
 condition rejects their rule. Only records marked `exposure_eligible` belong to the root's
 successful rule/split path; a failed root has no eligible prerequisite exposures. SDKs must
-also apply each assignment's `do_log`, consent, and ordinary exposure deduplication policy.
+also apply consent and ordinary exposure deduplication policy. Eligibility already incorporates
+the prerequisite assignment's `doLog` value.
 The trace does not emit telemetry itself. SDKs should advertise dependent-flag support only
 after integrating and testing both evaluation and exposure reporting.
 

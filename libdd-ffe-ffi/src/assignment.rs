@@ -881,24 +881,9 @@ pub unsafe extern "C" fn ddog_ffe_dependency_evaluation_get_serial_id(
     }
 }
 
-/// Whether the prerequisite assignment permits exposure logging.
-///
-/// # Safety
-/// A non-NULL `evaluation` must be borrowed from a live assignment handle.
-// allow(ffi-panic-boundary): null-checked scalar accessor
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_ffe_dependency_evaluation_get_do_log(
-    evaluation: *const DependencyEvaluation,
-) -> bool {
-    // SAFETY: the caller guarantees that a non-NULL pointer is valid and its owner is live.
-    (unsafe { evaluation.as_ref() }).is_some_and(
-        |evaluation| matches!(evaluation.details.as_ref(), Ok(assignment) if assignment.do_log),
-    )
-}
-
-/// Whether this prerequisite belongs to the successful root assignment path.
-///
-/// SDKs must also apply `do_log`, consent, and ordinary exposure deduplication policy.
+/// Whether this prerequisite belongs to the successful root assignment path and its selected
+/// assignment permits exposure logging. SDKs must still apply consent and ordinary exposure
+/// deduplication policy.
 ///
 /// # Safety
 /// A non-NULL `evaluation` must be borrowed from a live assignment handle.
@@ -1155,9 +1140,7 @@ mod tests {
         // SAFETY: the borrowed key remains valid while `result` is live.
         assert_eq!(unsafe { key.as_bytes() }, b"parent");
         // SAFETY: `dependency` is borrowed from the still-live result.
-        assert!(!unsafe { ddog_ffe_dependency_evaluation_get_do_log(dependency) });
-        // SAFETY: `dependency` is borrowed from the still-live result.
-        assert!(unsafe { ddog_ffe_dependency_evaluation_get_exposure_eligible(dependency) });
+        assert!(!unsafe { ddog_ffe_dependency_evaluation_get_exposure_eligible(dependency) });
         // SAFETY: `dependency` is borrowed from the still-live result.
         let error_code = unsafe { ddog_ffe_dependency_evaluation_get_error_code(dependency) };
         assert_eq!(error_code, ErrorCode::Ok);
