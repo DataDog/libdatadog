@@ -199,7 +199,7 @@ impl CrashInfo {
         if let Some(endpoint) = endpoint
             && Some("file") == endpoint.url.scheme_str()
         {
-            let path = libdd_networking::decode_uri_path_in_authority(&endpoint.url)
+            let path = libdd_networking::endpoint::decode_uri_path_in_authority(&endpoint.url)
                 .context("crash output file path was not correctly formatted")?;
             self.to_file(&path)?;
         }
