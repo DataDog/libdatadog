@@ -168,6 +168,9 @@ where
     fn get_shm_mut(&mut self) -> &mut ShmHandle;
 }
 
+// Keep WritableMemoryHandle implementations inside this crate: downstream
+// code must not grant writable access to a read-only mapping. This trait sealing
+// is a Rust API restriction, separate from operating-system shared-memory seals.
 mod writable_handle {
     pub trait Sealed {}
     impl Sealed for super::AnonHandle {}

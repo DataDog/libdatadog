@@ -109,6 +109,8 @@ impl PublicationReader {
         }
         bincode::DefaultOptions::new()
             .with_fixint_encoding()
+            // Allow the CDN transport's 10 MiB body limit plus 1 KiB for the
+            // serialized snapshot metadata (revision, delivery state, and length).
             .with_limit((10 << 20) + 1024)
             .reject_trailing_bytes()
             .deserialize(bytes)
