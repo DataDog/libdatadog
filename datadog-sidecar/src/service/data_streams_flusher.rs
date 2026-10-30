@@ -172,7 +172,12 @@ pub(crate) fn get_or_create_dsm_table(
             DEFAULT_DSM_CHECKPOINT_SLOT_COUNT,
             DEFAULT_DSM_CHECKPOINT_STRING_POOL_BYTES,
         )
-        .inspect_err(|_| backlogs.unlink())?;
+        // A worker may already have followed the path to the backlog table; signalled, it falls
+        // back to IPC rather than writing to a table no one drains.
+        .inspect_err(|_| {
+            backlogs.signal_reload();
+            backlogs.unlink();
+        })?;
         Ok((checkpoints, backlogs))
     });
     match created {
