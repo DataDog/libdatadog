@@ -7,6 +7,27 @@
 //! an acquire fence between the copy and the second check. Odd generations mean a write is
 //! in progress, even generations are stable, and 0 means nothing has been published.
 //!
+//! # Writer ownership and concurrent readers
+//!
+//! This is a seqlock-style protocol: each segment must have one payload writer.
+//! The writer's mutex serializes calls through that writer object; it does not coordinate
+//! independently constructed writers or writers in different processes. Callers must not
+//! create another payload writer for the same segment, including in a forked child.
+//!
+//! Readers may copy while the writer updates the segment. A reader that observes an odd
+//! generation does not copy the payload. After copying, it discards the candidate if the
+//! generation changed and retains its previous snapshot. The generation check detects
+//! overlapping writes; it does not exclude readers while a write is in progress.
+//!
+//! # Memory-model limitation
+//!
+//! The shared size and payload are accessed non-atomically. The generation checks and
+//! fences describe the intended cross-process snapshot protocol, but do not make those
+//! overlapping accesses or references formally sound under Rust's memory model. Changing
+//! references to raw pointers alone does not remove this limitation. See the proposed
+//! [atomic-copy facilities](https://github.com/rust-lang/rfcs/pull/3301) for background.
+//! This protocol must not be used to justify concurrent payload writers.
+//!
 //! Named segments have two terminal generations:
 //! - [`RETIRED`]: the segment is obsolete. Readers reopen through their opener.
 //! - [`ENDED`]: its writer went away. Readers take its last payload, then reopen the name.

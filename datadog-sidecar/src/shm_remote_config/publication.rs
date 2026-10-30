@@ -148,6 +148,10 @@ impl Drop for Publication {
     }
 }
 
+// Clones share one writer and serialize payload updates through the same mutex.
+// Unix subscribers receive read-only handles, so they can copy snapshots but cannot
+// become payload writers. Reads may overlap publication; the one-way channel checks
+// generations around each copy and documents the remaining memory-model limitation.
 #[derive(Clone)]
 pub(super) struct RemoteConfigPublisher(Arc<Mutex<Publication>>);
 

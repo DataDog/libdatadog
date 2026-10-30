@@ -261,10 +261,16 @@ impl<T: MemoryHandle> MappedMem<T> {
 }
 
 impl<T: WritableMemoryHandle> MappedMem<T> {
+    /// Borrow the writable mapping. `&mut self` excludes access through this mapping
+    /// object, not through other mappings of the same backing memory.
+    ///
+    /// Shared-memory users must establish writer ownership separately. The
+    /// [`crate::one_way_shared_memory`] channel documents its single-writer protocol
+    /// and the memory-model limitation when readers copy concurrently.
     pub fn as_slice_mut(&mut self) -> &mut [u8] {
         let len = self.get_size();
-        // SAFETY: these mappings permit writes, `len` bytes are backed, and `&mut self`
-        // is the caller's guarantee of exclusivity within this process.
+        // The mapping permits writes and `len` bytes are backed. This does not establish
+        // exclusive access across mappings; see the documented memory-model limitation.
         unsafe { std::slice::from_raw_parts_mut(self.ptr.as_ptr().cast(), len) }
     }
 }
