@@ -70,8 +70,11 @@ macro_rules! write_const_msgpack_str {
     }};
 }
 
+mod packer;
 mod span_v04;
 mod span_v1;
+
+pub use packer::ChunkPacker;
 
 #[inline(always)]
 fn to_writer<W: RmpWrite, T: TraceData, S: AsRef<[Span<T>]>>(
@@ -80,12 +83,21 @@ fn to_writer<W: RmpWrite, T: TraceData, S: AsRef<[Span<T>]>>(
 ) -> Result<(), ValueWriteError<W::Error>> {
     write_array_len(writer, traces.len() as u32)?;
     for trace in traces {
-        write_array_len(writer, trace.as_ref().len() as u32)?;
-        for span in trace.as_ref() {
-            span_v04::encode_span(writer, span)?;
-        }
+        encode_chunk(writer, trace.as_ref())?;
     }
 
+    Ok(())
+}
+
+#[inline(always)]
+fn encode_chunk<W: RmpWrite, T: TraceData>(
+    writer: &mut W,
+    spans: &[Span<T>],
+) -> Result<(), ValueWriteError<W::Error>> {
+    write_array_len(writer, spans.len() as u32)?;
+    for span in spans {
+        span_v04::encode_span(writer, span)?;
+    }
     Ok(())
 }
 
