@@ -3533,7 +3533,6 @@ dependencies = [
  "libdd-capabilities-impl",
  "libdd-common",
  "libdd-common-ffi",
- "libdd-networking",
  "libdd-telemetry",
  "paste",
  "serde_json",
