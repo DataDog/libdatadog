@@ -99,6 +99,13 @@ fn bench_trace_buffer(c: &mut Criterion) {
     // enqueue work.
     let mut group = c.benchmark_group("trace_buffer");
 
+    // Iterations cost tens of ms of wall time each (mostly outside the measured window;
+    // sleep granularity dominates the delay variants) and criterion floors at one iteration
+    // per sample, so default sampling runs 10+ s per function. The timer only counts the
+    // sender section, so the reading is unaffected.
+    group.sample_size(50);
+    group.measurement_time(Duration::from_secs(1));
+
     // (label, inter-send delay)
     let workloads: &[(&str, Option<Duration>)] = &[
         ("no_delay", None),

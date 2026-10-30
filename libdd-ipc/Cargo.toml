@@ -25,7 +25,6 @@ serde = { workspace = true, features = ["derive"] }
 libc.workspace = true
 libdd-tinybytes = { path = "../libdd-tinybytes", version = "1.2.0", optional = true }
 
-
 libdd-common = { version = "9.0.0", path = "../libdd-common" }
 libdd-ddsketch = { version = "1.1.4", path = "../libdd-ddsketch" }
 libdd-trace-protobuf = { version = "5.1.1", path = "../libdd-trace-protobuf" }
@@ -64,13 +63,6 @@ bench = false
 harness = false
 name = "ipc"
 path = "benches/ipc.rs"
-
-[lints.clippy]
-# TODO(paullgdc): This fails a lot because of if-let chaining which became
-# allowed with the 1.91.1 MSRV bump.
-# I am planning to fix each crate as an individual PR in order to not have 
-# too many conflicts
-collapsible_if = "allow"
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(polyfill_glibc_memfd)'] }

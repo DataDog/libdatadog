@@ -375,10 +375,10 @@ impl<
         if observations::record_payload(payload) {
             return;
         }
-        if let Some(telemetry) = self.telemetry.load_full().as_deref() {
-            if let Err(e) = telemetry.send(&payload()) {
-                error!(?e, "Error sending telemetry");
-            }
+        if let Some(telemetry) = self.telemetry.load_full().as_deref()
+            && let Err(e) = telemetry.send(&payload())
+        {
+            error!(?e, "Error sending telemetry");
         }
     }
 
@@ -1191,10 +1191,8 @@ impl<
         // Agent and agentless both send the Datadog format; the builder rejects agentless + OTLP.
         let native_export = self.otlp.is_none();
         for chunk in traces.iter_mut() {
-            if native_export {
-                if let Some(first) = chunk.first_mut() {
-                    add_native_export_marker(first);
-                }
+            if native_export && let Some(first) = chunk.first_mut() {
+                add_native_export_marker(first);
             }
             for span in chunk.iter_mut() {
                 span.dedup();
@@ -1272,17 +1270,15 @@ impl<
         // interval). On a 404 to `/v1.0/traces`, fail closed immediately and force an `/info`
         // refresh so the next send uses V0.4 and V1 support is re-detected as soon as the agent
         // advertises it again.
-        if effective_format == TraceExporterOutputFormat::V1 {
-            if let Err(TraceExporterError::Request(ref e)) = result {
-                if e.status() == http::StatusCode::NOT_FOUND
-                    && self.v1_active.swap(false, Ordering::Relaxed)
-                {
-                    warn!(
-                        "V1 trace send returned 404; agent no longer advertises {V1_TRACES_ENDPOINT} — falling back to V0.4"
-                    );
-                    self.info_response_observer.manual_trigger();
-                }
-            }
+        if effective_format == TraceExporterOutputFormat::V1
+            && let Err(TraceExporterError::Request(ref e)) = result
+            && e.status() == http::StatusCode::NOT_FOUND
+            && self.v1_active.swap(false, Ordering::Relaxed)
+        {
+            warn!(
+                "V1 trace send returned 404; agent no longer advertises {V1_TRACES_ENDPOINT} — falling back to V0.4"
+            );
+            self.info_response_observer.manual_trigger();
         }
 
         result
@@ -1491,17 +1487,15 @@ impl<
         // Same rationale as `process_and_send_trace_chunks`: on a 404 to `/v1.0/traces`, fail
         // closed immediately and force an `/info` refresh so the next send downgrades to v0.4
         // without waiting for the fetcher's next poll.
-        if effective_format == TraceExporterOutputFormat::V1 {
-            if let Err(TraceExporterError::Request(ref e)) = result {
-                if e.status() == http::StatusCode::NOT_FOUND
-                    && self.v1_active.swap(false, Ordering::Relaxed)
-                {
-                    warn!(
-                        "V1 trace send returned 404; agent no longer advertises {V1_TRACES_ENDPOINT} — falling back to V0.4"
-                    );
-                    self.info_response_observer.manual_trigger();
-                }
-            }
+        if effective_format == TraceExporterOutputFormat::V1
+            && let Err(TraceExporterError::Request(ref e)) = result
+            && e.status() == http::StatusCode::NOT_FOUND
+            && self.v1_active.swap(false, Ordering::Relaxed)
+        {
+            warn!(
+                "V1 trace send returned 404; agent no longer advertises {V1_TRACES_ENDPOINT} — falling back to V0.4"
+            );
+            self.info_response_observer.manual_trigger();
         }
 
         result

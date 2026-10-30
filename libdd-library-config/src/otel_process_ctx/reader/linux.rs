@@ -27,10 +27,10 @@ pub(in crate::otel_process_ctx) fn find_otel_mapping() -> io::Result<usize> {
 
     for line in reader.lines() {
         let line = line?;
-        if is_named_otel_mapping(&line) {
-            if let Some(address) = parse_mapping_start(&line) {
-                return Ok(address);
-            }
+        if is_named_otel_mapping(&line)
+            && let Some(address) = parse_mapping_start(&line)
+        {
+            return Ok(address);
         }
     }
 

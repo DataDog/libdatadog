@@ -107,7 +107,7 @@ ignored = [
 [workspace.package]
 rust-version = "1.91.1"
 edition = "2024"
-version = "46.0.0"
+version = "47.0.0"
 license = "Apache-2.0"
 authors = ["Datadog Inc. <info@datadoghq.com>"]
 
@@ -331,6 +331,7 @@ webpki-root-certs = { version = "1.0.10", default-features = false }
 web-time = { version = "1", default-features = false }
 windows = { version = "0.59.0", default-features = false }
 windows-sys = { version = "0.52", default-features = false }
+winresource = { version = "0.1", default-features = false }
 winver = { version = "1.0.0", default-features = false }
 zip = { version = "4.0.0", default-features = false }
 zrip = { version = "=0.6.0", default-features = false }
@@ -408,11 +409,6 @@ redundant_else = "allow" # less clear
 option_if_let_else = "allow" # less clear
 unreadable_literal = "allow" # annoying for all the ids in the codebase
 cognitive_complexity = "allow" # using clippy::too_many_lines already
-# TODO(paullgdc): This fails a lot because of if-let chaining which became
-# allowed with the 1.91.1 MSRV bump.
-# I am planning to fix each crate as an individual PR in order to not have 
-# too many conflicts
-collapsible_if = "allow" 
 
 [workspace.lints.rust]
 future_incompatible = { level = "warn", priority = -1 }

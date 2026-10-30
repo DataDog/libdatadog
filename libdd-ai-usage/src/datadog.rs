@@ -150,17 +150,17 @@ fn series_tags(
     point: &MetricPoint,
     resource: &Attributes,
 ) -> Result<Vec<String>, MetricError> {
-    if let Some(stated) = point.attributes.get(PROFILE_ATTRIBUTE) {
-        if stated != profile.id() {
-            return reject(
-                ErrorCode::MetricProfileMismatch,
-                format!(
-                    "{} carries the profile {stated}, not {}",
-                    point.name,
-                    profile.id()
-                ),
-            );
-        }
+    if let Some(stated) = point.attributes.get(PROFILE_ATTRIBUTE)
+        && stated != profile.id()
+    {
+        return reject(
+            ErrorCode::MetricProfileMismatch,
+            format!(
+                "{} carries the profile {stated}, not {}",
+                point.name,
+                profile.id()
+            ),
+        );
     }
     let mut tags = carrier_tags(resource);
     // A resource attribute never states the profile.
