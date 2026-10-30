@@ -72,12 +72,12 @@ const FILE_VERSION_VAR: &str = "LIBDATADOG_PACKAGE_VERSION";
 ///
 /// # Which version goes where
 ///
-/// `ProductVersion` is always [`RELEASE_VERSION`], identifying the libdatadog
-/// release the artifact was built from. `FileVersion` is the same by default, but
-/// a redistributor that ships these artifacts under its own version can override
-/// it by setting `LIBDATADOG_PACKAGE_VERSION` (see [`FILE_VERSION_VAR`]) — that is
-/// the field Windows Installer compares, so it has to be whichever version
-/// actually changes whenever the shipped bytes do.
+/// `ProductVersion` is always the libdatadog release version — the workspace-wide
+/// version that `vNN.0.0` tags carry — identifying the release the artifact was
+/// built from. `FileVersion` is the same by default, but a redistributor that
+/// ships these artifacts under a version of its own can override it by setting
+/// `LIBDATADOG_PACKAGE_VERSION`: that is the field Windows Installer compares, so
+/// it has to be whichever version actually changes whenever the shipped bytes do.
 ///
 /// # Cross-compilation
 ///
