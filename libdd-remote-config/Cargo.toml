@@ -32,6 +32,7 @@ client = [
     "futures-util",
     "tokio",
     "tokio-util",
+    "libdd-networking",
     "manual_future",
     "time",
     "tracing",
@@ -39,15 +40,16 @@ client = [
 
 regex-lite = ["libdd-common/regex-lite"]
 # Enable HTTPS support in the fetcher (rustls + ring via libdd-common).
-https = ["libdd-networking/https", "libdd-capabilities-impl/https"]
+https = ["libdd-networking?/https", "libdd-capabilities-impl/https"]
 # FIPS-compliant crypto provider (aws-lc-rs via libdd-common). Unix only.
-fips = ["libdd-networking/fips", "libdd-capabilities-impl/fips"]
+fips = ["libdd-networking?/fips", "libdd-capabilities-impl/fips"]
 test = ["hyper/server", "hyper-util"]
 
 [dependencies]
 anyhow.workspace = true
 bytes = { workspace = true, features = ["std"], optional = true }
 libdd-common = { path = "../libdd-common", version = "9.0.0", default-features = false, features = ["std"] }
+libdd-networking = { version = "1.0.0", path = "../libdd-networking", default-features = false, optional = true }
 libdd-capabilities = { path = "../libdd-capabilities", version = "4.0.1" }
 libdd-trace-protobuf = { path = "../libdd-trace-protobuf", version = "5.1.1", optional = true }
 hyper = { workspace = true, optional = true, features = ["http1", "client"] }
@@ -83,7 +85,6 @@ hyper-util = { workspace = true, features = [
     "client-legacy",
     "service",
 ], optional = true }
-libdd-networking = { version = "1.0.0", path = "../libdd-networking", default-features = false }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { workspace = true, features = ["js"] }
