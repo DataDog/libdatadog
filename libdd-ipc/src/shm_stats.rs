@@ -337,8 +337,11 @@ struct ShmBucketHeader {
     /// [`ShmBucketHeader::take_room`].
     additional_tag_room: AtomicU64,
     string_cursor: AtomicU32,
-    /// Spans whose additional metric tag values were replaced by [`TRACER_BLOCKED_VALUE`].
-    additional_tag_blocked: AtomicU32,
+    /// Spans whose additional metric tag values were replaced by [`TRACER_BLOCKED_VALUE`] for
+    /// lack of room under the cardinality limit, or in the table.
+    additional_tag_collapsed: AtomicU32,
+    /// Spans with additional metric tag values replaced for being too long.
+    additional_tag_oversized: AtomicU32,
     /// Set by the first writer blocking additional metric tag values, which alone logs it.
     additional_tag_warned: AtomicU8,
 }
@@ -368,15 +371,12 @@ fn unpack_room(room: u64) -> (u32, u32) {
 
 impl ShmBucketHeader {
     fn take_room(&self, limit: u32) -> Room {
-        let taken = self
-            .additional_tag_room
-            .fetch_update(AcqRel, Acquire, |room| {
-                let (taken, pending) = unpack_room(room);
-                (taken < limit).then(|| pack_room(taken + 1, pending.saturating_add(1)))
-            });
+        let taken = self.update_room(|taken, pending| {
+            (taken < limit).then(|| (taken + 1, pending.saturating_add(1)))
+        });
         match taken {
-            Ok(_) => Room::Taken,
-            Err(room) if unpack_room(room).1 > 0 => Room::Pending,
+            Ok(()) => Room::Taken,
+            Err((_, pending)) if pending > 0 => Room::Pending,
             Err(_) => Room::Full,
         }
     }
@@ -384,23 +384,42 @@ impl ShmBucketHeader {
     /// Keep room whose slot is filled. Release, so that a writer seeing the room no longer
     /// pending also sees the key in the slot.
     fn commit_room(&self) {
-        self.update_room(|taken, pending| (taken, pending.saturating_sub(1)));
+        let _ = self.update_room(|taken, pending| Some((taken, pending.saturating_sub(1))));
     }
 
     /// Give back room whose slot another writer claimed first.
     fn release_room(&self) {
-        self.update_room(|taken, pending| (taken.saturating_sub(1), pending.saturating_sub(1)));
+        let _ = self.update_room(|taken, pending| {
+            Some((taken.saturating_sub(1), pending.saturating_sub(1)))
+        });
     }
 
-    /// Saturating, since a flush resets the word even under a writer that missed its deadline.
-    fn update_room(&self, update: impl Fn(u32, u32) -> (u32, u32)) {
-        let _ = self
-            .additional_tag_room
-            .fetch_update(AcqRel, Acquire, |room| {
-                let (taken, pending) = unpack_room(room);
-                let (taken, pending) = update(taken, pending);
-                Some(pack_room(taken, pending))
-            });
+    /// Replace `(taken, pending)` with what `update` makes of it, or return the value it
+    /// refused. Updates saturate, since a flush resets the word even under a writer that missed
+    /// its deadline.
+    ///
+    /// A loop of its own, as `fetch_update` is deprecated in favor of `try_update`, which the
+    /// MSRV does not have yet.
+    fn update_room(
+        &self,
+        update: impl Fn(u32, u32) -> Option<(u32, u32)>,
+    ) -> Result<(), (u32, u32)> {
+        let mut room = self.additional_tag_room.load(Acquire);
+        loop {
+            let (taken, pending) = unpack_room(room);
+            let Some((new_taken, new_pending)) = update(taken, pending) else {
+                return Err((taken, pending));
+            };
+            match self.additional_tag_room.compare_exchange_weak(
+                room,
+                pack_room(new_taken, new_pending),
+                AcqRel,
+                Acquire,
+            ) {
+                Ok(_) => return Ok(()),
+                Err(current) => room = current,
+            }
+        }
     }
 }
 
@@ -1089,11 +1108,14 @@ impl ShmStatsMapping {
             Self::insert(&bucket, &key, input, None, &mut waits);
         }
 
-        let mut log_blocked = false;
-        if masked || oversized_key.is_some() {
-            bucket.hdr.additional_tag_blocked.fetch_add(1, Relaxed);
-            log_blocked = bucket.hdr.additional_tag_warned.swap(1, Relaxed) == 0;
+        if masked {
+            bucket.hdr.additional_tag_collapsed.fetch_add(1, Relaxed);
         }
+        if oversized_key.is_some() {
+            bucket.hdr.additional_tag_oversized.fetch_add(1, Relaxed);
+        }
+        let log_blocked = (masked || oversized_key.is_some())
+            && bucket.hdr.additional_tag_warned.swap(1, Relaxed) == 0;
 
         bucket.hdr.in_flight.fetch_sub(1, Release);
 
@@ -1341,7 +1363,7 @@ impl ShmStatsMapping {
     fn drain_bucket(
         &self,
         bucket_idx: u8,
-        blocked_additional_tags: &mut usize,
+        blocked_additional_tags: &mut BlockedAdditionalTags,
     ) -> Option<pb::ClientStatsBucket> {
         let bucket = self.bucket(bucket_idx);
 
@@ -1383,8 +1405,10 @@ impl ShmStatsMapping {
         // The cardinality limit and its warning apply per bucket: the next one starts afresh.
         bucket.hdr.additional_tag_room.store(0, Relaxed);
         bucket.hdr.additional_tag_warned.store(0, Relaxed);
-        let blocked = bucket.hdr.additional_tag_blocked.swap(0, Relaxed);
-        *blocked_additional_tags += usize::try_from(blocked).unwrap_or(usize::MAX);
+        let take =
+            |counter: &AtomicU32| usize::try_from(counter.swap(0, Relaxed)).unwrap_or(usize::MAX);
+        blocked_additional_tags.collapsed += take(&bucket.hdr.additional_tag_collapsed);
+        blocked_additional_tags.oversized += take(&bucket.hdr.additional_tag_oversized);
         bucket.hdr.string_cursor.store(0, Release);
 
         let now_ns = std::time::SystemTime::now()
@@ -1504,12 +1528,20 @@ impl ShmStatsMapping {
     }
 }
 
-/// What draining yields: the buckets, and how many of their spans had additional metric tag
-/// values replaced by [`TRACER_BLOCKED_VALUE`].
+/// Spans whose additional metric tag values were replaced by [`TRACER_BLOCKED_VALUE`].
+#[derive(Default)]
+struct BlockedAdditionalTags {
+    /// For lack of room under the cardinality limit, or in the table.
+    collapsed: usize,
+    /// For being too long.
+    oversized: usize,
+}
+
+/// What draining yields: the buckets, and the spans in them with blocked additional metric tags.
 #[derive(Default)]
 struct Drained {
     buckets: Vec<pb::ClientStatsBucket>,
-    blocked_additional_tags: usize,
+    blocked_additional_tags: BlockedAdditionalTags,
 }
 
 impl FlushableConcentrator for ShmSpanConcentrator {
@@ -1520,7 +1552,9 @@ impl FlushableConcentrator for ShmSpanConcentrator {
         let mut collapsed_fields_metrics = CollapsedFieldsMetrics::zero();
         let mut additional_tags = CollapsedFieldSet::empty();
         additional_tags.add(CollapsedFieldSet::ADDITIONAL_TAGS);
-        collapsed_fields_metrics.add(additional_tags, drained.blocked_additional_tags);
+        collapsed_fields_metrics.add(additional_tags, drained.blocked_additional_tags.collapsed);
+        collapsed_fields_metrics
+            .add_oversized_additional_tags(drained.blocked_additional_tags.oversized);
         FlushResult {
             obfuscated_buckets: vec![],
             unobfuscated_buckets: drained.buckets,
@@ -2146,6 +2180,12 @@ mod tests {
         }
     }
 
+    /// Spans blocked as `(collapsed, oversized)`.
+    fn blocked(drained: &Drained) -> (usize, usize) {
+        let blocked = &drained.blocked_additional_tags;
+        (blocked.collapsed, blocked.oversized)
+    }
+
     /// Every group as "[its additional metric tags] x<hits>", sorted.
     fn additional_tags_of(drained: &Drained) -> Vec<String> {
         let mut groups: Vec<String> = drained
@@ -2181,7 +2221,7 @@ mod tests {
             additional_tags_of(&drained),
             ["[] x1", "[region:eu, tenant:acme] x2", "[region:us] x1"]
         );
-        assert_eq!(drained.blocked_additional_tags, 0);
+        assert_eq!(blocked(&drained), (0, 0));
     }
 
     /// Peer tags get whatever room the additional metric tags leave in the shared arrays, and
@@ -2231,7 +2271,7 @@ mod tests {
                 format!("[tenant:{longest}] x1"),
             ]
         );
-        assert_eq!(drained.blocked_additional_tags, 1);
+        assert_eq!(blocked(&drained), (0, 1));
     }
 
     /// Past the limit a new key keeps its additional metric tag keys with masked values, while
@@ -2261,7 +2301,7 @@ mod tests {
                 format!("[tenant:{TRACER_BLOCKED_VALUE}] x2"),
             ]
         );
-        assert_eq!(drained.blocked_additional_tags, 3);
+        assert_eq!(blocked(&drained), (3, 0));
     }
 
     #[test]
@@ -2278,33 +2318,38 @@ mod tests {
                 format!("[tenant:{TRACER_BLOCKED_VALUE}] x1"),
             ]
         );
-        assert_eq!(first.blocked_additional_tags, 1);
+        assert_eq!(blocked(&first), (1, 0));
 
         // The other bucket, then the drained one again: both start with the whole limit.
         c.add_span(&tagged("res", &[("tenant", "b")], 1));
         let second = c.drain(false);
         assert_eq!(additional_tags_of(&second), ["[tenant:b] x1"]);
-        assert_eq!(second.blocked_additional_tags, 0);
+        assert_eq!(blocked(&second), (0, 0));
 
         c.add_span(&tagged("res", &[("tenant", "c")], 1));
         let third = c.drain(true);
         assert_eq!(additional_tags_of(&third), ["[tenant:c] x1"]);
-        assert_eq!(third.blocked_additional_tags, 0);
+        assert_eq!(blocked(&third), (0, 0));
     }
 
-    /// The telemetry for blocked values travels with the flushed buckets.
+    /// The telemetry for blocked values travels with the flushed buckets: values over the limit
+    /// as collapsed, and values too long as oversized, which is no cardinality limit.
     #[test]
     #[cfg_attr(miri, ignore)]
     fn blocked_additional_tags_are_reported_with_the_flush() {
         let mut c = default_concentrator(test_path());
+        let too_long = "x".repeat(ADDITIONAL_METRIC_TAG_VALUE_MAX_LEN + 1);
         c.add_span(&tagged("res", &[("tenant", "a")], 1));
         c.add_span(&tagged("res", &[("tenant", "b")], 1));
+        c.add_span(&tagged("res", &[("tenant", &too_long)], 1));
+        c.add_span(&tagged("res", &[("tenant", &too_long)], 1));
         let flushed = c.flush_buckets(true);
         assert_eq!(flushed.unobfuscated_buckets[0].stats.len(), 2);
         let mut expected = CollapsedFieldsMetrics::zero();
         let mut additional_tags = CollapsedFieldSet::empty();
         additional_tags.add(CollapsedFieldSet::ADDITIONAL_TAGS);
         expected.add(additional_tags, 1);
+        expected.add_oversized_additional_tags(2);
         assert_eq!(
             format!("{:?}", flushed.collapsed_fields_metrics),
             format!("{expected:?}")
@@ -2334,7 +2379,7 @@ mod tests {
                 format!("[tenant:{TRACER_BLOCKED_VALUE}] x2"),
             ]
         );
-        assert_eq!(drained.blocked_additional_tags, 2);
+        assert_eq!(blocked(&drained), (2, 0));
     }
 
     /// Writers racing to add the same new key must all count into it: room another writer has
