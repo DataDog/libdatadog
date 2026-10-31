@@ -7,7 +7,7 @@ use super::config::OtlpTraceConfig;
 use crate::trace_exporter::error::{InternalErrorKind, RequestError, TraceExporterError};
 use http::HeaderMap;
 use libdd_capabilities::{HttpClientCapability, SleepCapability};
-use libdd_common::Endpoint;
+use libdd_networking::endpoint::Endpoint;
 use libdd_trace_utils::send_with_retry::{
     CompressionStrategy, RetryBackoffType, RetryStrategy, SendWithRetryError, SendWithRetryResult,
     send_with_retry,
@@ -66,7 +66,7 @@ pub(crate) async fn send_otlp_http_with_observer<
     max_retries: u32,
     observer: F,
 ) -> Result<(), TraceExporterError> {
-    let url = libdd_common::parse_uri(endpoint_url).map_err(|e| {
+    let url = libdd_networking::endpoint::parse_uri(endpoint_url).map_err(|e| {
         TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(format!(
             "Invalid OTLP endpoint URL: {}",
             e

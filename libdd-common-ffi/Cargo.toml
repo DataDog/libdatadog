@@ -14,7 +14,7 @@ bench =false
 
 [features]
 default = ["std", "cbindgen"]
-std = ["dep:anyhow", "dep:chrono", "dep:crossbeam-queue", "dep:function_name", "dep:hyper", "dep:serde", "dep:libdd-common"]
+std = ["dep:anyhow", "dep:chrono", "dep:crossbeam-queue", "dep:function_name", "dep:hyper", "dep:serde", "dep:libdd-common", "dep:libdd-networking"]
 cbindgen = ["std", "build_common/cbindgen"]
 regex-lite = ["std", "libdd-common/regex-lite"]
 
@@ -27,6 +27,7 @@ chrono = { workspace = true, features = ["clock", "std"], optional = true }
 crossbeam-queue = { workspace = true, default-features = true, optional = true }
 function_name = { workspace = true, optional = true }
 libdd-common = { path = "../libdd-common", optional = true }
+libdd-networking = { path = "../libdd-networking", optional = true }
 hyper = { workspace = true, features = ["http1", "client"], optional = true }
 serde = { workspace = true, optional = true }
 

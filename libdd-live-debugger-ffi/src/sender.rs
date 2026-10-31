@@ -2,13 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::send_data::serialize_debugger_payload;
-use libdd_common::Endpoint;
 use libdd_common::tag::Tag;
 use libdd_common_ffi::slice::AsBytes;
 use libdd_common_ffi::{CharSlice, MaybeError};
 use libdd_live_debugger::debugger_defs::DebuggerPayload;
 use libdd_live_debugger::sender;
 use libdd_live_debugger::sender::{Config, DebuggerType, debugger_intake_endpoint, generate_tags};
+use libdd_networking::endpoint::Endpoint;
 use log::{debug, warn};
 use percent_encoding::{CONTROLS, percent_encode};
 use std::sync::Arc;

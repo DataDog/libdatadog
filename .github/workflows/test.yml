@@ -194,23 +194,23 @@ jobs:
         if: runner.os == 'Linux'
         shell: bash
         run: |
-          if [[ -z "$PACKAGES" ]] || echo "$PACKAGES" | grep -Eq "libdd-(ffe|common)"; then
+          if [[ -z "$PACKAGES" ]] || echo "$PACKAGES" | grep -Eq "libdd-(ffe|networking)"; then
             for provider in https fips; do
               # Isolate runtime features: unrelated workspace/dev dependencies
               # must not be what enables the CDN proxy connector.
               cargo tree -p libdd-ffe --no-default-features --features "cdn,$provider" \
                 --edges normal,build --prefix none --format '{p} {f}' \
-                | grep -E '^libdd-common .*hyper-proxy'
+                | grep -E '^libdd-networking .*hyper-proxy'
               cargo nextest run -p libdd-ffe --no-default-features \
                 --features "cdn,$provider" --profile ci --success-output never
             done
           fi
-      - name: "[${{ steps.rust-version.outputs.version}}] cargo nextest run -p libdd-common --no-default-features --features fips"
+      - name: "[${{ steps.rust-version.outputs.version}}] cargo nextest run -p libdd-networking --no-default-features --features fips"
         if: runner.os == 'Linux'
         shell: bash
         run: |
-          if echo "$PACKAGES" | grep -q "libdd-common"; then
-            cargo nextest run -p libdd-common --no-default-features --features fips --profile ci --verbose
+          if echo "$PACKAGES" | grep -q "libdd-networking"; then
+            cargo nextest run -p libdd-networking --no-default-features --features fips --profile ci --verbose
           fi
         env:
           RUST_BACKTRACE: full

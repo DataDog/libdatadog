@@ -7,7 +7,7 @@ use super::ffi;
 use super::profile::EncodedProfile;
 use crate::exporter;
 use crate::internal;
-use libdd_common::{Endpoint, parse_uri};
+use libdd_networking::endpoint::{Endpoint, parse_uri};
 
 struct PreparedExportArgs<'a> {
     files: Vec<(String, &'a [u8])>,

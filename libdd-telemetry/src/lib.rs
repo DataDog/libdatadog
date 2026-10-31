@@ -28,4 +28,4 @@ pub use info::build_host;
 #[cfg(feature = "alloc")]
 pub use libdd_common::tag::{Tag, parse_tags};
 #[cfg(feature = "std")]
-pub use libdd_common::{Endpoint, parse_uri};
+pub use libdd_networking::endpoint::{Endpoint, parse_uri};

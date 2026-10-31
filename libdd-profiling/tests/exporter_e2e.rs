@@ -208,7 +208,7 @@ enum RequestSource {
 
 /// Export a comprehensive profile with all features and capture the HTTP request
 async fn export_full_profile(
-    endpoint: libdd_common::Endpoint,
+    endpoint: libdd_networking::endpoint::Endpoint,
     source: RequestSource,
 ) -> anyhow::Result<ReceivedRequest> {
     // Build tags
@@ -436,7 +436,7 @@ async fn test_agentless_with_transport(transport: Transport) -> anyhow::Result<(
     // Configure agentless endpoint based on transport
     let endpoint = if let Some(port) = server.port {
         let endpoint_url = format!("http://127.0.0.1:{}/api/v2/profile", port).parse()?;
-        let mut endpoint = libdd_common::Endpoint::from_url(endpoint_url);
+        let mut endpoint = libdd_networking::endpoint::Endpoint::from_url(endpoint_url);
         endpoint.api_key = Some("test-api-key-12345".into());
         endpoint
     } else {
@@ -444,11 +444,11 @@ async fn test_agentless_with_transport(transport: Transport) -> anyhow::Result<(
         {
             let socket_path = server.socket_path.as_ref().unwrap();
             // For Unix sockets, we need to create endpoint manually
-            let endpoint_url = libdd_common::connector::uds::socket_path_to_uri(socket_path)?;
+            let endpoint_url = libdd_networking::connector::uds::socket_path_to_uri(socket_path)?;
             let mut parts = endpoint_url.into_parts();
             parts.path_and_query = Some("/api/v2/profile".parse()?);
             let url = http::Uri::from_parts(parts)?;
-            let mut endpoint = libdd_common::Endpoint::from_url(url);
+            let mut endpoint = libdd_networking::endpoint::Endpoint::from_url(url);
             endpoint.api_key = Some("test-api-key-12345".into());
             endpoint
         }
@@ -457,11 +457,11 @@ async fn test_agentless_with_transport(transport: Transport) -> anyhow::Result<(
             let pipe_path = server.pipe_path.as_ref().unwrap();
             // For named pipes, we need to create endpoint manually
             let endpoint_url =
-                libdd_common::connector::named_pipe::named_pipe_path_to_uri(pipe_path)?;
+                libdd_networking::connector::named_pipe::named_pipe_path_to_uri(pipe_path)?;
             let mut parts = endpoint_url.into_parts();
             parts.path_and_query = Some("/api/v2/profile".parse()?);
             let url = http::Uri::from_parts(parts)?;
-            let mut endpoint = libdd_common::Endpoint::from_url(url);
+            let mut endpoint = libdd_networking::endpoint::Endpoint::from_url(url);
             endpoint.api_key = Some("test-api-key-12345".into());
             endpoint
         }

@@ -422,7 +422,7 @@ mod tests {
     };
     use crate::watchdog::Watchdog;
     use httpmock::{Method::POST, MockServer};
-    use libdd_common::Endpoint;
+    use libdd_networking::endpoint::Endpoint;
     use libdd_telemetry::config::TelemetryEndpoint;
     use serde_json::{Value, json};
 

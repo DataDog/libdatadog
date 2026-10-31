@@ -68,7 +68,7 @@ external I/O, such as the sidecar; constructing it does not spawn a worker.
 `CdnConfig::validate` identifies the invalid setting through `InvalidConfig`
 variants without including URLs, credentials, or rejected values in diagnostics.
 
-`CdnEndpoint` wraps `libdd_common::Endpoint` while retaining CDN validation,
+`CdnEndpoint` wraps `libdd_networking::endpoint::Endpoint` while retaining CDN validation,
 credential isolation and redacted diagnostics. URL credentials remain
 case-sensitive in subscription identity. The endpoint IPC representation is
 unchanged; `CdnConfig::request_timeout` remains the request deadline. Request

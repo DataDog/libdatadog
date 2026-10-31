@@ -669,8 +669,8 @@ mod tests {
         ApplicationConfig, EvpProducerIdentity, EvpTransportConfig, EvpTransportConfigWithIdentity,
         InstanceId,
     };
-    use libdd_common::Endpoint;
     use libdd_ipc::{SeqpacketConn, SeqpacketListener};
+    use libdd_networking::endpoint::Endpoint;
     use libdd_telemetry::data;
     use libdd_telemetry::worker::TelemetryActions;
     use std::cell::RefCell;

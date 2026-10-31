@@ -4,14 +4,12 @@ Common utilities and foundational components shared across Datadog telemetry lib
 
 ## Overview
 
-`libdd-common` provides shared functionality used across multiple Datadog Rust libraries including HTTP client support, entity ID detection, tag handling, and platform-specific utilities.
+`libdd-common` provides shared functionality used across multiple Datadog Rust libraries including entity ID detection, tag handling, and platform-specific utilities.
 
 ## Features
 
-- **HTTP/HTTPS Client**: Async HTTP client built on hyper with rustls support
 - **Entity ID Detection**: Automatic container ID and entity ID detection from cgroups, Docker, Kubernetes, and Azure App Services
 - **Tag Management**: Compile-time validated tags with the `tag!` macro
-- **URI Parsing**: Special handling for Unix sockets, Windows named pipes, and file URIs  
 - **Platform Utilities**: Unix-specific utilities for fork, exec, and process management
 - **Datadog Headers**: Standard Datadog HTTP headers and constants
 - **Timeout Support**: Configurable timeouts for HTTP requests
@@ -21,11 +19,9 @@ Common utilities and foundational components shared across Datadog telemetry lib
 
 - `azure_app_services`: Azure App Services integration
 - `config`: Configuration utilities
-- `connector`: HTTP/HTTPS connector implementations
 - `entity_id`: Container and entity ID detection
 - `error`: Common error types
 - `header`: Datadog HTTP headers
-- `http_common`: Hyper version migration helpers
 - `tag`: Tag creation and validation
 - `timeout`: Timeout utilities
 - `unix_utils`: Unix-specific process utilities
@@ -60,11 +56,7 @@ if let Some(container_id) = entity_id::get_container_id() {
 
 - `std` (default): Enable the standard-library-dependent utilities
 - `alloc`: Enable allocation-backed tag creation and parsing without `std`
-- `http-client`: Enable the hyper-based HTTP client; implies `std`
-- `https` (default): Enable HTTPS support with rustls; implies `http-client`
-- `use_webpki_roots`: Use webpki roots instead of native certs
 - `cgroup_testing`: Enable cgroup stubbing for testing
-- `fips`: Use FIPS-compliant cryptographic provider (Unix only)
 
 `TagParser` and `TagValidationError` are available without feature flags. To use the allocation-backed
 `Tag` from a `no_std` crate:

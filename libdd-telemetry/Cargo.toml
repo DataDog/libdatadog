@@ -42,6 +42,7 @@ std = [
     "dep:libc",
     "dep:libdd-capabilities",
     "dep:libdd-ddsketch",
+    "dep:libdd-networking",
     "dep:libdd-shared-runtime",
     "dep:sys-info",
     "dep:tokio",
@@ -55,8 +56,8 @@ std = [
     "serde_json/std",
 ]
 tracing = ["std", "tracing/std"]
-https = ["std", "libdd-common/https", "libdd-shared-runtime/https"]
-fips = ["std", "libdd-common/fips", "libdd-shared-runtime/fips"]
+https = ["std", "libdd-networking/https", "libdd-shared-runtime/https"]
+fips = ["std", "libdd-networking/fips", "libdd-shared-runtime/fips"]
 
 [dependencies]
 anyhow = { workspace = true, optional = true }
@@ -80,6 +81,7 @@ libdd-common = { version = "9.0.0", path = "../libdd-common", default-features =
 libdd-shared-runtime = { version = "7.0.0", path = "../libdd-shared-runtime", default-features = false, optional = true }
 libdd-ddsketch = { version = "1.1.4", path = "../libdd-ddsketch", optional = true }
 web-time = { workspace = true, optional = true }
+libdd-networking = { path = "../libdd-networking", version = "1.0.0", default-features = false, optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 sys-info = { workspace = true, optional = true }

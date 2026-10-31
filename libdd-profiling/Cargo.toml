@@ -40,20 +40,21 @@ hashbrown.workspace = true
 http = { workspace = true, features = ["std"] }
 indexmap = { workspace = true, default-features = true }
 libdd-alloc = { version = "1.0.0", path = "../libdd-alloc" }
-libdd-common = { version = "9.0.0", path = "../libdd-common", default-features = false, features = ["reqwest", "tls-distrust"] }
+libdd-common = { version = "9.0.0", path = "../libdd-common", default-features = false }
+libdd-networking = { path = "../libdd-networking", version = "1.0.0", default-features = false, features = ["reqwest", "tls-distrust"] }
 libdd-profiling-protobuf = { version = "2.0.0", path = "../libdd-profiling-protobuf", features = ["prost_impls"] }
 opentelemetry-proto = { workspace = true, optional = true, features = ["profiles", "gen-tonic-messages"] }
 parking_lot.workspace = true
 # Only the prost::Message trait is used here; the Message derives live in
 # libdd-profiling-protobuf (which enables prost/derive for its generated code).
 prost = { workspace = true, features = ["std"] }
-# Use rustls to align with the rest of the workspace (libdd-common, libdd-telemetry, etc.)
+# Use rustls to align with the rest of the workspace (libdd-networking, libdd-telemetry, etc.)
 # Non-FIPS builds use ring as the crypto provider; FIPS builds use aws-lc-rs.
 # Use hickory-dns instead of the default system DNS resolver to avoid fork safety issues.
 # The default resolver can hold locks or other global state that can cause deadlocks
 # or corruption when the process forks (e.g., in PHP-FPM or other forking environments).
 # Use rustls-no-provider instead of rustls to avoid reqwest forcing aws-lc-rs as the crypto
-# backend. We install the ring provider explicitly via tls.rs / libdd-common instead.
+# backend. We install the ring provider explicitly via libdd-networking's connector instead.
 reqwest = { workspace = true, features = ["multipart", "rustls-no-provider", "hickory-dns"] }
 rustc-hash.workspace = true
 serde = { workspace = true, features = ["derive"] }

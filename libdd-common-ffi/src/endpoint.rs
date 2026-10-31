@@ -7,7 +7,7 @@ use crate::slice::AsBytes;
 use alloc::borrow::Cow;
 use core::str::FromStr;
 use hyper::http::uri::{Authority, Parts};
-use libdd_common::{Endpoint, parse_uri};
+use libdd_networking::endpoint::{Endpoint, parse_uri};
 
 #[unsafe(no_mangle)]
 #[must_use]

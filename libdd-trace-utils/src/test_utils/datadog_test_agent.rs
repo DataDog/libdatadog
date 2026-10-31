@@ -6,7 +6,7 @@ use cargo_metadata::MetadataCommand;
 use http_body_util::BodyExt;
 use hyper::body::Incoming;
 use hyper::{Request, Response, Uri};
-use libdd_common::http_common;
+use libdd_networking::http_common;
 use std::collections::HashMap;
 use std::fmt::Write;
 use std::path::Path;
@@ -210,7 +210,7 @@ impl DatadogAgentContainerBuilder {
 /// ```no_run
 /// use libdd_capabilities::HttpClientCapability;
 /// use libdd_capabilities_impl::NativeCapabilities;
-/// use libdd_common::Endpoint;
+/// use libdd_networking::endpoint::Endpoint;
 /// use libdd_trace_utils::send_data::SendData;
 /// use libdd_trace_utils::test_utils::datadog_test_agent::DatadogTestAgent;
 /// use libdd_trace_utils::trace_utils::TracerHeaderTags;
@@ -291,7 +291,7 @@ impl DatadogTestAgent {
     }
 
     pub async fn get_base_uri(&self) -> http::Uri {
-        libdd_common::parse_uri(&if let Some(path) = &self.socket_path {
+        libdd_networking::endpoint::parse_uri(&if let Some(path) = &self.socket_path {
             format!("unix://{path}")
         } else {
             self.container.trace_agent_uri().unwrap()

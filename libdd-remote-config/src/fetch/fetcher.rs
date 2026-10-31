@@ -11,7 +11,8 @@ use hashbrown::HashMap;
 use http::StatusCode;
 use http::uri::PathAndQuery;
 use libdd_capabilities::{HttpClientCapability, SleepCapability};
-use libdd_common::{Endpoint, MutexExt};
+use libdd_common::MutexExt;
+use libdd_networking::endpoint::Endpoint;
 use libdd_trace_protobuf::remoteconfig::{
     ClientGetConfigsRequest, ClientGetConfigsResponse, ClientState, ClientTracer, ConfigState,
     ConfigStatus, TargetFileHash, TargetFileMeta,
@@ -787,7 +788,7 @@ pub mod tests {
     use crate::fetch::test_server::RemoteConfigServer;
     use http::Response;
     use libdd_capabilities_impl::NativeCapabilities;
-    use libdd_common::http_common;
+    use libdd_networking::http_common;
     use std::mem::transmute;
     use std::sync::LazyLock;
 

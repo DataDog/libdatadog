@@ -16,12 +16,12 @@
 use crate::service::evp_transport::EvpTransport;
 use crate::service::{FfeFlagEvaluationBatch, FfeTelemetryContext};
 use libdd_capabilities_impl::NativeCapabilities;
-use libdd_common::Endpoint;
 use libdd_ffe::telemetry::flagevaluation::{
     EVP_PAYLOAD_SIZE_LIMIT, FlagEvaluationEvpCoalescer as CommonFlagEvaluationEvpCoalescer,
     FlagEvaluationEvpSendConfig, FlagEvaluationEvpWriterStats, encode_flag_evaluation_payloads,
     flagevaluation_agent_proxy_endpoint, send_flag_evaluation_batch,
 };
+use libdd_networking::endpoint::Endpoint;
 use std::borrow::Cow;
 use std::sync::Arc;
 use std::time::Duration;
@@ -231,10 +231,10 @@ mod tests {
     use httpmock::MockServer;
     use libdd_capabilities::HttpClientCapability;
     use libdd_capabilities_impl::NativeCapabilities;
-    use libdd_common::Endpoint;
     use libdd_ffe::telemetry::flagevaluation::{
         EVP_FLAGEVALUATION_PATH, FfeFlagEvaluationEvent, FlagEvalEventContext, FlagKey,
     };
+    use libdd_networking::endpoint::Endpoint;
     use std::collections::BTreeMap;
 
     struct BorrowOnly(&'static str);

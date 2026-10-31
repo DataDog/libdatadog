@@ -9,8 +9,8 @@ mod mini_agent {
     use bytes::{Buf, Bytes};
     use http_body_util::BodyExt;
     use libdd_capabilities::HttpClientCapability;
-    use libdd_common::Endpoint;
-    use libdd_common::http_common;
+    use libdd_networking::endpoint::Endpoint;
+    use libdd_networking::http_common;
     use libdd_trace_protobuf::pb;
     use std::io::Write;
     use tracing::debug;
@@ -96,7 +96,7 @@ mod mini_agent {
 mod mini_agent_tests {
     use crate::stats_utils;
     use http::Request;
-    use libdd_common::http_common;
+    use libdd_networking::http_common;
     use libdd_trace_protobuf::pb::{
         ClientGroupedStats, ClientStatsBucket, ClientStatsPayload, Trilean::NotSet,
     };

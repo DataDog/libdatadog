@@ -20,7 +20,8 @@ anyhow.workspace = true
 bytes = { workspace = true, features = ["std"] }
 http = { workspace = true, features = ["std"] }
 libdd-capabilities = { path = "../libdd-capabilities", version = "4.0.1" }
-libdd-common = { path = "../libdd-common", version = "9.0.0", default-features = false, features = ["http-client"] }
+libdd-common = { path = "../libdd-common", version = "9.0.0", default-features = false }
+libdd-networking = { path = "../libdd-networking", version = "1.0.0", default-features = false, features = ["http-client"] }
 tokio = { workspace = true, features = ["fs", "time"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
@@ -32,5 +33,5 @@ tokio = { workspace = true, features = ["fs", "macros", "rt", "time"] }
 
 [features]
 default = ["https"]
-https = ["libdd-common/https"]
-fips = ["libdd-common/fips"]
+https = ["libdd-networking/https"]
+fips = ["libdd-networking/fips"]

@@ -77,6 +77,7 @@ libdd-crashtracker-ffi = { path = "../libdd-crashtracker-ffi", default-features 
 libdd-library-config-ffi = {  path = "../libdd-library-config-ffi", default-features = false, optional = true }
 libdd-profiling = { path = "../libdd-profiling" }
 libdd-common = { path = "../libdd-common" }
+libdd-networking = { path = "../libdd-networking" }
 libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false, optional = true, features = ["std"] }
 libdd-telemetry-ffi = { path = "../libdd-telemetry-ffi", default-features = false, optional = true, features = ["expanded_builder_macros"] }
 libdd-ddsketch-ffi = { path = "../libdd-ddsketch-ffi", default-features = false, optional = true }

@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use http::{Uri, uri::PathAndQuery};
-use libdd_common::{Endpoint, config::parse_env, parse_uri};
+use libdd_common::config::parse_env;
+use libdd_networking::endpoint::{Endpoint, parse_uri};
 use std::{borrow::Cow, time::Duration};
 use tracing::debug;
 
@@ -397,9 +398,9 @@ mod tests {
     use std::path::Path;
 
     #[cfg(unix)]
-    use libdd_common::connector::uds;
+    use libdd_networking::connector::uds;
 
-    use libdd_common::connector::named_pipe;
+    use libdd_networking::connector::named_pipe;
 
     use super::{Config, Settings, TelemetryEndpoint};
 
@@ -547,7 +548,10 @@ mod tests {
             );
             assert_eq!(
                 Path::new(expected),
-                libdd_common::decode_uri_path_in_authority(&cfg.endpoint.unwrap().url).unwrap(),
+                libdd_networking::endpoint::decode_uri_path_in_authority(
+                    &cfg.endpoint.unwrap().url
+                )
+                .unwrap(),
             );
         }
     }
@@ -555,14 +559,14 @@ mod tests {
     #[test]
     fn test_config_set_parsed_file_uri_does_not_reencode_path() {
         let mut cfg = Config::default();
-        let uri = libdd_common::parse_uri("file:///absolute/path").unwrap();
+        let uri = libdd_networking::endpoint::parse_uri("file:///absolute/path").unwrap();
 
         cfg.set_endpoint_uri(uri).unwrap();
 
         let endpoint = cfg.endpoint().unwrap();
         assert_eq!(
             Path::new("/absolute/path"),
-            libdd_common::decode_uri_path_in_authority(&endpoint.url).unwrap()
+            libdd_networking::endpoint::decode_uri_path_in_authority(&endpoint.url).unwrap()
         );
     }
 

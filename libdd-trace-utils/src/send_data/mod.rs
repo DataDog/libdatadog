@@ -15,13 +15,10 @@ use futures::StreamExt;
 use futures::stream::FuturesUnordered;
 use http::{HeaderMap, HeaderValue, header::CONTENT_TYPE};
 use libdd_capabilities::{HttpClientCapability, SleepCapability};
-use libdd_common::{
-    Endpoint,
-    header::{
-        APPLICATION_MSGPACK, APPLICATION_PROTOBUF, DATADOG_SEND_REAL_HTTP_STATUS,
-        DATADOG_TRACE_COUNT,
-    },
+use libdd_common::header::{
+    APPLICATION_MSGPACK, APPLICATION_PROTOBUF, DATADOG_SEND_REAL_HTTP_STATUS, DATADOG_TRACE_COUNT,
 };
+use libdd_networking::endpoint::Endpoint;
 use libdd_trace_protobuf::pb::{AgentPayload, TracerPayload};
 use send_data_result::SendDataResult;
 use std::collections::HashMap;
@@ -38,7 +35,7 @@ use std::collections::HashMap;
 /// use libdd_trace_utils::send_data::{
 ///     SendData,
 /// };
-/// use libdd_common::Endpoint;
+/// use libdd_networking::endpoint::Endpoint;
 /// use libdd_trace_utils::send_with_retry::{RetryBackoffType, RetryStrategy};
 /// use libdd_trace_utils::trace_utils::TracerHeaderTags;
 /// use libdd_trace_utils::tracer_payload::TracerPayloadCollection;
@@ -448,7 +445,7 @@ mod tests {
     use httpmock::prelude::*;
     use libdd_capabilities::HttpClientCapability;
     use libdd_capabilities_impl::NativeCapabilities;
-    use libdd_common::Endpoint;
+    use libdd_networking::endpoint::Endpoint;
     use libdd_trace_protobuf::pb::Span;
     use std::collections::HashMap;
     use std::time::Duration;

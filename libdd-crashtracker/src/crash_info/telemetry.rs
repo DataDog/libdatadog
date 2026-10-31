@@ -10,7 +10,7 @@ use anyhow::Context;
 use chrono::{DateTime, Utc};
 use libdd_capabilities::HttpClientCapability;
 use libdd_capabilities_impl::NativeCapabilities;
-use libdd_common::Endpoint;
+use libdd_networking::endpoint::Endpoint;
 use libdd_telemetry::{
     build_host,
     data::{self, Application, LogLevel},
@@ -187,7 +187,7 @@ impl TelemetryCrashUploader {
             if endpoint.url.scheme_str() == Some("file") {
                 // Write telemetry alongside the crash file. Rebuild from the
                 // decoded path so the file path is re-encoded exactly once.
-                let path = libdd_common::decode_uri_path_in_authority(&endpoint.url)
+                let path = libdd_networking::endpoint::decode_uri_path_in_authority(&endpoint.url)
                     .context("file path is not valid")?;
                 let _ = cfg.set_endpoint(libdd_telemetry::config::TelemetryEndpoint {
                     url: Some(format!("file://{}.telemetry", path.display())),
@@ -421,7 +421,7 @@ mod tests {
         ErrorKind,
         crash_info::{CrashInfo, CrashInfoBuilder, Metadata, test_utils::TestInstance},
     };
-    use libdd_common::Endpoint;
+    use libdd_networking::endpoint::Endpoint;
     use libdd_telemetry::data::LogLevel;
     use std::{collections::HashSet, fs};
     use uuid::Uuid;

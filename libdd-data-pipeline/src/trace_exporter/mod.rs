@@ -51,9 +51,9 @@ use http::Uri;
 use http::header::HeaderMap;
 use http::uri::PathAndQuery;
 use libdd_capabilities::{HttpClientCapability, LogWriterCapability, MaybeSend, SleepCapability};
-use libdd_common::Endpoint;
 use libdd_common::tag::Tag;
 use libdd_dogstatsd_client::DogStatsDClient;
+use libdd_networking::endpoint::Endpoint;
 #[cfg(not(target_arch = "wasm32"))]
 use libdd_shared_runtime::BlockingRuntime;
 use libdd_shared_runtime::{SharedRuntime, WorkerHandle};

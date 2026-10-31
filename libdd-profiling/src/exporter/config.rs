@@ -1,12 +1,12 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use libdd_common::Endpoint;
 #[cfg(unix)]
-use libdd_common::connector::uds;
+use libdd_networking::connector::uds;
+use libdd_networking::endpoint::Endpoint;
 
 #[cfg(windows)]
-use libdd_common::connector::named_pipe;
+use libdd_networking::connector::named_pipe;
 
 use http::Uri;
 use std::borrow::Cow;

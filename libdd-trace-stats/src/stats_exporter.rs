@@ -15,8 +15,9 @@ use crate::span_concentrator::{FlushableConcentrator, SpanConcentrator};
 use async_trait::async_trait;
 use futures::future::join;
 use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
+use libdd_common::MutexExt;
 use libdd_common::mutable_metadata::MutableMetadataHandle;
-use libdd_common::{Endpoint, MutexExt};
+use libdd_networking::endpoint::Endpoint;
 use libdd_shared_runtime::Worker;
 use libdd_trace_protobuf::pb;
 use libdd_trace_utils::send_with_retry::{
@@ -1496,9 +1497,10 @@ mod tests {
             .unwrap();
         let addr = socket.local_addr().unwrap().to_string();
 
-        let dogstatsd_client =
-            libdd_dogstatsd_client::DogStatsDClient::new(libdd_common::Endpoint::from_slice(&addr))
-                .expect("failed to create dogstatsd client");
+        let dogstatsd_client = libdd_dogstatsd_client::DogStatsDClient::new(
+            libdd_networking::endpoint::Endpoint::from_slice(&addr),
+        )
+        .expect("failed to create dogstatsd client");
 
         // get_test_concentrator() has no cardinality collapse: collapsed_spans will be 0.
         let stats_exporter = StatsExporter::<NativeCapabilities>::new(
@@ -1546,9 +1548,10 @@ mod tests {
             .unwrap();
         let addr = socket.local_addr().unwrap().to_string();
 
-        let dogstatsd_client =
-            libdd_dogstatsd_client::DogStatsDClient::new(libdd_common::Endpoint::from_slice(&addr))
-                .expect("failed to create dogstatsd client");
+        let dogstatsd_client = libdd_dogstatsd_client::DogStatsDClient::new(
+            libdd_networking::endpoint::Endpoint::from_slice(&addr),
+        )
+        .expect("failed to create dogstatsd client");
 
         let stats_exporter = StatsExporter::<NativeCapabilities>::new(
             BUCKETS_DURATION,
@@ -1597,9 +1600,10 @@ mod tests {
             .unwrap();
         let addr = socket.local_addr().unwrap().to_string();
 
-        let dogstatsd_client =
-            libdd_dogstatsd_client::DogStatsDClient::new(libdd_common::Endpoint::from_slice(&addr))
-                .expect("failed to create dogstatsd client");
+        let dogstatsd_client = libdd_dogstatsd_client::DogStatsDClient::new(
+            libdd_networking::endpoint::Endpoint::from_slice(&addr),
+        )
+        .expect("failed to create dogstatsd client");
 
         let stats_exporter = StatsExporter::<NativeCapabilities>::new(
             BUCKETS_DURATION,

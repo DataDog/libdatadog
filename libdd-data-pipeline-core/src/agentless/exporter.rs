@@ -6,7 +6,7 @@
 use super::config::AgentlessTraceConfig;
 use http::HeaderMap;
 use libdd_capabilities::{HttpClientCapability, SleepCapability};
-use libdd_common::Endpoint;
+use libdd_networking::endpoint::Endpoint;
 use libdd_trace_utils::send_with_retry::{
     CompressionStrategy, RetryBackoffType, RetryStrategy, SendWithRetryError, SendWithRetryResult,
     send_with_retry_and_size,
@@ -201,7 +201,7 @@ where
         http::HeaderValue::from_str(&config.api_key).map_err(|_| AgentlessError::InvalidApiKey)?;
     headers.insert(http::HeaderName::from_static("dd-api-key"), api_key);
 
-    let url = libdd_common::parse_uri(&config.endpoint_url)
+    let url = libdd_networking::endpoint::parse_uri(&config.endpoint_url)
         .map_err(|error| AgentlessError::InvalidEndpoint(error.to_string()))?;
     let target = Endpoint {
         url,

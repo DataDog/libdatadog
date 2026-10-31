@@ -74,6 +74,7 @@ cargo_metadata = { workspace = true, optional = true }
 cargo-platform = { workspace = true, optional = true }
 httpmock = { workspace = true, optional = true }
 urlencoding = { workspace = true, optional = true }
+libdd-networking = { path = "../libdd-networking", version = "1.0.0", default-features = false }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 libdd-capabilities-impl = { version = "8.0.0", path = "../libdd-capabilities-impl", default-features = false, optional = true }
@@ -98,16 +99,16 @@ tempfile.workspace = true
 
 [features]
 default = ["https"]
-https = ["libdd-common/https", "dep:libdd-capabilities-impl", "libdd-capabilities-impl/https"]
+https = ["libdd-networking/https", "dep:libdd-capabilities-impl", "libdd-capabilities-impl/https"]
 mini_agent = [
     "compression",
-    "libdd-common/http-client",
-    "libdd-common/use_webpki_roots",
+    "libdd-networking/http-client",
+    "libdd-networking/use_webpki_roots",
     "dep:flate2",
 ]
 test-utils = [
     "dep:tokio",
-    "libdd-common/http-client",
+    "libdd-networking/http-client",
     "hyper/server",
     "httpmock",
     "cargo_metadata",
@@ -122,4 +123,4 @@ compression = ["zstd"]
 # target: zstd on native platforms and zrip on WASM.
 zstd = ["dep:zstd", "dep:zrip"]
 # FIPS mode uses the FIPS-compliant cryptographic provider (Unix only)
-fips = ["libdd-common/fips", "dep:libdd-capabilities-impl", "libdd-capabilities-impl/fips"]
+fips = ["libdd-networking/fips", "dep:libdd-capabilities-impl", "libdd-capabilities-impl/fips"]

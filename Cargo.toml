@@ -65,6 +65,7 @@ members = [
   "libdd-log-ffi",
   "libdd-sampling",
   "libdd-trace-model",
+  "libdd-networking",
 ]
 
 # https://doc.rust-lang.org/cargo/reference/resolver.html
@@ -89,6 +90,8 @@ ignored = [
   "getrandom",
   "libdd-capabilities-impl",
   "rustls-webpki",
+  "webpki-roots",
+  "webpki-root-certs",
   # Self dev-dependencies enable optional features in their own tests.
   "libdd-profiling-protobuf",
   "libdd-tinybytes",

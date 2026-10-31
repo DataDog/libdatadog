@@ -14,10 +14,11 @@ use crate::shm_path::keyed_shm_path;
 use futures::{TryFutureExt, future::join_all};
 use http::uri::PathAndQuery;
 use libdd_capabilities_impl::{HttpClientCapability, NativeCapabilities};
-use libdd_common::{Endpoint, MutexExt};
+use libdd_common::MutexExt;
 use libdd_ipc::shm_stats::{
     DEFAULT_SLOT_COUNT, DEFAULT_STRING_POOL_BYTES, RELOAD_FILL_RATIO, ShmSpanConcentrator,
 };
+use libdd_networking::endpoint::Endpoint;
 /// Sidecar's telemetry worker is native-only, so its handle is pinned to
 /// [`NativeCapabilities`].
 type TelemetryWorkerHandle = libdd_telemetry::worker::TelemetryWorkerHandle<NativeCapabilities>;

@@ -37,7 +37,6 @@ use datadog_sidecar::service::{
 };
 use datadog_sidecar::shm_remote_config::{RemoteConfigReader, path_for_remote_config};
 use libc::c_char;
-use libdd_common::Endpoint;
 use libdd_common::tag::Tag;
 use libdd_common_ffi::slice::{AsBytes, CharSlice, Slice};
 use libdd_common_ffi::{self as ffi, MaybeError};
@@ -46,6 +45,7 @@ use libdd_crashtracker_ffi::Metadata;
 use libdd_dogstatsd_client::DogStatsDActionOwned;
 use libdd_ipc::platform::{FileBackedHandle, MappedMem, NamedShmHandle, PlatformHandle, ShmHandle};
 use libdd_live_debugger::debugger_defs::DebuggerPayload;
+use libdd_networking::endpoint::Endpoint;
 use libdd_remote_config::fetch::ConfigInvariants;
 use libdd_remote_config::{RemoteConfigCapabilities, RemoteConfigProduct, Target};
 use libdd_telemetry::{

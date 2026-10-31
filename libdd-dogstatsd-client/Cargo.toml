@@ -13,6 +13,7 @@ bench = false
 
 [dependencies]
 libdd-common = { version = "9.0.0", path = "../libdd-common", default-features = false, features = ["std"] }
+libdd-networking = { path = "../libdd-networking", version = "1.0.0", default-features = false }
 cadence.workspace = true
 serde = { workspace = true, features = ["derive", "rc"] }
 tracing.workspace = true
@@ -24,8 +25,8 @@ async-trait = { workspace = true, optional = true }
 
 [features]
 default = ["https"]
-https = ["libdd-common/https"]
-fips = ["libdd-common/fips"]
+https = ["libdd-networking/https"]
+fips = ["libdd-networking/fips"]
 shared-runtime = ["dep:libdd-shared-runtime", "dep:tokio", "dep:async-trait"]
 
 [dev-dependencies]

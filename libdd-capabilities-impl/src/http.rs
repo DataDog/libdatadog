@@ -25,8 +25,8 @@ mod native {
     };
     use libdd_capabilities::maybe_send::MaybeSend;
     use libdd_common::MutexExt;
-    use libdd_common::connector::Connector;
-    use libdd_common::http_common::{
+    use libdd_networking::connector::Connector;
+    use libdd_networking::http_common::{
         Body, GenericHttpClient, new_client_periodic, new_default_client,
     };
 
@@ -40,7 +40,7 @@ mod native {
         periodic: bool,
     }
 
-    pub struct NativeBodySender(libdd_common::http_common::Sender);
+    pub struct NativeBodySender(libdd_networking::http_common::Sender);
 
     impl StreamingBodySender for NativeBodySender {
         fn send_chunk(&mut self, data: bytes::Bytes) -> ChunkFuture<'_> {
@@ -80,7 +80,7 @@ mod native {
         uri: &http::Uri,
         body: bytes::Bytes,
     ) -> Result<http::Response<bytes::Bytes>, HttpError> {
-        let path = libdd_common::decode_uri_path_in_authority(uri)
+        let path = libdd_networking::endpoint::decode_uri_path_in_authority(uri)
             .map_err(|e| HttpError::Other(anyhow::anyhow!("invalid file:// URI: {e}")))?;
 
         // Worker endpoints need constrained file opens. Directory mode also creates and renames
