@@ -11,5 +11,5 @@
 # which rustup reads for local development.
 
 [toolchain]
-stable = "1.99.0"
+stable = "1.99.1"
 nightly = "nightly-2026-07-26"
