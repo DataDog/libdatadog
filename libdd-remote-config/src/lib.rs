@@ -24,6 +24,104 @@ pub use path::*;
 
 use serde::{Deserialize, Serialize};
 
+/// An unsigned, big-endian remote-config capability mask.
+///
+/// Bit zero is the least significant bit of the final byte. Empty masks and leading
+/// zero bytes are valid. Single clients preserve the bytes unchanged. Shared
+/// clients advertise the numeric union of their runtimes' masks.
+///
+/// Consumers own capability assignments. Unknown bits and arbitrary widths are
+/// accepted without consulting [`RemoteConfigCapabilities`].
+#[derive(Debug, Default, Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct CapabilityMask(Vec<u8>);
+
+impl From<Vec<u8>> for CapabilityMask {
+    fn from(bytes: Vec<u8>) -> Self {
+        Self(bytes)
+    }
+}
+
+impl AsRef<[u8]> for CapabilityMask {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl FromIterator<RemoteConfigCapabilities> for CapabilityMask {
+    fn from_iter<T: IntoIterator<Item = RemoteConfigCapabilities>>(capabilities: T) -> Self {
+        Self::from_bit_positions(
+            capabilities
+                .into_iter()
+                .map(|capability| capability as usize),
+        )
+    }
+}
+
+impl CapabilityMask {
+    #[cfg(all(feature = "client", not(target_arch = "wasm32")))]
+    pub(crate) fn set_bits(&self) -> impl Iterator<Item = usize> + '_ {
+        self.0.iter().rev().enumerate().flat_map(|(offset, byte)| {
+            (0..8).filter_map(move |bit| (byte & (1 << bit) != 0).then_some(offset * 8 + bit))
+        })
+    }
+
+    pub(crate) fn from_bit_positions(positions: impl Iterator<Item = usize>) -> Self {
+        let mut bytes = Vec::new();
+        for position in positions {
+            let offset = position / 8;
+            if bytes.len() <= offset {
+                bytes.resize(offset + 1, 0);
+            }
+            bytes[offset] |= 1 << (position % 8);
+        }
+        bytes.reverse();
+        Self(bytes)
+    }
+}
+
+#[cfg(all(test, feature = "client", not(target_arch = "wasm32")))]
+mod capability_mask_tests {
+    use super::CapabilityMask;
+
+    #[test]
+    fn bit_positions_cross_integer_and_byte_boundaries() {
+        let mut bytes = vec![0; 33];
+        bytes[0] = 1;
+        bytes[1] = 0x80;
+        bytes[16] = 1;
+        bytes[17] = 0x80;
+        bytes[24] = 1;
+        bytes[25] = 0x80;
+        bytes[26] = 0x60;
+        bytes[28] = 1;
+        bytes[29] = 0x80;
+        bytes[31] = 1;
+        bytes[32] = 0x81;
+        let mask = CapabilityMask::from(bytes.clone());
+        assert_eq!(
+            mask.set_bits().collect::<Vec<_>>(),
+            [0, 7, 8, 31, 32, 53, 54, 63, 64, 127, 128, 255, 256]
+        );
+        assert_eq!(
+            CapabilityMask::from_bit_positions(mask.set_bits()).as_ref(),
+            bytes
+        );
+    }
+
+    #[test]
+    fn serialization_preserves_bytes_instead_of_enum_ordinals() {
+        let mask = CapabilityMask::from(vec![0, 0x80, 0]);
+        assert_eq!(serde_json::to_string(&mask).unwrap(), "[0,128,0]");
+        assert_eq!(
+            serde_json::from_str::<CapabilityMask>("[0,128,0]")
+                .unwrap()
+                .as_ref(),
+            &[0, 0x80, 0]
+        );
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone, Hash, Ord, PartialOrd, Eq, PartialEq)]
 pub struct Target {
     service: String,

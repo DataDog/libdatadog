@@ -5,7 +5,7 @@
 use super::agentless;
 
 use crate::targets::{Root, TargetsList};
-use crate::{RemoteConfigCapabilities, RemoteConfigPath, RemoteConfigProduct, Target};
+use crate::{CapabilityMask, RemoteConfigPath, RemoteConfigProduct, Target};
 use base64::Engine;
 use hashbrown::HashMap;
 use http::uri::PathAndQuery;
@@ -86,36 +86,18 @@ pub enum ConfigApplyState {
 #[derive(Debug, Clone)]
 pub struct ConfigProductCapabilities {
     products: Vec<RemoteConfigProduct>,
-    capabilities: Vec<RemoteConfigCapabilities>,
-    encoded_capabilities: Vec<u8>,
+    capabilities: CapabilityMask,
 }
 
 impl ConfigProductCapabilities {
-    pub fn new(
-        products: Vec<RemoteConfigProduct>,
-        capabilities: Vec<RemoteConfigCapabilities>,
-    ) -> Self {
+    pub fn new(products: Vec<RemoteConfigProduct>, capabilities: CapabilityMask) -> Self {
         ConfigProductCapabilities {
-            encoded_capabilities: Self::encode_capatibilites(&capabilities),
             products,
             capabilities,
         }
     }
 
-    fn encode_capatibilites(capabilities: &[RemoteConfigCapabilities]) -> Vec<u8> {
-        let capability_len = capabilities
-            .iter()
-            .map(|c| *c as usize / 8 + 1)
-            .max()
-            .unwrap_or(0);
-        let mut encoded_capabilities = vec![0; capability_len];
-        for capability in capabilities.iter().map(|c| *c as usize) {
-            encoded_capabilities[capability_len - (capability >> 3) - 1] |= 1 << (capability & 7);
-        }
-        encoded_capabilities
-    }
-
-    pub fn into_parts(self) -> (Vec<RemoteConfigProduct>, Vec<RemoteConfigCapabilities>) {
+    pub fn into_parts(self) -> (Vec<RemoteConfigProduct>, CapabilityMask) {
         (self.products, self.capabilities)
     }
 }
@@ -401,7 +383,7 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
                 is_agent: false,
                 client_agent: None,
                 last_seen: 0,
-                capabilities: product_capabilities.encoded_capabilities.clone(),
+                capabilities: product_capabilities.capabilities.as_ref().to_vec(),
                 is_updater: false,
                 client_updater: None,
             }),
@@ -737,10 +719,10 @@ fn make_agent_configs_endpoint(endpoint: &Endpoint) -> Endpoint {
 pub mod tests {
     use super::*;
     use crate::fetch::test_server::RemoteConfigServer;
+    use crate::RemoteConfigCapabilities;
     use http::Response;
     use libdd_capabilities_impl::NativeCapabilities;
     use libdd_common::http_common;
-    use std::mem::transmute;
     use std::sync::LazyLock;
 
     pub(crate) static PATH_FIRST: LazyLock<RemoteConfigPath> = LazyLock::new(|| {
@@ -1002,7 +984,9 @@ pub mod tests {
                 RemoteConfigProduct::ApmTracing,
                 RemoteConfigProduct::AgentConfig,
             ],
-            vec![RemoteConfigCapabilities::ApmTracingCustomTags],
+            [RemoteConfigCapabilities::ApmTracingCustomTags]
+                .into_iter()
+                .collect(),
         );
 
         let mut fetcher = ConfigFetcher::new(
@@ -1338,19 +1322,18 @@ pub mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_capability_encoding() {
-        let state = ConfigProductCapabilities::new(vec![], unsafe {
-            vec![
-                transmute::<u32, RemoteConfigCapabilities>(1u32),
-                transmute::<u32, RemoteConfigCapabilities>(24u32),
-                transmute::<u32, RemoteConfigCapabilities>(31u32),
-            ]
-        });
-        assert_eq!(state.encoded_capabilities.len(), 4);
-        assert_eq!(
-            state.encoded_capabilities,
-            (2u32 | (1 << 24) | (1 << 31)).to_be_bytes()
-        );
+        let mask: CapabilityMask = [
+            RemoteConfigCapabilities::AsmActivation,
+            RemoteConfigCapabilities::AsmActivation,
+            RemoteConfigCapabilities::AsmCustomRules,
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(mask.as_ref(), &[1, 2]);
+        let state = ConfigProductCapabilities::new(vec![RemoteConfigProduct::ApmTracing], mask);
+        let (products, mask) = state.into_parts();
+        assert_eq!(products, [RemoteConfigProduct::ApmTracing]);
+        assert_eq!(mask.as_ref(), &[1, 2]);
     }
 }

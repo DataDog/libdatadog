@@ -138,7 +138,7 @@ async fn run_one_iteration(
             agentless,
         },
         products: vec![ApmTracing],
-        capabilities: vec![],
+        capabilities: Default::default(),
     };
 
     // --- 1. Client init: TUF root bootstrap in agentless mode ---

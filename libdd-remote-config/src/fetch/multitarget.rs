@@ -6,7 +6,7 @@ use crate::fetch::{
     ConfigProductCapabilities, FileStorage, RefcountedFile, RefcountingStorage,
     RefcountingStorageStats, SharedFetcher,
 };
-use crate::{RemoteConfigCapabilities, RemoteConfigProduct, Target};
+use crate::{CapabilityMask, RemoteConfigCapabilities, RemoteConfigProduct, Target};
 use futures_util::future::Shared;
 use futures_util::FutureExt;
 use libdd_capabilities::{HttpClientCapability, SleepCapability};
@@ -93,7 +93,7 @@ enum KnownTargetStatus {
 
 pub struct ProductCapabilities {
     pub products: Vec<RemoteConfigProduct>,
-    pub capabilities: Vec<RemoteConfigCapabilities>,
+    pub capabilities: CapabilityMask,
 }
 
 struct KnownTarget {
@@ -104,7 +104,7 @@ struct KnownTarget {
     runtimes: HashMap<String, ProductCapabilities>,
     fetcher: Arc<SharedFetcher>,
     active_products: HashMap<RemoteConfigProduct, u32>,
-    active_capabilities: HashMap<RemoteConfigCapabilities, u32>,
+    active_capabilities: HashMap<usize, u32>,
 }
 
 fn addref_hashmap<K: Hash + Eq>(map: &mut HashMap<K, u32>, key: K) -> bool {
@@ -138,7 +138,7 @@ impl KnownTarget {
             *self.fetcher.product_capabilities.lock_or_panic() =
                 Arc::new(ConfigProductCapabilities::new(
                     self.active_products.keys().cloned().collect(),
-                    self.active_capabilities.keys().cloned().collect(),
+                    CapabilityMask::from_bit_positions(self.active_capabilities.keys().copied()),
                 ));
         }
     }
@@ -294,7 +294,7 @@ where
                                         decref_hashmap(&mut known_service.active_products, product)
                                             || update_product_data;
                                 }
-                                for capability in product_data.capabilities {
+                                for capability in product_data.capabilities.set_bits() {
                                     update_product_data = decref_hashmap(
                                         &mut known_service.active_capabilities,
                                         capability,
@@ -365,9 +365,11 @@ where
                                 .collect();
                             known_target.active_capabilities = product_capabilities
                                 .capabilities
-                                .iter()
-                                .map(|c| (*c, 1))
+                                .set_bits()
+                                .map(|bit| (bit, 1))
                                 .collect();
+                            drop(status);
+                            known_target.update_product_capabilities();
                         }
                         KnownTargetStatus::Removing(ref future) => {
                             let future = future.clone();
@@ -404,10 +406,10 @@ where
                                 1
                             });
                     }
-                    for capability in product_capabilities.capabilities.iter() {
+                    for capability in product_capabilities.capabilities.set_bits() {
                         known_target
                             .active_capabilities
-                            .entry(*capability)
+                            .entry(capability)
                             .and_modify(|count| *count += 1)
                             .or_insert_with(|| {
                                 update_product_data = true;
@@ -438,8 +440,8 @@ where
                             .collect(),
                         active_capabilities: product_capabilities
                             .capabilities
-                            .iter()
-                            .map(|c| (*c, 1))
+                            .set_bits()
+                            .map(|bit| (bit, 1))
                             .collect(),
                         synthetic_id,
                         runtimes: {
@@ -729,7 +731,7 @@ where
 
     pub fn force_capabilities(&self, target: &Target, capabilities: RemoteConfigCapabilities) {
         if let Some(known_target) = self.services.lock_or_panic().get_mut(target) {
-            if addref_hashmap(&mut known_target.active_capabilities, capabilities) {
+            if addref_hashmap(&mut known_target.active_capabilities, capabilities as usize) {
                 known_target.update_product_capabilities();
             }
         }
@@ -745,7 +747,7 @@ where
 
     pub fn unforce_capabilities(&self, target: &Target, capabilities: RemoteConfigCapabilities) {
         if let Some(known_target) = self.services.lock_or_panic().get_mut(target) {
-            if decref_hashmap(&mut known_target.active_capabilities, capabilities) {
+            if decref_hashmap(&mut known_target.active_capabilities, capabilities as usize) {
                 known_target.update_product_capabilities();
             }
         }
@@ -945,6 +947,114 @@ mod tests {
     static RT_ID_1: &str = "3b43524b-a70c-45dc-921d-34504e50c5eb";
     static RT_ID_2: &str = "ae588386-8464-43ba-bd3a-3e2d36b2c22c";
     static RT_ID_3: &str = "0125dff8-d9a7-4fd3-a0c2-0ca3b12816a1";
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn opaque_capabilities_follow_runtime_ownership() {
+        let server = RemoteConfigServer::spawn();
+        let (on_dead, completer) = ManualFuture::new();
+        let storage = MultiFileStorage {
+            rc: RcFileStorage::default(),
+            on_dead_completer: Arc::new(Mutex::new(Some(completer))),
+            recent_fetches: Default::default(),
+            awaiting_fetches: Default::default(),
+            awaited_fetched_done: Default::default(),
+            expected_expirations: Default::default(),
+        };
+        let fetcher = MultiTargetFetcher::<Notifier, MultiFileStorage, NativeCapabilities>::new(
+            storage.clone(),
+            server.dummy_options().invariants,
+            NativeCapabilities::new_without_connection_pooling(),
+        );
+        fetcher
+            .remote_config_interval
+            .store(1_000_000, Ordering::SeqCst);
+        let state = Arc::new(NotifyState::default());
+        let register = |runtime: &str, mask: Vec<u8>| {
+            fetcher.add_runtime(
+                runtime.into(),
+                runtime.into(),
+                Notifier {
+                    id: 1,
+                    state: state.clone(),
+                },
+                &DUMMY_TARGET,
+                ProductCapabilities {
+                    products: vec![],
+                    capabilities: mask.into(),
+                },
+            );
+        };
+        let assert_mask = |expected: &[u8]| {
+            let request = server.last_request.lock().unwrap();
+            assert_eq!(
+                request
+                    .as_ref()
+                    .unwrap()
+                    .client
+                    .as_ref()
+                    .unwrap()
+                    .capabilities,
+                expected
+            );
+        };
+        let next_fetch = |version| {
+            let fetched = storage.await_fetches(1);
+            server.files.lock().unwrap().insert(
+                PATH_FIRST.clone(),
+                (vec![DUMMY_TARGET.clone()], version, format!("v{version}")),
+            );
+            fetched
+        };
+        let first = vec![0x80, 0, 0, 0, 0, 0, 0, 0, 1];
+        let mut second = vec![0; 33];
+        second[0] = 1;
+        second[32] = 1;
+
+        let fetched = next_fetch(1);
+        register(RT_ID_1, first.clone());
+        fetched.await;
+        assert_mask(&first);
+
+        let fetched = next_fetch(2);
+        register(RT_ID_2, second.clone());
+        // Repeated registration retains the first mask until the final release.
+        register(RT_ID_2, vec![0x40]);
+        let mut union = second.clone();
+        union[24] = 0x80;
+        fetched.await;
+        assert_mask(&union);
+
+        let fetched = next_fetch(3);
+        fetcher.delete_runtime(RT_ID_2, RT_ID_2, &DUMMY_TARGET);
+        fetched.await;
+        assert_mask(&union);
+
+        let fetched = next_fetch(4);
+        fetcher.delete_runtime(RT_ID_1, RT_ID_1, &DUMMY_TARGET);
+        fetched.await;
+        assert_mask(&second);
+
+        let fetched = next_fetch(5);
+        fetcher.delete_runtime(RT_ID_2, RT_ID_2, &DUMMY_TARGET);
+        register(RT_ID_3, vec![0x40]);
+        fetched.await;
+        assert_mask(&[0x40]);
+
+        let fetched = next_fetch(6);
+        fetcher.force_capabilities(&DUMMY_TARGET, RemoteConfigCapabilities::AsmActivation);
+        fetched.await;
+        assert_mask(&[0x42]);
+        let fetched = next_fetch(7);
+        fetcher.unforce_capabilities(&DUMMY_TARGET, RemoteConfigCapabilities::AsmActivation);
+        fetched.await;
+        assert_mask(&[0x40]);
+
+        fetcher.delete_runtime(RT_ID_3, RT_ID_3, &DUMMY_TARGET);
+        storage.expect_expiration(&DUMMY_TARGET);
+        fetcher.shutdown();
+        on_dead.await;
+    }
 
     #[tokio::test]
     #[cfg_attr(miri, ignore)]

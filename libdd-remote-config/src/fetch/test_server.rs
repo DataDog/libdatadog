@@ -232,7 +232,9 @@ impl RemoteConfigServer {
                 RemoteConfigProduct::ApmTracing,
                 RemoteConfigProduct::LiveDebugging,
             ],
-            capabilities: vec![RemoteConfigCapabilities::ApmTracingCustomTags],
+            capabilities: [RemoteConfigCapabilities::ApmTracingCustomTags]
+                .into_iter()
+                .collect(),
         }
     }
 

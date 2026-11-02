@@ -188,7 +188,7 @@ impl TracerFlareManager {
                 RemoteConfigProduct::AgentConfig,
                 RemoteConfigProduct::AgentTask,
             ],
-            capabilities: vec![],
+            capabilities: Default::default(),
         };
 
         tracer_flare.listener = Some(SingleChangesFetcher::new_no_agentless(
