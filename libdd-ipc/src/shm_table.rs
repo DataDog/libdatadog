@@ -612,6 +612,20 @@ pub(crate) struct ShmTableMapping<S: Schema> {
     mem: MappedMem<NamedShmHandle>,
     /// Validated once for this mapping, never reread from the shared header.
     pub(crate) layout: Layout<S>,
+    /// The process that created the segment, which retires it when it lets go of the mapping;
+    /// `None` for an opener. A forked copy has another pid and leaves the parent's segment alone.
+    creator_pid: Option<u32>,
+}
+
+impl<S: Schema> Drop for ShmTableMapping<S> {
+    fn drop(&mut self) {
+        // The creator's handle unlinks the name once this returns, but workers that opened the
+        // segment would keep recording into it while nothing drains it. Retired, they reopen the
+        // path or fall back to IPC instead. Fields drop after this, so the mapping is still here.
+        if self.creator_pid == Some(std::process::id()) {
+            self.header().ready.store(0, Release);
+        }
+    }
 }
 
 impl<S: Schema> Clone for ShmTable<S> {
@@ -730,7 +744,11 @@ impl<S: Schema> ShmTableMapping<S> {
         let (handle, replaced) = NamedShmHandle::create_replacing(path, total)?;
         let mem = handle.map()?;
 
-        let this = Self { mem, layout };
+        let this = Self {
+            mem,
+            layout,
+            creator_pid: Some(std::process::id()),
+        };
 
         let hdr = this.header();
         hdr.version.store(SHM_VERSION, Relaxed);
@@ -800,7 +818,11 @@ impl<S: Schema> ShmTableMapping<S> {
         )
         .ok_or_else(|| invalid("SHM table: header does not describe this mapping"))?;
 
-        Ok(Self { mem, layout })
+        Ok(Self {
+            mem,
+            layout,
+            creator_pid: None,
+        })
     }
 
     pub(crate) fn header(&self) -> &ShmHeader {
@@ -1228,5 +1250,83 @@ mod tests {
         });
         assert_eq!(drained.iter().map(|b| b.groups.len()).sum::<usize>(), 2);
         assert!(matches!(insert(7, Some(1)), Insert::Done));
+    }
+
+    /// The keys and counts a table holds, in either bucket.
+    fn drain_all(table: &ShmTable<Counter>) -> Vec<(u64, u64)> {
+        let mut drained: Vec<_> = table
+            .mem
+            .load_full()
+            .unwrap()
+            .drain_buckets(true, |entry, _pool, _budget| {
+                Some((entry.key.load(Relaxed), entry.value.swap(0, Relaxed)))
+            })
+            .into_iter()
+            .flat_map(|b| b.groups)
+            .collect();
+        drained.sort();
+        drained
+    }
+
+    /// A creator letting go of its segment - a sidecar shutting down - unlinks it; a worker that
+    /// opened it must then stop recording into it, as nothing will drain it, and follow the
+    /// segment the next creator makes at the path.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn a_creator_letting_go_retires_its_segment() {
+        let path = test_path();
+        let creator = ShmTable::<Counter>::create(path.clone(), 10, 8, 64).unwrap();
+        let worker = ShmTable::<Counter>::open(&path).unwrap();
+        assert!(worker.add(&3));
+
+        drop(creator);
+        assert!(!worker.add(&3), "recorded into a segment nobody drains");
+
+        let next = ShmTable::<Counter>::create(path, 10, 8, 64).unwrap();
+        assert!(worker.add(&5));
+        assert_eq!(drain_all(&next), [(5, 1)]);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn an_opener_letting_go_leaves_the_segment_in_service() {
+        let path = test_path();
+        let creator = ShmTable::<Counter>::create(path.clone(), 10, 8, 64).unwrap();
+        let first = ShmTable::<Counter>::open(&path).unwrap();
+        assert!(first.add(&3));
+        drop(first);
+
+        let second = ShmTable::<Counter>::open(&path).unwrap();
+        assert!(second.add(&3));
+        assert_eq!(drain_all(&creator), [(3, 2)]);
+    }
+
+    /// A forked copy of the creator - a PHP worker forked from a master running the sidecar in
+    /// thread mode - holds the creator's mapping too, but letting go of it there must not retire
+    /// the segment the parent still drains.
+    #[test]
+    #[cfg(unix)]
+    #[cfg_attr(miri, ignore)]
+    fn a_forked_copy_of_the_creator_leaves_the_segment_in_service() {
+        let path = test_path();
+        let creator = ShmTable::<Counter>::create(path.clone(), 10, 8, 64).unwrap();
+        // SAFETY: the child only drops the table, which neither allocates nor takes a lock in a
+        // process that is not its creator, and calls _exit.
+        match unsafe { libc::fork() } {
+            -1 => panic!("fork failed"),
+            0 => {
+                drop(creator);
+                unsafe { libc::_exit(0) }
+            }
+            pid => {
+                let mut status = 0;
+                assert_eq!(unsafe { libc::waitpid(pid, &mut status, 0) }, pid);
+                assert!(libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0);
+            }
+        }
+
+        let worker = ShmTable::<Counter>::open(&path).unwrap();
+        assert!(worker.add(&3));
+        assert_eq!(drain_all(&creator), [(3, 1)]);
     }
 }
