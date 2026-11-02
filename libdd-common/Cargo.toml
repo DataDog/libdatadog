@@ -69,8 +69,9 @@ features = [
 [target.'cfg(unix)'.dependencies]
 # TODO: Transitional: conn_stream.rs and dump_server.rs still call unix_utils
 # helpers; they move to libdd-networking with APMSP-4096 and take this
-# dependency with them.
-libdd-process-utils = { version = "1.0.0", path = "../libdd-process-utils" }
+# dependency with them. Optional so no-default-features stays genuinely
+# no_std; activated by `http-client`, the feature that gates both call sites.
+libdd-process-utils = { version = "1.0.0", path = "../libdd-process-utils", optional = true }
 
 [dev-dependencies]
 bytes = { workspace = true, features = ["std"] }
@@ -115,6 +116,7 @@ http-client = [
     "dep:http-body-util",
     "dep:tower-service",
     "dep:tokio",
+    "dep:libdd-process-utils",
 ]
 # TLS plumbing without a crypto provider. Use `https` or `fips` to select one.
 tls-core = ["http-client", "dep:rustls", "dep:hyper-rustls", "dep:rustls-platform-verifier"]
