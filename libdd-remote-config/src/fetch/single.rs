@@ -6,7 +6,7 @@ use crate::fetch::{
     ConfigProductCapabilities, FileStorage, random_uuid_string,
 };
 use crate::file_change_tracker::{Change, ChangeTracker, FilePath, UpdatedFiles};
-use crate::{RemoteConfigCapabilities, RemoteConfigPath, RemoteConfigProduct, Target};
+use crate::{CapabilityMask, RemoteConfigPath, RemoteConfigProduct, Target};
 use libdd_capabilities::{HttpClientCapability, SleepCapability};
 use libdd_common::{Endpoint, MutexExt};
 use std::sync::{Arc, Mutex};
@@ -28,7 +28,7 @@ pub struct SingleFetcher<S: FileStorage, C: HttpClientCapability + SleepCapabili
 pub struct ConfigOptions {
     pub invariants: ConfigInvariants,
     pub products: Vec<RemoteConfigProduct>,
-    pub capabilities: Vec<RemoteConfigCapabilities>,
+    pub capabilities: CapabilityMask,
 }
 
 impl<S: FileStorage, C: HttpClientCapability + SleepCapability> SingleFetcher<S, C> {
@@ -182,7 +182,7 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> SingleFetcher<S,
     pub fn set_product_capabilities(
         &mut self,
         products: Vec<RemoteConfigProduct>,
-        capabilities: Vec<RemoteConfigCapabilities>,
+        capabilities: CapabilityMask,
     ) {
         self.product_capabilities = ConfigProductCapabilities::new(products, capabilities);
     }
@@ -279,7 +279,7 @@ where
     pub fn set_product_capabilities(
         &mut self,
         products: Vec<RemoteConfigProduct>,
-        capabilities: Vec<RemoteConfigCapabilities>,
+        capabilities: CapabilityMask,
     ) {
         self.fetcher
             .set_product_capabilities(products, capabilities);
@@ -339,5 +339,46 @@ mod tests {
             client.state.as_ref().unwrap().backend_client_state,
             b"some state"
         );
+    }
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn forwards_opaque_capability_masks() {
+        let server = RemoteConfigServer::spawn();
+        let mut options = server.dummy_options();
+        options.capabilities = crate::CapabilityMask::from(vec![0x80, 0, 0, 0, 0, 0, 0, 0, 1]);
+        let mut fetcher = SingleChangesFetcher::new_no_agentless(
+            SimpleFileStorage::default(),
+            Target::new("service".into(), "env".into(), "1".into(), vec![], vec![]),
+            "runtime".into(),
+            options,
+            NativeCapabilities::new_periodic(),
+        );
+        let masks = [
+            vec![0x80, 0, 0, 0, 0, 0, 0, 0, 1],
+            vec![],
+            vec![0],
+            vec![0, 0],
+            vec![0, 0x80],
+            vec![0, 0, 0, 0, 0, 0, 0, 1],
+            vec![1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+            vec![0x80; 33],
+        ];
+        for (index, mask) in masks.into_iter().enumerate() {
+            if index > 0 {
+                fetcher.set_product_capabilities(vec![], mask.clone().into());
+            }
+            fetcher.fetch_changes::<Vec<u8>>().await.unwrap();
+            let request = server.last_request.lock().unwrap();
+            assert_eq!(
+                request
+                    .as_ref()
+                    .unwrap()
+                    .client
+                    .as_ref()
+                    .unwrap()
+                    .capabilities,
+                mask
+            );
+        }
     }
 }

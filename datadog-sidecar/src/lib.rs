@@ -45,7 +45,10 @@ pub use self::windows::{
 
 macro_rules! sidecar_version {
     () => {
-        datadog_sidecar_macros::env_or_default!("SIDECAR_VERSION", env!("CARGO_PKG_VERSION"))
+        concat!(
+            datadog_sidecar_macros::env_or_default!("SIDECAR_VERSION", env!("CARGO_PKG_VERSION")),
+            "-rc-mask-1"
+        )
     };
 }
 pub(crate) use sidecar_version;

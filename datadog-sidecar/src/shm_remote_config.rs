@@ -976,7 +976,7 @@ mod tests {
                 vec![],
                 ProductCapabilities {
                     products: vec![],
-                    capabilities: vec![],
+                    capabilities: Default::default(),
                 },
                 DynamicInstrumentationConfigState::Disabled,
                 vec![],

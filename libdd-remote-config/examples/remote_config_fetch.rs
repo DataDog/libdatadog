@@ -107,7 +107,7 @@ async fn main() {
                 agentless,
             },
             products: vec![ApmTracing],
-            capabilities: vec![],
+            capabilities: Default::default(),
         },
         NativeCapabilities::new_periodic(),
     )

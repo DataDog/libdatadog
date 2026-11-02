@@ -13,7 +13,7 @@ pub use libdd_ffe::telemetry::flagevaluation::{
     FfeFlagEvaluationEvent, FieldOmissions, FlagEvalEventContext, FlagKey, MAX_CONTEXT_DEPTH,
     MAX_CONTEXT_FIELDS, MAX_FIELD_LENGTH, TargetingRuleKey, VariantKey, prune_context_json,
 };
-use libdd_remote_config::{RemoteConfigCapabilities, RemoteConfigProduct};
+use libdd_remote_config::{CapabilityMask, RemoteConfigProduct};
 use libdd_telemetry::worker::TelemetryActions;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -85,7 +85,7 @@ pub struct SessionConfig {
     pub log_level: String,
     pub log_file: config::LogMethod,
     pub remote_config_products: Vec<RemoteConfigProduct>,
-    pub remote_config_capabilities: Vec<RemoteConfigCapabilities>,
+    pub remote_config_capabilities: CapabilityMask,
     pub remote_config_enabled: bool,
     pub process_tags: Vec<Tag>,
     /// The service name the tracer resolves when none is configured, reported as the `svc.auto`
@@ -128,7 +128,7 @@ impl SessionConfig {
             log_level: "error".to_owned(),
             log_file: config::LogMethod::Disabled,
             remote_config_products: vec![],
-            remote_config_capabilities: vec![],
+            remote_config_capabilities: Default::default(),
             remote_config_enabled: false,
             process_tags: vec![],
             default_service_name: None,

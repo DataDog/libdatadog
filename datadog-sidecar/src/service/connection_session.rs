@@ -255,7 +255,7 @@ impl ConnectionSession {
                     agentless: None,
                 },
                 products: vec![],
-                capabilities: vec![],
+                capabilities: Default::default(),
             },
             remote_config_interval: Duration::from_secs(5),
             remote_config_enabled: false,

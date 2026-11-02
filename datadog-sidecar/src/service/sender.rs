@@ -581,7 +581,9 @@ mod tests {
         let instance_id = InstanceId::new("session", "runtime");
         let process_tags = vec![Tag::new("entrypoint.name", "php").unwrap()];
         let (mut previous, previous_peer) = sender();
-        previous.set_connection_config(instance_id.clone(), SessionConfig::for_test());
+        let mut config = SessionConfig::for_test();
+        config.remote_config_capabilities = vec![0, 0x80, 0, 0, 0, 0, 0, 0, 0, 1].into();
+        previous.set_connection_config(instance_id.clone(), config);
         previous.set_process_tags(process_tags.clone());
         previous.set_application(Some(application("svc")), 7);
         assert_eq!(received(&previous_peer).len(), 3);
@@ -609,6 +611,10 @@ mod tests {
             ] => {
                 assert_eq!(replayed_instance_id, &instance_id);
                 assert_eq!(config.language, "php");
+                assert_eq!(
+                    config.remote_config_capabilities.as_ref(),
+                    &[0, 0x80, 0, 0, 0, 0, 0, 0, 0, 1]
+                );
                 assert_eq!(replayed_process_tags, &process_tags);
                 assert_eq!(replayed_application.as_ref(), Some(&application("svc")));
                 // The new connection may reach another sidecar, which notifies about anything.
@@ -624,10 +630,9 @@ mod tests {
     fn new_instance_replays_the_state_with_the_given_generation() {
         let process_tags = vec![Tag::new("entrypoint.name", "php").unwrap()];
         let (mut previous, previous_peer) = sender();
-        previous.set_connection_config(
-            InstanceId::new("session", "parent"),
-            SessionConfig::for_test(),
-        );
+        let mut config = SessionConfig::for_test();
+        config.remote_config_capabilities = vec![0, 0x80, 0, 0, 0, 0, 0, 0, 0, 1].into();
+        previous.set_connection_config(InstanceId::new("session", "parent"), config);
         previous.set_process_tags(process_tags.clone());
         previous.set_application(Some(application("svc")), 7);
         assert_eq!(received(&previous_peer).len(), 3);
@@ -639,7 +644,10 @@ mod tests {
 
         match received(&peer).as_slice() {
             [
-                SidecarInterfaceRequest::SetConnectionConfig { instance_id, .. },
+                SidecarInterfaceRequest::SetConnectionConfig {
+                    instance_id,
+                    config,
+                },
                 SidecarInterfaceRequest::SetProcessTags {
                     process_tags: replayed_process_tags,
                 },
@@ -649,6 +657,10 @@ mod tests {
                 },
             ] => {
                 assert_eq!(instance_id, &child);
+                assert_eq!(
+                    config.remote_config_capabilities.as_ref(),
+                    &[0, 0x80, 0, 0, 0, 0, 0, 0, 0, 1]
+                );
                 assert_eq!(replayed_process_tags, &process_tags);
                 assert_eq!(replayed_application.as_ref(), Some(&application("svc")));
                 assert_eq!(*remote_config_generation, 9);
