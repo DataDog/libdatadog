@@ -2851,6 +2851,7 @@ dependencies = [
  "libdd-common",
  "libdd-gotter",
  "libdd-libunwind-sys",
+ "libdd-process-utils",
  "libdd-telemetry",
  "nix 0.29.0",
  "num-derive",
