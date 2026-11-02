@@ -11,6 +11,9 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # The tool-binaries cache key embeds these, so version bumps invalidate it.
+  CARGO_PUBLIC_API_VERSION: 0.52.0
+  CARGO_SEMVER_CHECKS_VERSION: 0.51.0
 
 jobs:
   # Automation that opens a PR and labels it in two steps (`gh pr create
@@ -151,14 +154,27 @@ jobs:
         id: sccache
         uses: ./.github/actions/setup-sccache
 
+      # cargo-public-api ships no prebuilt binaries, so install-action falls
+      # back to a from-source cargo install; the binaries only depend on the
+      # pinned versions, so cache them and skip the install + libssl-dev on hit
+      # (the built binary links the libssl runtime ubuntu-latest already ships).
+      - name: Cache cargo tool binaries
+        id: tools-cache
+        uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # 4.2.2
+        with:
+          path: ~/.cargo/bin
+          key: semver-tools-${{ runner.os }}-public-api-${{ env.CARGO_PUBLIC_API_VERSION }}-semver-checks-${{ env.CARGO_SEMVER_CHECKS_VERSION }}
+
       - name: Install dependencies
+        if: steps.tools-cache.outputs.cache-hit != 'true'
         run: |
           sudo apt update && sudo apt install -y libssl-dev  # cargo-public-api dependency
 
       - name: Install cargo-public-api
+        if: steps.tools-cache.outputs.cache-hit != 'true'
         uses: taiki-e/install-action@2c41309d51ede152b6f2ee6bf3b71e6dc9a8b7df # 2.49.27
         with:
-          tool: cargo-public-api@0.52.0, cargo-semver-checks@0.51.0
+          tool: cargo-public-api@${{ env.CARGO_PUBLIC_API_VERSION }}, cargo-semver-checks@${{ env.CARGO_SEMVER_CHECKS_VERSION }}
         env:
           RUSTUP_TOOLCHAIN: ${{ steps.stable-version.outputs.version }}
 
