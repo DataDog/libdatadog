@@ -42,3 +42,6 @@ futures-util = { workspace = true, features = ["alloc", "channel"] }
 
 [dev-dependencies]
 futures = { workspace = true, features = ["executor"] }
+
+[package.metadata.cargo-machete]
+ignored = ["libdd-regex"]

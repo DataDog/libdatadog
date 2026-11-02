@@ -31,3 +31,7 @@ forward the feature:
 [features]
 regex-lite = ["libdd-regex/regex-lite"]
 ```
+
+Cargo requires a direct dependency to reference a feature, so a relay crate
+that does not otherwise use the facade still declares it — and marks it in
+`[package.metadata.cargo-machete]` as intentionally unused in source.

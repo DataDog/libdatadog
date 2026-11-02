@@ -53,3 +53,6 @@ tempfile.workspace = true
 
 [target.'cfg(windows)'.dev-dependencies]
 windows = { workspace = true, features = ["std", "Win32_System_LibraryLoader"] }
+
+[package.metadata.cargo-machete]
+ignored = ["libdd-regex"]

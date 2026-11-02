@@ -48,3 +48,6 @@ std_instead_of_core = "warn"
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 libdd-library-config = { path = "../libdd-library-config", default-features = false, features = ["process-context-reader"] }
+
+[package.metadata.cargo-machete]
+ignored = ["libdd-regex"]

@@ -28,3 +28,6 @@ regex-lite = ["libdd-regex/regex-lite"]
 
 [build-dependencies]
 build_common = { path = "../build-common" }
+
+[package.metadata.cargo-machete]
+ignored = ["libdd-regex"]

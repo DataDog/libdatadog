@@ -38,3 +38,6 @@ assert_no_alloc.workspace = true
 [lints.clippy]
 std_instead_of_alloc = "warn"
 std_instead_of_core = "warn"
+
+[package.metadata.cargo-machete]
+ignored = ["libdd-regex"]

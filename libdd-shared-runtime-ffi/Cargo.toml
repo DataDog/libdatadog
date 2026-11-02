@@ -26,3 +26,6 @@ build_common = { path = "../build-common" }
 libdd-shared-runtime = { version = "7.0.0", path = "../libdd-shared-runtime" }
 libdd-regex = { version = "0.1.0", path = "../libdd-regex" }
 tracing.workspace = true
+
+[package.metadata.cargo-machete]
+ignored = ["libdd-regex"]

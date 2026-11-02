@@ -152,3 +152,6 @@ compression = [
     "libdd-trace-stats/compression",
     "libdd-data-pipeline-core/compression",
 ]
+
+[package.metadata.cargo-machete]
+ignored = ["libdd-regex"]

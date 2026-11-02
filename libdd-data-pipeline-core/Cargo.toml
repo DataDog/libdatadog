@@ -31,3 +31,6 @@ default = []
 compression = ["libdd-trace-stats?/compression", "libdd-trace-utils/compression"]
 regex-lite = ["libdd-regex/regex-lite"]
 stats-obfuscation = ["dep:anyhow", "dep:libdd-trace-stats", "libdd-trace-stats/stats-obfuscation"]
+
+[package.metadata.cargo-machete]
+ignored = ["libdd-regex"]

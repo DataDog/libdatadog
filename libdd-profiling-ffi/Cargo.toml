@@ -92,3 +92,6 @@ tokio-util.workspace = true
 libdd-ffe-ffi = { path = "../libdd-ffe-ffi", default-features = false, optional = true }
 libdd-shared-runtime-ffi = { path = "../libdd-shared-runtime-ffi", default-features = false, optional = true }
 libdd-otel-thread-ctx-ffi = { path = "../libdd-otel-thread-ctx-ffi", default-features = false, optional = true }
+
+[package.metadata.cargo-machete]
+ignored = ["libdd-regex"]
