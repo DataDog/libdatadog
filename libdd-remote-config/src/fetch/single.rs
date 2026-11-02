@@ -8,7 +8,8 @@ use crate::fetch::{
 use crate::file_change_tracker::{Change, ChangeTracker, FilePath, UpdatedFiles};
 use crate::{RemoteConfigCapabilities, RemoteConfigPath, RemoteConfigProduct, Target};
 use libdd_capabilities::{HttpClientCapability, SleepCapability};
-use libdd_common::{Endpoint, MutexExt};
+use libdd_common::MutexExt;
+use libdd_networking::endpoint::Endpoint;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
