@@ -552,7 +552,9 @@ compute_semver_results() {
         if [[ $SEMVER_EXIT_CODE -eq 0 ]]; then
             log_verbose "cargo-semver-checks: no violations"
             semver_level="none"
-        elif [[ $SEMVER_EXIT_CODE -eq 1 ]]; then
+        # cargo-semver-checks >= 0.49 exits 100 for deny-level violations and 101 for
+        # errors (older versions used 1 for both); the output grep below disambiguates.
+        elif [[ $SEMVER_EXIT_CODE -eq 1 || $SEMVER_EXIT_CODE -eq 100 || $SEMVER_EXIT_CODE -eq 101 ]]; then
             if grep -qE "Summary semver requires new major version" <<< "$SEMVER_OUTPUT"; then
                 semver_level="major"
                 semver_reason="cargo-semver-checks detected breaking changes"

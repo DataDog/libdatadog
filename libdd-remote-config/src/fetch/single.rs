@@ -8,7 +8,8 @@ use crate::fetch::{
 use crate::file_change_tracker::{Change, ChangeTracker, FilePath, UpdatedFiles};
 use crate::{RemoteConfigCapabilities, RemoteConfigPath, RemoteConfigProduct, Target};
 use libdd_capabilities::{HttpClientCapability, SleepCapability};
-use std::sync::Arc;
+use libdd_common::{Endpoint, MutexExt};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 const DEFAULT_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
@@ -94,6 +95,41 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> SingleFetcher<S,
         self.client_id = client_id;
         self.runtime_id = runtime_id;
         self.target.tags = tags;
+    }
+
+    /// Switches to another target or Endpoint, keeping the known-files state
+    pub async fn rebind(self, target: Target, endpoint: Option<Endpoint>) -> anyhow::Result<Self> {
+        let SingleFetcher {
+            fetcher,
+            target: _,
+            product_capabilities,
+            runtime_id,
+            client_id,
+            client_state: previous_client_state,
+        } = self;
+        let (file_storage, previous) = fetcher.into_parts();
+
+        let mut invariants = previous.invariants.clone();
+        if let Some(endpoint) = endpoint {
+            invariants.endpoint = endpoint;
+        }
+        let mut state = ConfigFetcherState::with_client(invariants, previous.http_client.clone());
+        state.expire_unused_files = previous.expire_unused_files;
+        state.target_files_by_path = Mutex::new(std::mem::take(
+            &mut *previous.target_files_by_path.lock_or_panic(),
+        ));
+
+        let mut client_state = ConfigClientState::default();
+        client_state.set_extra_services(previous_client_state.extra_services);
+
+        Ok(SingleFetcher {
+            fetcher: ConfigFetcher::new(file_storage, Arc::new(state)).await?,
+            target,
+            product_capabilities,
+            runtime_id,
+            client_id,
+            client_state,
+        })
     }
 
     /// Polls the current runtime config files.
