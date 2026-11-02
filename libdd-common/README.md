@@ -19,10 +19,15 @@ Common utilities and foundational components shared across Datadog telemetry lib
 - `azure_app_services`: Azure App Services integration
 - `config`: Configuration utilities
 - `connector`: HTTP/HTTPS connector implementations
+- `dump_server`: Local server that records received requests to a file (requires `reqwest`)
 - `entity_id`: Container and entity ID detection
 - `error`: Common error types
 - `header`: Datadog HTTP headers
 - `http_common`: Hyper version migration helpers
+- `machine_id`: Stable host machine ID as a hyphenated UUID, cached for the process lifetime
+- `multipart`: Multipart form data construction
+- `mutable_metadata`: Tracer metadata updatable after startup (runtime ID, process tags, session ancestry)
+- `regex_engine`: Regex engine re-exports; the `regex-lite` feature switches to `regex-lite` for smaller binaries
 - `tag`: Tag creation and validation
 
 ## Examples

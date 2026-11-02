@@ -24,6 +24,7 @@ otel = ["dep:opentelemetry-proto"]
 [[bench]]
 name = "main"
 harness = false
+path = "benches/main.rs"
 
 [dependencies]
 allocator-api2 = { workspace = true, features = ["alloc"] }
