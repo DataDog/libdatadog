@@ -475,10 +475,10 @@ impl Profile {
         );
 
         let mut found = self.sample_types.iter().copied().any(|st| st == slot);
-        if let Some(period) = self.period {
-            if period.sample_type == slot {
-                found = true;
-            }
+        if let Some(period) = self.period
+            && period.sample_type == slot
+        {
+            found = true;
         }
 
         anyhow::ensure!(
@@ -982,10 +982,10 @@ impl Profile {
 
     fn get_endpoint_for_label_set(&self, label_set: &LabelSet) -> anyhow::Result<Option<Label>> {
         if let Some(label) = label_set.iter().find_map(|id| {
-            if let Ok(label) = self.get_label(*id) {
-                if label.get_key() == self.endpoints.local_root_span_id_label {
-                    return Some(label);
-                }
+            if let Ok(label) = self.get_label(*id)
+                && label.get_key() == self.endpoints.local_root_span_id_label
+            {
+                return Some(label);
             }
             None
         }) {

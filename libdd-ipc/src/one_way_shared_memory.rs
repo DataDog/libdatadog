@@ -474,10 +474,11 @@ impl<T: FileBackedHandle, D> OneWayShmReader<T, D> {
                 Some(new) if new & 1 == 0 => generation = new,
                 _ => return self.cached(),
             }
-        } else if generation == ENDED && self.consumed_end() {
-            if let Some(new) = self.follow_end() {
-                generation = new;
-            }
+        } else if generation == ENDED
+            && self.consumed_end()
+            && let Some(new) = self.follow_end()
+        {
+            generation = new;
         }
 
         let wanted = generation != 0

@@ -444,11 +444,11 @@ mod tests {
         if request_type == Some(target_type) {
             results.push(value.clone());
         }
-        if request_type == Some("message-batch") {
-            if let Some(batch) = value["payload"].as_array() {
-                for item in batch {
-                    collect_payloads_recursive(item, target_type, results);
-                }
+        if request_type == Some("message-batch")
+            && let Some(batch) = value["payload"].as_array()
+        {
+            for item in batch {
+                collect_payloads_recursive(item, target_type, results);
             }
         }
     }

@@ -242,10 +242,10 @@ fn build_attributes(
         ));
     }
     for tag in &group.additional_metric_tags {
-        if let Some((k, v)) = tag.split_once(':') {
-            if attrs.iter().all(|attr| attr["key"].as_str() != Some(k)) {
-                attrs.push(kv_str(k, v));
-            }
+        if let Some((k, v)) = tag.split_once(':')
+            && attrs.iter().all(|attr| attr["key"].as_str() != Some(k))
+        {
+            attrs.push(kv_str(k, v));
         }
     }
     attrs

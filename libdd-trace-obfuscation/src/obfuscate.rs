@@ -116,25 +116,27 @@ pub fn obfuscate_pb_span(span: &mut pb::Span, config: &ObfuscationConfig) {
         }
         "redis" => {
             span.resource = quantize_redis_string(&span.resource);
-            if config.redis.enabled && !span.meta.is_empty() {
-                if let Some(redis_cmd) = span.meta.get_mut(TAG_REDIS_RAW_COMMAND) {
-                    if config.redis.remove_all_args {
-                        *redis_cmd = remove_all_redis_args(redis_cmd);
-                    } else {
-                        *redis_cmd = obfuscate_redis_string(redis_cmd);
-                    }
+            if config.redis.enabled
+                && !span.meta.is_empty()
+                && let Some(redis_cmd) = span.meta.get_mut(TAG_REDIS_RAW_COMMAND)
+            {
+                if config.redis.remove_all_args {
+                    *redis_cmd = remove_all_redis_args(redis_cmd);
+                } else {
+                    *redis_cmd = obfuscate_redis_string(redis_cmd);
                 }
             }
         }
         "valkey" => {
             span.resource = quantize_redis_string(&span.resource);
-            if config.valkey.enabled && !span.meta.is_empty() {
-                if let Some(valkey_cmd) = span.meta.get_mut(TAG_VALKEY_RAW_COMMAND) {
-                    if config.valkey.remove_all_args {
-                        *valkey_cmd = remove_all_redis_args(valkey_cmd);
-                    } else {
-                        *valkey_cmd = obfuscate_redis_string(valkey_cmd);
-                    }
+            if config.valkey.enabled
+                && !span.meta.is_empty()
+                && let Some(valkey_cmd) = span.meta.get_mut(TAG_VALKEY_RAW_COMMAND)
+            {
+                if config.valkey.remove_all_args {
+                    *valkey_cmd = remove_all_redis_args(valkey_cmd);
+                } else {
+                    *valkey_cmd = obfuscate_redis_string(valkey_cmd);
                 }
             }
         }
@@ -282,25 +284,27 @@ pub fn obfuscate_v04_span<T: TraceData>(span: &mut v04::Span<T>, config: &Obfusc
         }
         "redis" => {
             apply(&mut span.resource, quantize_redis);
-            if config.redis.enabled && !span.meta.is_empty() {
-                if let Some(redis_cmd) = span.meta.get_mut(TAG_REDIS_RAW_COMMAND) {
-                    if config.redis.remove_all_args {
-                        apply(redis_cmd, obfuscate_redis_remove_all_args);
-                    } else {
-                        apply(redis_cmd, obfuscate_redis);
-                    }
+            if config.redis.enabled
+                && !span.meta.is_empty()
+                && let Some(redis_cmd) = span.meta.get_mut(TAG_REDIS_RAW_COMMAND)
+            {
+                if config.redis.remove_all_args {
+                    apply(redis_cmd, obfuscate_redis_remove_all_args);
+                } else {
+                    apply(redis_cmd, obfuscate_redis);
                 }
             }
         }
         "valkey" => {
             apply(&mut span.resource, quantize_redis);
-            if config.valkey.enabled && !span.meta.is_empty() {
-                if let Some(valkey_cmd) = span.meta.get_mut(TAG_VALKEY_RAW_COMMAND) {
-                    if config.valkey.remove_all_args {
-                        apply(valkey_cmd, obfuscate_redis_remove_all_args);
-                    } else {
-                        apply(valkey_cmd, obfuscate_redis);
-                    }
+            if config.valkey.enabled
+                && !span.meta.is_empty()
+                && let Some(valkey_cmd) = span.meta.get_mut(TAG_VALKEY_RAW_COMMAND)
+            {
+                if config.valkey.remove_all_args {
+                    apply(valkey_cmd, obfuscate_redis_remove_all_args);
+                } else {
+                    apply(valkey_cmd, obfuscate_redis);
                 }
             }
         }

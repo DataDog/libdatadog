@@ -68,10 +68,10 @@ impl NameOwnership {
             return;
         }
         let _guard = lock_shm();
-        if let Ok(fd) = sys_open_existing(name) {
-            if sys_identity(&fd) == Some(self.identity) {
-                _ = sys_shm_unlink(name);
-            }
+        if let Ok(fd) = sys_open_existing(name)
+            && sys_identity(&fd) == Some(self.identity)
+        {
+            _ = sys_shm_unlink(name);
         }
     }
 }
