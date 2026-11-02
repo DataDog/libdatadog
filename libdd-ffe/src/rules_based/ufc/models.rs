@@ -656,7 +656,7 @@ where
 
     // Entries stay raw until each is parsed on its own: a number serde_json cannot represent,
     // such as 1e400, then skips its entry instead of failing the whole flag.
-    let Some(raw) = Option::<Box<RawValue>>::deserialize(deserializer)? else {
+    let Some(raw) = Option::<&RawValue>::deserialize(deserializer)? else {
         return Ok(Box::default());
     };
     let Ok(entries) = serde_json::from_str::<Vec<&RawValue>>(raw.get()) else {
