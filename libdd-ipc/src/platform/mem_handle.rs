@@ -186,6 +186,32 @@ impl MappedMem<NamedShmHandle> {
     }
 }
 
+impl MappedMem<ShmHandle> {
+    /// The same mapping, without the descriptor it was made from.
+    ///
+    /// A mapping stays valid once its descriptor is closed; the descriptor is only needed to map
+    /// the segment again or to pass it on. Mappings kept for a while - a trace payload waiting
+    /// for its flush - would otherwise hold one descriptor each, and enough of them at once
+    /// exhaust the process's limit.
+    ///
+    /// The descriptor closes here unless a clone of the handle still shares it.
+    pub fn into_detached(self) -> MappedMem<AnonHandle> {
+        let this = std::mem::ManuallyDrop::new(self);
+        // SAFETY: `this` is neither used nor dropped after this read, so the handle is taken out
+        // exactly once, and the mapping it refers to is unmapped only by the value returned.
+        let handle = unsafe { std::ptr::read(&this.mem) };
+        let size = handle.size;
+        // The mapping does not depend on the descriptor.
+        drop(handle);
+        MappedMem {
+            ptr: this.ptr,
+            mapped_len: this.mapped_len,
+            usable: AtomicUsize::new(this.usable.load(Ordering::Acquire)),
+            mem: AnonHandle { size },
+        }
+    }
+}
+
 impl<T: MemoryHandle> MappedMem<T> {
     pub fn as_slice(&self) -> &[u8] {
         // SAFETY: `usable` bytes from the base are mapped and backed. It only ever grows, so
@@ -280,15 +306,51 @@ impl From<ShmHandle> for PlatformHandle<OwnedFileHandle> {
 
 unsafe impl<T> Sync for MappedMem<T> where T: FileBackedHandle {}
 unsafe impl<T> Send for MappedMem<T> where T: FileBackedHandle {}
+// SAFETY: as for file-backed mappings - the value owns its mapping, and nothing in it is tied to
+// a thread; there is just no descriptor left behind it.
+unsafe impl Sync for MappedMem<AnonHandle> {}
+unsafe impl Send for MappedMem<AnonHandle> {}
 
 #[cfg(feature = "tiny-bytes")]
 impl UnderlyingBytes for MappedMem<ShmHandle> {}
+#[cfg(feature = "tiny-bytes")]
+impl UnderlyingBytes for MappedMem<AnonHandle> {}
 
 #[cfg(test)]
 mod tests {
     use crate::platform::{FileBackedHandle, NamedShmHandle, ShmHandle};
     use std::ffi::CString;
     use std::io::Write;
+
+    /// A detached mapping keeps its bytes, and the descriptor it was made from is closed rather
+    /// than held for as long as the mapping lives.
+    #[test]
+    #[cfg(unix)]
+    #[cfg_attr(miri, ignore)]
+    fn a_detached_mapping_keeps_its_bytes_but_not_its_descriptor() {
+        // The descriptor's number may be reused by another test once it is closed, so what is
+        // compared is the file it refers to.
+        let identity = |fd| {
+            let mut st = std::mem::MaybeUninit::<libc::stat>::uninit();
+            // SAFETY: fstat only writes `st`, and only reads `fd`.
+            (unsafe { libc::fstat(fd, st.as_mut_ptr()) } == 0).then(|| {
+                // SAFETY: initialized by the successful fstat.
+                let st = unsafe { st.assume_init() };
+                (st.st_dev, st.st_ino)
+            })
+        };
+
+        let size = page_size::get();
+        let mut mapped = ShmHandle::new(size).unwrap().map().unwrap();
+        mapped.as_slice_mut()[..5].copy_from_slice(b"spans");
+        let fd = mapped.mem.handle.fd;
+        let file = identity(fd).expect("the mapping's descriptor is open");
+
+        let detached = mapped.into_detached();
+        assert_ne!(identity(fd), Some(file), "the descriptor is still open");
+        assert_eq!(detached.get_size(), size);
+        assert_eq!(&detached.as_slice()[..5], b"spans");
+    }
 
     #[test]
     #[cfg(unix)]
