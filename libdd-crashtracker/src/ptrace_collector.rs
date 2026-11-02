@@ -189,10 +189,10 @@ pub fn enumerate_threads(pid: libc::pid_t) -> Result<Vec<libc::pid_t>, PtraceErr
     let mut tids = Vec::new();
     for entry in entries {
         let entry = entry.map_err(PtraceError::Enumeration)?;
-        if let Ok(name) = entry.file_name().into_string() {
-            if let Ok(tid) = name.parse::<libc::pid_t>() {
-                tids.push(tid);
-            }
+        if let Ok(name) = entry.file_name().into_string()
+            && let Ok(tid) = name.parse::<libc::pid_t>()
+        {
+            tids.push(tid);
         }
     }
     Ok(tids)
@@ -599,10 +599,8 @@ pub(crate) fn thread_data_from_capture(
     };
 
     let crashed = tid == crashing_tid;
-    if crashed {
-        if let Some((ip, sp)) = crash_site {
-            drop_frames_above_crash_site(&mut stack, ip, sp);
-        }
+    if crashed && let Some((ip, sp)) = crash_site {
+        drop_frames_above_crash_site(&mut stack, ip, sp);
     }
 
     ThreadData {

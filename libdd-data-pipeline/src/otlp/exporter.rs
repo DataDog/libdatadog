@@ -81,13 +81,13 @@ pub(crate) async fn send_otlp_http_with_observer<
 
     let mut headers = config_headers.clone();
     headers.insert(http::header::CONTENT_TYPE, content_type);
-    if let Some(token) = test_token {
-        if let Ok(val) = http::HeaderValue::from_str(token) {
-            headers.insert(
-                http::HeaderName::from_static("x-datadog-test-session-token"),
-                val,
-            );
-        }
+    if let Some(token) = test_token
+        && let Ok(val) = http::HeaderValue::from_str(token)
+    {
+        headers.insert(
+            http::HeaderName::from_static("x-datadog-test-session-token"),
+            val,
+        );
     }
 
     let retry_strategy = RetryStrategy::new(

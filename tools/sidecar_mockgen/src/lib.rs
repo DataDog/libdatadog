@@ -51,10 +51,10 @@ pub fn generate_mock_symbols(binary: &Path, objects: &[&Path]) -> Result<String,
         let bin_data = fs::read(path);
         let obj_file = check_and_parse(path, &bin_data)?;
         for sym in obj_file.symbols() {
-            if sym.is_undefined() {
-                if let Ok(name) = sym.name() {
-                    missing_symbols.insert(name.to_string());
-                }
+            if sym.is_undefined()
+                && let Ok(name) = sym.name()
+            {
+                missing_symbols.insert(name.to_string());
             }
         }
     }
@@ -64,41 +64,40 @@ pub fn generate_mock_symbols(binary: &Path, objects: &[&Path]) -> Result<String,
 
     let mut generated = String::new();
     for sym in so_file.symbols().chain(so_file.dynamic_symbols()) {
-        if sym_is_definition(&sym) {
-            if let Ok(name) = sym.name() {
-                if missing_symbols.remove(name) {
-                    let name = if is_macho { &name[1..] } else { name };
-                    _ = match sym.kind() {
-                        SymbolKind::Text => {
-                            if !sym.is_weak() {
-                                writeln!(generated, "void {name}() {{}}")
-                            } else {
-                                Ok(())
-                            }
-                        }
-                        // Ignore symbols of size 0, like _GLOBAL_OFFSET_TABLE_ on alpine
-                        SymbolKind::Data | SymbolKind::Unknown => {
-                            if sym.size() > 0 {
-                                writeln!(generated, "char {}[{}];", name, sym.size())
-                            } else if is_macho {
-                                writeln!(generated, "char {name}[1];")
-                            } else {
-                                Ok(())
-                            }
-                        }
-                        SymbolKind::Tls => {
-                            if sym.size() > 0 {
-                                writeln!(generated, "__thread char {}[{}];", name, sym.size())
-                            } else if is_macho {
-                                writeln!(generated, "__thread char {name}[1];")
-                            } else {
-                                Ok(())
-                            }
-                        }
-                        _ => Ok(()),
-                    };
+        if sym_is_definition(&sym)
+            && let Ok(name) = sym.name()
+            && missing_symbols.remove(name)
+        {
+            let name = if is_macho { &name[1..] } else { name };
+            _ = match sym.kind() {
+                SymbolKind::Text => {
+                    if !sym.is_weak() {
+                        writeln!(generated, "void {name}() {{}}")
+                    } else {
+                        Ok(())
+                    }
                 }
-            }
+                // Ignore symbols of size 0, like _GLOBAL_OFFSET_TABLE_ on alpine
+                SymbolKind::Data | SymbolKind::Unknown => {
+                    if sym.size() > 0 {
+                        writeln!(generated, "char {}[{}];", name, sym.size())
+                    } else if is_macho {
+                        writeln!(generated, "char {name}[1];")
+                    } else {
+                        Ok(())
+                    }
+                }
+                SymbolKind::Tls => {
+                    if sym.size() > 0 {
+                        writeln!(generated, "__thread char {}[{}];", name, sym.size())
+                    } else if is_macho {
+                        writeln!(generated, "__thread char {name}[1];")
+                    } else {
+                        Ok(())
+                    }
+                }
+                _ => Ok(()),
+            };
         }
     }
     Ok(generated)
@@ -136,17 +135,16 @@ pub fn weaken_object_symbols(target: &Path, binary: &Path) -> Result<(), String>
             so_file.dynamic_symbols().collect()
         };
         for sym in candidate_syms {
-            if sym_is_definition(&sym) {
-                if let Ok(name) = sym.name() {
-                    if undefined_candidates.contains(name) {
-                        let name = if is_macho {
-                            name.strip_prefix('_').unwrap_or(name)
-                        } else {
-                            name
-                        };
-                        result.insert(name.to_string());
-                    }
-                }
+            if sym_is_definition(&sym)
+                && let Ok(name) = sym.name()
+                && undefined_candidates.contains(name)
+            {
+                let name = if is_macho {
+                    name.strip_prefix('_').unwrap_or(name)
+                } else {
+                    name
+                };
+                result.insert(name.to_string());
             }
         }
         result

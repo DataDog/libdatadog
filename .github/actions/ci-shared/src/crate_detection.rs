@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use anyhow::{Context, Result};
+use cargo_metadata::Package;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -19,6 +20,23 @@ pub struct CrateInfo {
     pub manifest: PathBuf,
     /// false only if publish = false explicitly
     pub publish: bool,
+}
+
+/// Builds a [`CrateInfo`] from a `cargo metadata` package.
+impl From<&Package> for CrateInfo {
+    fn from(member: &Package) -> Self {
+        CrateInfo {
+            name: member.name.to_string(),
+            version: member.version.to_string(),
+            manifest: member.manifest_path.clone().into(),
+            path: member.manifest_path.parent().unwrap().into(),
+            publish: if let Some(publishable) = &member.publish {
+                !publishable.is_empty()
+            } else {
+                true
+            },
+        }
+    }
 }
 
 /// Find the closest Cargo.toml file by traversing up the directory tree.

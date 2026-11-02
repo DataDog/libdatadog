@@ -129,12 +129,11 @@ impl RemoteConfigs {
                         // Otherwise we have to check whether it's actually really dead and possibly
                         // re-insert.
 
-                        if let Ok(mut unlocked) = this.try_lock() {
-                            if let Some(active) = unlocked.remove(&invariants) {
-                                if !active.is_dead() {
-                                    unlocked.insert(invariants.clone(), active);
-                                }
-                            }
+                        if let Ok(mut unlocked) = this.try_lock()
+                            && let Some(active) = unlocked.remove(&invariants)
+                            && !active.is_dead()
+                        {
+                            unlocked.insert(invariants.clone(), active);
                         }
                     }),
                     poll_interval,

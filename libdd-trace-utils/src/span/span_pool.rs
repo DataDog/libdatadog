@@ -205,18 +205,18 @@ impl<T: TraceData> SpanPool<T> {
             let cell = self.inner.thread_cache.get_or_default();
             {
                 let mut slot = cell.borrow_mut();
-                if let Some(cache) = slot.last_cache.as_mut() {
-                    if let Some(span) = cache.0.pop() {
-                        if cache.0.is_empty() {
-                            // Recycle the now-empty `Vec` for `pull_empty_chunk`.
-                            let empty = std::mem::take(cache);
-                            slot.last_cache = None;
-                            if slot.empty_chunk.is_none() {
-                                slot.empty_chunk = Some(empty.0);
-                            }
+                if let Some(cache) = slot.last_cache.as_mut()
+                    && let Some(span) = cache.0.pop()
+                {
+                    if cache.0.is_empty() {
+                        // Recycle the now-empty `Vec` for `pull_empty_chunk`.
+                        let empty = std::mem::take(cache);
+                        slot.last_cache = None;
+                        if slot.empty_chunk.is_none() {
+                            slot.empty_chunk = Some(empty.0);
                         }
-                        return span;
                     }
+                    return span;
                 }
             }
             match self.inner.receiver.try_recv() {

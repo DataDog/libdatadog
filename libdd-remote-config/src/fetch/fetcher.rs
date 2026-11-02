@@ -126,7 +126,7 @@ pub struct ConfigFetcherState<S, C: HttpClientCapability + SleepCapability> {
     pub invariants: ConfigInvariants,
     endpoint: Endpoint,
     pub expire_unused_files: bool,
-    http_client: C,
+    pub(super) http_client: C,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -259,7 +259,7 @@ pub struct ConfigClientState {
     last_error: Option<String>,
     /// Services discovered at runtime. Sent to the agent on each poll so it can route configs
     /// targeting those services to this client. Updated out-of-band by the consumer
-    extra_services: Vec<String>,
+    pub(super) extra_services: Vec<String>,
     /// Server-recommended interval between consecutive polls.
     refresh_interval: Option<Duration>,
 }
@@ -332,6 +332,11 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
     /// Sets the apply state on a stored file.
     pub fn set_config_state(&self, file: &RemoteConfigPath, state: ConfigApplyState) {
         self.state.set_config_state(file, state)
+    }
+
+    /// Destructures the fetcher into its file storage and state.
+    pub fn into_parts(self) -> (S, Arc<ConfigFetcherState<S::StoredFile, C>>) {
+        (self.file_storage, self.state)
     }
 
     fn build_config_request(
@@ -459,13 +464,28 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
         }
         client_state.last_error = None;
 
+        let result = self.process_agent_response(&body_bytes, target, client_state);
+        if let Err(e) = &result {
+            // Contrary to transport errors, failures to process the response are reported back
+            // to the agent with the next request.
+            client_state.last_error = Some(format!("{e:#}"));
+        }
+        result
+    }
+
+    fn process_agent_response(
+        &mut self,
+        body_bytes: &[u8],
+        target: &Target,
+        client_state: &mut ConfigClientState,
+    ) -> anyhow::Result<Option<Vec<Arc<S::StoredFile>>>> {
         // Nothing changed
         if body_bytes.len() <= 3 {
             trace!("Requested remote config and got an empty reply");
             return Ok(None);
         }
 
-        let response: ClientGetConfigsResponse = serde_json::from_slice(body_bytes.as_ref())?;
+        let response: ClientGetConfigsResponse = serde_json::from_slice(body_bytes)?;
 
         if response.config_status == ConfigStatus::Expired as i32 {
             debug!(
@@ -528,7 +548,7 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
         // continuously
         let mut target_files = self.state.target_files_by_path.lock_or_panic();
 
-        let mut config_paths = HashSet::new();
+        let mut config_paths: HashSet<RemoteConfigPath> = HashSet::new();
         for path in response.client_configs.iter() {
             match RemoteConfigPath::try_parse(path) {
                 Ok(parsed) => {
@@ -542,6 +562,10 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
             target_files.retain(|k, _| config_paths.contains(k.as_ref()));
         }
 
+        // Errors of individual files don't prevent applying the other files: they are reported to
+        // the agent, and retried with the next response.
+        let mut errors = vec![];
+        let mut failed_paths = HashSet::new();
         for (path, target_file) in targets_list.signed.targets {
             fn hash_sha256(v: &[u8]) -> String {
                 format!("{:x}", Sha256::digest(v))
@@ -581,22 +605,48 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
                 // If the file isn't there, it's not meant for us.
                 continue;
             };
+            let mut fail = |error: String| {
+                warn!("{error}");
+                errors.push(error);
+                failed_paths.insert(path);
+            };
             let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(raw_file) else {
-                anyhow::bail!("Failed base64 decoding config for path {path}")
+                fail(format!("Failed base64 decoding config for path {path}"));
+                continue;
             };
             let computed_hash = hasher(decoded.as_slice());
             if hash != computed_hash {
-                anyhow::bail!(
+                fail(format!(
                     "Computed hash of file {computed_hash} did not match remote config targets \
                     file hash {hash} for path {path}"
-                );
+                ));
+                continue;
             }
             let Some(version) = target_file.try_parse_version() else {
-                anyhow::bail!("Failed parsing version from remote config path {path}");
+                fail(format!(
+                    "Failed parsing version from remote config path {path}"
+                ));
+                continue;
             };
             debug!("Fetched new remote config file at path {path} targeting {target:?}");
 
             let parsed_path: Arc<RemoteConfigPath> = Arc::new(parsed_path.into());
+            let length = decoded.len() as i64;
+            let stored = if let Some(handle) = handle {
+                self.file_storage
+                    .update(&handle, version, decoded)
+                    .map(|()| handle)
+            } else {
+                self.file_storage
+                    .store(version, parsed_path.clone(), decoded)
+            };
+            let handle = match stored {
+                Ok(handle) => handle,
+                Err(e) => {
+                    fail(format!("Failed storing remote config {path}: {e:#}"));
+                    continue;
+                }
+            };
             target_files.insert(
                 parsed_path.clone(),
                 StoredTargetFile {
@@ -610,7 +660,7 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
                     },
                     meta: TargetFileMeta {
                         path: path.to_string(),
-                        length: decoded.len() as i64,
+                        length,
                         hashes: target_file
                             .hashes
                             .iter()
@@ -620,12 +670,7 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
                             })
                             .collect(),
                     },
-                    handle: if let Some(handle) = handle {
-                        self.file_storage.update(&handle, version, decoded)?;
-                        handle
-                    } else {
-                        self.file_storage.store(version, parsed_path, decoded)?
-                    },
+                    handle,
                     expiring: false,
                 },
             );
@@ -636,11 +681,14 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
             if let Some(target_file) = target_files.get_mut(config) {
                 target_file.expiring = false;
                 configs.push(target_file.handle.clone());
-            } else {
+            } else if !failed_paths.contains(config.as_str()) {
                 anyhow::bail!("Found {config} in client_configs response, but it isn't stored.");
             }
         }
 
+        if !errors.is_empty() {
+            client_state.last_error = Some(errors.join("\n"));
+        }
         client_state.targets_version = targets_list.signed.version as u64;
         client_state.last_config_paths = config_paths;
         Ok(Some(configs))

@@ -80,10 +80,10 @@ pub fn quantize_peer_ip_addresses<'a>(s: &'a str) -> Cow<'a, str> {
 /// - IPv6 with suffix are not detected e.g. `::1-foo`
 fn quantize_ip(s: &str) -> Option<String> {
     let (prefix, stripped_s) = split_prefix(s);
-    if let Some((ip, suffix)) = parse_ip(stripped_s) {
-        if !ALLOWED_IP_ADDRESSES.contains(&ip) {
-            return Some(format!("{prefix}blocked-ip-address{suffix}"));
-        }
+    if let Some((ip, suffix)) = parse_ip(stripped_s)
+        && !ALLOWED_IP_ADDRESSES.contains(&ip)
+    {
+        return Some(format!("{prefix}blocked-ip-address{suffix}"));
     }
     None
 }
@@ -111,10 +111,10 @@ fn parse_ip(s: &str) -> Option<(&str, &str)> {
             }
             '[' => {
                 // Parse IPv6 in [host]:port format
-                if let Some((host, port)) = s[1..].split_once(']') {
-                    if host.parse::<Ipv6Addr>().is_ok() {
-                        return Some((host, port));
-                    }
+                if let Some((host, port)) = s[1..].split_once(']')
+                    && host.parse::<Ipv6Addr>().is_ok()
+                {
+                    return Some((host, port));
                 }
                 return None;
             }
