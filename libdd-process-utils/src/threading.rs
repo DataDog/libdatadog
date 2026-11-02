@@ -33,4 +33,6 @@ pub fn get_current_thread_id() -> i64 {
 
 /// Returns a numeric identifier for the current OS thread.
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-compile_error!("libdd_common::threading::get_current_thread_id is unsupported on this platform");
+compile_error!(
+    "libdd_process_utils::threading::get_current_thread_id is unsupported on this platform"
+);

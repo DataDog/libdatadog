@@ -69,6 +69,10 @@ features = [
 
 [target.'cfg(unix)'.dependencies]
 nix = { workspace = true, features = ["process"], optional = true }
+# TODO: Transitional: conn_stream.rs and dump_server.rs still call unix_utils
+# helpers; they move to libdd-networking with APMSP-4096 and take this
+# dependency with them.
+libdd-process-utils = { version = "1.0.0", path = "../libdd-process-utils" }
 
 [dev-dependencies]
 bytes = { workspace = true, features = ["std"] }
