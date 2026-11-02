@@ -982,7 +982,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
                 agentless: None,
             },
             products: config.remote_config_products,
-            capabilities: config.remote_config_capabilities.into_iter().collect(),
+            capabilities: config.remote_config_capabilities,
         });
         *session.remote_config_interval.lock_or_panic() = config.remote_config_poll_interval;
         self.server
@@ -1564,63 +1564,6 @@ mod tests {
         drop(peer);
         let conn = OwnedServerConn::new(local).expect("OwnedServerConn");
         ConnectionSidecarHandler::new(server, conn)
-    }
-
-    #[tokio::test]
-    #[cfg_attr(miri, ignore)]
-    async fn legacy_session_capabilities_reach_remote_config_options() {
-        use libdd_remote_config::{RemoteConfigCapabilities, RemoteConfigProduct};
-
-        let handler = test_handler(SidecarServer::default());
-        let config = SessionConfig {
-            endpoint: Endpoint {
-                url: "http://127.0.0.1:8126".parse().unwrap(),
-                api_key: Some("test-key".into()),
-                ..Endpoint::default()
-            },
-            dogstatsd_endpoint: Endpoint::default(),
-            otlp_metrics_endpoint: None,
-            language: "php".into(),
-            language_version: "8".into(),
-            tracer_version: "1".into(),
-            flush_interval: Duration::from_secs(60),
-            remote_config_poll_interval: Duration::from_secs(60),
-            telemetry_heartbeat_interval: Duration::from_secs(60),
-            telemetry_extended_heartbeat_interval: Duration::from_secs(60),
-            force_flush_size: 0,
-            force_drop_size: 0,
-            retry_interval: Duration::from_secs(1),
-            log_level: "off".into(),
-            log_file: crate::config::LogMethod::Disabled,
-            remote_config_products: vec![RemoteConfigProduct::AsmFeatures],
-            remote_config_capabilities: vec![
-                RemoteConfigCapabilities::AsmActivation,
-                RemoteConfigCapabilities::AsmDdRules,
-            ],
-            remote_config_enabled: true,
-            process_tags: vec![],
-            peer_tag_keys: vec![],
-            span_kinds_stats_computed: vec![],
-            hostname: String::new(),
-            root_service: String::new(),
-            root_session_id: None,
-            parent_session_id: None,
-        };
-        handler
-            .set_session_config(
-                "legacy-capabilities".into(),
-                #[cfg(windows)]
-                Default::default(),
-                config,
-                false,
-            )
-            .await;
-
-        let session = handler.server.get_session("legacy-capabilities");
-        let options = session.get_remote_config_options();
-        let options = options.as_ref().unwrap();
-        assert_eq!(options.products, vec![RemoteConfigProduct::AsmFeatures]);
-        assert_eq!(options.capabilities.as_ref(), &[0b1010]);
     }
 
     fn ffe_context() -> FfeTelemetryContext {

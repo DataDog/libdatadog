@@ -107,7 +107,7 @@ async fn main() {
                 agentless,
             },
             products: vec![ApmTracing],
-            capabilities: Default::default(),
+            capabilities: vec![],
         },
         NativeCapabilities::new_without_connection_pooling(),
     )

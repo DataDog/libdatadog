@@ -32,6 +32,10 @@ use serde::{Deserialize, Serialize};
 ///
 /// Consumers own capability assignments. Unknown bits and arbitrary widths are
 /// accepted without consulting [`RemoteConfigCapabilities`].
+///
+/// Enum constructors and setters remain available during migration. Client callers
+/// opt in with `fetch::SingleFetcher::new_with_capability_mask` or
+/// `fetch::MultiTargetFetcher::add_runtime_with_capability_mask`.
 #[derive(Debug, Default, Clone, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct CapabilityMask(Vec<u8>);

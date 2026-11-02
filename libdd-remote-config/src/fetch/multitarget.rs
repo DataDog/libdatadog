@@ -91,9 +91,20 @@ enum KnownTargetStatus {
     Removing(Shared<ManualFuture<()>>),
 }
 
-pub struct ProductCapabilities {
+/// Runtime subscriptions. Supply `ProductCapabilities<CapabilityMask>` to opt
+/// into opaque capability bytes; existing enum subscriptions remain supported.
+pub struct ProductCapabilities<C = Vec<RemoteConfigCapabilities>> {
     pub products: Vec<RemoteConfigProduct>,
-    pub capabilities: CapabilityMask,
+    pub capabilities: C,
+}
+
+impl From<ProductCapabilities> for ProductCapabilities<CapabilityMask> {
+    fn from(capabilities: ProductCapabilities) -> Self {
+        Self {
+            products: capabilities.products,
+            capabilities: capabilities.capabilities.into_iter().collect(),
+        }
+    }
 }
 
 struct KnownTarget {
@@ -101,8 +112,8 @@ struct KnownTarget {
     status: Arc<Mutex<KnownTargetStatus>>,
     synthetic_id: bool,
     /// All runtime ids belonging to a specific target, with their capabilities
-    runtimes: HashMap<String, ProductCapabilities>,
-    fetcher: Arc<SharedFetcher>,
+    runtimes: HashMap<String, ProductCapabilities<CapabilityMask>>,
+    fetcher: Arc<SharedFetcher<()>>,
     active_products: HashMap<RemoteConfigProduct, u32>,
     active_capabilities: HashMap<usize, u32>,
 }
@@ -136,7 +147,7 @@ impl KnownTarget {
     fn update_product_capabilities(&mut self) {
         if self.refcount > 0 {
             *self.fetcher.product_capabilities.lock_or_panic() =
-                Arc::new(ConfigProductCapabilities::new(
+                Arc::new(ConfigProductCapabilities::from_mask(
                     self.active_products.keys().cloned().collect(),
                     CapabilityMask::from_bit_positions(self.active_capabilities.keys().copied()),
                 ));
@@ -341,7 +352,7 @@ where
         runtime_id: &str,
         session_id: &str,
         target: Arc<Target>,
-        product_capabilities: ProductCapabilities,
+        product_capabilities: ProductCapabilities<CapabilityMask>,
     ) {
         let mut services = self.services.lock_or_panic();
         match services.entry(target.clone()) {
@@ -462,7 +473,7 @@ where
                             } else {
                                 session_id.into()
                             },
-                            ConfigProductCapabilities::new(
+                            ConfigProductCapabilities::from_mask(
                                 product_capabilities.products,
                                 product_capabilities.capabilities,
                             ),
@@ -480,6 +491,24 @@ where
         notify_target: N,
         target: &Arc<Target>,
         product_capabilities: ProductCapabilities,
+    ) {
+        self.add_runtime_with_capability_mask(
+            session_id,
+            runtime_id,
+            notify_target,
+            target,
+            product_capabilities.into(),
+        );
+    }
+
+    /// Registers a runtime with consumer-owned capability assignments.
+    pub fn add_runtime_with_capability_mask(
+        self: &Arc<Self>,
+        session_id: String,
+        runtime_id: String,
+        notify_target: N,
+        target: &Arc<Target>,
+        product_capabilities: ProductCapabilities<CapabilityMask>,
     ) {
         trace!("Adding remote config runtime: {target:?} with runtime id {runtime_id}");
         match self.runtimes.lock_or_panic().entry(runtime_id) {
@@ -971,7 +1000,7 @@ mod tests {
             .store(1_000_000, Ordering::SeqCst);
         let state = Arc::new(NotifyState::default());
         let register = |runtime: &str, mask: Vec<u8>| {
-            fetcher.add_runtime(
+            fetcher.add_runtime_with_capability_mask(
                 runtime.into(),
                 runtime.into(),
                 Notifier {
@@ -979,7 +1008,7 @@ mod tests {
                     state: state.clone(),
                 },
                 &DUMMY_TARGET,
-                ProductCapabilities {
+                ProductCapabilities::<CapabilityMask> {
                     products: vec![],
                     capabilities: mask.into(),
                 },
@@ -1046,7 +1075,27 @@ mod tests {
         fetched.await;
         assert_mask(&[0x42]);
         let fetched = next_fetch(7);
+        fetcher.add_runtime(
+            RT_ID_1.into(),
+            RT_ID_1.into(),
+            Notifier {
+                id: 1,
+                state: state.clone(),
+            },
+            &DUMMY_TARGET,
+            ProductCapabilities {
+                products: vec![],
+                capabilities: vec![RemoteConfigCapabilities::AsmActivation],
+            },
+        );
+        fetched.await;
+        assert_mask(&[0x42]);
+        let fetched = next_fetch(8);
         fetcher.unforce_capabilities(&DUMMY_TARGET, RemoteConfigCapabilities::AsmActivation);
+        fetched.await;
+        assert_mask(&[0x42]);
+        let fetched = next_fetch(9);
+        fetcher.delete_runtime(RT_ID_1, RT_ID_1, &DUMMY_TARGET);
         fetched.await;
         assert_mask(&[0x40]);
 
