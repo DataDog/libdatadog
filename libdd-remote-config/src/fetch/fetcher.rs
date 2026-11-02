@@ -5,7 +5,9 @@
 use super::agentless;
 
 use crate::targets::{Root, TargetsList};
-use crate::{CapabilityMask, RemoteConfigPath, RemoteConfigProduct, Target};
+use crate::{
+    CapabilityMask, RemoteConfigCapabilities, RemoteConfigPath, RemoteConfigProduct, Target,
+};
 use base64::Engine;
 use hashbrown::HashMap;
 use http::StatusCode;
@@ -83,22 +85,44 @@ pub enum ConfigApplyState {
     Error(String),
 }
 
+/// Products with enum capabilities by default, or an explicit opaque mask from
+/// [`ConfigProductCapabilities::from_mask`].
 #[derive(Debug, Clone)]
-pub struct ConfigProductCapabilities {
+pub struct ConfigProductCapabilities<C = Vec<RemoteConfigCapabilities>> {
     products: Vec<RemoteConfigProduct>,
-    capabilities: CapabilityMask,
+    capabilities: C,
+    encoded_capabilities: CapabilityMask,
 }
 
 impl ConfigProductCapabilities {
-    pub fn new(products: Vec<RemoteConfigProduct>, capabilities: CapabilityMask) -> Self {
+    pub fn new(
+        products: Vec<RemoteConfigProduct>,
+        capabilities: Vec<RemoteConfigCapabilities>,
+    ) -> Self {
         ConfigProductCapabilities {
+            encoded_capabilities: capabilities.iter().copied().collect(),
             products,
             capabilities,
         }
     }
 
-    pub fn into_parts(self) -> (Vec<RemoteConfigProduct>, CapabilityMask) {
+    pub fn into_parts(self) -> (Vec<RemoteConfigProduct>, Vec<RemoteConfigCapabilities>) {
         (self.products, self.capabilities)
+    }
+}
+
+impl ConfigProductCapabilities<()> {
+    /// Opts into an owned mask without retaining an enum list.
+    pub fn from_mask(products: Vec<RemoteConfigProduct>, capabilities: CapabilityMask) -> Self {
+        Self {
+            products,
+            capabilities: (),
+            encoded_capabilities: capabilities,
+        }
+    }
+
+    pub fn into_mask_parts(self) -> (Vec<RemoteConfigProduct>, CapabilityMask) {
+        (self.products, self.encoded_capabilities)
     }
 }
 
@@ -321,11 +345,11 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
         (self.file_storage, self.state)
     }
 
-    fn build_config_request(
+    fn build_config_request<T>(
         &self,
         runtime_id: &str,
         target: &Target,
-        product_capabilities: &ConfigProductCapabilities,
+        product_capabilities: &ConfigProductCapabilities<T>,
         client_id: &str,
         client_state: &ConfigClientState,
     ) -> ClientGetConfigsRequest {
@@ -388,7 +412,7 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
                 is_agent: false,
                 client_agent: None,
                 last_seen: 0,
-                capabilities: product_capabilities.capabilities.as_ref().to_vec(),
+                capabilities: product_capabilities.encoded_capabilities.as_ref().to_vec(),
                 is_updater: false,
                 client_updater: None,
             }),
@@ -687,11 +711,11 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
     /// It also makes sure that old files are dropped before new files are inserted.
     ///
     /// Returns None if nothing changed. Otherwise Some(active configs).
-    pub async fn fetch_once(
+    pub async fn fetch_once<T: Sync>(
         &mut self,
         runtime_id: &str,
         target: &Target,
-        product_capabilities: &ConfigProductCapabilities,
+        product_capabilities: &ConfigProductCapabilities<T>,
         client_id: &str,
         client_state: &mut ConfigClientState,
     ) -> anyhow::Result<Option<Vec<Arc<S::StoredFile>>>> {
@@ -1033,9 +1057,7 @@ pub mod tests {
                 RemoteConfigProduct::ApmTracing,
                 RemoteConfigProduct::AgentConfig,
             ],
-            [RemoteConfigCapabilities::ApmTracingCustomTags]
-                .into_iter()
-                .collect(),
+            vec![RemoteConfigCapabilities::ApmTracingCustomTags],
         );
 
         let mut fetcher = ConfigFetcher::new(
@@ -1380,32 +1402,38 @@ pub mod tests {
         .into_iter()
         .collect();
         assert_eq!(mask.as_ref(), &[1, 2]);
-        let state = ConfigProductCapabilities::new(vec![RemoteConfigProduct::ApmTracing], mask);
-        let (products, mask) = state.into_parts();
+        let state =
+            ConfigProductCapabilities::from_mask(vec![RemoteConfigProduct::ApmTracing], mask);
+        let (products, mask) = state.into_mask_parts();
         assert_eq!(products, [RemoteConfigProduct::ApmTracing]);
         assert_eq!(mask.as_ref(), &[1, 2]);
+
+        let enums = vec![RemoteConfigCapabilities::AsmActivation];
+        let legacy = ConfigProductCapabilities::new(vec![], enums.clone());
+        let (products, capabilities) = legacy.into_parts();
+        assert!(products.is_empty());
+        assert_eq!(capabilities, enums);
     }
 
     #[test]
     fn test_dependent_flag_capability_encoding() {
         let legacy = ConfigProductCapabilities::new(
             vec![RemoteConfigProduct::FfeFlags],
-            [RemoteConfigCapabilities::FfeFlagConfigurationRules]
-                .into_iter()
-                .collect(),
+            vec![RemoteConfigCapabilities::FfeFlagConfigurationRules],
         );
-        assert_eq!(legacy.capabilities.as_ref(), [0x40, 0, 0, 0, 0, 0]);
+        assert_eq!(legacy.encoded_capabilities.as_ref(), [0x40, 0, 0, 0, 0, 0]);
 
         let capable = ConfigProductCapabilities::new(
             vec![RemoteConfigProduct::FfeFlags],
             vec![
                 RemoteConfigCapabilities::FfeFlagConfigurationRules,
                 RemoteConfigCapabilities::FfeFlagDependentFlagVariantKeyV1,
-            ]
-            .into_iter()
-            .collect(),
+            ],
         );
-        assert_eq!(capable.capabilities.as_ref(), [0x04, 0x40, 0, 0, 0, 0, 0]);
+        assert_eq!(
+            capable.encoded_capabilities.as_ref(),
+            [0x04, 0x40, 0, 0, 0, 0, 0]
+        );
         assert_eq!(
             serde_json::to_string(&RemoteConfigCapabilities::FfeFlagDependentFlagVariantKeyV1)
                 .unwrap(),

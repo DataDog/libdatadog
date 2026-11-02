@@ -104,7 +104,7 @@ impl RemoteConfigs {
     #[allow(clippy::too_many_arguments)]
     pub fn add_runtime(
         &self,
-        options: ConfigOptions,
+        options: ConfigOptions<libdd_remote_config::CapabilityMask>,
         poll_interval: Duration,
         instance_id: InstanceId,
         remote_config_generation: u64,
@@ -141,7 +141,7 @@ impl RemoteConfigs {
                 ))
             }
         }
-        .add_runtime(
+        .add_runtime_with_capability_mask(
             instance_id,
             remote_config_generation,
             notify_target,

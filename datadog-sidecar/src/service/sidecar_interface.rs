@@ -315,10 +315,22 @@ pub trait SidecarInterface {
     /// their target without replacing the session's other transports. Repeated
     /// identical configuration preserves routing and deduplication state.
     /// Targets absent from the batch are unchanged; this is not a full snapshot.
-    ///
-    /// Keep this method last: request variants cross the bincode IPC boundary,
-    /// so appending preserves the ordinals of all existing messages.
     async fn add_session_evp_transports(configs: Vec<EvpTransportConfigWithIdentity>);
+
+    /// Sets the connection configuration with an owned, opaque capability mask.
+    /// The mask replaces the enum capabilities in `config`.
+    ///
+    /// Append new methods to preserve existing bincode request ordinals.
+    async fn set_connection_config_with_capability_mask(
+        instance_id: InstanceId,
+        #[cfg(windows)]
+        #[SerializedHandle]
+        remote_config_notify_target: Option<
+            crate::service::remote_configs::RemoteConfigNotifyTarget,
+        >,
+        config: SessionConfig,
+        capabilities: libdd_remote_config::CapabilityMask,
+    );
 }
 
 #[cfg(test)]

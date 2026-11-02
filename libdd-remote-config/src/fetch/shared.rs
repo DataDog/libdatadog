@@ -27,7 +27,7 @@ use tracing::error;
 ///  - It does not leak files which are no longer in use, i.e. it refcounts across all remote config
 ///    clients sharing the same RefcountingStorage.
 ///  - The state is always valid, i.e. there will be no intermittently expired files.
-pub struct SharedFetcher {
+pub struct SharedFetcher<T = Vec<crate::RemoteConfigCapabilities>> {
     /// (env, service, version) tuple representing the basic remote config target
     pub target: Arc<Target>, // could be theoretically also Mutex<>ed if needed
     /// A unique runtime id. It must not be used by any other remote config client at the same
@@ -36,7 +36,7 @@ pub struct SharedFetcher {
     /// Each fetcher must have an unique id. Defaults to a random UUID.
     pub client_id: String,
     /// Products&Capabilities used to query the remote config server.
-    pub product_capabilities: Mutex<Arc<ConfigProductCapabilities>>,
+    pub product_capabilities: Mutex<Arc<ConfigProductCapabilities<T>>>,
     cancellation: CancellationToken,
     /// Refetch interval in nanoseconds.
     pub interval: AtomicU64,
@@ -253,11 +253,11 @@ where
     }
 }
 
-impl SharedFetcher {
+impl<T: Send + Sync + 'static> SharedFetcher<T> {
     pub fn new(
         target: Arc<Target>,
         runtime_id: String,
-        product_capabilities: ConfigProductCapabilities,
+        product_capabilities: ConfigProductCapabilities<T>,
     ) -> Self {
         SharedFetcher {
             target,

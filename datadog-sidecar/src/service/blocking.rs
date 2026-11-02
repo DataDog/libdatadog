@@ -310,6 +310,28 @@ pub fn set_connection_config(
     Ok(())
 }
 
+/// Sets the connection configuration with an owned, opaque capability mask.
+pub fn set_connection_config_with_capability_mask(
+    transport: &mut SidecarTransport,
+    instance_id: InstanceId,
+    #[cfg(windows)] remote_config_notify_target: Option<
+        crate::service::remote_configs::RemoteConfigNotifyTarget,
+    >,
+    config: SessionConfig,
+    capabilities: libdd_remote_config::CapabilityMask,
+) -> io::Result<()> {
+    transport
+        .sender()
+        .set_connection_config_with_capability_mask(
+            instance_id,
+            #[cfg(windows)]
+            remote_config_notify_target,
+            config,
+            capabilities,
+        );
+    Ok(())
+}
+
 /// Sets the explicit EVP transport for one intake target on this connection.
 ///
 /// Call after setting the connection configuration. Updates replace only this

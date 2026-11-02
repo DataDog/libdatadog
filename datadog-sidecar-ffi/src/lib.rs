@@ -47,7 +47,7 @@ use libdd_dogstatsd_client::DogStatsDActionOwned;
 use libdd_ipc::platform::{FileBackedHandle, MappedMem, NamedShmHandle, PlatformHandle, ShmHandle};
 use libdd_live_debugger::debugger_defs::DebuggerPayload;
 use libdd_remote_config::fetch::ConfigInvariants;
-use libdd_remote_config::{RemoteConfigProduct, Target};
+use libdd_remote_config::{RemoteConfigCapabilities, RemoteConfigProduct, Target};
 use libdd_telemetry::{
     data::{self, Dependency, Integration},
     worker::{LifecycleAction, TelemetryActions},
@@ -631,6 +631,130 @@ pub struct RemoteConfigNotification {
 /// Sets the identity and configuration of the connection. It is kept by the transport and
 /// replayed after reconnects.
 ///
+/// `default_service_name` is the process-stable service name the tracer resolves when `DD_SERVICE`
+/// is not set, reported as `svc.auto:<name>`. Pass an empty `CharSlice` if it is not reported.
+#[unsafe(no_mangle)]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_sidecar_set_connection_config(
+    transport: &mut Box<SidecarTransport>,
+    instance_id: &InstanceId,
+    agent_endpoint: &Endpoint,
+    dogstatsd_endpoint: &Endpoint,
+    otlp_metrics_endpoint: *const Endpoint,
+    language: ffi::CharSlice,
+    language_version: ffi::CharSlice,
+    tracer_version: ffi::CharSlice,
+    flush_interval_milliseconds: u32,
+    retry_interval_milliseconds: u32,
+    remote_config_poll_interval_millis: u32,
+    telemetry_heartbeat_interval_millis: u32,
+    telemetry_extended_heartbeat_interval_millis: u64,
+    force_flush_size: usize,
+    force_drop_size: usize,
+    log_level: ffi::CharSlice,
+    log_path: ffi::CharSlice,
+    win_remote_config_notification: *const RemoteConfigNotification, // null for non-win
+    remote_config_products: *const RemoteConfigProduct,
+    remote_config_products_count: usize,
+    remote_config_capabilities: *const RemoteConfigCapabilities,
+    remote_config_capabilities_count: usize,
+    remote_config_enabled: bool,
+    process_tags: &libdd_common_ffi::Vec<Tag>,
+    default_service_name: ffi::CharSlice,
+    hostname: ffi::CharSlice,
+    root_service: ffi::CharSlice,
+    root_session_id: ffi::CharSlice,
+    parent_session_id: ffi::CharSlice,
+) -> MaybeError {
+    unsafe {
+        let otlp_metrics_endpoint: Option<Endpoint> = otlp_metrics_endpoint.as_ref().cloned();
+        let otlp_metrics_endpoint =
+            otlp_metrics_endpoint_with_agent_test_token(otlp_metrics_endpoint, agent_endpoint);
+        let session_config = SessionConfig {
+            endpoint: agent_endpoint.clone(),
+            dogstatsd_endpoint: dogstatsd_endpoint.clone(),
+            otlp_metrics_endpoint,
+            language: language.to_utf8_lossy().into(),
+            language_version: language_version.to_utf8_lossy().into(),
+            tracer_version: tracer_version.to_utf8_lossy().into(),
+            flush_interval: Duration::from_millis(flush_interval_milliseconds as u64),
+            remote_config_poll_interval: Duration::from_millis(
+                remote_config_poll_interval_millis as u64,
+            ),
+            telemetry_heartbeat_interval: Duration::from_millis(
+                telemetry_heartbeat_interval_millis as u64,
+            ),
+            telemetry_extended_heartbeat_interval: Duration::from_millis(
+                telemetry_extended_heartbeat_interval_millis,
+            ),
+            force_flush_size,
+            force_drop_size,
+            log_level: log_level.to_utf8_lossy().into(),
+            log_file: if log_path.is_empty() {
+                config::FromEnv::log_method()
+            } else {
+                LogMethod::File(String::from(log_path.to_utf8_lossy()).into())
+            },
+            remote_config_products: ffi::Slice::from_raw_parts(
+                remote_config_products,
+                remote_config_products_count,
+            )
+            .as_slice()
+            .to_vec(),
+            remote_config_capabilities: ffi::Slice::from_raw_parts(
+                remote_config_capabilities,
+                remote_config_capabilities_count,
+            )
+            .as_slice()
+            .to_vec(),
+            remote_config_enabled,
+            process_tags: process_tags.to_vec(),
+            default_service_name: if default_service_name.is_empty() {
+                None
+            } else {
+                Some(default_service_name.to_utf8_lossy().into())
+            },
+            peer_tag_keys: vec![],
+            span_kinds_stats_computed: vec![],
+            hostname: hostname.to_utf8_lossy().into(),
+            root_service: root_service.to_utf8_lossy().into(),
+            root_session_id: if root_session_id.is_empty() {
+                None
+            } else {
+                Some(root_session_id.to_utf8_lossy().into())
+            },
+            parent_session_id: if parent_session_id.is_empty() {
+                None
+            } else {
+                Some(parent_session_id.to_utf8_lossy().into())
+            },
+            retry_interval: Duration::from_millis(retry_interval_milliseconds as u64),
+        };
+        #[cfg(unix)]
+        let _ = win_remote_config_notification;
+        #[cfg(unix)]
+        try_c!(blocking::set_connection_config(
+            transport,
+            instance_id.clone(),
+            session_config,
+        ));
+        #[cfg(windows)]
+        try_c!(blocking::set_connection_config(
+            transport,
+            instance_id.clone(),
+            win_remote_config_notification
+                .as_ref()
+                .map(|notification| notification.inner.target()),
+            session_config,
+        ));
+
+        MaybeError::None
+    }
+}
+
+/// Sets the identity and configuration of the connection. It is kept by the transport and
+/// replayed after reconnects.
+///
 /// `remote_config_capabilities` is an unsigned, big-endian mask. Its length is in
 /// bytes. Unknown bits and leading zero bytes are accepted. The buffer is copied
 /// before this call returns. `(NULL, 0)` supplies an empty mask.
@@ -639,7 +763,7 @@ pub struct RemoteConfigNotification {
 /// is not set, reported as `svc.auto:<name>`. Pass an empty `CharSlice` if it is not reported.
 #[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_sidecar_set_connection_config(
+pub unsafe extern "C" fn ddog_sidecar_set_connection_config_with_capability_mask(
     transport: &mut Box<SidecarTransport>,
     instance_id: &InstanceId,
     agent_endpoint: &Endpoint,
@@ -716,7 +840,7 @@ pub unsafe extern "C" fn ddog_sidecar_set_connection_config(
             )
             .as_slice()
             .to_vec(),
-            remote_config_capabilities: capabilities,
+            remote_config_capabilities: vec![],
             remote_config_enabled,
             process_tags: process_tags.to_vec(),
             default_service_name: if default_service_name.is_empty() {
@@ -743,19 +867,21 @@ pub unsafe extern "C" fn ddog_sidecar_set_connection_config(
         #[cfg(unix)]
         let _ = win_remote_config_notification;
         #[cfg(unix)]
-        try_c!(blocking::set_connection_config(
+        try_c!(blocking::set_connection_config_with_capability_mask(
             transport,
             instance_id.clone(),
             session_config,
+            capabilities,
         ));
         #[cfg(windows)]
-        try_c!(blocking::set_connection_config(
+        try_c!(blocking::set_connection_config_with_capability_mask(
             transport,
             instance_id.clone(),
             win_remote_config_notification
                 .as_ref()
                 .map(|notification| notification.inner.target()),
             session_config,
+            capabilities,
         ));
 
         MaybeError::None
@@ -1928,14 +2054,13 @@ mod tests {
     use std::borrow::Cow;
 
     #[cfg(unix)]
-    unsafe fn set_capabilities(
-        transport: &mut Box<SidecarTransport>,
-        pointer: *const u8,
-        len: usize,
-    ) -> MaybeError {
-        unsafe {
-            ddog_sidecar_set_connection_config(
-                transport,
+    macro_rules! set_capabilities {
+        ($setter:ident, $transport:expr, $pointer:expr, $len:expr) => {
+            set_capabilities!($setter, $transport, $pointer, $len, CharSlice::empty())
+        };
+        ($setter:ident, $transport:expr, $pointer:expr, $len:expr, $optional:expr) => {
+            $setter(
+                $transport,
                 &InstanceId::new("session", "runtime"),
                 &Endpoint::default(),
                 &Endpoint::default(),
@@ -1951,21 +2076,21 @@ mod tests {
                 0,
                 0,
                 CharSlice::from("off"),
-                CharSlice::empty(),
+                $optional,
                 std::ptr::null(),
                 std::ptr::null(),
                 0,
-                pointer,
-                len,
+                $pointer,
+                $len,
                 true,
                 &ffi::Vec::new(),
+                $optional,
                 CharSlice::empty(),
                 CharSlice::empty(),
-                CharSlice::empty(),
-                CharSlice::empty(),
-                CharSlice::empty(),
+                $optional,
+                $optional,
             )
-        }
+        };
     }
 
     #[test]
@@ -1977,7 +2102,15 @@ mod tests {
         transport.sender().max_outstanding = 0;
         let mut bytes = vec![0, 0x80, 0, 0, 0, 0, 0, 0, 0, 1];
         assert!(matches!(
-            unsafe { set_capabilities(&mut transport, bytes.as_ptr(), bytes.len()) },
+            unsafe {
+                set_capabilities!(
+                    ddog_sidecar_set_connection_config_with_capability_mask,
+                    &mut transport,
+                    bytes.as_ptr(),
+                    bytes.len(),
+                    CharSlice::from("metadata")
+                )
+            },
             MaybeError::None
         ));
         bytes.fill(0);
@@ -1988,7 +2121,14 @@ mod tests {
             (std::ptr::dangling(), isize::MAX as usize + 1),
         ] {
             assert!(matches!(
-                unsafe { set_capabilities(&mut transport, pointer, len) },
+                unsafe {
+                    set_capabilities!(
+                        ddog_sidecar_set_connection_config_with_capability_mask,
+                        &mut transport,
+                        pointer,
+                        len
+                    )
+                },
                 MaybeError::Some(_)
             ));
         }
@@ -2000,17 +2140,86 @@ mod tests {
         let mut buffer = vec![0; libdd_ipc::max_message_size()];
         let (len, _) = peer.try_recv_raw(&mut buffer).unwrap();
         match libdd_ipc::codec::decode::<datadog_sidecar::service::sidecar_interface::SidecarInterfaceRequest>(&buffer[..len]).unwrap() {
-            datadog_sidecar::service::sidecar_interface::SidecarInterfaceRequest::SetConnectionConfig { config, .. } => {
-                assert_eq!(config.remote_config_capabilities.as_ref(), &[0, 0x80, 0, 0, 0, 0, 0, 0, 0, 1]);
+            datadog_sidecar::service::sidecar_interface::SidecarInterfaceRequest::SetConnectionConfigWithCapabilityMask { config, capabilities, .. } => {
+                assert_eq!(capabilities.as_ref(), &[0, 0x80, 0, 0, 0, 0, 0, 0, 0, 1]);
+                assert_eq!(config.default_service_name.as_deref(), Some("metadata"));
+                assert_eq!(config.root_session_id.as_deref(), Some("metadata"));
+                assert_eq!(config.parent_session_id.as_deref(), Some("metadata"));
             }
             request => panic!("expected connection configuration, got {request:?}"),
         }
         let (len, _) = peer.try_recv_raw(&mut buffer).unwrap();
         assert_eq!(&buffer[..len], b"done");
         assert!(matches!(
-            unsafe { set_capabilities(&mut transport, std::ptr::null(), 0) },
+            unsafe {
+                set_capabilities!(
+                    ddog_sidecar_set_connection_config_with_capability_mask,
+                    &mut transport,
+                    std::ptr::null(),
+                    0
+                )
+            },
             MaybeError::None
         ));
+        let (len, _) = peer.try_recv_raw(&mut buffer).unwrap();
+        assert!(matches!(
+            libdd_ipc::codec::decode::<datadog_sidecar::service::sidecar_interface::SidecarInterfaceRequest>(&buffer[..len]).unwrap(),
+            datadog_sidecar::service::sidecar_interface::SidecarInterfaceRequest::SetConnectionConfigWithCapabilityMask { capabilities, .. }
+                if capabilities.as_ref().is_empty()
+        ));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    #[cfg_attr(miri, ignore)]
+    fn enum_capabilities_keep_the_legacy_c_signature_and_request() {
+        use datadog_sidecar::service::sidecar_interface::SidecarInterfaceRequest;
+
+        let (conn, peer) = libdd_ipc::SeqpacketConn::socketpair().unwrap();
+        let mut transport = Box::new(SidecarTransport::from(conn));
+        transport.sender().max_outstanding = 0;
+        let expected = vec![
+            RemoteConfigCapabilities::AsmActivation,
+            RemoteConfigCapabilities::AsmCustomRules,
+        ];
+        let mut capabilities = expected.clone();
+        assert!(matches!(
+            unsafe {
+                set_capabilities!(
+                    ddog_sidecar_set_connection_config,
+                    &mut transport,
+                    capabilities.as_ptr(),
+                    capabilities.len()
+                )
+            },
+            MaybeError::None
+        ));
+        capabilities.clear();
+        drop(capabilities);
+        assert!(matches!(
+            unsafe {
+                set_capabilities!(
+                    ddog_sidecar_set_connection_config_with_capability_mask,
+                    &mut transport,
+                    std::ptr::null(),
+                    1
+                )
+            },
+            MaybeError::Some(_)
+        ));
+        transport.sender().max_outstanding = 100;
+        transport
+            .sender()
+            .drain_and_send_raw_blocking(b"done")
+            .unwrap();
+        let mut buffer = vec![0; libdd_ipc::max_message_size()];
+        let (len, _) = peer.try_recv_raw(&mut buffer).unwrap();
+        match libdd_ipc::codec::decode::<SidecarInterfaceRequest>(&buffer[..len]).unwrap() {
+            SidecarInterfaceRequest::SetConnectionConfig { config, .. } => {
+                assert_eq!(config.remote_config_capabilities, expected);
+            }
+            request => panic!("expected legacy connection configuration, got {request:?}"),
+        }
     }
 
     fn ffi_producer_identity<'a>(origin: &'a str, version: &'a str) -> EvpProducerIdentity<'a> {

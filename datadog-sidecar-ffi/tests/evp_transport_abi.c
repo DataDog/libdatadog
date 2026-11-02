@@ -3,6 +3,23 @@
 
 #include "sidecar.h"
 
+void ddog_test_remote_config_capability_abi(void) {
+  const enum ddog_RemoteConfigCapabilities *legacy = NULL;
+  const uint8_t *mask = NULL;
+
+#define SET_CAPABILITIES(setter, capabilities)                                   \
+  (void)setter(NULL, NULL, NULL, NULL, NULL, (ddog_CharSlice){0},                  \
+               (ddog_CharSlice){0}, (ddog_CharSlice){0}, 0, 0, 0, 0, 0, 0, 0,    \
+               (ddog_CharSlice){0}, (ddog_CharSlice){0}, NULL, NULL, 0,            \
+               capabilities, 0, false, NULL, (ddog_CharSlice){0},                \
+               (ddog_CharSlice){0}, (ddog_CharSlice){0}, (ddog_CharSlice){0},      \
+               (ddog_CharSlice){0})
+
+  SET_CAPABILITIES(ddog_sidecar_set_connection_config, legacy);
+  SET_CAPABILITIES(ddog_sidecar_set_connection_config_with_capability_mask, mask);
+#undef SET_CAPABILITIES
+}
+
 bool ddog_test_evp_transport_abi(void) {
   const enum ddog_EvpTransportMode modes[] = {
       DDOG_EVP_TRANSPORT_MODE_AGENT_ONLY,

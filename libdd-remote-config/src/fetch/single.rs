@@ -6,7 +6,9 @@ use crate::fetch::{
     ConfigProductCapabilities, FileStorage, random_uuid_string,
 };
 use crate::file_change_tracker::{Change, ChangeTracker, FilePath, UpdatedFiles};
-use crate::{CapabilityMask, RemoteConfigPath, RemoteConfigProduct, Target};
+use crate::{
+    CapabilityMask, RemoteConfigCapabilities, RemoteConfigPath, RemoteConfigProduct, Target,
+};
 use libdd_capabilities::{HttpClientCapability, SleepCapability};
 use libdd_common::{Endpoint, MutexExt};
 use std::sync::{Arc, Mutex};
@@ -18,17 +20,30 @@ const DEFAULT_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 pub struct SingleFetcher<S: FileStorage, C: HttpClientCapability + SleepCapability> {
     fetcher: ConfigFetcher<S, C>,
     target: Target,
-    product_capabilities: ConfigProductCapabilities,
+    product_capabilities: ConfigProductCapabilities<()>,
     runtime_id: String,
     client_id: String,
     client_state: ConfigClientState,
 }
 
+/// Poll configuration. Enum capabilities remain the default during migration.
+/// Pass `ConfigOptions<CapabilityMask>` to [`SingleFetcher::new_with_capability_mask`]
+/// to opt into opaque capability bytes.
 #[derive(Clone, Debug)]
-pub struct ConfigOptions {
+pub struct ConfigOptions<C = Vec<RemoteConfigCapabilities>> {
     pub invariants: ConfigInvariants,
     pub products: Vec<RemoteConfigProduct>,
-    pub capabilities: CapabilityMask,
+    pub capabilities: C,
+}
+
+impl From<ConfigOptions> for ConfigOptions<CapabilityMask> {
+    fn from(options: ConfigOptions) -> Self {
+        Self {
+            invariants: options.invariants,
+            products: options.products,
+            capabilities: options.capabilities.into_iter().collect(),
+        }
+    }
 }
 
 impl<S: FileStorage, C: HttpClientCapability + SleepCapability> SingleFetcher<S, C> {
@@ -37,6 +52,17 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> SingleFetcher<S,
         target: Target,
         runtime_id: String,
         options: ConfigOptions,
+        http_client: C,
+    ) -> anyhow::Result<Self> {
+        Self::new_with_capability_mask(sink, target, runtime_id, options.into(), http_client).await
+    }
+
+    /// Creates a fetcher with consumer-owned capability assignments.
+    pub async fn new_with_capability_mask(
+        sink: S,
+        target: Target,
+        runtime_id: String,
+        options: ConfigOptions<CapabilityMask>,
         http_client: C,
     ) -> anyhow::Result<Self> {
         Ok(SingleFetcher {
@@ -49,7 +75,7 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> SingleFetcher<S,
             )
             .await?,
             target,
-            product_capabilities: ConfigProductCapabilities::new(
+            product_capabilities: ConfigProductCapabilities::from_mask(
                 options.products,
                 options.capabilities,
             ),
@@ -66,6 +92,23 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> SingleFetcher<S,
         options: ConfigOptions,
         http_client: C,
     ) -> Self {
+        Self::new_no_agentless_with_capability_mask(
+            sink,
+            target,
+            runtime_id,
+            options.into(),
+            http_client,
+        )
+    }
+
+    /// Creates an agent-backed fetcher with consumer-owned capability assignments.
+    pub fn new_no_agentless_with_capability_mask(
+        sink: S,
+        target: Target,
+        runtime_id: String,
+        options: ConfigOptions<CapabilityMask>,
+        http_client: C,
+    ) -> Self {
         SingleFetcher {
             fetcher: ConfigFetcher::new_no_agentless(
                 sink,
@@ -75,7 +118,7 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> SingleFetcher<S,
                 )),
             ),
             target,
-            product_capabilities: ConfigProductCapabilities::new(
+            product_capabilities: ConfigProductCapabilities::from_mask(
                 options.products,
                 options.capabilities,
             ),
@@ -182,9 +225,18 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> SingleFetcher<S,
     pub fn set_product_capabilities(
         &mut self,
         products: Vec<RemoteConfigProduct>,
+        capabilities: Vec<RemoteConfigCapabilities>,
+    ) {
+        self.set_product_capability_mask(products, capabilities.into_iter().collect());
+    }
+
+    /// Replaces products and capabilities with an owned, opaque mask.
+    pub fn set_product_capability_mask(
+        &mut self,
+        products: Vec<RemoteConfigProduct>,
         capabilities: CapabilityMask,
     ) {
-        self.product_capabilities = ConfigProductCapabilities::new(products, capabilities);
+        self.product_capabilities = ConfigProductCapabilities::from_mask(products, capabilities);
     }
 }
 
@@ -207,10 +259,7 @@ where
         options: ConfigOptions,
         http_client: C,
     ) -> anyhow::Result<Self> {
-        Ok(SingleChangesFetcher {
-            changes: ChangeTracker::default(),
-            fetcher: SingleFetcher::new(sink, target, runtime_id, options, http_client).await?,
-        })
+        Self::new_with_capability_mask(sink, target, runtime_id, options.into(), http_client).await
     }
 
     pub fn new_no_agentless(
@@ -220,9 +269,47 @@ where
         options: ConfigOptions,
         http_client: C,
     ) -> Self {
+        Self::new_no_agentless_with_capability_mask(
+            sink,
+            target,
+            runtime_id,
+            options.into(),
+            http_client,
+        )
+    }
+
+    /// See [`SingleFetcher::new_with_capability_mask`].
+    pub async fn new_with_capability_mask(
+        sink: S,
+        target: Target,
+        runtime_id: String,
+        options: ConfigOptions<CapabilityMask>,
+        http_client: C,
+    ) -> anyhow::Result<Self> {
+        Ok(SingleChangesFetcher {
+            changes: ChangeTracker::default(),
+            fetcher: SingleFetcher::new_with_capability_mask(
+                sink,
+                target,
+                runtime_id,
+                options,
+                http_client,
+            )
+            .await?,
+        })
+    }
+
+    /// See [`SingleFetcher::new_no_agentless_with_capability_mask`].
+    pub fn new_no_agentless_with_capability_mask(
+        sink: S,
+        target: Target,
+        runtime_id: String,
+        options: ConfigOptions<CapabilityMask>,
+        http_client: C,
+    ) -> Self {
         SingleChangesFetcher {
             changes: ChangeTracker::default(),
-            fetcher: SingleFetcher::new_no_agentless(
+            fetcher: SingleFetcher::new_no_agentless_with_capability_mask(
                 sink,
                 target,
                 runtime_id,
@@ -279,10 +366,20 @@ where
     pub fn set_product_capabilities(
         &mut self,
         products: Vec<RemoteConfigProduct>,
-        capabilities: CapabilityMask,
+        capabilities: Vec<RemoteConfigCapabilities>,
     ) {
         self.fetcher
             .set_product_capabilities(products, capabilities);
+    }
+
+    /// See [`SingleFetcher::set_product_capability_mask`].
+    pub fn set_product_capability_mask(
+        &mut self,
+        products: Vec<RemoteConfigProduct>,
+        capabilities: CapabilityMask,
+    ) {
+        self.fetcher
+            .set_product_capability_mask(products, capabilities);
     }
 }
 
@@ -340,13 +437,73 @@ mod tests {
             b"some state"
         );
     }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn opt_in_constructors_preserve_enum_requests() {
+        let server = RemoteConfigServer::spawn();
+        let target = Target::new("service".into(), "env".into(), "1".into(), vec![], vec![]);
+        let options = || {
+            let mut options = server.dummy_options();
+            options.capabilities = vec![RemoteConfigCapabilities::AsmActivation];
+            options
+        };
+        let single = SingleFetcher::new(
+            SimpleFileStorage::default(),
+            target.clone(),
+            "runtime".into(),
+            options(),
+            NativeCapabilities::new_periodic(),
+        )
+        .await
+        .unwrap();
+        let synchronous = SingleFetcher::new_no_agentless(
+            SimpleFileStorage::default(),
+            target.clone(),
+            "runtime".into(),
+            options(),
+            NativeCapabilities::new_periodic(),
+        );
+        let changes = SingleChangesFetcher::new(
+            SimpleFileStorage::default(),
+            target.clone(),
+            "runtime".into(),
+            options(),
+            NativeCapabilities::new_periodic(),
+        )
+        .await
+        .unwrap();
+        let mask = SingleChangesFetcher::new_with_capability_mask(
+            SimpleFileStorage::default(),
+            target,
+            "runtime".into(),
+            options().into(),
+            NativeCapabilities::new_periodic(),
+        )
+        .await
+        .unwrap();
+        for mut fetcher in [single, synchronous, changes.fetcher, mask.fetcher] {
+            fetcher.fetch_once().await.unwrap();
+            let request = server.last_request.lock().unwrap();
+            assert_eq!(
+                request
+                    .as_ref()
+                    .unwrap()
+                    .client
+                    .as_ref()
+                    .unwrap()
+                    .capabilities,
+                [2]
+            );
+        }
+    }
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
     async fn forwards_opaque_capability_masks() {
         let server = RemoteConfigServer::spawn();
-        let mut options = server.dummy_options();
+        let mut options: ConfigOptions<CapabilityMask> = server.dummy_options().into();
         options.capabilities = crate::CapabilityMask::from(vec![0x80, 0, 0, 0, 0, 0, 0, 0, 1]);
-        let mut fetcher = SingleChangesFetcher::new_no_agentless(
+        let mut fetcher = SingleChangesFetcher::new_no_agentless_with_capability_mask(
             SimpleFileStorage::default(),
             Target::new("service".into(), "env".into(), "1".into(), vec![], vec![]),
             "runtime".into(),
@@ -365,7 +522,7 @@ mod tests {
         ];
         for (index, mask) in masks.into_iter().enumerate() {
             if index > 0 {
-                fetcher.set_product_capabilities(vec![], mask.clone().into());
+                fetcher.set_product_capability_mask(vec![], mask.clone().into());
             }
             fetcher.fetch_changes::<Vec<u8>>().await.unwrap();
             let request = server.last_request.lock().unwrap();
@@ -378,6 +535,44 @@ mod tests {
                     .unwrap()
                     .capabilities,
                 mask
+            );
+        }
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn enum_setters_can_replace_an_opted_in_mask() {
+        let server = RemoteConfigServer::spawn();
+        let mut fetcher = SingleChangesFetcher::new_no_agentless(
+            SimpleFileStorage::default(),
+            Target::new("service".into(), "env".into(), "1".into(), vec![], vec![]),
+            "runtime".into(),
+            server.dummy_options(),
+            NativeCapabilities::new_periodic(),
+        );
+        let mask = vec![0x80, 0, 0, 0, 0, 0, 0, 0, 1];
+        for expected in [vec![2], mask.clone(), vec![]] {
+            if expected == [2] {
+                fetcher.set_product_capabilities(
+                    vec![],
+                    vec![RemoteConfigCapabilities::AsmActivation],
+                );
+            } else if expected.is_empty() {
+                fetcher.set_product_capabilities(vec![], vec![]);
+            } else {
+                fetcher.set_product_capability_mask(vec![], mask.clone().into());
+            }
+            fetcher.fetch_changes::<Vec<u8>>().await.unwrap();
+            let request = server.last_request.lock().unwrap();
+            assert_eq!(
+                request
+                    .as_ref()
+                    .unwrap()
+                    .client
+                    .as_ref()
+                    .unwrap()
+                    .capabilities,
+                expected
             );
         }
     }
