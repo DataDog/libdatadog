@@ -2794,7 +2794,6 @@ dependencies = [
  "libc",
  "libdd-process-utils",
  "maplit",
- "nix 0.29.0",
  "pin-project",
  "proptest",
  "rand 0.8.8",

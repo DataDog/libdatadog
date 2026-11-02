@@ -4,7 +4,7 @@
 [package]
 name = "libdd-common"
 version = "9.0.0"
-description = "Shared utilities for Datadog libraries including HTTP/HTTPS connectors, container entity detection, tag validation, rate limiting, and Unix/Windows platform helpers"
+description = "Shared utilities for Datadog libraries including HTTP/HTTPS connectors, container entity detection, and tag validation"
 homepage = "https://github.com/DataDog/libdatadog/tree/main/datadog-common"
 repository = "https://github.com/DataDog/libdatadog/tree/main/datadog-common"
 edition.workspace = true
@@ -64,11 +64,9 @@ optional = true
 features = [
     "Win32_Foundation",
     "Win32_System_Registry",
-    "Win32_System_Threading",
 ]
 
 [target.'cfg(unix)'.dependencies]
-nix = { workspace = true, features = ["process"], optional = true }
 # TODO: Transitional: conn_stream.rs and dump_server.rs still call unix_utils
 # helpers; they move to libdd-networking with APMSP-4096 and take this
 # dependency with them.
@@ -103,7 +101,6 @@ std = [
     "dep:hex",
     "dep:http",
     "dep:libc",
-    "dep:nix",
     "dep:pin-project",
     "dep:regex",
     "dep:thiserror",
