@@ -109,6 +109,12 @@ const YIELD_AFTER_SPINS: u32 = 8;
 /// Max iterations `add` spends waiting on slots that are marked as being written. One
 /// budget for the whole call, so the worst case does not scale with the table's size.
 const MAX_SLOT_WAIT_ITERS: u32 = 10_000;
+/// Separate budget for waiting on [`Room::Pending`]. Used for another writer to commit
+/// or release its room reservation.  Unlike the slot-write wait this covers, the pending
+/// writer needs actual CPU time, so every iteration yields instead of spinning. A larger 
+//  budget than [`MAX_SLOT_WAIT_ITERS`] avoids false `OverLimit` when the room-holder is 
+//  merely OS-preempted rather than dead.
+const MAX_ROOM_PENDING_ITERS: u32 = 100_000;
 
 /// What the slots of one kind of table hold, and how inputs reach them.
 ///
@@ -895,6 +901,7 @@ impl<S: Schema> ShmTableMapping<S> {
         // a peer performs once, and in the sidecar this runs on the IPC handler's own thread.
         // Past the budget the probe keeps looking but stops waiting; an input is lost, not the
         // caller. The budget spans the whole call, so it also bounds a table poisoned throughout.
+        let mut room_pending_iters = 0u32;
         for _ in 0..slots {
             let entry = &bucket.entries[slot];
 
@@ -908,12 +915,14 @@ impl<S: Schema> ShmTableMapping<S> {
                                 Room::Taken => {}
                                 // The writer holding the last room may be about to fill this
                                 // very slot with this very key: look again once it had a chance.
+                                // Uses its own budget because the ending writer needs CPU time
                                 Room::Pending => {
-                                    if wait_for_slot(waits) {
+                                    room_pending_iters += 1;
+                                    if room_pending_iters < MAX_ROOM_PENDING_ITERS {
+                                        thread::yield_now();
                                         continue;
                                     }
-                                    // Rarely a plain timeout, but mostly a guard against a
-                                    // writer killed while holding room.
+                                    // A writer holding room for this long is likely dead.
                                     return Insert::OverLimit;
                                 }
                                 // Unless the last room went to this key, in this slot: room is
