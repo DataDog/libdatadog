@@ -45,12 +45,26 @@ fn event() -> FfeFlagEvaluationEvent {
 }
 
 fn request(events: Vec<FfeFlagEvaluationEvent>) -> SidecarInterfaceRequest {
+    request_with_context(
+        FfeTelemetryContext {
+            service: "svc".into(),
+            env: "test".into(),
+            version: "1".into(),
+        },
+        events,
+    )
+}
+
+fn request_with_context(
+    context: FfeTelemetryContext,
+    events: Vec<FfeFlagEvaluationEvent>,
+) -> SidecarInterfaceRequest {
     let ordinary = || SidecarAction::AddTelemetryMetricPoint(("ffe.healthy".into(), 3.0, vec![]));
     SidecarInterfaceRequest::EnqueueActions {
         actions: vec![
             ordinary(),
             SidecarAction::FfeFlagEvaluationBatch(FfeFlagEvaluationBatch {
-                context: FfeTelemetryContext::default(),
+                context,
                 flag_evaluations: events,
             }),
             ordinary(),
@@ -218,7 +232,12 @@ async fn matching_ipc_enforces_privacy_in_http_and_keeps_connection_healthy() {
         Some(r#"{"email":"degraded-context-canary"}"#.into());
     // Deliberately bypass producer normalization: the receiver must protect raw input.
     for rows in [vec![], vec![event()], vec![consented, degraded]] {
-        client.try_send_raw(encode(&request(rows)), &[]).unwrap();
+        client
+            .try_send_raw(
+                encode(&request_with_context(FfeTelemetryContext::default(), rows)),
+                &[],
+            )
+            .unwrap();
     }
     client
         .try_send_raw(
@@ -329,7 +348,9 @@ async fn bounded_ffe_submission_preserves_http_privacy_and_survives_rejection() 
                     let payload: serde_json::Value =
                         serde_json::from_slice(request.body_ref()).unwrap();
                     let rows = payload["flagEvaluations"].as_array().unwrap();
-                    rows.len() == 3
+                    payload["context"]
+                        == serde_json::json!({"service": "svc", "env": "test", "version": "1"})
+                        && rows.len() == 3
                         && rows.iter().any(|row| {
                             row["flag"]["key"] == "ipc-degraded"
                                 && row["evaluation_count"] == 2

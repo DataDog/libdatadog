@@ -1909,39 +1909,55 @@ mod tests {
         for character in ["a", "é"] {
             for (length, attributed) in [(256, true), (257, false)] {
                 let value = character.repeat(length);
-                for application in [
-                    test_application(&value),
-                    ApplicationConfig {
-                        env_name: value.clone(),
-                        ..test_application("svc")
-                    },
-                    ApplicationConfig {
-                        app_version: value.clone(),
-                        ..test_application("svc")
-                    },
+                for (field, application) in [
+                    ("service", test_application(&value)),
+                    (
+                        "env",
+                        ApplicationConfig {
+                            env_name: value.clone(),
+                            ..test_application("svc")
+                        },
+                    ),
+                    (
+                        "version",
+                        ApplicationConfig {
+                            app_version: value.clone(),
+                            ..test_application("svc")
+                        },
+                    ),
                 ] {
+                    let case = format!("{field} = {character:?} x {length}");
                     handler.set_application(Some(application.clone()), 0).await;
                     let mut batch = ffe_flag_evaluation_batch();
                     batch.context = FfeTelemetryContext::default();
                     handler.attach_flagevaluation_application(&mut batch);
+                    let event_service = batch.flag_evaluations[0]
+                        .context
+                        .as_ref()
+                        .and_then(|context| context.dd.as_ref())
+                        .map(|dd| dd.service.as_str());
                     if attributed {
-                        assert_eq!(batch.context.service, application.service_name);
-                        assert_eq!(batch.context.env, application.env_name);
-                        assert_eq!(batch.context.version, application.app_version);
+                        let expected = FfeTelemetryContext {
+                            service: application.service_name.clone(),
+                            env: application.env_name.clone(),
+                            version: application.app_version.clone(),
+                        };
+                        assert_eq!(batch.context, expected, "{case}: batch context");
                         assert_eq!(
-                            batch.flag_evaluations[0]
-                                .context
-                                .as_ref()
-                                .unwrap()
-                                .dd
-                                .as_ref()
-                                .unwrap()
-                                .service,
-                            application.service_name,
+                            event_service,
+                            Some(application.service_name.as_str()),
+                            "{case}: event service"
                         );
                     } else {
-                        assert_eq!(batch.context, FfeTelemetryContext::default());
-                        assert!(batch.flag_evaluations[0].context.is_none());
+                        assert_eq!(
+                            batch.context,
+                            FfeTelemetryContext::default(),
+                            "{case}: batch context"
+                        );
+                        assert!(
+                            batch.flag_evaluations[0].context.is_none(),
+                            "{case}: event context"
+                        );
                     }
                 }
             }
