@@ -25,8 +25,7 @@ http = { workspace = true, features = ["std"], optional = true }
 bytes = { workspace = true, features = ["std"], optional = true }
 pin-project = { workspace = true, optional = true }
 rand = { workspace = true, default-features = true, optional = true }
-regex = { workspace = true, features = ["std", "unicode", "perf"], optional = true }
-regex-lite = { workspace = true, default-features = true, optional = true }
+libdd-regex = { version = "0.1.0", path = "../libdd-regex", optional = true }
 # Use hickory-dns instead of the default system DNS resolver to avoid fork safety issues.
 # The default resolver can hold locks or other global state that can cause deadlocks
 # or corruption when the process forks (e.g., in PHP-FPM or other forking environments).
@@ -103,7 +102,7 @@ std = [
     "dep:http",
     "dep:libc",
     "dep:pin-project",
-    "dep:regex",
+    "dep:libdd-regex",
     "dep:thiserror",
     "dep:windows-sys",
     "serde/std",
@@ -129,11 +128,6 @@ use_webpki_roots = ["std", "hyper-rustls/webpki-roots", "dep:webpki-roots", "dep
 # Enable this feature to enable stubbing of cgroup
 # php directly import this crate and uses functions gated by this feature for their test
 cgroup_testing = ["std"]
-# Use regex-lite instead of regex for smaller binary size
-regex-lite = ["std", "dep:regex-lite"]
-# Consumers that handle user-provided regexes can enable this feature to force
-# the full `regex` crate, overriding `regex-lite` when both are active.
-require-regex-full = ["std"]
 # FIPS mode uses the FIPS-compliant cryptographic provider (Unix only)
 fips = ["tls-core", "hyper-rustls/fips"]
 # Honor HTTP(S)_PROXY/NO_PROXY environment variables for the hyper connector,

@@ -35,8 +35,6 @@ pub mod machine_id;
 pub mod multipart;
 #[cfg(feature = "std")]
 pub mod mutable_metadata;
-#[cfg(feature = "std")]
-pub mod regex_engine;
 pub mod tag;
 
 /// Extension trait that extracts the value from a `Result` whose error type is uninhabited.
