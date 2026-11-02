@@ -182,7 +182,9 @@ jobs:
       - name: Smoke-test semver tools on the new stable toolchain
         # A stable bump can move rustdoc's JSON format past what the pinned
         # cargo-semver-checks / cargo-public-api support, which silently breaks
-        # every later semver check. Run both tools once on an unchanged crate.
+        # every later semver check. Run both tools once on a crate against itself
+        # (baseline HEAD): identical source means any failure is tooling, never a
+        # real semver violation shipped with the bump.
         if: ${{ needs.detect-changes.outputs.stable_toolchain_changed == 'true' }}
         env:
           RUSTUP_TOOLCHAIN: ${{ steps.stable-version.outputs.version }}
@@ -190,7 +192,7 @@ jobs:
         run: |
           set -uo pipefail
           FAILED=()
-          if ! cargo semver-checks check-release -p "$PROBE_CRATE" --baseline-rev "origin/$GITHUB_BASE_REF"; then
+          if ! cargo semver-checks check-release -p "$PROBE_CRATE" --baseline-rev HEAD; then
             FAILED+=("cargo-semver-checks")
           fi
           if ! cargo public-api -p "$PROBE_CRATE" --simplified > /dev/null; then
