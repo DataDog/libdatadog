@@ -3271,6 +3271,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "libdd-process-utils"
+version = "1.0.0"
+dependencies = [
+ "libc",
+ "nix 0.29.0",
+ "tempfile",
+ "thiserror 2.0.17",
+ "windows-sys 0.52.0",
+]
+
+[[package]]
 name = "libdd-profiling"
 version = "1.0.0"
 dependencies = [
