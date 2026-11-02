@@ -10,8 +10,7 @@
 //! to stop writing), and the subsequent flush performs a final drain before removal.
 
 use crate::service::InstanceId;
-use base64::Engine;
-use base64::prelude::BASE64_URL_SAFE_NO_PAD;
+use crate::shm_path::keyed_shm_path;
 use futures::{TryFutureExt, future::join_all};
 use http::uri::PathAndQuery;
 use libdd_capabilities_impl::{HttpClientCapability, NativeCapabilities};
@@ -26,11 +25,10 @@ use libdd_common::mutable_metadata::MutableMetadata;
 use libdd_trace_stats::stats_exporter::{StatsExporter, StatsMetadata};
 use std::collections::HashMap;
 use std::ffi::CString;
-use std::hash::{Hash, Hasher};
+use std::hash::Hash;
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 use tracing::{debug, error, info, warn};
-use zwohash::ZwoHasher;
 
 /// Build the stats endpoint by appending `/v0.6/stats` to the agent base URL.
 /// Returns `None` for agentless mode (API key present) — stats are not supported agentless.
@@ -91,22 +89,7 @@ unsafe impl Send for SpanConcentratorState {}
 
 /// Compute the SHM path for an (env, version, root-service) triple's span concentrator.
 pub fn env_stats_shm_path(env: &str, version: &str, service: &str) -> CString {
-    let mut hasher = ZwoHasher::default();
-    env.hash(&mut hasher);
-    version.hash(&mut hasher);
-    service.hash(&mut hasher);
-    let hash = hasher.finish();
-
-    let mut path = format!(
-        "/ddspsc{}-{}",
-        crate::shm_namespace(),
-        BASE64_URL_SAFE_NO_PAD.encode(hash.to_ne_bytes()),
-    );
-    if cfg!(unix) {
-        path.truncate(31);
-    }
-    #[allow(clippy::unwrap_used)]
-    CString::new(path).unwrap()
+    keyed_shm_path("ddspsc", &(env, version, service))
 }
 
 fn make_exporter(
