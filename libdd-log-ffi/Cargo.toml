@@ -14,7 +14,7 @@ bench = false
 default = ["cbindgen", "expanded_builder_macros"]
 cbindgen = ["build_common/cbindgen", "libdd-common-ffi/cbindgen", "expanded_builder_macros"]
 expanded_builder_macros = []
-regex-lite = ["libdd-common-ffi/regex-lite"]
+regex-lite = ["libdd-regex/regex-lite"]
 
 [build-dependencies]
 build_common = { path = "../build-common" }
@@ -22,3 +22,4 @@ build_common = { path = "../build-common" }
 [dependencies]
 libdd-log = { path = "../libdd-log" }
 libdd-common-ffi = { path = "../libdd-common-ffi" }
+libdd-regex = { path = "../libdd-regex" }

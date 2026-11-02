@@ -43,7 +43,7 @@ ffe = []
 shared-runtime = []
 otel-thread-ctx = []
 catch_panic = []
-regex-lite = ["libdd-common/regex-lite"]
+regex-lite = ["libdd-regex/regex-lite"]
 
 [lib]
 bench = false
@@ -60,6 +60,7 @@ tools = { path = "../tools" }
 toml = { workspace = true, features = ["parse"] }
 serde.workspace = true
 libdd-common = { path = "../libdd-common", default-features = false, features = ["std"] }
+libdd-regex = { path = "../libdd-regex" }
 
 [[bin]]
 name = "release"

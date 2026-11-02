@@ -24,12 +24,13 @@ tokio-util.workspace = true
 tracing.workspace = true
 libdd-capabilities = { path = "../libdd-capabilities", version = "4.0.1" }
 libdd-common = { version = "9.0.0", path = "../libdd-common", default-features = false, features = ["std"] }
+libdd-regex = { version = "0.1.0", path = "../libdd-regex" }
 
 [features]
 default = ["https"]
 https = ["libdd-capabilities-impl/https"]
 fips = ["libdd-capabilities-impl/fips"]
-regex-lite = ["libdd-common/regex-lite"]
+regex-lite = ["libdd-regex/regex-lite"]
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 libdd-capabilities-impl = { path = "../libdd-capabilities-impl", version = "8.0.0", default-features = false }
