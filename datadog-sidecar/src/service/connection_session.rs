@@ -18,6 +18,7 @@ use crate::config::get_product_endpoint;
 use crate::log::{MULTI_LOG_FILTER, MULTI_LOG_WRITER, MultiEnvFilterGuard, MultiWriterGuard};
 use crate::service::agent_info::{AgentInfoGuard, AgentInfos};
 use crate::service::application::ActiveApplication;
+use crate::service::data_streams_flusher::{DsmConfig, dsm_endpoint};
 use crate::service::dogstatsd_pool::DogStatsDPool;
 use crate::service::evp_proxy::EVENT_PLATFORM_INTAKE_SUBDOMAIN;
 use crate::service::evp_transport::EvpTransport;
@@ -48,6 +49,8 @@ pub struct ConnectionSession {
     pub remote_config_interval: Duration,
     pub remote_config_enabled: bool,
     pub(crate) stats_config: Option<StatsConfig>,
+    /// `None` in agentless mode, where DSM is not sent.
+    pub(crate) dsm_config: Option<DsmConfig>,
     pub otlp_metrics_endpoint: Option<Endpoint>,
     evp_transports: EvpTransportState,
     pub process_tags: Vec<Tag>,
@@ -183,6 +186,15 @@ impl ConnectionSession {
             tracer_version: config.tracer_version.clone(),
         });
 
+        // Process tags are filled in by `refresh_stats_process_tags`, as for stats.
+        let dsm_config = dsm_endpoint(&config.endpoint).map(|endpoint| DsmConfig {
+            endpoint,
+            language: config.language.clone(),
+            language_version: config.language_version.clone(),
+            tracer_version: config.tracer_version.clone(),
+            process_tags: vec![],
+        });
+
         let mut session = ConnectionSession {
             instance_id,
             telemetry_config,
@@ -202,6 +214,7 @@ impl ConnectionSession {
             remote_config_interval: config.remote_config_poll_interval,
             remote_config_enabled: config.remote_config_enabled,
             stats_config,
+            dsm_config,
             otlp_metrics_endpoint: config.otlp_metrics_endpoint,
             evp_transports: EvpTransportState::default(),
             process_tags: config.process_tags,
@@ -247,6 +260,7 @@ impl ConnectionSession {
             remote_config_interval: Duration::from_secs(5),
             remote_config_enabled: false,
             stats_config: None,
+            dsm_config: None,
             otlp_metrics_endpoint: None,
             evp_transports: EvpTransportState::default(),
             process_tags: vec![],
@@ -369,10 +383,12 @@ impl ConnectionSession {
             .process_tags_with_svc_source()
             .iter()
             .map(|t| t.to_string())
-            .collect::<Vec<_>>()
-            .join(",");
+            .collect::<Vec<_>>();
         if let Some(stats) = self.stats_config.as_mut() {
-            stats.process_tags = process_tags;
+            stats.process_tags = process_tags.join(",");
+        }
+        if let Some(dsm) = self.dsm_config.as_mut() {
+            dsm.process_tags = process_tags;
         }
     }
 
@@ -394,7 +410,10 @@ impl ConnectionSession {
         }
         // So that newly created concentrators carry the test token.
         if let Some(stats) = self.stats_config.as_mut() {
-            stats.endpoint.test_token = token;
+            stats.endpoint.test_token = token.clone();
+        }
+        if let Some(dsm) = self.dsm_config.as_mut() {
+            dsm.endpoint.test_token = token;
         }
         // TODO(APMSP-1377): the dogstatsd-client doesn't support test_session tokens yet
     }

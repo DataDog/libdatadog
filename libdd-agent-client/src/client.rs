@@ -131,7 +131,7 @@ impl AgentClient {
     /// setting. This is a protocol requirement of the data-streams endpoint.
     pub async fn send_pipeline_stats(&self, payload: Bytes) -> Result<(), SendError> {
         let request = HttpRequest::new(
-            HttpMethod::Put,
+            HttpMethod::Post,
             format!("{}/v0.1/pipeline_stats", self.base_url),
         )
         .with_body(gzip_compress(payload)?)
