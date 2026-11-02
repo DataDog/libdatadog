@@ -32,8 +32,32 @@ pub struct ClientError {
 
 impl core::fmt::Display for ClientError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        self.source.fmt(f)
+        // The immediate source is typically a `hyper_util::client::legacy::Error`, whose own
+        // `Display` is terse. Render the whole chain so the message that eventually reaches users
+        // is useful. See also `reqwest_backend::error_chain` in `libdd-http-client`.
+        write_error_chain(f, self.source.as_ref())
     }
+}
+
+/// Writes `error` and its entire `source()` chain, joined by `": "`.
+///
+/// Relevant details often only appear in nested sources (e.g. a hyper connect error hides the TLS
+/// or DNS failure below it), so rendering a single level is often not informative. Use this when
+/// converting an error to a string that crosses a language or FFI boundary, or end up in logs.
+fn write_error_chain(
+    f: &mut core::fmt::Formatter<'_>,
+    error: &(dyn core::error::Error + 'static),
+) -> core::fmt::Result {
+    write!(f, "{error}")?;
+
+    let mut source = error.source();
+
+    while let Some(error) = source {
+        write!(f, ": {error}")?;
+        source = error.source();
+    }
+
+    Ok(())
 }
 
 impl ClientError {
@@ -324,3 +348,25 @@ mod native {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::*;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn client_error_display_includes_whole_source_chain() {
+        let source = anyhow::Error::new(std::io::Error::new(
+            std::io::ErrorKind::ConnectionRefused,
+            "connection refused",
+        ))
+        .context("tls handshake failed");
+        let error = ClientError {
+            source: source.context("client error (Connect)"),
+            kind: ErrorKind::Closed,
+        };
+        assert_eq!(
+            error.to_string(),
+            "client error (Connect): tls handshake failed: connection refused"
+        );
+    }
+}
