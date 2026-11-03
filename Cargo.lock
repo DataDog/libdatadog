@@ -3468,7 +3468,6 @@ dependencies = [
  "libdd-capabilities-impl",
  "libdd-common",
  "tokio",
- "tokio-util",
  "tracing",
  "wasm-bindgen-futures",
 ]

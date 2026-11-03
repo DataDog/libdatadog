@@ -144,6 +144,21 @@ mod tests {
         sender: Sender<i32>,
     }
 
+    /// Value sent by [`TestWorker::flush`].
+    const FLUSH_MARKER: i32 = -2;
+
+    /// Waits until the worker reports a flush.
+    fn wait_flush_marker(receiver: &Receiver<i32>) {
+        loop {
+            let v = receiver
+                .recv_timeout(Duration::from_secs(2))
+                .expect("worker did not flush");
+            if v == FLUSH_MARKER {
+                return;
+            }
+        }
+    }
+
     fn make_test_worker() -> (TestWorker, Receiver<i32>) {
         let (sender, receiver) = channel::<i32>();
         (TestWorker { state: 0, sender }, receiver)
@@ -158,6 +173,10 @@ mod tests {
 
         async fn trigger(&mut self) {
             sleep(Duration::from_millis(100)).await;
+        }
+
+        async fn flush(&mut self) {
+            let _ = self.sender.send(FLUSH_MARKER);
         }
 
         async fn shutdown(&mut self) {
@@ -347,5 +366,18 @@ mod tests {
                 .expect("worker did not run after caller dropped its runtime clone"),
             0
         );
+    }
+
+    #[test]
+    fn test_worker_handle_flush() {
+        let shared_runtime = BasicRuntime::new().expect("BasicRuntime::new");
+        let (worker, receiver) = make_test_worker();
+        let handle = shared_runtime.spawn_worker(worker, false).unwrap();
+        let token = handle.flush().unwrap();
+        shared_runtime
+            .block_on_with_timeout(token.wait(), Duration::from_secs(2))
+            .unwrap()
+            .unwrap();
+        wait_flush_marker(&receiver);
     }
 }

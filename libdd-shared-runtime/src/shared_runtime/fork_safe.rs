@@ -253,6 +253,21 @@ mod tests {
         sender: Sender<i32>,
     }
 
+    /// Value sent by [`TestWorker::flush`].
+    const FLUSH_MARKER: i32 = -2;
+
+    /// Waits until the worker reports a flush.
+    fn wait_flush_marker(receiver: &Receiver<i32>) {
+        loop {
+            let v = receiver
+                .recv_timeout(Duration::from_secs(2))
+                .expect("worker did not flush");
+            if v == FLUSH_MARKER {
+                return;
+            }
+        }
+    }
+
     fn make_test_worker() -> (TestWorker, Receiver<i32>) {
         let (sender, receiver) = channel::<i32>();
         (TestWorker { state: 0, sender }, receiver)
@@ -271,6 +286,10 @@ mod tests {
 
         fn reset(&mut self) {
             self.state = 0;
+        }
+
+        async fn flush(&mut self) {
+            let _ = self.sender.send(FLUSH_MARKER);
         }
 
         async fn shutdown(&mut self) {
@@ -494,5 +513,68 @@ mod tests {
             good_rx.recv_timeout(Duration::from_secs(1)).is_ok(),
             "good worker should resume after fork even if a peer is InvalidState"
         );
+    }
+
+    #[test]
+    fn test_worker_handle_flush() {
+        let shared_runtime = ForkSafeRuntime::new().unwrap();
+        let (worker, receiver) = make_test_worker();
+        let handle = shared_runtime.spawn_worker(worker, true).unwrap();
+        let token = handle.flush().unwrap();
+        shared_runtime
+            .block_on_with_timeout(token.wait(), Duration::from_secs(2))
+            .unwrap()
+            .unwrap();
+        wait_flush_marker(&receiver);
+    }
+
+    #[test]
+    fn test_flush_during_fork_window() {
+        let shared_runtime = ForkSafeRuntime::new().unwrap();
+        let (worker, receiver) = make_test_worker();
+        let handle = shared_runtime.spawn_worker(worker, true).unwrap();
+        receiver.recv_timeout(Duration::from_secs(1)).unwrap();
+
+        shared_runtime.before_fork();
+        let token = handle.flush().unwrap();
+        while let Ok(v) = receiver.try_recv() {
+            assert_ne!(v, FLUSH_MARKER, "flush must not run while paused");
+        }
+        shared_runtime.after_fork_parent().unwrap();
+
+        shared_runtime
+            .block_on_with_timeout(token.wait(), Duration::from_secs(2))
+            .unwrap()
+            .unwrap();
+        wait_flush_marker(&receiver);
+    }
+
+    #[test]
+    fn test_repeated_fork_cycles_keep_running() {
+        let shared_runtime = ForkSafeRuntime::new().unwrap();
+        let (worker, receiver) = make_test_worker();
+        let _handle = shared_runtime.spawn_worker(worker, true).unwrap();
+        receiver.recv_timeout(Duration::from_secs(1)).unwrap();
+        for _ in 0..5 {
+            shared_runtime.before_fork();
+            shared_runtime.after_fork_parent().unwrap();
+        }
+        while receiver.try_recv().is_ok() {}
+        let a = receiver.recv_timeout(Duration::from_secs(1)).unwrap();
+        let b = receiver.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert_eq!(b, a + 1);
+    }
+
+    #[test]
+    fn test_flush_after_stop() {
+        let shared_runtime = ForkSafeRuntime::new().unwrap();
+        let (worker, _receiver) = make_test_worker();
+        let handle = shared_runtime.spawn_worker(worker, true).unwrap();
+        let other = handle.clone();
+        shared_runtime.block_on(handle.stop()).unwrap().unwrap();
+        assert!(matches!(
+            other.flush(),
+            Err(crate::WorkerHandleError::AlreadyStopped)
+        ));
     }
 }
