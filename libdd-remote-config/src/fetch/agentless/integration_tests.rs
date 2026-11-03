@@ -1494,12 +1494,14 @@ async fn test_agentless_request_reports_config_states() {
     assert_eq!(states[0].apply_error, "boom");
 }
 
-/// Like in agent mode, a target without a `custom.v` version is a failure of
-/// that file, reported as the client's error, while the other files still
-/// apply; it must not be handed out as version 0.
+/// Like in agent mode and the Go client, a target without a `custom.v` version
+/// rejects the whole update: nothing from the response is applied (it must not
+/// be handed out as version 0, nor may the other files apply alone), the
+/// error is reported on the next request, which still advertises the previous
+/// versions, and once the backend fixes the target every file applies.
 #[tokio::test]
 #[cfg_attr(miri, ignore)]
-async fn test_target_without_version_fails_only_that_file() {
+async fn test_target_without_version_rejects_the_update() {
     use crate::fetch::{ConfigClientState, ConfigFetcher, ConfigProductCapabilities};
     use crate::{RemoteConfigCapabilities, RemoteConfigProduct, Target};
 
@@ -1518,25 +1520,36 @@ async fn test_target_without_version_fails_only_that_file() {
         &[HashAlgorithm::Sha256],
     )
     .await;
-    let dir = build_director_with_versions(
-        &director_key,
-        &[
-            (good_path, b"good payload", Some(7)),
-            (bad_path, b"bad payload", None),
-        ],
-        &[HashAlgorithm::Sha256],
-    )
-    .await;
-    let resp = delegated_response(&cfg, raw_delegated, "APM_TRACING", &dir, entries);
+    let director = async |bad_version: Option<u64>| {
+        build_director_with_versions(
+            &director_key,
+            &[
+                (good_path, b"good payload", Some(7)),
+                (bad_path, b"bad payload", bad_version),
+            ],
+            &[HashAlgorithm::Sha256],
+        )
+        .await
+    };
+    let broken_dir = director(None).await;
+    let fixed_dir = director(Some(3)).await;
+    let broken = delegated_response(
+        &cfg,
+        raw_delegated.clone(),
+        "APM_TRACING",
+        &broken_dir,
+        entries,
+    );
+    let fixed = delegated_response(&cfg, raw_delegated, "APM_TRACING", &fixed_dir, entries);
 
     let http = MockHttp::new();
-    http.push(&resp);
-    http.push(&resp);
+    http.push(&broken);
+    http.push(&fixed);
 
     let f = fetcher(
         http.clone(),
         cfg.root().unwrap().as_bytes().to_vec(),
-        dir.root().unwrap().as_bytes().to_vec(),
+        broken_dir.root().unwrap().as_bytes().to_vec(),
     )
     .await;
     let state = Arc::new(ConfigFetcherState::<(), MockHttp>::with_client(
@@ -1556,37 +1569,66 @@ async fn test_target_without_version_fails_only_that_file() {
         vec![RemoteConfigCapabilities::ApmTracingCustomTags],
     );
     let mut client_state = ConfigClientState::default();
-
-    for _ in 0..2 {
-        let configs = fetcher
-            .fetch_once("rt", &target, &capabilities, "client", &mut client_state)
-            .await
+    let stored = || {
+        let mut paths: Vec<String> = state
+            .target_files_by_path
+            .lock()
             .unwrap()
-            .unwrap();
-        assert_eq!(configs.len(), 1, "only the versioned file is applied");
-    }
+            .keys()
+            .map(|p| p.to_string())
+            .collect();
+        paths.sort();
+        paths
+    };
 
-    let stored: Vec<String> = state
-        .target_files_by_path
-        .lock()
-        .unwrap()
-        .keys()
-        .map(|p| p.to_string())
-        .collect();
-    assert_eq!(stored, vec![good_path.to_string()]);
-
-    let req = http.request_at(1);
-    let client_state = req.active_clients[0].state.as_ref().unwrap();
-    assert!(client_state.has_error, "the failed file is reported");
+    let err = fetcher
+        .fetch_once("rt", &target, &capabilities, "client", &mut client_state)
+        .await
+        .unwrap_err();
+    let expected = format!("Failed parsing version from remote config path {bad_path}");
     assert!(
-        client_state.error.contains(&format!(
-            "Failed parsing version from remote config path {bad_path}"
-        )),
-        "unexpected error: {:?}",
-        client_state.error
+        format!("{err:#}").contains(&expected),
+        "unexpected error: {err:#}"
     );
-    let states = &client_state.config_states;
-    assert_eq!(states.len(), 1, "{states:?}");
-    assert_eq!(states[0].id, "good");
-    assert_eq!(states[0].version, 7);
+    assert!(stored().is_empty(), "nothing is applied: {:?}", stored());
+
+    let configs = fetcher
+        .fetch_once("rt", &target, &capabilities, "client", &mut client_state)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(configs.len(), 2, "both files apply once fixed");
+    assert_eq!(stored(), vec![bad_path.to_string(), good_path.to_string()]);
+
+    let first = http.request_at(0);
+    let req = http.request_at(1);
+    assert_eq!(req.backend_client_state, first.backend_client_state);
+    assert_eq!(
+        req.current_config_snapshot_version,
+        first.current_config_snapshot_version
+    );
+    assert_eq!(
+        req.current_config_root_version,
+        first.current_config_root_version
+    );
+    assert_eq!(
+        req.current_director_root_version,
+        first.current_director_root_version
+    );
+    assert_eq!(req.new_products, first.new_products);
+    let req_state = req.active_clients[0].state.as_ref().unwrap();
+    let first_state = first.active_clients[0].state.as_ref().unwrap();
+    assert!(req_state.has_error, "the rejected update is reported");
+    assert!(
+        req_state.error.contains(&expected),
+        "unexpected error: {:?}",
+        req_state.error
+    );
+    assert_eq!(req_state.root_version, first_state.root_version);
+    assert_eq!(req_state.targets_version, first_state.targets_version);
+    assert!(
+        req_state.config_states.is_empty(),
+        "{:?}",
+        req_state.config_states
+    );
 }
