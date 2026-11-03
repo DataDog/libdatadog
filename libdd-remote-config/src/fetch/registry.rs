@@ -11,7 +11,9 @@
 //! consumer is still working with. Dead entries are pruned lazily.
 //!
 //! Every method takes the lock briefly and never drops a strong reference while holding it, so
-//! that a file's `Drop` (e.g. unlinking a shared memory segment) never runs under the lock.
+//! that a file's `Drop` (e.g. unlinking a shared memory segment) never runs under the lock. Files
+//! are stored without holding it either: only the version being stored is locked, so that
+//! different versions are stored in parallel.
 //!
 //! This module is free of any async runtime, so that it builds wherever the fetcher does.
 
@@ -20,7 +22,7 @@ use hashbrown::{HashMap, HashSet};
 use libdd_common::MutexExt;
 use libdd_trace_protobuf::remoteconfig::TargetFileMeta;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Mutex, PoisonError, Weak};
 
 /// The stored file versions, by path. A version is identified by (path, hash, length), which is
 /// what the agent deduplicates on: its version number plays no part in it. A version-only change
@@ -35,7 +37,8 @@ pub(crate) struct FileRegistry<F> {
 
 type Versions<F> = HashMap<Arc<RemoteConfigPath>, Vec<VersionEntry<F>>>;
 
-/// One stored version: one (path, hash, length).
+/// One stored version: one (path, hash, length). While its file is not alive, it is only a
+/// placeholder for stores in progress, which is neither advertised nor found.
 struct VersionEntry<F> {
     /// The primary hash of the contents, as chosen by the caller (the agent protocol uses sha256,
     /// else sha512).
@@ -46,6 +49,10 @@ struct VersionEntry<F> {
     newest_version: u64,
     /// The only reference the registry keeps.
     file: Weak<F>,
+    /// Held across the store of this version, so that it is never stored twice at once. The
+    /// entry is kept, even with a dead file, as long as a store holds or waits for it: cloned
+    /// only under the registry lock, a count of one means none does nor can start to.
+    storing: Arc<Mutex<()>>,
     /// The number of live [`RequestSnapshot`]s which advertised this version.
     in_flight: Arc<AtomicU32>,
 }
@@ -150,8 +157,9 @@ impl<F> FileRegistry<F> {
     /// there is none, the one `store` returns, recorded as named `version` by a response. Returns
     /// the registry's copy of the path and the stored file.
     ///
-    /// `store` is called under the registry lock, so that fetchers sharing the registry never
-    /// store the same version twice. It must not call back into the registry.
+    /// `store` is called with only this version locked: fetchers sharing the registry never store
+    /// the same version twice, and one waiting for another to store it reuses that file. It must
+    /// not call back into the registry for the same version.
     pub(crate) fn get_or_store(
         &self,
         path: Arc<RemoteConfigPath>,
@@ -160,37 +168,91 @@ impl<F> FileRegistry<F> {
         version: u64,
         store: impl FnOnce() -> anyhow::Result<Arc<F>>,
     ) -> anyhow::Result<(Arc<RemoteConfigPath>, Arc<F>)> {
-        let len = u64::try_from(meta.length).ok();
-        let mut paths = self.paths.lock_or_panic();
-        let entry = paths.entry(path);
-        // The registry's copy, if the path is already known.
-        let path = entry.key().clone();
-        let versions = entry.or_default();
-        versions.retain(VersionEntry::is_alive);
-        if let Some(file) = versions
-            .iter()
-            .find(|entry| len.is_some_and(|len| entry.matches(&hash, len)))
-            .and_then(|entry| entry.file.upgrade())
-        {
+        let Ok(len) = u64::try_from(meta.length) else {
+            // Never matched (see VersionEntry::matches), so there is nothing to wait for.
+            let file = store()?;
+            let mut paths = self.paths.lock_or_panic();
+            let entry = paths.entry(path);
+            let path = entry.key().clone();
+            entry.or_default().push(VersionEntry::new(
+                hash,
+                meta,
+                version,
+                Arc::downgrade(&file),
+                Arc::default(),
+            ));
+            return Ok((path, file));
+        };
+
+        // The registry's copy of the path, and the lock of the entry, created if missing.
+        let (path, storing) = {
+            let mut paths = self.paths.lock_or_panic();
+            let entry = paths.entry(path);
+            let path = entry.key().clone();
+            let versions = entry.or_default();
+            let storing = match versions.iter().find(|entry| entry.matches(&hash, len)) {
+                Some(entry) => match entry.file.upgrade() {
+                    Some(file) => return Ok((path, file)),
+                    None => entry.storing.clone(),
+                },
+                None => {
+                    let storing = Arc::<Mutex<()>>::default();
+                    versions.push(VersionEntry::new(
+                        hash.clone(),
+                        meta.clone(),
+                        version,
+                        Weak::new(),
+                        storing.clone(),
+                    ));
+                    storing
+                }
+            };
+            (path, storing)
+        };
+
+        // Nothing protected: the lock only serialises stores, so a panicking one poisons nothing.
+        let _storing = storing.lock().unwrap_or_else(PoisonError::into_inner);
+        // Stored by whoever held the lock before?
+        let stored = {
+            let paths = self.paths.lock_or_panic();
+            find_storing(&paths, &path, &storing).and_then(|entry| entry.file.upgrade())
+        };
+        if let Some(file) = stored {
             return Ok((path, file));
         }
-        let file = match store() {
-            Ok(file) => file,
+
+        let result = store();
+        let mut paths = self.paths.lock_or_panic();
+        let versions = paths.entry(path.clone()).or_default();
+        let entry = versions
+            .iter()
+            .position(|entry| Arc::ptr_eq(&entry.storing, &storing));
+        match result {
+            Ok(file) => {
+                let stored =
+                    VersionEntry::new(hash, meta, version, Arc::downgrade(&file), storing.clone());
+                match entry {
+                    Some(entry) => versions[entry] = stored,
+                    // Forgotten (see Self::clear) while storing.
+                    None => versions.push(stored),
+                }
+                Ok((path, file))
+            }
             Err(e) => {
+                // Nobody else holds nor waits for the lock: none will store this version, so the
+                // placeholder goes. A waiter would try storing it in turn.
+                let unused = entry.filter(|&entry| {
+                    Arc::strong_count(&storing) == 2 && !versions[entry].is_alive()
+                });
+                if let Some(entry) = unused {
+                    versions.swap_remove(entry);
+                }
                 if versions.is_empty() {
                     paths.remove(&path);
                 }
-                return Err(e);
+                Err(e)
             }
-        };
-        versions.push(VersionEntry {
-            hash,
-            meta,
-            newest_version: version,
-            file: Arc::downgrade(&file),
-            in_flight: Default::default(),
-        });
-        Ok((path, file))
+        }
     }
 
     /// Records that a client now holds each given file, stored for its path, as the given
@@ -220,7 +282,7 @@ impl<F> FileRegistry<F> {
     {
         let held: HashSet<*const F> = held.into_iter().map(Arc::as_ptr).collect();
         self.paths.lock_or_panic().retain(|_, versions| {
-            versions.retain(|entry| held.contains(&entry.file.as_ptr()));
+            versions.retain(|entry| held.contains(&entry.file.as_ptr()) || entry.is_being_stored());
             !versions.is_empty()
         });
     }
@@ -236,14 +298,20 @@ impl<F> FileRegistry<F> {
         let mut paths = self.paths.lock_or_panic();
         prune(&mut paths);
         let mut stats = RegistryStats {
-            paths: paths.len() as u32,
+            paths: 0,
             live: 0,
             in_flight_only: 0,
         };
-        for entry in paths.values().flatten() {
-            stats.live += 1;
-            if !entry.is_held_beyond_requests() {
-                stats.in_flight_only += 1;
+        for versions in paths.values() {
+            let mut live = versions.iter().filter(|entry| entry.is_alive()).peekable();
+            if live.peek().is_some() {
+                stats.paths += 1;
+            }
+            for entry in live {
+                stats.live += 1;
+                if !entry.is_held_beyond_requests() {
+                    stats.in_flight_only += 1;
+                }
             }
         }
         stats
@@ -289,15 +357,46 @@ pub(crate) struct EntryInfo<F> {
     pub file: Arc<F>,
 }
 
-/// Drops the entries of dead versions, and the paths left without any.
+/// Drops the entries of dead versions no store is in progress for, and the paths left without
+/// any.
 fn prune<F>(paths: &mut Versions<F>) {
     paths.retain(|_, versions| {
-        versions.retain(VersionEntry::is_alive);
+        versions.retain(|entry| entry.is_alive() || entry.is_being_stored());
         !versions.is_empty()
     });
 }
 
+/// The entry of `path` locked by `storing`, if still registered.
+fn find_storing<'v, F>(
+    paths: &'v Versions<F>,
+    path: &RemoteConfigPath,
+    storing: &Arc<Mutex<()>>,
+) -> Option<&'v VersionEntry<F>> {
+    paths
+        .get(path)?
+        .iter()
+        .find(|entry| Arc::ptr_eq(&entry.storing, storing))
+}
+
 impl<F> VersionEntry<F> {
+    fn new(
+        hash: String,
+        meta: TargetFileMeta,
+        version: u64,
+        file: Weak<F>,
+        storing: Arc<Mutex<()>>,
+    ) -> Self {
+        VersionEntry {
+            hash,
+            meta,
+            newest_version: version,
+            file,
+            storing,
+            // Fresh: requests which advertised a previous life of the entry no longer count.
+            in_flight: Default::default(),
+        }
+    }
+
     /// Whether this is the version with the given primary hash and length.
     fn matches(&self, hash: &str, len: u64) -> bool {
         // A negative length should never appear; if it does, nothing matches it, so that the file
@@ -311,6 +410,12 @@ impl<F> VersionEntry<F> {
 
     fn is_alive(&self) -> bool {
         self.file.strong_count() > 0
+    }
+
+    /// Whether a store of this version holds or waits for its lock. Read under the registry
+    /// lock, `false` is final: the lock is only cloned under it.
+    fn is_being_stored(&self) -> bool {
+        Arc::strong_count(&self.storing) > 1
     }
 
     /// Whether something else than in-flight requests keeps this version alive.
@@ -459,14 +564,19 @@ mod tests {
     #[test]
     fn failed_store_leaves_nothing() {
         let registry = FileRegistry::<String>::default();
-        let path = path();
-        let meta = meta(&path, "h1", 2);
+        let meta = meta(&path(), "h1", 2);
         assert!(
             registry
-                .get_or_store(path, "h1".to_string(), meta, 1, || anyhow::bail!("full"))
+                .get_or_store(path(), "h1".to_string(), meta, 1, || anyhow::bail!("full"))
                 .is_err()
         );
         assert!(registry.paths.lock_or_panic().is_empty());
+        assert!(registry.advertise().cached.is_empty());
+        assert!(registry.lookup(&path(), "h1", 2).is_none());
+
+        let stored = insert(&registry, "h1", 2, 1, "v1");
+        assert_eq!(*stored, "v1", "stored on a later attempt");
+        assert_eq!(advertised_hashes(&registry), ["h1"]);
     }
 
     #[test]
@@ -501,5 +611,144 @@ mod tests {
         registry.retain_held([]);
         assert!(registry.is_empty());
         drop(v1);
+    }
+
+    #[test]
+    fn storing_one_version_does_not_block_storing_another() {
+        let registry = Arc::new(FileRegistry::<String>::default());
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let slow = std::thread::spawn({
+            let registry = registry.clone();
+            move || {
+                let path = path();
+                let meta = meta(&path, "h1", 2);
+                registry
+                    .get_or_store(path, "h1".to_string(), meta, 1, || {
+                        entered_tx.send(()).unwrap();
+                        release_rx.recv().unwrap();
+                        Ok(Arc::new("v1".to_string()))
+                    })
+                    .unwrap()
+                    .1
+            }
+        });
+        entered_rx.recv().unwrap();
+
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let fast = std::thread::spawn({
+            let registry = registry.clone();
+            move || {
+                let file = insert(&registry, "h2", 2, 2, "v2");
+                done_tx.send(()).unwrap();
+                file
+            }
+        });
+        let fast_done = done_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .is_ok();
+        release_tx.send(()).unwrap();
+        let v1 = slow.join().unwrap();
+        let v2 = fast.join().unwrap();
+        assert!(fast_done, "storing v2 waited for the store of v1");
+        assert_eq!((v1.as_str(), v2.as_str()), ("v1", "v2"));
+        assert_eq!(advertised_hashes(&registry), ["h2"]);
+    }
+
+    /// The holders and waiters of the lock of the entry with the given hash, the entry included.
+    fn storing_count(registry: &FileRegistry<String>, hash: &str) -> usize {
+        registry.paths.lock_or_panic()[&*path()]
+            .iter()
+            .find(|entry| entry.hash == hash)
+            .map_or(0, |entry| Arc::strong_count(&entry.storing))
+    }
+
+    /// Spawns a `get_or_store` of version 1 of "h1", whose store signals `entered`, then returns
+    /// what it receives from `release` (Err: fails).
+    fn spawn_store(
+        registry: &Arc<FileRegistry<String>>,
+        stores: &Arc<std::sync::atomic::AtomicUsize>,
+        entered: std::sync::mpsc::Sender<()>,
+        release: std::sync::mpsc::Receiver<Result<String, String>>,
+    ) -> std::thread::JoinHandle<anyhow::Result<Arc<String>>> {
+        let registry = registry.clone();
+        let stores = stores.clone();
+        std::thread::spawn(move || {
+            let path = path();
+            let meta = meta(&path, "h1", 2);
+            registry
+                .get_or_store(path, "h1".to_string(), meta, 1, || {
+                    stores.fetch_add(1, Ordering::SeqCst);
+                    entered.send(()).unwrap();
+                    match release.recv().unwrap() {
+                        Ok(contents) => Ok(Arc::new(contents)),
+                        Err(e) => Err(anyhow::anyhow!(e)),
+                    }
+                })
+                .map(|(_, file)| file)
+        })
+    }
+
+    /// Waits until `count` stores hold or wait for the lock of "h1".
+    fn wait_for_stores(registry: &FileRegistry<String>, count: usize) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while storing_count(registry, "h1") != count + 1 {
+            assert!(std::time::Instant::now() < deadline, "stores never met");
+            std::thread::yield_now();
+        }
+    }
+
+    #[test]
+    fn concurrent_stores_of_one_version_store_it_once() {
+        let registry = Arc::new(FileRegistry::<String>::default());
+        let stores = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let first = spawn_store(&registry, &stores, entered_tx.clone(), release_rx);
+        entered_rx.recv().unwrap();
+        // Would store "second" if it stored at all.
+        let (second_release_tx, second_release_rx) = std::sync::mpsc::channel();
+        second_release_tx.send(Ok("second".to_string())).unwrap();
+        let second = spawn_store(&registry, &stores, entered_tx, second_release_rx);
+        // The second is waiting for the first to store the version.
+        wait_for_stores(&registry, 2);
+        assert!(advertised_hashes(&registry).is_empty(), "not stored yet");
+        release_tx.send(Ok("first".to_string())).unwrap();
+
+        let first = first.join().unwrap().unwrap();
+        let second = second.join().unwrap().unwrap();
+        assert_eq!(stores.load(Ordering::SeqCst), 1);
+        assert_eq!(*first, "first");
+        assert!(Arc::ptr_eq(&first, &second));
+        assert_eq!(registry.entries().len(), 1);
+        assert_eq!(advertised_hashes(&registry), ["h1"]);
+    }
+
+    #[test]
+    fn failed_store_lets_a_waiting_one_store() {
+        let registry = Arc::new(FileRegistry::<String>::default());
+        let stores = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let failing = spawn_store(&registry, &stores, entered_tx.clone(), release_rx);
+        entered_rx.recv().unwrap();
+        let (second_release_tx, second_release_rx) = std::sync::mpsc::channel();
+        let second = spawn_store(&registry, &stores, entered_tx, second_release_rx);
+        wait_for_stores(&registry, 2);
+        release_tx.send(Err("full".to_string())).unwrap();
+        assert!(failing.join().unwrap().is_err());
+
+        // The waiting one stores it in turn.
+        entered_rx.recv().unwrap();
+        assert!(advertised_hashes(&registry).is_empty(), "not stored yet");
+        assert_eq!(registry.stats().live, 0);
+        second_release_tx.send(Ok("second".to_string())).unwrap();
+        let second = second.join().unwrap().unwrap();
+        assert_eq!(stores.load(Ordering::SeqCst), 2);
+        assert_eq!(*second, "second");
+        assert_eq!(registry.paths.lock_or_panic()[&*path()].len(), 1);
+        assert_eq!(advertised_hashes(&registry), ["h1"]);
+        drop(second);
+        assert!(registry.is_empty());
     }
 }
