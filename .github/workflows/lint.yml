@@ -91,6 +91,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       codeowners: ${{ steps.filter.outputs.codeowners }}
+      codeowners_tool: ${{ steps.filter.outputs.codeowners_tool }}
       licensecheck: ${{ steps.filter.outputs.licensecheck }}
       license_3rdparty: ${{ steps.filter.outputs.license_3rdparty }}
       manifests: ${{ steps.filter.outputs.manifests }}
@@ -104,6 +105,10 @@ jobs:
             codeowners:
               - '.github/CODEOWNERS'
               - added|deleted: '**'
+            codeowners_tool:
+              - '.github/CODEOWNERS'
+              - '.github/CODEOWNERS.in'
+              - 'tools/**'
             licensecheck:
               - '**/*.rs'
               - '**/*.c'
@@ -432,6 +437,32 @@ jobs:
           experimental_checks: "notowned"
           # The repository path in which CODEOWNERS file should be validated."
           repository_path: "."
+
+  codeowners-freshness:
+    needs: [changes, setup]
+    if: >-
+      github.event_name != 'pull_request' ||
+      needs.changes.outputs.codeowners_tool == 'true' ||
+      contains(github.event.pull_request.labels.*.name, 'run-all-tests')
+    runs-on: ubuntu-latest
+    name: "CODEOWNERS is up to date"
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      RUSTUP_TOOLCHAIN: ${{ needs.setup.outputs.rust-version }}
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+      - name: Install ${{ needs.setup.outputs.rust-version }} toolchain
+        run: |
+          rustup set profile minimal
+          rustup toolchain install ${{ needs.setup.outputs.rust-version }}
+      - name: sccache
+        id: sccache
+        uses: ./.github/actions/setup-sccache
+      - name: Check .github/CODEOWNERS matches .github/CODEOWNERS.in
+        run: cargo run -q -p tools --bin generate_codeowners -- --check
 
   cargo-doc-lints:
     needs: setup
