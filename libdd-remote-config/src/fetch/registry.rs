@@ -18,7 +18,7 @@
 //! This module is free of any async runtime, so that it builds wherever the fetcher does.
 
 use crate::RemoteConfigPath;
-use hashbrown::{HashMap, HashSet};
+use hashbrown::HashMap;
 use libdd_common::MutexExt;
 use libdd_trace_protobuf::remoteconfig::TargetFileMeta;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -233,7 +233,7 @@ impl<F> FileRegistry<F> {
                     VersionEntry::new(hash, meta, version, Arc::downgrade(&file), storing.clone());
                 match entry {
                     Some(entry) => versions[entry] = stored,
-                    // Forgotten (see Self::clear) while storing.
+                    // Not expected: an entry being stored is never pruned.
                     None => versions.push(stored),
                 }
                 Ok((path, file))
@@ -273,23 +273,6 @@ impl<F> FileRegistry<F> {
                 entry.newest_version = entry.newest_version.max(version);
             }
         }
-    }
-
-    /// Keeps only the given files: those the only client using the registry holds.
-    pub(crate) fn retain_held<'f>(&self, held: impl IntoIterator<Item = &'f Arc<F>>)
-    where
-        F: 'f,
-    {
-        let held: HashSet<*const F> = held.into_iter().map(Arc::as_ptr).collect();
-        self.paths.lock_or_panic().retain(|_, versions| {
-            versions.retain(|entry| held.contains(&entry.file.as_ptr()) || entry.is_being_stored());
-            !versions.is_empty()
-        });
-    }
-
-    /// Forgets every version. Versions still alive are no longer advertised nor found.
-    pub(crate) fn clear(&self) {
-        self.paths.lock_or_panic().clear();
     }
 
     /// Counts the live versions. Those retained only by in-flight requests are counted as of
@@ -598,19 +581,6 @@ mod tests {
         assert!(released.upgrade().is_none());
         let stats = registry.stats();
         assert_eq!((stats.paths, stats.live, stats.in_flight_only), (0, 0, 0));
-    }
-
-    #[test]
-    fn retain_held_keeps_only_held_versions() {
-        let registry = FileRegistry::default();
-        let v1 = insert(&registry, "h1", 2, 1, "v1");
-        let v2 = insert(&registry, "h2", 2, 2, "v2");
-        registry.retain_held([&v2]);
-        assert!(registry.lookup(&path(), "h1", 2).is_none());
-        assert_eq!(registry.entries().len(), 1);
-        registry.retain_held([]);
-        assert!(registry.is_empty());
-        drop(v1);
     }
 
     #[test]

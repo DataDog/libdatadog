@@ -120,7 +120,6 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> SingleFetcher<S,
             invariants.endpoint = endpoint;
         }
         let mut state = ConfigFetcherState::with_client(invariants, previous.http_client.clone());
-        state.expire_unused_files = previous.expire_unused_files;
         state.registry = previous.registry.clone();
 
         let mut client_state = ConfigClientState::default();

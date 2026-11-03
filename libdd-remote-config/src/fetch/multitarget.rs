@@ -197,11 +197,9 @@ where
     pub const DEFAULT_CLIENTS_LIMIT: u32 = 100;
 
     pub fn new(storage: S, invariants: ConfigInvariants, http_client: C) -> Arc<Self> {
-        let mut state = ConfigFetcherState::with_client(invariants, http_client);
-        state.expire_unused_files = false;
         Arc::new(MultiTargetFetcher {
             storage,
-            state: Arc::new(state),
+            state: Arc::new(ConfigFetcherState::with_client(invariants, http_client)),
             runtimes: Mutex::new(Default::default()),
             remote_config_interval: AtomicU64::new(5_000_000_000),
             services: Mutex::new(Default::default()),

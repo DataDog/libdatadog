@@ -82,8 +82,7 @@ impl<F> SharedFetcher<F> {
     /// Once the run-loop ends, on_finish() is called, before the files on_fetch() was last
     /// called with are released: it must stop publishing them.
     /// Should not be called more than once.
-    /// `state` is shared by every client of its invariants: its `expire_unused_files` must be
-    /// off.
+    /// `state` is shared by every client of its invariants.
     #[allow(clippy::type_complexity)]
     pub async fn run<S: FileStorage<StoredFile = F>, C: HttpClientCapability + SleepCapability>(
         &self,
@@ -92,7 +91,6 @@ impl<F> SharedFetcher<F> {
         on_fetch: Box<dyn Send + Fn(&Vec<Arc<F>>)>,
         on_finish: Box<dyn Send + FnOnce()>,
     ) {
-        debug_assert!(!state.expire_unused_files);
         let mut fetcher = match ConfigFetcher::new(storage, state).await {
             Ok(f) => f,
             Err(e) => {
@@ -195,12 +193,10 @@ pub mod tests {
     pub(crate) fn shared_state(
         server: &RemoteConfigServer,
     ) -> Arc<ConfigFetcherState<PathStore, NativeCapabilities>> {
-        let mut state = ConfigFetcherState::with_client(
+        Arc::new(ConfigFetcherState::with_client(
             server.dummy_options().invariants,
             NativeCapabilities::new_periodic(),
-        );
-        state.expire_unused_files = false;
-        Arc::new(state)
+        ))
     }
 
     /// Targets sharing a path see a new version at different times: each receives it with its own
@@ -604,7 +600,7 @@ pub mod tests {
     /// on each other.
     #[tokio::test]
     async fn stats_and_expiration_do_not_deadlock() {
-        let mut state = ConfigFetcherState::<PathStore, _>::with_client(
+        let state = Arc::new(ConfigFetcherState::<PathStore, _>::with_client(
             ConfigInvariants {
                 language: "php".into(),
                 tracer_version: "test".into(),
@@ -612,9 +608,7 @@ pub mod tests {
                 agentless: None,
             },
             NativeCapabilities::new_periodic(),
-        );
-        state.expire_unused_files = false;
-        let state = Arc::new(state);
+        ));
         let storage = Arc::new(Storage::default());
         let get_or_store = |state: &ConfigFetcherState<PathStore, _>,
                             storage: &Arc<Storage>,
