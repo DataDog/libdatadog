@@ -22,10 +22,11 @@ use libdd_common::{Endpoint, http_common};
 use libdd_trace_protobuf::remoteconfig::{
     ClientGetConfigsRequest, ClientGetConfigsResponse, ConfigStatus, File,
 };
-use serde_json::value::to_raw_value;
+use serde_json::value::{RawValue, to_raw_value};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::convert::Infallible;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::net::TcpListener;
 use std::sync::{Arc, Mutex};
 use tokio::select;
@@ -40,6 +41,8 @@ pub struct RemoteConfigServer {
     /// [`ConfigStatus::Expired`] to simulate an agent serving from a stale
     /// cache whose TUF signatures have expired.
     pub config_status: Mutex<ConfigStatus>,
+    /// The current targets version and the fingerprint of the files it was computed for.
+    targets_state: Mutex<(u64, Option<u64>)>,
     pub endpoint: Endpoint,
     #[allow(dead_code)] // stops receiver on drop
     shutdown_complete_tx: Sender<()>,
@@ -55,120 +58,145 @@ impl RemoteConfigServer {
         let response = if let Some(response) = self.next_response.lock().unwrap().take() {
             response
         } else {
-            let known: HashMap<_, _> = request
-                .cached_target_files
-                .iter()
-                .map(|m| (m.path.clone(), m.hashes[0].hash.clone()))
-                .collect();
-            let files = self.files.lock().unwrap();
-            let applied_files: HashMap<_, _> = files
-                .iter()
-                .filter(|(_, (targets, _, _))| {
-                    let tracer = request
-                        .client
-                        .as_ref()
-                        .unwrap()
-                        .client_tracer
-                        .as_ref()
-                        .unwrap();
-                    targets.iter().any(|t| {
-                        t.service == tracer.service
-                            && t.env == tracer.env
-                            && t.app_version == tracer.app_version
-                    })
-                })
-                .collect();
-            let states = &request
-                .client
-                .as_ref()
-                .unwrap()
-                .state
-                .as_ref()
-                .unwrap()
-                .config_states;
-            // A change of config_status is itself a change the client must observe, so it
-            // cannot be answered with the "nothing changed" empty reply.
-            if *self.config_status.lock().unwrap() == ConfigStatus::Ok
-                && applied_files.len() == states.len()
-                && states.iter().all(|s| {
-                    for (p, (_, v, _)) in applied_files.iter() {
-                        if p.product().to_string() == s.product
-                            && p.config_id() == s.id
-                            && *v == s.version
-                        {
-                            return true;
-                        }
-                    }
-                    false
-                })
-            {
-                Response::new(http_common::Body::from("{}"))
-            } else {
-                let target_info: Vec<_> = applied_files
-                    .iter()
-                    .map(|(p, (_, v, file))| {
-                        (
-                            p.to_string(),
-                            format!("{:x}", Sha256::digest(file)),
-                            to_raw_value(v).unwrap(),
-                            file.clone(),
-                        )
-                    })
-                    .filter(|(p, hash, _, _)| {
-                        if let Some(existing) = known.get(p) {
-                            existing != hash
-                        } else {
-                            true
-                        }
-                    })
-                    .collect();
-                let targets = TargetsList {
-                    signed: TargetsData {
-                        custom: TargetsCustom {
-                            agent_refresh_interval: Some(1000),
-                            opaque_backend_state: "some state",
-                        },
-                        targets: target_info
-                            .iter()
-                            .map(|(p, hash, version, _)| {
-                                (
-                                    p.as_str(),
-                                    TargetData {
-                                        custom: HashMap::from([("v", &**version)]),
-                                        hashes: HashMap::from([("sha256", hash.as_str())]),
-                                        length: 0,
-                                    },
-                                )
-                            })
-                            .collect(),
-                        version: 1,
-                    },
-                };
-                let response = ClientGetConfigsResponse {
-                    roots: vec![], /* not checked */
-                    targets: base64::engine::general_purpose::STANDARD
-                        .encode(serde_json::to_vec(&targets).unwrap())
-                        .into_bytes(),
-                    target_files: target_info
-                        .iter()
-                        .map(|(p, _, _, file)| File {
-                            path: p.to_string(),
-                            raw: base64::engine::general_purpose::STANDARD
-                                .encode(file)
-                                .into_bytes(),
-                        })
-                        .collect(),
-                    client_configs: applied_files.keys().map(|k| k.to_string()).collect(),
-                    config_status: *self.config_status.lock().unwrap() as i32,
-                };
-                Response::new(http_common::Body::from(
-                    serde_json::to_vec(&response).unwrap(),
-                ))
-            }
+            self.agent_response(&request)
         };
         *self.last_request.lock().unwrap() = Some(request);
         eprintln!("reponse finished");
         Ok(response)
+    }
+
+    /// Answers like the agent's `ClientGetConfigs`: the client gets nothing unless its
+    /// `targets_version` differs from the current one, and then gets the full targets
+    /// metadata, the configs that apply to it, and the bodies of those it hasn't cached.
+    fn agent_response(&self, request: &ClientGetConfigsRequest) -> Response<http_common::Body> {
+        let files = self.files.lock().unwrap();
+        let targets_version = self.targets_version(&files);
+        let client = request.client.as_ref().unwrap();
+        let tracer = client.client_tracer.as_ref().unwrap();
+
+        let target_info: HashMap<String, (String, Box<RawValue>, &str)> = files
+            .iter()
+            .map(|(p, (_, v, file))| {
+                (
+                    p.to_string(),
+                    (
+                        format!("{:x}", Sha256::digest(file)),
+                        to_raw_value(v).unwrap(),
+                        file.as_str(),
+                    ),
+                )
+            })
+            .collect();
+        let targets = TargetsList {
+            signed: TargetsData {
+                custom: TargetsCustom {
+                    agent_refresh_interval: Some(1000),
+                    opaque_backend_state: "some state",
+                },
+                targets: target_info
+                    .iter()
+                    .map(|(p, (hash, version, file))| {
+                        (
+                            p.as_str(),
+                            TargetData {
+                                custom: HashMap::from([("v", &**version)]),
+                                hashes: HashMap::from([("sha256", hash.as_str())]),
+                                length: file.len() as u32,
+                            },
+                        )
+                    })
+                    .collect(),
+                version: targets_version as i64,
+            },
+        };
+        let targets = base64::engine::general_purpose::STANDARD
+            .encode(serde_json::to_vec(&targets).unwrap())
+            .into_bytes();
+
+        let config_status = *self.config_status.lock().unwrap();
+        if config_status == ConfigStatus::Expired {
+            // The agent flushes all clients, regardless of their targets_version.
+            let response = ClientGetConfigsResponse {
+                roots: vec![],
+                targets,
+                target_files: vec![],
+                client_configs: vec![],
+                config_status: config_status as i32,
+            };
+            return Response::new(http_common::Body::from(
+                serde_json::to_vec(&response).unwrap(),
+            ));
+        }
+
+        if client.state.as_ref().unwrap().targets_version == targets_version {
+            return Response::new(http_common::Body::from("{}"));
+        }
+
+        let client_configs: Vec<String> = files
+            .iter()
+            .filter(|(p, (targets, _, _))| {
+                client.products.contains(&p.product().to_string())
+                    && targets.iter().any(|t| {
+                        t.service == tracer.service
+                            && t.env == tracer.env
+                            && t.app_version == tracer.app_version
+                    })
+            })
+            .map(|(p, _)| p.to_string())
+            .collect();
+        let target_files = client_configs
+            .iter()
+            .filter(|p| {
+                let (hash, _, file) = &target_info[p.as_str()];
+                !request.cached_target_files.iter().any(|cached| {
+                    cached.path == **p
+                        && cached.length == file.len() as i64
+                        && !cached.hashes.is_empty()
+                        && cached
+                            .hashes
+                            .iter()
+                            .all(|h| h.algorithm == "sha256" && h.hash == *hash)
+                })
+            })
+            .map(|p| File {
+                path: p.clone(),
+                raw: base64::engine::general_purpose::STANDARD
+                    .encode(target_info[p.as_str()].2)
+                    .into_bytes(),
+            })
+            .collect();
+        let response = ClientGetConfigsResponse {
+            roots: vec![], /* not checked */
+            targets,
+            target_files,
+            client_configs,
+            config_status: config_status as i32,
+        };
+        Response::new(http_common::Body::from(
+            serde_json::to_vec(&response).unwrap(),
+        ))
+    }
+
+    /// The agent's director targets version: bumped whenever the files differ from those seen
+    /// by the previous request, so tests can keep mutating `files` directly.
+    fn targets_version(
+        &self,
+        files: &HashMap<RemoteConfigPath, (Vec<Arc<Target>>, u64, String)>,
+    ) -> u64 {
+        let mut snapshot: Vec<_> = files
+            .iter()
+            .map(|(p, (targets, v, file))| (p.to_string(), targets, v, file))
+            .collect();
+        snapshot.sort();
+        let mut hasher = DefaultHasher::new();
+        snapshot.hash(&mut hasher);
+        let fingerprint = hasher.finish();
+
+        let mut state = self.targets_state.lock().unwrap();
+        if state.1 != Some(fingerprint) {
+            *state = (state.0 + 1, Some(fingerprint));
+        }
+        state.0
     }
 
     pub fn spawn() -> Arc<Self> {
@@ -180,6 +208,7 @@ impl RemoteConfigServer {
             files: Default::default(),
             next_response: Mutex::new(None),
             config_status: Mutex::new(ConfigStatus::Ok),
+            targets_state: Mutex::new((0, None)),
             endpoint: Endpoint::from_slice(&format!("http://127.0.0.1:{port}/")),
             shutdown_complete_tx,
         });
