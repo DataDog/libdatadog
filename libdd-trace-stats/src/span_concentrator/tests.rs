@@ -2817,6 +2817,55 @@ fn test_oversized_additional_metric_tag_combined_with_collapsed_field() {
 }
 
 #[test]
+fn test_oversized_additional_metric_tag_combined_with_whole_key_overflow() {
+    let now = SystemTime::now();
+    let long_value = "x".repeat(201);
+    let meta = [("region", long_value.as_str())];
+    let mut spans = vec![get_test_span_with_meta(
+        now,
+        1,
+        0,
+        100,
+        5,
+        "svc",
+        "GET /foo",
+        0,
+        &meta,
+        &[("_dd.measured", 1.0)],
+    )];
+    compute_top_level_span(spans.as_mut_slice());
+
+    let mut concentrator = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        get_span_kinds(),
+        vec![],
+        None,
+        vec!["region".to_string()],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
+    );
+    concentrator.cardinality_limits.whole_key_limit = 0;
+    concentrator.add_span(&spans[0]);
+
+    let flushtime =
+        now + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
+    let buckets = concentrator.flush(flushtime, false);
+
+    // One point carrying `collapsed:whole_key` and `oversized:additional_metric_tags`.
+    use cardinality_limit_telemetry::CollapsedFieldSet;
+    let mut fields = CollapsedFieldSet::empty();
+    fields.add(CollapsedFieldSet::WHOLE_KEY);
+    fields.add(CollapsedFieldSet::OVERSIZED_ADDITIONAL_TAGS);
+    let mut expected = cardinality_limit_telemetry::CollapsedFieldsMetrics::zero();
+    expected.increment(fields);
+    assert_eq!(
+        format!("{:?}", buckets.collapsed_fields_metrics),
+        format!("{expected:?}")
+    );
+}
+
+#[test]
 fn test_additional_metric_tag_value_at_length_cap_passes_through() {
     let now = SystemTime::now();
     let ok_value = "x".repeat(200);

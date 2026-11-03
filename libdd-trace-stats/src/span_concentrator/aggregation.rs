@@ -691,7 +691,10 @@ impl StatsBucket {
         is_top_level: bool,
     ) {
         // Per field cardinality limiting
-        self.collapse_key_fields_cardinality(&mut key);
+        let mut collapsed_fields = self.collapse_key_fields_cardinality(&mut key);
+        if key.oversized_additional_tags.0 {
+            collapsed_fields.add(CollapsedFieldSet::OVERSIZED_ADDITIONAL_TAGS);
+        }
 
         // The map can't change size before the entry below is resolved, so this single read
         // covers the `max_entries` check in the vacant branch without a further lookup.
@@ -700,6 +703,7 @@ impl StatsBucket {
         match self.data.entry_ref(&key) {
             // Existing key, merge
             hashbrown::hash_map::EntryRef::Occupied(mut e) => {
+                self.collapsed_fields_metrics.increment(collapsed_fields);
                 e.get_mut().insert(duration, is_error, is_top_level);
             }
             hashbrown::hash_map::EntryRef::Vacant(e) => {
@@ -707,6 +711,13 @@ impl StatsBucket {
                 // sentinel.
                 if len_before_insert >= self.cardinality_limits.whole_key_limit {
                     self.collapsed_count += 1;
+                    // Whole-key overflow replaces the per-field tags; oversized is kept.
+                    let mut whole_key = CollapsedFieldSet::empty();
+                    whole_key.add(CollapsedFieldSet::WHOLE_KEY);
+                    if key.oversized_additional_tags.0 {
+                        whole_key.add(CollapsedFieldSet::OVERSIZED_ADDITIONAL_TAGS);
+                    }
+                    self.collapsed_fields_metrics.increment(whole_key);
                     self.data
                         .entry(OwnedAggregationKey::overflow_key())
                         .or_default()
@@ -714,6 +725,7 @@ impl StatsBucket {
                     return;
                 }
                 // Within the max entry limit, admit key as a new distinct entry.
+                self.collapsed_fields_metrics.increment(collapsed_fields);
                 e.insert_with_key(OwnedAggregationKey::from(&key), GroupedStats::default())
                     .insert(duration, is_error, is_top_level);
             }
@@ -721,7 +733,10 @@ impl StatsBucket {
     }
 
     /// Collapse an aggregation key fields following the bucket's `CardinalityLimitConfig`
-    fn collapse_key_fields_cardinality(&mut self, key: &mut BorrowedAggregationKey<'_>) {
+    fn collapse_key_fields_cardinality(
+        &mut self,
+        key: &mut BorrowedAggregationKey<'_>,
+    ) -> CollapsedFieldSet {
         use hashbrown::hash_set::Entry;
         fn hash(input: &impl Hash) -> u64 {
             let mut hasher = DefaultHasher::new();
@@ -774,10 +789,7 @@ impl StatsBucket {
                 slot.insert();
             }
         }
-        if key.oversized_additional_tags.0 {
-            collapsed_fields.add(CollapsedFieldSet::OVERSIZED_ADDITIONAL_TAGS);
-        }
-        self.collapsed_fields_metrics.increment(collapsed_fields);
+        collapsed_fields
     }
 
     /// Consume the bucket and return a ClientStatsBucket containing the bucket stats.

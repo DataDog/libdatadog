@@ -17,15 +17,19 @@ impl CollapsedFieldSet {
     pub const HTTP_ENDPOINT: usize = 1 << 1;
     pub const PEER_TAGS: usize = 1 << 2;
     pub const ADDITIONAL_TAGS: usize = 1 << 3;
+    /// The whole key was collapsed into the overflow key. Reported alone, as
+    /// `collapsed:whole_key`, except for [`Self::OVERSIZED_ADDITIONAL_TAGS`].
+    pub const WHOLE_KEY: usize = 1 << 4;
     /// Not a collapsed field: the span had additional metric tag values over the length limit,
     /// reported as `oversized:additional_metric_tags`.
-    pub const OVERSIZED_ADDITIONAL_TAGS: usize = 1 << 4;
+    pub const OVERSIZED_ADDITIONAL_TAGS: usize = 1 << 5;
 
-    const FIELDS: [usize; 5] = [
+    const FIELDS: [usize; 6] = [
         Self::RESOURCE_NAME,
         Self::HTTP_ENDPOINT,
         Self::PEER_TAGS,
         Self::ADDITIONAL_TAGS,
+        Self::WHOLE_KEY,
         Self::OVERSIZED_ADDITIONAL_TAGS,
     ];
 
@@ -43,9 +47,9 @@ impl CollapsedFieldSet {
 
 const COLLAPSED_FIELD_METRIC_SIZE: usize = 1 << CollapsedFieldSet::FIELDS.len();
 // Verify the array is of a reasonable size
-const_assert!(COLLAPSED_FIELD_METRIC_SIZE <= 32);
+const_assert!(COLLAPSED_FIELD_METRIC_SIZE <= 64);
 /// Counter of combination of collapsed stats key fields
-#[derive(Debug, Clone, Default, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct CollapsedFieldsMetrics {
     // Note: slot 0 is a counter for non_collapsed spans. It's not used for emitting telemetry
     collapsed: [usize; COLLAPSED_FIELD_METRIC_SIZE],
@@ -54,7 +58,9 @@ pub struct CollapsedFieldsMetrics {
 impl CollapsedFieldsMetrics {
     /// Default value every combination of collapsed fields set to 0
     pub fn zero() -> Self {
-        Self::default()
+        Self {
+            collapsed: [0; COLLAPSED_FIELD_METRIC_SIZE],
+        }
     }
 
     #[cfg(feature = "dogstatsd")]
@@ -117,6 +123,9 @@ impl CollapsedFieldsMetrics {
                 CollapsedFieldSet::ADDITIONAL_TAGS => {
                     libdd_common::tag!("collapsed", "additional_metric_tags")
                 }
+                CollapsedFieldSet::WHOLE_KEY => {
+                    libdd_common::tag!("collapsed", "whole_key")
+                }
                 CollapsedFieldSet::OVERSIZED_ADDITIONAL_TAGS => {
                     libdd_common::tag!("oversized", "additional_metric_tags")
                 }
@@ -143,6 +152,12 @@ impl CollapsedFieldsMetrics {
     /// Add `count` spans with additional metric tag values over the length limit
     pub fn add_oversized_additional_tags(&mut self, count: usize) {
         self.collapsed[CollapsedFieldSet::OVERSIZED_ADDITIONAL_TAGS] += count;
+    }
+}
+
+impl Default for CollapsedFieldsMetrics {
+    fn default() -> Self {
+        Self::zero()
     }
 }
 

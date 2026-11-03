@@ -245,6 +245,8 @@ pub struct ShmStatsBucketState {
     additional_tag_collapsed: AtomicU32,
     /// Spans with additional metric tag values replaced for being too long.
     additional_tag_oversized: AtomicU32,
+    /// Spans both collapsed and oversized; not counted in the two counters above.
+    additional_tag_collapsed_oversized: AtomicU32,
     /// Set by the first writer blocking additional metric tag values, which alone logs it.
     additional_tag_warned: AtomicU8,
 }
@@ -286,7 +288,7 @@ pub struct SpanStats;
 
 impl Schema for SpanStats {
     const ID: u32 = 1;
-    const VERSION: u32 = 2;
+    const VERSION: u32 = 3;
 
     type Key = ShmKeyHeader;
     type Value = ShmStats;
@@ -520,12 +522,12 @@ impl ShmTableMapping<SpanStats> {
             let mut log_blocked = false;
             if recorded && (masked || oversized_key.is_some()) {
                 let state = &bucket.hdr.schema;
-                if masked {
-                    state.additional_tag_collapsed.fetch_add(1, Relaxed);
-                }
-                if oversized_key.is_some() {
-                    state.additional_tag_oversized.fetch_add(1, Relaxed);
-                }
+                let counter = match (masked, oversized_key.is_some()) {
+                    (true, true) => &state.additional_tag_collapsed_oversized,
+                    (true, false) => &state.additional_tag_collapsed,
+                    _ => &state.additional_tag_oversized,
+                };
+                counter.fetch_add(1, Relaxed);
                 log_blocked = state.additional_tag_warned.swap(1, Relaxed) == 0;
             }
             (inserted, log_blocked)
@@ -580,6 +582,7 @@ impl ShmTableMapping<SpanStats> {
                     };
                     blocked.collapsed += take(&state.additional_tag_collapsed);
                     blocked.oversized += take(&state.additional_tag_oversized);
+                    blocked.collapsed_oversized += take(&state.additional_tag_collapsed_oversized);
                 },
             )
             .into_iter()
@@ -731,6 +734,8 @@ struct BlockedAdditionalTags {
     collapsed: usize,
     /// For being too long.
     oversized: usize,
+    /// Both, reported on a single point.
+    collapsed_oversized: usize,
 }
 
 /// What draining yields: the buckets, and the spans in them with blocked additional metric tags.
@@ -751,6 +756,13 @@ impl FlushableConcentrator for ShmSpanConcentrator {
         collapsed_fields_metrics.add(additional_tags, drained.blocked_additional_tags.collapsed);
         collapsed_fields_metrics
             .add_oversized_additional_tags(drained.blocked_additional_tags.oversized);
+        let mut collapsed_oversized = CollapsedFieldSet::empty();
+        collapsed_oversized.add(CollapsedFieldSet::ADDITIONAL_TAGS);
+        collapsed_oversized.add(CollapsedFieldSet::OVERSIZED_ADDITIONAL_TAGS);
+        collapsed_fields_metrics.add(
+            collapsed_oversized,
+            drained.blocked_additional_tags.collapsed_oversized,
+        );
         FlushResult {
             obfuscated_buckets: vec![],
             unobfuscated_buckets: drained.buckets,
@@ -1580,6 +1592,30 @@ mod tests {
         additional_tags.add(CollapsedFieldSet::ADDITIONAL_TAGS);
         expected.add(additional_tags, 1);
         expected.add_oversized_additional_tags(2);
+        assert_eq!(
+            format!("{:?}", flushed.collapsed_fields_metrics),
+            format!("{expected:?}")
+        );
+    }
+
+    /// A span both over the cardinality limit and with a too-long value is reported once, with
+    /// both tags.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn collapsed_and_oversized_span_is_reported_on_one_point() {
+        let mut c = default_concentrator(test_path());
+        let too_long = "x".repeat(ADDITIONAL_METRIC_TAG_VALUE_MAX_LEN + 1);
+        c.add_span(&tagged(
+            "res",
+            &[("tenant", &too_long), ("region", "eu")],
+            0,
+        ));
+        let flushed = c.flush_buckets(true);
+        let mut fields = CollapsedFieldSet::empty();
+        fields.add(CollapsedFieldSet::ADDITIONAL_TAGS);
+        fields.add(CollapsedFieldSet::OVERSIZED_ADDITIONAL_TAGS);
+        let mut expected = CollapsedFieldsMetrics::zero();
+        expected.add(fields, 1);
         assert_eq!(
             format!("{:?}", flushed.collapsed_fields_metrics),
             format!("{expected:?}")
