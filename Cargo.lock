@@ -3476,6 +3476,7 @@ dependencies = [
 name = "libdd-shared-runtime-ffi"
 version = "47.0.0"
 dependencies = [
+ "async-trait",
  "build_common",
  "libdd-shared-runtime",
  "tracing",

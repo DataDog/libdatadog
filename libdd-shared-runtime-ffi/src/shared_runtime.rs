@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::catch_panic;
-use libdd_shared_runtime::{ForkSafeRuntime, SharedRuntime, SharedRuntimeError};
+use libdd_shared_runtime::{
+    BlockOnTimeoutError, BlockingRuntime, ForkSafeRuntime, SharedRuntime, SharedRuntimeError,
+    WorkerHandle, WorkerHandleError,
+};
 use std::ffi::{CString, c_char};
 use std::ptr::NonNull;
 use std::sync::Arc;
@@ -23,6 +26,12 @@ pub enum SharedRuntimeErrorCode {
     RuntimeCreation,
     /// Shutdown timed out.
     ShutdownTimedOut,
+    /// The worker has already been stopped.
+    WorkerStopped,
+    /// The worker was dropped before completing the flush.
+    FlushAborted,
+    /// The flush did not complete before the timeout.
+    FlushTimedOut,
     /// An unexpected panic occurred inside the FFI call.
     #[cfg(feature = "catch_panic")]
     Panic,
@@ -54,6 +63,27 @@ impl From<SharedRuntimeError> for SharedRuntimeFFIError {
             SharedRuntimeError::WorkerError(_) => SharedRuntimeErrorCode::WorkerError,
             SharedRuntimeError::RuntimeCreation(_) => SharedRuntimeErrorCode::RuntimeCreation,
             SharedRuntimeError::ShutdownTimedOut(_) => SharedRuntimeErrorCode::ShutdownTimedOut,
+        };
+        SharedRuntimeFFIError::new(code, &err.to_string())
+    }
+}
+
+impl From<WorkerHandleError> for SharedRuntimeFFIError {
+    fn from(err: WorkerHandleError) -> Self {
+        let code = match &err {
+            WorkerHandleError::AlreadyStopped => SharedRuntimeErrorCode::WorkerStopped,
+            WorkerHandleError::WorkerError(_) => SharedRuntimeErrorCode::WorkerError,
+            WorkerHandleError::FlushAborted => SharedRuntimeErrorCode::FlushAborted,
+        };
+        SharedRuntimeFFIError::new(code, &err.to_string())
+    }
+}
+
+impl From<BlockOnTimeoutError> for SharedRuntimeFFIError {
+    fn from(err: BlockOnTimeoutError) -> Self {
+        let code = match &err {
+            BlockOnTimeoutError::Io(_) => SharedRuntimeErrorCode::RuntimeUnavailable,
+            BlockOnTimeoutError::TimedOut(_) => SharedRuntimeErrorCode::FlushTimedOut,
         };
         SharedRuntimeFFIError::new(code, &err.to_string())
     }
@@ -260,6 +290,60 @@ pub unsafe extern "C" fn ddog_shared_runtime_shutdown(
     )
 }
 
+/// Force a flush of a worker and block until it completes.
+///
+/// Requests a flush on `worker` and blocks the calling thread on `runtime` until the worker has
+/// flushed. `timeout_ms` bounds the wait, in milliseconds; pass `0` for no timeout.
+///
+/// Must not be called between [`ddog_shared_runtime_before_fork`] and
+/// `ddog_shared_runtime_after_fork_*`: the flush is deferred until workers restart, so the call
+/// would block until the timeout.
+///
+/// Returns `None` on success, or an error if an argument is null, the worker has been stopped,
+/// the worker was dropped before flushing, or the timeout was reached.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ddog_shared_runtime_worker_flush(
+    runtime: Option<&ForkSafeRuntime>,
+    worker: Option<&WorkerHandle>,
+    timeout_ms: u64,
+) -> Option<Box<SharedRuntimeFFIError>> {
+    catch_panic!(
+        {
+            let (Some(runtime), Some(worker)) = (runtime, worker) else {
+                return Some(Box::new(SharedRuntimeFFIError::new(
+                    SharedRuntimeErrorCode::InvalidArgument,
+                    "handle is null",
+                )));
+            };
+            let token = match worker.flush() {
+                Ok(token) => token,
+                Err(err) => return Some(Box::new(SharedRuntimeFFIError::from(err))),
+            };
+            let result = if timeout_ms > 0 {
+                runtime
+                    .block_on_with_timeout(
+                        token.wait(),
+                        std::time::Duration::from_millis(timeout_ms),
+                    )
+                    .map_err(SharedRuntimeFFIError::from)
+            } else {
+                runtime.block_on(token.wait()).map_err(|err| {
+                    SharedRuntimeFFIError::new(
+                        SharedRuntimeErrorCode::RuntimeUnavailable,
+                        &err.to_string(),
+                    )
+                })
+            };
+            match result {
+                Ok(Ok(())) => None,
+                Ok(Err(err)) => Some(Box::new(SharedRuntimeFFIError::from(err))),
+                Err(err) => Some(Box::new(err)),
+            }
+        },
+        panic_error!()
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -336,5 +420,47 @@ mod tests {
             "test error",
         ));
         unsafe { ddog_shared_runtime_error_free(Some(error)) };
+    }
+
+    #[derive(Debug)]
+    struct FlushWorker(std::sync::mpsc::Sender<()>);
+
+    #[async_trait::async_trait]
+    impl libdd_shared_runtime::Worker for FlushWorker {
+        async fn run(&mut self) {}
+        async fn trigger(&mut self) {
+            std::future::pending::<()>().await
+        }
+        async fn flush(&mut self) {
+            let _ = self.0.send(());
+        }
+    }
+
+    #[test]
+    fn test_worker_flush() {
+        let runtime = ForkSafeRuntime::new().unwrap();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let worker = runtime.spawn_worker(FlushWorker(sender), true).unwrap();
+        for timeout_ms in [0, 2000] {
+            let err = unsafe {
+                ddog_shared_runtime_worker_flush(Some(&runtime), Some(&worker), timeout_ms)
+            };
+            assert!(err.is_none(), "{:?}", err.map(|e| e.code));
+            assert!(
+                receiver.try_recv().is_ok(),
+                "flush must complete before returning"
+            );
+        }
+        let other = worker.clone();
+        runtime.block_on(worker.stop()).unwrap().unwrap();
+        let err = unsafe { ddog_shared_runtime_worker_flush(Some(&runtime), Some(&other), 0) };
+        assert_eq!(err.unwrap().code, SharedRuntimeErrorCode::WorkerStopped);
+    }
+
+    #[test]
+    fn test_worker_flush_null() {
+        let runtime = ForkSafeRuntime::new().unwrap();
+        let err = unsafe { ddog_shared_runtime_worker_flush(Some(&runtime), None, 0) };
+        assert_eq!(err.unwrap().code, SharedRuntimeErrorCode::InvalidArgument);
     }
 }

@@ -25,3 +25,6 @@ build_common = { path = "../build-common" }
 [dependencies]
 libdd-shared-runtime = { version = "7.0.0", path = "../libdd-shared-runtime" }
 tracing.workspace = true
+
+[dev-dependencies]
+async-trait.workspace = true
