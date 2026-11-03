@@ -1323,11 +1323,10 @@ fn new_target(path: &str, version: u64, content: &[u8]) -> NewTarget {
 /// the contents of the one they hold.
 #[test]
 fn test_shared_state_stores_new_version_as_new_file() {
-    let mut state = ConfigFetcherState::<(u64, u64), _>::with_client(
+    let state = ConfigFetcherState::<(u64, u64), _>::with_client(
         test_state().invariants.clone(),
         libdd_capabilities_impl::NativeCapabilities::new_client(),
     );
-    state.expire_unused_files = false;
     let storage = RecordingStorage::default();
     // Retains what it stores, as the holdings of the targets would.
     let mut cache = TargetCache::new(&state, &storage);

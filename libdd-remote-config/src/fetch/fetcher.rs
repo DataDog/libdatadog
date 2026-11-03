@@ -116,9 +116,6 @@ pub struct ConfigFetcherState<S, C: HttpClientCapability + SleepCapability> {
     pub(in crate::fetch) registry: Arc<FileRegistry<S>>,
     pub invariants: ConfigInvariants,
     endpoint: Endpoint,
-    /// Whether a single client uses the state: the versions it doesn't hold are then forgotten
-    /// after each response. Must be off when the state is shared by several clients.
-    pub expire_unused_files: bool,
     pub(super) http_client: C,
 }
 
@@ -185,7 +182,6 @@ impl<S, C: HttpClientCapability + SleepCapability> ConfigFetcherState<S, C> {
                 agentless,
                 ..invariants
             },
-            expire_unused_files: true,
             http_client,
         }
     }
@@ -641,9 +637,7 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
             // Not active
             if status == StatusCode::NOT_FOUND {
                 trace!("Requested remote config and but remote config not active");
-                if self.state.expire_unused_files {
-                    self.state.registry.clear();
-                }
+                // The files go once the caller drops `previous`, unless another client holds them.
                 let previous = client_state.holdings.take();
                 client_state.targets_version = 0;
                 client_state.opaque_backend_state.clear();
@@ -686,9 +680,7 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
                 "Agent served remote config from an expired cache for target {target:?}, \
                  reporting all configurations as removed"
             );
-            if self.state.expire_unused_files {
-                self.state.registry.clear();
-            }
+            // The files go once the caller drops `previous`, unless another client holds them.
             let previous = client_state.holdings.take();
             // Holding nothing, the client must not claim the targets it had: the agent would
             // answer that nothing changed, and the configs would never come back.
@@ -938,11 +930,6 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
                 hash,
             ));
         }
-        // The only client using the registry no longer needs what it doesn't hold.
-        if self.state.expire_unused_files {
-            registry.retain_held(held.iter().map(|(held, _)| &held.file));
-        }
-
         client_state.root_version = root_version;
         client_state.targets_version = targets_list.signed.version as u64;
         client_state.opaque_backend_state = opaque_backend_state;
@@ -979,7 +966,6 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
     /// Quite generic fetching implementation:
     ///  - runs a request against the Remote Config Server,
     ///  - validates the data,
-    ///  - removes unused files
     ///  - checks if the files are already known,
     ///  - stores new files,
     ///  - returns the files the client holds now, and those it held before.
@@ -1058,13 +1044,6 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
                     held.iter()
                         .map(|(held, _)| (&*held.path, &held.file, held.version)),
                 );
-                // The only client using the registry no longer needs what it doesn't hold.
-                if self.state.expire_unused_files {
-                    self.state
-                        .registry
-                        .retain_held(held.iter().map(|(held, _)| &held.file));
-                }
-
                 Ok(Some(client_state.holdings.replace(held)))
             }
         }
@@ -1926,7 +1905,7 @@ pub mod tests {
             ResponseFailure::CorruptFile,
             ResponseFailure::Storage,
         ] {
-            failed_response_leaves_state_unchanged(true, failure).await;
+            failed_response_leaves_state_unchanged(false, failure).await;
         }
     }
 
@@ -1938,7 +1917,7 @@ pub mod tests {
             ResponseFailure::CorruptFile,
             ResponseFailure::Storage,
         ] {
-            failed_response_leaves_state_unchanged(false, failure).await;
+            failed_response_leaves_state_unchanged(true, failure).await;
         }
     }
 
@@ -1952,8 +1931,10 @@ pub mod tests {
         Storage,
     }
 
+    /// With `another_client_holds_files`, a second client of the same state holds the files the
+    /// failing client holds; otherwise the failing client is their only holder.
     async fn failed_response_leaves_state_unchanged(
-        expire_unused_files: bool,
+        another_client_holds_files: bool,
         failure: ResponseFailure,
     ) {
         let path_third = RemoteConfigPath::parse("employee/APM_TRACING/5678/config").unwrap();
@@ -1968,12 +1949,10 @@ pub mod tests {
         );
 
         let storage = Arc::new(Storage::default());
-        let mut state = ConfigFetcherState::with_client(
+        let state = Arc::new(ConfigFetcherState::with_client(
             server.dummy_options().invariants,
             NativeCapabilities::new_periodic(),
-        );
-        state.expire_unused_files = expire_unused_files;
-        let state = Arc::new(state);
+        ));
         let mut fetcher = ConfigFetcher::new(storage.clone(), state.clone())
             .await
             .unwrap();
@@ -1992,6 +1971,34 @@ pub mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(held.len(), 2);
+
+        let mut other_state = ConfigClientState::default();
+        if another_client_holds_files {
+            let mut other_fetcher = ConfigFetcher::new(storage.clone(), state.clone())
+                .await
+                .unwrap();
+            let other_held = other_fetcher
+                .fetch_once(
+                    DUMMY_RUNTIME_ID,
+                    &DUMMY_TARGET,
+                    &capabilities,
+                    "bar",
+                    &mut other_state,
+                )
+                .await
+                .unwrap()
+                .unwrap();
+            let ptrs = |files: &[Arc<PathStore>]| {
+                let mut ptrs: Vec<_> = files.iter().map(Arc::as_ptr).collect();
+                ptrs.sort();
+                ptrs
+            };
+            assert_eq!(
+                ptrs(&other_held),
+                ptrs(&held),
+                "both clients hold the same files"
+            );
+        }
 
         let stored_files = |storage: &Storage| {
             let mut files: Vec<_> = storage
@@ -2137,6 +2144,7 @@ pub mod tests {
                 .unwrap()
                 .has_error
         );
+        drop(other_state);
     }
 
     #[tokio::test]
@@ -2149,13 +2157,11 @@ pub mod tests {
         );
 
         let storage = Arc::new(Storage::default());
-        // Shared state, as used by the shared/multitarget fetchers: several clients, each
-        // possibly holding a different version of a path.
-        let mut state = ConfigFetcherState::with_client(
+        // Several clients, each possibly holding a different version of a path.
+        let state = ConfigFetcherState::with_client(
             server.dummy_options().invariants,
             NativeCapabilities::new_periodic(),
         );
-        state.expire_unused_files = false;
         let mut fetcher = ConfigFetcher::new(storage.clone(), Arc::new(state))
             .await
             .unwrap();
@@ -2253,11 +2259,10 @@ pub mod tests {
         );
 
         let storage = Arc::new(Storage::default());
-        let mut state = ConfigFetcherState::with_client(
+        let state = ConfigFetcherState::with_client(
             server.dummy_options().invariants,
             NativeCapabilities::new_periodic(),
         );
-        state.expire_unused_files = false;
         let mut fetcher = ConfigFetcher::new(storage.clone(), Arc::new(state))
             .await
             .unwrap();
@@ -2348,11 +2353,10 @@ pub mod tests {
         );
 
         let storage = Arc::new(Storage::default());
-        let mut state = ConfigFetcherState::with_client(
+        let state = ConfigFetcherState::with_client(
             server.dummy_options().invariants,
             NativeCapabilities::new_periodic(),
         );
-        state.expire_unused_files = false;
         let state = Arc::new(state);
         let mut fetcher_a = ConfigFetcher::new(storage.clone(), state.clone())
             .await
