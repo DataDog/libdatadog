@@ -5,7 +5,7 @@ use crate::fetch::{
     ConfigApplyState, ConfigClientState, ConfigFetcher, ConfigFetcherState, ConfigInvariants,
     ConfigProductCapabilities, FileStorage, random_uuid_string,
 };
-use crate::file_change_tracker::{Change, ChangeTracker, FilePath, UpdatedFiles};
+use crate::file_change_tracker::{Change, ChangeTracker, FilePath};
 use crate::{RemoteConfigCapabilities, RemoteConfigPath, RemoteConfigProduct, Target};
 use libdd_capabilities::{HttpClientCapability, SleepCapability};
 use libdd_common::{Endpoint, MutexExt};
@@ -256,16 +256,14 @@ where
         self.fetcher.set_identity(client_id, runtime_id, tags);
     }
 
-    /// Polls for new changes
-    pub async fn fetch_changes<R>(&mut self) -> anyhow::Result<Vec<Change<Arc<S::StoredFile>, R>>>
-    where
-        S: UpdatedFiles<S::StoredFile, R>,
-    {
+    /// Polls for new changes. A new version of a file is a new stored file: it is reported as
+    /// [`Change::Update`] along with the previous one.
+    pub async fn fetch_changes(
+        &mut self,
+    ) -> anyhow::Result<Vec<Change<Arc<S::StoredFile>, Arc<S::StoredFile>>>> {
         Ok(match self.fetcher.fetch_once().await? {
             None => vec![],
-            Some(files) => self
-                .changes
-                .get_changes(files, self.fetcher.fetcher.file_storage.updated()),
+            Some(files) => self.changes.get_changes(files),
         })
     }
 
@@ -286,10 +284,8 @@ where
     }
 
     /// Sets the apply state of `version` of `file`; discarded, returning false, unless this
-    /// client still holds that version. Files may be updated in place by later fetches (see
-    /// [`FileStorage::update`]): pass the version the outcome was computed for (e.g.
-    /// [`crate::file_storage::RawFile::version`] read along with the contents), not the one the
-    /// file has once the outcome is known.
+    /// client still holds that version. Pass the version the outcome was computed for (e.g.
+    /// [`crate::file_storage::RawFile::version`]).
     pub fn set_config_state_for_version(
         &self,
         file: &S::StoredFile,
@@ -408,13 +404,13 @@ mod tests {
         )
         .with_client_id("old-client-id".to_string());
 
-        fetcher.fetch_changes::<Vec<u8>>().await.unwrap();
+        fetcher.fetch_changes().await.unwrap();
         fetcher.set_identity(
             "new-client-id".to_string(),
             "new-runtime-id".to_string(),
             vec!["runtime-id:new-runtime-id".to_string()],
         );
-        fetcher.fetch_changes::<Vec<u8>>().await.unwrap();
+        fetcher.fetch_changes().await.unwrap();
 
         let request = server.last_request.lock().unwrap();
         let client = request.as_ref().unwrap().client.as_ref().unwrap();

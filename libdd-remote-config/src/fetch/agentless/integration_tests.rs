@@ -175,15 +175,6 @@ impl FileStorage for NoopStorage {
     ) -> anyhow::Result<Arc<Self::StoredFile>> {
         Ok(Arc::new(()))
     }
-
-    fn update(
-        &self,
-        _file: &Arc<Self::StoredFile>,
-        _version: u64,
-        _contents: Vec<u8>,
-    ) -> anyhow::Result<()> {
-        Ok(())
-    }
 }
 
 fn test_state() -> ConfigFetcherState<(), libdd_capabilities_impl::NativeCapabilities> {
@@ -1297,16 +1288,14 @@ async fn test_org_uuid_refetched_on_root_rotation() {
 
 // ---- shared-state storage ------------------------------------------------
 
-/// Storage whose files are distinguishable: each stored file gets a fresh id,
-/// and `update()` calls are counted.
+/// Storage whose files are distinguishable: each stored file gets a fresh id.
 #[derive(Default)]
 struct RecordingStorage {
     next_id: Mutex<u64>,
-    updates: Mutex<u32>,
 }
 
 impl FileStorage for RecordingStorage {
-    type StoredFile = Mutex<(u64, u64)>; // (id, version)
+    type StoredFile = (u64, u64); // (id, version)
 
     fn store(
         &self,
@@ -1316,18 +1305,7 @@ impl FileStorage for RecordingStorage {
     ) -> anyhow::Result<Arc<Self::StoredFile>> {
         let mut id = self.next_id.lock().unwrap();
         *id += 1;
-        Ok(Arc::new(Mutex::new((*id, version))))
-    }
-
-    fn update(
-        &self,
-        file: &Arc<Self::StoredFile>,
-        version: u64,
-        _contents: Vec<u8>,
-    ) -> anyhow::Result<()> {
-        *self.updates.lock().unwrap() += 1;
-        file.lock().unwrap().1 = version;
-        Ok(())
+        Ok(Arc::new((*id, version)))
     }
 }
 
@@ -1346,7 +1324,7 @@ fn new_target(path: &str, version: u64, content: &[u8]) -> NewTarget {
 /// the contents of the one they hold.
 #[test]
 fn test_shared_state_stores_new_version_as_new_file() {
-    let mut state = ConfigFetcherState::<Mutex<(u64, u64)>, _>::with_client(
+    let mut state = ConfigFetcherState::<(u64, u64), _>::with_client(
         test_state().invariants.clone(),
         libdd_capabilities_impl::NativeCapabilities::new_client(),
     );
@@ -1372,39 +1350,48 @@ fn test_shared_state_stores_new_version_as_new_file() {
         .handle
         .clone();
 
-    assert_eq!(*storage.updates.lock().unwrap(), 0, "no in-place update");
     assert!(!Arc::ptr_eq(&old, &new), "new version must be a new file");
-    assert_eq!(*old.lock().unwrap(), (1, 1), "held version is untouched");
-    assert_eq!(*new.lock().unwrap(), (2, 2));
+    assert_eq!(*old, (1, 1), "held version is untouched");
+    assert_eq!(*new, (2, 2));
 }
 
-/// A single-target fetcher is the only holder of its files, so it keeps
-/// updating them in place.
+/// A single-target fetcher is the only holder of its files. A new version is
+/// still stored as a new file, and the previous one is released as soon as
+/// nothing references it anymore.
 #[test]
-fn test_single_state_updates_file_in_place() {
-    let state = ConfigFetcherState::<Mutex<(u64, u64)>, _>::with_client(
+fn test_single_state_stores_new_version_as_new_file() {
+    let state = ConfigFetcherState::<(u64, u64), _>::with_client(
         test_state().invariants.clone(),
         libdd_capabilities_impl::NativeCapabilities::new_client(),
     );
     let storage = RecordingStorage::default();
     let cache = TargetCache::new(&state, &storage);
     let path = "datadog/2/APM_TRACING/cfgid/config";
+    let parsed: RemoteConfigPath = RemoteConfigPath::parse(path).unwrap();
+    let handle = || {
+        state.target_files_by_path.lock().unwrap()[&parsed]
+            .handle
+            .clone()
+    };
 
     cache
         .lock()
         .store_batch([new_target(path, 1, b"v1")])
         .unwrap();
+    assert_eq!(*handle(), (1, 1));
+    let old = Arc::downgrade(&handle());
+
     cache
         .lock()
         .store_batch([new_target(path, 2, b"v2")])
         .unwrap();
-    let parsed: RemoteConfigPath = RemoteConfigPath::parse(path).unwrap();
-    let handle = state.target_files_by_path.lock().unwrap()[&parsed]
-        .handle
-        .clone();
+    let new = handle();
 
-    assert_eq!(*storage.updates.lock().unwrap(), 1);
-    assert_eq!(*handle.lock().unwrap(), (1, 2));
+    assert_eq!(*new, (2, 2), "the new version is a new file");
+    assert!(
+        old.upgrade().is_none(),
+        "the previous version is released once no longer referenced"
+    );
 }
 
 /// Like the agent, which forwards each tracer's `Client` (with its

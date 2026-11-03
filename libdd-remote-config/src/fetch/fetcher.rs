@@ -31,8 +31,9 @@ use std::time::Duration;
 use tracing::{debug, trace, warn};
 
 /// Manages config files.
-/// Presents store() and update() operations.
-/// It is recommended to minimize the overhead of these operations as they will be invoked while
+/// Presents the store() operation. Stored files are immutable: a new version of a file is always
+/// stored as a new file, and the previous one is released once no longer referenced.
+/// It is recommended to minimize the overhead of this operation as it will be invoked while
 /// a lock across all ConfigFetchers referencing the same ConfigFetcherState is held.
 pub trait FileStorage {
     type StoredFile;
@@ -44,14 +45,6 @@ pub trait FileStorage {
         path: Arc<RemoteConfigPath>,
         contents: Vec<u8>,
     ) -> anyhow::Result<Arc<Self::StoredFile>>;
-
-    /// A file at a given path was updated (new contents).
-    fn update(
-        &self,
-        file: &Arc<Self::StoredFile>,
-        version: u64,
-        contents: Vec<u8>,
-    ) -> anyhow::Result<()>;
 }
 
 /// Fundamental configuration of the RC client, which always must be set.
@@ -686,11 +679,10 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
         // resends the targets.
         let mut version_changes = vec![];
         let mut new_files = vec![];
-        struct NewFile<'a, H> {
+        struct NewFile<'a> {
             path: &'a str,
             parsed_path: Arc<RemoteConfigPath>,
             target_file: TargetData<'a>,
-            handle: Option<Arc<H>>,
             decoded: Vec<u8>,
             computed_hash: String,
             version: u64,
@@ -721,17 +713,14 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
                 .get_key_value(&parsed_path)
                 .filter(|(path, _)| kept(path))
                 .map(|(_, stored)| stored);
-            let handle = if let Some(stored) = stored {
-                if stored.hash == hash {
-                    if let Some(version) = target_file.try_parse_version() {
-                        version_changes.push((parsed_path, version));
-                    }
-                    continue;
+            if let Some(stored) = stored
+                && stored.hash == hash
+            {
+                if let Some(version) = target_file.try_parse_version() {
+                    version_changes.push((parsed_path, version));
                 }
-                Some(stored.handle.clone())
-            } else {
-                None
-            };
+                continue;
+            }
             let Some(raw_file) = incoming_files.get(path) else {
                 // If the file isn't there, it's not meant for us.
                 continue;
@@ -754,7 +743,6 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
                 path,
                 parsed_path: Arc::new(parsed_path.into()),
                 target_file,
-                handle,
                 decoded,
                 computed_hash,
                 version,
@@ -770,41 +758,17 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
             }
         }
 
-        // Commit. Only storing files can still fail. New versions are stored first, without being
-        // referenced anywhere yet: should one fail, the handles created so far are dropped, which
-        // releases them, and nothing else has changed.
-        let mut to_store = vec![];
-        let mut in_place = vec![];
+        // Commit. Only storing files can still fail. Every new version is stored as a new file,
+        // without being referenced anywhere yet: should one fail, the handles created so far are
+        // dropped, which releases them, and nothing else has changed. A previous version of the
+        // same path is never modified; it is released once nothing references it anymore.
+        let mut stored_files = Vec::with_capacity(new_files.len());
         for mut file in new_files {
-            match file.handle.take() {
-                // Only this fetcher's target uses the file: its contents are replaced in place.
-                Some(handle) if expire_unused_files => in_place.push((handle, file)),
-                // With shared state, other targets may still list the previous version until
-                // their own next fetch. Store the new version as a new file; the previous one
-                // expires once no target holds it anymore.
-                _ => to_store.push(file),
-            }
-        }
-        let mut stored_files = Vec::with_capacity(to_store.len() + in_place.len());
-        for mut file in to_store {
             let decoded = std::mem::take(&mut file.decoded);
             let length = decoded.len() as i64;
             let handle = self
                 .file_storage
                 .store(file.version, file.parsed_path.clone(), decoded)
-                .with_context(|| format!("Failed storing remote config {}", file.path))?;
-            stored_files.push((file, length, handle));
-        }
-        // In-place updates cannot be undone, so they come last. Should one of them fail, those
-        // done before it have replaced their contents already, while the client keeps describing
-        // the previous version; as the update is rejected, the agent resends it and the next poll
-        // updates them again. This limitation goes away with FileStorage::update(), which is to be
-        // removed.
-        for (handle, mut file) in in_place {
-            let decoded = std::mem::take(&mut file.decoded);
-            let length = decoded.len() as i64;
-            self.file_storage
-                .update(&handle, file.version, decoded)
                 .with_context(|| format!("Failed storing remote config {}", file.path))?;
             stored_files.push((file, length, handle));
         }
@@ -1008,7 +972,7 @@ pub mod tests {
     #[derive(Default)]
     pub struct Storage {
         pub files: Mutex<HashMap<Arc<RemoteConfigPath>, Arc<Mutex<DataStore>>>>,
-        /// Storing or updating this path fails.
+        /// Storing this path fails.
         pub fail_path: Mutex<Option<RemoteConfigPath>>,
     }
 
@@ -1071,20 +1035,6 @@ pub mod tests {
                 storage: self.clone(),
                 data,
             }))
-        }
-
-        fn update(
-            &self,
-            file: &Arc<Self::StoredFile>,
-            version: u64,
-            contents: Vec<u8>,
-        ) -> anyhow::Result<()> {
-            self.check_failure(&file.path)?;
-            *file.data.lock().unwrap() = DataStore {
-                version,
-                contents: String::from_utf8(contents).unwrap(),
-            };
-            Ok(())
         }
     }
 
@@ -1929,14 +1879,9 @@ pub mod tests {
                 "did not match"
             }
             ResponseFailure::Storage => {
-                // With expire_unused_files, the changed file is updated in place, which must not
-                // happen before the added file failed to be stored. Otherwise, both are stored as
-                // new files, and whichever was stored first must be released.
-                *storage.fail_path.lock().unwrap() = Some(if expire_unused_files {
-                    path_third.clone()
-                } else {
-                    PATH_SECOND.clone()
-                });
+                // Both the changed and the added file are stored as new files: whichever was
+                // stored before the failure must be released.
+                *storage.fail_path.lock().unwrap() = Some(PATH_SECOND.clone());
                 "storage failure"
             }
         };

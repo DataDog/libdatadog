@@ -10,10 +10,6 @@ pub trait FilePath {
     fn path(&self) -> &RemoteConfigPath;
 }
 
-pub trait UpdatedFiles<S: FilePath, R> {
-    fn updated(&self) -> Vec<(Arc<S>, R)>;
-}
-
 struct FilePathBasedArc<S: FilePath>(Arc<S>);
 
 impl<S: FilePath> Hash for FilePathBasedArc<S> {
@@ -44,16 +40,16 @@ impl<S: FilePath> Default for ChangeTracker<S> {
 
 pub enum Change<S, R> {
     Add(S),
+    /// The new file, and the one it replaces at the same path.
     Update(S, R),
     Remove(S),
 }
 
 impl<S: FilePath> ChangeTracker<S> {
-    pub fn get_changes<R>(
-        &mut self,
-        files: Vec<Arc<S>>,
-        updated: Vec<(Arc<S>, R)>,
-    ) -> Vec<Change<Arc<S>, R>> {
+    /// Computes the changes from the files of the previous call to `files`. Stored files are never
+    /// modified: a different file at the same path is a new version, reported as
+    /// [`Change::Update`] with the previous file.
+    pub fn get_changes(&mut self, files: Vec<Arc<S>>) -> Vec<Change<Arc<S>, Arc<S>>> {
         let files = HashSet::from_iter(files.into_iter().map(FilePathBasedArc));
         let mut changes = vec![];
 
@@ -67,10 +63,11 @@ impl<S: FilePath> ChangeTracker<S> {
             changes.push(Change::Add(file.0.clone()));
         }
 
-        for (updated_file, old_contents) in updated.into_iter() {
-            let file = FilePathBasedArc(updated_file);
-            if files.contains(&file) {
-                changes.push(Change::Update(file.0, old_contents))
+        for file in files.iter() {
+            if let Some(old) = self.last_files.get(file)
+                && !Arc::ptr_eq(&file.0, &old.0)
+            {
+                changes.push(Change::Update(file.0.clone(), old.0.clone()));
             }
         }
 
@@ -104,12 +101,12 @@ mod tests {
         let mut tracker: ChangeTracker<TestFile> = ChangeTracker::default();
         let a = file("a");
         // First round: "a" is added.
-        tracker.get_changes::<()>(vec![a.clone()], vec![]);
+        tracker.get_changes(vec![a.clone()]);
 
         // Second round: "a" is gone, "b" appears. The removal of "a" must be
         // emitted before the addition of "b".
         let b = file("b");
-        let changes = tracker.get_changes::<()>(vec![b.clone()], vec![]);
+        let changes = tracker.get_changes(vec![b.clone()]);
 
         assert_eq!(changes.len(), 2);
         match &changes[0] {
@@ -119,6 +116,37 @@ mod tests {
         match &changes[1] {
             Change::Add(f) => assert_eq!(f.path().name(), "b"),
             _ => panic!("expected the addition to be emitted after the removal"),
+        }
+    }
+
+    #[test]
+    fn update_carries_the_previous_file_after_removals() {
+        let mut tracker: ChangeTracker<TestFile> = ChangeTracker::default();
+        let a1 = file("a");
+        let b = file("b");
+        tracker.get_changes(vec![a1.clone(), b.clone()]);
+
+        // Re-delivering the same files is no change.
+        assert!(tracker.get_changes(vec![a1.clone(), b.clone()]).is_empty());
+
+        // A new version of "a" is a new file at the same path; "b" is gone.
+        let a2 = file("a");
+        let changes = tracker.get_changes(vec![a2.clone()]);
+
+        assert_eq!(changes.len(), 2);
+        match &changes[0] {
+            Change::Remove(f) => assert!(Arc::ptr_eq(f, &b)),
+            _ => panic!("expected the removal to be emitted first"),
+        }
+        match &changes[1] {
+            Change::Update(new, old) => {
+                assert!(Arc::ptr_eq(new, &a2), "the update carries the new file");
+                assert!(
+                    Arc::ptr_eq(old, &a1),
+                    "the update carries the previous file"
+                );
+            }
+            _ => panic!("expected the update to be emitted after the removal"),
         }
     }
 }

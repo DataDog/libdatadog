@@ -160,7 +160,6 @@ async fn run_one_iteration(
     // --- 2. Initial fetch: first call to fetch_changes on a fresh client ---
     let mut first_poll = Duration::ZERO;
     let first_wall_start = Instant::now();
-    // R is inferred from `ParsedFileStorage`'s `UpdatedFiles` impl.
     let first_fut = Box::pin(fetcher.fetch_changes());
     let first_changes: Vec<_> = Instrumented::new(first_fut, &mut first_poll).await?;
     let first = Sample {

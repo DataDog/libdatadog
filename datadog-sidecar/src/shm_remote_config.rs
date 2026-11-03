@@ -209,16 +209,6 @@ impl<N: NotifyTarget + 'static> FileStorage for ConfigFileStorage<N> {
             refcount: FileRefcountData::new(version, path),
         }))
     }
-
-    fn update(
-        &self,
-        file: &Arc<Self::StoredFile>,
-        version: u64,
-        contents: Vec<u8>,
-    ) -> anyhow::Result<()> {
-        *file.handle.lock_or_panic() = Some(store_shm(version, &file.refcount.path, contents)?);
-        Ok(())
-    }
 }
 
 fn store_shm(
