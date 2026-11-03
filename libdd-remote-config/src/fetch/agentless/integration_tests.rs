@@ -1275,3 +1275,115 @@ async fn test_org_uuid_refetched_on_root_rotation() {
     // A second org fetch happened lazily because the config root rotated.
     assert_eq!(http.org_request_count(), 2);
 }
+
+// ---- shared-state storage ------------------------------------------------
+
+/// Storage whose files are distinguishable: each stored file gets a fresh id,
+/// and `update()` calls are counted.
+#[derive(Default)]
+struct RecordingStorage {
+    next_id: Mutex<u64>,
+    updates: Mutex<u32>,
+}
+
+impl FileStorage for RecordingStorage {
+    type StoredFile = Mutex<(u64, u64)>; // (id, version)
+
+    fn store(
+        &self,
+        version: u64,
+        _path: Arc<RemoteConfigPath>,
+        _contents: Vec<u8>,
+    ) -> anyhow::Result<Arc<Self::StoredFile>> {
+        let mut id = self.next_id.lock().unwrap();
+        *id += 1;
+        Ok(Arc::new(Mutex::new((*id, version))))
+    }
+
+    fn update(
+        &self,
+        file: &Arc<Self::StoredFile>,
+        version: u64,
+        _contents: Vec<u8>,
+    ) -> anyhow::Result<()> {
+        *self.updates.lock().unwrap() += 1;
+        file.lock().unwrap().1 = version;
+        Ok(())
+    }
+}
+
+fn new_target(path: &str, version: u64, content: &[u8]) -> NewTarget {
+    NewTarget {
+        path: RemoteConfigPath::parse(path).unwrap(),
+        version,
+        primary_hash: format!("hash-{version}"),
+        hashes: vec![("sha256".to_string(), format!("hash-{version}"))],
+        content: content.to_vec(),
+    }
+}
+
+/// With a shared state, other targets may still hold the previous version of a
+/// path, so a new version must be stored as a new file rather than replacing
+/// the contents of the one they hold.
+#[test]
+fn test_shared_state_stores_new_version_as_new_file() {
+    let mut state = ConfigFetcherState::<Mutex<(u64, u64)>, _>::with_client(
+        test_state().invariants.clone(),
+        libdd_capabilities_impl::NativeCapabilities::new_client(),
+    );
+    state.expire_unused_files = false;
+    let storage = RecordingStorage::default();
+    let cache = TargetCache::new(&state, &storage);
+    let path = "datadog/2/APM_TRACING/cfgid/config";
+
+    cache
+        .lock()
+        .store_batch([new_target(path, 1, b"v1")])
+        .unwrap();
+    let parsed: RemoteConfigPath = RemoteConfigPath::parse(path).unwrap();
+    let old = state.target_files_by_path.lock().unwrap()[&parsed]
+        .handle
+        .clone();
+
+    cache
+        .lock()
+        .store_batch([new_target(path, 2, b"v2")])
+        .unwrap();
+    let new = state.target_files_by_path.lock().unwrap()[&parsed]
+        .handle
+        .clone();
+
+    assert_eq!(*storage.updates.lock().unwrap(), 0, "no in-place update");
+    assert!(!Arc::ptr_eq(&old, &new), "new version must be a new file");
+    assert_eq!(*old.lock().unwrap(), (1, 1), "held version is untouched");
+    assert_eq!(*new.lock().unwrap(), (2, 2));
+}
+
+/// A single-target fetcher is the only holder of its files, so it keeps
+/// updating them in place.
+#[test]
+fn test_single_state_updates_file_in_place() {
+    let state = ConfigFetcherState::<Mutex<(u64, u64)>, _>::with_client(
+        test_state().invariants.clone(),
+        libdd_capabilities_impl::NativeCapabilities::new_client(),
+    );
+    let storage = RecordingStorage::default();
+    let cache = TargetCache::new(&state, &storage);
+    let path = "datadog/2/APM_TRACING/cfgid/config";
+
+    cache
+        .lock()
+        .store_batch([new_target(path, 1, b"v1")])
+        .unwrap();
+    cache
+        .lock()
+        .store_batch([new_target(path, 2, b"v2")])
+        .unwrap();
+    let parsed: RemoteConfigPath = RemoteConfigPath::parse(path).unwrap();
+    let handle = state.target_files_by_path.lock().unwrap()[&parsed]
+        .handle
+        .clone();
+
+    assert_eq!(*storage.updates.lock().unwrap(), 1);
+    assert_eq!(*handle.lock().unwrap(), (1, 2));
+}
