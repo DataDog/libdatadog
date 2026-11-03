@@ -23,8 +23,8 @@ use libdd_remote_config::{
 use priority_queue::PriorityQueue;
 use sha2::{Digest, Sha224};
 use std::cmp::Reverse;
-use std::collections::HashMap;
 use std::collections::hash_map::Entry;
+use std::collections::{HashMap, HashSet};
 use std::default::Default;
 use std::ffi::{CStr, CString};
 use std::io;
@@ -644,6 +644,11 @@ pub struct RemoteConfigManager {
     unexpired_targets: PriorityQueue<Arc<Target>, Reverse<Instant>>,
     active_configs: HashMap<String, RemoteConfigPath>,
     last_read_configs: Vec<String>,
+    /// Listed configs of the active target that could not be read. They are retried on every
+    /// poll until they can be, or until they are no longer listed; only the first failure warns.
+    failed_configs: HashSet<String>,
+    /// Set when a poll is complete, so that the next one retries `failed_configs` once.
+    retry_failed: bool,
     check_configs: Vec<String>,
     /// Reapply every config after replacement: unchanged limiter indices refer to a new arena.
     reapply_all: bool,
@@ -683,6 +688,8 @@ impl RemoteConfigManager {
             unexpired_targets: Default::default(),
             active_configs: Default::default(),
             last_read_configs: Default::default(),
+            failed_configs: Default::default(),
+            retry_failed: false,
             check_configs: vec![],
             reapply_all: false,
             current_runtime_id: "".to_string(),
@@ -760,6 +767,7 @@ impl RemoteConfigManager {
                         }
                     }
                     self.last_read_configs = configs;
+                    self.failed_configs.clear();
                     self.check_configs = self.active_configs.keys().cloned().collect();
                 }
                 if self
@@ -795,26 +803,44 @@ impl RemoteConfigManager {
         }
         self.reapply_all = false;
 
+        if std::mem::take(&mut self.retry_failed) {
+            self.last_read_configs
+                .extend(self.failed_configs.iter().cloned());
+        }
+
         while let Some(config) = self.last_read_configs.pop() {
             if let Entry::Vacant(entry) = self.active_configs.entry(config) {
                 match read_config(entry.key(), &self.registry) {
                     Ok((parsed, limiter_index)) => {
                         trace!("Adding remote config file {}: {:?}", entry.key(), parsed);
+                        self.failed_configs.remove(entry.key());
                         entry.insert(parsed.path.clone());
                         return RemoteConfigUpdate::Add {
                             value: parsed,
                             limiter_index,
                         };
                     }
-                    Err(e) => warn!(
-                        "Failed reading remote config file {}; skipping: {:?}",
-                        entry.key(),
-                        e
-                    ),
+                    Err(e) => {
+                        if self.failed_configs.insert(entry.key().clone()) {
+                            warn!(
+                                "Failed reading remote config file {}; retrying on later polls: \
+                                 {:?}",
+                                entry.key(),
+                                e
+                            );
+                        } else {
+                            debug!(
+                                "Failed reading remote config file {} again: {:?}",
+                                entry.key(),
+                                e
+                            );
+                        }
+                    }
                 }
             }
         }
 
+        self.retry_failed = true;
         RemoteConfigUpdate::None
     }
 
@@ -827,11 +853,15 @@ impl RemoteConfigManager {
             if self.check_configs.is_empty() {
                 current_configs.extend(self.active_configs.keys().cloned());
             }
+            // Still listed and not applied: retry them when the target is active again.
+            current_configs.extend(self.failed_configs.drain());
             self.encountered_targets
                 .insert(old_target.clone(), (reader, current_configs));
             self.unexpired_targets
                 .push(old_target, Reverse(Instant::now()));
         }
+        // Never retry another target's listing.
+        self.failed_configs.clear();
         if let Some(ref target) = self.active_target
             && let Some((reader, last_fetch)) = self.encountered_targets.remove(target)
         {
@@ -1398,6 +1428,67 @@ mod tests {
         } else {
             unreachable!("expected RemoteConfigUpdate::Add for the LiveDebugger config");
         }
+    }
+
+    /// A listed segment that cannot be opened yet is retried on a later poll, without the
+    /// listing having to change and without re-adding the configs already applied.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    // It warns, which test_logs_created_counter would count.
+    #[serial_test::serial(log_counter)]
+    fn a_listed_segment_failing_to_open_is_retried() {
+        let invariants = ConfigInvariants {
+            language: "php".to_string(),
+            tracer_version: "test".to_string(),
+            endpoint: libdd_common::Endpoint::from_slice(&format!(
+                "file:///rc-retry-{}",
+                std::process::id()
+            )),
+            agentless: None,
+        };
+        let path = |id: &str| {
+            RemoteConfigPath::parse(&format!(
+                "employee/APM_TRACING/{id}-{}/config",
+                std::process::id()
+            ))
+            .unwrap()
+        };
+        let (late, present) = (path("late"), path("present"));
+        let content = serde_json::to_vec(&dummy_dynamic_config(true)).unwrap();
+        let present_file = store_shm(1, &present, content.clone()).unwrap();
+        let late_name = segment_name(&crate::shm_namespace().to_string(), 1, &late);
+
+        let mut listing = b"runtime\n".to_vec();
+        for (name, path) in [
+            (late_name.as_bytes(), &late),
+            (unsafe { present_file.get_path() }, &present),
+        ] {
+            listing.extend_from_slice(name);
+            listing.extend_from_slice(b":0:");
+            listing.extend_from_slice(BASE64_URL_SAFE_NO_PAD.encode(path.to_string()).as_bytes());
+            listing.push(b'\n');
+        }
+        let writer = RemoteConfigWriter::new(&invariants, &DUMMY_TARGET).unwrap();
+        assert!(writer.write(&listing));
+
+        let mut manager = RemoteConfigManager::new(invariants);
+        manager.track_target(&DUMMY_TARGET);
+        match manager.fetch_update() {
+            RemoteConfigUpdate::Add { value, .. } => assert_eq!(value.path, present),
+            other => panic!("expected the openable config to be added, got {other:?}"),
+        }
+        assert!(matches!(manager.fetch_update(), RemoteConfigUpdate::None));
+        // Still missing: nothing to add, and nothing removed.
+        assert!(matches!(manager.fetch_update(), RemoteConfigUpdate::None));
+
+        let late_file = store_shm(1, &late, content).unwrap();
+        assert_eq!(unsafe { late_file.get_path() }, late_name.as_bytes());
+        match manager.fetch_update() {
+            RemoteConfigUpdate::Add { value, .. } => assert_eq!(value.path, late),
+            other => panic!("expected the late config to be added on retry, got {other:?}"),
+        }
+        assert!(matches!(manager.fetch_update(), RemoteConfigUpdate::None));
+        assert!(matches!(manager.fetch_update(), RemoteConfigUpdate::None));
     }
 
     /// Identical config files and limiter indices still refer to a new arena after restart.
