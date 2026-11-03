@@ -343,6 +343,20 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
         }
     }
 
+    /// Create a config fetcher in agentless mode around a pre-built agentless fetcher.
+    #[cfg(all(test, feature = "agentless"))]
+    pub(crate) fn with_agentless_fetcher(
+        file_storage: S,
+        state: Arc<ConfigFetcherState<S::StoredFile, C>>,
+        agentless_fetcher: agentless::AgentlessFetcher<C>,
+    ) -> Self {
+        ConfigFetcher {
+            file_storage,
+            state,
+            mode: FetcherMode::Agentless(agentless_fetcher),
+        }
+    }
+
     /// Create a new config fetcher.
     pub async fn new(
         file_storage: S,
@@ -808,7 +822,7 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
                 if res.opaque_backend_state != client_state.opaque_backend_state {
                     client_state.opaque_backend_state = res.opaque_backend_state.clone();
                 }
-                client_state.last_error = None;
+                client_state.last_error = (!res.errors.is_empty()).then(|| res.errors.join("\n"));
 
                 let config_paths: HashSet<RemoteConfigPath> = res
                     .targets

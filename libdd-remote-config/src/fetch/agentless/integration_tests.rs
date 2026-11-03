@@ -580,10 +580,25 @@ async fn build_config_with_delegation(
 }
 
 /// Build a director repo (v1) that announces every `(path, content)` entry as a
-/// top-level target (sha256), matching the config authorization.
+/// top-level target (sha256), matching the config authorization. Like the
+/// backend's, each target carries its config version as `custom.v`.
 async fn build_director_with_targets(
     director_key: &Ed25519PrivateKey,
     entries: &[(&str, &[u8])],
+    target_hashes: &[HashAlgorithm],
+) -> RawSignedMetadataSet<Json> {
+    let versioned: Vec<(&str, &[u8], Option<u64>)> = entries
+        .iter()
+        .map(|(path, content)| (*path, *content, Some(1)))
+        .collect();
+    build_director_with_versions(director_key, &versioned, target_hashes).await
+}
+
+/// Like [`build_director_with_targets`], but with an explicit `custom.v` for
+/// each `(path, content, version)` entry; `None` omits it.
+async fn build_director_with_versions(
+    director_key: &Ed25519PrivateKey,
+    entries: &[(&str, &[u8], Option<u64>)],
     target_hashes: &[HashAlgorithm],
 ) -> RawSignedMetadataSet<Json> {
     let mut repo = EphemeralRepository::<Json>::new();
@@ -595,11 +610,15 @@ async fn build_director_with_targets(
         .stage_root_if_necessary()
         .unwrap()
         .target_hash_algorithms(target_hashes);
-    for (path, content) in entries {
+    for (path, content, version) in entries {
+        let custom = version
+            .map(|v| [("v".to_string(), serde_json::json!(v))].into())
+            .unwrap_or_default();
         builder = builder
-            .add_target(
+            .add_target_with_custom(
                 TargetPath::new((*path).to_string()).unwrap(),
                 futures_util::io::Cursor::new(content.to_vec()),
+                custom,
             )
             .await
             .unwrap();
@@ -1386,4 +1405,101 @@ fn test_single_state_updates_file_in_place() {
 
     assert_eq!(*storage.updates.lock().unwrap(), 1);
     assert_eq!(*handle.lock().unwrap(), (1, 2));
+}
+
+/// Like in agent mode, a target without a `custom.v` version is a failure of
+/// that file, reported as the client's error, while the other files still
+/// apply; it must not be handed out as version 0.
+#[tokio::test]
+#[cfg_attr(miri, ignore)]
+async fn test_target_without_version_fails_only_that_file() {
+    use crate::fetch::{ConfigClientState, ConfigFetcher, ConfigProductCapabilities};
+    use crate::{RemoteConfigCapabilities, RemoteConfigProduct, Target};
+
+    let config_key = new_key();
+    let product_key = new_key();
+    let director_key = new_key();
+    let good_path = "datadog/2/APM_TRACING/good/config";
+    let bad_path = "datadog/2/APM_TRACING/bad/config";
+    let entries: &[(&str, &[u8])] = &[(good_path, b"good payload"), (bad_path, b"bad payload")];
+    let (cfg, raw_delegated) = build_config_with_delegation(
+        &config_key,
+        &product_key,
+        "APM_TRACING",
+        entries,
+        &["datadog/*/APM_TRACING/*/*"],
+        &[HashAlgorithm::Sha256],
+    )
+    .await;
+    let dir = build_director_with_versions(
+        &director_key,
+        &[
+            (good_path, b"good payload", Some(7)),
+            (bad_path, b"bad payload", None),
+        ],
+        &[HashAlgorithm::Sha256],
+    )
+    .await;
+    let resp = delegated_response(&cfg, raw_delegated, "APM_TRACING", &dir, entries);
+
+    let http = MockHttp::new();
+    http.push(&resp);
+    http.push(&resp);
+
+    let f = fetcher(
+        http.clone(),
+        cfg.root().unwrap().as_bytes().to_vec(),
+        dir.root().unwrap().as_bytes().to_vec(),
+    )
+    .await;
+    let state = Arc::new(ConfigFetcherState::<(), MockHttp>::with_client(
+        test_state().invariants.clone(),
+        http.clone(),
+    ));
+    let mut fetcher = ConfigFetcher::with_agentless_fetcher(NoopStorage, state.clone(), f);
+    let target = Target::new(
+        "service".to_string(),
+        "env".to_string(),
+        "1.0".to_string(),
+        vec![],
+        vec![],
+    );
+    let capabilities = ConfigProductCapabilities::new(
+        vec![RemoteConfigProduct::ApmTracing],
+        vec![RemoteConfigCapabilities::ApmTracingCustomTags],
+    );
+    let mut client_state = ConfigClientState::default();
+
+    for _ in 0..2 {
+        let configs = fetcher
+            .fetch_once("rt", &target, &capabilities, "client", &mut client_state)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(configs.len(), 1, "only the versioned file is applied");
+    }
+
+    let stored: Vec<String> = state
+        .target_files_by_path
+        .lock()
+        .unwrap()
+        .keys()
+        .map(|p| p.to_string())
+        .collect();
+    assert_eq!(stored, vec![good_path.to_string()]);
+
+    let req = http.request_at(1);
+    let client_state = req.active_clients[0].state.as_ref().unwrap();
+    assert!(client_state.has_error, "the failed file is reported");
+    assert!(
+        client_state.error.contains(&format!(
+            "Failed parsing version from remote config path {bad_path}"
+        )),
+        "unexpected error: {:?}",
+        client_state.error
+    );
+    let states = &client_state.config_states;
+    assert_eq!(states.len(), 1, "{states:?}");
+    assert_eq!(states[0].id, "good");
+    assert_eq!(states[0].version, 7);
 }
