@@ -6,7 +6,7 @@ use super::agentless;
 #[cfg(not(target_arch = "wasm32"))]
 use super::shared::RefcountedFile;
 
-use crate::targets::{Root, TargetsList};
+use crate::targets::{Root, TargetData, TargetsList};
 use crate::{RemoteConfigCapabilities, RemoteConfigPath, RemoteConfigProduct, Target};
 use anyhow::Context;
 use base64::Engine;
@@ -576,7 +576,9 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
             ))
         })?;
 
-        client_state.root_version = response.roots.iter().try_fold(
+        // Processing either completes or leaves the client state and the stored files as they
+        // were: everything is validated first, and only then committed.
+        let root_version = response.roots.iter().try_fold(
             client_state.root_version,
             |max, cur| -> anyhow::Result<_> {
                 let decoded_root =
@@ -626,13 +628,25 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
             }
         }
 
-        if self.state.expire_unused_files {
-            target_files.retain(|k, _| config_paths.contains(k.as_ref()));
-        }
+        // Files no longer listed are expired once the response is committed; until then, they
+        // must be ignored.
+        let expire_unused_files = self.state.expire_unused_files;
+        let kept = |path: &RemoteConfigPath| !expire_unused_files || config_paths.contains(path);
 
         // Like the Go client, an error in any file rejects the whole update: it is reported to the
         // agent with the next request and, as the client keeps its targets version, the agent
         // resends the targets.
+        let mut version_changes = vec![];
+        let mut new_files = vec![];
+        struct NewFile<'a, H> {
+            path: &'a str,
+            parsed_path: Arc<RemoteConfigPath>,
+            target_file: TargetData<'a>,
+            handle: Option<Arc<H>>,
+            decoded: Vec<u8>,
+            computed_hash: String,
+            version: u64,
+        }
         for (path, target_file) in targets_list.signed.targets {
             fn hash_sha256(v: &[u8]) -> String {
                 format!("{:x}", Sha256::digest(v))
@@ -655,12 +669,14 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
                     continue;
                 }
             };
-            let handle = if let Some(stored) = target_files.get_mut(&parsed_path) {
+            let stored = target_files
+                .get_key_value(&parsed_path)
+                .filter(|(path, _)| kept(path))
+                .map(|(_, stored)| stored);
+            let handle = if let Some(stored) = stored {
                 if stored.hash == hash {
-                    // Like the Go client, report a version-only change without handing out
-                    // a new file, keeping the apply outcome of the unchanged contents.
                     if let Some(version) = target_file.try_parse_version() {
-                        stored.state.version = version;
+                        version_changes.push((parsed_path, version));
                     }
                     continue;
                 }
@@ -686,23 +702,89 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
                 anyhow::bail!("Failed parsing version from remote config path {path}");
             };
             debug!("Fetched new remote config file at path {path} targeting {target:?}");
+            new_files.push(NewFile {
+                path,
+                parsed_path: Arc::new(parsed_path.into()),
+                target_file,
+                handle,
+                decoded,
+                computed_hash,
+                version,
+            });
+        }
 
-            let parsed_path: Arc<RemoteConfigPath> = Arc::new(parsed_path.into());
-            let length = decoded.len() as i64;
-            let stored = match handle {
-                // Only this fetcher's target uses the file: replace its contents.
-                Some(handle) if self.state.expire_unused_files => self
-                    .file_storage
-                    .update(&handle, version, decoded)
-                    .map(|()| handle),
+        // A listed config must be either held already, or carried by this response.
+        for config in config_paths.iter() {
+            if !target_files.contains_key(config)
+                && !new_files.iter().any(|f| f.path == config.as_str())
+            {
+                anyhow::bail!("Found {config} in client_configs response, but it isn't stored.");
+            }
+        }
+
+        // Commit. Only storing files can still fail. New versions are stored first, without being
+        // referenced anywhere yet: should one fail, the handles created so far are dropped, which
+        // releases them, and nothing else has changed.
+        let mut to_store = vec![];
+        let mut in_place = vec![];
+        for mut file in new_files {
+            match file.handle.take() {
+                // Only this fetcher's target uses the file: its contents are replaced in place.
+                Some(handle) if expire_unused_files => in_place.push((handle, file)),
                 // With shared state, other targets may still list the previous version until
                 // their own next fetch. Store the new version as a new file; the previous one
                 // expires once no target holds it anymore.
-                _ => self
-                    .file_storage
-                    .store(version, parsed_path.clone(), decoded),
-            };
-            let handle = stored.with_context(|| format!("Failed storing remote config {path}"))?;
+                _ => to_store.push(file),
+            }
+        }
+        let mut stored_files = Vec::with_capacity(to_store.len() + in_place.len());
+        for mut file in to_store {
+            let decoded = std::mem::take(&mut file.decoded);
+            let length = decoded.len() as i64;
+            let handle = self
+                .file_storage
+                .store(file.version, file.parsed_path.clone(), decoded)
+                .with_context(|| format!("Failed storing remote config {}", file.path))?;
+            stored_files.push((file, length, handle));
+        }
+        // In-place updates cannot be undone, so they come last. Should one of them fail, those
+        // done before it have replaced their contents already, while the client keeps describing
+        // the previous version; as the update is rejected, the agent resends it and the next poll
+        // updates them again. This limitation goes away with FileStorage::update(), which is to be
+        // removed.
+        for (handle, mut file) in in_place {
+            let decoded = std::mem::take(&mut file.decoded);
+            let length = decoded.len() as i64;
+            self.file_storage
+                .update(&handle, file.version, decoded)
+                .with_context(|| format!("Failed storing remote config {}", file.path))?;
+            stored_files.push((file, length, handle));
+        }
+
+        // Nothing can fail from here on.
+        if expire_unused_files {
+            target_files.retain(|k, _| config_paths.contains(k.as_ref()));
+        }
+        for (path, version) in version_changes {
+            if let Some(stored) = target_files.get_mut(&path) {
+                // Like the Go client, report a version-only change without handing out a new
+                // file, keeping the apply outcome of the unchanged contents.
+                stored.state.version = version;
+            }
+        }
+        for (
+            NewFile {
+                path,
+                parsed_path,
+                target_file,
+                computed_hash,
+                version,
+                ..
+            },
+            length,
+            handle,
+        ) in stored_files
+        {
             target_files.insert(
                 parsed_path.clone(),
                 StoredTargetFile {
@@ -737,11 +819,10 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
             if let Some(target_file) = target_files.get_mut(config) {
                 target_file.expiring = false;
                 configs.push(target_file.handle.clone());
-            } else {
-                anyhow::bail!("Found {config} in client_configs response, but it isn't stored.");
             }
         }
 
+        client_state.root_version = root_version;
         client_state.targets_version = targets_list.signed.version as u64;
         client_state.opaque_backend_state = opaque_backend_state;
         client_state.last_config_paths = config_paths;
@@ -882,6 +963,17 @@ pub mod tests {
     #[derive(Default)]
     pub struct Storage {
         pub files: Mutex<HashMap<Arc<RemoteConfigPath>, Arc<Mutex<DataStore>>>>,
+        /// Storing or updating this path fails.
+        pub fail_path: Mutex<Option<RemoteConfigPath>>,
+    }
+
+    impl Storage {
+        fn check_failure(&self, path: &RemoteConfigPath) -> anyhow::Result<()> {
+            if self.fail_path.lock().unwrap().as_ref() == Some(path) {
+                anyhow::bail!("storage failure for {path}");
+            }
+            Ok(())
+        }
     }
 
     pub struct PathStore {
@@ -918,6 +1010,7 @@ pub mod tests {
             path: Arc<RemoteConfigPath>,
             contents: Vec<u8>,
         ) -> anyhow::Result<Arc<Self::StoredFile>> {
+            self.check_failure(&path)?;
             let data = Arc::new(Mutex::new(DataStore {
                 version,
                 contents: String::from_utf8(contents).unwrap(),
@@ -941,6 +1034,7 @@ pub mod tests {
             version: u64,
             contents: Vec<u8>,
         ) -> anyhow::Result<()> {
+            self.check_failure(&file.path)?;
             *file.data.lock().unwrap() = DataStore {
                 version,
                 contents: String::from_utf8(contents).unwrap(),
@@ -1614,6 +1708,235 @@ pub mod tests {
                 .collect::<Vec<_>>(),
             [("1234", 1)],
             "the agent is told the client still holds the previous version"
+        );
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn test_failed_response_leaves_state_unchanged() {
+        for failure in [
+            ResponseFailure::UnheldClientConfig,
+            ResponseFailure::CorruptFile,
+            ResponseFailure::Storage,
+        ] {
+            failed_response_leaves_state_unchanged(true, failure).await;
+        }
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn test_failed_response_leaves_shared_state_unchanged() {
+        for failure in [
+            ResponseFailure::UnheldClientConfig,
+            ResponseFailure::CorruptFile,
+            ResponseFailure::Storage,
+        ] {
+            failed_response_leaves_state_unchanged(false, failure).await;
+        }
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    enum ResponseFailure {
+        /// client_configs lists a path the response carries neither metadata nor a body for.
+        UnheldClientConfig,
+        /// The body of the added file doesn't match its hash.
+        CorruptFile,
+        /// Storing a file fails.
+        Storage,
+    }
+
+    async fn failed_response_leaves_state_unchanged(
+        expire_unused_files: bool,
+        failure: ResponseFailure,
+    ) {
+        let path_third = RemoteConfigPath::parse("employee/APM_TRACING/5678/config").unwrap();
+        let server = RemoteConfigServer::spawn();
+        server.files.lock().unwrap().insert(
+            PATH_FIRST.clone(),
+            (vec![DUMMY_TARGET.clone()], 1, "v1".to_string()),
+        );
+        server.files.lock().unwrap().insert(
+            PATH_SECOND.clone(),
+            (vec![DUMMY_TARGET.clone()], 1, "X".to_string()),
+        );
+
+        let storage = Arc::new(Storage::default());
+        let mut state = ConfigFetcherState::with_client(
+            server.dummy_options().invariants,
+            NativeCapabilities::new_periodic(),
+        );
+        state.expire_unused_files = expire_unused_files;
+        let state = Arc::new(state);
+        let mut fetcher = ConfigFetcher::new(storage.clone(), state.clone())
+            .await
+            .unwrap();
+        let mut opaque_state = ConfigClientState::default();
+        let capabilities = server.dummy_product_capabilities();
+
+        let held = fetcher
+            .fetch_once(
+                DUMMY_RUNTIME_ID,
+                &DUMMY_TARGET,
+                &capabilities,
+                "foo",
+                &mut opaque_state,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(held.len(), 2);
+
+        let stored_files = |storage: &Storage| {
+            let mut files: Vec<_> = storage
+                .files
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|(p, d)| {
+                    let d = d.lock().unwrap();
+                    (p.to_string(), d.version, d.contents.clone())
+                })
+                .collect();
+            files.sort();
+            files
+        };
+        let known_files = || {
+            let mut files: Vec<_> = state
+                .target_files_by_path
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|(p, f)| (p.to_string(), f.hash.clone(), f.expiring))
+                .collect();
+            files.sort();
+            files
+        };
+        let files_before = stored_files(&storage);
+        let known_before = known_files();
+
+        // A response removing a file, changing one, adding one, and failing.
+        server.files.lock().unwrap().remove(&*PATH_FIRST);
+        server.files.lock().unwrap().insert(
+            PATH_SECOND.clone(),
+            (vec![DUMMY_TARGET.clone()], 2, "Y".to_string()),
+        );
+        server.files.lock().unwrap().insert(
+            path_third.clone(),
+            (vec![DUMMY_TARGET.clone()], 1, "Z".to_string()),
+        );
+        let expected_error = match failure {
+            ResponseFailure::UnheldClientConfig => {
+                *server.extra_client_configs.lock().unwrap() =
+                    vec!["employee/APM_TRACING/5555/config".to_string()];
+                "isn't stored"
+            }
+            ResponseFailure::CorruptFile => {
+                *server.corrupt_next_body.lock().unwrap() = Some(path_third.clone());
+                "did not match"
+            }
+            ResponseFailure::Storage => {
+                // With expire_unused_files, the changed file is updated in place, which must not
+                // happen before the added file failed to be stored. Otherwise, both are stored as
+                // new files, and whichever was stored first must be released.
+                *storage.fail_path.lock().unwrap() = Some(if expire_unused_files {
+                    path_third.clone()
+                } else {
+                    PATH_SECOND.clone()
+                });
+                "storage failure"
+            }
+        };
+
+        let Err(err) = fetcher
+            .fetch_once(
+                DUMMY_RUNTIME_ID,
+                &DUMMY_TARGET,
+                &capabilities,
+                "foo",
+                &mut opaque_state,
+            )
+            .await
+        else {
+            panic!("the response must be rejected ({failure:?})");
+        };
+        assert!(
+            format!("{err:#}").contains(expected_error),
+            "{failure:?}: {err:#}"
+        );
+        let failed_req_state = server
+            .last_request
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .clone();
+
+        assert_eq!(
+            stored_files(&storage),
+            files_before,
+            "{failure:?}: no half-stored files"
+        );
+        assert_eq!(
+            known_files(),
+            known_before,
+            "{failure:?}: no pruned nor added entries"
+        );
+        assert_eq!(
+            held.iter()
+                .map(|f| f.data.lock().unwrap().contents.clone())
+                .collect::<HashSet<_>>(),
+            HashSet::from(["v1".to_string(), "X".to_string()]),
+            "{failure:?}: the held files keep their contents"
+        );
+
+        // The next request reports the same protocol state as the one before the failure.
+        let refetch = fetcher
+            .fetch_once(
+                DUMMY_RUNTIME_ID,
+                &DUMMY_TARGET,
+                &capabilities,
+                "foo",
+                &mut opaque_state,
+            )
+            .await;
+        // A corrupt body is served once only; the other failures persist.
+        assert_eq!(
+            refetch.is_err(),
+            failure != ResponseFailure::CorruptFile,
+            "{failure:?}: the agent sends the same targets again"
+        );
+        let req = server.last_request.lock().unwrap();
+        let req = req.as_ref().unwrap();
+        let client_state = |r: &ClientGetConfigsRequest| {
+            let s = r.client.as_ref().unwrap().state.as_ref().unwrap();
+            let mut config_states = s.config_states.clone();
+            config_states.sort_by(|a, b| a.id.cmp(&b.id));
+            (
+                s.root_version,
+                s.targets_version,
+                s.backend_client_state.clone(),
+                config_states,
+            )
+        };
+        let cached = |r: &ClientGetConfigsRequest| {
+            let mut c = r.cached_target_files.clone();
+            c.sort_by(|a, b| a.path.cmp(&b.path));
+            c
+        };
+        assert_eq!(
+            client_state(req),
+            client_state(&failed_req_state),
+            "{failure:?}"
+        );
+        assert_eq!(cached(req), cached(&failed_req_state), "{failure:?}");
+        assert!(
+            req.client
+                .as_ref()
+                .unwrap()
+                .state
+                .as_ref()
+                .unwrap()
+                .has_error
         );
     }
 

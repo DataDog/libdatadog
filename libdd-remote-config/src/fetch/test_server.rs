@@ -44,6 +44,9 @@ pub struct RemoteConfigServer {
     /// The body of this path is served corrupted (not matching its hash) in the next response
     /// carrying it.
     pub corrupt_next_body: Mutex<Option<RemoteConfigPath>>,
+    /// Paths listed in `client_configs` in addition to the applicable files, without any
+    /// target metadata nor body.
+    pub extra_client_configs: Mutex<Vec<String>>,
     /// The current targets version and the fingerprint of the files it was computed for.
     targets_state: Mutex<(u64, Option<u64>)>,
     pub endpoint: Endpoint,
@@ -135,7 +138,7 @@ impl RemoteConfigServer {
             return Response::new(http_common::Body::from("{}"));
         }
 
-        let client_configs: Vec<String> = files
+        let mut client_configs: Vec<String> = files
             .iter()
             .filter(|(p, (targets, _, _))| {
                 client.products.contains(&p.product().to_string())
@@ -179,6 +182,7 @@ impl RemoteConfigServer {
                 }
             })
             .collect();
+        client_configs.extend(self.extra_client_configs.lock().unwrap().iter().cloned());
         let response = ClientGetConfigsResponse {
             roots: vec![], /* not checked */
             targets,
@@ -223,6 +227,7 @@ impl RemoteConfigServer {
             next_response: Mutex::new(None),
             config_status: Mutex::new(ConfigStatus::Ok),
             corrupt_next_body: Mutex::new(None),
+            extra_client_configs: Default::default(),
             targets_state: Mutex::new((0, None)),
             endpoint: Endpoint::from_slice(&format!("http://127.0.0.1:{port}/")),
             shutdown_complete_tx,
