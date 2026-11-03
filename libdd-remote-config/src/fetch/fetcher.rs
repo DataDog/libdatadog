@@ -144,6 +144,7 @@ pub struct ConfigFetcherState<S, C: HttpClientCapability + SleepCapability> {
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct ConfigFetcherStateStats {
+    /// Paths with a stored file, counting a single version per path.
     pub active_files: u32,
 }
 
