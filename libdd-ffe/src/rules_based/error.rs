@@ -14,6 +14,22 @@ use crate::rules_based::{ExpectedFlagType, FlagType, Str};
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 #[non_exhaustive]
 pub enum EvaluationError {
+    /// A prerequisite failed. Its cause is preserved, while SDKs can distinguish this from
+    /// a directly requested flag's normal disabled/default result.
+    #[error("prerequisite {flag_key} failed: {source}")]
+    DependencyEvaluationFailed {
+        /// Referenced prerequisite key.
+        flag_key: Str,
+        /// Original prerequisite failure.
+        source: Box<EvaluationError>,
+    },
+    /// A reached prerequisite references a flag already being evaluated.
+    #[error("flag dependency cycle")]
+    DependencyCycle,
+
+    /// A reached prerequisite exceeds the configuration's dependency depth limit.
+    #[error("flag dependency depth exceeded")]
+    DependencyDepthExceeded,
     /// Requested flag has unexpected type.
     #[error("invalid flag type (expected: {expected:?}, found: {found:?})")]
     TypeMismatch {

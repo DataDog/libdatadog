@@ -113,3 +113,25 @@ This library change does not enable PHP EVP emission or change flag evaluation
 results. PHP capture/admission/lifecycle integration and its end-to-end release
 validation are separate work. Native matched-build IPC/HTTP tests are not a
 substitute for PHP upgrade tests or Windows CI.
+
+## Dependent flags
+
+Rules may mix ordinary attribute conditions with `flagEvaluation` references. A reference
+compares the prerequisite's selected **variant key**, using `ONE_OF` or `NOT_ONE_OF` with a
+string array. Conditions run in authored order and short-circuit. A mismatch rejects the
+rule; a reached missing, disabled, malformed, or unassigned prerequisite fails the root
+with `DependencyEvaluationFailed`, preserving its cause.
+
+Each root evaluation uses one configuration, context, timestamp, and experimentation opt-out
+policy. Completed prerequisites are memoized only within that invocation. Cycles fail;
+`evaluatorParams.maxDependencyDepth` limits dependency edges (default 10, accepted range
+0–255). Cached results retain the deepest dependency visited, including rejected rules,
+so reuse from a deeper path cannot bypass the limit.
+
+`Configuration::eval_flag_with_trace` additionally returns unique prerequisite evaluation
+records, excluding the requested root. SDKs can log these evaluations even if a later
+condition rejects their rule. Only records marked `exposure_eligible` belong to the root's
+successful rule/split path; a failed root has no eligible prerequisite exposures. SDKs must
+also apply each assignment's `do_log`, consent, and ordinary exposure deduplication policy.
+The trace does not emit telemetry itself. SDKs should advertise dependent-flag support only
+after integrating and testing both evaluation and exposure reporting.

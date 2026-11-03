@@ -2,12 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use chrono::{DateTime, Utc};
+use std::collections::{HashMap, HashSet};
 
 use crate::rules_based::{
-    Configuration, EvaluationContext, ExpectedFlagType, Timestamp,
+    Configuration, EvaluationContext, ExpectedFlagType, Str, Timestamp,
     error::EvaluationError,
     timestamp::OptOutTimestamp,
-    ufc::{Allocation, Assignment, AssignmentReason, CompiledFlagsConfig, Flag, Shard, Split},
+    ufc::{
+        Allocation, Assignment, AssignmentReason, CompiledFlagsConfig, ConditionCheck, Flag,
+        RuleWire, Shard, Split,
+    },
 };
 
 /// Selects how a subject's opt-out timestamp affects exposure-logging allocations.
@@ -132,11 +136,9 @@ impl Configuration {
         now: DateTime<Utc>,
         options: EvaluationOptions,
     ) -> Result<Assignment, EvaluationError> {
-        let exclusion = options.experimentation_exclusion(context)?;
-        let result =
-            self.flags
-                .compiled
-                .eval_flag(flag_key, context, expected_type, now, exclusion);
+        let result = self
+            .eval_flag_with_trace(flag_key, context, expected_type, now, options)
+            .result;
 
         match &result {
             Ok(assignment) => {
@@ -157,22 +159,110 @@ impl Configuration {
 
         result
     }
+
+    /// Evaluate with the prerequisite records needed for SDK evaluation and exposure logging.
+    /// Records exclude the requested root flag and occur once per evaluated prerequisite.
+    /// An unsuccessful root has no eligible prerequisite exposures. SDKs must additionally
+    /// honor each assignment's `do_log`, consent, and exposure deduplication policy.
+    pub fn eval_flag_with_trace(
+        &self,
+        flag_key: &str,
+        context: &EvaluationContext,
+        expected_type: ExpectedFlagType,
+        now: DateTime<Utc>,
+        options: EvaluationOptions,
+    ) -> EvaluationResult {
+        let exclusion = match options.experimentation_exclusion(context) {
+            Ok(exclusion) => exclusion,
+            Err(error) => {
+                return EvaluationResult {
+                    result: Err(error),
+                    evaluations: Vec::new(),
+                };
+            }
+        };
+        // Most evaluations have no dependencies. Preserve their allocation-only path rather
+        // than initializing memoization and exposure bookkeeping for every SDK call.
+        match self.flags.compiled.get_flag(flag_key) {
+            Ok(flag) if !flag.has_dependencies => {
+                return EvaluationResult {
+                    result: flag.evaluate_independent(context, expected_type, now, exclusion),
+                    evaluations: Vec::new(),
+                };
+            }
+            Err(error) => {
+                return EvaluationResult {
+                    result: Err(error),
+                    evaluations: Vec::new(),
+                };
+            }
+            Ok(_) => {}
+        }
+        let mut session = EvaluationSession {
+            config: &self.flags.compiled,
+            root_key: flag_key,
+            context,
+            now,
+            exclusion,
+            active: Vec::new(),
+            memo: HashMap::new(),
+            evaluations: Vec::new(),
+        };
+        let evaluated = session.evaluate_flag(flag_key, expected_type, 0);
+        if let Ok(root) = &evaluated {
+            for record in &mut session.evaluations {
+                record.exposure_eligible = root.exposures.contains(&record.flag_key);
+            }
+        }
+        EvaluationResult {
+            result: evaluated.map(|result| result.assignment),
+            evaluations: session.evaluations,
+        }
+    }
+}
+
+/// One requested evaluation and the prerequisites it actually evaluated.
+#[derive(Debug)]
+pub struct EvaluationResult {
+    /// The requested flag's result; SDKs return their caller default on failure.
+    pub result: Result<Assignment, EvaluationError>,
+    /// Unique prerequisite evaluations, in completion order; excludes the root.
+    pub evaluations: Vec<EvaluationRecord>,
+}
+
+/// Telemetry for a prerequisite reached within one root evaluation.
+#[derive(Debug)]
+pub struct EvaluationRecord {
+    /// Key of the evaluated prerequisite.
+    pub flag_key: Str,
+    /// The prerequisite result, including failures.
+    pub result: Result<Assignment, EvaluationError>,
+    /// Whether this result belongs to the root's successful assignment path.
+    /// This does not override `do_log` or the SDK's ordinary exposure policy.
+    pub exposure_eligible: bool,
+}
+
+#[derive(Clone)]
+struct EvaluatedFlag {
+    assignment: Assignment,
+    // Includes all reached branches, even rejected rules, to keep memoization depth-safe.
+    height: u16,
+    // Only dependencies on the selected rule/split path, not every successful evaluation.
+    exposures: HashSet<Str>,
+}
+
+struct EvaluationSession<'a> {
+    config: &'a CompiledFlagsConfig,
+    root_key: &'a str,
+    context: &'a EvaluationContext,
+    now: Timestamp,
+    exclusion: ExperimentationExclusion,
+    active: Vec<Str>,
+    memo: HashMap<Str, EvaluatedFlag>,
+    evaluations: Vec<EvaluationRecord>,
 }
 
 impl CompiledFlagsConfig {
-    /// Evaluate the flag for the given subject, expecting `expected_type` type.
-    fn eval_flag(
-        &self,
-        flag_key: &str,
-        subject: &EvaluationContext,
-        expected_type: ExpectedFlagType,
-        now: DateTime<Utc>,
-        exclusion: ExperimentationExclusion,
-    ) -> Result<Assignment, EvaluationError> {
-        self.get_flag(flag_key)?
-            .eval(subject, expected_type, now, exclusion)
-    }
-
     fn get_flag(&self, flag_key: &str) -> Result<&Flag, EvaluationError> {
         self.flags
             .get(flag_key)
@@ -183,14 +273,11 @@ impl CompiledFlagsConfig {
 }
 
 impl Flag {
-    fn eval(
+    fn validate(
         &self,
-        context: &EvaluationContext,
         expected_type: ExpectedFlagType,
-        now: DateTime<Utc>,
         exclusion: ExperimentationExclusion,
-    ) -> Result<Assignment, EvaluationError> {
-        // D004: flag-wide activation validity is consumed only by effective future policy.
+    ) -> Result<(), EvaluationError> {
         if matches!(exclusion, ExperimentationExclusion::ActivatedAtOrAfter(_))
             && self.has_invalid_activation
         {
@@ -202,64 +289,192 @@ impl Flag {
                 found: self.variation_type.into(),
             });
         }
-
-        let (allocation, split, reason) = self.find_allocation(context, now, exclusion)?;
-
-        Ok(Assignment {
-            value: split.value.clone(),
-            variation_key: split.variation_key.clone(),
-            allocation_key: allocation.key.clone(),
-            reason,
-            serial_id: split.serial_id,
-            do_log: allocation.do_log,
-        })
+        Ok(())
     }
 
-    fn find_allocation(
+    fn evaluate_independent(
         &self,
         context: &EvaluationContext,
-        now: DateTime<Utc>,
+        expected_type: ExpectedFlagType,
+        now: Timestamp,
         exclusion: ExperimentationExclusion,
-    ) -> Result<(&Allocation, &Split, AssignmentReason), EvaluationError> {
+    ) -> Result<Assignment, EvaluationError> {
+        self.validate(expected_type, exclusion)?;
         for allocation in &self.allocations {
-            if exclusion != ExperimentationExclusion::None && exclusion.excludes(allocation) {
+            if !allocation.is_active(now, exclusion) {
                 continue;
             }
-            if let Some((split, reason)) = allocation.get_matching_split(context, now)? {
-                return Ok((allocation, split, reason));
+            if !allocation.rules.is_empty()
+                && !allocation.rules.iter().any(|rule| rule.eval(context))
+            {
+                continue;
+            }
+            if let Some(split) = allocation.find_split(context)? {
+                return Ok(allocation.assignment(split));
             }
         }
-
         Err(EvaluationError::DefaultAllocationNull)
     }
 }
 
+impl EvaluationSession<'_> {
+    fn evaluate_flag(
+        &mut self,
+        flag_key: &str,
+        expected_type: ExpectedFlagType,
+        depth: u16,
+    ) -> Result<EvaluatedFlag, EvaluationError> {
+        let flag = self.config.get_flag(flag_key)?;
+        flag.validate(expected_type, self.exclusion)?;
+        if depth > 0 {
+            self.active.push(flag_key.into());
+        }
+        let result = self.evaluate_allocations(&flag.allocations, depth);
+        if depth > 0 {
+            self.active.pop();
+        }
+        result
+    }
+
+    fn evaluate_allocations(
+        &mut self,
+        allocations: &[Allocation],
+        depth: u16,
+    ) -> Result<EvaluatedFlag, EvaluationError> {
+        let mut height = 0;
+        for allocation in allocations {
+            if !allocation.is_active(self.now, self.exclusion) {
+                continue;
+            }
+            let mut selected_exposures = None;
+            if allocation.rules.is_empty() {
+                selected_exposures = Some(HashSet::new());
+            } else {
+                for rule in &allocation.rules {
+                    if let Some(exposures) = self.evaluate_rule(rule, depth, &mut height)? {
+                        selected_exposures = Some(exposures);
+                        break;
+                    }
+                }
+            }
+            let Some(exposures) = selected_exposures else {
+                continue;
+            };
+            let Some(split) = allocation.find_split(self.context)? else {
+                continue;
+            };
+            return Ok(EvaluatedFlag {
+                assignment: allocation.assignment(split),
+                height,
+                exposures,
+            });
+        }
+        Err(EvaluationError::DefaultAllocationNull)
+    }
+
+    fn evaluate_rule(
+        &mut self,
+        rule: &RuleWire,
+        depth: u16,
+        height: &mut u16,
+    ) -> Result<Option<HashSet<Str>>, EvaluationError> {
+        let mut exposures = HashSet::new();
+        for condition in &rule.conditions {
+            let matched = if let ConditionCheck::FlagEvaluation {
+                key,
+                expected_membership,
+                values,
+            } = &condition.check
+            {
+                let dependency = self.evaluate_dependency(key, depth + 1).map_err(|source| {
+                    EvaluationError::DependencyEvaluationFailed {
+                        flag_key: key.clone(),
+                        source: Box::new(source),
+                    }
+                })?;
+                *height = (*height).max(1 + dependency.height);
+                let matched = values
+                    .iter()
+                    .any(|value| value.as_ref() == dependency.assignment.variation_key.as_str())
+                    == *expected_membership;
+                if matched {
+                    exposures.insert(key.clone());
+                    exposures.extend(dependency.exposures);
+                }
+                matched
+            } else {
+                condition.eval(self.context)
+            };
+            if !matched {
+                return Ok(None);
+            }
+        }
+        Ok(Some(exposures))
+    }
+
+    fn evaluate_dependency(
+        &mut self,
+        key: &Str,
+        depth: u16,
+    ) -> Result<EvaluatedFlag, EvaluationError> {
+        let limit = u16::from(self.config.max_dependency_depth);
+        if depth > limit {
+            return Err(EvaluationError::DependencyDepthExceeded);
+        }
+        if key.as_str() == self.root_key || self.active.contains(key) {
+            return Err(EvaluationError::DependencyCycle);
+        }
+        if let Some(result) = self.memo.get(key) {
+            if depth + result.height > limit {
+                return Err(EvaluationError::DependencyDepthExceeded);
+            }
+            return Ok(result.clone());
+        }
+        let result = self
+            .evaluate_flag(key, ExpectedFlagType::Any, depth)
+            .and_then(|result| {
+                if result.assignment.variation_key.is_empty() {
+                    Err(EvaluationError::DefaultAllocationNull)
+                } else {
+                    Ok(result)
+                }
+            });
+        self.evaluations.push(EvaluationRecord {
+            flag_key: key.clone(),
+            result: result
+                .as_ref()
+                .map(|result| result.assignment.clone())
+                .map_err(Clone::clone),
+            exposure_eligible: false,
+        });
+        if let Ok(result) = &result {
+            self.memo.insert(key.clone(), result.clone());
+        }
+        result
+    }
+}
+
 impl Allocation {
-    fn get_matching_split(
-        &self,
-        context: &EvaluationContext,
-        now: Timestamp,
-    ) -> Result<Option<(&Split, AssignmentReason)>, EvaluationError> {
-        if self.start_at.is_some_and(|t| now < t) {
-            return Ok(None);
-        }
-        if self.end_at.is_some_and(|t| now > t) {
-            return Ok(None);
-        }
+    fn is_active(&self, now: Timestamp, exclusion: ExperimentationExclusion) -> bool {
+        !(exclusion != ExperimentationExclusion::None && exclusion.excludes(self)
+            || self.start_at.is_some_and(|t| now < t)
+            || self.end_at.is_some_and(|t| now > t))
+    }
 
-        let is_allowed_by_rules =
-            self.rules.is_empty() || self.rules.iter().any(|rule| rule.eval(context));
-        if !is_allowed_by_rules {
-            return Ok(None);
+    fn assignment(&self, split: &Split) -> Assignment {
+        Assignment {
+            value: split.value.clone(),
+            variation_key: split.variation_key.clone(),
+            allocation_key: self.key.clone(),
+            reason: self.assignment_reason(split),
+            serial_id: split.serial_id,
+            do_log: self.do_log,
         }
+    }
 
-        let Some(split) = self.find_split(context)? else {
-            return Ok(None);
-        };
-
-        // Determine the reason for assignment
+    fn assignment_reason(&self, split: &Split) -> AssignmentReason {
         let has_time_bounds = self.start_at.is_some() || self.end_at.is_some();
-        let reason = if !self.rules.is_empty() {
+        if !self.rules.is_empty() {
             AssignmentReason::TargetingMatch
         } else if has_time_bounds && self.splits.len() == 1 && split.shards.is_empty() {
             AssignmentReason::Default
@@ -267,9 +482,7 @@ impl Allocation {
             AssignmentReason::Static
         } else {
             AssignmentReason::Split
-        };
-
-        Ok(Some((split, reason)))
+        }
     }
 
     fn find_split(&self, subject: &EvaluationContext) -> Result<Option<&Split>, EvaluationError> {
