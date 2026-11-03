@@ -1,0 +1,46 @@
+# Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "libdd-remote-config-wasm-poc"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "Apache-2.0"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[workspace]
+members = ["."]
+
+[workspace.dependencies]
+anyhow = { version = "1", default-features = false }
+base64 = { version = "0.22", default-features = false }
+bytes = { version = "1", default-features = false }
+futures = { version = "0.3", default-features = false }
+http = { version = "1", default-features = false }
+serde = { version = "1", default-features = false }
+serde_json = { version = "1", default-features = false }
+
+[dependencies]
+anyhow = { workspace = true, features = ["std"] }
+base64 = { workspace = true, features = ["std"] }
+bytes = { workspace = true, features = ["std"] }
+futures = { workspace = true, features = ["std", "async-await"] }
+http = { workspace = true, features = ["std"] }
+serde = { workspace = true, features = ["derive", "std"] }
+serde_json = { workspace = true, features = ["std"] }
+libdd-capabilities = { path = "../../../libdd-capabilities" }
+libdd-common = { path = "../../../libdd-common", default-features = false, features = ["std"] }
+libdd-remote-config = { path = "../../../libdd-remote-config", default-features = false, features = ["client", "agentless"] }
+
+[profile.release]
+opt-level = "z"
+codegen-units = 1
+lto = true
+panic = "abort"
+strip = true
+
+[profile.dev]
+panic = "abort"

@@ -44,6 +44,7 @@ datadog-sidecar-macros               @DataDog/libdatadog-php
 deny.toml                            @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 /docs                                @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 /examples                            @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
+/bindings/wasm/                      @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 libdd-agent-client                   @DataDog/apm-common-components-core
 libdd-ai-usage                       @DataDog/agent-console
 libdd-alloc/                         @DataDog/libdatadog-profiling

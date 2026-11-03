@@ -1,0 +1,49 @@
+name: Shared remote configuration WASM
+
+on:
+  pull_request:
+    paths:
+      - 'bindings/wasm/remote-config-poc/**'
+      - 'libdd-*/**'
+      - 'Cargo.toml'
+      - '.github/workflows/shared-remote-config-wasm.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  conformance:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: bindings/wasm/remote-config-poc
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+      - uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a # 4.2.0
+        with:
+          node-version: '22'
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # 4.3.1
+        with:
+          dotnet-version: '10.0.x'
+      - name: Install toolchains
+        run: |
+          rustup toolchain install 1.98.0 --profile minimal --target wasm32-wasip1 --component clippy
+          rustup toolchain install nightly-2026-07-26 --profile minimal --component rustfmt
+          sudo apt-get update
+          sudo apt-get install -y clang llvm
+          curl --fail --location --output /tmp/binaryen.tar.gz https://github.com/WebAssembly/binaryen/releases/download/version_133/binaryen-version_133-x86_64-linux.tar.gz
+          echo '2dc9c7813f5375db93d96ead4b78222fcc3e2677bbb832297af4797782a37489  /tmp/binaryen.tar.gz' | sha256sum --check
+          tar -xzf /tmp/binaryen.tar.gz -C /tmp
+          echo /tmp/binaryen-version_133/bin >> "$GITHUB_PATH"
+      - name: Build and verify generated bindings
+        run: |
+          node scripts/generate.mjs --check
+          node scripts/build.mjs
+          git diff --exit-code -- LICENSE-3rdparty.csv
+      - name: Lint and test the facade
+        run: |
+          cargo +nightly-2026-07-26 fmt --all -- --check
+          cargo clippy --locked --all-targets -- -D warnings
+          cargo test --locked
+      - name: Run both WASM hosts
+        run: node --test test/conformance.mjs
