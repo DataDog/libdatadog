@@ -99,6 +99,23 @@ benchmarks:
 
       checkout_source_with_submodules "${UPSTREAM_REPO_URL}" "${CANDIDATE_PATH}" "${CANDIDATE_IDENTIFIER}"
 
+      # On PRs, compare against the merge-base with the target branch rather than its tip.
+      # Otherwise the candidate (PR head, not merged) is compared to a baseline that also has
+      # everything merged on the target branch since the PR branched off. That includes toolchain
+      # bumps and changes to the benchmarked crates. compute_impacted_crates already selects
+      # crates from the three-dot (merge-base) diff, so this makes the comparison match.
+      if [[ "${UPSTREAM_BRANCH}" != "main" && -n "${BASELINE_IDENTIFIER:-}" ]]; then
+        target_branch="${BASELINE_IDENTIFIER}"
+        if git -C "${CANDIDATE_PATH}" fetch --quiet origin "${target_branch}" \
+           && merge_base="$(git -C "${CANDIDATE_PATH}" merge-base "${CANDIDATE_IDENTIFIER}" FETCH_HEAD)"; then
+          echo "Baseline: merge-base ${merge_base} of ${CANDIDATE_IDENTIFIER} and ${target_branch}"
+          export BASELINE_BRANCH="${target_branch}"
+          export BASELINE_IDENTIFIER="${merge_base}"
+        else
+          echo "WARNING: could not compute the merge-base with ${target_branch}; using its tip" >&2
+        fi
+      fi
+
       # Refresh benchmark-platform's derived baseline after candidate checkout.
       VERBOSE="true" source ./steps/config-benchmark-env.sh
       checkout_source_with_submodules "${UPSTREAM_REPO_URL}" "${BASELINE_PATH}" "${BASELINE_IDENTIFIER}"
@@ -158,6 +175,11 @@ benchmarks:
     SCCACHE_BASEDIRS: /platform/workspace/candidate:/platform/workspace/baseline
     # Incompatible with a shared compiler cache.
     CARGO_INCREMENTAL: "0"
+    # Align every function to 64 bytes so that unchanged code keeps the same placement within
+    # cache lines and uop-cache windows when unrelated code moves. Without it, identical machine
+    # code was measured up to 30% apart (credit_card). Set here, not in run_benchmarks_ci.sh: the
+    # baseline runs its own copy of that script, so a flag added there would apply to only one side.
+    RUSTFLAGS: "-C llvm-args=-align-all-functions=6"
 
 # Merges the parallel benchmark shards and posts a single PR comment. Each shard already uploaded its
 # own results to S3 / the Benchmarking API with correct per-run metadata; this job only assembles the
