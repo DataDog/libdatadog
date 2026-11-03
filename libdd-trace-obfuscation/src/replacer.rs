@@ -437,7 +437,7 @@ mod tests {
     use crate::replacer;
     use duplicate::duplicate_item;
     use libdd_tinybytes::BytesString;
-    use libdd_trace_model::{Attributes as _, AttributesIter as _, Span as _, TraceChunk as _};
+    use libdd_trace_model::{Attributes as _, Span as _, TraceChunk as _};
     use libdd_trace_protobuf::pb;
     use libdd_trace_utils::span::{BytesData, v1, v04};
     use std::collections::HashMap;
