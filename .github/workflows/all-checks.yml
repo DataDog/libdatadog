@@ -4,6 +4,7 @@ on:
     push:
       branches:
         - 'mq-working-branch-*'
+        - 'release/*'
 jobs:
     allchecks:
         runs-on: ubuntu-latest
