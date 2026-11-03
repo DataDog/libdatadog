@@ -1,0 +1,39 @@
+# Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "libdd-otel-telemetry"
+version = "0.1.0"
+description = "Shared OpenTelemetry metrics/logs aggregation and OTLP export for Datadog tracers."
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-otel-telemetry"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-otel-telemetry"
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+autobenches = false
+
+[dependencies]
+async-trait.workspace = true
+http = { workspace = true, features = ["std"] }
+prost = { workspace = true, features = ["std"] }
+tokio = { workspace = true, features = ["sync", "time"] }
+libdd-capabilities = { version = "4.0.1", path = "../libdd-capabilities" }
+libdd-capabilities-impl = { version = "7.0.0", path = "../libdd-capabilities-impl", default-features = false }
+libdd-common = { version = "8.0.0", path = "../libdd-common", default-features = false }
+libdd-shared-runtime = { version = "6.0.0", path = "../libdd-shared-runtime", default-features = false }
+libdd-trace-protobuf = { version = "5.1.0", path = "../libdd-trace-protobuf" }
+libdd-trace-utils = { version = "14.0.0", path = "../libdd-trace-utils", default-features = false }
+
+[features]
+default = ["http"]
+grpc = []
+http = [
+    "libdd-capabilities-impl/https",
+    "libdd-common/https",
+    "libdd-shared-runtime/https",
+    "libdd-trace-utils/https",
+]
+test-utils = []
+
+[dev-dependencies]
+libdd-shared-runtime = { version = "6.0.0", path = "../libdd-shared-runtime" }
