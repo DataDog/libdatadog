@@ -92,6 +92,7 @@ jobs:
     outputs:
       codeowners: ${{ steps.filter.outputs.codeowners }}
       codeowners_tool: ${{ steps.filter.outputs.codeowners_tool }}
+      codeowners_supporting: ${{ steps.filter.outputs.codeowners_supporting }}
       licensecheck: ${{ steps.filter.outputs.licensecheck }}
       license_3rdparty: ${{ steps.filter.outputs.license_3rdparty }}
       manifests: ${{ steps.filter.outputs.manifests }}
@@ -101,6 +102,10 @@ jobs:
       - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         id: filter
         with:
+          # codeowners_supporting: paths the CODEOWNERS generator's output
+          # depends on; adding or removing one requires regenerating the
+          # artifact (the freshness job verifies that). Root patterns are
+          # listed separately because `**/x` does not match the root file.
           filters: |
             codeowners:
               - '.github/CODEOWNERS'
@@ -109,6 +114,19 @@ jobs:
               - '.github/CODEOWNERS'
               - '.github/CODEOWNERS.in'
               - 'tools/**'
+            codeowners_supporting:
+              - added|deleted: 'Cargo.toml'
+              - added|deleted: 'Cargo.lock'
+              - added|deleted: 'CHANGELOG.md'
+              - added|deleted: 'build.rs'
+              - added|deleted: 'tests/**'
+              - added|deleted: 'benches/**'
+              - added|deleted: '**/Cargo.toml'
+              - added|deleted: '**/Cargo.lock'
+              - added|deleted: '**/CHANGELOG.md'
+              - added|deleted: '**/build.rs'
+              - added|deleted: '**/tests/**'
+              - added|deleted: '**/benches/**'
             licensecheck:
               - '**/*.rs'
               - '**/*.c'
@@ -460,6 +478,7 @@ jobs:
     if: >-
       github.event_name != 'pull_request' ||
       needs.changes.outputs.codeowners_tool == 'true' ||
+      needs.changes.outputs.codeowners_supporting == 'true' ||
       contains(github.event.pull_request.labels.*.name, 'run-all-tests')
     runs-on: ubuntu-latest
     name: "CODEOWNERS is up to date"
