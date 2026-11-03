@@ -8,6 +8,7 @@ use super::shared::RefcountedFile;
 
 use crate::targets::{Root, TargetsList};
 use crate::{RemoteConfigCapabilities, RemoteConfigPath, RemoteConfigProduct, Target};
+use anyhow::Context;
 use base64::Engine;
 use hashbrown::HashMap;
 use http::StatusCode;
@@ -590,7 +591,7 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
             },
         )?;
 
-        client_state.opaque_backend_state = targets_list
+        let opaque_backend_state = targets_list
             .signed
             .custom
             .opaque_backend_state
@@ -629,10 +630,9 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
             target_files.retain(|k, _| config_paths.contains(k.as_ref()));
         }
 
-        // Errors of individual files don't prevent applying the other files: they are reported to
-        // the agent, and retried with the next response.
-        let mut errors = vec![];
-        let mut failed_paths = HashSet::new();
+        // Like the Go client, an error in any file rejects the whole update: it is reported to the
+        // agent with the next request and, as the client keeps its targets version, the agent
+        // resends the targets.
         for (path, target_file) in targets_list.signed.targets {
             fn hash_sha256(v: &[u8]) -> String {
                 format!("{:x}", Sha256::digest(v))
@@ -672,28 +672,18 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
                 // If the file isn't there, it's not meant for us.
                 continue;
             };
-            let mut fail = |error: String| {
-                warn!("{error}");
-                errors.push(error);
-                failed_paths.insert(path);
-            };
             let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(raw_file) else {
-                fail(format!("Failed base64 decoding config for path {path}"));
-                continue;
+                anyhow::bail!("Failed base64 decoding config for path {path}");
             };
             let computed_hash = hasher(decoded.as_slice());
             if hash != computed_hash {
-                fail(format!(
+                anyhow::bail!(
                     "Computed hash of file {computed_hash} did not match remote config targets \
                     file hash {hash} for path {path}"
-                ));
-                continue;
+                );
             }
             let Some(version) = target_file.try_parse_version() else {
-                fail(format!(
-                    "Failed parsing version from remote config path {path}"
-                ));
-                continue;
+                anyhow::bail!("Failed parsing version from remote config path {path}");
             };
             debug!("Fetched new remote config file at path {path} targeting {target:?}");
 
@@ -712,13 +702,7 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
                     .file_storage
                     .store(version, parsed_path.clone(), decoded),
             };
-            let handle = match stored {
-                Ok(handle) => handle,
-                Err(e) => {
-                    fail(format!("Failed storing remote config {path}: {e:#}"));
-                    continue;
-                }
-            };
+            let handle = stored.with_context(|| format!("Failed storing remote config {path}"))?;
             target_files.insert(
                 parsed_path.clone(),
                 StoredTargetFile {
@@ -753,15 +737,13 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
             if let Some(target_file) = target_files.get_mut(config) {
                 target_file.expiring = false;
                 configs.push(target_file.handle.clone());
-            } else if !failed_paths.contains(config.as_str()) {
+            } else {
                 anyhow::bail!("Found {config} in client_configs response, but it isn't stored.");
             }
         }
 
-        if !errors.is_empty() {
-            client_state.last_error = Some(errors.join("\n"));
-        }
         client_state.targets_version = targets_list.signed.version as u64;
+        client_state.opaque_backend_state = opaque_backend_state;
         client_state.last_config_paths = config_paths;
         Ok(Some(configs))
     }
@@ -1510,6 +1492,128 @@ pub mod tests {
             (states[0].apply_state, states[0].apply_error.as_str()),
             (3, "bad"),
             "the apply outcome of the unchanged contents is kept"
+        );
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn test_failed_file_is_retried() {
+        let server = RemoteConfigServer::spawn();
+        server.files.lock().unwrap().insert(
+            PATH_FIRST.clone(),
+            (vec![DUMMY_TARGET.clone()], 1, "v1".to_string()),
+        );
+
+        let storage = Arc::new(Storage::default());
+        let mut fetcher = ConfigFetcher::new(
+            storage.clone(),
+            Arc::new(ConfigFetcherState::with_client(
+                server.dummy_options().invariants,
+                NativeCapabilities::new_periodic(),
+            )),
+        )
+        .await
+        .unwrap();
+        let mut opaque_state = ConfigClientState::default();
+        let capabilities = server.dummy_product_capabilities();
+
+        let fetched = fetcher
+            .fetch_once(
+                DUMMY_RUNTIME_ID,
+                &DUMMY_TARGET,
+                &capabilities,
+                "foo",
+                &mut opaque_state,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.len(), 1);
+        drop(fetched);
+        let applied_targets_version = opaque_state.targets_version;
+
+        // The next targets change the first file, whose body is served corrupted, and add a
+        // second, valid one.
+        server.files.lock().unwrap().insert(
+            PATH_FIRST.clone(),
+            (vec![DUMMY_TARGET.clone()], 2, "v2".to_string()),
+        );
+        server.files.lock().unwrap().insert(
+            PATH_SECOND.clone(),
+            (vec![DUMMY_TARGET.clone()], 1, "X".to_string()),
+        );
+        *server.corrupt_next_body.lock().unwrap() = Some(PATH_FIRST.clone());
+
+        let result = fetcher
+            .fetch_once(
+                DUMMY_RUNTIME_ID,
+                &DUMMY_TARGET,
+                &capabilities,
+                "foo",
+                &mut opaque_state,
+            )
+            .await;
+        assert!(
+            result.is_err(),
+            "a file error rejects the whole update, the valid file included"
+        );
+        assert!(opaque_state.last_error.is_some());
+        assert_eq!(
+            opaque_state.targets_version, applied_targets_version,
+            "the client keeps claiming the targets it holds"
+        );
+        let target_files = fetcher.state.target_files_by_path.lock().unwrap();
+        assert_eq!(
+            opaque_state
+                .last_config_paths
+                .iter()
+                .map(|path| (path.clone(), target_files[path].state.version))
+                .collect::<Vec<_>>(),
+            [(PATH_FIRST.clone(), 1)],
+            "the client keeps reporting the previous state"
+        );
+        drop(target_files);
+
+        // The agent resends the targets, now with a valid body, and everything is applied.
+        let fetched = fetcher
+            .fetch_once(
+                DUMMY_RUNTIME_ID,
+                &DUMMY_TARGET,
+                &capabilities,
+                "foo",
+                &mut opaque_state,
+            )
+            .await
+            .unwrap()
+            .expect("the rejected update must be fetched again");
+        let mut contents: Vec<_> = fetched
+            .iter()
+            .map(|f| f.data.lock().unwrap().contents.clone())
+            .collect();
+        contents.sort();
+        assert_eq!(contents, ["X", "v2"]);
+        assert!(opaque_state.last_error.is_none());
+        assert_ne!(opaque_state.targets_version, applied_targets_version);
+        let req = server.last_request.lock().unwrap();
+        let state = req
+            .as_ref()
+            .unwrap()
+            .client
+            .as_ref()
+            .unwrap()
+            .state
+            .as_ref()
+            .unwrap();
+        assert!(state.has_error, "the failure is reported to the agent");
+        assert_eq!(state.targets_version, applied_targets_version);
+        assert_eq!(
+            state
+                .config_states
+                .iter()
+                .map(|s| (s.id.as_str(), s.version))
+                .collect::<Vec<_>>(),
+            [("1234", 1)],
+            "the agent is told the client still holds the previous version"
         );
     }
 

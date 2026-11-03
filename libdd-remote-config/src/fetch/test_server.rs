@@ -41,6 +41,9 @@ pub struct RemoteConfigServer {
     /// [`ConfigStatus::Expired`] to simulate an agent serving from a stale
     /// cache whose TUF signatures have expired.
     pub config_status: Mutex<ConfigStatus>,
+    /// The body of this path is served corrupted (not matching its hash) in the next response
+    /// carrying it.
+    pub corrupt_next_body: Mutex<Option<RemoteConfigPath>>,
     /// The current targets version and the fingerprint of the files it was computed for.
     targets_state: Mutex<(u64, Option<u64>)>,
     pub endpoint: Endpoint,
@@ -144,6 +147,7 @@ impl RemoteConfigServer {
             })
             .map(|(p, _)| p.to_string())
             .collect();
+        let mut corrupt_next_body = self.corrupt_next_body.lock().unwrap();
         let target_files = client_configs
             .iter()
             .filter(|p| {
@@ -158,11 +162,21 @@ impl RemoteConfigServer {
                             .all(|h| h.algorithm == "sha256" && h.hash == *hash)
                 })
             })
-            .map(|p| File {
-                path: p.clone(),
-                raw: base64::engine::general_purpose::STANDARD
-                    .encode(target_info[p.as_str()].2)
-                    .into_bytes(),
+            .map(|p| {
+                let mut body = target_info[p.as_str()].2.to_string();
+                if corrupt_next_body
+                    .as_ref()
+                    .is_some_and(|c| c.to_string() == *p)
+                {
+                    *corrupt_next_body = None;
+                    body.push_str("-corrupted");
+                }
+                File {
+                    path: p.clone(),
+                    raw: base64::engine::general_purpose::STANDARD
+                        .encode(body)
+                        .into_bytes(),
+                }
             })
             .collect();
         let response = ClientGetConfigsResponse {
@@ -208,6 +222,7 @@ impl RemoteConfigServer {
             files: Default::default(),
             next_response: Mutex::new(None),
             config_status: Mutex::new(ConfigStatus::Ok),
+            corrupt_next_body: Mutex::new(None),
             targets_state: Mutex::new((0, None)),
             endpoint: Endpoint::from_slice(&format!("http://127.0.0.1:{port}/")),
             shutdown_complete_tx,
