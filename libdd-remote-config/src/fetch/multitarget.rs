@@ -776,6 +776,16 @@ where
         }
     }
 
+    /// How many times `product` is active for `target`: once per runtime asking for it, plus
+    /// once per [`Self::force_product`] not yet undone. 0 for an unknown target.
+    pub fn active_product_count(&self, target: &Target, product: RemoteConfigProduct) -> u32 {
+        self.services
+            .lock_or_panic()
+            .get(target)
+            .and_then(|known_target| known_target.active_products.get(&product).copied())
+            .unwrap_or(0)
+    }
+
     pub fn force_capabilities(&self, target: &Target, capabilities: RemoteConfigCapabilities) {
         if let Some(known_target) = self.services.lock_or_panic().get_mut(target)
             && addref_hashmap(&mut known_target.active_capabilities, capabilities)
