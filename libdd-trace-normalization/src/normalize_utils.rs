@@ -278,6 +278,40 @@ fn normalize_metric_name(name: &mut String) {
     bytes.truncate(write_cursor);
 }
 
+/// Writes `value` normalized by `normalize` to `buf`, reusing its allocation, and returns it if it
+/// differs from `value`. Lets callers that can't hand out a `&mut String` (e.g. the generic
+/// normalizer) apply the same rules without allocating when nothing changes.
+fn normalized_with<'b>(
+    value: &str,
+    buf: &'b mut String,
+    normalize: fn(&mut String),
+) -> Option<&'b str> {
+    buf.clear();
+    buf.push_str(value);
+    normalize(buf);
+    (buf.as_str() != value).then_some(buf.as_str())
+}
+
+/// [`normalize_service`] through a scratch buffer, see [`normalized_with`].
+pub(crate) fn normalized_service<'b>(svc: &str, buf: &'b mut String) -> Option<&'b str> {
+    normalized_with(svc, buf, normalize_service)
+}
+
+/// [`normalize_name`] through a scratch buffer, see [`normalized_with`].
+pub(crate) fn normalized_name<'b>(name: &str, buf: &'b mut String) -> Option<&'b str> {
+    normalized_with(name, buf, normalize_name)
+}
+
+/// [`normalize_span_type`] through a scratch buffer, see [`normalized_with`].
+pub(crate) fn normalized_span_type<'b>(span_type: &str, buf: &'b mut String) -> Option<&'b str> {
+    normalized_with(span_type, buf, normalize_span_type)
+}
+
+/// [`normalize_tag`] through a scratch buffer, see [`normalized_with`].
+pub(crate) fn normalized_tag<'b>(tag: &str, buf: &'b mut String) -> Option<&'b str> {
+    normalized_with(tag, buf, normalize_tag)
+}
+
 // truncate_utf8 truncates the given string to make sure it uses less than limit bytes.
 // If the last character is a utf8 character that would be split, it removes it
 // entirely to make sure the resulting string is not broken.
@@ -291,6 +325,26 @@ mod tests {
 
     use super::*;
     use duplicate::duplicate_item;
+
+    #[test]
+    fn test_normalized_returns_only_changes() {
+        let mut buf = String::new();
+        assert_eq!(normalized_service("good", &mut buf), None);
+        assert_eq!(
+            normalized_service("Bad&Service", &mut buf),
+            Some("bad_service")
+        );
+        assert_eq!(normalized_service("", &mut buf), Some(DEFAULT_SERVICE_NAME));
+        assert_eq!(normalized_name("good.name", &mut buf), None);
+        assert_eq!(normalized_name("bad-name", &mut buf), Some("bad_name"));
+        assert_eq!(normalized_span_type("web", &mut buf), None);
+        assert_eq!(
+            normalized_span_type(&"sql".repeat(100), &mut buf).map(str::len),
+            Some(MAX_TYPE_LEN)
+        );
+        assert_eq!(normalized_tag("prod", &mut buf), None);
+        assert_eq!(normalized_tag("PROD", &mut buf), Some("prod"));
+    }
 
     #[test]
     fn test_normalize_span_start_duration_handles_min_start() {

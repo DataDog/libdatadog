@@ -24,7 +24,8 @@
 //!   `metrics["_trace_root"]=1` where applicable.
 //! - **Non-finite metrics** (NaN/Inf) are dropped (JSON can't represent them).
 //!
-//! TODO: span normalization (service/name/resource/type truncation + defaults)
+//! - **Normalization**: v1 chunks are normalized by the sender before encoding. TODO: normalize
+//!   v0.4 spans too (service/name/resource/type truncation + defaults)
 
 use crate::hex::{hex_low_u64, hex_u64, hex_u128};
 use crate::span::v1;

@@ -44,10 +44,11 @@ pub(crate) fn normalize_span(s: &mut pb::Span) -> anyhow::Result<()> {
 }
 
 pub fn is_valid_http_status_code(sc: &str) -> bool {
-    if let Ok(code) = sc.parse::<i64>() {
-        return (100..600).contains(&code);
-    }
-    false
+    sc.parse::<i64>().is_ok_and(is_valid_http_status_code_int)
+}
+
+pub(crate) fn is_valid_http_status_code_int(code: i64) -> bool {
+    (100..600).contains(&code)
 }
 
 /// normalize_trace takes a trace and

@@ -7,15 +7,18 @@ use super::config::AgentlessTraceConfig;
 use http::HeaderMap;
 use libdd_capabilities::{HttpClientCapability, SleepCapability};
 use libdd_common::Endpoint;
+use libdd_trace_normalization::generic as normalizer;
 use libdd_trace_utils::send_with_retry::{
     CompressionStrategy, RetryBackoffType, RetryStrategy, SendWithRetryError, SendWithRetryResult,
     send_with_retry_and_size,
 };
 use libdd_trace_utils::span::span_pool::PooledChunks;
+use libdd_trace_utils::span::trace_utils::{compute_top_level_span, get_root_span_index};
 use libdd_trace_utils::span::v1::span_pool::PooledTraceChunks;
-use libdd_trace_utils::span::{TraceData, trace_utils::compute_top_level_span, trace_utils_v1};
+use libdd_trace_utils::span::{TraceData, trace_utils_v1};
 use libdd_trace_utils::tracer_metadata::TracerMetadata;
 use thiserror::Error;
+use tracing::debug;
 
 const AGENTLESS_MAX_RETRIES: u32 = 2;
 const AGENTLESS_RETRY_DELAY_MS: u64 = 1000;
@@ -136,6 +139,9 @@ where
 
 /// Encodes and sends already-decoded v1 trace chunks, reporting the final send result.
 ///
+/// The chunks are normalized first; those that can't be (empty, or holding a span with a zero span
+/// id) are dropped.
+///
 /// The observer is invoked once after the retry loop with the post-compression payload size.
 pub async fn send_agentless_traces_with_observer_v1<C, T, F>(
     capabilities: &C,
@@ -150,6 +156,20 @@ where
     T: TraceData,
     F: FnOnce(&SendWithRetryResult, usize),
 {
+    // Like the agent, normalize before anything else reads the spans, and drop the chunks that
+    // can't be repaired.
+    traces.retain_mut(|chunk| {
+        if let Err(error) = normalizer::normalize_trace(chunk) {
+            debug!(%error, "Dropping invalid trace");
+            return false;
+        }
+        if let Ok(root_span_index) = get_root_span_index(&chunk.spans)
+            && let Err(error) = normalizer::normalize_chunk(chunk, root_span_index)
+        {
+            debug!(%error, "Failed to normalize trace chunk");
+        }
+        true
+    });
     // Top-level tagging is already done before sending when client-side stats are active.
     if !metadata.client_computed_top_level && !client_side_stats {
         for chunk in traces.iter_mut() {
@@ -419,6 +439,38 @@ mod tests {
             }
             assert_eq!(capabilities.requests.lock().unwrap().len(), 1);
         }
+    }
+
+    #[test]
+    fn normalizes_v1_traces_and_drops_invalid_ones() {
+        use libdd_trace_utils::span::v1::{Span, TraceChunk};
+        let chunk = |span_id| TraceChunk::<BytesData> {
+            trace_id: 1u128.to_be_bytes(),
+            spans: vec![Span {
+                name: BytesString::from_static("bad-name"),
+                service: BytesString::from_static("service-1"),
+                span_id,
+                start: 1,
+                duration: 2,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let capabilities = TestCapabilities::default();
+        let result = futures::executor::block_on(send_agentless_traces_v1(
+            &capabilities,
+            PooledTraceChunks::unpooled(vec![chunk(2), chunk(0), TraceChunk::default()]),
+            &metadata(),
+            &config(),
+            false,
+        ));
+        assert!(result.is_ok());
+
+        let requests = capabilities.requests.lock().unwrap();
+        assert_eq!(requests[0].headers()["x-datadog-trace-count"], "1");
+        let body = String::from_utf8(request_body(&requests[0])).unwrap();
+        assert!(body.contains("\"name\":\"bad_name\""), "{body}");
+        assert!(body.contains("\"resource\":\"bad_name\""), "{body}");
     }
 
     #[test]
