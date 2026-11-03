@@ -374,7 +374,9 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
         {
             let target_files = self.state.target_files_by_path.lock_or_panic();
             for StoredTargetFile { meta, expiring, .. } in target_files.values() {
-                if !expiring {
+                // The agent rejects the whole request if a cached file has a length below 1.
+                // Not advertising empty files only makes the agent resend their empty body.
+                if !expiring && meta.length > 0 {
                     cached_target_files.push(meta.clone());
                 }
             }
@@ -1307,6 +1309,69 @@ pub mod tests {
             assert_eq!(fetched.len(), 1);
             assert_eq!(storage.files.lock().unwrap().len(), 1);
         }
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn test_empty_file_not_advertised_with_zero_length() {
+        let server = RemoteConfigServer::spawn();
+        server.files.lock().unwrap().insert(
+            PATH_FIRST.clone(),
+            (vec![DUMMY_TARGET.clone()], 1, "".to_string()),
+        );
+        server.files.lock().unwrap().insert(
+            PATH_SECOND.clone(),
+            (vec![DUMMY_TARGET.clone()], 1, "X".to_string()),
+        );
+
+        let storage = Arc::new(Storage::default());
+        let mut fetcher = ConfigFetcher::new(
+            storage.clone(),
+            Arc::new(ConfigFetcherState::with_client(
+                server.dummy_options().invariants,
+                NativeCapabilities::new_periodic(),
+            )),
+        )
+        .await
+        .unwrap();
+        let mut opaque_state = ConfigClientState::default();
+        let capabilities = server.dummy_product_capabilities();
+
+        let fetched = fetcher
+            .fetch_once(
+                DUMMY_RUNTIME_ID,
+                &DUMMY_TARGET,
+                &capabilities,
+                "foo",
+                &mut opaque_state,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.len(), 2, "the empty config is stored too");
+        assert!(opaque_state.last_error.is_none());
+
+        fetcher
+            .fetch_once(
+                DUMMY_RUNTIME_ID,
+                &DUMMY_TARGET,
+                &capabilities,
+                "foo",
+                &mut opaque_state,
+            )
+            .await
+            .unwrap();
+        let req = server.last_request.lock().unwrap();
+        let cached = &req.as_ref().unwrap().cached_target_files;
+        // The agent rejects the whole request if any cached file has a length below 1.
+        assert!(
+            cached.iter().all(|f| f.length >= 1),
+            "a 0-byte file must not be advertised with length 0: {cached:?}"
+        );
+        assert!(
+            cached.iter().any(|f| f.path == PATH_SECOND.to_string()),
+            "non-empty files are still advertised: {cached:?}"
+        );
     }
 
     #[tokio::test]
