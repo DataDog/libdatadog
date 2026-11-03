@@ -169,24 +169,6 @@ fn collect_span_attributes_v1<T: TraceData>(
     let has_version = !version.is_empty();
     let component = span.component.borrow();
     let has_component = !component.is_empty();
-    let (emit_env, emit_version, emit_component) = if resource_attributes.is_empty() {
-        (has_env, has_version, has_component)
-    } else {
-        (
-            has_env
-                && resource_attributes
-                    .get("env")
-                    .is_none_or(|value| value != env),
-            has_version
-                && resource_attributes
-                    .get("version")
-                    .is_none_or(|value| value != version),
-            has_component
-                && resource_attributes
-                    .get("component")
-                    .is_none_or(|value| value != component),
-        )
-    };
     let origin = chunk.origin.borrow();
     let has_origin = !origin.is_empty();
     let has_sampling_mechanism = chunk.sampling_mechanism.is_some();
@@ -225,75 +207,60 @@ fn collect_span_attributes_v1<T: TraceData>(
     // dropped count.
     let eligible_count = merged.iter().filter(|(k, v)| is_eligible(k, v)).count();
 
-    let promoted_compat = if otel_trace_semantics_enabled {
-        0
-    } else {
-        (has_per_span_service as usize)
-            + (has_operation_name as usize)
-            + (has_span_type as usize)
-            + (has_resource_name as usize)
-    };
-    let promoted_dedicated = (emit_env as usize)
-        + (emit_version as usize)
-        + (emit_component as usize)
-        + (has_origin as usize)
-        + (has_sampling_mechanism as usize)
-        + (has_sampling_priority as usize);
-    let total = promoted_compat + promoted_dedicated + eligible_count;
-
-    let mut attrs: Vec<ProtoKeyValue> = Vec::with_capacity(total.min(MAX_ATTRIBUTES_PER_SPAN));
-    if has_per_span_service && !otel_trace_semantics_enabled {
+    let mechanism = chunk
+        .sampling_mechanism
+        .map(|m| format!("-{m}"))
+        .filter(|value| {
+            resource_attributes
+                .get("_dd.p.dm")
+                .is_none_or(|resource| resource != value)
+        });
+    let promoted = [
+        (
+            "service.name",
+            (has_per_span_service && !otel_trace_semantics_enabled).then_some(span_service),
+        ),
+        (
+            "operation.name",
+            (has_operation_name && !otel_trace_semantics_enabled).then_some(operation_name),
+        ),
+        (
+            "span.type",
+            (has_span_type && !otel_trace_semantics_enabled).then_some(span_type),
+        ),
+        (
+            "resource.name",
+            (has_resource_name && !otel_trace_semantics_enabled).then_some(resource_name),
+        ),
+        ("env", has_env.then_some(env)),
+        ("version", has_version.then_some(version)),
+        ("component", has_component.then_some(component)),
+        ("_dd.origin", has_origin.then_some(origin)),
+    ]
+    .map(|(key, value)| {
+        value
+            .filter(|value| {
+                resource_attributes
+                    .get(key)
+                    .is_none_or(|resource| resource.as_str() != *value)
+            })
+            .map(|value| (key, value))
+    });
+    let total = promoted.iter().flatten().count()
+        + (mechanism.is_some() as usize)
+        + (has_sampling_priority as usize)
+        + eligible_count;
+    let mut attrs = Vec::with_capacity(total.min(MAX_ATTRIBUTES_PER_SPAN));
+    for (key, value) in promoted.into_iter().flatten() {
         attrs.push(proto_kv(
-            "service.name".to_string(),
-            ProtoValue::StringValue(span_service.to_string()),
+            key.to_string(),
+            ProtoValue::StringValue(value.to_string()),
         ));
     }
-    if has_operation_name && !otel_trace_semantics_enabled {
-        attrs.push(proto_kv(
-            "operation.name".to_string(),
-            ProtoValue::StringValue(operation_name.to_string()),
-        ));
-    }
-    if has_span_type && !otel_trace_semantics_enabled {
-        attrs.push(proto_kv(
-            "span.type".to_string(),
-            ProtoValue::StringValue(span_type.to_string()),
-        ));
-    }
-    if has_resource_name && !otel_trace_semantics_enabled {
-        attrs.push(proto_kv(
-            "resource.name".to_string(),
-            ProtoValue::StringValue(resource_name.to_string()),
-        ));
-    }
-    if emit_env {
-        attrs.push(proto_kv(
-            "env".to_string(),
-            ProtoValue::StringValue(env.to_string()),
-        ));
-    }
-    if emit_version {
-        attrs.push(proto_kv(
-            "version".to_string(),
-            ProtoValue::StringValue(version.to_string()),
-        ));
-    }
-    if emit_component {
-        attrs.push(proto_kv(
-            "component".to_string(),
-            ProtoValue::StringValue(component.to_string()),
-        ));
-    }
-    if has_origin {
-        attrs.push(proto_kv(
-            "_dd.origin".to_string(),
-            ProtoValue::StringValue(origin.to_string()),
-        ));
-    }
-    if let Some(mechanism) = chunk.sampling_mechanism {
+    if let Some(value) = mechanism {
         attrs.push(proto_kv(
             "_dd.p.dm".to_string(),
-            ProtoValue::StringValue(format!("-{mechanism}")),
+            ProtoValue::StringValue(value),
         ));
     }
     if let Some(priority) = effective_priority {
@@ -526,6 +493,12 @@ mod tests_v1 {
                 ("env", "same"),
                 ("version", "same"),
                 ("component", "same"),
+                ("service.name", "same"),
+                ("operation.name", "same"),
+                ("resource.name", "same"),
+                ("span.type", "same"),
+                ("_dd.origin", "same"),
+                ("_dd.p.dm", "-1"),
             ]
             .map(|(key, value)| (key.into(), value.into()))
             .into(),
@@ -538,7 +511,7 @@ mod tests_v1 {
             .insert(bs("region"), AttributeValue::String(bs("eu1")));
         span.attributes
             .insert(bs("workers"), AttributeValue::Int(7));
-        for key in ["env", "version", "component"] {
+        for key in ["env", "version", "component", "_dd.origin"] {
             span.attributes
                 .insert(bs(key), AttributeValue::String(bs("shadowed")));
         }
@@ -546,7 +519,10 @@ mod tests_v1 {
             span.attributes
                 .insert(bs(&format!("key-{i}")), AttributeValue::Bool(true));
         }
+        span.attributes
+            .insert(bs("_dd.p.dm"), AttributeValue::String(bs("shadowed")));
         let mut chunk = minimal_chunk([1; 16], span);
+        chunk.sampling_mechanism = Some(1);
         chunk
             .attributes
             .insert(bs("team"), AttributeValue::String(bs("core")));
@@ -561,18 +537,43 @@ mod tests_v1 {
             ("different", Some("different")),
             ("", Some("shadowed")),
         ] {
+            chunk.spans[0].service = bs(field_value);
+            chunk.spans[0].name = bs(field_value);
+            chunk.spans[0].resource = bs(field_value);
+            chunk.spans[0].r#type = bs(field_value);
+            chunk.origin = bs(field_value);
             chunk.spans[0].env = bs(field_value);
             chunk.spans[0].version = bs(field_value);
             chunk.spans[0].component = bs(field_value);
             for semantics in [false, true] {
                 let request = map_traces_to_otlp_v1(std::slice::from_ref(&chunk), &info, semantics);
-                let mapped = &request.resource_spans[0].scope_spans[0].spans[0];
+                let group = &request.resource_spans[0];
+                let resource = &group.resource.as_ref().unwrap().attributes;
+                for (key, value) in &info.resource_attributes {
+                    assert!(
+                        resource.contains(&proto_kv(key.clone(), PV::StringValue(value.clone())))
+                    );
+                }
+                let mapped = &group.scope_spans[0].spans[0];
+                let compat_overrides = field_value == "different" && !semantics;
+                for key in [
+                    "service.name",
+                    "operation.name",
+                    "resource.name",
+                    "span.type",
+                ] {
+                    assert_eq!(
+                        mapped.attributes.iter().any(|a| a.key == key),
+                        compat_overrides
+                    );
+                }
+                assert!(!mapped.attributes.iter().any(|a| a.key == "_dd.p.dm"));
                 assert_eq!(mapped.attributes.len(), MAX_ATTRIBUTES_PER_SPAN);
                 assert_eq!(
                     mapped.dropped_attributes_count,
-                    if expected.is_some() { 3 } else { 0 }
+                    if expected.is_some() { 4 } else { 0 } + if compat_overrides { 4 } else { 0 }
                 );
-                for key in ["env", "version", "component"] {
+                for key in ["env", "version", "component", "_dd.origin"] {
                     let value = mapped
                         .attributes
                         .iter()
