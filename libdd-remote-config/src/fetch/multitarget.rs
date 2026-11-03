@@ -955,15 +955,6 @@ mod tests {
         ) -> anyhow::Result<Arc<Self::StoredFile>> {
             self.rc.store(version, path, contents)
         }
-
-        fn update(
-            &self,
-            file: &Arc<Self::StoredFile>,
-            version: u64,
-            contents: Vec<u8>,
-        ) -> anyhow::Result<()> {
-            self.rc.update(file, version, contents)
-        }
     }
 
     #[derive(Default, Debug)]

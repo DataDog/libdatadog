@@ -169,7 +169,7 @@ struct ConfigFileStorage<N: NotifyTarget + 'static> {
 
 struct StoredShmFile {
     handle: Mutex<Option<NamedShmHandle>>, // just an option to use the handle under lock
-    limiter: Mutex<Option<ShmLimiter<()>>>,
+    limiter: Option<ShmLimiter<()>>,
     refcount: FileRefcountData,
 }
 
@@ -182,7 +182,7 @@ impl RefcountedFile for StoredShmFile {
 impl<N: NotifyTarget + 'static> ConfigFileStorage<N> {
     /// No limiter means no rate limiting: either the segment could not be created, which is
     /// already reported where it happened, or no slot is available right now. The latter is
-    /// retried on the next update of the file.
+    /// retried when the next version of the file is stored.
     fn alloc_live_debugging_limiter(&self, path: &RemoteConfigPath) -> Option<ShmLimiter<()>> {
         let limiter = self.limiter.as_ref()?;
         let allocated = limiter.lock_or_panic().alloc();
@@ -207,30 +207,13 @@ impl<N: NotifyTarget + 'static> FileStorage for ConfigFileStorage<N> {
     ) -> anyhow::Result<Arc<StoredShmFile>> {
         Ok(Arc::new(StoredShmFile {
             handle: Mutex::new(Some(store_shm(version, &path, file)?)),
-            limiter: Mutex::new(if path.product() == RemoteConfigProduct::LiveDebugging {
+            limiter: if path.product() == RemoteConfigProduct::LiveDebugging {
                 self.alloc_live_debugging_limiter(&path)
             } else {
                 None
-            }),
+            },
             refcount: FileRefcountData::new(version, path),
         }))
-    }
-
-    fn update(
-        &self,
-        file: &Arc<Self::StoredFile>,
-        version: u64,
-        contents: Vec<u8>,
-    ) -> anyhow::Result<()> {
-        *file.handle.lock_or_panic() = Some(store_shm(version, &file.refcount.path, contents)?);
-        // Retry a slot allocation which failed when the file was first stored.
-        if file.refcount.path.product() == RemoteConfigProduct::LiveDebugging {
-            let mut limiter = file.limiter.lock_or_panic();
-            if limiter.is_none() {
-                *limiter = self.alloc_live_debugging_limiter(&file.refcount.path);
-            }
-        }
-        Ok(())
     }
 }
 
@@ -344,7 +327,7 @@ impl<N: NotifyTarget + 'static> MultiTargetHandlers<N, Self, NativeCapabilities>
                 serialized.extend_from_slice(path);
             }
             serialized.push(b':');
-            if let Some(ref limiter) = *file.limiter.lock_or_panic() {
+            if let Some(ref limiter) = file.limiter {
                 serialized.extend_from_slice(limiter.index().to_string().as_bytes());
             } else {
                 serialized.push(b'0');

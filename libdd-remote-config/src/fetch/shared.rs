@@ -266,15 +266,6 @@ where
         stored.push(Arc::downgrade(&file));
         Ok(file)
     }
-
-    fn update(
-        &self,
-        file: &Arc<Self::StoredFile>,
-        version: u64,
-        contents: Vec<u8>,
-    ) -> anyhow::Result<()> {
-        self.storage.update(file, version, contents)
-    }
 }
 
 impl SharedFetcher {
@@ -495,15 +486,6 @@ pub mod tests {
                 store: self.0.store(version, path.clone(), contents)?,
                 refcounted: FileRefcountData::new(version, path),
             }))
-        }
-
-        fn update(
-            &self,
-            file: &Arc<Self::StoredFile>,
-            version: u64,
-            contents: Vec<u8>,
-        ) -> anyhow::Result<()> {
-            self.0.update(&file.store, version, contents)
         }
     }
 

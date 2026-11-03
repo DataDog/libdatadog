@@ -1319,17 +1319,10 @@ mod cache {
                     )
                 })?;
                 let path: Arc<crate::RemoteConfigPath> = Arc::new(path);
-                let new_handle = match self.files.get(&path) {
-                    // Only this fetcher's target uses the file: replace its contents.
-                    Some(existing) if self.expire_unused_files => self
-                        .storage
-                        .update(&existing.handle, version, content)
-                        .map(|()| existing.handle.clone())?,
-                    // With shared state, other targets may still hold the previous version
-                    // until their own next fetch. Store the new version as a new file; the
-                    // previous one expires once no target holds it anymore.
-                    _ => self.storage.store(version, path.clone(), content)?,
-                };
+                // Every new version is stored as a new file. Other targets may still hold the
+                // previous version until their own next fetch; it is released once nothing
+                // references it anymore.
+                let new_handle = self.storage.store(version, path.clone(), content)?;
                 let file = StoredTargetFile {
                     hash: primary_hash,
                     version,
