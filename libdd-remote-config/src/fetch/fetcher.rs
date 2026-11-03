@@ -800,7 +800,7 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
                 if res.opaque_backend_state != client_state.opaque_backend_state {
                     client_state.opaque_backend_state = res.opaque_backend_state.clone();
                 }
-                client_state.last_error = None;
+                client_state.last_error = (!res.errors.is_empty()).then(|| res.errors.join("\n"));
 
                 let (configs, last_configs) = cache.lock().collect_handles(&res.targets)?;
 

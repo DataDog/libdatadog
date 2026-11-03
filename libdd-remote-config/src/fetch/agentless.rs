@@ -18,7 +18,7 @@ use libdd_common::Endpoint;
 use libdd_trace_protobuf::remoteconfig;
 use prost::Message;
 use serde_json::Value;
-use tracing::debug;
+use tracing::{debug, warn};
 use tuf::metadata::{
     Metadata, MetadataPath, MetadataVersion, RawSignedMetadata, TargetDescription, TargetPath,
 };
@@ -270,7 +270,23 @@ pub struct ClientResponse {
     /// All currently active targets; content is already stored in the outer cache.
     pub targets: Vec<ClientTargetRef>,
     pub refresh_interval: Duration,
+    /// Errors of the trusted targets that could not be applied, one per file. As in agent
+    /// mode, they don't fail the fetch but are reported as the client's error.
+    pub errors: Vec<String>,
 }
+
+/// A trusted target that must not be applied, and whose failure is reported to the backend
+/// (unlike expired targets, which are just skipped).
+#[derive(Debug)]
+struct InvalidTarget(String);
+
+impl fmt::Display for InvalidTarget {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for InvalidTarget {}
 
 /// A single TUF target that has passed metadata verification: it comes from the
 /// director's trusted `targets` database (so its signature, snapshot binding and
@@ -323,7 +339,15 @@ impl<'a> TrustedTarget<'a> {
         // retain_supported_hashes return order is deterministic.
         let primary_hash = all_hashes[0].1.to_string();
 
-        let version = desc.custom().get("v").and_then(|v| v.as_u64()).unwrap_or(0);
+        let version = desc
+            .custom()
+            .get("v")
+            .and_then(|v| v.as_u64())
+            .ok_or_else(|| {
+                InvalidTarget(format!(
+                    "Failed parsing version from remote config path {path}"
+                ))
+            })?;
 
         Ok(Self {
             path,
@@ -608,7 +632,8 @@ impl<C: HttpClientCapability + SleepCapability> AgentlessFetcher<C> {
             }
         };
 
-        let active_targets = match self.apply(&response, cache, prefetched_org_uuid).await {
+        let (active_targets, errors) = match self.apply(&response, cache, prefetched_org_uuid).await
+        {
             Ok(t) => t,
             Err(e) => {
                 self.consecutive_failures = self.consecutive_failures.saturating_add(1);
@@ -641,6 +666,7 @@ impl<C: HttpClientCapability + SleepCapability> AgentlessFetcher<C> {
             opaque_backend_state: self.opaque_backend_state.clone(),
             targets: active_targets,
             refresh_interval: self.refresh_interval,
+            errors,
         })
     }
 
@@ -712,7 +738,7 @@ impl<C: HttpClientCapability + SleepCapability> AgentlessFetcher<C> {
         response: &remoteconfig::LatestConfigsResponse,
         cache: &TargetCache<'_, S>,
         prefetched_org_uuid: Option<String>,
-    ) -> anyhow::Result<Vec<ClientTargetRef>> {
+    ) -> anyhow::Result<(Vec<ClientTargetRef>, Vec<String>)> {
         // At a high level,  we're populating the "remote" repos with the metadata
         // that we received from upstream (which does not validate it), and then using the clients'
         // `update` methods to synchronize that metadata to the "local" repos, during which
@@ -800,7 +826,10 @@ impl<C: HttpClientCapability + SleepCapability> AgentlessFetcher<C> {
         verify_director_against_config(&self.config_client, &self.director_client)?;
         self.verify_org_uuid(prefetched_org_uuid).await?;
 
-        let targets: Vec<TrustedTarget<'_>> = trusted_targets(&self.director_client)?.collect();
+        let mut errors = Vec::new();
+        let targets: Vec<TrustedTarget<'_>> = trusted_targets(&self.director_client)?
+            .filter_map(|target| target.map_err(|e| errors.push(e)).ok())
+            .collect();
 
         // Hold the cache lock for the entire fetch/verify/store cycle.
         // Prevents another agentless fetcher sharing the same
@@ -870,7 +899,7 @@ impl<C: HttpClientCapability + SleepCapability> AgentlessFetcher<C> {
             self.last_config_top_targets = config_metas.top_targets.clone();
         }
 
-        Ok(active_targets)
+        Ok((active_targets, errors))
     }
 }
 
@@ -1096,22 +1125,27 @@ fn segment_matches(pattern: &str, segment: &str) -> bool {
 }
 
 /// Return all currently trusted, unexpired targets.  Targets that are expired or that lack a
-/// supported hash algorithm are skipped with a debug log.
+/// supported hash algorithm are skipped with a debug log. Invalid targets (e.g. without a
+/// version) are returned as errors, to be reported as failures of their files.
 fn trusted_targets(
     director_client: &TUFClient,
-) -> anyhow::Result<impl Iterator<Item = TrustedTarget<'_>> + '_> {
+) -> anyhow::Result<impl Iterator<Item = Result<TrustedTarget<'_>, String>> + '_> {
     Ok(director_client
         .database()
         .trusted_targets()
         .ok_or_else(|| format_err!("missing targets from TUF director client"))?
         .targets()
         .iter()
-        .filter_map(|(path, desc)| {
-            TrustedTarget::try_create(path, desc)
-                .inspect_err(|e| {
-                    debug!(%path, "Skipping target: error {}", e);
-                })
-                .ok()
+        .filter_map(|(path, desc)| match TrustedTarget::try_create(path, desc) {
+            Ok(target) => Some(Ok(target)),
+            Err(e) if e.is::<InvalidTarget>() => {
+                warn!("{e}");
+                Some(Err(e.to_string()))
+            }
+            Err(e) => {
+                debug!(%path, "Skipping target: error {}", e);
+                None
+            }
         }))
 }
 
