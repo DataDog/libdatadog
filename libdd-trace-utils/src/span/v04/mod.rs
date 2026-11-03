@@ -3,6 +3,7 @@
 
 use crate::span::{BytesData, SliceData, SpanKeyParseError, TraceData};
 use crate::tracer_payload::TraceChunks;
+use libdd_trace_model::{Attributes, SPAN_LINK_FLAGS_SET_SENTINEL, f64_to_exact_i64};
 use serde::Serialize;
 use serde::ser::SerializeStruct;
 use std::borrow::Borrow;
@@ -136,7 +137,7 @@ where
 
 /// v04 spans keep strings and numbers in the separate `meta` and `metrics` maps, which the typed
 /// reads look up directly. A key present in both maps stays reachable through both.
-impl<T: TraceData> libdd_trace_model::Attributes for Span<T> {
+impl<T: TraceData> Attributes for Span<T> {
     type Text = T::Text;
     type Bytes = T::Bytes;
     type Values = T;
@@ -217,7 +218,7 @@ impl<T: TraceData> libdd_trace_model::Span for Span<T> {
 }
 
 /// v04 span links only carry string attributes.
-impl<T: TraceData> libdd_trace_model::Attributes for SpanLink<T> {
+impl<T: TraceData> Attributes for SpanLink<T> {
     type Text = T::Text;
     type Bytes = T::Bytes;
     type Values = T;
@@ -245,12 +246,12 @@ impl<T: TraceData> libdd_trace_model::SpanLink for SpanLink<T> {
     }
 
     fn flags(&self) -> u32 {
-        self.flags
+        self.flags & !SPAN_LINK_FLAGS_SET_SENTINEL
     }
 }
 
 /// Typed reads only see single values; array attributes read as missing.
-impl<T: TraceData> libdd_trace_model::Attributes for SpanEvent<T> {
+impl<T: TraceData> Attributes for SpanEvent<T> {
     type Text = T::Text;
     type Bytes = T::Bytes;
     type Values = T;
@@ -275,9 +276,7 @@ impl<T: TraceData> libdd_trace_model::Attributes for SpanEvent<T> {
     fn attribute_i64(&self, key: &str) -> Option<i64> {
         match self.attributes.get(key)? {
             AttributeAnyValue::SingleValue(AttributeArrayValue::Integer(i)) => Some(*i),
-            AttributeAnyValue::SingleValue(AttributeArrayValue::Double(f)) => {
-                libdd_trace_model::f64_to_exact_i64(*f)
-            }
+            AttributeAnyValue::SingleValue(AttributeArrayValue::Double(f)) => f64_to_exact_i64(*f),
             _ => None,
         }
     }
@@ -503,16 +502,21 @@ mod tests {
 
     #[test]
     fn model_traits_expose_v04_links_and_events() {
-        use libdd_trace_model::{Attributes, Span as _, SpanLink as _};
+        use libdd_trace_model::{
+            Attributes, SPAN_LINK_FLAGS_SET_SENTINEL, Span as _, SpanLink as _,
+        };
 
         let link = SpanLink::<SliceData> {
             trace_id: 2,
             trace_id_high: 1,
             span_id: 3,
             attributes: HashMap::from([(Cow::Borrowed("k"), Cow::Borrowed("v"))]),
+            flags: SPAN_LINK_FLAGS_SET_SENTINEL | 1,
             ..Default::default()
         };
         assert_eq!(link.trace_id(), (1u128 << 64) | 2);
+        // The "flags set" sentinel isn't part of the W3C flags.
+        assert_eq!(link.flags(), 1);
         assert_eq!(link.attribute_str("k"), Some("v"));
 
         let event = SpanEvent::<SliceData> {

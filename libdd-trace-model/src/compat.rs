@@ -73,6 +73,14 @@ impl<S: Span> Attributes for CompatSpan<S> {
             self.0.attribute_i64(key)
         }
     }
+
+    fn has_attribute(&self, key: &str) -> bool {
+        if is_promoted(key) {
+            self.promoted(key).is_some()
+        } else {
+            self.0.has_attribute(key)
+        }
+    }
 }
 
 /// Yields the span's attributes, then its promoted tags.
@@ -88,14 +96,6 @@ impl<S: Span + AttributesIter> AttributesIter for CompatSpan<S> {
             .attributes()
             .filter(|(key, _)| !is_promoted(key))
             .chain(promoted)
-    }
-
-    fn has_attribute(&self, key: &str) -> bool {
-        if is_promoted(key) {
-            self.promoted(key).is_some()
-        } else {
-            self.0.has_attribute(key)
-        }
     }
 }
 

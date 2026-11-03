@@ -112,6 +112,10 @@ macro_rules! impl_vec_map_attributes {
             fn attribute_i64(&self, key: &str) -> Option<i64> {
                 self.attributes.get(key)?.as_i64()
             }
+
+            fn has_attribute(&self, key: &str) -> bool {
+                self.attributes.contains_key(key)
+            }
         }
 
         impl<T: TraceData> libdd_trace_model::AttributesIter for $ty<T> {
@@ -121,10 +125,6 @@ macro_rules! impl_vec_map_attributes {
                 self.attributes
                     .iter_unique()
                     .map(|(k, v)| (k.as_str(), v.into()))
-            }
-
-            fn has_attribute(&self, key: &str) -> bool {
-                self.attributes.contains_key(key)
             }
         }
     };
@@ -261,7 +261,7 @@ impl<T: TraceData> libdd_trace_model::SpanLink for SpanLink<T> {
     }
 
     fn flags(&self) -> u32 {
-        self.flags
+        self.flags & !libdd_trace_model::SPAN_LINK_FLAGS_SET_SENTINEL
     }
 }
 
@@ -373,7 +373,8 @@ mod tests {
             trace_id: 7u128.to_be_bytes(),
             span_id: 2,
             tracestate: BytesString::from_static("dd=s:1"),
-            flags: 1,
+            // The "flags set" sentinel isn't part of the W3C flags.
+            flags: libdd_trace_model::SPAN_LINK_FLAGS_SET_SENTINEL | 1,
             ..Default::default()
         });
         span.span_events.push(SpanEventBytes {
@@ -550,6 +551,33 @@ mod tests {
         // Promoted chunk tags get no compatibility.
         assert_eq!(compat.attribute_str("_dd.origin"), None);
         assert!(!compat.has_attribute("_dd.origin"));
+    }
+
+    #[test]
+    fn chunk_span_view_span_key_shadows_chunk_key_of_any_type() {
+        let mut span = SpanBytes::default();
+        span.attributes
+            .insert(BytesString::from_static("k"), AttributeValue::Int(1));
+        let mut chunk = TraceChunkBytes {
+            spans: vec![span],
+            ..Default::default()
+        };
+        chunk.attributes.insert(
+            BytesString::from_static("k"),
+            AttributeValue::String(BytesString::from_static("chunk")),
+        );
+        let view = ChunkSpanView {
+            span: &chunk.spans[0],
+            chunk: &chunk,
+        };
+        // The span's integer hides the chunk's string, for typed reads as for iteration.
+        assert_eq!(view.attribute_str("k"), None);
+        assert_eq!(view.attribute_i64("k"), Some(1));
+        assert!(view.has_attribute("k"));
+        assert_eq!(
+            view.attributes().collect::<Vec<_>>(),
+            [("k", AttributeRef::Int(1))]
+        );
     }
 
     #[test]

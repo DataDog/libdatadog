@@ -118,6 +118,14 @@ pub trait Attributes {
     fn attribute_i64(&self, key: &str) -> Option<i64> {
         self.attribute_f64(key).and_then(f64_to_exact_i64)
     }
+
+    /// Returns true if an attribute (of any type) exists for `key`.
+    ///
+    /// The default goes through the typed getters, which suits storage that only holds strings and
+    /// numbers. Storage holding other types should override it.
+    fn has_attribute(&self, key: &str) -> bool {
+        self.attribute_str(key).is_some() || self.attribute_f64(key).is_some()
+    }
 }
 
 /// Converts `f` to an `i64` if it is exactly an integer within range.
@@ -138,11 +146,6 @@ pub fn f64_to_exact_i64(f: f64) -> Option<i64> {
 pub trait AttributesIter: Attributes {
     /// Iterate over all `(key, value)` attribute pairs, each key at most once
     fn attributes(&self) -> impl Iterator<Item = (&str, AttributeRef<'_, Self::Values>)>;
-
-    /// Returns true if an attribute (of any type) exists for `key`
-    fn has_attribute(&self, key: &str) -> bool {
-        self.attributes().any(|(k, _)| k == key)
-    }
 }
 
 /// A timestamped event attached to a span, carrying its own attributes.
@@ -150,6 +153,10 @@ pub trait SpanEvent: Attributes {
     fn name(&self) -> &str;
     fn time_unix_nano(&self) -> u64;
 }
+
+/// Bit 31 of a span link's stored `flags`, set when the flags were explicitly set. It isn't part of
+/// the W3C trace flags: [`SpanLink::flags`] masks it off.
+pub const SPAN_LINK_FLAGS_SET_SENTINEL: u32 = 1 << 31;
 
 /// A link from a span to another span, possibly in another trace, carrying its own attributes.
 pub trait SpanLink: Attributes {
@@ -159,7 +166,7 @@ pub trait SpanLink: Attributes {
     fn span_id(&self) -> u64;
     /// The W3C tracestate of the linked span, empty if unset
     fn tracestate(&self) -> &str;
-    /// The W3C trace flags of the linked span
+    /// The W3C trace flags of the linked span, without [`SPAN_LINK_FLAGS_SET_SENTINEL`]
     fn flags(&self) -> u32;
 }
 
@@ -566,6 +573,7 @@ impl<'a, T: ValueTypes> From<&'a AttributeValue<T>> for AttributeRef<'a, T> {
     }
 }
 
+// Not derived: the derive would require `T: Clone` / `T: Copy` on the `ValueTypes` marker.
 impl<T: ValueTypes> Clone for AttributeRef<'_, T> {
     fn clone(&self) -> Self {
         *self
@@ -574,6 +582,7 @@ impl<T: ValueTypes> Clone for AttributeRef<'_, T> {
 
 impl<T: ValueTypes> Copy for AttributeRef<'_, T> {}
 
+// Not derived: the derive would require `T: PartialEq` on the `ValueTypes` marker.
 impl<T: ValueTypes> PartialEq for AttributeRef<'_, T> {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
@@ -589,6 +598,7 @@ impl<T: ValueTypes> PartialEq for AttributeRef<'_, T> {
     }
 }
 
+// Not derived: the derive would require `T: Debug` on the `ValueTypes` marker.
 impl<T: ValueTypes> Debug for AttributeRef<'_, T> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {

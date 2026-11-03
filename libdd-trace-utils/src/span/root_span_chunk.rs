@@ -10,9 +10,13 @@ use libdd_trace_model::{
 };
 use libdd_trace_protobuf::pb;
 
+/// Tag holding the high 64 bits of a 128-bit trace id as hex, set on the chunk root only.
+const TRACE_ID_HIGH_KEY: &str = "_dd.p.tid";
+
 /// A span that carries its own trace id, as v0.4 and protobuf spans do.
 pub trait SpanWithTraceId: Span {
-    /// The 128-bit trace id of the span, `0` if unknown.
+    /// The trace id stored in the span, `0` if unknown. Its high 64 bits may be zero with the
+    /// actual ones in the root span's `_dd.p.tid` tag, see [`RootSpanChunk`].
     fn trace_id(&self) -> u128;
 }
 
@@ -22,7 +26,7 @@ impl<T: TraceData> SpanWithTraceId for v04::Span<T> {
     }
 }
 
-/// Only the low 64 bits: protobuf spans carry the high bits in the `_dd.p.tid` tag.
+/// Only the low 64 bits: protobuf spans carry the high bits in the root's `_dd.p.tid` tag.
 impl SpanWithTraceId for pb::Span {
     fn trace_id(&self) -> u128 {
         u128::from(self.trace_id)
@@ -32,8 +36,9 @@ impl SpanWithTraceId for pb::Span {
 /// The spans of one trace, in a format without chunk-level storage, viewed as a trace chunk.
 ///
 /// The chunk fields are read from the root span's tags, the way the agent derives them (e.g. the
-/// origin from the root's `_dd.origin` tag), and the chunk has no attributes. The root span is
-/// found once, on construction. A single span can be viewed as a one-span chunk with
+/// origin from the root's `_dd.origin` tag, or the high 64 bits of the trace id from its
+/// `_dd.p.tid` tag when the span doesn't hold them), and the chunk has no attributes. The root span
+/// is found once, on construction. A single span can be viewed as a one-span chunk with
 /// `RootSpanChunk::new(std::slice::from_ref(span))`.
 pub struct RootSpanChunk<'a, S> {
     spans: &'a [S],
@@ -72,7 +77,18 @@ impl<S: SpanWithTraceId> TraceChunk for RootSpanChunk<'_, S> {
     type Span = S;
 
     fn trace_id(&self) -> u128 {
-        self.root.map_or(0, SpanWithTraceId::trace_id)
+        let Some(root) = self.root else {
+            return 0;
+        };
+        let trace_id = root.trace_id();
+        if trace_id >> 64 != 0 {
+            return trace_id;
+        }
+        let high = root
+            .attribute_str(TRACE_ID_HIGH_KEY)
+            .and_then(|high| u64::from_str_radix(high, 16).ok())
+            .unwrap_or(0);
+        (u128::from(high) << 64) | trace_id
     }
 
     fn origin(&self) -> &str {
@@ -169,5 +185,41 @@ mod tests {
         assert_eq!(chunk.trace_id(), 7);
         assert_eq!(chunk.origin(), "synthetics");
         assert_eq!(chunk.priority(), Some(1));
+    }
+
+    #[test]
+    fn trace_id_high_bits_from_root_tag() {
+        let pb_root = |tid: &str| pb::Span {
+            trace_id: 7,
+            meta: HashMap::from([("_dd.p.tid".to_owned(), tid.to_owned())]),
+            ..Default::default()
+        };
+        let span = pb_root("640cfd8d00000000");
+        assert_eq!(
+            RootSpanChunk::new(std::slice::from_ref(&span)).trace_id(),
+            (0x640c_fd8d_0000_0000u128 << 64) | 7
+        );
+        // An invalid tag leaves the high bits unset.
+        let span = pb_root("not-hex");
+        assert_eq!(
+            RootSpanChunk::new(std::slice::from_ref(&span)).trace_id(),
+            7
+        );
+
+        // High bits stored in the span win over the tag.
+        let mut span = SpanBytes {
+            trace_id: (1u128 << 64) | 7,
+            ..Default::default()
+        };
+        span.meta.insert("_dd.p.tid".into(), "2".into());
+        assert_eq!(
+            RootSpanChunk::new(std::slice::from_ref(&span)).trace_id(),
+            (1u128 << 64) | 7
+        );
+        span.trace_id = 7;
+        assert_eq!(
+            RootSpanChunk::new(std::slice::from_ref(&span)).trace_id(),
+            (2u128 << 64) | 7
+        );
     }
 }

@@ -119,7 +119,7 @@ impl libdd_trace_model::SpanLink for pb::SpanLink {
     }
 
     fn flags(&self) -> u32 {
-        self.flags
+        self.flags & !libdd_trace_model::SPAN_LINK_FLAGS_SET_SENTINEL
     }
 }
 
@@ -215,9 +215,12 @@ mod tests {
             trace_id: 2,
             trace_id_high: 1,
             attributes: HashMap::from([("k".to_owned(), "v".to_owned())]),
+            flags: libdd_trace_model::SPAN_LINK_FLAGS_SET_SENTINEL | 1,
             ..Default::default()
         };
         assert_eq!(link.trace_id(), (1u128 << 64) | 2);
+        // The "flags set" sentinel isn't part of the W3C flags.
+        assert_eq!(link.flags(), 1);
         assert_eq!(link.attribute_str("k"), Some("v"));
 
         let event = pb::SpanEvent {

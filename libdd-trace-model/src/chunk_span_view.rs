@@ -8,20 +8,21 @@ use crate::{AttributeRef, Attributes, AttributesIter, Span, TraceChunk, is_promo
 /// Wraps a span together with its enclosing chunk.
 ///
 /// Chunk attributes hold values common to every span in the chunk (e.g. peer tags). Attribute
-/// lookups fall back to the chunk whenever the span doesn't have its own value for a given key,
-/// except for the promoted span tags (see [`crate::PROMOTED_SPAN_TAGS`]): like on a span, the
-/// attribute getters don't see those, and the dedicated getters (e.g. [`Span::env`]) fall back to
-/// the chunk attribute instead. Chunk-level fields (e.g. [`TraceChunk::origin`]) are read from
-/// [`ChunkSpanView::chunk`].
+/// lookups fall back to the chunk whenever the span doesn't have an attribute for a given key,
+/// whatever its type, except for the promoted span tags (see [`crate::PROMOTED_SPAN_TAGS`]): like
+/// on a span, the attribute getters don't see those, and the dedicated getters (e.g. [`Span::env`])
+/// fall back to the chunk attribute instead. Chunk-level fields (e.g. [`TraceChunk::origin`]) are
+/// read from [`ChunkSpanView::chunk`].
 pub struct ChunkSpanView<'a, C: TraceChunk> {
     pub span: &'a C::Span,
     pub chunk: &'a C,
 }
 
 impl<C: TraceChunk> ChunkSpanView<'_, C> {
-    /// The chunk to fall back to for `key`, `None` for the promoted span tags.
+    /// The chunk to fall back to for `key`, `None` if the span has an attribute for `key` (of any
+    /// type) or `key` is a promoted span tag.
     fn chunk_fallback(&self, key: &str) -> Option<&C> {
-        (!is_promoted(key)).then_some(self.chunk)
+        (!is_promoted(key) && !self.span.has_attribute(key)).then_some(self.chunk)
     }
 }
 
@@ -30,8 +31,8 @@ impl<C: TraceChunk> Attributes for ChunkSpanView<'_, C> {
     type Bytes = C::Bytes;
     type Values = C::Values;
 
-    // Typed reads fall back per type, so a span attribute of the wrong type doesn't shadow a
-    // matching chunk attribute.
+    // A span attribute shadows the chunk attribute with the same key, even of another type, so
+    // the typed reads agree with `attributes()`.
     fn attribute_str(&self, key: &str) -> Option<&str> {
         self.span
             .attribute_str(key)
@@ -49,6 +50,13 @@ impl<C: TraceChunk> Attributes for ChunkSpanView<'_, C> {
             .attribute_i64(key)
             .or_else(|| self.chunk_fallback(key)?.attribute_i64(key))
     }
+
+    fn has_attribute(&self, key: &str) -> bool {
+        self.span.has_attribute(key)
+            || self
+                .chunk_fallback(key)
+                .is_some_and(|chunk| chunk.has_attribute(key))
+    }
 }
 
 /// Yields the span attributes, then the chunk attributes whose key the span doesn't have (promoted
@@ -62,15 +70,8 @@ where
         self.span.attributes().chain(
             self.chunk
                 .attributes()
-                .filter(|(k, _)| !is_promoted(k) && !self.span.has_attribute(k)),
+                .filter(|(k, _)| self.chunk_fallback(k).is_some()),
         )
-    }
-
-    fn has_attribute(&self, key: &str) -> bool {
-        self.span.has_attribute(key)
-            || self
-                .chunk_fallback(key)
-                .is_some_and(|chunk| chunk.has_attribute(key))
     }
 }
 

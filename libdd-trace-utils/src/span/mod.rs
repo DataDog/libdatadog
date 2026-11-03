@@ -37,7 +37,8 @@ use std::{fmt, ptr};
 /// they emit `flags`, because those consumers treat `flags` as the real W3C trace-flags value.
 /// The JSON formats are the v0.5 `_dd.span_links` dictionary, agentless JSON, and structured
 /// JSON logging.
-pub(crate) const SPAN_LINK_FLAGS_SET_SENTINEL: u32 = 1 << 31;
+pub(crate) const SPAN_LINK_FLAGS_SET_SENTINEL: u32 =
+    libdd_trace_model::SPAN_LINK_FLAGS_SET_SENTINEL;
 
 /// Trait representing the requirements for a type to be used as a Span "string" type.
 /// Note: `Borrow<str>` is not required by the derived traits, but allows to access HashMap elements
