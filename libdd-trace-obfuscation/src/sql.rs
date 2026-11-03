@@ -310,15 +310,15 @@ impl<'a> Tokenizer<'a> {
         }
         // Also skip Unicode whitespace (e.g. U+2003 EM SPACE) — Go uses unicode.IsSpace
         while !self.at_end() && self.bytes[self.pos] > 127 {
-            if let Some(c) = self.s[self.pos..].chars().next() {
-                if c.is_whitespace() {
-                    self.pos += c.len_utf8();
-                    // There may be ASCII whitespace after, loop again
-                    while !self.at_end() && is_whitespace(self.bytes[self.pos]) {
-                        self.pos += 1;
-                    }
-                    continue;
+            if let Some(c) = self.s[self.pos..].chars().next()
+                && c.is_whitespace()
+            {
+                self.pos += c.len_utf8();
+                // There may be ASCII whitespace after, loop again
+                while !self.at_end() && is_whitespace(self.bytes[self.pos]) {
+                    self.pos += 1;
                 }
+                continue;
             }
             break;
         }
@@ -2012,20 +2012,20 @@ fn collapse_grouped_values(s: &str, obfuscation_mode: SqlObfuscationMode) -> Str
 
     while i < n {
         // Try ( ?, ... )
-        if bytes[i] == b'(' {
-            if let Some(end) = try_match_pure_group(bytes, b'(', b')', i) {
-                result.push_str("( ? )");
-                i = end;
-                continue;
-            }
+        if bytes[i] == b'('
+            && let Some(end) = try_match_pure_group(bytes, b'(', b')', i)
+        {
+            result.push_str("( ? )");
+            i = end;
+            continue;
         }
         // Try [ ?, ... ]
-        if bytes[i] == b'[' {
-            if let Some(end) = try_match_pure_group(bytes, b'[', b']', i) {
-                result.push_str("[ ? ]");
-                i = end;
-                continue;
-            }
+        if bytes[i] == b'['
+            && let Some(end) = try_match_pure_group(bytes, b'[', b']', i)
+        {
+            result.push_str("[ ? ]");
+            i = end;
+            continue;
         }
         // Push next character correctly (multi-byte UTF-8 safe)
         if bytes[i] < 128 {

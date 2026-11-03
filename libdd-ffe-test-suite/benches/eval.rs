@@ -15,6 +15,7 @@ use std::{
     collections::{BTreeMap, HashMap},
     fs,
     sync::Arc,
+    time::Duration,
 };
 
 use libdd_ffe::rules_based::{
@@ -56,14 +57,12 @@ fn load_test_cases() -> Vec<TestCase> {
 
     if let Ok(entries) = fs::read_dir(EVALUATION_CASES_DIR) {
         for entry in entries.flatten() {
-            if let Some(path_str) = entry.path().to_str() {
-                if path_str.ends_with(".json") {
-                    if let Ok(content) = fs::read_to_string(entry.path()) {
-                        if let Ok(cases) = serde_json::from_str::<Vec<TestCase>>(&content) {
-                            test_cases.extend(cases);
-                        }
-                    }
-                }
+            if let Some(path_str) = entry.path().to_str()
+                && path_str.ends_with(".json")
+                && let Ok(content) = fs::read_to_string(entry.path())
+                && let Ok(cases) = serde_json::from_str::<Vec<TestCase>>(&content)
+            {
+                test_cases.extend(cases);
             }
         }
     }
@@ -158,6 +157,10 @@ struct FlagEvalBenchProfile {
     num_flags: usize,
     num_users: usize,
     num_fields: usize,
+    // Criterion sampling: iteration cost spans three orders of magnitude across profiles
+    // (µs for typical, ~120 ms for stress), so heavy profiles need far fewer samples.
+    sample_size: usize,
+    measurement_time: Duration,
 }
 
 const FLAG_EVAL_BENCH_PROFILES: [FlagEvalBenchProfile; 3] = [
@@ -166,18 +169,24 @@ const FLAG_EVAL_BENCH_PROFILES: [FlagEvalBenchProfile; 3] = [
         num_flags: 100,
         num_users: 50,
         num_fields: 10,
+        sample_size: 100,
+        measurement_time: Duration::from_secs(2),
     },
     FlagEvalBenchProfile {
         name: "stress/10flags_1000users_250fields",
         num_flags: 10,
         num_users: 1_000,
         num_fields: 250,
+        sample_size: 25,
+        measurement_time: Duration::from_secs(2),
     },
     FlagEvalBenchProfile {
         name: "scale/2500flags_500users_20fields",
         num_flags: 2_500,
         num_users: 500,
         num_fields: 20,
+        sample_size: 50,
+        measurement_time: Duration::from_secs(2),
     },
 ];
 
@@ -248,6 +257,8 @@ fn bench_flagevaluation_evp_coalescer(c: &mut Criterion) {
     for profile in FLAG_EVAL_BENCH_PROFILES {
         let batch = flag_eval_batch(profile);
         group.throughput(Throughput::Elements(batch.flag_evaluations.len() as u64));
+        group.sample_size(profile.sample_size);
+        group.measurement_time(profile.measurement_time);
         group.bench_function(profile.name, |b| {
             b.iter_batched(
                 || batch.clone(),
@@ -270,6 +281,8 @@ fn bench_flagevaluation_evp_payloads(c: &mut Criterion) {
     for profile in FLAG_EVAL_BENCH_PROFILES {
         let batch = flag_eval_batch(profile);
         group.throughput(Throughput::Elements(batch.flag_evaluations.len() as u64));
+        group.sample_size(profile.sample_size);
+        group.measurement_time(profile.measurement_time);
         group.bench_function(profile.name, |b| {
             b.iter_batched(
                 || batch.clone(),

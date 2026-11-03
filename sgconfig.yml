@@ -1,0 +1,20 @@
+# ast-grep project config. Rules live in .sg/rules/; fixtures in .sg/tests/.
+# Run locally with ./scripts/run-ast-grep.sh (same command CI uses).
+
+ruleDirs:
+  - .sg/rules
+
+testConfigs:
+  - testDir: .sg/tests
+
+ignoreFiles:
+  - .git/**/*
+  - target/**/*
+  - "**/target/**"
+  - vendor/**/*
+  - symbolizer-ffi/**/*
+  - datadog-ipc/plugins/**/*
+  - datadog-ipc/tarpc/**/*
+  - "**/generated/**"
+  - libdd-trace-protobuf/src/pb.rs
+  - libdd-trace-protobuf/src/pb.idx.rs

@@ -2,6 +2,14 @@
 
 
 
+## [5.1.1](https://github.com/datadog/libdatadog/compare/libdd-trace-protobuf-v5.1.0..libdd-trace-protobuf-v5.1.1) - 2026-10-23
+
+### Changed
+
+- Fix last doc lints ([#2694](https://github.com/datadog/libdatadog/issues/2694)) - ([3e4a453](https://github.com/datadog/libdatadog/commit/3e4a4532fb7f79eebfb6daef022a2d0c6772a560))
+
+
+
 ## [5.1.0](https://github.com/datadog/libdatadog/compare/libdd-trace-protobuf-v5.0.1..libdd-trace-protobuf-v5.1.0) - 2026-10-02
 
 ### Changed

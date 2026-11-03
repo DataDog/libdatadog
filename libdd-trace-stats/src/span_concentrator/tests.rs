@@ -1226,6 +1226,460 @@ fn test_base_service_peer_tag() {
     );
 }
 
+/// Test peer-tag selection by span kind, mirroring the Go trace-agent:
+/// the base-service fallback applies only to absent/empty/internal kinds, server and unknown
+/// kinds never get peer tags, and the original kind casing is preserved in the aggregation key.
+#[test]
+fn test_base_service_peer_tag_kind_selection() {
+    let now = SystemTime::now();
+    let measured = &[("_dd.measured", 1.0)];
+    let mut spans = vec![
+        // Absent kind with a non-empty base service: fallback applies.
+        // Kind and resource deliberately shared with the next span where only the
+        // base-service value differs: different non-empty base services must separate buckets.
+        get_test_span_with_meta(
+            now,
+            1,
+            0,
+            100,
+            5,
+            "A1",
+            "op",
+            0,
+            &[("_dd.base_service", "svc-a"), ("db.instance", "i-1234")],
+            measured,
+        ),
+        // Empty kind with a different non-empty base service: same span kind (empty),
+        // different peer tag, so it stays in its own group.
+        get_test_span_with_meta(
+            now,
+            2,
+            0,
+            20,
+            5,
+            "A1",
+            "op",
+            0,
+            &[
+                ("span.kind", ""),
+                ("_dd.base_service", "svc-b"),
+                ("db.instance", "i-1234"),
+            ],
+            measured,
+        ),
+        // Explicit internal kind: fallback applies, other configured keys are ignored.
+        get_test_span_with_meta(
+            now,
+            3,
+            0,
+            30,
+            5,
+            "A1",
+            "op",
+            0,
+            &[
+                ("span.kind", "internal"),
+                ("_dd.base_service", "svc-a"),
+                ("db.instance", "i-1234"),
+            ],
+            measured,
+        ),
+        // Mixed-case internal kind: selected case-insensitively, casing preserved in the key.
+        get_test_span_with_meta(
+            now,
+            4,
+            0,
+            40,
+            5,
+            "A1",
+            "op",
+            0,
+            &[
+                ("span.kind", "InTeRnAl"),
+                ("_dd.base_service", "svc-a"),
+                ("db.instance", "i-1234"),
+            ],
+            measured,
+        ),
+        // Internal kind with an empty base-service value: no peer tags.
+        get_test_span_with_meta(
+            now,
+            5,
+            0,
+            50,
+            5,
+            "A1",
+            "op",
+            0,
+            &[
+                ("span.kind", "internal"),
+                ("_dd.base_service", ""),
+                ("db.instance", "i-1234"),
+            ],
+            measured,
+        ),
+        // Internal kind with a missing base service: no peer tags, and it merges with the
+        // empty-value span above since both yield no peer tags.
+        get_test_span_with_meta(
+            now,
+            6,
+            0,
+            60,
+            5,
+            "A1",
+            "op",
+            0,
+            &[("span.kind", "internal"), ("db.instance", "i-1234")],
+            measured,
+        ),
+        // Server span: never gets peer tags, even with a base service and configured keys.
+        get_test_span_with_meta(
+            now,
+            7,
+            0,
+            70,
+            5,
+            "A1",
+            "op",
+            0,
+            &[
+                ("span.kind", "server"),
+                ("_dd.base_service", "svc-a"),
+                ("db.instance", "i-1234"),
+            ],
+            measured,
+        ),
+        // Mixed-case server span: no peer tags either, casing preserved in the key.
+        get_test_span_with_meta(
+            now,
+            8,
+            0,
+            80,
+            5,
+            "A1",
+            "op",
+            0,
+            &[
+                ("span.kind", "SERVER"),
+                ("_dd.base_service", "svc-a"),
+                ("db.instance", "i-1234"),
+            ],
+            measured,
+        ),
+        // Unknown kind: no peer tags.
+        get_test_span_with_meta(
+            now,
+            9,
+            0,
+            90,
+            5,
+            "A1",
+            "op",
+            0,
+            &[
+                ("span.kind", "gateway"),
+                ("_dd.base_service", "svc-a"),
+                ("db.instance", "i-1234"),
+            ],
+            measured,
+        ),
+        // Client span: uses configured peer tags only; _dd.base_service is not appended.
+        get_test_span_with_meta(
+            now,
+            10,
+            0,
+            110,
+            5,
+            "A1",
+            "op",
+            0,
+            &[
+                ("span.kind", "client"),
+                ("_dd.base_service", "ignored-for-client"),
+                ("db.instance", "i-1234"),
+            ],
+            measured,
+        ),
+    ];
+    compute_top_level_span(spans.as_mut_slice());
+
+    let mut concentrator = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        get_span_kinds(),
+        vec!["db.instance".to_string()],
+        None,
+        vec![],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
+    );
+
+    for span in &spans {
+        concentrator.add_span(span);
+    }
+
+    let flushtime =
+        now + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
+
+    let expected = vec![
+        // Absent kind, base service svc-a.
+        pb::ClientGroupedStats {
+            service: "A1".to_string(),
+            resource: "op".to_string(),
+            r#type: "db".to_string(),
+            name: "query".to_string(),
+            peer_tags: vec!["_dd.base_service:svc-a".to_string()],
+            duration: 100,
+            hits: 1,
+            top_level_hits: 1,
+            errors: 0,
+            is_trace_root: pb::Trilean::True.into(),
+            ..Default::default()
+        },
+        // Empty kind, base service svc-b: separated from svc-a by the peer tag.
+        pb::ClientGroupedStats {
+            service: "A1".to_string(),
+            resource: "op".to_string(),
+            r#type: "db".to_string(),
+            name: "query".to_string(),
+            peer_tags: vec!["_dd.base_service:svc-b".to_string()],
+            duration: 20,
+            hits: 1,
+            top_level_hits: 1,
+            errors: 0,
+            is_trace_root: pb::Trilean::True.into(),
+            ..Default::default()
+        },
+        // Internal kind, base service svc-a.
+        pb::ClientGroupedStats {
+            service: "A1".to_string(),
+            resource: "op".to_string(),
+            r#type: "db".to_string(),
+            name: "query".to_string(),
+            span_kind: "internal".to_string(),
+            peer_tags: vec!["_dd.base_service:svc-a".to_string()],
+            duration: 30,
+            hits: 1,
+            top_level_hits: 1,
+            errors: 0,
+            is_trace_root: pb::Trilean::True.into(),
+            ..Default::default()
+        },
+        // Mixed-case internal kind: own group, casing preserved, fallback still applies.
+        pb::ClientGroupedStats {
+            service: "A1".to_string(),
+            resource: "op".to_string(),
+            r#type: "db".to_string(),
+            name: "query".to_string(),
+            span_kind: "InTeRnAl".to_string(),
+            peer_tags: vec!["_dd.base_service:svc-a".to_string()],
+            duration: 40,
+            hits: 1,
+            top_level_hits: 1,
+            errors: 0,
+            is_trace_root: pb::Trilean::True.into(),
+            ..Default::default()
+        },
+        // Internal kind, empty and missing base service: merged, no peer tags.
+        pb::ClientGroupedStats {
+            service: "A1".to_string(),
+            resource: "op".to_string(),
+            r#type: "db".to_string(),
+            name: "query".to_string(),
+            span_kind: "internal".to_string(),
+            duration: 110,
+            hits: 2,
+            top_level_hits: 2,
+            errors: 0,
+            is_trace_root: pb::Trilean::True.into(),
+            ..Default::default()
+        },
+        // Server span: no peer tags despite base service and configured keys.
+        pb::ClientGroupedStats {
+            service: "A1".to_string(),
+            resource: "op".to_string(),
+            r#type: "db".to_string(),
+            name: "query".to_string(),
+            span_kind: "server".to_string(),
+            duration: 70,
+            hits: 1,
+            top_level_hits: 1,
+            errors: 0,
+            is_trace_root: pb::Trilean::True.into(),
+            ..Default::default()
+        },
+        // Mixed-case server span: no peer tags, casing preserved.
+        pb::ClientGroupedStats {
+            service: "A1".to_string(),
+            resource: "op".to_string(),
+            r#type: "db".to_string(),
+            name: "query".to_string(),
+            span_kind: "SERVER".to_string(),
+            duration: 80,
+            hits: 1,
+            top_level_hits: 1,
+            errors: 0,
+            is_trace_root: pb::Trilean::True.into(),
+            ..Default::default()
+        },
+        // Unknown kind: no peer tags.
+        pb::ClientGroupedStats {
+            service: "A1".to_string(),
+            resource: "op".to_string(),
+            r#type: "db".to_string(),
+            name: "query".to_string(),
+            span_kind: "gateway".to_string(),
+            duration: 90,
+            hits: 1,
+            top_level_hits: 1,
+            errors: 0,
+            is_trace_root: pb::Trilean::True.into(),
+            ..Default::default()
+        },
+        // Client span: configured peer tags only, base service not appended.
+        pb::ClientGroupedStats {
+            service: "A1".to_string(),
+            resource: "op".to_string(),
+            r#type: "db".to_string(),
+            name: "query".to_string(),
+            span_kind: "client".to_string(),
+            peer_tags: vec!["db.instance:i-1234".to_string()],
+            duration: 110,
+            hits: 1,
+            top_level_hits: 1,
+            errors: 0,
+            is_trace_root: pb::Trilean::True.into(),
+            ..Default::default()
+        },
+    ];
+
+    let stats = concentrator.flush(flushtime, false).all_buckets();
+    assert_counts_equal(
+        expected,
+        stats
+            .first()
+            .expect("There should be at least one time bucket")
+            .stats
+            .clone(),
+    );
+}
+
+/// Test that an empty configured peer-key list suppresses every peer tag, including the
+/// _dd.base_service fallback and the configured-key extraction for client spans.
+#[test]
+fn test_base_service_peer_tag_empty_key_list() {
+    let now = SystemTime::now();
+    let measured = &[("_dd.measured", 1.0)];
+    let mut spans = vec![
+        // Internal spans with differing base services: must merge (no peer tags at all).
+        get_test_span_with_meta(
+            now,
+            1,
+            0,
+            100,
+            5,
+            "A1",
+            "op",
+            0,
+            &[
+                ("span.kind", "internal"),
+                ("_dd.base_service", "svc-a"),
+                ("db.instance", "i-1234"),
+            ],
+            measured,
+        ),
+        get_test_span_with_meta(
+            now,
+            2,
+            0,
+            50,
+            5,
+            "A1",
+            "op",
+            0,
+            &[
+                ("span.kind", "internal"),
+                ("_dd.base_service", "svc-b"),
+                ("db.instance", "i-1234"),
+            ],
+            measured,
+        ),
+        // Client span: configured extraction is disabled too.
+        get_test_span_with_meta(
+            now,
+            3,
+            0,
+            75,
+            5,
+            "A1",
+            "op",
+            0,
+            &[("span.kind", "client"), ("db.instance", "i-1234")],
+            measured,
+        ),
+    ];
+    compute_top_level_span(spans.as_mut_slice());
+
+    let mut concentrator = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        get_span_kinds(),
+        vec![],
+        None,
+        vec![],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
+    );
+
+    for span in &spans {
+        concentrator.add_span(span);
+    }
+
+    let flushtime =
+        now + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
+
+    let expected = vec![
+        // Both internal spans merge despite differing base services: no peer tags.
+        pb::ClientGroupedStats {
+            service: "A1".to_string(),
+            resource: "op".to_string(),
+            r#type: "db".to_string(),
+            name: "query".to_string(),
+            span_kind: "internal".to_string(),
+            duration: 150,
+            hits: 2,
+            top_level_hits: 2,
+            errors: 0,
+            is_trace_root: pb::Trilean::True.into(),
+            ..Default::default()
+        },
+        // Client span: no peer tags either.
+        pb::ClientGroupedStats {
+            service: "A1".to_string(),
+            resource: "op".to_string(),
+            r#type: "db".to_string(),
+            name: "query".to_string(),
+            span_kind: "client".to_string(),
+            duration: 75,
+            hits: 1,
+            top_level_hits: 1,
+            errors: 0,
+            is_trace_root: pb::Trilean::True.into(),
+            ..Default::default()
+        },
+    ];
+
+    let stats = concentrator.flush(flushtime, false).all_buckets();
+    assert_counts_equal(
+        expected,
+        stats
+            .first()
+            .expect("There should be at least one time bucket")
+            .stats
+            .clone(),
+    );
+}
+
 #[test]
 fn test_compute_stats_for_span_kind() {
     let test_cases: Vec<(SpanSlice, bool)> = vec![

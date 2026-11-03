@@ -6,7 +6,7 @@ use std::alloc::Layout;
 use std::borrow::Borrow;
 use std::ffi::c_void;
 use std::marker::PhantomData;
-use std::mem::MaybeUninit;
+use std::mem::{MaybeUninit, align_of};
 use std::ops::Deref;
 use std::ptr::NonNull;
 use std::{fmt, hash, ptr};
@@ -14,7 +14,14 @@ use std::{fmt, hash, ptr};
 const USIZE_WIDTH: usize = core::mem::size_of::<usize>();
 
 /// A struct which acts like a thin slice reference. It does this by storing
-// the length of the slice just before the elements of the slice.
+/// the length of the slice just before the elements of the slice.
+///
+/// # Invariants
+///
+/// The allocation backing is `[u8]`-like, laid out directly after the 8-byte (native-endian) length
+/// (see [`Self::layout_for`]). Consequently, `T` must have an alignment of 1 so that we can safely
+/// create references. This is enforced at compile time in [`Self::layout_for`], which every safe
+/// construction and deallocation path goes through.
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct ThinSlice<'a, T: Copy> {
@@ -261,6 +268,16 @@ impl<'a, T: Copy> ThinSlice<'a, T> {
 
     /// Computes the layout for a slice of the given length.
     pub fn layout_for(slice: &[T]) -> Result<Layout, AllocError> {
+        // The backing allocation is laid out with alignment 1 and the data starts right after the
+        // 8-byte size prefix, so `T` with alignment > 1 would make the `&[T]` and `&InlineSlice<T>`
+        // references produced by this type misaligned (undefined behavior).
+        const {
+            assert!(
+                align_of::<T>() == 1,
+                "ThinSlice<T> requires T to have alignment 1"
+            )
+        }
+
         let len = slice.len();
         let element_size = core::mem::size_of::<T>();
         let data_size = len.checked_mul(element_size).ok_or(AllocError)?;
@@ -321,6 +338,8 @@ impl<'a, T: Copy> ThinSlice<'a, T> {
     ///
     /// The caller must ensure that `spare_capacity` has enough space for the slice
     /// as determined by [`Self::layout_for`].
+    ///
+    /// Like every [`ThinSlice`], `T` must have alignment 1.
     pub unsafe fn from_slice_in_unchecked(
         slice: &[T],
         spare_capacity: &'a mut [MaybeUninit<u8>],
@@ -490,8 +509,14 @@ impl hash::Hash for ThinStr<'_> {
     }
 }
 
-impl<'a> From<ThinSlice<'a, u8>> for ThinStr<'a> {
-    fn from(inner: ThinSlice<'a, u8>) -> Self {
+impl<'a> ThinStr<'a> {
+    /// Creates a [`ThinStr`] from a [`ThinSlice`] of bytes without checking
+    /// that the bytes are valid UTF-8.
+    ///
+    /// # Safety
+    ///
+    /// The bytes of `inner` must be valid UTF-8.
+    pub unsafe fn from_utf8_unchecked(inner: ThinSlice<'a, u8>) -> Self {
         ThinStr { inner }
     }
 }

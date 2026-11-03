@@ -152,7 +152,7 @@ fn next_section_id() -> u64 {
     // Seed from monotonic time so reused PIDs do not repeat names still held by a sidecar.
     // Zero is reserved for an empty named-section index.
     static NEXT: LazyLock<AtomicU64> =
-        LazyLock::new(|| AtomicU64::new(libdd_common::rate_limiter::now().max(1)));
+        LazyLock::new(|| AtomicU64::new(crate::rate_limiter::now().max(1)));
     NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
