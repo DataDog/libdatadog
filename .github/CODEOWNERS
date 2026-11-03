@@ -19,11 +19,8 @@ ruby/README.md                                  @DataDog/apm-common-components-c
 /docs/                                          @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 /examples/                                      @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 benchmark/                                      @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
-build-common/                                   @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
-/builder/                                       @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 cmake/                                          @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 /windows/                                       @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
-tools/                                          @DataDog/apm-common-components-core
 scripts/check_cargo_metadata.sh                 @DataDog/apm-common-components-core
 scripts/check_crypto_providers.sh               @DataDog/apm-common-components-core
 scripts/commits-since-release.sh                @DataDog/apm-common-components-core
@@ -65,7 +62,10 @@ scripts/Dockerfile.license                      @DataDog/apm-common-components-c
 /libdd-trace-stats/                             @DataDog/apm-common-components-core
 /libdd-trace-utils/                             @DataDog/apm-common-components-core
 /libdd-tracer-flare/                            @DataDog/apm-common-components-core
+/tools/                                         @DataDog/apm-common-components-core
 /libdd-common*/                                 @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
+/builder/                                       @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
+/build-common/                                  @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 /libdd-profiling*/                              @DataDog/libdatadog-profiling
 /libdd-alloc/                                   @DataDog/libdatadog-profiling
 /symbolizer-ffi/                                @DataDog/libdatadog-profiling
@@ -115,17 +115,78 @@ CONTRIBUTING.md                                 @DataDog/apm-common-components-c
 flake.*                                         @DataDog/nix-guild @DataDog/apm-common-components-core
 
 # ── 3. Supporting architecture — co-owned by the libdatadog team ──
-Cargo.toml                                      @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
-Cargo.lock                                      @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
-CHANGELOG.md                                    @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
-build.rs                                        @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
-tests/                                          @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
-benches/                                        @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
+/Cargo.toml                                     @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
+/Cargo.lock                                     @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
+/tests/                                         @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 
 # ── Crate code rules under a supporting directory (below the
 #    general tests/ rule), then family blocks restoring crate owners ──
 /tests/spawn_from_lib/                          @DataDog/libdatadog-php @DataDog/apm-common-components-core-reviewers
 /tests/wasm/                                    @DataDog/libdatadog-profiling @DataDog/serverless @DataDog/apm-common-components-core-reviewers
+/libdd-process-utils/Cargo.toml                 @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
+/libdd-process-utils/tests/                     @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
+/libdd-agent-client/Cargo.toml                  @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
+/libdd-agent-client/tests/                      @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
+/libdd-capabilities*/Cargo.toml                 @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
+/libdd-capabilities*/CHANGELOG.md               @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
+/libdd-data-pipeline*/Cargo.toml                @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
+/libdd-data-pipeline*/CHANGELOG.md              @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
+/libdd-data-pipeline*/build.rs                  @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
+/libdd-data-pipeline*/tests/                    @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
+/libdd-data-pipeline*/benches/                  @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
+/libdd-ddsketch*/Cargo.toml                     @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
+/libdd-ddsketch*/CHANGELOG.md                   @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
+/libdd-ddsketch*/build.rs                       @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
+/libdd-ddsketch*/benches/                       @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
+/libdd-dogstatsd-client/Cargo.toml              @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
+/libdd-dogstatsd-client/CHANGELOG.md            @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
+/libdd-http-client/Cargo.toml                   @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
+/libdd-http-client/CHANGELOG.md                 @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
+/libdd-http-client/tests/                       @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
+/libdd-log*/Cargo.toml                          @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
+/libdd-log*/CHANGELOG.md                        @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
+/libdd-log*/build.rs                            @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
+/libdd-otel-thread-ctx*/Cargo.toml              @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
+/libdd-otel-thread-ctx*/CHANGELOG.md            @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
+/libdd-otel-thread-ctx*/build.rs                @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
+/libdd-otel-thread-ctx*/tests/                  @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
+/libdd-sampling/Cargo.toml                      @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
+/libdd-sampling/CHANGELOG.md                    @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
+/libdd-sampling/benches/                        @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
+/libdd-shared-runtime*/Cargo.toml               @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
+/libdd-shared-runtime*/CHANGELOG.md             @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
+/libdd-shared-runtime*/build.rs                 @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
+/libdd-telemetry*/Cargo.toml                    @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
+/libdd-telemetry*/CHANGELOG.md                  @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
+/libdd-telemetry*/build.rs                      @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
+/libdd-tinybytes/Cargo.toml                     @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
+/libdd-tinybytes/CHANGELOG.md                   @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
+/libdd-trace-model/Cargo.toml                   @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
+/libdd-trace-model/CHANGELOG.md                 @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
+/libdd-trace-normalization/Cargo.toml           @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
+/libdd-trace-normalization/CHANGELOG.md         @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
+/libdd-trace-normalization/benches/             @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
+/libdd-trace-obfuscation/Cargo.toml             @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
+/libdd-trace-obfuscation/CHANGELOG.md           @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
+/libdd-trace-obfuscation/tests/                 @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
+/libdd-trace-obfuscation/benches/               @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
+/libdd-trace-stats/Cargo.toml                   @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
+/libdd-trace-stats/CHANGELOG.md                 @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
+/libdd-trace-stats/benches/                     @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
+/libdd-trace-utils/Cargo.toml                   @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
+/libdd-trace-utils/CHANGELOG.md                 @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
+/libdd-trace-utils/tests/                       @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
+/libdd-trace-utils/benches/                     @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
+/libdd-tracer-flare/Cargo.toml                  @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
+/libdd-tracer-flare/CHANGELOG.md                @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
+/libdd-tracer-flare/tests/                      @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
+/tools/Cargo.toml                               @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
+/libdd-common*/Cargo.toml                       @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
+/libdd-common*/CHANGELOG.md                     @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
+/libdd-common*/build.rs                         @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
+/libdd-common*/tests/                           @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
+/builder/Cargo.toml                             @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
+/build-common/Cargo.toml                        @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
 /libdd-profiling*/Cargo.toml                    @DataDog/libdatadog-profiling @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
 /libdd-profiling*/CHANGELOG.md                  @DataDog/libdatadog-profiling @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
 /libdd-profiling*/build.rs                      @DataDog/libdatadog-profiling @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers

@@ -71,11 +71,10 @@ infra:
   CONTRIBUTING.md /README.md ruby/README.md /docs/ /examples/
 
 # build and packaging infrastructure
+# (builder, build-common and tools are workspace members; they are listed
+# as crates below to get per-file supporting rules)
 infra:
-  benchmark/ build-common/ /builder/ cmake/ /windows/
-
-infra core:
-  tools/
+  benchmark/ cmake/ /windows/
 
 # nix
 infra nix core:
@@ -117,10 +116,11 @@ crate core:
   libdd-log* libdd-otel-thread-ctx* libdd-sampling libdd-shared-runtime*
   libdd-telemetry* libdd-tinybytes libdd-trace-model libdd-trace-normalization
   libdd-trace-obfuscation libdd-trace-stats libdd-trace-utils libdd-tracer-flare
+  tools
 
-# libdd-common is co-owned by the guild even for code
+# builder, build-common and libdd-common are co-owned by the guild even for code
 crate core guild:
-  libdd-common*
+  libdd-common* builder build-common
 
 crate prof:
   libdd-profiling* libdd-alloc symbolizer-ffi datadog-profiling-replayer
