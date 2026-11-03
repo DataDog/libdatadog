@@ -7,6 +7,7 @@ mod agentless;
 mod fetcher;
 #[cfg(not(target_arch = "wasm32"))]
 mod multitarget;
+mod registry;
 #[cfg(not(target_arch = "wasm32"))]
 mod shared;
 mod single;

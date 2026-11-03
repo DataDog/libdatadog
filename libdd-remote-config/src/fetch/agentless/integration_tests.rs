@@ -859,7 +859,7 @@ async fn test_tampered_target_bytes_are_rejected() {
     );
 
     // Nothing must have been stored.
-    assert!(state.target_files_by_path.lock().unwrap().is_empty());
+    assert!(state.registry.is_empty());
 }
 
 /// Feed a response whose raw bytes for a target have the wrong length.
@@ -900,7 +900,7 @@ async fn test_target_length_mismatch_is_rejected() {
         msg.contains("bad length for file"),
         "expected a length-mismatch error, got: {msg}"
     );
-    assert!(state.target_files_by_path.lock().unwrap().is_empty());
+    assert!(state.registry.is_empty());
 }
 
 /// The director publishes a target whose path is not covered by any config
@@ -960,7 +960,7 @@ async fn test_director_target_not_in_config_delegations_is_rejected() {
         "expected an unauthorized-target error, got: {msg}"
     );
     // The authorized sibling must NOT have been cached: apply() is all-or-nothing.
-    assert!(state.target_files_by_path.lock().unwrap().is_empty());
+    assert!(state.registry.is_empty());
 }
 
 /// Director and config both authorize the same path, but their signed
@@ -1026,7 +1026,7 @@ async fn test_director_config_length_disagreement_is_rejected() {
         msg.contains("length mismatch between director and config"),
         "expected a director/config length-mismatch error, got: {msg}"
     );
-    assert!(state.target_files_by_path.lock().unwrap().is_empty());
+    assert!(state.registry.is_empty());
 }
 
 /// Director and config agree on hash algorithms and content length but the
@@ -1092,7 +1092,7 @@ async fn test_director_config_hash_value_disagreement_is_rejected() {
         msg.contains("hash set mismatch"),
         "expected a director/config hash-value mismatch error, got: {msg}"
     );
-    assert!(state.target_files_by_path.lock().unwrap().is_empty());
+    assert!(state.registry.is_empty());
 }
 
 // ---- org UUID tests -----------------------------------------------------
@@ -1337,18 +1337,16 @@ fn test_shared_state_stores_new_version_as_new_file() {
         .lock()
         .store_batch([new_target(path, 1, b"v1")])
         .unwrap();
-    let parsed: RemoteConfigPath = RemoteConfigPath::parse(path).unwrap();
-    let old = state.target_files_by_path.lock().unwrap()[&parsed]
-        .handle
-        .clone();
+    let old = state.registry.entries()[0].file.clone();
 
     cache
         .lock()
         .store_batch([new_target(path, 2, b"v2")])
         .unwrap();
-    let new = state.target_files_by_path.lock().unwrap()[&parsed]
-        .handle
-        .clone();
+    let entries = state.registry.entries();
+    assert_eq!(entries.len(), 2, "both versions are kept");
+    assert!(Arc::ptr_eq(&entries[0].file, &old));
+    let new = entries[1].file.clone();
 
     assert!(!Arc::ptr_eq(&old, &new), "new version must be a new file");
     assert_eq!(*old, (1, 1), "held version is untouched");
@@ -1369,22 +1367,25 @@ fn test_single_state_stores_new_version_as_new_file() {
     let path = "datadog/2/APM_TRACING/cfgid/config";
     let parsed: RemoteConfigPath = RemoteConfigPath::parse(path).unwrap();
     let handle = || {
-        state.target_files_by_path.lock().unwrap()[&parsed]
-            .handle
-            .clone()
+        let entries = state.registry.entries();
+        assert_eq!(entries.len(), 1, "only the held version is kept");
+        entries[0].file.clone()
+    };
+    // Like apply(): store the new versions, then keep only the active ones.
+    let cycle = |version: u64, content: &[u8]| {
+        let mut files = cache.lock();
+        files
+            .store_batch([new_target(path, version, content)])
+            .unwrap();
+        let hash = format!("hash-{version}");
+        files.retain_only([(&parsed, hash.as_str(), content.len() as u64)]);
     };
 
-    cache
-        .lock()
-        .store_batch([new_target(path, 1, b"v1")])
-        .unwrap();
+    cycle(1, b"v1");
     assert_eq!(*handle(), (1, 1));
     let old = Arc::downgrade(&handle());
 
-    cache
-        .lock()
-        .store_batch([new_target(path, 2, b"v2")])
-        .unwrap();
+    cycle(2, b"v2");
     let new = handle();
 
     assert_eq!(*new, (2, 2), "the new version is a new file");
@@ -1558,13 +1559,12 @@ async fn test_target_without_version_rejects_the_update() {
     let mut client_state = ConfigClientState::default();
     let stored = || {
         let mut paths: Vec<String> = state
-            .target_files_by_path
-            .lock()
-            .unwrap()
-            .keys()
-            .map(|p| p.to_string())
+            .registry
+            .entries()
+            .into_iter()
+            .map(|entry| entry.path)
             .collect();
-        paths.sort();
+        paths.dedup();
         paths
     };
 

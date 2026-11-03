@@ -3,6 +3,9 @@
 
 #[cfg(feature = "agentless")]
 use super::agentless;
+use super::registry::FileRegistry;
+#[cfg(not(target_arch = "wasm32"))]
+use super::registry::RegistryGuard;
 #[cfg(not(target_arch = "wasm32"))]
 use super::shared::RefcountedFile;
 
@@ -24,8 +27,6 @@ use sha2::{Digest, Sha256, Sha512};
 use std::collections::HashSet;
 use std::marker::PhantomData;
 use std::ops::Add;
-#[cfg(not(target_arch = "wasm32"))]
-use std::sync::MutexGuard;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tracing::{debug, trace, warn};
@@ -65,16 +66,6 @@ impl ConfigInvariants {
     pub fn agentless_enabled(&self) -> bool {
         self.agentless.is_some()
     }
-}
-
-pub(crate) struct StoredTargetFile<S> {
-    pub(crate) hash: String,
-    pub(crate) handle: Arc<S>,
-    /// The version of the file. The apply state of a version belongs to each client holding it,
-    /// see [`ConfigClientState`].
-    pub(crate) version: u64,
-    pub(crate) meta: TargetFileMeta,
-    pub(crate) expiring: bool,
 }
 
 pub enum ConfigApplyState {
@@ -121,8 +112,8 @@ impl ConfigProductCapabilities {
 }
 
 pub struct ConfigFetcherState<S, C: HttpClientCapability + SleepCapability> {
-    pub(in crate::fetch) target_files_by_path:
-        Mutex<HashMap<Arc<RemoteConfigPath>, StoredTargetFile<S>>>,
+    /// The file versions stored under these invariants. Shared on rebind.
+    pub(in crate::fetch) registry: Arc<FileRegistry<S>>,
     pub invariants: ConfigInvariants,
     endpoint: Endpoint,
     pub expire_unused_files: bool,
@@ -147,34 +138,22 @@ impl Add for ConfigFetcherStateStats {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub struct ConfigFetcherFilesLock<'a, S> {
-    inner: MutexGuard<'a, HashMap<Arc<RemoteConfigPath>, StoredTargetFile<S>>>,
+    inner: RegistryGuard<'a, S>,
 }
 
-// A path's entry may already hold a newer version than the file being expired: these only act on
-// the entry if it still holds that very file.
+// Several versions of a path may be stored: these only act on the version which is that very
+// file.
 #[cfg(not(target_arch = "wasm32"))]
 impl<S: RefcountedFile> ConfigFetcherFilesLock<'_, S> {
     /// Actually remove the file from the known files.
     /// It may only be expired if already marked as expiring.
     pub fn expire_file(&mut self, file: &Arc<S>) {
-        let path = &file.refcount().path;
-        if let Some(target_file) = self.inner.get(path) {
-            if !target_file.expiring || !Arc::ptr_eq(&target_file.handle, file) {
-                return;
-            }
-        } else {
-            return;
-        }
-        self.inner.remove(path);
+        self.inner.expire(&file.refcount().path, file);
     }
 
     /// Stop advertising the file as known. It's the predecessor to expire_file().
     pub fn mark_expiring(&mut self, file: &Arc<S>) {
-        if let Some(target_file) = self.inner.get_mut(&file.refcount().path)
-            && Arc::ptr_eq(&target_file.handle, file)
-        {
-            target_file.expiring = true;
-        }
+        self.inner.mark_expiring(&file.refcount().path, file);
     }
 }
 
@@ -196,7 +175,7 @@ impl<S, C: HttpClientCapability + SleepCapability> ConfigFetcherState<S, C> {
             None => (make_agent_configs_endpoint(&invariants.endpoint), None),
         };
         ConfigFetcherState {
-            target_files_by_path: Default::default(),
+            registry: Default::default(),
             endpoint,
             invariants: ConfigInvariants {
                 agentless,
@@ -216,13 +195,13 @@ impl<S, C: HttpClientCapability + SleepCapability> ConfigFetcherState<S, C> {
     pub fn files_lock(&self) -> ConfigFetcherFilesLock<'_, S> {
         assert!(!self.expire_unused_files);
         ConfigFetcherFilesLock {
-            inner: self.target_files_by_path.lock_or_panic(),
+            inner: self.registry.lock(),
         }
     }
 
     pub fn stats(&self) -> ConfigFetcherStateStats {
         ConfigFetcherStateStats {
-            active_files: self.target_files_by_path.lock_or_panic().len() as u32,
+            active_files: self.registry.paths(),
         }
     }
 }
@@ -579,17 +558,7 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
             process_tags,
         } = (*target).clone();
 
-        let mut cached_target_files = vec![];
-        {
-            let target_files = self.state.target_files_by_path.lock_or_panic();
-            for StoredTargetFile { meta, expiring, .. } in target_files.values() {
-                // The agent rejects the whole request if a cached file has a length below 1.
-                // Not advertising empty files only makes the agent resend their empty body.
-                if !expiring && meta.length > 0 {
-                    cached_target_files.push(meta.clone());
-                }
-            }
-        }
+        let cached_target_files = self.state.registry.advertise();
         let config_states = client_state.holdings.states();
         let extra_services = client_state.extra_services.clone();
 
@@ -675,7 +644,7 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
             if status == StatusCode::NOT_FOUND {
                 trace!("Requested remote config and but remote config not active");
                 if self.state.expire_unused_files {
-                    self.state.target_files_by_path.lock_or_panic().clear();
+                    self.state.registry.clear();
                 }
                 let previous = client_state.holdings.take();
                 client_state.targets_version = 0;
@@ -720,7 +689,7 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
                  reporting all configurations as removed"
             );
             if self.state.expire_unused_files {
-                self.state.target_files_by_path.lock_or_panic().clear();
+                self.state.registry.clear();
             }
             let previous = client_state.holdings.take();
             // Holding nothing, the client must not claim the targets it had: the agent would
@@ -779,11 +748,6 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
             .map(|f| (f.path.as_str(), f.raw.as_slice()))
             .collect();
 
-        // This lock must be held continuously at least between the existence check
-        // (target_files.get()) and the insertion later on. Makes more sense to just hold it
-        // continuously
-        let mut target_files = self.state.target_files_by_path.lock_or_panic();
-
         let mut config_paths: HashSet<RemoteConfigPath> = HashSet::new();
         for path in response.client_configs.iter() {
             match RemoteConfigPath::try_parse(path) {
@@ -794,15 +758,23 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
             }
         }
 
-        // Files no longer listed are expired once the response is committed; until then, they
-        // must be ignored.
-        let expire_unused_files = self.state.expire_unused_files;
-        let kept = |path: &RemoteConfigPath| !expire_unused_files || config_paths.contains(path);
+        // The registry stays locked until the response is committed, so that fetchers sharing it
+        // never store the same version twice.
+        let mut registry = self.state.registry.lock();
 
         // Like the Go client, an error in any file rejects the whole update: it is reported to the
         // agent with the next request and, as the client keeps its targets version, the agent
         // resends the targets.
-        let mut version_changes = vec![];
+        //
+        // Each listed config resolves to a stored version, found by (path, hash, length) as the
+        // agent identifies it, or to a new version whose body this response carries.
+        struct Resolved<F> {
+            path: Arc<RemoteConfigPath>,
+            file: Arc<F>,
+            hash: String,
+            version: u64,
+        }
+        let mut resolved = vec![];
         let mut new_files = vec![];
         struct NewFile<'a> {
             path: &'a str,
@@ -827,27 +799,35 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
                 warn!("Found a target file without hashes at path {path}");
                 continue;
             };
-            let parsed_path = match RemoteConfigPath::try_parse(path) {
-                Ok(parsed_path) => parsed_path,
+            let parsed_path: RemoteConfigPath = match RemoteConfigPath::try_parse(path) {
+                Ok(parsed_path) => parsed_path.into(),
                 Err(e) => {
                     warn!("Failed parsing remote config path: {path} - {e:?}");
                     continue;
                 }
             };
-            let stored = target_files
-                .get_key_value(&parsed_path)
-                .filter(|(path, _)| kept(path))
-                .map(|(_, stored)| stored);
-            if let Some(stored) = stored
-                && stored.hash == hash
-            {
-                if let Some(version) = target_file.try_parse_version() {
-                    version_changes.push((parsed_path, version));
-                }
+            if !config_paths.contains(&parsed_path) {
+                // Not meant for this client.
+                continue;
+            }
+            let length = u64::from(target_file.length);
+            if let Some((parsed_path, file)) = registry.lookup(&parsed_path, hash, length) {
+                // Already stored, possibly under another version: like the Go client, a
+                // version-only change is reported without handing out a new file. A client served
+                // an older version than the newest one stored reuses it, if still alive.
+                let Some(version) = target_file.try_parse_version() else {
+                    anyhow::bail!("Failed parsing version from remote config path {path}");
+                };
+                resolved.push(Resolved {
+                    path: parsed_path,
+                    file,
+                    hash: hash.to_string(),
+                    version,
+                });
                 continue;
             }
             let Some(raw_file) = incoming_files.get(path) else {
-                // If the file isn't there, it's not meant for us.
+                // Not stored, and no body: caught by the client_configs check below.
                 continue;
             };
             let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(raw_file) else {
@@ -860,13 +840,21 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
                     file hash {hash} for path {path}"
                 );
             }
+            // The stored version is found by the length the targets give it.
+            if decoded.len() as u64 != length {
+                anyhow::bail!(
+                    "Length of file {} did not match remote config targets file length {length} \
+                     for path {path}",
+                    decoded.len()
+                );
+            }
             let Some(version) = target_file.try_parse_version() else {
                 anyhow::bail!("Failed parsing version from remote config path {path}");
             };
             debug!("Fetched new remote config file at path {path} targeting {target:?}");
             new_files.push(NewFile {
                 path,
-                parsed_path: Arc::new(parsed_path.into()),
+                parsed_path: Arc::new(parsed_path),
                 target_file,
                 decoded,
                 computed_hash,
@@ -874,10 +862,10 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
             });
         }
 
-        // A listed config must be either held already, or carried by this response.
+        // A listed config must be either stored already, or carried by this response.
         for config in config_paths.iter() {
-            if !target_files.contains_key(config)
-                && !new_files.iter().any(|f| f.path == config.as_str())
+            if !resolved.iter().any(|f| *f.path == *config)
+                && !new_files.iter().any(|f| *f.parsed_path == *config)
             {
                 anyhow::bail!("Found {config} in client_configs response, but it isn't stored.");
             }
@@ -885,8 +873,9 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
 
         // Commit. Only storing files can still fail. Every new version is stored as a new file,
         // without being referenced anywhere yet: should one fail, the handles created so far are
-        // dropped, which releases them, and nothing else has changed. A previous version of the
-        // same path is never modified; it is released once nothing references it anymore.
+        // dropped, which releases them, and nothing else has changed. Other versions of the same
+        // path are never modified nor replaced; each is released once nothing references it
+        // anymore.
         let mut stored_files = Vec::with_capacity(new_files.len());
         for mut file in new_files {
             let decoded = std::mem::take(&mut file.decoded);
@@ -899,18 +888,6 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
         }
 
         // Nothing can fail from here on.
-        if expire_unused_files {
-            target_files.retain(|k, _| config_paths.contains(k.as_ref()));
-        }
-        for (path, version) in version_changes {
-            if let Some(stored) = target_files.get_mut(&path) {
-                // Like the Go client, report a version-only change without handing out a new
-                // file. Each client keeps the apply outcome of the unchanged contents (see
-                // ClientHoldings::replace); clients still holding the previous version keep
-                // reporting it until their own next fetch.
-                stored.version = version;
-            }
-        }
         for (
             NewFile {
                 path,
@@ -924,44 +901,54 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
             handle,
         ) in stored_files
         {
-            target_files.insert(
-                parsed_path.clone(),
-                StoredTargetFile {
-                    hash: computed_hash,
-                    version,
-                    meta: TargetFileMeta {
-                        path: path.to_string(),
-                        length,
-                        hashes: target_file
-                            .hashes
-                            .iter()
-                            .map(|(algorithm, hash)| TargetFileHash {
-                                algorithm: algorithm.to_string(),
-                                hash: hash.to_string(),
-                            })
-                            .collect(),
-                    },
-                    handle,
-                    expiring: false,
-                },
-            );
+            let meta = TargetFileMeta {
+                path: path.to_string(),
+                length,
+                hashes: target_file
+                    .hashes
+                    .iter()
+                    .map(|(algorithm, hash)| TargetFileHash {
+                        algorithm: algorithm.to_string(),
+                        hash: hash.to_string(),
+                    })
+                    .collect(),
+            };
+            let (path, file) =
+                registry.insert(parsed_path, computed_hash.clone(), meta, version, handle);
+            resolved.push(Resolved {
+                path,
+                file,
+                hash: computed_hash,
+                version,
+            });
         }
 
-        let mut held = Vec::with_capacity(config_paths.len());
-        for config in config_paths.iter() {
-            if let Some((path, target_file)) = target_files.get_key_value_mut(config) {
-                target_file.expiring = false;
-                held.push((
-                    HeldFile {
-                        path: path.clone(),
-                        version: target_file.version,
-                        file: target_file.handle.clone(),
-                    },
-                    target_file.hash.clone(),
-                ));
-            }
+        // Each client holds the version its own response names: clients still holding a previous
+        // version keep reporting it until their own next fetch. Each keeps the apply outcome of
+        // unchanged contents (see ClientHoldings::replace).
+        let mut held = Vec::with_capacity(resolved.len());
+        for Resolved {
+            path,
+            file,
+            hash,
+            version,
+        } in resolved
+        {
+            registry.hold(&path, &file, version);
+            held.push((
+                HeldFile {
+                    path,
+                    version,
+                    file,
+                },
+                hash,
+            ));
         }
-        drop(target_files);
+        // The only client using the registry no longer needs what it doesn't hold.
+        if self.state.expire_unused_files {
+            registry.retain_held(held.iter().map(|(held, _)| &held.file));
+        }
+        drop(registry);
 
         client_state.root_version = root_version;
         client_state.targets_version = targets_list.signed.version as u64;
@@ -1126,6 +1113,8 @@ pub mod tests {
         pub files: Mutex<HashMap<Arc<RemoteConfigPath>, Arc<Mutex<DataStore>>>>,
         /// Storing this path fails.
         pub fail_path: Mutex<Option<RemoteConfigPath>>,
+        /// The number of files stored.
+        pub stores: std::sync::atomic::AtomicUsize,
     }
 
     impl Storage {
@@ -1172,6 +1161,8 @@ pub mod tests {
             contents: Vec<u8>,
         ) -> anyhow::Result<Arc<Self::StoredFile>> {
             self.check_failure(&path)?;
+            self.stores
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let data = Arc::new(Mutex::new(DataStore {
                 version,
                 contents: String::from_utf8(contents).unwrap(),
@@ -1997,15 +1988,12 @@ pub mod tests {
             files
         };
         let known_files = || {
-            let mut files: Vec<_> = state
-                .target_files_by_path
-                .lock()
-                .unwrap()
-                .iter()
-                .map(|(p, f)| (p.to_string(), f.hash.clone(), f.expiring))
-                .collect();
-            files.sort();
-            files
+            state
+                .registry
+                .entries()
+                .into_iter()
+                .map(|e| (e.path, e.hash, e.version, e.expiring))
+                .collect::<Vec<_>>()
         };
         let files_before = stored_files(&storage);
         let known_before = known_files();
@@ -2233,6 +2221,91 @@ pub mod tests {
             Arc::ptr_eq(&fetched[0], &newest[0]),
             "the lagging client gets the already stored newest version"
         );
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn lagging_client_served_old_version_reuses_it() {
+        let server = RemoteConfigServer::spawn();
+        server.files.lock().unwrap().insert(
+            PATH_FIRST.clone(),
+            (vec![DUMMY_TARGET.clone()], 1, "v1".to_string()),
+        );
+
+        let storage = Arc::new(Storage::default());
+        let mut state = ConfigFetcherState::with_client(
+            server.dummy_options().invariants,
+            NativeCapabilities::new_periodic(),
+        );
+        state.expire_unused_files = false;
+        let mut fetcher = ConfigFetcher::new(storage.clone(), Arc::new(state))
+            .await
+            .unwrap();
+        let capabilities = server.dummy_product_capabilities();
+        let mut up_to_date = ConfigClientState::default();
+        let mut lagging = ConfigClientState::default();
+        let mut fetch = async |client_state: &mut ConfigClientState<PathStore>| {
+            fetcher
+                .fetch_once(
+                    DUMMY_RUNTIME_ID,
+                    &DUMMY_TARGET,
+                    &capabilities,
+                    "foo",
+                    client_state,
+                )
+                .await
+                .unwrap()
+        };
+
+        let v1 = fetch(&mut lagging).await.unwrap();
+        fetch(&mut up_to_date).await.unwrap();
+        server.files.lock().unwrap().insert(
+            PATH_FIRST.clone(),
+            (vec![DUMMY_TARGET.clone()], 2, "v2".to_string()),
+        );
+        let v2 = fetch(&mut up_to_date).await.unwrap();
+        assert_eq!(v2[0].data.lock().unwrap().contents, "v2");
+        let stores = storage.stores.load(std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(stores, 2);
+
+        // The lagging client is served v1 again, as by an agent whose cache is behind. As v2 is
+        // what it advertises, the response carries the body of v1.
+        server.files.lock().unwrap().insert(
+            PATH_FIRST.clone(),
+            (vec![DUMMY_TARGET.clone()], 1, "v1".to_string()),
+        );
+        let served = fetch(&mut lagging).await.unwrap();
+        assert_eq!(served.len(), 1);
+        assert!(
+            Arc::ptr_eq(&served[0], &v1[0]),
+            "the stored v1, still alive, is reused"
+        );
+        assert_eq!(
+            storage.stores.load(std::sync::atomic::Ordering::Relaxed),
+            stores,
+            "v1 is not stored again"
+        );
+
+        // It neither replaced v2, which the next request still advertises.
+        server.files.lock().unwrap().insert(
+            PATH_FIRST.clone(),
+            (vec![DUMMY_TARGET.clone()], 2, "v2".to_string()),
+        );
+        fetch(&mut up_to_date).await;
+        let req = server.last_request.lock().unwrap();
+        assert_eq!(
+            req.as_ref().unwrap().cached_target_files,
+            [TargetFileMeta {
+                path: PATH_FIRST.to_string(),
+                length: 2,
+                hashes: vec![TargetFileHash {
+                    algorithm: "sha256".to_string(),
+                    hash: format!("{:x}", Sha256::digest("v2")),
+                }],
+            }],
+            "the newest version is still the one advertised"
+        );
+        assert!(Arc::ptr_eq(&v2[0], &up_to_date.holdings.take()[0].file));
     }
 
     #[tokio::test]

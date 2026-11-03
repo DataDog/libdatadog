@@ -8,8 +8,8 @@ use crate::fetch::{
 use crate::file_change_tracker::{Change, changes};
 use crate::{RemoteConfigCapabilities, RemoteConfigPath, RemoteConfigProduct, Target};
 use libdd_capabilities::{HttpClientCapability, SleepCapability};
-use libdd_common::{Endpoint, MutexExt};
-use std::sync::{Arc, Mutex};
+use libdd_common::Endpoint;
+use std::sync::Arc;
 use std::time::Duration;
 
 const DEFAULT_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
@@ -121,9 +121,7 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> SingleFetcher<S,
         }
         let mut state = ConfigFetcherState::with_client(invariants, previous.http_client.clone());
         state.expire_unused_files = previous.expire_unused_files;
-        state.target_files_by_path = Mutex::new(std::mem::take(
-            &mut *previous.target_files_by_path.lock_or_panic(),
-        ));
+        state.registry = previous.registry.clone();
 
         let mut client_state = ConfigClientState::default();
         carried.extend(previous_client_state.holdings.take());
