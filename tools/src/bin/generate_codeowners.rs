@@ -8,20 +8,22 @@
 //! per-crate lines. This tool owns that expansion; the .in file only
 //! declares data:
 //!
-//!   team <alias> <@handle>        team aliases used everywhere below
-//!   supporting <kinds...>         file kinds co-owned with the libdatadog team
-//!   manifest <kinds...>           supporting kinds that also carry the release team
-//!   co-owners <teams...>           the libdatadog team co-owning supporting files
-//!   release <teams...>            teams added on manifest kinds
-//!   infra-default <teams...>      default owners for infra blocks without teams
+//! ```text
+//! team <alias> <@handle>        team aliases used everywhere below
+//! supporting <kinds...>         file kinds co-owned with the libdatadog team
+//! manifest <kinds...>           supporting kinds that also carry the release team
+//! co-owners <teams...>          the libdatadog team co-owning supporting files
+//! release <teams...>            teams added on manifest kinds
+//! infra-default <teams...>      default owners for infra blocks without teams
 //!
-//!   infra [teams...]:             repo-wide files; indented lines carry
-//!                                 patterns, several per line, emitted verbatim
-//!   crate [teams...]:             crates; code owned by the teams, supporting
-//!                                 files co-owned per policy. A team prefixed
-//!                                 with "+" (e.g. +crev) owns code only and is
-//!                                 left off the supporting-file co-ownership
-//!   exception [teams...]:         overrides, emitted last
+//! infra [teams...]:             repo-wide files; indented lines carry
+//!                               patterns, several per line, emitted verbatim
+//! crate [teams...]:             crates; code owned by the teams, supporting
+//!                               files co-owned per policy. A team prefixed
+//!                               with "+" (e.g. +crev) owns code only and is
+//!                               left off the supporting-file co-ownership
+//! exception [teams...]:         overrides, emitted last
+//! ```
 //!
 //! Emission order (in CODEOWNERS, order is semantics):
 //!
@@ -35,7 +37,10 @@
 //!      owners are a subset of the co-owners (the core-owned ones) need nothing more, so no family
 //!      block is emitted
 //!   5. code rules for crates under a supporting directory, then one family block per remaining
-//!      crate: owners + co-owners, plus release on manifest kinds
+//!      crate: owners + co-owners, plus release on manifest kinds. Family-block rules are emitted
+//!      only for kinds that exist in the working tree, so no pattern matches zero files (GitHub's
+//!      CODEOWNERS validator rejects those); the CI `--check` forces a regeneration when such files
+//!      are added or removed
 //!   6. exceptions
 
 use anyhow::{Context, Result, bail, ensure};
@@ -47,7 +52,7 @@ use nom::combinator::{all_consuming, map, rest};
 use nom::multi::{many0, separated_list1};
 use nom::sequence::{preceded, tuple};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 const PAD: usize = 47;
@@ -256,6 +261,11 @@ fn validate(m: &Model) -> Result<()> {
     for b in m.blocks.iter().filter(|b| b.kind == BlockKind::Crate) {
         for p in &b.patterns {
             ensure!(seen.insert(p.as_str()), "duplicate crate pattern {p:?}");
+            let literal = p.trim_end_matches('*');
+            ensure!(
+                !literal.contains(['*', '?', '[']),
+                "crate pattern {p:?}: only trailing * globs are supported"
+            );
         }
     }
     Ok(())
@@ -279,7 +289,7 @@ fn rule(m: &Model, pattern: &str, teams: &[&str]) -> Result<String> {
         .to_string())
 }
 
-fn emit(m: &Model) -> Result<String> {
+fn emit(m: &Model, target_exists: &dyn Fn(&str, &str) -> bool) -> Result<String> {
     let co = &m.co_owners;
     let co_set: HashSet<&str> = co.iter().map(String::as_str).collect();
     let supporting = &m.supporting;
@@ -365,6 +375,9 @@ fn emit(m: &Model) -> Result<String> {
         }
         for p in &b.patterns {
             for kind in supporting {
+                if !target_exists(p, kind) {
+                    continue; // rule would match no file; the validator rejects those
+                }
                 let mut ts = owners.clone();
                 ts.extend(co.iter().map(String::as_str));
                 if m.manifest.contains(kind.as_str()) {
@@ -399,7 +412,27 @@ fn run(check: bool) -> Result<()> {
     let text = std::fs::read_to_string(&in_path)
         .with_context(|| format!("reading {}", in_path.display()))?;
     let model = parse(&text)?;
-    let generated = emit(&model)?;
+    // Resolve crate patterns against the working tree up front: each must
+    // match at least one directory, and family-block rules are emitted only
+    // for supporting files that exist (GitHub's CODEOWNERS validator rejects
+    // patterns that match no file).
+    let mut dirs_by_pattern: BTreeMap<String, Vec<PathBuf>> = BTreeMap::new();
+    for b in model.blocks.iter().filter(|b| b.kind == BlockKind::Crate) {
+        for p in &b.patterns {
+            let dirs = pattern_dirs(root, p)?;
+            ensure!(
+                !dirs.is_empty(),
+                "crate pattern {p:?} matches no directory in the repository"
+            );
+            dirs_by_pattern.insert(p.clone(), dirs);
+        }
+    }
+    let target_exists = |pattern: &str, kind: &str| {
+        dirs_by_pattern
+            .get(pattern)
+            .is_some_and(|dirs| kind_exists(dirs, kind))
+    };
+    let generated = emit(&model, &target_exists)?;
     if check {
         let current = std::fs::read_to_string(&out_path)
             .with_context(|| format!("reading {}", out_path.display()))?;
@@ -429,6 +462,55 @@ fn main() -> ExitCode {
             eprintln!("generate_codeowners: {e:#}");
             ExitCode::FAILURE
         }
+    }
+}
+
+/// Crate patterns are root-relative paths whose components are literal names
+/// or trailing-`*` globs (libdd-profiling*, tools/sidecar_mockgen). Returns
+/// the repository directories a pattern expands to.
+fn pattern_dirs(root: &Path, pattern: &str) -> Result<Vec<PathBuf>> {
+    let mut dirs = vec![root.to_path_buf()];
+    for comp in pattern.split('/') {
+        ensure!(
+            !comp.is_empty(),
+            "crate pattern {pattern:?} has an empty path component"
+        );
+        let mut next = Vec::new();
+        for dir in &dirs {
+            for entry in
+                std::fs::read_dir(dir).with_context(|| format!("reading {}", dir.display()))?
+            {
+                let entry = entry.context("reading directory entry")?;
+                let name = entry.file_name();
+                let Some(name) = name.to_str() else { continue };
+                if component_matches(comp, name)
+                    && entry.file_type().context("reading file type")?.is_dir()
+                {
+                    next.push(entry.path());
+                }
+            }
+        }
+        dirs = next;
+    }
+    Ok(dirs)
+}
+
+/// Component match for the only glob crate patterns support: a trailing `*`.
+fn component_matches(comp: &str, name: &str) -> bool {
+    match comp.strip_suffix('*') {
+        Some(prefix) => name.starts_with(prefix),
+        None => comp == name,
+    }
+}
+
+/// Whether `<crate-pattern>/<kind>` matches a real path: file kinds
+/// (Cargo.toml, build.rs) need the file to exist in a matched crate
+/// directory, directory kinds (tests/, benches/) need the directory.
+fn kind_exists(dirs: &[PathBuf], kind: &str) -> bool {
+    if let Some(sub) = kind.strip_suffix('/') {
+        dirs.iter().any(|d| d.join(sub).is_dir())
+    } else {
+        dirs.iter().any(|d| d.join(kind).is_file())
     }
 }
 
@@ -477,7 +559,7 @@ crate b +c:
     #[test]
     fn expands_policy() {
         let model = parse(MINI).expect("mini model parses");
-        let out = emit(&model).expect("mini model emits");
+        let out = emit(&model, &|_, _| true).expect("mini model emits");
         // collapse the alignment padding so assertions stay readable
         let rules: Vec<String> = out
             .lines()
@@ -563,5 +645,40 @@ co-owners a
 ";
         let err = parse(text).expect_err("manifest subset must be checked");
         assert!(err.to_string().contains("manifest kinds not in supporting"));
+    }
+
+    #[test]
+    fn emits_only_kinds_that_exist() {
+        let model = parse(MINI).expect("mini model parses");
+        // only Cargo.toml and tests/ exist for these crates
+        let exists = |_p: &str, k: &str| k == "Cargo.toml" || k == "tests/";
+        let out = emit(&model, &exists).expect("mini model emits");
+        let has = |needle: &str| out.lines().any(|l| l.trim().starts_with(needle));
+
+        assert!(has("/domain-thing/Cargo.toml"));
+        assert!(has("/domain-thing/tests/"));
+        assert!(has("/tests/nested-thing/Cargo.toml"));
+        assert!(!has("/domain-thing/build.rs"));
+        assert!(!has("/domain-thing/Cargo.lock"));
+        assert!(!has("/domain-thing/benches/"));
+    }
+
+    #[test]
+    fn glob_components() {
+        assert!(component_matches("libdd-profiling*", "libdd-profiling-ffi"));
+        assert!(component_matches("bin_tests", "bin_tests"));
+        assert!(!component_matches("libdd-profiling*", "libdd-alloc"));
+        assert!(!component_matches("bin_tests", "bin_tests-ffi"));
+    }
+
+    #[test]
+    fn crate_patterns_resolve_in_the_repo() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("tools/ has a parent");
+        let dirs = pattern_dirs(root, "libdd-profiling*").expect("glob resolves");
+        assert!(dirs.iter().any(|d| d.ends_with("libdd-profiling-ffi")));
+        let none = pattern_dirs(root, "no-such-crate").expect("missing dir is not an error");
+        assert!(none.is_empty());
     }
 }

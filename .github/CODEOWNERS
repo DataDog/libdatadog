@@ -127,127 +127,60 @@ benches/                                        @DataDog/apm-common-components-c
 /tests/spawn_from_lib/                          @DataDog/libdatadog-php @DataDog/apm-common-components-core-reviewers
 /tests/wasm/                                    @DataDog/libdatadog-profiling @DataDog/serverless @DataDog/apm-common-components-core-reviewers
 /libdd-profiling*/Cargo.toml                    @DataDog/libdatadog-profiling @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
-/libdd-profiling*/Cargo.lock                    @DataDog/libdatadog-profiling @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
 /libdd-profiling*/CHANGELOG.md                  @DataDog/libdatadog-profiling @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
 /libdd-profiling*/build.rs                      @DataDog/libdatadog-profiling @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 /libdd-profiling*/tests/                        @DataDog/libdatadog-profiling @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 /libdd-profiling*/benches/                      @DataDog/libdatadog-profiling @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 /libdd-alloc/Cargo.toml                         @DataDog/libdatadog-profiling @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
-/libdd-alloc/Cargo.lock                         @DataDog/libdatadog-profiling @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
 /libdd-alloc/CHANGELOG.md                       @DataDog/libdatadog-profiling @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
-/libdd-alloc/build.rs                           @DataDog/libdatadog-profiling @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
-/libdd-alloc/tests/                             @DataDog/libdatadog-profiling @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
-/libdd-alloc/benches/                           @DataDog/libdatadog-profiling @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 /symbolizer-ffi/Cargo.toml                      @DataDog/libdatadog-profiling @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
-/symbolizer-ffi/Cargo.lock                      @DataDog/libdatadog-profiling @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
-/symbolizer-ffi/CHANGELOG.md                    @DataDog/libdatadog-profiling @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
 /symbolizer-ffi/build.rs                        @DataDog/libdatadog-profiling @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
-/symbolizer-ffi/tests/                          @DataDog/libdatadog-profiling @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
-/symbolizer-ffi/benches/                        @DataDog/libdatadog-profiling @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 /datadog-profiling-replayer/Cargo.toml          @DataDog/libdatadog-profiling @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
-/datadog-profiling-replayer/Cargo.lock          @DataDog/libdatadog-profiling @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
-/datadog-profiling-replayer/CHANGELOG.md        @DataDog/libdatadog-profiling @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
-/datadog-profiling-replayer/build.rs            @DataDog/libdatadog-profiling @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
-/datadog-profiling-replayer/tests/              @DataDog/libdatadog-profiling @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
-/datadog-profiling-replayer/benches/            @DataDog/libdatadog-profiling @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 /libdd-crashtracker*/Cargo.toml                 @DataDog/libdatadog-profiling @DataDog/libdatadog-crashtracking-reviewers @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
-/libdd-crashtracker*/Cargo.lock                 @DataDog/libdatadog-profiling @DataDog/libdatadog-crashtracking-reviewers @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
 /libdd-crashtracker*/CHANGELOG.md               @DataDog/libdatadog-profiling @DataDog/libdatadog-crashtracking-reviewers @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
 /libdd-crashtracker*/build.rs                   @DataDog/libdatadog-profiling @DataDog/libdatadog-crashtracking-reviewers @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 /libdd-crashtracker*/tests/                     @DataDog/libdatadog-profiling @DataDog/libdatadog-crashtracking-reviewers @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 /libdd-crashtracker*/benches/                   @DataDog/libdatadog-profiling @DataDog/libdatadog-crashtracking-reviewers @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 /libdd-gotter/Cargo.toml                        @DataDog/libdatadog-profiling @DataDog/libdatadog-crashtracking-reviewers @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
-/libdd-gotter/Cargo.lock                        @DataDog/libdatadog-profiling @DataDog/libdatadog-crashtracking-reviewers @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
 /libdd-gotter/CHANGELOG.md                      @DataDog/libdatadog-profiling @DataDog/libdatadog-crashtracking-reviewers @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
-/libdd-gotter/build.rs                          @DataDog/libdatadog-profiling @DataDog/libdatadog-crashtracking-reviewers @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 /libdd-gotter/tests/                            @DataDog/libdatadog-profiling @DataDog/libdatadog-crashtracking-reviewers @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
-/libdd-gotter/benches/                          @DataDog/libdatadog-profiling @DataDog/libdatadog-crashtracking-reviewers @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 /bin_tests/Cargo.toml                           @DataDog/libdatadog-profiling @DataDog/libdatadog-crashtracking-reviewers @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
-/bin_tests/Cargo.lock                           @DataDog/libdatadog-profiling @DataDog/libdatadog-crashtracking-reviewers @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
-/bin_tests/CHANGELOG.md                         @DataDog/libdatadog-profiling @DataDog/libdatadog-crashtracking-reviewers @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
 /bin_tests/build.rs                             @DataDog/libdatadog-profiling @DataDog/libdatadog-crashtracking-reviewers @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 /bin_tests/tests/                               @DataDog/libdatadog-profiling @DataDog/libdatadog-crashtracking-reviewers @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
-/bin_tests/benches/                             @DataDog/libdatadog-profiling @DataDog/libdatadog-crashtracking-reviewers @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 /libdd-ipc*/Cargo.toml                          @DataDog/libdatadog-php @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
-/libdd-ipc*/Cargo.lock                          @DataDog/libdatadog-php @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
 /libdd-ipc*/CHANGELOG.md                        @DataDog/libdatadog-php @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
 /libdd-ipc*/build.rs                            @DataDog/libdatadog-php @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 /libdd-ipc*/tests/                              @DataDog/libdatadog-php @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 /libdd-ipc*/benches/                            @DataDog/libdatadog-php @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 /datadog-sidecar-macros/Cargo.toml              @DataDog/libdatadog-php @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
-/datadog-sidecar-macros/Cargo.lock              @DataDog/libdatadog-php @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
-/datadog-sidecar-macros/CHANGELOG.md            @DataDog/libdatadog-php @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
-/datadog-sidecar-macros/build.rs                @DataDog/libdatadog-php @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
-/datadog-sidecar-macros/tests/                  @DataDog/libdatadog-php @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
-/datadog-sidecar-macros/benches/                @DataDog/libdatadog-php @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 /tools/sidecar_mockgen/Cargo.toml               @DataDog/libdatadog-php @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
-/tools/sidecar_mockgen/Cargo.lock               @DataDog/libdatadog-php @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
-/tools/sidecar_mockgen/CHANGELOG.md             @DataDog/libdatadog-php @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
-/tools/sidecar_mockgen/build.rs                 @DataDog/libdatadog-php @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
-/tools/sidecar_mockgen/tests/                   @DataDog/libdatadog-php @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
-/tools/sidecar_mockgen/benches/                 @DataDog/libdatadog-php @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 /libdd-live-debugger*/Cargo.toml                @DataDog/libdatadog-php @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
-/libdd-live-debugger*/Cargo.lock                @DataDog/libdatadog-php @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
 /libdd-live-debugger*/CHANGELOG.md              @DataDog/libdatadog-php @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
 /libdd-live-debugger*/build.rs                  @DataDog/libdatadog-php @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
-/libdd-live-debugger*/tests/                    @DataDog/libdatadog-php @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
-/libdd-live-debugger*/benches/                  @DataDog/libdatadog-php @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 /datadog-sidecar/Cargo.toml                     @DataDog/libdatadog-php @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
-/datadog-sidecar/Cargo.lock                     @DataDog/libdatadog-php @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
-/datadog-sidecar/CHANGELOG.md                   @DataDog/libdatadog-php @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
-/datadog-sidecar/build.rs                       @DataDog/libdatadog-php @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 /datadog-sidecar/tests/                         @DataDog/libdatadog-php @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
-/datadog-sidecar/benches/                       @DataDog/libdatadog-php @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 /datadog-sidecar-ffi/Cargo.toml                 @DataDog/libdatadog-php @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
-/datadog-sidecar-ffi/Cargo.lock                 @DataDog/libdatadog-php @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
-/datadog-sidecar-ffi/CHANGELOG.md               @DataDog/libdatadog-php @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
 /datadog-sidecar-ffi/build.rs                   @DataDog/libdatadog-php @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 /datadog-sidecar-ffi/tests/                     @DataDog/libdatadog-php @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
-/datadog-sidecar-ffi/benches/                   @DataDog/libdatadog-php @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 /spawn_worker/Cargo.toml                        @DataDog/libdatadog-php @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
-/spawn_worker/Cargo.lock                        @DataDog/libdatadog-php @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
-/spawn_worker/CHANGELOG.md                      @DataDog/libdatadog-php @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
 /spawn_worker/build.rs                          @DataDog/libdatadog-php @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 /spawn_worker/tests/                            @DataDog/libdatadog-php @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
-/spawn_worker/benches/                          @DataDog/libdatadog-php @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 /tests/spawn_from_lib/Cargo.toml                @DataDog/libdatadog-php @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
-/tests/spawn_from_lib/Cargo.lock                @DataDog/libdatadog-php @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
-/tests/spawn_from_lib/CHANGELOG.md              @DataDog/libdatadog-php @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
 /tests/spawn_from_lib/build.rs                  @DataDog/libdatadog-php @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 /tests/spawn_from_lib/tests/                    @DataDog/libdatadog-php @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
-/tests/spawn_from_lib/benches/                  @DataDog/libdatadog-php @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 /libdd-remote-config/Cargo.toml                 @DataDog/libdatadog-php @DataDog/remote-config @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
-/libdd-remote-config/Cargo.lock                 @DataDog/libdatadog-php @DataDog/remote-config @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
 /libdd-remote-config/CHANGELOG.md               @DataDog/libdatadog-php @DataDog/remote-config @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
-/libdd-remote-config/build.rs                   @DataDog/libdatadog-php @DataDog/remote-config @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
-/libdd-remote-config/tests/                     @DataDog/libdatadog-php @DataDog/remote-config @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
-/libdd-remote-config/benches/                   @DataDog/libdatadog-php @DataDog/remote-config @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 /libdd-trace-protobuf/Cargo.toml                @DataDog/serverless @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
-/libdd-trace-protobuf/Cargo.lock                @DataDog/serverless @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
 /libdd-trace-protobuf/CHANGELOG.md              @DataDog/serverless @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
 /libdd-trace-protobuf/build.rs                  @DataDog/serverless @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
-/libdd-trace-protobuf/tests/                    @DataDog/serverless @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
-/libdd-trace-protobuf/benches/                  @DataDog/serverless @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 /tests/wasm/Cargo.toml                          @DataDog/libdatadog-profiling @DataDog/serverless @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
-/tests/wasm/Cargo.lock                          @DataDog/libdatadog-profiling @DataDog/serverless @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
-/tests/wasm/CHANGELOG.md                        @DataDog/libdatadog-profiling @DataDog/serverless @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
-/tests/wasm/build.rs                            @DataDog/libdatadog-profiling @DataDog/serverless @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 /tests/wasm/tests/                              @DataDog/libdatadog-profiling @DataDog/serverless @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
-/tests/wasm/benches/                            @DataDog/libdatadog-profiling @DataDog/serverless @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 /libdd-ai-usage/Cargo.toml                      @DataDog/agent-console @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
-/libdd-ai-usage/Cargo.lock                      @DataDog/agent-console @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
-/libdd-ai-usage/CHANGELOG.md                    @DataDog/agent-console @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
-/libdd-ai-usage/build.rs                        @DataDog/agent-console @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 /libdd-ai-usage/tests/                          @DataDog/agent-console @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
-/libdd-ai-usage/benches/                        @DataDog/agent-console @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 /libdd-library-config*/Cargo.toml               @DataDog/apm-sdk-capabilities @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
-/libdd-library-config*/Cargo.lock               @DataDog/apm-sdk-capabilities @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
 /libdd-library-config*/CHANGELOG.md             @DataDog/apm-sdk-capabilities @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
 /libdd-library-config*/build.rs                 @DataDog/apm-sdk-capabilities @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
-/libdd-library-config*/tests/                   @DataDog/apm-sdk-capabilities @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
-/libdd-library-config*/benches/                 @DataDog/apm-sdk-capabilities @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 /libdd-ffe*/Cargo.toml                          @DataDog/feature-flagging-and-experimentation-sdk @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
-/libdd-ffe*/Cargo.lock                          @DataDog/feature-flagging-and-experimentation-sdk @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
 /libdd-ffe*/CHANGELOG.md                        @DataDog/feature-flagging-and-experimentation-sdk @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/libdatadog-release
 /libdd-ffe*/build.rs                            @DataDog/feature-flagging-and-experimentation-sdk @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 /libdd-ffe*/tests/                              @DataDog/feature-flagging-and-experimentation-sdk @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers

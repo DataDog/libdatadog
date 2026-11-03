@@ -102,10 +102,14 @@ infra:
 # ── crates ─────────────────────────────────────────────────────────────────
 # One block per owner set; patterns may be globs over crate families
 # (libdd-profiling* covers libdd-profiling-ffi and the heap crates) or paths
-# (tools/sidecar_mockgen, tests/wasm). A +team (e.g. +crev) reviews code
-# only and is left off supporting files. Crates owned only by the co-owners
-# (the core-owned ones) get no family block: the general supporting rules
-# already produce the right owner sets.
+# (tools/sidecar_mockgen, tests/wasm), with only trailing * globs supported.
+# A +team (e.g. +crev) reviews code only and is left off supporting files.
+# Supporting-file rules are emitted only for files that exist in the repo
+# (GitHub's CODEOWNERS validator rejects patterns that match nothing), so
+# adding or removing a Cargo.toml/CHANGELOG/build.rs/tests/benches requires
+# regenerating. Crates owned only by the co-owners (the core-owned ones) get
+# no family block: the general supporting rules already produce the right
+# owner sets.
 
 crate core:
   libdd-process-utils libdd-agent-client libdd-capabilities*
