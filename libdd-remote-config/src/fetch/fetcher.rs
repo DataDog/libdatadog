@@ -77,7 +77,9 @@ impl ConfigInvariants {
 pub(crate) struct StoredTargetFile<S> {
     pub(crate) hash: String,
     pub(crate) handle: Arc<S>,
-    pub(crate) state: Arc<Mutex<ConfigState>>,
+    /// The version of the file. The apply state of a version belongs to each client holding it,
+    /// see [`ConfigClientState`].
+    pub(crate) version: u64,
     pub(crate) meta: TargetFileMeta,
     pub(crate) expiring: bool,
 }
@@ -225,27 +227,6 @@ impl<S, C: HttpClientCapability + SleepCapability> ConfigFetcherState<S, C> {
         }
     }
 
-    /// Sets the apply state on a stored file.
-    pub fn set_config_state(&self, file: &RemoteConfigPath, state: ConfigApplyState) {
-        if let Some(target_file) = self.target_files_by_path.lock_or_panic().get_mut(file) {
-            let mut target_state = target_file.state.lock_or_panic();
-            match state {
-                ConfigApplyState::Unacknowledged => {
-                    target_state.apply_state = 1;
-                    target_state.apply_error = "".to_string();
-                }
-                ConfigApplyState::Acknowledged => {
-                    target_state.apply_state = 2;
-                    target_state.apply_error = "".to_string();
-                }
-                ConfigApplyState::Error(error) => {
-                    target_state.apply_state = 3;
-                    target_state.apply_error = error;
-                }
-            }
-        }
-    }
-
     pub fn stats(&self) -> ConfigFetcherStateStats {
         ConfigFetcherStateStats {
             active_files: self.target_files_by_path.lock_or_panic().len() as u32,
@@ -266,9 +247,93 @@ pub struct ConfigFetcher<S: FileStorage, C: HttpClientCapability + SleepCapabili
     mode: FetcherMode<C>,
 }
 
+/// The file versions a client holds, one per path, each with the apply state reported for it.
+/// Cloning shares the holdings, so that outcomes can be set while the client fetches.
+#[derive(Clone, Default)]
+pub(crate) struct ClientHoldings(Arc<Mutex<HashMap<RemoteConfigPath, Holding>>>);
+
+struct Holding {
+    /// Hash of the contents of the held version.
+    hash: String,
+    state: ConfigState,
+}
+
+impl ClientHoldings {
+    /// Sets the apply state of the holding at `path`, if it is at `version` (or, if `None`, at
+    /// whichever version is held). Returns whether a holding was updated.
+    pub(crate) fn set(
+        &self,
+        path: &RemoteConfigPath,
+        version: Option<u64>,
+        state: ConfigApplyState,
+    ) -> bool {
+        let mut holdings = self.0.lock_or_panic();
+        let Some(holding) = holdings.get_mut(path) else {
+            debug!("Discarding the apply state of {path} (version {version:?}): not held");
+            return false;
+        };
+        if let Some(version) = version
+            && holding.state.version != version
+        {
+            debug!(
+                "Discarding the apply state of {path} version {version}: version {} is held",
+                holding.state.version
+            );
+            return false;
+        }
+        let (apply_state, apply_error) = match state {
+            ConfigApplyState::Unacknowledged => (1, String::new()),
+            ConfigApplyState::Acknowledged => (2, String::new()),
+            ConfigApplyState::Error(error) => (3, error),
+        };
+        holding.state.apply_state = apply_state;
+        holding.state.apply_error = apply_error;
+        true
+    }
+
+    fn states(&self) -> Vec<ConfigState> {
+        self.0
+            .lock_or_panic()
+            .values()
+            .map(|holding| holding.state.clone())
+            .collect()
+    }
+
+    pub(crate) fn clear(&self) {
+        self.0.lock_or_panic().clear();
+    }
+
+    /// Replaces the holdings by the given (path, version, hash) ones. A version already held
+    /// keeps its apply state, and so does a new version with unchanged contents: like the Go
+    /// client, a version-only change keeps the outcome of applying those contents. Other
+    /// versions start acknowledged.
+    pub(crate) fn replace(&self, held: impl IntoIterator<Item = (RemoteConfigPath, u64, String)>) {
+        let mut holdings = self.0.lock_or_panic();
+        let mut previous = std::mem::take(&mut *holdings);
+        for (path, version, hash) in held {
+            let state = match previous.remove(&path) {
+                Some(Holding { hash: prev, state }) if prev == hash => {
+                    ConfigState { version, ..state }
+                }
+                _ => ConfigState {
+                    id: path.config_id().to_string(),
+                    version,
+                    product: path.product().to_string(),
+                    apply_state: 2, // Acknowledged
+                    apply_error: String::new(),
+                },
+            };
+            holdings.insert(path, Holding { hash, state });
+        }
+    }
+}
+
+/// The state of one client (one client id) of the remote config server. Besides what it reports
+/// to the server, it keeps the file versions the client holds, each with its own apply state:
+/// several clients holding the same version don't share their outcome.
 pub struct ConfigClientState {
     opaque_backend_state: Vec<u8>,
-    last_configs: HashMap<RemoteConfigPath, Arc<Mutex<ConfigState>>>,
+    pub(crate) holdings: ClientHoldings,
     targets_version: u64,
     root_version: u64,
     last_error: Option<String>,
@@ -283,7 +348,7 @@ impl Default for ConfigClientState {
     fn default() -> Self {
         ConfigClientState {
             opaque_backend_state: vec![],
-            last_configs: Default::default(),
+            holdings: Default::default(),
             targets_version: 0,
             root_version: 1,
             last_error: None,
@@ -300,6 +365,29 @@ impl ConfigClientState {
 
     pub fn server_recommended_refresh_interval(&self) -> Option<Duration> {
         self.refresh_interval
+    }
+
+    /// Sets the apply state of the file version this client holds at `path`, reported to the
+    /// server with the following requests. Discarded, returning false, unless the client still
+    /// holds `version` of the file: an outcome never applies to the version which replaced it.
+    pub fn set_config_state(
+        &self,
+        path: &RemoteConfigPath,
+        version: u64,
+        state: ConfigApplyState,
+    ) -> bool {
+        self.holdings.set(path, Some(version), state)
+    }
+
+    /// Sets the apply state of whichever version of the file this client currently holds at
+    /// `path`. Prefer [`Self::set_config_state`] when the outcome may be set after the client
+    /// fetched again: by then it may hold another version.
+    pub fn set_current_config_state(
+        &self,
+        path: &RemoteConfigPath,
+        state: ConfigApplyState,
+    ) -> bool {
+        self.holdings.set(path, None, state)
     }
 }
 
@@ -358,11 +446,6 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
         })
     }
 
-    /// Sets the apply state on a stored file.
-    pub fn set_config_state(&self, file: &RemoteConfigPath, state: ConfigApplyState) {
-        self.state.set_config_state(file, state)
-    }
-
     /// Destructures the fetcher into its file storage and state.
     pub fn into_parts(self) -> (S, Arc<ConfigFetcherState<S::StoredFile, C>>) {
         (self.file_storage, self.state)
@@ -385,8 +468,6 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
         } = (*target).clone();
 
         let mut cached_target_files = vec![];
-        let mut config_states = vec![];
-
         {
             let target_files = self.state.target_files_by_path.lock_or_panic();
             for StoredTargetFile { meta, expiring, .. } in target_files.values() {
@@ -396,11 +477,8 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
                     cached_target_files.push(meta.clone());
                 }
             }
-
-            for state in client_state.last_configs.values() {
-                config_states.push(state.lock_or_panic().clone());
-            }
         }
+        let config_states = client_state.holdings.states();
         let extra_services = client_state.extra_services.clone();
 
         ClientGetConfigsRequest {
@@ -487,7 +565,7 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
                 if self.state.expire_unused_files {
                     self.state.target_files_by_path.lock_or_panic().clear();
                 }
-                client_state.last_configs.clear();
+                client_state.holdings.clear();
                 client_state.targets_version = 0;
                 client_state.opaque_backend_state.clear();
                 return Ok(Some(vec![]));
@@ -529,7 +607,7 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
             if self.state.expire_unused_files {
                 self.state.target_files_by_path.lock_or_panic().clear();
             }
-            client_state.last_configs.clear();
+            client_state.holdings.clear();
             // Holding nothing, the client must not claim the targets it had: the agent would
             // answer that nothing changed, and the configs would never come back.
             client_state.targets_version = 0;
@@ -738,14 +816,10 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
         for (path, version) in version_changes {
             if let Some(stored) = target_files.get_mut(&path) {
                 // Like the Go client, report a version-only change without handing out a new
-                // file, keeping the apply outcome of the unchanged contents. The state is
-                // replaced, not mutated: clients still holding the previous version keep
+                // file. Each client keeps the apply outcome of the unchanged contents (see
+                // ClientHoldings::replace); clients still holding the previous version keep
                 // reporting it until their own next fetch.
-                let mut state = stored.state.lock_or_panic().clone();
-                if state.version != version {
-                    state.version = version;
-                    stored.state = Arc::new(Mutex::new(state));
-                }
+                stored.version = version;
             }
         }
         for (
@@ -765,13 +839,7 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
                 parsed_path.clone(),
                 StoredTargetFile {
                     hash: computed_hash,
-                    state: Arc::new(Mutex::new(ConfigState {
-                        id: parsed_path.config_id().to_string(),
-                        version,
-                        product: parsed_path.product().to_string(),
-                        apply_state: 2, // Acknowledged
-                        apply_error: "".to_string(),
-                    })),
+                    version,
                     meta: TargetFileMeta {
                         path: path.to_string(),
                         length,
@@ -791,19 +859,24 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
         }
 
         let mut configs = Vec::with_capacity(config_paths.len());
-        let mut last_configs = HashMap::with_capacity(config_paths.len());
+        let mut held = Vec::with_capacity(config_paths.len());
         for config in config_paths.iter() {
             if let Some(target_file) = target_files.get_mut(config) {
                 target_file.expiring = false;
                 configs.push(target_file.handle.clone());
-                last_configs.insert(config.clone(), target_file.state.clone());
+                held.push((
+                    config.clone(),
+                    target_file.version,
+                    target_file.hash.clone(),
+                ));
             }
         }
+        drop(target_files);
 
         client_state.root_version = root_version;
         client_state.targets_version = targets_list.signed.version as u64;
         client_state.opaque_backend_state = opaque_backend_state;
-        client_state.last_configs = last_configs;
+        client_state.holdings.replace(held);
         Ok(Some(configs))
     }
 
@@ -866,9 +939,9 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
                 }
                 client_state.last_error = (!res.errors.is_empty()).then(|| res.errors.join("\n"));
 
-                let (configs, last_configs) = cache.lock().collect_handles(&res.targets)?;
+                let (configs, held) = cache.lock().collect_handles(&res.targets)?;
 
-                client_state.last_configs = last_configs;
+                client_state.holdings.replace(held);
                 Ok(Some(configs))
             }
         }
@@ -1504,7 +1577,11 @@ pub mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(first.len(), 1);
-        fetcher.set_config_state(&PATH_FIRST, ConfigApplyState::Error("bad".to_string()));
+        assert!(opaque_state.set_config_state(
+            &PATH_FIRST,
+            1,
+            ConfigApplyState::Error("bad".to_string())
+        ));
         // Another client sharing the fetcher state, which will lag behind.
         let mut lagging_state = ConfigClientState::default();
         fetcher
@@ -1583,21 +1660,25 @@ pub mod tests {
             )
             .await
             .unwrap();
-        let req = server.last_request.lock().unwrap();
-        let states = &req
-            .as_ref()
-            .unwrap()
-            .client
-            .as_ref()
-            .unwrap()
-            .state
-            .as_ref()
-            .unwrap()
-            .config_states;
+        let states = server.reported_config_states();
         assert_eq!(states.len(), 1);
+        assert_eq!(states[0].0, 1, "a lagging client reports what it holds");
+
+        // Having fetched, it reports the new version with its own outcome.
+        fetcher
+            .fetch_once(
+                DUMMY_RUNTIME_ID,
+                &DUMMY_TARGET,
+                &capabilities,
+                "bar",
+                &mut lagging_state,
+            )
+            .await
+            .unwrap();
         assert_eq!(
-            states[0].version, 1,
-            "a lagging client reports what it holds"
+            server.reported_config_states(),
+            [(2, 2, String::new())],
+            "a client keeps its own outcome across a version-only change"
         );
     }
 
@@ -1670,9 +1751,12 @@ pub mod tests {
         );
         assert_eq!(
             opaque_state
-                .last_configs
+                .holdings
+                .0
+                .lock()
+                .unwrap()
                 .iter()
-                .map(|(path, state)| (path.clone(), state.lock().unwrap().version))
+                .map(|(path, holding)| (path.clone(), holding.state.version))
                 .collect::<Vec<_>>(),
             [(PATH_FIRST.clone(), 1)],
             "the client keeps reporting the previous state"

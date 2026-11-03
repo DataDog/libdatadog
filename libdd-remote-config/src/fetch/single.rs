@@ -163,9 +163,23 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> SingleFetcher<S,
         &self.fetcher.file_storage
     }
 
-    /// Sets the apply state on a stored file.
+    /// Sets the apply state of whichever version of the file this client currently holds at
+    /// `file`, reported with the following requests. An outcome set after a later fetch_once()
+    /// applies to the version held then; use [`Self::set_config_state_for_version`] to have it
+    /// discarded if that is not the version the outcome is for.
     pub fn set_config_state(&self, file: &RemoteConfigPath, state: ConfigApplyState) {
-        self.fetcher.set_config_state(file, state)
+        self.client_state.set_current_config_state(file, state);
+    }
+
+    /// Sets the apply state of `version` of the file at `path`, reported with the following
+    /// requests. Discarded, returning false, unless this client still holds that version.
+    pub fn set_config_state_for_version(
+        &self,
+        path: &RemoteConfigPath,
+        version: u64,
+        state: ConfigApplyState,
+    ) -> bool {
+        self.client_state.set_config_state(path, version, state)
     }
 
     /// Update the set of services discovered at runtime
@@ -265,9 +279,25 @@ where
         self.fetcher.get_refresh_interval()
     }
 
-    /// Sets the apply state on a stored file.
+    /// Sets the apply state of whichever version of the file this client currently holds at the
+    /// path of `file`. See [`SingleFetcher::set_config_state`].
     pub fn set_config_state(&self, file: &S::StoredFile, state: ConfigApplyState) {
         self.fetcher.set_config_state(file.path(), state)
+    }
+
+    /// Sets the apply state of `version` of `file`; discarded, returning false, unless this
+    /// client still holds that version. Files may be updated in place by later fetches (see
+    /// [`FileStorage::update`]): pass the version the outcome was computed for (e.g.
+    /// [`crate::file_storage::RawFile::version`] read along with the contents), not the one the
+    /// file has once the outcome is known.
+    pub fn set_config_state_for_version(
+        &self,
+        file: &S::StoredFile,
+        version: u64,
+        state: ConfigApplyState,
+    ) -> bool {
+        self.fetcher
+            .set_config_state_for_version(file.path(), version, state)
     }
 
     /// See [`SingleFetcher::set_extra_services`].
@@ -292,6 +322,67 @@ mod tests {
     use crate::fetch::test_server::RemoteConfigServer;
     use crate::file_storage::SimpleFileStorage;
     use libdd_capabilities_impl::NativeCapabilities;
+
+    /// The apply state set for the version held is reported with the next request; once the file
+    /// was replaced by a new version, a late outcome for the previous one is discarded.
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn apply_state_is_kept_for_the_version_held() {
+        let server = RemoteConfigServer::spawn();
+        let target = Target::new(
+            "service".to_string(),
+            "env".to_string(),
+            "1.2.3".to_string(),
+            vec![],
+            vec![],
+        );
+        let path = RemoteConfigPath::parse("employee/APM_TRACING/state/config").unwrap();
+        server.files.lock().unwrap().insert(
+            path.clone(),
+            (vec![Arc::new(target.clone())], 1, "v1".to_string()),
+        );
+        let mut fetcher = SingleFetcher::new_no_agentless(
+            SimpleFileStorage::default(),
+            target.clone(),
+            "runtime-id".to_string(),
+            server.dummy_options(),
+            NativeCapabilities::new_periodic(),
+        );
+
+        fetcher.fetch_once().await.unwrap().unwrap();
+        fetcher.set_config_state(&path, ConfigApplyState::Error("bad".to_string()));
+        fetcher.fetch_once().await.unwrap();
+        assert_eq!(server.reported_config_states(), [(1, 3, "bad".to_string())]);
+        assert!(fetcher.set_config_state_for_version(
+            &path,
+            1,
+            ConfigApplyState::Error("worse".to_string())
+        ));
+        fetcher.fetch_once().await.unwrap();
+        assert_eq!(
+            server.reported_config_states(),
+            [(1, 3, "worse".to_string())]
+        );
+
+        server
+            .files
+            .lock()
+            .unwrap()
+            .insert(path.clone(), (vec![Arc::new(target)], 2, "v2".to_string()));
+        fetcher.fetch_once().await.unwrap().unwrap();
+        // The outcome of applying v1 arrives once the client already holds v2.
+        assert!(!fetcher.set_config_state_for_version(
+            &path,
+            1,
+            ConfigApplyState::Error("late".to_string())
+        ));
+        fetcher.fetch_once().await.unwrap();
+        assert_eq!(
+            server.reported_config_states(),
+            [(2, 2, String::new())],
+            "the outcome for v1 must not land on v2"
+        );
+    }
 
     #[tokio::test]
     #[cfg_attr(miri, ignore)]

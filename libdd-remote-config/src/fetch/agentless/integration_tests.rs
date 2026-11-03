@@ -1452,6 +1452,8 @@ async fn test_agentless_request_reports_config_states() {
         vec![RemoteConfigCapabilities::ApmTracingCustomTags],
     );
     let mut client_state = ConfigClientState::default();
+    // Shared with client_state, which the polls borrow.
+    let holdings = client_state.holdings.clone();
     let mut poll = async |fetcher: &mut ConfigFetcher<NoopStorage, MockHttp>| {
         fetcher
             .fetch_once("rt", &target, &capabilities, "client", &mut client_state)
@@ -1463,7 +1465,11 @@ async fn test_agentless_request_reports_config_states() {
     assert_eq!(poll(&mut fetcher).await.len(), 1);
     poll(&mut fetcher).await;
     let parsed = RemoteConfigPath::parse(path).unwrap();
-    fetcher.set_config_state(&parsed, ConfigApplyState::Error("boom".to_string()));
+    assert!(holdings.set(
+        &parsed,
+        Some(1),
+        ConfigApplyState::Error("boom".to_string())
+    ));
     poll(&mut fetcher).await;
 
     let config_states = |i: usize| {

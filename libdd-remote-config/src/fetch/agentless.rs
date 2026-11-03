@@ -1231,7 +1231,7 @@ mod cache {
     use hashbrown::HashMap;
     use libdd_capabilities::{HttpClientCapability, SleepCapability};
     use libdd_common::MutexExt as _;
-    use libdd_trace_protobuf::remoteconfig::{ConfigState, TargetFileHash, TargetFileMeta};
+    use libdd_trace_protobuf::remoteconfig::{TargetFileHash, TargetFileMeta};
 
     /// Wrapper over the shared [`ConfigFetcherState::target_files_by_path`]
     /// map giving `AgentlessFetcher::apply` a set of small, self-contained
@@ -1257,8 +1257,8 @@ mod cache {
         expire_unused_files: bool,
     }
 
-    /// Apply state of each file version handed to a client, by path.
-    pub(crate) type CollectedStates = HashMap<RemoteConfigPath, Arc<Mutex<ConfigState>>>;
+    /// The (path, version, hash) of each file version handed to a client.
+    pub(crate) type CollectedVersions = Vec<(RemoteConfigPath, u64, String)>;
 
     impl<'a, S: FileStorage> TargetCache<'a, S> {
         pub(crate) fn new<C: HttpClientCapability + SleepCapability>(
@@ -1337,13 +1337,7 @@ mod cache {
                 };
                 let file = StoredTargetFile {
                     hash: primary_hash,
-                    state: Arc::new(std::sync::Mutex::new(ConfigState {
-                        id: path.config_id().to_string(),
-                        version,
-                        product: path.product().to_string(),
-                        apply_state: 2, // Acknowledged
-                        apply_error: String::new(),
-                    })),
+                    version,
                     meta: TargetFileMeta {
                         path: path.to_string(),
                         length,
@@ -1371,14 +1365,13 @@ mod cache {
 
         /// Collect `Arc<S::StoredFile>` handles for every target in `targets`, verifying
         /// stored hash and length match, and marking each entry as non-expiring. Also
-        /// returns the apply state of each collected file version, to be reported in the
-        /// client's `config_states`.
+        /// returns each collected file version, which the client then holds.
         pub(crate) fn collect_handles(
             &mut self,
             targets: &[ClientTargetRef],
-        ) -> anyhow::Result<(Vec<Arc<S::StoredFile>>, CollectedStates)> {
+        ) -> anyhow::Result<(Vec<Arc<S::StoredFile>>, CollectedVersions)> {
             let mut handles = Vec::with_capacity(targets.len());
-            let mut states = HashMap::with_capacity(targets.len());
+            let mut held = Vec::with_capacity(targets.len());
             for target in targets {
                 let stored = self.files.get_mut(&target.path).ok_or_else(|| {
                     anyhow::format_err!(
@@ -1406,9 +1399,9 @@ mod cache {
                 }
                 stored.expiring = false;
                 handles.push(stored.handle.clone());
-                states.insert(target.path.clone(), stored.state.clone());
+                held.push((target.path.clone(), stored.version, stored.hash.clone()));
             }
-            Ok((handles, states))
+            Ok((handles, held))
         }
     }
 }
