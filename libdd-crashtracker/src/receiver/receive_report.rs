@@ -581,8 +581,10 @@ fn attach_additional_files(
         let opened: std::io::Result<std::fs::File> = if restricted {
             #[cfg(unix)]
             {
-                libdd_common::unix_utils::open_regular_for_read(std::path::Path::new(filename))
-                    .map_err(std::io::Error::from)
+                libdd_process_utils::unix_utils::open_regular_for_read(std::path::Path::new(
+                    filename,
+                ))
+                .map_err(std::io::Error::from)
             }
             #[cfg(not(unix))]
             {

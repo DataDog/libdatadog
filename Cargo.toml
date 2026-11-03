@@ -42,6 +42,7 @@ members = [
   "libdd-capabilities-impl",
   "libdd-common",
   "libdd-common-ffi",
+  "libdd-process-utils",
   "libdd-telemetry",
   "libdd-telemetry-ffi",
   "tools",

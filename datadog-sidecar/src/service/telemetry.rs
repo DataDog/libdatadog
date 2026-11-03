@@ -571,8 +571,8 @@ impl TelemetryCachedClient {
             let opened = async {
                 let file = {
                     #[cfg(unix)]
-                    if libdd_common::unix_utils::worker_file_outputs_restricted() {
-                        libdd_common::unix_utils::open_regular_for_read(&path)
+                    if libdd_process_utils::unix_utils::worker_file_outputs_restricted() {
+                        libdd_process_utils::unix_utils::open_regular_for_read(&path)
                             .map(tokio::fs::File::from_std)
                             .map_err(std::io::Error::from)
                     } else {
