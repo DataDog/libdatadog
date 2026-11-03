@@ -109,13 +109,14 @@ const MAX_FLUSH_WAIT_ITERS: u32 = 100_000;
 const YIELD_AFTER_SPINS: u32 = 8;
 /// Max iterations `add` spends waiting on slots that are marked as being written. One
 /// budget for the whole call, so the worst case does not scale with the table's size.
+/// Once exhausted, a wall-clock fallback ([`WRITER_TIMEOUT`]) takes over so that an
+/// OS-preempted writer is not mistaken for a dead one.
 const MAX_SLOT_WAIT_ITERS: u32 = 10_000;
-/// Wall-clock deadline for waiting on [`Room::Pending`], i.e. for another writer to commit
-/// or release its room reservation. Unlike the slot-write wait, the pending writer needs
-/// actual CPU time (it may be OS-preempted on another core), so an iteration count cannot
-/// bound the real wait. A wall-clock deadline avoids false `OverLimit` when the holder is
-/// merely preempted, while still bounding the wait for a genuinely dead writer.
-const ROOM_PENDING_TIMEOUT: Duration = Duration::from_millis(100);
+/// Wall-clock fallback for waiting on a concurrent writer after the spin budget
+/// ([`MAX_SLOT_WAIT_ITERS`]) is exhausted. Covers `SLOT_INIT` waits, `Room::Pending`
+/// waits, and CAS-failure retries. These are all cases where another writer needs CPU
+/// time that an iteration count cannot guarantee. Shared across the whole `insert` call.
+const WRITER_TIMEOUT: Duration = Duration::from_millis(100);
 
 /// What the slots of one kind of table hold, and how inputs reach them.
 ///
@@ -551,6 +552,22 @@ fn wait_for_slot(waits: &mut u32) -> bool {
     true
 }
 
+/// Wait for a concurrent writer to finish. Uses [`wait_for_slot`] (spin + yield) as a fast
+/// path, then falls back to a wall-clock deadline ([`WRITER_TIMEOUT`]) so that an
+/// OS-preempted writer is not mistaken for a dead one
+fn wait_for_writer(waits: &mut u32, deadline: &mut Option<Instant>) -> bool {
+    if wait_for_slot(waits) {
+        return true;
+    }
+    // Spin budget exhausted. The writer may be OS-preempted; switch to a wall-clock
+    let deadline = deadline.get_or_insert_with(|| Instant::now() + WRITER_TIMEOUT);
+    if Instant::now() >= *deadline {
+        return false;
+    }
+    thread::yield_now();
+    true
+}
+
 /// Bump-allocate `s` in the pool, returning an empty reference if it does not fit.
 ///
 /// `cursor` lives in the mapping, so a peer can set it to anything; a forged value can only
@@ -902,7 +919,7 @@ impl<S: Schema> ShmTableMapping<S> {
         // a peer performs once, and in the sidecar this runs on the IPC handler's own thread.
         // Past the budget the probe keeps looking but stops waiting; an input is lost, not the
         // caller. The budget spans the whole call, so it also bounds a table poisoned throughout.
-        let mut room_pending_deadline: Option<Instant> = None;
+        let mut writer_deadline: Option<Instant> = None;
         for _ in 0..slots {
             let entry = &bucket.entries[slot];
 
@@ -916,15 +933,8 @@ impl<S: Schema> ShmTableMapping<S> {
                                 Room::Taken => {}
                                 // The writer holding the last room may be about to fill this
                                 // very slot with this very key: look again once it had a chance.
-                                // Uses a wall-clock deadline (not the slot-write iteration
-                                // budget) because the pending writer needs CPU time and may
-                                // be OS-preempted.
                                 Room::Pending => {
-                                    let deadline = room_pending_deadline.get_or_insert_with(|| {
-                                        Instant::now() + ROOM_PENDING_TIMEOUT
-                                    });
-                                    if Instant::now() < *deadline {
-                                        thread::yield_now();
+                                    if wait_for_writer(waits, &mut writer_deadline) {
                                         continue;
                                     }
                                     // A writer holding room past the deadline is likely dead.
@@ -958,12 +968,12 @@ impl<S: Schema> ShmTableMapping<S> {
                         if limit.is_some() {
                             bucket.hdr.release_room();
                         }
-                        if !wait_for_slot(waits) {
+                        if !wait_for_writer(waits, &mut writer_deadline) {
                             break;
                         }
                     }
                     SLOT_INIT => {
-                        if !wait_for_slot(waits) {
+                        if !wait_for_writer(waits, &mut writer_deadline) {
                             break;
                         }
                     }
