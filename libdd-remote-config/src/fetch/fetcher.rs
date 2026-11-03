@@ -610,16 +610,22 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
                     continue;
                 }
             };
-            let handle = if let Some(StoredTargetFile {
-                hash: old_hash,
-                handle,
-                ..
-            }) = target_files.get(&parsed_path)
-            {
-                if old_hash == hash {
+            let handle = if let Some(stored) = target_files.get_mut(&parsed_path) {
+                if stored.hash == hash {
+                    // Like the Go client, report a version-only change without handing out
+                    // a new file, keeping the apply outcome of the unchanged contents. The
+                    // state is replaced, not mutated: clients still holding the previous
+                    // version keep reporting it until their own next fetch.
+                    if let Some(version) = target_file.try_parse_version() {
+                        let mut state = stored.state.lock_or_panic().clone();
+                        if state.version != version {
+                            state.version = version;
+                            stored.state = Arc::new(Mutex::new(state));
+                        }
+                    }
                     continue;
                 }
-                Some(handle.clone())
+                Some(stored.handle.clone())
             } else {
                 None
             };
@@ -1371,6 +1377,137 @@ pub mod tests {
         assert!(
             cached.iter().any(|f| f.path == PATH_SECOND.to_string()),
             "non-empty files are still advertised: {cached:?}"
+        );
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn test_version_only_change_is_reported() {
+        let server = RemoteConfigServer::spawn();
+        server.files.lock().unwrap().insert(
+            PATH_FIRST.clone(),
+            (vec![DUMMY_TARGET.clone()], 1, "same".to_string()),
+        );
+
+        let storage = Arc::new(Storage::default());
+        let mut fetcher = ConfigFetcher::new(
+            storage.clone(),
+            Arc::new(ConfigFetcherState::with_client(
+                server.dummy_options().invariants,
+                NativeCapabilities::new_periodic(),
+            )),
+        )
+        .await
+        .unwrap();
+        let mut opaque_state = ConfigClientState::default();
+        let capabilities = server.dummy_product_capabilities();
+
+        let first = fetcher
+            .fetch_once(
+                DUMMY_RUNTIME_ID,
+                &DUMMY_TARGET,
+                &capabilities,
+                "foo",
+                &mut opaque_state,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(first.len(), 1);
+        fetcher.set_config_state(&PATH_FIRST, ConfigApplyState::Error("bad".to_string()));
+        // Another client sharing the fetcher state, which will lag behind.
+        let mut lagging_state = ConfigClientState::default();
+        fetcher
+            .fetch_once(
+                DUMMY_RUNTIME_ID,
+                &DUMMY_TARGET,
+                &capabilities,
+                "bar",
+                &mut lagging_state,
+            )
+            .await
+            .unwrap();
+
+        // Only the version changes; the contents (and thus the hash) stay the same.
+        server.files.lock().unwrap().insert(
+            PATH_FIRST.clone(),
+            (vec![DUMMY_TARGET.clone()], 2, "same".to_string()),
+        );
+        let second = fetcher
+            .fetch_once(
+                DUMMY_RUNTIME_ID,
+                &DUMMY_TARGET,
+                &capabilities,
+                "foo",
+                &mut opaque_state,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(second.len(), 1);
+        assert!(
+            Arc::ptr_eq(&first[0], &second[0]),
+            "unchanged contents must not be handed out as a new file"
+        );
+
+        fetcher
+            .fetch_once(
+                DUMMY_RUNTIME_ID,
+                &DUMMY_TARGET,
+                &capabilities,
+                "foo",
+                &mut opaque_state,
+            )
+            .await
+            .unwrap();
+        let states = server
+            .last_request
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .client
+            .as_ref()
+            .unwrap()
+            .state
+            .as_ref()
+            .unwrap()
+            .config_states
+            .clone();
+        assert_eq!(states.len(), 1);
+        assert_eq!(states[0].version, 2, "the new version must be reported");
+        assert_eq!(
+            (states[0].apply_state, states[0].apply_error.as_str()),
+            (3, "bad"),
+            "the apply outcome of the unchanged contents is kept"
+        );
+
+        // The lagging client still holds version 1, and must report that in its request.
+        fetcher
+            .fetch_once(
+                DUMMY_RUNTIME_ID,
+                &DUMMY_TARGET,
+                &capabilities,
+                "bar",
+                &mut lagging_state,
+            )
+            .await
+            .unwrap();
+        let req = server.last_request.lock().unwrap();
+        let states = &req
+            .as_ref()
+            .unwrap()
+            .client
+            .as_ref()
+            .unwrap()
+            .state
+            .as_ref()
+            .unwrap()
+            .config_states;
+        assert_eq!(states.len(), 1);
+        assert_eq!(
+            states[0].version, 1,
+            "a lagging client reports what it holds"
         );
     }
 
