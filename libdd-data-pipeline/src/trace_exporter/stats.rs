@@ -60,7 +60,7 @@ pub(crate) struct StatsContext<
     R: SharedRuntime,
 > {
     pub metadata: &'a TracerMetadata,
-    pub endpoint_url: &'a http::Uri,
+    pub endpoint: &'a Endpoint,
     pub shared_runtime: &'a R,
     pub stats_cardinality_limits: Option<CardinalityLimitConfig>,
     pub additional_metric_tag_keys: &'a [String],
@@ -188,7 +188,10 @@ fn create_and_start_stats_worker<
         bucket_size,
         stats_concentrator.clone(),
         StatsMetadata::from(ctx.metadata.clone()),
-        Endpoint::from_url(add_path(ctx.endpoint_url, STATS_ENDPOINT)),
+        Endpoint {
+            test_token: ctx.endpoint.test_token.clone(),
+            ..Endpoint::from_url(add_path(&ctx.endpoint.url, STATS_ENDPOINT))
+        },
         capabilities.clone(),
         #[cfg(feature = "stats-obfuscation")]
         SUPPORTED_OBFUSCATION_VERSION_STR,
