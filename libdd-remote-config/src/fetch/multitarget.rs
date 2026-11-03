@@ -490,6 +490,8 @@ where
         match self.runtimes.lock_or_panic().entry(runtime_id) {
             Entry::Occupied(mut runtime_entry) => {
                 let info = runtime_entry.get_mut();
+                // The runtime may now listen elsewhere, e.g. after reconnecting.
+                info.notify_target = notify_target;
                 let primary_target = if info.targets.len() == 1 {
                     info.targets.keys().next().cloned()
                 } else {
@@ -1505,5 +1507,61 @@ mod tests {
             .await
             .expect("the fetcher was never reported dead");
         assert!(storage.rc.0.files.lock().unwrap().is_empty());
+    }
+
+    /// A runtime registering again with another notify target is notified at the new one.
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn runtime_is_notified_at_its_latest_notify_target() {
+        let server = RemoteConfigServer::spawn();
+        let (storage, on_dead) = multi_file_storage();
+        let state = Arc::new(NotifyState::default());
+        server.files.lock().unwrap().insert(
+            PATH_FIRST.clone(),
+            (vec![DUMMY_TARGET.clone()], 1, "v1".to_string()),
+        );
+        let fetcher = MultiTargetFetcher::<Notifier, MultiFileStorage, NativeCapabilities>::new(
+            storage.clone(),
+            server.dummy_options().invariants,
+            NativeCapabilities::new_periodic(),
+        );
+        fetcher.remote_config_interval.store(1000, Ordering::SeqCst);
+        let add = |id| {
+            fetcher.add_runtime(
+                RT_ID_1.to_string(),
+                RT_ID_1.to_string(),
+                Notifier {
+                    id,
+                    state: state.clone(),
+                },
+                &DUMMY_TARGET,
+                ProductCapabilities {
+                    products: server.dummy_options().products,
+                    capabilities: server.dummy_options().capabilities,
+                },
+            )
+        };
+
+        let fut = storage.await_fetches(1);
+        add(1);
+        fut.await;
+        state.assert_notified(&[1]);
+
+        add(2);
+        let fut = storage.await_fetches(1);
+        server.files.lock().unwrap().insert(
+            PATH_FIRST.clone(),
+            (vec![DUMMY_TARGET.clone()], 2, "v2".to_string()),
+        );
+        fut.await;
+        state.assert_notified(&[2]);
+
+        storage.recent_fetches.lock().unwrap().clear();
+        let expired = storage.expect_expiration(&DUMMY_TARGET);
+        fetcher.delete_runtime(RT_ID_1, RT_ID_1, &DUMMY_TARGET);
+        fetcher.delete_runtime(RT_ID_1, RT_ID_1, &DUMMY_TARGET);
+        fetcher.shutdown();
+        expired.await;
+        on_dead.await;
     }
 }
