@@ -265,7 +265,21 @@ where
                             }
                         }
                         1 => {
-                            known_service.runtimes.remove(instance_runtime_id);
+                            // Drop the runtime's share, keeping what is forced: a revival adds
+                            // the products of its runtime back.
+                            if let Some(product_data) =
+                                known_service.runtimes.remove(instance_runtime_id)
+                            {
+                                for product in product_data.products {
+                                    decref_hashmap(&mut known_service.active_products, product);
+                                }
+                                for capability in product_data.capabilities {
+                                    decref_hashmap(
+                                        &mut known_service.active_capabilities,
+                                        capability,
+                                    );
+                                }
+                            }
                             let mut status = known_service.status.lock_or_panic();
                             *status = match *status {
                                 KnownTargetStatus::Pending => KnownTargetStatus::Alive, /* not really */
@@ -346,27 +360,19 @@ where
         match services.entry(target.clone()) {
             Entry::Occupied(mut e) => {
                 let known_target = &mut e.get_mut();
+                // The fetcher still polls with the products of the runtimes which left.
+                let mut update_product_data = false;
                 if known_target.refcount == 0 {
                     let mut status = known_target.status.lock_or_panic();
                     match *status {
                         KnownTargetStatus::RemoveAt(_) => {
                             *status = KnownTargetStatus::Alive;
-                            known_target.refcount = 1;
+                            update_product_data = true;
                             if synthetic_id && !known_target.synthetic_id {
                                 known_target.synthetic_id = true;
                                 *known_target.fetcher.runtime_id.lock_or_panic() =
                                     Arc::new(Self::generate_synthetic_id());
                             }
-                            known_target.active_products = product_capabilities
-                                .products
-                                .iter()
-                                .map(|p| (*p, 1))
-                                .collect();
-                            known_target.active_capabilities = product_capabilities
-                                .capabilities
-                                .iter()
-                                .map(|c| (*c, 1))
-                                .collect();
                         }
                         KnownTargetStatus::Removing(ref future) => {
                             let future = future.clone();
@@ -390,32 +396,30 @@ where
                         }
                         KnownTargetStatus::Alive | KnownTargetStatus::Pending => unreachable!(),
                     }
-                } else {
-                    known_target.refcount += 1;
-                    let mut update_product_data = false;
-                    for product in product_capabilities.products.iter() {
-                        known_target
-                            .active_products
-                            .entry(*product)
-                            .and_modify(|count| *count += 1)
-                            .or_insert_with(|| {
-                                update_product_data = true;
-                                1
-                            });
-                    }
-                    for capability in product_capabilities.capabilities.iter() {
-                        known_target
-                            .active_capabilities
-                            .entry(*capability)
-                            .and_modify(|count| *count += 1)
-                            .or_insert_with(|| {
-                                update_product_data = true;
-                                1
-                            });
-                    }
-                    if update_product_data {
-                        known_target.update_product_capabilities();
-                    }
+                }
+                known_target.refcount += 1;
+                for product in product_capabilities.products.iter() {
+                    known_target
+                        .active_products
+                        .entry(*product)
+                        .and_modify(|count| *count += 1)
+                        .or_insert_with(|| {
+                            update_product_data = true;
+                            1
+                        });
+                }
+                for capability in product_capabilities.capabilities.iter() {
+                    known_target
+                        .active_capabilities
+                        .entry(*capability)
+                        .and_modify(|count| *count += 1)
+                        .or_insert_with(|| {
+                            update_product_data = true;
+                            1
+                        });
+                }
+                if update_product_data {
+                    known_target.update_product_capabilities();
                 }
                 known_target
                     .runtimes
@@ -1217,5 +1221,106 @@ mod tests {
             storage.rc.0.files.lock().unwrap().is_empty(),
             "the removed target's files were never released"
         );
+    }
+
+    fn multi_file_storage() -> (MultiFileStorage, ManualFuture<()>) {
+        let (on_dead, on_dead_completer) = ManualFuture::new();
+        let storage = MultiFileStorage {
+            rc: RcFileStorage::default(),
+            on_dead_completer: Arc::new(Mutex::new(Some(on_dead_completer))),
+            recent_fetches: Default::default(),
+            awaiting_fetches: Default::default(),
+            awaited_fetched_done: Default::default(),
+            expected_expirations: Default::default(),
+            listed: Default::default(),
+            released_while_listed: Default::default(),
+        };
+        (storage, on_dead)
+    }
+
+    /// Returns the products of a request the fetcher started after this call.
+    async fn products_of_a_later_request(server: &RemoteConfigServer) -> Vec<String> {
+        // The first request seen may have been in flight already.
+        for _ in 0..2 {
+            *server.last_request.lock().unwrap() = None;
+            while server.last_request.lock().unwrap().is_none() {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        }
+        let mut products = server
+            .last_request
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .client
+            .as_ref()
+            .unwrap()
+            .products
+            .clone();
+        products.sort();
+        products
+    }
+
+    /// A target revived by a new runtime while waiting for removal polls with the products of
+    /// its current runtimes, plus the forced ones.
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn revived_target_polls_with_the_products_of_its_new_runtimes() {
+        let server = RemoteConfigServer::spawn();
+        let (storage, on_dead) = multi_file_storage();
+        let state = Arc::new(NotifyState::default());
+        let fetcher = MultiTargetFetcher::<Notifier, MultiFileStorage, NativeCapabilities>::new(
+            storage.clone(),
+            server.dummy_options().invariants,
+            NativeCapabilities::new_periodic(),
+        );
+        fetcher.remote_config_interval.store(1000, Ordering::SeqCst);
+        let runtime = |id: u8, product| {
+            (
+                Notifier {
+                    id,
+                    state: state.clone(),
+                },
+                ProductCapabilities {
+                    products: vec![product],
+                    capabilities: vec![],
+                },
+            )
+        };
+
+        let (notifier, products) = runtime(1, RemoteConfigProduct::ApmTracing);
+        fetcher.add_runtime(
+            RT_ID_1.to_string(),
+            RT_ID_1.to_string(),
+            notifier,
+            &DUMMY_TARGET,
+            products,
+        );
+        fetcher.force_product(&DUMMY_TARGET, RemoteConfigProduct::AsmFeatures);
+        assert_eq!(
+            products_of_a_later_request(&server).await,
+            ["APM_TRACING", "ASM_FEATURES"]
+        );
+
+        fetcher.delete_runtime(RT_ID_1, RT_ID_1, &DUMMY_TARGET);
+        let (notifier, products) = runtime(2, RemoteConfigProduct::LiveDebugging);
+        fetcher.add_runtime(
+            RT_ID_2.to_string(),
+            RT_ID_2.to_string(),
+            notifier,
+            &DUMMY_TARGET,
+            products,
+        );
+        assert_eq!(
+            products_of_a_later_request(&server).await,
+            ["ASM_FEATURES", "LIVE_DEBUGGING"]
+        );
+
+        let expired = storage.expect_expiration(&DUMMY_TARGET);
+        fetcher.delete_runtime(RT_ID_2, RT_ID_2, &DUMMY_TARGET);
+        fetcher.shutdown();
+        expired.await;
+        on_dead.await;
     }
 }
