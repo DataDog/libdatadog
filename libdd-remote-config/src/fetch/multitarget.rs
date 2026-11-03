@@ -24,7 +24,7 @@ use std::time::Duration;
 use tokio::select;
 use tokio::sync::Semaphore;
 use tokio::time::Instant;
-use tracing::{debug, error, trace};
+use tracing::{debug, trace};
 
 /// MultiTargetFetcher built on a set of SharedFetchers, managing multiple environments and services
 /// at once.
@@ -286,8 +286,12 @@ where
                                 KnownTargetStatus::Alive => KnownTargetStatus::RemoveAt(
                                     Instant::now() + Duration::from_secs(3666),
                                 ),
-                                KnownTargetStatus::RemoveAt(_) | KnownTargetStatus::Removing(_) => {
-                                    unreachable!()
+                                // Stopped by shutdown() while it still had runtimes.
+                                KnownTargetStatus::RemoveAt(instant) => {
+                                    KnownTargetStatus::RemoveAt(instant)
+                                }
+                                KnownTargetStatus::Removing(ref future) => {
+                                    KnownTargetStatus::Removing(future.clone())
                                 }
                             };
                             // We've marked it Alive so that the Pending check in start_fetcher()
@@ -716,21 +720,26 @@ where
         });
     }
 
+    /// Stops all targets, whether they still have runtimes or not. Each running target ends
+    /// like a removed one: its listing is cleared, then its files are released.
     pub fn shutdown(&self) {
-        let services = self.services.lock_or_panic();
-        for (target, service) in services.iter() {
+        self.services.lock_or_panic().retain(|target, service| {
             let mut status = service.status.lock_or_panic();
             match *status {
-                KnownTargetStatus::Pending | KnownTargetStatus::Alive => {
-                    error!("Trying to shutdown {:?} while still alive", target);
+                KnownTargetStatus::Pending => {
+                    trace!("Remove pending {target:?} from services map at shutdown");
+                    // Not Pending, lest its task starts it once it gets a fetcher slot.
+                    *status = KnownTargetStatus::RemoveAt(Instant::now());
+                    false
                 }
-                KnownTargetStatus::RemoveAt(_) => {
+                KnownTargetStatus::Alive | KnownTargetStatus::RemoveAt(_) => {
                     *status = KnownTargetStatus::RemoveAt(Instant::now());
                     service.fetcher.cancel();
+                    true
                 }
-                KnownTargetStatus::Removing(_) => {}
+                KnownTargetStatus::Removing(_) => true,
             }
-        }
+        });
     }
 
     pub fn active_runtimes(&self) -> usize {
@@ -1378,5 +1387,123 @@ mod tests {
             .await
             .expect("the fetcher was never reported dead");
         assert!(fetcher.is_dead());
+    }
+
+    /// shutdown() stops every target, whatever its state: a running target releases its files
+    /// once its listing is cleared, and a pending one ends without fetching.
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn shutdown_stops_running_and_pending_targets() {
+        let server = RemoteConfigServer::spawn();
+        let (storage, on_dead) = multi_file_storage();
+        server.files.lock().unwrap().insert(
+            PATH_FIRST.clone(),
+            (vec![DUMMY_TARGET.clone()], 1, "v1".to_string()),
+        );
+        let fetcher = MultiTargetFetcher::<Notifier, MultiFileStorage, NativeCapabilities>::new(
+            storage.clone(),
+            server.dummy_options().invariants,
+            NativeCapabilities::new_periodic(),
+        );
+        fetcher.remote_config_interval.store(1000, Ordering::SeqCst);
+        // Leave a single fetcher slot, so that only the first target runs.
+        let _other_slots = fetcher
+            .fetcher_semaphore
+            .acquire_many(
+                MultiTargetFetcher::<Notifier, MultiFileStorage, NativeCapabilities>::DEFAULT_CLIENTS_LIMIT - 1,
+            )
+            .await
+            .unwrap();
+        let add = |runtime_id: &str, id, target| {
+            fetcher.add_runtime(
+                runtime_id.to_string(),
+                runtime_id.to_string(),
+                Notifier {
+                    id,
+                    state: Default::default(),
+                },
+                target,
+                ProductCapabilities {
+                    products: server.dummy_options().products,
+                    capabilities: server.dummy_options().capabilities,
+                },
+            )
+        };
+
+        let fut = storage.await_fetches(1);
+        add(RT_ID_1, 1, &DUMMY_TARGET);
+        fut.await;
+        add(RT_ID_2, 2, &OTHER_TARGET);
+        // Only the fetcher may keep the delivered files alive.
+        storage.recent_fetches.lock().unwrap().clear();
+        assert_eq!(storage.rc.0.files.lock().unwrap().len(), 1);
+        let stats = fetcher.stats();
+        assert_eq!((stats.active_fetchers, stats.starting_fetchers), (1, 1));
+
+        let expired = storage.expect_expiration(&DUMMY_TARGET);
+        fetcher.shutdown();
+        tokio::time::timeout(Duration::from_secs(5), expired)
+            .await
+            .expect("the running target was never stopped");
+        tokio::time::timeout(Duration::from_secs(5), on_dead)
+            .await
+            .expect("the fetcher was never reported dead");
+
+        assert!(fetcher.is_dead());
+        fetcher.delete_runtime(RT_ID_1, RT_ID_1, &DUMMY_TARGET);
+        fetcher.delete_runtime(RT_ID_2, RT_ID_2, &OTHER_TARGET);
+        assert!(
+            !storage.released_while_listed.load(Ordering::SeqCst),
+            "the files were released while the target's listing still named them"
+        );
+        assert!(
+            storage.rc.0.files.lock().unwrap().is_empty(),
+            "the stopped target's files were never released"
+        );
+    }
+
+    /// The runtimes of a target being stopped by shutdown() may leave before it stopped.
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn runtime_leaving_a_target_stopped_by_shutdown() {
+        let server = RemoteConfigServer::spawn();
+        let (storage, on_dead) = multi_file_storage();
+        server.files.lock().unwrap().insert(
+            PATH_FIRST.clone(),
+            (vec![DUMMY_TARGET.clone()], 1, "v1".to_string()),
+        );
+        let fetcher = MultiTargetFetcher::<Notifier, MultiFileStorage, NativeCapabilities>::new(
+            storage.clone(),
+            server.dummy_options().invariants,
+            NativeCapabilities::new_periodic(),
+        );
+        fetcher.remote_config_interval.store(1000, Ordering::SeqCst);
+        let fut = storage.await_fetches(1);
+        fetcher.add_runtime(
+            RT_ID_1.to_string(),
+            RT_ID_1.to_string(),
+            Notifier {
+                id: 1,
+                state: Default::default(),
+            },
+            &DUMMY_TARGET,
+            ProductCapabilities {
+                products: server.dummy_options().products,
+                capabilities: server.dummy_options().capabilities,
+            },
+        );
+        fut.await;
+        storage.recent_fetches.lock().unwrap().clear();
+
+        let expired = storage.expect_expiration(&DUMMY_TARGET);
+        fetcher.shutdown();
+        fetcher.delete_runtime(RT_ID_1, RT_ID_1, &DUMMY_TARGET);
+        tokio::time::timeout(Duration::from_secs(5), expired)
+            .await
+            .expect("the target was never stopped");
+        tokio::time::timeout(Duration::from_secs(5), on_dead)
+            .await
+            .expect("the fetcher was never reported dead");
+        assert!(storage.rc.0.files.lock().unwrap().is_empty());
     }
 }
