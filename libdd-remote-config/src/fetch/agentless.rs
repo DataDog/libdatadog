@@ -858,9 +858,11 @@ impl<C: HttpClientCapability + SleepCapability> AgentlessFetcher<C> {
         }
         files_guard.store_batch(new_targets)?;
 
-        let active_paths: HashSet<&RemoteConfigPath> =
-            targets.iter().map(|t| &t.parsed_path).collect();
-        files_guard.retain_only(&active_paths);
+        files_guard.retain_only(
+            targets
+                .iter()
+                .map(|t| (&t.parsed_path, t.primary_hash.as_str(), t.length)),
+        );
 
         let active_targets: Vec<ClientTargetRef> = targets
             .iter()
@@ -1217,39 +1219,37 @@ pub(crate) use cache::TargetCache;
 /// * Being able to isolate the agentless logic in it's own crate eventually so that we can reuse it
 ///   in bottlecap/ obs-pipeline without the rest of the code
 mod cache {
-    use std::sync::{Arc, Mutex, MutexGuard};
+    use std::sync::Arc;
 
     use crate::{
         RemoteConfigPath,
         fetch::{
-            ClientTargetRef, ConfigFetcherState, FileStorage, HeldFile, NewTarget, StoredTargetFile,
+            ClientTargetRef, ConfigFetcherState, FileStorage, HeldFile, NewTarget,
+            registry::{FileRegistry, RegistryGuard},
         },
     };
-    use hashbrown::HashMap;
     use libdd_capabilities::{HttpClientCapability, SleepCapability};
-    use libdd_common::MutexExt as _;
     use libdd_trace_protobuf::remoteconfig::{TargetFileHash, TargetFileMeta};
 
-    /// Wrapper over the shared [`ConfigFetcherState::target_files_by_path`]
-    /// map giving `AgentlessFetcher::apply` a set of small, self-contained
-    /// cache operations. Callers must first acquire the mutex via
-    /// [`Self::lock`] and then invoke the batch methods on the returned
-    /// guard, so the whole read cycle happens under a single lock scope.
+    /// Wrapper over the shared [`ConfigFetcherState::registry`] giving
+    /// `AgentlessFetcher::apply` a set of small, self-contained cache
+    /// operations. Callers must first acquire the lock via [`Self::lock`] and
+    /// then invoke the batch methods on the returned guard, so the whole read
+    /// cycle happens under a single lock scope.
     pub(crate) struct TargetCache<'a, Storage: FileStorage> {
-        files: &'a Mutex<HashMap<Arc<RemoteConfigPath>, StoredTargetFile<Storage::StoredFile>>>,
+        registry: &'a FileRegistry<Storage::StoredFile>,
         storage: &'a Storage,
         expire_unused_files: bool,
     }
 
-    /// Locked view of the [`TargetCache`] — holds the mutex guard so
+    /// Locked view of the [`TargetCache`] — holds the registry lock so
     /// every method below runs under the same critical section, atomic
     /// w.r.t. concurrent agentless fetchers sharing the same state.
     ///
     /// SAFETY / INVARIANT: never `.await` while this guard is alive — it
     /// wraps a `std::sync::MutexGuard` and would block the runtime thread.
     pub(crate) struct LockedTargetCache<'a, Storage: FileStorage> {
-        files:
-            MutexGuard<'a, HashMap<Arc<RemoteConfigPath>, StoredTargetFile<Storage::StoredFile>>>,
+        files: RegistryGuard<'a, Storage::StoredFile>,
         storage: &'a Storage,
         expire_unused_files: bool,
     }
@@ -1263,18 +1263,18 @@ mod cache {
             storage: &'a S,
         ) -> Self {
             TargetCache {
-                files: &state.target_files_by_path,
+                registry: &state.registry,
                 storage,
                 expire_unused_files: state.expire_unused_files,
             }
         }
 
         /// Acquire the cache lock. Hold the returned guard for the whole
-        /// read cycle so `is_cached_batch`, `store_batch`, `retain_only`
-        /// and `collect_handles` all run under one critical section.
+        /// read cycle so `is_cached_batch`, `store_batch` and `retain_only`
+        /// all run under one critical section.
         pub(crate) fn lock(&self) -> LockedTargetCache<'a, S> {
             LockedTargetCache {
-                files: self.files.lock_or_panic(),
+                files: self.registry.lock(),
                 storage: self.storage,
                 expire_unused_files: self.expire_unused_files,
             }
@@ -1282,7 +1282,8 @@ mod cache {
     }
 
     impl<'a, S: FileStorage> LockedTargetCache<'a, S> {
-        /// Returns the set of paths whose `(primary_hash, len)` already matches the cache.
+        /// Returns the set of paths whose `(primary_hash, len)` is already stored, under any
+        /// version.
         pub(crate) fn is_cached_batch<'b>(
             &self,
             candidates: impl IntoIterator<Item = (&'b RemoteConfigPath, &'b str, u64)>,
@@ -1290,13 +1291,9 @@ mod cache {
             candidates
                 .into_iter()
                 .filter_map(|(parsed_path, primary_hash, len)| {
-                    let stored = self.files.get(parsed_path)?;
-                    // `stored.meta.length` is an `i64` coming from protobuf. A
-                    // negative value should never appear, but if it does treat the
-                    // entry as "not cached" so the caller re-fetches instead of
-                    // matching a wrapped u64.
-                    let stored_len = u64::try_from(stored.meta.length).ok()?;
-                    (stored.hash == primary_hash && stored_len == len).then_some(parsed_path)
+                    self.files
+                        .lookup(parsed_path, primary_hash, len)
+                        .map(|_| parsed_path)
                 })
                 .collect()
         }
@@ -1321,79 +1318,76 @@ mod cache {
                     )
                 })?;
                 let path: Arc<crate::RemoteConfigPath> = Arc::new(path);
-                // Every new version is stored as a new file. Other targets may still hold the
-                // previous version until their own next fetch; it is released once nothing
-                // references it anymore.
+                // Every new version is stored as a new file, next to the previous ones: other
+                // targets may still hold them until their own next fetch.
                 let new_handle = self.storage.store(version, path.clone(), content)?;
-                let file = StoredTargetFile {
-                    hash: primary_hash,
-                    version,
-                    meta: TargetFileMeta {
-                        path: path.to_string(),
-                        length,
-                        hashes: hashes
-                            .into_iter()
-                            .map(|(algorithm, hash)| TargetFileHash { algorithm, hash })
-                            .collect(),
-                    },
-                    handle: new_handle,
-                    expiring: false,
+                let meta = TargetFileMeta {
+                    path: path.to_string(),
+                    length,
+                    hashes: hashes
+                        .into_iter()
+                        .map(|(algorithm, hash)| TargetFileHash { algorithm, hash })
+                        .collect(),
                 };
-                self.files.insert(path, file);
+                self.files
+                    .insert(path, primary_hash, meta, version, new_handle);
             }
             Ok(())
         }
 
-        /// Evict every entry whose parsed TUF path is not in `active_paths`. No-op when
-        /// `expire_unused_files` is `false`.
-        pub(crate) fn retain_only(&mut self, active_paths: &hashbrown::HashSet<&RemoteConfigPath>) {
+        /// Evict every version which isn't one of the `active` `(path, primary_hash, len)`.
+        /// No-op when `expire_unused_files` is `false`.
+        pub(crate) fn retain_only<'b>(
+            &mut self,
+            active: impl IntoIterator<Item = (&'b RemoteConfigPath, &'b str, u64)>,
+        ) {
             if !self.expire_unused_files {
                 return;
             }
-            self.files.retain(|path, _| active_paths.contains(&**path));
+            let mut active_versions: hashbrown::HashMap<&RemoteConfigPath, Vec<(&str, u64)>> =
+                hashbrown::HashMap::new();
+            for (path, primary_hash, len) in active {
+                active_versions
+                    .entry(path)
+                    .or_default()
+                    .push((primary_hash, len));
+            }
+            self.files.retain(|path, entry| {
+                active_versions
+                    .get(path)
+                    .is_some_and(|versions| versions.iter().any(|(h, len)| entry.matches(h, *len)))
+            });
         }
 
         /// Collect the file version of every target in `targets`, which the client then holds,
-        /// verifying stored hash and length match, and marking each entry as non-expiring.
+        /// found by stored hash and length, and marking each as non-expiring. Each is held under
+        /// the version the target names.
         pub(crate) fn collect_handles(
             &mut self,
             targets: &[ClientTargetRef],
         ) -> anyhow::Result<CollectedVersions<S::StoredFile>> {
             let mut held = Vec::with_capacity(targets.len());
             for target in targets {
-                let (path, stored) =
-                    self.files.get_key_value_mut(&target.path).ok_or_else(|| {
+                let (path, file) = self
+                    .files
+                    .lookup(&target.path, &target.primary_hash, target.length)
+                    .ok_or_else(|| {
                         anyhow::format_err!(
-                            "collect_handles: path {} not found in cache after fetch",
-                            target.path
+                            "collect_handles: {} with hash={} len={} not found in cache after \
+                             fetch",
+                            target.path,
+                            target.primary_hash,
+                            target.length,
                         )
                     })?;
-                let stored_len = u64::try_from(stored.meta.length).map_err(|_| {
-                    anyhow::format_err!(
-                        "collect_handles: cached length {} for {} is not a valid u64",
-                        stored.meta.length,
-                        target.path,
-                    )
-                })?;
-                if stored.hash != target.primary_hash || stored_len != target.length {
-                    anyhow::bail!(
-                        "collect_handles: cache mismatch for {}: stored hash={} len={}, \
-                         expected hash={} len={}",
-                        target.path,
-                        stored.hash,
-                        stored.meta.length,
-                        target.primary_hash,
-                        target.length,
-                    );
-                }
-                stored.expiring = false;
+                self.files.hold(&path, &file, target.version);
                 held.push((
                     HeldFile {
-                        path: path.clone(),
-                        version: stored.version,
-                        file: stored.handle.clone(),
+                        path,
+                        version: target.version,
+                        file,
                     },
-                    stored.hash.clone(),
+                    target.primary_hash.clone(),
                 ));
             }
             Ok(held)
