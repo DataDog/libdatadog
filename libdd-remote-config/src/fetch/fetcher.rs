@@ -457,6 +457,11 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
         };
         let status = response.status();
         let body_bytes = response.into_body();
+        // The trace-agent answers 204 when the core agent had no response for it.
+        if status == StatusCode::NO_CONTENT {
+            trace!("Requested remote config and got no content");
+            return Ok(None);
+        }
         if status != StatusCode::OK {
             // Not active
             if status == StatusCode::NOT_FOUND {
@@ -507,6 +512,10 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
                 self.state.target_files_by_path.lock_or_panic().clear();
             }
             client_state.last_configs.clear();
+            // Holding nothing, the client must not claim the targets it had: the agent would
+            // answer that nothing changed, and the configs would never come back.
+            client_state.targets_version = 0;
+            client_state.opaque_backend_state.clear();
             return Ok(Some(vec![]));
         }
 
@@ -945,6 +954,42 @@ pub mod tests {
 
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
+    async fn test_no_content_means_unchanged() {
+        let server = RemoteConfigServer::spawn();
+        let storage = Arc::new(Storage::default());
+        let mut fetcher = ConfigFetcher::new(
+            storage.clone(),
+            Arc::new(ConfigFetcherState::with_client(
+                server.dummy_options().invariants,
+                NativeCapabilities::new_periodic(),
+            )),
+        )
+        .await
+        .unwrap();
+        let mut opaque_state = ConfigClientState::default();
+
+        // The trace-agent answers 204 when the core agent returned no response.
+        let mut response = http_common::empty_response(Response::builder()).unwrap();
+        *response.status_mut() = StatusCode::NO_CONTENT;
+        *server.next_response.lock().unwrap() = Some(response);
+
+        let fetched = fetcher
+            .fetch_once(
+                DUMMY_RUNTIME_ID,
+                &DUMMY_TARGET,
+                &server.dummy_product_capabilities(),
+                "foo",
+                &mut opaque_state,
+            )
+            .await
+            .unwrap();
+
+        assert!(fetched.is_none(), "204 means nothing changed");
+        assert!(opaque_state.last_error.is_none());
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn test_expired_config_status_drops_all_configs() {
         let server = RemoteConfigServer::spawn();
         server.files.lock().unwrap().insert(
@@ -1043,6 +1088,17 @@ pub mod tests {
                     .config_states
                     .is_empty(),
                 "dropped configs must not be reported as applied"
+            );
+            assert_eq!(
+                req.client
+                    .as_ref()
+                    .unwrap()
+                    .state
+                    .as_ref()
+                    .unwrap()
+                    .targets_version,
+                0,
+                "with every config dropped, the client must not claim the targets it had"
             );
         }
     }
