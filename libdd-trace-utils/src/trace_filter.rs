@@ -333,6 +333,7 @@ mod tests {
     use crate::span::v1::span_pool::PooledTraceChunks;
     use crate::span::v1::{AttributeValue, SpanBytes as SpanBytesV1, SpanKind, TraceChunk};
     use crate::span::v04::{SpanBytes, VecMap};
+    use libdd_trace_model::{COMPONENT_KEY, ENV_KEY, SPAN_KIND_KEY, VERSION_KEY};
     // ---- helpers ----
 
     fn span_with(resource: &'static str, meta: &[(&'static str, &'static str)]) -> SpanBytes {
@@ -370,10 +371,10 @@ mod tests {
         // Promoted tags (e.g. `env`) live in their dedicated fields, never in the attributes.
         for (k, v) in meta {
             match *k {
-                "env" => span.env = (*v).into(),
-                "version" => span.version = (*v).into(),
-                "component" => span.component = (*v).into(),
-                "span.kind" => span.span_kind = SpanKind::from_meta(v),
+                ENV_KEY => span.env = (*v).into(),
+                VERSION_KEY => span.version = (*v).into(),
+                COMPONENT_KEY => span.component = (*v).into(),
+                SPAN_KIND_KEY => span.span_kind = SpanKind::from_meta(v),
                 _ => {
                     span.attributes
                         .insert((*k).into(), AttributeValue::String((*v).into()));
