@@ -31,6 +31,7 @@ use std::net::TcpListener;
 use std::sync::{Arc, Mutex};
 use tokio::select;
 use tokio::sync::mpsc::Sender;
+use tokio::sync::oneshot;
 
 pub struct RemoteConfigServer {
     pub last_request: Mutex<Option<ClientGetConfigsRequest>>,
@@ -47,6 +48,9 @@ pub struct RemoteConfigServer {
     /// Paths listed in `client_configs` in addition to the applicable files, without any
     /// target metadata nor body.
     pub extra_client_configs: Mutex<Vec<String>>,
+    /// See [`Self::hold_next_response`].
+    #[allow(clippy::type_complexity)]
+    next_request_gate: Mutex<Option<(oneshot::Sender<()>, oneshot::Receiver<()>)>>,
     /// The current targets version and the fingerprint of the files it was computed for.
     targets_state: Mutex<(u64, Option<u64>)>,
     pub endpoint: Endpoint,
@@ -228,6 +232,7 @@ impl RemoteConfigServer {
             config_status: Mutex::new(ConfigStatus::Ok),
             corrupt_next_body: Mutex::new(None),
             extra_client_configs: Default::default(),
+            next_request_gate: Default::default(),
             targets_state: Mutex::new((0, None)),
             endpoint: Endpoint::from_slice(&format!("http://127.0.0.1:{port}/")),
             shutdown_complete_tx,
@@ -237,6 +242,11 @@ impl RemoteConfigServer {
             let this = this.clone();
             async move {
                 let body_bytes = req.into_body().collect().await.unwrap().to_bytes();
+                let gate = this.next_request_gate.lock().unwrap().take();
+                if let Some((received, release)) = gate {
+                    received.send(()).ok();
+                    release.await.ok();
+                }
                 this.handle_request(body_bytes)
             }
         });
@@ -262,6 +272,16 @@ impl RemoteConfigServer {
             }
         });
         server
+    }
+
+    /// Holds the response to the next request, keeping it in flight: the first returned value
+    /// completes once that request arrived, and the response is computed, from the files as they
+    /// are by then, once the second is used or dropped.
+    pub fn hold_next_response(&self) -> (oneshot::Receiver<()>, oneshot::Sender<()>) {
+        let (received_tx, received_rx) = oneshot::channel();
+        let (release_tx, release_rx) = oneshot::channel();
+        *self.next_request_gate.lock().unwrap() = Some((received_tx, release_rx));
+        (received_rx, release_tx)
     }
 
     pub fn dummy_options(&self) -> ConfigOptions {

@@ -468,6 +468,54 @@ mod tests {
         );
     }
 
+    /// The files held before a rebind stay stored and advertised: the next response doesn't
+    /// resend their bodies, and the client gets the very same files again (C4).
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn rebind_keeps_stored_files() {
+        let server = RemoteConfigServer::spawn();
+        let target = Target::new(
+            "service".to_string(),
+            "env".to_string(),
+            "1.2.3".to_string(),
+            vec![],
+            vec![],
+        );
+        let path = RemoteConfigPath::parse("employee/APM_TRACING/rebind/config").unwrap();
+        server.files.lock().unwrap().insert(
+            path.clone(),
+            (vec![Arc::new(target.clone())], 1, "v1".to_string()),
+        );
+        let fetcher = SingleFetcher::new_no_agentless(
+            SimpleFileStorage::default(),
+            target.clone(),
+            "runtime-id".to_string(),
+            server.dummy_options(),
+            NativeCapabilities::new_periodic(),
+        );
+        let mut fetcher = fetcher;
+        let v1 = Arc::downgrade(&fetcher.fetch_once().await.unwrap().unwrap()[0]);
+
+        let mut fetcher = fetcher.rebind(target, None).await.unwrap();
+        assert!(v1.upgrade().is_some(), "kept across the rebind");
+        let fetched = fetcher.fetch_once().await.unwrap().unwrap();
+        let request = server.last_request.lock().unwrap().take().unwrap();
+        assert_eq!(
+            request
+                .cached_target_files
+                .iter()
+                .map(|f| f.path.as_str())
+                .collect::<Vec<_>>(),
+            [path.to_string()],
+            "the stored file is still advertised"
+        );
+        assert_eq!(fetched.len(), 1);
+        assert!(
+            std::ptr::eq(Arc::as_ptr(&fetched[0]), v1.as_ptr()),
+            "the stored file is reused"
+        );
+    }
+
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
     async fn updates_identity_without_resetting_client_state() {

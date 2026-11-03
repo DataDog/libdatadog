@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::fetch::{
-    ConfigApplyState, ConfigFetcherState, ConfigInvariants, ConfigProductCapabilities, FileStorage,
-    RefcountedFile, RefcountingStorage, RefcountingStorageStats, SharedFetcher, random_uuid_string,
+    ConfigApplyState, ConfigFetcherState, ConfigInvariants, ConfigProductCapabilities,
+    FileRegistryStats, FileStorage, SharedFetcher, random_uuid_string,
 };
 use crate::{RemoteConfigCapabilities, RemoteConfigProduct, Target};
 use futures_util::FutureExt;
@@ -39,7 +39,7 @@ pub struct MultiTargetFetcher<
     S: FileStorage + Clone + Sync + Send,
     C: HttpClientCapability + SleepCapability + Send + Sync,
 > where
-    S::StoredFile: RefcountedFile + Sync + Send,
+    S::StoredFile: Sync + Send,
     S: MultiTargetHandlers<N, S, C>,
 {
     /// Keyed by runtime_id
@@ -50,7 +50,9 @@ pub struct MultiTargetFetcher<
     /// WARNING: do NOT lock runtimes while holding a lock to services!
     services: Mutex<HashMap<Arc<Target>, KnownTarget<S::StoredFile>>>,
     pending_async_insertions: AtomicU32,
-    pub storage: RefcountingStorage<S, C>,
+    pub storage: S,
+    /// The file versions stored under the invariants, shared by every target's fetcher.
+    state: Arc<ConfigFetcherState<S::StoredFile, C>>,
     /// Limit on how many fetchers can be active at once.
     /// This functionality is mostly targeted at CLI programs which generally have their file name
     /// as the service name. E.g. a phpt testsuite will generate one service for every single file.
@@ -65,7 +67,7 @@ pub struct MultiTargetStats {
     active_fetchers: u32,
     inactive_fetchers: u32,
     removing_fetchers: u32,
-    storage: RefcountingStorageStats,
+    storage: FileRegistryStats,
 }
 
 impl Add for MultiTargetStats {
@@ -158,7 +160,7 @@ pub trait MultiTargetHandlers<
     S: FileStorage + Clone + Sync + Send + MultiTargetHandlers<N, S, C>,
     C: HttpClientCapability + SleepCapability + Send + Sync,
 > where
-    S::StoredFile: RefcountedFile + Sync + Send,
+    S::StoredFile: Sync + Send,
 {
     fn fetched(
         &self,
@@ -189,17 +191,17 @@ impl<
     C: HttpClientCapability + SleepCapability + Send + Sync + 'static,
 > MultiTargetFetcher<N, S, C>
 where
-    S::StoredFile: RefcountedFile + Sync + Send,
+    S::StoredFile: Sync + Send,
     S: MultiTargetHandlers<N, S, C>,
 {
     pub const DEFAULT_CLIENTS_LIMIT: u32 = 100;
 
     pub fn new(storage: S, invariants: ConfigInvariants, http_client: C) -> Arc<Self> {
+        let mut state = ConfigFetcherState::with_client(invariants, http_client);
+        state.expire_unused_files = false;
         Arc::new(MultiTargetFetcher {
-            storage: RefcountingStorage::new(
-                storage,
-                ConfigFetcherState::with_client(invariants, http_client),
-            ),
+            storage,
+            state: Arc::new(state),
             runtimes: Mutex::new(Default::default()),
             remote_config_interval: AtomicU64::new(5_000_000_000),
             services: Mutex::new(Default::default()),
@@ -524,7 +526,6 @@ where
             }
             Entry::Vacant(e) => {
                 if self
-                    .storage
                     .invariants()
                     .endpoint
                     .url
@@ -634,7 +635,7 @@ where
                 // services may hold a new entry for the same target by now, whose listing
                 // expired() would clear. Its removal may still have left no target behind.
                 if this.is_dead() {
-                    this.storage.storage.dead();
+                    this.storage.dead();
                 }
                 return;
             }
@@ -649,9 +650,10 @@ where
             let fetcher_fut = fetcher
                 .run(
                     this.storage.clone(),
+                    this.state.clone(),
                     Box::new(move |files| {
                         let runtime_id = Arc::new(inner_fetcher.runtime_id.lock_or_panic().clone());
-                        let notify = inner_this.storage.storage.fetched(
+                        let notify = inner_this.storage.fetched(
                             &inner_this,
                             &runtime_id,
                             &inner_fetcher.target,
@@ -686,7 +688,7 @@ where
                         }
                     }),
                     // The target's files are released only once their listing is cleared.
-                    Box::new(move || finish_this.storage.storage.expired(&finish_target)),
+                    Box::new(move || finish_this.storage.expired(&finish_target)),
                 )
                 .shared();
 
@@ -732,7 +734,7 @@ where
                 services.is_empty() && this.pending_async_insertions.load(Ordering::Relaxed) == 0
             };
             if is_dead {
-                this.storage.storage.dead();
+                this.storage.dead();
             }
             remove_completer.complete(()).await;
         });
@@ -765,7 +767,7 @@ where
     }
 
     pub fn invariants(&self) -> &ConfigInvariants {
-        self.storage.invariants()
+        &self.state.invariants
     }
 
     pub fn force_product(&self, target: &Target, product: RemoteConfigProduct) {
@@ -823,7 +825,7 @@ where
             active_fetchers,
             inactive_fetchers,
             removing_fetchers,
-            storage: self.storage.stats(),
+            storage: self.state.stats(),
         }
     }
 }
@@ -843,16 +845,16 @@ mod tests {
 
     #[derive(Clone)]
     struct MultiFileStorage {
-        rc: RcFileStorage,
+        rc: Arc<Storage>,
         on_dead_completer: Arc<Mutex<Option<ManualFutureCompleter<()>>>>,
         #[allow(clippy::type_complexity)]
-        recent_fetches: Arc<Mutex<HashMap<Arc<Target>, Vec<Arc<RcPathStore>>>>>,
+        recent_fetches: Arc<Mutex<HashMap<Arc<Target>, Vec<Arc<PathStore>>>>>,
         awaiting_fetches: Arc<AtomicU8>,
         awaited_fetched_done: Arc<Mutex<Option<ManualFutureCompleter<()>>>>,
         expected_expirations: Arc<Mutex<HashMap<Arc<Target>, ManualFutureCompleter<()>>>>,
         /// The files each target's current listing names.
         #[allow(clippy::type_complexity)]
-        listed: Arc<Mutex<HashMap<Arc<Target>, Vec<Weak<RcPathStore>>>>>,
+        listed: Arc<Mutex<HashMap<Arc<Target>, Vec<Weak<PathStore>>>>>,
         /// Set if a target's files were released before its listing was cleared.
         released_while_listed: Arc<AtomicBool>,
     }
@@ -884,7 +886,7 @@ mod tests {
             _fetcher: &Arc<MultiTargetFetcher<Notifier, MultiFileStorage, NativeCapabilities>>,
             _runtime_id: &Arc<String>,
             target: &Arc<Target>,
-            files: &[Arc<RcPathStore>],
+            files: &[Arc<PathStore>],
         ) -> bool {
             self.listed
                 .lock()
@@ -944,7 +946,7 @@ mod tests {
     }
 
     impl FileStorage for MultiFileStorage {
-        type StoredFile = <RcFileStorage as FileStorage>::StoredFile;
+        type StoredFile = PathStore;
 
         fn store(
             &self,
@@ -1007,7 +1009,7 @@ mod tests {
         let server = RemoteConfigServer::spawn();
         let (on_dead, on_dead_completer) = ManualFuture::new();
         let storage = MultiFileStorage {
-            rc: RcFileStorage::default(),
+            rc: Default::default(),
             on_dead_completer: Arc::new(Mutex::new(Some(on_dead_completer))),
             recent_fetches: Default::default(),
             awaiting_fetches: Default::default(),
@@ -1143,7 +1145,7 @@ mod tests {
             .get(&*DUMMY_TARGET)
             .unwrap()
             .iter()
-            .map(|p| p.store.data.clone())
+            .map(|p| p.data.clone())
             .collect();
         assert_eq!(last_fetched.len(), 1);
 
@@ -1163,7 +1165,7 @@ mod tests {
             .get(&*OTHER_TARGET)
             .unwrap()
             .iter()
-            .map(|p| p.store.data.clone())
+            .map(|p| p.data.clone())
             .collect();
         assert_eq!(
             storage
@@ -1202,7 +1204,7 @@ mod tests {
         let server = RemoteConfigServer::spawn();
         let (on_dead, on_dead_completer) = ManualFuture::new();
         let storage = MultiFileStorage {
-            rc: RcFileStorage::default(),
+            rc: Default::default(),
             on_dead_completer: Arc::new(Mutex::new(Some(on_dead_completer))),
             recent_fetches: Default::default(),
             awaiting_fetches: Default::default(),
@@ -1237,7 +1239,7 @@ mod tests {
         fut.await;
         // Only the fetcher may keep the delivered files alive.
         storage.recent_fetches.lock().unwrap().clear();
-        assert_eq!(storage.rc.0.files.lock().unwrap().len(), 1);
+        assert_eq!(storage.rc.files.lock().unwrap().len(), 1);
 
         let expired = storage.expect_expiration(&DUMMY_TARGET);
         fetcher.delete_runtime(RT_ID_1, RT_ID_1, &DUMMY_TARGET);
@@ -1250,7 +1252,7 @@ mod tests {
             "the files were released while the target's listing still named them"
         );
         assert!(
-            storage.rc.0.files.lock().unwrap().is_empty(),
+            storage.rc.files.lock().unwrap().is_empty(),
             "the removed target's files were never released"
         );
     }
@@ -1258,7 +1260,7 @@ mod tests {
     fn multi_file_storage() -> (MultiFileStorage, ManualFuture<()>) {
         let (on_dead, on_dead_completer) = ManualFuture::new();
         let storage = MultiFileStorage {
-            rc: RcFileStorage::default(),
+            rc: Default::default(),
             on_dead_completer: Arc::new(Mutex::new(Some(on_dead_completer))),
             recent_fetches: Default::default(),
             awaiting_fetches: Default::default(),
@@ -1445,7 +1447,7 @@ mod tests {
         add(RT_ID_2, 2, &OTHER_TARGET);
         // Only the fetcher may keep the delivered files alive.
         storage.recent_fetches.lock().unwrap().clear();
-        assert_eq!(storage.rc.0.files.lock().unwrap().len(), 1);
+        assert_eq!(storage.rc.files.lock().unwrap().len(), 1);
         let stats = fetcher.stats();
         assert_eq!((stats.active_fetchers, stats.starting_fetchers), (1, 1));
 
@@ -1466,7 +1468,7 @@ mod tests {
             "the files were released while the target's listing still named them"
         );
         assert!(
-            storage.rc.0.files.lock().unwrap().is_empty(),
+            storage.rc.files.lock().unwrap().is_empty(),
             "the stopped target's files were never released"
         );
     }
@@ -1513,7 +1515,7 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(5), on_dead)
             .await
             .expect("the fetcher was never reported dead");
-        assert!(storage.rc.0.files.lock().unwrap().is_empty());
+        assert!(storage.rc.files.lock().unwrap().is_empty());
     }
 
     /// A runtime registering again with another notify target is notified at the new one.

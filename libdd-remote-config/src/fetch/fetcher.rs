@@ -4,10 +4,6 @@
 #[cfg(feature = "agentless")]
 use super::agentless;
 use super::registry::FileRegistry;
-#[cfg(not(target_arch = "wasm32"))]
-use super::registry::RegistryGuard;
-#[cfg(not(target_arch = "wasm32"))]
-use super::shared::RefcountedFile;
 
 use crate::targets::{Root, TargetData, TargetsList};
 use crate::{RemoteConfigCapabilities, RemoteConfigPath, RemoteConfigProduct, Target};
@@ -36,6 +32,9 @@ use tracing::{debug, trace, warn};
 /// stored as a new file, and the previous one is released once no longer referenced.
 /// It is recommended to minimize the overhead of this operation as it will be invoked while
 /// a lock across all ConfigFetchers referencing the same ConfigFetcherState is held.
+/// The fetcher only keeps weak references to stored files: a stored file is dropped once no
+/// client holds it, no request advertising it is in flight and no consumer keeps it, and never
+/// while any lock of the fetcher is held.
 pub trait FileStorage {
     type StoredFile;
 
@@ -116,13 +115,15 @@ pub struct ConfigFetcherState<S, C: HttpClientCapability + SleepCapability> {
     pub(in crate::fetch) registry: Arc<FileRegistry<S>>,
     pub invariants: ConfigInvariants,
     endpoint: Endpoint,
+    /// Whether a single client uses the state: the versions it doesn't hold are then forgotten
+    /// after each response. Must be off when the state is shared by several clients.
     pub expire_unused_files: bool,
     pub(super) http_client: C,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct ConfigFetcherStateStats {
-    /// Paths with a stored file, counting a single version per path.
+    /// Paths with a live file version.
     pub active_files: u32,
 }
 
@@ -136,24 +137,26 @@ impl Add for ConfigFetcherStateStats {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-pub struct ConfigFetcherFilesLock<'a, S> {
-    inner: RegistryGuard<'a, S>,
+/// The file versions alive under a [`ConfigFetcherState`].
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct FileRegistryStats {
+    /// Live file versions retained only for in-flight requests. Included in live_files.
+    pub inactive_files: u32,
+    /// Live file versions, of all paths.
+    #[serde(default)]
+    pub live_files: u32,
+    pub fetcher: ConfigFetcherStateStats,
 }
 
-// Several versions of a path may be stored: these only act on the version which is that very
-// file.
-#[cfg(not(target_arch = "wasm32"))]
-impl<S: RefcountedFile> ConfigFetcherFilesLock<'_, S> {
-    /// Actually remove the file from the known files.
-    /// It may only be expired if already marked as expiring.
-    pub fn expire_file(&mut self, file: &Arc<S>) {
-        self.inner.expire(&file.refcount().path, file);
-    }
+impl Add for FileRegistryStats {
+    type Output = Self;
 
-    /// Stop advertising the file as known. It's the predecessor to expire_file().
-    pub fn mark_expiring(&mut self, file: &Arc<S>) {
-        self.inner.mark_expiring(&file.refcount().path, file);
+    fn add(self, rhs: Self) -> Self::Output {
+        FileRegistryStats {
+            inactive_files: self.inactive_files + rhs.inactive_files,
+            live_files: self.live_files + rhs.live_files,
+            fetcher: self.fetcher + rhs.fetcher,
+        }
     }
 }
 
@@ -186,22 +189,16 @@ impl<S, C: HttpClientCapability + SleepCapability> ConfigFetcherState<S, C> {
         }
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
-    /// To remove unused remote files manually. Must not be called when auto expiration is active.
-    /// Note: careful attention must be paid when using this API in order to not deadlock:
-    /// - This files_lock() must always be called prior to locking any data structure locked within
-    ///   FileStorage::store().
-    /// - Also, files_lock() must not be called from within FileStorage::store().
-    pub fn files_lock(&self) -> ConfigFetcherFilesLock<'_, S> {
-        assert!(!self.expire_unused_files);
-        ConfigFetcherFilesLock {
-            inner: self.registry.lock(),
-        }
-    }
-
-    pub fn stats(&self) -> ConfigFetcherStateStats {
-        ConfigFetcherStateStats {
-            active_files: self.registry.paths(),
+    /// Counts the file versions alive: a version is alive while a client holds it, a request
+    /// which advertised it is in flight, or a consumer keeps it.
+    pub fn stats(&self) -> FileRegistryStats {
+        let stats = self.registry.stats();
+        FileRegistryStats {
+            inactive_files: stats.in_flight_only,
+            live_files: stats.live,
+            fetcher: ConfigFetcherStateStats {
+                active_files: stats.paths,
+            },
         }
     }
 }
@@ -549,6 +546,7 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
         product_capabilities: &ConfigProductCapabilities,
         client_id: &str,
         client_state: &ConfigClientState<S::StoredFile>,
+        cached_target_files: Vec<TargetFileMeta>,
     ) -> ClientGetConfigsRequest {
         let Target {
             service,
@@ -558,7 +556,6 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
             process_tags,
         } = (*target).clone();
 
-        let cached_target_files = self.state.registry.advertise();
         let config_states = client_state.holdings.states();
         let extra_services = client_state.extra_services.clone();
 
@@ -758,16 +755,16 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
             }
         }
 
-        // The registry stays locked until the response is committed, so that fetchers sharing it
-        // never store the same version twice.
-        let mut registry = self.state.registry.lock();
+        let registry = &self.state.registry;
 
         // Like the Go client, an error in any file rejects the whole update: it is reported to the
         // agent with the next request and, as the client keeps its targets version, the agent
         // resends the targets.
         //
         // Each listed config resolves to a stored version, found by (path, hash, length) as the
-        // agent identifies it, or to a new version whose body this response carries.
+        // agent identifies it, or to a new version whose body this response carries. `resolved`
+        // keeps them alive until the client holds them: should the response be rejected,
+        // dropping it releases whatever this response stored, and nothing else has changed.
         struct Resolved<F> {
             path: Arc<RemoteConfigPath>,
             file: Arc<F>,
@@ -871,39 +868,22 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
             }
         }
 
-        // Commit. Only storing files can still fail. Every new version is stored as a new file,
-        // without being referenced anywhere yet: should one fail, the handles created so far are
-        // dropped, which releases them, and nothing else has changed. Other versions of the same
-        // path are never modified nor replaced; each is released once nothing references it
-        // anymore.
-        let mut stored_files = Vec::with_capacity(new_files.len());
-        for mut file in new_files {
-            let decoded = std::mem::take(&mut file.decoded);
-            let length = decoded.len() as i64;
-            let handle = self
-                .file_storage
-                .store(file.version, file.parsed_path.clone(), decoded)
-                .with_context(|| format!("Failed storing remote config {}", file.path))?;
-            stored_files.push((file, length, handle));
-        }
-
-        // Nothing can fail from here on.
-        for (
-            NewFile {
-                path,
-                parsed_path,
-                target_file,
-                computed_hash,
-                version,
-                ..
-            },
-            length,
-            handle,
-        ) in stored_files
+        // Only storing files can still fail. Every new version is stored as a new file, next to
+        // the other versions of its path, which are never modified nor replaced; each is released
+        // once nothing references it anymore. Should another client have stored the same version
+        // meanwhile, that one is reused.
+        for NewFile {
+            path,
+            parsed_path,
+            target_file,
+            decoded,
+            computed_hash,
+            version,
+        } in new_files
         {
             let meta = TargetFileMeta {
                 path: path.to_string(),
-                length,
+                length: decoded.len() as i64,
                 hashes: target_file
                     .hashes
                     .iter()
@@ -913,8 +893,15 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
                     })
                     .collect(),
             };
-            let (path, file) =
-                registry.insert(parsed_path, computed_hash.clone(), meta, version, handle);
+            let (path, file) = registry
+                .get_or_store(
+                    parsed_path.clone(),
+                    computed_hash.clone(),
+                    meta,
+                    version,
+                    || self.file_storage.store(version, parsed_path, decoded),
+                )
+                .with_context(|| format!("Failed storing remote config {path}"))?;
             resolved.push(Resolved {
                 path,
                 file,
@@ -923,9 +910,16 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
             });
         }
 
+        // Commit: nothing can fail from here on.
+
         // Each client holds the version its own response names: clients still holding a previous
         // version keep reporting it until their own next fetch. Each keeps the apply outcome of
         // unchanged contents (see ClientHoldings::replace).
+        registry.hold(
+            resolved
+                .iter()
+                .map(|resolved| (&*resolved.path, &resolved.file, resolved.version)),
+        );
         let mut held = Vec::with_capacity(resolved.len());
         for Resolved {
             path,
@@ -934,7 +928,6 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
             version,
         } in resolved
         {
-            registry.hold(&path, &file, version);
             held.push((
                 HeldFile {
                     path,
@@ -948,7 +941,6 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
         if self.state.expire_unused_files {
             registry.retain_held(held.iter().map(|(held, _)| &held.file));
         }
-        drop(registry);
 
         client_state.root_version = root_version;
         client_state.targets_version = targets_list.signed.version as u64;
@@ -1003,13 +995,28 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
         client_id: &str,
         client_state: &mut ConfigClientState<S::StoredFile>,
     ) -> anyhow::Result<Option<Fetched<S::StoredFile>>> {
+        // Every version the request advertises stays alive until its response is processed: the
+        // response may list it without a body.
+        let mut snapshot = self.state.registry.advertise();
         let config_req = self.build_config_request(
             runtime_id,
             target,
             product_capabilities,
             client_id,
             &*client_state,
+            std::mem::take(&mut snapshot.cached),
         );
+        let fetched = self.fetch_with(config_req, target, client_state).await;
+        drop(snapshot);
+        fetched
+    }
+
+    async fn fetch_with(
+        &mut self,
+        config_req: ClientGetConfigsRequest,
+        target: &Target,
+        client_state: &mut ConfigClientState<S::StoredFile>,
+    ) -> anyhow::Result<Option<Fetched<S::StoredFile>>> {
         match &mut self.mode {
             FetcherMode::Agent(_) => self.fetch_agent(config_req, target, client_state).await,
             #[cfg(feature = "agentless")]
@@ -1019,8 +1026,10 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
                     "RC ConfigFetcher::build_config_request should always return a `Some` client",
                 );
 
-                let cache = agentless::TargetCache::new(&self.state, &self.file_storage);
-                let res = match agentless_fetcher.fetch_config(client, &cache).await {
+                // Strong references to every version this response resolves to, until the client
+                // holds them: on failure, dropping it releases what was stored.
+                let mut cache = agentless::TargetCache::new(&self.state, &self.file_storage);
+                let res = match agentless_fetcher.fetch_config(client, &mut cache).await {
                     Ok(r) => r,
                     Err(e) => {
                         client_state.last_error = Some(format!("{e:#}"));
@@ -1043,7 +1052,17 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
                 }
                 client_state.last_error = None;
 
-                let held = cache.lock().collect_handles(&res.targets)?;
+                let held = cache.collect_handles(&res.targets)?;
+                self.state.registry.hold(
+                    held.iter()
+                        .map(|(held, _)| (&*held.path, &held.file, held.version)),
+                );
+                // The only client using the registry no longer needs what it doesn't hold.
+                if self.state.expire_unused_files {
+                    self.state
+                        .registry
+                        .retain_held(held.iter().map(|(held, _)| &held.file));
+                }
 
                 Ok(Some(client_state.holdings.replace(held)))
             }
@@ -1992,7 +2011,7 @@ pub mod tests {
                 .registry
                 .entries()
                 .into_iter()
-                .map(|e| (e.path, e.hash, e.version, e.expiring))
+                .map(|e| (e.path, e.hash, e.version, Arc::as_ptr(&e.file) as usize))
                 .collect::<Vec<_>>()
         };
         let files_before = stored_files(&storage);
@@ -2306,6 +2325,107 @@ pub mod tests {
             "the newest version is still the one advertised"
         );
         assert!(Arc::ptr_eq(&v2[0], &up_to_date.holdings.take()[0].file));
+    }
+
+    /// A version a request advertised stays alive until the response to that request has been
+    /// processed, even if nothing else holds it by then, since the response may name it without
+    /// a body (L2). Once neither a request nor a client keeps it, it is released (L3).
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn advertised_version_outlives_its_request() {
+        let server = RemoteConfigServer::spawn();
+        let other = Arc::new(Target::new(
+            "other".to_string(),
+            "env".to_string(),
+            "7.8.9".to_string(),
+            vec![],
+            vec![],
+        ));
+        server.files.lock().unwrap().insert(
+            PATH_FIRST.clone(),
+            (vec![other.clone()], 1, "v1".to_string()),
+        );
+
+        let storage = Arc::new(Storage::default());
+        let mut state = ConfigFetcherState::with_client(
+            server.dummy_options().invariants,
+            NativeCapabilities::new_periodic(),
+        );
+        state.expire_unused_files = false;
+        let state = Arc::new(state);
+        let mut fetcher_a = ConfigFetcher::new(storage.clone(), state.clone())
+            .await
+            .unwrap();
+        let mut fetcher_b = ConfigFetcher::new(storage.clone(), state.clone())
+            .await
+            .unwrap();
+        let capabilities = server.dummy_product_capabilities();
+        let mut a = ConfigClientState::default();
+        let mut b = ConfigClientState::default();
+
+        // Only B holds v1.
+        let v1 = Arc::downgrade(
+            &fetcher_b
+                .fetch_once(DUMMY_RUNTIME_ID, &other, &capabilities, "b", &mut b)
+                .await
+                .unwrap()
+                .unwrap()[0],
+        );
+
+        // A's request advertises v1. While it is in flight, v1 moves from B to A: B releases it.
+        let (received, release) = server.hold_next_response();
+        let fetch_a =
+            fetcher_a.fetch_once(DUMMY_RUNTIME_ID, &DUMMY_TARGET, &capabilities, "a", &mut a);
+        let meanwhile = async {
+            received.await.unwrap();
+            server.files.lock().unwrap().insert(
+                PATH_FIRST.clone(),
+                (vec![DUMMY_TARGET.clone()], 1, "v1".to_string()),
+            );
+            let held_by_b = fetcher_b
+                .fetch_once(DUMMY_RUNTIME_ID, &other, &capabilities, "b", &mut b)
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(held_by_b.is_empty());
+            assert!(
+                v1.upgrade().is_some(),
+                "the request in flight keeps the version it advertised"
+            );
+            let stats = state.stats();
+            assert_eq!((stats.live_files, stats.inactive_files), (1, 1));
+            release.send(()).unwrap();
+        };
+        let (fetched, ()) = tokio::join!(fetch_a, meanwhile);
+
+        // A's response named v1 without its body, and v1 was still there for it.
+        let req = server.last_request.lock().unwrap().take().unwrap();
+        assert_eq!(req.client.unwrap().id, "a");
+        assert_eq!(
+            req.cached_target_files
+                .iter()
+                .map(|f| f.path.as_str())
+                .collect::<Vec<_>>(),
+            [PATH_FIRST.to_string()]
+        );
+        let fetched = fetched.unwrap().unwrap();
+        assert_eq!(fetched.len(), 1);
+        assert!(std::ptr::eq(Arc::as_ptr(&fetched[0]), v1.as_ptr()));
+        assert_eq!(storage.stores.load(std::sync::atomic::Ordering::Relaxed), 1);
+        assert_eq!(state.stats().inactive_files, 0, "A holds it now");
+        drop(fetched);
+
+        // Once A no longer holds it either, v1 is released.
+        server.files.lock().unwrap().clear();
+        fetcher_a
+            .fetch_once(DUMMY_RUNTIME_ID, &DUMMY_TARGET, &capabilities, "a", &mut a)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(v1.upgrade().is_none());
+        assert!(storage.files.lock().unwrap().is_empty());
+        let stats = state.stats();
+        assert_eq!((stats.live_files, stats.inactive_files), (0, 0));
     }
 
     #[tokio::test]

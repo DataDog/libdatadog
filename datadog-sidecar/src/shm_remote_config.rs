@@ -13,8 +13,8 @@ use libdd_ipc::rate_limiter::{ShmLimiter, ShmLimiterMemory};
 use libdd_live_debugger::LiveDebuggingData;
 use libdd_remote_config::config::dynamic::{Configs, parse_json};
 use libdd_remote_config::fetch::{
-    ConfigInvariants, FileRefcountData, FileStorage, MultiTargetFetcher, MultiTargetHandlers,
-    MultiTargetStats, NotifyTarget, ProductCapabilities, RefcountedFile,
+    ConfigInvariants, FileStorage, MultiTargetFetcher, MultiTargetHandlers, MultiTargetStats,
+    NotifyTarget, ProductCapabilities,
 };
 use libdd_remote_config::{
     ParserRegistry, RemoteConfigPath, RemoteConfigProduct, RemoteConfigValue, Target,
@@ -170,13 +170,8 @@ struct ConfigFileStorage<N: NotifyTarget + 'static> {
 struct StoredShmFile {
     handle: Mutex<Option<NamedShmHandle>>, // just an option to use the handle under lock
     limiter: Option<ShmLimiter<()>>,
-    refcount: FileRefcountData,
-}
-
-impl RefcountedFile for StoredShmFile {
-    fn refcount(&self) -> &FileRefcountData {
-        &self.refcount
-    }
+    /// The path the file was stored for.
+    path: Arc<RemoteConfigPath>,
 }
 
 impl<N: NotifyTarget + 'static> FileStorage for ConfigFileStorage<N> {
@@ -206,7 +201,7 @@ impl<N: NotifyTarget + 'static> FileStorage for ConfigFileStorage<N> {
             } else {
                 None
             },
-            refcount: FileRefcountData::new(version, path),
+            path,
         }))
     }
 }
@@ -329,12 +324,12 @@ impl<N: NotifyTarget + 'static> MultiTargetHandlers<N, Self, NativeCapabilities>
             serialized.push(b':');
             serialized.extend_from_slice(
                 BASE64_URL_SAFE_NO_PAD
-                    .encode(file.refcount.path.to_string())
+                    .encode(file.path.to_string())
                     .as_bytes(),
             );
             serialized.push(b'\n');
 
-            if file.refcount.path.product() == RemoteConfigProduct::ApmTracing {
+            if file.path.product() == RemoteConfigProduct::ApmTracing {
                 let mut handle = file.handle.lock_or_panic();
                 #[allow(clippy::unwrap_used)]
                 let shm = handle.take().unwrap();
@@ -419,9 +414,8 @@ impl<N: NotifyTarget + 'static> Drop for ShmRemoteConfigsGuard<N> {
         }
 
         if self.dynamic_instrumentation_state != DynamicInstrumentationConfigState::Disabled {
-            let writers = fetcher.storage.storage.writers.lock_or_panic();
+            let writers = fetcher.storage.writers.lock_or_panic();
             if let Entry::Occupied(mut entry) = fetcher
-                .storage
                 .storage
                 .targets
                 .lock_or_panic()
@@ -531,7 +525,7 @@ impl<N: NotifyTarget + 'static> ShmRemoteConfigs<N> {
             product_capabilities,
         );
 
-        let writers = self.0.storage.storage.writers.lock_or_panic();
+        let writers = self.0.storage.writers.lock_or_panic();
         if let Some(writer) = writers.get(&target)
             && writer.current_generation() > remote_config_generation
         {
@@ -542,7 +536,7 @@ impl<N: NotifyTarget + 'static> ShmRemoteConfigs<N> {
             notify_target.notify();
         }
         if dynamic_instrumentation_state != DynamicInstrumentationConfigState::Disabled {
-            let mut targets = self.0.storage.storage.targets.lock_or_panic();
+            let mut targets = self.0.storage.targets.lock_or_panic();
             let info = targets
                 .entry(target.clone())
                 .or_insert(TargetInfo::default());
@@ -1066,7 +1060,7 @@ mod tests {
             Duration::from_secs(60),
             None,
         );
-        let storage = &sidecar.0.storage.storage;
+        let storage = &sidecar.0.storage;
         *NOTIFY_PROBE.lock().unwrap() = Some((invariants.clone(), storage.writers.clone(), vec![]));
         unsafe { ddog_set_rc_notify_fn(Some(probe_notify)) };
 
@@ -1120,7 +1114,6 @@ mod tests {
         assert!(new.write(b"new-runtime\n"));
         sidecar
             .0
-            .storage
             .storage
             .writers
             .lock_or_panic()

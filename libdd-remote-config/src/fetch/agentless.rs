@@ -544,7 +544,7 @@ impl<C: HttpClientCapability + SleepCapability> AgentlessFetcher<C> {
     pub(crate) async fn fetch_config<Storage: FileStorage>(
         &mut self,
         c: remoteconfig::Client,
-        cache: &TargetCache<'_, Storage>,
+        cache: &mut TargetCache<'_, Storage>,
     ) -> anyhow::Result<ClientResponse> {
         // Derive the versions we report to the backend directly from the live
         // trusted databases. A freshly built or just-reset client has no
@@ -731,7 +731,7 @@ impl<C: HttpClientCapability + SleepCapability> AgentlessFetcher<C> {
     async fn apply<S: FileStorage>(
         &mut self,
         response: &remoteconfig::LatestConfigsResponse,
-        cache: &TargetCache<'_, S>,
+        cache: &mut TargetCache<'_, S>,
         prefetched_org_uuid: Option<String>,
     ) -> anyhow::Result<Vec<ClientTargetRef>> {
         // At a high level,  we're populating the "remote" repos with the metadata
@@ -826,13 +826,9 @@ impl<C: HttpClientCapability + SleepCapability> AgentlessFetcher<C> {
         let targets: Vec<TrustedTarget<'_>> =
             trusted_targets(&self.director_client)?.collect::<anyhow::Result<_>>()?;
 
-        // Hold the cache lock for the entire fetch/verify/store cycle.
-        // Prevents another agentless fetcher sharing the same
-        // `ConfigFetcherState` from interleaving between `is_cached_batch`
-        // and `store_batch`
-        let mut files_guard = cache.lock();
-
-        let cached_paths: HashSet<&RemoteConfigPath> = files_guard.is_cached_batch(
+        // The cache retains every version found or stored here, so another agentless fetcher
+        // sharing the same `ConfigFetcherState` cannot release them in between.
+        let cached_paths: HashSet<&RemoteConfigPath> = cache.is_cached_batch(
             targets
                 .iter()
                 .map(|t| (&t.parsed_path, t.primary_hash.as_str(), t.length)),
@@ -856,13 +852,7 @@ impl<C: HttpClientCapability + SleepCapability> AgentlessFetcher<C> {
                 content: content.to_owned(),
             });
         }
-        files_guard.store_batch(new_targets)?;
-
-        files_guard.retain_only(
-            targets
-                .iter()
-                .map(|t| (&t.parsed_path, t.primary_hash.as_str(), t.length)),
-        );
+        cache.store_batch(new_targets)?;
 
         let active_targets: Vec<ClientTargetRef> = targets
             .iter()
@@ -1225,33 +1215,31 @@ mod cache {
         RemoteConfigPath,
         fetch::{
             ClientTargetRef, ConfigFetcherState, FileStorage, HeldFile, NewTarget,
-            registry::{FileRegistry, RegistryGuard},
+            registry::FileRegistry,
         },
     };
     use libdd_capabilities::{HttpClientCapability, SleepCapability};
     use libdd_trace_protobuf::remoteconfig::{TargetFileHash, TargetFileMeta};
 
-    /// Wrapper over the shared [`ConfigFetcherState::registry`] giving
-    /// `AgentlessFetcher::apply` a set of small, self-contained cache
-    /// operations. Callers must first acquire the lock via [`Self::lock`] and
-    /// then invoke the batch methods on the returned guard, so the whole read
-    /// cycle happens under a single lock scope.
+    /// The view `AgentlessFetcher::apply` has of the shared [`ConfigFetcherState::registry`],
+    /// for one fetch: a set of small, self-contained cache operations, and strong references to
+    /// every version they resolved (`retained`) until the client holds them. Should the fetch
+    /// fail, dropping the cache releases what it stored.
+    ///
+    /// Concurrent agentless fetchers sharing the state need no common lock: each registry
+    /// operation is atomic, a version two of them store at once is stored once, and a version
+    /// found by one stays alive since it is retained.
     pub(crate) struct TargetCache<'a, Storage: FileStorage> {
         registry: &'a FileRegistry<Storage::StoredFile>,
         storage: &'a Storage,
-        expire_unused_files: bool,
+        retained: Vec<Retained<Storage::StoredFile>>,
     }
 
-    /// Locked view of the [`TargetCache`] — holds the registry lock so
-    /// every method below runs under the same critical section, atomic
-    /// w.r.t. concurrent agentless fetchers sharing the same state.
-    ///
-    /// SAFETY / INVARIANT: never `.await` while this guard is alive — it
-    /// wraps a `std::sync::MutexGuard` and would block the runtime thread.
-    pub(crate) struct LockedTargetCache<'a, Storage: FileStorage> {
-        files: RegistryGuard<'a, Storage::StoredFile>,
-        storage: &'a Storage,
-        expire_unused_files: bool,
+    struct Retained<F> {
+        path: Arc<RemoteConfigPath>,
+        primary_hash: String,
+        length: u64,
+        file: Arc<F>,
     }
 
     /// Each file version handed to a client, with the hash of its contents.
@@ -1265,39 +1253,33 @@ mod cache {
             TargetCache {
                 registry: &state.registry,
                 storage,
-                expire_unused_files: state.expire_unused_files,
+                retained: vec![],
             }
         }
 
-        /// Acquire the cache lock. Hold the returned guard for the whole
-        /// read cycle so `is_cached_batch`, `store_batch` and `retain_only`
-        /// all run under one critical section.
-        pub(crate) fn lock(&self) -> LockedTargetCache<'a, S> {
-            LockedTargetCache {
-                files: self.registry.lock(),
-                storage: self.storage,
-                expire_unused_files: self.expire_unused_files,
-            }
-        }
-    }
-
-    impl<'a, S: FileStorage> LockedTargetCache<'a, S> {
         /// Returns the set of paths whose `(primary_hash, len)` is already stored, under any
-        /// version.
+        /// version, retaining those versions.
         pub(crate) fn is_cached_batch<'b>(
-            &self,
+            &mut self,
             candidates: impl IntoIterator<Item = (&'b RemoteConfigPath, &'b str, u64)>,
         ) -> hashbrown::HashSet<&'b RemoteConfigPath> {
             candidates
                 .into_iter()
                 .filter_map(|(parsed_path, primary_hash, len)| {
-                    self.files
-                        .lookup(parsed_path, primary_hash, len)
-                        .map(|_| parsed_path)
+                    let (path, file) = self.registry.lookup(parsed_path, primary_hash, len)?;
+                    self.retained.push(Retained {
+                        path,
+                        primary_hash: primary_hash.to_string(),
+                        length: len,
+                        file,
+                    });
+                    Some(parsed_path)
                 })
                 .collect()
         }
 
+        /// Stores each target, retaining it. Every new version is stored as a new file, next to
+        /// the previous ones: other targets may still hold them until their own next fetch.
         pub(crate) fn store_batch(
             &mut self,
             targets: impl IntoIterator<Item = NewTarget>,
@@ -1318,9 +1300,6 @@ mod cache {
                     )
                 })?;
                 let path: Arc<crate::RemoteConfigPath> = Arc::new(path);
-                // Every new version is stored as a new file, next to the previous ones: other
-                // targets may still hold them until their own next fetch.
-                let new_handle = self.storage.store(version, path.clone(), content)?;
                 let meta = TargetFileMeta {
                     path: path.to_string(),
                     length,
@@ -1329,48 +1308,41 @@ mod cache {
                         .map(|(algorithm, hash)| TargetFileHash { algorithm, hash })
                         .collect(),
                 };
-                self.files
-                    .insert(path, primary_hash, meta, version, new_handle);
+                let storage = self.storage;
+                let (path, file) = self.registry.get_or_store(
+                    path.clone(),
+                    primary_hash.clone(),
+                    meta,
+                    version,
+                    || storage.store(version, path, content),
+                )?;
+                self.retained.push(Retained {
+                    path,
+                    primary_hash,
+                    length: length as u64,
+                    file,
+                });
             }
             Ok(())
         }
 
-        /// Evict every version which isn't one of the `active` `(path, primary_hash, len)`.
-        /// No-op when `expire_unused_files` is `false`.
-        pub(crate) fn retain_only<'b>(
-            &mut self,
-            active: impl IntoIterator<Item = (&'b RemoteConfigPath, &'b str, u64)>,
-        ) {
-            if !self.expire_unused_files {
-                return;
-            }
-            let mut active_versions: hashbrown::HashMap<&RemoteConfigPath, Vec<(&str, u64)>> =
-                hashbrown::HashMap::new();
-            for (path, primary_hash, len) in active {
-                active_versions
-                    .entry(path)
-                    .or_default()
-                    .push((primary_hash, len));
-            }
-            self.files.retain(|path, entry| {
-                active_versions
-                    .get(path)
-                    .is_some_and(|versions| versions.iter().any(|(h, len)| entry.matches(h, *len)))
-            });
-        }
-
         /// Collect the file version of every target in `targets`, which the client then holds,
-        /// found by stored hash and length, and marking each as non-expiring. Each is held under
-        /// the version the target names.
+        /// from the versions retained by stored hash and length. Each is held under the version
+        /// the target names.
         pub(crate) fn collect_handles(
-            &mut self,
+            &self,
             targets: &[ClientTargetRef],
         ) -> anyhow::Result<CollectedVersions<S::StoredFile>> {
             let mut held = Vec::with_capacity(targets.len());
             for target in targets {
-                let (path, file) = self
-                    .files
-                    .lookup(&target.path, &target.primary_hash, target.length)
+                let retained = self
+                    .retained
+                    .iter()
+                    .find(|retained| {
+                        *retained.path == target.path
+                            && retained.primary_hash == target.primary_hash
+                            && retained.length == target.length
+                    })
                     .ok_or_else(|| {
                         anyhow::format_err!(
                             "collect_handles: {} with hash={} len={} not found in cache after \
@@ -1380,12 +1352,11 @@ mod cache {
                             target.length,
                         )
                     })?;
-                self.files.hold(&path, &file, target.version);
                 held.push((
                     HeldFile {
-                        path,
+                        path: retained.path.clone(),
                         version: target.version,
-                        file,
+                        file: retained.file.clone(),
                     },
                     target.primary_hash.clone(),
                 ));
