@@ -17,12 +17,16 @@ impl CollapsedFieldSet {
     pub const HTTP_ENDPOINT: usize = 1 << 1;
     pub const PEER_TAGS: usize = 1 << 2;
     pub const ADDITIONAL_TAGS: usize = 1 << 3;
+    /// Not a collapsed field: the span had additional metric tag values over the length limit,
+    /// reported as `oversized:additional_metric_tags`.
+    pub const OVERSIZED_ADDITIONAL_TAGS: usize = 1 << 4;
 
-    const FIELDS: [usize; 4] = [
+    const FIELDS: [usize; 5] = [
         Self::RESOURCE_NAME,
         Self::HTTP_ENDPOINT,
         Self::PEER_TAGS,
         Self::ADDITIONAL_TAGS,
+        Self::OVERSIZED_ADDITIONAL_TAGS,
     ];
 
     /// Default value with none of the fields set (no collapsed fields)
@@ -39,15 +43,12 @@ impl CollapsedFieldSet {
 
 const COLLAPSED_FIELD_METRIC_SIZE: usize = 1 << CollapsedFieldSet::FIELDS.len();
 // Verify the array is of a reasonable size
-const_assert!(COLLAPSED_FIELD_METRIC_SIZE <= 16);
+const_assert!(COLLAPSED_FIELD_METRIC_SIZE <= 32);
 /// Counter of combination of collapsed stats key fields
 #[derive(Debug, Clone, Default, Copy)]
 pub struct CollapsedFieldsMetrics {
     // Note: slot 0 is a counter for non_collapsed spans. It's not used for emitting telemetry
     collapsed: [usize; COLLAPSED_FIELD_METRIC_SIZE],
-    /// Spans with additional metric tag values over the length limit. No field is collapsed for
-    /// them, but they are reported on the same metric, tagged `oversized:additional_metric_tags`.
-    oversized_additional_tags: usize,
 }
 
 impl CollapsedFieldsMetrics {
@@ -69,13 +70,6 @@ impl CollapsedFieldsMetrics {
                 )]);
             }
         }
-        if self.oversized_additional_tags > 0 {
-            dogstatsd.send(vec![libdd_dogstatsd_client::DogStatsDAction::Count(
-                "datadog.tracer.stats.collapsed_spans",
-                self.oversized_additional_tags as i64,
-                [Self::oversized_additional_tags_tag()].iter(),
-            )]);
-        }
     }
 
     #[cfg(feature = "telemetry")]
@@ -93,18 +87,6 @@ impl CollapsedFieldsMetrics {
                 let _ = handle.add_point(count as f64, context_key, tags);
             }
         }
-        if self.oversized_additional_tags > 0 {
-            let _ = handle.add_point(
-                self.oversized_additional_tags as f64,
-                context_key,
-                vec![Self::oversized_additional_tags_tag()],
-            );
-        }
-    }
-
-    #[cfg(any(feature = "telemetry", feature = "dogstatsd"))]
-    fn oversized_additional_tags_tag() -> libdd_common::tag::Tag {
-        libdd_common::tag!("oversized", "additional_metric_tags")
     }
 
     /// Given a bitmask of collapsed fields, returns the list of tags to attach to
@@ -135,6 +117,9 @@ impl CollapsedFieldsMetrics {
                 CollapsedFieldSet::ADDITIONAL_TAGS => {
                     libdd_common::tag!("collapsed", "additional_metric_tags")
                 }
+                CollapsedFieldSet::OVERSIZED_ADDITIONAL_TAGS => {
+                    libdd_common::tag!("oversized", "additional_metric_tags")
+                }
                 // Should be unreachable, but don't fail in prod if provided with an invalid field
                 // set
                 _ => continue,
@@ -157,7 +142,7 @@ impl CollapsedFieldsMetrics {
 
     /// Add `count` spans with additional metric tag values over the length limit
     pub fn add_oversized_additional_tags(&mut self, count: usize) {
-        self.oversized_additional_tags += count;
+        self.collapsed[CollapsedFieldSet::OVERSIZED_ADDITIONAL_TAGS] += count;
     }
 }
 
@@ -166,6 +151,5 @@ impl std::ops::AddAssign for CollapsedFieldsMetrics {
         for i in 0..self.collapsed.len() {
             self.collapsed[i] += rhs.collapsed[i];
         }
-        self.oversized_additional_tags += rhs.oversized_additional_tags;
     }
 }

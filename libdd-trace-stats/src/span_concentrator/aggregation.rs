@@ -105,7 +105,23 @@ pub(super) struct BorrowedAggregationKey<'a> {
     fixed: FixedAggregationKey<&'a str>,
     peer_tags: Vec<(&'a str, Cow<'a, str>)>,
     additional_metric_tags: Vec<(&'a str, &'a str)>,
+    /// Whether an additional metric tag value was replaced for being too long. Excluded from
+    /// hashing and equality: it is telemetry metadata, not part of the key.
+    oversized_additional_tags: TelemetryFlag,
 }
+
+/// A bool ignored by `Hash` and `PartialEq`, so it does not affect key identity.
+#[derive(Clone, Copy, Default, Debug)]
+struct TelemetryFlag(bool);
+impl Hash for TelemetryFlag {
+    fn hash<H: std::hash::Hasher>(&self, _state: &mut H) {}
+}
+impl PartialEq for TelemetryFlag {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+impl Eq for TelemetryFlag {}
 
 impl hashbrown::Equivalent<OwnedAggregationKey> for BorrowedAggregationKey<'_> {
     #[inline]
@@ -383,6 +399,7 @@ impl<'a> BorrowedAggregationKey<'a> {
         let grpc_status_code = get_grpc_status_code(span);
         let service_source = span.get_meta(TAG_SVC_SRC).unwrap_or_default();
 
+        let mut oversized_additional_tags = false;
         let additional_metric_tags: Vec<(&'a str, &'a str)> = additional_metric_tag_keys
             .iter()
             .filter_map(|key| match span.get_meta(key.as_str()) {
@@ -392,6 +409,7 @@ impl<'a> BorrowedAggregationKey<'a> {
                             "additional_metric_tags: value for key '{}' exceeds {} characters; substituting tracer_blocked_value",
                             key, ADDITIONAL_METRIC_TAG_VALUE_MAX_LEN,
                         );
+                        oversized_additional_tags = true;
                         Some((key.as_str(), TRACER_BLOCKED_VALUE))
                     } else {
                         Some((key.as_str(), v))
@@ -424,6 +442,7 @@ impl<'a> BorrowedAggregationKey<'a> {
             },
             peer_tags,
             additional_metric_tags,
+            oversized_additional_tags: TelemetryFlag(oversized_additional_tags),
         }
     }
 
@@ -754,6 +773,9 @@ impl StatsBucket {
             } else {
                 slot.insert();
             }
+        }
+        if key.oversized_additional_tags.0 {
+            collapsed_fields.add(CollapsedFieldSet::OVERSIZED_ADDITIONAL_TAGS);
         }
         self.collapsed_fields_metrics.increment(collapsed_fields);
     }
