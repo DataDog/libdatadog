@@ -9,11 +9,10 @@
 //! recursively with no flattening or type coercion.
 
 use super::OtlpResourceInfo;
-use super::mapper::{MAX_ATTRIBUTES_PER_SPAN, build_resource, proto_kv};
+use super::mapper::{MAX_ATTRIBUTES_PER_SPAN, SpanResourceAttributes, build_resource, proto_kv};
 use crate::span::trace_utils::SDK_OTLP_EXPORT_KEY;
 use crate::span::v1::{AttributeValue, Span, SpanEvent, SpanLink, TraceChunk};
 use crate::span::{SPAN_LINK_FLAGS_SET_SENTINEL, TraceData};
-use hashbrown::HashMap;
 use std::borrow::Borrow;
 use std::collections::hash_map::Entry;
 
@@ -146,7 +145,7 @@ fn collect_span_attributes_v1<T: TraceData>(
     chunk: &TraceChunk<T>,
     merged: &[(&str, &AttributeValue<T>)],
     resource_service: &str,
-    resource_attributes: &HashMap<String, String>,
+    resource_attributes: &SpanResourceAttributes<'_>,
     effective_priority: Option<i32>,
     otel_trace_semantics_enabled: bool,
 ) -> (Vec<ProtoKeyValue>, usize) {
@@ -180,7 +179,7 @@ fn collect_span_attributes_v1<T: TraceData>(
     // or (under OTel-semantics) duplicates the error-message compat tags that are promoted to the
     // Status message instead.
     let is_eligible = |key: &&str, value: &AttributeValue<T>| {
-        if matches!(value, AttributeValue::String(value) if resource_attributes
+        if matches!(value, AttributeValue::String(value) if resource_attributes.strings
                 .get(*key)
                 .is_some_and(|resource| resource.as_str() == value.borrow()))
         {
@@ -212,38 +211,50 @@ fn collect_span_attributes_v1<T: TraceData>(
         .map(|m| format!("-{m}"))
         .filter(|value| {
             resource_attributes
-                .get("_dd.p.dm")
+                .sampling_mechanism
                 .is_none_or(|resource| resource != value)
         });
     let promoted = [
         (
             "service.name",
             (has_per_span_service && !otel_trace_semantics_enabled).then_some(span_service),
+            resource_attributes.service,
         ),
         (
             "operation.name",
             (has_operation_name && !otel_trace_semantics_enabled).then_some(operation_name),
+            resource_attributes.operation,
         ),
         (
             "span.type",
             (has_span_type && !otel_trace_semantics_enabled).then_some(span_type),
+            resource_attributes.span_type,
         ),
         (
             "resource.name",
             (has_resource_name && !otel_trace_semantics_enabled).then_some(resource_name),
+            resource_attributes.resource,
         ),
-        ("env", has_env.then_some(env)),
-        ("version", has_version.then_some(version)),
-        ("component", has_component.then_some(component)),
-        ("_dd.origin", has_origin.then_some(origin)),
+        ("env", has_env.then_some(env), resource_attributes.env),
+        (
+            "version",
+            has_version.then_some(version),
+            resource_attributes.version,
+        ),
+        (
+            "component",
+            has_component.then_some(component),
+            resource_attributes.component,
+        ),
+        (
+            "_dd.origin",
+            has_origin.then_some(origin),
+            resource_attributes.origin,
+        ),
     ]
-    .map(|(key, value)| {
+    .map(|(key, value, resource_value)| {
         value
-            .filter(|value| {
-                resource_attributes
-                    .get(key)
-                    .is_none_or(|resource| resource.as_str() != *value)
-            })
+            .filter(|value| resource_value != Some(*value))
             .map(|value| (key, value))
     });
     let total = promoted.iter().flatten().count()
@@ -335,7 +346,7 @@ fn map_span_v1<T: TraceData>(
     span: &Span<T>,
     chunk: &TraceChunk<T>,
     resource_service: &str,
-    resource_attributes: &HashMap<String, String>,
+    resource_attributes: &SpanResourceAttributes<'_>,
     flags: u32,
     effective_priority: Option<i32>,
     otel_trace_semantics_enabled: bool,
@@ -411,6 +422,7 @@ pub fn map_traces_to_otlp_v1<T: TraceData>(
 ) -> ProtoReq {
     let (resource, resource_attributes) =
         build_resource(resource_info, otel_trace_semantics_enabled);
+    let resource_attributes = SpanResourceAttributes::new(&resource_attributes);
     // Pre-size to the total span count so the per-span push loop never reallocates.
     let total_spans: usize = trace_chunks.iter().map(|chunk| chunk.spans.len()).sum();
     let mut all_spans: Vec<ProtoSpan> = Vec::with_capacity(total_spans);
@@ -484,34 +496,34 @@ mod tests_v1 {
 
     #[test]
     fn resource_duplicates_do_not_consume_span_attribute_limit() {
-        let info = OtlpResourceInfo {
-            resource_attributes: [
-                ("team", "core"),
-                ("region", "us1"),
-                ("workers", "7"),
-                ("late", "same"),
-                ("env", "same"),
-                ("version", "same"),
-                ("component", "same"),
-                ("service.name", "same"),
-                ("operation.name", "same"),
-                ("resource.name", "same"),
-                ("span.type", "same"),
-                ("_dd.origin", "same"),
-                ("_dd.p.dm", "-1"),
-            ]
-            .map(|(key, value)| (key.into(), value.into()))
-            .into(),
+        let compat_keys = [
+            "service.name",
+            "operation.name",
+            "resource.name",
+            "span.type",
+        ];
+        let dedicated_keys = ["env", "version", "component", "_dd.origin"];
+        let mut info = OtlpResourceInfo {
+            resource_attributes: compat_keys
+                .into_iter()
+                .chain(dedicated_keys)
+                .chain(["team", "region", "late"])
+                .map(|key| (key.into(), "same".into()))
+                .collect(),
             ..Default::default()
         };
+        info.resource_attributes
+            .insert("workers".into(), "7".into());
+        info.resource_attributes
+            .insert("_dd.p.dm".into(), "-1".into());
         let mut span = Span::<BytesData>::default();
         span.attributes
-            .insert(bs("team"), AttributeValue::String(bs("core")));
+            .insert(bs("team"), AttributeValue::String(bs("same")));
         span.attributes
-            .insert(bs("region"), AttributeValue::String(bs("eu1")));
+            .insert(bs("region"), AttributeValue::String(bs("override")));
         span.attributes
             .insert(bs("workers"), AttributeValue::Int(7));
-        for key in ["env", "version", "component", "_dd.origin"] {
+        for key in dedicated_keys.into_iter().chain(["_dd.p.dm"]) {
             span.attributes
                 .insert(bs(key), AttributeValue::String(bs("shadowed")));
         }
@@ -519,19 +531,13 @@ mod tests_v1 {
             span.attributes
                 .insert(bs(&format!("key-{i}")), AttributeValue::Bool(true));
         }
-        span.attributes
-            .insert(bs("_dd.p.dm"), AttributeValue::String(bs("shadowed")));
         let mut chunk = minimal_chunk([1; 16], span);
         chunk.sampling_mechanism = Some(1);
-        chunk
-            .attributes
-            .insert(bs("team"), AttributeValue::String(bs("core")));
-        chunk
-            .attributes
-            .insert(bs("region"), AttributeValue::String(bs("us1")));
-        chunk
-            .attributes
-            .insert(bs("late"), AttributeValue::String(bs("same")));
+        for key in ["team", "region", "late"] {
+            chunk
+                .attributes
+                .insert(bs(key), AttributeValue::String(bs("same")));
+        }
         for (field_value, expected) in [
             ("same", None),
             ("different", Some("different")),
@@ -547,55 +553,31 @@ mod tests_v1 {
             chunk.spans[0].component = bs(field_value);
             for semantics in [false, true] {
                 let request = map_traces_to_otlp_v1(std::slice::from_ref(&chunk), &info, semantics);
-                let group = &request.resource_spans[0];
-                let resource = &group.resource.as_ref().unwrap().attributes;
-                for (key, value) in &info.resource_attributes {
-                    assert!(
-                        resource.contains(&proto_kv(key.clone(), PV::StringValue(value.clone())))
-                    );
-                }
-                let mapped = &group.scope_spans[0].spans[0];
+                let mapped = &request.resource_spans[0].scope_spans[0].spans[0];
+                let attrs = &mapped.attributes;
                 let compat_overrides = field_value == "different" && !semantics;
-                for key in [
-                    "service.name",
-                    "operation.name",
-                    "resource.name",
-                    "span.type",
-                ] {
+                for key in compat_keys {
+                    assert_eq!(attrs.iter().any(|a| a.key == key), compat_overrides);
+                }
+                for key in dedicated_keys {
                     assert_eq!(
-                        mapped.attributes.iter().any(|a| a.key == key),
-                        compat_overrides
+                        attrs.iter().find(|a| a.key == key),
+                        expected
+                            .map(|v: &str| proto_kv(key.into(), PV::StringValue(v.into())))
+                            .as_ref()
                     );
                 }
-                assert!(!mapped.attributes.iter().any(|a| a.key == "_dd.p.dm"));
-                assert_eq!(mapped.attributes.len(), MAX_ATTRIBUTES_PER_SPAN);
+                assert_eq!(attrs.len(), MAX_ATTRIBUTES_PER_SPAN);
                 assert_eq!(
                     mapped.dropped_attributes_count,
                     if expected.is_some() { 4 } else { 0 } + if compat_overrides { 4 } else { 0 }
                 );
-                for key in ["env", "version", "component", "_dd.origin"] {
-                    let value = mapped
-                        .attributes
-                        .iter()
-                        .find(|a| a.key == key)
-                        .and_then(|a| a.value.as_ref())
-                        .and_then(|v| v.value.as_ref());
-                    assert_eq!(
-                        value,
-                        expected.map(|v: &str| PV::StringValue(v.into())).as_ref()
-                    );
-                }
-                assert!(!mapped.attributes.iter().any(|a| a.key == "team"));
-                assert!(
-                    mapped
-                        .attributes
-                        .contains(&proto_kv("region".into(), PV::StringValue("eu1".into())))
-                );
-                assert!(
-                    mapped
-                        .attributes
-                        .contains(&proto_kv("workers".into(), PV::IntValue(7)))
-                );
+                assert!(!attrs.iter().any(|a| a.key == "team" || a.key == "_dd.p.dm"));
+                assert!(attrs.contains(&proto_kv(
+                    "region".into(),
+                    PV::StringValue("override".into())
+                )));
+                assert!(attrs.contains(&proto_kv("workers".into(), PV::IntValue(7))));
             }
         }
     }

@@ -1709,20 +1709,9 @@ mod tests {
             .set_otlp_instrumentation_scope("dd-trace-js", "7.0.0-pre");
         let exporter = builder.build::<NativeCapabilities>().unwrap();
         assert!(matches!(exporter.otlp, Some(OtlpExportMode::Grpc(_))));
-        assert_eq!(
-            exporter
-                .otlp_resource_info
-                .load()
-                .instrumentation_scope_name,
-            "dd-trace-js"
-        );
-        assert_eq!(
-            exporter
-                .otlp_resource_info
-                .load()
-                .instrumentation_scope_version,
-            "7.0.0-pre"
-        );
+        let resource = exporter.otlp_resource_info.load();
+        assert_eq!(resource.instrumentation_scope_name, "dd-trace-js");
+        assert_eq!(resource.instrumentation_scope_version, "7.0.0-pre");
     }
 
     #[cfg_attr(miri, ignore)]

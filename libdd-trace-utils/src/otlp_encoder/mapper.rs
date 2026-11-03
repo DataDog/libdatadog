@@ -166,16 +166,44 @@ pub(super) fn proto_kv(key: String, value: ProtoValue) -> ProtoKeyValue {
     }
 }
 
+// Resolve fixed keys once from the emitted resource; only values are reused across spans.
+pub(super) struct SpanResourceAttributes<'a> {
+    pub strings: &'a HashMap<String, String>,
+    pub service: Option<&'a str>,
+    pub operation: Option<&'a str>,
+    pub span_type: Option<&'a str>,
+    pub resource: Option<&'a str>,
+    pub env: Option<&'a str>,
+    pub version: Option<&'a str>,
+    pub component: Option<&'a str>,
+    pub origin: Option<&'a str>,
+    pub sampling_mechanism: Option<&'a str>,
+}
+
+impl<'a> SpanResourceAttributes<'a> {
+    pub fn new(strings: &'a HashMap<String, String>) -> Self {
+        Self {
+            strings,
+            service: strings.get("service.name").map(String::as_str),
+            operation: strings.get("operation.name").map(String::as_str),
+            span_type: strings.get("span.type").map(String::as_str),
+            resource: strings.get("resource.name").map(String::as_str),
+            env: strings.get("env").map(String::as_str),
+            version: strings.get("version").map(String::as_str),
+            component: strings.get("component").map(String::as_str),
+            origin: strings.get("_dd.origin").map(String::as_str),
+            sampling_mechanism: strings.get("_dd.p.dm").map(String::as_str),
+        }
+    }
+}
+
 fn push_span_string_attribute(
     attrs: &mut Vec<ProtoKeyValue>,
-    resource_attributes: &HashMap<String, String>,
+    resource_value: Option<&str>,
     key: &str,
     value: &str,
 ) {
-    if resource_attributes
-        .get(key)
-        .is_none_or(|resource| resource != value)
-    {
+    if resource_value != Some(value) {
         attrs.push(proto_kv(
             key.to_string(),
             ProtoValue::StringValue(value.to_string()),
@@ -190,7 +218,7 @@ fn push_span_string_attribute(
 fn collect_span_attributes<T: TraceData>(
     span: &Span<T>,
     resource_service: &str,
-    resource_attributes: &HashMap<String, String>,
+    resource_attributes: &SpanResourceAttributes<'_>,
     otel_trace_semantics_enabled: bool,
 ) -> (Vec<ProtoKeyValue>, usize) {
     // Pre-size to avoid reallocations as attributes accumulate. Upper bound is the 4 synthetic
@@ -206,7 +234,7 @@ fn collect_span_attributes<T: TraceData>(
     if has_per_span_service && !otel_trace_semantics_enabled {
         push_span_string_attribute(
             &mut attrs,
-            resource_attributes,
+            resource_attributes.service,
             "service.name",
             span_service,
         );
@@ -216,7 +244,7 @@ fn collect_span_attributes<T: TraceData>(
     if has_operation_name && !otel_trace_semantics_enabled {
         push_span_string_attribute(
             &mut attrs,
-            resource_attributes,
+            resource_attributes.operation,
             "operation.name",
             operation_name,
         );
@@ -224,14 +252,19 @@ fn collect_span_attributes<T: TraceData>(
     let span_type = span.r#type.borrow();
     let has_span_type = !span_type.is_empty();
     if has_span_type && !otel_trace_semantics_enabled {
-        push_span_string_attribute(&mut attrs, resource_attributes, "span.type", span_type);
+        push_span_string_attribute(
+            &mut attrs,
+            resource_attributes.span_type,
+            "span.type",
+            span_type,
+        );
     }
     let resource_name = span.resource.borrow();
     let has_resource_name = !resource_name.is_empty();
     if has_resource_name && !otel_trace_semantics_enabled {
         push_span_string_attribute(
             &mut attrs,
-            resource_attributes,
+            resource_attributes.resource,
             "resource.name",
             resource_name,
         );
@@ -251,6 +284,7 @@ fn collect_span_attributes<T: TraceData>(
             continue;
         }
         if resource_attributes
+            .strings
             .get(key)
             .is_some_and(|value| value.as_str() == v.borrow())
         {
@@ -363,6 +397,7 @@ pub fn map_traces_to_otlp<T: TraceData>(
 ) -> ProtoReq {
     let (resource, resource_attributes) =
         build_resource(resource_info, otel_trace_semantics_enabled);
+    let resource_attributes = SpanResourceAttributes::new(&resource_attributes);
     // Pre-size to the total span count so the per-span push loop never reallocates.
     let total_spans: usize = trace_chunks.iter().map(|chunk| chunk.len()).sum();
     let mut all_spans: Vec<ProtoSpan> = Vec::with_capacity(total_spans);
@@ -501,7 +536,7 @@ pub(super) fn build_resource(
 fn map_span<T: TraceData>(
     span: &Span<T>,
     resource_service: &str,
-    resource_attributes: &HashMap<String, String>,
+    resource_attributes: &SpanResourceAttributes<'_>,
     chunk_trace_id_high: u64,
     flags: u32,
     otel_trace_semantics_enabled: bool,
@@ -613,20 +648,9 @@ mod tests {
             .insert("telemetry.sdk.name".into(), "datadog".into());
         let request = map_traces_to_otlp(&[vec![span]], &info, false);
         let group = &request.resource_spans[0];
-        let service: Vec<_> = group
-            .resource
-            .as_ref()
-            .unwrap()
-            .attributes
-            .iter()
-            .filter(|a| a.key == "service.name")
-            .collect();
         assert_eq!(
-            service,
-            [&proto_kv(
-                "service.name".into(),
-                ProtoValue::StringValue("configured".into())
-            )]
+            resource_str_attr(&request, "service.name"),
+            Some("configured")
         );
         assert_eq!(
             group.scope_spans[0].spans[0].attributes,
@@ -670,12 +694,8 @@ mod tests {
                 for semantics in [false, true] {
                     let request = map_traces_to_otlp(&chunks, &info, semantics);
                     let group = &request.resource_spans[0];
-                    let resource = &group.resource.as_ref().unwrap().attributes;
                     for (key, value) in &info.resource_attributes {
-                        assert!(resource.contains(&proto_kv(
-                            key.clone(),
-                            ProtoValue::StringValue(value.clone())
-                        )));
+                        assert_eq!(resource_str_attr(&request, key), Some(value.as_str()));
                     }
                     let mapped = &group.scope_spans[0].spans[0];
                     assert_eq!(mapped.attributes.len(), MAX_ATTRIBUTES_PER_SPAN);
