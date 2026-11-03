@@ -103,7 +103,7 @@ fn has_valid_http_status_code(span: &impl Attributes) -> bool {
 
 /// Fills the chunk fields older tracers set on spans instead, from the span at `root_span_index`:
 /// * the sampling priority, if unset, from the root span's `_sampling_priority_v1`, else from the
-///   first span that has one;
+///   first span that has one; a value that isn't an exact `i32` is ignored;
 /// * the origin, if empty, from the root span's `_dd.origin`.
 ///
 /// The agent doesn't do this for v1 payloads, but the v1 decoder doesn't promote these tags to the
@@ -115,10 +115,19 @@ pub fn normalize_chunk<C: TraceChunkMut>(
     let Some(root) = chunk.spans().nth(root_span_index) else {
         return Err(NormalizeError::RootSpanIndexOutOfBounds(root_span_index));
     };
-    let priority = if chunk.priority().is_none() {
-        sampling_priority(root).or_else(|| chunk.spans().find_map(sampling_priority))
-    } else {
+    let priority = if chunk.priority().is_some() {
         None
+    } else if root.has_attribute(SAMPLING_PRIORITY_KEY) {
+        // Like the agent, a root priority is used even if invalid (here: not an exact `i32`).
+        sampling_priority(root)
+    } else {
+        chunk
+            .spans()
+            .find_map(|span| {
+                span.has_attribute(SAMPLING_PRIORITY_KEY)
+                    .then(|| sampling_priority(span))
+            })
+            .flatten()
     };
     let origin = if chunk.origin().is_empty() {
         root.attribute_str(ORIGIN_KEY).map(str::to_owned)

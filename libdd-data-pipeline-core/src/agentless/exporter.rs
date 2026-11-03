@@ -112,9 +112,32 @@ where
     send_agentless_json(capabilities, config, headers, json_body, observer).await
 }
 
+/// Normalizes v1 trace chunks the way the agent does, and drops those that can't be repaired
+/// (empty, or holding a span with a zero span id).
+///
+/// Call it once before anything reads the spans (stats, top-level computation, trace filtering),
+/// as the agent normalizes first: the v1 agentless senders don't normalize. It isn't idempotent
+/// for every input (e.g. a reset start can make a large duration overflow on a second pass).
+pub fn normalize_traces_v1<T: TraceData>(traces: &mut PooledTraceChunks<'_, T>) {
+    traces.retain_mut(|chunk| {
+        if let Err(error) = normalizer::normalize_trace(chunk) {
+            debug!(%error, "Dropping invalid trace");
+            return false;
+        }
+        if let Ok(root_span_index) = get_root_span_index(&chunk.spans)
+            && let Err(error) = normalizer::normalize_chunk(chunk, root_span_index)
+        {
+            debug!(%error, "Failed to normalize trace chunk");
+        }
+        true
+    });
+}
+
 /// Encodes and sends already-decoded v1 trace chunks.
 ///
 /// V1-native counterpart of [`send_agentless_traces`].
+///
+/// The chunks must already be normalized, see [`normalize_traces_v1`].
 pub async fn send_agentless_traces_v1<C, T>(
     capabilities: &C,
     traces: PooledTraceChunks<'_, T>,
@@ -139,8 +162,7 @@ where
 
 /// Encodes and sends already-decoded v1 trace chunks, reporting the final send result.
 ///
-/// The chunks are normalized first; those that can't be (empty, or holding a span with a zero span
-/// id) are dropped.
+/// The chunks must already be normalized, see [`normalize_traces_v1`].
 ///
 /// The observer is invoked once after the retry loop with the post-compression payload size.
 pub async fn send_agentless_traces_with_observer_v1<C, T, F>(
@@ -156,20 +178,6 @@ where
     T: TraceData,
     F: FnOnce(&SendWithRetryResult, usize),
 {
-    // Like the agent, normalize before anything else reads the spans, and drop the chunks that
-    // can't be repaired.
-    traces.retain_mut(|chunk| {
-        if let Err(error) = normalizer::normalize_trace(chunk) {
-            debug!(%error, "Dropping invalid trace");
-            return false;
-        }
-        if let Ok(root_span_index) = get_root_span_index(&chunk.spans)
-            && let Err(error) = normalizer::normalize_chunk(chunk, root_span_index)
-        {
-            debug!(%error, "Failed to normalize trace chunk");
-        }
-        true
-    });
     // Top-level tagging is already done before sending when client-side stats are active.
     if !metadata.client_computed_top_level && !client_side_stats {
         for chunk in traces.iter_mut() {
@@ -456,10 +464,13 @@ mod tests {
             }],
             ..Default::default()
         };
+        let mut traces =
+            PooledTraceChunks::unpooled(vec![chunk(2), chunk(0), TraceChunk::default()]);
+        normalize_traces_v1(&mut traces);
         let capabilities = TestCapabilities::default();
         let result = futures::executor::block_on(send_agentless_traces_v1(
             &capabilities,
-            PooledTraceChunks::unpooled(vec![chunk(2), chunk(0), TraceChunk::default()]),
+            traces,
             &metadata(),
             &config(),
             false,

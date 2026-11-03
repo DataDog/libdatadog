@@ -171,10 +171,13 @@ fn run_v1(input: &Input) -> Option<Output> {
     let before = now();
     let mut chunk = v1_chunk(vec![v1_span(input)]);
     generic::normalize_trace(&mut chunk).ok()?;
-    let span = chunk.spans.pop().unwrap();
+    Some(v1_output(input, &chunk.spans[0], before))
+}
+
+fn v1_output(input: &Input, span: &v1::Span<BytesData>, before: i64) -> Output {
     // v1 holds no env as an empty env; pb keeps the (normalized) empty tag.
     let env = input.env.as_ref().map(|_| span.env.as_str().to_owned());
-    Some(Output {
+    Output {
         start: observed_start(span.start, input.start, span.duration, before),
         env,
         http_status_code: span
@@ -188,7 +191,7 @@ fn run_v1(input: &Input) -> Option<Output> {
         typ: span.r#type.as_str().to_owned(),
         parent_id: span.parent_id,
         duration: span.duration,
-    })
+    }
 }
 
 type Case = (&'static str, fn(&mut Input), fn(&mut Output));
@@ -369,8 +372,15 @@ fn normalizers_reject_zero_span_id() {
     );
 }
 
-/// A chunk of three spans, the first one being the root, with these sampling priorities and
-/// root origin.
+/// Index of the root in the chunks built from a [`ChunkInput`]: not the first span, so that taking
+/// the first span instead of the root shows.
+const ROOT_INDEX: usize = 1;
+/// The first span of every chunk built from a [`ChunkInput`] has this origin, which must be
+/// ignored.
+const FIRST_SPAN_ORIGIN: &str = "synthetics";
+
+/// A chunk of three spans, the one at [`ROOT_INDEX`] being the root, with these sampling
+/// priorities and root origin.
 struct ChunkInput {
     chunk_priority: Option<i32>,
     chunk_origin: &'static str,
@@ -383,7 +393,8 @@ fn run_pb_chunk(input: &ChunkInput) -> (Option<i32>, String) {
         .span_priorities
         .iter()
         .zip(SPAN_ID..)
-        .map(|(priority, span_id)| {
+        .enumerate()
+        .map(|(index, (priority, span_id))| {
             let mut span = pb_span(&Input {
                 span_id,
                 ..Default::default()
@@ -392,9 +403,12 @@ fn run_pb_chunk(input: &ChunkInput) -> (Option<i32>, String) {
                 span.metrics
                     .insert("_sampling_priority_v1".to_owned(), *priority);
             }
-            if span_id == SPAN_ID
-                && let Some(origin) = input.root_origin
-            {
+            let origin = match index {
+                0 => Some(FIRST_SPAN_ORIGIN),
+                ROOT_INDEX => input.root_origin,
+                _ => None,
+            };
+            if let Some(origin) = origin {
                 span.meta.insert("_dd.origin".to_owned(), origin.to_owned());
             }
             span
@@ -406,7 +420,7 @@ fn run_pb_chunk(input: &ChunkInput) -> (Option<i32>, String) {
         spans,
         ..Default::default()
     };
-    normalizer::normalize_chunk(&mut chunk, 0).unwrap();
+    normalizer::normalize_chunk(&mut chunk, ROOT_INDEX).unwrap();
     let priority = (chunk.priority != PRIORITY_NONE).then_some(chunk.priority);
     (priority, chunk.origin)
 }
@@ -416,7 +430,8 @@ fn run_v1_chunk(input: &ChunkInput) -> (Option<i32>, String) {
         .span_priorities
         .iter()
         .zip(SPAN_ID..)
-        .map(|(priority, span_id)| {
+        .enumerate()
+        .map(|(index, (priority, span_id))| {
             let mut span = v1_span(&Input {
                 span_id,
                 ..Default::default()
@@ -427,9 +442,12 @@ fn run_v1_chunk(input: &ChunkInput) -> (Option<i32>, String) {
                     AttributeValue::Float(*priority),
                 );
             }
-            if span_id == SPAN_ID
-                && let Some(origin) = input.root_origin
-            {
+            let origin = match index {
+                0 => Some(FIRST_SPAN_ORIGIN),
+                ROOT_INDEX => input.root_origin,
+                _ => None,
+            };
+            if let Some(origin) = origin {
                 span.attributes
                     .insert("_dd.origin".into(), AttributeValue::String(origin.into()));
             }
@@ -439,7 +457,7 @@ fn run_v1_chunk(input: &ChunkInput) -> (Option<i32>, String) {
     let mut chunk = v1_chunk(spans);
     chunk.priority = input.chunk_priority;
     chunk.origin = input.chunk_origin.into();
-    generic::normalize_chunk(&mut chunk, 0).unwrap();
+    generic::normalize_chunk(&mut chunk, ROOT_INDEX).unwrap();
     (chunk.priority, chunk.origin.as_str().to_owned())
 }
 
@@ -451,7 +469,7 @@ fn normalizers_agree_on_chunks() {
             ChunkInput {
                 chunk_priority: None,
                 chunk_origin: "",
-                span_priorities: [Some(2.0), Some(1.0), None],
+                span_priorities: [Some(1.0), Some(2.0), Some(0.0)],
                 root_origin: None,
             },
             (Some(2), ""),
@@ -471,7 +489,7 @@ fn normalizers_agree_on_chunks() {
             ChunkInput {
                 chunk_priority: Some(0),
                 chunk_origin: "",
-                span_priorities: [Some(2.0), None, None],
+                span_priorities: [None, Some(2.0), None],
                 root_origin: None,
             },
             (Some(0), ""),
@@ -563,6 +581,21 @@ fn generic_validates_non_string_status_codes() {
             "{value:?}"
         );
     }
+}
+
+#[test]
+fn generic_ignores_inexact_root_priority() {
+    // The root's priority wins even when it can't be used, like in the agent (which truncates it
+    // to 1, where the generic normalizer leaves the priority unset).
+    let mut chunk = v1_chunk(vec![v1_span(&Input::default()), v1_span(&Input::default())]);
+    chunk.spans[0]
+        .attributes
+        .insert("_sampling_priority_v1".into(), AttributeValue::Float(1.5));
+    chunk.spans[1]
+        .attributes
+        .insert("_sampling_priority_v1".into(), AttributeValue::Int(2));
+    generic::normalize_chunk(&mut chunk, 0).unwrap();
+    assert_eq!(chunk.priority, None);
 }
 
 #[test]
