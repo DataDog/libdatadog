@@ -33,14 +33,16 @@
 //!      rules move below it
 //!   3. infra patterns without "/": they match at any depth, so they must come after the crate
 //!      rules (crate-level LICENSE/NOTICE stay centralized)
-//!   4. general supporting rules: co-owners, plus the release team on manifest kinds. Crates whose
-//!      owners are a subset of the co-owners (the core-owned ones) need nothing more, so no family
-//!      block is emitted
-//!   5. code rules for crates under a supporting directory, then one family block per remaining
-//!      crate: owners + co-owners, plus release on manifest kinds. Family-block rules are emitted
-//!      only for kinds that exist in the working tree, so no pattern matches zero files (GitHub's
-//!      CODEOWNERS validator rejects those); the CI `--check` forces a regeneration when such files
-//!      are added or removed
+//!   4. root-level supporting rules: the workspace manifests and other supporting kinds existing at
+//!      the repository root (/Cargo.toml, /Cargo.lock, /tests/) are owned by the co-owners, plus
+//!      the release team on manifest kinds. They are anchored with a leading slash: GitHub would
+//!      match an unanchored name at any depth, but the CI CODEOWNERS validator does not implement
+//!      that rule
+//!   5. code rules for crates under a supporting directory, then one family block per crate: owners
+//!      and co-owners, plus release on manifest kinds. Family-block rules are emitted only for
+//!      kinds that exist in the working tree, so no pattern matches zero files (GitHub's CODEOWNERS
+//!      validator rejects those); the CI `--check` forces a regeneration when such files are added
+//!      or removed
 //!   6. exceptions
 
 use anyhow::{Context, Result, bail, ensure};
@@ -275,14 +277,17 @@ fn validate(m: &Model) -> Result<()> {
 /// team is a code-only reviewer and resolves like any other alias here; the
 /// family-block emission filters those out before calling this.
 fn rule(m: &Model, pattern: &str, teams: &[&str]) -> Result<String> {
-    let mut owners = Vec::with_capacity(teams.len());
+    let mut owners: Vec<&str> = Vec::with_capacity(teams.len());
     for t in teams {
         let key = t.strip_prefix('+').unwrap_or(t);
         let handle = m
             .teams
             .get(key)
             .ok_or_else(|| anyhow::anyhow!("unknown team {key:?}"))?;
-        owners.push(handle.as_str());
+        // a crate's owners may overlap the co-owners; keep each handle once
+        if !owners.contains(&handle.as_str()) {
+            owners.push(handle.as_str());
+        }
     }
     Ok(format!("{pattern:<PAD$} {}", owners.join(" "))
         .trim_end()
@@ -291,7 +296,6 @@ fn rule(m: &Model, pattern: &str, teams: &[&str]) -> Result<String> {
 
 fn emit(m: &Model, target_exists: &dyn Fn(&str, &str) -> bool) -> Result<String> {
     let co = &m.co_owners;
-    let co_set: HashSet<&str> = co.iter().map(String::as_str).collect();
     let supporting = &m.supporting;
     let dir_kinds: HashSet<&str> = supporting
         .iter()
@@ -346,12 +350,18 @@ fn emit(m: &Model, target_exists: &dyn Fn(&str, &str) -> bool) -> Result<String>
 
     lines.push(String::new());
     lines.push("# ── 3. Supporting architecture — co-owned by the libdatadog team ──".to_string());
+    // Root-level supporting files, anchored on purpose: GitHub would match an
+    // unanchored name at any depth, but the CODEOWNERS validator used in CI
+    // does not, so nested coverage comes from the per-crate lines below.
     for kind in supporting {
+        if !target_exists("", kind) {
+            continue;
+        }
         let mut ts: Vec<&str> = co.iter().map(String::as_str).collect();
         if m.manifest.contains(kind.as_str()) {
             ts.extend(m.release.iter().map(String::as_str));
         }
-        lines.push(rule(m, kind, &ts)?);
+        lines.push(rule(m, &format!("/{kind}"), &ts)?);
     }
 
     lines.push(String::new());
@@ -370,9 +380,6 @@ fn emit(m: &Model, target_exists: &dyn Fn(&str, &str) -> bool) -> Result<String>
             .map(String::as_str)
             .filter(|t| !t.starts_with('+'))
             .collect();
-        if owners.iter().all(|t| co_set.contains(t)) {
-            continue; // general supporting rules already cover these owners
-        }
         for p in &b.patterns {
             for kind in supporting {
                 if !target_exists(p, kind) {
@@ -427,10 +434,19 @@ fn run(check: bool) -> Result<()> {
             dirs_by_pattern.insert(p.clone(), dirs);
         }
     }
+    // The empty pattern refers to the repository root (root-level supporting
+    // files such as /Cargo.toml and /tests/).
+    let root_dir = root.to_path_buf();
     let target_exists = |pattern: &str, kind: &str| {
-        dirs_by_pattern
-            .get(pattern)
-            .is_some_and(|dirs| kind_exists(dirs, kind))
+        let dirs: &[PathBuf] = if pattern.is_empty() {
+            std::slice::from_ref(&root_dir)
+        } else {
+            dirs_by_pattern
+                .get(pattern)
+                .map(Vec::as_slice)
+                .unwrap_or(&[])
+        };
+        kind_exists(dirs, kind)
     };
     let generated = emit(&model, &target_exists)?;
     if check {
@@ -584,13 +600,14 @@ crate b +c:
         // crate code rules carry the +reviewer team
         assert!(has("/domain-thing/ @x/b @x/c"));
 
-        // general supporting rules
-        assert!(has("Cargo.toml @x/a @x/b"));
-        assert!(has("tests/ @x/a"));
+        // root-level supporting rules (anchored: the CI validator does not
+        // match unanchored names below the root)
+        assert!(has("/Cargo.toml @x/a @x/b"));
+        assert!(has("/tests/ @x/a"));
 
-        // late crate under tests/: code rule below the general tests/ rule
+        // late crate under tests/: code rule below the root-level tests/ rule
         assert!(has("/tests/nested-thing/ @x/b @x/c"));
-        let i_tests = rules.iter().position(|l| l.starts_with("tests/ ")).unwrap();
+        let i_tests = rules.iter().position(|l| l == "/tests/ @x/a").unwrap();
         let i_nested = rules
             .iter()
             .position(|l| l.starts_with("/tests/nested-thing/"))
@@ -598,14 +615,16 @@ crate b +c:
         assert!(i_tests < i_nested);
 
         // family blocks: owners + co-owners (+ release on manifest kinds),
-        // without the +reviewer team
-        assert!(has("/domain-thing/Cargo.toml @x/b @x/a @x/b"));
+        // without the +reviewer team and without duplicated handles
+        assert!(has("/domain-thing/Cargo.toml @x/b @x/a"));
         assert!(has("/domain-thing/tests/ @x/b @x/a"));
-        assert!(has("/tests/nested-thing/Cargo.toml @x/b @x/a @x/b"));
+        assert!(has("/tests/nested-thing/Cargo.toml @x/b @x/a"));
         assert!(has("/tests/nested-thing/tests/ @x/b @x/a"));
 
-        // core-owned crate needs no family block
-        assert!(!out.contains("/core-thing/Cargo.toml"));
+        // core-owned crates get family blocks too; owners overlapping the
+        // co-owners appear once
+        assert!(has("/core-thing/Cargo.toml @x/a @x/b"));
+        assert!(has("/core-thing/tests/ @x/a"));
     }
 
     #[test]
@@ -655,6 +674,9 @@ co-owners a
         let out = emit(&model, &exists).expect("mini model emits");
         let has = |needle: &str| out.lines().any(|l| l.trim().starts_with(needle));
 
+        // root-level rules are filtered like per-crate ones
+        assert!(has("/Cargo.toml"));
+        assert!(has("/tests/"));
         assert!(has("/domain-thing/Cargo.toml"));
         assert!(has("/domain-thing/tests/"));
         assert!(has("/tests/nested-thing/Cargo.toml"));

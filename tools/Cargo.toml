@@ -91,3 +91,8 @@ required-features = ["cli"]
 name = "generate_codeowners"
 bench = false
 required-features = ["cli"]
+
+[[bin]]
+name = "validate_codeowners"
+bench = false
+required-features = ["cli"]
