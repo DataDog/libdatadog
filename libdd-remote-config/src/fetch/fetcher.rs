@@ -30,8 +30,9 @@ use tracing::{debug, trace, warn};
 /// Manages config files.
 /// Presents the store() operation. Stored files are immutable: a new version of a file is always
 /// stored as a new file, and the previous one is released once no longer referenced.
-/// It is recommended to minimize the overhead of this operation as it will be invoked while
-/// a lock across all ConfigFetchers referencing the same ConfigFetcherState is held.
+/// It is not invoked under any lock shared by the ConfigFetchers referencing the same
+/// ConfigFetcherState: only the version being stored is locked, so that it is never stored
+/// twice at once, and different versions may be stored concurrently.
 /// The fetcher only keeps weak references to stored files: a stored file is dropped once no
 /// client holds it, no request advertising it is in flight and no consumer keeps it, and never
 /// while any lock of the fetcher is held.
