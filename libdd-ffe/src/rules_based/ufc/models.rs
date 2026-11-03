@@ -14,7 +14,7 @@ use crate::rules_based::{EvaluationError, FlagType, Str, Timestamp};
 #[serde(rename_all = "camelCase")]
 pub(crate) struct UniversalFlagConfigWire {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub evaluator_params: Option<EvaluatorParams>,
+    pub evaluator_params: Option<serde_json::Value>,
     /// When configuration was last updated.
     pub created_at: Timestamp,
     /// Environment this configuration belongs to.
@@ -31,13 +31,6 @@ pub(crate) struct UniversalFlagConfigWire {
     /// Value is wrapped in `TryParse` so that if we fail to parse one flag (e.g., new server
     /// format), we can still serve other flags.
     pub flags: HashMap<Str, TryParse<FlagWire>>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct EvaluatorParams {
-    // u8 rejects negative, fractional, and >255 limits; zero explicitly forbids dependencies.
-    pub max_dependency_depth: Option<u8>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -269,17 +262,35 @@ impl From<SemverComparisonOperator> for ConditionOperator {
 #[serde(rename_all = "camelCase")]
 #[allow(missing_docs)]
 pub(crate) struct ConditionWire {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_present",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub attribute: Option<Box<str>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_present",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub flag_evaluation: Option<FlagEvaluationWire>,
     pub operator: ConditionOperator,
     pub value: ConditionValue,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct FlagEvaluationWire {
     pub key: Str,
+}
+
+// An absent selector is allowed, but an explicit null must not be treated as absent.
+fn deserialize_present<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    T::deserialize(deserializer).map(Some)
 }
 
 impl From<Condition> for ConditionWire {
@@ -362,12 +373,7 @@ impl TryFrom<ConditionWire> for Condition {
 
     fn try_from(condition: ConditionWire) -> Result<Self, Self::Error> {
         if let Some(reference) = condition.flag_evaluation {
-            if condition
-                .attribute
-                .as_ref()
-                .is_some_and(|attribute| !attribute.is_empty())
-                || reference.key.is_empty()
-            {
+            if condition.attribute.is_some() || reference.key.is_empty() {
                 return Err(EvaluationError::ConfigurationParseError);
             }
             let expected_membership = match condition.operator {
@@ -378,9 +384,6 @@ impl TryFrom<ConditionWire> for Condition {
             let ConditionValue::Multiple(values) = condition.value else {
                 return Err(EvaluationError::ConfigurationParseError);
             };
-            if values.is_empty() {
-                return Err(EvaluationError::ConfigurationParseError);
-            }
             return Ok(Self {
                 attribute: "".into(),
                 check: ConditionCheck::FlagEvaluation {

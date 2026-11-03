@@ -22,7 +22,8 @@ pub struct UniversalFlagConfig {
 #[derive(Debug, Deserialize)]
 #[serde(from = "UniversalFlagConfigWire")]
 pub(crate) struct CompiledFlagsConfig {
-    pub max_dependency_depth: u8,
+    // Preserve absence versus explicit null and defer validation until a dependency is reached.
+    pub max_dependency_depth: Option<serde_json::Value>,
     /// When configuration was last updated.
     pub created_at: Timestamp,
     /// Environment this configuration belongs to.
@@ -104,8 +105,7 @@ impl From<UniversalFlagConfigWire> for CompiledFlagsConfig {
         CompiledFlagsConfig {
             max_dependency_depth: config
                 .evaluator_params
-                .and_then(|params| params.max_dependency_depth)
-                .unwrap_or(10),
+                .and_then(|params| params.get("maxDependencyDepth").cloned()),
             created_at: config.created_at,
             environment: config.environment,
             observe_full_evaluation_data: config.observe_full_evaluation_data,

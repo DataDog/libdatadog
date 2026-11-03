@@ -71,6 +71,8 @@ fn compares_variant_keys_not_values_and_supports_both_membership_operators() {
         ("ONE_OF", json!(["false"]), "off"),
         ("NOT_ONE_OF", json!(["off"]), "on"),
         ("NOT_ONE_OF", json!(["on"]), "off"),
+        ("ONE_OF", json!([]), "off"),
+        ("NOT_ONE_OF", json!([]), "on"),
     ] {
         let condition =
             json!({"flagEvaluation": {"key": "parent"}, "operator": operator, "value": values});
@@ -80,6 +82,22 @@ fn compares_variant_keys_not_values_and_supports_both_membership_operators() {
         assert_eq!(result.result.unwrap().variation_key.as_str(), expected);
         assert_eq!(result.evaluations.len(), 1);
         assert_eq!(result.evaluations[0].exposure_eligible, expected == "on");
+    }
+}
+
+#[test]
+fn empty_dependency_comparands_still_evaluate_the_prerequisite() {
+    for operator in ["ONE_OF", "NOT_ONE_OF"] {
+        let condition =
+            json!({"flagEvaluation": {"key": "missing"}, "operator": operator, "value": []});
+        let result = eval(wire(json!({"root": flag(vec![condition])})));
+        assert_eq!(
+            cause(result.result.as_ref().unwrap_err()),
+            &EvaluationError::FlagUnrecognizedOrDisabled
+        );
+        assert_eq!(result.evaluations.len(), 1);
+        assert_eq!(result.evaluations[0].flag_key.as_str(), "missing");
+        assert!(!result.evaluations[0].exposure_eligible);
     }
 }
 
@@ -130,19 +148,34 @@ fn reached_failed_prerequisites_abort_the_root_instead_of_selecting_fallback() {
 #[test]
 fn invalid_dependency_conditions_are_isolated_to_the_containing_flag() {
     for invalid in [
-        json!({"flagEvaluation": {"key": "parent"}, "operator": "ONE_OF", "value": []}),
-        json!({"flagEvaluation": {"key": "parent"}, "operator": "NOT_ONE_OF", "value": []}),
         json!({"flagEvaluation": {"key": "parent"}, "attribute": "country", "operator": "ONE_OF", "value": ["on"]}),
+        json!({"flagEvaluation": {"key": "parent"}, "attribute": "", "operator": "ONE_OF", "value": ["on"]}),
+        json!({"flagEvaluation": {"key": "parent"}, "attribute": null, "operator": "ONE_OF", "value": ["on"]}),
+        json!({"flagEvaluation": {"key": "parent", "extra": true}, "operator": "ONE_OF", "value": ["on"]}),
+        json!({"flagEvaluation": null, "attribute": "country", "operator": "ONE_OF", "value": ["FR"]}),
+        json!({"flagEvaluation": null, "operator": "ONE_OF", "value": ["on"]}),
         json!({"flagEvaluation": {"key": ""}, "operator": "ONE_OF", "value": ["on"]}),
         json!({"flagEvaluation": {"key": "parent"}, "operator": "IS_NULL", "value": false}),
         json!({"flagEvaluation": {"key": "parent"}, "operator": "ONE_OF", "value": "on"}),
         json!({"flagEvaluation": {"key": "parent"}, "operator": "ONE_OF", "value": [true]}),
+        json!({"attribute": null, "operator": "ONE_OF", "value": ["on"]}),
     ] {
         let w = wire(json!({"root": flag(vec![invalid]), "parent": flag(vec![])}));
         assert_eq!(
             eval(w.clone()).result.unwrap_err(),
             EvaluationError::FlagConfigurationInvalid
         );
+        let mut dependent = w.clone();
+        dependent["flags"]["bad"] = dependent["flags"]["root"].clone();
+        dependent["flags"]["root"] = flag(vec![dependency("bad")]);
+        let result = eval(dependent);
+        assert_eq!(
+            cause(result.result.as_ref().unwrap_err()),
+            &EvaluationError::FlagConfigurationInvalid
+        );
+        assert_eq!(result.evaluations.len(), 1);
+        assert_eq!(result.evaluations[0].flag_key.as_str(), "bad");
+        assert!(!result.evaluations[0].exposure_eligible);
         let config = Configuration::from_server_response(
             UniversalFlagConfig::from_json(serde_json::to_vec(&w).unwrap()).unwrap(),
         );
@@ -157,6 +190,14 @@ fn invalid_dependency_conditions_are_isolated_to_the_containing_flag() {
                 .is_ok()
         );
     }
+}
+
+#[test]
+fn an_empty_attribute_selector_without_a_reference_remains_valid() {
+    let condition = json!({"attribute": "", "operator": "IS_NULL", "value": true});
+    let result = eval(wire(json!({"root": flag(vec![condition])})));
+    assert_eq!(result.result.unwrap().variation_key.as_str(), "on");
+    assert!(result.evaluations.is_empty());
 }
 
 #[test]
@@ -304,21 +345,234 @@ fn depth_counts_edges_defaults_to_ten_and_preserves_explicit_zero() {
 }
 
 #[test]
-fn rejects_invalid_depth_limits_and_preserves_wire_parameters() {
-    for limit in [json!(-1), json!(256), json!(1.5), json!("10"), json!(true)] {
-        let mut w = chain(0);
-        w["evaluatorParams"] = json!({"maxDependencyDepth":limit});
-        assert!(UniversalFlagConfig::from_json(serde_json::to_vec(&w).unwrap()).is_err());
+fn invalid_depth_limits_only_fail_when_a_dependency_executes() {
+    for limit in [
+        json!(-1),
+        json!(256),
+        json!(1.5),
+        json!("10"),
+        json!(true),
+        json!(false),
+        json!(null),
+        json!([]),
+        json!({}),
+    ] {
+        let mut w = wire(json!({"root": flag(vec![]),
+            "dependent": flag(vec![dependency("parent")]), "parent": flag(vec![])}));
+        w["evaluatorParams"] = json!({"maxDependencyDepth": limit});
+        let bytes = serde_json::to_vec(&w).unwrap();
+        let parsed = UniversalFlagConfig::from_json(bytes.clone()).unwrap();
+        assert_eq!(parsed.to_json(), bytes);
+        let config = Configuration::from_server_response(parsed);
+        let context = EvaluationContext::new(Some("subject".into()), Default::default());
+        let now = "2026-10-28T00:00:00Z".parse::<DateTime<Utc>>().unwrap();
+        assert_eq!(
+            config
+                .eval_flag("root", &context, ExpectedFlagType::Boolean, now)
+                .unwrap()
+                .variation_key
+                .as_str(),
+            "on",
+            "limit={limit}"
+        );
+        let result = config.eval_flag_with_trace(
+            "dependent",
+            &context,
+            ExpectedFlagType::Boolean,
+            now,
+            EvaluationOptions::default(),
+        );
+        assert_eq!(
+            result.result.unwrap_err(),
+            EvaluationError::ConfigurationParseError,
+            "limit={limit}"
+        );
+        assert!(result.evaluations.is_empty());
     }
-    let mut w = chain(0);
-    w["evaluatorParams"] = json!({"maxDependencyDepth":0});
-    let bytes = serde_json::to_vec(&w).unwrap();
-    assert_eq!(
-        UniversalFlagConfig::from_json(bytes.clone())
-            .unwrap()
-            .to_json(),
-        bytes
+}
+
+#[test]
+fn invalid_depth_limits_do_not_affect_skipped_dependency_conditions() {
+    let mut future = flag(vec![dependency("missing")]);
+    future["allocations"][0]["startAt"] = json!("2026-10-29T00:00:00Z");
+    let mut expired = flag(vec![dependency("missing")]);
+    expired["allocations"][0]["endAt"] = json!("2026-10-27T00:00:00Z");
+    let mut earlier_allocation = flag(vec![dependency("missing")]);
+    earlier_allocation["allocations"]
+        .as_array_mut()
+        .unwrap()
+        .insert(0, allocation(vec![], "on"));
+    let mut earlier_rule = flag(vec![dependency("missing")]);
+    earlier_rule["allocations"][0]["rules"]
+        .as_array_mut()
+        .unwrap()
+        .insert(0, json!({"conditions": []}));
+    for (name, root, expected) in [
+        (
+            "short-circuit",
+            flag(vec![fails(), dependency("missing")]),
+            "off",
+        ),
+        ("future allocation", future, "off"),
+        ("expired allocation", expired, "off"),
+        ("earlier allocation", earlier_allocation, "on"),
+        ("earlier rule", earlier_rule, "on"),
+    ] {
+        for limit in [json!(-1), json!(null)] {
+            let mut w = wire(json!({"root": root}));
+            w["evaluatorParams"] = json!({"maxDependencyDepth": limit});
+            let result = eval(w);
+            assert_eq!(
+                result.result.unwrap().variation_key.as_str(),
+                expected,
+                "{name} limit={limit}"
+            );
+            assert!(result.evaluations.is_empty());
+        }
+    }
+}
+
+#[test]
+fn experimentation_opt_out_can_skip_an_invalid_dependency_limit() {
+    let mut root = flag(vec![dependency("missing")]);
+    root["allocations"][1]["doLog"] = json!(false);
+    let mut w = wire(json!({"root": root}));
+    w["evaluatorParams"] = json!({"maxDependencyDepth": null});
+    let result = evaluate(
+        w,
+        EvaluationOptions {
+            experimentation_opt_out_mode: ExperimentationOptOutMode::Immediate,
+        },
+        EvaluationContext::new(
+            Some("subject".into()),
+            Arc::new(HashMap::from([(
+                "dd_experimentation_opt_out_at".into(),
+                "2026-10-26T00:00:00Z".into(),
+            )])),
+        ),
     );
+    assert_eq!(result.result.unwrap().variation_key.as_str(), "off");
+    assert!(result.evaluations.is_empty());
+}
+
+#[test]
+fn omitted_depth_limits_default_to_ten() {
+    for params in [
+        json!(null),
+        json!({}),
+        json!({"other": true}),
+        json!(false),
+        json!([]),
+        json!("ignored"),
+    ] {
+        for edges in [10, 11] {
+            let mut w = chain(edges);
+            w["evaluatorParams"] = params.clone();
+            let result = eval(w);
+            assert_eq!(
+                result.result.is_ok(),
+                edges == 10,
+                "params={params} edges={edges}"
+            );
+            if edges == 11 {
+                assert_eq!(
+                    cause(result.result.as_ref().unwrap_err()),
+                    &EvaluationError::DependencyDepthExceeded
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn integral_json_numbers_are_valid_depth_limits() {
+    for (limit, edges) in [
+        (json!(0), 0),
+        (json!(0.0), 0),
+        (json!(-0.0), 0),
+        (json!(1.0), 1),
+        (json!(255), 255),
+        (json!(255.0), 255),
+    ] {
+        let mut w = chain(edges);
+        w["evaluatorParams"] = json!({"maxDependencyDepth": limit});
+        let bytes = serde_json::to_vec(&w).unwrap();
+        assert_eq!(
+            UniversalFlagConfig::from_json(bytes.clone())
+                .unwrap()
+                .to_json(),
+            bytes
+        );
+        assert!(eval(w).result.is_ok(), "limit={limit}");
+    }
+}
+
+#[test]
+fn depth_rejected_prerequisites_are_recorded_before_their_ancestors() {
+    for (edges, limit, expected) in [(1, 0, vec!["f1"]), (3, 2, vec!["f3", "f2", "f1"])] {
+        let mut w = chain(edges);
+        w["evaluatorParams"] = json!({"maxDependencyDepth": limit});
+        let result = eval(w);
+        assert_eq!(
+            cause(result.result.as_ref().unwrap_err()),
+            &EvaluationError::DependencyDepthExceeded
+        );
+        assert_eq!(
+            result
+                .evaluations
+                .iter()
+                .map(|record| record.flag_key.as_str())
+                .collect::<Vec<_>>(),
+            expected
+        );
+        for record in &result.evaluations {
+            assert_eq!(
+                cause(record.result.as_ref().unwrap_err()),
+                &EvaluationError::DependencyDepthExceeded
+            );
+            assert!(!record.exposure_eligible);
+        }
+    }
+}
+
+#[test]
+fn depth_rejection_does_not_duplicate_active_or_memoized_nodes_or_include_the_root() {
+    for (flags, limit, expected) in [
+        (json!({"root": flag(vec![dependency("root")])}), 0, vec![]),
+        (
+            json!({"root": flag(vec![dependency("a")]), "a": flag(vec![dependency("a")])}),
+            1,
+            vec!["a"],
+        ),
+        (
+            json!({"root": flag(vec![dependency("a"), dependency("b")]),
+            "a": flag(vec![]), "b": flag(vec![dependency("a")])}),
+            1,
+            vec!["a", "b"],
+        ),
+    ] {
+        let mut w = wire(flags);
+        w["evaluatorParams"] = json!({"maxDependencyDepth": limit});
+        let result = eval(w);
+        assert_eq!(
+            cause(result.result.as_ref().unwrap_err()),
+            &EvaluationError::DependencyDepthExceeded
+        );
+        assert_eq!(
+            result
+                .evaluations
+                .iter()
+                .map(|record| record.flag_key.as_str())
+                .collect::<Vec<_>>(),
+            expected
+        );
+        assert!(
+            result
+                .evaluations
+                .iter()
+                .all(|record| !record.exposure_eligible)
+        );
+    }
 }
 
 #[test]

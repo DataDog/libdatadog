@@ -204,6 +204,7 @@ impl Configuration {
             context,
             now,
             exclusion,
+            max_dependency_depth: None,
             active: Vec::new(),
             memo: HashMap::new(),
             evaluations: Vec::new(),
@@ -257,6 +258,7 @@ struct EvaluationSession<'a> {
     context: &'a EvaluationContext,
     now: Timestamp,
     exclusion: ExperimentationExclusion,
+    max_dependency_depth: Option<u16>,
     active: Vec<Str>,
     memo: HashMap<Str, EvaluatedFlag>,
     evaluations: Vec<EvaluationRecord>,
@@ -386,12 +388,15 @@ impl EvaluationSession<'_> {
                 values,
             } = &condition.check
             {
-                let dependency = self.evaluate_dependency(key, depth + 1).map_err(|source| {
-                    EvaluationError::DependencyEvaluationFailed {
-                        flag_key: key.clone(),
-                        source: Box::new(source),
-                    }
-                })?;
+                // Validate only after authored-order evaluation reaches a dependency. An invalid
+                // evaluator setting must not affect independent flags or skipped conditions.
+                let limit = self.dependency_depth_limit()?;
+                let dependency =
+                    self.evaluate_dependency(key, depth + 1, limit)
+                        .map_err(|source| EvaluationError::DependencyEvaluationFailed {
+                            flag_key: key.clone(),
+                            source: Box::new(source),
+                        })?;
                 *height = (*height).max(1 + dependency.height);
                 let matched = values
                     .iter()
@@ -412,13 +417,42 @@ impl EvaluationSession<'_> {
         Ok(Some(exposures))
     }
 
+    fn dependency_depth_limit(&mut self) -> Result<u16, EvaluationError> {
+        if let Some(limit) = self.max_dependency_depth {
+            return Ok(limit);
+        }
+        let limit = match &self.config.max_dependency_depth {
+            None => 10,
+            Some(value) => {
+                let depth = value
+                    .as_f64()
+                    .filter(|depth| depth.fract() == 0.0 && (0.0..=255.0).contains(depth))
+                    .ok_or(EvaluationError::ConfigurationParseError)?;
+                // The checked value is an integer in 0..=255, so this conversion is lossless.
+                depth as u16
+            }
+        };
+        self.max_dependency_depth = Some(limit);
+        Ok(limit)
+    }
+
     fn evaluate_dependency(
         &mut self,
         key: &Str,
         depth: u16,
+        limit: u16,
     ) -> Result<EvaluatedFlag, EvaluationError> {
-        let limit = u16::from(self.config.max_dependency_depth);
         if depth > limit {
+            if key.as_str() != self.root_key
+                && !self.active.contains(key)
+                && !self.memo.contains_key(key)
+            {
+                self.evaluations.push(EvaluationRecord {
+                    flag_key: key.clone(),
+                    result: Err(EvaluationError::DependencyDepthExceeded),
+                    exposure_eligible: false,
+                });
+            }
             return Err(EvaluationError::DependencyDepthExceeded);
         }
         if key.as_str() == self.root_key || self.active.contains(key) {
