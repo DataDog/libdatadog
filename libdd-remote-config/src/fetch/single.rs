@@ -3,9 +3,9 @@
 
 use crate::fetch::{
     ConfigApplyState, ConfigClientState, ConfigFetcher, ConfigFetcherState, ConfigInvariants,
-    ConfigProductCapabilities, FileStorage, random_uuid_string,
+    ConfigProductCapabilities, Fetched, FileStorage, HeldFile, random_uuid_string,
 };
-use crate::file_change_tracker::{Change, ChangeTracker, FilePath};
+use crate::file_change_tracker::{Change, changes};
 use crate::{RemoteConfigCapabilities, RemoteConfigPath, RemoteConfigProduct, Target};
 use libdd_capabilities::{HttpClientCapability, SleepCapability};
 use libdd_common::{Endpoint, MutexExt};
@@ -21,7 +21,10 @@ pub struct SingleFetcher<S: FileStorage, C: HttpClientCapability + SleepCapabili
     product_capabilities: ConfigProductCapabilities,
     runtime_id: String,
     client_id: String,
-    client_state: ConfigClientState,
+    client_state: ConfigClientState<S::StoredFile>,
+    /// The files held before a rebind, which reset the client state. They are handed out as the
+    /// previous files of the next fetch which changes anything, as if still held until then.
+    carried: Vec<HeldFile<S::StoredFile>>,
 }
 
 #[derive(Clone, Debug)]
@@ -56,6 +59,7 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> SingleFetcher<S,
             runtime_id,
             client_id: random_uuid_string(),
             client_state: ConfigClientState::default(),
+            carried: vec![],
         })
     }
 
@@ -82,6 +86,7 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> SingleFetcher<S,
             runtime_id,
             client_id: random_uuid_string(),
             client_state: ConfigClientState::default(),
+            carried: vec![],
         }
     }
 
@@ -106,6 +111,7 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> SingleFetcher<S,
             runtime_id,
             client_id,
             client_state: previous_client_state,
+            mut carried,
         } = self;
         let (file_storage, previous) = fetcher.into_parts();
 
@@ -120,6 +126,7 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> SingleFetcher<S,
         ));
 
         let mut client_state = ConfigClientState::default();
+        carried.extend(previous_client_state.holdings.take());
         client_state.set_extra_services(previous_client_state.extra_services);
 
         Ok(SingleFetcher {
@@ -129,20 +136,39 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> SingleFetcher<S,
             runtime_id,
             client_id,
             client_state,
+            carried,
         })
     }
 
     /// Polls the current runtime config files.
     pub async fn fetch_once(&mut self) -> anyhow::Result<Option<Vec<Arc<S::StoredFile>>>> {
-        self.fetcher
-            .fetch_once(
+        Ok(self
+            .fetch()
+            .await?
+            .map(|fetched| fetched.files.into_iter().map(|held| held.file).collect()))
+    }
+
+    /// Polls the current runtime config files, returning both the files held now and those held
+    /// before. See [`ConfigFetcher::fetch`].
+    pub async fn fetch(&mut self) -> anyhow::Result<Option<Fetched<S::StoredFile>>> {
+        let fetched = self
+            .fetcher
+            .fetch(
                 self.runtime_id.as_str(),
                 &self.target,
                 &self.product_capabilities,
                 self.client_id.as_str(),
                 &mut self.client_state,
             )
-            .await
+            .await?;
+        Ok(fetched.map(|mut fetched| {
+            if !self.carried.is_empty() {
+                let mut previous = std::mem::take(&mut self.carried);
+                previous.append(&mut fetched.previous);
+                fetched.previous = previous;
+            }
+            fetched
+        }))
     }
 
     pub fn get_client_id(&self) -> &str {
@@ -202,18 +228,11 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> SingleFetcher<S,
     }
 }
 
-pub struct SingleChangesFetcher<S: FileStorage, C: HttpClientCapability + SleepCapability>
-where
-    S::StoredFile: FilePath,
-{
-    changes: ChangeTracker<S::StoredFile>,
+pub struct SingleChangesFetcher<S: FileStorage, C: HttpClientCapability + SleepCapability> {
     pub fetcher: SingleFetcher<S, C>,
 }
 
-impl<S: FileStorage, C: HttpClientCapability + SleepCapability> SingleChangesFetcher<S, C>
-where
-    S::StoredFile: FilePath,
-{
+impl<S: FileStorage, C: HttpClientCapability + SleepCapability> SingleChangesFetcher<S, C> {
     pub async fn new(
         sink: S,
         target: Target,
@@ -222,7 +241,6 @@ where
         http_client: C,
     ) -> anyhow::Result<Self> {
         Ok(SingleChangesFetcher {
-            changes: ChangeTracker::default(),
             fetcher: SingleFetcher::new(sink, target, runtime_id, options, http_client).await?,
         })
     }
@@ -235,7 +253,6 @@ where
         http_client: C,
     ) -> Self {
         SingleChangesFetcher {
-            changes: ChangeTracker::default(),
             fetcher: SingleFetcher::new_no_agentless(
                 sink,
                 target,
@@ -256,14 +273,15 @@ where
         self.fetcher.set_identity(client_id, runtime_id, tags);
     }
 
-    /// Polls for new changes. A new version of a file is a new stored file: it is reported as
-    /// [`Change::Update`] along with the previous one.
+    /// Polls for new changes: the difference between the files held before and after the fetch.
+    /// A new version of a file is a new stored file: it is reported as [`Change::Update`] along
+    /// with the previous one.
     pub async fn fetch_changes(
         &mut self,
     ) -> anyhow::Result<Vec<Change<Arc<S::StoredFile>, Arc<S::StoredFile>>>> {
-        Ok(match self.fetcher.fetch_once().await? {
+        Ok(match self.fetcher.fetch().await? {
             None => vec![],
-            Some(files) => self.changes.get_changes(files),
+            Some(Fetched { files, previous }) => changes(&previous, &files),
         })
     }
 
@@ -277,15 +295,18 @@ where
         self.fetcher.get_refresh_interval()
     }
 
-    /// Sets the apply state of whichever version of the file this client currently holds at the
-    /// path of `file`. See [`SingleFetcher::set_config_state`].
+    /// Sets the apply state of `file`, the very stored file, reported with the following requests.
+    /// Discarded if this client no longer holds it: an outcome for a file replaced by a new
+    /// version never applies to the new one.
     pub fn set_config_state(&self, file: &S::StoredFile, state: ConfigApplyState) {
-        self.fetcher.set_config_state(file.path(), state)
+        self.fetcher
+            .client_state
+            .set_file_config_state(file, None, state);
     }
 
-    /// Sets the apply state of `version` of `file`; discarded, returning false, unless this
-    /// client still holds that version. Pass the version the outcome was computed for (e.g.
-    /// [`crate::file_storage::RawFile::version`]).
+    /// Sets the apply state of `version` of `file`, the very stored file; discarded, returning
+    /// false, unless this client still holds it at that version. Pass the version the outcome
+    /// was computed for (e.g. [`crate::file_storage::RawFile::version`]).
     pub fn set_config_state_for_version(
         &self,
         file: &S::StoredFile,
@@ -293,7 +314,8 @@ where
         state: ConfigApplyState,
     ) -> bool {
         self.fetcher
-            .set_config_state_for_version(file.path(), version, state)
+            .client_state
+            .set_file_config_state(file, Some(version), state)
     }
 
     /// See [`SingleFetcher::set_extra_services`].
@@ -377,6 +399,74 @@ mod tests {
             server.reported_config_states(),
             [(2, 2, String::new())],
             "the outcome for v1 must not land on v2"
+        );
+    }
+
+    /// The apply state set for a stored file lands on the holding of that very file: once it was
+    /// replaced by a new version, an outcome for the previous file is discarded, while one for
+    /// the current file is reported.
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn apply_state_set_for_a_file_targets_its_holding() {
+        let server = RemoteConfigServer::spawn();
+        let target = Target::new(
+            "service".to_string(),
+            "env".to_string(),
+            "1.2.3".to_string(),
+            vec![],
+            vec![],
+        );
+        let path = RemoteConfigPath::parse("employee/APM_TRACING/state/config").unwrap();
+        server.files.lock().unwrap().insert(
+            path.clone(),
+            (vec![Arc::new(target.clone())], 1, "v1".to_string()),
+        );
+        let mut fetcher = SingleChangesFetcher::new_no_agentless(
+            SimpleFileStorage::default(),
+            target.clone(),
+            "runtime-id".to_string(),
+            server.dummy_options(),
+            NativeCapabilities::new_periodic(),
+        );
+
+        let changes = fetcher.fetch_changes().await.unwrap();
+        let [Change::Add(v1)] = changes.as_slice() else {
+            panic!("expected v1 to be added");
+        };
+        let v1 = v1.clone();
+
+        server
+            .files
+            .lock()
+            .unwrap()
+            .insert(path.clone(), (vec![Arc::new(target)], 2, "v2".to_string()));
+        let changes = fetcher.fetch_changes().await.unwrap();
+        let [Change::Update(v2, old)] = changes.as_slice() else {
+            panic!("expected v1 to be updated to v2");
+        };
+        assert!(Arc::ptr_eq(old, &v1));
+        let v2 = v2.clone();
+
+        // The outcome of applying v1 arrives once the client already holds v2.
+        fetcher.set_config_state(&v1, ConfigApplyState::Error("late".to_string()));
+        assert!(!fetcher.set_config_state_for_version(
+            &v1,
+            1,
+            ConfigApplyState::Error("late".to_string())
+        ));
+        assert!(fetcher.fetch_changes().await.unwrap().is_empty());
+        assert_eq!(
+            server.reported_config_states(),
+            [(2, 2, String::new())],
+            "the outcome for v1 must not land on v2"
+        );
+
+        fetcher.set_config_state(&v2, ConfigApplyState::Error("bad".to_string()));
+        fetcher.fetch_changes().await.unwrap();
+        assert_eq!(
+            server.reported_config_states(),
+            [(2, 3, "bad".to_string())],
+            "the outcome for the file held is reported"
         );
     }
 

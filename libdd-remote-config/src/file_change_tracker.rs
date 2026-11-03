@@ -2,40 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::RemoteConfigPath;
-use std::collections::HashSet;
-use std::hash::{Hash, Hasher};
+use crate::fetch::HeldFile;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 pub trait FilePath {
     fn path(&self) -> &RemoteConfigPath;
-}
-
-struct FilePathBasedArc<S: FilePath>(Arc<S>);
-
-impl<S: FilePath> Hash for FilePathBasedArc<S> {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.0.path().hash(state)
-    }
-}
-
-impl<S: FilePath> PartialEq for FilePathBasedArc<S> {
-    fn eq(&self, other: &Self) -> bool {
-        self.0.path() == other.0.path()
-    }
-}
-
-impl<S: FilePath> Eq for FilePathBasedArc<S> {}
-
-pub struct ChangeTracker<S: FilePath> {
-    last_files: HashSet<FilePathBasedArc<S>>,
-}
-
-impl<S: FilePath> Default for ChangeTracker<S> {
-    fn default() -> Self {
-        ChangeTracker {
-            last_files: Default::default(),
-        }
-    }
 }
 
 pub enum Change<S, R> {
@@ -45,35 +17,44 @@ pub enum Change<S, R> {
     Remove(S),
 }
 
-impl<S: FilePath> ChangeTracker<S> {
-    /// Computes the changes from the files of the previous call to `files`. Stored files are never
-    /// modified: a different file at the same path is a new version, reported as
-    /// [`Change::Update`] with the previous file.
-    pub fn get_changes(&mut self, files: Vec<Arc<S>>) -> Vec<Change<Arc<S>, Arc<S>>> {
-        let files = HashSet::from_iter(files.into_iter().map(FilePathBasedArc));
-        let mut changes = vec![];
-
-        // Emit removals before additions/updates so that consumers observe
-        // configuration deletions strictly before new or updated configs.
-        for file in self.last_files.difference(&files) {
-            changes.push(Change::Remove(file.0.clone()));
-        }
-
-        for file in files.difference(&self.last_files) {
-            changes.push(Change::Add(file.0.clone()));
-        }
-
-        for file in files.iter() {
-            if let Some(old) = self.last_files.get(file)
-                && !Arc::ptr_eq(&file.0, &old.0)
-            {
-                changes.push(Change::Update(file.0.clone(), old.0.clone()));
-            }
-        }
-
-        self.last_files = files;
-        changes
+/// Computes the changes from the files a client held before a fetch to those it holds after it
+/// (see [`crate::fetch::Fetched`]). Stored files are never modified: a different file at the same
+/// path is a new version, reported as [`Change::Update`] with the previous file, while the same
+/// file (a version-only change) is no change.
+pub fn changes<F>(
+    previous: &[HeldFile<F>],
+    current: &[HeldFile<F>],
+) -> Vec<Change<Arc<F>, Arc<F>>> {
+    fn by_path<F>(files: &[HeldFile<F>]) -> HashMap<&RemoteConfigPath, &Arc<F>> {
+        files.iter().map(|held| (&*held.path, &held.file)).collect()
     }
+    let before = by_path(previous);
+    let after = by_path(current);
+    let mut changes = vec![];
+
+    // Emit removals before additions/updates so that consumers observe
+    // configuration deletions strictly before new or updated configs.
+    for (path, file) in before.iter() {
+        if !after.contains_key(path) {
+            changes.push(Change::Remove((*file).clone()));
+        }
+    }
+
+    for (path, file) in after.iter() {
+        if !before.contains_key(path) {
+            changes.push(Change::Add((*file).clone()));
+        }
+    }
+
+    for (path, file) in after.iter() {
+        if let Some(old) = before.get(path)
+            && !Arc::ptr_eq(file, old)
+        {
+            changes.push(Change::Update((*file).clone(), (*old).clone()));
+        }
+    }
+
+    changes
 }
 
 #[cfg(test)]
@@ -81,68 +62,68 @@ mod tests {
     use super::*;
     use crate::RemoteConfigPath;
 
-    struct TestFile(RemoteConfigPath);
+    struct TestFile(Arc<RemoteConfigPath>);
 
-    impl FilePath for TestFile {
-        fn path(&self) -> &RemoteConfigPath {
-            &self.0
-        }
-    }
-
-    fn file(name: &str) -> Arc<TestFile> {
-        Arc::new(TestFile(
+    fn file(name: &str) -> HeldFile<TestFile> {
+        let path = Arc::new(
             RemoteConfigPath::parse(&format!("employee/APM_TRACING/id/{name}"))
                 .expect("test file has a valid path"),
-        ))
+        );
+        HeldFile {
+            path: path.clone(),
+            version: 1,
+            file: Arc::new(TestFile(path)),
+        }
     }
 
     #[test]
     fn removals_are_emitted_before_additions() {
-        let mut tracker: ChangeTracker<TestFile> = ChangeTracker::default();
+        // "a" is gone, "b" appears. The removal of "a" must be emitted before the addition of
+        // "b".
         let a = file("a");
-        // First round: "a" is added.
-        tracker.get_changes(vec![a.clone()]);
-
-        // Second round: "a" is gone, "b" appears. The removal of "a" must be
-        // emitted before the addition of "b".
         let b = file("b");
-        let changes = tracker.get_changes(vec![b.clone()]);
+        let changes = changes(&[a], &[b]);
 
         assert_eq!(changes.len(), 2);
         match &changes[0] {
-            Change::Remove(f) => assert_eq!(f.path().name(), "a"),
+            Change::Remove(f) => assert_eq!(f.0.name(), "a"),
             _ => panic!("expected the removal to be emitted first"),
         }
         match &changes[1] {
-            Change::Add(f) => assert_eq!(f.path().name(), "b"),
+            Change::Add(f) => assert_eq!(f.0.name(), "b"),
             _ => panic!("expected the addition to be emitted after the removal"),
         }
     }
 
     #[test]
     fn update_carries_the_previous_file_after_removals() {
-        let mut tracker: ChangeTracker<TestFile> = ChangeTracker::default();
         let a1 = file("a");
         let b = file("b");
-        tracker.get_changes(vec![a1.clone(), b.clone()]);
 
-        // Re-delivering the same files is no change.
-        assert!(tracker.get_changes(vec![a1.clone(), b.clone()]).is_empty());
+        // Holding the same files is no change, whatever their version.
+        let a1_v2 = HeldFile {
+            version: 2,
+            ..a1.clone()
+        };
+        assert!(changes(&[a1.clone(), b.clone()], &[a1_v2, b.clone()]).is_empty());
 
         // A new version of "a" is a new file at the same path; "b" is gone.
         let a2 = file("a");
-        let changes = tracker.get_changes(vec![a2.clone()]);
+        let changes = changes(&[a1.clone(), b.clone()], std::slice::from_ref(&a2));
 
         assert_eq!(changes.len(), 2);
         match &changes[0] {
-            Change::Remove(f) => assert!(Arc::ptr_eq(f, &b)),
+            Change::Remove(f) => assert!(Arc::ptr_eq(f, &b.file)),
             _ => panic!("expected the removal to be emitted first"),
         }
         match &changes[1] {
             Change::Update(new, old) => {
-                assert!(Arc::ptr_eq(new, &a2), "the update carries the new file");
                 assert!(
-                    Arc::ptr_eq(old, &a1),
+                    Arc::ptr_eq(new, &a2.file),
+                    "the update carries the new file"
+                );
+                assert!(
+                    Arc::ptr_eq(old, &a1.file),
                     "the update carries the previous file"
                 );
             }

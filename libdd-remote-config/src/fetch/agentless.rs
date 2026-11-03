@@ -1221,7 +1221,9 @@ mod cache {
 
     use crate::{
         RemoteConfigPath,
-        fetch::{ClientTargetRef, ConfigFetcherState, FileStorage, NewTarget, StoredTargetFile},
+        fetch::{
+            ClientTargetRef, ConfigFetcherState, FileStorage, HeldFile, NewTarget, StoredTargetFile,
+        },
     };
     use hashbrown::HashMap;
     use libdd_capabilities::{HttpClientCapability, SleepCapability};
@@ -1252,8 +1254,8 @@ mod cache {
         expire_unused_files: bool,
     }
 
-    /// The (path, version, hash) of each file version handed to a client.
-    pub(crate) type CollectedVersions = Vec<(RemoteConfigPath, u64, String)>;
+    /// Each file version handed to a client, with the hash of its contents.
+    pub(crate) type CollectedVersions<F> = Vec<(HeldFile<F>, String)>;
 
     impl<'a, S: FileStorage> TargetCache<'a, S> {
         pub(crate) fn new<C: HttpClientCapability + SleepCapability>(
@@ -1351,22 +1353,21 @@ mod cache {
             self.files.retain(|path, _| active_paths.contains(&**path));
         }
 
-        /// Collect `Arc<S::StoredFile>` handles for every target in `targets`, verifying
-        /// stored hash and length match, and marking each entry as non-expiring. Also
-        /// returns each collected file version, which the client then holds.
+        /// Collect the file version of every target in `targets`, which the client then holds,
+        /// verifying stored hash and length match, and marking each entry as non-expiring.
         pub(crate) fn collect_handles(
             &mut self,
             targets: &[ClientTargetRef],
-        ) -> anyhow::Result<(Vec<Arc<S::StoredFile>>, CollectedVersions)> {
-            let mut handles = Vec::with_capacity(targets.len());
+        ) -> anyhow::Result<CollectedVersions<S::StoredFile>> {
             let mut held = Vec::with_capacity(targets.len());
             for target in targets {
-                let stored = self.files.get_mut(&target.path).ok_or_else(|| {
-                    anyhow::format_err!(
-                        "collect_handles: path {} not found in cache after fetch",
-                        target.path
-                    )
-                })?;
+                let (path, stored) =
+                    self.files.get_key_value_mut(&target.path).ok_or_else(|| {
+                        anyhow::format_err!(
+                            "collect_handles: path {} not found in cache after fetch",
+                            target.path
+                        )
+                    })?;
                 let stored_len = u64::try_from(stored.meta.length).map_err(|_| {
                     anyhow::format_err!(
                         "collect_handles: cached length {} for {} is not a valid u64",
@@ -1386,10 +1387,16 @@ mod cache {
                     );
                 }
                 stored.expiring = false;
-                handles.push(stored.handle.clone());
-                held.push((target.path.clone(), stored.version, stored.hash.clone()));
+                held.push((
+                    HeldFile {
+                        path: path.clone(),
+                        version: stored.version,
+                        file: stored.handle.clone(),
+                    },
+                    stored.hash.clone(),
+                ));
             }
-            Ok((handles, held))
+            Ok(held)
         }
     }
 }

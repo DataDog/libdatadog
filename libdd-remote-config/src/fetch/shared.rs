@@ -3,7 +3,7 @@
 
 use crate::fetch::{
     ClientHoldings, ConfigApplyState, ConfigClientState, ConfigFetcher, ConfigFetcherState,
-    ConfigFetcherStateStats, ConfigInvariants, ConfigProductCapabilities, FileStorage,
+    ConfigFetcherStateStats, ConfigInvariants, ConfigProductCapabilities, Fetched, FileStorage,
     random_uuid_string,
 };
 use crate::{RemoteConfigPath, Target};
@@ -26,7 +26,7 @@ use tracing::error;
 ///  - It does not leak files which are no longer in use, i.e. it refcounts across all remote config
 ///    clients sharing the same RefcountingStorage.
 ///  - The state is always valid, i.e. there will be no intermittently expired files.
-pub struct SharedFetcher {
+pub struct SharedFetcher<F> {
     /// (env, service, version) tuple representing the basic remote config target
     pub target: Arc<Target>, // could be theoretically also Mutex<>ed if needed
     /// A unique runtime id. It must not be used by any other remote config client at the same
@@ -39,8 +39,9 @@ pub struct SharedFetcher {
     cancellation: CancellationToken,
     /// Refetch interval in nanoseconds.
     pub interval: AtomicU64,
-    /// The file versions this client holds, with their apply states.
-    holdings: ClientHoldings,
+    /// The file versions this client holds, with their apply states. They own the files the
+    /// client was last delivered.
+    holdings: ClientHoldings<F>,
 }
 
 pub struct FileRefcountData {
@@ -268,7 +269,7 @@ where
     }
 }
 
-impl SharedFetcher {
+impl<F> SharedFetcher<F> {
     pub fn new(
         target: Arc<Target>,
         runtime_id: String,
@@ -296,6 +297,12 @@ impl SharedFetcher {
         self.holdings.set(path, Some(version), state)
     }
 
+    /// Sets the apply state of `file`, the very stored file, reported with the following
+    /// requests. Discarded, returning false, unless this client still holds it.
+    pub(crate) fn set_file_config_state(&self, file: &F, state: ConfigApplyState) -> bool {
+        self.holdings.set_for_file(file, None, state)
+    }
+
     /// Runs.
     /// On successful fetches on_fetch() is called with the new configuration. The files it was
     /// called with previously are released only after it returns, so whatever it published may
@@ -304,13 +311,16 @@ impl SharedFetcher {
     /// called with are released: it must stop publishing them.
     /// Should not be called more than once.
     #[allow(clippy::type_complexity)]
-    pub async fn run<S: FileStorage + Clone, C: HttpClientCapability + SleepCapability>(
+    pub async fn run<
+        S: FileStorage<StoredFile = F> + Clone,
+        C: HttpClientCapability + SleepCapability,
+    >(
         &self,
         storage: RefcountingStorage<S, C>,
-        on_fetch: Box<dyn Send + Fn(&Vec<Arc<S::StoredFile>>)>,
+        on_fetch: Box<dyn Send + Fn(&Vec<Arc<F>>)>,
         on_finish: Box<dyn Send + FnOnce()>,
     ) where
-        S::StoredFile: RefcountedFile,
+        F: RefcountedFile,
     {
         let state = storage.state.clone();
         let mut fetcher = match ConfigFetcher::new(storage, state).await {
@@ -322,10 +332,9 @@ impl SharedFetcher {
             }
         };
 
+        // The holdings own the files on_fetch() was last called with.
         let mut opaque_state = ConfigClientState::default();
         opaque_state.holdings = self.holdings.clone();
-
-        let mut last_files: Vec<Arc<S::StoredFile>> = vec![];
 
         loop {
             let first_run_id = fetcher.file_storage.run_id.inc_runners();
@@ -333,7 +342,7 @@ impl SharedFetcher {
             let runtime_id = self.runtime_id.lock_or_panic().clone();
             let product_capabilities = self.product_capabilities.lock_or_panic().clone();
             let fetched = fetcher
-                .fetch_once(
+                .fetch(
                     runtime_id.as_str(),
                     &self.target,
                     &product_capabilities,
@@ -361,9 +370,9 @@ impl SharedFetcher {
                 Ok(None) => {
                     clean_inactive();
                 }
-                Ok(Some(files)) => {
-                    if !files.is_empty() || !last_files.is_empty() {
-                        for file in files.iter() {
+                Ok(Some(Fetched { files, previous })) => {
+                    if !files.is_empty() || !previous.is_empty() {
+                        for file in files.iter().map(|held| &held.file) {
                             if file.get_expiring_run_id() != 0 {
                                 let mut inactive = fetcher.file_storage.inactive.lock_or_panic();
                                 if let Some(i) = inactive.iter().position(|f| Arc::ptr_eq(f, file))
@@ -380,13 +389,11 @@ impl SharedFetcher {
 
                         // Publish the new files before releasing the previous ones: until
                         // on_fetch() returns, the published listing still names them.
-                        let previous_files = std::mem::replace(&mut last_files, files);
+                        on_fetch(&files.into_iter().map(|held| held.file).collect());
 
-                        on_fetch(&last_files);
-
-                        for file in previous_files {
-                            if file.delref() == 1 {
-                                fetcher.file_storage.expire_file(file);
+                        for held in previous {
+                            if held.file.delref() == 1 {
+                                fetcher.file_storage.expire_file(held.file);
                             }
                         }
                     } else {
@@ -416,12 +423,12 @@ impl SharedFetcher {
             }
         }
 
-        self.holdings.clear();
+        let held = self.holdings.take();
         on_finish();
 
-        for file in last_files {
-            if file.delref() == 1 {
-                fetcher.file_storage.expire_file(file);
+        for held in held {
+            if held.file.delref() == 1 {
+                fetcher.file_storage.expire_file(held.file);
             }
         }
     }
@@ -797,7 +804,7 @@ pub mod tests {
         );
         fetcher.interval.store(1000, Ordering::SeqCst);
         let iteration = AtomicU32::new(0);
-        let inner_fetcher = unsafe { &*(&fetcher as *const SharedFetcher) };
+        let inner_fetcher = unsafe { &*(&fetcher as *const SharedFetcher<_>) };
         let inner_server = server.clone();
         fetcher
             .run(
@@ -856,7 +863,7 @@ pub mod tests {
         let iteration = AtomicU32::new(0);
         let previous: Arc<Mutex<Vec<std::sync::Weak<RcPathStore>>>> = Default::default();
         let finish_previous = previous.clone();
-        let inner_fetcher = unsafe { &*(&fetcher as *const SharedFetcher) };
+        let inner_fetcher = unsafe { &*(&fetcher as *const SharedFetcher<_>) };
         let inner_server = server.clone();
         server.files.lock().unwrap().insert(
             PATH_SECOND.clone(),
@@ -990,7 +997,7 @@ pub mod tests {
             server.dummy_product_capabilities(),
         );
         let iteration = AtomicU32::new(0);
-        let inner_fetcher = unsafe { &*(&fetcher as *const SharedFetcher) };
+        let inner_fetcher = unsafe { &*(&fetcher as *const SharedFetcher<_>) };
         let inner_storage = storage.clone();
         fetcher
             .run(
@@ -1119,8 +1126,8 @@ pub mod tests {
         let iteration = Arc::new(AtomicU32::new(0));
         let iteration_1 = iteration.clone();
         let iteration_2 = iteration.clone();
-        let inner_fetcher_1 = unsafe { &*(&fetcher_1 as *const SharedFetcher) };
-        let inner_fetcher_2 = unsafe { &*(&fetcher_2 as *const SharedFetcher) };
+        let inner_fetcher_1 = unsafe { &*(&fetcher_1 as *const SharedFetcher<_>) };
+        let inner_fetcher_2 = unsafe { &*(&fetcher_2 as *const SharedFetcher<_>) };
         join_all(vec![
             fetcher_1.run(
                 rc_storage.clone(),
@@ -1224,7 +1231,7 @@ pub mod tests {
         );
         fetcher.interval.store(1000, Ordering::SeqCst);
         let iteration = AtomicU32::new(0);
-        let inner_fetcher = unsafe { &*(&fetcher as *const SharedFetcher) };
+        let inner_fetcher = unsafe { &*(&fetcher as *const SharedFetcher<_>) };
         let inner_server = server.clone();
         let inner_storage = rc_storage.clone();
         fetcher
