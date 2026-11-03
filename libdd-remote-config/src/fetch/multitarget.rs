@@ -48,7 +48,7 @@ pub struct MultiTargetFetcher<
     pub remote_config_interval: AtomicU64,
     /// All services by target in use
     /// WARNING: do NOT lock runtimes while holding a lock to services!
-    services: Mutex<HashMap<Arc<Target>, KnownTarget>>,
+    services: Mutex<HashMap<Arc<Target>, KnownTarget<S::StoredFile>>>,
     pending_async_insertions: AtomicU32,
     pub storage: RefcountingStorage<S, C>,
     /// Limit on how many fetchers can be active at once.
@@ -95,13 +95,13 @@ pub struct ProductCapabilities {
     pub capabilities: Vec<RemoteConfigCapabilities>,
 }
 
-struct KnownTarget {
+struct KnownTarget<F> {
     refcount: u32,
     status: Arc<Mutex<KnownTargetStatus>>,
     synthetic_id: bool,
     /// All runtime ids belonging to a specific target, with their capabilities
     runtimes: HashMap<String, ProductCapabilities>,
-    fetcher: Arc<SharedFetcher>,
+    fetcher: Arc<SharedFetcher<F>>,
     active_products: HashMap<RemoteConfigProduct, u32>,
     active_capabilities: HashMap<RemoteConfigCapabilities, u32>,
 }
@@ -131,7 +131,7 @@ fn decref_hashmap<K: Hash + Eq>(map: &mut HashMap<K, u32>, key: K) -> bool {
     false
 }
 
-impl KnownTarget {
+impl<F> KnownTarget<F> {
     fn update_product_capabilities(&mut self) {
         if self.refcount > 0 {
             *self.fetcher.product_capabilities.lock_or_panic() =
@@ -143,7 +143,7 @@ impl KnownTarget {
     }
 }
 
-impl Drop for KnownTarget {
+impl<F> Drop for KnownTarget<F> {
     fn drop(&mut self) {
         self.fetcher.cancel();
     }
@@ -584,7 +584,7 @@ where
 
     /// Sets the apply state of `file` (a version of a path) as held by the client of `target`,
     /// reported with its following requests. Discarded, returning false, unless that client
-    /// still holds this version.
+    /// still holds this very stored file.
     pub fn set_config_state(
         &self,
         target: &Target,
@@ -600,11 +600,10 @@ where
             debug!("Discarding the apply state of a file for unknown target {target:?}");
             return false;
         };
-        let refcount = file.refcount();
-        fetcher.set_config_state(&refcount.path, refcount.version, state)
+        fetcher.set_file_config_state(file, state)
     }
 
-    fn start_fetcher(self: &Arc<Self>, known_target: &KnownTarget) {
+    fn start_fetcher(self: &Arc<Self>, known_target: &KnownTarget<S::StoredFile>) {
         let this = self.clone();
         let fetcher = known_target.fetcher.clone();
         let status = known_target.status.clone();

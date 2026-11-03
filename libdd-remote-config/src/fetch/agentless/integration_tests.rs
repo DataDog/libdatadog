@@ -682,7 +682,7 @@ async fn test_unknown_product_target_is_not_stuck_known_targets() {
     );
 
     // The active batch is fully servable: `collect_handles` succeeds (no stuck).
-    let (handles, _) = cache
+    let handles = cache
         .lock()
         .collect_handles(&res.targets)
         .expect("active batch must not stuck collect_handles");
