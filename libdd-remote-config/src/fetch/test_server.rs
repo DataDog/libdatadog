@@ -280,6 +280,28 @@ impl RemoteConfigServer {
         }
     }
 
+    /// The (version, apply_state, apply_error) of each config state the last request reported,
+    /// sorted by version.
+    pub fn reported_config_states(&self) -> Vec<(u64, u64, String)> {
+        let request = self.last_request.lock().unwrap();
+        let state = request
+            .as_ref()
+            .unwrap()
+            .client
+            .as_ref()
+            .unwrap()
+            .state
+            .as_ref()
+            .unwrap();
+        let mut states: Vec<_> = state
+            .config_states
+            .iter()
+            .map(|s| (s.version, s.apply_state, s.apply_error.clone()))
+            .collect();
+        states.sort();
+        states
+    }
+
     pub fn dummy_product_capabilities(&self) -> ConfigProductCapabilities {
         ConfigProductCapabilities::new(
             self.dummy_options().products,

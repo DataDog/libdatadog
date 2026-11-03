@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::fetch::{
-    ConfigApplyState, ConfigClientState, ConfigFetcher, ConfigFetcherState,
+    ClientHoldings, ConfigApplyState, ConfigClientState, ConfigFetcher, ConfigFetcherState,
     ConfigFetcherStateStats, ConfigInvariants, ConfigProductCapabilities, FileStorage,
     random_uuid_string,
 };
@@ -39,6 +39,8 @@ pub struct SharedFetcher {
     cancellation: CancellationToken,
     /// Refetch interval in nanoseconds.
     pub interval: AtomicU64,
+    /// The file versions this client holds, with their apply states.
+    holdings: ClientHoldings,
 }
 
 pub struct FileRefcountData {
@@ -217,20 +219,6 @@ where
         }
     }
 
-    /// Sets the apply state on a stored file. If the file's path has already moved on to a newer
-    /// version, the state is dropped.
-    ///
-    /// Known bugs:
-    /// - The apply state is a property of each client applying a file, not of the file, yet it is
-    ///   stored once per path and shared by every client of this storage. Clients applying the same
-    ///   version can have different outcomes (one fails, another succeeds); whichever reports last
-    ///   wins, and all of them report that outcome as their own.
-    /// - Only the latest version of a path has a state. A client still on a previous version
-    ///   (because another client fetched the newer one first) has its result dropped.
-    pub fn set_config_state(&self, file: &S::StoredFile, state: ConfigApplyState) {
-        self.state.set_file_config_state(file, state)
-    }
-
     pub fn invariants(&self) -> &ConfigInvariants {
         &self.state.invariants
     }
@@ -302,7 +290,19 @@ impl SharedFetcher {
             product_capabilities: Mutex::new(Arc::new(product_capabilities)),
             cancellation: CancellationToken::new(),
             interval: AtomicU64::new(5_000_000_000),
+            holdings: ClientHoldings::default(),
         }
+    }
+
+    /// Sets the apply state of `version` of the file at `path`, reported with the following
+    /// requests. Discarded, returning false, unless this client still holds that version.
+    pub fn set_config_state(
+        &self,
+        path: &RemoteConfigPath,
+        version: u64,
+        state: ConfigApplyState,
+    ) -> bool {
+        self.holdings.set(path, Some(version), state)
     }
 
     /// Runs.
@@ -332,6 +332,7 @@ impl SharedFetcher {
         };
 
         let mut opaque_state = ConfigClientState::default();
+        opaque_state.holdings = self.holdings.clone();
 
         let mut last_files: Vec<Arc<S::StoredFile>> = vec![];
 
@@ -424,6 +425,7 @@ impl SharedFetcher {
             }
         }
 
+        self.holdings.clear();
         on_finish();
 
         for file in last_files {
@@ -545,6 +547,12 @@ pub mod tests {
             .unwrap()
             .unwrap();
 
+        // Applying v1 failed; the target holding v1 reports that until it gets v2.
+        assert!(state_a.set_config_state(
+            &PATH_FIRST,
+            1,
+            ConfigApplyState::Error("invalid data".to_string()),
+        ));
         server
             .files
             .lock()
@@ -560,6 +568,99 @@ pub mod tests {
             held_by_a[0].store.data.lock().unwrap().contents,
             "v1",
             "the file the other target still lists was changed under it"
+        );
+
+        // The lagging target reports the version it holds, so it is sent the new one.
+        let fetched = fetcher
+            .fetch_once(runtime_id, &DUMMY_TARGET, &capabilities, "a", &mut state_a)
+            .await
+            .unwrap();
+        let reported: Vec<(u64, u64, String)> = server
+            .last_request
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .client
+            .as_ref()
+            .unwrap()
+            .state
+            .as_ref()
+            .unwrap()
+            .config_states
+            .iter()
+            .map(|state| (state.version, state.apply_state, state.apply_error.clone()))
+            .collect();
+        assert_eq!(
+            reported,
+            vec![(1, 3, "invalid data".to_string())],
+            "the lagging target must report the state of the version it holds"
+        );
+        let fetched_by_a = fetched.expect("the lagging target must be sent the new version");
+        assert!(Arc::ptr_eq(&fetched_by_a[0], &fetched_by_b[0]));
+    }
+
+    /// Two clients holding the same version each have their own apply state: the outcome one of
+    /// them reports must not change what the other reports.
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn apply_state_is_per_client() {
+        let server = RemoteConfigServer::spawn();
+        let both = vec![DUMMY_TARGET.clone(), OTHER_TARGET.clone()];
+        server
+            .files
+            .lock()
+            .unwrap()
+            .insert(PATH_FIRST.clone(), (both, 1, "v1".to_string()));
+
+        let storage = RefcountingStorage::new(
+            RcFileStorage::default(),
+            ConfigFetcherState::with_client(
+                server.dummy_options().invariants,
+                NativeCapabilities::new_periodic(),
+            ),
+        );
+        let mut fetcher = ConfigFetcher::new(storage.clone(), storage.state.clone())
+            .await
+            .unwrap();
+        let capabilities = server.dummy_product_capabilities();
+        let mut state_a = ConfigClientState::default();
+        let mut state_b = ConfigClientState::default();
+        let runtime_id = "1b8c1a0c-4c7f-4d33-9e44-7c1f3d1bd2a1";
+        for (target, id, state) in [
+            (&*DUMMY_TARGET, "a", &mut state_a),
+            (&*OTHER_TARGET, "b", &mut state_b),
+        ] {
+            fetcher
+                .fetch_once(runtime_id, target, &capabilities, id, state)
+                .await
+                .unwrap()
+                .unwrap();
+        }
+
+        // Applying v1 failed in client a only.
+        assert!(state_a.set_config_state(
+            &PATH_FIRST,
+            1,
+            ConfigApplyState::Error("invalid data".to_string()),
+        ));
+
+        fetcher
+            .fetch_once(runtime_id, &OTHER_TARGET, &capabilities, "b", &mut state_b)
+            .await
+            .unwrap();
+        assert_eq!(
+            server.reported_config_states(),
+            [(1, 2, String::new())],
+            "client b must not report the outcome of client a"
+        );
+        fetcher
+            .fetch_once(runtime_id, &DUMMY_TARGET, &capabilities, "a", &mut state_a)
+            .await
+            .unwrap();
+        assert_eq!(
+            server.reported_config_states(),
+            [(1, 3, "invalid data".to_string())]
         );
     }
 
@@ -614,29 +715,135 @@ pub mod tests {
             .unwrap()
             .unwrap();
 
-        storage.set_config_state(&held_by_a[0], ConfigApplyState::Error("v1 failed".into()));
+        assert!(state_a.set_config_state(
+            &held_by_a[0].refcount().path,
+            held_by_a[0].refcount().version,
+            ConfigApplyState::Error("v1 failed".into()),
+        ));
 
         fetcher
             .fetch_once(runtime_id, &OTHER_TARGET, &capabilities, "b", &mut state_b)
             .await
             .unwrap();
-        let request = server.last_request.lock().unwrap();
-        let config_states = &request
-            .as_ref()
-            .unwrap()
-            .client
-            .as_ref()
-            .unwrap()
-            .state
-            .as_ref()
-            .unwrap()
-            .config_states;
-        assert_eq!(config_states.len(), 1);
-        assert_eq!(config_states[0].version, 2);
         assert_eq!(
-            config_states[0].apply_error, "",
+            server.reported_config_states(),
+            [(2, 2, String::new())],
             "v2 was reported with the apply state of v1"
         );
+    }
+
+    /// An outcome reported for a version the client no longer holds is discarded: it must not
+    /// be applied to the version that replaced it.
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn late_outcome_for_a_replaced_version_is_discarded() {
+        let server = RemoteConfigServer::spawn();
+        server.files.lock().unwrap().insert(
+            PATH_FIRST.clone(),
+            (vec![DUMMY_TARGET.clone()], 1, "v1".to_string()),
+        );
+
+        let storage = RefcountingStorage::new(
+            RcFileStorage::default(),
+            ConfigFetcherState::with_client(
+                server.dummy_options().invariants,
+                NativeCapabilities::new_periodic(),
+            ),
+        );
+        let mut fetcher = ConfigFetcher::new(storage.clone(), storage.state.clone())
+            .await
+            .unwrap();
+        let capabilities = server.dummy_product_capabilities();
+        let mut state = ConfigClientState::default();
+        let runtime_id = "1b8c1a0c-4c7f-4d33-9e44-7c1f3d1bd2a1";
+
+        let v1 = fetcher
+            .fetch_once(runtime_id, &DUMMY_TARGET, &capabilities, "a", &mut state)
+            .await
+            .unwrap()
+            .unwrap();
+        server.files.lock().unwrap().insert(
+            PATH_FIRST.clone(),
+            (vec![DUMMY_TARGET.clone()], 2, "v2".to_string()),
+        );
+        fetcher
+            .fetch_once(runtime_id, &DUMMY_TARGET, &capabilities, "a", &mut state)
+            .await
+            .unwrap()
+            .unwrap();
+
+        // The outcome of applying v1 arrives once the client already holds v2.
+        assert!(!state.set_config_state(
+            &v1[0].refcount().path,
+            v1[0].refcount().version,
+            ConfigApplyState::Error("late".to_string()),
+        ));
+
+        fetcher
+            .fetch_once(runtime_id, &DUMMY_TARGET, &capabilities, "a", &mut state)
+            .await
+            .unwrap();
+        assert_eq!(
+            server.reported_config_states(),
+            [(2, 2, String::new())],
+            "the outcome for v1 must not land on v2"
+        );
+    }
+
+    /// The apply state set through a running SharedFetcher is that of its own holding, reported
+    /// with its next request.
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn shared_fetcher_reports_the_apply_state_set() {
+        let server = RemoteConfigServer::spawn();
+        let rc_storage = RefcountingStorage::new(
+            RcFileStorage::default(),
+            ConfigFetcherState::with_client(
+                server.dummy_options().invariants,
+                NativeCapabilities::new_periodic(),
+            ),
+        );
+        server.files.lock().unwrap().insert(
+            PATH_FIRST.clone(),
+            (vec![DUMMY_TARGET.clone()], 1, "v1".to_string()),
+        );
+
+        let fetcher = SharedFetcher::new(
+            DUMMY_TARGET.clone(),
+            "3b43524b-a70c-45dc-921d-34504e50c5eb".to_string(),
+            server.dummy_product_capabilities(),
+        );
+        fetcher.interval.store(1000, Ordering::SeqCst);
+        let iteration = AtomicU32::new(0);
+        let inner_fetcher = unsafe { &*(&fetcher as *const SharedFetcher) };
+        let inner_server = server.clone();
+        fetcher
+            .run(
+                rc_storage,
+                Box::new(move |_| match iteration.fetch_add(1, Ordering::SeqCst) {
+                    0 => {
+                        let error = || ConfigApplyState::Error("bad".to_string());
+                        assert!(!inner_fetcher.set_config_state(&PATH_FIRST, 2, error()));
+                        assert!(!inner_fetcher.set_config_state(&PATH_SECOND, 1, error()));
+                        assert!(inner_fetcher.set_config_state(&PATH_FIRST, 1, error()));
+                        inner_server.files.lock().unwrap().insert(
+                            PATH_SECOND.clone(),
+                            (vec![DUMMY_TARGET.clone()], 1, "X".to_string()),
+                        );
+                    }
+                    1 => {
+                        assert_eq!(
+                            inner_server.reported_config_states(),
+                            [(1, 3, "bad".to_string())]
+                        );
+                        inner_fetcher.cancel();
+                    }
+                    _ => panic!("Unexpected"),
+                }),
+                Box::new(|| {}),
+            )
+            .await;
+        assert!(!fetcher.set_config_state(&PATH_FIRST, 1, ConfigApplyState::Acknowledged));
     }
 
     /// A target's listing names the files it was last delivered. Each of them must stay alive

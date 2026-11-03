@@ -582,9 +582,26 @@ where
         Self::remove_target(self, runtime_id, session_id, target, runtimes);
     }
 
-    /// Sets the apply state on a stored file.
-    pub fn set_config_state(&self, file: &S::StoredFile, state: ConfigApplyState) {
-        self.storage.set_config_state(file, state)
+    /// Sets the apply state of `file` (a version of a path) as held by the client of `target`,
+    /// reported with its following requests. Discarded, returning false, unless that client
+    /// still holds this version.
+    pub fn set_config_state(
+        &self,
+        target: &Target,
+        file: &S::StoredFile,
+        state: ConfigApplyState,
+    ) -> bool {
+        let Some(fetcher) = self
+            .services
+            .lock_or_panic()
+            .get(target)
+            .map(|known_target| known_target.fetcher.clone())
+        else {
+            debug!("Discarding the apply state of a file for unknown target {target:?}");
+            return false;
+        };
+        let refcount = file.refcount();
+        fetcher.set_config_state(&refcount.path, refcount.version, state)
     }
 
     fn start_fetcher(self: &Arc<Self>, known_target: &KnownTarget) {

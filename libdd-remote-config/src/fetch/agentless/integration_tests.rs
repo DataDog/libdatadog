@@ -691,7 +691,7 @@ async fn test_unknown_product_target_is_not_stuck_known_targets() {
     );
 
     // The active batch is fully servable: `collect_handles` succeeds (no stuck).
-    let handles = cache
+    let (handles, _) = cache
         .lock()
         .collect_handles(&res.targets)
         .expect("active batch must not stuck collect_handles");
@@ -1405,6 +1405,93 @@ fn test_single_state_updates_file_in_place() {
 
     assert_eq!(*storage.updates.lock().unwrap(), 1);
     assert_eq!(*handle.lock().unwrap(), (1, 2));
+}
+
+/// Like the agent, which forwards each tracer's `Client` (with its
+/// `config_states`) to the backend as an `active_clients` entry, the agentless
+/// request must report the state of every config the client holds.
+#[tokio::test]
+#[cfg_attr(miri, ignore)]
+async fn test_agentless_request_reports_config_states() {
+    use crate::fetch::{
+        ConfigApplyState, ConfigClientState, ConfigFetcher, ConfigProductCapabilities,
+    };
+    use crate::{RemoteConfigCapabilities, RemoteConfigProduct, Target};
+
+    let path = "datadog/2/APM_TRACING/cfgid/config";
+    let content: &[u8] = b"apm config payload";
+    let (cfg, raw_delegated, dir) = matched_pair(path, content).await;
+    let entries: &[(&str, &[u8])] = &[(path, content)];
+    let resp = delegated_response(&cfg, raw_delegated, "APM_TRACING", &dir, entries);
+
+    let http = MockHttp::new();
+    http.push(&resp);
+    http.push(&resp);
+    http.push(&resp);
+
+    let f = fetcher(
+        http.clone(),
+        cfg.root().unwrap().as_bytes().to_vec(),
+        dir.root().unwrap().as_bytes().to_vec(),
+    )
+    .await;
+    let state = Arc::new(ConfigFetcherState::<(), MockHttp>::with_client(
+        test_state().invariants.clone(),
+        http.clone(),
+    ));
+    let mut fetcher = ConfigFetcher::with_agentless_fetcher(NoopStorage, state, f);
+    let target = Target::new(
+        "service".to_string(),
+        "env".to_string(),
+        "1.0".to_string(),
+        vec![],
+        vec![],
+    );
+    let capabilities = ConfigProductCapabilities::new(
+        vec![RemoteConfigProduct::ApmTracing],
+        vec![RemoteConfigCapabilities::ApmTracingCustomTags],
+    );
+    let mut client_state = ConfigClientState::default();
+    // Shared with client_state, which the polls borrow.
+    let holdings = client_state.holdings.clone();
+    let mut poll = async |fetcher: &mut ConfigFetcher<NoopStorage, MockHttp>| {
+        fetcher
+            .fetch_once("rt", &target, &capabilities, "client", &mut client_state)
+            .await
+            .unwrap()
+            .unwrap()
+    };
+
+    assert_eq!(poll(&mut fetcher).await.len(), 1);
+    poll(&mut fetcher).await;
+    let parsed = RemoteConfigPath::parse(path).unwrap();
+    assert!(holdings.set(
+        &parsed,
+        Some(1),
+        ConfigApplyState::Error("boom".to_string())
+    ));
+    poll(&mut fetcher).await;
+
+    let config_states = |i: usize| {
+        let req = http.request_at(i);
+        assert_eq!(req.active_clients.len(), 1);
+        req.active_clients[0]
+            .state
+            .as_ref()
+            .unwrap()
+            .config_states
+            .clone()
+    };
+    assert!(config_states(0).is_empty(), "nothing held before 1st poll");
+    let states = config_states(1);
+    assert_eq!(states.len(), 1, "held config reported: {states:?}");
+    assert_eq!(states[0].id, "cfgid");
+    assert_eq!(states[0].product, "APM_TRACING");
+    assert_eq!(states[0].apply_state, 2); // Acknowledged
+    let states = config_states(2);
+    assert_eq!(states.len(), 1, "held config reported: {states:?}");
+    assert_eq!(states[0].apply_state, 3); // Error
+    assert_eq!(states[0].apply_error, "boom");
 }
 
 /// Like in agent mode, a target without a `custom.v` version is a failure of
