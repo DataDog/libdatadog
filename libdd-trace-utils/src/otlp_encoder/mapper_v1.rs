@@ -179,9 +179,7 @@ fn collect_span_attributes_v1<T: TraceData>(
     // or (under OTel-semantics) duplicates the error-message compat tags that are promoted to the
     // Status message instead.
     let is_eligible = |key: &&str, value: &AttributeValue<T>| {
-        if matches!(value, AttributeValue::String(value) if resource_attributes.strings
-                .get(*key)
-                .is_some_and(|resource| resource.as_str() == value.borrow()))
+        if matches!(value, AttributeValue::String(value) if resource_attributes.matches(key, value.borrow()))
         {
             return false;
         }
@@ -357,12 +355,13 @@ fn map_span_v1<T: TraceData>(
         Vec::new()
     };
     let (merged, index) = merged_attrs_v1(chunk, span);
+    let resource_attributes = resource_attributes.for_span(|key| index.contains_key(key));
     let (attributes, dropped_attributes_count) = collect_span_attributes_v1(
         span,
         chunk,
         &merged,
         resource_service,
-        resource_attributes,
+        &resource_attributes,
         effective_priority,
         otel_trace_semantics_enabled,
     );
@@ -504,6 +503,8 @@ mod tests_v1 {
         ];
         let dedicated_keys = ["env", "version", "component", "_dd.origin"];
         let mut info = OtlpResourceInfo {
+            env: "same".into(),
+            app_version: "same".into(),
             resource_attributes: compat_keys
                 .into_iter()
                 .chain(dedicated_keys)

@@ -342,7 +342,10 @@ impl<
 
     /// Atomically replace custom string resource attributes for subsequent OTLP trace exports.
     /// An empty map clears them. Matching span string tags are omitted from OTLP output;
-    /// native payloads and metric resources are unchanged.
+    /// native payloads and metric resources are unchanged. Metrics use
+    /// TraceExporterBuilder::set_tracer_tags, configured separately at build time.
+    /// Empty keys are ignored; empty string values are preserved.
+    /// Span copies are retained when Agent resource conversion could change their meaning.
     /// SDK-generated values take precedence for service.name, deployment.environment.name,
     /// service.version, telemetry.sdk.{name,language,version}, runtime-id, _dd.stats_computed,
     /// _dd.sdk.otlp_export, and datadog.sdk.semantics when emitted. Each export uses one snapshot.
