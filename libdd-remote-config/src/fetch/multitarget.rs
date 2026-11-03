@@ -593,14 +593,28 @@ where
             // Relatively primitive, no prioritization or anything. It is not expected that this
             // semaphore is ever awaiting under standard usage. Can be improved if needed, e.g.
             // sorted by amount of targets on the outstanding services or similar.
+            // A target removed while pending is dropped from services, which cancels its fetcher.
             #[allow(clippy::unwrap_used)]
-            let _semaphore = this.fetcher_semaphore.acquire().await.unwrap();
-            {
+            let permit = select! {
+                permit = this.fetcher_semaphore.acquire() => Some(permit.unwrap()),
+                _ = fetcher.cancelled() => None,
+            };
+            let removed_while_pending = {
                 let mut status = status.lock_or_panic();
-                if !matches!(*status, KnownTargetStatus::Pending) {
-                    return;
+                let pending = permit.is_some() && matches!(*status, KnownTargetStatus::Pending);
+                if pending {
+                    *status = KnownTargetStatus::Alive;
                 }
-                *status = KnownTargetStatus::Alive;
+                !pending
+            };
+            if removed_while_pending {
+                // It never fetched, so it published no listing for expired() to clear; and
+                // services may hold a new entry for the same target by now, whose listing
+                // expired() would clear. Its removal may still have left no target behind.
+                if this.is_dead() {
+                    this.storage.storage.dead();
+                }
+                return;
             }
 
             let (remove_future, remove_completer) = ManualFuture::new();
@@ -1322,5 +1336,47 @@ mod tests {
         fetcher.shutdown();
         expired.await;
         on_dead.await;
+    }
+
+    /// A target removed while waiting for a fetcher slot ends like any other: the fetcher is
+    /// reported dead once it has no target left. Having fetched nothing, it has no listing.
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn target_removed_while_pending_is_reported_dead() {
+        let server = RemoteConfigServer::spawn();
+        let (storage, on_dead) = multi_file_storage();
+        let fetcher = MultiTargetFetcher::<Notifier, MultiFileStorage, NativeCapabilities>::new(
+            storage.clone(),
+            server.dummy_options().invariants,
+            NativeCapabilities::new_periodic(),
+        );
+        fetcher.remote_config_interval.store(1000, Ordering::SeqCst);
+        // Take every fetcher slot, so that the target stays pending.
+        let _all_slots = fetcher
+            .fetcher_semaphore
+            .acquire_many(MultiTargetFetcher::<Notifier, MultiFileStorage, NativeCapabilities>::DEFAULT_CLIENTS_LIMIT)
+            .await
+            .unwrap();
+
+        fetcher.add_runtime(
+            RT_ID_1.to_string(),
+            RT_ID_1.to_string(),
+            Notifier {
+                id: 1,
+                state: Default::default(),
+            },
+            &DUMMY_TARGET,
+            ProductCapabilities {
+                products: server.dummy_options().products,
+                capabilities: server.dummy_options().capabilities,
+            },
+        );
+        assert_eq!(fetcher.stats().starting_fetchers, 1);
+
+        fetcher.delete_runtime(RT_ID_1, RT_ID_1, &DUMMY_TARGET);
+        tokio::time::timeout(Duration::from_secs(5), on_dead)
+            .await
+            .expect("the fetcher was never reported dead");
+        assert!(fetcher.is_dead());
     }
 }
