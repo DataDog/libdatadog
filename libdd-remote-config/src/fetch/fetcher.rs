@@ -1500,6 +1500,97 @@ pub mod tests {
 
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
+    async fn test_lagging_client_advertises_newest_version() {
+        let server = RemoteConfigServer::spawn();
+        server.files.lock().unwrap().insert(
+            PATH_FIRST.clone(),
+            (vec![DUMMY_TARGET.clone()], 1, "v1".to_string()),
+        );
+
+        let storage = Arc::new(Storage::default());
+        // Shared state, as used by the shared/multitarget fetchers: several clients, each
+        // possibly holding a different version of a path.
+        let mut state = ConfigFetcherState::with_client(
+            server.dummy_options().invariants,
+            NativeCapabilities::new_periodic(),
+        );
+        state.expire_unused_files = false;
+        let mut fetcher = ConfigFetcher::new(storage.clone(), Arc::new(state))
+            .await
+            .unwrap();
+        let capabilities = server.dummy_product_capabilities();
+        let mut up_to_date = ConfigClientState::default();
+        let mut lagging = ConfigClientState::default();
+
+        for client_state in [&mut up_to_date, &mut lagging] {
+            fetcher
+                .fetch_once(
+                    DUMMY_RUNTIME_ID,
+                    &DUMMY_TARGET,
+                    &capabilities,
+                    "foo",
+                    client_state,
+                )
+                .await
+                .unwrap()
+                .unwrap();
+        }
+
+        server.files.lock().unwrap().insert(
+            PATH_FIRST.clone(),
+            (vec![DUMMY_TARGET.clone()], 2, "v2".to_string()),
+        );
+        let newest = fetcher
+            .fetch_once(
+                DUMMY_RUNTIME_ID,
+                &DUMMY_TARGET,
+                &capabilities,
+                "foo",
+                &mut up_to_date,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(newest[0].data.lock().unwrap().contents, "v2");
+
+        // The lagging client still holds v1, but v2 is what the agent will serve it: the agent
+        // only compares cached files with its current targets, so v1 would be of no use.
+        let fetched = fetcher
+            .fetch_once(
+                DUMMY_RUNTIME_ID,
+                &DUMMY_TARGET,
+                &capabilities,
+                "foo",
+                &mut lagging,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        let req = server.last_request.lock().unwrap();
+        let req = req.as_ref().unwrap();
+        let v2_hash = format!("{:x}", Sha256::digest("v2"));
+        assert_eq!(
+            req.cached_target_files,
+            [TargetFileMeta {
+                path: PATH_FIRST.to_string(),
+                length: 2,
+                hashes: vec![TargetFileHash {
+                    algorithm: "sha256".to_string(),
+                    hash: v2_hash,
+                }],
+            }],
+            "the newest version is advertised, matching the agent's current targets, so its \
+             body isn't sent again"
+        );
+        assert_eq!(fetched.len(), 1);
+        assert!(
+            Arc::ptr_eq(&fetched[0], &newest[0]),
+            "the lagging client gets the already stored newest version"
+        );
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn test_extra_services_forwarded_in_client_tracer() {
         let server: Arc<RemoteConfigServer> = RemoteConfigServer::spawn();
         server.files.lock().unwrap().insert(
