@@ -234,6 +234,21 @@ fn store_shm(
     Ok(handle.into())
 }
 
+/// The config file in a segment mapped from store_shm(): on Windows, the file follows its
+/// length, as the mapping may be larger than what was stored.
+fn segment_contents(data: &[u8]) -> anyhow::Result<&[u8]> {
+    #[cfg(windows)]
+    let data = {
+        let len = data
+            .get(..4)
+            .ok_or_else(|| anyhow::anyhow!("segment shorter than its length prefix"))?;
+        let len = u32::from_ne_bytes(len.try_into()?) as usize;
+        data.get(4..4 + len)
+            .ok_or_else(|| anyhow::anyhow!("segment shorter than its length prefix says"))?
+    };
+    Ok(data)
+}
+
 /// `/ddrc<namespace>-<base64url(SHA224(namespace, version, path))>`, cut to the 31 bytes macOS
 /// allows for a shared memory name.
 ///
@@ -342,7 +357,9 @@ impl<N: NotifyTarget + 'static> MultiTargetHandlers<N, Self, NativeCapabilities>
                 #[allow(clippy::unwrap_used)]
                 // if mapping our own memory fails, it's already broken
                 let mapped = shm.map().unwrap();
-                if let Ok(config) = parse_json(mapped.as_slice()) {
+                if let Ok(contents) = segment_contents(mapped.as_slice())
+                    && let Ok(config) = parse_json(contents)
+                {
                     let configs: Vec<Configs> = config.lib_config.into();
                     for config in configs {
                         if let Configs::DynamicInstrumentationEnabled(enabled) = config {
@@ -591,9 +608,7 @@ fn read_config(path: &str, registry: &ParserRegistry) -> anyhow::Result<(RemoteC
     if let [shm_path, limiter, rc_path] = &path.split(':').collect::<Vec<_>>()[..] {
         let mapped = NamedShmHandle::open(&CString::new(*shm_path)?)?.map()?;
         let rc_path = String::from_utf8(BASE64_URL_SAFE_NO_PAD.decode(rc_path)?)?;
-        let data = mapped.as_slice();
-        #[cfg(windows)]
-        let data = &data[4..(4 + u32::from_ne_bytes((&data[0..4]).try_into()?) as usize)];
+        let data = segment_contents(mapped.as_slice())?;
         Ok((
             RemoteConfigValue::try_parse(&rc_path, data, registry)?,
             u32::from_str(limiter)?,
@@ -1084,6 +1099,92 @@ mod tests {
             vec![(true, b"runtime\n".to_vec()), (true, vec![])],
             "expected one unlocked notification per listing change"
         );
+    }
+
+    fn test_invariants(endpoint: &str) -> ConfigInvariants {
+        ConfigInvariants {
+            language: "php".to_string(),
+            tracer_version: "test".to_string(),
+            endpoint: libdd_common::Endpoint::from_slice(endpoint),
+            agentless: None,
+        }
+    }
+
+    /// APM_TRACING turning dynamic instrumentation on activates LIVE_DEBUGGING for the target
+    /// once, for as long as a listed APM_TRACING file says so.
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    // Polling the unreachable agent logs errors, which test_logs_created_counter would count.
+    #[serial_test::serial(log_counter)]
+    async fn apm_tracing_dynamic_instrumentation_forces_live_debugging_while_listed() {
+        // Unlike file:// endpoints, this one registers targets; it is never answered.
+        let invariants =
+            test_invariants(&format!("http://127.0.0.1:1/rc-di-{}", std::process::id()));
+        let sidecar =
+            ShmRemoteConfigs::new(invariants, Box::new(|| {}), Duration::from_secs(3600), None);
+        let (sender, _receiver) = tokio::sync::mpsc::channel(1);
+        let _registration = sidecar.add_runtime(
+            InstanceId::new("session", "runtime"),
+            0,
+            NotifyDummy(Arc::new(sender)),
+            DUMMY_TARGET.env().to_string(),
+            DUMMY_TARGET.service().to_string(),
+            DUMMY_TARGET.app_version().to_string(),
+            vec![],
+            ProductCapabilities {
+                products: vec![RemoteConfigProduct::ApmTracing],
+                capabilities: vec![],
+            },
+            DynamicInstrumentationConfigState::NotSet,
+            vec![],
+        );
+        let storage = &sidecar.0.storage;
+        let live_debugging = || {
+            sidecar
+                .0
+                .active_product_count(&DUMMY_TARGET, RemoteConfigProduct::LiveDebugging)
+        };
+        let path = Arc::new(
+            RemoteConfigPath::parse(&format!(
+                "employee/APM_TRACING/di-{}/config",
+                std::process::id()
+            ))
+            .unwrap(),
+        );
+        let apm_tracing = |version, enabled: bool| {
+            let json = format!(
+                r#"{{"action":"","lib_config":{{"dynamic_instrumentation_enabled":{enabled}}}}}"#
+            );
+            storage
+                .store(version, path.clone(), json.into_bytes())
+                .unwrap()
+        };
+        let publish = |files: &[Arc<StoredShmFile>]| {
+            storage.fetched(
+                &sidecar.0,
+                &Arc::new("runtime".to_string()),
+                &DUMMY_TARGET,
+                files,
+            );
+        };
+        assert_eq!(live_debugging(), 0);
+
+        let v1 = apm_tracing(1, true);
+        publish(std::slice::from_ref(&v1));
+        assert_eq!(live_debugging(), 1);
+        // Neither listing it again nor a new version saying the same forces it twice.
+        publish(std::slice::from_ref(&v1));
+        assert_eq!(live_debugging(), 1);
+        let v2 = apm_tracing(2, true);
+        publish(std::slice::from_ref(&v2));
+        assert_eq!(live_debugging(), 1);
+
+        publish(&[]);
+        assert_eq!(live_debugging(), 0, "the file went: unforced");
+        publish(std::slice::from_ref(&v2));
+        assert_eq!(live_debugging(), 1);
+        publish(&[apm_tracing(3, false)]);
+        assert_eq!(live_debugging(), 0, "disabled by a new version: unforced");
     }
 
     #[tokio::test]
