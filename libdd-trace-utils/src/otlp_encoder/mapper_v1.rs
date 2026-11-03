@@ -161,15 +161,32 @@ fn collect_span_attributes_v1<T: TraceData>(
     let has_span_type = !span_type.is_empty();
     let resource_name = span.resource.borrow();
     let has_resource_name = !resource_name.is_empty();
-    // env/version/component are dedicated span fields (not synthetic compat tags), so unlike the
-    // four attrs above they're always emitted, matching the v0.4 downgrade mapping
-    // (`msgpack_encoder::v04::span_v1`) which the existing OTLP mapper preserves.
+    // env/version/component are dedicated fields, emitted in both semantic modes unless
+    // they match a resource attribute, just as in the v0.4 mapping.
     let env = span.env.borrow();
     let has_env = !env.is_empty();
     let version = span.version.borrow();
     let has_version = !version.is_empty();
     let component = span.component.borrow();
     let has_component = !component.is_empty();
+    let (emit_env, emit_version, emit_component) = if resource_attributes.is_empty() {
+        (has_env, has_version, has_component)
+    } else {
+        (
+            has_env
+                && resource_attributes
+                    .get("env")
+                    .is_none_or(|value| value != env),
+            has_version
+                && resource_attributes
+                    .get("version")
+                    .is_none_or(|value| value != version),
+            has_component
+                && resource_attributes
+                    .get("component")
+                    .is_none_or(|value| value != component),
+        )
+    };
     let origin = chunk.origin.borrow();
     let has_origin = !origin.is_empty();
     let has_sampling_mechanism = chunk.sampling_mechanism.is_some();
@@ -216,9 +233,9 @@ fn collect_span_attributes_v1<T: TraceData>(
             + (has_span_type as usize)
             + (has_resource_name as usize)
     };
-    let promoted_dedicated = (has_env as usize)
-        + (has_version as usize)
-        + (has_component as usize)
+    let promoted_dedicated = (emit_env as usize)
+        + (emit_version as usize)
+        + (emit_component as usize)
         + (has_origin as usize)
         + (has_sampling_mechanism as usize)
         + (has_sampling_priority as usize);
@@ -249,19 +266,19 @@ fn collect_span_attributes_v1<T: TraceData>(
             ProtoValue::StringValue(resource_name.to_string()),
         ));
     }
-    if has_env {
+    if emit_env {
         attrs.push(proto_kv(
             "env".to_string(),
             ProtoValue::StringValue(env.to_string()),
         ));
     }
-    if has_version {
+    if emit_version {
         attrs.push(proto_kv(
             "version".to_string(),
             ProtoValue::StringValue(version.to_string()),
         ));
     }
-    if has_component {
+    if emit_component {
         attrs.push(proto_kv(
             "component".to_string(),
             ProtoValue::StringValue(component.to_string()),
@@ -506,6 +523,9 @@ mod tests_v1 {
                 ("region", "us1"),
                 ("workers", "7"),
                 ("late", "same"),
+                ("env", "same"),
+                ("version", "same"),
+                ("component", "same"),
             ]
             .map(|(key, value)| (key.into(), value.into()))
             .into(),
@@ -518,6 +538,10 @@ mod tests_v1 {
             .insert(bs("region"), AttributeValue::String(bs("eu1")));
         span.attributes
             .insert(bs("workers"), AttributeValue::Int(7));
+        for key in ["env", "version", "component"] {
+            span.attributes
+                .insert(bs(key), AttributeValue::String(bs("shadowed")));
+        }
         for i in 0..MAX_ATTRIBUTES_PER_SPAN - 2 {
             span.attributes
                 .insert(bs(&format!("key-{i}")), AttributeValue::Bool(true));
@@ -532,22 +556,46 @@ mod tests_v1 {
         chunk
             .attributes
             .insert(bs("late"), AttributeValue::String(bs("same")));
-        for semantics in [false, true] {
-            let request = map_traces_to_otlp_v1(std::slice::from_ref(&chunk), &info, semantics);
-            let mapped = &request.resource_spans[0].scope_spans[0].spans[0];
-            assert_eq!(mapped.attributes.len(), MAX_ATTRIBUTES_PER_SPAN);
-            assert_eq!(mapped.dropped_attributes_count, 0);
-            assert!(!mapped.attributes.iter().any(|a| a.key == "team"));
-            assert!(
-                mapped
-                    .attributes
-                    .contains(&proto_kv("region".into(), PV::StringValue("eu1".into())))
-            );
-            assert!(
-                mapped
-                    .attributes
-                    .contains(&proto_kv("workers".into(), PV::IntValue(7)))
-            );
+        for (field_value, expected) in [
+            ("same", None),
+            ("different", Some("different")),
+            ("", Some("shadowed")),
+        ] {
+            chunk.spans[0].env = bs(field_value);
+            chunk.spans[0].version = bs(field_value);
+            chunk.spans[0].component = bs(field_value);
+            for semantics in [false, true] {
+                let request = map_traces_to_otlp_v1(std::slice::from_ref(&chunk), &info, semantics);
+                let mapped = &request.resource_spans[0].scope_spans[0].spans[0];
+                assert_eq!(mapped.attributes.len(), MAX_ATTRIBUTES_PER_SPAN);
+                assert_eq!(
+                    mapped.dropped_attributes_count,
+                    if expected.is_some() { 3 } else { 0 }
+                );
+                for key in ["env", "version", "component"] {
+                    let value = mapped
+                        .attributes
+                        .iter()
+                        .find(|a| a.key == key)
+                        .and_then(|a| a.value.as_ref())
+                        .and_then(|v| v.value.as_ref());
+                    assert_eq!(
+                        value,
+                        expected.map(|v: &str| PV::StringValue(v.into())).as_ref()
+                    );
+                }
+                assert!(!mapped.attributes.iter().any(|a| a.key == "team"));
+                assert!(
+                    mapped
+                        .attributes
+                        .contains(&proto_kv("region".into(), PV::StringValue("eu1".into())))
+                );
+                assert!(
+                    mapped
+                        .attributes
+                        .contains(&proto_kv("workers".into(), PV::IntValue(7)))
+                );
+            }
         }
     }
 
