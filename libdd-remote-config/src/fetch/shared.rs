@@ -3,28 +3,25 @@
 
 use crate::fetch::{
     ClientHoldings, ConfigApplyState, ConfigClientState, ConfigFetcher, ConfigFetcherState,
-    ConfigFetcherStateStats, ConfigInvariants, ConfigProductCapabilities, Fetched, FileStorage,
-    random_uuid_string,
+    ConfigProductCapabilities, Fetched, FileStorage, random_uuid_string,
 };
 use crate::{RemoteConfigPath, Target};
 use libdd_capabilities::{HttpClientCapability, SleepCapability};
 use libdd_common::MutexExt;
-use serde::{Deserialize, Serialize};
-use std::ops::Add;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::select;
 use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 use tracing::error;
 
-/// Fetcher which does a run-loop and carefully manages state around files, with the following
-/// guarantees:
+/// Fetcher which does a run-loop, one of possibly many clients sharing a [`ConfigFetcherState`],
+/// with the following guarantees:
 ///  - A file is not recreated as long as it exists. A new version of a path is stored as a new
 ///    file, while targets which haven't fetched it yet keep the previous version alive.
-///  - It does not leak files which are no longer in use, i.e. it refcounts across all remote config
-///    clients sharing the same RefcountingStorage.
+///  - It does not leak files which are no longer in use: a file is alive exactly as long as a
+///    client holds it, a request which advertised it is in flight, or a consumer keeps it.
 ///  - The state is always valid, i.e. there will be no intermittently expired files.
 pub struct SharedFetcher<F> {
     /// (env, service, version) tuple representing the basic remote config target
@@ -42,231 +39,6 @@ pub struct SharedFetcher<F> {
     /// The file versions this client holds, with their apply states. They own the files the
     /// client was last delivered.
     holdings: ClientHoldings<F>,
-}
-
-pub struct FileRefcountData {
-    /// Primary refcounter:
-    ///  - When active (dropped_run_id == 0), the amount of runners holding it since the last
-    ///    remote config fetch.
-    ///  - When inactive (dropped_run_id > 0), the remaining amount of runners actively fetching
-    ///    remote config at the point in time dropped_run_id represents.
-    rc: AtomicU32,
-    /// 0, or point in time (see RunnersGeneration) where the file was moved to inactive.
-    dropped_run_id: AtomicU64,
-    pub path: Arc<RemoteConfigPath>,
-    pub version: u64,
-}
-
-impl FileRefcountData {
-    pub fn new(version: u64, path: Arc<RemoteConfigPath>) -> Self {
-        FileRefcountData {
-            rc: AtomicU32::new(0),
-            dropped_run_id: AtomicU64::new(0),
-            path,
-            version,
-        }
-    }
-}
-
-pub trait RefcountedFile {
-    fn refcount(&self) -> &FileRefcountData;
-
-    fn incref(&self) -> u32 {
-        self.refcount().rc.fetch_add(1, Ordering::AcqRel)
-    }
-
-    fn delref(&self) -> u32 {
-        self.refcount().rc.fetch_sub(1, Ordering::AcqRel)
-    }
-
-    fn setref(&self, val: u32) {
-        self.refcount().rc.store(val, Ordering::SeqCst)
-    }
-
-    fn set_expiring_run_id(&self, val: u64) {
-        self.refcount().dropped_run_id.store(val, Ordering::SeqCst)
-    }
-
-    fn get_expiring_run_id(&self) -> u64 {
-        self.refcount().dropped_run_id.load(Ordering::Relaxed)
-    }
-}
-
-#[derive(Default)]
-struct RunnersGeneration {
-    /// This atomic contains both run_id and runners count; saving us from needing a Mutex.
-    val: AtomicU64,
-}
-
-/// Atomic structure to represent the exact amount of remote config fetching runners at a specific
-/// point in time represented by the generation (run_id), an integer which is only ever incremented.
-/// This data structure helps contain which inactive files are pending deletion.
-impl RunnersGeneration {
-    const RUN_ID_SHIFT: i32 = 20;
-
-    /// Increments run_id and increments active runners. Returns first run_id to watch for.
-    fn inc_runners(&self) -> u64 {
-        (self
-            .val
-            .fetch_add((1 << Self::RUN_ID_SHIFT) + 1, Ordering::SeqCst)
-            >> Self::RUN_ID_SHIFT)
-            + 1
-    }
-
-    /// Increments run_id and decrements active runners. Returns last run_id to watch for.
-    fn dec_runners(&self) -> u64 {
-        self.val
-            .fetch_add((1 << Self::RUN_ID_SHIFT) - 1, Ordering::SeqCst)
-            >> Self::RUN_ID_SHIFT
-    }
-
-    /// Returns amount of active runners and current run_id.
-    fn runners_and_run_id(&self) -> (u32, u64) {
-        let val = self.val.load(Ordering::Acquire);
-        (
-            (val & ((1 << Self::RUN_ID_SHIFT) - 1)) as u32,
-            val >> Self::RUN_ID_SHIFT,
-        )
-    }
-}
-
-pub struct RefcountingStorage<S: FileStorage + Clone, C: HttpClientCapability + SleepCapability>
-where
-    S::StoredFile: RefcountedFile,
-{
-    pub storage: S,
-    state: Arc<ConfigFetcherState<S::StoredFile, C>>,
-    /// Stores recently expired files. When a file refcount drops to zero, they're no longer sent
-    /// via the remote config client. However, there may still be in-flight requests, with telling
-    /// the remote config server that we know about these files. Thus, as long as these requests
-    /// are being processed, we must retain the files, as these would not be resent, leaving us
-    /// with a potentially incomplete configuration.
-    /// Several versions of a path may be inactive at once.
-    inactive: Arc<Mutex<Vec<Arc<S::StoredFile>>>>,
-    /// Every file version stored, to count those still alive. Several versions of a path may be
-    /// alive at once, held by targets which haven't fetched the newest one yet.
-    stored: Arc<Mutex<Vec<Weak<S::StoredFile>>>>,
-    /// times `ConfigFetcher::<S>::fetch_once()` is currently being run
-    run_id: Arc<RunnersGeneration>,
-}
-
-#[derive(Debug, Default, Serialize, Deserialize)]
-pub struct RefcountingStorageStats {
-    /// Live file versions retained only for in-flight requests. Included in live_files.
-    pub inactive_files: u32,
-    /// Live file versions, of all paths.
-    #[serde(default)]
-    pub live_files: u32,
-    pub fetcher: ConfigFetcherStateStats,
-}
-
-impl Add for RefcountingStorageStats {
-    type Output = Self;
-
-    fn add(self, rhs: Self) -> Self::Output {
-        RefcountingStorageStats {
-            inactive_files: self.inactive_files + rhs.inactive_files,
-            live_files: self.live_files + rhs.live_files,
-            fetcher: self.fetcher + rhs.fetcher,
-        }
-    }
-}
-
-impl<S: FileStorage + Clone, C: HttpClientCapability + SleepCapability> Clone
-    for RefcountingStorage<S, C>
-where
-    S::StoredFile: RefcountedFile,
-{
-    fn clone(&self) -> Self {
-        RefcountingStorage {
-            storage: self.storage.clone(),
-            state: self.state.clone(),
-            inactive: self.inactive.clone(),
-            stored: self.stored.clone(),
-            run_id: self.run_id.clone(),
-        }
-    }
-}
-
-impl<S: FileStorage + Clone, C: HttpClientCapability + SleepCapability> RefcountingStorage<S, C>
-where
-    S::StoredFile: RefcountedFile,
-{
-    pub fn new(storage: S, mut state: ConfigFetcherState<S::StoredFile, C>) -> Self {
-        state.expire_unused_files = false;
-        RefcountingStorage {
-            storage,
-            state: Arc::new(state),
-            inactive: Default::default(),
-            stored: Default::default(),
-            run_id: Default::default(),
-        }
-    }
-
-    fn expire_file(&mut self, file: Arc<S::StoredFile>) {
-        let mut expire_lock = self.state.files_lock();
-        let mut inactive = self.inactive.lock_or_panic();
-        if file.refcount().rc.load(Ordering::Relaxed) != 0 {
-            return; // Don't do anything if refcount was increased while acquiring the lock
-        }
-        expire_lock.mark_expiring(&file);
-        let (runners, run_id) = self.run_id.runners_and_run_id();
-        if runners > 0 {
-            file.setref(runners);
-            file.set_expiring_run_id(run_id);
-            inactive.push(file);
-        } else {
-            expire_lock.expire_file(&file);
-        }
-    }
-
-    pub fn invariants(&self) -> &ConfigInvariants {
-        &self.state.invariants
-    }
-
-    pub fn stats(&self) -> RefcountingStorageStats {
-        // Release these locks before stats takes the file-state lock.
-        let inactive_files = self.inactive.lock_or_panic().len() as u32;
-        let live_files = {
-            let mut stored = self.stored.lock_or_panic();
-            stored.retain(|file| file.strong_count() > 0);
-            stored.len() as u32
-        };
-        RefcountingStorageStats {
-            inactive_files,
-            live_files,
-            fetcher: self.state.stats(),
-        }
-    }
-}
-
-impl<S: FileStorage + Clone, C: HttpClientCapability + SleepCapability> FileStorage
-    for RefcountingStorage<S, C>
-where
-    S::StoredFile: RefcountedFile,
-{
-    type StoredFile = S::StoredFile;
-
-    fn store(
-        &self,
-        version: u64,
-        path: Arc<RemoteConfigPath>,
-        contents: Vec<u8>,
-    ) -> anyhow::Result<Arc<Self::StoredFile>> {
-        let file = self.storage.store(version, path, contents)?;
-        // Called with the file-state lock held.
-        let mut stored = self.stored.lock_or_panic();
-        // Drop the dead entries before growing; grow anyway if mostly live, to amortize this.
-        if stored.len() == stored.capacity() {
-            stored.retain(|file| file.strong_count() > 0);
-            let capacity = stored.capacity();
-            if stored.len() > capacity / 2 {
-                stored.reserve(capacity);
-            }
-        }
-        stored.push(Arc::downgrade(&file));
-        Ok(file)
-    }
 }
 
 impl<F> SharedFetcher<F> {
@@ -310,19 +82,17 @@ impl<F> SharedFetcher<F> {
     /// Once the run-loop ends, on_finish() is called, before the files on_fetch() was last
     /// called with are released: it must stop publishing them.
     /// Should not be called more than once.
+    /// `state` is shared by every client of its invariants: its `expire_unused_files` must be
+    /// off.
     #[allow(clippy::type_complexity)]
-    pub async fn run<
-        S: FileStorage<StoredFile = F> + Clone,
-        C: HttpClientCapability + SleepCapability,
-    >(
+    pub async fn run<S: FileStorage<StoredFile = F>, C: HttpClientCapability + SleepCapability>(
         &self,
-        storage: RefcountingStorage<S, C>,
+        storage: S,
+        state: Arc<ConfigFetcherState<F, C>>,
         on_fetch: Box<dyn Send + Fn(&Vec<Arc<F>>)>,
         on_finish: Box<dyn Send + FnOnce()>,
-    ) where
-        F: RefcountedFile,
-    {
-        let state = storage.state.clone();
+    ) {
+        debug_assert!(!state.expire_unused_files);
         let mut fetcher = match ConfigFetcher::new(storage, state).await {
             Ok(f) => f,
             Err(e) => {
@@ -337,8 +107,6 @@ impl<F> SharedFetcher<F> {
         opaque_state.holdings = self.holdings.clone();
 
         loop {
-            let first_run_id = fetcher.file_storage.run_id.inc_runners();
-
             let runtime_id = self.runtime_id.lock_or_panic().clone();
             let product_capabilities = self.product_capabilities.lock_or_panic().clone();
             let fetched = fetcher
@@ -351,57 +119,17 @@ impl<F> SharedFetcher<F> {
                 )
                 .await;
 
-            let clean_inactive = || {
-                let run_range = first_run_id..=fetcher.file_storage.run_id.dec_runners();
-                // Match expire_file's lock order.
-                let mut files = fetcher.file_storage.state.files_lock();
-                let mut inactive = fetcher.file_storage.inactive.lock_or_panic();
-                inactive.retain(|v| {
-                    if run_range.contains(&v.get_expiring_run_id()) && v.delref() == 1 {
-                        files.expire_file(v);
-                        false
-                    } else {
-                        true
-                    }
-                });
-            };
-
             match fetched {
-                Ok(None) => {
-                    clean_inactive();
-                }
+                Ok(None) => {}
                 Ok(Some(Fetched { files, previous })) => {
                     if !files.is_empty() || !previous.is_empty() {
-                        for file in files.iter().map(|held| &held.file) {
-                            if file.get_expiring_run_id() != 0 {
-                                let mut inactive = fetcher.file_storage.inactive.lock_or_panic();
-                                if let Some(i) = inactive.iter().position(|f| Arc::ptr_eq(f, file))
-                                {
-                                    inactive.swap_remove(i);
-                                    file.setref(0);
-                                    file.set_expiring_run_id(0);
-                                }
-                            }
-                            file.incref();
-                        }
-
-                        clean_inactive();
-
                         // Publish the new files before releasing the previous ones: until
                         // on_fetch() returns, the published listing still names them.
                         on_fetch(&files.into_iter().map(|held| held.file).collect());
-
-                        for held in previous {
-                            if held.file.delref() == 1 {
-                                fetcher.file_storage.expire_file(held.file);
-                            }
-                        }
-                    } else {
-                        clean_inactive();
                     }
+                    drop(previous);
                 }
                 Err(e) => {
-                    clean_inactive();
                     error!("{:?}", e);
                 }
             }
@@ -425,12 +153,7 @@ impl<F> SharedFetcher<F> {
 
         let held = self.holdings.take();
         on_finish();
-
-        for held in held {
-            if held.file.delref() == 1 {
-                fetcher.file_storage.expire_file(held.file);
-            }
-        }
+        drop(held);
     }
 
     /// Note that due to the async logic, a cancellation does not guarantee a strict ordering:
@@ -450,10 +173,12 @@ impl<F> SharedFetcher<F> {
 pub mod tests {
     use super::*;
     use crate::Target;
+    use crate::fetch::ConfigInvariants;
     use crate::fetch::fetcher::tests::*;
     use crate::fetch::test_server::RemoteConfigServer;
     use futures::future::join_all;
     use libdd_capabilities_impl::NativeCapabilities;
+    use std::sync::atomic::AtomicU32;
     use std::sync::{Arc, LazyLock};
 
     pub(crate) static OTHER_TARGET: LazyLock<Arc<Target>> = LazyLock::new(|| {
@@ -466,34 +191,16 @@ pub mod tests {
         ))
     });
 
-    pub struct RcPathStore {
-        pub store: Arc<PathStore>,
-        refcounted: FileRefcountData,
-    }
-
-    impl RefcountedFile for RcPathStore {
-        fn refcount(&self) -> &FileRefcountData {
-            &self.refcounted
-        }
-    }
-
-    #[derive(Default, Clone)]
-    pub struct RcFileStorage(pub Arc<Storage>);
-
-    impl FileStorage for RcFileStorage {
-        type StoredFile = RcPathStore;
-
-        fn store(
-            &self,
-            version: u64,
-            path: Arc<RemoteConfigPath>,
-            contents: Vec<u8>,
-        ) -> anyhow::Result<Arc<Self::StoredFile>> {
-            Ok(Arc::new(RcPathStore {
-                store: self.0.store(version, path.clone(), contents)?,
-                refcounted: FileRefcountData::new(version, path),
-            }))
-        }
+    /// A state shared by several clients, as SharedFetcher requires.
+    pub(crate) fn shared_state(
+        server: &RemoteConfigServer,
+    ) -> Arc<ConfigFetcherState<PathStore, NativeCapabilities>> {
+        let mut state = ConfigFetcherState::with_client(
+            server.dummy_options().invariants,
+            NativeCapabilities::new_periodic(),
+        );
+        state.expire_unused_files = false;
+        Arc::new(state)
     }
 
     /// Targets sharing a path see a new version at different times: each receives it with its own
@@ -510,14 +217,9 @@ pub mod tests {
             .unwrap()
             .insert(PATH_FIRST.clone(), (both.clone(), 1, "v1".to_string()));
 
-        let storage = RefcountingStorage::new(
-            RcFileStorage::default(),
-            ConfigFetcherState::with_client(
-                server.dummy_options().invariants,
-                NativeCapabilities::new_periodic(),
-            ),
-        );
-        let mut fetcher = ConfigFetcher::new(storage.clone(), storage.state.clone())
+        let storage = Arc::new(Storage::default());
+        let state = shared_state(&server);
+        let mut fetcher = ConfigFetcher::new(storage.clone(), state.clone())
             .await
             .unwrap();
         let capabilities = server.dummy_product_capabilities();
@@ -552,9 +254,9 @@ pub mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(fetched_by_b[0].store.data.lock().unwrap().contents, "v2");
+        assert_eq!(fetched_by_b[0].data.lock().unwrap().contents, "v2");
         assert_eq!(
-            held_by_a[0].store.data.lock().unwrap().contents,
+            held_by_a[0].data.lock().unwrap().contents,
             "v1",
             "the file the other target still lists was changed under it"
         );
@@ -602,14 +304,9 @@ pub mod tests {
             .unwrap()
             .insert(PATH_FIRST.clone(), (both, 1, "v1".to_string()));
 
-        let storage = RefcountingStorage::new(
-            RcFileStorage::default(),
-            ConfigFetcherState::with_client(
-                server.dummy_options().invariants,
-                NativeCapabilities::new_periodic(),
-            ),
-        );
-        let mut fetcher = ConfigFetcher::new(storage.clone(), storage.state.clone())
+        let storage = Arc::new(Storage::default());
+        let state = shared_state(&server);
+        let mut fetcher = ConfigFetcher::new(storage.clone(), state.clone())
             .await
             .unwrap();
         let capabilities = server.dummy_product_capabilities();
@@ -667,14 +364,9 @@ pub mod tests {
             .unwrap()
             .insert(PATH_FIRST.clone(), (both.clone(), 1, "v1".to_string()));
 
-        let storage = RefcountingStorage::new(
-            RcFileStorage::default(),
-            ConfigFetcherState::with_client(
-                server.dummy_options().invariants,
-                NativeCapabilities::new_periodic(),
-            ),
-        );
-        let mut fetcher = ConfigFetcher::new(storage.clone(), storage.state.clone())
+        let storage = Arc::new(Storage::default());
+        let state = shared_state(&server);
+        let mut fetcher = ConfigFetcher::new(storage.clone(), state.clone())
             .await
             .unwrap();
         let capabilities = server.dummy_product_capabilities();
@@ -682,7 +374,7 @@ pub mod tests {
         let mut state_b = ConfigClientState::default();
         let runtime_id = "1b8c1a0c-4c7f-4d33-9e44-7c1f3d1bd2a1";
 
-        let held_by_a = fetcher
+        fetcher
             .fetch_once(runtime_id, &DUMMY_TARGET, &capabilities, "a", &mut state_a)
             .await
             .unwrap()
@@ -705,8 +397,8 @@ pub mod tests {
             .unwrap();
 
         assert!(state_a.set_config_state(
-            &held_by_a[0].refcount().path,
-            held_by_a[0].refcount().version,
+            &PATH_FIRST,
+            1,
             ConfigApplyState::Error("v1 failed".into()),
         ));
 
@@ -732,21 +424,16 @@ pub mod tests {
             (vec![DUMMY_TARGET.clone()], 1, "v1".to_string()),
         );
 
-        let storage = RefcountingStorage::new(
-            RcFileStorage::default(),
-            ConfigFetcherState::with_client(
-                server.dummy_options().invariants,
-                NativeCapabilities::new_periodic(),
-            ),
-        );
-        let mut fetcher = ConfigFetcher::new(storage.clone(), storage.state.clone())
+        let storage = Arc::new(Storage::default());
+        let state = shared_state(&server);
+        let mut fetcher = ConfigFetcher::new(storage.clone(), state.clone())
             .await
             .unwrap();
         let capabilities = server.dummy_product_capabilities();
         let mut state = ConfigClientState::default();
         let runtime_id = "1b8c1a0c-4c7f-4d33-9e44-7c1f3d1bd2a1";
 
-        let v1 = fetcher
+        fetcher
             .fetch_once(runtime_id, &DUMMY_TARGET, &capabilities, "a", &mut state)
             .await
             .unwrap()
@@ -763,8 +450,8 @@ pub mod tests {
 
         // The outcome of applying v1 arrives once the client already holds v2.
         assert!(!state.set_config_state(
-            &v1[0].refcount().path,
-            v1[0].refcount().version,
+            &PATH_FIRST,
+            1,
             ConfigApplyState::Error("late".to_string()),
         ));
 
@@ -785,13 +472,8 @@ pub mod tests {
     #[cfg_attr(miri, ignore)]
     async fn shared_fetcher_reports_the_apply_state_set() {
         let server = RemoteConfigServer::spawn();
-        let rc_storage = RefcountingStorage::new(
-            RcFileStorage::default(),
-            ConfigFetcherState::with_client(
-                server.dummy_options().invariants,
-                NativeCapabilities::new_periodic(),
-            ),
-        );
+        let storage = Arc::new(Storage::default());
+        let state = shared_state(&server);
         server.files.lock().unwrap().insert(
             PATH_FIRST.clone(),
             (vec![DUMMY_TARGET.clone()], 1, "v1".to_string()),
@@ -808,7 +490,8 @@ pub mod tests {
         let inner_server = server.clone();
         fetcher
             .run(
-                rc_storage,
+                storage.clone(),
+                state.clone(),
                 Box::new(move |_| match iteration.fetch_add(1, Ordering::SeqCst) {
                     0 => {
                         let error = || ConfigApplyState::Error("bad".to_string());
@@ -842,14 +525,8 @@ pub mod tests {
     #[cfg_attr(miri, ignore)]
     async fn previous_files_outlive_the_delivery_of_new_ones() {
         let server = RemoteConfigServer::spawn();
-        let storage = RcFileStorage::default();
-        let rc_storage = RefcountingStorage::new(
-            storage.clone(),
-            ConfigFetcherState::with_client(
-                server.dummy_options().invariants,
-                NativeCapabilities::new_periodic(),
-            ),
-        );
+        let storage = Arc::new(Storage::default());
+        let state = shared_state(&server);
         server.files.lock().unwrap().insert(
             PATH_FIRST.clone(),
             (vec![DUMMY_TARGET.clone()], 1, "v1".to_string()),
@@ -861,7 +538,7 @@ pub mod tests {
             server.dummy_product_capabilities(),
         );
         let iteration = AtomicU32::new(0);
-        let previous: Arc<Mutex<Vec<std::sync::Weak<RcPathStore>>>> = Default::default();
+        let previous: Arc<Mutex<Vec<std::sync::Weak<PathStore>>>> = Default::default();
         let finish_previous = previous.clone();
         let inner_fetcher = unsafe { &*(&fetcher as *const SharedFetcher<_>) };
         let inner_server = server.clone();
@@ -871,7 +548,8 @@ pub mod tests {
         );
         fetcher
             .run(
-                rc_storage,
+                storage.clone(),
+                state.clone(),
                 Box::new(move |fetched| {
                     let i = iteration.fetch_add(1, Ordering::SeqCst);
                     let mut previous = previous.lock().unwrap();
@@ -884,7 +562,7 @@ pub mod tests {
                     let mut files = inner_server.files.lock().unwrap();
                     let mut contents: Vec<String> = fetched
                         .iter()
-                        .map(|f| f.store.data.lock().unwrap().contents.clone())
+                        .map(|f| f.data.lock().unwrap().contents.clone())
                         .collect();
                     contents.sort();
                     match i {
@@ -918,46 +596,62 @@ pub mod tests {
             )
             .await;
 
-        assert!(storage.0.files.lock().unwrap().is_empty());
+        assert!(storage.files.lock().unwrap().is_empty());
     }
 
+    /// Stats, advertising (and dropping the snapshot, which may release a version) and storing
+    /// (and releasing a version, whose Drop takes the storage's lock, as store() does) never wait
+    /// on each other.
     #[tokio::test]
     async fn stats_and_expiration_do_not_deadlock() {
-        let storage = RefcountingStorage::new(
-            RcFileStorage::default(),
-            ConfigFetcherState::with_client(
-                ConfigInvariants {
-                    language: "php".into(),
-                    tracer_version: "test".into(),
-                    endpoint: libdd_common::Endpoint::from_slice("http://localhost:8126"),
-                    agentless: None,
-                },
-                NativeCapabilities::new_periodic(),
-            ),
+        let mut state = ConfigFetcherState::<PathStore, _>::with_client(
+            ConfigInvariants {
+                language: "php".into(),
+                tracer_version: "test".into(),
+                endpoint: libdd_common::Endpoint::from_slice("http://localhost:8126"),
+                agentless: None,
+            },
+            NativeCapabilities::new_periodic(),
         );
-        let file = storage
-            .store(1, Arc::new(PATH_FIRST.clone()), b"config".to_vec())
-            .unwrap();
+        state.expire_unused_files = false;
+        let state = Arc::new(state);
+        let storage = Arc::new(Storage::default());
+        let get_or_store = |state: &ConfigFetcherState<PathStore, _>,
+                            storage: &Arc<Storage>,
+                            path: &RemoteConfigPath| {
+            let contents = b"config".to_vec();
+            let meta = libdd_trace_protobuf::remoteconfig::TargetFileMeta {
+                path: path.to_string(),
+                length: contents.len() as i64,
+                hashes: vec![],
+            };
+            let path = Arc::new(path.clone());
+            state
+                .registry
+                .get_or_store(path.clone(), "hash".to_string(), meta, 1, || {
+                    storage.store(1, path, contents)
+                })
+                .unwrap()
+                .1
+        };
+        // Kept alive, so that advertising lists it.
+        let _file = get_or_store(&state, &storage, &PATH_FIRST);
         let start = Arc::new(std::sync::Barrier::new(3));
         let (done_tx, done_rx) = std::sync::mpsc::channel();
         let mut threads = Vec::new();
         for task in 0..3 {
-            let mut storage = storage.clone();
-            let file = file.clone();
+            let state = state.clone();
+            let storage = storage.clone();
             let start = start.clone();
             let done = done_tx.clone();
             threads.push(std::thread::spawn(move || {
                 start.wait();
                 for _ in 0..if cfg!(miri) { 100 } else { 100_000 } {
                     match task {
-                        0 => drop(storage.stats()),
-                        1 => storage.expire_file(file.clone()),
-                        // Like fetch_once(), which stores with the file-state lock held.
-                        _ => {
-                            let _files = storage.state.files_lock();
-                            let path = Arc::new(PATH_SECOND.clone());
-                            drop(storage.store(1, path, b"config".to_vec()).unwrap());
-                        }
+                        0 => drop(state.stats()),
+                        1 => drop(state.registry.advertise()),
+                        // Like a response storing a new version which nothing holds afterwards.
+                        _ => drop(get_or_store(&state, &storage, &PATH_SECOND)),
                     }
                 }
                 done.send(()).unwrap();
@@ -977,14 +671,8 @@ pub mod tests {
     #[cfg_attr(miri, ignore)]
     async fn test_single_fetcher() {
         let server = RemoteConfigServer::spawn();
-        let storage = RcFileStorage::default();
-        let rc_storage = RefcountingStorage::new(
-            storage.clone(),
-            ConfigFetcherState::with_client(
-                server.dummy_options().invariants,
-                NativeCapabilities::new_periodic(),
-            ),
-        );
+        let storage = Arc::new(Storage::default());
+        let state = shared_state(&server);
 
         server.files.lock().unwrap().insert(
             PATH_FIRST.clone(),
@@ -1001,12 +689,13 @@ pub mod tests {
         let inner_storage = storage.clone();
         fetcher
             .run(
-                rc_storage,
+                storage.clone(),
+                state.clone(),
                 Box::new(
                     move |fetched| match iteration.fetch_add(1, Ordering::SeqCst) {
                         0 => {
                             assert_eq!(fetched.len(), 1);
-                            assert_eq!(fetched[0].store.data.lock().unwrap().contents, "v1");
+                            assert_eq!(fetched[0].data.lock().unwrap().contents, "v1");
 
                             server.files.lock().unwrap().insert(
                                 PATH_SECOND.clone(),
@@ -1021,7 +710,7 @@ pub mod tests {
                         2 => {
                             assert_eq!(fetched.len(), 1);
                             // The removed file is released once this listing is published.
-                            assert_eq!(inner_storage.0.files.lock().unwrap().len(), 2);
+                            assert_eq!(inner_storage.files.lock().unwrap().len(), 2);
                             let req = server.last_request.lock().unwrap();
                             let req = req.as_ref().unwrap();
                             let client = req.client.as_ref().unwrap();
@@ -1037,21 +726,15 @@ pub mod tests {
             )
             .await;
 
-        assert!(storage.0.files.lock().unwrap().is_empty());
+        assert!(storage.files.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
     async fn test_parallel_fetchers() {
         let server = RemoteConfigServer::spawn();
-        let storage = RcFileStorage::default();
-        let rc_storage = RefcountingStorage::new(
-            storage.clone(),
-            ConfigFetcherState::with_client(
-                server.dummy_options().invariants,
-                NativeCapabilities::new_periodic(),
-            ),
-        );
+        let storage = Arc::new(Storage::default());
+        let state = shared_state(&server);
 
         server.files.lock().unwrap().insert(
             PATH_FIRST.clone(),
@@ -1069,7 +752,7 @@ pub mod tests {
         let server_1 = server.clone();
         let server_1_storage = storage.clone();
         let server_first_1 = move || {
-            assert_eq!(server_1_storage.0.files.lock().unwrap().len(), 2);
+            assert_eq!(server_1_storage.files.lock().unwrap().len(), 2);
             server_1.files.lock().unwrap().insert(
                 PATH_FIRST.clone(),
                 (vec![OTHER_TARGET.clone()], 1, "v1".to_string()),
@@ -1088,7 +771,7 @@ pub mod tests {
         let server_2 = server.clone();
         let server_2_storage = storage.clone();
         let server_second_1 = move || {
-            assert_eq!(server_2_storage.0.files.lock().unwrap().len(), 2);
+            assert_eq!(server_2_storage.files.lock().unwrap().len(), 2);
             server_2.files.lock().unwrap().insert(
                 PATH_FIRST.clone(),
                 (vec![DUMMY_TARGET.clone()], 2, "v2".to_string()),
@@ -1099,16 +782,16 @@ pub mod tests {
 
         let server_3 = server.clone();
         let server_3_storage = storage.clone();
-        let server_3_rc_storage = rc_storage.clone();
+        let server_3_state = state.clone();
         let server_third_1 = move || {
             // Called while the target delivering second publishes its new files. Its previous
             // files, PATH_SECOND among them as both targets held it, are released only after
-            // that, so they are neither expired nor inactive yet. The previous files of the
-            // target which delivered first were released once it published: PATH_SECOND is
-            // still held, and if its v1 of PATH_FIRST went inactive, it was cleaned up when the
-            // fetch of the target delivering now, which was in flight then, completed.
-            assert_eq!(server_3_rc_storage.inactive.lock().unwrap().len(), 0);
-            assert_eq!(server_3_storage.0.files.lock().unwrap().len(), 2);
+            // that, so they are still alive. The target which delivered first released its
+            // previous files once it published, and stopped: it has no request in flight, and
+            // the request of the target delivering now was processed. So nothing is alive only
+            // for an in-flight request.
+            assert_eq!(server_3_state.stats().inactive_files, 0);
+            assert_eq!(server_3_storage.files.lock().unwrap().len(), 2);
             server_3.files.lock().unwrap().clear();
         };
         let server_third_2 = server_third_1.clone();
@@ -1130,7 +813,8 @@ pub mod tests {
         let inner_fetcher_2 = unsafe { &*(&fetcher_2 as *const SharedFetcher<_>) };
         join_all(vec![
             fetcher_1.run(
-                rc_storage.clone(),
+                storage.clone(),
+                state.clone(),
                 Box::new(
                     move |fetched| match iteration_1.fetch_add(1, Ordering::SeqCst) {
                         i @ 0 | i @ 1 => {
@@ -1142,7 +826,7 @@ pub mod tests {
                         }
                         i @ 2 | i @ 3 => {
                             assert_eq!(fetched.len(), 1);
-                            assert_eq!(fetched[0].store.data.lock().unwrap().contents, "X");
+                            assert_eq!(fetched[0].data.lock().unwrap().contents, "X");
 
                             if i == 3 {
                                 server_second_1();
@@ -1150,7 +834,7 @@ pub mod tests {
                         }
                         i @ 4 | i @ 5 => {
                             assert_eq!(fetched.len(), 1);
-                            assert_eq!(fetched[0].store.data.lock().unwrap().contents, "v2");
+                            assert_eq!(fetched[0].data.lock().unwrap().contents, "v2");
 
                             if i == 5 {
                                 server_third_1();
@@ -1167,12 +851,13 @@ pub mod tests {
                 Box::new(|| {}),
             ),
             fetcher_2.run(
-                rc_storage,
+                storage.clone(),
+                state.clone(),
                 Box::new(
                     move |fetched| match iteration_2.fetch_add(1, Ordering::SeqCst) {
                         i @ 0 | i @ 1 => {
                             assert_eq!(fetched.len(), 1);
-                            assert_eq!(fetched[0].store.data.lock().unwrap().contents, "v1");
+                            assert_eq!(fetched[0].data.lock().unwrap().contents, "v1");
 
                             if i == 1 {
                                 server_first_2();
@@ -1202,7 +887,7 @@ pub mod tests {
         ])
         .await;
 
-        assert!(storage.0.files.lock().unwrap().is_empty());
+        assert!(storage.files.lock().unwrap().is_empty());
     }
 
     /// The stats count every live version of a file, not just the paths with a stored file: a
@@ -1211,14 +896,8 @@ pub mod tests {
     #[cfg_attr(miri, ignore)]
     async fn stats_count_live_file_versions() {
         let server = RemoteConfigServer::spawn();
-        let storage = RcFileStorage::default();
-        let rc_storage = RefcountingStorage::new(
-            storage.clone(),
-            ConfigFetcherState::with_client(
-                server.dummy_options().invariants,
-                NativeCapabilities::new_periodic(),
-            ),
-        );
+        let storage = Arc::new(Storage::default());
+        let state = shared_state(&server);
         server.files.lock().unwrap().insert(
             PATH_FIRST.clone(),
             (vec![DUMMY_TARGET.clone()], 1, "v1".to_string()),
@@ -1233,12 +912,13 @@ pub mod tests {
         let iteration = AtomicU32::new(0);
         let inner_fetcher = unsafe { &*(&fetcher as *const SharedFetcher<_>) };
         let inner_server = server.clone();
-        let inner_storage = rc_storage.clone();
+        let inner_state = state.clone();
         fetcher
             .run(
-                rc_storage.clone(),
+                storage.clone(),
+                state.clone(),
                 Box::new(move |_| {
-                    let stats = inner_storage.stats();
+                    let stats = inner_state.stats();
                     match iteration.fetch_add(1, Ordering::SeqCst) {
                         0 => {
                             assert_eq!((stats.fetcher.active_files, stats.live_files), (1, 1));
@@ -1260,7 +940,7 @@ pub mod tests {
             )
             .await;
 
-        let stats = rc_storage.stats();
+        let stats = state.stats();
         assert_eq!((stats.live_files, stats.inactive_files), (0, 0));
     }
 }

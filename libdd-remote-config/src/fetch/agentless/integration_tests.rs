@@ -377,14 +377,14 @@ async fn test_root_rotation_without_top_targets_still_converges() {
     .await;
     let state = test_state();
     let storage = NoopStorage;
-    let cache = TargetCache::new(&state, &storage);
+    let mut cache = TargetCache::new(&state, &storage);
 
     // Poll 1 succeeds and advances the config DB to root v1 / snapshot v1.
-    f.fetch_config(dummy_client(), &cache).await.unwrap();
+    f.fetch_config(dummy_client(), &mut cache).await.unwrap();
     assert_eq!(config_root_version(&f), 1);
 
     // Poll 2 (root rotation, no top-targets) must still converge.
-    f.fetch_config(dummy_client(), &cache)
+    f.fetch_config(dummy_client(), &mut cache)
         .await
         .expect("root rotation with omitted top-targets must converge");
     assert_eq!(config_root_version(&f), 2);
@@ -464,10 +464,10 @@ async fn test_apply_error_resets_and_recovers() {
     .await;
     let state = test_state();
     let storage = NoopStorage;
-    let cache = TargetCache::new(&state, &storage);
+    let mut cache = TargetCache::new(&state, &storage);
 
     // Poll 1 ok.
-    f.fetch_config(dummy_client(), &cache).await.unwrap();
+    f.fetch_config(dummy_client(), &mut cache).await.unwrap();
     assert_eq!(config_root_version(&f), 1);
     assert_eq!(config_snapshot_version(&f), Some(1));
     // A fully successful poll leaves the backoff counter at 0.
@@ -475,7 +475,7 @@ async fn test_apply_error_resets_and_recovers() {
     assert_eq!(f.next_backoff(), None);
 
     // Poll 2 fails (after the config root advanced to v2) and resets.
-    assert!(f.fetch_config(dummy_client(), &cache).await.is_err());
+    assert!(f.fetch_config(dummy_client(), &mut cache).await.is_err());
     // Reset purges snapshot/targets/timestamp/delegations but preserves the
     // trusted root that `update()` already advanced to v2 — recovery does not
     // roll back the trust chain to the embedded root v1.
@@ -493,7 +493,7 @@ async fn test_apply_error_resets_and_recovers() {
     // preserved trusted root v2 and is ignored by `update_root`; snapshot,
     // timestamp and targets are re-signed by the same key that root v2 trusts,
     // so they verify and repopulate the purged non-root state.
-    f.fetch_config(dummy_client(), &cache).await.unwrap();
+    f.fetch_config(dummy_client(), &mut cache).await.unwrap();
     assert_eq!(config_root_version(&f), 2);
     assert_eq!(config_snapshot_version(&f), Some(1));
     // A fully successful poll clears the counter again.
@@ -667,10 +667,10 @@ async fn test_unknown_product_target_is_not_stuck_known_targets() {
     .await;
     let state = test_state();
     let storage = NoopStorage;
-    let cache = TargetCache::new(&state, &storage);
+    let mut cache = TargetCache::new(&state, &storage);
 
     let res = f
-        .fetch_config(dummy_client(), &cache)
+        .fetch_config(dummy_client(), &mut cache)
         .await
         .expect("a config-authorized unknown-product target must not stuck the fetch");
 
@@ -683,7 +683,6 @@ async fn test_unknown_product_target_is_not_stuck_known_targets() {
 
     // The active batch is fully servable: `collect_handles` succeeds (no stuck).
     let handles = cache
-        .lock()
         .collect_handles(&res.targets)
         .expect("active batch must not stuck collect_handles");
     assert_eq!(handles.len(), 1, "only the known target should be served");
@@ -769,9 +768,9 @@ async fn test_director_hash_superset_is_rejected() {
     .await;
     let state = test_state();
     let storage = NoopStorage;
-    let cache = TargetCache::new(&state, &storage);
+    let mut cache = TargetCache::new(&state, &storage);
 
-    let Err(err) = f.fetch_config(dummy_client(), &cache).await else {
+    let Err(err) = f.fetch_config(dummy_client(), &mut cache).await else {
         panic!("director hash superset must be rejected (exact-equality)");
     };
     let msg = format!("{err:#}");
@@ -847,9 +846,9 @@ async fn test_tampered_target_bytes_are_rejected() {
     .await;
     let state = test_state();
     let storage = NoopStorage;
-    let cache = TargetCache::new(&state, &storage);
+    let mut cache = TargetCache::new(&state, &storage);
 
-    let Err(err) = f.fetch_config(dummy_client(), &cache).await else {
+    let Err(err) = f.fetch_config(dummy_client(), &mut cache).await else {
         panic!("tampered target bytes must be rejected");
     };
     let msg = format!("{err:#}");
@@ -890,9 +889,9 @@ async fn test_target_length_mismatch_is_rejected() {
     .await;
     let state = test_state();
     let storage = NoopStorage;
-    let cache = TargetCache::new(&state, &storage);
+    let mut cache = TargetCache::new(&state, &storage);
 
-    let Err(err) = f.fetch_config(dummy_client(), &cache).await else {
+    let Err(err) = f.fetch_config(dummy_client(), &mut cache).await else {
         panic!("target with mismatching length must be rejected");
     };
     let msg = format!("{err:#}");
@@ -949,9 +948,9 @@ async fn test_director_target_not_in_config_delegations_is_rejected() {
     .await;
     let state = test_state();
     let storage = NoopStorage;
-    let cache = TargetCache::new(&state, &storage);
+    let mut cache = TargetCache::new(&state, &storage);
 
-    let Err(err) = f.fetch_config(dummy_client(), &cache).await else {
+    let Err(err) = f.fetch_config(dummy_client(), &mut cache).await else {
         panic!("unauthorized director target must be rejected");
     };
     let msg = format!("{err:#}");
@@ -1016,9 +1015,9 @@ async fn test_director_config_length_disagreement_is_rejected() {
     .await;
     let state = test_state();
     let storage = NoopStorage;
-    let cache = TargetCache::new(&state, &storage);
+    let mut cache = TargetCache::new(&state, &storage);
 
-    let Err(err) = f.fetch_config(dummy_client(), &cache).await else {
+    let Err(err) = f.fetch_config(dummy_client(), &mut cache).await else {
         panic!("director/config length disagreement must be rejected");
     };
     let msg = format!("{err:#}");
@@ -1082,9 +1081,9 @@ async fn test_director_config_hash_value_disagreement_is_rejected() {
     .await;
     let state = test_state();
     let storage = NoopStorage;
-    let cache = TargetCache::new(&state, &storage);
+    let mut cache = TargetCache::new(&state, &storage);
 
-    let Err(err) = f.fetch_config(dummy_client(), &cache).await else {
+    let Err(err) = f.fetch_config(dummy_client(), &mut cache).await else {
         panic!("director/config hash-value disagreement must be rejected");
     };
     let msg = format!("{err:#}");
@@ -1168,9 +1167,9 @@ async fn test_org_uuid_match_via_concurrent_prefetch() {
     .await;
     let state = test_state();
     let storage = NoopStorage;
-    let cache = TargetCache::new(&state, &storage);
+    let mut cache = TargetCache::new(&state, &storage);
 
-    f.fetch_config(dummy_client(), &cache)
+    f.fetch_config(dummy_client(), &mut cache)
         .await
         .expect("matching org UUID must not fail the poll");
 
@@ -1209,9 +1208,9 @@ async fn test_org_uuid_mismatch_fails_and_resets() {
     .await;
     let state = test_state();
     let storage = NoopStorage;
-    let cache = TargetCache::new(&state, &storage);
+    let mut cache = TargetCache::new(&state, &storage);
 
-    let Err(err) = f.fetch_config(dummy_client(), &cache).await else {
+    let Err(err) = f.fetch_config(dummy_client(), &mut cache).await else {
         panic!("mismatching org UUID must fail the poll");
     };
     let msg = format!("{err:#}");
@@ -1274,13 +1273,13 @@ async fn test_org_uuid_refetched_on_root_rotation() {
     .await;
     let state = test_state();
     let storage = NoopStorage;
-    let cache = TargetCache::new(&state, &storage);
+    let mut cache = TargetCache::new(&state, &storage);
 
-    f.fetch_config(dummy_client(), &cache).await.unwrap();
+    f.fetch_config(dummy_client(), &mut cache).await.unwrap();
     assert_eq!(config_root_version(&f), 1);
     assert_eq!(http.org_request_count(), 1); // concurrent prefetch
 
-    f.fetch_config(dummy_client(), &cache).await.unwrap();
+    f.fetch_config(dummy_client(), &mut cache).await.unwrap();
     assert_eq!(config_root_version(&f), 2);
     // A second org fetch happened lazily because the config root rotated.
     assert_eq!(http.org_request_count(), 2);
@@ -1330,19 +1329,14 @@ fn test_shared_state_stores_new_version_as_new_file() {
     );
     state.expire_unused_files = false;
     let storage = RecordingStorage::default();
-    let cache = TargetCache::new(&state, &storage);
+    // Retains what it stores, as the holdings of the targets would.
+    let mut cache = TargetCache::new(&state, &storage);
     let path = "datadog/2/APM_TRACING/cfgid/config";
 
-    cache
-        .lock()
-        .store_batch([new_target(path, 1, b"v1")])
-        .unwrap();
+    cache.store_batch([new_target(path, 1, b"v1")]).unwrap();
     let old = state.registry.entries()[0].file.clone();
 
-    cache
-        .lock()
-        .store_batch([new_target(path, 2, b"v2")])
-        .unwrap();
+    cache.store_batch([new_target(path, 2, b"v2")]).unwrap();
     let entries = state.registry.entries();
     assert_eq!(entries.len(), 2, "both versions are kept");
     assert!(Arc::ptr_eq(&entries[0].file, &old));
@@ -1363,36 +1357,85 @@ fn test_single_state_stores_new_version_as_new_file() {
         libdd_capabilities_impl::NativeCapabilities::new_client(),
     );
     let storage = RecordingStorage::default();
-    let cache = TargetCache::new(&state, &storage);
     let path = "datadog/2/APM_TRACING/cfgid/config";
-    let parsed: RemoteConfigPath = RemoteConfigPath::parse(path).unwrap();
     let handle = || {
         let entries = state.registry.entries();
         assert_eq!(entries.len(), 1, "only the held version is kept");
         entries[0].file.clone()
     };
-    // Like apply(): store the new versions, then keep only the active ones.
+    // Like a fetch: store the new versions, and hand the client what the
+    // targets name, which replaces what it held.
     let cycle = |version: u64, content: &[u8]| {
-        let mut files = cache.lock();
-        files
+        let mut cache = TargetCache::new(&state, &storage);
+        cache
             .store_batch([new_target(path, version, content)])
             .unwrap();
-        let hash = format!("hash-{version}");
-        files.retain_only([(&parsed, hash.as_str(), content.len() as u64)]);
+        cache
+            .collect_handles(&[ClientTargetRef {
+                path: RemoteConfigPath::parse(path).unwrap(),
+                version,
+                primary_hash: format!("hash-{version}"),
+                length: content.len() as u64,
+            }])
+            .unwrap()
     };
 
-    cycle(1, b"v1");
+    let held = cycle(1, b"v1");
     assert_eq!(*handle(), (1, 1));
     let old = Arc::downgrade(&handle());
 
-    cycle(2, b"v2");
+    let held = {
+        let new = cycle(2, b"v2");
+        drop(held);
+        new
+    };
     let new = handle();
 
     assert_eq!(*new, (2, 2), "the new version is a new file");
+    assert!(Arc::ptr_eq(&new, &held[0].0.file));
     assert!(
         old.upgrade().is_none(),
         "the previous version is released once no longer referenced"
     );
+}
+
+/// A storage failure in the middle of a fetch leaves nothing stored: what the
+/// fetch stored before is released with the cache retaining it.
+#[test]
+fn test_storage_failure_releases_what_the_fetch_stored() {
+    struct FailingStorage(RecordingStorage, &'static str);
+    impl FileStorage for FailingStorage {
+        type StoredFile = (u64, u64);
+
+        fn store(
+            &self,
+            version: u64,
+            path: Arc<RemoteConfigPath>,
+            contents: Vec<u8>,
+        ) -> anyhow::Result<Arc<Self::StoredFile>> {
+            anyhow::ensure!(path.to_string() != self.1, "storage full");
+            self.0.store(version, path, contents)
+        }
+    }
+    let state = ConfigFetcherState::<(u64, u64), _>::with_client(
+        test_state().invariants.clone(),
+        libdd_capabilities_impl::NativeCapabilities::new_client(),
+    );
+    let failing = "datadog/2/APM_TRACING/second/config";
+    let storage = FailingStorage(RecordingStorage::default(), failing);
+    let mut cache = TargetCache::new(&state, &storage);
+
+    let err = cache
+        .store_batch([
+            new_target("datadog/2/APM_TRACING/first/config", 1, b"v1"),
+            new_target(failing, 2, b"v2"),
+        ])
+        .unwrap_err();
+    assert!(format!("{err:#}").contains("storage full"));
+    let stored = Arc::downgrade(&state.registry.entries()[0].file);
+    drop(cache);
+    assert!(stored.upgrade().is_none(), "the stored file is released");
+    assert!(state.registry.is_empty());
 }
 
 /// Like the agent, which forwards each tracer's `Client` (with its
