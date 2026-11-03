@@ -411,6 +411,11 @@ impl SharedFetcher {
     pub fn cancel(&self) {
         self.cancellation.cancel();
     }
+
+    /// Completes once cancel() was called.
+    pub async fn cancelled(&self) {
+        self.cancellation.cancelled().await
+    }
 }
 
 #[cfg(test)]
