@@ -226,14 +226,7 @@ fn store_shm(
     path: &RemoteConfigPath,
     file: Vec<u8>,
 ) -> anyhow::Result<NamedShmHandle> {
-    let name = format!("ddrc{}-{}", crate::shm_namespace(), version,);
-    // as much signal as possible to be collision free
-    let hashed_path = BASE64_URL_SAFE_NO_PAD.encode(Sha224::digest(path.to_string()));
-    #[cfg(target_os = "macos")]
-    let sliced_path = &hashed_path[..30usize.saturating_sub(name.len()).min(hashed_path.len())];
-    #[cfg(not(target_os = "macos"))]
-    let sliced_path = &hashed_path;
-    let name = format!("/{name}-{sliced_path}");
+    let name = segment_name(&crate::shm_namespace().to_string(), version, path);
     let len = file.len();
     #[cfg(windows)]
     let len = len + 4;
@@ -248,6 +241,28 @@ fn store_shm(
     target_slice.copy_from_slice(file.as_slice());
 
     Ok(handle.into())
+}
+
+/// `/ddrc<namespace>-<base64url(SHA224(namespace, version, path))>`, cut to the 31 bytes macOS
+/// allows for a shared memory name.
+///
+/// The version and namespace go into the digest rather than into the name in decimal, so that
+/// a long version cannot crowd the hash out of a truncated name: the hash always keeps at least
+/// 14 characters (84 bits) on unix. The name still changes whenever the version does, which
+/// readers rely on to notice changed contents. Readers never parse it; they only open the
+/// names listed by the sidecar.
+fn segment_name(namespace: &str, version: u64, path: &RemoteConfigPath) -> String {
+    let mut hasher = Sha224::new();
+    hasher.update((namespace.len() as u64).to_le_bytes());
+    hasher.update(namespace);
+    hasher.update(version.to_le_bytes());
+    hasher.update(path.to_string());
+    let hash = BASE64_URL_SAFE_NO_PAD.encode(hasher.finalize());
+    let mut name = format!("/ddrc{namespace}-{hash}");
+    if cfg!(unix) {
+        name.truncate(31);
+    }
+    name
 }
 
 fn dynamic_instrumentation_is_enabled(apm_config: Option<bool>, info: &TargetInfo) -> bool {
@@ -898,6 +913,35 @@ mod tests {
         assert_ne!(path, path_for_remote_config(&invariants, &target));
         invariants.endpoint = libdd_common::Endpoint::from_slice("http://agent-b:8126");
         assert_ne!(path, path_for_remote_config(&invariants, &DUMMY_TARGET));
+    }
+
+    /// Every (namespace, version, path) gets a segment of its own, in a name macOS accepts.
+    #[test]
+    fn segment_names_are_unique_and_fit_macos() {
+        // The longest namespace and version leave the least room for the path's hash.
+        assert_ne!(
+            segment_name("t4294967295", u64::MAX, &PATH_FIRST),
+            segment_name("t4294967295", u64::MAX, &PATH_SECOND)
+        );
+        let paths = [&*PATH_FIRST, &*PATH_SECOND, &*PATH_LIVE_DEBUGGER];
+        let mut names = std::collections::HashSet::new();
+        for namespace in ["0", "4294967295", "t4294967295"] {
+            for version in [0, 1, 2, 1_000_000_007, u64::MAX - 1, u64::MAX] {
+                for path in paths {
+                    let name = segment_name(namespace, version, path);
+                    assert!(
+                        names.insert(name.clone()),
+                        "{name} is shared by two (namespace, version, path) triples"
+                    );
+                    if cfg!(unix) {
+                        assert!(name.len() <= 31, "{name} is longer than 31 bytes");
+                    }
+                    assert!(name.starts_with("/ddrc"), "{name}");
+                    assert!(!name[1..].contains('/'), "{name}");
+                    assert_eq!(name, segment_name(namespace, version, path));
+                }
+            }
+        }
     }
 
     #[derive(Debug, Clone)]
