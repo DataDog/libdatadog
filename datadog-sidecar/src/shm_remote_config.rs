@@ -640,6 +640,9 @@ pub struct RemoteConfigManager {
     /// Reapply every config after replacement: unchanged limiter indices refer to a new arena.
     reapply_all: bool,
     pub current_runtime_id: String,
+    /// Runs right before a listed segment is opened, to race a writer against the reader.
+    #[cfg(test)]
+    before_open: Option<Box<dyn FnMut()>>,
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -680,6 +683,8 @@ impl RemoteConfigManager {
             check_configs: vec![],
             reapply_all: false,
             current_runtime_id: "".to_string(),
+            #[cfg(test)]
+            before_open: None,
         }
     }
 
@@ -712,61 +717,10 @@ impl RemoteConfigManager {
     /// Has to be polled repeatedly until None is returned.
     pub fn fetch_update(&mut self) -> RemoteConfigUpdate {
         if let Some(ref target) = self.active_target {
-            let reader = self
-                .active_reader
-                .get_or_insert_with(|| RemoteConfigReader::new(&self.invariants, target));
-
-            let (changed, data) = reader.read();
-            if changed {
-                'fetch_new: {
-                    let mut configs = vec![];
-                    let mut runtime_id: &[u8] = b"";
-                    if !data.is_empty() {
-                        let mut i = 0;
-                        while i < data.len() {
-                            if data[i] == b'\n' {
-                                break;
-                            }
-                            i += 1;
-                        }
-                        runtime_id = &data[0..i];
-                        i += 1;
-                        let mut start = i;
-                        while i < data.len() {
-                            if data[i] == b'\n' {
-                                match std::str::from_utf8(&data[start..i]) {
-                                    Ok(s) => configs.push(s.to_string()),
-                                    Err(e) => {
-                                        warn!("Failed reading received configurations {e:?}");
-                                        break 'fetch_new;
-                                    }
-                                }
-                                start = i + 1;
-                            }
-                            i += 1;
-                        }
-                    }
-                    match std::str::from_utf8(runtime_id) {
-                        Ok(s) => self.current_runtime_id = s.to_string(),
-                        Err(e) => {
-                            warn!("Failed reading received configurations {e:?}");
-                            break 'fetch_new;
-                        }
-                    }
-                    self.last_read_configs = configs;
-                    self.failed_configs.clear();
-                    self.check_configs = self.active_configs.keys().cloned().collect();
-                }
-                if self
-                    .active_reader
-                    .as_mut()
-                    .is_some_and(|r| r.take_replaced())
-                {
-                    debug!("The remote config directory was replaced; re-applying all configs");
-                    self.check_configs = self.active_configs.keys().cloned().collect();
-                    self.reapply_all = true;
-                }
-
+            if self.active_reader.is_none() {
+                self.active_reader = Some(RemoteConfigReader::new(&self.invariants, target));
+            }
+            if self.refresh_listing() {
                 let expiry = Instant::now().checked_sub(Duration::from_secs(3666));
                 while let Some((_, Reverse(instant))) = self.unexpired_targets.peek() {
                     #[allow(clippy::unwrap_used)]
@@ -797,6 +751,10 @@ impl RemoteConfigManager {
 
         while let Some(config) = self.last_read_configs.pop() {
             if let Entry::Vacant(entry) = self.active_configs.entry(config) {
+                #[cfg(test)]
+                if let Some(hook) = self.before_open.as_mut() {
+                    hook();
+                }
                 match read_config(entry.key(), &self.registry) {
                     Ok((parsed, limiter_index)) => {
                         trace!("Adding remote config file {}: {:?}", entry.key(), parsed);
@@ -808,19 +766,23 @@ impl RemoteConfigManager {
                         };
                     }
                     Err(e) => {
-                        if self.failed_configs.insert(entry.key().clone()) {
+                        let config = entry.into_key();
+                        // The writer publishes a new listing before unlinking the segments the
+                        // old one names, so a changed listing means this line is stale.
+                        if self.refresh_listing() {
+                            debug!(
+                                "Remote config file {config} is gone with its listing; moving to \
+                                 the current listing: {e:?}"
+                            );
+                            return self.fetch_update();
+                        }
+                        if self.failed_configs.insert(config.clone()) {
                             warn!(
-                                "Failed reading remote config file {}; retrying on later polls: \
-                                 {:?}",
-                                entry.key(),
-                                e
+                                "Failed reading remote config file {config}; retrying on later \
+                                 polls: {e:?}"
                             );
                         } else {
-                            debug!(
-                                "Failed reading remote config file {} again: {:?}",
-                                entry.key(),
-                                e
-                            );
+                            debug!("Failed reading remote config file {config} again: {e:?}");
                         }
                     }
                 }
@@ -829,6 +791,68 @@ impl RemoteConfigManager {
 
         self.retry_failed = true;
         RemoteConfigUpdate::None
+    }
+
+    /// Reads the active target's listing again and, if it changed, makes it the one to apply:
+    /// configs it no longer names are removed before any of its own configs is added.
+    /// Returns whether it changed.
+    fn refresh_listing(&mut self) -> bool {
+        let Some(reader) = self.active_reader.as_mut() else {
+            return false;
+        };
+        let (changed, data) = reader.read();
+        if !changed {
+            return false;
+        }
+        'fetch_new: {
+            let mut configs = vec![];
+            let mut runtime_id: &[u8] = b"";
+            if !data.is_empty() {
+                let mut i = 0;
+                while i < data.len() {
+                    if data[i] == b'\n' {
+                        break;
+                    }
+                    i += 1;
+                }
+                runtime_id = &data[0..i];
+                i += 1;
+                let mut start = i;
+                while i < data.len() {
+                    if data[i] == b'\n' {
+                        match std::str::from_utf8(&data[start..i]) {
+                            Ok(s) => configs.push(s.to_string()),
+                            Err(e) => {
+                                warn!("Failed reading received configurations {e:?}");
+                                break 'fetch_new;
+                            }
+                        }
+                        start = i + 1;
+                    }
+                    i += 1;
+                }
+            }
+            match std::str::from_utf8(runtime_id) {
+                Ok(s) => self.current_runtime_id = s.to_string(),
+                Err(e) => {
+                    warn!("Failed reading received configurations {e:?}");
+                    break 'fetch_new;
+                }
+            }
+            self.last_read_configs = configs;
+            self.failed_configs.clear();
+            self.check_configs = self.active_configs.keys().cloned().collect();
+        }
+        if self
+            .active_reader
+            .as_mut()
+            .is_some_and(|r| r.take_replaced())
+        {
+            debug!("The remote config directory was replaced; re-applying all configs");
+            self.check_configs = self.active_configs.keys().cloned().collect();
+            self.reapply_all = true;
+        }
+        true
     }
 
     fn set_target(&mut self, target: Option<Arc<Target>>) {
@@ -1476,6 +1500,105 @@ mod tests {
         }
         assert!(matches!(manager.fetch_update(), RemoteConfigUpdate::None));
         assert!(matches!(manager.fetch_update(), RemoteConfigUpdate::None));
+    }
+
+    /// A segment named by a listing that the writer has meanwhile replaced (and whose segments
+    /// it has unlinked) is not a failure: the reader moves on to the current listing at once.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn a_segment_gone_with_its_listing_moves_to_the_current_listing() {
+        use std::sync::atomic::AtomicUsize;
+        use tracing_subscriber::layer::{Context, SubscriberExt};
+
+        /// Counts this thread's warnings, leaving the global log counter alone.
+        struct CountWarnings(Arc<AtomicUsize>);
+        impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for CountWarnings {
+            fn on_event(&self, event: &tracing::Event<'_>, _: Context<'_, S>) {
+                if *event.metadata().level() == tracing::Level::WARN {
+                    self.0.fetch_add(1, Ordering::Relaxed);
+                }
+            }
+        }
+        let warnings = Arc::new(AtomicUsize::new(0));
+        let _subscriber = tracing::subscriber::set_default(
+            tracing_subscriber::registry().with(CountWarnings(warnings.clone())),
+        );
+        let invariants = ConfigInvariants {
+            language: "php".to_string(),
+            tracer_version: "test".to_string(),
+            endpoint: libdd_common::Endpoint::from_slice(&format!(
+                "file:///rc-stale-{}",
+                std::process::id()
+            )),
+            agentless: None,
+        };
+        let path = |id: &str| {
+            RemoteConfigPath::parse(&format!(
+                "employee/APM_TRACING/{id}-{}/config",
+                std::process::id()
+            ))
+            .unwrap()
+        };
+        let (changing, stable) = (path("changing"), path("stable"));
+        let content = serde_json::to_vec(&dummy_dynamic_config(true)).unwrap();
+        let stable_file = store_shm(1, &stable, content.clone()).unwrap();
+        // Version 1 is already unlinked; version 2 replaces it.
+        let gone_name = segment_name(&crate::shm_namespace().to_string(), 1, &changing);
+        let changed_file = store_shm(2, &changing, content).unwrap();
+        let listing = |entries: [(&[u8], &RemoteConfigPath); 2]| {
+            let mut listing = b"runtime\n".to_vec();
+            for (name, path) in entries {
+                listing.extend_from_slice(name);
+                listing.extend_from_slice(b":0:");
+                listing
+                    .extend_from_slice(BASE64_URL_SAFE_NO_PAD.encode(path.to_string()).as_bytes());
+                listing.push(b'\n');
+            }
+            listing
+        };
+        let stable_name = unsafe { stable_file.get_path() }.to_vec();
+        let writer = Arc::new(RemoteConfigWriter::new(&invariants, &DUMMY_TARGET).unwrap());
+        // The stable config is opened first, the gone one on the next call.
+        assert!(writer.write(&listing([
+            (gone_name.as_bytes(), &changing),
+            (&stable_name, &stable)
+        ])));
+
+        let mut manager = RemoteConfigManager::new(invariants);
+        manager.track_target(&DUMMY_TARGET);
+        match manager.fetch_update() {
+            RemoteConfigUpdate::Add { value, .. } => assert_eq!(value.path, stable),
+            other => panic!("expected the stable config to be added, got {other:?}"),
+        }
+
+        // The writer publishes its next listing between the reader's read and its open.
+        let next = listing([
+            (unsafe { changed_file.get_path() }, &changing),
+            (&stable_name, &stable),
+        ]);
+        let racing_writer = writer.clone();
+        let mut publish = Some(move || assert!(racing_writer.write(&next)));
+        manager.before_open = Some(Box::new(move || {
+            if let Some(publish) = publish.take() {
+                publish();
+            }
+        }));
+        match manager.fetch_update() {
+            RemoteConfigUpdate::Add { value, .. } => assert_eq!(value.path, changing),
+            other => panic!("expected the current version to be added, got {other:?}"),
+        }
+        assert!(
+            manager.failed_configs.is_empty(),
+            "{:?}",
+            manager.failed_configs
+        );
+        assert!(matches!(manager.fetch_update(), RemoteConfigUpdate::None));
+        assert!(matches!(manager.fetch_update(), RemoteConfigUpdate::None));
+        assert_eq!(
+            warnings.load(Ordering::Relaxed),
+            0,
+            "a stale listing is not a failure"
+        );
     }
 
     /// Identical config files and limiter indices still refer to a new arena after restart.
