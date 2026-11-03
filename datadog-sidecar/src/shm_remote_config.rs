@@ -275,6 +275,21 @@ fn dynamic_instrumentation_is_enabled(apm_config: Option<bool>, info: &TargetInf
     }
 }
 
+impl<N: NotifyTarget + 'static> ConfigFileStorage<N> {
+    /// Tell the in-process consumer (the AppSec helper) that the target's listing changed.
+    ///
+    /// Must be called without holding any of this storage's locks: the callback re-reads the
+    /// listing and may do lengthy work, like rebuilding the WAF.
+    fn notify_in_proc(&self, target: &Arc<Target>) {
+        if let Some(in_proc_notify) = unsafe { IN_PROC_NOTIFY_FUN } {
+            in_proc_notify(
+                &self.invariants as *const ConfigInvariants,
+                target as *const Arc<Target>,
+            );
+        }
+    }
+}
+
 impl<N: NotifyTarget + 'static> MultiTargetHandlers<N, Self, NativeCapabilities>
     for ConfigFileStorage<N>
 {
@@ -361,31 +376,29 @@ impl<N: NotifyTarget + 'static> MultiTargetHandlers<N, Self, NativeCapabilities>
             }
         }
 
-        if writer.writer.as_slice() != serialized {
-            writer.write(&serialized);
-
-            debug!(
-                "Active configuration files are: {}",
-                String::from_utf8_lossy(&serialized)
-            );
-
-            if let Some(in_proc_notify) = unsafe { IN_PROC_NOTIFY_FUN } {
-                in_proc_notify(
-                    &self.invariants as *const ConfigInvariants,
-                    target as *const Arc<Target>,
-                );
-            }
-
-            true
-        } else {
-            false
+        if writer.writer.as_slice() == serialized {
+            return false;
         }
+        writer.write(&serialized);
+        drop(writers);
+
+        debug!(
+            "Active configuration files are: {}",
+            String::from_utf8_lossy(&serialized)
+        );
+
+        // The files still listed stay alive until this returns, so the callback may open them.
+        self.notify_in_proc(target);
+        true
     }
 
     fn expired(&self, target: &Arc<Target>) {
-        if let Some(writer) = self.writers.lock_or_panic().remove(target) {
+        let writer = self.writers.lock_or_panic().remove(target);
+        if let Some(writer) = writer {
             // clear to signal it's no longer being fetched
             writer.write(&[]);
+            // Keep the listing's name alive while the callback reads it.
+            self.notify_in_proc(target);
         }
     }
 
@@ -966,6 +979,67 @@ mod tests {
                 channel.send(()).await.unwrap();
             });
         }
+    }
+
+    type WritersProbe = (
+        ConfigInvariants,
+        Arc<Mutex<HashMap<Arc<Target>, RemoteConfigWriter>>>,
+        Vec<(bool, Vec<u8>)>,
+    );
+    static NOTIFY_PROBE: Mutex<Option<WritersProbe>> = Mutex::new(None);
+
+    /// Records whether the writers were unlocked and what the listing said when notified.
+    extern "C" fn probe_notify(invariants: *const ConfigInvariants, target: *const Arc<Target>) {
+        let (invariants, target) = unsafe { (&*invariants, &*target) };
+        let mut probe = NOTIFY_PROBE.lock().unwrap();
+        if let Some((expected, writers, calls)) = probe.as_mut()
+            && expected == invariants
+        {
+            let unlocked = writers.try_lock().is_ok();
+            let mut reader = RemoteConfigReader::new(invariants, target);
+            calls.push((unlocked, reader.read().1.to_vec()));
+        }
+    }
+
+    /// The in-process callback (the AppSec helper) runs without the sidecar's locks held, and
+    /// learns about a target's listing being cleared, not only about it being filled.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn in_process_notification_runs_unlocked_and_on_expiry() {
+        let invariants = ConfigInvariants {
+            language: "php".to_string(),
+            tracer_version: "test".to_string(),
+            // The file scheme disables background fetching.
+            endpoint: libdd_common::Endpoint::from_slice(&format!(
+                "file:///rc-notify-{}",
+                std::process::id()
+            )),
+            agentless: None,
+        };
+        let sidecar = ShmRemoteConfigs::<NotifyDummy>::new(
+            invariants.clone(),
+            Box::new(|| {}),
+            Duration::from_secs(60),
+            None,
+        );
+        let storage = &sidecar.0.storage.storage;
+        *NOTIFY_PROBE.lock().unwrap() = Some((invariants.clone(), storage.writers.clone(), vec![]));
+        unsafe { ddog_set_rc_notify_fn(Some(probe_notify)) };
+
+        assert!(storage.fetched(
+            &sidecar.0,
+            &Arc::new("runtime".to_string()),
+            &DUMMY_TARGET,
+            &[]
+        ));
+        storage.expired(&DUMMY_TARGET);
+
+        let (_, _, calls) = NOTIFY_PROBE.lock().unwrap().take().unwrap();
+        assert_eq!(
+            calls,
+            vec![(true, b"runtime\n".to_vec()), (true, vec![])],
+            "expected one unlocked notification per listing change"
+        );
     }
 
     #[tokio::test]
