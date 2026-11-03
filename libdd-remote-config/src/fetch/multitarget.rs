@@ -604,6 +604,8 @@ where
 
             let inner_fetcher = fetcher.clone();
             let inner_this = this.clone();
+            let finish_target = fetcher.target.clone();
+            let finish_this = this.clone();
             let fetcher_fut = fetcher
                 .run(
                     this.storage.clone(),
@@ -643,6 +645,8 @@ where
                             }
                         }
                     }),
+                    // The target's files are released only once their listing is cleared.
+                    Box::new(move || finish_this.storage.storage.expired(&finish_target)),
                 )
                 .shared();
 
@@ -674,7 +678,8 @@ where
                 }
             }
 
-            this.storage.storage.expired(&fetcher.target);
+            // Let the cancelled run end: dropping it instead would never release its files.
+            fetcher_fut.await;
 
             let is_dead = {
                 // scope lock before await
@@ -788,7 +793,8 @@ mod tests {
     use libdd_capabilities_impl::NativeCapabilities;
     use manual_future::ManualFutureCompleter;
     use std::hash::Hasher;
-    use std::sync::atomic::AtomicU8;
+    use std::sync::Weak;
+    use std::sync::atomic::{AtomicBool, AtomicU8};
 
     #[derive(Clone)]
     struct MultiFileStorage {
@@ -799,6 +805,11 @@ mod tests {
         awaiting_fetches: Arc<AtomicU8>,
         awaited_fetched_done: Arc<Mutex<Option<ManualFutureCompleter<()>>>>,
         expected_expirations: Arc<Mutex<HashMap<Arc<Target>, ManualFutureCompleter<()>>>>,
+        /// The files each target's current listing names.
+        #[allow(clippy::type_complexity)]
+        listed: Arc<Mutex<HashMap<Arc<Target>, Vec<Weak<RcPathStore>>>>>,
+        /// Set if a target's files were released before its listing was cleared.
+        released_while_listed: Arc<AtomicBool>,
     }
 
     impl MultiFileStorage {
@@ -830,6 +841,10 @@ mod tests {
             target: &Arc<Target>,
             files: &[Arc<RcPathStore>],
         ) -> bool {
+            self.listed
+                .lock()
+                .unwrap()
+                .insert(target.clone(), files.iter().map(Arc::downgrade).collect());
             match self.recent_fetches.lock().unwrap().entry(target.clone()) {
                 Entry::Occupied(_) => panic!("Double fetch without recent_fetches clear"),
                 Entry::Vacant(e) => {
@@ -856,6 +871,11 @@ mod tests {
         }
 
         fn expired(&self, target: &Arc<Target>) {
+            if let Some(listed) = self.listed.lock().unwrap().remove(target)
+                && listed.iter().any(|f| f.strong_count() == 0)
+            {
+                self.released_while_listed.store(true, Ordering::SeqCst);
+            }
             tokio::spawn(
                 self.expected_expirations
                     .lock()
@@ -957,6 +977,8 @@ mod tests {
             awaiting_fetches: Default::default(),
             awaited_fetched_done: Default::default(),
             expected_expirations: Default::default(),
+            listed: Default::default(),
+            released_while_listed: Default::default(),
         };
         let state = Arc::new(NotifyState::default());
 
@@ -1134,5 +1156,66 @@ mod tests {
         storage.expect_expiration(&OTHER_TARGET);
 
         on_dead.await
+    }
+
+    /// A removed target's listing names its files until expired() clears it; the files must
+    /// outlive that, and be released afterwards.
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn removed_target_releases_files_after_clearing_its_listing() {
+        let server = RemoteConfigServer::spawn();
+        let (on_dead, on_dead_completer) = ManualFuture::new();
+        let storage = MultiFileStorage {
+            rc: RcFileStorage::default(),
+            on_dead_completer: Arc::new(Mutex::new(Some(on_dead_completer))),
+            recent_fetches: Default::default(),
+            awaiting_fetches: Default::default(),
+            awaited_fetched_done: Default::default(),
+            expected_expirations: Default::default(),
+            listed: Default::default(),
+            released_while_listed: Default::default(),
+        };
+        let state = Arc::new(NotifyState::default());
+        server.files.lock().unwrap().insert(
+            PATH_FIRST.clone(),
+            (vec![DUMMY_TARGET.clone()], 1, "v1".to_string()),
+        );
+
+        let fut = storage.await_fetches(1);
+        let fetcher = MultiTargetFetcher::<Notifier, MultiFileStorage, NativeCapabilities>::new(
+            storage.clone(),
+            server.dummy_options().invariants,
+            NativeCapabilities::new_periodic(),
+        );
+        fetcher.remote_config_interval.store(1000, Ordering::SeqCst);
+        fetcher.add_runtime(
+            RT_ID_1.to_string(),
+            RT_ID_1.to_string(),
+            Notifier { id: 1, state },
+            &DUMMY_TARGET,
+            ProductCapabilities {
+                products: server.dummy_options().products,
+                capabilities: server.dummy_options().capabilities,
+            },
+        );
+        fut.await;
+        // Only the fetcher may keep the delivered files alive.
+        storage.recent_fetches.lock().unwrap().clear();
+        assert_eq!(storage.rc.0.files.lock().unwrap().len(), 1);
+
+        let expired = storage.expect_expiration(&DUMMY_TARGET);
+        fetcher.delete_runtime(RT_ID_1, RT_ID_1, &DUMMY_TARGET);
+        fetcher.shutdown();
+        expired.await;
+        on_dead.await;
+
+        assert!(
+            !storage.released_while_listed.load(Ordering::SeqCst),
+            "the files were released while the target's listing still named them"
+        );
+        assert!(
+            storage.rc.0.files.lock().unwrap().is_empty(),
+            "the removed target's files were never released"
+        );
     }
 }
