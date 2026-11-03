@@ -315,6 +315,20 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
         }
     }
 
+    /// Create a config fetcher in agentless mode around a pre-built agentless fetcher.
+    #[cfg(all(test, feature = "agentless"))]
+    pub(crate) fn with_agentless_fetcher(
+        file_storage: S,
+        state: Arc<ConfigFetcherState<S::StoredFile, C>>,
+        agentless_fetcher: agentless::AgentlessFetcher<C>,
+    ) -> Self {
+        ConfigFetcher {
+            file_storage,
+            state,
+            mode: FetcherMode::Agentless(agentless_fetcher),
+        }
+    }
+
     /// Create a new config fetcher.
     pub async fn new(
         file_storage: S,
@@ -788,10 +802,9 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
                 }
                 client_state.last_error = None;
 
-                let configs = cache.lock().collect_handles(&res.targets)?;
+                let (configs, last_configs) = cache.lock().collect_handles(&res.targets)?;
 
-                // The agentless cache keeps its own files, whose states aren't reported.
-                client_state.last_configs.clear();
+                client_state.last_configs = last_configs;
                 Ok(Some(configs))
             }
         }

@@ -1223,6 +1223,9 @@ mod cache {
         expire_unused_files: bool,
     }
 
+    /// Apply state of each file version handed to a client, by path.
+    pub(crate) type CollectedStates = HashMap<RemoteConfigPath, Arc<Mutex<ConfigState>>>;
+
     impl<'a, S: FileStorage> TargetCache<'a, S> {
         pub(crate) fn new<C: HttpClientCapability + SleepCapability>(
             state: &'a ConfigFetcherState<S::StoredFile, C>,
@@ -1333,12 +1336,15 @@ mod cache {
         }
 
         /// Collect `Arc<S::StoredFile>` handles for every target in `targets`, verifying
-        /// stored hash and length match, and marking each entry as non-expiring.
+        /// stored hash and length match, and marking each entry as non-expiring. Also
+        /// returns the apply state of each collected file version, to be reported in the
+        /// client's `config_states`.
         pub(crate) fn collect_handles(
             &mut self,
             targets: &[ClientTargetRef],
-        ) -> anyhow::Result<Vec<Arc<S::StoredFile>>> {
+        ) -> anyhow::Result<(Vec<Arc<S::StoredFile>>, CollectedStates)> {
             let mut handles = Vec::with_capacity(targets.len());
+            let mut states = HashMap::with_capacity(targets.len());
             for target in targets {
                 let stored = self.files.get_mut(&target.path).ok_or_else(|| {
                     anyhow::format_err!(
@@ -1366,8 +1372,9 @@ mod cache {
                 }
                 stored.expiring = false;
                 handles.push(stored.handle.clone());
+                states.insert(target.path.clone(), stored.state.clone());
             }
-            Ok(handles)
+            Ok((handles, states))
         }
     }
 }
