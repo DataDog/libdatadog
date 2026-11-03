@@ -12,7 +12,7 @@ use libdd_common::MutexExt;
 use serde::{Deserialize, Serialize};
 use std::ops::Add;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 use tokio::select;
 use tokio::time::sleep;
@@ -140,13 +140,20 @@ where
     /// with a potentially incomplete configuration.
     /// Several versions of a path may be inactive at once.
     inactive: Arc<Mutex<Vec<Arc<S::StoredFile>>>>,
+    /// Every file version stored, to count those still alive. Several versions of a path may be
+    /// alive at once, held by targets which haven't fetched the newest one yet.
+    stored: Arc<Mutex<Vec<Weak<S::StoredFile>>>>,
     /// times `ConfigFetcher::<S>::fetch_once()` is currently being run
     run_id: Arc<RunnersGeneration>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct RefcountingStorageStats {
+    /// Live file versions retained only for in-flight requests. Included in live_files.
     pub inactive_files: u32,
+    /// Live file versions, of all paths.
+    #[serde(default)]
+    pub live_files: u32,
     pub fetcher: ConfigFetcherStateStats,
 }
 
@@ -156,6 +163,7 @@ impl Add for RefcountingStorageStats {
     fn add(self, rhs: Self) -> Self::Output {
         RefcountingStorageStats {
             inactive_files: self.inactive_files + rhs.inactive_files,
+            live_files: self.live_files + rhs.live_files,
             fetcher: self.fetcher + rhs.fetcher,
         }
     }
@@ -171,6 +179,7 @@ where
             storage: self.storage.clone(),
             state: self.state.clone(),
             inactive: self.inactive.clone(),
+            stored: self.stored.clone(),
             run_id: self.run_id.clone(),
         }
     }
@@ -186,6 +195,7 @@ where
             storage,
             state: Arc::new(state),
             inactive: Default::default(),
+            stored: Default::default(),
             run_id: Default::default(),
         }
     }
@@ -217,10 +227,16 @@ where
     }
 
     pub fn stats(&self) -> RefcountingStorageStats {
-        // Release this lock before stats takes the file-state lock.
+        // Release these locks before stats takes the file-state lock.
         let inactive_files = self.inactive.lock_or_panic().len() as u32;
+        let live_files = {
+            let mut stored = self.stored.lock_or_panic();
+            stored.retain(|file| file.strong_count() > 0);
+            stored.len() as u32
+        };
         RefcountingStorageStats {
             inactive_files,
+            live_files,
             fetcher: self.state.stats(),
         }
     }
@@ -239,7 +255,19 @@ where
         path: Arc<RemoteConfigPath>,
         contents: Vec<u8>,
     ) -> anyhow::Result<Arc<Self::StoredFile>> {
-        self.storage.store(version, path, contents)
+        let file = self.storage.store(version, path, contents)?;
+        // Called with the file-state lock held.
+        let mut stored = self.stored.lock_or_panic();
+        // Drop the dead entries before growing; grow anyway if mostly live, to amortize this.
+        if stored.len() == stored.capacity() {
+            stored.retain(|file| file.strong_count() > 0);
+            let capacity = stored.capacity();
+            if stored.len() > capacity / 2 {
+                stored.reserve(capacity);
+            }
+        }
+        stored.push(Arc::downgrade(&file));
+        Ok(file)
     }
 
     fn update(
@@ -663,10 +691,10 @@ pub mod tests {
         let file = storage
             .store(1, Arc::new(PATH_FIRST.clone()), b"config".to_vec())
             .unwrap();
-        let start = Arc::new(std::sync::Barrier::new(2));
+        let start = Arc::new(std::sync::Barrier::new(3));
         let (done_tx, done_rx) = std::sync::mpsc::channel();
         let mut threads = Vec::new();
-        for expire in [false, true] {
+        for task in 0..3 {
             let mut storage = storage.clone();
             let file = file.clone();
             let start = start.clone();
@@ -674,16 +702,21 @@ pub mod tests {
             threads.push(std::thread::spawn(move || {
                 start.wait();
                 for _ in 0..if cfg!(miri) { 100 } else { 100_000 } {
-                    if expire {
-                        storage.expire_file(file.clone());
-                    } else {
-                        storage.stats();
+                    match task {
+                        0 => drop(storage.stats()),
+                        1 => storage.expire_file(file.clone()),
+                        // Like fetch_once(), which stores with the file-state lock held.
+                        _ => {
+                            let _files = storage.state.files_lock();
+                            let path = Arc::new(PATH_SECOND.clone());
+                            drop(storage.store(1, path, b"config".to_vec()).unwrap());
+                        }
                     }
                 }
                 done.send(()).unwrap();
             }));
         }
-        for _ in 0..2 {
+        for _ in 0..3 {
             done_rx
                 .recv_timeout(Duration::from_secs(10))
                 .expect("stats and expiration deadlocked");
@@ -923,5 +956,64 @@ pub mod tests {
         .await;
 
         assert!(storage.0.files.lock().unwrap().is_empty());
+    }
+
+    /// The stats count every live version of a file, not just the paths with a stored file: a
+    /// replaced version stays alive while a listing still names it.
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn stats_count_live_file_versions() {
+        let server = RemoteConfigServer::spawn();
+        let storage = RcFileStorage::default();
+        let rc_storage = RefcountingStorage::new(
+            storage.clone(),
+            ConfigFetcherState::with_client(
+                server.dummy_options().invariants,
+                NativeCapabilities::new_periodic(),
+            ),
+        );
+        server.files.lock().unwrap().insert(
+            PATH_FIRST.clone(),
+            (vec![DUMMY_TARGET.clone()], 1, "v1".to_string()),
+        );
+
+        let fetcher = SharedFetcher::new(
+            DUMMY_TARGET.clone(),
+            "3b43524b-a70c-45dc-921d-34504e50c5eb".to_string(),
+            server.dummy_product_capabilities(),
+        );
+        fetcher.interval.store(1000, Ordering::SeqCst);
+        let iteration = AtomicU32::new(0);
+        let inner_fetcher = unsafe { &*(&fetcher as *const SharedFetcher) };
+        let inner_server = server.clone();
+        let inner_storage = rc_storage.clone();
+        fetcher
+            .run(
+                rc_storage.clone(),
+                Box::new(move |_| {
+                    let stats = inner_storage.stats();
+                    match iteration.fetch_add(1, Ordering::SeqCst) {
+                        0 => {
+                            assert_eq!((stats.fetcher.active_files, stats.live_files), (1, 1));
+                            inner_server.files.lock().unwrap().insert(
+                                PATH_FIRST.clone(),
+                                (vec![DUMMY_TARGET.clone()], 2, "v2".to_string()),
+                            );
+                        }
+                        1 => {
+                            // v1 is released once this listing is published.
+                            assert_eq!((stats.fetcher.active_files, stats.live_files), (1, 2));
+                            assert_eq!(stats.inactive_files, 0);
+                            inner_fetcher.cancel();
+                        }
+                        _ => panic!("Unexpected"),
+                    }
+                }),
+                Box::new(|| {}),
+            )
+            .await;
+
+        let stats = rc_storage.stats();
+        assert_eq!((stats.live_files, stats.inactive_files), (0, 0));
     }
 }
