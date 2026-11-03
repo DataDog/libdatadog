@@ -91,6 +91,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       codeowners: ${{ steps.filter.outputs.codeowners }}
+      codeowners_tool: ${{ steps.filter.outputs.codeowners_tool }}
+      codeowners_supporting: ${{ steps.filter.outputs.codeowners_supporting }}
       licensecheck: ${{ steps.filter.outputs.licensecheck }}
       license_3rdparty: ${{ steps.filter.outputs.license_3rdparty }}
       manifests: ${{ steps.filter.outputs.manifests }}
@@ -100,10 +102,31 @@ jobs:
       - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         id: filter
         with:
+          # codeowners_supporting: paths the CODEOWNERS generator's output
+          # depends on; adding or removing one requires regenerating the
+          # artifact (the freshness job verifies that). Root patterns are
+          # listed separately because `**/x` does not match the root file.
           filters: |
             codeowners:
               - '.github/CODEOWNERS'
               - added|deleted: '**'
+            codeowners_tool:
+              - '.github/CODEOWNERS'
+              - '.github/CODEOWNERS.in'
+              - 'tools/**'
+            codeowners_supporting:
+              - added|deleted: 'Cargo.toml'
+              - added|deleted: 'Cargo.lock'
+              - added|deleted: 'CHANGELOG.md'
+              - added|deleted: 'build.rs'
+              - added|deleted: 'tests/**'
+              - added|deleted: 'benches/**'
+              - added|deleted: '**/Cargo.toml'
+              - added|deleted: '**/Cargo.lock'
+              - added|deleted: '**/CHANGELOG.md'
+              - added|deleted: '**/build.rs'
+              - added|deleted: '**/tests/**'
+              - added|deleted: '**/benches/**'
             licensecheck:
               - '**/*.rs'
               - '**/*.c'
@@ -410,28 +433,72 @@ jobs:
           path: /tmp/CI.csv
           overwrite: true
 
-  codeowners-validator:
-    needs: changes
-    if: github.event_name != 'pull_request' || needs.changes.outputs.codeowners == 'true'
+  codeowners-validate:
+    needs: [changes, setup]
+    if: >-
+      github.event_name != 'pull_request' ||
+      needs.changes.outputs.codeowners == 'true' ||
+      needs.changes.outputs.codeowners_tool == 'true' ||
+      contains(github.event.pull_request.labels.*.name, 'run-all-tests')
     runs-on: ubuntu-latest
     name: "Validate CODEOWNERS"
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      RUSTUP_TOOLCHAIN: ${{ needs.setup.outputs.rust-version }}
     steps:
       - name: Checkout sources
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
-      - name: GitHub CODEOWNERS Validator
-        uses: mszostok/codeowners-validator@7f3f5e28c6d7b8dfae5731e54ce2272ca384592f #v0.7.4
-        # input parameters
-        with:
-          github_app_id: ${{ secrets.CODEOWNERS_VALIDATOR_APP_ID }}
-          github_app_installation_id: ${{ secrets.CODEOWNERS_VALIDATOR_APP_INSTALLATION_ID }}
-          github_app_private_key: ${{ secrets.CODEOWNERS_VALIDATOR_APP_PRIVATE_KEY }}
+      - name: Install ${{ needs.setup.outputs.rust-version }} toolchain
+        run: |
+          rustup set profile minimal
+          rustup toolchain install ${{ needs.setup.outputs.rust-version }}
+      - name: sccache
+        id: sccache
+        uses: ./.github/actions/setup-sccache
+      - name: Validate rules (duplicates, inert patterns, unowned files)
+        run: cargo run -q -p tools --bin validate_codeowners
+      # Owner existence and write access are GitHub's own validation; query
+      # its verdict for this commit (SHA refs are supported) instead of
+      # reimplementing team lookups.
+      - name: "Validate owners (GitHub: existence and write access)"
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ERRORS=$(gh api "repos/${{ github.repository }}/codeowners/errors?ref=${{ github.sha }}" --jq '.errors')
+          if [ "$ERRORS" != "[]" ]; then
+            gh api "repos/${{ github.repository }}/codeowners/errors?ref=${{ github.sha }}" \
+              --jq '.errors[] | "\(.path):\(.line): \(.kind): \(.message)"' >&2
+            exit 1
+          fi
 
-          # "The list of checks that will be executed. By default, all checks are executed. Possible values: files,owners,duppatterns,syntax"
-          checks: "files,duppatterns,syntax"
-          # "The comma-separated list of experimental checks that should be executed. By default, all experimental checks are turned off. Possible values: notowned."
-          experimental_checks: "notowned"
-          # The repository path in which CODEOWNERS file should be validated."
-          repository_path: "."
+  codeowners-freshness:
+    needs: [changes, setup]
+    if: >-
+      github.event_name != 'pull_request' ||
+      needs.changes.outputs.codeowners_tool == 'true' ||
+      needs.changes.outputs.codeowners_supporting == 'true' ||
+      contains(github.event.pull_request.labels.*.name, 'run-all-tests')
+    runs-on: ubuntu-latest
+    name: "CODEOWNERS is up to date"
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      RUSTUP_TOOLCHAIN: ${{ needs.setup.outputs.rust-version }}
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+      - name: Install ${{ needs.setup.outputs.rust-version }} toolchain
+        run: |
+          rustup set profile minimal
+          rustup toolchain install ${{ needs.setup.outputs.rust-version }}
+      - name: sccache
+        id: sccache
+        uses: ./.github/actions/setup-sccache
+      - name: Check .github/CODEOWNERS matches .github/CODEOWNERS.in
+        run: cargo run -q -p tools --bin generate_codeowners -- --check
 
   cargo-doc-lints:
     needs: setup

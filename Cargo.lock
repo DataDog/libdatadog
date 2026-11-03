@@ -6331,6 +6331,7 @@ dependencies = [
  "libdd-common",
  "mime",
  "multer",
+ "nom",
  "quick-xml",
  "rand 0.8.8",
  "tokio",

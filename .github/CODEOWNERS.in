@@ -1,0 +1,182 @@
+# libdatadog CODEOWNERS — source of truth
+#
+# `cargo run -p tools --bin generate_codeowners` turns this file into
+# .github/CODEOWNERS. Never edit .github/CODEOWNERS by hand: edit this file,
+# run the tool, commit both. CI can enforce freshness with `--check`.
+#
+# Model:
+#   - crate code is solely owned by the crate's team
+#   - supporting files (manifests, build scripts, tests, benches) are
+#     co-owned by the crate's team and the co-owners; manifest kinds also
+#     carry the release team
+#   - infra patterns without a "/" match at any depth, so the generator
+#     emits them after the crate rules: crate-level LICENSE/NOTICE files
+#     stay centralized instead of falling to the crate's team
+#   - exceptions are emitted last and override everything
+#
+# Grammar: `team`/policy directives are plain lines; `infra`/`crate`/
+# `exception` open blocks whose indented lines carry patterns (several per
+# line). Infra and exception patterns are emitted verbatim; crate patterns
+# are always crate directories.
+
+# ── teams ──────────────────────────────────────────────────────────────────
+
+team core    @DataDog/apm-common-components-core
+team guild   @DataDog/libdatadog-guild-reviewers
+team rel     @DataDog/libdatadog-release
+team prof    @DataDog/libdatadog-profiling
+team ct      @DataDog/libdatadog-crashtracking-reviewers
+team php     @DataDog/libdatadog-php
+team crev    @DataDog/apm-common-components-core-reviewers
+team rc      @DataDog/remote-config
+team sdkc    @DataDog/apm-sdk-capabilities
+team ffe     @DataDog/feature-flagging-and-experimentation-sdk
+team sls     @DataDog/serverless
+team ai      @DataDog/agent-console
+team nix     @DataDog/nix-guild
+team chaos   @DataDog/chaos-engineering
+
+# ── policy ─────────────────────────────────────────────────────────────────
+
+supporting  Cargo.toml Cargo.lock CHANGELOG.md build.rs tests/ benches/
+manifest    Cargo.toml Cargo.lock CHANGELOG.md
+co-owners   core guild
+release     rel
+
+# ── repo-wide infrastructure ───────────────────────────────────────────────
+
+infra-default core guild
+
+# agent and repo configuration
+infra:
+  .claude/ AGENTS.md CLAUDE.md .clang-format .pre-commit-config.yaml
+  .sg/ sgconfig.yml .cargo/* .config/nextest.toml .config/commitlint.config.js
+  .devcontainer .dockerignore .gitignore .gitmodules
+
+# CI and repo metadata
+infra:
+  .github/ .gitlab-ci.yml .gitlab/benchmarks.yml .gitlab/impacted-crates.yml
+  ci-toolchain.toml repository.datadog.yml
+
+infra chaos:
+  .gitlab/fuzz.yml
+
+# rust workspace configuration and licensing
+infra:
+  rust-toolchain.toml rustfmt.toml clippy.toml cliff.toml deny.toml Cross.toml
+  LICENSE* license-tool.toml NOTICE local-linux.Dockerfile
+
+# docs and examples (ruby/README.md is a placeholder for a deprecated crate)
+infra:
+  CONTRIBUTING.md /README.md ruby/README.md /docs/ /examples/
+
+# build and packaging infrastructure
+# (builder, build-common and tools are workspace members; they are listed
+# as crates below to get per-file supporting rules)
+infra:
+  benchmark/ cmake/ /windows/
+
+# nix
+infra nix core:
+  *.nix flake.*
+
+# scripts (deliberately enumerated: new scripts are not auto-owned)
+infra core:
+  scripts/check_cargo_metadata.sh scripts/check_crypto_providers.sh
+  scripts/commits-since-release.sh scripts/create-release.sh
+  scripts/crates-to-package.sh scripts/exclude-from-green-ci.sh
+  scripts/major-bumps-level.sh scripts/publication-order.sh
+  scripts/reformat_copyright.sh scripts/release-excluded-crates-hints.sh
+  scripts/release-generate-changelogs.sh scripts/release-version-bumps.sh
+  scripts/release-version-major-bumps.sh scripts/run-ast-grep.sh
+  scripts/_add_ffi_panic_allows.py scripts/semver-level.sh
+  scripts/split_lcov.sh scripts/update_license_3rdparty.sh
+
+infra php crev:
+  scripts/test_sidecar_ffi.sh
+
+infra:
+  scripts/Dockerfile.license
+
+# ── crates ─────────────────────────────────────────────────────────────────
+# One block per owner set; patterns may be globs over crate families
+# (libdd-profiling* covers libdd-profiling-ffi and the heap crates) or paths
+# (tools/sidecar_mockgen, tests/wasm), with only trailing * globs supported.
+# A +team (e.g. +crev) reviews code only and is left off supporting files.
+# Supporting-file rules are emitted only for files that exist in the repo
+# (GitHub's CODEOWNERS validator rejects patterns that match nothing), so
+# adding or removing a Cargo.toml/CHANGELOG/build.rs/tests/benches requires
+# regenerating. Crates owned only by the co-owners (the core-owned ones) get
+# no family block: the general supporting rules already produce the right
+# owner sets.
+
+crate core:
+  libdd-process-utils libdd-agent-client libdd-capabilities*
+  libdd-data-pipeline* libdd-ddsketch* libdd-dogstatsd-client libdd-http-client
+  libdd-log* libdd-otel-thread-ctx* libdd-sampling libdd-shared-runtime*
+  libdd-telemetry* libdd-tinybytes libdd-trace-model libdd-trace-normalization
+  libdd-trace-obfuscation libdd-trace-stats libdd-trace-utils libdd-tracer-flare
+  tools
+
+# builder, build-common and libdd-common are co-owned by the guild even for code
+crate core guild:
+  libdd-common* builder build-common
+
+crate prof:
+  libdd-profiling* libdd-alloc symbolizer-ffi datadog-profiling-replayer
+
+crate prof ct:
+  libdd-crashtracker* libdd-gotter bin_tests
+
+crate php:
+  libdd-ipc* datadog-sidecar-macros tools/sidecar_mockgen
+
+crate php +crev:
+  libdd-live-debugger* datadog-sidecar datadog-sidecar-ffi spawn_worker
+  tests/spawn_from_lib
+
+crate php rc +crev:
+  libdd-remote-config
+
+crate sls +crev:
+  libdd-trace-protobuf
+
+crate prof sls +crev:
+  tests/wasm
+
+crate ai:
+  libdd-ai-usage
+
+crate sdkc:
+  libdd-library-config*
+
+crate ffe:
+  libdd-ffe*
+
+# ── exceptions (emitted last) ──────────────────────────────────────────────
+
+exception ffe:
+  examples/ffi/ffe.c
+
+exception core guild:
+  bin_tests/tests/test_the_tests.rs bin_tests/src/bin/test_the_tests.rs
+
+exception sdkc core:
+  libdd-data-pipeline/src/otlp/ libdd-trace-utils/src/otlp_encoder/
+  libdd-data-pipeline/tests/test_trace_exporter_otlp_export.rs
+  libdd-data-pipeline/tests/test_trace_exporter_otlp_grpc.rs
+
+exception php ffe crev:
+  datadog-sidecar/src/service/ffe_exposures_flusher.rs
+  datadog-sidecar/src/service/ffe_metrics_flusher.rs
+
+exception nix core:
+  .github/workflows/nix.yml
+
+# helper workspace inside .github: keep libdatadog-release off its manifests
+exception core guild:
+  .github/actions/
+
+# unanchored on purpose: also covers libdd-trace-normalization/fuzz/
+exception chaos:
+  fuzz/
