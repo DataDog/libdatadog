@@ -10,30 +10,13 @@ pub struct Span {
     pub thread_name: Option<String>,
 }
 
-/// A snapshot of an active APM span captured at crash time by some collector.
-/// When present, the receiver submits it as a finished span to the Datadog
-/// Agent trace intake. See RFC 0016.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct ApmSpanSnapshot {
-    pub schema_version: u32,
-    /// Full 128-bit trace ID as a decimal string.
-    pub trace_id: String,
-    pub span_id: String,
-    pub parent_id: String,
-    pub start_unix_ns: String,
-    pub duration_ns: String,
-    #[serde(default)]
-    pub error: i32,
-    #[serde(default)]
-    pub has_sampling_priority: bool,
-    #[serde(default)]
-    pub sampling_priority: i32,
-    #[serde(default)]
-    pub service: String,
-    #[serde(default)]
-    pub name: String,
-    #[serde(default)]
-    pub resource: String,
-    #[serde(rename = "type", default)]
-    pub span_type: String,
+/// A pre-encoded v0.4 msgpack trace payload captured at crash time by the
+/// collector. The receiver hex-decodes it and POSTs the raw bytes to the
+/// agent. See RFC 0016.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ApmTracePayload {
+    /// The agent URL to POST the payload to (e.g. "http://127.0.0.1:8126").
+    pub agent_url: String,
+    /// Raw v0.4 msgpack bytes (hex-decoded from the wire protocol).
+    pub data: Vec<u8>,
 }

@@ -121,7 +121,7 @@ pub struct CrashInfoBuilder {
     pub os_info: Option<OsInfo>,
     pub proc_info: Option<ProcInfo>,
     pub sig_info: Option<SigInfo>,
-    pub apm_span: Option<ApmSpanSnapshot>,
+    pub apm_trace_payload: Option<ApmTracePayload>,
     pub span_ids: Option<Vec<Span>>,
     pub timestamp: Option<DateTime<Utc>>,
     pub trace_ids: Option<Vec<Span>>,
@@ -132,7 +132,7 @@ pub struct CrashInfoBuilder {
 impl Default for CrashInfoBuilder {
     fn default() -> Self {
         Self {
-            apm_span: None,
+            apm_trace_payload: None,
             counters: None,
             error: ErrorDataBuilder::default(),
             experimental: None,
@@ -155,7 +155,7 @@ impl Default for CrashInfoBuilder {
 
 impl CrashInfoBuilder {
     pub fn build(self) -> anyhow::Result<CrashInfo> {
-        let apm_span = self.apm_span;
+        let apm_trace_payload = self.apm_trace_payload;
         let counters = self.counters.unwrap_or_default();
         let data_schema_version = CrashInfo::current_schema_version().to_string();
         let (error, incomplete_error) = self.error.build()?;
@@ -174,7 +174,7 @@ impl CrashInfoBuilder {
         let ucontext = self.ucontext;
         let uuid = self.uuid;
         Ok(CrashInfo {
-            apm_span,
+            apm_trace_payload,
             counters,
             data_schema_version,
             error,
@@ -211,8 +211,8 @@ impl CrashInfoBuilder {
         Self::default()
     }
 
-    pub fn with_apm_span(&mut self, snapshot: ApmSpanSnapshot) -> anyhow::Result<()> {
-        self.apm_span = Some(snapshot);
+    pub fn with_apm_trace_payload(&mut self, payload: ApmTracePayload) -> anyhow::Result<()> {
+        self.apm_trace_payload = Some(payload);
         Ok(())
     }
 

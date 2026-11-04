@@ -52,15 +52,12 @@ anyhow.workspace = true
 chrono = { workspace = true, features = ["std", "clock", "serde"] }
 cxx = { workspace = true, default-features = true, optional = true }
 errno = { workspace = true, default-features = true }
+hex = { workspace = true, features = ["std"] }
 libdd-capabilities = { version = "4.0.1", path = "../libdd-capabilities" }
 libdd-capabilities-impl = { version = "8.0.0", path = "../libdd-capabilities-impl" }
 libdd-common = { version = "9.0.0", path = "../libdd-common", features = ["hyper-proxy"] }
 libdd-process-utils = { version = "1.0.0", path = "../libdd-process-utils" }
-libdd-data-pipeline = { version = "13.0.0", path = "../libdd-data-pipeline", default-features = false }
-libdd-shared-runtime = { version = "7.0.0", path = "../libdd-shared-runtime", default-features = false }
 libdd-telemetry = { version = "11.0.0", path = "../libdd-telemetry" }
-libdd-tinybytes = { version = "1.1.5", path = "../libdd-tinybytes" }
-libdd-trace-utils = { version = "15.0.0", path = "../libdd-trace-utils", default-features = false }
 http = { workspace = true, features = ["std"] }
 libc.workspace = true
 nix = { workspace = true, features = ["poll", "signal", "socket"] }
@@ -86,6 +83,7 @@ windows = { workspace = true, features = ["std", "Win32_System_Diagnostics_Debug
 [dev-dependencies]
 criterion.workspace = true
 goblin = { workspace = true, features = ["std", "pe32", "pe64"] }
+rmpv = { workspace = true }
 tempfile.workspace = true
 
 [target.'cfg(windows)'.dev-dependencies]

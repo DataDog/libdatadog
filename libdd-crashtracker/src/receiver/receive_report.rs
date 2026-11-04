@@ -8,7 +8,7 @@ use crate::ptrace_collector::{crash_site_registers, parse_hex_address};
 use crate::{
     CrashtrackerConfiguration, StackTrace,
     crash_info::{
-        ApmSpanSnapshot, CrashInfo, CrashInfoBuilder, ErrorKind, SigInfo, Span, StackFrame,
+        ApmTracePayload, CrashInfo, CrashInfoBuilder, ErrorKind, SigInfo, Span, StackFrame,
         Ucontext,
     },
     receiver::debug_logger::{DebugLogger, ReceiverIssue},
@@ -84,7 +84,7 @@ impl ReceiverFileAccess {
 #[derive(Debug)]
 pub(crate) enum StdinState {
     AdditionalTags,
-    ApmSpan,
+    ApmTracePayload,
     Config,
     Counters,
     Done,
@@ -128,11 +128,17 @@ fn process_line(
             StdinState::AdditionalTags
         }
 
-        StdinState::ApmSpan if line.starts_with(DD_CRASHTRACK_END_APM_SPAN) => StdinState::Waiting,
-        StdinState::ApmSpan => {
-            let snapshot: ApmSpanSnapshot = serde_json::from_str(line)?;
-            builder.with_apm_span(snapshot)?;
-            StdinState::ApmSpan
+        StdinState::ApmTracePayload if line.starts_with(DD_CRASHTRACK_END_APM_TRACE_PAYLOAD) => {
+            StdinState::Waiting
+        }
+        StdinState::ApmTracePayload => {
+            // The payload is a single line of hex-encoded v0.4 msgpack.
+            let data = hex::decode(line)?;
+            // Resolve the agent URL from the environment inherited from the
+            // crashing process (same vars the tracer used).
+            let agent_url = super::apm_span_submit::agent_url();
+            builder.with_apm_trace_payload(ApmTracePayload { agent_url, data })?;
+            StdinState::ApmTracePayload
         }
 
         StdinState::Config if line.starts_with(DD_CRASHTRACK_END_CONFIG) => StdinState::Waiting,
@@ -309,8 +315,8 @@ fn process_line(
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_ADDITIONAL_TAGS) => {
             StdinState::AdditionalTags
         }
-        StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_APM_SPAN) => {
-            StdinState::ApmSpan
+        StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_APM_TRACE_PAYLOAD) => {
+            StdinState::ApmTracePayload
         }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_CONFIG) => StdinState::Config,
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_COUNTERS) => {
