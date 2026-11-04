@@ -1414,6 +1414,12 @@ impl<
 
         let mut header_tags: TracerHeaderTags = self.metadata.borrow().into();
 
+        // Without an agent to normalize the traces, normalize them before stats, filtering and
+        // telemetry read them, as the agent would.
+        if self.agentless_config.is_some() {
+            libdd_data_pipeline_core::normalize_traces_v1(&mut traces);
+        }
+
         // Process stats computation and drop non-sampled (p0) chunks.
         // This must run before the OTLP path so that unsampled spans are not exported.
         let client_side_stats = stats::process_traces_for_stats_v1(
@@ -3145,7 +3151,9 @@ mod tests {
                 .header("dd-api-key", "test-api-key")
                 .header("X-Datadog-Trace-Count", "1")
                 .header("datadog-meta-lang", "nodejs")
-                .header("datadog-meta-tracer-version", "1.0");
+                .header("datadog-meta-tracer-version", "1.0")
+                // Normalized by the exporter
+                .body_includes(r#""name":"bad_name""#);
             then.status(200).body("");
         });
 
@@ -3162,20 +3170,28 @@ mod tests {
             .set_output_format(TraceExporterOutputFormat::V1);
         let exporter = builder.build::<NativeCapabilities>().unwrap();
 
-        let chunks = vec![TraceChunkBytes {
-            trace_id: [0; 16],
-            spans: vec![SpanBytesV1 {
-                name: BytesString::from_slice(b"op").unwrap(),
-                service: BytesString::from_static("svc"),
-                resource: BytesString::from_static("res"),
-                span_id: 2,
-                parent_id: 0,
-                start: 2_500_000_000,
-                duration: 1_000_000,
-                ..Default::default()
-            }],
+        // The second chunk can't be normalized (zero span id), so it is dropped.
+        let invalid_chunk = TraceChunkBytes {
+            spans: vec![SpanBytesV1::default()],
             ..Default::default()
-        }];
+        };
+        let chunks = vec![
+            TraceChunkBytes {
+                trace_id: [0; 16],
+                spans: vec![SpanBytesV1 {
+                    name: BytesString::from_static("bad-name"),
+                    service: BytesString::from_static("svc"),
+                    resource: BytesString::from_static("res"),
+                    span_id: 2,
+                    parent_id: 0,
+                    start: 2_500_000_000,
+                    duration: 1_000_000,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+            invalid_chunk,
+        ];
         let result = exporter.send_trace_chunks_v1(PooledTraceChunks::unpooled(chunks), None);
 
         assert!(

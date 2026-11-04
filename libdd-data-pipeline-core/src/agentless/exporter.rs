@@ -7,15 +7,18 @@ use super::config::AgentlessTraceConfig;
 use http::HeaderMap;
 use libdd_capabilities::{HttpClientCapability, SleepCapability};
 use libdd_common::Endpoint;
+use libdd_trace_normalization::generic as normalizer;
 use libdd_trace_utils::send_with_retry::{
     CompressionStrategy, RetryBackoffType, RetryStrategy, SendWithRetryError, SendWithRetryResult,
     send_with_retry_and_size,
 };
 use libdd_trace_utils::span::span_pool::PooledChunks;
+use libdd_trace_utils::span::trace_utils::{compute_top_level_span, get_root_span_index};
 use libdd_trace_utils::span::v1::span_pool::PooledTraceChunks;
-use libdd_trace_utils::span::{TraceData, trace_utils::compute_top_level_span, trace_utils_v1};
+use libdd_trace_utils::span::{TraceData, trace_utils_v1};
 use libdd_trace_utils::tracer_metadata::TracerMetadata;
 use thiserror::Error;
+use tracing::debug;
 
 const AGENTLESS_MAX_RETRIES: u32 = 2;
 const AGENTLESS_RETRY_DELAY_MS: u64 = 1000;
@@ -109,9 +112,32 @@ where
     send_agentless_json(capabilities, config, headers, json_body, observer).await
 }
 
+/// Normalizes v1 trace chunks the way the agent does, and drops those that can't be repaired
+/// (empty, or holding a span with a zero span id).
+///
+/// Call it once before anything reads the spans (stats, top-level computation, trace filtering),
+/// as the agent normalizes first: the v1 agentless senders don't normalize. It isn't idempotent
+/// for every input (e.g. a reset start can make a large duration overflow on a second pass).
+pub fn normalize_traces_v1<T: TraceData>(traces: &mut PooledTraceChunks<'_, T>) {
+    traces.retain_mut(|chunk| {
+        if let Err(error) = normalizer::normalize_trace(chunk) {
+            debug!(%error, "Dropping invalid trace");
+            return false;
+        }
+        if let Ok(root_span_index) = get_root_span_index(&chunk.spans)
+            && let Err(error) = normalizer::normalize_chunk(chunk, root_span_index)
+        {
+            debug!(%error, "Failed to normalize trace chunk");
+        }
+        true
+    });
+}
+
 /// Encodes and sends already-decoded v1 trace chunks.
 ///
 /// V1-native counterpart of [`send_agentless_traces`].
+///
+/// The chunks must already be normalized, see [`normalize_traces_v1`].
 pub async fn send_agentless_traces_v1<C, T>(
     capabilities: &C,
     traces: PooledTraceChunks<'_, T>,
@@ -135,6 +161,8 @@ where
 }
 
 /// Encodes and sends already-decoded v1 trace chunks, reporting the final send result.
+///
+/// The chunks must already be normalized, see [`normalize_traces_v1`].
 ///
 /// The observer is invoked once after the retry loop with the post-compression payload size.
 pub async fn send_agentless_traces_with_observer_v1<C, T, F>(
@@ -419,6 +447,41 @@ mod tests {
             }
             assert_eq!(capabilities.requests.lock().unwrap().len(), 1);
         }
+    }
+
+    #[test]
+    fn normalizes_v1_traces_and_drops_invalid_ones() {
+        use libdd_trace_utils::span::v1::{Span, TraceChunk};
+        let chunk = |span_id| TraceChunk::<BytesData> {
+            trace_id: 1u128.to_be_bytes(),
+            spans: vec![Span {
+                name: BytesString::from_static("bad-name"),
+                service: BytesString::from_static("service-1"),
+                span_id,
+                start: 1,
+                duration: 2,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let mut traces =
+            PooledTraceChunks::unpooled(vec![chunk(2), chunk(0), TraceChunk::default()]);
+        normalize_traces_v1(&mut traces);
+        let capabilities = TestCapabilities::default();
+        let result = futures::executor::block_on(send_agentless_traces_v1(
+            &capabilities,
+            traces,
+            &metadata(),
+            &config(),
+            false,
+        ));
+        assert!(result.is_ok());
+
+        let requests = capabilities.requests.lock().unwrap();
+        assert_eq!(requests[0].headers()["x-datadog-trace-count"], "1");
+        let body = String::from_utf8(request_body(&requests[0])).unwrap();
+        assert!(body.contains("\"name\":\"bad_name\""), "{body}");
+        assert!(body.contains("\"resource\":\"bad_name\""), "{body}");
     }
 
     #[test]
