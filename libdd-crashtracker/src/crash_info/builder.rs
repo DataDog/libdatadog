@@ -120,6 +120,9 @@ pub struct CrashInfoBuilder {
     pub metadata: Option<Metadata>,
     pub os_info: Option<OsInfo>,
     pub otel_thread_contexts: Option<Vec<OtelThreadContext>>,
+    /// TLS slot address from the collector, used transiently to compute the TLS
+    /// offset for reading other threads' OTel contexts. Not part of CrashInfo.
+    pub otel_tls_slot_addr: Option<u64>,
     pub proc_info: Option<ProcInfo>,
     pub sig_info: Option<SigInfo>,
     pub span_ids: Option<Vec<Span>>,
@@ -142,6 +145,7 @@ impl Default for CrashInfoBuilder {
             metadata: None,
             os_info: None,
             otel_thread_contexts: None,
+            otel_tls_slot_addr: None,
             proc_info: None,
             sig_info: None,
             span_ids: None,

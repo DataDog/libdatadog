@@ -150,7 +150,9 @@ pub(crate) fn emit_crashreport(
     }
 
     #[cfg(all(target_os = "linux", feature = "otel-thread-ctx"))]
-    emit_otel_thread_ctx_ptr(pipe)?;
+    if config.collect_otel_thread_contexts() {
+        emit_otel_thread_ctx_ptr(pipe)?;
+    }
 
     writeln!(pipe, "{DD_CRASHTRACK_DONE}")?;
     pipe.flush()?;
@@ -973,20 +975,21 @@ fn emit_text_file(w: &mut impl Write, path: &str) -> Result<(), EmitterError> {
     Ok(())
 }
 
-/// Emit the address of the crashing thread's OTel `ThreadContextRecord`.
+/// Emit the TLS slot address for the `otel_thread_ctx_v1` variable.
 ///
-/// The collector is forked from the crashing process, so its TLS is a copy of the
-/// crashing thread's TLS. `attached_record_address()` reads the inherited TLS slot
-/// to get the record's virtual address in the crashing process's address space.
-/// The receiver then reads the actual record from `/proc/<pid>/mem`.
+/// The receiver uses this address + the crashing thread's TP register to derive
+/// the per-thread TLS offset, then reads every thread's context via
+/// `/proc/<pid>/mem`.
+///
+/// Async-signal-safe: one TLS address computation, one `write()`.
 #[cfg(all(target_os = "linux", feature = "otel-thread-ctx"))]
 fn emit_otel_thread_ctx_ptr(w: &mut impl Write) -> Result<(), EmitterError> {
-    let addr = libdd_otel_thread_ctx::linux::attached_record_address();
-    if addr == 0 {
-        return Ok(()); // No context attached on the crashing thread.
+    let slot_addr = libdd_otel_thread_ctx::linux::tls_slot_address();
+    if slot_addr == 0 {
+        return Ok(()); // Symbol not linked.
     }
     writeln!(w, "{DD_CRASHTRACK_BEGIN_OTEL_THREAD_CTX_PTR}")?;
-    writeln!(w, "{addr}")?;
+    writeln!(w, "{slot_addr}")?;
     writeln!(w, "{DD_CRASHTRACK_END_OTEL_THREAD_CTX_PTR}")?;
     w.flush()?;
     Ok(())

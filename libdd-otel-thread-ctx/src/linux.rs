@@ -371,20 +371,13 @@ impl ThreadContext {
     }
 }
 
-/// Return the address of the `ThreadContextRecord` currently attached to this thread's TLS slot,
-/// or `0` if no context is attached.
+/// Return the virtual address of the `otel_thread_ctx_v1` TLS slot for the current thread.
 ///
-/// The returned value is a raw virtual address in the current process's address space. It is
-/// intended for cross-process readers (e.g. the crashtracker receiver reading from
-/// `/proc/<pid>/mem`) that need to know **where** the record lives without dereferencing it
-/// in-process.
-///
-/// # Safety
-///
-/// This function is safe to call. The returned address must not be dereferenced as a pointer
-/// — it is only meaningful as a numeric address for remote memory reads.
-pub fn attached_record_address() -> usize {
-    with_tls_slot(|slot| slot.load(Ordering::Relaxed) as usize)
+/// This is the address of the slot itself (not the value stored in it). Combined with a
+/// thread's thread-pointer register, the TLS offset can be computed as
+/// `tls_offset = slot_address - TP`. That offset is constant across all threads in the process.
+pub fn tls_slot_address() -> usize {
+    with_tls_slot(|slot| slot as *const _ as usize)
 }
 
 /// Read the TLS pointer for the current thread (the value stored in the TLS slot, not the address

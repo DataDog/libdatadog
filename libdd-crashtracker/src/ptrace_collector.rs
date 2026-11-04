@@ -244,7 +244,7 @@ fn wait_for_stop(tid: libc::pid_t, deadline: Instant) -> Result<(), PtraceError>
 /// `waitpid` returns WIFSTOPPED but the thread's register state hasn't been fully
 /// flushed to the ptrace-accessible area yet. Reading registers in that window
 /// yields zeros, which causes libunwind to produce an empty stack trace.
-fn attach_thread(tid: libc::pid_t, stop_deadline: Instant) -> Result<(), PtraceError> {
+pub(crate) fn attach_thread(tid: libc::pid_t, stop_deadline: Instant) -> Result<(), PtraceError> {
     // PTRACE_SEIZE attaches without stopping the thread
     let result = unsafe {
         libc::ptrace(
@@ -341,7 +341,60 @@ fn wait_for_registers(tid: libc::pid_t, deadline: Instant) -> bool {
     }
 }
 
-fn detach_thread(tid: libc::pid_t) -> Result<(), PtraceError> {
+/// Read the thread pointer register from a ptrace-stopped thread.
+///
+/// On x86_64 this is `fs_base` (from `user_regs_struct`).
+/// On aarch64 this is `tpidr_el0` (via `NT_ARM_TLS`).
+pub(crate) fn read_thread_pointer(tid: libc::pid_t) -> Result<u64, PtraceError> {
+    #[cfg(target_arch = "x86_64")]
+    {
+        let mut regs: libc::user_regs_struct = unsafe { core::mem::zeroed() };
+        let mut iov = libc::iovec {
+            iov_base: (&mut regs as *mut libc::user_regs_struct).cast(),
+            iov_len: core::mem::size_of::<libc::user_regs_struct>(),
+        };
+        let ret = unsafe {
+            libc::ptrace(
+                libc::PTRACE_GETREGSET,
+                tid as libc::c_long,
+                libc::NT_PRSTATUS as usize as *mut libc::c_void,
+                &mut iov as *mut libc::iovec,
+            )
+        };
+        if ret == -1 {
+            return Err(PtraceError::Registers(tid, unsafe {
+                *libc::__errno_location()
+            }));
+        }
+        Ok(regs.fs_base)
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    {
+        const NT_ARM_TLS: libc::c_int = 0x401;
+        let mut tp: u64 = 0;
+        let mut iov = libc::iovec {
+            iov_base: (&mut tp as *mut u64).cast(),
+            iov_len: core::mem::size_of::<u64>(),
+        };
+        let ret = unsafe {
+            libc::ptrace(
+                libc::PTRACE_GETREGSET,
+                tid as libc::c_long,
+                NT_ARM_TLS as usize as *mut libc::c_void,
+                &mut iov as *mut libc::iovec,
+            )
+        };
+        if ret == -1 {
+            return Err(PtraceError::Registers(tid, unsafe {
+                *libc::__errno_location()
+            }));
+        }
+        Ok(tp)
+    }
+}
+
+pub(crate) fn detach_thread(tid: libc::pid_t) -> Result<(), PtraceError> {
     // SAFETY: PTRACE_DETACH is valid for a currently-traced thread
     let result = unsafe {
         libc::ptrace(

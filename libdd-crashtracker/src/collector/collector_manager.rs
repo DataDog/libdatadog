@@ -76,7 +76,20 @@ impl Collector {
                     // SAFETY: both calls are async-signal-safe. Closing the write end is what
                     // releases the child, so it must come after the grant.
                     unsafe {
-                        libc::prctl(libc::PR_SET_PTRACER, pid as libc::c_ulong);
+                        // When otel thread context collection is enabled, the
+                        // receiver also needs ptrace access to read TLS from
+                        // other threads. PR_SET_PTRACER only holds one PID,
+                        // so use ANY in that case.
+                        if cfg!(feature = "otel-thread-ctx")
+                            && config.collect_otel_thread_contexts()
+                        {
+                            libc::prctl(
+                                libc::PR_SET_PTRACER,
+                                libc::PR_SET_PTRACER_ANY as libc::c_ulong,
+                            );
+                        } else {
+                            libc::prctl(libc::PR_SET_PTRACER, pid as libc::c_ulong);
+                        }
                         libc::close(read_fd);
                         libc::close(write_fd);
                     }
