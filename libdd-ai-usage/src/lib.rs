@@ -87,8 +87,8 @@ pub use error_type::{
     ERROR_TYPE_API, ERROR_TYPE_API_CONNECTION, ERROR_TYPE_AUTHENTICATION, ERROR_TYPE_BAD_REQUEST,
     ERROR_TYPE_CANCELLED, ERROR_TYPE_CONFLICT, ERROR_TYPE_INTERNAL_SERVER, ERROR_TYPE_NOT_FOUND,
     ERROR_TYPE_PERMISSION_DENIED, ERROR_TYPE_RATE_LIMIT, ERROR_TYPE_TIMEOUT,
-    ERROR_TYPE_UNPROCESSABLE_ENTITY, ERROR_TYPES, classify_error, error_type_for_name,
-    error_type_for_status, error_type_identifier,
+    ERROR_TYPE_UNPROCESSABLE_ENTITY, ERROR_TYPES, classify_error, classify_known_error,
+    error_type_for_name, error_type_for_status, error_type_identifier,
 };
 pub use json::{Json, JsonError, JsonErrorKind, JsonObject};
 pub use number::{MAX_SAFE_INTEGER, nano_usd_from_number, nano_usd_from_usd, usd_from_nano_usd};

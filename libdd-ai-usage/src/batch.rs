@@ -8,7 +8,7 @@
 //! starts a new one. The batch is a plain value owned by the caller: the crate
 //! keeps no state of its own.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::Profile;
 use crate::datadog::{DatadogSeries, SeriesBuilder};
@@ -83,6 +83,12 @@ pub struct MetricBatch {
     pub(crate) groups: BTreeMap<(Attributes, Profile), Group>,
     /// Histogram samples added so far.
     recorded: u64,
+    /// The points held: Counter series plus Histogram samples.
+    len: usize,
+    /// The most points the batch holds, if bounded.
+    max_len: Option<usize>,
+    /// Projections refused because the batch was full, since it was created.
+    dropped: u64,
 }
 
 impl MetricBatch {
@@ -90,10 +96,62 @@ impl MetricBatch {
         Self::default()
     }
 
+    /// An empty batch that holds at most `max_len` points (see
+    /// [`MetricBatch::len`]). A projection that would take it past the bound
+    /// is dropped whole and counted by [`MetricBatch::dropped`].
+    pub fn with_max_len(max_len: usize) -> Self {
+        Self {
+            max_len: Some(max_len),
+            ..Self::default()
+        }
+    }
+
+    /// The bound set by [`MetricBatch::with_max_len`] or
+    /// [`MetricBatch::set_max_len`], if any.
+    pub fn max_len(&self) -> Option<usize> {
+        self.max_len
+    }
+
+    /// Bound the batch to `max_len` points, or lift the bound with `None`.
+    /// Points already held are kept.
+    pub fn set_max_len(&mut self, max_len: Option<usize>) {
+        self.max_len = max_len;
+    }
+
+    /// The projections dropped because the batch was full, since it was
+    /// created. [`MetricBatch::take`] keeps the count, so it only grows.
+    pub fn dropped(&self) -> u64 {
+        self.dropped
+    }
+
+    /// Take the points of the batch, leaving it empty with the same bound
+    /// and dropped count.
+    pub fn take(&mut self) -> MetricBatch {
+        let empty = MetricBatch {
+            max_len: self.max_len,
+            dropped: self.dropped,
+            ..MetricBatch::default()
+        };
+        std::mem::replace(self, empty)
+    }
+
     /// Add the points of one projection of `profile`. A point that is not a
     /// metric of the profile, or that states another profile, is
-    /// `metric_profile_mismatch`, and nothing of the projection is added.
+    /// `metric_profile_mismatch`, and nothing of the projection is added. A
+    /// projection that does not fit a bounded batch is dropped, as
+    /// [`MetricBatch::try_add`] reports.
     pub fn add(&mut self, profile: Profile, projection: &Projection) -> Result<(), MetricError> {
+        self.try_add(profile, projection).map(|_| ())
+    }
+
+    /// [`MetricBatch::add`], returning whether the projection was added:
+    /// `false` when it would take a bounded batch past its bound, in which
+    /// case nothing of it is added and [`MetricBatch::dropped`] counts it.
+    pub fn try_add(
+        &mut self,
+        profile: Profile,
+        projection: &Projection,
+    ) -> Result<bool, MetricError> {
         for point in &projection.points {
             if !profile.metric_names().contains(&point.name.as_str()) {
                 return reject(
@@ -120,20 +178,46 @@ impl MetricBatch {
         // resource never states it, as in the Datadog binding.
         let mut resource = projection.resource.clone();
         resource.remove(PROFILE_ATTRIBUTE);
+        let keys: Vec<SeriesKey> = projection
+            .points
+            .iter()
+            .map(|point| {
+                // The profile is stated once per group, as the OTLP scope
+                // attribute; a point that also states it is the same series
+                // as one that does not.
+                let mut attributes = point.attributes.clone();
+                attributes.remove(PROFILE_ATTRIBUTE);
+                (point.name.clone(), attributes)
+            })
+            .collect();
+        if let Some(max_len) = self.max_len {
+            let existing = self.groups.get(&(resource.clone(), profile));
+            let mut new_counters = BTreeSet::new();
+            let mut added = 0;
+            for (point, key) in projection.points.iter().zip(&keys) {
+                match point.instrument {
+                    Instrument::Counter => {
+                        let held = existing.is_some_and(|g| g.counters.contains_key(key));
+                        if !held && new_counters.insert(key) {
+                            added += 1;
+                        }
+                    }
+                    Instrument::Histogram => added += 1,
+                }
+            }
+            if self.len + added > max_len {
+                self.dropped += 1;
+                return Ok(false);
+            }
+        }
         let group = self.groups.entry((resource, profile)).or_default();
-        for point in &projection.points {
-            // The profile is stated once per group, as the OTLP scope
-            // attribute; a point that also states it is the same series as
-            // one that does not.
-            let mut attributes = point.attributes.clone();
-            attributes.remove(PROFILE_ATTRIBUTE);
-            let key = (point.name.clone(), attributes);
+        for (point, key) in projection.points.iter().zip(keys) {
             match point.instrument {
                 Instrument::Counter => {
-                    let entry = group
-                        .counters
-                        .entry(key)
-                        .or_insert_with(|| (point.unit.clone(), Sum::Integer(0)));
+                    let entry = group.counters.entry(key).or_insert_with(|| {
+                        self.len += 1;
+                        (point.unit.clone(), Sum::Integer(0))
+                    });
                     entry.1 = entry.1.add(Sum::of(point));
                 }
                 Instrument::Histogram => {
@@ -145,10 +229,11 @@ impl MetricBatch {
                     samples.values.push(point.value);
                     samples.order.push(self.recorded);
                     self.recorded += 1;
+                    self.len += 1;
                 }
             }
         }
-        Ok(())
+        Ok(true)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -163,17 +248,7 @@ impl MetricBatch {
     /// apart, so the DogStatsD lines can be fewer, never more. For a flush
     /// threshold; it encodes nothing.
     pub fn len(&self) -> usize {
-        self.groups
-            .values()
-            .map(|group| {
-                group.counters.len()
-                    + group
-                        .histograms
-                        .values()
-                        .map(|(_, samples)| samples.values.len())
-                        .sum::<usize>()
-            })
-            .sum()
+        self.len
     }
 
     /// The batch as points: per resource and profile, one point per Counter
@@ -263,6 +338,42 @@ mod tests {
         // One point per Counter series, one per Histogram sample.
         assert_eq!(batch.len(), points.len());
         assert_eq!(MetricBatch::new().len(), 0);
+    }
+
+    #[test]
+    fn a_bounded_batch_drops_what_does_not_fit_and_counts_it() {
+        let call = attempt(CALL);
+        let mut unbounded = MetricBatch::new();
+        unbounded.add(Profile::ProviderAttempt, &call).unwrap();
+        let one = unbounded.len();
+        unbounded.add(Profile::ProviderAttempt, &call).unwrap();
+        // Counters merge into their series; only Histogram samples are new.
+        let growth = unbounded.len() - one;
+        assert!(growth > 0 && growth < one);
+
+        let mut batch = MetricBatch::with_max_len(one + growth);
+        assert_eq!(batch.max_len(), Some(one + growth));
+        assert!(batch.try_add(Profile::ProviderAttempt, &call).unwrap());
+        assert!(batch.try_add(Profile::ProviderAttempt, &call).unwrap());
+        assert_eq!(batch.len(), one + growth);
+        // A third call would exceed the bound: dropped whole, and counted.
+        assert!(!batch.try_add(Profile::ProviderAttempt, &call).unwrap());
+        batch.add(Profile::ProviderAttempt, &call).unwrap();
+        assert_eq!(batch.len(), one + growth);
+        assert_eq!(batch.dropped(), 2);
+        // Taking empties the batch and keeps the bound and the count.
+        let taken = batch.take();
+        assert_eq!(taken.len(), one + growth);
+        assert_eq!(batch.len(), 0);
+        assert!(batch.is_empty());
+        assert_eq!(batch.max_len(), Some(one + growth));
+        assert_eq!(batch.dropped(), 2);
+        assert!(batch.try_add(Profile::ProviderAttempt, &call).unwrap());
+        // The cached length agrees with the points.
+        let points: usize = batch.points().iter().map(|(_, _, p)| p.len()).sum();
+        assert_eq!(batch.len(), points);
+        batch.set_max_len(None);
+        assert_eq!(batch.max_len(), None);
     }
 
     #[test]

@@ -155,23 +155,37 @@ pub fn error_type_identifier(class_name: &str) -> Option<String> {
         .then_some(identifier)
 }
 
-/// The `error.type` of a failure: its name when the vocabulary knows it
-/// (a three-digit name is read as a status), else its HTTP status, else
-/// `api_error` for a named failure. `None` when neither says it failed.
+/// The `error.type` of a failure: its name when the vocabulary knows it,
+/// else its HTTP status, else `api_error` for a named failure. `None` when
+/// neither says it failed. A three-digit name is a status: it is read as one
+/// only when no status is given, so the status a response carried wins over
+/// a code a body repeated (`"200"` or `"404"` with 500 is
+/// `internal_server_error`).
 pub fn classify_error(name: Option<&str>, status: Option<u16>) -> Option<&'static str> {
+    classify_known_error(name, status).or_else(|| {
+        let name = name.map(str::trim).filter(|name| !name.is_empty())?;
+        (!is_status_name(name)).then_some(ERROR_TYPE_API)
+    })
+}
+
+/// [`classify_error`] without its fallback: `None` also for a name the
+/// vocabulary does not know and no failed status, which [`classify_error`]
+/// reads as `api_error`. So a caller tells an `api_error` the provider
+/// reported from one that only means "failed, cause unknown".
+pub fn classify_known_error(name: Option<&str>, status: Option<u16>) -> Option<&'static str> {
     let name = name.map(str::trim).filter(|name| !name.is_empty());
     if let Some(name) = name {
         if let Some(error_type) = error_type_for_name(name) {
             return Some(error_type);
         }
-        if name.len() == 3
-            && let Ok(code) = name.parse::<u16>()
-            && let Some(error_type) = error_type_for_status(code)
-        {
-            return Some(error_type);
+        if status.is_none() && is_status_name(name) {
+            return name.parse::<u16>().ok().and_then(error_type_for_status);
         }
     }
-    status
-        .and_then(error_type_for_status)
-        .or(name.map(|_| ERROR_TYPE_API))
+    status.and_then(error_type_for_status)
+}
+
+/// A name that is an HTTP status code: three ASCII digits.
+fn is_status_name(name: &str) -> bool {
+    name.len() == 3 && name.bytes().all(|b| b.is_ascii_digit())
 }

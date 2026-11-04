@@ -834,15 +834,37 @@ impl UsageStream {
             _ => ("data", line),
         };
         if field == "event" {
-            match value {
-                "message_stop" | "response.completed" | "response.incomplete" => {
-                    self.complete();
-                }
-                "response.failed" => self.fail(None),
-                _ => {}
-            }
-            return;
+            self.event_name(value);
+        } else {
+            self.data(value);
         }
+    }
+
+    /// Read a server-sent event that the caller already split: its `event`
+    /// field (empty when it had none) and its `data`, as
+    /// [`UsageStream::feed`] reads them from a stream. Data longer than
+    /// [`MAX_STREAM_LINE_BYTES`] is skipped, as a line that long is.
+    pub fn feed_event(&mut self, event_name: &str, data: &str) {
+        let event_name = event_name.trim();
+        if !event_name.is_empty() {
+            self.event_name(event_name);
+        }
+        if data.len() <= MAX_STREAM_LINE_BYTES {
+            self.data(data.trim());
+        }
+    }
+
+    fn event_name(&mut self, name: &str) {
+        match name {
+            "message_stop" | "response.completed" | "response.incomplete" => {
+                self.complete();
+            }
+            "response.failed" => self.fail(None),
+            _ => {}
+        }
+    }
+
+    fn data(&mut self, value: &str) {
         if value == "[DONE]" {
             self.complete();
             return;
@@ -1013,15 +1035,19 @@ fn billing_id(value: &str) -> Option<&str> {
 }
 
 /// The account and project the provider's response headers name, as
-/// deployment attributes. `provider_name` is the `gen_ai.provider.name`;
-/// `header` returns a header's value by its lower-case name.
+/// deployment attributes. `provider_name` is the `gen_ai.provider.name`, or
+/// empty when the caller does not know it: then every header of
+/// [`PROVIDER_ID_HEADERS`] is tried, in its order, and the first that names
+/// an attribute sets it. No provider sends another's headers. `header`
+/// returns a header's value by its lower-case name.
 pub fn provider_id_attributes<'a>(
     provider_name: &str,
     header: impl Fn(&str) -> Option<&'a str>,
 ) -> Attributes {
     let mut attributes = Attributes::new();
     for (provider, attribute, name) in PROVIDER_ID_HEADERS {
-        if provider != provider_name || attributes.contains_key(attribute) {
+        let applies = provider_name.is_empty() || provider == provider_name;
+        if !applies || attributes.contains_key(attribute) {
             continue;
         }
         if let Some(value) = header(name).and_then(billing_id) {

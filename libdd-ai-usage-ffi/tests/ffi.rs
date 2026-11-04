@@ -152,7 +152,7 @@ fn batch_to_dogstatsd_datagrams() {
             let mut out = empty();
             let status = ddog_ai_usage_batch_add(batch, ATTEMPT.as_ptr(), ATTEMPT.len(), &mut out);
             assert_eq!(status, Status::Ok);
-            assert_eq!(json_of(out), json!({"issues": []}));
+            assert_eq!(json_of(out), json!({"issues": [], "dropped": false}));
             // Counters are summed into their series; each Histogram sample
             // is a point of its own.
             let len = ddog_ai_usage_batch_len(batch);
@@ -474,4 +474,240 @@ fn buffers_release_once() {
     }
     assert!(out.ptr.is_null());
     assert_eq!(out.len, 0);
+}
+
+/// The text of a NUL-separated datagram buffer, one string per datagram.
+fn datagrams_of(text: &str) -> Vec<String> {
+    if text.is_empty() {
+        return Vec::new();
+    }
+    text.split('\0').map(str::to_string).collect()
+}
+
+fn lines_of(input: &str) -> (Status, String) {
+    // SAFETY: valid input and output.
+    text_of(|out| unsafe { ddog_ai_usage_dogstatsd_lines(input.as_ptr(), input.len(), out) })
+}
+
+#[test]
+fn text_lines_and_packing_match_the_json_path() {
+    // One observation's lines as text, in a fixed order (by name).
+    let (status, text) = lines_of(ATTEMPT);
+    assert_eq!(status, Status::Ok);
+    assert!(!text.ends_with('\n'));
+    let lines: Vec<&str> = text.lines().collect();
+    assert!(lines.len() > 1);
+    let names: Vec<&str> = lines.iter().map(|l| l.split(':').next().unwrap()).collect();
+    let mut sorted = names.clone();
+    sorted.sort();
+    assert_eq!(names, sorted);
+    assert_eq!(lines_of(ATTEMPT).1, text);
+
+    // Packing the text lines gives the datagrams the batch gives.
+    let joined = lines.join("\r\n") + "\n\n";
+    let tags = "env:prod, version:1.2";
+    // SAFETY: valid inputs and output.
+    let (status, packed) = text_of(|out| unsafe {
+        ddog_ai_usage_pack_dogstatsd_lines(
+            joined.as_ptr(),
+            joined.len(),
+            tags.as_ptr(),
+            tags.len(),
+            256,
+            out,
+        )
+    });
+    assert_eq!(status, Status::Ok);
+    let packed = datagrams_of(&packed);
+    assert!(packed.len() > 1);
+    for datagram in &packed {
+        assert!(datagram.len() <= 256 || !datagram.contains('\n'));
+    }
+    let mut batch = ptr::null_mut();
+    // SAFETY: `batch` is written by `batch_new` and used until dropped.
+    unsafe {
+        assert_eq!(ddog_ai_usage_batch_new(&mut batch), Status::Ok);
+        let mut out = empty();
+        ddog_ai_usage_batch_add(batch, ATTEMPT.as_ptr(), ATTEMPT.len(), &mut out);
+        take(out);
+        let (status, taken) = text_of(|out| {
+            ddog_ai_usage_batch_take_dogstatsd_text(batch, tags.as_ptr(), tags.len(), 256, out)
+        });
+        assert_eq!(status, Status::Ok);
+        assert_eq!(datagrams_of(&taken), packed);
+        assert_eq!(
+            text_of(|out| ddog_ai_usage_batch_take_dogstatsd_text(
+                batch,
+                ptr::null(),
+                0,
+                UDP_MAX_PAYLOAD,
+                out
+            )),
+            (Status::Ok, String::new())
+        );
+        ddog_ai_usage_batch_drop(batch);
+    }
+
+    // Rejections carry the JSON error, as the JSON path does.
+    let (status, error) = lines_of(r#"{"profile": "nope@1"}"#);
+    assert_eq!(status, Status::Rejected);
+    let error: Value = serde_json::from_str(&error).unwrap();
+    assert_eq!(error["error"]["code"], "profile_invalid");
+    // SAFETY: valid input and output.
+    let (status, _) = text_of(|out| unsafe {
+        ddog_ai_usage_pack_dogstatsd_lines(ptr::null(), 0, ptr::null(), 0, 0, out)
+    });
+    assert_eq!(status, Status::Rejected);
+}
+
+#[test]
+fn a_bounded_batch_drops_and_counts() {
+    let add = |batch: *const Batch| {
+        let mut out = empty();
+        // SAFETY: a live batch and valid input and output.
+        let status =
+            unsafe { ddog_ai_usage_batch_add(batch, ATTEMPT.as_ptr(), ATTEMPT.len(), &mut out) };
+        assert_eq!(status, Status::Ok);
+        json_of(out)
+    };
+    let mut batch = ptr::null_mut();
+    // SAFETY: `batch` is written by `batch_new` and used until dropped.
+    unsafe {
+        assert_eq!(ddog_ai_usage_batch_new(&mut batch), Status::Ok);
+        add(batch);
+        let one = ddog_ai_usage_batch_len(batch);
+        ddog_ai_usage_batch_set_max_len(batch, one);
+        assert_eq!(add(batch), json!({"issues": [], "dropped": true}));
+        assert_eq!(ddog_ai_usage_batch_len(batch), one);
+        assert_eq!(ddog_ai_usage_batch_dropped(batch), 1);
+        // Taking keeps the bound and the count.
+        let mut out = empty();
+        ddog_ai_usage_batch_take_dogstatsd(batch, ptr::null(), 0, UDP_MAX_PAYLOAD, &mut out);
+        take(out);
+        assert_eq!(ddog_ai_usage_batch_len(batch), 0);
+        assert_eq!(ddog_ai_usage_batch_dropped(batch), 1);
+        assert_eq!(add(batch)["dropped"], false);
+        assert_eq!(add(batch)["dropped"], true);
+        assert_eq!(ddog_ai_usage_batch_dropped(batch), 2);
+        // 0 lifts the bound.
+        ddog_ai_usage_batch_set_max_len(batch, 0);
+        assert_eq!(add(batch)["dropped"], false);
+        ddog_ai_usage_batch_set_max_len(ptr::null(), 1);
+        assert_eq!(ddog_ai_usage_batch_dropped(ptr::null()), 0);
+        ddog_ai_usage_batch_drop(batch);
+    }
+}
+
+#[test]
+fn known_error_types_and_metrics() {
+    // SAFETY: valid inputs and outputs.
+    unsafe {
+        let name = "SomethingElse";
+        assert_eq!(
+            text_of(|out| ddog_ai_usage_error_type(name.as_ptr(), name.len(), 0, out)),
+            (Status::Ok, "api_error".to_string())
+        );
+        assert_eq!(
+            text_of(|out| ddog_ai_usage_error_type_known(name.as_ptr(), name.len(), 0, out)),
+            (Status::Rejected, String::new())
+        );
+        let name = "api_error";
+        assert_eq!(
+            text_of(|out| ddog_ai_usage_error_type_known(name.as_ptr(), name.len(), 0, out)),
+            (Status::Ok, "api_error".to_string())
+        );
+        let name = "404";
+        assert_eq!(
+            text_of(|out| ddog_ai_usage_error_type(name.as_ptr(), name.len(), 500, out)),
+            (Status::Ok, "internal_server_error".to_string())
+        );
+
+        let profile = "gen_ai.client.provider_streaming@0.1.0";
+        let mut out = empty();
+        assert_eq!(
+            ddog_ai_usage_known_metrics(profile.as_ptr(), profile.len(), &mut out),
+            Status::Ok
+        );
+        assert_eq!(
+            json_of(out),
+            json!(["gen_ai.client.inference.time_per_output_chunk"])
+        );
+        let mut out = empty();
+        assert_eq!(
+            ddog_ai_usage_known_metrics(ptr::null(), 0, &mut out),
+            Status::Ok
+        );
+        let all = json_of(out);
+        let all = all.as_array().unwrap();
+        assert!(all.len() > 10);
+        assert!(all.contains(&json!("trajectory.gen_ai.gateway.request.duration")));
+        let profile = "nope@1";
+        let mut out = empty();
+        assert_eq!(
+            ddog_ai_usage_known_metrics(profile.as_ptr(), profile.len(), &mut out),
+            Status::Rejected
+        );
+        assert_eq!(json_of(out)["error"]["code"], "profile_invalid");
+    }
+}
+
+#[test]
+fn provider_ids_without_the_provider() {
+    let call = |input: Value| {
+        let input = input.to_string();
+        let mut out = empty();
+        // SAFETY: valid input and output.
+        let status = unsafe { ddog_ai_usage_provider_ids(input.as_ptr(), input.len(), &mut out) };
+        (status, json_of(out))
+    };
+    assert_eq!(
+        call(json!({"headers": {"OpenAI-Organization": "acme", "openai-project": "proj_1"}})),
+        (
+            Status::Ok,
+            json!({"trajectory.request.provider_account_id": "acme",
+                "trajectory.request.project_id": "proj_1"})
+        )
+    );
+    assert_eq!(
+        call(json!({"provider_name": "",
+            "models": ["arn:aws:bedrock:us-east-1:123456789012:inference-profile/x"]})),
+        (
+            Status::Ok,
+            json!({"trajectory.request.provider_account_id": "123456789012"})
+        )
+    );
+}
+
+#[test]
+fn stream_events_split_by_the_caller() {
+    let mut stream = ptr::null_mut();
+    let format = "openai_chat";
+    // SAFETY: `stream` is written by `stream_new` and used until dropped.
+    unsafe {
+        assert_eq!(
+            ddog_ai_usage_stream_new(format.as_ptr(), format.len(), false, &mut stream),
+            Status::Ok
+        );
+        let data = r#"{"model": "gpt-4o", "usage": {"prompt_tokens": 4, "completion_tokens": 2}}"#;
+        assert_eq!(
+            ddog_ai_usage_stream_feed_event(stream, ptr::null(), 0, data.as_ptr(), data.len()),
+            Status::Ok
+        );
+        let done = "[DONE]";
+        assert_eq!(
+            ddog_ai_usage_stream_feed_event(stream, ptr::null(), 0, done.as_ptr(), done.len()),
+            Status::Ok
+        );
+        let mut out = empty();
+        assert_eq!(ddog_ai_usage_stream_finish(stream, &mut out), Status::Ok);
+        let value = json_of(out);
+        assert_eq!(value["outcome"], "completed");
+        assert_eq!(value["response_model"], "gpt-4o");
+        assert_eq!(value["usage"]["input_tokens"], 4);
+        assert_eq!(
+            ddog_ai_usage_stream_feed_event(ptr::null_mut(), ptr::null(), 0, ptr::null(), 0),
+            Status::Internal
+        );
+        ddog_ai_usage_stream_drop(stream);
+    }
 }

@@ -10,11 +10,11 @@ use std::path::{Path, PathBuf};
 
 use libdd_ai_usage::{
     Json, Profile, ProviderAttemptObservation, StreamOutcome, TokenBreakdownObservation,
-    UsageFormat, UsageStream, bedrock_arn_account, classify_error, error_type_for_name,
-    error_type_for_status, error_type_identifier, gen_ai_provider_name, is_person_identifier,
-    is_service_tier, pack_dogstatsd, parse_provider_body, parse_provider_response,
-    project_provider_attempt, project_token_breakdown, provider_id_attributes, retain_metrics,
-    with_constant_tags,
+    UsageFormat, UsageStream, bedrock_arn_account, classify_error, classify_known_error,
+    error_type_for_name, error_type_for_status, error_type_identifier, gen_ai_provider_name,
+    is_person_identifier, is_service_tier, pack_dogstatsd, parse_provider_body,
+    parse_provider_response, project_provider_attempt, project_token_breakdown,
+    provider_id_attributes, retain_metrics, with_constant_tags,
 };
 use serde_json::{Value, json};
 
@@ -188,6 +188,51 @@ fn gemini_compat_event(completion: u64, total: u64) -> String {
 }
 
 #[test]
+fn split_events_read_as_the_stream_does() {
+    let events = [
+        (
+            "message_start",
+            r#"{"type": "message_start", "message": {"model": "claude-haiku-4-5",
+                "usage": {"input_tokens": 12, "output_tokens": 1}}}"#,
+        ),
+        (
+            "message_delta",
+            r#"{"type": "message_delta", "usage": {"output_tokens": 7}}"#,
+        ),
+        ("message_stop", r#"{"type": "message_stop"}"#),
+    ];
+    let mut split = UsageStream::new(UsageFormat::Anthropic, false);
+    let mut chunked = UsageStream::new(UsageFormat::Anthropic, false);
+    for (name, data) in events {
+        split.feed_event(name, data);
+        let data = data.replace('\n', " ");
+        chunked.feed(format!("event: {name}\ndata: {data}\n\n").as_bytes());
+    }
+    assert_eq!(split.outcome(), StreamOutcome::Completed);
+    assert_eq!(split.response(), chunked.response());
+    assert_eq!(
+        split.response().usage.as_ref().unwrap().output_tokens,
+        Some(7)
+    );
+
+    // The event name alone ends a stream; data alone is read without one.
+    let mut stream = UsageStream::new(UsageFormat::OpenAiResponses, false);
+    stream.feed_event("response.completed", "");
+    assert_eq!(stream.outcome(), StreamOutcome::Completed);
+    let mut stream = UsageStream::new(UsageFormat::OpenAiChat, false);
+    stream.feed_event("", "[DONE]");
+    assert_eq!(stream.outcome(), StreamOutcome::Completed);
+    // Data over the line bound is skipped.
+    let mut stream = UsageStream::new(UsageFormat::OpenAiChat, false);
+    let long = format!(
+        "{{\"usage\": {{\"prompt_tokens\": 3, \"completion_tokens\": 1}}, \"pad\": \"{}\"}}",
+        "x".repeat(libdd_ai_usage::MAX_STREAM_LINE_BYTES)
+    );
+    stream.feed_event("", &long);
+    assert_eq!(stream.response().usage, None);
+}
+
+#[test]
 fn stream_basis_follows_the_merged_counts() {
     // Google's OpenAI-compatible endpoint: an early event without thinking
     // reads as output including reasoning; a later one whose total exceeds
@@ -290,6 +335,33 @@ fn error_types() {
         classify_error(Some("request_too_large"), None),
         classify_error(None, Some(413))
     );
+    // A status-shaped name is read as a status only without a real one: the
+    // status the response carried wins, and the name is not a fallback.
+    assert_eq!(
+        classify_error(Some("200"), Some(500)),
+        Some("internal_server_error")
+    );
+    assert_eq!(
+        classify_error(Some("404"), Some(500)),
+        Some("internal_server_error")
+    );
+    assert_eq!(classify_error(Some("404"), Some(200)), None);
+    assert_eq!(classify_error(Some("404"), None), Some("not_found_error"));
+    assert_eq!(classify_error(Some("200"), None), None);
+    // Without the fallback, an unknown name is unknown.
+    assert_eq!(classify_known_error(Some("SomethingElse"), None), None);
+    assert_eq!(
+        classify_known_error(Some("SomethingElse"), Some(503)),
+        Some("internal_server_error")
+    );
+    assert_eq!(
+        classify_known_error(Some("api_error"), None),
+        Some("api_error")
+    );
+    assert_eq!(
+        classify_known_error(Some("RateLimitError"), Some(500)),
+        Some("rate_limit_error")
+    );
     // A known name wins over the status a transport translated it into.
     assert_eq!(
         classify_error(Some("APITimeoutError"), Some(500)),
@@ -340,6 +412,21 @@ fn provider_ids() {
         Some("acme")
     );
     assert!(provider_id_attributes("aws.bedrock", header).is_empty());
+    // Without the provider, every known header is tried.
+    let openai_only = |name: &str| match name {
+        "openai-organization" => Some("acme"),
+        "openai-project" => Some("proj_1"),
+        _ => None,
+    };
+    assert_eq!(
+        provider_id_attributes("", openai_only),
+        provider_id_attributes("openai", openai_only)
+    );
+    let anthropic_only = |name: &str| (name == "anthropic-organization-id").then_some("org-123");
+    assert_eq!(
+        provider_id_attributes("", anthropic_only),
+        provider_id_attributes("anthropic", anthropic_only)
+    );
     let long = "x".repeat(129);
     assert!(provider_id_attributes("anthropic", |_| Some(long.as_str())).is_empty());
 

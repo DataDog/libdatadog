@@ -14,7 +14,11 @@ The artifacts are named for the C prefix: `libdd_ai_usage_ffi.so`
 
 ## Conventions
 
-- Structured values are UTF-8 JSON. Every input is a pointer and a length.
+- Structured values are UTF-8 JSON. Every input is a pointer and a length. The hot DogStatsD
+  path also has a text form with no JSON: `_dogstatsd_lines` writes one observation's lines
+  separated by `\n`, and `_pack_dogstatsd_lines` / `_batch_take_dogstatsd_text` write datagrams
+  (lines joined by `\n`) separated by a NUL byte, with no trailing NUL. On failure these
+  functions still write the JSON error.
 - Output is written to a `ddog_ai_usage_Buffer` the caller passes by pointer and releases with
   `ddog_ai_usage_buffer_drop`. No structure is passed by value.
 - Every call returns a `ddog_ai_usage_Status`: `OK`, `REJECTED` (the input broke a rule; a JSON
@@ -34,16 +38,27 @@ The artifacts are named for the C prefix: `libdd_ai_usage_ffi.so`
 | Function | Does |
 | --- | --- |
 | `ddog_ai_usage_project` | One observation (`{profile, observation, deployment_attributes, metrics}`) to its Datadog series and issues |
-| `ddog_ai_usage_batch_new` / `_add` / `_is_empty` / `_len` / `_take_dogstatsd` / `_drop` | Collect projections over an export window and take them as DogStatsD datagrams of at most a given size, with constant tags. `_len` is the number of points held (one per Counter series, one per Histogram sample; the lines taken can be fewer, never more), for a flush threshold |
+| `ddog_ai_usage_dogstatsd_lines` | One observation (the same request document) to its DogStatsD lines as `\n`-separated text: this observation's alone, never merged with another's, ordered by name then tags |
+| `ddog_ai_usage_pack_dogstatsd_lines` | `\n`-separated lines and comma-separated constant tags to NUL-separated datagrams of at most a given size, with no JSON either way |
+| `ddog_ai_usage_batch_new` / `_add` / `_is_empty` / `_len` / `_take_dogstatsd` / `_take_dogstatsd_text` / `_drop` | Collect projections over an export window and take them as DogStatsD datagrams of at most a given size, with constant tags (`_text`: NUL-separated, no JSON). `_len` is the number of points held (one per Counter series, one per Histogram sample; the lines taken can be fewer, never more), for a flush threshold |
+| `ddog_ai_usage_batch_set_max_len` / `_dropped` | Bound a batch to a number of points (0 lifts it). An observation that does not fit is dropped whole: `_add` still returns `OK` with `"dropped": true`, and `_dropped` counts it. The count only grows (taking keeps it and the bound), so report the difference at each flush |
 | `ddog_ai_usage_parse_provider_response` | A whole provider response body (JSON, or buffered server-sent events) to the observation's usage members, the model and service tier, how it ended and its `error.type` |
 | `ddog_ai_usage_stream_new` / `_feed` / `_finish` / `_drop` | The same for a stream read as it passes through, in chunks that may end anywhere |
+| `ddog_ai_usage_stream_feed_event` | One server-sent event the caller already split (its `event` name, possibly empty, and its `data`), read as `_feed` reads it; the two can be mixed on one stream |
 | `ddog_ai_usage_provider_name` | A gateway's or SDK's provider name to `gen_ai.provider.name` |
-| `ddog_ai_usage_error_type` | An error name and HTTP status to `error.type` |
-| `ddog_ai_usage_provider_ids` | Provider response headers and Bedrock model ARNs to the account and project attributes |
+| `ddog_ai_usage_error_type` | An error name and HTTP status to `error.type`. A three-digit name is read as a status only when no status is given, so the response's status wins |
+| `ddog_ai_usage_error_type_known` | The same without the fallback: `REJECTED` for a name the vocabulary does not know and no failed status, which `_error_type` writes as `api_error` |
+| `ddog_ai_usage_provider_ids` | Provider response headers and Bedrock model ARNs to the account and project attributes. Without a `provider_name`, every known header and ARN is tried |
 | `ddog_ai_usage_provider_id_headers` | The lower-case response header names `_provider_ids` reads for a provider (all providers for an empty name), so a gateway fetches exactly those |
-| `ddog_ai_usage_pack_dogstatsd` | DogStatsD lines to datagrams |
+| `ddog_ai_usage_pack_dogstatsd` | DogStatsD lines to datagrams (JSON form) |
+| `ddog_ai_usage_known_metrics` | The metric names of a profile, or of every profile for an empty one: what a request's `metrics` list can keep |
 | `ddog_ai_usage_datadog_tag_value` | A value as Datadog stores it in a tag |
 | `ddog_ai_usage_is_service_tier` / `_is_deployment_value` / `_is_person_identifier` | The grammars of a service tier, a deployment attribute value and `user.id` |
+
+Observations follow the profiles of the Open Trajectory metric specification. The specification
+requires `streaming` on a provider attempt (`streaming: null` or a missing flag is
+`required_field_missing`; see its `streaming-null` conformance case), so a caller always states it,
+`false` for a non-streaming call. The library does not default it.
 
 Usage formats are `auto`, `openai_chat`, `openai_responses`, `anthropic`,
 `gemini` and `gemini_openai_compat`.
