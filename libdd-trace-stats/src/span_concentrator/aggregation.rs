@@ -105,23 +105,7 @@ pub(super) struct BorrowedAggregationKey<'a> {
     fixed: FixedAggregationKey<&'a str>,
     peer_tags: Vec<(&'a str, Cow<'a, str>)>,
     additional_metric_tags: Vec<(&'a str, &'a str)>,
-    /// Whether an additional metric tag value was replaced for being too long. Excluded from
-    /// hashing and equality: it is telemetry metadata, not part of the key.
-    oversized_additional_tags: TelemetryFlag,
 }
-
-/// A bool ignored by `Hash` and `PartialEq`, so it does not affect key identity.
-#[derive(Clone, Copy, Default, Debug)]
-struct TelemetryFlag(bool);
-impl Hash for TelemetryFlag {
-    fn hash<H: std::hash::Hasher>(&self, _state: &mut H) {}
-}
-impl PartialEq for TelemetryFlag {
-    fn eq(&self, _other: &Self) -> bool {
-        true
-    }
-}
-impl Eq for TelemetryFlag {}
 
 impl hashbrown::Equivalent<OwnedAggregationKey> for BorrowedAggregationKey<'_> {
     #[inline]
@@ -326,11 +310,13 @@ impl<'a> BorrowedAggregationKey<'a> {
     /// key.
     /// If `additional_metric_tags` is not empty then matching span tags keys are included in the
     /// key.
+    ///
+    /// Also returns whether an additional metric tag value was replaced for being too long.
     pub(super) fn from_span<T: StatSpan<'a>>(
         span: &'a T,
         peer_tag_keys: &'a [String],
         additional_metric_tag_keys: &'a [String],
-    ) -> Self {
+    ) -> (Self, bool) {
         Self::from_obfuscated_span(
             span.resource(),
             span,
@@ -344,7 +330,7 @@ impl<'a> BorrowedAggregationKey<'a> {
         span: &'b T,
         peer_tag_keys: &'b [String],
         additional_metric_tag_keys: &'b [String],
-    ) -> BorrowedAggregationKey<'a>
+    ) -> (BorrowedAggregationKey<'a>, bool)
     where
         T: StatSpan<'b>,
         // resource_name is a temporary string on the stack the span will outlive it
@@ -419,7 +405,7 @@ impl<'a> BorrowedAggregationKey<'a> {
             })
             .collect();
 
-        Self {
+        let key = Self {
             fixed: FixedAggregationKey {
                 resource_name,
                 service_name: span.service(),
@@ -442,8 +428,8 @@ impl<'a> BorrowedAggregationKey<'a> {
             },
             peer_tags,
             additional_metric_tags,
-            oversized_additional_tags: TelemetryFlag(oversized_additional_tags),
-        }
+        };
+        (key, oversized_additional_tags)
     }
 
     /// Truncates string fields in accordance with the cardinality limit RFC
@@ -686,13 +672,14 @@ impl StatsBucket {
     pub(super) fn insert(
         &mut self,
         mut key: BorrowedAggregationKey<'_>,
+        oversized_additional_tags: bool,
         duration: i64,
         is_error: bool,
         is_top_level: bool,
     ) {
         // Per field cardinality limiting
         let mut collapsed_fields = self.collapse_key_fields_cardinality(&mut key);
-        if key.oversized_additional_tags.0 {
+        if oversized_additional_tags {
             collapsed_fields.add(CollapsedFieldSet::OVERSIZED_ADDITIONAL_TAGS);
         }
 
@@ -714,7 +701,7 @@ impl StatsBucket {
                     // Whole-key overflow replaces the per-field tags; oversized is kept.
                     let mut whole_key = CollapsedFieldSet::empty();
                     whole_key.add(CollapsedFieldSet::WHOLE_KEY);
-                    if key.oversized_additional_tags.0 {
+                    if oversized_additional_tags {
                         whole_key.add(CollapsedFieldSet::OVERSIZED_ADDITIONAL_TAGS);
                     }
                     self.collapsed_fields_metrics.increment(whole_key);
@@ -1787,7 +1774,7 @@ mod tests {
         ];
 
         for (span, expected_key) in test_cases {
-            let borrowed_key = BorrowedAggregationKey::from_span(&span, &[], &[]);
+            let borrowed_key = BorrowedAggregationKey::from_span(&span, &[], &[]).0;
             assert_eq!(
                 OwnedAggregationKey::from(&borrowed_key),
                 expected_key,
@@ -1801,7 +1788,7 @@ mod tests {
 
         for (span, expected_key) in test_cases_with_peer_tags {
             let borrowed_key =
-                BorrowedAggregationKey::from_span(&span, test_peer_tags.as_slice(), &[]);
+                BorrowedAggregationKey::from_span(&span, test_peer_tags.as_slice(), &[]).0;
             assert_eq!(OwnedAggregationKey::from(&borrowed_key), expected_key);
             assert_eq!(
                 get_hash(&borrowed_key),
@@ -1997,7 +1984,7 @@ mod tests {
             };
             let peer_tag_keys: Vec<String> =
                 peer_tag_keys.iter().map(|key| key.to_string()).collect();
-            let borrowed_key = BorrowedAggregationKey::from_span(&span, &peer_tag_keys, &[]);
+            let borrowed_key = BorrowedAggregationKey::from_span(&span, &peer_tag_keys, &[]).0;
             let owned_key = OwnedAggregationKey::from(&borrowed_key);
             let expected: Vec<(String, String)> = expected_peer_tags
                 .into_iter()
@@ -2038,7 +2025,7 @@ mod tests {
             .into(),
             ..Default::default()
         };
-        let key = BorrowedAggregationKey::from_span(&span_ipv4, &peer_tag_keys, &[]);
+        let key = BorrowedAggregationKey::from_span(&span_ipv4, &peer_tag_keys, &[]).0;
         let owned = OwnedAggregationKey::from(&key);
         assert_eq!(
             owned.peer_tags,
@@ -2069,7 +2056,7 @@ mod tests {
             ..Default::default()
         };
         let ipv6_keys = vec!["peer.hostname".to_string()];
-        let key = BorrowedAggregationKey::from_span(&span_ipv6, &ipv6_keys, &[]);
+        let key = BorrowedAggregationKey::from_span(&span_ipv6, &ipv6_keys, &[]).0;
         let owned = OwnedAggregationKey::from(&key);
         assert_eq!(
             owned.peer_tags,
@@ -2097,7 +2084,7 @@ mod tests {
             ..Default::default()
         };
         let non_ip_keys = vec!["db.instance".to_string()];
-        let key = BorrowedAggregationKey::from_span(&span_non_ip, &non_ip_keys, &[]);
+        let key = BorrowedAggregationKey::from_span(&span_non_ip, &non_ip_keys, &[]).0;
         let owned = OwnedAggregationKey::from(&key);
         assert_eq!(
             owned.peer_tags,

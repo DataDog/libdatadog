@@ -355,7 +355,7 @@ impl SpanConcentrator {
         };
         #[cfg(not(feature = "stats-obfuscation"))]
         let obfuscated_resource: Option<String> = None;
-        let agg_key = match obfuscated_resource.as_deref() {
+        let (agg_key, oversized_additional_tags) = match obfuscated_resource.as_deref() {
             Some(res) => BorrowedAggregationKey::from_obfuscated_span(
                 res,
                 span,
@@ -377,6 +377,7 @@ impl SpanConcentrator {
         }
         target_bucket.insert(
             agg_key,
+            oversized_additional_tags,
             span.duration(),
             span.is_error(),
             span.has_top_level(),
