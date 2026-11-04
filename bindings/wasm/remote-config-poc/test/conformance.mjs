@@ -55,7 +55,7 @@ async function execute (command, args) {
   return Buffer.concat(stdout).toString().trim().split('\n').map(line => JSON.parse(line))
 }
 
-for (const language of ['nodejs', 'dotnet']) {
+for (const language of process.env.LANGUAGES?.split(',') ?? ['nodejs', 'dotnet', 'java']) {
   test(`${language}: agentless TUF signatures, expiry, file integrity, and recovery`, async () => {
     const fixture = agentlessFixture(scenario)
     const directory = mkdtempSync(join(tmpdir(), 'libdd-agentless-'))
@@ -64,6 +64,8 @@ for (const language of ['nodejs', 'dotnet']) {
     try {
       const results = language === 'nodejs'
         ? await execute(process.execPath, [fileURLToPath(new URL('hosts/node/demo.mjs', root)), wasm, fixture.options.url, path])
+        : language === 'java'
+        ? await execute('java', ['-jar', fileURLToPath(new URL('hosts/java/build/libs/remote-config-host.jar', root)), wasm, fixture.options.url, path])
         : await execute('dotnet', [fileURLToPath(new URL('hosts/dotnet/bin/Release/net10.0/RemoteConfigPoc.dll', root)), wasm, fixture.options.url, path])
       assert.equal(results.length, 9)
       assert.equal(results[0].error, 'cancelled')
@@ -126,6 +128,8 @@ for (const language of ['nodejs', 'dotnet']) {
       const url = `http://127.0.0.1:${server.address().port}`
       const outcomes = language === 'nodejs'
         ? await execute(process.execPath, [fileURLToPath(new URL('hosts/node/demo.mjs', root)), wasm, url, scenarioPath])
+        : language === 'java'
+        ? await execute('java', ['-jar', fileURLToPath(new URL('hosts/java/build/libs/remote-config-host.jar', root)), wasm, url, scenarioPath])
         : await execute('dotnet', [fileURLToPath(new URL('hosts/dotnet/bin/Release/net10.0/RemoteConfigPoc.dll', root)), wasm, url, scenarioPath])
       assert.deepEqual(errors, [])
       assert.equal(requests.length, 7, JSON.stringify(outcomes))
@@ -221,6 +225,39 @@ test('.NET adapter cancels in-flight HTTP through CancellationToken and can poll
   const aborted = once(server, 'aborted-response')
   const child = spawn('dotnet', [
     fileURLToPath(new URL('hosts/dotnet/bin/Release/net10.0/RemoteConfigPoc.dll', root)),
+    wasm, `http://127.0.0.1:${server.address().port}`, scenarioPath, '--cancel-stdin'
+  ], { stdio: ['pipe', 'pipe', 'pipe'] })
+  const output = []
+  const errors = []
+  child.stdout.on('data', chunk => output.push(chunk))
+  child.stderr.on('data', chunk => errors.push(chunk))
+  const finished = once(child, 'close')
+  try {
+    await observed
+    child.stdin.end('cancel\n')
+    const [code] = await finished
+    assert.equal(code, 0, Buffer.concat(errors).toString())
+    assert.deepEqual(Buffer.concat(output).toString().trim().split('\n').map(line => JSON.parse(line)), [
+      { error: 'cancelled' }, { restarted: true }
+    ])
+    await aborted
+  } finally {
+    child.kill()
+    server.closeAllConnections()
+    await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
+  }
+})
+
+test('Java adapter cancels in-flight HTTP and can poll again', async () => {
+  const server = http.createServer((_request, response) => {
+    response.once('close', () => server.emit('aborted-response'))
+  })
+  server.listen(0, '127.0.0.1')
+  await once(server, 'listening')
+  const observed = once(server, 'request')
+  const aborted = once(server, 'aborted-response')
+  const child = spawn('java', [
+    '-jar', fileURLToPath(new URL('hosts/java/build/libs/remote-config-host.jar', root)),
     wasm, `http://127.0.0.1:${server.address().port}`, scenarioPath, '--cancel-stdin'
   ], { stdio: ['pipe', 'pipe', 'pipe'] })
   const output = []

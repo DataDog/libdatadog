@@ -1,4 +1,6 @@
 /target/
 /hosts/dotnet/bin/
 /hosts/dotnet/obj/
+/hosts/java/.gradle/
+/hosts/java/build/
 /artifacts/

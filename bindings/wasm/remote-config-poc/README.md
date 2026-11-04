@@ -6,7 +6,7 @@ The prototype is not a production tracer integration. Its generated scalar bindi
 
 ## Create and run the bindings
 
-From this directory, install the pinned Rust toolchain and WASI target. The generator also requires `nightly-2026-07-26` rustfmt, matching the repository's formatter. Use Node.js 22 and the .NET 10 SDK for the demonstrated host programs.
+From this directory, install the pinned Rust toolchain and WASI target. The generator also requires `nightly-2026-07-26` rustfmt, matching the repository's formatter. Use Node.js 22, the .NET 10 SDK, and a Java 21 JDK for the demonstrated host programs. The Java build compiles to Java 11 bytecode.
 
 The build requires LLVM's `clang` and `llvm-ar` for the WASI cryptography dependency, and Binaryen `wasm-opt` version 133. On macOS, install LLVM with Homebrew. `LLVM_BIN` can select another LLVM directory, including its trailing slash. `CC_wasm32_wasip1` and `AR_wasm32_wasip1` override the individual tools. `WASM_OPT` can select the optimizer executable. The release profile optimizes for size and strips symbols before Binaryen optimizes the final module.
 
@@ -17,25 +17,26 @@ node scripts/generate.mjs --check
 node --test test/conformance.mjs
 ```
 
-The build restores the pinned Wasmtime NuGet package for the .NET host. Wasmtime includes a native runtime dependency. Node uses its built-in WebAssembly engine. No JavaScript engine runs inside .NET.
+The build restores the pinned Wasmtime NuGet package for the .NET host. Wasmtime includes a native runtime dependency. Node uses its built-in WebAssembly engine. The Java host uses Endive's build-time compiler: the Gradle build turns every wasm function body into JVM bytecode ahead of time, so the runtime executes the generated classes instead of Endive's interpreter. No native dependency is added. No JavaScript engine runs inside .NET.
 
-`abi.json` defines the ABI version, function names, and scalar arguments. `scripts/generate.mjs` emits Rust exports, JavaScript declarations and memory helpers, and typed C# delegates and memory helpers. Generated files are checked in. `--check` detects divergence.
+`abi.json` defines the ABI version, function names, and scalar arguments. `scripts/generate.mjs` emits Rust exports, JavaScript declarations and memory helpers, typed C# delegates and memory helpers, and the Java `RcAbi` class. Generated files are checked in. `--check` detects divergence.
 
 ```text
 abi.json -> Rust exports -> libdd-remote-config -> one WASM reactor
         -> JavaScript binding -> Node HTTP/timers
         -> C# binding --------> .NET HttpClient/Task.Delay
+        -> Java binding -----> Endive build-time compiled classes + java.net.http/ScheduledExecutor
 ```
 
 The generator does not infer remote-configuration semantics. The Rust facade implements them through the existing upstream client. Rust serde types define JSON records. The host drivers translate operations into runtime services. Full generation of those record types remains future work.
 
-`artifacts/remote-config.wasm` is the canonical output. Both host programs accept its path as their first argument. The manifest records its hash. The conformance runner loads the same file in both engines and uses a controlled HTTP service with independently constructed protocol responses.
+`artifacts/remote-config.wasm` is the canonical output. Every host program accepts its path as their first argument; Node and .NET load the file, while the Java host keeps the argument only for CLI uniformity and executes the module compiled into its jar at build time. The manifest records its hash. The conformance runner loads the same file in all engines and uses a controlled HTTP service with independently constructed protocol responses. Set the `LANGUAGES` environment variable (for example `LANGUAGES=nodejs,java`) to run a subset of the host matrix.
 
 ## Ownership and asynchronous work
 
 Buffers and clients have checked integer handles. An input buffer remains caller-owned and must be freed after the consuming call. Reading an output through either generated helper copies and frees it. No host retains a view into guest memory across a guest call. Buffer allocation has per-buffer and aggregate limits.
 
-A poll yields HTTP and timeout operations. The host completes an operation by ID through `rc_complete`. Guest calls never overlap. The C# dispatcher awaits host work before entering the store again. The Node driver queues callbacks before completing the guest operation. Neither guest execution nor completion uses JavaScript promises inside WASM.
+A poll yields HTTP and timeout operations. The host completes an operation by ID through `rc_complete`. Guest calls never overlap. The C# dispatcher awaits host work before entering the store again. The Node driver queues callbacks before completing the guest operation. The Java driver takes completions from a queue at the head of its poll loop, so no guest call is ever re-entered. Neither guest execution nor completion uses JavaScript promises inside WASM.
 
 The Rust future owns a lease on the fetcher. Completion or cancellation returns it to the client. Operation IDs are not reused during that client's lifetime. Late and duplicate completions are rejected. Acknowledgement during an active poll is rejected explicitly. This prototype does not yet queue identity or product updates during a poll.
 

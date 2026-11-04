@@ -22,9 +22,6 @@ execFileSync(process.execPath, ['scripts/generate.mjs'], { cwd: root, stdio: 'in
 execFileSync('rustup', ['run', toolchain, 'cargo', 'build', '--target', 'wasm32-wasip1', '--release', '--locked'], {
   cwd: root, env, stdio: 'inherit'
 })
-execFileSync('dotnet', ['build', 'hosts/dotnet/RemoteConfigPoc.csproj', '-c', 'Release', '--nologo', '-p:RestoreLockedMode=true'], {
-  cwd: root, stdio: 'inherit'
-})
 const metadata = JSON.parse(execFileSync('rustup', ['run', toolchain, 'cargo', 'metadata', '--locked', '--format-version', '1'], {
   cwd: root, env, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024
 }))
@@ -50,3 +47,8 @@ const manifest = {
 }
 writeFileSync(`${root}/artifacts/manifest.json`, JSON.stringify(manifest, null, 2) + '\n')
 process.stdout.write(`Shared artifact: ${manifest.sha256} (${manifest.bytes} bytes)\n`)
+execFileSync('dotnet', ['build', 'hosts/dotnet/RemoteConfigPoc.csproj', '-c', 'Release', '--nologo', '-p:RestoreLockedMode=true'], {
+  cwd: root, stdio: 'inherit'
+})
+// The Java host AOT-compiles the final artifact into JVM bytecode at build time.
+execFileSync('./gradlew', ['-q', '--no-daemon', 'build'], { cwd: `${root}/hosts/java`, stdio: 'inherit' })
