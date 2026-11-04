@@ -17,14 +17,18 @@ bench = false
 default = ["cbindgen", "catch_panic"]
 catch_panic = []
 cbindgen = ["build_common/cbindgen"]
-regex-lite = ["libdd-shared-runtime/regex-lite"]
+regex-lite = ["libdd-regex/regex-lite"]
 
 [build-dependencies]
 build_common = { path = "../build-common" }
 
 [dependencies]
 libdd-shared-runtime = { version = "7.0.0", path = "../libdd-shared-runtime" }
+libdd-regex = { version = "0.1.0", path = "../libdd-regex" }
 tracing.workspace = true
 
 [dev-dependencies]
 async-trait.workspace = true
+
+[package.metadata.cargo-machete]
+ignored = ["libdd-regex"]
