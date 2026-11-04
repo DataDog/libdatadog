@@ -202,10 +202,11 @@ jobs:
             git config --global core.longpaths true
           fi
           CLIPPY_ARGS=${CLIPPY_PACKAGES:---workspace}
+          # `standalone` (libdd-library-config-ffi) is no_std and only builds with panic=abort.
           # shellcheck disable=SC2086
-          cargo hack clippy $CLIPPY_ARGS --all-targets --each-feature        --keep-going -- -D warnings
+          cargo hack clippy $CLIPPY_ARGS --all-targets --each-feature --exclude-features standalone --keep-going -- -D warnings
           # shellcheck disable=SC2086
-          cargo      clippy $CLIPPY_ARGS --all-targets --all-features        --keep-going -- -D warnings
+          cargo      clippy $CLIPPY_ARGS --all-targets --all-features --keep-going -- -D warnings
       - name: sccache statistics
         if: always() && steps.sccache.outputs.enabled == 'true'
         shell: bash
