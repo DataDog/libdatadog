@@ -181,8 +181,11 @@ jobs:
           rustup set profile minimal
           rustup install "$VERSION"
           rustup component add clippy --toolchain "$VERSION"
-          cargo install cargo-hack@0.6.42 # TODO: cache this
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+      - name: Install cargo-hack
+        uses: taiki-e/cache-cargo-install-action@7447f04c51f2ba27ca35e7f1e28fab848c5b3ba7 # 2.3.1
+        with:
+          tool: cargo-hack@0.6.42
       - name: sccache
         id: sccache
         uses: ./.github/actions/setup-sccache
@@ -199,8 +202,6 @@ jobs:
             git config --global core.longpaths true
           fi
           CLIPPY_ARGS=${CLIPPY_PACKAGES:---workspace}
-          # shellcheck disable=SC2086
-          cargo      clippy $CLIPPY_ARGS --all-targets --no-default-features --keep-going -- -D warnings
           # shellcheck disable=SC2086
           cargo hack clippy $CLIPPY_ARGS --all-targets --each-feature        --keep-going -- -D warnings
           # shellcheck disable=SC2086
