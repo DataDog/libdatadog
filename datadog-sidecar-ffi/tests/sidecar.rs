@@ -346,18 +346,18 @@ fn test_ddog_sidecar_register_app() {
     ddog_sidecar_transport_drop(transport);
 }
 
-// Covers FFI conversion, IPC, the sidecar exposure deduplicator and EVP encoding.
+// Covers FFI conversion, IPC, the sidecar exposure deduplicator and EVP encoding. Uses the
+// in-process listener: a spawned daemon resets the connection in the CentOS 7 CI container.
 #[test]
 #[cfg_attr(miri, ignore)]
 #[cfg_attr(
     windows,
-    ignore = "sidecar daemon cannot start from a test exe on Windows (no exported entrypoint)"
+    ignore = "the in-process listener is only exercised on Unix here"
 )]
 fn test_ddog_sidecar_ffe_exposure_features_reach_the_intake() {
     use httpmock::{Method::POST, MockServer};
     use libdd_common_ffi::CharSlice;
 
-    set_sidecar_per_process();
     // The sidecar deduplicator outlives this test; a unique flag keeps runs independent.
     let flag_key = format!("ffe-features-{}", std::process::id());
     let http = MockServer::start();
@@ -386,14 +386,18 @@ fn test_ddog_sidecar_ffe_exposure_features_reach_the_intake() {
         then.status(202);
     });
 
+    assert_maybe_no_error!(ddog_sidecar_connect_master());
     let mut transport = std::ptr::null_mut();
-    assert_maybe_no_error!(ddog_sidecar_connect(&mut transport));
+    assert_maybe_no_error!(ddog_sidecar_connect_worker(
+        i32::try_from(std::process::id()).unwrap(),
+        &mut transport
+    ));
     let mut transport = unsafe { Box::from_raw(transport) };
     transport
-        .set_read_timeout(Some(Duration::from_secs(1)))
+        .set_read_timeout(Some(Duration::from_secs(5)))
         .unwrap();
     transport
-        .set_write_timeout(Some(Duration::from_secs(1)))
+        .set_write_timeout(Some(Duration::from_secs(5)))
         .unwrap();
 
     let agent_endpoint = Endpoint {
@@ -480,4 +484,5 @@ fn test_ddog_sidecar_ffe_exposure_features_reach_the_intake() {
 
     unsafe { ddog_sidecar_instanceId_drop(instance_id) };
     ddog_sidecar_transport_drop(transport);
+    assert_maybe_no_error!(ddog_sidecar_shutdown_master_listener());
 }
