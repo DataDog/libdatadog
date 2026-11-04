@@ -5,7 +5,7 @@
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group};
 use libdd_crashtracker::{
     CrashtrackerConfiguration, SharedLibrary, StacktraceCollection,
-    benchmark::receiver_entry_point, default_signals, get_tests_folder_path, shared::constants::*,
+    benchmark::receiver_entry_point, get_tests_folder_path, shared::constants::*,
 };
 use std::fmt::Write;
 use std::time::Duration;

@@ -206,7 +206,7 @@ impl CrashtrackerConfigurationBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{default_signals, shared::constants};
+    use crate::shared::constants;
     use core::time::Duration;
 
     #[test]
