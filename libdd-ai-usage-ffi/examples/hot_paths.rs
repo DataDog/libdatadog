@@ -1,0 +1,244 @@
+// Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
+//! Time and allocations of the calls a gateway makes per request, through
+//! the C interface: `cargo run --release -p libdd-ai-usage-ffi --example
+//! hot_paths`.
+
+use std::alloc::{GlobalAlloc, Layout, System};
+use std::ptr;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Instant;
+
+use dd_ai_usage_ffi::*;
+
+struct Counting;
+
+static ALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
+
+// SAFETY: forwards to the system allocator, counting calls.
+unsafe impl GlobalAlloc for Counting {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
+        // SAFETY: forwarded.
+        unsafe { System.alloc(layout) }
+    }
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        // SAFETY: forwarded.
+        unsafe { System.dealloc(ptr, layout) }
+    }
+    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, size: usize) -> *mut u8 {
+        ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
+        // SAFETY: forwarded.
+        unsafe { System.realloc(ptr, layout, size) }
+    }
+}
+
+#[global_allocator]
+static GLOBAL: Counting = Counting;
+
+/// The best time of a call, in microseconds, and its allocations.
+fn measure(label: &str, mut call: impl FnMut()) {
+    call();
+    let before = ALLOCATIONS.load(Ordering::Relaxed);
+    call();
+    let allocations = ALLOCATIONS.load(Ordering::Relaxed) - before;
+    let mut best = f64::MAX;
+    for _ in 0..20 {
+        let start = Instant::now();
+        for _ in 0..200 {
+            call();
+        }
+        best = best.min(start.elapsed().as_secs_f64() * 1e6 / 200.0);
+    }
+    println!("{label:<44} {best:>8.2} us {allocations:>6} allocations");
+}
+
+fn drop_out(out: &mut Buffer) {
+    // SAFETY: written by the library.
+    unsafe { ddog_ai_usage_buffer_drop(out) };
+}
+
+const ATTEMPT: &str = r#"{"profile": "gen_ai.client.provider_attempt@0.1.0",
+  "observation": {"operation_name": "chat", "provider_name": "openai",
+    "request_model": "gpt-4o", "response_model": "gpt-4o-2024-08-06",
+    "duration_seconds": 1.2, "streaming": true, "time_to_first_chunk_seconds": 0.3,
+    "input_tokens": 1000, "input_basis": "includes_cache", "output_tokens": 500,
+    "output_basis": "includes_reasoning", "service_tier": "default",
+    "cost_nano_usd": 11500000, "cost_source": "calculated", "cost_rate_card": "openai@1",
+    "observation_point": "gateway"},
+  "deployment_attributes": {"user.id": "ada@example.com"}}"#;
+
+const BREAKDOWN: &str = r#"{"profile": "trajectory.gen_ai.client.token_breakdown@0.1.0",
+  "observation": {"operation_name": "chat", "provider_name": "anthropic",
+    "request_model": "claude-sonnet-4-5", "input_tokens": 100, "input_basis": "excludes_cache",
+    "output_tokens": 50, "output_basis": "includes_reasoning", "cache_read_input_tokens": 400,
+    "cache_write_input_tokens": 20, "reasoning_output_tokens": 10,
+    "observation_point": "gateway"}}"#;
+
+const GATEWAY: &str = r#"{"profile": "trajectory.gen_ai.gateway.request@0.1.0",
+  "observation": {"operation_name": "chat", "request_model": "gpt-4o",
+    "duration_seconds": 1.4, "provider_operations": 1,
+    "provider_operation_coverage": "complete", "cache_outcomes": ["miss"]}}"#;
+
+fn main() {
+    for (label, doc) in [
+        ("project provider_attempt", ATTEMPT),
+        ("project token_breakdown", BREAKDOWN),
+        ("project gateway_request", GATEWAY),
+    ] {
+        let mut out = Buffer {
+            ptr: ptr::null_mut(),
+            len: 0,
+        };
+        // SAFETY: valid input and output.
+        let status = unsafe { ddog_ai_usage_project(doc.as_ptr(), doc.len(), &mut out) };
+        assert_eq!(status, Status::Ok, "{label}");
+        drop_out(&mut out);
+        measure(label, || {
+            // SAFETY: valid input and output.
+            unsafe { ddog_ai_usage_project(doc.as_ptr(), doc.len(), &mut out) };
+            drop_out(&mut out);
+        });
+    }
+
+    let mut batch = ptr::null_mut();
+    // SAFETY: written by `batch_new`.
+    unsafe { ddog_ai_usage_batch_new(&mut batch) };
+    for (label, doc) in [
+        ("batch_add provider_attempt", ATTEMPT),
+        ("batch_add token_breakdown", BREAKDOWN),
+    ] {
+        measure(label, || {
+            let mut out = Buffer {
+                ptr: ptr::null_mut(),
+                len: 0,
+            };
+            // SAFETY: a live batch, valid input and output.
+            unsafe { ddog_ai_usage_batch_add(batch, doc.as_ptr(), doc.len(), &mut out) };
+            drop_out(&mut out);
+        });
+    }
+    // SAFETY: a live batch, released once.
+    unsafe { ddog_ai_usage_batch_drop(batch) };
+
+    // The same documents with the deployment attributes set once on the
+    // batch, added without output.
+    let mut batch = ptr::null_mut();
+    let fixed = r#"{"user.id": "ada@example.com"}"#;
+    // SAFETY: written by `batch_new`; valid inputs and outputs.
+    unsafe {
+        ddog_ai_usage_batch_new(&mut batch);
+        let mut out = Buffer {
+            ptr: ptr::null_mut(),
+            len: 0,
+        };
+        let status = ddog_ai_usage_batch_set_deployment_attributes(
+            batch,
+            fixed.as_ptr(),
+            fixed.len(),
+            &mut out,
+        );
+        assert_eq!(status, Status::Ok);
+        drop_out(&mut out);
+    }
+    let attempt = ATTEMPT.replace(
+        ",\n  \"deployment_attributes\": {\"user.id\": \"ada@example.com\"}",
+        "",
+    );
+    assert_ne!(attempt, ATTEMPT);
+    for (label, doc) in [
+        ("batch_add_quiet provider_attempt", attempt.as_str()),
+        ("batch_add_quiet token_breakdown", BREAKDOWN),
+    ] {
+        measure(label, || {
+            // SAFETY: a live batch and valid input.
+            let status = unsafe {
+                ddog_ai_usage_batch_add_quiet(batch, doc.as_ptr(), doc.len(), ptr::null_mut())
+            };
+            assert_eq!(status, Status::Ok);
+        });
+    }
+    // SAFETY: a live batch, released once.
+    unsafe { ddog_ai_usage_batch_drop(batch) };
+
+    let body = r#"{"id": "chatcmpl-1", "object": "chat.completion", "model": "gpt-4o-2024-08-06",
+      "service_tier": "default", "choices": [{"index": 0, "message": {"role": "assistant",
+      "content": "Hello! How can I help you today?"}, "finish_reason": "stop"}],
+      "usage": {"prompt_tokens": 19, "completion_tokens": 10, "total_tokens": 29,
+      "prompt_tokens_details": {"cached_tokens": 0}, "completion_tokens_details":
+      {"reasoning_tokens": 0}}}"#;
+    let format = "openai_chat";
+    measure("parse_provider_response openai_chat", || {
+        let mut out = Buffer {
+            ptr: ptr::null_mut(),
+            len: 0,
+        };
+        // SAFETY: valid inputs and output.
+        unsafe {
+            ddog_ai_usage_parse_provider_response(
+                format.as_ptr(),
+                format.len(),
+                false,
+                body.as_ptr(),
+                body.len(),
+                &mut out,
+            )
+        };
+        drop_out(&mut out);
+    });
+
+    // An OpenAI chat stream with usage requested: every chunk names the
+    // model and tier and carries `"usage": null`; the last one has usage.
+    let mut chunks: Vec<String> = (0..32)
+        .map(|i| {
+            format!(
+                "data: {{\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"created\":1,\
+                 \"model\":\"gpt-4o-2024-08-06\",\"service_tier\":\"default\",\
+                 \"system_fingerprint\":\"fp_1\",\"choices\":[{{\"index\":0,\"delta\":\
+                 {{\"content\":\"word{i} \"}},\"logprobs\":null,\"finish_reason\":null}}],\
+                 \"usage\":null}}\n\n"
+            )
+        })
+        .collect();
+    chunks.push(
+        "data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"created\":1,\
+         \"model\":\"gpt-4o-2024-08-06\",\"service_tier\":\"default\",\"choices\":[],\
+         \"usage\":{\"prompt_tokens\":19,\"completion_tokens\":32,\"total_tokens\":51}}\n\n"
+            .to_string(),
+    );
+    chunks.push("data: [DONE]\n\n".to_string());
+    measure("stream 34 chunks: new + feed + finish + drop", || {
+        let mut stream = ptr::null_mut();
+        let mut out = Buffer {
+            ptr: ptr::null_mut(),
+            len: 0,
+        };
+        // SAFETY: the stream is used until dropped; valid inputs and output.
+        unsafe {
+            ddog_ai_usage_stream_new(format.as_ptr(), format.len(), false, &mut stream);
+            for chunk in &chunks {
+                ddog_ai_usage_stream_feed(stream, chunk.as_ptr(), chunk.len());
+            }
+            ddog_ai_usage_stream_finish(stream, &mut out);
+            ddog_ai_usage_stream_drop(stream);
+        }
+        drop_out(&mut out);
+    });
+    measure("stream 34 chunks: new + feed + take", || {
+        let mut stream = ptr::null_mut();
+        let mut out = Buffer {
+            ptr: ptr::null_mut(),
+            len: 0,
+        };
+        // SAFETY: the stream is used until taken; valid inputs and output.
+        unsafe {
+            ddog_ai_usage_stream_new(format.as_ptr(), format.len(), false, &mut stream);
+            for chunk in &chunks {
+                ddog_ai_usage_stream_feed(stream, chunk.as_ptr(), chunk.len());
+            }
+            ddog_ai_usage_stream_take(stream, &mut out);
+        }
+        drop_out(&mut out);
+    });
+}

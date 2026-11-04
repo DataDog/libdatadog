@@ -152,6 +152,17 @@ impl MetricBatch {
         profile: Profile,
         projection: &Projection,
     ) -> Result<bool, MetricError> {
+        self.try_add_owned(profile, projection.clone())
+    }
+
+    /// [`MetricBatch::try_add`] for a projection the caller no longer needs:
+    /// its names and attribute sets become the batch's series keys as they
+    /// are, without a copy per point.
+    pub fn try_add_owned(
+        &mut self,
+        profile: Profile,
+        projection: Projection,
+    ) -> Result<bool, MetricError> {
         for point in &projection.points {
             if !profile.metric_names().contains(&point.name.as_str()) {
                 return reject(
@@ -176,26 +187,34 @@ impl MetricBatch {
         }
         // The profile is stated once per group, as the OTLP scope attribute; a
         // resource never states it, as in the Datadog binding.
-        let mut resource = projection.resource.clone();
+        let mut resource = projection.resource;
         resource.remove(PROFILE_ATTRIBUTE);
-        let keys: Vec<SeriesKey> = projection
+        let points: Vec<(SeriesKey, Instrument, String, Sum, f64)> = projection
             .points
-            .iter()
+            .into_iter()
             .map(|point| {
-                // The profile is stated once per group, as the OTLP scope
-                // attribute; a point that also states it is the same series
-                // as one that does not.
-                let mut attributes = point.attributes.clone();
+                let sum = Sum::of(&point);
+                let MetricPoint {
+                    name,
+                    instrument,
+                    unit,
+                    value,
+                    mut attributes,
+                    ..
+                } = point;
+                // A point that also states the profile is the same series as
+                // one that does not.
                 attributes.remove(PROFILE_ATTRIBUTE);
-                (point.name.clone(), attributes)
+                ((name, attributes), instrument, unit, sum, value)
             })
             .collect();
+        let group_key = (resource, profile);
         if let Some(max_len) = self.max_len {
-            let existing = self.groups.get(&(resource.clone(), profile));
+            let existing = self.groups.get(&group_key);
             let mut new_counters = BTreeSet::new();
             let mut added = 0;
-            for (point, key) in projection.points.iter().zip(&keys) {
-                match point.instrument {
+            for (key, instrument, ..) in &points {
+                match instrument {
                     Instrument::Counter => {
                         let held = existing.is_some_and(|g| g.counters.contains_key(key));
                         if !held && new_counters.insert(key) {
@@ -210,23 +229,23 @@ impl MetricBatch {
                 return Ok(false);
             }
         }
-        let group = self.groups.entry((resource, profile)).or_default();
-        for (point, key) in projection.points.iter().zip(keys) {
-            match point.instrument {
+        let group = self.groups.entry(group_key).or_default();
+        for (key, instrument, unit, sum, value) in points {
+            match instrument {
                 Instrument::Counter => {
                     let entry = group.counters.entry(key).or_insert_with(|| {
                         self.len += 1;
-                        (point.unit.clone(), Sum::Integer(0))
+                        (unit, Sum::Integer(0))
                     });
-                    entry.1 = entry.1.add(Sum::of(point));
+                    entry.1 = entry.1.add(sum);
                 }
                 Instrument::Histogram => {
                     let samples = &mut group
                         .histograms
                         .entry(key)
-                        .or_insert_with(|| (point.unit.clone(), Samples::default()))
+                        .or_insert_with(|| (unit, Samples::default()))
                         .1;
-                    samples.values.push(point.value);
+                    samples.values.push(value);
                     samples.order.push(self.recorded);
                     self.recorded += 1;
                     self.len += 1;

@@ -745,3 +745,157 @@ fn stream_events_split_by_the_caller() {
         ddog_ai_usage_stream_drop(stream);
     }
 }
+
+#[test]
+fn batch_settings_and_quiet_adds() {
+    let attempt = r#"{"profile": "gen_ai.client.provider_attempt@0.1.0",
+        "observation": {"operation_name": "chat", "provider_name": "openai",
+        "duration_seconds": 0.5, "streaming": false, "input_tokens": 10,
+        "input_basis": "includes_cache", "output_tokens": 2,
+        "output_basis": "includes_reasoning", "observation_point": "gateway"}}"#;
+    let set = |f: unsafe extern "C" fn(*const Batch, *const u8, usize, *mut Buffer) -> Status,
+               batch: *const Batch,
+               input: &str| {
+        let mut out = empty();
+        // SAFETY: a live batch, valid input and output.
+        let status = unsafe { f(batch, input.as_ptr(), input.len(), &mut out) };
+        (status, json_of(out))
+    };
+    let mut batch = ptr::null_mut();
+    // SAFETY: `batch` is written by `batch_new` and used until dropped.
+    unsafe {
+        assert_eq!(ddog_ai_usage_batch_new(&mut batch), Status::Ok);
+        let (status, value) = set(
+            ddog_ai_usage_batch_set_deployment_attributes,
+            batch,
+            r#"{"nope": "x"}"#,
+        );
+        assert_eq!(status, Status::Rejected);
+        assert_eq!(value["error"]["code"], "deployment_attribute_unknown");
+        assert_eq!(
+            set(
+                ddog_ai_usage_batch_set_deployment_attributes,
+                batch,
+                r#"{"user.id": "ada@example.com"}"#
+            ),
+            (Status::Ok, json!({}))
+        );
+        assert_eq!(
+            set(
+                ddog_ai_usage_batch_set_metrics,
+                batch,
+                r#"["gen_ai.client.inference.usage.input_tokens"]"#
+            ),
+            (Status::Ok, json!({}))
+        );
+        assert_eq!(
+            set(ddog_ai_usage_batch_set_metrics, batch, r#"{"a": 1}"#).0,
+            Status::Rejected
+        );
+        // Added without output; a null `out` is allowed.
+        assert_eq!(
+            ddog_ai_usage_batch_add_quiet(batch, attempt.as_ptr(), attempt.len(), ptr::null_mut()),
+            Status::Ok
+        );
+        let mut out = empty();
+        assert_eq!(
+            ddog_ai_usage_batch_add_quiet(batch, attempt.as_ptr(), attempt.len(), &mut out),
+            Status::Ok
+        );
+        assert_eq!(take(out), "");
+        let rejected = r#"{"profile": "nope@1"}"#;
+        let mut out = empty();
+        assert_eq!(
+            ddog_ai_usage_batch_add_quiet(batch, rejected.as_ptr(), rejected.len(), &mut out),
+            Status::Rejected
+        );
+        assert_eq!(json_of(out)["error"]["code"], "profile_invalid");
+        assert_eq!(
+            ddog_ai_usage_batch_add_quiet(
+                batch,
+                rejected.as_ptr(),
+                rejected.len(),
+                ptr::null_mut()
+            ),
+            Status::Rejected
+        );
+        // The batch kept only the metric set, with the attributes set once.
+        let (_, lines) = text_of(|out| {
+            ddog_ai_usage_batch_take_dogstatsd_text(
+                batch,
+                ptr::null(),
+                0,
+                UDS_MAX_PAYLOAD,
+                ptr::null_mut(),
+                out,
+            )
+        });
+        let lines: Vec<&str> = lines.lines().collect();
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(lines[0].starts_with("gen_ai.client.inference.usage.input_tokens:20|c|#"));
+        assert!(lines[0].contains("user.id:ada_example.com"), "{}", lines[0]);
+        // A document's own list and attributes win over the batch's.
+        let own = attempt.replace(
+            r#""observation_point": "gateway"}}"#,
+            r#""observation_point": "gateway"},
+            "metrics": ["gen_ai.client.inference.usage.output_tokens"]}"#,
+        );
+        let mut out = empty();
+        ddog_ai_usage_batch_add(batch, own.as_ptr(), own.len(), &mut out);
+        take(out);
+        let (_, lines) = text_of(|out| {
+            ddog_ai_usage_batch_take_dogstatsd_text(
+                batch,
+                ptr::null(),
+                0,
+                UDS_MAX_PAYLOAD,
+                ptr::null_mut(),
+                out,
+            )
+        });
+        assert!(lines.starts_with("gen_ai.client.inference.usage.output_tokens:2|c|#"));
+        // Clearing the settings keeps every metric again.
+        assert_eq!(
+            set(ddog_ai_usage_batch_set_metrics, batch, "null"),
+            (Status::Ok, json!({}))
+        );
+        ddog_ai_usage_batch_add_quiet(batch, attempt.as_ptr(), attempt.len(), ptr::null_mut());
+        assert!(ddog_ai_usage_batch_len(batch) > 1);
+        assert_eq!(
+            ddog_ai_usage_batch_add_quiet(
+                ptr::null(),
+                attempt.as_ptr(),
+                attempt.len(),
+                ptr::null_mut()
+            ),
+            Status::Internal
+        );
+        ddog_ai_usage_batch_drop(batch);
+    }
+}
+
+#[test]
+fn stream_take_reports_and_releases() {
+    let format = "openai_chat";
+    let chunk = b"data: {\"model\": \"gpt-4o\", \"usage\": {\"prompt_tokens\": 4, \"completion_tokens\": 1}}\n\ndata: [DONE]";
+    let mut stream = ptr::null_mut();
+    // SAFETY: `stream` is written by `stream_new` and released by `take`.
+    unsafe {
+        assert_eq!(
+            ddog_ai_usage_stream_new(format.as_ptr(), format.len(), false, &mut stream),
+            Status::Ok
+        );
+        ddog_ai_usage_stream_feed(stream, chunk.as_ptr(), chunk.len());
+        let mut out = empty();
+        assert_eq!(ddog_ai_usage_stream_take(stream, &mut out), Status::Ok);
+        let value = json_of(out);
+        assert_eq!(value["outcome"], "completed");
+        assert_eq!(value["usage"]["input_tokens"], 4);
+        let mut out = empty();
+        assert_eq!(
+            ddog_ai_usage_stream_take(ptr::null_mut(), &mut out),
+            Status::Internal
+        );
+        take(out);
+    }
+}

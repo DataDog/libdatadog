@@ -96,6 +96,7 @@ impl Buffer {
 /// threads.
 pub struct Batch {
     inner: Mutex<MetricBatch>,
+    settings: Mutex<BatchSettings>,
 }
 
 /// A provider stream being read. Use one from one thread at a time.
@@ -256,6 +257,22 @@ fn parse_document(input: Option<&[u8]>) -> Result<Json, Failure> {
 /// optional `deployment_attributes`, and an optional `metrics` list that
 /// keeps only those metrics.
 fn projection_of(document: &Json) -> Result<(Profile, libdd_ai_usage::Projection), Failure> {
+    projection_with(document, &BatchSettings::default())
+}
+
+/// The metric list and deployment attributes a batch applies to every
+/// document that does not state its own.
+#[derive(Default)]
+struct BatchSettings {
+    metrics: Option<Vec<String>>,
+    deployment_attributes: Option<Json>,
+}
+
+/// [`projection_of`], with `defaults` for what the document leaves out.
+fn projection_with(
+    document: &Json,
+    defaults: &BatchSettings,
+) -> Result<(Profile, libdd_ai_usage::Projection), Failure> {
     let id = document
         .get("profile")
         .and_then(Json::as_str)
@@ -268,10 +285,20 @@ fn projection_of(document: &Json) -> Result<(Profile, libdd_ai_usage::Projection
     })?;
     let observation = document.get(profile.input_key()).unwrap_or(&Json::Null);
     let projection = project_result(profile, observation)?;
-    let deployment = document.get("deployment_attributes").unwrap_or(&Json::Null);
+    let deployment = match document.get("deployment_attributes") {
+        None | Some(Json::Null) => defaults
+            .deployment_attributes
+            .as_ref()
+            .unwrap_or(&Json::Null),
+        Some(attributes) => attributes,
+    };
     let mut projection = with_deployment_attributes_json(projection, deployment)?;
     match document.get("metrics") {
-        None | Some(Json::Null) => {}
+        None | Some(Json::Null) => {
+            if let Some(names) = &defaults.metrics {
+                retain_metrics(&mut projection, names);
+            }
+        }
         Some(Json::Array(names)) => {
             let names = names
                 .iter()
@@ -447,6 +474,7 @@ pub unsafe extern "C" fn ddog_ai_usage_batch_new(out: *mut *mut Batch) -> Status
     let batch = catch_unwind(|| {
         Box::into_raw(Box::new(Batch {
             inner: Mutex::new(MetricBatch::new()),
+            settings: Mutex::new(BatchSettings::default()),
         }))
     });
     match batch {
@@ -488,16 +516,180 @@ pub unsafe extern "C" fn ddog_ai_usage_batch_add(
                 let batch = batch
                     .as_ref()
                     .ok_or(Failure::Internal("the batch is null"))?;
-                let document = parse_document(bytes(input, input_len))?;
-                let (profile, projection) = projection_of(&document)?;
-                let added = batch
-                    .inner
-                    .lock()
-                    .map_err(|_| Failure::Internal("the batch is poisoned"))?
-                    .try_add(profile, &projection)?;
-                Ok(json!({"issues": issues(&projection), "dropped": !added}))
+                let (issues, added) = add_document(batch, bytes(input, input_len), true)?;
+                Ok(json!({"issues": issues, "dropped": !added}))
             }))
             .unwrap_or(Err(Failure::Internal("adding to the batch panicked")))
+        })
+    }
+}
+
+/// Project a request document with the batch's settings and add it,
+/// returning its issues (when asked for) and whether it was added.
+fn add_document(
+    batch: &Batch,
+    input: Option<&[u8]>,
+    want_issues: bool,
+) -> Result<(Option<Value>, bool), Failure> {
+    let document = parse_document(input)?;
+    let (profile, projection) = {
+        let settings = batch
+            .settings
+            .lock()
+            .map_err(|_| Failure::Internal("the batch is poisoned"))?;
+        projection_with(&document, &settings)?
+    };
+    let issues = want_issues.then(|| issues(&projection));
+    let added = batch
+        .inner
+        .lock()
+        .map_err(|_| Failure::Internal("the batch is poisoned"))?
+        .try_add_owned(profile, projection)?;
+    Ok((issues, added))
+}
+
+/// [`ddog_ai_usage_batch_add`] without its output: nothing is written on
+/// success, so a gateway that does not read the issues builds no JSON. A
+/// rejected document writes `{"error": {"code", "message"}}` to `out` when
+/// `out` is not null. Whether a bounded batch dropped the observation is
+/// counted by [`ddog_ai_usage_batch_dropped`].
+///
+/// # Safety
+///
+/// As [`ddog_ai_usage_batch_add`]; `out` may be null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ddog_ai_usage_batch_add_quiet(
+    batch: *const Batch,
+    input: *const u8,
+    input_len: usize,
+    out: *mut Buffer,
+) -> Status {
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        // SAFETY: the caller guarantees a live batch or null.
+        let batch = unsafe { batch.as_ref() }.ok_or(Failure::Internal("the batch is null"))?;
+        // SAFETY: forwarded from the caller.
+        add_document(batch, unsafe { bytes(input, input_len) }, false).map(|_| ())
+    }))
+    .unwrap_or(Err(Failure::Internal("adding to the batch panicked")));
+    let (status, error) = match result {
+        Ok(()) => return Status::Ok,
+        Err(Failure::Rejected(error)) => (Status::Rejected, rejection(&error)),
+        Err(Failure::Internal(message)) => (Status::Internal, error_value("internal", message)),
+    };
+    if !out.is_null() {
+        // SAFETY: `out` is not null and the caller guarantees it is writable.
+        unsafe { write(out, error.to_string()) };
+    }
+    status
+}
+
+/// Set the metric list `input[..input_len]` (a JSON array of names, as a
+/// request document's `metrics` states it) that `batch` keeps of every
+/// document stating none. `null` or empty input keeps every metric again.
+/// Parsed once here rather than in every document.
+///
+/// # Safety
+///
+/// `batch` must be a live batch from [`ddog_ai_usage_batch_new`], `input`
+/// must point to `input_len` readable bytes (or `input_len` must be 0), and
+/// `out` must be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ddog_ai_usage_batch_set_metrics(
+    batch: *const Batch,
+    input: *const u8,
+    input_len: usize,
+    out: *mut Buffer,
+) -> Status {
+    // SAFETY: forwarded from the caller.
+    unsafe {
+        json_call(out, || {
+            catch_unwind(AssertUnwindSafe(|| {
+                // SAFETY: the caller guarantees a live batch or null.
+                let batch = batch
+                    .as_ref()
+                    .ok_or(Failure::Internal("the batch is null"))?;
+                let metrics = if input_len == 0 {
+                    None
+                } else {
+                    match parse_document(bytes(input, input_len))? {
+                        Json::Null => None,
+                        Json::Array(names) => Some(
+                            names
+                                .iter()
+                                .map(|name| {
+                                    name.as_str()
+                                        .map(str::to_string)
+                                        .ok_or_else(|| invalid("metrics must be strings"))
+                                })
+                                .collect::<Result<Vec<String>, Failure>>()?,
+                        ),
+                        _ => return Err(invalid("metrics must be an array of strings")),
+                    }
+                };
+                batch
+                    .settings
+                    .lock()
+                    .map_err(|_| Failure::Internal("the batch is poisoned"))?
+                    .metrics = metrics;
+                Ok(json!({}))
+            }))
+            .unwrap_or(Err(Failure::Internal("setting the metrics panicked")))
+        })
+    }
+}
+
+/// Set the deployment attributes `input[..input_len]` (a JSON object, as a
+/// request document's `deployment_attributes` states it) that `batch`
+/// applies to every document stating none, such as a gateway's fixed
+/// `service`, `env` and `version`. Checked once here: an unknown attribute
+/// is [`Status::Rejected`] with `deployment_attribute_unknown`, and the
+/// setting is left as it was. `null` or empty input clears them.
+///
+/// # Safety
+///
+/// As [`ddog_ai_usage_batch_set_metrics`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ddog_ai_usage_batch_set_deployment_attributes(
+    batch: *const Batch,
+    input: *const u8,
+    input_len: usize,
+    out: *mut Buffer,
+) -> Status {
+    // SAFETY: forwarded from the caller.
+    unsafe {
+        json_call(out, || {
+            catch_unwind(AssertUnwindSafe(|| {
+                // SAFETY: the caller guarantees a live batch or null.
+                let batch = batch
+                    .as_ref()
+                    .ok_or(Failure::Internal("the batch is null"))?;
+                let attributes = if input_len == 0 {
+                    None
+                } else {
+                    match parse_document(bytes(input, input_len))? {
+                        Json::Null => None,
+                        attributes => {
+                            // Unknown names and other types are refused now,
+                            // not on every document.
+                            let checked = with_deployment_attributes_json(
+                                libdd_ai_usage::Projection::default(),
+                                &attributes,
+                            )?;
+                            drop(checked);
+                            Some(attributes)
+                        }
+                    }
+                };
+                batch
+                    .settings
+                    .lock()
+                    .map_err(|_| Failure::Internal("the batch is poisoned"))?
+                    .deployment_attributes = attributes;
+                Ok(json!({}))
+            }))
+            .unwrap_or(Err(Failure::Internal(
+                "setting the deployment attributes panicked",
+            )))
         })
     }
 }
@@ -876,7 +1068,40 @@ pub unsafe extern "C" fn ddog_ai_usage_stream_finish(
                 let stream = stream
                     .as_ref()
                     .ok_or(Failure::Internal("the stream is null"))?;
-                let (response, outcome, error) = stream.inner.clone().finish();
+                let (response, outcome, error) = stream.inner.report();
+                Ok(response_value(&response, outcome, error.as_deref()))
+            }))
+            .unwrap_or(Err(Failure::Internal("reading the stream panicked")))
+        })
+    }
+}
+
+/// [`ddog_ai_usage_stream_finish`] and [`ddog_ai_usage_stream_drop`] in one
+/// call: write what the stream reported, taking its state rather than
+/// copying it, and release it. The stream must not be used afterwards, and
+/// is released even when the call fails. A null stream is
+/// [`Status::Internal`].
+///
+/// # Safety
+///
+/// `stream` must be null or a live stream from [`ddog_ai_usage_stream_new`],
+/// released only once, and `out` must be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ddog_ai_usage_stream_take(
+    stream: *mut Stream,
+    out: *mut Buffer,
+) -> Status {
+    if stream.is_null() {
+        // SAFETY: forwarded from the caller.
+        return unsafe { json_call(out, || Err(Failure::Internal("the stream is null"))) };
+    }
+    // SAFETY: `stream` came from `Box::into_raw` in `ddog_ai_usage_stream_new`.
+    let stream = unsafe { Box::from_raw(stream) };
+    // SAFETY: forwarded from the caller.
+    unsafe {
+        json_call(out, move || {
+            catch_unwind(AssertUnwindSafe(move || {
+                let (response, outcome, error) = stream.inner.finish();
                 Ok(response_value(&response, outcome, error.as_deref()))
             }))
             .unwrap_or(Err(Failure::Internal("reading the stream panicked")))

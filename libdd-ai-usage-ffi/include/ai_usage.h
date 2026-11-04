@@ -171,6 +171,56 @@ enum ddog_ai_usage_Status ddog_ai_usage_batch_add(const struct ddog_ai_usage_Bat
                                                   struct ddog_ai_usage_Buffer *out);
 
 /**
+ * [`ddog_ai_usage_batch_add`] without its output: nothing is written on
+ * success, so a gateway that does not read the issues builds no JSON. A
+ * rejected document writes `{"error": {"code", "message"}}` to `out` when
+ * `out` is not null. Whether a bounded batch dropped the observation is
+ * counted by [`ddog_ai_usage_batch_dropped`].
+ *
+ * # Safety
+ *
+ * As [`ddog_ai_usage_batch_add`]; `out` may be null.
+ */
+enum ddog_ai_usage_Status ddog_ai_usage_batch_add_quiet(const struct ddog_ai_usage_Batch *batch,
+                                                        const uint8_t *input,
+                                                        uintptr_t input_len,
+                                                        struct ddog_ai_usage_Buffer *out);
+
+/**
+ * Set the metric list `input[..input_len]` (a JSON array of names, as a
+ * request document's `metrics` states it) that `batch` keeps of every
+ * document stating none. `null` or empty input keeps every metric again.
+ * Parsed once here rather than in every document.
+ *
+ * # Safety
+ *
+ * `batch` must be a live batch from [`ddog_ai_usage_batch_new`], `input`
+ * must point to `input_len` readable bytes (or `input_len` must be 0), and
+ * `out` must be null or writable.
+ */
+enum ddog_ai_usage_Status ddog_ai_usage_batch_set_metrics(const struct ddog_ai_usage_Batch *batch,
+                                                          const uint8_t *input,
+                                                          uintptr_t input_len,
+                                                          struct ddog_ai_usage_Buffer *out);
+
+/**
+ * Set the deployment attributes `input[..input_len]` (a JSON object, as a
+ * request document's `deployment_attributes` states it) that `batch`
+ * applies to every document stating none, such as a gateway's fixed
+ * `service`, `env` and `version`. Checked once here: an unknown attribute
+ * is [`Status::Rejected`] with `deployment_attribute_unknown`, and the
+ * setting is left as it was. `null` or empty input clears them.
+ *
+ * # Safety
+ *
+ * As [`ddog_ai_usage_batch_set_metrics`].
+ */
+enum ddog_ai_usage_Status ddog_ai_usage_batch_set_deployment_attributes(const struct ddog_ai_usage_Batch *batch,
+                                                                        const uint8_t *input,
+                                                                        uintptr_t input_len,
+                                                                        struct ddog_ai_usage_Buffer *out);
+
+/**
  * Whether `batch` holds no points. A null batch is empty.
  *
  * # Safety
@@ -345,6 +395,21 @@ enum ddog_ai_usage_Status ddog_ai_usage_stream_feed_event(struct ddog_ai_usage_S
  */
 enum ddog_ai_usage_Status ddog_ai_usage_stream_finish(const struct ddog_ai_usage_Stream *stream,
                                                       struct ddog_ai_usage_Buffer *out);
+
+/**
+ * [`ddog_ai_usage_stream_finish`] and [`ddog_ai_usage_stream_drop`] in one
+ * call: write what the stream reported, taking its state rather than
+ * copying it, and release it. The stream must not be used afterwards, and
+ * is released even when the call fails. A null stream is
+ * [`Status::Internal`].
+ *
+ * # Safety
+ *
+ * `stream` must be null or a live stream from [`ddog_ai_usage_stream_new`],
+ * released only once, and `out` must be null or writable.
+ */
+enum ddog_ai_usage_Status ddog_ai_usage_stream_take(struct ddog_ai_usage_Stream *stream,
+                                                    struct ddog_ai_usage_Buffer *out);
 
 /**
  * Release a stream. A null stream is a no-op.

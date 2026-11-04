@@ -41,9 +41,12 @@ The artifacts are named for the C prefix: `libdd_ai_usage_ffi.so`
 | `ddog_ai_usage_dogstatsd_lines` | One observation (the same request document) to its DogStatsD lines as `\n`-separated text: this observation's alone, never merged with another's, ordered by name then tags |
 | `ddog_ai_usage_pack_dogstatsd_lines` | `\n`-separated lines and comma-separated constant tags to NUL-separated datagrams of at most a given size, with no JSON either way. A line longer than the size with its tags is dropped (the Agent refuses it) and counted in the optional `dropped_lines` |
 | `ddog_ai_usage_batch_new` / `_add` / `_is_empty` / `_len` / `_take_dogstatsd` / `_take_dogstatsd_text` / `_drop` | Collect projections over an export window and take them as DogStatsD datagrams of at most a given size, with constant tags (`_text`: NUL-separated, no JSON). Lines longer than the size are dropped and counted (`dropped_lines` in the JSON, an optional out-parameter for `_text`). `_len` is the number of points held (one per Counter series, one per Histogram sample; the lines taken can be fewer, never more), for a flush threshold |
+| `ddog_ai_usage_batch_add_quiet` | `_add` without output: nothing is written on success (`out` may be null), the JSON error on rejection |
+| `ddog_ai_usage_batch_set_metrics` / `_set_deployment_attributes` | Set once on the batch the metric list and the fixed deployment attributes (checked when set) applied to every document that states none, so documents stay small and nothing is parsed twice |
 | `ddog_ai_usage_batch_set_max_len` / `_dropped` | Bound a batch to a number of points (0 lifts it). An observation that does not fit is dropped whole: `_add` still returns `OK` with `"dropped": true`, and `_dropped` counts it. The count only grows (taking keeps it and the bound), so report the difference at each flush |
 | `ddog_ai_usage_parse_provider_response` | A whole provider response body (JSON, or buffered server-sent events) to the observation's usage members, the model and service tier, how it ended and its `error.type` |
-| `ddog_ai_usage_stream_new` / `_feed` / `_finish` / `_drop` | The same for a stream read as it passes through, in chunks that may end anywhere. Strings longer than 1 KiB (generated text) are cut as they pass, so a line holding a whole response, such as Responses' `response.completed`, keeps its usage without being held. `[DONE]` ends only OpenAI-shaped streams. Anthropic's `message_start` output count is a placeholder and is not reported: only `message_delta` reports output, so a stream cut before it has no output count to mistake for a reported one |
+| `ddog_ai_usage_stream_new` / `_feed` / `_finish` / `_drop` | The same for a stream read as it passes through, in chunks that may end anywhere. Strings longer than 1 KiB (generated text) are cut as they pass, so a line holding a whole response, such as Responses' `response.completed`, keeps its usage without being held. A data line is decoded only when a byte scan finds something it can carry (usage that is not `null`, an error, a terminal event, or the model and tier until they are known), so OpenAI content chunks are not decoded. `[DONE]` ends only OpenAI-shaped streams. Anthropic's `message_start` output count is a placeholder and is not reported: only `message_delta` reports output, so a stream cut before it has no output count to mistake for a reported one |
+| `ddog_ai_usage_stream_take` | `_finish` and `_drop` in one call, taking the stream's state instead of copying it |
 | `ddog_ai_usage_stream_feed_event` | One server-sent event the caller already split (its `event` name, possibly empty, and its `data`), read as `_feed` reads it; the two can be mixed on one stream |
 | `ddog_ai_usage_provider_name` | A gateway's or SDK's provider name to `gen_ai.provider.name` |
 | `ddog_ai_usage_error_type` | An error name and HTTP status to `error.type`. A three-digit name is read as a status only when no status is given, so the response's status wins |
@@ -89,6 +92,11 @@ ddog_ai_usage_batch_take_dogstatsd(batch, (const uint8_t *)"env:prod", 8,
 ddog_ai_usage_buffer_drop(&out);
 ddog_ai_usage_batch_drop(batch);
 ```
+
+## Cost
+
+`cargo run --release -p libdd-ai-usage-ffi --example hot_paths` prints the time and allocations of
+the calls a gateway makes per request.
 
 ## Release builds
 

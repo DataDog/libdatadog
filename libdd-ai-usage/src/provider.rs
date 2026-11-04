@@ -875,21 +875,47 @@ fn cut_strings(text: &[u8]) -> Vec<u8> {
     cut.out
 }
 
-/// The quoted names a line must contain to be decoded. A quote inside a JSON
-/// string is escaped, so generated text cannot contain them.
-const CANDIDATE_MARKERS: [&str; 11] = [
-    "\"usage\"",
-    "\"usageMetadata\"",
-    "\"service_tier\"",
-    "\"error\"",
-    "\"finishReason\"",
-    "\"message_start\"",
-    "\"message_delta\"",
-    "\"message_stop\"",
-    "\"response.completed\"",
-    "\"response.incomplete\"",
-    "\"response.failed\"",
+/// What a quoted name in a line says about whether to decode it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Candidate {
+    /// An event type or terminal marker: always decode.
+    Marker,
+    /// A member worth decoding when its value is not `null` (or when the
+    /// name is a value, as in `"type": "error"`).
+    Member,
+    /// The model, decoded until one is known.
+    Model,
+    /// The service tier, decoded until one is known.
+    Tier,
+}
+
+/// The quoted names that make a line worth decoding. A quote inside a JSON
+/// string is escaped, so generated text cannot contain them. OpenAI's
+/// chunks name the model and tier and carry `"usage": null` in every chunk,
+/// so once both are known a content chunk matches none of them.
+const CANDIDATES: [(&str, Candidate); 12] = [
+    ("\"usage\"", Candidate::Member),
+    ("\"usageMetadata\"", Candidate::Member),
+    ("\"error\"", Candidate::Member),
+    ("\"model\"", Candidate::Model),
+    ("\"service_tier\"", Candidate::Tier),
+    ("\"finishReason\"", Candidate::Marker),
+    ("\"message_start\"", Candidate::Marker),
+    ("\"message_delta\"", Candidate::Marker),
+    ("\"message_stop\"", Candidate::Marker),
+    ("\"response.completed\"", Candidate::Marker),
+    ("\"response.incomplete\"", Candidate::Marker),
+    ("\"response.failed\"", Candidate::Marker),
 ];
+
+/// Whether the quoted name ending at `rest` is other than a member whose
+/// value is `null`.
+fn not_null_member(rest: &str) -> bool {
+    match rest.trim_start().strip_prefix(':') {
+        Some(value) => !value.trim_start().starts_with("null"),
+        None => true,
+    }
+}
 
 /// The server-sent events of a provider stream, read as they pass through:
 /// usage, model and service tier merged across events, the terminal event,
@@ -939,20 +965,18 @@ impl UsageStream {
             at = 1;
         }
         self.after_cr = false;
-        while at < chunk.len() {
-            let byte = chunk[at];
-            if byte == b'\r' || byte == b'\n' {
-                self.end_line(&chunk[start..at]);
-                if byte == b'\r' {
-                    match chunk.get(at + 1) {
-                        Some(b'\n') => at += 1,
-                        None => self.after_cr = true,
-                        Some(_) => {}
-                    }
+        while let Some(n) = memchr::memchr2(b'\r', b'\n', &chunk[at..]) {
+            at += n;
+            self.end_line(&chunk[start..at]);
+            if chunk[at] == b'\r' {
+                match chunk.get(at + 1) {
+                    Some(b'\n') => at += 1,
+                    None => self.after_cr = true,
+                    Some(_) => {}
                 }
-                start = at + 1;
             }
             at += 1;
+            start = at;
         }
         self.hold(&chunk[start..]);
     }
@@ -1048,13 +1072,39 @@ impl UsageStream {
         if !value.starts_with('{') && !value.starts_with('[') {
             return;
         }
-        let model_unknown = self.response.response_model.is_none() && value.contains("\"model\"");
-        if !model_unknown && !CANDIDATE_MARKERS.iter().any(|m| value.contains(m)) {
+        // A content chunk names the model and tier again and carries no
+        // usage: once both are known it is skipped without being decoded.
+        if !self.wanted(value) {
             return;
         }
         if let Ok(event) = Json::parse(value) {
             self.event(&event);
         }
+    }
+
+    /// Whether a data line can carry what the stream reads, by one scan of
+    /// its quotes that decodes nothing.
+    fn wanted(&self, value: &str) -> bool {
+        let bytes = value.as_bytes();
+        memchr::memchr_iter(b'"', bytes).any(|at| {
+            let Some(next) = bytes.get(at + 1) else {
+                return false;
+            };
+            let rest = &value[at..];
+            CANDIDATES.iter().any(|(name, kind)| {
+                name.as_bytes()[1] == *next
+                    && rest.starts_with(name)
+                    && match kind {
+                        Candidate::Marker => true,
+                        Candidate::Member => not_null_member(&rest[name.len()..]),
+                        Candidate::Model => self.response.response_model.is_none(),
+                        Candidate::Tier => {
+                            self.response.service_tier.is_none()
+                                && not_null_member(&rest[name.len()..])
+                        }
+                    }
+            })
+        })
     }
 
     fn complete(&mut self) {
@@ -1128,11 +1178,36 @@ impl UsageStream {
     /// Read a final line that had no line ending, and return what the stream
     /// reported.
     pub fn finish(mut self) -> (ProviderResponse, StreamOutcome, Option<String>) {
+        self.read_last_line();
+        (self.response, self.outcome, self.error_name)
+    }
+
+    /// What [`UsageStream::finish`] would return, leaving the stream to be
+    /// fed further. Only the report is copied, not the line being held,
+    /// unless that line is the last one and must be read.
+    pub fn report(&self) -> (ProviderResponse, StreamOutcome, Option<String>) {
+        if !self.skipping && !self.pending.is_empty() {
+            let mut last = UsageStream {
+                format: self.format,
+                embeddings: self.embeddings,
+                response: self.response.clone(),
+                outcome: self.outcome,
+                error_name: self.error_name.clone(),
+                pending: CutStrings::default(),
+                skipping: false,
+                after_cr: false,
+            };
+            last.line(&self.pending.out);
+            return (last.response, last.outcome, last.error_name);
+        }
+        (self.response.clone(), self.outcome, self.error_name.clone())
+    }
+
+    fn read_last_line(&mut self) {
         if !self.skipping && !self.pending.is_empty() {
             let line = std::mem::take(&mut self.pending.out);
             self.line(&line);
         }
-        (self.response, self.outcome, self.error_name)
     }
 }
 

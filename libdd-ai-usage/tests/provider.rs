@@ -587,3 +587,42 @@ fn dogstatsd_packing() {
     assert_eq!((datagrams.len(), dropped), (0, 1));
     assert!(pack_dogstatsd(&[""; 0], &[""; 0], 1432).is_empty());
 }
+
+#[test]
+fn content_chunks_are_skipped_without_losing_what_they_carry() {
+    let chunk = |extra: &str| {
+        format!(
+            "data: {{\"id\":\"c\",\"object\":\"chat.completion.chunk\",\"model\":\"gpt-4o\",\
+             \"service_tier\":\"default\",\"choices\":[{{\"index\":0,\"delta\":\
+             {{\"content\":\"hi\"}},\"finish_reason\":null}}]{extra}}}\n\n"
+        )
+    };
+    let mut stream = UsageStream::new(UsageFormat::OpenAiChat, false);
+    for _ in 0..3 {
+        stream.feed(chunk(",\"usage\":null").as_bytes());
+    }
+    assert_eq!(stream.response().usage, None);
+    assert_eq!(stream.response().response_model.as_deref(), Some("gpt-4o"));
+    assert_eq!(stream.response().service_tier.as_deref(), Some("default"));
+    stream.feed(chunk(",\"usage\" : {\"prompt_tokens\": 5, \"completion_tokens\": 3}").as_bytes());
+    // What a report says before the stream ends is what finishing says.
+    let report = stream.report();
+    stream.feed(b"data: [DONE]\n\n");
+    let (response, outcome, error) = stream.finish();
+    assert_eq!(response.usage.as_ref().unwrap().input_tokens, Some(5));
+    assert_eq!(report.0, response);
+    assert_eq!(outcome, StreamOutcome::Completed);
+    assert_eq!(error, None);
+
+    // An error named as a value, not a member, is still read.
+    let mut stream = UsageStream::new(UsageFormat::OpenAiResponses, false);
+    stream.feed(b"data: {\"type\": \"error\", \"code\": \"rate_limit_exceeded\"}\n\n");
+    assert_eq!(stream.outcome(), StreamOutcome::Failed);
+    assert_eq!(stream.error_name(), Some("rate_limit_exceeded"));
+
+    // A last line without a line ending is read by a report too.
+    let mut stream = UsageStream::new(UsageFormat::OpenAiChat, false);
+    stream.feed(b"data: {\"usage\": {\"prompt_tokens\": 2, \"completion_tokens\": 1}}");
+    assert_eq!(stream.report().0.usage.unwrap().input_tokens, Some(2));
+    assert_eq!(stream.response().usage, None);
+}
