@@ -169,7 +169,6 @@ impl AgentInfoFetcher {
                 match fetched {
                     Ok(FetchInfoStatus::SameState) => {}
                     Ok(FetchInfoStatus::NewState(status)) => {
-                        state = Some(status.state_hash);
                         if writer.is_none() {
                             writer = match OneWayShmWriter::<NamedShmHandle>::new(info_path(
                                 &endpoint,
@@ -181,14 +180,22 @@ impl AgentInfoFetcher {
                                 }
                             };
                         }
+                        let mut published = false;
                         this.update(status.info, &mut completer, |info| {
                             if let Some(ref writer) = writer {
                                 // A payload that does not fit is logged and dropped by the
                                 // writer; the previously published info stays readable.
-                                _ = writer.write(info);
+                                published = writer.write(info);
                             }
                         })
                         .await;
+                        // Only advance the state hash once the new payload has actually been
+                        // published to shared memory; otherwise the agent keeps reporting
+                        // `SameState` and readers in other processes never observe the update.
+                        // Leaving `state` unchanged retries the write on the next iteration.
+                        if published {
+                            state = Some(status.state_hash);
+                        }
                     }
                     Err(e) => {
                         // We'll just return the old values as long as the endpoint is

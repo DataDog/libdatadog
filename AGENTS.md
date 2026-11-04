@@ -66,6 +66,14 @@ Iterate fastest with `cargo check -p <crate>` while editing; validate each affec
   ```bash
   cargo nextest run -p libdd-otel-thread-ctx --no-default-features --features shared-context
   ```
+- **libdd-regex**: ships two alternative engine features (`full` is the default, `regex-lite` is
+  the alternative). Only one engine is re-exported per build, so each mode needs its own run:
+  ```bash
+  # Default (full) engine — covered by the workspace test run
+  cargo nextest run -p libdd-regex
+  # regex-lite engine
+  cargo nextest run -p libdd-regex --no-default-features --features regex-lite
+  ```
 - **test_spawn_from_lib**: `cargo nextest run --package test_spawn_from_lib --features prefer-dynamic`.
 
 ### Code exploration
