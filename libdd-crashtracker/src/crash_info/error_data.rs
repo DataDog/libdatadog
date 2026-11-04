@@ -42,7 +42,7 @@ impl<'a> CachedElfResolvers<'a> {
     }
 
     /// Resolve names without dropping the ELF cache between stacks.
-    #[cfg(target_os = "linux")]
+    #[cfg(all(target_os = "linux", feature = "collector"))]
     pub(crate) fn symbolizer(&self) -> &blazesym::symbolize::Symbolizer {
         self.symbolizer
     }

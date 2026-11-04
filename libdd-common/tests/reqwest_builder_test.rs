@@ -1,7 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-#[cfg(feature = "reqwest")]
+#[cfg(all(feature = "reqwest", feature = "https"))]
 mod tests {
     use libdd_common::Endpoint;
     use tools::test_utils::{count_active_threads, create_temp_file_path, parse_http_request};
