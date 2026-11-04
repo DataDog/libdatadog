@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "exports": {
+    "rc_version": [],
+    "rc_alloc": ["length"],
+    "rc_buffer_ptr": ["buffer"],
+    "rc_buffer_len": ["buffer"],
+    "rc_free": ["buffer"],
+    "rc_error": [],
+    "rc_create": ["options"],
+    "rc_poll": ["client"],
+    "rc_events": ["client"],
+    "rc_complete": ["client", "operation", "reply"],
+    "rc_result": ["client"],
+    "rc_ack": ["client", "acknowledgement"],
+    "rc_cancel": ["client"],
+    "rc_close": ["client"]
+  }
+}

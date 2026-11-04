@@ -1,0 +1,7 @@
+# Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[toolchain]
+channel = "1.98.0"
+targets = ["wasm32-wasip1"]
+profile = "minimal"

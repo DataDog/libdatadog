@@ -1,0 +1,4 @@
+/target/
+/hosts/dotnet/bin/
+/hosts/dotnet/obj/
+/artifacts/

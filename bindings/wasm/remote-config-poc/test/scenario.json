@@ -1,0 +1,26 @@
+{
+  "options": {
+    "clientId": "shared-wasm-poc",
+    "runtimeId": "shared-runtime",
+    "service": "shared-service",
+    "env": "test",
+    "appVersion": "1.0.0",
+    "tracerVersion": "poc",
+    "timeoutMs": 30000,
+    "products": ["APM_TRACING"],
+    "tags": ["test:shared-wasm"]
+  },
+  "actions": [
+    { "kind": "poll" },
+    { "kind": "ack", "value": { "path": "datadog/2/APM_TRACING/poc/config", "state": 2 } },
+    { "kind": "cancel" },
+    { "kind": "timeout" },
+    { "kind": "poll" },
+    { "kind": "ack", "value": { "path": "datadog/2/APM_TRACING/poc/config", "state": 3, "error": "consumer rejected config" } },
+    { "kind": "poll" },
+    { "kind": "poll" },
+    { "kind": "poll" },
+    { "kind": "poll" },
+    { "kind": "poll" }
+  ]
+}
