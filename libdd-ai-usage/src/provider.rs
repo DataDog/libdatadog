@@ -198,7 +198,40 @@ impl ProviderUsage {
     /// Merge the usage of a later event of the same stream. A count reported
     /// by both is the larger, as stream counts are cumulative and an early
     /// event can carry a placeholder (Anthropic's `message_start` output).
+    /// A basis goes with the count it describes: it is the later event's
+    /// when that event's count is kept, so an early event of Google's
+    /// OpenAI-compatible endpoint that had no thinking yet does not mark a
+    /// later count that leaves thinking out as including it.
     pub fn merge(&mut self, later: &ProviderUsage) {
+        fn basis(
+            basis: &mut Option<&'static str>,
+            later_basis: Option<&'static str>,
+            count: Option<u64>,
+            later_count: Option<u64>,
+        ) {
+            let later_kept = match (count, later_count) {
+                (Some(a), Some(b)) => b >= a,
+                (None, Some(_)) => true,
+                (_, None) => false,
+            };
+            *basis = if later_kept {
+                later_basis.or(*basis)
+            } else {
+                basis.or(later_basis)
+            };
+        }
+        basis(
+            &mut self.input_basis,
+            later.input_basis,
+            self.input_tokens,
+            later.input_tokens,
+        );
+        basis(
+            &mut self.output_basis,
+            later.output_basis,
+            self.output_tokens,
+            later.output_tokens,
+        );
         fn larger(earlier: &mut Option<u64>, later: Option<u64>) {
             *earlier = match (*earlier, later) {
                 (Some(a), Some(b)) => Some(a.max(b)),
@@ -227,8 +260,6 @@ impl ProviderUsage {
             &mut self.reasoning_output_tokens,
             later.reasoning_output_tokens,
         );
-        self.input_basis = self.input_basis.or(later.input_basis);
-        self.output_basis = self.output_basis.or(later.output_basis);
         if later.input_tokens_by_modality.is_some() {
             self.input_tokens_by_modality = later.input_tokens_by_modality.clone();
         }
@@ -779,7 +810,11 @@ impl UsageStream {
             return;
         }
         if self.pending.is_empty() {
-            self.line(tail);
+            // Bounded as a line held across chunks is, so the usage read
+            // does not depend on where the transport split the stream.
+            if tail.len() <= MAX_STREAM_LINE_BYTES {
+                self.line(tail);
+            }
         } else if self.pending.len() + tail.len() <= MAX_STREAM_LINE_BYTES {
             let mut line = std::mem::take(&mut self.pending);
             line.extend_from_slice(tail);

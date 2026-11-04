@@ -160,10 +160,53 @@ fn stream_outcomes() {
         stream.response().usage.as_ref().unwrap().input_tokens,
         Some(3)
     );
+    // A line longer than the bound is skipped also when it arrives whole in
+    // one chunk, so the usage read does not depend on the chunk boundaries.
+    let long_usage = format!(
+        "data: {{\"usage\": {{\"prompt_tokens\": 7, \"completion_tokens\": 1}}, \"pad\": \"{}\"}}\n",
+        "x".repeat(libdd_ai_usage::MAX_STREAM_LINE_BYTES)
+    );
+    let mut whole = UsageStream::new(UsageFormat::OpenAiChat, false);
+    whole.feed(long_usage.as_bytes());
+    let mut split = UsageStream::new(UsageFormat::OpenAiChat, false);
+    let (head, tail) = long_usage.as_bytes().split_at(long_usage.len() / 2);
+    split.feed(head);
+    split.feed(tail);
+    assert_eq!(whole.response().usage, None);
+    assert_eq!(split.response().usage, None);
     // A final line without a line ending is read at the end.
     let mut stream = UsageStream::new(UsageFormat::OpenAiChat, false);
     stream.feed(b"data: [DONE]");
     assert_eq!(stream.finish().1, StreamOutcome::Completed);
+}
+
+fn gemini_compat_event(completion: u64, total: u64) -> String {
+    format!(
+        "data: {{\"choices\": [], \"usage\": {{\"prompt_tokens\": 10, \
+         \"completion_tokens\": {completion}, \"total_tokens\": {total}}}}}\n\n"
+    )
+}
+
+#[test]
+fn stream_basis_follows_the_merged_counts() {
+    // Google's OpenAI-compatible endpoint: an early event without thinking
+    // reads as output including reasoning; a later one whose total exceeds
+    // prompt and completion reports thinking the completion leaves out.
+    let mut stream = UsageStream::new(UsageFormat::GeminiOpenAiCompat, false);
+    stream.feed(gemini_compat_event(0, 10).as_bytes());
+    stream.feed(gemini_compat_event(5, 20).as_bytes());
+    let usage = stream.response().usage.clone().unwrap();
+    assert_eq!(usage.output_tokens, Some(5));
+    assert_eq!(usage.reasoning_output_tokens, Some(5));
+    assert_eq!(usage.output_basis, Some("excludes_reasoning"));
+
+    // The basis of the count kept wins also when it came first.
+    let mut stream = UsageStream::new(UsageFormat::GeminiOpenAiCompat, false);
+    stream.feed(gemini_compat_event(5, 20).as_bytes());
+    stream.feed(gemini_compat_event(0, 10).as_bytes());
+    let usage = stream.response().usage.clone().unwrap();
+    assert_eq!(usage.output_tokens, Some(5));
+    assert_eq!(usage.output_basis, Some("excludes_reasoning"));
 }
 
 #[test]
@@ -219,6 +262,8 @@ fn error_types() {
         ("CancelledError", Some("cancelled")),
         ("overloaded_error", Some("internal_server_error")),
         ("invalid_request_error", Some("bad_request_error")),
+        // The same failure as HTTP 413.
+        ("request_too_large", Some("api_error")),
         ("rate_limit_error", Some("rate_limit_error")),
         ("SomethingElse", None),
     ] {
@@ -241,6 +286,10 @@ fn error_types() {
     assert_eq!(classify_error(None, Some(200)), None);
     assert_eq!(classify_error(None, Some(429)), Some("rate_limit_error"));
     assert_eq!(classify_error(Some("429"), None), Some("rate_limit_error"));
+    assert_eq!(
+        classify_error(Some("request_too_large"), None),
+        classify_error(None, Some(413))
+    );
     // A known name wins over the status a transport translated it into.
     assert_eq!(
         classify_error(Some("APITimeoutError"), Some(500)),
