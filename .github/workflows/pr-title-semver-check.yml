@@ -59,17 +59,14 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Detect stable toolchain bump in ci-toolchain.toml
+      - name: Detect ci-toolchain.toml change
         id: toolchain
         run: |
           set -euo pipefail
           BASE_REF="${{ github.base_ref }}"
           git fetch origin "$BASE_REF"
-          read_stable() { grep -Po '^stable = "\K[^"]+' || true; }
-          OLD=$(git show "origin/$BASE_REF:ci-toolchain.toml" 2>/dev/null | read_stable)
-          NEW=$(read_stable < ci-toolchain.toml)
-          if [[ "$OLD" != "$NEW" ]]; then
-            echo "Stable toolchain changed: ${OLD:-<none>} -> $NEW; semver tools will be smoke-tested."
+          if git diff --name-only "origin/$BASE_REF"...HEAD | grep -qx 'ci-toolchain.toml'; then
+            echo "ci-toolchain.toml changed; semver tools will be smoke-tested."
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
             echo "changed=false" >> "$GITHUB_OUTPUT"
@@ -179,8 +176,8 @@ jobs:
         env:
           RUSTUP_TOOLCHAIN: ${{ steps.stable-version.outputs.version }}
 
-      - name: Smoke-test semver tools on the new stable toolchain
-        # A stable bump can move rustdoc's JSON format past what the pinned
+      - name: Smoke-test semver tools on the ci-toolchain.toml toolchain
+        # A ci-toolchain.toml change (e.g. a stable bump) can move rustdoc's JSON format past what the pinned
         # cargo-semver-checks / cargo-public-api support, which silently breaks
         # every later semver check. Run both tools once on a crate against itself
         # (baseline HEAD): identical source means any failure is tooling, never a
@@ -188,7 +185,7 @@ jobs:
         if: ${{ needs.detect-changes.outputs.stable_toolchain_changed == 'true' }}
         env:
           RUSTUP_TOOLCHAIN: ${{ steps.stable-version.outputs.version }}
-          PROBE_CRATE: libdd-common
+          PROBE_CRATE: libdd-ddsketch
         run: |
           set -uo pipefail
           FAILED=()
@@ -199,7 +196,7 @@ jobs:
             FAILED+=("cargo-public-api")
           fi
           if [[ ${#FAILED[@]} -gt 0 ]]; then
-            echo "::error title=Semver tools broken by stable toolchain bump::${FAILED[*]} failed on Rust $RUSTUP_TOOLCHAIN (crate $PROBE_CRATE). The new stable likely emits a rustdoc JSON format the pinned tool version does not support. Bump the tool version in this workflow (install-action step) or keep the previous stable in ci-toolchain.toml."
+            echo "::error title=Semver tools broken by ci-toolchain.toml change::${FAILED[*]} failed on Rust $RUSTUP_TOOLCHAIN (crate $PROBE_CRATE). The toolchain from ci-toolchain.toml likely emits a rustdoc JSON format the pinned tool version does not support. Bump the tool version in this workflow (install-action step) or revert the stable version in ci-toolchain.toml."
             exit 1
           fi
           echo "✅ cargo-semver-checks and cargo-public-api run on Rust $RUSTUP_TOOLCHAIN"
