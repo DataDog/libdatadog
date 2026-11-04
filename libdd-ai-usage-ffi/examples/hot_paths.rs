@@ -15,23 +15,53 @@ use dd_ai_usage_ffi::*;
 struct Counting;
 
 static ALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
+static LIVE: AtomicUsize = AtomicUsize::new(0);
+static PEAK: AtomicUsize = AtomicUsize::new(0);
 
-// SAFETY: forwards to the system allocator, counting calls.
+fn grow(by: usize) {
+    let live = LIVE.fetch_add(by, Ordering::Relaxed) + by;
+    PEAK.fetch_max(live, Ordering::Relaxed);
+}
+
+// SAFETY: forwards to the system allocator, counting calls and live bytes.
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
+        grow(layout.size());
         // SAFETY: forwarded.
         unsafe { System.alloc(layout) }
     }
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        LIVE.fetch_sub(layout.size(), Ordering::Relaxed);
         // SAFETY: forwarded.
         unsafe { System.dealloc(ptr, layout) }
     }
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, size: usize) -> *mut u8 {
         ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
+        LIVE.fetch_sub(layout.size(), Ordering::Relaxed);
+        grow(size);
         // SAFETY: forwarded.
         unsafe { System.realloc(ptr, layout, size) }
     }
+}
+
+/// The time of one call in milliseconds (best of 5) and the most memory
+/// it held at once beyond what was live before it.
+fn measure_burst(label: &str, mut call: impl FnMut()) {
+    let mut best = f64::MAX;
+    let mut peak = 0;
+    for _ in 0..5 {
+        let base = LIVE.load(Ordering::Relaxed);
+        PEAK.store(base, Ordering::Relaxed);
+        let start = Instant::now();
+        call();
+        best = best.min(start.elapsed().as_secs_f64() * 1e3);
+        peak = peak.max(PEAK.load(Ordering::Relaxed) - base);
+    }
+    println!(
+        "{label:<44} {best:>8.2} ms {:>8.1} MiB peak",
+        peak as f64 / (1024.0 * 1024.0)
+    );
 }
 
 #[global_allocator]
@@ -82,6 +112,74 @@ const GATEWAY: &str = r#"{"profile": "trajectory.gen_ai.gateway.request@0.1.0",
     "provider_operation_coverage": "complete", "cache_outcomes": ["miss"]}}"#;
 
 fn main() {
+    // 50,000 DogStatsD lines packed into UDS datagrams, caller's encoding
+    // and decoding included, as a gateway in another language pays them.
+    let lines: Vec<String> = (0..50_000)
+        .map(|i| {
+            format!(
+                "gen_ai.client.inference.usage.input_tokens:{i}|c|#gen_ai.operation.name:chat,\
+                 gen_ai.provider.name:openai,gen_ai.request.model:gpt-4o,\
+                 gen_ai.token.modality:unknown,trajectory.observation.point:gateway,\
+                 trajectory.profile:gen_ai.client.provider_attempt/0.1.0"
+            )
+        })
+        .collect();
+    measure_burst("pack 50k lines, JSON path", || {
+        let request = serde_json::json!({
+            "lines": lines,
+            "constant_tags": ["env:prod", "version:1.2"],
+            "max_payload": UDS_MAX_PAYLOAD,
+        })
+        .to_string();
+        let mut out = Buffer {
+            ptr: ptr::null_mut(),
+            len: 0,
+        };
+        // SAFETY: valid input and output.
+        unsafe { ddog_ai_usage_pack_dogstatsd(request.as_ptr(), request.len(), &mut out) };
+        // SAFETY: written by the library.
+        let text = unsafe { std::slice::from_raw_parts(out.ptr, out.len) };
+        let value: serde_json::Value = serde_json::from_slice(text).unwrap();
+        assert!(value["datagrams"].as_array().unwrap().len() > 100);
+        drop(value);
+        drop_out(&mut out);
+    });
+    measure_burst("pack 50k lines, text path", || {
+        let request = lines.join("\n");
+        let tags = "env:prod,version:1.2";
+        let mut out = Buffer {
+            ptr: ptr::null_mut(),
+            len: 0,
+        };
+        // SAFETY: valid inputs and output.
+        unsafe {
+            ddog_ai_usage_pack_dogstatsd_lines(
+                request.as_ptr(),
+                request.len(),
+                tags.as_ptr(),
+                tags.len(),
+                UDS_MAX_PAYLOAD,
+                ptr::null_mut(),
+                &mut out,
+            )
+        };
+        // SAFETY: written by the library.
+        let text = unsafe { std::slice::from_raw_parts(out.ptr, out.len) };
+        let datagrams: Vec<&[u8]> = text.split(|b| *b == 0).collect();
+        assert!(datagrams.len() > 100);
+        drop(datagrams);
+        drop_out(&mut out);
+    });
+    measure("dogstatsd_lines provider_attempt (text)", || {
+        let mut out = Buffer {
+            ptr: ptr::null_mut(),
+            len: 0,
+        };
+        // SAFETY: valid input and output.
+        unsafe { ddog_ai_usage_dogstatsd_lines(ATTEMPT.as_ptr(), ATTEMPT.len(), &mut out) };
+        drop_out(&mut out);
+    });
+
     for (label, doc) in [
         ("project provider_attempt", ATTEMPT),
         ("project token_breakdown", BREAKDOWN),

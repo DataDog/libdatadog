@@ -33,8 +33,8 @@ use libdd_ai_usage::{
     MetricError, PROVIDER_ID_HEADERS, Profile, ProviderResponse, StreamOutcome, UsageFormat,
     UsageStream, bedrock_arn_account, classify_error, classify_known_error, datadog_series,
     datadog_tag_value, gen_ai_provider_name, is_deployment_value, is_person_identifier,
-    is_service_tier, pack_dogstatsd_counted, parse_provider_body, project_result,
-    provider_id_attributes, retain_metrics, with_deployment_attributes_json,
+    is_service_tier, pack_dogstatsd_counted, pack_dogstatsd_joined, parse_provider_body,
+    project_result, provider_id_attributes, retain_metrics, with_deployment_attributes_json,
 };
 use serde_json::{Value, json};
 
@@ -202,12 +202,6 @@ unsafe fn text_or_error_call(
     // SAFETY: `out` is not null and the caller guarantees it is writable.
     unsafe { write(out, text) };
     status
-}
-
-/// Datagrams as one text: each datagram's lines joined by `\n`, datagrams
-/// separated by a NUL byte, which no DogStatsD line holds.
-fn nul_separated(datagrams: &[String]) -> String {
-    datagrams.join("\0")
 }
 
 /// Write `count` to `out` when it is not null.
@@ -447,13 +441,12 @@ pub unsafe extern "C" fn ddog_ai_usage_pack_dogstatsd_lines(
                 if max_payload == 0 {
                     return Err(invalid("max_payload must be a positive integer"));
                 }
-                let lines: Vec<&str> = lines
+                let lines = lines
                     .split('\n')
-                    .map(|line| line.strip_suffix('\r').unwrap_or(line))
-                    .collect();
-                let (datagrams, dropped) = pack_dogstatsd_counted(&lines, &tags, max_payload);
+                    .map(|line| line.strip_suffix('\r').unwrap_or(line));
+                let (text, dropped) = pack_dogstatsd_joined(lines, &tags, max_payload, '\0');
                 write_count(dropped_lines, dropped);
-                Ok(nul_separated(&datagrams))
+                Ok(text)
             }))
             .unwrap_or(Err(Failure::Internal("packing panicked")))
         })
@@ -809,10 +802,15 @@ pub unsafe extern "C" fn ddog_ai_usage_batch_take_dogstatsd_text(
                     .as_ref()
                     .ok_or(Failure::Internal("the batch is null"))?;
                 let tags = constant_tags_of(text(constant_tags, constant_tags_len))?;
-                let (datagrams, dropped) =
-                    take_batch(batch)?.dogstatsd_datagrams_counted(&tags, max_payload)?;
+                let lines = take_batch(batch)?.dogstatsd_lines()?;
+                let (text, dropped) = pack_dogstatsd_joined(
+                    lines.iter().map(String::as_str),
+                    &tags,
+                    max_payload,
+                    '\0',
+                );
                 write_count(dropped_lines, dropped);
-                Ok(nul_separated(&datagrams))
+                Ok(text)
             }))
             .unwrap_or(Err(Failure::Internal("encoding the batch panicked")))
         })

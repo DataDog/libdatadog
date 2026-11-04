@@ -586,6 +586,30 @@ fn dogstatsd_packing() {
     let (datagrams, dropped) = libdd_ai_usage::pack_dogstatsd_counted(&[line], &["env:prod"], 15);
     assert_eq!((datagrams.len(), dropped), (0, 1));
     assert!(pack_dogstatsd(&[""; 0], &[""; 0], 1432).is_empty());
+
+    // Packed into one text, the datagrams are the same.
+    let lines = [
+        "a:1|c|#x:y",
+        "b:2|c",
+        "",
+        "c:3|d|#k:v,w:z",
+        long.as_str(),
+        "d:4|c",
+        "e:5|c|#t:u",
+    ];
+    for tags in [
+        &[][..],
+        &["env:prod"][..],
+        &["env:prod", "", "version:1"][..],
+    ] {
+        for max in [10, 16, 25, 32, 43, 64, 1432] {
+            let (datagrams, dropped) = libdd_ai_usage::pack_dogstatsd_counted(&lines, tags, max);
+            let (joined, joined_dropped) =
+                libdd_ai_usage::pack_dogstatsd_joined(lines, tags, max, '\0');
+            assert_eq!(joined, datagrams.join("\0"), "{tags:?} {max}");
+            assert_eq!(joined_dropped, dropped, "{tags:?} {max}");
+        }
+    }
 }
 
 #[test]

@@ -80,6 +80,52 @@ pub fn pack_dogstatsd_counted<L: AsRef<str>, S: AsRef<str>>(
     (datagrams, dropped)
 }
 
+/// [`pack_dogstatsd_counted`] written into one text: the datagrams in
+/// order, each separated from the next by `separator` (a NUL byte for a
+/// caller that splits them itself), with no line or datagram copied on its
+/// own. Returns the text and the number of lines dropped for being longer
+/// than `max_payload` with their tags.
+pub fn pack_dogstatsd_joined<'a, S: AsRef<str>>(
+    lines: impl IntoIterator<Item = &'a str>,
+    constant_tags: &[S],
+    max_payload: usize,
+    separator: char,
+) -> (String, usize) {
+    let tags: Vec<&str> = constant_tags
+        .iter()
+        .map(AsRef::as_ref)
+        .filter(|tag| !tag.is_empty())
+        .collect();
+    // The tags joined by commas, and its length with its leading `|#` or `,`.
+    let joined = tags.join(",");
+    let suffix_len = if tags.is_empty() { 0 } else { joined.len() + 1 };
+    let mut out = String::new();
+    let mut datagram = 0;
+    let mut dropped = 0;
+    for line in lines.into_iter().filter(|line| !line.is_empty()) {
+        let tagged = line.contains("|#");
+        let len = line.len() + suffix_len + usize::from(suffix_len > 0 && !tagged);
+        if len > max_payload {
+            dropped += 1;
+            continue;
+        }
+        if datagram > 0 && datagram + 1 + len > max_payload {
+            out.push(separator);
+            datagram = 0;
+        } else if datagram > 0 {
+            out.push('\n');
+            datagram += 1;
+        }
+        out.push_str(line);
+        if suffix_len > 0 {
+            out.push_str(if tagged { "," } else { "|#" });
+            out.push_str(&joined);
+        }
+        datagram += len;
+    }
+    (out, dropped)
+}
+
 impl MetricBatch {
     /// The batch as DogStatsD datagrams: [`MetricBatch::dogstatsd_lines`]
     /// packed by [`pack_dogstatsd`].
