@@ -401,7 +401,9 @@ pub struct TelemetryCachedEntry {
 
 pub struct TelemetryCachedClient {
     pub worker: TelemetryWorkerHandle,
+    /// `None` when the segment hasn't been created yet, or a previous attempt failed.
     pub shm_writer: Option<OneWayShmWriter<NamedShmHandle>>,
+    shm_path: CString,
     pub telemetry_metrics: HashMap<String, ContextKey>,
     pub handle: Option<JoinHandle<()>>,
     pub shared: TelemetryCachedClientShmData,
@@ -460,19 +462,10 @@ impl TelemetryCachedClient {
         // Queue Start before another batch can send Stop to this worker.
         handle.send_start().ok();
 
-        let client = Self {
+        let mut client = Self {
             worker: handle,
-            shm_writer: {
-                let path = path_for_telemetry(service, env);
-                OneWayShmWriter::<NamedShmHandle>::new(path.clone())
-                    .inspect_err(|e| {
-                        warn!(
-                            "Could not create the telemetry cache at {}: {e}. Continuing without it.",
-                            path.to_string_lossy()
-                        )
-                    })
-                    .ok()
-            },
+            shm_writer: None,
+            shm_path: path_for_telemetry(service, env),
             shared: TelemetryCachedClientShmData::default(),
             telemetry_metrics: Default::default(),
             handle: None,
@@ -482,14 +475,27 @@ impl TelemetryCachedClient {
         client
     }
 
-    pub fn write_shm_file(&self) {
-        let Some(shm_writer) = &self.shm_writer else {
+    /// Creates the segment on first use, and again on later writes if a previous attempt
+    /// failed, so a transient failure does not disable the telemetry cache for good.
+    pub fn write_shm_file(&mut self) {
+        let Ok(buf) = bincode::serialize(&self.shared) else {
+            warn!("Failed to serialize telemetry data for shared memory");
             return;
         };
-        if let Ok(buf) = bincode::serialize(&self.shared) {
+        if self.shm_writer.is_none() {
+            match OneWayShmWriter::<NamedShmHandle>::new(self.shm_path.clone()) {
+                Ok(writer) => self.shm_writer = Some(writer),
+                Err(e) => {
+                    warn!(
+                        "Could not create the telemetry cache at {}: {e}. Continuing without it.",
+                        self.shm_path.to_string_lossy()
+                    );
+                    return;
+                }
+            }
+        }
+        if let Some(shm_writer) = &self.shm_writer {
             shm_writer.write(&buf);
-        } else {
-            warn!("Failed to serialize telemetry data for shared memory");
         }
     }
 
@@ -565,8 +571,8 @@ impl TelemetryCachedClient {
             let opened = async {
                 let file = {
                     #[cfg(unix)]
-                    if libdd_common::unix_utils::worker_file_outputs_restricted() {
-                        libdd_common::unix_utils::open_regular_for_read(&path)
+                    if libdd_process_utils::unix_utils::worker_file_outputs_restricted() {
+                        libdd_process_utils::unix_utils::open_regular_for_read(&path)
                             .map(tokio::fs::File::from_std)
                             .map_err(std::io::Error::from)
                     } else {
