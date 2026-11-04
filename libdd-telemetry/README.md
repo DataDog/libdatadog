@@ -91,6 +91,7 @@ using vanilla `reqwless` and a caller-provided transport:
 cargo check -p libdd-telemetry --lib --no-default-features --features alloc
 cargo check -p libdd-telemetry --lib --no-default-features --features signal-safe
 cargo run -p libdd-telemetry --example signal_safe_metrics --no-default-features --features signal-safe
+cargo nextest run -p libdd-telemetry --no-default-features --features signal-safe --test signal_safe_no_alloc
 ```
 
 Allocate and populate the application and host identity before entering the
@@ -99,8 +100,16 @@ them. The encoding and HTTP layers do not allocate. Async-signal-safety of a
 full submission still depends on the transport, resolver, executor, and
 buffers provided by the caller.
 
+The example demonstrates submission with an in-memory transport. The
+`signal_safe_no_alloc` integration test uses `assert_no_alloc` to verify that
+encoding and submission make no allocator calls, for both successful and
+unsuccessful HTTP responses.
+
 `send_metrics` accepts up to `MAX_EXTRA_HEADERS` caller-provided headers, such
-as `DD-API-KEY` for direct intake submission. Each request is sent with
+as `DD-API-KEY` for direct intake submission. The caller supplies valid HTTP
+header names and values, including the application language and tracer version
+used as header values; this layer passes them through unchanged.
+Each request is sent with
 `Connection: close` and its response body is not read, so use a fresh
 connection per call.
 

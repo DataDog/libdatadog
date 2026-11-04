@@ -3573,6 +3573,7 @@ name = "libdd-telemetry"
 version = "11.0.0"
 dependencies = [
  "anyhow",
+ "assert_no_alloc",
  "async-trait",
  "base64 0.22.1",
  "bytes",

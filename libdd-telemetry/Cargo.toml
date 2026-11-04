@@ -18,6 +18,10 @@ bench = false
 name = "signal_safe_metrics"
 required-features = ["signal-safe"]
 
+[[test]]
+name = "signal_safe_no_alloc"
+required-features = ["signal-safe"]
+
 [[example]]
 name = "tm-metrics-worker-test"
 required-features = ["std"]
@@ -107,6 +111,7 @@ libc = { workspace = true, optional = true }
 winver = { workspace = true, optional = true }
 
 [dev-dependencies]
+assert_no_alloc.workspace = true
 # Examples only call fmt(); ansi/tracing-log/smallvec extras not needed.
 tracing-subscriber = { workspace = true, features = ["fmt"] }
 tokio = { workspace = true, features = ["sync", "io-util", "rt-multi-thread"] }
