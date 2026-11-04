@@ -233,26 +233,48 @@ impl<S, C: HttpClientCapability + SleepCapability> ConfigFetcherState<S, C> {
     /// Sets the apply state on a stored file.
     pub fn set_config_state(&self, file: &RemoteConfigPath, state: ConfigApplyState) {
         if let Some(target_file) = self.target_files_by_path.lock_or_panic().get_mut(file) {
-            match state {
-                ConfigApplyState::Unacknowledged => {
-                    target_file.state.apply_state = 1;
-                    target_file.state.apply_error = "".to_string();
-                }
-                ConfigApplyState::Acknowledged => {
-                    target_file.state.apply_state = 2;
-                    target_file.state.apply_error = "".to_string();
-                }
-                ConfigApplyState::Error(error) => {
-                    target_file.state.apply_state = 3;
-                    target_file.state.apply_error = error;
-                }
-            }
+            set_apply_state(&mut target_file.state, state);
+        }
+    }
+
+    /// Sets the apply state of `file`, unless its path has already moved on to a newer version,
+    /// in which case the state is dropped. See `RefcountingStorage::set_config_state` for the
+    /// known bugs of this.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn set_file_config_state(&self, file: &S, state: ConfigApplyState)
+    where
+        S: RefcountedFile,
+    {
+        if let Some(target_file) = self
+            .target_files_by_path
+            .lock_or_panic()
+            .get_mut(&file.refcount().path)
+            && std::ptr::eq(Arc::as_ptr(&target_file.handle), file)
+        {
+            set_apply_state(&mut target_file.state, state);
         }
     }
 
     pub fn stats(&self) -> ConfigFetcherStateStats {
         ConfigFetcherStateStats {
             active_files: self.target_files_by_path.lock_or_panic().len() as u32,
+        }
+    }
+}
+
+fn set_apply_state(target: &mut ConfigState, state: ConfigApplyState) {
+    match state {
+        ConfigApplyState::Unacknowledged => {
+            target.apply_state = 1;
+            target.apply_error = "".to_string();
+        }
+        ConfigApplyState::Acknowledged => {
+            target.apply_state = 2;
+            target.apply_error = "".to_string();
+        }
+        ConfigApplyState::Error(error) => {
+            target.apply_state = 3;
+            target.apply_error = error;
         }
     }
 }

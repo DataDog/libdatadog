@@ -207,9 +207,18 @@ where
         }
     }
 
-    /// Sets the apply state on a stored file.
+    /// Sets the apply state on a stored file. If the file's path has already moved on to a newer
+    /// version, the state is dropped.
+    ///
+    /// Known bugs:
+    /// - The apply state is a property of each client applying a file, not of the file, yet it is
+    ///   stored once per path and shared by every client of this storage. Clients applying the same
+    ///   version can have different outcomes (one fails, another succeeds); whichever reports last
+    ///   wins, and all of them report that outcome as their own.
+    /// - Only the latest version of a path has a state. A client still on a previous version
+    ///   (because another client fetched the newer one first) has its result dropped.
     pub fn set_config_state(&self, file: &S::StoredFile, state: ConfigApplyState) {
-        self.state.set_config_state(&file.refcount().path, state)
+        self.state.set_file_config_state(file, state)
     }
 
     pub fn invariants(&self) -> &ConfigInvariants {
@@ -508,6 +517,82 @@ pub mod tests {
             held_by_a[0].store.data.lock().unwrap().contents,
             "v1",
             "the file the other target still lists was changed under it"
+        );
+    }
+
+    /// A target may report the apply state of a version its path has already moved on from,
+    /// because another target fetched the new version meanwhile. That state belongs to the old
+    /// version: the new one must not be reported with it.
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn late_apply_state_of_old_version_is_not_reported_for_new_one() {
+        let server = RemoteConfigServer::spawn();
+        let both = vec![DUMMY_TARGET.clone(), OTHER_TARGET.clone()];
+        server
+            .files
+            .lock()
+            .unwrap()
+            .insert(PATH_FIRST.clone(), (both.clone(), 1, "v1".to_string()));
+
+        let storage = RefcountingStorage::new(
+            RcFileStorage::default(),
+            ConfigFetcherState::with_client(
+                server.dummy_options().invariants,
+                NativeCapabilities::new_periodic(),
+            ),
+        );
+        let mut fetcher = ConfigFetcher::new(storage.clone(), storage.state.clone())
+            .await
+            .unwrap();
+        let capabilities = server.dummy_product_capabilities();
+        let mut state_a = ConfigClientState::default();
+        let mut state_b = ConfigClientState::default();
+        let runtime_id = "1b8c1a0c-4c7f-4d33-9e44-7c1f3d1bd2a1";
+
+        let held_by_a = fetcher
+            .fetch_once(runtime_id, &DUMMY_TARGET, &capabilities, "a", &mut state_a)
+            .await
+            .unwrap()
+            .unwrap();
+        fetcher
+            .fetch_once(runtime_id, &OTHER_TARGET, &capabilities, "b", &mut state_b)
+            .await
+            .unwrap()
+            .unwrap();
+
+        server
+            .files
+            .lock()
+            .unwrap()
+            .insert(PATH_FIRST.clone(), (both, 2, "v2".to_string()));
+        fetcher
+            .fetch_once(runtime_id, &OTHER_TARGET, &capabilities, "b", &mut state_b)
+            .await
+            .unwrap()
+            .unwrap();
+
+        storage.set_config_state(&held_by_a[0], ConfigApplyState::Error("v1 failed".into()));
+
+        fetcher
+            .fetch_once(runtime_id, &OTHER_TARGET, &capabilities, "b", &mut state_b)
+            .await
+            .unwrap();
+        let request = server.last_request.lock().unwrap();
+        let config_states = &request
+            .as_ref()
+            .unwrap()
+            .client
+            .as_ref()
+            .unwrap()
+            .state
+            .as_ref()
+            .unwrap()
+            .config_states;
+        assert_eq!(config_states.len(), 1);
+        assert_eq!(config_states[0].version, 2);
+        assert_eq!(
+            config_states[0].apply_error, "",
+            "v2 was reported with the apply state of v1"
         );
     }
 
