@@ -32,6 +32,10 @@ pub struct CrashtrackerConfiguration {
     additional_files: Vec<String>,
     #[serde(default)]
     collect_all_threads: bool,
+    /// Read OTel thread-level contexts from all threads at crash time and include
+    /// them in the crash report. Requires the `otel-thread-ctx` feature.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    collect_otel_thread_contexts: bool,
     create_alt_stack: bool,
     // Whether to demangle symbol names in stack traces
     demangle_names: bool,
@@ -66,6 +70,7 @@ impl PartialEq for CrashtrackerConfiguration {
     fn eq(&self, other: &Self) -> bool {
         self.additional_files == other.additional_files
             && self.collect_all_threads == other.collect_all_threads
+            && self.collect_otel_thread_contexts == other.collect_otel_thread_contexts
             && self.create_alt_stack == other.create_alt_stack
             && self.demangle_names == other.demangle_names
             && self.endpoint == other.endpoint
@@ -157,6 +162,10 @@ impl CrashtrackerConfiguration {
         self.collect_all_threads
     }
 
+    pub fn collect_otel_thread_contexts(&self) -> bool {
+        self.collect_otel_thread_contexts
+    }
+
     pub fn create_alt_stack(&self) -> bool {
         self.create_alt_stack
     }
@@ -211,6 +220,10 @@ impl CrashtrackerConfiguration {
 
     pub fn set_collect_all_threads(&mut self, collect: bool) {
         self.collect_all_threads = collect;
+    }
+
+    pub fn set_collect_otel_thread_contexts(&mut self, collect: bool) {
+        self.collect_otel_thread_contexts = collect;
     }
 
     pub fn set_max_threads(&mut self, max: usize) {

@@ -77,6 +77,15 @@ fn read_remote_memory(pid: u32, addr: u64, buf: &mut [u8]) -> Result<(), OtelTls
     Ok(())
 }
 
+/// Read the 8-byte TLS slot value (a record pointer) from `/proc/<pid>/mem`.
+///
+/// Returns `Ok(0)` if the slot is null (no context attached on that thread).
+pub(crate) fn read_tls_slot_value(pid: u32, slot_addr: u64) -> Result<u64, OtelTlsError> {
+    let mut buf = [0u8; 8];
+    read_remote_memory(pid, slot_addr, &mut buf)?;
+    Ok(u64::from_ne_bytes(buf))
+}
+
 // ---------------------------------------------------------------------------
 // Record decoding
 // ---------------------------------------------------------------------------

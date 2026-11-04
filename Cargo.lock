@@ -463,7 +463,11 @@ dependencies = [
  "libc",
  "libdd-common",
  "libdd-crashtracker",
+<<<<<<< HEAD
  "libdd-regex",
+=======
+ "libdd-otel-thread-ctx",
+>>>>>>> 88c5316b0 (feat: collect all thread's contexts)
  "nix 0.29.0",
  "once_cell",
  "os_info",
