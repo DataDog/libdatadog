@@ -7,7 +7,7 @@
 
 use std::ptr;
 
-use libdd_ai_usage_ffi::*;
+use dd_ai_usage_ffi::*;
 use serde_json::{Value, json};
 
 fn empty() -> Buffer {
@@ -127,6 +127,7 @@ fn null_pointers_are_internal() {
         );
         take(out);
         assert!(ddog_ai_usage_batch_is_empty(ptr::null()));
+        assert_eq!(ddog_ai_usage_batch_len(ptr::null()), 0);
         ddog_ai_usage_batch_drop(ptr::null_mut());
         assert_eq!(
             ddog_ai_usage_stream_feed(ptr::null_mut(), ptr::null(), 0),
@@ -145,11 +146,22 @@ fn batch_to_dogstatsd_datagrams() {
     unsafe {
         assert_eq!(ddog_ai_usage_batch_new(&mut batch), Status::Ok);
         assert!(ddog_ai_usage_batch_is_empty(batch));
-        for _ in 0..3 {
+        assert_eq!(ddog_ai_usage_batch_len(batch), 0);
+        let mut one_len = 0;
+        for i in 0..3 {
             let mut out = empty();
             let status = ddog_ai_usage_batch_add(batch, ATTEMPT.as_ptr(), ATTEMPT.len(), &mut out);
             assert_eq!(status, Status::Ok);
             assert_eq!(json_of(out), json!({"issues": []}));
+            // Counters are summed into their series; each Histogram sample
+            // is a point of its own.
+            let len = ddog_ai_usage_batch_len(batch);
+            if i == 0 {
+                one_len = len;
+                assert!(len > 0);
+            } else {
+                assert!(len > one_len);
+            }
         }
         let rejected = r#"{"profile": "nope@1"}"#;
         let mut out = empty();
@@ -183,6 +195,7 @@ fn batch_to_dogstatsd_datagrams() {
                 .any(|l| { l.starts_with("gen_ai.client.inference.usage.input_tokens:30|c|#") })
         );
         assert!(ddog_ai_usage_batch_is_empty(batch));
+        assert_eq!(ddog_ai_usage_batch_len(batch), 0);
 
         let mut out = empty();
         let status =
@@ -396,6 +409,56 @@ fn provider_ids_and_packing() {
         json!({"lines": [], "max_payload": 0}),
     );
     assert_eq!(status, Status::Rejected);
+}
+
+#[test]
+fn provider_id_headers() {
+    let headers = |provider: &str| {
+        let mut out = empty();
+        // SAFETY: valid input and output.
+        let status = unsafe {
+            ddog_ai_usage_provider_id_headers(provider.as_ptr(), provider.len(), &mut out)
+        };
+        (status, json_of(out))
+    };
+    assert_eq!(
+        headers("openai"),
+        (Status::Ok, json!(["openai-organization", "openai-project"]))
+    );
+    assert_eq!(
+        headers("anthropic"),
+        (Status::Ok, json!(["anthropic-organization-id"]))
+    );
+    assert_eq!(headers("aws.bedrock"), (Status::Ok, json!([])));
+    let (status, all) = headers("");
+    assert_eq!(status, Status::Ok);
+    assert_eq!(
+        all,
+        json!([
+            "anthropic-organization-id",
+            "openai-organization",
+            "openai-project"
+        ])
+    );
+    // Every header listed is one the id extraction reads.
+    for (header, value) in [
+        ("anthropic-organization-id", "org-1"),
+        ("openai-organization", "acme"),
+        ("openai-project", "proj_1"),
+    ] {
+        let provider = if header.starts_with("anthropic") {
+            "anthropic"
+        } else {
+            "openai"
+        };
+        let input = json!({"provider_name": provider, "headers": {header: value}}).to_string();
+        let mut out = empty();
+        // SAFETY: valid input and output.
+        let status = unsafe { ddog_ai_usage_provider_ids(input.as_ptr(), input.len(), &mut out) };
+        assert_eq!(status, Status::Ok);
+        let ids = json_of(out);
+        assert_eq!(ids.as_object().unwrap().len(), 1, "{header}: {ids}");
+    }
 }
 
 #[test]

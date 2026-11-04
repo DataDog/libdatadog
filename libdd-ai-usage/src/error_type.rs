@@ -41,7 +41,9 @@ pub const ERROR_TYPES: [&str; 12] = [
 const ERROR_NAMES: [(&str, &str); 35] = [
     // Anthropic and OpenAI error types and codes.
     ("invalid_request_error", ERROR_TYPE_BAD_REQUEST),
-    ("request_too_large", ERROR_TYPE_BAD_REQUEST),
+    // Anthropic's type for HTTP 413, which has no `error.type` of its own:
+    // `api_error`, as the status and an SDK's generic status error read.
+    ("request_too_large", ERROR_TYPE_API),
     ("permission_error", ERROR_TYPE_PERMISSION_DENIED),
     ("overloaded_error", ERROR_TYPE_INTERNAL_SERVER),
     // SDK exception classes (OpenAI, Anthropic, LiteLLM).

@@ -157,6 +157,25 @@ impl MetricBatch {
             .all(|group| group.counters.is_empty() && group.histograms.is_empty())
     }
 
+    /// The number of points the batch holds: one per Counter series and one
+    /// per Histogram sample, as [`MetricBatch::points`] returns them. Series
+    /// of resources whose Datadog tags normalize alike are still counted
+    /// apart, so the DogStatsD lines can be fewer, never more. For a flush
+    /// threshold; it encodes nothing.
+    pub fn len(&self) -> usize {
+        self.groups
+            .values()
+            .map(|group| {
+                group.counters.len()
+                    + group
+                        .histograms
+                        .values()
+                        .map(|(_, samples)| samples.values.len())
+                        .sum::<usize>()
+            })
+            .sum()
+    }
+
     /// The batch as points: per resource and profile, one point per Counter
     /// series with its sum, and one point per Histogram sample.
     pub fn points(&self) -> Vec<(Attributes, Profile, Vec<MetricPoint>)> {
@@ -241,6 +260,9 @@ mod tests {
             .filter(|p| p.name == "gen_ai.client.inference.duration")
             .count();
         assert_eq!(durations, 2);
+        // One point per Counter series, one per Histogram sample.
+        assert_eq!(batch.len(), points.len());
+        assert_eq!(MetricBatch::new().len(), 0);
     }
 
     #[test]

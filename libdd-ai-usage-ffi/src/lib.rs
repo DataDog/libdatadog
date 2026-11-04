@@ -30,10 +30,10 @@ use std::{ptr, slice};
 
 use libdd_ai_usage::{
     Attributes, DOGSTATSD_UDP_MAX_PAYLOAD, DOGSTATSD_UDS_MAX_PAYLOAD, ErrorCode, Json, MetricBatch,
-    MetricError, Profile, ProviderResponse, StreamOutcome, UsageFormat, UsageStream,
-    bedrock_arn_account, classify_error, datadog_series, datadog_tag_value, gen_ai_provider_name,
-    is_deployment_value, is_person_identifier, is_service_tier, pack_dogstatsd,
-    parse_provider_body, project_result, provider_id_attributes, retain_metrics,
+    MetricError, PROVIDER_ID_HEADERS, Profile, ProviderResponse, StreamOutcome, UsageFormat,
+    UsageStream, bedrock_arn_account, classify_error, datadog_series, datadog_tag_value,
+    gen_ai_provider_name, is_deployment_value, is_person_identifier, is_service_tier,
+    pack_dogstatsd, parse_provider_body, project_result, provider_id_attributes, retain_metrics,
     with_deployment_attributes_json,
 };
 use serde_json::{Value, json};
@@ -366,6 +366,25 @@ pub unsafe extern "C" fn ddog_ai_usage_batch_is_empty(batch: *const Batch) -> bo
         })
     }))
     .unwrap_or(true)
+}
+
+/// The number of points `batch` holds: one per Counter series and one per
+/// Histogram sample. The DogStatsD lines taken can be fewer (series whose
+/// tags normalize alike share a line), never more. For a flush threshold. A
+/// null batch holds none.
+///
+/// # Safety
+///
+/// `batch` must be null or a live batch from [`ddog_ai_usage_batch_new`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ddog_ai_usage_batch_len(batch: *const Batch) -> usize {
+    catch_unwind(AssertUnwindSafe(|| {
+        // SAFETY: the caller guarantees a live batch or null.
+        unsafe { batch.as_ref() }.map_or(0, |batch| {
+            batch.inner.lock().map(|inner| inner.len()).unwrap_or(0)
+        })
+    }))
+    .unwrap_or(0)
 }
 
 /// Take every point of `batch`, leaving it empty, and write it as DogStatsD
@@ -701,6 +720,42 @@ pub unsafe extern "C" fn ddog_ai_usage_datadog_tag_value(
                 text(value, value_len).map(|value| Some(datadog_tag_value(value)))
             }))
             .unwrap_or(None)
+        })
+    }
+}
+
+/// The lower-case names of the response headers
+/// [`ddog_ai_usage_provider_ids`] reads for the provider
+/// `provider_name[..provider_name_len]` (a `gen_ai.provider.name`, such as
+/// `openai`), so a gateway fetches exactly those: writes `["openai-organization",
+/// "openai-project"]`. An empty name lists the headers of every provider; a
+/// provider whose ids come from no header has none.
+///
+/// # Safety
+///
+/// `provider_name` must point to `provider_name_len` readable bytes (or
+/// `provider_name_len` must be 0), and `out` must be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ddog_ai_usage_provider_id_headers(
+    provider_name: *const u8,
+    provider_name_len: usize,
+    out: *mut Buffer,
+) -> Status {
+    // SAFETY: forwarded from the caller.
+    unsafe {
+        json_call(out, || {
+            catch_unwind(AssertUnwindSafe(|| {
+                let provider = text(provider_name, provider_name_len)
+                    .ok_or(Failure::Internal("provider_name is not UTF-8"))?;
+                let mut headers: Vec<&str> = Vec::new();
+                for (name, _, header) in PROVIDER_ID_HEADERS {
+                    if (provider.is_empty() || provider == name) && !headers.contains(&header) {
+                        headers.push(header);
+                    }
+                }
+                Ok(json!(headers))
+            }))
+            .unwrap_or(Err(Failure::Internal("listing the headers panicked")))
         })
     }
 }

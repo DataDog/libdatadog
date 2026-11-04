@@ -130,6 +130,18 @@ enum ddog_ai_usage_Status ddog_ai_usage_batch_add(const struct ddog_ai_usage_Bat
 bool ddog_ai_usage_batch_is_empty(const struct ddog_ai_usage_Batch *batch);
 
 /**
+ * The number of points `batch` holds: one per Counter series and one per
+ * Histogram sample. The DogStatsD lines taken can be fewer (series whose
+ * tags normalize alike share a line), never more. For a flush threshold. A
+ * null batch holds none.
+ *
+ * # Safety
+ *
+ * `batch` must be null or a live batch from [`ddog_ai_usage_batch_new`].
+ */
+uintptr_t ddog_ai_usage_batch_len(const struct ddog_ai_usage_Batch *batch);
+
+/**
  * Take every point of `batch`, leaving it empty, and write it as DogStatsD
  * datagrams: `{"datagrams": ["line\nline", ...]}`. Each datagram is at most
  * `max_payload` bytes ([`UDP_MAX_PAYLOAD`] or [`UDS_MAX_PAYLOAD`]), except a
@@ -273,6 +285,23 @@ enum ddog_ai_usage_Status ddog_ai_usage_error_type(const uint8_t *name,
 enum ddog_ai_usage_Status ddog_ai_usage_datadog_tag_value(const uint8_t *value,
                                                           uintptr_t value_len,
                                                           struct ddog_ai_usage_Buffer *out);
+
+/**
+ * The lower-case names of the response headers
+ * [`ddog_ai_usage_provider_ids`] reads for the provider
+ * `provider_name[..provider_name_len]` (a `gen_ai.provider.name`, such as
+ * `openai`), so a gateway fetches exactly those: writes `["openai-organization",
+ * "openai-project"]`. An empty name lists the headers of every provider; a
+ * provider whose ids come from no header has none.
+ *
+ * # Safety
+ *
+ * `provider_name` must point to `provider_name_len` readable bytes (or
+ * `provider_name_len` must be 0), and `out` must be null or writable.
+ */
+enum ddog_ai_usage_Status ddog_ai_usage_provider_id_headers(const uint8_t *provider_name,
+                                                            uintptr_t provider_name_len,
+                                                            struct ddog_ai_usage_Buffer *out);
 
 /**
  * The deployment attributes a provider's response names, from the request

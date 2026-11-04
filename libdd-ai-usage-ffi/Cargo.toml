@@ -16,6 +16,9 @@ include = ["src/**/*.rs", "include/*.h", "cbindgen.toml", "Cargo.toml", "README.
 [lib]
 # The library has no dependency on libdd-common-ffi, so that it can be
 # published to crates.io and loaded on its own (dlopen, LuaJIT FFI, ctypes).
+# Loaded on its own, it is named for its C prefix: `libdd_ai_usage_ffi.so`
+# (`.dylib`, `.a`; `dd_ai_usage_ffi.dll`), not `liblibdd_ai_usage_ffi.so`.
+name = "dd_ai_usage_ffi"
 crate-type = ["lib", "staticlib", "cdylib"]
 bench = false
 
