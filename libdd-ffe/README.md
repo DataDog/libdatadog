@@ -98,6 +98,24 @@ headers are set explicitly, without the common builder's entity headers.
   degradation/drop metrics retain their names and units. Internal field-loss
   metadata is never sent in EVP. Event Debug output omits customer fields.
 
+## Split features on exposures and evaluation counts
+
+The SDK routes each split feature by destination and sends one flat JSON
+object per destination: `FfeExposure.features_json` for exposures and
+`FfeFlagEvaluation.features_json` for evaluation counts. Values are strings,
+numbers or booleans; other values are skipped. At most 256 features are kept,
+in sorted key order, and keys or strings over 256 Unicode characters are
+skipped. Numbers are written as doubles. Empty, invalid or non-object JSON
+means no features and never rejects the event.
+
+- Exposures write a top-level `features` object, omitted when empty. Features
+  are not part of exposure deduplication.
+- Evaluation counts write a top-level `features` object on each row, omitted
+  when empty, in every tier and consent mode. Rows with different features
+  are never merged, in the full or the degraded tier. Payload-limit
+  degradation keeps features, and an oversized single-observation
+  submission is retried with them.
+
 ### Native integration and compatibility
 
 Build the C caller against matching generated headers and native artifacts.

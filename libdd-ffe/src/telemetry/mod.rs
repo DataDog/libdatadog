@@ -5,6 +5,8 @@
 pub mod evaluation_metrics;
 #[cfg(feature = "exposure-events")]
 pub mod exposures;
+#[cfg(any(feature = "exposure-events", feature = "flagevaluation-evp"))]
+pub mod features;
 #[cfg(feature = "flagevaluation-evp")]
 pub mod flagevaluation;
 

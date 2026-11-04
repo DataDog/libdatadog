@@ -93,6 +93,7 @@ mod tests {
             allocation_key: allocation_key.to_owned(),
             variant: variant.to_owned(),
             serial_id: None,
+            features_json: String::new(),
         }
     }
 

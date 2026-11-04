@@ -45,7 +45,8 @@ pub struct FfeSnapshotState {
 /// rejected observations are not retained. `Accepted` is not a delivery guarantee.
 /// Oversized observations are retried once without targeting key or event context;
 /// a successfully accepted reduced observation also returns `Accepted`. Required
-/// metadata and optional flag dimensions must still fit the IPC packet limit.
+/// metadata, optional flag dimensions and features must still fit the IPC packet
+/// limit.
 /// The sidecar owns hashing, aggregation, final EVP encoding and HTTP delivery.
 ///
 /// Context comes exclusively from `attributes`; `evaluation_context_json` is
@@ -205,6 +206,11 @@ fn build_request(
     let variant = optional_text(source.variant)?;
     let allocation = optional_text(source.allocation_key)?;
     let rule = optional_text(source.targeting_rule_key)?;
+    // Feature input larger than one packet cannot fit; omit it without parsing.
+    let features = optional_text(source.features_json)
+        .ok()
+        .flatten()
+        .and_then(service::canonical_features_json);
     let mut omissions = FieldOmissions::default();
     omissions.targeting_key_invalid = snapshot.targeting_key_invalid;
     let mut is_degraded = false;
@@ -235,6 +241,7 @@ fn build_request(
         variant.unwrap_or_default(),
         allocation.unwrap_or_default(),
         rule.unwrap_or_default(),
+        features.as_deref().unwrap_or_default(),
     ] {
         bytes = bytes
             .checked_add(value.len())
@@ -279,6 +286,7 @@ fn build_request(
             .then_some(service::FlagEvalEventContext { evaluation, dd }),
         error: safe_error(source.error_message),
         runtime_default_used: source.runtime_default_used,
+        features,
         observe_full_evaluation_data: source.observe_full_evaluation_data,
         is_degraded,
         field_omissions: omissions,
@@ -329,6 +337,7 @@ mod tests {
             error_message: "".into(),
             runtime_default_used: false,
             observe_full_evaluation_data: consent,
+            features_json: "".into(),
         }
     }
 
@@ -748,6 +757,37 @@ mod tests {
                 assert_eq!(serde_json::to_value(&row).unwrap(), before);
                 assert_eq!(row.field_omissions, omissions);
             }
+        }
+    }
+
+    #[test]
+    fn features_are_canonicalized_and_survive_identity_degradation() {
+        let oversized = "x".repeat(libdd_ipc::max_message_size());
+        for consent in [false, true] {
+            for target in ["jane", oversized.as_str()] {
+                let mut source = event(consent);
+                source.targeting_key = target.into();
+                source.features_json = r#"{"b":true,"a":2}"#.into();
+                let row = convert(&source, &[], FfeSnapshotState::default());
+                assert_eq!(row.features.as_deref(), Some(r#"{"a":2.0,"b":true}"#));
+            }
+        }
+    }
+
+    #[test]
+    fn malformed_or_oversized_features_are_omitted_without_rejecting() {
+        let invalid = [0xffu8];
+        let oversized = "x".repeat(libdd_ipc::max_message_size() + 1);
+        for features in [
+            CharSlice::from_bytes(&invalid),
+            "not json".into(),
+            oversized.as_str().into(),
+        ] {
+            let mut source = event(true);
+            source.features_json = features;
+            let row = convert(&source, &[], FfeSnapshotState::default());
+            assert!(row.features.is_none());
+            assert_eq!(row.evaluation_count, 1);
         }
     }
 

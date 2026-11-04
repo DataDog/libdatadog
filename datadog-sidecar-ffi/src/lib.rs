@@ -33,7 +33,7 @@ use datadog_sidecar::service::{
     FlagKey, InstanceId, RuntimeMetadata, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
     SidecarFlushOptions, TargetingRuleKey, VariantKey,
     blocking::{self, SidecarTransport},
-    prune_context_json,
+    canonical_features_json, prune_context_json,
 };
 use datadog_sidecar::shm_remote_config::{RemoteConfigReader, path_for_remote_config};
 use libc::c_char;
@@ -1047,6 +1047,11 @@ pub struct FfeExposure<'a> {
     pub variant: CharSlice<'a>,
     pub serial_id: i32,
     pub has_serial_id: bool,
+    /// UTF-8 JSON object of the split features routed to exposures, mapping a
+    /// key to a string, number or boolean. Empty, invalid or non-object input
+    /// means no features and never rejects the exposure. Not part of
+    /// deduplication.
+    pub features_json: CharSlice<'a>,
 }
 
 #[repr(C)]
@@ -1080,6 +1085,12 @@ pub struct FfeFlagEvaluation<'a> {
     pub runtime_default_used: bool,
     /// Consent captured from the configuration used for this evaluation.
     pub observe_full_evaluation_data: bool,
+    /// UTF-8 JSON object of the split features routed to evaluation counts,
+    /// mapping a key to a string, number or boolean. Rows with different
+    /// features are counted separately. Kept regardless of consent. Empty,
+    /// invalid or non-object input means no features and never rejects the
+    /// evaluation.
+    pub features_json: CharSlice<'a>,
 }
 
 /// Send structured Feature Flags exposure events to the sidecar. The sidecar owns
@@ -1281,6 +1292,7 @@ fn ffe_exposure_from_ffi(exposure: &FfeExposure<'_>) -> Result<SidecarFfeExposur
         allocation_key: char_slice_to_string(exposure.allocation_key)?,
         variant: char_slice_to_string(exposure.variant)?,
         serial_id: exposure.has_serial_id.then_some(exposure.serial_id),
+        features_json: optional_string_if_valid_utf8(exposure.features_json).unwrap_or_default(),
     })
 }
 
@@ -1348,6 +1360,9 @@ fn ffe_flag_evaluation_from_ffi(
             EvalError::from_message(event.error_message.try_to_utf8().unwrap_or("GENERAL"))
         },
         runtime_default_used: event.runtime_default_used,
+        features: optional_string_if_valid_utf8(event.features_json)
+            .as_deref()
+            .and_then(canonical_features_json),
         observe_full_evaluation_data: event.observe_full_evaluation_data,
         is_degraded: false,
         field_omissions,
@@ -1955,6 +1970,7 @@ mod tests {
             error_message: CharSlice::empty(),
             runtime_default_used: false,
             observe_full_evaluation_data: true,
+            features_json: CharSlice::empty(),
         }
     }
 
@@ -2002,6 +2018,40 @@ mod tests {
             variant: CharSlice::from("blue"),
             serial_id,
             has_serial_id,
+            features_json: CharSlice::empty(),
+        }
+    }
+
+    #[test]
+    fn ffe_exposure_carries_features_and_tolerates_malformed_input() {
+        let mut exposure = ffi_exposure(0, false);
+        exposure.features_json = CharSlice::from(r#"{"holdout.key":"h1"}"#);
+        let converted = ffe_exposure_from_ffi(&exposure).unwrap();
+        assert_eq!(converted.features_json, r#"{"holdout.key":"h1"}"#);
+
+        let invalid = [0xffu8];
+        // SAFETY: the borrowed bytes outlive the conversion.
+        exposure.features_json = unsafe { CharSlice::from_raw_parts(invalid.as_ptr().cast(), 1) };
+        let converted = ffe_exposure_from_ffi(&exposure).unwrap();
+        assert_eq!(converted.features_json, "");
+        assert_eq!(converted.flag_key, "flag-a");
+    }
+
+    #[test]
+    fn ffe_flag_evaluation_canonicalizes_features_regardless_of_consent() {
+        for consent in [false, true] {
+            let mut event = ffi_flag_evaluation("");
+            event.observe_full_evaluation_data = consent;
+            event.features_json = CharSlice::from(r#"{"b":1,"a":"x","n":null}"#);
+            let converted = ffe_flag_evaluation_from_ffi(&event, "svc").unwrap();
+            assert_eq!(converted.features.as_deref(), Some(r#"{"a":"x","b":1.0}"#));
+        }
+        for raw in ["", "not json", "{}", "[1]"] {
+            let mut event = ffi_flag_evaluation("");
+            event.features_json = CharSlice::from(raw);
+            let converted = ffe_flag_evaluation_from_ffi(&event, "svc").unwrap();
+            assert_eq!(converted.features, None, "{raw}");
+            assert_eq!(converted.evaluation_count, 7);
         }
     }
 
