@@ -345,3 +345,139 @@ fn test_ddog_sidecar_register_app() {
 
     ddog_sidecar_transport_drop(transport);
 }
+
+// Covers FFI conversion, IPC, the sidecar exposure deduplicator and EVP encoding.
+#[test]
+#[cfg_attr(miri, ignore)]
+#[cfg_attr(
+    windows,
+    ignore = "sidecar daemon cannot start from a test exe on Windows (no exported entrypoint)"
+)]
+fn test_ddog_sidecar_ffe_exposure_features_reach_the_intake() {
+    use httpmock::{Method::POST, MockServer};
+    use libdd_common_ffi::CharSlice;
+
+    set_sidecar_per_process();
+    // The sidecar deduplicator outlives this test; a unique flag keeps runs independent.
+    let flag_key = format!("ffe-features-{}", std::process::id());
+    let http = MockServer::start();
+    let exposures = http.mock(|when, then| {
+        let flag_key = flag_key.clone();
+        when.method(POST)
+            .path("/evp_proxy/v2/api/v2/exposures")
+            .is_true(move |request| {
+                let Ok(payload) = serde_json::from_slice::<serde_json::Value>(request.body_ref())
+                else {
+                    return false;
+                };
+                let Some(events) = payload["exposures"].as_array() else {
+                    return false;
+                };
+                events.len() == 3
+                    && events.iter().all(|event| event["flag"]["key"] == *flag_key)
+                    && events[0]["subject"]["id"] == "user-a"
+                    && events[0]["features"]
+                        == serde_json::json!({"holdout.key": "h1", "weight": 2.0, "included": false})
+                    && events[1]["subject"]["id"] == "user-b"
+                    && events[1].get("features").is_none()
+                    && events[2]["subject"]["id"] == "user-c"
+                    && events[2].get("features").is_none()
+            });
+        then.status(202);
+    });
+
+    let mut transport = std::ptr::null_mut();
+    assert_maybe_no_error!(ddog_sidecar_connect(&mut transport));
+    let mut transport = unsafe { Box::from_raw(transport) };
+    transport
+        .set_read_timeout(Some(Duration::from_secs(1)))
+        .unwrap();
+    transport
+        .set_write_timeout(Some(Duration::from_secs(1)))
+        .unwrap();
+
+    let agent_endpoint = Endpoint {
+        url: http.url("/").parse().unwrap(),
+        ..Default::default()
+    };
+    let process_tags = libdd_common_ffi::Vec::default();
+    let instance_id = unsafe {
+        ddog_sidecar_instanceId_build("ffe-features-session".into(), "runtime_id".into())
+    };
+    unsafe {
+        ddog_sidecar_set_connection_config(
+            &mut transport,
+            &instance_id,
+            &agent_endpoint,
+            &Endpoint::default(),
+            null(),
+            "".into(),
+            "".into(),
+            "".into(),
+            1000,
+            100,
+            1000000,
+            1,
+            86400000,
+            10000000,
+            10000000,
+            "".into(),
+            "".into(),
+            null_mut(),
+            null(),
+            0,
+            null(),
+            0,
+            false,
+            &process_tags,
+            "".into(),
+            "".into(),
+            "".into(),
+            "".into(),
+            "".into(),
+        )
+        .unwrap_none();
+    }
+
+    let exposure = |subject: &'static str, features: CharSlice<'static>| FfeExposure {
+        timestamp_ms: 1_700_000_000_000,
+        flag_key: flag_key.as_str().into(),
+        subject_id: subject.into(),
+        subject_attributes_json: "{}".into(),
+        allocation_key: "alloc".into(),
+        variant: "on".into(),
+        serial_id: 1,
+        has_serial_id: true,
+        features_json: features,
+    };
+    // The repeat differs only by features, so deduplication drops it.
+    let batch = [
+        exposure(
+            "user-a",
+            r#"{"holdout.key":"h1","weight":2,"included":false,"nested":{}}"#.into(),
+        ),
+        exposure("user-a", r#"{"holdout.key":"h2"}"#.into()),
+        exposure("user-b", "not json".into()),
+        exposure("user-c", CharSlice::from_bytes(&[0xff])),
+    ];
+    let context = FfeTelemetryContext {
+        service: "svc".into(),
+        env: "prod".into(),
+        version: "1".into(),
+    };
+    assert_maybe_no_error!(unsafe {
+        ddog_sidecar_send_ffe_exposure_batch(&mut transport, &context, batch[..].into())
+    });
+    assert_maybe_no_error!(ddog_sidecar_ping(&mut transport));
+
+    for _ in 0..500 {
+        if exposures.calls() > 0 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    exposures.assert_calls(1);
+
+    unsafe { ddog_sidecar_instanceId_drop(instance_id) };
+    ddog_sidecar_transport_drop(transport);
+}
