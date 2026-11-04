@@ -1312,6 +1312,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // many large inputs are too slow under Miri
     fn long_strings_are_cut_at_safe_boundaries() {
         let short = r#"{"model": "gpt-4o", "usage": {"prompt_tokens": 3}}"#;
         assert_eq!(cut(short), short);
