@@ -1,0 +1,29 @@
+{
+  "description": "message_start nests usage and the model in its message.",
+  "format": "anthropic",
+  "operation_name": "chat",
+  "payload": {
+    "type": "message_start",
+    "message": {
+      "model": "claude-haiku-4-5",
+      "usage": {
+        "input_tokens": 7,
+        "output_tokens": 1,
+        "cache_read_input_tokens": 2,
+        "cache_creation_input_tokens": 1
+      }
+    }
+  },
+  "expected": {
+    "usage": {
+      "input_tokens": 7,
+      "input_basis": "excludes_cache",
+      "output_tokens": 1,
+      "output_basis": "includes_reasoning",
+      "cache_read_input_tokens": 2,
+      "cache_write_input_tokens": 1
+    },
+    "response_model": "claude-haiku-4-5",
+    "service_tier": null
+  }
+}

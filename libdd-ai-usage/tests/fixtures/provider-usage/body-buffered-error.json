@@ -1,0 +1,13 @@
+{
+  "description": "A buffered error body fails with the provider's error type.",
+  "format": "anthropic",
+  "operation_name": "chat",
+  "body": "{\"type\": \"error\", \"error\": {\"type\": \"rate_limit_error\", \"message\": \"slow down\"}}",
+  "expected": {
+    "usage": null,
+    "response_model": null,
+    "service_tier": null,
+    "outcome": "failed",
+    "error_name": "rate_limit_error"
+  }
+}

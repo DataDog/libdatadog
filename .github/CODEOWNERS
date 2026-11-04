@@ -46,6 +46,7 @@ deny.toml                            @DataDog/apm-common-components-core @DataDo
 /examples                            @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 libdd-agent-client                   @DataDog/apm-common-components-core
 libdd-ai-usage                       @DataDog/agent-console
+libdd-ai-usage-ffi                   @DataDog/agent-console
 libdd-alloc/                         @DataDog/libdatadog-profiling
 libdd-capabilities*/                 @DataDog/apm-common-components-core
 libdd-common*/                       @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
@@ -142,6 +143,7 @@ datadog-sidecar/src/service/ffe_metrics_flusher.rs      @DataDog/libdatadog-php 
 
 libdd-agent-client/Cargo.toml                @DataDog/apm-common-components-core @DataDog/libdatadog-release
 libdd-ai-usage/Cargo.toml                    @DataDog/agent-console @DataDog/libdatadog-release
+libdd-ai-usage-ffi/Cargo.toml                @DataDog/agent-console @DataDog/libdatadog-release
 libdd-capabilities-impl/CHANGELOG.md         @DataDog/apm-common-components-core @DataDog/libdatadog-release
 libdd-capabilities-impl/Cargo.toml           @DataDog/apm-common-components-core @DataDog/libdatadog-release
 libdd-capabilities/CHANGELOG.md              @DataDog/apm-common-components-core @DataDog/libdatadog-release

@@ -92,7 +92,40 @@ caller owns.
   `trajectory.profile:{id}/{version}`. Tag values are normalized
   the way Datadog stores them.
 
-Sending the bytes or lines is the caller's job.
+  `MetricBatch::dogstatsd_datagrams` (or `pack_dogstatsd` for lines of your
+  own) packs them, with the client's constant tags, into datagrams of at most
+  `DOGSTATSD_UDP_MAX_PAYLOAD` (1432) or `DOGSTATSD_UDS_MAX_PAYLOAD` (8192)
+  bytes; a longer line is a datagram of its own.
+
+Sending the bytes or datagrams is the caller's job.
+
+## Provider responses
+
+What every integration reads from a provider before it can describe a call is
+here too, so that one response gives one observation wherever it was read:
+
+- `parse_provider_response`, `parse_provider_body` and `UsageStream` read the
+  usage of a response, a stream event or a whole stream (OpenAI Chat
+  Completions and Responses, Anthropic Messages, Gemini `usageMetadata`,
+  Google's OpenAI-compatible Gemini endpoint, or `Auto` for an SDK's normalized
+  usage object) into the observation's usage members, with the model and
+  service tier the provider named. Counts not reported are `None`; a usage
+  object of zeros (cache counts included) is a placeholder, not usage. A stream
+  reports whether its terminal event arrived (`message_stop`,
+  `response.completed`, `response.incomplete`, `[DONE]`, a Gemini
+  `finishReason`) or it failed in-band, and splits lines only at CR and LF.
+- `gen_ai_provider_name` maps a gateway's or SDK's provider name to
+  `gen_ai.provider.name` (`bedrock` is `aws.bedrock`, `vertex_ai` is
+  `gcp.vertex_ai`, ...).
+- `classify_error`, `error_type_for_status` and `error_type_for_name` give
+  `error.type` in one vocabulary from an HTTP status, a provider error type or
+  an SDK exception class.
+- `provider_id_attributes` and `bedrock_arn_account` find the provider account
+  and project a call was billed to; `is_person_identifier` and
+  `is_deployment_value` keep `user.id` to people and identifiers.
+
+`libdd-ai-usage-ffi` exposes all of it to other languages through a C
+interface.
 
 ## Conformance
 

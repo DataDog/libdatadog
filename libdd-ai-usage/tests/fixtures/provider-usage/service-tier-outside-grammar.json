@@ -1,0 +1,22 @@
+{
+  "description": "A tier outside ^[A-Za-z0-9._-]{1,32}$ is not kept.",
+  "format": "openai_chat",
+  "operation_name": "chat",
+  "payload": {
+    "service_tier": "a tier with spaces",
+    "usage": {
+      "prompt_tokens": 1,
+      "completion_tokens": 1
+    }
+  },
+  "expected": {
+    "usage": {
+      "input_tokens": 1,
+      "input_basis": "includes_cache",
+      "output_tokens": 1,
+      "output_basis": "includes_reasoning"
+    },
+    "response_model": null,
+    "service_tier": null
+  }
+}

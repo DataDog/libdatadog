@@ -1,0 +1,1050 @@
+// Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
+//! Reading what a model provider reported: the token usage of a response or
+//! stream, the model and service tier it named, the account and project its
+//! headers name, and its `gen_ai.provider.name`.
+//!
+//! Every gateway and integration needs these before it can describe a call
+//! as an observation, and each provider reports them in its own shape. The
+//! rules here are the ones the LiteLLM integration, the Kong plugin and
+//! Datadog's AI gateways share, so that one response gives one observation
+//! wherever it was read.
+//!
+//! A count the provider did not report is `None`, never zero. Nothing here
+//! reads prompts or generated content into a value: only usage objects, model
+//! names, service tiers and terminal events are kept.
+
+use std::collections::BTreeMap;
+
+use serde::Serialize;
+
+use crate::json::Json;
+use crate::number::MAX_SAFE_INTEGER;
+use crate::observation::{
+    ProviderAttemptObservation, TokenBreakdownObservation, is_context_band, is_identifier,
+};
+use crate::point::Attributes;
+use crate::usage::ReportedUsage;
+
+/// Provider names that differ from their OpenTelemetry well-known
+/// `gen_ai.provider.name`, as gateways and SDKs spell them.
+const PROVIDER_ALIASES: [(&str, &str); 21] = [
+    ("anthropic_text", "anthropic"),
+    ("aws-bedrock", "aws.bedrock"),
+    ("aws_bedrock", "aws.bedrock"),
+    ("azure", "azure.ai.openai"),
+    ("azure_ai", "azure.ai.inference"),
+    ("azure_openai", "azure.ai.openai"),
+    ("azure_text", "azure.ai.openai"),
+    ("bedrock", "aws.bedrock"),
+    ("bedrock_converse", "aws.bedrock"),
+    ("cohere_chat", "cohere"),
+    // The Gemini API (Google AI Studio). Gemini served by Vertex AI is
+    // `vertex_ai`.
+    ("gemini", "gcp.gemini"),
+    ("mistral", "mistral_ai"),
+    ("moonshot", "moonshot_ai"),
+    ("text-completion-openai", "openai"),
+    ("vertex", "gcp.vertex_ai"),
+    ("vertex_ai", "gcp.vertex_ai"),
+    ("vertex_ai_beta", "gcp.vertex_ai"),
+    ("watsonx", "ibm.watsonx.ai"),
+    ("watsonx_text", "ibm.watsonx.ai"),
+    ("x-ai", "x_ai"),
+    ("xai", "x_ai"),
+];
+
+/// The `gen_ai.provider.name` of a provider as a gateway or SDK names it.
+///
+/// A name with an OpenTelemetry well-known value is mapped to it (`bedrock`
+/// is `aws.bedrock`, `azure` is `azure.ai.openai`, `vertex_ai` is
+/// `gcp.vertex_ai`, `gemini` is `gcp.gemini`, `xai` is `x_ai`, ...). Any other
+/// name is kept as a low-cardinality identifier: trimmed, lower-cased, with
+/// each character outside `[a-z0-9_.-]` replaced by `_`. `None` when that
+/// does not start with a letter.
+pub fn gen_ai_provider_name(name: &str) -> Option<String> {
+    let lowered = name.trim().to_ascii_lowercase();
+    if let Some((_, known)) = PROVIDER_ALIASES.iter().find(|(alias, _)| *alias == lowered) {
+        return Some((*known).to_string());
+    }
+    let identifier: String = lowered
+        .chars()
+        .map(|c| {
+            if c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '_' | '.' | '-') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    is_identifier(&identifier).then_some(identifier)
+}
+
+/// Whether `value` is a service tier an observation can carry: the
+/// provider's own word, `^[A-Za-z0-9._-]{1,32}$`.
+pub fn is_service_tier(value: &str) -> bool {
+    is_context_band(value)
+}
+
+/// The shape a provider reported its usage in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum UsageFormat {
+    /// Told apart by the members of the usage object, as an SDK that
+    /// normalizes several providers hands it over.
+    Auto,
+    /// OpenAI Chat Completions, Completions and Embeddings (`prompt_tokens`,
+    /// `completion_tokens`), and the providers compatible with it.
+    OpenAiChat,
+    /// OpenAI Responses (`input_tokens`, `output_tokens`, both inclusive).
+    OpenAiResponses,
+    /// Anthropic Messages, also served by Bedrock InvokeModel and Vertex AI
+    /// rawPredict: `input_tokens` leaves cache reads and writes out.
+    Anthropic,
+    /// Gemini `generateContent` (`usageMetadata`), from the Gemini API or
+    /// Vertex AI.
+    Gemini,
+    /// Google's OpenAI-compatible Gemini endpoint, whose `completion_tokens`
+    /// leaves thinking out while `total_tokens` counts it.
+    GeminiOpenAiCompat,
+}
+
+impl UsageFormat {
+    pub const ALL: [UsageFormat; 6] = [
+        UsageFormat::Auto,
+        UsageFormat::OpenAiChat,
+        UsageFormat::OpenAiResponses,
+        UsageFormat::Anthropic,
+        UsageFormat::Gemini,
+        UsageFormat::GeminiOpenAiCompat,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            UsageFormat::Auto => "auto",
+            UsageFormat::OpenAiChat => "openai_chat",
+            UsageFormat::OpenAiResponses => "openai_responses",
+            UsageFormat::Anthropic => "anthropic",
+            UsageFormat::Gemini => "gemini",
+            UsageFormat::GeminiOpenAiCompat => "gemini_openai_compat",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<UsageFormat> {
+        UsageFormat::ALL.into_iter().find(|f| f.as_str() == name)
+    }
+}
+
+/// The token usage a provider reported for one operation, as the members of
+/// an observation. Every member is optional: `None` was not reported.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct ProviderUsage {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_tokens: Option<u64>,
+    /// `includes_cache` or `excludes_cache`, set with `input_tokens`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_basis: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_tokens: Option<u64>,
+    /// `includes_reasoning` or `excludes_reasoning`, set with `output_tokens`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_basis: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_read_input_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_write_input_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_write_5m_input_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_write_1h_input_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_output_tokens: Option<u64>,
+    /// The provider's own parts by modality (`image`, `audio`), zeros
+    /// included. Text is never read: several SDKs fill it in themselves.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_tokens_by_modality: Option<BTreeMap<String, u64>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_tokens_by_modality: Option<BTreeMap<String, u64>>,
+}
+
+const INCLUDES_CACHE: &str = "includes_cache";
+const EXCLUDES_CACHE: &str = "excludes_cache";
+const INCLUDES_REASONING: &str = "includes_reasoning";
+const EXCLUDES_REASONING: &str = "excludes_reasoning";
+
+/// A count no double holds exactly is above every bound the profiles state,
+/// so it is never read as one.
+fn as_f64(count: u64) -> f64 {
+    // Counts are at most MAX_SAFE_INTEGER (2^53 - 1), which f64 holds exactly.
+    count as f64
+}
+
+impl ProviderUsage {
+    /// Whether every count is absent or zero: what an SDK reports for usage
+    /// it does not know. Cache counts are part of it, because Anthropic's
+    /// input count leaves them out and reads zero for input served wholly
+    /// from cache.
+    pub fn is_placeholder(&self) -> bool {
+        [
+            self.input_tokens,
+            self.output_tokens,
+            self.cache_read_input_tokens,
+            self.cache_write_input_tokens,
+        ]
+        .iter()
+        .all(|count| count.unwrap_or(0) == 0)
+    }
+
+    /// Merge the usage of a later event of the same stream. A count reported
+    /// by both is the larger, as stream counts are cumulative and an early
+    /// event can carry a placeholder (Anthropic's `message_start` output).
+    pub fn merge(&mut self, later: &ProviderUsage) {
+        fn larger(earlier: &mut Option<u64>, later: Option<u64>) {
+            *earlier = match (*earlier, later) {
+                (Some(a), Some(b)) => Some(a.max(b)),
+                (a, b) => a.or(b),
+            };
+        }
+        larger(&mut self.input_tokens, later.input_tokens);
+        larger(&mut self.output_tokens, later.output_tokens);
+        larger(
+            &mut self.cache_read_input_tokens,
+            later.cache_read_input_tokens,
+        );
+        larger(
+            &mut self.cache_write_input_tokens,
+            later.cache_write_input_tokens,
+        );
+        larger(
+            &mut self.cache_write_5m_input_tokens,
+            later.cache_write_5m_input_tokens,
+        );
+        larger(
+            &mut self.cache_write_1h_input_tokens,
+            later.cache_write_1h_input_tokens,
+        );
+        larger(
+            &mut self.reasoning_output_tokens,
+            later.reasoning_output_tokens,
+        );
+        self.input_basis = self.input_basis.or(later.input_basis);
+        self.output_basis = self.output_basis.or(later.output_basis);
+        if later.input_tokens_by_modality.is_some() {
+            self.input_tokens_by_modality = later.input_tokens_by_modality.clone();
+        }
+        if later.output_tokens_by_modality.is_some() {
+            self.output_tokens_by_modality = later.output_tokens_by_modality.clone();
+        }
+    }
+
+    fn reported(&self) -> ReportedUsage {
+        let parts = |parts: &Option<BTreeMap<String, u64>>| {
+            parts.as_ref().map(|parts| {
+                parts
+                    .iter()
+                    .map(|(name, count)| (name.clone(), as_f64(*count)))
+                    .collect()
+            })
+        };
+        ReportedUsage {
+            input_tokens: self.input_tokens.map(as_f64),
+            output_tokens: self.output_tokens.map(as_f64),
+            cache_read_input_tokens: self.cache_read_input_tokens.map(as_f64),
+            cache_write_input_tokens: self.cache_write_input_tokens.map(as_f64),
+            cache_write_5m_input_tokens: self.cache_write_5m_input_tokens.map(as_f64),
+            cache_write_1h_input_tokens: self.cache_write_1h_input_tokens.map(as_f64),
+            reasoning_output_tokens: self.reasoning_output_tokens.map(as_f64),
+            input_basis: self.input_basis.map(str::to_string),
+            output_basis: self.output_basis.map(str::to_string),
+            input_tokens_by_modality: parts(&self.input_tokens_by_modality),
+            output_tokens_by_modality: parts(&self.output_tokens_by_modality),
+            ..ReportedUsage::default()
+        }
+    }
+
+    /// Set the usage members of a provider attempt observation, keeping its
+    /// server tool counts.
+    pub fn apply_to_attempt(&self, observation: &mut ProviderAttemptObservation) {
+        let reported = self.reported();
+        observation.usage = ReportedUsage {
+            web_search_requests: observation.usage.web_search_requests,
+            web_search_requests_secondary: observation.usage.web_search_requests_secondary,
+            ..reported
+        };
+    }
+
+    /// Set the usage members of a token breakdown observation, which has no
+    /// modality parts.
+    pub fn apply_to_breakdown(&self, observation: &mut TokenBreakdownObservation) {
+        observation.usage = ReportedUsage {
+            input_tokens_by_modality: None,
+            output_tokens_by_modality: None,
+            ..self.reported()
+        };
+    }
+}
+
+/// What one provider response, or one stream event, reported.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct ProviderResponse {
+    /// `None` when the payload had no usage, or only a placeholder of zeros.
+    pub usage: Option<ProviderUsage>,
+    /// The model the provider named (`gen_ai.response.model`).
+    pub response_model: Option<String>,
+    /// The tier the provider served the operation at, in its own words. The
+    /// tier a request asked for is never read.
+    pub service_tier: Option<String>,
+}
+
+impl ProviderResponse {
+    /// Merge a later event of the same stream: usage as
+    /// [`ProviderUsage::merge`], the first model and tier named.
+    pub fn merge(&mut self, later: ProviderResponse) {
+        match (&mut self.usage, later.usage) {
+            (Some(usage), Some(next)) => usage.merge(&next),
+            (usage @ None, next) => *usage = next,
+            (Some(_), None) => {}
+        }
+        if self.response_model.is_none() {
+            self.response_model = later.response_model;
+        }
+        if self.service_tier.is_none() {
+            self.service_tier = later.service_tier;
+        }
+    }
+}
+
+/// A token count: a whole, non-negative JSON number no larger than
+/// `MAX_SAFE_INTEGER`. Anything else is not a count.
+fn count(value: Option<&Json>) -> Option<u64> {
+    let number = value?.as_f64()?;
+    if !number.is_finite() || number < 0.0 || number.fract() != 0.0 {
+        return None;
+    }
+    // Whole and within [0, 2^53), so the conversion is exact.
+    let whole = number as u64;
+    (whole <= MAX_SAFE_INTEGER).then_some(whole)
+}
+
+fn member<'a>(object: Option<&'a Json>, key: &str) -> Option<&'a Json> {
+    object?.get(key).filter(|value| !value.is_null())
+}
+
+fn text(value: Option<&Json>) -> Option<String> {
+    value?
+        .as_str()
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(str::to_string)
+}
+
+fn sum(a: Option<u64>, b: Option<u64>) -> Option<u64> {
+    match (a, b) {
+        (None, None) => None,
+        (a, b) => a.unwrap_or(0).checked_add(b.unwrap_or(0)),
+    }
+}
+
+/// The usage object of a payload: a response body, or a stream event that
+/// nests it under `response` (Responses) or `message` (Anthropic
+/// `message_start`). A payload that is itself a usage object is read as one.
+fn usage_object(payload: &Json) -> Option<&Json> {
+    if let Some(usage) = member(Some(payload), "usage") {
+        return usage.as_object().map(|_| usage);
+    }
+    for parent in ["response", "message"] {
+        if let Some(usage) = member(member(Some(payload), parent), "usage") {
+            return usage.as_object().map(|_| usage);
+        }
+    }
+    let object = payload.as_object()?;
+    [
+        "prompt_tokens",
+        "completion_tokens",
+        "input_tokens",
+        "output_tokens",
+    ]
+    .iter()
+    .any(|key| object.contains_key(*key))
+    .then_some(payload)
+}
+
+fn gemini_usage_object(payload: &Json) -> Option<&Json> {
+    if let Some(usage) = member(Some(payload), "usageMetadata") {
+        return usage.as_object().map(|_| usage);
+    }
+    let object = payload.as_object()?;
+    [
+        "promptTokenCount",
+        "candidatesTokenCount",
+        "totalTokenCount",
+    ]
+    .iter()
+    .any(|key| object.contains_key(*key))
+    .then_some(payload)
+}
+
+/// The format of an `Auto` payload, from the members of its usage object.
+fn detect(payload: &Json, usage: Option<&Json>) -> UsageFormat {
+    if gemini_usage_object(payload).is_some() {
+        return UsageFormat::Gemini;
+    }
+    let has = |key: &str| member(usage, key).is_some();
+    if has("prompt_tokens") || has("completion_tokens") {
+        return UsageFormat::OpenAiChat;
+    }
+    let event = member(Some(payload), "type").and_then(Json::as_str);
+    if has("cache_read_input_tokens")
+        || has("cache_creation_input_tokens")
+        || matches!(event, Some("message" | "message_start" | "message_delta"))
+    {
+        return UsageFormat::Anthropic;
+    }
+    UsageFormat::OpenAiResponses
+}
+
+/// The `image` and `audio` parts of an OpenAI usage details object.
+fn openai_modalities(details: Option<&Json>) -> Option<BTreeMap<String, u64>> {
+    let mut parts = BTreeMap::new();
+    for modality in ["image", "audio"] {
+        if let Some(value) = count(member(details, &format!("{modality}_tokens"))) {
+            parts.insert(modality.to_string(), value);
+        }
+    }
+    (!parts.is_empty()).then_some(parts)
+}
+
+/// The `IMAGE` and `AUDIO` parts of a Gemini `*TokensDetails` list.
+fn gemini_modalities(details: Option<&Json>) -> Option<BTreeMap<String, u64>> {
+    let mut parts: BTreeMap<String, u64> = BTreeMap::new();
+    for entry in details?.as_array()? {
+        let modality = match member(Some(entry), "modality").and_then(Json::as_str) {
+            Some("IMAGE") => "image",
+            Some("AUDIO") => "audio",
+            _ => continue,
+        };
+        let Some(value) = count(member(Some(entry), "tokenCount")) else {
+            continue;
+        };
+        let part = parts.entry(modality.to_string()).or_insert(0);
+        *part = part.saturating_add(value);
+    }
+    (!parts.is_empty()).then_some(parts)
+}
+
+/// Chat Completions and Responses usage: both totals are inclusive.
+fn openai_usage(usage: Option<&Json>, responses: bool, embeddings: bool) -> ProviderUsage {
+    let (input_key, output_key, input_details_key, output_details_key) = if responses {
+        (
+            "input_tokens",
+            "output_tokens",
+            "input_tokens_details",
+            "output_tokens_details",
+        )
+    } else {
+        (
+            "prompt_tokens",
+            "completion_tokens",
+            "prompt_tokens_details",
+            "completion_tokens_details",
+        )
+    };
+    let input_details = member(usage, input_details_key);
+    let output_details = member(usage, output_details_key);
+    let input_tokens = count(member(usage, input_key));
+    let output_tokens = if embeddings {
+        None
+    } else {
+        count(member(usage, output_key))
+    };
+    // An SDK that normalizes Anthropic usage into this shape keeps its cache
+    // counts at the top level.
+    let cache_read = count(member(usage, "cache_read_input_tokens"))
+        .or_else(|| count(member(input_details, "cached_tokens")));
+    let cache_write = count(member(usage, "cache_creation_input_tokens"))
+        .or_else(|| count(member(input_details, "cache_creation_tokens")))
+        .or_else(|| count(member(input_details, "cache_write_tokens")));
+    let lifetimes = member(input_details, "cache_creation_token_details")
+        .or_else(|| member(usage, "cache_creation"));
+    ProviderUsage {
+        input_basis: input_tokens.map(|_| INCLUDES_CACHE),
+        input_tokens,
+        output_basis: output_tokens.map(|_| INCLUDES_REASONING),
+        output_tokens,
+        cache_read_input_tokens: cache_read,
+        cache_write_input_tokens: cache_write,
+        cache_write_5m_input_tokens: count(member(lifetimes, "ephemeral_5m_input_tokens")),
+        cache_write_1h_input_tokens: count(member(lifetimes, "ephemeral_1h_input_tokens")),
+        reasoning_output_tokens: if embeddings {
+            None
+        } else {
+            count(member(output_details, "reasoning_tokens"))
+        },
+        input_tokens_by_modality: openai_modalities(input_details),
+        output_tokens_by_modality: if embeddings {
+            None
+        } else {
+            openai_modalities(output_details)
+        },
+    }
+}
+
+/// Google's OpenAI-compatible Gemini endpoint: what `total_tokens` counts
+/// beyond the prompt and completion is the thinking the completion left out.
+fn gemini_compat_usage(usage: Option<&Json>, embeddings: bool) -> ProviderUsage {
+    let mut parsed = openai_usage(usage, false, embeddings);
+    if embeddings || parsed.reasoning_output_tokens.is_some() {
+        return parsed;
+    }
+    let (Some(prompt), Some(completion), Some(total)) = (
+        parsed.input_tokens,
+        parsed.output_tokens,
+        count(member(usage, "total_tokens")),
+    ) else {
+        return parsed;
+    };
+    if let Some(thinking) = total
+        .checked_sub(prompt)
+        .and_then(|rest| rest.checked_sub(completion))
+        .filter(|thinking| *thinking > 0)
+    {
+        parsed.reasoning_output_tokens = Some(thinking);
+        parsed.output_basis = Some(EXCLUDES_REASONING);
+    }
+    parsed
+}
+
+/// Anthropic Messages usage: `input_tokens` leaves cache reads and writes
+/// out, and `output_tokens` counts thinking.
+fn anthropic_usage(usage: Option<&Json>, embeddings: bool) -> ProviderUsage {
+    let input_tokens = count(member(usage, "input_tokens"));
+    let output_tokens = if embeddings {
+        None
+    } else {
+        count(member(usage, "output_tokens"))
+    };
+    let lifetimes = member(usage, "cache_creation");
+    ProviderUsage {
+        input_basis: input_tokens.map(|_| EXCLUDES_CACHE),
+        input_tokens,
+        output_basis: output_tokens.map(|_| INCLUDES_REASONING),
+        output_tokens,
+        cache_read_input_tokens: count(member(usage, "cache_read_input_tokens")),
+        cache_write_input_tokens: count(member(usage, "cache_creation_input_tokens")),
+        cache_write_5m_input_tokens: count(member(lifetimes, "ephemeral_5m_input_tokens")),
+        cache_write_1h_input_tokens: count(member(lifetimes, "ephemeral_1h_input_tokens")),
+        ..ProviderUsage::default()
+    }
+}
+
+/// Gemini `usageMetadata`. Billed input is the prompt and the tool-use
+/// prompt, which include the cached content. Billed output is the candidates
+/// and the thoughts, except when the candidates already count the thoughts:
+/// then the prompt, candidates and tool-use prompt add up to the total.
+fn gemini_usage(usage: Option<&Json>, embeddings: bool) -> ProviderUsage {
+    let prompt = count(member(usage, "promptTokenCount"));
+    let tool_prompt = count(member(usage, "toolUsePromptTokenCount"));
+    let candidates = count(member(usage, "candidatesTokenCount"));
+    let thoughts = count(member(usage, "thoughtsTokenCount"));
+    let total = count(member(usage, "totalTokenCount"));
+    let thoughts_in_candidates = thoughts.is_some_and(|t| t > 0)
+        && total.is_some()
+        && sum(sum(prompt, candidates), tool_prompt) == total;
+    let output_tokens = if embeddings {
+        None
+    } else if thoughts_in_candidates {
+        candidates
+    } else {
+        sum(candidates, thoughts)
+    };
+    let input_tokens = if prompt.is_some() {
+        sum(prompt, tool_prompt)
+    } else {
+        // Vertex AI leaves the prompt count out when the whole prompt was
+        // served from cache; the total still counts it.
+        total.and_then(|total| total.checked_sub(output_tokens.unwrap_or(0)))
+    };
+    ProviderUsage {
+        input_basis: input_tokens.map(|_| INCLUDES_CACHE),
+        input_tokens,
+        output_basis: output_tokens.map(|_| INCLUDES_REASONING),
+        output_tokens,
+        cache_read_input_tokens: count(member(usage, "cachedContentTokenCount")),
+        reasoning_output_tokens: if embeddings { None } else { thoughts },
+        input_tokens_by_modality: gemini_modalities(member(usage, "promptTokensDetails")),
+        output_tokens_by_modality: if embeddings {
+            None
+        } else {
+            gemini_modalities(member(usage, "candidatesTokensDetails"))
+        },
+        ..ProviderUsage::default()
+    }
+}
+
+fn response_model(payload: &Json) -> Option<String> {
+    text(member(Some(payload), "model"))
+        .or_else(|| text(member(member(Some(payload), "response"), "model")))
+        .or_else(|| text(member(member(Some(payload), "message"), "model")))
+        .or_else(|| text(member(Some(payload), "modelVersion")))
+}
+
+fn service_tier(payload: &Json, usage: Option<&Json>) -> Option<String> {
+    [
+        member(Some(payload), "service_tier"),
+        member(member(Some(payload), "response"), "service_tier"),
+        member(usage, "service_tier"),
+    ]
+    .into_iter()
+    .find_map(text)
+    .filter(|tier| is_service_tier(tier))
+}
+
+/// Read a provider response body, or one stream event, in `format`.
+/// `embeddings` is `true` for an embeddings operation, which has no output
+/// side. A Gemini stream returned as one JSON array is read as its events.
+pub fn parse_provider_response(
+    format: UsageFormat,
+    payload: &Json,
+    embeddings: bool,
+) -> ProviderResponse {
+    if let Some(events) = payload.as_array() {
+        let mut merged = ProviderResponse::default();
+        for event in events {
+            merged.merge(parse_provider_response(format, event, embeddings));
+        }
+        return merged;
+    }
+    let usage = usage_object(payload);
+    let format = match format {
+        UsageFormat::Auto => detect(payload, usage),
+        format => format,
+    };
+    let parsed = match format {
+        UsageFormat::Gemini => {
+            gemini_usage_object(payload).map(|usage| gemini_usage(Some(usage), embeddings))
+        }
+        UsageFormat::Anthropic => usage.map(|usage| anthropic_usage(Some(usage), embeddings)),
+        UsageFormat::GeminiOpenAiCompat => {
+            usage.map(|usage| gemini_compat_usage(Some(usage), embeddings))
+        }
+        UsageFormat::OpenAiResponses => {
+            usage.map(|usage| openai_usage(Some(usage), true, embeddings))
+        }
+        UsageFormat::OpenAiChat | UsageFormat::Auto => {
+            usage.map(|usage| openai_usage(Some(usage), false, embeddings))
+        }
+    };
+    ProviderResponse {
+        usage: parsed.filter(|usage| !usage.is_placeholder()),
+        response_model: response_model(payload),
+        service_tier: service_tier(payload, usage),
+    }
+}
+
+/// [`parse_provider_response`] for the usage alone.
+pub fn parse_provider_usage(
+    format: UsageFormat,
+    payload: &Json,
+    embeddings: bool,
+) -> Option<ProviderUsage> {
+    parse_provider_response(format, payload, embeddings).usage
+}
+
+/// How a provider stream ended, as far as its events say.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StreamOutcome {
+    /// No terminal event yet: a stream that ends here was cut short.
+    Open,
+    /// The provider's terminal event arrived: Anthropic `message_stop`,
+    /// Responses `response.completed` or `response.incomplete`, Chat
+    /// Completions `[DONE]`, or a Gemini candidate's `finishReason`.
+    Completed,
+    /// The provider reported a failure in the stream: Responses
+    /// `response.failed`, an `error` event, or an `{"error": ...}` payload.
+    Failed,
+}
+
+impl StreamOutcome {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            StreamOutcome::Open => "open",
+            StreamOutcome::Completed => "completed",
+            StreamOutcome::Failed => "failed",
+        }
+    }
+}
+
+/// A stream line longer than this is generated content: it is skipped
+/// rather than held.
+pub const MAX_STREAM_LINE_BYTES: usize = 1024 * 1024;
+
+/// The quoted names a line must contain to be decoded. A quote inside a JSON
+/// string is escaped, so generated text cannot contain them.
+const CANDIDATE_MARKERS: [&str; 11] = [
+    "\"usage\"",
+    "\"usageMetadata\"",
+    "\"service_tier\"",
+    "\"error\"",
+    "\"finishReason\"",
+    "\"message_start\"",
+    "\"message_delta\"",
+    "\"message_stop\"",
+    "\"response.completed\"",
+    "\"response.incomplete\"",
+    "\"response.failed\"",
+];
+
+/// The server-sent events of a provider stream, read as they pass through:
+/// usage, model and service tier merged across events, the terminal event,
+/// and the name of an in-band error.
+///
+/// Lines end only at CR, LF or CRLF, as server-sent events define them, so a
+/// JSON string holding U+2028 does not split an event. A chunk can end
+/// anywhere: an unfinished line is held until the next chunk, up to
+/// [`MAX_STREAM_LINE_BYTES`]. Only lines that can carry usage, the model, the
+/// tier or a terminal event are decoded.
+#[derive(Debug, Clone)]
+pub struct UsageStream {
+    format: UsageFormat,
+    embeddings: bool,
+    response: ProviderResponse,
+    outcome: StreamOutcome,
+    error_name: Option<String>,
+    pending: Vec<u8>,
+    skipping: bool,
+    /// The previous chunk ended in CR: a LF that starts the next one ends no
+    /// line of its own.
+    after_cr: bool,
+}
+
+impl UsageStream {
+    pub fn new(format: UsageFormat, embeddings: bool) -> Self {
+        Self {
+            format,
+            embeddings,
+            response: ProviderResponse::default(),
+            outcome: StreamOutcome::Open,
+            error_name: None,
+            pending: Vec::new(),
+            skipping: false,
+            after_cr: false,
+        }
+    }
+
+    /// Read the next bytes of the stream.
+    pub fn feed(&mut self, chunk: &[u8]) {
+        let mut start = 0;
+        let mut at = 0;
+        if self.after_cr && chunk.first() == Some(&b'\n') {
+            // The CRLF was split between two chunks.
+            start = 1;
+            at = 1;
+        }
+        self.after_cr = false;
+        while at < chunk.len() {
+            let byte = chunk[at];
+            if byte == b'\r' || byte == b'\n' {
+                self.end_line(&chunk[start..at]);
+                if byte == b'\r' {
+                    match chunk.get(at + 1) {
+                        Some(b'\n') => at += 1,
+                        None => self.after_cr = true,
+                        Some(_) => {}
+                    }
+                }
+                start = at + 1;
+            }
+            at += 1;
+        }
+        self.hold(&chunk[start..]);
+    }
+
+    fn hold(&mut self, rest: &[u8]) {
+        if self.skipping {
+            return;
+        }
+        if self.pending.len() + rest.len() > MAX_STREAM_LINE_BYTES {
+            self.pending.clear();
+            self.skipping = true;
+        } else {
+            self.pending.extend_from_slice(rest);
+        }
+    }
+
+    fn end_line(&mut self, tail: &[u8]) {
+        if self.skipping {
+            self.skipping = false;
+            self.pending.clear();
+            return;
+        }
+        if self.pending.is_empty() {
+            self.line(tail);
+        } else if self.pending.len() + tail.len() <= MAX_STREAM_LINE_BYTES {
+            let mut line = std::mem::take(&mut self.pending);
+            line.extend_from_slice(tail);
+            self.line(&line);
+        } else {
+            self.pending.clear();
+        }
+    }
+
+    fn line(&mut self, line: &[u8]) {
+        let Ok(line) = std::str::from_utf8(line) else {
+            return;
+        };
+        let line = line.trim();
+        let (field, value) = match line.split_once(':') {
+            Some((field @ ("data" | "event"), value)) => (field, value.trim()),
+            _ => ("data", line),
+        };
+        if field == "event" {
+            match value {
+                "message_stop" | "response.completed" | "response.incomplete" => {
+                    self.complete();
+                }
+                "response.failed" => self.fail(None),
+                _ => {}
+            }
+            return;
+        }
+        if value == "[DONE]" {
+            self.complete();
+            return;
+        }
+        if !value.starts_with('{') && !value.starts_with('[') {
+            return;
+        }
+        let model_unknown = self.response.response_model.is_none() && value.contains("\"model\"");
+        if !model_unknown && !CANDIDATE_MARKERS.iter().any(|m| value.contains(m)) {
+            return;
+        }
+        if let Ok(event) = Json::parse(value) {
+            self.event(&event);
+        }
+    }
+
+    fn complete(&mut self) {
+        if self.outcome == StreamOutcome::Open {
+            self.outcome = StreamOutcome::Completed;
+        }
+    }
+
+    fn fail(&mut self, name: Option<String>) {
+        self.outcome = StreamOutcome::Failed;
+        if self.error_name.is_none() {
+            self.error_name = name;
+        }
+    }
+
+    /// Read one decoded event, as [`UsageStream::feed`] does for each line.
+    pub fn event(&mut self, event: &Json) {
+        let kind = member(Some(event), "type").and_then(Json::as_str);
+        match kind {
+            Some("message_stop" | "response.completed" | "response.incomplete") => {
+                self.complete();
+            }
+            Some("response.failed") => {
+                let error = member(member(Some(event), "response"), "error");
+                self.fail(error_name(error));
+            }
+            Some("error") => {
+                // Anthropic nests the error; the Responses error event holds
+                // its code beside the event type.
+                let name = error_name(member(Some(event), "error"))
+                    .or_else(|| text(member(Some(event), "code")));
+                self.fail(name);
+            }
+            _ => {}
+        }
+        if let Some(error) = member(Some(event), "error") {
+            let content = ["choices", "candidates"]
+                .iter()
+                .any(|key| member(Some(event), key).is_some());
+            if kind != Some("error") && !content && error.as_object().is_some() {
+                self.fail(error_name(Some(error)));
+            }
+        }
+        if let Some(candidates) = member(Some(event), "candidates").and_then(Json::as_array)
+            && candidates
+                .iter()
+                .any(|c| text(member(Some(c), "finishReason")).is_some())
+        {
+            self.complete();
+        }
+        self.response
+            .merge(parse_provider_response(self.format, event, self.embeddings));
+    }
+
+    /// What the stream reported so far.
+    pub fn response(&self) -> &ProviderResponse {
+        &self.response
+    }
+
+    pub fn outcome(&self) -> StreamOutcome {
+        self.outcome
+    }
+
+    /// The provider's name for the failure an error event reported (its
+    /// `type`, `code` or `status`), to classify with
+    /// [`crate::classify_error`].
+    pub fn error_name(&self) -> Option<&str> {
+        self.error_name.as_deref()
+    }
+
+    /// Read a final line that had no line ending, and return what the stream
+    /// reported.
+    pub fn finish(mut self) -> (ProviderResponse, StreamOutcome, Option<String>) {
+        if !self.skipping && !self.pending.is_empty() {
+            let line = std::mem::take(&mut self.pending);
+            self.line(&line);
+        }
+        (self.response, self.outcome, self.error_name)
+    }
+}
+
+/// The name an error object gives its failure: `type`, else `code`, else
+/// `status`. A numeric code is read as its digits.
+fn error_name(error: Option<&Json>) -> Option<String> {
+    for key in ["type", "code", "status"] {
+        match member(error, key) {
+            Some(Json::String(name)) if !name.trim().is_empty() => {
+                return Some(name.trim().to_string());
+            }
+            Some(number @ Json::Number(_)) => {
+                if let Some(code) = count(Some(number)) {
+                    return Some(code.to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Read a whole provider response body: a JSON document, or a stream of
+/// server-sent events that was buffered.
+pub fn parse_provider_body(
+    format: UsageFormat,
+    body: &[u8],
+    embeddings: bool,
+) -> (ProviderResponse, StreamOutcome, Option<String>) {
+    let text = std::str::from_utf8(body).unwrap_or_default().trim_start();
+    if (text.starts_with('{') || text.starts_with('['))
+        && let Ok(document) = Json::parse(text)
+    {
+        let mut stream = UsageStream::new(format, embeddings);
+        match document.as_array() {
+            Some(events) => events.iter().for_each(|event| stream.event(event)),
+            None => stream.event(&document),
+        }
+        let (response, outcome, error) = stream.finish();
+        // A buffered body is complete unless it reported a failure.
+        let outcome = match outcome {
+            StreamOutcome::Open => StreamOutcome::Completed,
+            outcome => outcome,
+        };
+        return (response, outcome, error);
+    }
+    let mut stream = UsageStream::new(format, embeddings);
+    stream.feed(body);
+    stream.finish()
+}
+
+/// The longest account, project or key id kept.
+const MAX_ID_LENGTH: usize = 128;
+
+/// The response headers that name the account and project a provider billed:
+/// (`gen_ai.provider.name`, attribute, header). No other header is read.
+pub const PROVIDER_ID_HEADERS: [(&str, &str, &str); 3] = [
+    (
+        "anthropic",
+        "trajectory.request.provider_account_id",
+        "anthropic-organization-id",
+    ),
+    // The organization's name, not its org- id.
+    (
+        "openai",
+        "trajectory.request.provider_account_id",
+        "openai-organization",
+    ),
+    ("openai", "trajectory.request.project_id", "openai-project"),
+];
+
+/// An account, project or key id as written: non-blank, at most 128 bytes.
+fn billing_id(value: &str) -> Option<&str> {
+    let value = value.trim();
+    (!value.is_empty() && value.len() <= MAX_ID_LENGTH).then_some(value)
+}
+
+/// The account and project the provider's response headers name, as
+/// deployment attributes. `provider_name` is the `gen_ai.provider.name`;
+/// `header` returns a header's value by its lower-case name.
+pub fn provider_id_attributes<'a>(
+    provider_name: &str,
+    header: impl Fn(&str) -> Option<&'a str>,
+) -> Attributes {
+    let mut attributes = Attributes::new();
+    for (provider, attribute, name) in PROVIDER_ID_HEADERS {
+        if provider != provider_name || attributes.contains_key(attribute) {
+            continue;
+        }
+        if let Some(value) = header(name).and_then(billing_id) {
+            attributes.insert(attribute.to_string(), value.to_string());
+        }
+    }
+    attributes
+}
+
+/// The AWS account a Bedrock model ARN names, such as an inference
+/// profile's: the 12 digits of `arn:aws*:bedrock:{region}:{account}:...`,
+/// at the start of `model` or after a `/`.
+pub fn bedrock_arn_account(model: &str) -> Option<&str> {
+    let mut from = 0;
+    while let Some(found) = model[from..].find("arn:aws") {
+        let start = from + found;
+        from = start + 1;
+        if start > 0 && model.as_bytes()[start - 1] != b'/' {
+            continue;
+        }
+        let mut parts = model[start..].splitn(6, ':');
+        let (Some(_arn), Some(partition), Some(service), Some(region), Some(account), Some(_)) = (
+            parts.next(),
+            parts.next(),
+            parts.next(),
+            parts.next(),
+            parts.next(),
+            parts.next(),
+        ) else {
+            continue;
+        };
+        let partition_ok = partition
+            .strip_prefix("aws")
+            .is_some_and(|rest| rest.bytes().all(|b| b.is_ascii_lowercase() || b == b'-'));
+        let region_ok = !region.is_empty()
+            && region
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-');
+        let account_ok = account.len() == 12 && account.bytes().all(|b| b.is_ascii_digit());
+        if partition_ok && service == "bedrock" && region_ok && account_ok {
+            return Some(account);
+        }
+    }
+    None
+}
+
+/// Whether `value` names a person: an email address,
+/// `^[^@\s]+@[^@\s]+\.[^@\s]+$`. `user.id` is only ever a person; a service
+/// or a credential is named by `trajectory.gateway.key.alias` instead.
+pub fn is_person_identifier(value: &str) -> bool {
+    let Some((local, domain)) = value.split_once('@') else {
+        return false;
+    };
+    let plain =
+        |part: &str| !part.is_empty() && !part.contains('@') && !part.contains(char::is_whitespace);
+    plain(local)
+        && plain(domain)
+        && domain
+            .char_indices()
+            .any(|(at, c)| c == '.' && at > 0 && at + 1 < domain.len())
+}

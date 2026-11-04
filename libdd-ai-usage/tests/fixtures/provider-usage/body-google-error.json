@@ -1,0 +1,13 @@
+{
+  "description": "Google's error envelope names its failure by a numeric code.",
+  "format": "gemini",
+  "operation_name": "chat",
+  "body": "{\"error\": {\"code\": 429, \"message\": \"quota\", \"status\": \"RESOURCE_EXHAUSTED\"}}",
+  "expected": {
+    "usage": null,
+    "response_model": null,
+    "service_tier": null,
+    "outcome": "failed",
+    "error_name": "429"
+  }
+}
