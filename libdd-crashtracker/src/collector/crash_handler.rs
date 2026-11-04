@@ -16,7 +16,7 @@ use core::sync::atomic::Ordering::{Acquire, Relaxed, SeqCst};
 use core::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, AtomicU64};
 use errno::{errno, set_errno};
 use libc::{c_void, pid_t, siginfo_t, ucontext_t};
-use libdd_common::timeout::TimeoutManager;
+use libdd_process_utils::timeout::TimeoutManager;
 use std::panic;
 use std::panic::PanicHookInfo;
 

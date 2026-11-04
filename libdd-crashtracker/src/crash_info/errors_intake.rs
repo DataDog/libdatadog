@@ -524,8 +524,8 @@ impl ErrorsIntakeUploader {
             let file_path = path.with_extension("errors");
             // Apply the same path policy as the crash JSON output to its .errors companion.
             #[cfg(unix)]
-            let file = if libdd_common::unix_utils::worker_file_outputs_restricted() {
-                libdd_common::unix_utils::open_regular_for_create(&file_path).with_context(
+            let file = if libdd_process_utils::unix_utils::worker_file_outputs_restricted() {
+                libdd_process_utils::unix_utils::open_regular_for_create(&file_path).with_context(
                     || {
                         format!(
                             "Failed to create errors intake file {}",

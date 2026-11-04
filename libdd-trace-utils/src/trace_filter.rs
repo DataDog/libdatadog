@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Trace-level filter logic for client-side stats (filter_tags, filter_tags_regex,
 //! ignore_resources as published by the agent's /info endpoint).
-use libdd_common::regex_engine::Regex;
+use libdd_regex::Regex;
 use libdd_trace_model::{Attributes as _, ChunkSpanView, Span};
 use libdd_trace_normalization::{normalize_utils, normalizer};
 use tracing::{debug, error};
