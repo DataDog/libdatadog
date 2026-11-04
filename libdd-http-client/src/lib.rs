@@ -7,6 +7,12 @@
 #![cfg_attr(not(test), deny(clippy::expect_used))]
 #![cfg_attr(not(test), deny(clippy::todo))]
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
+// Without a backend, the internals that only `HttpClient` uses (pool settings, retry delays, ...)
+// are unused.
+#![cfg_attr(
+    not(any(feature = "hyper-backend", feature = "reqwest-backend")),
+    allow(dead_code)
+)]
 
 //! `libdd-http-client` is an HTTP client library intended for use by other
 //! languages via FFI. It offers a simple `send()` API over a concrete
@@ -42,14 +48,13 @@
 //! # }
 //! ```
 
-#[cfg(not(any(feature = "hyper-backend", feature = "reqwest-backend")))]
-compile_error!(
-    "at least one backend feature must be enabled: `reqwest-backend` or `hyper-backend`"
-);
-
 pub mod config;
 
+// Without a backend the crate only exposes its configuration, request and response types:
+// `HttpClient` needs `reqwest-backend` or `hyper-backend`.
+#[cfg(any(feature = "hyper-backend", feature = "reqwest-backend"))]
 pub(crate) mod backend;
+#[cfg(any(feature = "hyper-backend", feature = "reqwest-backend"))]
 mod client;
 mod error;
 mod request;
@@ -59,6 +64,7 @@ pub mod retry;
 #[cfg(all(feature = "reqwest-backend", any(feature = "https", feature = "fips")))]
 mod tls;
 
+#[cfg(any(feature = "hyper-backend", feature = "reqwest-backend"))]
 pub use client::HttpClient;
 pub use config::{HttpClientBuilder, HttpClientConfig};
 pub use error::HttpClientError;

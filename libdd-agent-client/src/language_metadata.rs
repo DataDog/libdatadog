@@ -40,6 +40,7 @@ impl LanguageMetadata {
     /// Produces the `User-Agent` header.
     ///
     /// Format: `dd-trace-<language>/<tracer_version>`, e.g. `dd-trace-python/2.18.0`.
+    #[cfg(any(feature = "hyper-backend", feature = "reqwest-backend"))]
     #[inline]
     pub(crate) fn user_agent(&self) -> String {
         format!("dd-trace-{}/{}", self.language, self.tracer_version)
@@ -61,12 +62,14 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any(feature = "hyper-backend", feature = "reqwest-backend"))]
     fn user_agent_format() {
         let m = LanguageMetadata::new("python", "3.12.1", "CPython", "", "2.18.0");
         assert_eq!(m.user_agent(), "dd-trace-python/2.18.0");
     }
 
     #[test]
+    #[cfg(any(feature = "hyper-backend", feature = "reqwest-backend"))]
     fn user_agent_ruby() {
         let m = LanguageMetadata::new("ruby", "3.2.0", "MRI", "", "1.13.0");
         assert_eq!(m.user_agent(), "dd-trace-ruby/1.13.0");
