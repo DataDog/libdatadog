@@ -1,19 +1,18 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Sampling trait implementations for the v04 [`Span<T>`] type.
+//! Sampling support for the v04 [`Span<T>`] type.
 //!
-//! This module implements the sampling traits on the v04 span representation:
-//! [`ValueLike`]/[`AttributeLike`] for attributes
-//! borrowed from `span.meta` and `span.metrics`, [`SpanProperties`] via the
-//! [`V04SpanProperties`] wrapper, [`SamplingData`] via [`V04SamplingData`], and
-//! [`AttributeFactory`] via [`V04AttributeFactory`].
+//! [`DatadogSampler::sample_v04`] makes a decision for a v04 root span, and
+//! [`apply_to_v04_span`] writes the resulting sampling tags back into its `meta` / `metrics`.
+//!
+//! Internally the span is adapted to the crate's sampling traits.
 //!
 //! # Example
 //!
 //! ```
 //! use libdd_sampling::DatadogSampler;
-//! use libdd_sampling::v04_span::{V04AttributeFactory, V04SamplingData, V04SamplingTag};
+//! use libdd_sampling::v04_span::{V04SamplingData, apply_to_v04_span};
 //! use libdd_trace_utils::span::{SliceData, v04::Span};
 //! use std::borrow::Cow::*;
 //!
@@ -23,33 +22,20 @@
 //! span.trace_id = 1234567890u128;
 //!
 //! let sampler = DatadogSampler::new(vec![], 100);
-//! let data = V04SamplingData {
+//! let result = sampler.sample_v04(&V04SamplingData {
 //!     is_parent_sampled: None,
 //!     span: &span,
-//! };
-//! let result = sampler.sample(&data);
-//!
-//! if let Some(tags) = result.to_dd_sampling_tags(&V04AttributeFactory) {
-//!     for tag in tags {
-//!         match tag {
-//!             V04SamplingTag::Meta { key, value } => {
-//!                 /* insert into span.meta */
-//!                 let _ = (key, value);
-//!             }
-//!             V04SamplingTag::Metric { key, value } => {
-//!                 /* insert into span.metrics */
-//!                 let _ = (key, value);
-//!             }
-//!         }
-//!     }
-//! }
+//! });
+//! apply_to_v04_span(&result, &mut span);
+//! assert!(span.metrics.get("_sampling_priority_v1").is_some());
 //! ```
 
 use std::borrow::{Borrow, Cow};
 
-use libdd_trace_utils::span::{TraceData, v04::Span};
+use libdd_trace_utils::span::{SpanText, TraceData, v04::Span};
 
 use crate::types::{AttributeFactory, AttributeLike, SamplingData, SpanProperties, ValueLike};
+use crate::{DatadogSampler, datadog_sampler::DdSamplingResult};
 
 /// A span attribute value sourced from either `span.meta` (string) or `span.metrics` (f64).
 pub enum SpanAttributeValue<'a> {
@@ -208,13 +194,13 @@ impl<T: TraceData> SamplingData for V04SamplingData<'_, T> {
 /// A sampling tag to apply back to a v04 span after a sampling decision.
 ///
 /// Meta tags go into `span.meta`; Metric tags go into `span.metrics`.
-pub enum V04SamplingTag {
+pub(crate) enum V04SamplingTag {
     Meta { key: &'static str, value: String },
     Metric { key: &'static str, value: f64 },
 }
 
 /// Attribute factory that produces [`V04SamplingTag`] values.
-pub struct V04AttributeFactory;
+pub(crate) struct V04AttributeFactory;
 
 impl AttributeFactory for V04AttributeFactory {
     type Attribute = V04SamplingTag;
@@ -235,6 +221,38 @@ impl AttributeFactory for V04AttributeFactory {
         V04SamplingTag::Meta {
             key,
             value: value.into_owned(),
+        }
+    }
+}
+
+// TODO: Non-generic v04 version; will go away once the internal pipeline is fully v1.
+impl DatadogSampler {
+    /// Samples a v04 root span. See [`DatadogSampler::sample`] for the precedence rules.
+    pub fn sample_v04<T: TraceData>(&self, data: &V04SamplingData<'_, T>) -> DdSamplingResult {
+        self.sample(data)
+    }
+}
+
+/// Writes the sampling tags of `result` into a v04 root span: strings into `meta`, numbers
+/// (including the sampling priority) into `metrics`. Does nothing for decisions inherited from
+/// the parent, which carry no tags.
+pub fn apply_to_v04_span<T: TraceData>(result: &DdSamplingResult, span: &mut Span<T>) {
+    let Some(tags) = result.to_dd_sampling_tags(&V04AttributeFactory) else {
+        return;
+    };
+    for tag in tags {
+        match tag {
+            V04SamplingTag::Meta { key, value } => {
+                let value = T::Text::from_owned(value);
+                match span.meta.get_mut(key) {
+                    Some(existing) => *existing = value,
+                    None => span.meta.insert(T::Text::from_static_str(key), value),
+                }
+            }
+            V04SamplingTag::Metric { key, value } => match span.metrics.get_mut(key) {
+                Some(existing) => *existing = value,
+                None => span.metrics.insert(T::Text::from_static_str(key), value),
+            },
         }
     }
 }
@@ -394,7 +412,7 @@ mod tests {
             span: &span,
         };
         // sample() calls data.with_span_properties internally
-        let result = sampler.sample(&data);
+        let result = sampler.sample_v04(&data);
         // Service key includes env; the sampler used span properties correctly
         assert!(result.get_priority().is_keep() || !result.get_priority().is_keep());
     }
@@ -443,7 +461,7 @@ mod tests {
             is_parent_sampled: None,
             span: &span,
         };
-        let result = sampler.sample(&data);
+        let result = sampler.sample_v04(&data);
         // Default with no rules and full rate limit: auto-keep
         assert!(result.get_priority().is_keep());
     }
@@ -458,7 +476,7 @@ mod tests {
             span: &span,
         };
         assert_eq!(
-            sampler.sample(&data_keep).get_priority(),
+            sampler.sample_v04(&data_keep).get_priority(),
             priority::AUTO_KEEP
         );
 
@@ -467,7 +485,7 @@ mod tests {
             span: &span,
         };
         assert_eq!(
-            sampler.sample(&data_drop).get_priority(),
+            sampler.sample_v04(&data_drop).get_priority(),
             priority::AUTO_REJECT
         );
     }
@@ -480,7 +498,7 @@ mod tests {
             is_parent_sampled: None,
             span: &span,
         };
-        let result = sampler.sample(&data);
+        let result = sampler.sample_v04(&data);
         let tags = result
             .to_dd_sampling_tags(&V04AttributeFactory)
             .expect("tags should be produced for root spans");
@@ -515,25 +533,16 @@ mod tests {
             is_parent_sampled: None,
             span: &span,
         };
-        let result = sampler.sample(&data);
+        let result = sampler.sample_v04(&data);
 
         let mut out_span: Span<SliceData<'static>> = span;
-        if let Some(tags) = result.to_dd_sampling_tags(&V04AttributeFactory) {
-            for tag in tags {
-                match tag {
-                    V04SamplingTag::Meta { key, value } => {
-                        // For SliceData spans, we can't insert owned strings back easily.
-                        // Verify the tags are well-formed.
-                        assert!(!key.is_empty());
-                        assert!(!value.is_empty());
-                    }
-                    V04SamplingTag::Metric { key, value } => {
-                        out_span.metrics.insert(Cow::Borrowed(key), value);
-                    }
-                }
-            }
-        }
+        apply_to_v04_span(&result, &mut out_span);
 
+        assert_eq!(
+            out_span.meta.get("_dd.p.dm").map(|v| v.as_ref()),
+            Some("-0"),
+            "decision maker should be written to meta"
+        );
         // The sampling priority should have been inserted into metrics
         assert!(out_span.metrics.contains_key("_sampling_priority_v1"));
     }
