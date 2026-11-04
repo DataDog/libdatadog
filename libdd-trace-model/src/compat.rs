@@ -21,9 +21,14 @@ use crate::{
 ///
 /// Wrap a [`ChunkSpanView`](crate::ChunkSpanView) to also see the chunk attributes.
 #[repr(transparent)]
-pub struct CompatSpan<S>(pub S);
+pub struct CompatSpan<S>(S);
 
 impl<S> CompatSpan<S> {
+    /// The wrapped span, whose attribute getters don't see the promoted tags.
+    pub const fn inner(&self) -> &S {
+        &self.0
+    }
+
     /// Wraps a borrowed span.
     pub const fn from_ref(span: &S) -> &Self {
         // SAFETY: `CompatSpan` is a `repr(transparent)` wrapper around `S`, so `&S` and

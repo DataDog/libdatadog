@@ -491,6 +491,7 @@ mod tests {
         assert_eq!(span.attribute_str("env"), None);
         assert_eq!(span.compat().attribute_str("env"), Some("prod"));
         assert!(span.compat().has_attribute("env"));
+        assert_eq!(span.compat().inner().attribute_str("env"), None);
         // Promoted tags are strings.
         assert_eq!(span.compat().attribute_f64("env"), None);
         // Empty text is unset.
