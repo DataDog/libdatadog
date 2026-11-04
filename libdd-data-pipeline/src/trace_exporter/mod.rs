@@ -592,7 +592,7 @@ impl<
             StatsComputationStatus::DisabledByAgent { .. } => {
                 let ctx = stats::StatsContext {
                     metadata: &self.metadata,
-                    endpoint_url: &self.endpoint.url,
+                    endpoint: &self.endpoint,
                     shared_runtime: &*self.shared_runtime,
                     stats_cardinality_limits: self.client_side_stats.stats_cardinality_limits,
                     additional_metric_tag_keys: &self.client_side_stats.additional_metric_tag_keys,
