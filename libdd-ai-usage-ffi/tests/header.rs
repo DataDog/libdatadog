@@ -8,6 +8,7 @@ use std::fs;
 use std::path::Path;
 
 #[test]
+#[cfg_attr(miri, ignore)] // cbindgen runs `cargo metadata`; miri can't spawn processes
 fn header_is_current() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let config = cbindgen::Config::from_file(crate_dir.join("cbindgen.toml")).unwrap();
@@ -24,7 +25,10 @@ fn header_is_current() {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, &generated).unwrap();
     }
-    let checked_in = fs::read_to_string(&path).unwrap_or_default();
+    // A Windows checkout may give the header CRLF line endings.
+    let checked_in = fs::read_to_string(&path)
+        .unwrap_or_default()
+        .replace("\r\n", "\n");
     assert!(
         checked_in == generated,
         "include/ai_usage.h is out of date; run \
