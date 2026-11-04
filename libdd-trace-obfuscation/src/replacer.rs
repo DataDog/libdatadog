@@ -1,7 +1,7 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use libdd_common::regex_engine::{Regex, Replacer};
+use libdd_regex::{Regex, Replacer};
 use libdd_trace_model::{
     AttributeValue, Attributes, AttributesMut, PROMOTED_SPAN_TAGS, SpanMut, TraceChunkMut,
     TraceText, ValueArrayMut, ValueMapMut, ValueTypes,
