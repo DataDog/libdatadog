@@ -49,6 +49,7 @@ libdd-ai-usage                       @DataDog/agent-console
 libdd-alloc/                         @DataDog/libdatadog-profiling
 libdd-capabilities*/                 @DataDog/apm-common-components-core
 libdd-common*/                       @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
+libdd-regex/                          @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 libdd-crashtracker*/                 @DataDog/libdatadog-profiling @DataDog/libdatadog-crashtracking-reviewers
 libdd-data-pipeline*/                @DataDog/apm-common-components-core
 libdd-ddsketch*/                     @DataDog/apm-common-components-core
@@ -191,6 +192,7 @@ builder/Cargo.toml                           @DataDog/apm-common-components-core
 libdd-common-ffi/Cargo.toml                  @DataDog/apm-common-components-core @DataDog/libdatadog-release @DataDog/libdatadog-guild-reviewers
 libdd-common/CHANGELOG.md                    @DataDog/apm-common-components-core @DataDog/libdatadog-release @DataDog/libdatadog-guild-reviewers
 libdd-common/Cargo.toml                      @DataDog/apm-common-components-core @DataDog/libdatadog-release @DataDog/libdatadog-guild-reviewers
+libdd-regex/Cargo.toml                        @DataDog/apm-common-components-core @DataDog/libdatadog-release @DataDog/libdatadog-guild-reviewers
 
 libdd-gotter/CHANGELOG.md                    @DataDog/libdatadog-profiling @DataDog/libdatadog-release @DataDog/libdatadog-crashtracking-reviewers
 libdd-gotter/Cargo.toml                      @DataDog/libdatadog-profiling @DataDog/libdatadog-release @DataDog/libdatadog-crashtracking-reviewers
