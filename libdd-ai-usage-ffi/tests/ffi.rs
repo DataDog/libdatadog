@@ -175,15 +175,17 @@ fn batch_to_dogstatsd_datagrams() {
         let tags = "env:prod,version:1.2";
         let mut out = empty();
         let status =
-            ddog_ai_usage_batch_take_dogstatsd(batch, tags.as_ptr(), tags.len(), 256, &mut out);
+            ddog_ai_usage_batch_take_dogstatsd(batch, tags.as_ptr(), tags.len(), 512, &mut out);
         assert_eq!(status, Status::Ok);
-        let datagrams = json_of(out)["datagrams"].as_array().unwrap().clone();
+        let taken = json_of(out);
+        assert_eq!(taken["dropped_lines"], 0);
+        let datagrams = taken["datagrams"].as_array().unwrap().clone();
         assert!(datagrams.len() > 1);
         let lines: Vec<String> = datagrams
             .iter()
             .flat_map(|d| {
                 let d = d.as_str().unwrap();
-                assert!(d.len() <= 256 || !d.contains('\n'), "{d}");
+                assert!(d.len() <= 512, "{d}");
                 d.lines().map(str::to_string).collect::<Vec<_>>()
             })
             .collect();
@@ -201,7 +203,7 @@ fn batch_to_dogstatsd_datagrams() {
         let status =
             ddog_ai_usage_batch_take_dogstatsd(batch, ptr::null(), 0, UDP_MAX_PAYLOAD, &mut out);
         assert_eq!(status, Status::Ok);
-        assert_eq!(json_of(out), json!({"datagrams": []}));
+        assert_eq!(json_of(out), json!({"datagrams": [], "dropped_lines": 0}));
         ddog_ai_usage_batch_drop(batch);
     }
 }
@@ -395,7 +397,8 @@ fn provider_ids_and_packing() {
         ),
         (
             Status::Ok,
-            json!({"datagrams": ["a:1|c|#x:y,env:prod", "b:1|c|#x:y,env:prod"]})
+            json!({"datagrams": ["a:1|c|#x:y,env:prod", "b:1|c|#x:y,env:prod"],
+                "dropped_lines": 0})
         )
     );
     let (status, value) = call(
@@ -506,6 +509,7 @@ fn text_lines_and_packing_match_the_json_path() {
     // Packing the text lines gives the datagrams the batch gives.
     let joined = lines.join("\r\n") + "\n\n";
     let tags = "env:prod, version:1.2";
+    let mut dropped = usize::MAX;
     // SAFETY: valid inputs and output.
     let (status, packed) = text_of(|out| unsafe {
         ddog_ai_usage_pack_dogstatsd_lines(
@@ -514,6 +518,7 @@ fn text_lines_and_packing_match_the_json_path() {
             tags.as_ptr(),
             tags.len(),
             256,
+            &mut dropped,
             out,
         )
     });
@@ -530,17 +535,27 @@ fn text_lines_and_packing_match_the_json_path() {
         let mut out = empty();
         ddog_ai_usage_batch_add(batch, ATTEMPT.as_ptr(), ATTEMPT.len(), &mut out);
         take(out);
+        let mut batch_dropped = usize::MAX;
         let (status, taken) = text_of(|out| {
-            ddog_ai_usage_batch_take_dogstatsd_text(batch, tags.as_ptr(), tags.len(), 256, out)
+            ddog_ai_usage_batch_take_dogstatsd_text(
+                batch,
+                tags.as_ptr(),
+                tags.len(),
+                256,
+                &mut batch_dropped,
+                out,
+            )
         });
         assert_eq!(status, Status::Ok);
         assert_eq!(datagrams_of(&taken), packed);
+        assert_eq!(batch_dropped, dropped);
         assert_eq!(
             text_of(|out| ddog_ai_usage_batch_take_dogstatsd_text(
                 batch,
                 ptr::null(),
                 0,
                 UDP_MAX_PAYLOAD,
+                ptr::null_mut(),
                 out
             )),
             (Status::Ok, String::new())
@@ -555,9 +570,28 @@ fn text_lines_and_packing_match_the_json_path() {
     assert_eq!(error["error"]["code"], "profile_invalid");
     // SAFETY: valid input and output.
     let (status, _) = text_of(|out| unsafe {
-        ddog_ai_usage_pack_dogstatsd_lines(ptr::null(), 0, ptr::null(), 0, 0, out)
+        ddog_ai_usage_pack_dogstatsd_lines(ptr::null(), 0, ptr::null(), 0, 0, ptr::null_mut(), out)
     });
     assert_eq!(status, Status::Rejected);
+    // A line longer than the payload is dropped and counted.
+    let lines = format!("a:1|c\nb:1|c|#t:{}\nc:1|c", "x".repeat(64));
+    let mut dropped = 0;
+    // SAFETY: valid inputs and output.
+    let (status, packed) = text_of(|out| unsafe {
+        ddog_ai_usage_pack_dogstatsd_lines(
+            lines.as_ptr(),
+            lines.len(),
+            ptr::null(),
+            0,
+            32,
+            &mut dropped,
+            out,
+        )
+    });
+    assert_eq!(
+        (status, packed.as_str(), dropped),
+        (Status::Ok, "a:1|c\nc:1|c", 1)
+    );
 }
 
 #[test]

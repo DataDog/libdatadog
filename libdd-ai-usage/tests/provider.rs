@@ -160,8 +160,9 @@ fn stream_outcomes() {
         stream.response().usage.as_ref().unwrap().input_tokens,
         Some(3)
     );
-    // A line longer than the bound is skipped also when it arrives whole in
-    // one chunk, so the usage read does not depend on the chunk boundaries.
+    // A line whose text is longer than the bound is still read: its long
+    // strings are cut as they pass, whole in one chunk or split, so the
+    // usage read does not depend on the chunk boundaries.
     let long_usage = format!(
         "data: {{\"usage\": {{\"prompt_tokens\": 7, \"completion_tokens\": 1}}, \"pad\": \"{}\"}}\n",
         "x".repeat(libdd_ai_usage::MAX_STREAM_LINE_BYTES)
@@ -172,8 +173,56 @@ fn stream_outcomes() {
     let (head, tail) = long_usage.as_bytes().split_at(long_usage.len() / 2);
     split.feed(head);
     split.feed(tail);
+    assert_eq!(
+        whole.response().usage.as_ref().unwrap().input_tokens,
+        Some(7)
+    );
+    assert_eq!(whole.response(), split.response());
+    // A line whose structure alone exceeds the bound is skipped, both ways.
+    let huge_structure = format!(
+        "data: {{\"usage\": {{\"prompt_tokens\": 7}}, \"pad\": [{}0]}}\n",
+        "0,".repeat(libdd_ai_usage::MAX_STREAM_LINE_BYTES / 2 + 1)
+    );
+    let mut whole = UsageStream::new(UsageFormat::OpenAiChat, false);
+    whole.feed(huge_structure.as_bytes());
+    let mut split = UsageStream::new(UsageFormat::OpenAiChat, false);
+    for piece in huge_structure.as_bytes().chunks(4096) {
+        split.feed(piece);
+    }
     assert_eq!(whole.response().usage, None);
     assert_eq!(split.response().usage, None);
+    // A Responses `response.completed` event carries the whole response on
+    // one line, its text included; its usage is read however long the text.
+    let completed = format!(
+        "event: response.completed\ndata: {{\"type\": \"response.completed\", \"response\": \
+         {{\"model\": \"gpt-5\", \"output\": [{{\"type\": \"message\", \"content\": \
+         [{{\"type\": \"output_text\", \"text\": \"{}\"}}]}}], \"usage\": \
+         {{\"input_tokens\": 11, \"output_tokens\": 4000000}}}}}}\n\n",
+        "word \\\"quoted\\\" \\u00e9 ".repeat(300_000)
+    );
+    assert!(completed.len() > 4 * libdd_ai_usage::MAX_STREAM_LINE_BYTES);
+    for step in [completed.len(), 65_536, 1000] {
+        let mut stream = UsageStream::new(UsageFormat::OpenAiResponses, false);
+        for piece in completed.as_bytes().chunks(step) {
+            stream.feed(piece);
+        }
+        assert_eq!(stream.outcome(), StreamOutcome::Completed, "{step}");
+        let usage = stream.response().usage.clone().unwrap();
+        assert_eq!(usage.input_tokens, Some(11), "{step}");
+        assert_eq!(usage.output_tokens, Some(4_000_000), "{step}");
+        assert_eq!(stream.response().response_model.as_deref(), Some("gpt-5"));
+    }
+    // The same body read whole.
+    let body = completed
+        .split_once("data: ")
+        .unwrap()
+        .1
+        .trim_end()
+        .to_string();
+    let (response, outcome, _) =
+        parse_provider_body(UsageFormat::OpenAiResponses, body.as_bytes(), false);
+    assert_eq!(outcome, StreamOutcome::Completed);
+    assert_eq!(response.usage.unwrap().output_tokens, Some(4_000_000));
     // A final line without a line ending is read at the end.
     let mut stream = UsageStream::new(UsageFormat::OpenAiChat, false);
     stream.feed(b"data: [DONE]");
@@ -222,14 +271,39 @@ fn split_events_read_as_the_stream_does() {
     let mut stream = UsageStream::new(UsageFormat::OpenAiChat, false);
     stream.feed_event("", "[DONE]");
     assert_eq!(stream.outcome(), StreamOutcome::Completed);
-    // Data over the line bound is skipped.
+    // Data longer than the line bound is read with its strings cut.
     let mut stream = UsageStream::new(UsageFormat::OpenAiChat, false);
     let long = format!(
         "{{\"usage\": {{\"prompt_tokens\": 3, \"completion_tokens\": 1}}, \"pad\": \"{}\"}}",
         "x".repeat(libdd_ai_usage::MAX_STREAM_LINE_BYTES)
     );
     stream.feed_event("", &long);
-    assert_eq!(stream.response().usage, None);
+    assert_eq!(
+        stream.response().usage.as_ref().unwrap().input_tokens,
+        Some(3)
+    );
+
+    // `[DONE]` ends only an OpenAI-shaped stream.
+    for (format, expected) in [
+        (UsageFormat::OpenAiChat, StreamOutcome::Completed),
+        (UsageFormat::GeminiOpenAiCompat, StreamOutcome::Completed),
+        (UsageFormat::Auto, StreamOutcome::Completed),
+        (UsageFormat::Anthropic, StreamOutcome::Open),
+        (UsageFormat::Gemini, StreamOutcome::Open),
+    ] {
+        let mut stream = UsageStream::new(format, false);
+        stream.feed(b"data: [DONE]\n\n");
+        assert_eq!(stream.outcome(), expected, "{format:?}");
+    }
+
+    // Anthropic: the output count of `message_start` is a placeholder. A
+    // stream cut before `message_delta` reports no output.
+    let mut stream = UsageStream::new(UsageFormat::Anthropic, false);
+    stream.feed_event("message_start", events[0].1);
+    let usage = stream.response().usage.clone().unwrap();
+    assert_eq!(usage.input_tokens, Some(12));
+    assert_eq!(usage.output_tokens, None);
+    assert_eq!(usage.output_basis, None);
 }
 
 #[test]
@@ -305,6 +379,10 @@ fn error_types() {
         ("Timeout", Some("timeout_error")),
         ("APIConnectionError", Some("api_connection_error")),
         ("CancelledError", Some("cancelled")),
+        ("ClientDisconnected", Some("cancelled")),
+        ("ReadError", Some("api_connection_error")),
+        ("ConnectError", Some("api_connection_error")),
+        ("RemoteProtocolError", Some("api_connection_error")),
         ("overloaded_error", Some("internal_server_error")),
         ("invalid_request_error", Some("bad_request_error")),
         // The same failure as HTTP 413.
@@ -495,9 +573,15 @@ fn dogstatsd_packing() {
         datagrams.iter().map(|d| d.lines().count()).sum::<usize>(),
         5
     );
-    // A line longer than the payload is a datagram of its own.
+    // A line longer than the payload is dropped, and counted.
     let long = format!("m:1|c|#a:{}", "x".repeat(64));
     let datagrams = pack_dogstatsd(&[line, long.as_str(), line], &[""; 0], 32);
-    assert_eq!(datagrams, vec![line, long.as_str(), line]);
+    assert_eq!(datagrams, vec![format!("{line}\n{line}")]);
+    let (datagrams, dropped) =
+        libdd_ai_usage::pack_dogstatsd_counted(&[line, long.as_str()], &[""; 0], 32);
+    assert_eq!((datagrams, dropped), (vec![line.to_string()], 1));
+    // The constant tags count toward the length.
+    let (datagrams, dropped) = libdd_ai_usage::pack_dogstatsd_counted(&[line], &["env:prod"], 15);
+    assert_eq!((datagrams.len(), dropped), (0, 1));
     assert!(pack_dogstatsd(&[""; 0], &[""; 0], 1432).is_empty());
 }

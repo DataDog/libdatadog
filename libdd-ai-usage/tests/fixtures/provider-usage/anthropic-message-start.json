@@ -1,5 +1,5 @@
 {
-  "description": "message_start nests usage and the model in its message.",
+  "description": "message_start nests usage and the model in its message. Its output count is a placeholder stated before any output, so it is not read.",
   "format": "anthropic",
   "operation_name": "chat",
   "payload": {
@@ -18,8 +18,6 @@
     "usage": {
       "input_tokens": 7,
       "input_basis": "excludes_cache",
-      "output_tokens": 1,
-      "output_basis": "includes_reasoning",
       "cache_read_input_tokens": 2,
       "cache_write_input_tokens": 1
     },

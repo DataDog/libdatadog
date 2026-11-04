@@ -81,7 +81,8 @@ pub use deployment::{
     with_deployment_attributes, with_deployment_attributes_json,
 };
 pub use dogstatsd::{
-    DOGSTATSD_UDP_MAX_PAYLOAD, DOGSTATSD_UDS_MAX_PAYLOAD, pack_dogstatsd, with_constant_tags,
+    DOGSTATSD_UDP_MAX_PAYLOAD, DOGSTATSD_UDS_MAX_PAYLOAD, pack_dogstatsd, pack_dogstatsd_counted,
+    with_constant_tags,
 };
 pub use error_type::{
     ERROR_TYPE_API, ERROR_TYPE_API_CONNECTION, ERROR_TYPE_AUTHENTICATION, ERROR_TYPE_BAD_REQUEST,
@@ -108,10 +109,10 @@ pub use project::{
     project_token_breakdown,
 };
 pub use provider::{
-    MAX_STREAM_LINE_BYTES, PROVIDER_ID_HEADERS, ProviderResponse, ProviderUsage, StreamOutcome,
-    UsageFormat, UsageStream, bedrock_arn_account, gen_ai_provider_name, is_person_identifier,
-    is_service_tier, parse_provider_body, parse_provider_response, parse_provider_usage,
-    provider_id_attributes,
+    MAX_KEPT_STRING_BYTES, MAX_STREAM_LINE_BYTES, PROVIDER_ID_HEADERS, ProviderResponse,
+    ProviderUsage, StreamOutcome, UsageFormat, UsageStream, bedrock_arn_account,
+    gen_ai_provider_name, is_person_identifier, is_service_tier, parse_provider_body,
+    parse_provider_response, parse_provider_usage, provider_id_attributes,
 };
 pub use registry::{
     AttributeDefinition, DeploymentAttributeDefinition, Finding, FindingCode, MetricDefinition,

@@ -38,17 +38,34 @@ pub fn with_constant_tags<S: AsRef<str>>(line: &str, constant_tags: &[S]) -> Str
 
 /// Join DogStatsD lines, with `constant_tags` appended to each, into
 /// newline-separated datagrams of at most `max_payload` bytes, in order. A
-/// line longer than `max_payload` is a datagram of its own, which the
-/// transport may refuse. Empty lines are skipped.
+/// line longer than `max_payload` with its tags is dropped: the Agent
+/// refuses a datagram that long ([`DOGSTATSD_UDP_MAX_PAYLOAD`],
+/// [`DOGSTATSD_UDS_MAX_PAYLOAD`]). [`pack_dogstatsd_counted`] also counts
+/// them. Empty lines are skipped.
 pub fn pack_dogstatsd<L: AsRef<str>, S: AsRef<str>>(
     lines: &[L],
     constant_tags: &[S],
     max_payload: usize,
 ) -> Vec<String> {
+    pack_dogstatsd_counted(lines, constant_tags, max_payload).0
+}
+
+/// [`pack_dogstatsd`], also returning the number of lines dropped for being
+/// longer than `max_payload`.
+pub fn pack_dogstatsd_counted<L: AsRef<str>, S: AsRef<str>>(
+    lines: &[L],
+    constant_tags: &[S],
+    max_payload: usize,
+) -> (Vec<String>, usize) {
     let mut datagrams = Vec::new();
     let mut packet = String::new();
+    let mut dropped = 0;
     for line in lines.iter().map(AsRef::as_ref).filter(|l| !l.is_empty()) {
         let line = with_constant_tags(line, constant_tags);
+        if line.len() > max_payload {
+            dropped += 1;
+            continue;
+        }
         if !packet.is_empty() && packet.len() + 1 + line.len() > max_payload {
             datagrams.push(std::mem::take(&mut packet));
         }
@@ -60,7 +77,7 @@ pub fn pack_dogstatsd<L: AsRef<str>, S: AsRef<str>>(
     if !packet.is_empty() {
         datagrams.push(packet);
     }
-    datagrams
+    (datagrams, dropped)
 }
 
 impl MetricBatch {
@@ -71,7 +88,19 @@ impl MetricBatch {
         constant_tags: &[S],
         max_payload: usize,
     ) -> Result<Vec<String>, MetricError> {
-        Ok(pack_dogstatsd(
+        Ok(self
+            .dogstatsd_datagrams_counted(constant_tags, max_payload)?
+            .0)
+    }
+
+    /// [`MetricBatch::dogstatsd_datagrams`], also returning the number of
+    /// lines dropped for being longer than `max_payload`.
+    pub fn dogstatsd_datagrams_counted<S: AsRef<str>>(
+        &self,
+        constant_tags: &[S],
+        max_payload: usize,
+    ) -> Result<(Vec<String>, usize), MetricError> {
+        Ok(pack_dogstatsd_counted(
             &self.dogstatsd_lines()?,
             constant_tags,
             max_payload,

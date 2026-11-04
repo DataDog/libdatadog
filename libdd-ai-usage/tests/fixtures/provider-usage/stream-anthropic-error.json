@@ -7,8 +7,6 @@
     "usage": {
       "input_tokens": 10,
       "input_basis": "excludes_cache",
-      "output_tokens": 1,
-      "output_basis": "includes_reasoning",
       "cache_read_input_tokens": 5,
       "cache_write_input_tokens": 0
     },

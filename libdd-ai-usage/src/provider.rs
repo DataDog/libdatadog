@@ -197,7 +197,7 @@ impl ProviderUsage {
 
     /// Merge the usage of a later event of the same stream. A count reported
     /// by both is the larger, as stream counts are cumulative and an early
-    /// event can carry a placeholder (Anthropic's `message_start` output).
+    /// event can carry a placeholder.
     /// A basis goes with the count it describes: it is the later event's
     /// when that event's count is kept, so an early event of Google's
     /// OpenAI-compatible endpoint that had no thinking yet does not mark a
@@ -654,7 +654,18 @@ pub fn parse_provider_response(
         UsageFormat::Gemini => {
             gemini_usage_object(payload).map(|usage| gemini_usage(Some(usage), embeddings))
         }
-        UsageFormat::Anthropic => usage.map(|usage| anthropic_usage(Some(usage), embeddings)),
+        UsageFormat::Anthropic => usage.map(|usage| {
+            let mut parsed = anthropic_usage(Some(usage), embeddings);
+            // `message_start` states an output count before any output: a
+            // placeholder, not a count the provider reported. Only
+            // `message_delta` reports output, so a stream cut before it has
+            // no output count and the caller estimates one.
+            if member(Some(payload), "type").and_then(Json::as_str) == Some("message_start") {
+                parsed.output_tokens = None;
+                parsed.output_basis = None;
+            }
+            parsed
+        }),
         UsageFormat::GeminiOpenAiCompat => {
             usage.map(|usage| gemini_compat_usage(Some(usage), embeddings))
         }
@@ -706,9 +717,163 @@ impl StreamOutcome {
     }
 }
 
-/// A stream line longer than this is generated content: it is skipped
-/// rather than held.
+/// The longest stream line kept, once the long strings it holds are cut to
+/// [`MAX_KEPT_STRING_BYTES`]: a line whose structure alone is longer is
+/// skipped. A line that carries a whole response, such as the Responses
+/// `response.completed` event, is mostly generated text, so it is read
+/// however long its text is.
 pub const MAX_STREAM_LINE_BYTES: usize = 1024 * 1024;
+
+/// The bytes of a JSON string kept as a line or body is read. A longer
+/// string is generated content (a message, a tool argument, an image): the
+/// rest of it is dropped as it passes, so it is neither held nor decoded.
+/// Every value this module reads (a model, a tier, an error type or code)
+/// is far shorter.
+pub const MAX_KEPT_STRING_BYTES: usize = 1024;
+
+/// A line or body shorter than this is decoded as it is, without cutting
+/// its strings first: cutting would not save enough to pay for itself.
+const CUT_ABOVE_BYTES: usize = 64 * 1024;
+
+/// JSON text with every string cut to its first [`MAX_KEPT_STRING_BYTES`]
+/// bytes, fed in pieces that can end anywhere. A string is cut only at a
+/// character boundary outside an escape (never between the two halves of a
+/// surrogate pair), so the text stays valid JSON, and valid UTF-8 when the
+/// input was. Bytes outside strings are kept as they are.
+#[derive(Debug, Clone, Default)]
+struct CutStrings {
+    out: Vec<u8>,
+    in_string: bool,
+    /// The previous byte was the backslash of an escape.
+    escaped: bool,
+    /// Hex digits of a `\u` escape still to come, and its value so far.
+    hex_left: u8,
+    hex: u32,
+    /// The last escape was a high surrogate, whose low half must be kept.
+    high_surrogate: bool,
+    /// The bytes of the current string kept so far.
+    kept: usize,
+    /// The current string is being dropped until its closing quote.
+    cutting: bool,
+}
+
+impl CutStrings {
+    fn clear(&mut self) {
+        self.out.clear();
+        self.in_string = false;
+        self.escaped = false;
+        self.hex_left = 0;
+        self.hex = 0;
+        self.high_surrogate = false;
+        self.kept = 0;
+        self.cutting = false;
+    }
+
+    fn is_empty(&self) -> bool {
+        self.out.is_empty()
+    }
+
+    fn push(&mut self, bytes: &[u8]) {
+        let mut at = 0;
+        while at < bytes.len() {
+            if !self.in_string {
+                // Copy up to the next quote in one go.
+                let next = memchr::memchr(b'"', &bytes[at..]).map_or(bytes.len(), |n| at + n);
+                self.out.extend_from_slice(&bytes[at..next]);
+                if next < bytes.len() {
+                    self.out.push(b'"');
+                    self.in_string = true;
+                    self.kept = 0;
+                    self.cutting = false;
+                    self.high_surrogate = false;
+                }
+                at = next + 1;
+                continue;
+            }
+            if self.cutting {
+                if self.escaped {
+                    self.escaped = false;
+                    at += 1;
+                    continue;
+                }
+                // Skip to the next quote or backslash in one go; an escape
+                // skips the byte it escapes.
+                loop {
+                    match memchr::memchr2(b'"', b'\\', &bytes[at..]) {
+                        None => at = bytes.len(),
+                        Some(n) if bytes[at + n] == b'"' => {
+                            self.out.push(b'"');
+                            self.in_string = false;
+                            at += n + 1;
+                        }
+                        Some(n) if at + n + 1 < bytes.len() => {
+                            at += n + 2;
+                            continue;
+                        }
+                        Some(_) => {
+                            // The escaped byte is in the next piece.
+                            self.escaped = true;
+                            at = bytes.len();
+                        }
+                    }
+                    break;
+                }
+                continue;
+            }
+            let b = bytes[at];
+            at += 1;
+            if self.escaped {
+                self.escaped = false;
+                if b == b'u' {
+                    self.hex_left = 4;
+                    self.hex = 0;
+                } else {
+                    self.high_surrogate = false;
+                }
+                self.keep(b);
+                continue;
+            }
+            if self.hex_left > 0 {
+                self.hex_left -= 1;
+                self.hex = self.hex * 16 + char::from(b).to_digit(16).unwrap_or(0);
+                if self.hex_left == 0 {
+                    self.high_surrogate = (0xD800..0xDC00).contains(&self.hex);
+                }
+                self.keep(b);
+                continue;
+            }
+            if b == b'"' {
+                self.out.push(b);
+                self.in_string = false;
+                continue;
+            }
+            let boundary = b & 0xC0 != 0x80 && !(self.high_surrogate && b == b'\\');
+            if self.kept >= MAX_KEPT_STRING_BYTES && boundary {
+                self.cutting = true;
+                self.escaped = b == b'\\';
+                continue;
+            }
+            if b == b'\\' {
+                self.escaped = true;
+            } else if b & 0xC0 != 0x80 {
+                self.high_surrogate = false;
+            }
+            self.keep(b);
+        }
+    }
+
+    fn keep(&mut self, b: u8) {
+        self.out.push(b);
+        self.kept += 1;
+    }
+}
+
+/// `text` with its long strings cut, as [`CutStrings`] does.
+fn cut_strings(text: &[u8]) -> Vec<u8> {
+    let mut cut = CutStrings::default();
+    cut.push(text);
+    cut.out
+}
 
 /// The quoted names a line must contain to be decoded. A quote inside a JSON
 /// string is escaped, so generated text cannot contain them.
@@ -732,9 +897,10 @@ const CANDIDATE_MARKERS: [&str; 11] = [
 ///
 /// Lines end only at CR, LF or CRLF, as server-sent events define them, so a
 /// JSON string holding U+2028 does not split an event. A chunk can end
-/// anywhere: an unfinished line is held until the next chunk, up to
-/// [`MAX_STREAM_LINE_BYTES`]. Only lines that can carry usage, the model, the
-/// tier or a terminal event are decoded.
+/// anywhere: an unfinished line is held until the next chunk, its strings
+/// cut to [`MAX_KEPT_STRING_BYTES`] as they arrive, so a line holding a whole
+/// response is read without holding its text. Only lines that can carry
+/// usage, the model, the tier or a terminal event are decoded.
 #[derive(Debug, Clone)]
 pub struct UsageStream {
     format: UsageFormat,
@@ -742,7 +908,7 @@ pub struct UsageStream {
     response: ProviderResponse,
     outcome: StreamOutcome,
     error_name: Option<String>,
-    pending: Vec<u8>,
+    pending: CutStrings,
     skipping: bool,
     /// The previous chunk ended in CR: a LF that starts the next one ends no
     /// line of its own.
@@ -757,7 +923,7 @@ impl UsageStream {
             response: ProviderResponse::default(),
             outcome: StreamOutcome::Open,
             error_name: None,
-            pending: Vec::new(),
+            pending: CutStrings::default(),
             skipping: false,
             after_cr: false,
         }
@@ -792,14 +958,13 @@ impl UsageStream {
     }
 
     fn hold(&mut self, rest: &[u8]) {
-        if self.skipping {
+        if self.skipping || rest.is_empty() {
             return;
         }
-        if self.pending.len() + rest.len() > MAX_STREAM_LINE_BYTES {
+        self.pending.push(rest);
+        if self.pending.out.len() > MAX_STREAM_LINE_BYTES {
             self.pending.clear();
             self.skipping = true;
-        } else {
-            self.pending.extend_from_slice(rest);
         }
     }
 
@@ -809,19 +974,19 @@ impl UsageStream {
             self.pending.clear();
             return;
         }
-        if self.pending.is_empty() {
-            // Bounded as a line held across chunks is, so the usage read
-            // does not depend on where the transport split the stream.
-            if tail.len() <= MAX_STREAM_LINE_BYTES {
-                self.line(tail);
-            }
-        } else if self.pending.len() + tail.len() <= MAX_STREAM_LINE_BYTES {
-            let mut line = std::mem::take(&mut self.pending);
-            line.extend_from_slice(tail);
-            self.line(&line);
-        } else {
-            self.pending.clear();
+        if self.pending.is_empty() && tail.len() <= CUT_ABOVE_BYTES {
+            self.line(tail);
+            return;
         }
+        // Cut as a line held across chunks is, so the usage read does not
+        // depend on where the transport split the stream.
+        self.pending.push(tail);
+        let mut pending = std::mem::take(&mut self.pending);
+        if pending.out.len() <= MAX_STREAM_LINE_BYTES {
+            self.line(&pending.out);
+        }
+        pending.clear();
+        self.pending = pending;
     }
 
     fn line(&mut self, line: &[u8]) {
@@ -842,14 +1007,21 @@ impl UsageStream {
 
     /// Read a server-sent event that the caller already split: its `event`
     /// field (empty when it had none) and its `data`, as
-    /// [`UsageStream::feed`] reads them from a stream. Data longer than
-    /// [`MAX_STREAM_LINE_BYTES`] is skipped, as a line that long is.
+    /// [`UsageStream::feed`] reads them from a stream, long strings cut
+    /// alike.
     pub fn feed_event(&mut self, event_name: &str, data: &str) {
         let event_name = event_name.trim();
         if !event_name.is_empty() {
             self.event_name(event_name);
         }
-        if data.len() <= MAX_STREAM_LINE_BYTES {
+        if data.len() <= CUT_ABOVE_BYTES {
+            self.data(data.trim());
+            return;
+        }
+        let cut = cut_strings(data.as_bytes());
+        if cut.len() <= MAX_STREAM_LINE_BYTES
+            && let Ok(data) = std::str::from_utf8(&cut)
+        {
             self.data(data.trim());
         }
     }
@@ -866,7 +1038,11 @@ impl UsageStream {
 
     fn data(&mut self, value: &str) {
         if value == "[DONE]" {
-            self.complete();
+            // Only OpenAI-shaped streams end with `[DONE]`; Anthropic's and
+            // Gemini's have terminal events of their own.
+            if !matches!(self.format, UsageFormat::Anthropic | UsageFormat::Gemini) {
+                self.complete();
+            }
             return;
         }
         if !value.starts_with('{') && !value.starts_with('[') {
@@ -953,7 +1129,7 @@ impl UsageStream {
     /// reported.
     pub fn finish(mut self) -> (ProviderResponse, StreamOutcome, Option<String>) {
         if !self.skipping && !self.pending.is_empty() {
-            let line = std::mem::take(&mut self.pending);
+            let line = std::mem::take(&mut self.pending.out);
             self.line(&line);
         }
         (self.response, self.outcome, self.error_name)
@@ -986,8 +1162,22 @@ pub fn parse_provider_body(
     body: &[u8],
     embeddings: bool,
 ) -> (ProviderResponse, StreamOutcome, Option<String>) {
-    let text = std::str::from_utf8(body).unwrap_or_default().trim_start();
-    if (text.starts_with('{') || text.starts_with('['))
+    let start = body
+        .iter()
+        .position(|b| !b.is_ascii_whitespace())
+        .unwrap_or(body.len());
+    let body_text = &body[start..];
+    // A large document is mostly generated text: cut its strings before
+    // decoding (and before checking its UTF-8), so none of it is copied.
+    let cut;
+    let document = if body_text.len() > CUT_ABOVE_BYTES {
+        cut = cut_strings(body_text);
+        cut.as_slice()
+    } else {
+        body_text
+    };
+    if matches!(body_text.first(), Some(b'{' | b'['))
+        && let Ok(text) = std::str::from_utf8(document)
         && let Ok(document) = Json::parse(text)
     {
         let mut stream = UsageStream::new(format, embeddings);
@@ -1029,6 +1219,9 @@ pub const PROVIDER_ID_HEADERS: [(&str, &str, &str); 3] = [
 ];
 
 /// An account, project or key id as written: non-blank, at most 128 bytes.
+/// Leading and trailing whitespace is trimmed on purpose: it is not part of
+/// an HTTP field value (RFC 9110, section 5.5), and a proxy or client that
+/// leaves it in would otherwise split one account into several series.
 fn billing_id(value: &str) -> Option<&str> {
     let value = value.trim();
     (!value.is_empty() && value.len() <= MAX_ID_LENGTH).then_some(value)
@@ -1108,4 +1301,59 @@ pub fn is_person_identifier(value: &str) -> bool {
         && domain
             .char_indices()
             .any(|(at, c)| c == '.' && at > 0 && at + 1 < domain.len())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cut(text: &str) -> String {
+        String::from_utf8(cut_strings(text.as_bytes())).unwrap()
+    }
+
+    #[test]
+    fn long_strings_are_cut_at_safe_boundaries() {
+        let short = r#"{"model": "gpt-4o", "usage": {"prompt_tokens": 3}}"#;
+        assert_eq!(cut(short), short);
+
+        let n = MAX_KEPT_STRING_BYTES;
+        for filler in ["a", "é", r"\u00e9", r"\\", r#"\""#, r"\ud83d\ude00", r"\n"] {
+            for pad in 0..6 {
+                let text = format!(
+                    r#"{{"text": "{}{}", "usage": {{"output_tokens": 5}}}}"#,
+                    "x".repeat(n - pad),
+                    filler.repeat(2048)
+                );
+                let out = cut(&text);
+                assert!(out.len() < n + 64, "{filler} {pad}");
+                let value = Json::parse(&out).unwrap_or_else(|e| panic!("{filler} {pad}: {e}"));
+                assert_eq!(
+                    value
+                        .get("usage")
+                        .and_then(|u| u.get("output_tokens"))
+                        .and_then(Json::as_f64),
+                    Some(5.0)
+                );
+            }
+        }
+        // Multi-byte characters are never split.
+        let text = format!(r#"["{}"]"#, "é".repeat(4096));
+        let out = cut(&text);
+        assert!(Json::parse(&out).is_ok());
+
+        // Fed in pieces that end anywhere, the result is the same.
+        let text = format!(
+            r#"{{"a": "{}\ud83d\ude00", "b": "{}", "usage": {{"x": 1}}}}"#,
+            "y".repeat(n - 3),
+            "z\\\"".repeat(1000)
+        );
+        let whole = cut_strings(text.as_bytes());
+        for step in [1, 2, 3, 7, 1000] {
+            let mut pieces = CutStrings::default();
+            for piece in text.as_bytes().chunks(step) {
+                pieces.push(piece);
+            }
+            assert_eq!(pieces.out, whole, "{step}");
+        }
+    }
 }

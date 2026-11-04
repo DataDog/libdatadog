@@ -121,19 +121,23 @@ enum ddog_ai_usage_Status ddog_ai_usage_dogstatsd_lines(const uint8_t *input,
  * `max_payload` bytes, with the comma-separated `constant_tags` appended to
  * each line, and write them to `out` as text: each datagram's lines joined
  * by `\n`, datagrams separated by a NUL byte, no trailing NUL. Neither the
- * input nor the output is JSON. A line longer than `max_payload` is a
- * datagram of its own. [`Status::Rejected`] for a `max_payload` of 0.
+ * input nor the output is JSON. A line longer than `max_payload` with its
+ * tags is dropped (the Agent would refuse it), and the number dropped is
+ * written to `dropped_lines` when it is not null. [`Status::Rejected`] for
+ * a `max_payload` of 0.
  *
  * # Safety
  *
  * `lines` and `constant_tags` must point to their lengths of readable bytes
- * (or the length must be 0), and `out` must be null or writable.
+ * (or the length must be 0), `dropped_lines` must be null or writable, and
+ * `out` must be null or writable.
  */
 enum ddog_ai_usage_Status ddog_ai_usage_pack_dogstatsd_lines(const uint8_t *lines,
                                                              uintptr_t lines_len,
                                                              const uint8_t *constant_tags,
                                                              uintptr_t constant_tags_len,
                                                              uintptr_t max_payload,
+                                                             uintptr_t *dropped_lines,
                                                              struct ddog_ai_usage_Buffer *out);
 
 /**
@@ -189,9 +193,10 @@ uintptr_t ddog_ai_usage_batch_len(const struct ddog_ai_usage_Batch *batch);
 
 /**
  * Take every point of `batch`, leaving it empty, and write it as DogStatsD
- * datagrams: `{"datagrams": ["line\nline", ...]}`. Each datagram is at most
- * `max_payload` bytes ([`UDP_MAX_PAYLOAD`] or [`UDS_MAX_PAYLOAD`]), except a
- * single line longer than that. `constant_tags` is a comma-separated list of
+ * datagrams: `{"datagrams": ["line\nline", ...], "dropped_lines": 0}`. Each
+ * datagram is at most `max_payload` bytes ([`UDP_MAX_PAYLOAD`] or
+ * [`UDS_MAX_PAYLOAD`]); a line longer than that with its tags is dropped and
+ * counted in `dropped_lines`. `constant_tags` is a comma-separated list of
  * `key:value` tags added to every line, such as the client's `env`; it may
  * be empty.
  *
@@ -211,16 +216,19 @@ enum ddog_ai_usage_Status ddog_ai_usage_batch_take_dogstatsd(const struct ddog_a
  * [`ddog_ai_usage_batch_take_dogstatsd`], writing the datagrams as text
  * rather than JSON: each datagram's lines joined by `\n`, datagrams
  * separated by a NUL byte, no trailing NUL. An empty batch writes an empty
- * buffer.
+ * buffer. The number of lines dropped for being longer than `max_payload`
+ * is written to `dropped_lines` when it is not null.
  *
  * # Safety
  *
- * As [`ddog_ai_usage_batch_take_dogstatsd`].
+ * As [`ddog_ai_usage_batch_take_dogstatsd`]; `dropped_lines` must be null or
+ * writable.
  */
 enum ddog_ai_usage_Status ddog_ai_usage_batch_take_dogstatsd_text(const struct ddog_ai_usage_Batch *batch,
                                                                   const uint8_t *constant_tags,
                                                                   uintptr_t constant_tags_len,
                                                                   uintptr_t max_payload,
+                                                                  uintptr_t *dropped_lines,
                                                                   struct ddog_ai_usage_Buffer *out);
 
 /**
@@ -465,7 +473,8 @@ enum ddog_ai_usage_Status ddog_ai_usage_provider_ids(const uint8_t *input,
  * Pack DogStatsD lines into datagrams, from the request document
  * `input[..input_len]`: `{"lines": [...], "constant_tags": [...],
  * "max_payload": 1432}` (`constant_tags` optional, `max_payload` defaults to
- * [`UDP_MAX_PAYLOAD`]). Writes `{"datagrams": [...]}`.
+ * [`UDP_MAX_PAYLOAD`]). Writes `{"datagrams": [...], "dropped_lines": 0}`; a
+ * line longer than `max_payload` with its tags is dropped and counted.
  *
  * # Safety
  *

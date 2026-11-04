@@ -38,7 +38,7 @@ pub const ERROR_TYPES: [&str; 12] = [
 
 /// The error names providers and SDKs report, other than the vocabulary's
 /// own values, which map to themselves.
-const ERROR_NAMES: [(&str, &str); 35] = [
+const ERROR_NAMES: [(&str, &str); 39] = [
     // Anthropic and OpenAI error types and codes.
     ("invalid_request_error", ERROR_TYPE_BAD_REQUEST),
     // Anthropic's type for HTTP 413, which has no `error.type` of its own:
@@ -68,8 +68,14 @@ const ERROR_NAMES: [(&str, &str); 35] = [
     ("NetworkError", ERROR_TYPE_API_CONNECTION),
     ("ProtocolError", ERROR_TYPE_API_CONNECTION),
     ("EndpointConnectionError", ERROR_TYPE_API_CONNECTION),
+    // httpx transport errors.
+    ("ReadError", ERROR_TYPE_API_CONNECTION),
+    ("ConnectError", ERROR_TYPE_API_CONNECTION),
+    ("RemoteProtocolError", ERROR_TYPE_API_CONNECTION),
     ("CancelledError", ERROR_TYPE_CANCELLED),
     ("GeneratorExit", ERROR_TYPE_CANCELLED),
+    // The client went away before the response ended (LiteLLM proxy).
+    ("ClientDisconnected", ERROR_TYPE_CANCELLED),
     ("canceled", ERROR_TYPE_CANCELLED),
     // How a gateway sees a stream end.
     ("missing_message_stop", ERROR_TYPE_API_CONNECTION),
