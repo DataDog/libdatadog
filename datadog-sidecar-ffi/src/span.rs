@@ -799,7 +799,7 @@ pub extern "C" fn ddog_v1_attributes_value(attrs: &Attributes, idx: usize) -> *c
     }
 }
 
-/// [`DDOG_V1_ATTR_*`] type tag of `value`.
+/// `DDOG_V1_ATTR_*` type tag of `value`.
 #[unsafe(no_mangle)]
 pub extern "C" fn ddog_v1_value_type(value: &AttrValue) -> u32 {
     match value.0 {
