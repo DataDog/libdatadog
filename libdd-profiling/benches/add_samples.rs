@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use criterion::*;
-use libdd_common::threading::get_current_thread_id;
+use libdd_process_utils::threading::get_current_thread_id;
 use libdd_profiling::api2::Location2;
 use libdd_profiling::profiles::datatypes::{Function, FunctionId2, MappingId2, StringId2};
 use libdd_profiling::{self as profiling, api, api2};

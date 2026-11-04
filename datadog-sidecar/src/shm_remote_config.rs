@@ -169,13 +169,30 @@ struct ConfigFileStorage<N: NotifyTarget + 'static> {
 
 struct StoredShmFile {
     handle: Mutex<Option<NamedShmHandle>>, // just an option to use the handle under lock
-    limiter: Option<ShmLimiter<()>>,
+    limiter: Mutex<Option<ShmLimiter<()>>>,
     refcount: FileRefcountData,
 }
 
 impl RefcountedFile for StoredShmFile {
     fn refcount(&self) -> &FileRefcountData {
         &self.refcount
+    }
+}
+
+impl<N: NotifyTarget + 'static> ConfigFileStorage<N> {
+    /// No limiter means no rate limiting: either the segment could not be created, which is
+    /// already reported where it happened, or no slot is available right now. The latter is
+    /// retried on the next update of the file.
+    fn alloc_live_debugging_limiter(&self, path: &RemoteConfigPath) -> Option<ShmLimiter<()>> {
+        let limiter = self.limiter.as_ref()?;
+        let allocated = limiter.lock_or_panic().alloc();
+        if allocated.is_none() {
+            warn!(
+                "No rate limiter slot available for live debugging config {path}; \
+                 not rate limited (will retry on the next update)"
+            );
+        }
+        allocated
     }
 }
 
@@ -190,22 +207,11 @@ impl<N: NotifyTarget + 'static> FileStorage for ConfigFileStorage<N> {
     ) -> anyhow::Result<Arc<StoredShmFile>> {
         Ok(Arc::new(StoredShmFile {
             handle: Mutex::new(Some(store_shm(version, &path, file)?)),
-            // No limiter means no rate limiting: the segment could not be created, which is
-            // already reported where it happened.
-            limiter: if path.product() == RemoteConfigProduct::LiveDebugging {
-                self.limiter.as_ref().and_then(|limiter| {
-                    let allocated = limiter.lock_or_panic().alloc();
-                    if allocated.is_none() {
-                        warn!(
-                            "No rate limiter slot available for live debugging config {path}; \
-                             not rate limited"
-                        );
-                    }
-                    allocated
-                })
+            limiter: Mutex::new(if path.product() == RemoteConfigProduct::LiveDebugging {
+                self.alloc_live_debugging_limiter(&path)
             } else {
                 None
-            },
+            }),
             refcount: FileRefcountData::new(version, path),
         }))
     }
@@ -217,6 +223,13 @@ impl<N: NotifyTarget + 'static> FileStorage for ConfigFileStorage<N> {
         contents: Vec<u8>,
     ) -> anyhow::Result<()> {
         *file.handle.lock_or_panic() = Some(store_shm(version, &file.refcount.path, contents)?);
+        // Retry a slot allocation which failed when the file was first stored.
+        if file.refcount.path.product() == RemoteConfigProduct::LiveDebugging {
+            let mut limiter = file.limiter.lock_or_panic();
+            if limiter.is_none() {
+                *limiter = self.alloc_live_debugging_limiter(&file.refcount.path);
+            }
+        }
         Ok(())
     }
 }
@@ -301,7 +314,7 @@ impl<N: NotifyTarget + 'static> MultiTargetHandlers<N, Self, NativeCapabilities>
                 serialized.extend_from_slice(path);
             }
             serialized.push(b':');
-            if let Some(ref limiter) = file.limiter {
+            if let Some(ref limiter) = *file.limiter.lock_or_panic() {
                 serialized.extend_from_slice(limiter.index().to_string().as_bytes());
             } else {
                 serialized.push(b'0');
