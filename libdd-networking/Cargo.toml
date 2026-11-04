@@ -49,6 +49,10 @@ hyper-util = { workspace = true, features = ["client", "client-legacy", "http1"]
 tokio = { workspace = true, features = ["fs", "io-util", "macros", "net", "rt", "rt-multi-thread", "time"], optional = true }
 tower-service = { workspace = true, optional = true }
 
+[target.'cfg(unix)'.dependencies]
+# Used by conn_stream.rs and dump_server.rs (both gated by `http-client`).
+libdd-process-utils = { version = "1.0.0", path = "../libdd-process-utils", optional = true }
+
 [dev-dependencies]
 rand = { workspace = true, default-features = true }
 rcgen.workspace = true
@@ -66,6 +70,7 @@ http-client = [
   "dep:http-body-util",
   "dep:hyper",
   "dep:hyper-util",
+  "dep:libdd-process-utils",
   "dep:tokio",
   "dep:tower-service",
 ]

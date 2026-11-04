@@ -13,6 +13,7 @@ anyhow.workspace = true
 libdd-remote-config = { version = "8.0.0", path = "../libdd-remote-config", default-features = false }
 libdd-common = { version = "9.0.0", path = "../libdd-common" }
 libdd-networking = { path = "../libdd-networking", version = "1.0.0" }
+libdd-regex = { version = "0.1.0", path = "../libdd-regex" }
 libdd-data-pipeline = { version = "13.0.0", path = "../libdd-data-pipeline" }
 libdd-capabilities = { version = "4.0.1", path = "../libdd-capabilities" }
 http = { workspace = true, features = ["std"] }
@@ -34,7 +35,7 @@ tokio.workspace = true
 libdd-capabilities-impl = { version = "8.0.0", path = "../libdd-capabilities-impl" }
 
 [features]
-regex-lite = ["libdd-common/regex-lite"]
+regex-lite = ["libdd-regex/regex-lite"]
 
 [lib]
 bench = false

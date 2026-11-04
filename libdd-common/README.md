@@ -4,16 +4,13 @@ Common utilities and foundational components shared across Datadog telemetry lib
 
 ## Overview
 
-`libdd-common` provides shared functionality used across multiple Datadog Rust libraries including entity ID detection, tag handling, and platform-specific utilities.
+`libdd-common` provides shared functionality used across multiple Datadog Rust libraries including entity ID detection and tag handling.
 
 ## Features
 
 - **Entity ID Detection**: Automatic container ID and entity ID detection from cgroups, Docker, Kubernetes, and Azure App Services
 - **Tag Management**: Compile-time validated tags with the `tag!` macro
-- **Platform Utilities**: Unix-specific utilities for fork, exec, and process management
 - **Datadog Headers**: Standard Datadog HTTP headers and constants
-- **Timeout Support**: Configurable timeouts for HTTP requests
-- **Worker Abstraction**: Generic worker pattern for background tasks
 
 ## Modules
 
@@ -22,10 +19,10 @@ Common utilities and foundational components shared across Datadog telemetry lib
 - `entity_id`: Container and entity ID detection
 - `error`: Common error types
 - `header`: Datadog HTTP headers
+- `machine_id`: Stable host machine ID as a hyphenated UUID, cached for the process lifetime
+- `multipart`: Multipart form data construction
+- `mutable_metadata`: Tracer metadata updatable after startup (runtime ID, process tags, session ancestry)
 - `tag`: Tag creation and validation
-- `timeout`: Timeout utilities
-- `unix_utils`: Unix-specific process utilities
-- `worker`: Background worker abstraction
 
 ## Examples
 

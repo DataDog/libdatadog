@@ -3,6 +3,8 @@
 
 #[cfg(feature = "agentless")]
 use super::agentless;
+#[cfg(not(target_arch = "wasm32"))]
+use super::shared::RefcountedFile;
 
 use crate::targets::{Root, TargetsList};
 use crate::{RemoteConfigCapabilities, RemoteConfigPath, RemoteConfigProduct, Target};
@@ -22,7 +24,9 @@ use sha2::{Digest, Sha256, Sha512};
 use std::collections::HashSet;
 use std::marker::PhantomData;
 use std::ops::Add;
-use std::sync::{Arc, Mutex, MutexGuard};
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::MutexGuard;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tracing::{debug, trace, warn};
 
@@ -33,7 +37,13 @@ use tracing::{debug, trace, warn};
 pub trait FileStorage {
     type StoredFile;
 
-    /// A new, currently unknown file was received.
+    /// A file was received for which the fetcher holds no stored file to update.
+    ///
+    /// When the fetcher state is shared between targets (as with `RefcountingStorage`), this is
+    /// also how a new version of a known path is received: targets which haven't fetched it yet
+    /// keep the previous stored file of that path alive. Implementations must therefore not
+    /// assume a path has a single live stored file, e.g. by keying backing resources by path
+    /// alone.
     fn store(
         &self,
         version: u64,
@@ -42,6 +52,9 @@ pub trait FileStorage {
     ) -> anyhow::Result<Arc<Self::StoredFile>>;
 
     /// A file at a given path was updated (new contents).
+    ///
+    /// Only called when the fetcher is the sole user of its files, i.e. not when the fetcher
+    /// state is shared between targets (see [`FileStorage::store`]).
     fn update(
         &self,
         file: &Arc<Self::StoredFile>,
@@ -145,27 +158,32 @@ impl Add for ConfigFetcherStateStats {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub struct ConfigFetcherFilesLock<'a, S> {
     inner: MutexGuard<'a, HashMap<Arc<RemoteConfigPath>, StoredTargetFile<S>>>,
 }
 
-impl<S> ConfigFetcherFilesLock<'_, S> {
+// A path's entry may already hold a newer version than the file being expired: these only act on
+// the entry if it still holds that very file.
+#[cfg(not(target_arch = "wasm32"))]
+impl<S: RefcountedFile> ConfigFetcherFilesLock<'_, S> {
     /// Actually remove the file from the known files.
     /// It may only be expired if already marked as expiring.
-    pub fn expire_file(&mut self, path: &RemoteConfigPath) {
-        if let Some(target_file) = self.inner.get(path) {
-            if !target_file.expiring {
-                return;
-            }
-        } else {
-            return;
+    pub fn expire_file(&mut self, file: &Arc<S>) {
+        let path = &file.refcount().path;
+        if let Some(target_file) = self.inner.get(path)
+            && target_file.expiring
+            && Arc::ptr_eq(&target_file.handle, file)
+        {
+            self.inner.remove(path);
         }
-        self.inner.remove(path);
     }
 
     /// Stop advertising the file as known. It's the predecessor to expire_file().
-    pub fn mark_expiring(&mut self, path: &RemoteConfigPath) {
-        if let Some(target_file) = self.inner.get_mut(path) {
+    pub fn mark_expiring(&mut self, file: &Arc<S>) {
+        if let Some(target_file) = self.inner.get_mut(&file.refcount().path)
+            && Arc::ptr_eq(&target_file.handle, file)
+        {
             target_file.expiring = true;
         }
     }
@@ -200,6 +218,7 @@ impl<S, C: HttpClientCapability + SleepCapability> ConfigFetcherState<S, C> {
         }
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     /// To remove unused remote files manually. Must not be called when auto expiration is active.
     /// Note: careful attention must be paid when using this API in order to not deadlock:
     /// - This files_lock() must always be called prior to locking any data structure locked within
@@ -215,26 +234,48 @@ impl<S, C: HttpClientCapability + SleepCapability> ConfigFetcherState<S, C> {
     /// Sets the apply state on a stored file.
     pub fn set_config_state(&self, file: &RemoteConfigPath, state: ConfigApplyState) {
         if let Some(target_file) = self.target_files_by_path.lock_or_panic().get_mut(file) {
-            match state {
-                ConfigApplyState::Unacknowledged => {
-                    target_file.state.apply_state = 1;
-                    target_file.state.apply_error = "".to_string();
-                }
-                ConfigApplyState::Acknowledged => {
-                    target_file.state.apply_state = 2;
-                    target_file.state.apply_error = "".to_string();
-                }
-                ConfigApplyState::Error(error) => {
-                    target_file.state.apply_state = 3;
-                    target_file.state.apply_error = error;
-                }
-            }
+            set_apply_state(&mut target_file.state, state);
+        }
+    }
+
+    /// Sets the apply state of `file`, unless its path has already moved on to a newer version,
+    /// in which case the state is dropped. See `RefcountingStorage::set_config_state` for the
+    /// known bugs of this.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn set_file_config_state(&self, file: &S, state: ConfigApplyState)
+    where
+        S: RefcountedFile,
+    {
+        if let Some(target_file) = self
+            .target_files_by_path
+            .lock_or_panic()
+            .get_mut(&file.refcount().path)
+            && std::ptr::eq(Arc::as_ptr(&target_file.handle), file)
+        {
+            set_apply_state(&mut target_file.state, state);
         }
     }
 
     pub fn stats(&self) -> ConfigFetcherStateStats {
         ConfigFetcherStateStats {
             active_files: self.target_files_by_path.lock_or_panic().len() as u32,
+        }
+    }
+}
+
+fn set_apply_state(target: &mut ConfigState, state: ConfigApplyState) {
+    match state {
+        ConfigApplyState::Unacknowledged => {
+            target.apply_state = 1;
+            target.apply_error = "".to_string();
+        }
+        ConfigApplyState::Acknowledged => {
+            target.apply_state = 2;
+            target.apply_error = "".to_string();
+        }
+        ConfigApplyState::Error(error) => {
+            target.apply_state = 3;
+            target.apply_error = error;
         }
     }
 }
@@ -633,13 +674,18 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
 
             let parsed_path: Arc<RemoteConfigPath> = Arc::new(parsed_path.into());
             let length = decoded.len() as i64;
-            let stored = if let Some(handle) = handle {
-                self.file_storage
+            let stored = match handle {
+                // Only this fetcher's target uses the file: replace its contents.
+                Some(handle) if self.state.expire_unused_files => self
+                    .file_storage
                     .update(&handle, version, decoded)
-                    .map(|()| handle)
-            } else {
-                self.file_storage
-                    .store(version, parsed_path.clone(), decoded)
+                    .map(|()| handle),
+                // With shared state, other targets may still list the previous version until
+                // their own next fetch. Store the new version as a new file; the previous one
+                // expires once no target holds it anymore.
+                _ => self
+                    .file_storage
+                    .store(version, parsed_path.clone(), decoded),
             };
             let handle = match stored {
                 Ok(handle) => handle,
@@ -845,7 +891,14 @@ pub mod tests {
 
     impl Drop for PathStore {
         fn drop(&mut self) {
-            self.storage.files.lock().unwrap().remove(&self.path);
+            let mut files = self.storage.files.lock().unwrap();
+            // A newer version of the path may have been stored while this one was alive.
+            if files
+                .get(&self.path)
+                .is_some_and(|data| Arc::ptr_eq(data, &self.data))
+            {
+                files.remove(&self.path);
+            }
         }
     }
 
@@ -862,13 +915,12 @@ pub mod tests {
                 version,
                 contents: String::from_utf8(contents).unwrap(),
             }));
-            assert!(
-                self.files
-                    .lock()
-                    .unwrap()
-                    .insert(path.clone(), data.clone())
-                    .is_none()
-            );
+            // A previous version may still be alive, held by targets that haven't fetched
+            // the new one yet; the map tracks the latest version of each path.
+            self.files
+                .lock()
+                .unwrap()
+                .insert(path.clone(), data.clone());
             Ok(Arc::new(PathStore {
                 path: path.clone(),
                 storage: self.clone(),

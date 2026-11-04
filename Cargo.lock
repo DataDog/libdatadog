@@ -463,6 +463,7 @@ dependencies = [
  "libc",
  "libdd-common",
  "libdd-crashtracker",
+ "libdd-regex",
  "nix 0.29.0",
  "once_cell",
  "os_info",
@@ -722,7 +723,7 @@ dependencies = [
  "anyhow",
  "build_common",
  "cmake",
- "libdd-common",
+ "libdd-regex",
  "pico-args",
  "serde",
  "tar",
@@ -1395,6 +1396,7 @@ dependencies = [
  "libdd-ipc-macros",
  "libdd-live-debugger",
  "libdd-networking",
+ "libdd-process-utils",
  "libdd-remote-config",
  "libdd-telemetry",
  "libdd-tinybytes",
@@ -2770,6 +2772,7 @@ dependencies = [
  "libdd-capabilities",
  "libdd-common",
  "libdd-networking",
+ "libdd-process-utils",
  "tempfile",
  "tokio",
 ]
@@ -2784,11 +2787,9 @@ dependencies = [
  "http 1.1.0",
  "indexmap 2.12.1",
  "libc",
+ "libdd-regex",
  "maplit",
- "nix 0.29.0",
  "proptest",
- "regex",
- "regex-lite",
  "serde",
  "static_assertions",
  "tempfile",
@@ -2810,6 +2811,7 @@ dependencies = [
  "hyper",
  "libdd-common",
  "libdd-networking",
+ "libdd-regex",
  "serde",
 ]
 
@@ -2834,6 +2836,7 @@ dependencies = [
  "libdd-gotter",
  "libdd-libunwind-sys",
  "libdd-networking",
+ "libdd-process-utils",
  "libdd-telemetry",
  "nix 0.29.0",
  "num-derive",
@@ -2866,6 +2869,7 @@ dependencies = [
  "libdd-common-ffi",
  "libdd-crashtracker",
  "libdd-networking",
+ "libdd-regex",
  "serde_json",
  "symbolic-common",
  "symbolic-demangle",
@@ -2900,6 +2904,7 @@ dependencies = [
  "libdd-dogstatsd-client",
  "libdd-log",
  "libdd-networking",
+ "libdd-regex",
  "libdd-shared-runtime",
  "libdd-telemetry",
  "libdd-tinybytes",
@@ -2937,6 +2942,7 @@ dependencies = [
  "libdd-capabilities",
  "libdd-common",
  "libdd-networking",
+ "libdd-regex",
  "libdd-tinybytes",
  "libdd-trace-obfuscation",
  "libdd-trace-stats",
@@ -2956,6 +2962,7 @@ dependencies = [
  "libdd-common",
  "libdd-common-ffi",
  "libdd-data-pipeline",
+ "libdd-regex",
  "libdd-shared-runtime",
  "libdd-tinybytes",
  "libdd-trace-obfuscation",
@@ -2986,6 +2993,7 @@ dependencies = [
  "build_common",
  "libdd-common-ffi",
  "libdd-ddsketch",
+ "libdd-regex",
 ]
 
 [[package]]
@@ -2998,6 +3006,7 @@ dependencies = [
  "http 1.1.0",
  "libdd-common",
  "libdd-networking",
+ "libdd-process-utils",
  "libdd-shared-runtime",
  "serde",
  "tokio",
@@ -3025,6 +3034,7 @@ dependencies = [
  "libdd-capabilities-impl",
  "libdd-common",
  "libdd-networking",
+ "libdd-regex",
  "libdd-remote-config",
  "libdd-trace-protobuf",
  "log",
@@ -3167,6 +3177,7 @@ dependencies = [
  "libc_alloc",
  "libdd-common-ffi",
  "libdd-library-config",
+ "libdd-regex",
 ]
 
 [[package]]
@@ -3194,6 +3205,7 @@ dependencies = [
  "libdd-common",
  "libdd-data-pipeline",
  "libdd-networking",
+ "libdd-regex",
  "libdd-remote-config",
  "percent-encoding",
  "serde",
@@ -3215,6 +3227,7 @@ dependencies = [
  "libdd-common-ffi",
  "libdd-live-debugger",
  "libdd-networking",
+ "libdd-regex",
  "log",
  "percent-encoding",
  "serde_json",
@@ -3240,6 +3253,7 @@ dependencies = [
  "build_common",
  "libdd-common-ffi",
  "libdd-log",
+ "libdd-regex",
 ]
 
 [[package]]
@@ -3258,6 +3272,7 @@ dependencies = [
  "hyper-rustls",
  "hyper-util",
  "libdd-common",
+ "libdd-process-utils",
  "pin-project",
  "rand 0.8.8",
  "rcgen",
@@ -3296,6 +3311,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "libdd-process-utils"
+version = "1.0.0"
+dependencies = [
+ "libc",
+ "nix 0.29.0",
+ "tempfile",
+ "thiserror 2.0.17",
+ "windows-sys 0.52.0",
+]
+
+[[package]]
 name = "libdd-profiling"
 version = "1.0.0"
 dependencies = [
@@ -3316,6 +3342,7 @@ dependencies = [
  "libdd-alloc",
  "libdd-common",
  "libdd-networking",
+ "libdd-process-utils",
  "libdd-profiling-protobuf",
  "opentelemetry-proto",
  "parking_lot",
@@ -3359,6 +3386,7 @@ dependencies = [
  "libdd-networking",
  "libdd-otel-thread-ctx-ffi",
  "libdd-profiling",
+ "libdd-regex",
  "libdd-shared-runtime-ffi",
  "libdd-telemetry-ffi",
  "serde_json",
@@ -3419,6 +3447,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "libdd-regex"
+version = "0.1.0"
+dependencies = [
+ "regex",
+ "regex-lite",
+]
+
+[[package]]
 name = "libdd-remote-config"
 version = "8.0.0"
 dependencies = [
@@ -3438,6 +3474,7 @@ dependencies = [
  "libdd-capabilities-impl",
  "libdd-common",
  "libdd-networking",
+ "libdd-regex",
  "libdd-remote-config",
  "libdd-trace-protobuf",
  "libdd-tuf",
@@ -3479,6 +3516,7 @@ dependencies = [
  "libdd-capabilities",
  "libdd-capabilities-impl",
  "libdd-common",
+ "libdd-regex",
  "tokio",
  "tokio-util",
  "tracing",
@@ -3490,6 +3528,7 @@ name = "libdd-shared-runtime-ffi"
 version = "47.0.0"
 dependencies = [
  "build_common",
+ "libdd-regex",
  "libdd-shared-runtime",
  "tracing",
 ]
@@ -3537,6 +3576,7 @@ dependencies = [
  "libdd-capabilities-impl",
  "libdd-common",
  "libdd-common-ffi",
+ "libdd-regex",
  "libdd-telemetry",
  "paste",
  "serde_json",
@@ -3583,6 +3623,7 @@ dependencies = [
  "duplicate",
  "fluent-uri",
  "libdd-common",
+ "libdd-regex",
  "libdd-tinybytes",
  "libdd-trace-model",
  "libdd-trace-protobuf",
@@ -3668,6 +3709,7 @@ dependencies = [
  "libdd-capabilities-impl",
  "libdd-common",
  "libdd-networking",
+ "libdd-regex",
  "libdd-tinybytes",
  "libdd-trace-model",
  "libdd-trace-normalization",
@@ -6344,7 +6386,7 @@ dependencies = [
  "futures",
  "futures-util",
  "httparse",
- "libdd-common",
+ "libdd-regex",
  "mime",
  "multer",
  "quick-xml",

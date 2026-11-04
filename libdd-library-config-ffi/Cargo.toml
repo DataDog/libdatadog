@@ -26,10 +26,11 @@ catch_panic = []
 # Provides a libc-backed #[global_allocator], #[panic_handler], and rust_eh_personality for
 # building a standalone no_std staticlib/cdylib. Must be built with panic=abort.
 standalone = ["dep:libc_alloc"]
-regex-lite = ["libdd-common-ffi/regex-lite"]
+regex-lite = ["libdd-regex/regex-lite"]
 
 [dependencies]
 libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
+libdd-regex = { path = "../libdd-regex" }
 libdd-library-config = { path = "../libdd-library-config", default-features = false }
 anyhow = { workspace = true, optional = true }
 constcat.workspace = true
@@ -47,3 +48,6 @@ std_instead_of_core = "warn"
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 libdd-library-config = { path = "../libdd-library-config", default-features = false, features = ["process-context-reader"] }
+
+[package.metadata.cargo-machete]
+ignored = ["libdd-regex"]

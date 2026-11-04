@@ -118,9 +118,10 @@ impl ConnStream {
             {
                 let bytes = path.as_os_str().as_encoded_bytes();
                 let is_abstract = bytes.first().is_none_or(|b| *b == 0);
-                if libdd_common::unix_utils::worker_file_outputs_restricted() && !is_abstract {
+                if libdd_process_utils::unix_utils::worker_file_outputs_restricted() && !is_abstract
+                {
                     let (_pinned, connect_path) =
-                        libdd_common::unix_utils::constrained_unix_socket_fd(&path)?;
+                        libdd_process_utils::unix_utils::constrained_unix_socket_fd(&path)?;
                     // Keep the pin alive until connect finishes using its /proc/self/fd path.
                     let stream = tokio::net::UnixStream::connect(&connect_path).await?;
                     return Ok(ConnStream::Udp {

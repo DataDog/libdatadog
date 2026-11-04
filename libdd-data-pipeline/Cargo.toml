@@ -36,6 +36,7 @@ libdd-capabilities = { path = "../libdd-capabilities", version = "4.0.1" }
 libdd-data-pipeline-core = { path = "../libdd-data-pipeline-core", version = "4.0.0" }
 libdd-common = { version = "9.0.0", path = "../libdd-common", default-features = false, features = ["std"] }
 libdd-networking = { path = "../libdd-networking", version = "1.0.0", default-features = false }
+libdd-regex = { version = "0.1.0", path = "../libdd-regex" }
 libdd-shared-runtime = { version = "7.0.0", path = "../libdd-shared-runtime", default-features = false }
 libdd-telemetry = { version = "11.0.0", path = "../libdd-telemetry", default-features = false, features = ["std"], optional = true}
 libdd-trace-protobuf = { version = "5.1.1", path = "../libdd-trace-protobuf" }
@@ -145,10 +146,13 @@ fips = [
     "libdd-dogstatsd-client/fips",
 ]
 test-utils = []
-regex-lite = ["libdd-common/regex-lite"]
+regex-lite = ["libdd-regex/regex-lite"]
 # Enable zstd compression for the agentless trace and stats intake senders.
 compression = [
     "libdd-trace-utils/compression",
     "libdd-trace-stats/compression",
     "libdd-data-pipeline-core/compression",
 ]
+
+[package.metadata.cargo-machete]
+ignored = ["libdd-regex"]

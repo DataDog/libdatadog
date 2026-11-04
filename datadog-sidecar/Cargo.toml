@@ -24,6 +24,7 @@ arc-swap.workspace = true
 priority-queue = { workspace = true, default-features = true }
 libdd-common = { path = "../libdd-common" }
 libdd-networking = { path = "../libdd-networking" }
+libdd-process-utils = { path = "../libdd-process-utils" }
 libdd-capabilities = { path = "../libdd-capabilities", version = "4.0.1" }
 datadog-sidecar-macros = { path = "../datadog-sidecar-macros" }
 

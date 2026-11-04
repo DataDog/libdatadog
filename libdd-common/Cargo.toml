@@ -4,7 +4,7 @@
 [package]
 name = "libdd-common"
 version = "9.0.0"
-description = "Shared utilities for Datadog libraries including container entity detection, tag validation, rate limiting, and Unix/Windows platform helpers"
+description = "Shared utilities for Datadog libraries including container entity detection and tag validation"
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-common"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-common"
 edition.workspace = true
@@ -19,8 +19,7 @@ bench = false
 anyhow = { workspace = true, optional = true }
 arc-swap = { workspace = true, optional = true }
 http = { workspace = true, features = ["std"], optional = true }
-regex = { workspace = true, features = ["std", "unicode", "perf"], optional = true }
-regex-lite = { workspace = true, default-features = true, optional = true }
+libdd-regex = { version = "0.1.0", path = "../libdd-regex", optional = true }
 thiserror = { workspace = true, default-features = true, optional = true }
 serde = { workspace = true, features = ["derive"] }
 static_assertions = { workspace = true, optional = true }
@@ -35,11 +34,7 @@ optional = true
 features = [
     "Win32_Foundation",
     "Win32_System_Registry",
-    "Win32_System_Threading",
 ]
-
-[target.'cfg(unix)'.dependencies]
-nix = { workspace = true, features = ["process"], optional = true }
 
 [dev-dependencies]
 indexmap = { workspace = true, default-features = true }
@@ -61,8 +56,7 @@ std = [
     "dep:arc-swap",
     "dep:http",
     "dep:libc",
-    "dep:nix",
-    "dep:regex",
+    "dep:libdd-regex",
     "dep:thiserror",
     "dep:windows-sys",
     "serde/std",
@@ -70,11 +64,6 @@ std = [
 # Enable this feature to enable stubbing of cgroup
 # php directly import this crate and uses functions gated by this feature for their test
 cgroup_testing = ["std"]
-# Use regex-lite instead of regex for smaller binary size
-regex-lite = ["std", "dep:regex-lite"]
-# Consumers that handle user-provided regexes can enable this feature to force
-# the full `regex` crate, overriding `regex-lite` when both are active.
-require-regex-full = ["std"]
 
 [lints.clippy]
 std_instead_of_alloc = "warn"

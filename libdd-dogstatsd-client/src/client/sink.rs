@@ -43,9 +43,10 @@ pub(super) fn create_unix_sink(endpoint: &Endpoint) -> anyhow::Result<PinnedUnix
     let path = socket_path_from_uri(&endpoint.url)
         .map_err(|e| anyhow!("failed to build socket path from uri: {}", e))?;
 
-    if libdd_common::unix_utils::worker_file_outputs_restricted() {
-        let (pinned, connect_path) = libdd_common::unix_utils::constrained_unix_socket_fd(&path)
-            .map_err(|e| anyhow!("failed to resolve dogstatsd socket path: {}", e))?;
+    if libdd_process_utils::unix_utils::worker_file_outputs_restricted() {
+        let (pinned, connect_path) =
+            libdd_process_utils::unix_utils::constrained_unix_socket_fd(&path)
+                .map_err(|e| anyhow!("failed to resolve dogstatsd socket path: {}", e))?;
         return Ok(PinnedUnixSink {
             inner: UnixMetricSink::from(connect_path, socket),
             _pin: Some(pinned),
