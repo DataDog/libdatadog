@@ -220,7 +220,7 @@ test('buffer ownership, malformed options, duplicate operations, and disposal', 
   abi.check(abi.exports.rc_close(client))
   assert.equal(abi.exports.rc_poll(client), -1)
   assert.equal(abi.exports.rc_close(client), -1)
-  assert.throws(() => new RcAbi({ ...abi.exports, rc_version: () => 2 }), /version mismatch/)
+  assert.throws(() => new RcAbi({ ...abi.exports, rc_version: () => 99 }), /version mismatch/)
 })
 
 test('.NET adapter cancels in-flight HTTP through CancellationToken and can poll again', async () => {

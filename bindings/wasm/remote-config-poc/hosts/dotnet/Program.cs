@@ -33,7 +33,7 @@ try
         Console.WriteLine((await pending).GetRawText());
         abi.Check(abi.rc_poll(client));
         abi.Check(abi.rc_cancel(client));
-        abi.Json(abi.rc_result(client));
+        ResolveOutcome(abi, abi.Json(abi.rc_result(client)));
         Console.WriteLine("{\"restarted\":true}");
     }
     else
@@ -56,7 +56,11 @@ try
                 if (kind == "cancel") abi.Check(abi.rc_cancel(client));
                 else Input(abi, JsonSerializer.SerializeToElement(new { }), buffer => abi.rc_complete(client, operationId, buffer));
                 outcome = abi.Json(abi.rc_result(client));
-                int reply = abi.Write(JsonSerializer.SerializeToElement(new { status = 200, body = "e30=" }));
+                int reply = abi.Write(JsonSerializer.SerializeToElement(new
+                {
+                    status = 200,
+                    body = abi.WriteBytes(Convert.FromBase64String("e30="))
+                }));
                 try
                 {
                     if (abi.rc_complete(client, operationId, reply) != -1) throw new InvalidOperationException("Late completion accepted");
@@ -82,14 +86,27 @@ try
                                 abi.rc_complete(client, operation.GetProperty("id").GetInt32(), buffer));
                         }
                         if (operation.GetProperty("kind").GetString() != "http") continue;
-                        requests.Add(operation.Clone());
+                        var recorded = JsonSerializer.SerializeToElement(new
+                        {
+                            kind = operation.GetProperty("kind").GetString(),
+                            id = operation.GetProperty("id").GetInt32(),
+                            method = operation.GetProperty("method").GetString(),
+                            url = operation.GetProperty("url").GetString(),
+                            headers = operation.GetProperty("headers").Clone(),
+                            body = Convert.ToBase64String(abi.Read(operation.GetProperty("body").GetInt32()))
+                        });
+                        requests.Add(recorded);
                         string body = new Uri(operation.GetProperty("url").GetString()!).AbsolutePath == "/api/v0.1/org"
                             ? "" : action["body"]!.GetValue<string>();
-                        Input(abi, JsonSerializer.SerializeToElement(new { status = 200, body }), buffer =>
+                        Input(abi, JsonSerializer.SerializeToElement(new
+                        {
+                            status = 200,
+                            body = abi.WriteBytes(Convert.FromBase64String(body))
+                        }), buffer =>
                             abi.rc_complete(client, operation.GetProperty("id").GetInt32(), buffer));
                     }
                     int buffer = abi.Check(abi.rc_result(client));
-                    if (buffer > 0) result = abi.Json(buffer);
+                    if (buffer > 0) result = ResolveOutcome(abi, abi.Json(buffer));
                 }
                 if (result is null) throw new InvalidOperationException("Fixture did not complete");
                 outcome = JsonSerializer.SerializeToElement(new { outcome = result, requests });
@@ -109,10 +126,28 @@ static int Input(RcAbi abi, JsonElement value, Func<int, int> operation)
     finally { abi.Check(abi.rc_free(buffer)); }
 }
 
+static JsonElement ResolveOutcome(RcAbi abi, JsonElement outcome)
+{
+    if (!outcome.TryGetProperty("changes", out var changes)) return outcome;
+    return JsonSerializer.SerializeToElement(new
+    {
+        changes = changes.EnumerateArray().Select(change => new
+        {
+            kind = change.GetProperty("kind").GetString(),
+            path = change.GetProperty("path").GetString(),
+            version = change.GetProperty("version").GetString(),
+            contentsBase64 = change.TryGetProperty("contents", out var contents)
+                && contents.ValueKind == JsonValueKind.Number
+                ? Convert.ToBase64String(abi.Read(contents.GetInt32()))
+                : (string?)null
+        })
+    });
+}
+
 static async Task<JsonElement> Poll(RcAbi abi, int client, HttpClient http, CancellationToken cancellation = default)
 {
     abi.Check(abi.rc_poll(client));
-    var pending = new Dictionary<int, (CancellationTokenSource Cancellation, Task<JsonElement> Completion)>();
+    var pending = new Dictionary<int, (CancellationTokenSource Cancellation, Task<(int Status, JsonElement Headers, byte[] Body, string? Error)> Completion)>();
     try
     {
         while (true)
@@ -128,31 +163,52 @@ static async Task<JsonElement> Poll(RcAbi abi, int client, HttpClient http, Canc
                 else
                 {
                     var operationCancellation = new CancellationTokenSource();
-                    pending.Add(id, (operationCancellation, Execute(operation, http, operationCancellation.Token)));
+                    pending.Add(id, (operationCancellation, Execute(abi, operation, http, operationCancellation.Token)));
                 }
             }
             int result = abi.Check(abi.rc_result(client));
-            if (result != 0) return abi.Json(result);
+            if (result != 0) return ResolveOutcome(abi, abi.Json(result));
             if (pending.Count == 0) throw new InvalidOperationException("Pending guest has no host work");
-            Task<JsonElement> completed = await Task.WhenAny(pending.Values.Select(value => value.Completion)).WaitAsync(cancellation);
+            Task<(int Status, JsonElement Headers, byte[] Body, string? Error)> completed =
+                await Task.WhenAny(pending.Values.Select(value => value.Completion)).WaitAsync(cancellation);
             int completedId = pending.First(value => value.Value.Completion == completed).Key;
             var completedResource = pending[completedId];
             pending.Remove(completedId);
             completedResource.Cancellation.Dispose();
-            JsonElement reply = await completed;
+            var payload = await completed;
+            // Bodies attach to guest buffers at the loop head only; guest calls never run on
+            // HTTP or timer completion threads.
+            JsonElement reply;
+            if (payload.Error is not null)
+            {
+                reply = JsonSerializer.SerializeToElement(new { error = payload.Error });
+            }
+            else if (payload.Body is null)
+            {
+                reply = JsonSerializer.SerializeToElement(new { });
+            }
+            else
+            {
+                reply = JsonSerializer.SerializeToElement(new
+                {
+                    status = payload.Status,
+                    headers = payload.Headers,
+                    body = abi.WriteBytes(payload.Body)
+                });
+            }
             Input(abi, reply, buffer => abi.rc_complete(client, completedId, buffer));
         }
     }
     catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
     {
         abi.Check(abi.rc_cancel(client));
-        return abi.Json(abi.rc_result(client));
+        return ResolveOutcome(abi, abi.Json(abi.rc_result(client)));
     }
     catch
     {
         abi.rc_cancel(client);
         int result = abi.rc_result(client);
-        if (result > 0) abi.Read(result);
+        if (result > 0) ResolveOutcome(abi, abi.Json(result));
         throw;
     }
     finally
@@ -162,7 +218,7 @@ static async Task<JsonElement> Poll(RcAbi abi, int client, HttpClient http, Canc
     }
 }
 
-static async Task<JsonElement> Execute(JsonElement operation, HttpClient http, CancellationToken cancellation)
+static async Task<(int Status, JsonElement Headers, byte[] Body, string? Error)> Execute(RcAbi abi, JsonElement operation, HttpClient http, CancellationToken cancellation)
 {
     try
     {
@@ -170,11 +226,12 @@ static async Task<JsonElement> Execute(JsonElement operation, HttpClient http, C
         if (kind == "sleep")
         {
             await Task.Delay(TimeSpan.FromMilliseconds(operation.GetProperty("milliseconds").GetDouble()), cancellation);
-            return JsonSerializer.SerializeToElement(new { });
+            return (0, default, null!, null);
         }
         if (kind != "http") throw new InvalidOperationException($"Unknown host operation: {kind}");
         using var request = new HttpRequestMessage(new HttpMethod(operation.GetProperty("method").GetString()!), operation.GetProperty("url").GetString());
-        request.Content = new ByteArrayContent(Convert.FromBase64String(operation.GetProperty("body").GetString()!));
+        // The request body is read before the first await so the guest call stays on the driver thread.
+        request.Content = new ByteArrayContent(abi.Read(operation.GetProperty("body").GetInt32()));
         foreach (JsonElement header in operation.GetProperty("headers").EnumerateArray())
         {
             string name = header[0].GetString()!;
@@ -191,11 +248,12 @@ static async Task<JsonElement> Execute(JsonElement operation, HttpClient http, C
             if (body.Length + count > 16 * 1024 * 1024) throw new InvalidOperationException("Response exceeds 16 MiB");
             body.Write(chunk, 0, count);
         }
-        var headers = response.Headers.Concat(response.Content.Headers).SelectMany(pair => pair.Value.Select(value => new[] { pair.Key, value }));
-        return JsonSerializer.SerializeToElement(new { status = (int)response.StatusCode, headers, body = Convert.ToBase64String(body.ToArray()) });
+        var headers = JsonSerializer.SerializeToElement(response.Headers.Concat(response.Content.Headers)
+            .SelectMany(pair => pair.Value.Select(value => new[] { pair.Key, value })));
+        return ((int)response.StatusCode, headers, body.ToArray(), null);
     }
     catch (Exception error) when (error is HttpRequestException or OperationCanceledException or IOException or InvalidOperationException)
     {
-        return JsonSerializer.SerializeToElement(new { error = error.Message });
+        return (0, default, Array.Empty<byte>(), error.Message);
     }
 }

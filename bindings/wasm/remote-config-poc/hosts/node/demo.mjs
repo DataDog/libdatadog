@@ -3,7 +3,7 @@
 
 import { readFileSync } from 'node:fs'
 
-import { input, load, poll } from './client.mjs'
+import { input, load, poll, resolveOutcome } from './client.mjs'
 
 const [wasm, url, scenarioPath] = process.argv.slice(2)
 const scenario = JSON.parse(readFileSync(scenarioPath, 'utf8'))
@@ -25,8 +25,8 @@ try {
       } else {
         input(abi, {}, buffer => abi.exports.rc_complete(client, operation.id, buffer))
       }
-      outcome = abi.json(abi.exports.rc_result(client))
-      const reply = abi.write({ status: 200, body: 'e30=' })
+      outcome = resolveOutcome(abi, abi.json(abi.exports.rc_result(client)))
+      const reply = abi.write({ status: 200, body: abi.writeBytes(Buffer.from('e30=', 'base64')) })
       try {
         if (abi.exports.rc_complete(client, operation.id, reply) !== -1) throw new Error('Late completion accepted')
       } finally { abi.check(abi.exports.rc_free(reply)) }
@@ -42,13 +42,13 @@ try {
             input(abi, {}, buffer => abi.exports.rc_complete(client, event.id, buffer))
           }
           if (event.kind !== 'http') continue
-          requests.push(event)
+          requests.push({ ...event, body: Buffer.from(abi.read(event.body)).toString('base64') })
           const body = new URL(event.url).pathname === '/api/v0.1/org' ? '' : action.body
-          input(abi, { status: 200, body }, buffer => abi.exports.rc_complete(client, event.id, buffer))
+          input(abi, { status: 200, body: abi.writeBytes(Buffer.from(body, 'base64')) }, buffer => abi.exports.rc_complete(client, event.id, buffer))
         }
         const result = abi.check(abi.exports.rc_result(client))
         if (result) {
-          outcome = { outcome: abi.json(result), requests }
+          outcome = { outcome: resolveOutcome(abi, abi.json(result)), requests }
           break
         }
       }

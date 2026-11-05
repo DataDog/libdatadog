@@ -45,7 +45,7 @@ internal sealed class RcAbi
         rc_ack = instance.GetFunction<int, int, int>("rc_ack") ?? throw new InvalidOperationException("ABI signature mismatch: rc_ack");
         rc_cancel = instance.GetFunction<int, int>("rc_cancel") ?? throw new InvalidOperationException("ABI signature mismatch: rc_cancel");
         rc_close = instance.GetFunction<int, int>("rc_close") ?? throw new InvalidOperationException("ABI signature mismatch: rc_close");
-        if (rc_version() != 1) throw new InvalidOperationException("ABI version mismatch");
+        if (rc_version() != 2) throw new InvalidOperationException("ABI version mismatch");
     }
 
     internal int Check(int result)
@@ -59,6 +59,21 @@ internal sealed class RcAbi
     internal int Write(JsonElement value)
     {
         byte[] bytes = Encoding.UTF8.GetBytes(value.GetRawText());
+        int buffer = Check(rc_alloc(bytes.Length));
+        try
+        {
+            bytes.AsSpan().CopyTo(memory.GetSpan(unchecked((uint)rc_buffer_ptr(buffer)), bytes.Length));
+            return buffer;
+        }
+        catch
+        {
+            rc_free(buffer);
+            throw;
+        }
+    }
+
+    internal int WriteBytes(byte[] bytes)
+    {
         int buffer = Check(rc_alloc(bytes.Length));
         try
         {

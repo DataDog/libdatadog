@@ -43,7 +43,7 @@ export class RcAbi {
     if (typeof exports.rc_ack !== 'function' || exports.rc_ack.length !== 2) throw new Error('ABI signature mismatch: rc_ack')
     if (typeof exports.rc_cancel !== 'function' || exports.rc_cancel.length !== 1) throw new Error('ABI signature mismatch: rc_cancel')
     if (typeof exports.rc_close !== 'function' || exports.rc_close.length !== 1) throw new Error('ABI signature mismatch: rc_close')
-    if (exports.rc_version() !== 1) throw new Error('ABI version mismatch')
+    if (exports.rc_version() !== 2) throw new Error('ABI version mismatch')
   }
 
   /** @param {number} result */
@@ -59,6 +59,19 @@ export class RcAbi {
   /** @param {unknown} value */
   write (value) {
     const bytes = encoder.encode(JSON.stringify(value))
+    const buffer = this.check(this.exports.rc_alloc(bytes.length))
+    try {
+      const pointer = this.exports.rc_buffer_ptr(buffer) >>> 0
+      new Uint8Array(this.exports.memory.buffer, pointer, bytes.length).set(bytes)
+      return buffer
+    } catch (error) {
+      this.exports.rc_free(buffer)
+      throw error
+    }
+  }
+
+  /** @param {Uint8Array} bytes */
+  writeBytes (bytes) {
     const buffer = this.check(this.exports.rc_alloc(bytes.length))
     try {
       const pointer = this.exports.rc_buffer_ptr(buffer) >>> 0

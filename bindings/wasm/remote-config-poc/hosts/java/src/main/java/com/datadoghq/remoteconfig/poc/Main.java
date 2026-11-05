@@ -42,13 +42,30 @@ public final class Main {
 
     private Main() {}
 
+    /** A host reply with the body still as raw bytes; the guest buffer is attached at loop head. */
+    private static final class ReplyPayload {
+        final Integer status;
+        final JSONArray headers;
+        final byte[] body;
+        final String error;
+
+        ReplyPayload(Integer status, JSONArray headers, byte[] body, String error) {
+            this.status = status;
+            this.headers = headers;
+            this.body = body;
+            this.error = error;
+        }
+
+        static final ReplyPayload EMPTY = new ReplyPayload(null, null, null, null);
+    }
+
     /** One pending host operation: either an in-flight HTTP request or a timer. */
     private static final class Pending {
         final int id;
-        final CompletableFuture<JSONObject> completion;
+        final CompletableFuture<ReplyPayload> completion;
         final Runnable canceller;
 
-        Pending(int id, CompletableFuture<JSONObject> completion, Runnable canceller) {
+        Pending(int id, CompletableFuture<ReplyPayload> completion, Runnable canceller) {
             this.id = id;
             this.completion = completion;
             this.canceller = canceller;
@@ -96,7 +113,7 @@ public final class Main {
                     System.out.println(pending.join());
                     abi.check(abi.poll(client));
                     abi.check(abi.cancel(client));
-                    abi.json(abi.result(client));
+                    resolveOutcome(abi, abi.json(abi.result(client)));
                     System.out.println("{\"restarted\":true}");
                 } else {
                     for (Object entry : scenario.getJSONArray("actions")) {
@@ -146,8 +163,10 @@ public final class Main {
         } else {
             input(abi, new JSONObject(), buffer -> abi.complete(client, operationId, buffer));
         }
-        JSONObject outcome = abi.json(abi.result(client));
-        int reply = abi.write(new JSONObject().put("status", 200).put("body", "e30="));
+        JSONObject outcome = resolveOutcome(abi, abi.json(abi.result(client)));
+        int reply = abi.write(new JSONObject()
+                .put("status", 200)
+                .put("body", abi.writeBytes(Base64.getDecoder().decode("e30="))));
         try {
             if (abi.complete(client, operationId, reply) != -1) {
                 throw new IllegalStateException("Late completion accepted");
@@ -177,21 +196,40 @@ public final class Main {
                     input(abi, new JSONObject(), buffer -> abi.complete(client, id, buffer));
                 }
                 if (!kind.equals("http")) continue;
-                requests.put(operation);
+                JSONObject recorded = new JSONObject(operation, JSONObject.getNames(operation));
+                recorded.put("body", Base64.getEncoder().encodeToString(abi.read(operation.getInt("body"))));
+                requests.put(recorded);
                 int id = operation.getInt("id");
                 String path = URI.create(operation.getString("url")).getPath();
                 String body = path.equals("/api/v0.1/org") ? "" : action.getString("body");
-                input(abi, new JSONObject().put("status", 200).put("body", body),
+                input(abi, new JSONObject()
+                        .put("status", 200)
+                        .put("body", abi.writeBytes(Base64.getDecoder().decode(body))),
                         buffer -> abi.complete(client, id, buffer));
             }
             int result = abi.check(abi.result(client));
             if (result > 0) {
                 outcome = new JSONObject()
-                        .put("outcome", abi.json(result))
+                        .put("outcome", resolveOutcome(abi, abi.json(result)))
                         .put("requests", requests);
             }
         }
         if (outcome == null) throw new IllegalStateException("Fixture did not complete");
+        return outcome;
+    }
+
+    /** Resolves raw content buffer ids in an outcome into base64 for display; buffers return to the guest. */
+    static JSONObject resolveOutcome(RcAbi abi, JSONObject outcome) {
+        JSONArray changes = outcome.optJSONArray("changes");
+        if (changes == null) return outcome;
+        for (Object entry : changes) {
+            JSONObject change = (JSONObject) entry;
+            if (!change.has("contents")) continue;
+            Object contents = change.remove("contents");
+            change.put("contentsBase64", contents == JSONObject.NULL
+                    ? JSONObject.NULL
+                    : Base64.getEncoder().encodeToString(abi.read((int) contents)));
+        }
         return outcome;
     }
 
@@ -217,12 +255,12 @@ public final class Main {
                         Pending resource = pending.remove(id);
                         if (resource != null) resource.canceller.run();
                     } else {
-                        Pending resource = dispatch(operation, http, scheduler, wakeups);
+                        Pending resource = dispatch(abi, operation, http, scheduler, wakeups);
                         pending.put(id, resource);
                     }
                 }
                 int result = abi.check(abi.result(client));
-                if (result != 0) return abi.json(result);
+                if (result != 0) return resolveOutcome(abi, abi.json(result));
                 if (pending.isEmpty()) throw new IllegalStateException("Pending guest has no host work");
                 Object wake;
                 try {
@@ -233,11 +271,24 @@ public final class Main {
                 }
                 if (wake == CANCEL) {
                     abi.check(abi.cancel(client));
-                    return abi.json(abi.result(client));
+                    return resolveOutcome(abi, abi.json(abi.result(client)));
                 }
                 Pending completed = pending.remove((Integer) wake);
                 if (completed == null) continue; // Stale wake for an operation the guest cancelled.
-                JSONObject reply = completed.completion.join();
+                ReplyPayload payload = completed.completion.join();
+                // Bodies attach to guest buffers at the loop head only; guest calls never run on
+                // HTTP or timer completion threads.
+                JSONObject reply;
+                if (payload.error != null) {
+                    reply = new JSONObject().put("error", payload.error);
+                } else if (payload.status == null) {
+                    reply = new JSONObject();
+                } else {
+                    reply = new JSONObject()
+                            .put("status", payload.status)
+                            .put("headers", payload.headers)
+                            .put("body", abi.writeBytes(payload.body));
+                }
                 int operationId = completed.id;
                 input(abi, reply, buffer -> abi.complete(client, operationId, buffer));
             }
@@ -245,7 +296,7 @@ public final class Main {
             // An adapter failure must not leave a guest future retaining client state.
             abi.cancel(client);
             int result = abi.result(client);
-            if (result > 0) abi.read(result);
+            if (result > 0) resolveOutcome(abi, abi.json(result));
             throw error;
         } finally {
             scheduler.shutdownNow();
@@ -254,21 +305,21 @@ public final class Main {
     }
 
     /** Starts the host work described by one event and returns its handle. */
-    private static Pending dispatch(JSONObject operation, HttpClient http,
+    private static Pending dispatch(RcAbi abi, JSONObject operation, HttpClient http,
             ScheduledThreadPoolExecutor scheduler, LinkedBlockingQueue<Object> wakeups) {
         int id = operation.getInt("id");
         String kind = operation.getString("kind");
-        CompletableFuture<JSONObject> completion = new CompletableFuture<>();
+        CompletableFuture<ReplyPayload> completion = new CompletableFuture<>();
         if (kind.equals("sleep")) {
             long milliseconds = (long) operation.getDouble("milliseconds");
             ScheduledFuture<?> timer = scheduler.schedule(
-                    () -> completion.complete(new JSONObject()), milliseconds, TimeUnit.MILLISECONDS);
+                    () -> completion.complete(ReplyPayload.EMPTY), milliseconds, TimeUnit.MILLISECONDS);
             return new Pending(id, completion, () -> timer.cancel(false));
         }
         if (!kind.equals("http")) throw new IllegalStateException("Unknown host operation: " + kind);
 
         HttpRequest.Builder request = HttpRequest.newBuilder(URI.create(operation.getString("url")));
-        byte[] body = Base64.getDecoder().decode(operation.getString("body"));
+        byte[] body = abi.read(operation.getInt("body"));
         request.method(operation.getString("method"), HttpRequest.BodyPublishers.ofByteArray(body));
         for (Object entry : operation.getJSONArray("headers")) {
             JSONArray header = (JSONArray) entry;
@@ -277,18 +328,18 @@ public final class Main {
         CompletableFuture<HttpResponse<byte[]>> sent =
                 http.sendAsync(request.build(), HttpResponse.BodyHandlers.ofByteArray());
         sent.whenComplete((response, error) -> wakeups.add(id));
-        return new Pending(id, sent.handle(Main::reply), () -> sent.cancel(true));
+        return new Pending(id, sent.handle(Main::payload), () -> sent.cancel(true));
     }
 
-    /** Converts an HTTP response or failure into the bridge reply JSON. */
-    private static JSONObject reply(HttpResponse<byte[]> response, Throwable error) {
+    /** Captures an HTTP response or failure as a payload; no guest calls run on completion threads. */
+    private static ReplyPayload payload(HttpResponse<byte[]> response, Throwable error) {
         if (error != null) {
             Throwable cause = error.getCause() != null ? error.getCause() : error;
-            return new JSONObject().put("error", cause.getMessage());
+            return new ReplyPayload(null, null, null, cause.getMessage());
         }
         byte[] body = response.body();
         if (body.length > MAX_BODY) {
-            return new JSONObject().put("error", "Response exceeds 16 MiB");
+            return new ReplyPayload(null, null, null, "Response exceeds 16 MiB");
         }
         JSONArray headers = new JSONArray();
         for (Map.Entry<String, java.util.List<String>> entry : response.headers().map().entrySet()) {
@@ -296,10 +347,7 @@ public final class Main {
                 headers.put(new JSONArray().put(entry.getKey()).put(value));
             }
         }
-        return new JSONObject()
-                .put("status", response.statusCode())
-                .put("headers", headers)
-                .put("body", Base64.getEncoder().encodeToString(body));
+        return new ReplyPayload(response.statusCode(), headers, body, null);
     }
 
     private static JSONObject find(JSONArray events, String kind) {
