@@ -8,6 +8,11 @@
     "response_model": "gpt-5-mini",
     "service_tier": null,
     "outcome": "failed",
-    "error_name": "rate_limit_error"
+    "error_name": "rate_limit_error",
+    "error": {
+      "code": null,
+      "message": "slow down",
+      "name": "rate_limit_error"
+    }
   }
 }

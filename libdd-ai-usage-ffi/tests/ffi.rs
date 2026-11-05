@@ -232,6 +232,7 @@ fn parse_provider_response_round_trip() {
                 "output_tokens": 1, "output_basis": "includes_reasoning"},
             "response_model": "claude-haiku-4-5", "service_tier": null,
             "outcome": "completed", "error_name": null, "error_type": null,
+            "error_code": null, "error_message": null,
         })
     );
 
@@ -258,7 +259,7 @@ fn stream_round_trip() {
     let chunks: [&[u8]; 4] = [
         b"event: error\r",
         b"\ndata: {\"type\":\"error\",\"error\":{\"type\":\"rate_",
-        b"limit_error\"}}\r\n\r\n",
+        b"limit_error\",\"message\":\"Slow\\ndown\"}}\r\n\r\n",
         b"",
     ];
     // SAFETY: `stream` is written by `stream_new` and used until dropped.
@@ -279,6 +280,8 @@ fn stream_round_trip() {
         assert_eq!(value["outcome"], "failed");
         assert_eq!(value["error_name"], "rate_limit_error");
         assert_eq!(value["error_type"], "rate_limit_error");
+        assert_eq!(value["error_message"], "Slow down");
+        assert_eq!(value["error_code"], Value::Null);
         // Finishing does not consume the stream.
         let mut out = empty();
         assert_eq!(ddog_ai_usage_stream_finish(stream, &mut out), Status::Ok);

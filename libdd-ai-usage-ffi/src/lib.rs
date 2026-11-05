@@ -912,6 +912,8 @@ fn response_value(
         "outcome": outcome.as_str(),
         "error_name": error_name,
         "error_type": error_type,
+        "error_code": response.error.as_ref().and_then(|e| e.code.as_deref()),
+        "error_message": response.error.as_ref().and_then(|e| e.message.as_deref()),
     })
 }
 
@@ -920,8 +922,12 @@ fn response_value(
 /// `format` (`auto`, `openai_chat`, `openai_responses`, `anthropic`,
 /// `gemini` or `gemini_openai_compat`; empty is `auto`), and write
 /// `{"usage": {...} | null, "response_model", "service_tier", "outcome",
-/// "error_name", "error_type"}` to `out`. `usage` holds the members to merge
-/// into an observation. `embeddings` is true for an embeddings operation.
+/// "error_name", "error_type", "error_code", "error_message"}` to `out`.
+/// `usage` holds the members to merge into an observation. `error_code` and
+/// `error_message` are the provider's own, from the body or an in-band
+/// stream error: control characters removed, the message cut to 256 bytes,
+/// so a gateway can log them without parsing the error itself. `embeddings`
+/// is true for an embeddings operation.
 ///
 /// # Safety
 ///

@@ -325,11 +325,35 @@ pub struct ProviderResponse {
     /// The tier the provider served the operation at, in its own words. The
     /// tier a request asked for is never read.
     pub service_tier: Option<String>,
+    /// The error the provider reported in the body or in the stream, if any.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<ProviderError>,
+}
+
+/// The longest provider error message kept, in bytes.
+pub const MAX_ERROR_MESSAGE_BYTES: usize = 256;
+
+/// The longest provider error code kept, in bytes.
+const MAX_ERROR_CODE_BYTES: usize = 64;
+
+/// An error a provider reported, as a gateway logs or classifies it.
+/// Every member is cut short and holds no control characters, so it can be
+/// logged as it is.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct ProviderError {
+    /// The provider's name for the failure (its `type`, else `code`, else
+    /// `status`), to classify with [`crate::classify_error`].
+    pub name: Option<String>,
+    /// The provider's `code`, a string or the digits of a number.
+    pub code: Option<String>,
+    /// The provider's message, cut to [`MAX_ERROR_MESSAGE_BYTES`] at a
+    /// character boundary.
+    pub message: Option<String>,
 }
 
 impl ProviderResponse {
     /// Merge a later event of the same stream: usage as
-    /// [`ProviderUsage::merge`], the first model and tier named.
+    /// [`ProviderUsage::merge`], the first model, tier and error named.
     pub fn merge(&mut self, later: ProviderResponse) {
         match (&mut self.usage, later.usage) {
             (Some(usage), Some(next)) => usage.merge(&next),
@@ -342,7 +366,75 @@ impl ProviderResponse {
         if self.service_tier.is_none() {
             self.service_tier = later.service_tier;
         }
+        if self.error.is_none() {
+            self.error = later.error;
+        }
     }
+}
+
+/// `text` without control characters, trimmed, and cut to `max` bytes at a
+/// character boundary; `None` when nothing is left.
+fn safe_text(text: &str, max: usize) -> Option<String> {
+    let mut out = String::with_capacity(text.len().min(max));
+    for c in text.trim().chars() {
+        let c = if c.is_control() { ' ' } else { c };
+        if out.len() + c.len_utf8() > max {
+            break;
+        }
+        out.push(c);
+    }
+    let out = out.trim_end();
+    (!out.is_empty()).then(|| out.to_string())
+}
+
+/// A code as text: a string, or the digits of a whole number.
+fn code_text(value: Option<&Json>) -> Option<String> {
+    match value? {
+        Json::String(code) => safe_text(code, MAX_ERROR_CODE_BYTES),
+        number @ Json::Number(_) => count(Some(number)).map(|code| code.to_string()),
+        _ => None,
+    }
+}
+
+/// The error a payload reports: Responses `response.failed` (under
+/// `response.error`), an `error` event (Anthropic nests it under `error`;
+/// the Responses one holds `code` and `message` beside its type), or an
+/// `{"error": ...}` payload that carries no content. `None` otherwise.
+fn provider_error(payload: &Json) -> Option<ProviderError> {
+    let kind = member(Some(payload), "type").and_then(Json::as_str);
+    let content = ["choices", "candidates"]
+        .iter()
+        .any(|key| member(Some(payload), key).is_some());
+    let object = match kind {
+        Some("response.failed") => member(member(Some(payload), "response"), "error"),
+        Some("error") => member(Some(payload), "error")
+            .filter(|e| e.as_object().is_some())
+            .or(Some(payload)),
+        _ if content => None,
+        _ => member(Some(payload), "error"),
+    };
+    let object = object?;
+    if let Some(message) = object.as_str() {
+        // `{"error": "message"}`, as some compatible servers send it.
+        return Some(ProviderError {
+            message: safe_text(message, MAX_ERROR_MESSAGE_BYTES),
+            ..ProviderError::default()
+        });
+    }
+    object.as_object()?;
+    let mut name = error_name(Some(object));
+    if kind == Some("error") && std::ptr::eq(object, payload) {
+        // The Responses error event: its own `type` is `error`.
+        name = text(member(Some(object), "code"));
+    }
+    let error = ProviderError {
+        name: name.and_then(|name| safe_text(&name, MAX_ERROR_CODE_BYTES)),
+        code: code_text(member(Some(object), "code")),
+        message: member(Some(object), "message")
+            .and_then(Json::as_str)
+            .and_then(|message| safe_text(message, MAX_ERROR_MESSAGE_BYTES)),
+    };
+    (error != ProviderError::default()).then_some(error)
 }
 
 /// A token count: a whole, non-negative JSON number no larger than
@@ -700,6 +792,7 @@ pub fn parse_provider_response(
         usage: parsed.filter(|usage| !usage.is_placeholder()),
         response_model: response_model(payload),
         service_tier: service_tier(payload, usage),
+        error: provider_error(payload),
     }
 }
 

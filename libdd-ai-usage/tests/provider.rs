@@ -132,6 +132,52 @@ fn reasoning_basis_follows_the_total_so_output_is_billed_once() {
 }
 
 #[test]
+fn provider_errors_carry_a_safe_message_and_code() {
+    // The Responses error event holds its code and message beside its type.
+    let mut stream = UsageStream::new(UsageFormat::OpenAiResponses, false);
+    stream.feed(
+        b"event: error\ndata: {\"type\": \"error\", \"code\": \"rate_limit_exceeded\", \"message\": \"Too\\nmany\\u0007 requests\"}\n\n",
+    );
+    let (response, outcome, name) = stream.finish();
+    assert_eq!(outcome, StreamOutcome::Failed);
+    assert_eq!(name.as_deref(), Some("rate_limit_exceeded"));
+    let error = response.error.unwrap();
+    assert_eq!(error.name.as_deref(), Some("rate_limit_exceeded"));
+    assert_eq!(error.code.as_deref(), Some("rate_limit_exceeded"));
+    // Control characters never reach a log line.
+    assert_eq!(error.message.as_deref(), Some("Too many  requests"));
+
+    // A long message is cut at a character boundary.
+    let long = "é".repeat(400);
+    let payload = Json::parse(&format!(
+        r#"{{"error": {{"type": "invalid_request_error", "code": 400, "message": "{long}"}}}}"#
+    ))
+    .unwrap();
+    let error = parse_provider_response(UsageFormat::OpenAiChat, &payload, false)
+        .error
+        .unwrap();
+    assert_eq!(error.name.as_deref(), Some("invalid_request_error"));
+    assert_eq!(error.code.as_deref(), Some("400"));
+    let message = error.message.unwrap();
+    assert!(message.len() <= libdd_ai_usage::MAX_ERROR_MESSAGE_BYTES);
+    assert!(message.len() > libdd_ai_usage::MAX_ERROR_MESSAGE_BYTES - 2);
+    assert!(message.chars().all(|c| c == 'é'));
+
+    // A bare message, and no error at all.
+    let payload = Json::parse(r#"{"error": "upstream unavailable"}"#).unwrap();
+    let error = parse_provider_response(UsageFormat::Auto, &payload, false)
+        .error
+        .unwrap();
+    assert_eq!(error.message.as_deref(), Some("upstream unavailable"));
+    assert_eq!(error.name, None);
+    let payload = Json::parse(r#"{"error": null, "usage": {"prompt_tokens": 1}}"#).unwrap();
+    assert_eq!(
+        parse_provider_response(UsageFormat::Auto, &payload, false).error,
+        None
+    );
+}
+
+#[test]
 fn parsed_usage_projects() {
     // An Anthropic response as the observation of one attempt: the crate
     // adds the cache back into the input total.

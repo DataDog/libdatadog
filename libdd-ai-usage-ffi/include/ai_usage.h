@@ -333,8 +333,12 @@ void ddog_ai_usage_batch_drop(struct ddog_ai_usage_Batch *batch);
  * `format` (`auto`, `openai_chat`, `openai_responses`, `anthropic`,
  * `gemini` or `gemini_openai_compat`; empty is `auto`), and write
  * `{"usage": {...} | null, "response_model", "service_tier", "outcome",
- * "error_name", "error_type"}` to `out`. `usage` holds the members to merge
- * into an observation. `embeddings` is true for an embeddings operation.
+ * "error_name", "error_type", "error_code", "error_message"}` to `out`.
+ * `usage` holds the members to merge into an observation. `error_code` and
+ * `error_message` are the provider's own, from the body or an in-band
+ * stream error: control characters removed, the message cut to 256 bytes,
+ * so a gateway can log them without parsing the error itself. `embeddings`
+ * is true for an embeddings operation.
  *
  * # Safety
  *

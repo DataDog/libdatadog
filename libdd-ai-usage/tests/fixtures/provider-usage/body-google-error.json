@@ -8,6 +8,11 @@
     "response_model": null,
     "service_tier": null,
     "outcome": "failed",
-    "error_name": "429"
+    "error_name": "429",
+    "error": {
+      "code": "429",
+      "message": "quota",
+      "name": "429"
+    }
   }
 }

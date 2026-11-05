@@ -13,6 +13,11 @@
     "response_model": "claude-sonnet-4-5",
     "service_tier": "priority",
     "outcome": "failed",
-    "error_name": "overloaded_error"
+    "error_name": "overloaded_error",
+    "error": {
+      "code": null,
+      "message": "Overloaded",
+      "name": "overloaded_error"
+    }
   }
 }

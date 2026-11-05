@@ -8,6 +8,11 @@
     "response_model": "gpt-5",
     "service_tier": null,
     "outcome": "failed",
-    "error_name": "server_error"
+    "error_name": "server_error",
+    "error": {
+      "code": "server_error",
+      "message": "boom",
+      "name": "server_error"
+    }
   }
 }
