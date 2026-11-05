@@ -1032,10 +1032,8 @@ fn quote_masks(block: &[u8]) -> (u64, u64) {
     }
     let mut quotes = 0u64;
     let mut backslashes = 0u64;
-    for (k, chunk) in block.chunks_exact(8).enumerate().take(8) {
-        let mut bytes = [0u8; 8];
-        bytes.copy_from_slice(chunk);
-        let word = u64::from_le_bytes(bytes);
+    for (k, chunk) in block.as_chunks::<8>().0.iter().enumerate().take(8) {
+        let word = u64::from_le_bytes(*chunk);
         quotes |= zero_bytes(word ^ (ONES * u64::from(b'"'))) << (8 * k);
         backslashes |= zero_bytes(word ^ (ONES * u64::from(b'\\'))) << (8 * k);
     }
@@ -1071,8 +1069,8 @@ fn closing_quote(bytes: &[u8]) -> Result<usize, bool> {
         Some(n) => n,
     };
     let mut carry = 0u64;
-    let mut blocks = bytes[base..].chunks_exact(64);
-    for block in &mut blocks {
+    let (blocks, remainder) = bytes[base..].as_chunks::<64>();
+    for block in blocks {
         let (quotes, backslashes) = quote_masks(block);
         let open = quotes & !escaped_bits(backslashes, &mut carry);
         if open != 0 {
@@ -1081,7 +1079,7 @@ fn closing_quote(bytes: &[u8]) -> Result<usize, bool> {
         base += 64;
     }
     let mut escaped = carry != 0;
-    for (i, &b) in blocks.remainder().iter().enumerate() {
+    for (i, &b) in remainder.iter().enumerate() {
         if escaped {
             escaped = false;
         } else if b == b'"' {
