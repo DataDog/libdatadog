@@ -955,3 +955,74 @@ fn stream_take_reports_and_releases() {
         take(out);
     }
 }
+
+const BREAKDOWN: &str = r#"{"profile": "trajectory.gen_ai.client.token_breakdown@0.1.0",
+    "observation": {"operation_name": "chat", "provider_name": "anthropic",
+        "input_tokens": 100, "input_basis": "excludes_cache", "output_tokens": 50,
+        "output_basis": "includes_reasoning", "cache_read_input_tokens": 400,
+        "cache_write_input_tokens": 20, "reasoning_output_tokens": 10,
+        "observation_point": "gateway"}}"#;
+
+#[test]
+fn a_request_is_added_whole_or_not_at_all() {
+    let request = format!("[{ATTEMPT}, {BREAKDOWN}]");
+    let add = |batch: *const Batch, out: *mut Buffer| {
+        // SAFETY: a live batch, valid input, and a null or writable output.
+        unsafe { ddog_ai_usage_batch_add_request(batch, request.as_ptr(), request.len(), out) }
+    };
+    let mut batch = ptr::null_mut();
+    // SAFETY: `batch` is written by `batch_new` and used until dropped.
+    unsafe {
+        assert_eq!(ddog_ai_usage_batch_new(&mut batch), Status::Ok);
+        let mut out = empty();
+        assert_eq!(add(batch, &mut out), Status::Ok);
+        let value = json_of(out);
+        assert_eq!(value["dropped"], false);
+        assert_eq!(value["issues"].as_array().unwrap().len(), 2);
+        let one = ddog_ai_usage_batch_len(batch);
+        let mut out = empty();
+        ddog_ai_usage_batch_take_dogstatsd_text(
+            batch,
+            ptr::null(),
+            0,
+            1432,
+            ptr::null_mut(),
+            &mut out,
+        );
+        take(out);
+
+        // Room for the attempt alone: neither it nor its breakdown is kept.
+        ddog_ai_usage_batch_set_max_len(batch, one - 1);
+        let mut out = empty();
+        assert_eq!(add(batch, &mut out), Status::Ok);
+        assert_eq!(json_of(out)["dropped"], true);
+        assert!(ddog_ai_usage_batch_is_empty(batch));
+        assert_eq!(ddog_ai_usage_batch_dropped(batch), 2);
+        // Quietly, with a null output.
+        ddog_ai_usage_batch_set_max_len(batch, 0);
+        assert_eq!(add(batch, ptr::null_mut()), Status::Ok);
+        assert_eq!(ddog_ai_usage_batch_len(batch), one);
+
+        // A rejected document rejects the request and adds nothing.
+        let bad = format!(r#"[{ATTEMPT}, {{"profile": "nope@1"}}]"#);
+        let mut out = empty();
+        let status = ddog_ai_usage_batch_add_request(batch, bad.as_ptr(), bad.len(), &mut out);
+        assert_eq!(status, Status::Rejected);
+        let error = json_of(out);
+        assert_eq!(error["error"]["code"], "profile_invalid");
+        assert!(
+            error["error"]["message"]
+                .as_str()
+                .unwrap()
+                .starts_with("document 1:")
+        );
+        assert_eq!(ddog_ai_usage_batch_len(batch), one);
+        // A single document is not a request.
+        let mut out = empty();
+        let status =
+            ddog_ai_usage_batch_add_request(batch, ATTEMPT.as_ptr(), ATTEMPT.len(), &mut out);
+        assert_eq!(status, Status::Rejected);
+        take(out);
+        ddog_ai_usage_batch_drop(batch);
+    }
+}

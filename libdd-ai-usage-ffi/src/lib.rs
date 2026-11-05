@@ -584,6 +584,85 @@ pub unsafe extern "C" fn ddog_ai_usage_batch_add_quiet(
     status
 }
 
+/// Add every observation of one request to `batch` together: `input[..input_len]`
+/// is a JSON array of request documents, each as [`ddog_ai_usage_batch_add`]
+/// reads it (its provider attempts, token breakdowns and gateway request).
+/// Either all are added or none: a bounded batch without room for all of
+/// them drops them all, so it never keeps an attempt without its breakdown,
+/// and counts each in [`ddog_ai_usage_batch_dropped`]. A rejected document
+/// rejects the request, adds nothing, and writes `{"error": {"code",
+/// "message"}}` whose message names the document's index. On success writes
+/// `{"issues": [[...], ...], "dropped": false}` (one issue list per
+/// document) to `out`, or nothing when `out` is null.
+///
+/// # Safety
+///
+/// `batch` must be a live batch from [`ddog_ai_usage_batch_new`], `input`
+/// must point to `input_len` readable bytes (or `input_len` must be 0), and
+/// `out` must be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ddog_ai_usage_batch_add_request(
+    batch: *const Batch,
+    input: *const u8,
+    input_len: usize,
+    out: *mut Buffer,
+) -> Status {
+    let want_output = !out.is_null();
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        // SAFETY: the caller guarantees a live batch or null.
+        let batch = unsafe { batch.as_ref() }.ok_or(Failure::Internal("the batch is null"))?;
+        // SAFETY: forwarded from the caller.
+        let request = parse_document(unsafe { bytes(input, input_len) })?;
+        let documents = request
+            .as_array()
+            .ok_or_else(|| invalid("a request must be an array of documents"))?;
+        let projections = {
+            let settings = batch
+                .settings
+                .lock()
+                .map_err(|_| Failure::Internal("the batch is poisoned"))?;
+            documents
+                .iter()
+                .enumerate()
+                .map(|(at, document)| {
+                    projection_with(document, &settings).map_err(|failure| match failure {
+                        Failure::Rejected(error) => Failure::Rejected(MetricError::new(
+                            error.code(),
+                            format!("document {at}: {}", error.message()),
+                        )),
+                        internal => internal,
+                    })
+                })
+                .collect::<Result<Vec<_>, Failure>>()?
+        };
+        let issues = want_output.then(|| {
+            projections
+                .iter()
+                .map(|(_, projection)| issues(projection))
+                .collect::<Vec<Value>>()
+        });
+        let added = batch
+            .inner
+            .lock()
+            .map_err(|_| Failure::Internal("the batch is poisoned"))?
+            .try_add_all(projections)?;
+        Ok((issues, added))
+    }))
+    .unwrap_or(Err(Failure::Internal("adding to the batch panicked")));
+    let (status, value) = match result {
+        Ok((Some(issues), added)) => (Status::Ok, json!({"issues": issues, "dropped": !added})),
+        Ok((None, _)) => return Status::Ok,
+        Err(Failure::Rejected(error)) => (Status::Rejected, rejection(&error)),
+        Err(Failure::Internal(message)) => (Status::Internal, error_value("internal", message)),
+    };
+    if want_output {
+        let text = catch_unwind(|| value.to_string()).unwrap_or_default();
+        // SAFETY: `out` is not null and the caller guarantees it is writable.
+        unsafe { write(out, text) };
+    }
+    status
+}
+
 /// Set the metric list `input[..input_len]` (a JSON array of names, as a
 /// request document's `metrics` states it) that `batch` keeps of every
 /// document stating none. `null` or empty input keeps every metric again.

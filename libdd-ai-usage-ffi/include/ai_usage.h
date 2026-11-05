@@ -196,6 +196,29 @@ enum ddog_ai_usage_Status ddog_ai_usage_batch_add_quiet(const struct ddog_ai_usa
                                                         struct ddog_ai_usage_Buffer *out);
 
 /**
+ * Add every observation of one request to `batch` together: `input[..input_len]`
+ * is a JSON array of request documents, each as [`ddog_ai_usage_batch_add`]
+ * reads it (its provider attempts, token breakdowns and gateway request).
+ * Either all are added or none: a bounded batch without room for all of
+ * them drops them all, so it never keeps an attempt without its breakdown,
+ * and counts each in [`ddog_ai_usage_batch_dropped`]. A rejected document
+ * rejects the request, adds nothing, and writes `{"error": {"code",
+ * "message"}}` whose message names the document's index. On success writes
+ * `{"issues": [[...], ...], "dropped": false}` (one issue list per
+ * document) to `out`, or nothing when `out` is null.
+ *
+ * # Safety
+ *
+ * `batch` must be a live batch from [`ddog_ai_usage_batch_new`], `input`
+ * must point to `input_len` readable bytes (or `input_len` must be 0), and
+ * `out` must be null or writable.
+ */
+enum ddog_ai_usage_Status ddog_ai_usage_batch_add_request(const struct ddog_ai_usage_Batch *batch,
+                                                          const uint8_t *input,
+                                                          uintptr_t input_len,
+                                                          struct ddog_ai_usage_Buffer *out);
+
+/**
  * Set the metric list `input[..input_len]` (a JSON array of names, as a
  * request document's `metrics` states it) that `batch` keeps of every
  * document stating none. `null` or empty input keeps every metric again.

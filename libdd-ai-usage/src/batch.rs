@@ -163,74 +163,61 @@ impl MetricBatch {
         profile: Profile,
         projection: Projection,
     ) -> Result<bool, MetricError> {
-        for point in &projection.points {
-            if !profile.metric_names().contains(&point.name.as_str()) {
-                return reject(
-                    ErrorCode::MetricProfileMismatch,
-                    format!("{} is not a metric of {}", point.name, profile.id()),
-                );
-            }
-            if point
-                .attributes
-                .get(PROFILE_ATTRIBUTE)
-                .is_some_and(|stated| stated != profile.id())
-            {
-                return reject(
-                    ErrorCode::MetricProfileMismatch,
-                    format!(
-                        "{} states another profile than {}",
-                        point.name,
-                        profile.id()
-                    ),
-                );
-            }
-        }
-        // The profile is stated once per group, as the OTLP scope attribute; a
-        // resource never states it, as in the Datadog binding.
-        let mut resource = projection.resource;
-        resource.remove(PROFILE_ATTRIBUTE);
-        let points: Vec<(SeriesKey, Instrument, String, Sum, f64)> = projection
-            .points
+        self.try_add_all([(profile, projection)])
+    }
+
+    /// Add the projections of one request (its provider attempts, token
+    /// breakdowns and gateway request) together: all of them, or, when they
+    /// would take a bounded batch past its bound, none, so a full batch drops
+    /// whole requests and never keeps part of one. Returns whether they were
+    /// added; [`MetricBatch::dropped`] counts each projection dropped. A
+    /// projection that [`MetricBatch::add`] refuses refuses them all, and
+    /// nothing is added.
+    pub fn try_add_all(
+        &mut self,
+        projections: impl IntoIterator<Item = (Profile, Projection)>,
+    ) -> Result<bool, MetricError> {
+        let prepared = projections
             .into_iter()
-            .map(|point| {
-                let sum = Sum::of(&point);
-                let MetricPoint {
-                    name,
-                    instrument,
-                    unit,
-                    value,
-                    mut attributes,
-                    ..
-                } = point;
-                // A point that also states the profile is the same series as
-                // one that does not.
-                attributes.remove(PROFILE_ATTRIBUTE);
-                ((name, attributes), instrument, unit, sum, value)
-            })
-            .collect();
-        let group_key = (resource, profile);
-        if let Some(max_len) = self.max_len {
-            let existing = self.groups.get(&group_key);
-            let mut new_counters = BTreeSet::new();
-            let mut added = 0;
-            for (key, instrument, ..) in &points {
+            .map(|(profile, projection)| prepare(profile, projection))
+            .collect::<Result<Vec<Prepared>, MetricError>>()?;
+        if let Some(max_len) = self.max_len
+            && self.len + self.added(&prepared) > max_len
+        {
+            self.dropped += prepared.len() as u64;
+            return Ok(false);
+        }
+        for item in prepared {
+            self.insert(item);
+        }
+        Ok(true)
+    }
+
+    /// The points `items` would add: their Histogram samples, and their
+    /// Counter series that neither the batch nor an earlier item holds.
+    fn added(&self, items: &[Prepared]) -> usize {
+        let mut new_counters = BTreeSet::new();
+        let mut added = 0;
+        for item in items {
+            let existing = self.groups.get(&item.group);
+            for (key, instrument, ..) in &item.points {
                 match instrument {
                     Instrument::Counter => {
                         let held = existing.is_some_and(|g| g.counters.contains_key(key));
-                        if !held && new_counters.insert(key) {
+                        if !held && new_counters.insert((&item.group, key)) {
                             added += 1;
                         }
                     }
                     Instrument::Histogram => added += 1,
                 }
             }
-            if self.len + added > max_len {
-                self.dropped += 1;
-                return Ok(false);
-            }
         }
-        let group = self.groups.entry(group_key).or_default();
-        for (key, instrument, unit, sum, value) in points {
+        added
+    }
+
+    fn insert(&mut self, item: Prepared) {
+        let group = self.groups.entry(item.group).or_default();
+        for (key, instrument, unit, sum, value) in item.points {
             match instrument {
                 Instrument::Counter => {
                     let entry = group.counters.entry(key).or_insert_with(|| {
@@ -252,7 +239,6 @@ impl MetricBatch {
                 }
             }
         }
-        Ok(true)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -312,6 +298,66 @@ impl MetricBatch {
             .map(DatadogSeries::to_dogstatsd)
             .collect())
     }
+}
+
+/// A projection checked and keyed for a batch, not added yet.
+struct Prepared {
+    group: (Attributes, Profile),
+    points: Vec<(SeriesKey, Instrument, String, Sum, f64)>,
+}
+
+/// Check a projection of `profile` as [`MetricBatch::add`] does, and key its
+/// points as the batch holds them.
+fn prepare(profile: Profile, projection: Projection) -> Result<Prepared, MetricError> {
+    for point in &projection.points {
+        if !profile.metric_names().contains(&point.name.as_str()) {
+            return reject(
+                ErrorCode::MetricProfileMismatch,
+                format!("{} is not a metric of {}", point.name, profile.id()),
+            );
+        }
+        if point
+            .attributes
+            .get(PROFILE_ATTRIBUTE)
+            .is_some_and(|stated| stated != profile.id())
+        {
+            return reject(
+                ErrorCode::MetricProfileMismatch,
+                format!(
+                    "{} states another profile than {}",
+                    point.name,
+                    profile.id()
+                ),
+            );
+        }
+    }
+    // The profile is stated once per group, as the OTLP scope attribute; a
+    // resource never states it, as in the Datadog binding.
+    let mut resource = projection.resource;
+    resource.remove(PROFILE_ATTRIBUTE);
+    let points: Vec<(SeriesKey, Instrument, String, Sum, f64)> = projection
+        .points
+        .into_iter()
+        .map(|point| {
+            let sum = Sum::of(&point);
+            let MetricPoint {
+                name,
+                instrument,
+                unit,
+                value,
+                mut attributes,
+                ..
+            } = point;
+            // A point that also states the profile is the same series as
+            // one that does not.
+            attributes.remove(PROFILE_ATTRIBUTE);
+            ((name, attributes), instrument, unit, sum, value)
+        })
+        .collect();
+    Ok(Prepared {
+        group: (resource, profile),
+        points,
+    })
 }
 
 #[cfg(test)]
@@ -393,6 +439,71 @@ mod tests {
         assert_eq!(batch.len(), points);
         batch.set_max_len(None);
         assert_eq!(batch.max_len(), None);
+    }
+
+    #[test]
+    fn a_full_batch_drops_whole_requests() {
+        let call = attempt(CALL);
+        let breakdown = project_result(
+            Profile::TokenBreakdown,
+            &Json::parse(
+                r#"{"operation_name": "chat", "provider_name": "anthropic",
+                "input_tokens": 100, "input_basis": "excludes_cache", "output_tokens": 50,
+                "output_basis": "includes_reasoning", "cache_read_input_tokens": 400,
+                "cache_write_input_tokens": 20, "reasoning_output_tokens": 10,
+                "observation_point": "gateway"}"#,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let request = || {
+            vec![
+                (Profile::ProviderAttempt, call.clone()),
+                (Profile::TokenBreakdown, breakdown.clone()),
+            ]
+        };
+        let mut unbounded = MetricBatch::new();
+        assert!(unbounded.try_add_all(request()).unwrap());
+        let one = unbounded.len();
+        assert!(one > call.points.len());
+
+        // Room for the attempt but not its breakdown: neither is added.
+        let mut batch = MetricBatch::with_max_len(one - 1);
+        assert!(!batch.try_add_all(request()).unwrap());
+        assert!(batch.is_empty());
+        assert_eq!(batch.dropped(), 2);
+        batch.set_max_len(Some(one));
+        assert!(batch.try_add_all(request()).unwrap());
+        assert_eq!(batch.len(), one);
+
+        // Series shared within the request are counted once.
+        let mut twice = MetricBatch::new();
+        twice
+            .try_add_all([
+                (Profile::ProviderAttempt, call.clone()),
+                (Profile::ProviderAttempt, call.clone()),
+            ])
+            .unwrap();
+        let mut exact = MetricBatch::with_max_len(twice.len());
+        assert!(
+            exact
+                .try_add_all([
+                    (Profile::ProviderAttempt, call.clone()),
+                    (Profile::ProviderAttempt, call.clone()),
+                ])
+                .unwrap()
+        );
+
+        // One refused projection refuses the request.
+        let mut batch = MetricBatch::new();
+        let error = batch
+            .try_add_all([
+                (Profile::ProviderAttempt, call.clone()),
+                (Profile::GatewayRequest, call.clone()),
+            ])
+            .unwrap_err();
+        assert_eq!(error.code(), ErrorCode::MetricProfileMismatch);
+        assert!(batch.is_empty());
     }
 
     #[test]
