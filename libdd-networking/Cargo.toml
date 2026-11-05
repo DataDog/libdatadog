@@ -13,9 +13,9 @@ license.workspace = true
 
 [dependencies]
 anyhow = { workspace = true, features = ["std"] }
-bytes = { workspace = true, features = ["std"] }
+bytes = { workspace = true, features = ["std"], optional = true }
 hex = { workspace = true, features = ["std"] }
-pin-project = { workspace = true}
+pin-project = { workspace = true, optional = true }
 http.workspace = true
 httparse = { workspace = true, optional = true }
 hyper-rustls = { workspace = true, features = ["http1", "tls12"], optional = true }
@@ -34,12 +34,12 @@ rustls-platform-verifier = { workspace = true, optional = true }
 # Unused; pins a floor on this transitive-only dep since rustls itself only requires ^0.103.5.
 rustls-webpki = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"] }
-thiserror = { workspace = true, default-features = true }
+thiserror = { workspace = true, default-features = true, optional = true }
 webpki-root-certs = { workspace = true, optional = true }
 webpki-roots = { workspace = true, optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-futures = { workspace = true, features = ["alloc", "executor"] }
+futures = { workspace = true, features = ["alloc", "executor"], optional = true }
 http-body = { workspace = true, optional = true }
 http-body-util = { workspace = true, optional = true }
 # Target gating keeps these dependencies out of WASM. They are also optional so
@@ -66,11 +66,15 @@ default = ["https"]
 # FIPS mode uses the FIPS-compliant cryptographic provider (Unix only)
 fips = ["hyper-rustls/fips", "tls-core"]
 http-client = [
+  "dep:bytes",
+  "dep:futures",
   "dep:http-body",
   "dep:http-body-util",
   "dep:hyper",
   "dep:hyper-util",
   "dep:libdd-process-utils",
+  "dep:pin-project",
+  "dep:thiserror",
   "dep:tokio",
   "dep:tower-service",
 ]
