@@ -37,6 +37,13 @@ benchmarks:
     - job: compute_impacted_crates
       artifacts: true
       optional: true
+    # Per-benchmark selection (bench-selector). Absent on main / when
+    # undetermined / on failure -- select_bench_packages.sh then falls back to
+    # the crate-level selection above, which itself falls back to the full
+    # suite, so this job can only widen what runs.
+    - job: compute_bench_selection
+      artifacts: true
+      optional: true
   image:
     name: $BASE_CI_IMAGE
   rules: *benchmark_run_rules
@@ -61,8 +68,19 @@ benchmarks:
           export BENCH_PACKAGES=""
           ;;
         *)
-          export BENCH_PACKAGES="$DECISION"
-          echo "Shard ${CI_NODE_INDEX:-1}/${CI_NODE_TOTAL:-1} crates: $BENCH_PACKAGES"
+          if [[ "$DECISION" == \[* ]]; then
+            # Bench-level selection: a JSON array of per-binary specs, consumed
+            # via $BENCH_SELECTION by benchmark/run_benchmarks_ci.sh (candidate
+            # and baseline alike; each intersects it with its own --list).
+            export BENCH_SELECTION="$DECISION"
+            # Distinct crates as the crate-level fallback scope, should
+            # $BENCH_SELECTION fail to reach the bench runner intact.
+            export BENCH_PACKAGES="$(jq -r '[.[].crate] | unique | join(" ")' <<< "$BENCH_SELECTION")"
+            echo "Shard ${CI_NODE_INDEX:-1}/${CI_NODE_TOTAL:-1}: bench-level selection, $(jq 'length' <<< "$BENCH_SELECTION") benchmark binary(ies): $BENCH_PACKAGES"
+          else
+            export BENCH_PACKAGES="$DECISION"
+            echo "Shard ${CI_NODE_INDEX:-1}/${CI_NODE_TOTAL:-1} crates: $BENCH_PACKAGES"
+          fi
           ;;
       esac
     - export CACHE_FAILURES_LOG="${CI_PROJECT_DIR}/.cache-failures.log" && rm -f "${CACHE_FAILURES_LOG}"

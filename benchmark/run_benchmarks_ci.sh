@@ -45,6 +45,13 @@ bench_features_for_crate() {
   esac
 }
 
+# Escape regex metacharacters outside character classes; criterion's benchmark
+# filter is a regex and bench IDs are arbitrary text. Mirrors bench-selector's
+# cluster::escape_regex (.github/actions/bench-selector).
+escape_bench_regex() {
+  printf '%s' "$1" | sed -e 's/[\\.*+?^$|()\[\]{}]/\\&/g'
+}
+
 # Run benchmarks.
 message "Running benchmarks"
 
@@ -56,8 +63,32 @@ metadata="$(cargo metadata --no-deps --format-version 1)"
 # BENCH_PACKAGES (optional, space-separated crate names) scopes the run to specific crates -- set by
 # the GitLab benchmarks job so a PR only benchmarks the crates it impacts. When empty (e.g. a local
 # run) default to every crate that declares a benchmark target, which is equivalent to --workspace.
-if [[ -z "${BENCH_PACKAGES:-}" ]]; then
-  BENCH_PACKAGES="$(jq -r '.packages[] | select(any(.targets[]?; .kind[]? == "bench")) | .name' <<< "$metadata" | tr '\n' ' ')"
+#
+# BENCH_SELECTION (optional, a JSON array of per-binary specs
+# {"crate", "target", "features": [...], "ids": [...]}) scopes the run to
+# exactly the selected benchmark IDs -- set by the GitLab benchmarks job from
+# bench-selector output (see .github/actions/bench-selector). It takes
+# precedence over BENCH_PACKAGES. Specs whose crate, target, or benchmark IDs
+# are absent from THIS checkout (the baseline often predates a PR's new
+# benches) are skipped, so a new bench simply has no baseline counterpart to
+# compare against -- the same semantics the crate-level path has for new
+# crates.
+BENCH_SELECTION="${BENCH_SELECTION:-}"
+spec_mode=false
+if [[ -n "${BENCH_SELECTION}" ]]; then
+  if jq -e 'type == "array"' <<< "${BENCH_SELECTION}" >/dev/null 2>&1; then
+    spec_mode=true
+    message "Bench-level selection: $(jq 'length' <<< "${BENCH_SELECTION}") benchmark binary(ies)."
+  else
+    message "BENCH_SELECTION is set but is not a JSON array; falling back to crate-level selection."
+    BENCH_SELECTION=""
+  fi
+fi
+
+if [[ "${spec_mode}" != true ]]; then
+  if [[ -z "${BENCH_PACKAGES:-}" ]]; then
+    BENCH_PACKAGES="$(jq -r '.packages[] | select(any(.targets[]?; .kind[]? == "bench")) | .name' <<< "$metadata" | tr '\n' ' ')"
+  fi
 fi
 
 # Build the package and feature arguments from a single code path so the feature set always comes
@@ -109,7 +140,86 @@ dump_compiler_cache_diagnostics() {
   fi
 }
 
-if (( ${#package_args[@]} == 0 )); then
+# Storage IO errors during the build (e.g. S3 hiccup) only show up in these
+# counters; surface them loudly instead of letting them read as cache misses.
+check_sccache_io_errors() {
+  sccache --show-stats || :
+  local stats io_errors io_detail
+  stats="$(sccache --show-stats --stats-format json 2>/dev/null || echo '{}')"
+  io_errors="$(jq -r '[.stats.cache_write_errors, .stats.cache_read_errors, .stats.cache_timeouts] | add // 0' <<< "${stats}")"
+  if (( io_errors > 0 )); then
+    io_detail="$(jq -r '"cache write errors=\(.stats.cache_write_errors), cache read errors=\(.stats.cache_read_errors), cache timeouts=\(.stats.cache_timeouts)"' <<< "${stats}")"
+    record_cache_failure "SCCACHE SERVER FAILURE: ${io_errors} cache storage IO errors during this job — ${io_detail}"
+  fi
+}
+
+criterion_args=(--warm-up-time 1 --measurement-time 5 --sample-size=200)
+
+if [[ "${spec_mode}" == true ]]; then
+  # Bench-level selection: run only the selected benchmark IDs, intersected
+  # with what exists in THIS checkout (the baseline often predates new ones).
+  spec_crate=()
+  spec_target=()
+  spec_features=()
+  spec_count="$(jq 'length' <<< "${BENCH_SELECTION}")"
+  for ((i = 0; i < spec_count; i++)); do
+    crate="$(jq -r ".[$i].crate" <<< "${BENCH_SELECTION}")"
+    target="$(jq -r ".[$i].target" <<< "${BENCH_SELECTION}")"
+    crate_features="$(jq -r ".[$i].features | join(\",\")" <<< "${BENCH_SELECTION}")"
+    if ! grep -qxF "${crate}" <<< "${members}"; then
+      message "Skipping '${crate}/${target}': not a member of this checkout"
+      continue
+    fi
+    spec_crate+=("${crate}")
+    spec_target+=("${target}")
+    spec_features+=("${crate_features}")
+  done
+
+  if (( ${#spec_crate[@]} == 0 )); then
+    message "No selected benchmark binaries present in this checkout; nothing to run."
+  else
+    # Compile and measure in separate invocations so no sccache server is alive
+    # while anything is timed (same contract as the crate-level path below).
+    if start_compiler_cache; then
+      for j in "${!spec_crate[@]}"; do
+        spec_args=(-p "${spec_crate[$j]}" --bench "${spec_target[$j]}")
+        if [[ -n "${spec_features[$j]}" ]]; then
+          spec_args+=(--features "${spec_features[$j]}")
+        fi
+        if ! RUSTC_WRAPPER=sccache cargo bench "${spec_args[@]}" --no-run; then
+          message "sccache: compilation via the wrapper failed; the measuring run continues without a compiler cache"
+          record_cache_failure "SCCACHE SERVER FAILURE: compilation via the wrapper failed; the measuring run continues without a compiler cache"
+        fi
+      done
+      check_sccache_io_errors
+      sccache --stop-server > /dev/null 2>&1 || :
+    fi
+
+    # Measure each spec, filtered to the IDs this checkout actually has. The
+    # --list call is instant (the compile phase above just built the target)
+    # and tolerates a missing bench target on the baseline.
+    for j in "${!spec_crate[@]}"; do
+      spec_args=(-p "${spec_crate[$j]}" --bench "${spec_target[$j]}")
+      if [[ -n "${spec_features[$j]}" ]]; then
+        spec_args+=(--features "${spec_features[$j]}")
+      fi
+      listed="$(cargo bench "${spec_args[@]}" -- --list --format terse 2>/dev/null | sed -n 's/: benchmark$//p' || true)"
+      filter=""
+      while read -r bench_id; do
+        [[ -z "${bench_id}" ]] && continue
+        if grep -qxF "${bench_id}" <<< "${listed}"; then
+          filter="${filter:+${filter}|}$(escape_bench_regex "${bench_id}")"
+        fi
+      done < <(jq -r ".[$j].ids[]" <<< "${BENCH_SELECTION}")
+      if [[ -z "${filter}" ]]; then
+        message "Skipping '${spec_crate[$j]}/--bench ${spec_target[$j]}': none of the selected benchmark IDs exist in this checkout"
+        continue
+      fi
+      message "Benchmarking ${spec_crate[$j]}/--bench ${spec_target[$j]} with selection filter ^(${filter})$"
+      cargo bench "${spec_args[@]}" -- "${criterion_args[@]}" "^(${filter})$"
+    done
+  fi
+elif (( ${#package_args[@]} == 0 )); then
   message "No benchmarkable crates present in this checkout; nothing to run."
 else
   feature_args=()
@@ -117,8 +227,6 @@ else
     feature_args=(--features "$(IFS=,; echo "${features[*]}")")
   fi
   message "Benchmarking crates:${package_args[*]}"
-
-  criterion_args=(--warm-up-time 1 --measurement-time 5 --sample-size=200)
 
   # Compile and measure in separate invocations so no sccache server is alive while anything is
   # timed. Safe only because cargo does not treat a RUSTC_WRAPPER change as a fingerprint change
@@ -128,15 +236,7 @@ else
       message "sccache: compilation via the wrapper failed; retrying without a compiler cache"
       record_cache_failure "SCCACHE SERVER FAILURE: compilation via the wrapper failed; the measuring run continues without a compiler cache"
     fi
-    # Storage IO errors during the build (e.g. S3 hiccup) only show up in these
-    # counters; surface them loudly instead of letting them read as cache misses.
-    sccache --show-stats || :
-    sccache_stats="$(sccache --show-stats --stats-format json 2>/dev/null || echo '{}')"
-    sccache_io_errors="$(jq -r '[.stats.cache_write_errors, .stats.cache_read_errors, .stats.cache_timeouts] | add // 0' <<< "${sccache_stats}")"
-    if (( sccache_io_errors > 0 )); then
-      sccache_io_detail="$(jq -r '"cache write errors=\(.stats.cache_write_errors), cache read errors=\(.stats.cache_read_errors), cache timeouts=\(.stats.cache_timeouts)"' <<< "${sccache_stats}")"
-      record_cache_failure "SCCACHE SERVER FAILURE: ${sccache_io_errors} cache storage IO errors during this job — ${sccache_io_detail}"
-    fi
+    check_sccache_io_errors
     sccache --stop-server > /dev/null 2>&1 || :
   fi
 

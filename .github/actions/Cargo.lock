@@ -310,6 +310,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "bench-selector"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cargo_metadata",
+ "ci-shared",
+ "clap",
+ "env_logger 0.11.10",
+ "log",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "bit-set"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
