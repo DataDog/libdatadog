@@ -19,7 +19,7 @@ use std::collections::BTreeMap;
 
 use serde::Serialize;
 
-use crate::json::Json;
+use crate::json::{Json, Prune};
 use crate::number::MAX_SAFE_INTEGER;
 use crate::observation::{
     ProviderAttemptObservation, TokenBreakdownObservation, is_context_band, is_identifier,
@@ -733,7 +733,7 @@ pub const MAX_KEPT_STRING_BYTES: usize = 1024;
 
 /// A line or body shorter than this is decoded as it is, without cutting
 /// its strings first: cutting would not save enough to pay for itself.
-const CUT_ABOVE_BYTES: usize = 64 * 1024;
+const CUT_ABOVE_BYTES: usize = 8 * 1024;
 
 /// JSON text with every string cut to its first [`MAX_KEPT_STRING_BYTES`]
 /// bytes, fed in pieces that can end anywhere. A string is cut only at a
@@ -796,29 +796,37 @@ impl CutStrings {
                     at += 1;
                     continue;
                 }
-                // Skip to the next quote or backslash in one go; an escape
-                // skips the byte it escapes.
-                loop {
-                    match memchr::memchr2(b'"', b'\\', &bytes[at..]) {
-                        None => at = bytes.len(),
-                        Some(n) if bytes[at + n] == b'"' => {
-                            self.out.push(b'"');
-                            self.in_string = false;
-                            at += n + 1;
-                        }
-                        Some(n) if at + n + 1 < bytes.len() => {
-                            at += n + 2;
-                            continue;
-                        }
-                        Some(_) => {
-                            // The escaped byte is in the next piece.
-                            self.escaped = true;
-                            at = bytes.len();
-                        }
+                // Skip to the closing quote, 64 bytes at a time, so text
+                // dense with escapes (tool arguments, quoted prose) costs no
+                // more than plain text.
+                match closing_quote(&bytes[at..]) {
+                    Ok(n) => {
+                        self.out.push(b'"');
+                        self.in_string = false;
+                        at += n + 1;
                     }
-                    break;
+                    Err(escaped) => {
+                        // The escaped byte of a final backslash is in the
+                        // next piece.
+                        self.escaped = escaped;
+                        at = bytes.len();
+                    }
                 }
                 continue;
+            }
+            if !self.escaped && self.hex_left == 0 && self.kept < MAX_KEPT_STRING_BYTES {
+                // Copy the plain run of a kept string in one go, up to the
+                // next quote or backslash or the end of what is kept. A
+                // plain character after an escape ends any surrogate pair.
+                let end = bytes.len().min(at + (MAX_KEPT_STRING_BYTES - self.kept));
+                let run = memchr::memchr2(b'"', b'\\', &bytes[at..end]).unwrap_or(end - at);
+                if run > 0 {
+                    self.out.extend_from_slice(&bytes[at..at + run]);
+                    self.kept += run;
+                    self.high_surrogate = false;
+                    at += run;
+                    continue;
+                }
             }
             let b = bytes[at];
             at += 1;
@@ -868,6 +876,80 @@ impl CutStrings {
     }
 }
 
+/// The bits of the quotes and of the backslashes of a 64-byte block, bit `i`
+/// for byte `i`, eight bytes at a time.
+fn quote_masks(block: &[u8]) -> (u64, u64) {
+    const LOW: u64 = 0x7F7F_7F7F_7F7F_7F7F;
+    const ONES: u64 = 0x0101_0101_0101_0101;
+    /// Bit `k` set when byte `k` of `word` is zero: its high bit, found
+    /// without carries between bytes, gathered by one multiplication.
+    fn zero_bytes(word: u64) -> u64 {
+        let high = !(((word & LOW).wrapping_add(LOW)) | word | LOW);
+        (high >> 7).wrapping_mul(0x0102_0408_1020_4080) >> 56
+    }
+    let mut quotes = 0u64;
+    let mut backslashes = 0u64;
+    for (k, chunk) in block.chunks_exact(8).enumerate().take(8) {
+        let mut bytes = [0u8; 8];
+        bytes.copy_from_slice(chunk);
+        let word = u64::from_le_bytes(bytes);
+        quotes |= zero_bytes(word ^ (ONES * u64::from(b'"'))) << (8 * k);
+        backslashes |= zero_bytes(word ^ (ONES * u64::from(b'\\'))) << (8 * k);
+    }
+    (quotes, backslashes)
+}
+
+/// The bits of the bytes a backslash escapes in a 64-byte block whose
+/// backslashes are `backslashes`. `carry` is 1 when the first byte is
+/// escaped by the block before, and is set for the block after: an odd run
+/// of backslashes escapes the byte after it, an even run does not. This is
+/// simdjson's escape scanner.
+fn escaped_bits(backslashes: u64, carry: &mut u64) -> u64 {
+    const EVEN: u64 = 0x5555_5555_5555_5555;
+    let backslashes = backslashes & !*carry;
+    let follows_escape = (backslashes << 1) | *carry;
+    let odd_starts = backslashes & !EVEN & !follows_escape;
+    let (even_starts, overflow) = odd_starts.overflowing_add(backslashes);
+    *carry = u64::from(overflow);
+    (EVEN ^ (even_starts << 1)) & follows_escape
+}
+
+/// The offset of the first quote no backslash escapes in `bytes`, the rest
+/// of a JSON string with no escape pending at its start: the quote that
+/// closes it. Without one, `Err` says whether `bytes` ends in an escape
+/// whose escaped byte is still to come.
+fn closing_quote(bytes: &[u8]) -> Result<usize, bool> {
+    // Text without escapes is skipped at memchr's speed; from the first
+    // backslash on, a block of 64 bytes costs the same however many escapes
+    // it holds.
+    let mut base = match memchr::memchr2(b'"', b'\\', bytes) {
+        None => return Err(false),
+        Some(n) if bytes[n] == b'"' => return Ok(n),
+        Some(n) => n,
+    };
+    let mut carry = 0u64;
+    let mut blocks = bytes[base..].chunks_exact(64);
+    for block in &mut blocks {
+        let (quotes, backslashes) = quote_masks(block);
+        let open = quotes & !escaped_bits(backslashes, &mut carry);
+        if open != 0 {
+            return Ok(base + open.trailing_zeros() as usize);
+        }
+        base += 64;
+    }
+    let mut escaped = carry != 0;
+    for (i, &b) in blocks.remainder().iter().enumerate() {
+        if escaped {
+            escaped = false;
+        } else if b == b'"' {
+            return Ok(base + i);
+        } else if b == b'\\' {
+            escaped = true;
+        }
+    }
+    Err(escaped)
+}
+
 /// `text` with its long strings cut, as [`CutStrings`] does.
 fn cut_strings(text: &[u8]) -> Vec<u8> {
     let mut cut = CutStrings::default();
@@ -907,6 +989,60 @@ const CANDIDATES: [(&str, Candidate); 12] = [
     ("\"response.incomplete\"", Candidate::Marker),
     ("\"response.failed\"", Candidate::Marker),
 ];
+
+/// What a stream event or response body is decoded for: the members this
+/// module reads, and nothing of the generated content around them. Every
+/// other member is checked as JSON but not built.
+const EVENT: Prune = Prune::Members(&[
+    ("type", Prune::All),
+    ("code", Prune::All),
+    ("model", Prune::All),
+    ("modelVersion", Prune::All),
+    ("service_tier", Prune::All),
+    ("usage", Prune::All),
+    ("usageMetadata", Prune::All),
+    ("error", Prune::All),
+    (
+        "response",
+        Prune::Members(&[
+            ("usage", Prune::All),
+            ("model", Prune::All),
+            ("service_tier", Prune::All),
+            ("error", Prune::All),
+        ]),
+    ),
+    (
+        "message",
+        Prune::Members(&[("usage", Prune::All), ("model", Prune::All)]),
+    ),
+    // Each candidate's finish reason; each choice is only seen to be there.
+    (
+        "candidates",
+        Prune::Members(&[("finishReason", Prune::All)]),
+    ),
+    ("choices", Prune::Members(&[])),
+    // A payload that is itself a usage object.
+    ("prompt_tokens", Prune::All),
+    ("completion_tokens", Prune::All),
+    ("total_tokens", Prune::All),
+    ("input_tokens", Prune::All),
+    ("output_tokens", Prune::All),
+    ("prompt_tokens_details", Prune::All),
+    ("completion_tokens_details", Prune::All),
+    ("input_tokens_details", Prune::All),
+    ("output_tokens_details", Prune::All),
+    ("cache_read_input_tokens", Prune::All),
+    ("cache_creation_input_tokens", Prune::All),
+    ("cache_creation", Prune::All),
+    ("promptTokenCount", Prune::All),
+    ("candidatesTokenCount", Prune::All),
+    ("totalTokenCount", Prune::All),
+    ("thoughtsTokenCount", Prune::All),
+    ("toolUsePromptTokenCount", Prune::All),
+    ("cachedContentTokenCount", Prune::All),
+    ("promptTokensDetails", Prune::All),
+    ("candidatesTokensDetails", Prune::All),
+]);
 
 /// Whether the quoted name ending at `rest` is other than a member whose
 /// value is `null`.
@@ -1077,7 +1213,7 @@ impl UsageStream {
         if !self.wanted(value) {
             return;
         }
-        if let Ok(event) = Json::parse(value) {
+        if let Ok(event) = Json::parse_pruned(value, EVENT) {
             self.event(&event);
         }
     }
@@ -1253,7 +1389,7 @@ pub fn parse_provider_body(
     };
     if matches!(body_text.first(), Some(b'{' | b'['))
         && let Ok(text) = std::str::from_utf8(document)
-        && let Ok(document) = Json::parse(text)
+        && let Ok(document) = Json::parse_pruned(text, EVENT)
     {
         let mut stream = UsageStream::new(format, embeddings);
         match document.as_array() {
@@ -1430,6 +1566,84 @@ mod tests {
                 pieces.push(piece);
             }
             assert_eq!(pieces.out, whole, "{step}");
+        }
+    }
+
+    /// The closing quote found one byte at a time.
+    fn closing_quote_bytewise(bytes: &[u8]) -> Result<usize, bool> {
+        let mut escaped = false;
+        for (i, &b) in bytes.iter().enumerate() {
+            if escaped {
+                escaped = false;
+            } else if b == b'"' {
+                return Ok(i);
+            } else if b == b'\\' {
+                escaped = true;
+            }
+        }
+        Err(escaped)
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)] // many inputs are too slow under Miri
+    fn the_block_scanner_finds_the_quote_a_bytewise_scan_finds() {
+        // Runs of backslashes of every length, across 64-byte block edges.
+        let mut seed = 0x9E37_79B9_7F4A_7C15u64;
+        let alphabet = [b'a', b'"', b'\\', b'\\', b'\\', b'n', 0xC3, 0xA9];
+        for len in [0, 1, 2, 63, 64, 65, 127, 128, 129, 200, 1000] {
+            for _ in 0..300 {
+                let text: Vec<u8> = (0..len)
+                    .map(|_| {
+                        seed ^= seed << 13;
+                        seed ^= seed >> 7;
+                        seed ^= seed << 17;
+                        alphabet[(seed % alphabet.len() as u64) as usize]
+                    })
+                    .collect();
+                assert_eq!(
+                    closing_quote(&text),
+                    closing_quote_bytewise(&text),
+                    "{:?}",
+                    String::from_utf8_lossy(&text)
+                );
+            }
+        }
+        let run = |n: usize| format!("{}{}\"", "x".repeat(70), "\\".repeat(n));
+        assert_eq!(closing_quote(run(64).as_bytes()), Ok(134));
+        assert_eq!(closing_quote(run(65).as_bytes()), Err(false));
+        assert_eq!(closing_quote(b"abc\\"), Err(true));
+    }
+
+    #[test]
+    fn a_pruned_event_reads_as_the_whole_event() {
+        let events = [
+            r#"{"type":"response.completed","response":{"model":"gpt-4.1","output":[{"content":[{"text":"hi \"there\""}]}],"service_tier":"default","usage":{"input_tokens":12,"output_tokens":18,"output_tokens_details":{"reasoning_tokens":3}},"error":null}}"#,
+            r#"{"model":"gemini","candidates":[{"content":{"parts":[{"text":"x"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":3,"candidatesTokenCount":4,"totalTokenCount":7}}"#,
+            r#"{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#,
+            r#"{"choices":[{"delta":{"content":"x"}}],"error":{"code":500,"message":"boom"}}"#,
+            r#"{"prompt_tokens":4,"completion_tokens":2,"total_tokens":6}"#,
+            r#"[{"usageMetadata":{"promptTokenCount":1}},{"candidates":[{"finishReason":"STOP"}]}]"#,
+        ];
+        for text in events {
+            let whole = Json::parse(text).unwrap();
+            let pruned = Json::parse_pruned(text, EVENT).unwrap();
+            for format in UsageFormat::ALL {
+                assert_eq!(
+                    parse_provider_response(format, &pruned, false),
+                    parse_provider_response(format, &whole, false),
+                    "{text}"
+                );
+            }
+            let mut a = UsageStream::new(UsageFormat::Auto, false);
+            a.event(&whole);
+            let mut b = UsageStream::new(UsageFormat::Auto, false);
+            b.event(&pruned);
+            assert_eq!(a.finish(), b.finish(), "{text}");
+        }
+        // Skipped members are still checked: invalid JSON is refused alike.
+        for text in [r#"{"x": "a\qb"}"#, "{\"x\": \"a\u{1}b\"}", r#"{"x": [1,]}"#] {
+            assert!(Json::parse_pruned(text, EVENT).is_err(), "{text}");
+            assert!(Json::parse(text).is_err(), "{text}");
         }
     }
 }

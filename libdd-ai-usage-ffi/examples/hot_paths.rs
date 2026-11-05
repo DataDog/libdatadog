@@ -111,6 +111,27 @@ const GATEWAY: &str = r#"{"profile": "trajectory.gen_ai.gateway.request@0.1.0",
     "duration_seconds": 1.4, "provider_operations": 1,
     "provider_operation_coverage": "complete", "cache_outcomes": ["miss"]}}"#;
 
+/// A small Responses `response.completed` event, as OpenAI sends it.
+const RESPONSE_COMPLETED: &str = r#"{"type":"response.completed","sequence_number":20,"response":{"id":"resp_68af","object":"response","created_at":1756300000,"status":"completed","background":false,"error":null,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"gpt-4.1-2025-04-14","output":[{"id":"msg_68af","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"Hello! How can I help you today? Let me know what you would like to work on."}],"role":"assistant"}],"parallel_tool_calls":true,"previous_response_id":null,"prompt_cache_key":null,"reasoning":{"effort":null,"summary":null},"safety_identifier":null,"service_tier":"default","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":{"input_tokens":12,"input_tokens_details":{"cached_tokens":0},"output_tokens":18,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":30},"user":null,"metadata":{}}}"#;
+
+/// A Chat Completions body of about `size` bytes: a long answer with line
+/// breaks and quotes, and a tool call whose arguments are escaped JSON.
+fn chat_body(size: usize) -> String {
+    let sentence = r#"The quick brown fox said \"hello\" and jumped over the lazy dog.\n"#;
+    let args = r#"{\"path\": \"src/main.rs\", \"line\": 42, \"text\": \"fn main() {}\"}"#;
+    let mut content = String::with_capacity(size);
+    while content.len() < size * 3 / 4 {
+        content.push_str(sentence);
+    }
+    let mut arguments = String::with_capacity(size / 4);
+    while arguments.len() < size / 4 {
+        arguments.push_str(args);
+    }
+    format!(
+        r#"{{"id": "chatcmpl-1", "object": "chat.completion", "created": 1, "model": "gpt-4o-2024-08-06", "choices": [{{"index": 0, "message": {{"role": "assistant", "content": "{content}", "tool_calls": [{{"id": "call_1", "type": "function", "function": {{"name": "edit", "arguments": "{arguments}"}}}}]}}, "logprobs": null, "finish_reason": "stop"}}], "usage": {{"prompt_tokens": 1200, "completion_tokens": 9000, "total_tokens": 10200, "prompt_tokens_details": {{"cached_tokens": 0}}, "completion_tokens_details": {{"reasoning_tokens": 0}}}}, "service_tier": "default", "system_fingerprint": "fp_1"}}"#
+    )
+}
+
 fn main() {
     // 50,000 DogStatsD lines packed into UDS datagrams, caller's encoding
     // and decoding included, as a gateway in another language pays them.
@@ -283,6 +304,51 @@ fn main() {
                 &mut out,
             )
         };
+        drop_out(&mut out);
+    });
+
+    // Chat Completions bodies of 50 and 500 KB, mostly generated text with
+    // the escapes prose and tool arguments carry.
+    for kb in [50, 500] {
+        let body = chat_body(kb * 1024);
+        measure(
+            &format!("parse_provider_response openai_chat {kb} KB"),
+            || {
+                let mut out = Buffer {
+                    ptr: ptr::null_mut(),
+                    len: 0,
+                };
+                // SAFETY: valid inputs and output.
+                unsafe {
+                    ddog_ai_usage_parse_provider_response(
+                        format.as_ptr(),
+                        format.len(),
+                        false,
+                        body.as_ptr(),
+                        body.len(),
+                        &mut out,
+                    )
+                };
+                drop_out(&mut out);
+            },
+        );
+    }
+
+    // A small Responses `response.completed` event, fed as one line.
+    let responses = "openai_responses";
+    let completed = format!("event: response.completed\ndata: {RESPONSE_COMPLETED}\n\n");
+    measure("stream response.completed: new + feed + take", || {
+        let mut stream = ptr::null_mut();
+        let mut out = Buffer {
+            ptr: ptr::null_mut(),
+            len: 0,
+        };
+        // SAFETY: the stream is used until taken; valid inputs and output.
+        unsafe {
+            ddog_ai_usage_stream_new(responses.as_ptr(), responses.len(), false, &mut stream);
+            ddog_ai_usage_stream_feed(stream, completed.as_ptr(), completed.len());
+            ddog_ai_usage_stream_take(stream, &mut out);
+        }
         drop_out(&mut out);
     });
 
