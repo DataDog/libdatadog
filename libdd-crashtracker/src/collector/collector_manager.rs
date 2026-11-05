@@ -41,11 +41,15 @@ impl Collector {
         // Get the current tid to identify thread info
         let tid = current_tid();
 
-        // Thread collection needs the collector to ptrace us, and Yama permits that only once
-        // we name it as our tracer - which we cannot do before the fork tells us its pid. The
-        // child therefore blocks on this pipe until we have granted it.
+        // Thread collection and OTel TLS reading both need the collector to
+        // ptrace us. Yama permits that only once we name it as our tracer —
+        // which we cannot do before the fork tells us its pid. The child
+        // therefore blocks on this pipe until we have granted it.
         #[cfg(target_os = "linux")]
-        let ptrace_gate = if config.collect_all_threads() {
+        let needs_ptrace = config.collect_all_threads()
+            || (cfg!(feature = "otel-thread-ctx") && config.collect_otel_thread_contexts());
+        #[cfg(target_os = "linux")]
+        let ptrace_gate = if needs_ptrace {
             make_ptrace_gate()
         } else {
             None
@@ -76,20 +80,7 @@ impl Collector {
                     // SAFETY: both calls are async-signal-safe. Closing the write end is what
                     // releases the child, so it must come after the grant.
                     unsafe {
-                        // When otel thread context collection is enabled, the
-                        // receiver also needs ptrace access to read TLS from
-                        // other threads. PR_SET_PTRACER only holds one PID,
-                        // so use ANY in that case.
-                        if cfg!(feature = "otel-thread-ctx")
-                            && config.collect_otel_thread_contexts()
-                        {
-                            libc::prctl(
-                                libc::PR_SET_PTRACER,
-                                libc::PR_SET_PTRACER_ANY as libc::c_ulong,
-                            );
-                        } else {
-                            libc::prctl(libc::PR_SET_PTRACER, pid as libc::c_ulong);
-                        }
+                        libc::prctl(libc::PR_SET_PTRACER, pid as libc::c_ulong);
                         libc::close(read_fd);
                         libc::close(write_fd);
                     }

@@ -120,9 +120,6 @@ pub struct CrashInfoBuilder {
     pub metadata: Option<Metadata>,
     pub os_info: Option<OsInfo>,
     pub otel_thread_contexts: Option<Vec<OtelThreadContext>>,
-    /// TLS slot address from the collector, used transiently to compute the TLS
-    /// offset for reading other threads' OTel contexts. Not part of CrashInfo.
-    pub otel_tls_slot_addr: Option<u64>,
     pub proc_info: Option<ProcInfo>,
     pub sig_info: Option<SigInfo>,
     pub span_ids: Option<Vec<Span>>,
@@ -145,7 +142,6 @@ impl Default for CrashInfoBuilder {
             metadata: None,
             os_info: None,
             otel_thread_contexts: None,
-            otel_tls_slot_addr: None,
             proc_info: None,
             sig_info: None,
             span_ids: None,
@@ -162,14 +158,19 @@ impl CrashInfoBuilder {
         let counters = self.counters.unwrap_or_default();
         let data_schema_version = CrashInfo::current_schema_version().to_string();
         let (error, incomplete_error) = self.error.build()?;
-        let experimental = self.experimental;
+        let otel_thread_contexts = self.otel_thread_contexts.unwrap_or_default();
+        let mut experimental = self.experimental;
+        if !otel_thread_contexts.is_empty() {
+            experimental
+                .get_or_insert_with(Experimental::default)
+                .otel_thread_contexts = otel_thread_contexts;
+        }
         let files = self.files.unwrap_or_default();
         let fingerprint = self.fingerprint;
         let incomplete = incomplete_error || self.incomplete.unwrap_or(false);
         let log_messages = self.log_messages.unwrap_or_default();
         let metadata = self.metadata.unwrap_or_else(Metadata::unknown_value);
         let os_info = self.os_info.unwrap_or_else(OsInfo::unknown_value);
-        let otel_thread_contexts = self.otel_thread_contexts.unwrap_or_default();
         let proc_info = self.proc_info;
         let sig_info = self.sig_info;
         let span_ids = self.span_ids.unwrap_or_default();
@@ -188,7 +189,6 @@ impl CrashInfoBuilder {
             log_messages,
             metadata,
             os_info,
-            otel_thread_contexts,
             proc_info,
             sig_info,
             span_ids,

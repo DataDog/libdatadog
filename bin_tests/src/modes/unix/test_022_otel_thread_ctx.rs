@@ -1,8 +1,7 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Attaches OTel thread contexts on three threads before crashing so the
-//! receiver can read them via ptrace + `/proc/<pid>/mem`.
+//! Attaches OTel thread contexts on three threads before crashing
 
 use crate::modes::behavior::Behavior;
 use libdd_crashtracker::CrashtrackerConfiguration;
@@ -79,8 +78,7 @@ impl Behavior for Test {
                 [0xde, 0xad, 0xbe, 0xef, 0xca, 0xfe, 0xba, 0xbe],
                 &[],
             );
-            let _prev = ctx.attach();
-            // Leak: contexts must stay alive until the crash.
+            ctx.attach();
         }
         Ok(())
     }

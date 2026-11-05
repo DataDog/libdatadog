@@ -343,27 +343,13 @@ fn handle_posix_signal_impl(
 
     let receiver = Receiver::from_crashtracker_config(config)?;
 
-    // Grant ptrace permission so the receiver and/or collector can read
-    // /proc/<pid>/mem. When both collect_all_threads and otel-thread-ctx are
-    // active, both the collector child and receiver need access. Since
-    // PR_SET_PTRACER only holds one PID, use PR_SET_PTRACER_ANY in that case.
+    // Enable ptrace permissions for receiver if multi-thread collection is enabled.
+    // For fork/exec receivers, we have the child PID directly (trusted: we spawned it).
+    // For socket-based receivers (PHP sidecar), verify the peer PID matches the
+    // expected receiver PID that was registered during trusted initialization
     #[cfg(target_os = "linux")]
-    {
-        let needs_receiver =
-            cfg!(feature = "otel-thread-ctx") && config.collect_otel_thread_contexts();
-        let needs_collector = config.collect_all_threads();
-        if needs_receiver && needs_collector {
-            // Both processes need access; PR_SET_PTRACER only holds one PID.
-            // SAFETY: prctl is async-signal-safe.
-            unsafe {
-                libc::prctl(
-                    libc::PR_SET_PTRACER,
-                    libc::PR_SET_PTRACER_ANY as libc::c_ulong,
-                );
-            }
-        } else if needs_receiver || needs_collector {
-            grant_ptracer_permission(&receiver);
-        }
+    if config.collect_all_threads() {
+        grant_ptracer_permission(&receiver);
     }
 
     collect_and_finish(
@@ -524,20 +510,8 @@ pub fn report_unhandled_exception(
     let receiver = Receiver::from_crashtracker_config(&config)?;
 
     #[cfg(target_os = "linux")]
-    {
-        let needs_receiver =
-            cfg!(feature = "otel-thread-ctx") && config.collect_otel_thread_contexts();
-        let needs_collector = config.collect_all_threads();
-        if needs_receiver && needs_collector {
-            unsafe {
-                libc::prctl(
-                    libc::PR_SET_PTRACER,
-                    libc::PR_SET_PTRACER_ANY as libc::c_ulong,
-                );
-            }
-        } else if needs_receiver || needs_collector {
-            grant_ptracer_permission(&receiver);
-        }
+    if config.collect_all_threads() {
+        grant_ptracer_permission(&receiver);
     }
 
     let timeout_manager = TimeoutManager::new(config.timeout());

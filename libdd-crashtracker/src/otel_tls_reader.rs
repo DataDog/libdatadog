@@ -2,11 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Read an OTel `ThreadContextRecord` from the crashing process's memory.
-//!
-//! The collector (forked from the crashing process) emits the virtual address of
-//! the record via the `DD_CRASHTRACK_*_OTEL_THREAD_CTX_PTR` protocol section.
-//! This module reads the 640-byte record from `/proc/<pid>/mem` at that address
-//! and decodes it into an [`OtelThreadContext`].
 
 use alloc::fmt;
 use std::fs::File;
@@ -15,10 +10,6 @@ use std::io::{Read, Seek, SeekFrom};
 use crate::crash_info::{OtelAttribute, OtelThreadContext};
 
 const RECORD_SIZE: usize = 640;
-
-// ---------------------------------------------------------------------------
-// Errors
-// ---------------------------------------------------------------------------
 
 #[derive(Debug)]
 pub(crate) enum OtelTlsError {
@@ -40,35 +31,23 @@ impl From<std::io::Error> for OtelTlsError {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
-
-/// Read and decode the `ThreadContextRecord` at `record_addr` in the target
-/// process's address space.
-///
-/// Returns `Ok(None)` if the record's `valid` flag is not `1` (e.g. the
-/// record was being updated at crash time).
-pub(crate) fn read_otel_thread_context(
+/// Read the raw 640-byte record into `buf`. Returns `Ok(false)` if the record
+/// is not valid (e.g. mid-update).
+pub(crate) fn read_raw_record(
     pid: u32,
-    tid: i32,
     record_addr: u64,
-) -> Result<Option<OtelThreadContext>, OtelTlsError> {
-    let mut record = [0u8; RECORD_SIZE];
-    read_remote_memory(pid, record_addr, &mut record)?;
-
-    let ctx = decode_thread_context_record(tid, &record);
-    if let Some(mut ctx) = ctx {
-        ctx.thread_name = read_thread_name(pid, tid);
-        Ok(Some(ctx))
-    } else {
-        Ok(None)
-    }
+    buf: &mut [u8; RECORD_SIZE],
+) -> Result<bool, OtelTlsError> {
+    read_remote_memory(pid, record_addr, buf)?;
+    Ok(buf[24] == 1) // valid flag
 }
 
-// ---------------------------------------------------------------------------
-// Remote memory reading
-// ---------------------------------------------------------------------------
+pub(crate) const OTEL_RECORD_SIZE: usize = RECORD_SIZE;
+
+/// Decode a raw 640-byte record into an `OtelThreadContext` (no thread name).
+pub(crate) fn decode_record(tid: i32, record: &[u8; RECORD_SIZE]) -> Option<OtelThreadContext> {
+    decode_thread_context_record(tid, record)
+}
 
 fn read_remote_memory(pid: u32, addr: u64, buf: &mut [u8]) -> Result<(), OtelTlsError> {
     let mut file = File::open(format!("/proc/{pid}/mem"))?;
@@ -85,10 +64,6 @@ pub(crate) fn read_tls_slot_value(pid: u32, slot_addr: u64) -> Result<u64, OtelT
     read_remote_memory(pid, slot_addr, &mut buf)?;
     Ok(u64::from_ne_bytes(buf))
 }
-
-// ---------------------------------------------------------------------------
-// Record decoding
-// ---------------------------------------------------------------------------
 
 /// Decode a raw 640-byte `ThreadContextRecord`.
 ///
@@ -156,16 +131,13 @@ fn bytes_to_hex(bytes: &[u8]) -> String {
     s
 }
 
+/// Read a thread's name from `/proc/<pid>/task/<tid>/comm`.
 pub(crate) fn read_thread_name(pid: u32, tid: i32) -> Option<String> {
     std::fs::read_to_string(format!("/proc/{pid}/task/{tid}/comm"))
         .ok()
         .map(|s| s.trim_end_matches('\n').to_string())
         .filter(|s| !s.is_empty())
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
