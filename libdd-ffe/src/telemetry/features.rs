@@ -26,8 +26,9 @@ pub fn features_map(raw: &str) -> BTreeMap<String, Value> {
     }
     let parsed = match serde_json::from_str::<BTreeMap<String, Value>>(raw) {
         Ok(parsed) => parsed,
-        Err(error) => {
-            log::debug!("ffe features must be a JSON object: {error}; omitting features");
+        Err(_) => {
+            // serde errors can quote the rejected input, which is customer data.
+            log::debug!("ffe features must be a JSON object; omitting features");
             return BTreeMap::new();
         }
     };
@@ -79,6 +80,22 @@ mod tests {
             serde_json::to_value(&features).unwrap(),
             json!({"s":"a","n":2.0,"b":false,"empty":""})
         );
+    }
+
+    #[test]
+    fn rejected_input_is_not_logged() {
+        crate::telemetry::test_logging::start_log_capture();
+        for raw in [
+            r#""FEATURE_CANARY""#,
+            r#"{"FEATURE_CANARY":"#,
+            r#"["FEATURE_CANARY"]"#,
+        ] {
+            assert!(features_map(raw).is_empty());
+        }
+        let logs = crate::telemetry::test_logging::captured_logs();
+        assert_eq!(logs.len(), 3);
+        assert!(logs.iter().all(|log| log.level == log::Level::Debug
+            && log.message == "ffe features must be a JSON object; omitting features"));
     }
 
     #[test]
