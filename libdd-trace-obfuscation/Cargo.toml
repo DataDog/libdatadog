@@ -22,13 +22,12 @@ fluent-uri.workspace = true
 libdd-trace-protobuf = { version = "5.1.1", path = "../libdd-trace-protobuf" }
 libdd-trace-model = { version = "1.0.0", path = "../libdd-trace-model" }
 libdd-trace-utils = { version = "15.0.0", path = "../libdd-trace-utils", default-features = false }
-libdd-common = { version = "9.0.0", path = "../libdd-common", default-features = false, features = ["std"] }
 libdd-regex = { version = "0.1.0", path = "../libdd-regex" }
 
 [features]
 default = ["https"]
-https = ["libdd-common/https", "libdd-trace-utils/https"]
-fips = ["libdd-common/fips", "libdd-trace-utils/fips"]
+https = ["libdd-trace-utils/https"]
+fips = ["libdd-trace-utils/fips"]
 regex-lite = ["libdd-regex/regex-lite"]
 
 [dev-dependencies]

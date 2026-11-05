@@ -3593,7 +3593,6 @@ dependencies = [
  "criterion",
  "duplicate",
  "fluent-uri",
- "libdd-common",
  "libdd-regex",
  "libdd-tinybytes",
  "libdd-trace-model",
