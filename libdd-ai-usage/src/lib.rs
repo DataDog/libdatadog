@@ -111,9 +111,10 @@ pub use project::{
 };
 pub use provider::{
     MAX_ERROR_MESSAGE_BYTES, MAX_KEPT_STRING_BYTES, MAX_STREAM_LINE_BYTES, PROVIDER_ID_HEADERS,
-    ProviderError, ProviderResponse, ProviderUsage, StreamOutcome, UsageFormat, UsageStream,
-    bedrock_arn_account, gen_ai_provider_name, is_person_identifier, is_service_tier,
-    parse_provider_body, parse_provider_response, parse_provider_usage, provider_id_attributes,
+    ProviderError, ProviderResponse, ProviderUsage, SERVICE_TIER_DROPPED, StreamOutcome,
+    UsageFormat, UsageStream, bedrock_arn_account, gen_ai_provider_name, is_person_identifier,
+    is_service_tier, parse_provider_body, parse_provider_response, parse_provider_usage,
+    provider_id_attributes,
 };
 pub use registry::{
     AttributeDefinition, DeploymentAttributeDefinition, Finding, FindingCode, MetricDefinition,

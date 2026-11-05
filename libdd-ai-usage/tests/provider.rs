@@ -132,6 +132,20 @@ fn reasoning_basis_follows_the_total_so_output_is_billed_once() {
 }
 
 #[test]
+fn a_dropped_service_tier_is_reported_until_a_tier_is_kept() {
+    let mut stream = UsageStream::new(UsageFormat::OpenAiChat, false);
+    stream.feed(b"data: {\"service_tier\": \"flex tier\", \"choices\": []}\n\n");
+    assert_eq!(
+        stream.report().0.issues,
+        vec![libdd_ai_usage::SERVICE_TIER_DROPPED]
+    );
+    stream.feed(b"data: {\"service_tier\": \"flex\", \"choices\": []}\n\n");
+    let (response, ..) = stream.finish();
+    assert_eq!(response.service_tier.as_deref(), Some("flex"));
+    assert!(response.issues.is_empty());
+}
+
+#[test]
 fn provider_errors_carry_a_safe_message_and_code() {
     // The Responses error event holds its code and message beside its type.
     let mut stream = UsageStream::new(UsageFormat::OpenAiResponses, false);

@@ -232,9 +232,28 @@ fn parse_provider_response_round_trip() {
                 "output_tokens": 1, "output_basis": "includes_reasoning"},
             "response_model": "claude-haiku-4-5", "service_tier": null,
             "outcome": "completed", "error_name": null, "error_type": null,
-            "error_code": null, "error_message": null,
+            "error_code": null, "error_message": null, "issues": [],
         })
     );
+    // A tier outside the grammar is not kept, and the issue says why.
+    let tiered = r#"{"service_tier": "priority tier", "usage": {"prompt_tokens": 1}}"#;
+    let format = "openai_chat";
+    let mut out = empty();
+    // SAFETY: valid inputs and output.
+    let status = unsafe {
+        ddog_ai_usage_parse_provider_response(
+            format.as_ptr(),
+            format.len(),
+            false,
+            tiered.as_ptr(),
+            tiered.len(),
+            &mut out,
+        )
+    };
+    assert_eq!(status, Status::Ok);
+    let value = json_of(out);
+    assert_eq!(value["service_tier"], Value::Null);
+    assert_eq!(value["issues"], json!(["service_tier_dropped"]));
 
     let format = "no_such_format";
     let mut out = empty();

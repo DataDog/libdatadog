@@ -1,5 +1,5 @@
 {
-  "description": "A tier outside ^[A-Za-z0-9._-]{1,32}$ is not kept.",
+  "description": "A tier outside ^[A-Za-z0-9._-]{1,32}$ is not kept, and service_tier_dropped says why.",
   "format": "openai_chat",
   "operation_name": "chat",
   "payload": {
@@ -17,6 +17,7 @@
       "output_basis": "includes_reasoning"
     },
     "response_model": null,
-    "service_tier": null
+    "service_tier": null,
+    "issues": ["service_tier_dropped"]
   }
 }

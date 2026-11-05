@@ -333,7 +333,9 @@ void ddog_ai_usage_batch_drop(struct ddog_ai_usage_Batch *batch);
  * `format` (`auto`, `openai_chat`, `openai_responses`, `anthropic`,
  * `gemini` or `gemini_openai_compat`; empty is `auto`), and write
  * `{"usage": {...} | null, "response_model", "service_tier", "outcome",
- * "error_name", "error_type", "error_code", "error_message"}` to `out`.
+ * "error_name", "error_type", "error_code", "error_message", "issues"}` to
+ * `out`. `issues` says why something reported was not kept:
+ * `service_tier_dropped` for a tier outside `^[A-Za-z0-9._-]{1,32}$`.
  * `usage` holds the members to merge into an observation. `error_code` and
  * `error_message` are the provider's own, from the body or an in-band
  * stream error: control characters removed, the message cut to 256 bytes,

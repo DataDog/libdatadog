@@ -328,7 +328,16 @@ pub struct ProviderResponse {
     /// The error the provider reported in the body or in the stream, if any.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<ProviderError>,
+    /// Why something the provider reported was not kept, such as
+    /// [`SERVICE_TIER_DROPPED`]. Empty when everything was kept.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub issues: Vec<&'static str>,
 }
+
+/// The issue of a response whose service tier is outside
+/// `^[A-Za-z0-9._-]{1,32}$`: the tier is not kept, as the profiles require,
+/// and this says why it is missing.
+pub const SERVICE_TIER_DROPPED: &str = "service_tier_dropped";
 
 /// The longest provider error message kept, in bytes.
 pub const MAX_ERROR_MESSAGE_BYTES: usize = 256;
@@ -368,6 +377,15 @@ impl ProviderResponse {
         }
         if self.error.is_none() {
             self.error = later.error;
+        }
+        for issue in later.issues {
+            if !self.issues.contains(&issue) {
+                self.issues.push(issue);
+            }
+        }
+        if self.service_tier.is_some() {
+            // A tier was kept after all, from another event.
+            self.issues.retain(|issue| *issue != SERVICE_TIER_DROPPED);
         }
     }
 }
@@ -731,15 +749,21 @@ fn response_model(payload: &Json) -> Option<String> {
         .or_else(|| text(member(Some(payload), "modelVersion")))
 }
 
-fn service_tier(payload: &Json, usage: Option<&Json>) -> Option<String> {
-    [
+/// The served tier the payload names, and whether it named one outside the
+/// grammar, which is not kept.
+fn service_tier(payload: &Json, usage: Option<&Json>) -> (Option<String>, bool) {
+    let named = [
         member(Some(payload), "service_tier"),
         member(member(Some(payload), "response"), "service_tier"),
         member(usage, "service_tier"),
     ]
     .into_iter()
-    .find_map(text)
-    .filter(|tier| is_service_tier(tier))
+    .find_map(text);
+    match named {
+        Some(tier) if is_service_tier(&tier) => (Some(tier), false),
+        Some(_) => (None, true),
+        None => (None, false),
+    }
 }
 
 /// Read a provider response body, or one stream event, in `format`.
@@ -788,11 +812,17 @@ pub fn parse_provider_response(
             usage.map(|usage| openai_usage(Some(usage), false, embeddings))
         }
     };
+    let (service_tier, tier_dropped) = service_tier(payload, usage);
     ProviderResponse {
         usage: parsed.filter(|usage| !usage.is_placeholder()),
         response_model: response_model(payload),
-        service_tier: service_tier(payload, usage),
+        service_tier,
         error: provider_error(payload),
+        issues: if tier_dropped {
+            vec![SERVICE_TIER_DROPPED]
+        } else {
+            Vec::new()
+        },
     }
 }
 
