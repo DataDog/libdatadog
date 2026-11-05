@@ -3,17 +3,14 @@
 
 //! A bounded multi-producer / single-consumer ring buffer for metric points.
 //!
-//! Metric points are the highest-frequency telemetry action, so routing every point through the
-//! worker's tokio mpsc channel — a heap-boxed [`TelemetryActions`] message plus a receiver wakeup
-//! per point — dominates the per-`add_point` cost. This ring buffer replaces that per-point cost
-//! with:
+//! Metric points are the highest-frequency telemetry action. Sending each point through the
+//! worker's Tokio channel requires a boxed [`TelemetryActions`](super::TelemetryActions) message
+//! and a receiver wakeup. The ring buffers points with:
 //!   * a lock-free reserve (a compare-and-swap on the write cursor) followed by a release-store
 //!     publish,
-//!   * a single consumer (the telemetry worker) that batch-drains all pending points,
-//!   * an amortized wakeup — the consumer is notified once every [`NOTIFY_INTERVAL`] points (and
-//!     whenever a producer finds the buffer full), not once per point, and
-//!   * bounded memory without waiting for space: a producer that would lap the consumer drops its
-//!     point and returns.
+//!   * a single consumer that drains at most one ring's worth of points per call,
+//!   * one wakeup every `NOTIFY_INTERVAL` points and whenever a producer finds the buffer full,
+//!   * a bounded number of slots. A producer that would lap the consumer drops its point.
 //!
 //! # Why a full buffer drops the point
 //!
@@ -207,7 +204,8 @@ impl MetricRing {
         true
     }
 
-    /// Drain all currently-published points in order, invoking `f` for each.
+    /// Drain published points in order, invoking `f` for each. Stop at the first unpublished
+    /// slot or after one ring capacity so that producers cannot indefinitely extend this call.
     ///
     /// A concurrent or reentrant call returns without draining.
     pub fn drain(&self, mut f: impl FnMut(f64, ContextKey, Vec<Tag>)) {
@@ -220,7 +218,7 @@ impl MetricRing {
         }
         let _guard = DrainGuard(&self.draining);
 
-        loop {
+        for _ in 0..RING_SIZE {
             // Only the consumer advances `read_pos`, so a relaxed load of our cursor is fine.
             let seq = self.read_pos.load(Ordering::Relaxed);
             let slot = &self.slots[(seq & RING_MASK) as usize];
@@ -349,6 +347,30 @@ mod tests {
             drained += 1;
         });
         assert_eq!(drained, RING_SIZE as u32);
+    }
+
+    #[test]
+    fn drain_returns_when_producers_refill_the_ring() {
+        let ring = MetricRing::new();
+        for i in 0..RING_SIZE as u32 {
+            assert!(ring.try_push(1.0, key(i, MetricType::Count), Vec::new()));
+        }
+
+        let mut consumed = 0;
+        ring.drain(|_, k, _| {
+            assert_eq!(k.index(), consumed);
+            consumed += 1;
+            if k.index() < RING_SIZE as u32 {
+                let next = key(k.index() + RING_SIZE as u32, MetricType::Count);
+                assert!(ring.try_push(1.0, next, Vec::new()));
+            }
+        });
+        assert_eq!(consumed, RING_SIZE as u32);
+        ring.drain(|_, k, _| {
+            assert_eq!(k.index(), consumed);
+            consumed += 1;
+        });
+        assert_eq!(consumed, 2 * RING_SIZE as u32);
     }
 
     #[test]
@@ -482,64 +504,57 @@ mod tests {
         let producers = 4u32;
         let per_producer = 50_000u32;
         let done = Arc::new(AtomicBool::new(false));
-        let consumed = Arc::new(AtomicU64::new(0));
-        let value_sum = Arc::new(AtomicU64::new(0)); // sum of integer values, as bits
 
         // Consumer thread: drain until every accepted point is accounted for.
         let consumer = {
             let ring = ring.clone();
             let done = done.clone();
-            let consumed = consumed.clone();
-            let value_sum = value_sum.clone();
-            std::thread::spawn(move || loop {
-                ring.drain(|v, _k, _t| {
-                    consumed.fetch_add(1, Ordering::Relaxed);
-                    value_sum.fetch_add(v as u64, Ordering::Relaxed);
-                });
-                if done.load(Ordering::Acquire)
-                    && ring.read_pos.load(Ordering::Acquire)
-                        == ring.write_pos.load(Ordering::Acquire)
-                {
-                    break;
+            std::thread::spawn(move || {
+                let mut delivered = Vec::new();
+                loop {
+                    let producers_done = done.load(Ordering::Acquire);
+                    ring.drain(|value, key, _| {
+                        assert_eq!(value as u32, key.index());
+                        delivered.push(key.index());
+                    });
+                    if producers_done {
+                        break;
+                    }
+                    std::hint::spin_loop();
                 }
-                std::hint::spin_loop();
+                delivered
             })
         };
 
-        // Each producer counts what the buffer accepted. A producer that finds the buffer full
+        // Each producer records what the buffer accepted. A producer that finds the buffer full
         // drops the point and continues, so the producers never wait for the consumer.
         let mut handles = Vec::new();
-        for _ in 0..producers {
+        for producer in 0..producers {
             let ring = ring.clone();
             handles.push(std::thread::spawn(move || {
-                let mut accepted = 0u64;
-                let mut accepted_sum = 0u64;
+                let mut accepted = Vec::new();
                 for i in 0..per_producer {
-                    if ring.try_push(i as f64, key(i, MetricType::Count), Vec::new()) {
-                        accepted += 1;
-                        accepted_sum += i as u64;
+                    let id = producer * per_producer + i;
+                    if ring.try_push(id as f64, key(id, MetricType::Count), Vec::new()) {
+                        accepted.push(id);
                     }
                 }
-                (accepted, accepted_sum)
+                accepted
             }));
         }
-        let mut accepted = 0u64;
-        let mut accepted_sum = 0u64;
+        let mut accepted = Vec::new();
         for h in handles {
-            let (count, sum) = h.join().unwrap();
-            accepted += count;
-            accepted_sum += sum;
+            accepted.extend(h.join().unwrap());
         }
         done.store(true, Ordering::Release);
-        consumer.join().unwrap();
+        let mut delivered = consumer.join().unwrap();
 
-        assert!(accepted > 0);
-        assert!(accepted <= (producers * per_producer) as u64);
+        assert!(!accepted.is_empty());
+        accepted.sort_unstable();
+        delivered.sort_unstable();
         assert_eq!(
-            consumed.load(Ordering::Relaxed),
-            accepted,
+            delivered, accepted,
             "every accepted point is delivered one time"
         );
-        assert_eq!(value_sum.load(Ordering::Relaxed), accepted_sum);
     }
 }

@@ -359,6 +359,12 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
             // Fold any points published to the ring buffer into the aggregates before we wait.
             self.drain_metric_ring();
 
+            let ring_wakeup = async {
+                self.metric_ring.notified().await;
+                // Under sustained publication a permit can be ready after every drain. Let the
+                // shared runtime poll its pause request before this task starts another batch.
+                tokio::task::yield_now().await;
+            };
             let action = if let Some((deadline, deadline_action)) = self.deadlines.next_deadline() {
                 let deadline_action = *deadline_action;
                 // If deadline passed, service any already-queued mailbox action first, then
@@ -373,20 +379,18 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
                 };
 
                 let sleeper = <C as SleepCapability>::new();
-                let ring = self.metric_ring.clone();
                 tokio::select! {
                     biased;
                     mailbox_action = self.mailbox.recv() => mailbox_action,
                     _ = sleeper.sleep(remaining) => Some(TelemetryActions::Lifecycle(deadline_action)),
                     // The ring buffer has points to drain: loop back to fold them in.
-                    _ = ring.notified() => continue,
+                    _ = ring_wakeup => continue,
                 }
             } else {
-                let ring = self.metric_ring.clone();
                 tokio::select! {
                     biased;
                     mailbox_action = self.mailbox.recv() => mailbox_action,
-                    _ = ring.notified() => continue,
+                    _ = ring_wakeup => continue,
                 }
             };
 
@@ -2361,14 +2365,13 @@ mod tests {
             MetricNamespace::Tracers,
         );
 
-        // Ten times the capacity of the buffer. Without the drop this loop never ends.
-        let total = 20_480u32;
         let producer = {
             let handle = handle.clone();
             std::thread::spawn(move || {
-                let accepted = (0..total)
-                    .filter(|_| handle.try_add_point(1.0, &context, Vec::new()))
-                    .count();
+                let mut accepted = 0usize;
+                while handle.try_add_point(1.0, &context, Vec::new()) {
+                    accepted += 1;
+                }
                 let legacy_result = handle.add_point(1.0, &context, Vec::new());
                 (accepted, legacy_result)
             })
@@ -2382,7 +2385,7 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
         let (accepted, legacy_result) = producer.join().unwrap();
-        assert!(accepted > 0 && accepted < total as usize);
+        assert!(accepted > 0);
         assert!(
             legacy_result.is_ok(),
             "a dropped metric must not trigger error handling in existing callers"
