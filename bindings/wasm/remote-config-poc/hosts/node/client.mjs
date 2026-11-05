@@ -27,12 +27,12 @@ export function input (abi, value, operation) {
 
 /**
  * @typedef {{kind: string, id: number, method?: string, url?: string,
- *   headers?: [string, string][], body?: string, milliseconds?: number}} HostEvent
- * @typedef {{status?: number, headers?: [string, string][], body?: string, error?: string}} Reply
+ *   headers?: [string, string][], body?: number, milliseconds?: number}} HostEvent
+ * @typedef {{status?: number, headers?: [string, string][], body?: Buffer, error?: string}} Reply
  */
 
-/** @param {HostEvent} event @param {(reply: Reply) => void} complete */
-function request (event, complete) {
+/** @param {RcAbi} abi @param {HostEvent} event @param {(reply: Reply) => void} complete */
+function request (abi, event, complete) {
   const transport = event.url.startsWith('https:') ? https : http
   const headers = Object.create(null)
   for (const [name, value] of event.headers) (headers[name] ??= []).push(value)
@@ -64,11 +64,22 @@ function request (event, complete) {
       status: response.statusCode,
       headers: Array.from({ length: response.rawHeaders.length / 2 }, (_, index) =>
         [response.rawHeaders[index * 2], response.rawHeaders[index * 2 + 1]]),
-      body: Buffer.concat(chunks).toString('base64')
+      body: Buffer.concat(chunks)
     }))
   })
-  request.end(Buffer.from(event.body, 'base64'))
+  request.end(abi.read(event.body))
   return () => { terminal = true; request.destroy() }
+}
+
+/** Resolves raw content buffer ids in an outcome into base64 for display; buffers return to the guest. */
+export function resolveOutcome (abi, outcome) {
+  for (const change of outcome.changes ?? []) {
+    change.contentsBase64 = change.contents == null
+      ? null
+      : Buffer.from(abi.read(change.contents)).toString('base64')
+    delete change.contents
+  }
+  return outcome
 }
 
 /** @param {RcAbi} abi @param {number} client @param {AbortSignal} [signal] */
@@ -92,7 +103,7 @@ export async function poll (abi, client, signal) {
           resources.get(event.id)?.()
           resources.delete(event.id)
         } else if (event.kind === 'http') {
-          resources.set(event.id, request(event, reply => enqueue({ id: event.id, reply })))
+          resources.set(event.id, request(abi, event, reply => enqueue({ id: event.id, reply })))
         } else if (event.kind === 'sleep') {
           const timer = setTimeout(() => enqueue({ id: event.id, reply: {} }), event.milliseconds)
           timer.unref()
@@ -102,21 +113,26 @@ export async function poll (abi, client, signal) {
         }
       }
       const result = abi.check(abi.exports.rc_result(client))
-      if (result) return abi.json(result)
+      if (result) return resolveOutcome(abi, abi.json(result))
       if (!ready.length) await new Promise(resolve => { wake = resolve })
       wake = undefined
       const completion = ready.shift()
       if (completion.cancel) {
         abi.check(abi.exports.rc_cancel(client))
       } else if (resources.delete(completion.id)) {
-        input(abi, completion.reply, buffer => abi.exports.rc_complete(client, completion.id, buffer))
+        // Bodies attach to guest buffers at the loop head only; guest calls never run on
+        // socket or timer threads.
+        const reply = completion.reply.body === undefined
+          ? completion.reply
+          : { ...completion.reply, body: abi.writeBytes(completion.reply.body) }
+        input(abi, reply, buffer => abi.exports.rc_complete(client, completion.id, buffer))
       }
     }
   } catch (error) {
     // An ordinary adapter failure must not leave a guest future retaining client state.
     abi.exports.rc_cancel(client)
     const result = abi.exports.rc_result(client)
-    if (result > 0) abi.read(result)
+    if (result > 0) resolveOutcome(abi, abi.json(result))
     throw error
   } finally {
     signal?.removeEventListener('abort', abort)

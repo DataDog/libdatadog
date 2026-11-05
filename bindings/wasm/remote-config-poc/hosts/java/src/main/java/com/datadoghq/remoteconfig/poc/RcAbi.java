@@ -51,7 +51,7 @@ final class RcAbi {
         rcAck = function(instance, "rc_ack");
         rcCancel = function(instance, "rc_cancel");
         rcClose = function(instance, "rc_close");
-        if (call(rcVersion) != 1) throw new IllegalStateException("ABI version mismatch");
+        if (call(rcVersion) != 2) throw new IllegalStateException("ABI version mismatch");
     }
 
     private static ExportFunction function(Instance instance, String name) {
@@ -94,6 +94,18 @@ final class RcAbi {
         try {
             // The aggregate buffer budget (32 MiB) keeps wasm32 addresses below 2^31, so the
             // signed i32 returned by rc_buffer_ptr is always a valid non-negative offset here.
+            memory.write(call(rcBufferPtr, buffer), bytes);
+            return buffer;
+        } catch (RuntimeException error) {
+            free(buffer);
+            throw error;
+        }
+    }
+
+    /** Allocates a guest buffer and writes raw bytes into it, without JSON encoding. */
+    int writeBytes(byte[] bytes) {
+        int buffer = check(alloc(bytes.length));
+        try {
             memory.write(call(rcBufferPtr, buffer), bytes);
             return buffer;
         } catch (RuntimeException error) {

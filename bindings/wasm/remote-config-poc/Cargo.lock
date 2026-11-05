@@ -865,7 +865,6 @@ name = "libdd-remote-config-wasm-poc"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "base64",
  "bytes",
  "futures",
  "http 1.5.0",

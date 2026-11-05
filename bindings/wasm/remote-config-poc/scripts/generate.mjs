@@ -45,6 +45,7 @@ exports.map(([name, args]) => `    if (typeof exports.${name} !== 'function' || 
 `    if (exports.rc_version() !== ${schema.version}) throw new Error('ABI version mismatch')\n  }\n\n` +
 `  /** @param {number} result */\n  check (result) {\n    if (result < 0) {\n      const error = this.exports.rc_error()\n      if (error <= 0) throw new Error('Guest error buffer unavailable')\n      throw new Error(decoder.decode(this.read(error)))\n    }\n    return result\n  }\n\n` +
 `  /** @param {unknown} value */\n  write (value) {\n    const bytes = encoder.encode(JSON.stringify(value))\n    const buffer = this.check(this.exports.rc_alloc(bytes.length))\n    try {\n      const pointer = this.exports.rc_buffer_ptr(buffer) >>> 0\n      new Uint8Array(this.exports.memory.buffer, pointer, bytes.length).set(bytes)\n      return buffer\n    } catch (error) {\n      this.exports.rc_free(buffer)\n      throw error\n    }\n  }\n\n` +
+`  /** @param {Uint8Array} bytes */\n  writeBytes (bytes) {\n    const buffer = this.check(this.exports.rc_alloc(bytes.length))\n    try {\n      const pointer = this.exports.rc_buffer_ptr(buffer) >>> 0\n      new Uint8Array(this.exports.memory.buffer, pointer, bytes.length).set(bytes)\n      return buffer\n    } catch (error) {\n      this.exports.rc_free(buffer)\n      throw error\n    }\n  }\n\n` +
 `  /** @param {number} buffer */\n  read (buffer) {\n    try {\n      const length = this.check(this.exports.rc_buffer_len(buffer))\n      const pointer = this.exports.rc_buffer_ptr(buffer) >>> 0\n      return new Uint8Array(this.exports.memory.buffer, pointer, length).slice()\n    } finally {\n      this.check(this.exports.rc_free(buffer))\n    }\n  }\n\n` +
 `  /** @param {number} buffer */\n  json (buffer) {\n    return JSON.parse(decoder.decode(this.read(this.check(buffer))))\n  }\n}\n`)
 
@@ -55,6 +56,7 @@ exports.map(([name, args]) => `        ${name} = instance.GetFunction<${[...args
 `        if (rc_version() != ${schema.version}) throw new InvalidOperationException("ABI version mismatch");\n    }\n\n` +
 `    internal int Check(int result)\n    {\n        if (result >= 0) return result;\n        int error = rc_error();\n        if (error <= 0) throw new InvalidOperationException("Guest error buffer unavailable");\n        throw new InvalidOperationException(Encoding.UTF8.GetString(Read(error)));\n    }\n\n` +
 `    internal int Write(JsonElement value)\n    {\n        byte[] bytes = Encoding.UTF8.GetBytes(value.GetRawText());\n        int buffer = Check(rc_alloc(bytes.Length));\n        try\n        {\n            bytes.AsSpan().CopyTo(memory.GetSpan(unchecked((uint)rc_buffer_ptr(buffer)), bytes.Length));\n            return buffer;\n        }\n        catch\n        {\n            rc_free(buffer);\n            throw;\n        }\n    }\n\n` +
+`    internal int WriteBytes(byte[] bytes)\n    {\n        int buffer = Check(rc_alloc(bytes.Length));\n        try\n        {\n            bytes.AsSpan().CopyTo(memory.GetSpan(unchecked((uint)rc_buffer_ptr(buffer)), bytes.Length));\n            return buffer;\n        }\n        catch\n        {\n            rc_free(buffer);\n            throw;\n        }\n    }\n\n` +
 `    internal byte[] Read(int buffer)\n    {\n        try\n        {\n            int length = Check(rc_buffer_len(buffer));\n            return memory.GetSpan(unchecked((uint)rc_buffer_ptr(buffer)), length).ToArray();\n        }\n        finally\n        {\n            Check(rc_free(buffer));\n        }\n    }\n\n` +
 `    internal JsonElement Json(int buffer)\n    {\n        using JsonDocument document = JsonDocument.Parse(Read(Check(buffer)));\n        return document.RootElement.Clone();\n    }\n}\n`)
 
@@ -127,6 +129,18 @@ exports.map(([name, args]) => `    int ${javaMethod(name)}(${args.map(arg => `in
         try {
             // The aggregate buffer budget (32 MiB) keeps wasm32 addresses below 2^31, so the
             // signed i32 returned by rc_buffer_ptr is always a valid non-negative offset here.
+            memory.write(call(rcBufferPtr, buffer), bytes);
+            return buffer;
+        } catch (RuntimeException error) {
+            free(buffer);
+            throw error;
+        }
+    }
+
+    /** Allocates a guest buffer and writes raw bytes into it, without JSON encoding. */
+    int writeBytes(byte[] bytes) {
+        int buffer = check(alloc(bytes.length));
+        try {
             memory.write(call(rcBufferPtr, buffer), bytes);
             return buffer;
         } catch (RuntimeException error) {

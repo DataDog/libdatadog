@@ -2,7 +2,7 @@
 
 This prototype runs libdatadog's remote-configuration client in Node.js and .NET using the same WASM file. Each host supplies HTTP and timers. Libdatadog retains the agent and agentless protocols, TUF verification, file hashing, cached state, change tracking, and acknowledgement state.
 
-The prototype is not a production tracer integration. Its generated scalar bindings are intentionally small. Options, host events, replies, and results use UTF-8 JSON. Binary HTTP bodies and configuration contents use base64. This proves ownership and interoperability, not a low-copy or optimized interface.
+The prototype is not a production tracer integration. Its generated scalar bindings are intentionally small. Options, host events, replies, and results use UTF-8 JSON. Binary HTTP bodies and configuration contents cross as raw guest buffers referenced by ID from the JSON envelopes, so they are neither base64-inflated nor made opaque to the JSON tooling; the envelopes stay human-readable. This proves ownership and interoperability, not a low-copy or optimized interface.
 
 ## Create and run the bindings
 

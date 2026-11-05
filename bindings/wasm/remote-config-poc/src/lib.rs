@@ -5,7 +5,6 @@ mod generated;
 mod host;
 
 use anyhow::{Context, Result, bail, ensure};
-use base64::{Engine, engine::general_purpose::STANDARD};
 use futures::task::noop_waker;
 use libdd_common::Endpoint;
 use libdd_remote_config::fetch::{
@@ -59,14 +58,31 @@ struct Options {
     capabilities: Vec<RemoteConfigCapabilities>,
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
+/// Internal change record: contents are raw bytes; they attach to guest buffers when the
+/// outcome crosses the wire at rc_result time.
 struct ChangeRecord {
     kind: &'static str,
     path: String,
     // Decimal text preserves all u64 versions in JavaScript as well as C#.
     version: String,
-    contents_base64: Option<String>,
+    contents: Option<Vec<u8>>,
+}
+
+/// Wire change record with contents referenced by raw guest buffer id.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ChangeRecordWire {
+    kind: &'static str,
+    path: String,
+    version: String,
+    contents: Option<i32>,
+}
+
+#[derive(Serialize)]
+#[serde(untagged)]
+enum OutcomeWire {
+    Success { changes: Vec<ChangeRecordWire> },
+    Error { error: String },
 }
 
 #[derive(Deserialize)]
@@ -78,11 +94,32 @@ struct Acknowledgement {
     error: String,
 }
 
-#[derive(Serialize)]
-#[serde(untagged)]
 enum Outcome {
     Success { changes: Vec<ChangeRecord> },
     Error { error: String },
+}
+
+impl Outcome {
+    /// Converts an outcome to its wire shape, attaching each change's contents to a raw guest
+    /// buffer through `attach` (the `Registry::buffer` call).
+    fn into_wire(self, attach: &mut dyn FnMut(Vec<u8>) -> Result<i32>) -> Result<OutcomeWire> {
+        Ok(match self {
+            Outcome::Success { changes } => OutcomeWire::Success {
+                changes: changes
+                    .into_iter()
+                    .map(|change| {
+                        Ok(ChangeRecordWire {
+                            kind: change.kind,
+                            path: change.path,
+                            version: change.version,
+                            contents: change.contents.map(&mut *attach).transpose()?,
+                        })
+                    })
+                    .collect::<Result<_>>()?,
+            },
+            Outcome::Error { error } => OutcomeWire::Error { error },
+        })
+    }
 }
 
 #[derive(Clone)]
@@ -231,13 +268,12 @@ impl Client {
                         Change::Update(file, _) => ("update", file, false),
                         Change::Remove(file) => ("remove", file, true),
                     };
-                    let contents_base64 =
-                        (!removed).then(|| STANDARD.encode(file.contents().as_slice()));
+                    let contents = (!removed).then(|| file.contents().as_slice().to_vec());
                     ChangeRecord {
                         kind,
                         path: file.path().to_string(),
                         version: file.version().to_string(),
-                        contents_base64,
+                        contents,
                     }
                 })
                 .collect())
@@ -314,9 +350,16 @@ mod tests {
                 _ => None,
             })
             .expect("the injected host must receive the timeout operation");
+        let mut no_buffers = |_: i32| Ok(Vec::new());
         client
             .host
-            .complete(timer, serde_json::from_str("{}").unwrap())
+            .complete(
+                timer,
+                serde_json::from_str::<host::ReplyWire>("{}")
+                    .unwrap()
+                    .resolve(&mut no_buffers)
+                    .unwrap(),
+            )
             .unwrap();
         client.drive();
         assert!(
@@ -360,6 +403,15 @@ impl Registry {
         Ok(serde_json::from_slice(
             self.buffers.get(&buffer).context("invalid buffer")?,
         )?)
+    }
+
+    fn take_buffer(&mut self, buffer: i32) -> Result<Vec<u8>> {
+        let bytes = self
+            .buffers
+            .remove(&buffer)
+            .context("invalid or freed buffer")?;
+        self.buffer_bytes -= bytes.len();
+        Ok(bytes)
     }
 
     fn client(&mut self, client: i32) -> Result<&mut Client> {
@@ -457,13 +509,19 @@ mod api {
     pub fn rc_events(client: i32) -> i32 {
         entry(|registry| {
             let events = registry.client(client)?.host.events()?;
+            let mut attach = |bytes: Vec<u8>| registry.buffer(bytes);
+            let events = host::events_to_wire(events, &mut attach)?;
             registry.buffer(serde_json::to_vec(&events)?)
         })
     }
 
     pub fn rc_complete(client: i32, operation: i32, reply: i32) -> i32 {
         entry(|registry| {
-            let reply = registry.decode(reply)?;
+            // The wire reply is decoded and its body buffer taken before any other check so
+            // the guest owns the buffer from entry on, even for a stale or rejected completion.
+            let wire: host::ReplyWire = registry.decode(reply)?;
+            let mut take = |buffer: i32| registry.take_buffer(buffer);
+            let reply = wire.resolve(&mut take)?;
             let client = registry.client(client)?;
             client.host.complete(operation, reply)?;
             client.drive();
@@ -473,7 +531,11 @@ mod api {
 
     pub fn rc_result(client: i32) -> i32 {
         entry(|registry| match registry.client(client)?.outcome.take() {
-            Some(outcome) => registry.buffer(serde_json::to_vec(&outcome)?),
+            Some(outcome) => {
+                let mut attach = |bytes: Vec<u8>| registry.buffer(bytes);
+                let outcome = outcome.into_wire(&mut attach)?;
+                registry.buffer(serde_json::to_vec(&outcome)?)
+            }
             None => Ok(0),
         })
     }

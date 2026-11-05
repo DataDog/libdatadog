@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use anyhow::{Context, Result, ensure};
-use base64::{Engine, engine::general_purpose::STANDARD};
 use bytes::Bytes;
 use futures::channel::oneshot;
 use futures::lock::Mutex;
@@ -12,15 +11,17 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-#[derive(Debug, Serialize)]
-#[serde(tag = "kind", rename_all = "camelCase")]
+/// A pending host operation as the guest tracks it. HTTP bodies are raw bytes; they are only
+/// attached to registry buffers at `rc_events` time, because request execution runs inside
+/// the registry borrow and the wire conversion runs against a `&mut Registry` closure.
+#[derive(Debug)]
 pub enum Event {
     Http {
         id: i32,
         method: String,
         url: String,
         headers: Vec<(String, String)>,
-        body: String,
+        body: Bytes,
     },
     Sleep {
         id: i32,
@@ -31,22 +32,98 @@ pub enum Event {
     },
 }
 
+/// Wire shape of [`Event`] with HTTP bodies referenced by raw guest buffer id instead of being
+/// base64-encoded inside the JSON envelope.
+#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum EventWire {
+    Http {
+        id: i32,
+        method: String,
+        url: String,
+        headers: Vec<(String, String)>,
+        body: i32,
+    },
+    Sleep {
+        id: i32,
+        milliseconds: u64,
+    },
+    Cancel {
+        id: i32,
+    },
+}
+
+/// Converts pending events to their wire shape, attaching each HTTP body to a raw guest buffer
+/// through `attach` (the `Registry::buffer` call).
+pub fn events_to_wire(
+    events: Vec<Event>,
+    attach: &mut dyn FnMut(Vec<u8>) -> Result<i32>,
+) -> Result<Vec<EventWire>> {
+    events
+        .into_iter()
+        .map(|event| match event {
+            Event::Http {
+                id,
+                method,
+                url,
+                headers,
+                body,
+            } => Ok(EventWire::Http {
+                id,
+                method,
+                url,
+                headers,
+                body: attach(body.to_vec())?,
+            }),
+            Event::Sleep { id, milliseconds } => Ok(EventWire::Sleep { id, milliseconds }),
+            Event::Cancel { id } => Ok(EventWire::Cancel { id }),
+        })
+        .collect()
+}
+
+/// Host reply as it crosses the wire: the HTTP body is a raw guest buffer id (0 = empty).
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Reply {
+pub struct ReplyWire {
     status: Option<u16>,
     #[serde(default)]
     headers: Vec<(String, String)>,
     #[serde(default)]
-    body: String,
+    body: i32,
     error: Option<String>,
+}
+
+/// A reply with the body buffer already taken out of the registry.
+pub struct ResolvedReply {
+    status: Option<u16>,
+    headers: Vec<(String, String)>,
+    body: Bytes,
+    error: Option<String>,
+}
+
+impl ReplyWire {
+    /// Takes the referenced body buffer out of the registry through `take` (the
+    /// `Registry::take_buffer` call). The guest owns the buffer from `rc_complete` entry on.
+    pub fn resolve(self, take: &mut dyn FnMut(i32) -> Result<Vec<u8>>) -> Result<ResolvedReply> {
+        let body = if self.body == 0 {
+            Vec::new()
+        } else {
+            take(self.body)?
+        };
+        Ok(ResolvedReply {
+            status: self.status,
+            headers: self.headers,
+            body: Bytes::from(body),
+            error: self.error,
+        })
+    }
 }
 
 #[derive(Default, Debug)]
 struct Bridge {
     next: i32,
     events: Vec<Event>,
-    pending: HashMap<i32, oneshot::Sender<Reply>>,
+    pending: HashMap<i32, oneshot::Sender<ResolvedReply>>,
 }
 
 // Events contain no host objects. Both engines drive these queues after guest calls return.
@@ -56,7 +133,7 @@ pub struct Host(Arc<Mutex<Bridge>>);
 struct Wait {
     host: Host,
     id: i32,
-    receiver: oneshot::Receiver<Reply>,
+    receiver: oneshot::Receiver<ResolvedReply>,
 }
 
 impl Drop for Wait {
@@ -94,7 +171,7 @@ impl Host {
         ))
     }
 
-    pub fn complete(&self, id: i32, reply: Reply) -> Result<()> {
+    pub fn complete(&self, id: i32, reply: ResolvedReply) -> Result<()> {
         let sender = self
             .0
             .try_lock()
@@ -131,7 +208,7 @@ impl HttpClientCapability for Host {
                 method: parts.method.to_string(),
                 url: parts.uri.to_string(),
                 headers,
-                body: STANDARD.encode(body),
+                body,
             })
         };
         let mut wait = operation().map_err(HttpError::InvalidRequest)?;
@@ -150,11 +227,7 @@ impl HttpClientCapability for Host {
             builder = builder.header(name, value);
         }
         builder
-            .body(Bytes::from(
-                STANDARD
-                    .decode(reply.body)
-                    .map_err(|error| HttpError::ResponseBody(error.into()))?,
-            ))
+            .body(reply.body)
             .map_err(|error| HttpError::Other(error.into()))
     }
 }
