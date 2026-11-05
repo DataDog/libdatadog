@@ -37,8 +37,10 @@ pub struct FfeExposure {
     /// organization, so `Some(0)` is a real value and must not be treated as
     /// absent.
     pub serial_id: Option<i32>,
-    /// Flat JSON object of the split features routed to exposures. Empty,
-    /// invalid or non-object JSON means no features. Not part of deduplication.
+    /// Flat JSON object of the split features routed to exposures, canonical
+    /// when it comes from the FFI. Empty, invalid or non-object JSON means no
+    /// features; it is validated again when the payload is built. Not part of
+    /// deduplication.
     pub features_json: String,
 }
 

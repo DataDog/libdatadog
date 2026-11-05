@@ -373,7 +373,7 @@ fn test_ddog_sidecar_ffe_exposure_features_reach_the_intake() {
                 let Some(events) = payload["exposures"].as_array() else {
                     return false;
                 };
-                events.len() == 3
+                events.len() == 4
                     && events.iter().all(|event| event["flag"]["key"] == *flag_key)
                     && events[0]["subject"]["id"] == "user-a"
                     && events[0]["features"]
@@ -382,6 +382,8 @@ fn test_ddog_sidecar_ffe_exposure_features_reach_the_intake() {
                     && events[1].get("features").is_none()
                     && events[2]["subject"]["id"] == "user-c"
                     && events[2].get("features").is_none()
+                    && events[3]["subject"]["id"] == "user-d"
+                    && events[3].get("features").is_none()
             });
         then.status(202);
     });
@@ -443,26 +445,36 @@ fn test_ddog_sidecar_ffe_exposure_features_reach_the_intake() {
         .unwrap_none();
     }
 
-    let exposure = |subject: &'static str, features: CharSlice<'static>| FfeExposure {
-        timestamp_ms: 1_700_000_000_000,
-        flag_key: flag_key.as_str().into(),
-        subject_id: subject.into(),
-        subject_attributes_json: "{}".into(),
-        allocation_key: "alloc".into(),
-        variant: "on".into(),
-        serial_id: 1,
-        has_serial_id: true,
-        features_json: features,
-    };
+    let oversized = "x".repeat(libdd_ipc::max_message_size() + 1);
+    fn exposure<'a>(
+        flag_key: &'a str,
+        subject: &'a str,
+        features: CharSlice<'a>,
+    ) -> FfeExposure<'a> {
+        FfeExposure {
+            timestamp_ms: 1_700_000_000_000,
+            flag_key: flag_key.into(),
+            subject_id: subject.into(),
+            subject_attributes_json: "{}".into(),
+            allocation_key: "alloc".into(),
+            variant: "on".into(),
+            serial_id: 1,
+            has_serial_id: true,
+            features_json: features,
+        }
+    }
     // The repeat differs only by features, so deduplication drops it.
     let batch = [
         exposure(
+            &flag_key,
             "user-a",
             r#"{"holdout.key":"h1","weight":2,"included":false,"nested":{}}"#.into(),
         ),
-        exposure("user-a", r#"{"holdout.key":"h2"}"#.into()),
-        exposure("user-b", "not json".into()),
-        exposure("user-c", CharSlice::from_bytes(&[0xff])),
+        exposure(&flag_key, "user-a", r#"{"holdout.key":"h2"}"#.into()),
+        exposure(&flag_key, "user-b", "not json".into()),
+        exposure(&flag_key, "user-c", CharSlice::from_bytes(&[0xff])),
+        // Larger than one IPC packet: it must not take the batch down with it.
+        exposure(&flag_key, "user-d", oversized.as_str().into()),
     ];
     let context = FfeTelemetryContext {
         service: "svc".into(),

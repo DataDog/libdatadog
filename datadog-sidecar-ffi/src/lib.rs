@@ -1049,8 +1049,8 @@ pub struct FfeExposure<'a> {
     pub has_serial_id: bool,
     /// UTF-8 JSON object of the split features routed to exposures, mapping a
     /// key to a string, number or boolean. Empty, invalid or non-object input
-    /// means no features and never rejects the exposure. Not part of
-    /// deduplication.
+    /// means no features and never rejects the exposure. Input larger than one
+    /// IPC packet is ignored. Not part of deduplication.
     pub features_json: CharSlice<'a>,
 }
 
@@ -1292,8 +1292,17 @@ fn ffe_exposure_from_ffi(exposure: &FfeExposure<'_>) -> Result<SidecarFfeExposur
         allocation_key: char_slice_to_string(exposure.allocation_key)?,
         variant: char_slice_to_string(exposure.variant)?,
         serial_id: exposure.has_serial_id.then_some(exposure.serial_id),
-        features_json: optional_string_if_valid_utf8(exposure.features_json).unwrap_or_default(),
+        features_json: ffi_features(exposure.features_json).unwrap_or_default(),
     })
+}
+
+// Malformed input must not grow the IPC request past the packet limit, which
+// drops the whole batch; only the bounded canonical object crosses IPC.
+fn ffi_features(features_json: CharSlice) -> Option<String> {
+    if features_json.is_empty() || features_json.len() > libdd_ipc::max_message_size() {
+        return None;
+    }
+    canonical_features_json(features_json.try_to_utf8().ok()?)
 }
 
 fn ffe_flag_evaluation_from_ffi(
@@ -2029,12 +2038,41 @@ mod tests {
         let converted = ffe_exposure_from_ffi(&exposure).unwrap();
         assert_eq!(converted.features_json, r#"{"holdout.key":"h1"}"#);
 
-        let invalid = [0xffu8];
-        // SAFETY: the borrowed bytes outlive the conversion.
-        exposure.features_json = unsafe { CharSlice::from_raw_parts(invalid.as_ptr().cast(), 1) };
+        exposure.features_json = CharSlice::from(r#"{"b":1,"a":"x","n":null}"#);
         let converted = ffe_exposure_from_ffi(&exposure).unwrap();
-        assert_eq!(converted.features_json, "");
-        assert_eq!(converted.flag_key, "flag-a");
+        assert_eq!(converted.features_json, r#"{"a":"x","b":1.0}"#);
+
+        let invalid = [0xffu8];
+        // Valid features padded past the packet limit, so only the size guard drops them.
+        let oversized = format!(
+            r#"{{"a":"x"{}}}"#,
+            " ".repeat(libdd_ipc::max_message_size())
+        );
+        for features in [
+            // SAFETY: the borrowed bytes outlive the conversion.
+            unsafe { CharSlice::from_raw_parts(invalid.as_ptr().cast(), 1) },
+            CharSlice::from("not json"),
+            CharSlice::from(oversized.as_str()),
+        ] {
+            exposure.features_json = features;
+            let converted = ffe_exposure_from_ffi(&exposure).unwrap();
+            assert_eq!(converted.features_json, "");
+            assert_eq!(converted.flag_key, "flag-a");
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "parses a packet-sized input")]
+    fn ffe_exposure_keeps_features_exactly_one_packet_long() {
+        let at_limit = format!(
+            r#"{{"a":"x"{}}}"#,
+            " ".repeat(libdd_ipc::max_message_size() - 9)
+        );
+        assert_eq!(at_limit.len(), libdd_ipc::max_message_size());
+        let mut exposure = ffi_exposure(0, false);
+        exposure.features_json = CharSlice::from(at_limit.as_str());
+        let converted = ffe_exposure_from_ffi(&exposure).unwrap();
+        assert_eq!(converted.features_json, r#"{"a":"x"}"#);
     }
 
     #[test]
