@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // Integration test for PreparedExecve::exec
 
-#![cfg(all(unix, feature = "std"))]
+#![cfg(unix)]
 
-use libdd_common::unix_utils::PreparedExecve;
+use libdd_process_utils::unix_utils::PreparedExecve;
 use std::io::Read;
 use std::os::unix::io::FromRawFd;
 

@@ -13,7 +13,7 @@ use std::fmt::{Debug, Formatter};
 use std::io;
 use std::marker::PhantomData;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicI32, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU8, AtomicU32, AtomicU64, Ordering};
 use std::time::Duration;
 
 /// A type whose values can be stored in, and concurrently accessed from, memory shared with
@@ -26,7 +26,7 @@ use std::time::Duration;
 /// non-UTF-8 bytes, a `Vec` a broken length/pointer pair, etc.
 ///
 /// `ShmSafe` encodes that contract at the type level, so that the shared-memory wrappers in this
-/// module can require it instead of trusting every caller.
+/// module and in `crate::shm_table` can require it instead of trusting every caller.
 ///
 /// # Safety
 ///
@@ -44,7 +44,14 @@ pub unsafe trait ShmSafe: Sized {}
 unsafe impl ShmSafe for () {}
 // SAFETY: every bit pattern is a valid value of an atomic (its operations are defined for any
 // bytes), and its contents are by definition interior-mutable.
+unsafe impl ShmSafe for AtomicU8 {}
+// SAFETY: as for `AtomicU8`.
+unsafe impl ShmSafe for AtomicU32 {}
+// SAFETY: as for `AtomicU8`.
 unsafe impl ShmSafe for AtomicU64 {}
+// SAFETY: an array has no bytes of its own beyond its elements', so it inherits both properties
+// from `T`.
+unsafe impl<T: ShmSafe, const N: usize> ShmSafe for [T; N] {}
 
 #[repr(C)]
 #[derive(Default)]
@@ -119,10 +126,10 @@ impl<Inner: ShmSafe> ShmLimiterMemory<Inner> {
         mem.first_free_ref()
             .store(ShmLimiterArena::<Inner>::START_OFFSET, Ordering::Relaxed);
         for old in replaced {
-            if let Ok(old) = old.map() {
-                if let Some(retired) = ShmLimiterArena::<Inner>::retired_flag(old.as_slice()) {
-                    retired.store(1, Ordering::Release);
-                }
+            if let Ok(old) = old.map()
+                && let Some(retired) = ShmLimiterArena::<Inner>::retired_flag(old.as_slice())
+            {
+                retired.store(1, Ordering::Release);
             }
         }
         Ok(Self {
@@ -187,10 +194,10 @@ impl<Inner: ShmSafe> ShmLimiterMemory<Inner> {
 
     /// Unlink this arena if it still belongs to the current process.
     pub fn unlink(&self) {
-        if self.path.is_none() {
-            if let Some(mem) = self.mem.load().as_ref() {
-                mem.mem.unlink();
-            }
+        if self.path.is_none()
+            && let Some(mem) = self.mem.load().as_ref()
+        {
+            mem.mem.unlink();
         }
     }
 
@@ -419,12 +426,11 @@ impl<Inner: ShmSafe> ShmLimiterArena<Inner> {
                     // have since written, and the `UnsafeCell` admits their writes.
                     data.rc.load(Ordering::Acquire) > 0 && cond(unsafe { &*data.inner.get() })
                 })?;
-                if hit {
-                    if let Some(limiter) = self.get(cur) {
-                        if limiter.with_data(&cond).unwrap_or(false) {
-                            return Some(limiter);
-                        }
-                    }
+                if hit
+                    && let Some(limiter) = self.get(cur)
+                    && limiter.with_data(&cond).unwrap_or(false)
+                {
+                    return Some(limiter);
                 }
                 cur = cur.checked_add(Self::STRIDE)?;
             }

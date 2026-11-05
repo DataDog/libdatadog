@@ -864,10 +864,10 @@ impl<C: HttpClientCapability + SleepCapability> AgentlessFetcher<C> {
         // Commit the top-targets cache only now that `apply()` has fully
         // succeeded, so a mid-way failure (followed by `reset()`) never leaves a
         // stale cached copy
-        if let Some(config_metas) = response.config_metas.as_ref() {
-            if config_metas.top_targets.is_some() {
-                self.last_config_top_targets = config_metas.top_targets.clone();
-            }
+        if let Some(config_metas) = response.config_metas.as_ref()
+            && config_metas.top_targets.is_some()
+        {
+            self.last_config_top_targets = config_metas.top_targets.clone();
         }
 
         Ok(active_targets)
@@ -1029,10 +1029,10 @@ fn lookup_config_target<'a>(
             continue;
         }
 
-        if let Some(meta) = trusted_delegations.get(delegation.name()) {
-            if let Some(d) = meta.targets().get(path) {
-                return Some(d);
-            }
+        if let Some(meta) = trusted_delegations.get(delegation.name())
+            && let Some(d) = meta.targets().get(path)
+        {
+            return Some(d);
         }
 
         // Scope matched but path not found: per TUF, a `terminating` delegation

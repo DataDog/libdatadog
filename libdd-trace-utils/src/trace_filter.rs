@@ -4,7 +4,7 @@
 //! ignore_resources as published by the agent's /info endpoint).
 use std::borrow::Borrow as _;
 
-use libdd_common::regex_engine::Regex;
+use libdd_regex::Regex;
 use libdd_trace_normalization::{normalize_utils, normalizer};
 use tracing::{debug, error};
 

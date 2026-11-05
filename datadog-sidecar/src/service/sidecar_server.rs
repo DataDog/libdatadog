@@ -40,6 +40,9 @@ use crate::appsec::{AppSecConnection, AppSecManager};
 #[cfg(unix)]
 use crate::config::AppSecConfig;
 use crate::service::agent_info::AgentInfos;
+use crate::service::data_streams_flusher::{
+    DsmTableKey, DsmTables, flush_all_dsm_now, get_or_create_dsm_table,
+};
 use crate::service::debugger_diagnostics_bookkeeper::{
     DebuggerDiagnosticsBookkeeper, DebuggerDiagnosticsBookkeeperStats,
 };
@@ -47,6 +50,7 @@ use crate::service::evp_proxy;
 use crate::service::ffe_exposures_flusher;
 use crate::service::ffe_flagevaluation_flusher;
 use crate::service::ffe_metrics_flusher;
+use crate::service::kafka_cluster_ids::KafkaClusterIds;
 #[cfg(windows)]
 use crate::service::remote_configs::RemoteConfigNotifyTarget;
 use crate::service::remote_configs::RemoteConfigs;
@@ -113,6 +117,11 @@ pub struct SidecarServer {
     debugger_diagnostics_bookkeeper: Arc<DebuggerDiagnosticsBookkeeper>,
     /// Per-env&version SHM span concentrators (global across all sessions).
     pub(crate) span_concentrators: Arc<Mutex<HashMap<ConcentratorKey, Arc<SpanConcentratorState>>>>,
+    /// Per-(env, version, service, primary tag) SHM DSM tables (global across all sessions).
+    pub(crate) dsm_tables: DsmTables,
+    /// Kafka cluster ids by bootstrap servers, published for all processes (global across all
+    /// sessions).
+    pub(crate) kafka_cluster_ids: KafkaClusterIds,
     /// HTTP client shared by FFE fire-and-forget forwarders for connection reuse.
     pub(crate) ffe_http_client: NativeCapabilities,
     /// Sidecar-owned exposure cache, shared across sessions/connections.
@@ -357,12 +366,11 @@ impl ConnectionSidecarHandler {
             // Auto-register any metrics known to this connection but not yet registered
             // in this telemetry client (e.g., the client was just created for a new service/env).
             for action in &actions {
-                if let SidecarAction::AddTelemetryMetricPoint((name, _, _)) = action {
-                    if !telemetry.telemetry_metrics.contains_key(name) {
-                        if let Some(metric) = connection_metric_registrations.get(name) {
-                            telemetry.register_metric(metric.clone());
-                        }
-                    }
+                if let SidecarAction::AddTelemetryMetricPoint((name, _, _)) = action
+                    && !telemetry.telemetry_metrics.contains_key(name)
+                    && let Some(metric) = connection_metric_registrations.get(name)
+                {
+                    telemetry.register_metric(metric.clone());
                 }
             }
 
@@ -755,10 +763,10 @@ impl SidecarInterface for ConnectionSidecarHandler {
             self.cdn_subscription = None;
             return Ok(None);
         };
-        if let Some(subscription) = &self.cdn_subscription {
-            if subscription.config == config {
-                return Ok(Some(subscription.handle.clone()));
-            }
+        if let Some(subscription) = &self.cdn_subscription
+            && subscription.config == config
+        {
+            return Ok(Some(subscription.handle.clone()));
         }
         // Drop the previous subscription even if replacement settings fail.
         self.cdn_subscription = None;
@@ -924,15 +932,15 @@ impl SidecarInterface for ConnectionSidecarHandler {
                 }
                 None => current.insert(ActiveApplication::new(config)),
             };
-            if let Some(session) = session {
-                if let Some(notify_target) = session.notify_target() {
-                    app.update_remote_config(
-                        &self.server.remote_configs,
-                        &session,
-                        remote_config_generation,
-                        notify_target,
-                    );
-                }
+            if let Some(session) = session
+                && let Some(notify_target) = session.notify_target()
+            {
+                app.update_remote_config(
+                    &self.server.remote_configs,
+                    &session,
+                    remote_config_generation,
+                    notify_target,
+                );
             }
         });
     }
@@ -1160,10 +1168,64 @@ impl SidecarInterface for ConnectionSidecarHandler {
             session_id,
             &session,
         ) {
-            let mut peer_tag_buf = Vec::new();
-            let input = span.as_shm_input(&mut peer_tag_buf);
+            let mut tag_buf = Vec::new();
+            let input = span.as_shm_input(&mut tag_buf);
             state.concentrator.add_span(&input);
         }
+    }
+
+    async fn add_dsm_checkpoint(
+        &mut self,
+        env: String,
+        version: String,
+        service: String,
+        primary_tag: String,
+        checkpoint: libdd_ipc::shm_dsm_checkpoint::OwnedDsmCheckpoint,
+    ) {
+        let Some(session) = self.session.load() else {
+            return;
+        };
+        // Lazily create the table on the first IPC checkpoint for this key.
+        let key = DsmTableKey {
+            env,
+            version,
+            service,
+            primary_tag,
+        };
+        if let Some(state) = get_or_create_dsm_table(&self.server.dsm_tables, key, &session) {
+            let mut edge_tag_buf = Vec::new();
+            state
+                .checkpoints
+                .add_checkpoint(&checkpoint.as_shm_input(&mut edge_tag_buf));
+        }
+    }
+
+    async fn add_dsm_backlog(
+        &mut self,
+        env: String,
+        version: String,
+        service: String,
+        primary_tag: String,
+        backlog: libdd_ipc::shm_dsm_backlog::OwnedDsmBacklog,
+    ) {
+        let Some(session) = self.session.load() else {
+            return;
+        };
+        let key = DsmTableKey {
+            env,
+            version,
+            service,
+            primary_tag,
+        };
+        if let Some(state) = get_or_create_dsm_table(&self.server.dsm_tables, key, &session) {
+            state.backlogs.add_backlog(&backlog.as_shm_input());
+        }
+    }
+
+    async fn set_kafka_cluster_id(&mut self, bootstrap_servers: String, cluster_id: String) {
+        self.server
+            .kafka_cluster_ids
+            .set(bootstrap_servers, cluster_id);
     }
 
     async fn flush(&mut self, options: SidecarFlushOptions) {
@@ -1179,12 +1241,14 @@ impl SidecarInterface for ConnectionSidecarHandler {
         let traces_and_stats = options.traces_and_stats;
         let flusher = self.server.trace_flusher.clone();
         let span_concentrators = self.server.span_concentrators.clone();
+        let dsm_tables = self.server.dsm_tables.clone();
         let flush_traces_and_stats = async move {
             if traces_and_stats {
                 if let Err(e) = tokio::spawn(async move { flusher.flush().await }).await {
                     error!("Failed flushing traces: {e:?}");
                 }
                 flush_all_stats_now(&span_concentrators).await;
+                flush_all_dsm_now(&dsm_tables).await;
                 debug!("Finished executing flush() for traces and stats")
             }
         };
@@ -1431,10 +1495,10 @@ mod tests {
 
             let deadline = Instant::now() + Duration::from_secs(5);
             let retired_before_removal = loop {
-                if let Ok(guard) = client.try_lock() {
-                    if guard.is_none() {
-                        break true;
-                    }
+                if let Ok(guard) = client.try_lock()
+                    && guard.is_none()
+                {
+                    break true;
                 }
                 if Instant::now() >= deadline {
                     break false;

@@ -54,6 +54,7 @@ thread_local.workspace = true
 
 libdd-capabilities = { path = "../libdd-capabilities", version = "4.0.1" }
 libdd-common = { version = "9.0.0", path = "../libdd-common", default-features = false, features = ["std"] }
+libdd-regex = { version = "0.1.0", path = "../libdd-regex" }
 libdd-trace-normalization = { version = "4.3.0", path = "../libdd-trace-normalization" }
 libdd-trace-protobuf = { version = "5.1.1", path = "../libdd-trace-protobuf" }
 libdd-trace-model = { version = "1.0.0", path = "../libdd-trace-model" }
@@ -123,10 +124,3 @@ compression = ["zstd"]
 zstd = ["dep:zstd", "dep:zrip"]
 # FIPS mode uses the FIPS-compliant cryptographic provider (Unix only)
 fips = ["libdd-common/fips", "dep:libdd-capabilities-impl", "libdd-capabilities-impl/fips"]
-
-[lints.clippy]
-# TODO(paullgdc): This fails a lot because of if-let chaining which became
-# allowed with the 1.91.1 MSRV bump.
-# I am planning to fix each crate as an individual PR in order to not have 
-# too many conflicts
-collapsible_if = "allow"

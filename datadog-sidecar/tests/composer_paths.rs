@@ -36,7 +36,7 @@ async fn composer_paths_are_checked_before_reusing_cached_dependencies() {
         1
     );
 
-    libdd_common::unix_utils::set_restrict_worker_file_outputs(true);
+    libdd_process_utils::unix_utils::set_restrict_worker_file_outputs(true);
     assert_eq!(
         TelemetryCachedClient::extract_composer_telemetry(path.clone())
             .await

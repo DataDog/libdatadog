@@ -463,6 +463,7 @@ dependencies = [
  "libc",
  "libdd-common",
  "libdd-crashtracker",
+ "libdd-regex",
  "nix 0.29.0",
  "once_cell",
  "os_info",
@@ -708,20 +709,21 @@ checksum = "dc0b364ead1874514c8c2855ab558056ebfeb775653e7ae45ff72f28f8f3166c"
 
 [[package]]
 name = "build_common"
-version = "46.0.0"
+version = "47.0.0"
 dependencies = [
  "cbindgen",
  "serde_json",
+ "winresource",
 ]
 
 [[package]]
 name = "builder"
-version = "46.0.0"
+version = "47.0.0"
 dependencies = [
  "anyhow",
  "build_common",
  "cmake",
- "libdd-common",
+ "libdd-regex",
  "pico-args",
  "serde",
  "tar",
@@ -1354,7 +1356,7 @@ checksum = "d7a1e2f27636f116493b8b860f5546edb47c8d8f8ea73e1d2a20be88e28d1fea"
 
 [[package]]
 name = "datadog-profiling-replayer"
-version = "46.0.0"
+version = "47.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1376,6 +1378,7 @@ dependencies = [
  "console-subscriber",
  "crossbeam-utils",
  "datadog-sidecar-macros",
+ "flate2",
  "futures",
  "http 1.1.0",
  "httpmock",
@@ -1392,6 +1395,7 @@ dependencies = [
  "libdd-ipc",
  "libdd-ipc-macros",
  "libdd-live-debugger",
+ "libdd-process-utils",
  "libdd-remote-config",
  "libdd-telemetry",
  "libdd-tinybytes",
@@ -1403,6 +1407,8 @@ dependencies = [
  "prctl",
  "priority-queue",
  "rand 0.8.8",
+ "rmp-serde",
+ "rmpv",
  "serde",
  "serde_json",
  "serde_with",
@@ -2706,7 +2712,7 @@ checksum = "7581282928bc99698341d1de7590964c28db747c164eaac9409432a3eaed098a"
 
 [[package]]
 name = "libdd-agent-client"
-version = "46.0.0"
+version = "47.0.0"
 dependencies = [
  "bytes",
  "flate2",
@@ -2763,6 +2769,7 @@ dependencies = [
  "http-body-util",
  "libdd-capabilities",
  "libdd-common",
+ "libdd-process-utils",
  "tempfile",
  "tokio",
 ]
@@ -2786,14 +2793,13 @@ dependencies = [
  "hyper-util",
  "indexmap 2.12.1",
  "libc",
+ "libdd-process-utils",
+ "libdd-regex",
  "maplit",
- "nix 0.29.0",
  "pin-project",
  "proptest",
  "rand 0.8.8",
  "rcgen",
- "regex",
- "regex-lite",
  "reqwest",
  "rustls",
  "rustls-platform-verifier",
@@ -2813,7 +2819,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-common-ffi"
-version = "46.0.0"
+version = "47.0.0"
 dependencies = [
  "anyhow",
  "assert_no_alloc",
@@ -2824,6 +2830,7 @@ dependencies = [
  "function_name",
  "hyper",
  "libdd-common",
+ "libdd-regex",
  "serde",
 ]
 
@@ -2847,6 +2854,7 @@ dependencies = [
  "libdd-common",
  "libdd-gotter",
  "libdd-libunwind-sys",
+ "libdd-process-utils",
  "libdd-telemetry",
  "nix 0.29.0",
  "num-derive",
@@ -2869,7 +2877,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-crashtracker-ffi"
-version = "46.0.0"
+version = "47.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -2878,6 +2886,7 @@ dependencies = [
  "libdd-common",
  "libdd-common-ffi",
  "libdd-crashtracker",
+ "libdd-regex",
  "serde_json",
  "symbolic-common",
  "symbolic-demangle",
@@ -2911,6 +2920,7 @@ dependencies = [
  "libdd-ddsketch",
  "libdd-dogstatsd-client",
  "libdd-log",
+ "libdd-regex",
  "libdd-shared-runtime",
  "libdd-telemetry",
  "libdd-tinybytes",
@@ -2947,6 +2957,7 @@ dependencies = [
  "http 1.1.0",
  "libdd-capabilities",
  "libdd-common",
+ "libdd-regex",
  "libdd-tinybytes",
  "libdd-trace-obfuscation",
  "libdd-trace-stats",
@@ -2958,7 +2969,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-data-pipeline-ffi"
-version = "46.0.0"
+version = "47.0.0"
 dependencies = [
  "build_common",
  "httpmock",
@@ -2966,6 +2977,7 @@ dependencies = [
  "libdd-common",
  "libdd-common-ffi",
  "libdd-data-pipeline",
+ "libdd-regex",
  "libdd-shared-runtime",
  "libdd-tinybytes",
  "libdd-trace-obfuscation",
@@ -2991,11 +3003,12 @@ dependencies = [
 
 [[package]]
 name = "libdd-ddsketch-ffi"
-version = "46.0.0"
+version = "47.0.0"
 dependencies = [
  "build_common",
  "libdd-common-ffi",
  "libdd-ddsketch",
+ "libdd-regex",
 ]
 
 [[package]]
@@ -3007,6 +3020,7 @@ dependencies = [
  "cadence",
  "http 1.1.0",
  "libdd-common",
+ "libdd-process-utils",
  "libdd-shared-runtime",
  "serde",
  "tokio",
@@ -3033,6 +3047,7 @@ dependencies = [
  "libdd-capabilities",
  "libdd-capabilities-impl",
  "libdd-common",
+ "libdd-regex",
  "libdd-remote-config",
  "libdd-trace-protobuf",
  "log",
@@ -3066,7 +3081,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-ffe-test-suite"
-version = "46.0.0"
+version = "47.0.0"
 dependencies = [
  "chrono",
  "criterion",
@@ -3127,6 +3142,8 @@ dependencies = [
  "page_size",
  "serde",
  "spawn_worker",
+ "strum",
+ "strum_macros",
  "tempfile",
  "tokio",
  "tracing",
@@ -3172,6 +3189,7 @@ dependencies = [
  "libc_alloc",
  "libdd-common-ffi",
  "libdd-library-config",
+ "libdd-regex",
 ]
 
 [[package]]
@@ -3198,6 +3216,7 @@ dependencies = [
  "libdd-capabilities-impl",
  "libdd-common",
  "libdd-data-pipeline",
+ "libdd-regex",
  "libdd-remote-config",
  "percent-encoding",
  "serde",
@@ -3218,6 +3237,7 @@ dependencies = [
  "libdd-common",
  "libdd-common-ffi",
  "libdd-live-debugger",
+ "libdd-regex",
  "log",
  "percent-encoding",
  "serde_json",
@@ -3238,11 +3258,12 @@ dependencies = [
 
 [[package]]
 name = "libdd-log-ffi"
-version = "46.0.0"
+version = "47.0.0"
 dependencies = [
  "build_common",
  "libdd-common-ffi",
  "libdd-log",
+ "libdd-regex",
 ]
 
 [[package]]
@@ -3265,6 +3286,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "libdd-process-utils"
+version = "1.0.0"
+dependencies = [
+ "libc",
+ "nix 0.29.0",
+ "tempfile",
+ "thiserror 2.0.17",
+ "windows-sys 0.52.0",
+]
+
+[[package]]
 name = "libdd-profiling"
 version = "1.0.0"
 dependencies = [
@@ -3284,6 +3316,7 @@ dependencies = [
  "indexmap 2.12.1",
  "libdd-alloc",
  "libdd-common",
+ "libdd-process-utils",
  "libdd-profiling-protobuf",
  "opentelemetry-proto",
  "parking_lot",
@@ -3326,6 +3359,7 @@ dependencies = [
  "libdd-log-ffi",
  "libdd-otel-thread-ctx-ffi",
  "libdd-profiling",
+ "libdd-regex",
  "libdd-shared-runtime-ffi",
  "libdd-telemetry-ffi",
  "serde_json",
@@ -3355,7 +3389,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-profiling-heap-gotter-ffi"
-version = "46.0.0"
+version = "47.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -3386,6 +3420,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "libdd-regex"
+version = "0.1.0"
+dependencies = [
+ "regex",
+ "regex-lite",
+]
+
+[[package]]
 name = "libdd-remote-config"
 version = "8.0.0"
 dependencies = [
@@ -3404,6 +3446,7 @@ dependencies = [
  "libdd-capabilities",
  "libdd-capabilities-impl",
  "libdd-common",
+ "libdd-regex",
  "libdd-remote-config",
  "libdd-trace-protobuf",
  "libdd-tuf",
@@ -3416,7 +3459,6 @@ dependencies = [
  "strum",
  "strum_macros",
  "thiserror 2.0.17",
- "time",
  "tokio",
  "tokio-util",
  "tracing",
@@ -3446,6 +3488,7 @@ dependencies = [
  "libdd-capabilities",
  "libdd-capabilities-impl",
  "libdd-common",
+ "libdd-regex",
  "tokio",
  "tokio-util",
  "tracing",
@@ -3454,9 +3497,10 @@ dependencies = [
 
 [[package]]
 name = "libdd-shared-runtime-ffi"
-version = "46.0.0"
+version = "47.0.0"
 dependencies = [
  "build_common",
+ "libdd-regex",
  "libdd-shared-runtime",
  "tracing",
 ]
@@ -3496,13 +3540,14 @@ dependencies = [
 
 [[package]]
 name = "libdd-telemetry-ffi"
-version = "46.0.0"
+version = "47.0.0"
 dependencies = [
  "build_common",
  "function_name",
  "libdd-capabilities-impl",
  "libdd-common",
  "libdd-common-ffi",
+ "libdd-regex",
  "libdd-telemetry",
  "paste",
  "serde_json",
@@ -3549,6 +3594,7 @@ dependencies = [
  "duplicate",
  "fluent-uri",
  "libdd-common",
+ "libdd-regex",
  "libdd-tinybytes",
  "libdd-trace-model",
  "libdd-trace-protobuf",
@@ -3632,6 +3678,7 @@ dependencies = [
  "libdd-capabilities",
  "libdd-capabilities-impl",
  "libdd-common",
+ "libdd-regex",
  "libdd-tinybytes",
  "libdd-trace-model",
  "libdd-trace-normalization",
@@ -5840,7 +5887,7 @@ dependencies = [
 
 [[package]]
 name = "symbolizer-ffi"
-version = "46.0.0"
+version = "47.0.0"
 dependencies = [
  "blazesym-c",
  "build_common",
@@ -6296,7 +6343,7 @@ dependencies = [
 
 [[package]]
 name = "tools"
-version = "46.0.0"
+version = "47.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -6307,7 +6354,7 @@ dependencies = [
  "futures",
  "futures-util",
  "httparse",
- "libdd-common",
+ "libdd-regex",
  "mime",
  "multer",
  "quick-xml",
@@ -7268,6 +7315,15 @@ checksum = "524e57b2c537c0f9b1e69f1965311ec12182b4122e45035b1508cd24d2adadb1"
 dependencies = [
  "cfg-if",
  "windows-sys 0.48.0",
+]
+
+[[package]]
+name = "winresource"
+version = "0.1.31"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0986a8b1d586b7d3e4fe3d9ea39fb451ae22869dcea4aa109d287a374d866087"
+dependencies = [
+ "version_check",
 ]
 
 [[package]]
