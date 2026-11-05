@@ -57,3 +57,100 @@ exports.map(([name, args]) => `        ${name} = instance.GetFunction<${[...args
 `    internal int Write(JsonElement value)\n    {\n        byte[] bytes = Encoding.UTF8.GetBytes(value.GetRawText());\n        int buffer = Check(rc_alloc(bytes.Length));\n        try\n        {\n            bytes.AsSpan().CopyTo(memory.GetSpan(unchecked((uint)rc_buffer_ptr(buffer)), bytes.Length));\n            return buffer;\n        }\n        catch\n        {\n            rc_free(buffer);\n            throw;\n        }\n    }\n\n` +
 `    internal byte[] Read(int buffer)\n    {\n        try\n        {\n            int length = Check(rc_buffer_len(buffer));\n            return memory.GetSpan(unchecked((uint)rc_buffer_ptr(buffer)), length).ToArray();\n        }\n        finally\n        {\n            Check(rc_free(buffer));\n        }\n    }\n\n` +
 `    internal JsonElement Json(int buffer)\n    {\n        using JsonDocument document = JsonDocument.Parse(Read(Check(buffer)));\n        return document.RootElement.Clone();\n    }\n}\n`)
+
+/** @param {string} name */
+function javaField (name) {
+  return name.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase())
+}
+
+/** @param {string} name */
+function javaMethod (name) {
+  return name.replace(/^rc_/, '').replace(/_([a-z])/g, (_, letter) => letter.toUpperCase())
+}
+
+emit('hosts/java/src/main/java/com/datadoghq/remoteconfig/poc/RcAbi.java', `
+package com.datadoghq.remoteconfig.poc;
+
+import java.nio.charset.StandardCharsets;
+import org.json.JSONArray;
+import org.json.JSONObject;
+import run.endive.runtime.ExportFunction;
+import run.endive.runtime.Instance;
+import run.endive.runtime.Memory;
+
+/**
+ * Bindings for the shared remote-config WASM ABI, mirroring hosts/node/bindings.mjs and
+ * hosts/dotnet/Bindings.g.cs. All guest calls return an i32 handle: -1 is the error sentinel,
+ * ids are allocated from 1, and 0 from rc_result means no outcome yet.
+ */
+final class RcAbi {
+    private final Memory memory;
+` +
+exports.map(([name]) => `    private final ExportFunction ${javaField(name)};
+`).join('') +
+`
+    RcAbi(Instance instance) {
+        memory = instance.memory();
+        if (memory == null) throw new IllegalStateException("Missing memory export");
+` +
+exports.map(([name]) => `        ${javaField(name)} = function(instance, "${name}");
+`).join('') +
+`        if (call(rcVersion) != ${schema.version}) throw new IllegalStateException("ABI version mismatch");
+    }
+
+    private static ExportFunction function(Instance instance, String name) {
+        return instance.export(name);
+    }
+
+    private static int call(ExportFunction fn, long... args) {
+        long[] result = fn.apply(args);
+        return (int) result[0];
+    }
+
+    /** Throws a descriptive exception when the guest reports -1. */
+    int check(int result) {
+        if (result >= 0) return result;
+        int error = error();
+        if (error <= 0) throw new IllegalStateException("Guest error buffer unavailable");
+        throw new IllegalStateException(new String(read(error), StandardCharsets.UTF_8));
+    }
+
+    // Unchecked guest calls, mirroring the raw delegate fields of the .NET bindings.
+` +
+exports.map(([name, args]) => `    int ${javaMethod(name)}(${args.map(arg => `int ${arg}`).join(', ')}) { return call(${javaField(name)}${args.length ? ', ' + args.join(', ') : ''}); }
+`).join('') +
+`
+    /** Allocates a guest buffer and writes the UTF-8 JSON encoding of value into it. */
+    int write(Object value) {
+        byte[] bytes = value.toString().getBytes(StandardCharsets.UTF_8);
+        int buffer = check(alloc(bytes.length));
+        try {
+            // The aggregate buffer budget (32 MiB) keeps wasm32 addresses below 2^31, so the
+            // signed i32 returned by rc_buffer_ptr is always a valid non-negative offset here.
+            memory.write(call(rcBufferPtr, buffer), bytes);
+            return buffer;
+        } catch (RuntimeException error) {
+            free(buffer);
+            throw error;
+        }
+    }
+
+    /** Copies a guest buffer out and frees it; ownership returns to the guest. */
+    byte[] read(int buffer) {
+        try {
+            int length = check(call(rcBufferLen, buffer));
+            return memory.readBytes(call(rcBufferPtr, buffer), length);
+        } finally {
+            check(free(buffer));
+        }
+    }
+
+    JSONObject json(int buffer) {
+        return new JSONObject(new String(read(check(buffer)), StandardCharsets.UTF_8));
+    }
+
+    JSONArray jsonArray(int buffer) {
+        return new JSONArray(new String(read(check(buffer)), StandardCharsets.UTF_8));
+    }
+}
+`)

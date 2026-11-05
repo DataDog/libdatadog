@@ -22,9 +22,6 @@ execFileSync(process.execPath, ['scripts/generate.mjs'], { cwd: root, stdio: 'in
 execFileSync('rustup', ['run', toolchain, 'cargo', 'build', '--target', 'wasm32-wasip1', '--release', '--locked'], {
   cwd: root, env, stdio: 'inherit'
 })
-execFileSync('dotnet', ['build', 'hosts/dotnet/RemoteConfigPoc.csproj', '-c', 'Release', '--nologo', '-p:RestoreLockedMode=true'], {
-  cwd: root, stdio: 'inherit'
-})
 const metadata = JSON.parse(execFileSync('rustup', ['run', toolchain, 'cargo', 'metadata', '--locked', '--format-version', '1'], {
   cwd: root, env, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024
 }))
@@ -35,9 +32,18 @@ writeFileSync(`${root}/LICENSE-3rdparty.csv`, 'name,version,license,repository\n
 mkdirSync(`${root}/artifacts`, { recursive: true })
 const source = `${root}/target/wasm32-wasip1/release/libdd_remote_config_wasm_poc.wasm`
 const artifact = `${root}/artifacts/remote-config.wasm`
+// Node and Wasmtime run the wasm as-is, so their artifact only needs the smallest binary.
 execFileSync(wasmOpt, [source, '-Oz', '--converge', '--enable-mutable-globals',
   '--enable-nontrapping-float-to-int', '--enable-bulk-memory', '--enable-sign-ext',
   '--enable-reference-types', '--enable-multivalue', '--disable-gc', '-o', artifact], { stdio: 'inherit' })
+// The Endive AOT compiler maps every wasm function to one JVM method, and wasm-opt's
+// -Oz/--converge inlining grows a function past the JVM's 64 KiB method limit, which would
+// silently push it to the interpreter. The Java artifact uses -O1, which keeps every
+// function compilable, and the Gradle build treats any interpreter fallback as an error.
+const javaArtifact = `${root}/artifacts/remote-config-java.wasm`
+execFileSync(wasmOpt, [source, '-O1', '--enable-mutable-globals',
+  '--enable-nontrapping-float-to-int', '--enable-bulk-memory', '--enable-sign-ext',
+  '--enable-reference-types', '--enable-multivalue', '--disable-gc', '-o', javaArtifact], { stdio: 'inherit' })
 const bytes = readFileSync(artifact)
 const manifest = {
   abiVersion: JSON.parse(readFileSync(`${root}/abi.json`)).version,
@@ -50,3 +56,10 @@ const manifest = {
 }
 writeFileSync(`${root}/artifacts/manifest.json`, JSON.stringify(manifest, null, 2) + '\n')
 process.stdout.write(`Shared artifact: ${manifest.sha256} (${manifest.bytes} bytes)\n`)
+const javaBytes = readFileSync(javaArtifact)
+process.stdout.write(`Java AOT artifact: ${createHash('sha256').update(javaBytes).digest('hex')} (${javaBytes.length} bytes)\n`)
+execFileSync('dotnet', ['build', 'hosts/dotnet/RemoteConfigPoc.csproj', '-c', 'Release', '--nologo', '-p:RestoreLockedMode=true'], {
+  cwd: root, stdio: 'inherit'
+})
+// The Java host AOT-compiles the final artifact into JVM bytecode at build time.
+execFileSync('./gradlew', ['-q', '--no-daemon', 'build'], { cwd: `${root}/hosts/java`, stdio: 'inherit' })

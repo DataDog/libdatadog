@@ -1,0 +1,2 @@
+# Keep the Gradle-generated batch file exactly as distributed (CRLF).
+gradlew.bat -text

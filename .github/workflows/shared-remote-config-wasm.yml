@@ -25,6 +25,10 @@ jobs:
       - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # 4.3.1
         with:
           dotnet-version: '10.0.x'
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # 5.7.0
+        with:
+          distribution: temurin
+          java-version: '21'
       - name: Install toolchains
         run: |
           rustup toolchain install 1.98.0 --profile minimal --target wasm32-wasip1 --component clippy
@@ -45,5 +49,5 @@ jobs:
           cargo +nightly-2026-07-26 fmt --all -- --check
           cargo clippy --locked --all-targets -- -D warnings
           cargo test --locked
-      - name: Run both WASM hosts
+      - name: Run all WASM hosts
         run: node --test test/conformance.mjs
