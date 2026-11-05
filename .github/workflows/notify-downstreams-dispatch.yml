@@ -22,6 +22,7 @@ permissions: {}
 
 env:
   VERSION: ${{ github.event.workflow_run.head_branch }}
+  TAG_SHA: ${{ github.event.workflow_run.head_sha }}
 
 jobs:
   validate:
@@ -34,19 +35,15 @@ jobs:
     outputs:
       skip: ${{ steps.check.outputs.skip }}
     steps:
-      # Version comes from the tag ref (head_branch). Validate shape and
-      # existence before minting.
-      - name: Validate version and tag
+      # Version and tag commit come from the event payload: head_branch is
+      # the tag name, head_sha is the commit it points at. Nothing is fetched
+      # from the repository. The event is the release record.
+      - name: Validate version
         id: check
         run: |
           if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "::notice::${VERSION} is not a plain release tag. Nothing to notify."
             echo "skip=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          if [ -z "$(git ls-remote https://github.com/DataDog/libdatadog "refs/tags/${VERSION}")" ]; then
-            echo "::error::Tag ${VERSION} does not exist."
-            exit 1
           fi
 
   dispatch:
@@ -79,5 +76,6 @@ jobs:
           gh api "repos/${{ matrix.consumer.repository }}/dispatches" \
             -f event_type=libdatadog-released \
             -f "client_payload[version]=${VERSION#v}" \
+            -f "client_payload[tag_sha]=${TAG_SHA}" \
             -f "client_payload[triggered_by]=${{ github.repository }}" \
             -f "client_payload[source_run_url]=${{ github.event.workflow_run.html_url }}"
