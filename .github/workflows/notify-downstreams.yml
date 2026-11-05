@@ -1,5 +1,3 @@
-name: Notify Downstreams
-
 on: # yamllint disable-line rule:truthy
   push:
     tags:
@@ -19,6 +17,11 @@ on: # yamllint disable-line rule:truthy
 # notify-downstreams-dispatch.yml, which watches this run complete via
 # workflow_run and resolves from the default branch, mints and dispatches
 # from reviewed code. See that workflow for the trust chain.
+#
+# This workflow is intentionally unnamed. Its default name is its file path,
+# which is the single identifier the whole chain keys on: the dispatcher
+# watches that path, and the downstream trust policies pin the dispatcher by
+# its path. Do not add a name field without updating the dispatcher.
 
 permissions: {}
 

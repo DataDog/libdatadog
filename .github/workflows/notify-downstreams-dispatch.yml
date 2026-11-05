@@ -3,9 +3,11 @@ name: Dispatch Release Notification to Downstreams
 on: # yamllint disable-line rule:truthy
   workflow_run: # zizmor: ignore[dangerous-triggers]
     workflows:
-      # Watched BY NAME: renaming the Notify Downstreams workflow breaks
-      # this hop silently. Rename both together.
-      - Notify Downstreams
+      # The shim is intentionally unnamed, so its default name is its file
+      # path. Renaming the shim file breaks this hop. The path is the single
+      # identifier the whole chain keys on. The downstream trust policies
+      # also pin this workflow by its own path.
+      - ".github/workflows/notify-downstreams.yml"
     types:
       - completed
 
