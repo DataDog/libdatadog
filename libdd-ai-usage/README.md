@@ -95,7 +95,9 @@ caller owns.
   `MetricBatch::dogstatsd_datagrams` (or `pack_dogstatsd` for lines of your
   own) packs them, with the client's constant tags, into datagrams of at most
   `DOGSTATSD_UDP_MAX_PAYLOAD` (1432) or `DOGSTATSD_UDS_MAX_PAYLOAD` (8192)
-  bytes; a longer line is a datagram of its own.
+  bytes; a longer line is a datagram of its own, up to
+  `DOGSTATSD_MAX_LINE_BYTES` (8192, or `pack_dogstatsd_limited` to set it),
+  and only a line past that is dropped and counted.
 
 Sending the bytes or datagrams is the caller's job.
 

@@ -248,10 +248,12 @@ impl MetricBatch {
     }
 
     /// The number of points the batch holds: one per Counter series and one
-    /// per Histogram sample, as [`MetricBatch::points`] returns them. Series
-    /// of resources whose Datadog tags normalize alike are still counted
-    /// apart, so the DogStatsD lines can be fewer, never more. For a flush
-    /// threshold; it encodes nothing.
+    /// per Histogram sample, as [`MetricBatch::points`] returns them. For a
+    /// flush threshold; it encodes nothing, and is not a line count: the
+    /// DogStatsD lines can be more (each Histogram series also writes a
+    /// `.count` and a `.sum` line) or fewer (series of resources whose
+    /// Datadog tags normalize alike are counted apart here but share their
+    /// lines).
     pub fn len(&self) -> usize {
         self.len
     }

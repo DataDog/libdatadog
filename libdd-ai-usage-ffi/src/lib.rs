@@ -833,9 +833,10 @@ pub unsafe extern "C" fn ddog_ai_usage_batch_is_empty(batch: *const Batch) -> bo
 }
 
 /// The number of points `batch` holds: one per Counter series and one per
-/// Histogram sample. The DogStatsD lines taken can be fewer (series whose
-/// tags normalize alike share a line), never more. For a flush threshold. A
-/// null batch holds none.
+/// Histogram sample. For a flush threshold, not a line count: the
+/// DogStatsD lines taken can be more (each Histogram series also writes a
+/// `.count` and a `.sum` line) or fewer (series whose tags normalize alike
+/// share their lines). A null batch holds none.
 ///
 /// # Safety
 ///
