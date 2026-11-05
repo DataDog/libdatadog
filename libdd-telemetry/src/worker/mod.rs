@@ -376,11 +376,11 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
     }
 
     async fn recv_next_action(&mut self) -> TelemetryActions {
-        loop {
+        let action = loop {
             // Fold any points published to the ring buffer into the aggregates before we wait.
             self.drain_metric_ring();
 
-            let action = if let Some((deadline, deadline_action)) = self.deadlines.next_deadline() {
+            if let Some((deadline, deadline_action)) = self.deadlines.next_deadline() {
                 let deadline_action = *deadline_action;
                 // If deadline passed, service any already-queued mailbox action first, then
                 // return the associated action.
@@ -394,31 +394,28 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
                 };
 
                 let sleeper = <C as SleepCapability>::new();
-                let ring = self.metric_ring.clone();
                 tokio::select! {
                     biased;
-                    mailbox_action = self.mailbox.recv() => mailbox_action,
-                    _ = sleeper.sleep(remaining) => Some(TelemetryActions::Lifecycle(deadline_action)),
-                    // The ring buffer has points to drain: loop back to fold them in.
-                    _ = ring.notified() => continue,
+                    mailbox_action = self.mailbox.recv() => break mailbox_action,
+                    _ = sleeper.sleep(remaining) => return TelemetryActions::Lifecycle(deadline_action),
+                    _ = self.metric_ring.notified() => (),
                 }
             } else {
-                let ring = self.metric_ring.clone();
                 tokio::select! {
                     biased;
-                    mailbox_action = self.mailbox.recv() => mailbox_action,
-                    _ = ring.notified() => continue,
+                    mailbox_action = self.mailbox.recv() => break mailbox_action,
+                    _ = self.metric_ring.notified() => (),
                 }
-            };
+            }
+            tokio::task::yield_now().await;
+        };
 
-            // if no action is received, then it means the channel is stopped
-            return action.unwrap_or_else(|| {
-                // the worker handle no longer lives - remove restartable here to avoid leaks
-                self.config.restartable = false;
-                self.stopped = true;
-                TelemetryActions::Lifecycle(LifecycleAction::Stop)
-            });
-        }
+        action.unwrap_or_else(|| {
+            // the worker handle no longer lives - remove restartable here to avoid leaks
+            self.config.restartable = false;
+            self.stopped = true;
+            TelemetryActions::Lifecycle(LifecycleAction::Stop)
+        })
     }
 
     async fn dispatch_metrics_logs_action(&mut self, action: TelemetryActions) -> ControlFlow<()> {
@@ -2678,6 +2675,6 @@ mod tests {
         assert_eq!(series.len(), 1);
         assert_eq!(series[0].0, context);
         assert_eq!(series[0].2[0].1, accepted as f64);
-        assert!(handle.add_point(1.0, &context, Vec::new()).is_ok());
+        assert!(handle.try_add_point(1.0, &context, Vec::new()));
     }
 }

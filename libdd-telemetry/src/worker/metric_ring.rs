@@ -224,7 +224,8 @@ impl MetricRing {
         true
     }
 
-    /// Drain currently published points in order, invoking `f` for each.
+    /// Drain published points in order, invoking `f` for each. Points reserved after this batch
+    /// starts are left for the next call, even if producers refill the slots as they are freed.
     ///
     /// If another drain is in progress, this call returns without consuming points.
     pub fn drain(&self, mut f: impl FnMut(f64, ContextKey, Vec<Tag>)) {
@@ -237,9 +238,9 @@ impl MetricRing {
         }
         let _guard = DrainGuard(&self.draining);
 
-        loop {
-            // Only the consumer writes `read_pos`, so a relaxed load of our own cursor is fine.
-            let seq = self.read_pos.load(Ordering::Relaxed);
+        let mut seq = self.read_pos.load(Ordering::Relaxed);
+        let end = self.write_pos.load(Ordering::Relaxed);
+        while seq != end {
             let slot = &self.slots[(seq & RING_MASK) as usize];
             let encoded = slot.ready.load(Ordering::Acquire);
             if encoded == 0 {
@@ -255,7 +256,8 @@ impl MetricRing {
             // Free the slot, then advance the cursor so producers can reserve it again. The order
             // matters: a producer may write the slot as soon as it sees the new `read_pos`.
             slot.ready.store(0, Ordering::Release);
-            self.read_pos.store(seq.wrapping_add(1), Ordering::Release);
+            seq = seq.wrapping_add(1);
+            self.read_pos.store(seq, Ordering::Release);
 
             f(value, key, tags);
         }
@@ -346,14 +348,19 @@ mod tests {
                 "a full buffer must drop the point"
             );
         }
-        ring.push(-1.0, key(0, MetricType::Count), Vec::new());
+        ring.push(
+            -1.0,
+            key(0, MetricType::Count),
+            vec![Tag::new("a", "b").unwrap()],
+        );
 
         // A dropped point reserves no sequence, so the consumer sees no gap: it reads every
         // accepted point, in order.
         let mut next_expected = 0u32;
-        ring.drain(|v, k, _| {
+        ring.drain(|v, k, tags| {
             assert_eq!(k.index(), next_expected);
             assert_eq!(v as u32, next_expected);
+            assert!(tags.is_empty());
             next_expected += 1;
         });
         assert_eq!(next_expected, RING_SIZE as u32);
@@ -437,19 +444,26 @@ mod tests {
     }
 
     #[test]
-    fn dropped_point_tags_are_not_delivered() {
+    fn drain_returns_when_producers_refill_freed_slots() {
         let ring = MetricRing::new();
-        for i in 0..RING_SIZE as u32 {
-            assert!(ring.try_push(0.0, key(i, MetricType::Count), Vec::new()));
+        let context = key(0, MetricType::Count);
+        for _ in 0..RING_SIZE {
+            assert!(ring.try_push(1.0, context, Vec::new()));
         }
-        let tags = vec![Tag::new("a", "b").unwrap()];
-        assert!(!ring.try_push(1.0, key(0, MetricType::Count), tags));
-        let mut tagged = 0;
-        ring.drain(|_, _, t| tagged += t.len());
-        assert_eq!(
-            tagged, 0,
-            "the tags of a dropped point must not reach the consumer"
-        );
+
+        let mut drained = 0;
+        ring.drain(|value, _, _| {
+            assert_eq!(value, 1.0, "a refill must wait for the next drain");
+            drained += 1;
+            assert!(ring.try_push(2.0, context, Vec::new()));
+        });
+        assert_eq!(drained, RING_SIZE);
+        let mut remaining = 0;
+        ring.drain(|value, _, _| {
+            assert_eq!(value, 2.0);
+            remaining += 1;
+        });
+        assert_eq!(remaining, RING_SIZE);
     }
 
     #[test]
