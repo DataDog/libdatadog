@@ -169,7 +169,15 @@ test('artifact has only WASI imports and generated ABI exports', () => {
   for (const name of Object.keys(JSON.parse(readFileSync(new URL('abi.json', root))).exports)) {
     assert.ok(exports.some(entry => entry.name === name && entry.kind === 'function'), name)
   }
+  // The Java AOT artifact is optimized separately; both packages must expose the same ABI.
+  const javaBytes = readFileSync(fileURLToPath(new URL('artifacts/remote-config-java.wasm', root)))
+  const javaExports = WebAssembly.Module.exports(new WebAssembly.Module(javaBytes))
+  assert.deepEqual(javaExports.map(entry => `${entry.kind} ${entry.name}`).sort(),
+    exports.map(entry => `${entry.kind} ${entry.name}`).sort())
+  assert.ok(WebAssembly.Module.imports(new WebAssembly.Module(javaBytes))
+    .every(entry => entry.module === 'wasi_snapshot_preview1'))
   process.stdout.write(`WASM sha256 ${createHash('sha256').update(bytes).digest('hex')} (${bytes.length} bytes)\n`)
+  process.stdout.write(`Java AOT wasm sha256 ${createHash('sha256').update(javaBytes).digest('hex')} (${javaBytes.length} bytes)\n`)
 })
 
 test('buffer ownership, malformed options, duplicate operations, and disposal', () => {

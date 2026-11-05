@@ -1,6 +1,8 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+import java.security.MessageDigest
+
 plugins {
     java
 }
@@ -15,14 +17,12 @@ repositories {
 // Classpath for the Endive build-time compiler CLI (wasm → JVM classes).
 val endiveCompilerCli by configurations.creating
 
-// Prefer the canonical artifact from scripts/build.mjs (wasm-opt optimized); fall back to the raw
-// cargo output so a standalone Gradle build works after only `cargo build --release --target
-// wasm32-wasip1`. -Pwasm=/path/to.wasm overrides both.
-val canonicalWasm = rootDir.resolve("../../artifacts/remote-config.wasm")
-val cargoWasm = rootDir.resolve("../../target/wasm32-wasip1/release/libdd_remote_config_wasm_poc.wasm")
-val aotWasm: Any = providers.gradleProperty("wasm")
+// The AOT input is the Java-specific artifact from scripts/build.mjs (wasm-opt -O1: every
+// function stays small enough for one JVM method, so any interpreter fallback fails the
+// build). -Pwasm=/path/to.wasm overrides it.
+val aotWasm = providers.gradleProperty("wasm")
     .map { rootDir.resolve(it) }
-    .getOrElse(if (canonicalWasm.exists()) canonicalWasm else cargoWasm)
+    .orElse(rootDir.resolve("../../artifacts/remote-config-java.wasm"))
 
 val aotSources = layout.buildDirectory.dir("generated/aot/sources")
 val aotClasses = layout.buildDirectory.dir("generated/aot/classes")
@@ -59,12 +59,11 @@ val aotCompile by tasks.registering(JavaExec::class) {
     mainClass.set("run.endive.experimental.compiler.cli.Cli")
     argumentProviders.add(CommandLineArgumentProvider {
         listOf(
-            aotWasm.toString(),
+            aotWasm.get().toString(),
             "--prefix", "com.datadoghq.remoteconfig.poc.RemoteConfig",
             "--source-dir", aotSources.get().toString(),
             "--class-dir", aotClasses.get().toString(),
-            "--wasm-dir", aotWasmDir.get().toString(),
-            "--interpreter-fallback", "WARN"
+            "--wasm-dir", aotWasmDir.get().toString()
         )
     })
     inputs.file(aotWasm)
@@ -95,6 +94,20 @@ val fatJar = tasks.register<Jar>("fatJar") {
     from(aotWasmDir)
     dependsOn(aotCompile)
     dependsOn(configurations.runtimeClasspath)
+    doFirst {
+        // Stamp the executed jar with the identity of the wasm it embeds.
+        val digest = MessageDigest.getInstance("SHA-256")
+        aotWasm.get().inputStream().use { input ->
+            val buffer = ByteArray(64 * 1024)
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) break
+                digest.update(buffer, 0, read)
+            }
+        }
+        manifest.attributes(
+            "Wasm-Sha256" to digest.digest().joinToString("") { byte -> "%02x".format(byte) })
+    }
     from({
         configurations.runtimeClasspath.get()
             .filter { it.name.endsWith(".jar") }
