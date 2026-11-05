@@ -497,20 +497,40 @@ fn openai_usage(usage: Option<&Json>, responses: bool, embeddings: bool) -> Prov
         .or_else(|| count(member(input_details, "cache_write_tokens")));
     let lifetimes = member(input_details, "cache_creation_token_details")
         .or_else(|| member(usage, "cache_creation"));
+    let reasoning = if embeddings {
+        None
+    } else {
+        count(member(output_details, "reasoning_tokens"))
+    };
+    // OpenAI's completion count includes reasoning, so the prompt and the
+    // completion add up to the total. Some compatible endpoints (Vertex AI's
+    // OpenAI-compatible API) leave reasoning out of the completion and count
+    // it in the total: then the prompt, completion and reasoning add up to
+    // it, and the completion excludes reasoning.
+    let total = count(member(usage, "total_tokens"));
+    let reasoning_separate = !responses
+        && matches!(
+            (input_tokens, output_tokens, reasoning, total),
+            (Some(prompt), Some(completion), Some(thinking), Some(total))
+                if thinking > 0
+                    && prompt.checked_add(completion).and_then(|n| n.checked_add(thinking))
+                        == Some(total)
+        );
+    let output_basis = if reasoning_separate {
+        EXCLUDES_REASONING
+    } else {
+        INCLUDES_REASONING
+    };
     ProviderUsage {
         input_basis: input_tokens.map(|_| INCLUDES_CACHE),
         input_tokens,
-        output_basis: output_tokens.map(|_| INCLUDES_REASONING),
+        output_basis: output_tokens.map(|_| output_basis),
         output_tokens,
         cache_read_input_tokens: cache_read,
         cache_write_input_tokens: cache_write,
         cache_write_5m_input_tokens: count(member(lifetimes, "ephemeral_5m_input_tokens")),
         cache_write_1h_input_tokens: count(member(lifetimes, "ephemeral_1h_input_tokens")),
-        reasoning_output_tokens: if embeddings {
-            None
-        } else {
-            count(member(output_details, "reasoning_tokens"))
-        },
+        reasoning_output_tokens: reasoning,
         input_tokens_by_modality: openai_modalities(input_details),
         output_tokens_by_modality: if embeddings {
             None

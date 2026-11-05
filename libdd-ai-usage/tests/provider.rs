@@ -88,6 +88,50 @@ fn provider_usage_cases() {
 }
 
 #[test]
+fn reasoning_basis_follows_the_total_so_output_is_billed_once() {
+    // Vertex AI's OpenAI-compatible API (completion leaves reasoning out)
+    // and OpenAI's own shape (completion includes it) both bill 1445.
+    for (completion, label) in [(1212, "separate"), (1445, "included")] {
+        let payload = Json::parse(&format!(
+            r#"{{"usage": {{"prompt_tokens": 14, "completion_tokens": {completion},
+                "total_tokens": 1459, "completion_tokens_details": {{"reasoning_tokens": 233}}}}}}"#
+        ))
+        .unwrap();
+        for format in [UsageFormat::OpenAiChat, UsageFormat::Auto] {
+            let usage = parse_provider_response(format, &payload, false)
+                .usage
+                .unwrap();
+            let mut attempt = ProviderAttemptObservation {
+                operation_name: Some("chat".into()),
+                provider_name: Some("gcp.vertex_ai".into()),
+                duration_seconds: Some(1.0),
+                streaming: Some(false),
+                observation_point: Some("gateway".into()),
+                ..ProviderAttemptObservation::default()
+            };
+            usage.apply_to_attempt(&mut attempt);
+            let projection = project_provider_attempt(&attempt).unwrap();
+            let output = projection
+                .points
+                .iter()
+                .find(|p| p.name == "gen_ai.client.inference.usage.output_tokens")
+                .unwrap();
+            assert_eq!(output.value, 1445.0, "{label} {format:?}");
+        }
+    }
+    // Totals that match neither keep OpenAI's reading.
+    let payload = Json::parse(
+        r#"{"usage": {"prompt_tokens": 14, "completion_tokens": 1212, "total_tokens": 2000,
+            "completion_tokens_details": {"reasoning_tokens": 233}}}"#,
+    )
+    .unwrap();
+    let usage = parse_provider_response(UsageFormat::OpenAiChat, &payload, false)
+        .usage
+        .unwrap();
+    assert_eq!(usage.output_basis, Some("includes_reasoning"));
+}
+
+#[test]
 fn parsed_usage_projects() {
     // An Anthropic response as the observation of one attempt: the crate
     // adds the cache back into the input total.
