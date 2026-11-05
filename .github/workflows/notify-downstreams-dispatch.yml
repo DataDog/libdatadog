@@ -1,27 +1,22 @@
 name: Dispatch Release Notification to Downstreams
 
+# The octo-sts mints live here because workflow_run resolves this file from
+# the default branch. A mint in the tag-push shim hands the token to whoever
+# can push release tags. Each downstream trust policy pins this file to
+# refs/heads/main. The triggering run proves only that a push happened.
+# These guards and this code decide the rest.
+#
+# Adding a downstream: one matrix entry here plus the downstream's trust
+# policy.
+
 on: # yamllint disable-line rule:truthy
   workflow_run: # zizmor: ignore[dangerous-triggers]
     workflows:
-      # The shim is intentionally unnamed, so its default name is its file
-      # path. Renaming the shim file breaks this hop. The path is the single
-      # identifier the whole chain keys on. The downstream trust policies
-      # also pin this workflow by its own path.
+      # The shim is unnamed, so its default name is its file path. Renaming
+      # the shim file breaks this hop.
       - ".github/workflows/notify-downstreams.yml"
     types:
       - completed
-
-# The octo-sts mints for downstream repositories live here, on the default
-# branch, on purpose. notify-downstreams.yml (the tag-push trigger) executes
-# from the tagged commit, so a mint there hands the token to whoever can
-# push release tags. workflow_run resolves THIS workflow from the default
-# branch, so the minting code is the reviewed definition from main, and each
-# downstream trust policy pins this file to refs/heads/main. The triggering
-# run decides only that a push happened. This workflow's guards decide
-# everything else, and only main's code can change them.
-#
-# Adding a downstream: add one matrix entry below and create the matching
-# octo-sts trust policy in the downstream repository.
 
 permissions: {}
 
@@ -39,9 +34,8 @@ jobs:
     outputs:
       skip: ${{ steps.check.outputs.skip }}
     steps:
-      # The triggering run carries only the push event and the tag name. The
-      # version comes from the tag ref itself, and its existence is checked
-      # against the repository. Validate both before minting anything.
+      # Version comes from the tag ref (head_branch). Validate shape and
+      # existence before minting.
       - name: Validate version and tag
         id: check
         run: |
@@ -66,8 +60,8 @@ jobs:
       fail-fast: false
       matrix:
         consumer:
-          # repository: the octo-sts scope and the dispatch target.
-          # policy: the octo-sts trust policy name in that repository.
+          # repository: octo-sts scope and dispatch target.
+          # policy: trust policy name in that repository.
           - repository: DataDog/libdatadog-rb
             policy: libdatadog.notify-consumers
     steps:
