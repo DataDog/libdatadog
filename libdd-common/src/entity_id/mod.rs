@@ -51,7 +51,6 @@
 //! 1:name=systemd:/ecs/8cd79a803caf4d2aa945152e934a5c00/8cd79a803caf4d2aa945152e934a5c00-1053176469
 //! ```
 
-use crate::config::parse_env;
 use std::sync::LazyLock;
 
 const EXTERNAL_ENV_ENVIRONMENT_VARIABLE: &str = "DD_EXTERNAL_ENV";
@@ -94,10 +93,10 @@ pub fn get_entity_id() -> Option<&'static str> {
 }
 
 pub static DD_EXTERNAL_ENV: LazyLock<Option<&'static str>> = LazyLock::new(|| {
-    let leaked: Option<&'static str> = parse_env::str_not_empty(EXTERNAL_ENV_ENVIRONMENT_VARIABLE)
-        .map(|s| &*Box::leak(s.into_boxed_str()));
-
-    leaked
+    std::env::var(EXTERNAL_ENV_ENVIRONMENT_VARIABLE)
+        .ok()
+        .filter(|s| !s.is_empty())
+        .map(|s| &*Box::leak(s.into_boxed_str()))
 });
 
 /// Returns an iterator of entity-related headers (container-id, entity-id, external-env)

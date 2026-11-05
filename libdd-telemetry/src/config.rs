@@ -122,8 +122,8 @@ fn env_str_not_empty(name: &str) -> Option<String> {
     std::env::var(name).ok().filter(|s| !s.is_empty())
 }
 
-/// Settings gathers configuration options we receive from the environment
-/// (either through env variable, or that could be set from the )
+/// Settings gathers configuration options from the environment, plus a
+/// filesystem check for the agent's Unix socket.
 #[derive(Debug)]
 pub struct Settings {
     // Env parameter
