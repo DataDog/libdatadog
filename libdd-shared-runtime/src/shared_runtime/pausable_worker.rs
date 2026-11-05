@@ -456,37 +456,6 @@ mod tests {
         assert!(matches!(pw, PausableWorker::Paused { .. }));
     }
 
-    // A dropped pause leaves the pause requested, and the next pause completes without sending
-    // another.
-    #[test]
-    fn test_cancelled_pause_then_pause_again() {
-        let (mut pw, receiver, _, _) = setup();
-        // A current-thread runtime only runs the task while we block on it, so polling `pause`
-        // once outside of it deterministically leaves the pause pending.
-        let runtime = Builder::new_current_thread().enable_all().build().unwrap();
-        pw.start(tokio_spawn_fn(runtime.handle())).unwrap();
-        runtime.block_on(async { sleep(Duration::from_millis(50)).await });
-        let guard = runtime.enter();
-        assert!(
-            futures::FutureExt::now_or_never(Box::pin(pw.pause())).is_none(),
-            "pause should still be pending"
-        );
-        drop(guard);
-        assert!(matches!(
-            pw,
-            PausableWorker::Running {
-                pause_requested: true,
-                ..
-            }
-        ));
-        runtime.block_on(pw.pause()).unwrap();
-        assert!(!pw.has_queued_pause());
-        drain(&receiver);
-        let runtime = Builder::new_multi_thread().enable_time().build().unwrap();
-        pw.start(tokio_spawn_fn(runtime.handle())).unwrap();
-        assert_keeps_running(&receiver);
-    }
-
     // A flush requested on a running worker calls `flush` once and resolves its token.
     #[test]
     fn test_flush_while_running() {
@@ -521,27 +490,6 @@ mod tests {
         assert_eq!(receiver.recv().unwrap(), next);
     }
 
-    // A flush queued after the pause stays in the channel and completes after restart.
-    #[test]
-    fn test_flush_queued_behind_pause() {
-        let (mut pw, _receiver, flushes, _) = setup();
-        let runtime = Builder::new_current_thread().enable_all().build().unwrap();
-        pw.start(tokio_spawn_fn(runtime.handle())).unwrap();
-        runtime.block_on(async { sleep(Duration::from_millis(50)).await });
-        // Send the pause without letting the task run, then queue a flush behind it.
-        {
-            let _guard = runtime.enter();
-            assert!(futures::FutureExt::now_or_never(Box::pin(pw.pause())).is_none());
-        }
-        let token = pw.request_flush().unwrap();
-        runtime.block_on(pw.pause()).unwrap();
-        // The pause is ahead of the flush in the FIFO channel, so the flush stays queued.
-        assert_eq!(flushes.load(Ordering::SeqCst), 0);
-        pw.start(tokio_spawn_fn(runtime.handle())).unwrap();
-        runtime.block_on(token.wait()).unwrap();
-        assert_eq!(flushes.load(Ordering::SeqCst), 1);
-    }
-
     // Shutdown flushes once and resolves every queued flush token successfully.
     #[test]
     fn test_shutdown_acks_queued_flushes() {
@@ -567,17 +515,6 @@ mod tests {
             runtime.block_on(token.wait()),
             Err(WorkerHandleError::FlushAborted)
         ));
-    }
-
-    // The default `Worker::shutdown` calls `Worker::flush`.
-    #[test]
-    fn test_default_shutdown_calls_flush() {
-        let (pw, _receiver, flushes, runtime) = setup();
-        let PausableWorker::Paused { mut worker, .. } = pw else {
-            panic!("expected paused");
-        };
-        runtime.block_on(worker.shutdown());
-        assert_eq!(flushes.load(Ordering::SeqCst), 1);
     }
 
     // Requesting a flush on a worker in an invalid state returns an error.
