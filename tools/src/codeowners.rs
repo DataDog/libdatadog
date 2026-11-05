@@ -11,8 +11,9 @@
 //!   a pattern without any `/` matches at any depth
 //! - a trailing `/` marks a directory pattern: it matches everything inside the matched directory,
 //!   not the directory path itself
-//! - a pattern naming a directory matches everything beneath it (gitignore inheritance), whether or
-//!   not it carries a trailing slash
+//! - a rooted literal path naming a directory matches everything beneath it (gitignore
+//!   inheritance); unlike gitignore, a component glob does not extend into subdirectories: GitHub
+//!   documents that `docs/*` does not match `docs/build-app/troubleshooting.md`
 //! - `*` and `?` are wildcards within a single path component
 //!
 //! Owner validity (handles exist and have write access) is GitHub's own
@@ -85,9 +86,12 @@ pub fn glob_match(pattern: &str, text: &str) -> bool {
 
 /// Whether a CODEOWNERS `pattern` matches a repository-relative `path`.
 pub fn matches(pattern: &str, path: &str) -> bool {
-    let anchored = pattern.starts_with('/');
+    let leading = pattern.starts_with('/');
     let core = pattern.trim_start_matches('/').trim_end_matches('/');
     let trailing = pattern.ends_with('/');
+    // gitignore: a slash at the start or in the middle anchors the pattern to
+    // the repository root; a slash only at the end does not
+    let rooted = leading || core.contains('/');
     let comps: Vec<&str> = if core.is_empty() {
         Vec::new()
     } else {
@@ -98,16 +102,21 @@ pub fn matches(pattern: &str, path: &str) -> bool {
     if trailing {
         // directory pattern: the path must live strictly inside a matched dir
         let n = comps.len();
-        if anchored {
+        if rooted {
             return pcs.len() > n && (0..n).all(|i| glob_match(comps[i], pcs[i]));
         }
         return (0..pcs.len())
             .any(|i| i + n < pcs.len() && (0..n).all(|j| glob_match(comps[j], pcs[i + j])));
     }
-    if anchored || core.contains('/') {
-        // rooted pattern: exact file match, or anything under a matched dir
+    if rooted {
+        // exact component-wise match; a literal prefix naming a directory also
+        // matches everything beneath it (component globs do not extend)
         let m = comps.len();
-        return pcs.len() >= m && (0..m).all(|i| glob_match(comps[i], pcs[i]));
+        if pcs.len() == m && (0..m).all(|i| glob_match(comps[i], pcs[i])) {
+            return true;
+        }
+        let literal = comps.iter().all(|c| !c.contains(['*', '?']));
+        return literal && pcs.len() > m && (0..m).all(|i| comps[i] == pcs[i]);
     }
     // single component, matches at any depth (file or dir, contents inherit)
     pcs.iter().any(|c| glob_match(comps[0], c))
@@ -147,6 +156,9 @@ mod tests {
             "fuzz/",
             "libdd-trace-normalization/fuzz/Cargo.toml"
         ));
+        // an internal slash anchors to the root like a leading one
+        assert!(matches("tests/wasm/", "tests/wasm/foo.rs"));
+        assert!(!matches("tests/wasm/", "archive/tests/wasm/foo.rs"));
     }
 
     #[test]
@@ -171,12 +183,15 @@ mod tests {
     }
 
     #[test]
-    fn anchored_pattern_without_trailing_slash_inherits() {
+    fn rooted_literal_prefix_inherits_glob_does_not() {
         // gitignore: a pattern matching a directory owns its subtree
         assert!(matches("/docs", "docs/a/b.md"));
         assert!(matches("/examples", "examples/ffi/ffe.c"));
+        assert!(!matches("/docs", "documentation/a.md"));
+        // a component glob only matches at its own depth (GitHub documents
+        // that docs/* does not match docs/build-app/troubleshooting.md)
         assert!(matches(".cargo/*", ".cargo/config.toml"));
-        assert!(matches(".cargo/*", ".cargo/x/y.rs"));
+        assert!(!matches(".cargo/*", ".cargo/x/y.rs"));
         assert!(!matches(".cargo/*", "other/config.toml"));
     }
 

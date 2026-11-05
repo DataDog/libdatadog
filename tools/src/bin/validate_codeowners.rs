@@ -104,8 +104,10 @@ fn run(relative: Option<&str>) -> Result<()> {
 }
 
 fn tracked_files(root: &Path) -> Result<Vec<String>> {
+    // -z: NUL-delimited and unquoted (with the default core.quotePath, git
+    // C-quotes non-ASCII names, which would not match any pattern)
     let out = Command::new("git")
-        .arg("ls-files")
+        .args(["ls-files", "-z"])
         .current_dir(root)
         .output()
         .context("running git ls-files")?;
@@ -113,7 +115,11 @@ fn tracked_files(root: &Path) -> Result<Vec<String>> {
         bail!("git ls-files failed: {}", out.status);
     }
     let stdout = String::from_utf8(out.stdout).context("git ls-files output is not UTF-8")?;
-    Ok(stdout.lines().map(str::to_string).collect())
+    Ok(stdout
+        .split('\0')
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect())
 }
 
 fn main() -> ExitCode {
