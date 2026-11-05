@@ -5,10 +5,8 @@ use std::error::Error;
 
 #[cfg(feature = "generate-protobuf")]
 use std::{
-    env,
-    fs::File,
-    io::{Read, Write},
-    path::Path,
+    env, fs,
+    path::{Path, PathBuf},
 };
 
 #[cfg(feature = "generate-protobuf")]
@@ -30,15 +28,28 @@ fn main() -> Result<(), Box<dyn Error>> {
 
         let mut config = prost_build::Config::new();
 
-        let cur_working_dir = env::var("CARGO_MANIFEST_DIR")?;
-        let output_path = Path::new(&cur_working_dir).join("src");
-
-        config.out_dir(output_path.clone());
+        // Stage prost's output in OUT_DIR instead of letting it write straight into
+        // src/: the generated file is checked in, and rewriting it with unchanged
+        // content still bumps its mtime, which dirties every feature combination of
+        // this crate (and its dependents) on the next build. In CI, the
+        // `--all-features` pass regenerates it, and the bin_tests prebuild step that
+        // runs right after rebuilds ddsketch -> telemetry -> crashtracker -> bin_tests
+        // and half the test artifacts for nothing, twice per pipeline, per platform.
+        let staging_dir = PathBuf::from(env::var("OUT_DIR")?);
+        config.out_dir(&staging_dir);
 
         println!("cargo:rerun-if-changed=src/pb/DDSketch.proto");
         config.compile_protos(&["src/pb/DDSketch.proto"], &["src/"])?;
 
-        prepend_to_file(HEADER.as_bytes(), &output_path.join("pb.rs"))?;
+        let generated = [
+            HEADER.as_bytes(),
+            fs::read(staging_dir.join("pb.rs"))?.as_slice(),
+        ]
+        .concat();
+        let dest = Path::new(&env::var("CARGO_MANIFEST_DIR")?)
+            .join("src")
+            .join("pb.rs");
+        write_if_changed(&dest, &generated)?;
     }
     #[cfg(not(feature = "generate-protobuf"))]
     {
@@ -48,13 +59,17 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// Writes `contents` to `dest` only when they differ from what's already there, so
+/// regenerating an unchanged file leaves its mtime — and cargo's fingerprints for
+/// everything downstream — alone. Missing files are written unconditionally.
 #[cfg(feature = "generate-protobuf")]
-fn prepend_to_file(data: &[u8], file_path: &Path) -> Result<(), Box<dyn Error>> {
-    let mut f = File::open(file_path)?;
-    let mut content = data.to_owned();
-    f.read_to_end(&mut content)?;
-
-    let mut f = File::create(file_path)?;
-    f.write_all(content.as_slice())?;
+fn write_if_changed(dest: &Path, contents: &[u8]) -> Result<(), Box<dyn Error>> {
+    if fs::read(dest)
+        .map(|existing| existing == contents)
+        .unwrap_or(false)
+    {
+        return Ok(());
+    }
+    fs::write(dest, contents)?;
     Ok(())
 }
