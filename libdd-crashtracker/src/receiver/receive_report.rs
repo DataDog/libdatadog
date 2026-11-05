@@ -101,8 +101,9 @@ pub(crate) enum StdinState {
     RuntimeStackFrame(Vec<StackFrame>),
     RuntimeStackString(Vec<String>),
     Message,
-    /// Carries the TLS slot address parsed from the collector's emission.
-    OtelThreadCtxPtr(Option<u64>),
+    /// A single OTel thread context record. The tid comes from the begin
+    /// marker; the hex-encoded 640-byte record is on the next line.
+    OtelThreadCtx(i32),
 }
 
 /// A state machine that processes data from the crash-tracker collector line by
@@ -339,17 +340,30 @@ fn process_line(
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_WHOLE_STACKTRACE) => {
             StdinState::WholeStackTrace
         }
-        StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_OTEL_THREAD_CTX_PTR) => {
-            StdinState::OtelThreadCtxPtr(None)
+        StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_OTEL_THREAD_CTX) => {
+            // "DD_CRASHTRACK_BEGIN_OTEL_THREAD_CTX <tid>"
+            let tid = line
+                .strip_prefix(DD_CRASHTRACK_BEGIN_OTEL_THREAD_CTX)
+                .unwrap_or("")
+                .trim()
+                .parse::<i32>()
+                .unwrap_or(0);
+            StdinState::OtelThreadCtx(tid)
         }
-        StdinState::OtelThreadCtxPtr(parsed)
-            if line.starts_with(DD_CRASHTRACK_END_OTEL_THREAD_CTX_PTR) =>
-        {
-            builder.otel_tls_slot_addr = parsed;
+        StdinState::OtelThreadCtx(_) if line.starts_with(DD_CRASHTRACK_END_OTEL_THREAD_CTX) => {
             StdinState::Waiting
         }
-        StdinState::OtelThreadCtxPtr(_) => {
-            StdinState::OtelThreadCtxPtr(line.trim().parse::<u64>().ok())
+        StdinState::OtelThreadCtx(tid) => {
+            #[cfg(target_os = "linux")]
+            if let Some(ctx) = decode_hex_otel_record(tid, line.trim()) {
+                builder
+                    .otel_thread_contexts
+                    .get_or_insert_with(Vec::new)
+                    .push(ctx);
+            }
+            #[cfg(not(target_os = "linux"))]
+            let _ = tid;
+            StdinState::OtelThreadCtx(tid)
         }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_DONE) => {
             builder.with_incomplete(false)?;
@@ -530,6 +544,17 @@ pub(crate) async fn receive_report_from_stream(
     }
 
     enrich_thread_name(&mut builder)?;
+
+    #[cfg(target_os = "linux")]
+    if let Some(ref mut contexts) = builder.otel_thread_contexts
+        && let Some(proc_info) = builder.proc_info.as_ref()
+    {
+        let pid = proc_info.pid;
+        for ctx in contexts.iter_mut() {
+            ctx.thread_name = crate::otel_tls_reader::read_thread_name(pid, ctx.tid);
+        }
+    }
+
     builder.with_os_info_this_machine()?;
 
     // Without a config, we don't even know the endpoint to transmit to.  Not much to do to recover.
@@ -564,22 +589,6 @@ pub(crate) async fn receive_report_from_stream(
         ) {
             let _ =
                 builder.with_log_message(format!("Failed to collect thread contexts: {e}"), true);
-        }
-    }
-
-    // Collect OTel thread contexts for all threads. The collector sent the TLS
-    // slot address; we derive the TLS offset from the crashing thread's TP
-    // register, then read each thread's TLS slot and record via /proc/<pid>/mem.
-    #[cfg(target_os = "linux")]
-    if !access.is_restricted()
-        && let Some(slot_addr) = builder.otel_tls_slot_addr
-        && let Some(proc_info) = builder.proc_info.as_ref()
-    {
-        let pid = proc_info.pid;
-        let crashing_tid = proc_info.tid.unwrap_or(proc_info.pid) as i32;
-        if let Err(e) = collect_otel_thread_contexts(&mut builder, pid, crashing_tid, slot_addr) {
-            let _ = builder
-                .with_log_message(format!("Failed to collect OTel thread contexts: {e}"), true);
         }
     }
 
@@ -703,64 +712,19 @@ fn collect_and_add_thread_contexts(
     Ok(())
 }
 
-/// Read the OTel thread context for all threads in the crashing process.
-///
-/// 1. Ptrace-attach to the crashing thread to read its TP register
-/// 2. Compute `tls_offset = slot_addr - crashing_TP`
-/// 3. For each thread (including crashing): attach, read TP, compute slot, read record from
-///    `/proc/<pid>/mem`, detach
+/// Decode a hex-encoded 640-byte OTel record into an `OtelThreadContext`.
 #[cfg(target_os = "linux")]
-fn collect_otel_thread_contexts(
-    builder: &mut CrashInfoBuilder,
-    pid: u32,
-    crashing_tid: i32,
-    slot_addr: u64,
-) -> anyhow::Result<()> {
-    use crate::ptrace_collector::{
-        attach_thread, detach_thread, enumerate_threads, read_thread_pointer,
-    };
+fn decode_hex_otel_record(tid: i32, hex: &str) -> Option<crate::crash_info::OtelThreadContext> {
+    use crate::otel_tls_reader::OTEL_RECORD_SIZE;
 
-    let attach_timeout = core::time::Duration::from_millis(100);
-
-    // Attach to the crashing thread first to read its TP and derive the TLS offset.
-    let deadline = std::time::Instant::now() + attach_timeout;
-    attach_thread(crashing_tid, deadline)
-        .map_err(|e| anyhow::anyhow!("attach crashing thread: {e}"))?;
-    let crashing_tp = read_thread_pointer(crashing_tid);
-    let _ = detach_thread(crashing_tid);
-    let crashing_tp = crashing_tp.map_err(|e| anyhow::anyhow!("read TP: {e}"))?;
-
-    let tls_offset = slot_addr as i64 - crashing_tp as i64;
-
-    let tids =
-        enumerate_threads(pid as i32).map_err(|e| anyhow::anyhow!("enumerate threads: {e}"))?;
-
-    let mut otel_contexts = Vec::new();
-    for tid in tids {
-        let deadline = std::time::Instant::now() + attach_timeout;
-        if attach_thread(tid, deadline).is_err() {
-            continue;
-        }
-        let tp = read_thread_pointer(tid);
-        let _ = detach_thread(tid);
-        let Some(tp) = tp.ok() else { continue };
-
-        let this_slot = (tp as i64).wrapping_add(tls_offset) as u64;
-        if let Ok(record_ptr) = crate::otel_tls_reader::read_tls_slot_value(pid, this_slot)
-            && record_ptr != 0
-            && let Ok(Some(mut ctx)) =
-                crate::otel_tls_reader::read_otel_thread_context(pid, tid, record_ptr)
-        {
-            ctx.thread_name = crate::otel_tls_reader::read_thread_name(pid, tid);
-            otel_contexts.push(ctx);
-        }
+    if hex.len() != OTEL_RECORD_SIZE * 2 {
+        return None;
     }
-
-    if !otel_contexts.is_empty() {
-        let _ = builder.with_otel_thread_contexts(otel_contexts);
+    let mut record = [0u8; OTEL_RECORD_SIZE];
+    for (i, byte) in record.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).ok()?;
     }
-
-    Ok(())
+    crate::otel_tls_reader::decode_record(tid, &record)
 }
 
 /// Recover callers before a collector-emitted stack replaces the one that has them.

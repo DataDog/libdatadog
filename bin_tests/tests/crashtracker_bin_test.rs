@@ -3035,9 +3035,9 @@ fn test_crash_tracking_otel_thread_ctx() {
     let artifacts_map = fetch_built_artifacts(&artifacts.as_slice()).unwrap();
 
     let validator: ValidatorFn = Box::new(move |payload, _fixtures| {
-        let contexts = payload["otel_thread_contexts"]
+        let contexts = payload["experimental"]["otel_thread_contexts"]
             .as_array()
-            .expect("otel_thread_contexts should be an array");
+            .expect("experimental.otel_thread_contexts should be an array");
         assert!(
             contexts.len() >= 3,
             "expected at least 3 OTel thread contexts (main + 2 workers), got {}",
