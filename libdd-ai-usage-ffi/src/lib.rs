@@ -285,12 +285,25 @@ fn projection_with(
     })?;
     let observation = document.get(profile.input_key()).unwrap_or(&Json::Null);
     let projection = project_result(profile, observation)?;
-    let deployment = match document.get("deployment_attributes") {
-        None | Some(Json::Null) => defaults
-            .deployment_attributes
-            .as_ref()
-            .unwrap_or(&Json::Null),
-        Some(attributes) => attributes,
+    // The batch's attributes, with the document's on top: a document states
+    // only what differs, and `null` for an attribute removes the batch's.
+    let merged;
+    let deployment = match (
+        document.get("deployment_attributes"),
+        &defaults.deployment_attributes,
+    ) {
+        (None | Some(Json::Null), Some(defaults)) => defaults,
+        (None | Some(Json::Null), None) => &Json::Null,
+        (Some(Json::Object(own)), Some(Json::Object(defaults))) => {
+            let mut all = defaults.clone();
+            all.extend(
+                own.iter()
+                    .map(|(name, value)| (name.clone(), value.clone())),
+            );
+            merged = Json::Object(all);
+            &merged
+        }
+        (Some(attributes), _) => attributes,
     };
     let mut projection = with_deployment_attributes_json(projection, deployment)?;
     match document.get("metrics") {
@@ -665,8 +678,12 @@ pub unsafe extern "C" fn ddog_ai_usage_batch_add_request(
 
 /// Set the metric list `input[..input_len]` (a JSON array of names, as a
 /// request document's `metrics` states it) that `batch` keeps of every
-/// document stating none. `null` or empty input keeps every metric again.
-/// Parsed once here rather than in every document.
+/// document stating none. Parsed once here rather than in every document.
+///
+/// **An empty list `[]` keeps no metric**, as `"metrics": []` in a document
+/// does: every observation added then projects to nothing. To keep every
+/// metric again, call [`ddog_ai_usage_batch_reset_metrics`] (or pass `null`
+/// or zero-length input, which do the same).
 ///
 /// # Safety
 ///
@@ -718,10 +735,31 @@ pub unsafe extern "C" fn ddog_ai_usage_batch_set_metrics(
     }
 }
 
+/// Clear the metric list of `batch`, so it keeps every metric of a document
+/// stating none, as a new batch does. A null batch is a no-op.
+///
+/// # Safety
+///
+/// `batch` must be null or a live batch from [`ddog_ai_usage_batch_new`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ddog_ai_usage_batch_reset_metrics(batch: *const Batch) {
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        // SAFETY: the caller guarantees a live batch or null.
+        if let Some(batch) = unsafe { batch.as_ref() }
+            && let Ok(mut settings) = batch.settings.lock()
+        {
+            settings.metrics = None;
+        }
+    }));
+}
+
 /// Set the deployment attributes `input[..input_len]` (a JSON object, as a
 /// request document's `deployment_attributes` states it) that `batch`
-/// applies to every document stating none, such as a gateway's fixed
-/// `service`, `env` and `version`. Checked once here: an unknown attribute
+/// applies to every document, such as a gateway's fixed `service`, `env`
+/// and `version`. A document's own `deployment_attributes` are merged on
+/// top: an attribute it states replaces the batch's, `null` for an
+/// attribute removes the batch's, and the others are kept, so a document
+/// states only what differs (a per-request `user.id`). Checked once here: an unknown attribute
 /// is [`Status::Rejected`] with `deployment_attribute_unknown`, and the
 /// setting is left as it was. `null` or empty input clears them.
 ///

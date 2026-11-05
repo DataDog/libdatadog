@@ -1026,3 +1026,104 @@ fn a_request_is_added_whole_or_not_at_all() {
         ddog_ai_usage_batch_drop(batch);
     }
 }
+
+/// The DogStatsD lines `batch` holds, taken.
+///
+/// # Safety
+///
+/// `batch` must be a live batch.
+unsafe fn taken_lines(batch: *const Batch) -> String {
+    let mut out = empty();
+    // SAFETY: forwarded from the caller.
+    unsafe {
+        ddog_ai_usage_batch_take_dogstatsd_text(
+            batch,
+            ptr::null(),
+            0,
+            8192,
+            ptr::null_mut(),
+            &mut out,
+        )
+    };
+    take(out)
+}
+
+/// Set a batch setting from JSON text.
+///
+/// # Safety
+///
+/// `batch` must be a live batch.
+unsafe fn apply(
+    setter: unsafe extern "C" fn(*const Batch, *const u8, usize, *mut Buffer) -> Status,
+    batch: *const Batch,
+    input: &str,
+) -> Status {
+    let mut out = empty();
+    // SAFETY: forwarded from the caller.
+    let status = unsafe { setter(batch, input.as_ptr(), input.len(), &mut out) };
+    take(out);
+    status
+}
+
+#[test]
+fn batch_deployment_attributes_merge_with_the_document() {
+    let bare = r#"{"profile": "gen_ai.client.provider_attempt@0.1.0",
+        "observation": {"operation_name": "chat", "provider_name": "openai",
+            "duration_seconds": 0.5, "streaming": false, "input_tokens": 10, "input_basis": "includes_cache",
+            "output_tokens": 2, "output_basis": "includes_reasoning", "observation_point": "gateway"}"#;
+    let with = |attributes: &str| format!("{bare}, \"deployment_attributes\": {attributes}}}");
+    let mut batch = ptr::null_mut();
+    // SAFETY: `batch` is written by `batch_new` and used until dropped.
+    unsafe {
+        assert_eq!(ddog_ai_usage_batch_new(&mut batch), Status::Ok);
+        let defaults = r#"{"trajectory.gateway.route": "chat", "trajectory.team.id": "ml"}"#;
+        assert_eq!(
+            apply(
+                ddog_ai_usage_batch_set_deployment_attributes,
+                batch,
+                defaults
+            ),
+            Status::Ok
+        );
+        assert_eq!(
+            apply(
+                ddog_ai_usage_batch_set_metrics,
+                batch,
+                r#"["gen_ai.client.inference.usage.input_tokens"]"#
+            ),
+            Status::Ok
+        );
+        // The document adds a user and overrides the team; the route stays.
+        let document = with(r#"{"user.id": "ada@example.com", "trajectory.team.id": "infra"}"#);
+        ddog_ai_usage_batch_add_quiet(batch, document.as_ptr(), document.len(), ptr::null_mut());
+        let lines = taken_lines(batch);
+        assert!(lines.contains("trajectory.gateway.route:chat"), "{lines}");
+        assert!(lines.contains("trajectory.team.id:infra"), "{lines}");
+        assert!(!lines.contains("trajectory.team.id:ml"), "{lines}");
+        assert!(lines.contains("user.id:ada_example.com"), "{lines}");
+        // `null` removes the batch's attribute for this document only.
+        let document = with(r#"{"trajectory.gateway.route": null}"#);
+        ddog_ai_usage_batch_add_quiet(batch, document.as_ptr(), document.len(), ptr::null_mut());
+        let lines = taken_lines(batch);
+        assert!(!lines.contains("trajectory.gateway.route"), "{lines}");
+        assert!(lines.contains("trajectory.team.id:ml"), "{lines}");
+        let document = format!("{bare}}}");
+        ddog_ai_usage_batch_add_quiet(batch, document.as_ptr(), document.len(), ptr::null_mut());
+        let lines = taken_lines(batch);
+        assert!(lines.contains("trajectory.gateway.route:chat"), "{lines}");
+
+        // `[]` keeps no metric; `null`, empty input or the reset call keep
+        // every metric again.
+        assert_eq!(
+            apply(ddog_ai_usage_batch_set_metrics, batch, "[]"),
+            Status::Ok
+        );
+        ddog_ai_usage_batch_add_quiet(batch, document.as_ptr(), document.len(), ptr::null_mut());
+        assert!(ddog_ai_usage_batch_is_empty(batch));
+        ddog_ai_usage_batch_reset_metrics(batch);
+        ddog_ai_usage_batch_add_quiet(batch, document.as_ptr(), document.len(), ptr::null_mut());
+        assert!(ddog_ai_usage_batch_len(batch) > 1);
+        ddog_ai_usage_batch_reset_metrics(ptr::null());
+        ddog_ai_usage_batch_drop(batch);
+    }
+}
