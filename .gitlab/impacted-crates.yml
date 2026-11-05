@@ -82,3 +82,94 @@ compute_impacted_crates:
     paths:
       - changed_files.txt
     expire_in: 1 week
+
+# Computes which *individual benchmarks* (well: benchmark clusters — every bench
+# binary, then the first `/`-segment of each criterion bench ID inside it) a PR
+# should run, by building the affected bench crates with `-C
+# instrument-coverage`, running every cluster once (criterion `--test`), and
+# intersecting the executed-function line coverage with the PR's changed lines.
+# The tool lives in .github/actions/bench-selector (see its sources for the
+# design and the fail-conservative rules).
+#
+# The benchmarks job consumes bench-selection.json when this job succeeds;
+# anything else (missing output, non-success status, undetermined impacted
+# crates, workspace-level changes) makes it fall back to the crate-level
+# selection it already had, so this job can never reduce what runs on failure.
+compute_bench_selection:
+  stage: test
+  tags: ["arch:amd64"]
+  image:
+    name: $BASE_CI_IMAGE
+  needs:
+    # Optional: absent on main / release / merge-queue pipelines, and this job
+    # never runs there either (same rules as compute_impacted_crates).
+    - job: compute_impacted_crates
+      artifacts: true
+      optional: true
+  rules:
+    - !reference [.untrusted_ref_guard, rules]
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: never
+    - if: '$CI_COMMIT_BRANCH =~ /^(release|hotfix)\//'
+      when: never
+    - if: '$CI_EXTERNAL_PULL_REQUEST_SOURCE_BRANCH_NAME =~ /^(release|hotfix)\//'
+      when: never
+    - if: '$CI_COMMIT_BRANCH =~ /^mq-working-branch-/'
+      when: never
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+      when: never
+    - when: on_success
+  variables:
+    # select diffs against origin/main; full history makes the merge-base resolve.
+    GIT_DEPTH: 0
+  # Same posture as compute_impacted_crates: a failure falls back downstream
+  # instead of failing the pipeline.
+  allow_failure: true
+  script:
+    # Always emit a dotenv so the benchmarks job always receives its needed
+    # artifacts and falls back to crate-level selection on anything unexpected.
+    - |
+      set -eu
+      # Write the dotenv up front ("failed" by default) so the artifact always
+      # exists, even if a later step dies; each early exit rewrites it.
+      printf 'BENCH_SELECTION_STATUS=failed\n' | tee bench-selection.env
+      status() { printf 'BENCH_SELECTION_STATUS=%s\n' "$1" | tee bench-selection.env; }
+      if [[ "${IMPACTED_STATUS:-}" != "success" || -z "${AFFECTED_CRATES:-}" ]]; then
+        echo "Impacted crates undetermined -> benchmarks fall back to crate-level selection."
+        status skipped
+        exit 0
+      fi
+      if [[ "${WORKSPACE_LEVEL_CHANGE:-}" == "true" ]]; then
+        echo "Workspace-level change -> full benchmark suite."
+        status skipped
+        exit 0
+      fi
+      # The coverage pass needs llvm-profdata/llvm-cov matching rustc: the
+      # llvm-tools-preview component of the active (MSRV) toolchain provides
+      # them (bench-selector prefers it over any system LLVM, whose profile
+      # format may not match).
+      rustup component add llvm-tools-preview
+      (cd .github/actions && cargo build --release -p bench-selector)
+      SELECTOR=./.github/actions/target/release/bench-selector
+      # Restrict to the crates this PR affects; inventory/coverage skip the rest.
+      CRATES="$(jq -r '.[]' <<< "${AFFECTED_CRATES}" | paste -sd ',')"
+      "$SELECTOR" inventory --workspace-root . --crates "$CRATES" --out bench-inventory.json
+      "$SELECTOR" coverage \
+        --inventory bench-inventory.json \
+        --target-dir target/bench-selection \
+        --out bench-coverage.json
+      "$SELECTOR" select \
+        --inventory bench-inventory.json \
+        --coverage bench-coverage.json \
+        --base-ref main \
+        --out bench-selection.json
+      status success
+  artifacts:
+    when: always
+    reports:
+      dotenv: bench-selection.env
+    paths:
+      - bench-selection.json
+      - bench-inventory.json
+      - bench-coverage.json
+    expire_in: 1 week
