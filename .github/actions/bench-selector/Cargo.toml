@@ -1,0 +1,25 @@
+# Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "bench-selector"
+version = "0.1.0"
+edition = "2024"
+rust-version.workspace = true
+description = "Selects which criterion benchmark groups to run on a PR by intersecting one-shot instrumented-coverage of each group with the PR's changed lines"
+homepage = "https://github.com/DataDog/libdatadog/tree/main/.github/actions/bench-selector"
+repository = "https://github.com/DataDog/libdatadog/tree/main/.github/actions/bench-selector"
+publish = false
+
+[dependencies]
+ci-shared = { path = "../ci-shared" }
+anyhow = "1.0"
+clap = { version = "4", features = ["derive", "env"] }
+log = "0.4"
+env_logger = "0.11"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+cargo_metadata = "0.23.1"
+tempfile = "3"
+
+[dev-dependencies]
