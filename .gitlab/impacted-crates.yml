@@ -44,8 +44,10 @@ compute_impacted_crates:
     - |
       export GITHUB_OUTPUT="$(mktemp)"
       git fetch --no-tags origin main || :
+      # --pr-merge: this pipeline runs on the PR head, so compute the changes the PR brings when
+      # merged into main (from GitHub's test merge commit), not those since it branched off.
       if (cd .github/actions && cargo build --release -p crates-reporter) \
-         && ./.github/actions/target/release/crates-reporter main; then
+         && ./.github/actions/target/release/crates-reporter --pr-merge main; then
         :
       else
         echo "status=skipped" >> "$GITHUB_OUTPUT"
@@ -55,9 +57,17 @@ compute_impacted_crates:
       IMPACTED_STATUS=$(sed -n 's/^status=//p' "$GITHUB_OUTPUT" | tail -n1)
       : "${AFFECTED_CRATES:=[]}"
       : "${IMPACTED_STATUS:=skipped}"
+      DIFF_BASE=$(sed -n 's/^diff_base=//p' "$GITHUB_OUTPUT" | tail -n1)
+      DIFF_HEAD=$(sed -n 's/^diff_head=//p' "$GITHUB_OUTPUT" | tail -n1)
       printf 'AFFECTED_CRATES=%s\nIMPACTED_STATUS=%s\n' "$AFFECTED_CRATES" "$IMPACTED_STATUS" | tee impacted-crates.env
-      # Record the changed files so downstream jobs can make path-based decisions.
-      git diff --name-only origin/main...HEAD > changed_files.txt || : > changed_files.txt
+      # Record the changed files so downstream jobs can make path-based decisions, from the same
+      # revisions as the crates when crates-reporter got that far.
+      if [[ -n "$DIFF_BASE" && -n "$DIFF_HEAD" ]]; then
+        printf 'IMPACTED_DIFF_BASE=%s\nIMPACTED_DIFF_HEAD=%s\n' "$DIFF_BASE" "$DIFF_HEAD" | tee -a impacted-crates.env
+        git diff --name-only "$DIFF_BASE" "$DIFF_HEAD" > changed_files.txt || : > changed_files.txt
+      else
+        git diff --name-only origin/main...HEAD > changed_files.txt || : > changed_files.txt
+      fi
       # Classifications for the downstream pipeline, which cannot read changed_files.txt.
       # - FFI_TOUCHED=false skips packaging. Absent means undetermined, making the the full chain run.
       # - WORKSPACE_LEVEL_CHANGE indicates if there are workspace-level changes that can affect everything.

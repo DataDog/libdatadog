@@ -10,12 +10,14 @@
 //!   changed_crates         - JSON array
 //!   affected_crates        – JSON array of {name, version, path, manifest}
 //!   affected_crates_count  – integer
+//!   diff_base, diff_head   – the revisions whose diff the crates were computed from
 
 use anyhow::Result;
 use cargo_metadata::Package;
 use cargo_metadata::camino::Utf8Path;
 use ci_shared::crate_detection::CrateInfo;
 use ci_shared::git;
+use ci_shared::git::DiffRange;
 use ci_shared::github_output::set_output;
 use ci_shared::workspace;
 use clap::Parser;
@@ -26,6 +28,13 @@ use std::collections::HashSet;
 struct Args {
     /// Base reference to compare against (e.g. origin/main)
     base_ref: String,
+
+    /// Compute the changes HEAD (a PR head) brings when merged into the base, using GitHub's test
+    /// merge commit for the PR (`refs/pull/<N>/merge`), rather than its changes since the
+    /// merge-base. Falls back to the merge-base when there is no such commit (e.g. conflicts).
+    /// Unneeded in GitHub Actions `pull_request` jobs, which check out that merge commit already.
+    #[arg(long)]
+    pr_merge: bool,
 }
 
 fn main() -> Result<()> {
@@ -39,7 +48,23 @@ fn main() -> Result<()> {
 
     git::fetch_base(&base_ref)?;
 
-    let changed_files = git::changed_files(&base_ref)?;
+    let pr_merge = if args.pr_merge {
+        DiffRange::pr_merge(&base_ref)?
+    } else {
+        None
+    };
+    let range = match pr_merge {
+        Some(range) => range,
+        None => {
+            if args.pr_merge {
+                log::info!("No test merge commit for HEAD into {base_ref}; using the merge-base");
+            }
+            DiffRange::merge_base(&base_ref)?
+        }
+    };
+    log::info!("Diffing {} against {}", range.head, range.base);
+
+    let changed_files = git::changed_files(&range)?;
     log::info!("Changed files: {:?}", changed_files);
 
     let workspace = workspace::load()?;
@@ -51,11 +76,11 @@ fn main() -> Result<()> {
 
     if changed_crates.is_empty() {
         log::info!("Changed crates is empty");
-        if git::has_workflow_changes(&base_ref)? {
+        if git::has_workflow_changes(&range)? {
             log::info!("Workflow files changed, running all tests");
             return set_output("status", "skipped");
         }
-        return build_output(None, None, &base_ref);
+        return build_output(None, None, &base_ref, &range);
     }
 
     let seeds: Vec<String> = changed_crates.iter().map(|c| c.name.clone()).collect();
@@ -66,6 +91,7 @@ fn main() -> Result<()> {
         Some(changed_crates),
         Some(result.into_iter().collect()),
         &base_ref,
+        &range,
     )
 }
 
@@ -105,6 +131,7 @@ fn build_output(
     changed_crates: Option<Vec<CrateInfo>>,
     affected_crates: Option<Vec<String>>,
     base_ref: &str,
+    range: &DiffRange,
 ) -> Result<()> {
     let (changed, changed_len): (String, String) = if let Some(crates) = changed_crates {
         (
@@ -130,6 +157,8 @@ fn build_output(
         log::info!("affected_crates: {:?}", affected);
         log::info!("affected_crates_count: {:?}", affected_len);
         log::info!("base_ref: {:?}", base_ref);
+        log::info!("diff_base: {:?}", range.base);
+        log::info!("diff_head: {:?}", range.head);
     } else {
         set_output("status", "success")?;
         set_output("crates", &changed)?;
@@ -137,6 +166,8 @@ fn build_output(
         set_output("affected_crates", &affected)?;
         set_output("affected_crates_count", &affected_len)?;
         set_output("base_ref", base_ref)?;
+        set_output("diff_base", &range.base)?;
+        set_output("diff_head", &range.head)?;
     }
     Ok(())
 }
