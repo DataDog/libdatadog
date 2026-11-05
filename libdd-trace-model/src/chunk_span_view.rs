@@ -22,7 +22,13 @@ impl<C: TraceChunk> ChunkSpanView<'_, C> {
     /// The chunk to fall back to for `key`, `None` if the span has an attribute for `key` (of any
     /// type) or `key` is a promoted span tag.
     fn chunk_fallback(&self, key: &str) -> Option<&C> {
-        (!is_promoted(key) && !self.span.has_attribute(key)).then_some(self.chunk)
+        self.falls_back(key).then_some(self.chunk)
+    }
+
+    /// Whether a lookup of `key` may fall back to the chunk. Only checked once the chunk has `key`,
+    /// so that a miss on both costs a single span lookup.
+    fn falls_back(&self, key: &str) -> bool {
+        !is_promoted(key) && !self.span.has_attribute(key)
     }
 }
 
@@ -34,28 +40,28 @@ impl<C: TraceChunk> Attributes for ChunkSpanView<'_, C> {
     // A span attribute shadows the chunk attribute with the same key, even of another type, so
     // the typed reads agree with `attributes()`.
     fn attribute_str(&self, key: &str) -> Option<&str> {
-        self.span
-            .attribute_str(key)
-            .or_else(|| self.chunk_fallback(key)?.attribute_str(key))
+        self.span.attribute_str(key).or_else(|| {
+            let value = self.chunk.attribute_str(key)?;
+            self.falls_back(key).then_some(value)
+        })
     }
 
     fn attribute_f64(&self, key: &str) -> Option<f64> {
-        self.span
-            .attribute_f64(key)
-            .or_else(|| self.chunk_fallback(key)?.attribute_f64(key))
+        self.span.attribute_f64(key).or_else(|| {
+            let value = self.chunk.attribute_f64(key)?;
+            self.falls_back(key).then_some(value)
+        })
     }
 
     fn attribute_i64(&self, key: &str) -> Option<i64> {
-        self.span
-            .attribute_i64(key)
-            .or_else(|| self.chunk_fallback(key)?.attribute_i64(key))
+        self.span.attribute_i64(key).or_else(|| {
+            let value = self.chunk.attribute_i64(key)?;
+            self.falls_back(key).then_some(value)
+        })
     }
 
     fn has_attribute(&self, key: &str) -> bool {
-        self.span.has_attribute(key)
-            || self
-                .chunk_fallback(key)
-                .is_some_and(|chunk| chunk.has_attribute(key))
+        self.span.has_attribute(key) || (!is_promoted(key) && self.chunk.has_attribute(key))
     }
 }
 
