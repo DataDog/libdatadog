@@ -7,5 +7,6 @@ members = [
     "crates-reporter",
     "clippy-annotation-reporter",
     "workspace-deps-lint",
+    "bench-selector",
 ]
 resolver = "2"
