@@ -2793,7 +2793,6 @@ dependencies = [
  "serde",
  "static_assertions",
  "tempfile",
- "thiserror 2.0.17",
  "windows-sys 0.52.0",
 ]
 
@@ -3032,7 +3031,6 @@ dependencies = [
  "hyper",
  "libdd-capabilities",
  "libdd-capabilities-impl",
- "libdd-common",
  "libdd-networking",
  "libdd-regex",
  "libdd-remote-config",
