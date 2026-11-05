@@ -1089,7 +1089,7 @@ pub struct FfeFlagEvaluation<'a> {
     /// mapping a key to a string, number or boolean. Rows with different
     /// features are counted separately. Kept regardless of consent. Empty,
     /// invalid or non-object input means no features and never rejects the
-    /// evaluation.
+    /// evaluation. Input larger than one IPC packet is ignored.
     pub features_json: CharSlice<'a>,
 }
 
@@ -1369,9 +1369,7 @@ fn ffe_flag_evaluation_from_ffi(
             EvalError::from_message(event.error_message.try_to_utf8().unwrap_or("GENERAL"))
         },
         runtime_default_used: event.runtime_default_used,
-        features: optional_string_if_valid_utf8(event.features_json)
-            .as_deref()
-            .and_then(canonical_features_json),
+        features: ffi_features(event.features_json),
         observe_full_evaluation_data: event.observe_full_evaluation_data,
         is_degraded: false,
         field_omissions,
@@ -2084,7 +2082,12 @@ mod tests {
             let converted = ffe_flag_evaluation_from_ffi(&event, "svc").unwrap();
             assert_eq!(converted.features.as_deref(), Some(r#"{"a":"x","b":1.0}"#));
         }
-        for raw in ["", "not json", "{}", "[1]"] {
+        // Valid features padded past the packet limit, so only the size guard drops them.
+        let oversized = format!(
+            r#"{{"a":"x"{}}}"#,
+            " ".repeat(libdd_ipc::max_message_size())
+        );
+        for raw in ["", "not json", "{}", "[1]", oversized.as_str()] {
             let mut event = ffi_flag_evaluation("");
             event.features_json = CharSlice::from(raw);
             let converted = ffe_flag_evaluation_from_ffi(&event, "svc").unwrap();
