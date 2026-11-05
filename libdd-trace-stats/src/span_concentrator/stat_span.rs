@@ -148,8 +148,11 @@ impl<'a, T: TraceData> StatSpan<'a> for SpanV1<T> {
             // `span_kind` is a dedicated field rather than an attribute; expose it under the same
             // "span.kind" key that v0.4 spans (and is_span_eligible) look for. `Internal` is the
             // wire-level default and indistinguishable from "unset", so it's treated as no value
-            // here, leaving room for a chunk-level fallback (see `ChunkSpanView`).
-            _ if key == "span.kind" && self.span_kind != SpanKind::Internal => {
+            // here like `Unspecified`, leaving room for a chunk-level fallback (see
+            // `ChunkSpanView`).
+            _ if key == "span.kind"
+                && !matches!(self.span_kind, SpanKind::Internal | SpanKind::Unspecified) =>
+            {
                 Some(self.span_kind.as_meta_str())
             }
             _ => None,
