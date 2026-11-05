@@ -1,0 +1,32 @@
+name: Notify Downstreams
+
+on: # yamllint disable-line rule:truthy
+  push:
+    tags:
+      - "v[0-9]*.[0-9]*.[0-9]*"
+
+# The plain `v<major>.<minor>.<patch>` tags are the libdatadog crate release
+# interface (libdd-* crates use prefixed tags like `libdd-telemetry-v10.0.0`),
+# and consumers such as libdatadog-rb build from the git tag -- the crate is
+# not published to crates.io -- so a tag push is the first moment downstreams
+# can consume a release. Hotfix releases are tagged on maintenance branches
+# (v46.x is the current one) before reaching main, so only this trigger
+# catches every release flow.
+#
+# This workflow runs from the TAGGED COMMIT, which makes it untrusted by
+# design: whoever can push a release tag controls this file's contents. It
+# therefore holds no permissions and mints no tokens. It exists only so that
+# notify-downstreams-dispatch.yml, which watches this run complete via
+# workflow_run and resolves from the default branch, mints and dispatches
+# from reviewed code. See that workflow for the trust chain.
+
+permissions: {}
+
+jobs:
+  notify-downstreams:
+    name: "Notify Downstreams"
+    if: github.event.deleted == false
+    runs-on: ubuntu-latest
+    steps:
+      - name: No-op
+        run: echo "Release tag ${{ github.ref_name }} pushed. notify-downstreams-dispatch.yml picks this up from main."

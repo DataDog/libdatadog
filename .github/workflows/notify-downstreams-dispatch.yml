@@ -1,0 +1,87 @@
+name: Dispatch Release Notification to Downstreams
+
+on: # yamllint disable-line rule:truthy
+  workflow_run: # zizmor: ignore[dangerous-triggers]
+    workflows:
+      # Watched BY NAME: renaming the Notify Downstreams workflow breaks
+      # this hop silently. Rename both together.
+      - Notify Downstreams
+    types:
+      - completed
+
+# The octo-sts mints for downstream repositories live here, on the default
+# branch, on purpose. notify-downstreams.yml (the tag-push trigger) executes
+# from the tagged commit, so a mint there hands the token to whoever can
+# push release tags. workflow_run resolves THIS workflow from the default
+# branch, so the minting code is the reviewed definition from main, and each
+# downstream trust policy pins this file to refs/heads/main. The triggering
+# run decides only that a push happened. This workflow's guards decide
+# everything else, and only main's code can change them.
+#
+# Adding a downstream: add one matrix entry below and create the matching
+# octo-sts trust policy in the downstream repository.
+
+permissions: {}
+
+env:
+  VERSION: ${{ github.event.workflow_run.head_branch }}
+
+jobs:
+  validate:
+    name: "Validate release tag"
+    if: >-
+      ${{ github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_repository.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    outputs:
+      skip: ${{ steps.check.outputs.skip }}
+    steps:
+      # The triggering run carries only the push event and the tag name. The
+      # version comes from the tag ref itself, and its existence is checked
+      # against the repository. Validate both before minting anything.
+      - name: Validate version and tag
+        id: check
+        run: |
+          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::notice::${VERSION} is not a plain release tag. Nothing to notify."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ -z "$(git ls-remote https://github.com/DataDog/libdatadog "refs/tags/${VERSION}")" ]; then
+            echo "::error::Tag ${VERSION} does not exist."
+            exit 1
+          fi
+
+  dispatch:
+    name: "Notify ${{ matrix.consumer.repository }}"
+    needs: validate
+    if: needs.validate.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        consumer:
+          # repository: the octo-sts scope and the dispatch target.
+          # policy: the octo-sts trust policy name in that repository.
+          - repository: DataDog/libdatadog-rb
+            policy: libdatadog.notify-consumers
+    steps:
+      - name: Get GitHub Token via dd-octo-sts
+        id: generate-token
+        uses: DataDog/dd-octo-sts-action@acaa02eee7e3bb0839e4272dacb37b8f3b58ba80 # v1.0.3
+        with:
+          scope: ${{ matrix.consumer.repository }}
+          policy: ${{ matrix.consumer.policy }}
+
+      - name: Dispatch to ${{ matrix.consumer.repository }}
+        env:
+          GH_TOKEN: ${{ steps.generate-token.outputs.token }}
+        run: |
+          gh api "repos/${{ matrix.consumer.repository }}/dispatches" \
+            -f event_type=libdatadog-released \
+            -f "client_payload[version]=${VERSION#v}" \
+            -f "client_payload[triggered_by]=${{ github.repository }}" \
+            -f "client_payload[source_run_url]=${{ github.event.workflow_run.html_url }}"
