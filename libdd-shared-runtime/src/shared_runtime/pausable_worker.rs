@@ -425,6 +425,7 @@ mod tests {
         assert_eq!(receiver.recv().unwrap(), next_message);
     }
 
+    // A paused then restarted worker keeps running and is not re-paused by a leftover command.
     #[test]
     fn test_pause_start_keeps_running() {
         let (mut pw, receiver, _, runtime) = setup();
@@ -438,6 +439,7 @@ mod tests {
         assert_keeps_running(&receiver);
     }
 
+    // Pausing twice sends a single pause, so the worker keeps running after restart.
     #[test]
     fn test_double_pause() {
         let (mut pw, receiver, _, runtime) = setup();
@@ -454,6 +456,8 @@ mod tests {
         assert!(matches!(pw, PausableWorker::Paused { .. }));
     }
 
+    // A dropped pause leaves the pause requested, and the next pause completes without sending
+    // another.
     #[test]
     fn test_cancelled_pause_then_pause_again() {
         let (mut pw, receiver, _, _) = setup();
@@ -483,6 +487,7 @@ mod tests {
         assert_keeps_running(&receiver);
     }
 
+    // A flush requested on a running worker calls `flush` once and resolves its token.
     #[test]
     fn test_flush_while_running() {
         let (mut pw, _receiver, flushes, runtime) = setup();
@@ -492,6 +497,7 @@ mod tests {
         assert_eq!(flushes.load(Ordering::SeqCst), 1);
     }
 
+    // A flush requested while paused runs only after restart and the worker state is preserved.
     #[test]
     fn test_flush_while_paused() {
         let (mut pw, receiver, flushes, runtime) = setup();
@@ -515,6 +521,7 @@ mod tests {
         assert_eq!(receiver.recv().unwrap(), next);
     }
 
+    // A flush queued after the pause stays in the channel and completes after restart.
     #[test]
     fn test_flush_queued_behind_pause() {
         let (mut pw, _receiver, flushes, _) = setup();
@@ -535,6 +542,7 @@ mod tests {
         assert_eq!(flushes.load(Ordering::SeqCst), 1);
     }
 
+    // Shutdown flushes once and resolves every queued flush token successfully.
     #[test]
     fn test_shutdown_acks_queued_flushes() {
         let (mut pw, _receiver, flushes, runtime) = setup();
@@ -549,6 +557,7 @@ mod tests {
         assert_eq!(flushes.load(Ordering::SeqCst), 1);
     }
 
+    // Dropping a worker without shutdown makes pending flush tokens return `FlushAborted`.
     #[test]
     fn test_drop_aborts_flush() {
         let (pw, _receiver, _, runtime) = setup();
@@ -560,6 +569,7 @@ mod tests {
         ));
     }
 
+    // The default `Worker::shutdown` calls `Worker::flush`.
     #[test]
     fn test_default_shutdown_calls_flush() {
         let (pw, _receiver, flushes, runtime) = setup();
@@ -570,6 +580,7 @@ mod tests {
         assert_eq!(flushes.load(Ordering::SeqCst), 1);
     }
 
+    // Requesting a flush on a worker in an invalid state returns an error.
     #[test]
     fn test_request_flush_invalid_state() {
         let pw: PausableWorker<Box<dyn Worker>> = PausableWorker::InvalidState;

@@ -436,6 +436,8 @@ mod tests {
         }
     }
 
+    // The FFI flush blocks until the worker flushed, with and without timeout, and reports a
+    // stopped worker.
     #[test]
     fn test_worker_flush() {
         let runtime = ForkSafeRuntime::new().unwrap();
@@ -457,6 +459,7 @@ mod tests {
         assert_eq!(err.unwrap().code, SharedRuntimeErrorCode::WorkerStopped);
     }
 
+    // The FFI flush rejects a null worker handle with `InvalidArgument`.
     #[test]
     fn test_worker_flush_null() {
         let runtime = ForkSafeRuntime::new().unwrap();

@@ -368,6 +368,7 @@ mod tests {
         );
     }
 
+    // `WorkerHandle::flush` runs the worker flush and its token resolves.
     #[test]
     fn test_worker_handle_flush() {
         let shared_runtime = BasicRuntime::new().expect("BasicRuntime::new");

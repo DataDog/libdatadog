@@ -515,6 +515,7 @@ mod tests {
         );
     }
 
+    // `WorkerHandle::flush` runs the worker flush and its token resolves.
     #[test]
     fn test_worker_handle_flush() {
         let shared_runtime = ForkSafeRuntime::new().unwrap();
@@ -528,6 +529,7 @@ mod tests {
         wait_flush_marker(&receiver);
     }
 
+    // A flush requested between `before_fork` and `after_fork_parent` runs only after the restart.
     #[test]
     fn test_flush_during_fork_window() {
         let shared_runtime = ForkSafeRuntime::new().unwrap();
@@ -549,6 +551,7 @@ mod tests {
         wait_flush_marker(&receiver);
     }
 
+    // Repeated fork cycles leave the worker running.
     #[test]
     fn test_repeated_fork_cycles_keep_running() {
         let shared_runtime = ForkSafeRuntime::new().unwrap();
@@ -565,6 +568,7 @@ mod tests {
         assert_eq!(b, a + 1);
     }
 
+    // Flushing a stopped worker returns `AlreadyStopped`.
     #[test]
     fn test_flush_after_stop() {
         let shared_runtime = ForkSafeRuntime::new().unwrap();
