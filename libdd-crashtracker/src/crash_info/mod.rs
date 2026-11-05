@@ -162,8 +162,8 @@ impl CrashInfo {
     /// Apply worker path restrictions to `file://` outputs when enabled by the sidecar.
     pub fn to_file(&self, path: &Path) -> anyhow::Result<()> {
         #[cfg(unix)]
-        let file = if libdd_common::unix_utils::worker_file_outputs_restricted() {
-            libdd_common::unix_utils::open_regular_for_append(path)
+        let file = if libdd_process_utils::unix_utils::worker_file_outputs_restricted() {
+            libdd_process_utils::unix_utils::open_regular_for_append(path)
                 .with_context(|| format!("Failed to create {}", path.display()))?
         } else {
             File::options()
@@ -196,12 +196,12 @@ impl CrashInfo {
         endpoint: &Option<Endpoint>,
     ) -> anyhow::Result<()> {
         // If we're debugging to a file, dump the actual crashinfo into a json
-        if let Some(endpoint) = endpoint {
-            if Some("file") == endpoint.url.scheme_str() {
-                let path = libdd_common::decode_uri_path_in_authority(&endpoint.url)
-                    .context("crash output file path was not correctly formatted")?;
-                self.to_file(&path)?;
-            }
+        if let Some(endpoint) = endpoint
+            && Some("file") == endpoint.url.scheme_str()
+        {
+            let path = libdd_common::decode_uri_path_in_authority(&endpoint.url)
+                .context("crash output file path was not correctly formatted")?;
+            self.to_file(&path)?;
         }
 
         let telemetry_future = self.upload_to_telemetry(endpoint);

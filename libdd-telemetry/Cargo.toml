@@ -98,5 +98,5 @@ winver = { workspace = true, optional = true }
 tracing-subscriber = { workspace = true, features = ["fmt"] }
 tokio = { workspace = true, features = ["sync", "io-util", "rt-multi-thread"] }
 libdd-capabilities-impl = { path = "../libdd-capabilities-impl" }
-libdd-common = { path = "../libdd-common", features = ["test-utils"] }
+tools = { path = "../tools", default-features = false, features = ["test-utils"] }
 httpmock.workspace = true

@@ -242,10 +242,10 @@ pub fn build_crashtracker_receiver_config(
         // direct mode: ld.so uses argv[1] as the library to exec
         receiver_args.push(entrypoint_path_str.clone());
         receiver_env.push(("_DD_SIDECAR_DIRECT_EXEC".to_string(), entrypoint_name));
-        if let Ok(env) = std::env::var("_DD_SIDECAR_PATH_DEPS") {
-            if !env.is_empty() {
-                receiver_env.push(("_DD_SIDECAR_PATH_DEPS".to_string(), env));
-            }
+        if let Ok(env) = std::env::var("_DD_SIDECAR_PATH_DEPS")
+            && !env.is_empty()
+        {
+            receiver_env.push(("_DD_SIDECAR_PATH_DEPS".to_string(), env));
         }
     }
 

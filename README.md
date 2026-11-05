@@ -49,7 +49,7 @@ cargo run --bin release -- --out output-folder
 
 #### Build dependencies
 
-- Rust 1.87.0 or newer with cargo. The exact version is pinned in `rust-toolchain.toml` at the workspace root and rustup installs it automatically. See the comment near `rust-version` in `Cargo.toml` for the constraints to check when bumping this version.
+- Rust 1.91.1 or newer with cargo. The exact version is pinned in `rust-toolchain.toml` at the workspace root and rustup installs it automatically. See the comment near `rust-version` in `Cargo.toml` for the constraints to check when bumping this version.
 - `cbindgen` 0.29
 - `cmake` and `protoc`
 
@@ -137,7 +137,7 @@ nix develop .#nightly --command cargo fmt --all -- --check
 ##### Debugging CI failures
 
 - Reproduce the Nix CI build with `nix develop --command cargo build --workspace --exclude builder`.
-- After an MSRV or nightly bump, update `rust-toolchain.toml` or `nightly-toolchain.toml`, then refresh `flake.lock` with `nix flake update`.
+- After an MSRV or CI toolchain bump, update `rust-toolchain.toml` or `ci-toolchain.toml`, then refresh `flake.lock` with `nix flake update`.
 
 #### Docker container
 A dockerfile is provided to run tests in a Ubuntu linux environment. This is particularly useful for running and debugging linux-only tests on macOS.

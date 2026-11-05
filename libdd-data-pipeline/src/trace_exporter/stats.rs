@@ -60,7 +60,7 @@ pub(crate) struct StatsContext<
     R: SharedRuntime,
 > {
     pub metadata: &'a TracerMetadata,
-    pub endpoint_url: &'a http::Uri,
+    pub endpoint: &'a Endpoint,
     pub shared_runtime: &'a R,
     pub stats_cardinality_limits: Option<CardinalityLimitConfig>,
     pub additional_metric_tag_keys: &'a [String],
@@ -188,7 +188,10 @@ fn create_and_start_stats_worker<
         bucket_size,
         stats_concentrator.clone(),
         StatsMetadata::from(ctx.metadata.clone()),
-        Endpoint::from_url(add_path(ctx.endpoint_url, STATS_ENDPOINT)),
+        Endpoint {
+            test_token: ctx.endpoint.test_token.clone(),
+            ..Endpoint::from_url(add_path(&ctx.endpoint.url, STATS_ENDPOINT))
+        },
         capabilities.clone(),
         #[cfg(feature = "stats-obfuscation")]
         SUPPORTED_OBFUSCATION_VERSION_STR,
@@ -394,13 +397,13 @@ pub(crate) fn process_traces_for_stats<
 
         // Send dropped P0 stats directly to telemetry if available
         #[cfg(feature = "telemetry")]
-        if let Some(telemetry_client) = telemetry {
-            if let Err(e) = telemetry_client.send_client_side_stats_drops(
+        if let Some(telemetry_client) = telemetry
+            && let Err(e) = telemetry_client.send_client_side_stats_drops(
                 dropped_p0_stats.dropped_p0_traces,
                 dropped_by_trace_filter,
-            ) {
-                tracing::error!(?e, "Error sending dropped P0 stats to telemetry");
-            }
+            )
+        {
+            tracing::error!(?e, "Error sending dropped P0 stats to telemetry");
         }
         true
     } else {
@@ -475,13 +478,13 @@ pub(crate) fn process_traces_for_stats_v1<
 
         // Send dropped P0 stats directly to telemetry if available
         #[cfg(all(not(target_arch = "wasm32"), feature = "telemetry"))]
-        if let Some(telemetry_client) = telemetry {
-            if let Err(e) = telemetry_client.send_client_side_stats_drops(
+        if let Some(telemetry_client) = telemetry
+            && let Err(e) = telemetry_client.send_client_side_stats_drops(
                 dropped_p0_stats.dropped_p0_traces,
                 dropped_by_trace_filter,
-            ) {
-                tracing::error!(?e, "Error sending dropped P0 stats to telemetry");
-            }
+            )
+        {
+            tracing::error!(?e, "Error sending dropped P0 stats to telemetry");
         }
         true
     } else {
