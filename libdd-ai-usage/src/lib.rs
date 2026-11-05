@@ -81,8 +81,9 @@ pub use deployment::{
     with_deployment_attributes, with_deployment_attributes_json,
 };
 pub use dogstatsd::{
-    DOGSTATSD_UDP_MAX_PAYLOAD, DOGSTATSD_UDS_MAX_PAYLOAD, pack_dogstatsd, pack_dogstatsd_counted,
-    pack_dogstatsd_joined, with_constant_tags,
+    DOGSTATSD_MAX_LINE_BYTES, DOGSTATSD_UDP_MAX_PAYLOAD, DOGSTATSD_UDS_MAX_PAYLOAD, pack_dogstatsd,
+    pack_dogstatsd_counted, pack_dogstatsd_joined, pack_dogstatsd_joined_limited,
+    pack_dogstatsd_limited, with_constant_tags,
 };
 pub use error_type::{
     ERROR_TYPE_API, ERROR_TYPE_API_CONNECTION, ERROR_TYPE_AUTHENTICATION, ERROR_TYPE_BAD_REQUEST,

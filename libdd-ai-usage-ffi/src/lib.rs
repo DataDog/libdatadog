@@ -29,12 +29,13 @@ use std::sync::Mutex;
 use std::{ptr, slice};
 
 use libdd_ai_usage::{
-    Attributes, DOGSTATSD_UDP_MAX_PAYLOAD, DOGSTATSD_UDS_MAX_PAYLOAD, ErrorCode, Json, MetricBatch,
-    MetricError, PROVIDER_ID_HEADERS, Profile, ProviderResponse, StreamOutcome, UsageFormat,
-    UsageStream, bedrock_arn_account, classify_error, classify_known_error, datadog_series,
-    datadog_tag_value, gen_ai_provider_name, is_deployment_value, is_person_identifier,
-    is_service_tier, pack_dogstatsd_counted, pack_dogstatsd_joined, parse_provider_body,
-    project_result, provider_id_attributes, retain_metrics, with_deployment_attributes_json,
+    Attributes, DOGSTATSD_MAX_LINE_BYTES, DOGSTATSD_UDP_MAX_PAYLOAD, DOGSTATSD_UDS_MAX_PAYLOAD,
+    ErrorCode, Json, MetricBatch, MetricError, PROVIDER_ID_HEADERS, Profile, ProviderResponse,
+    StreamOutcome, UsageFormat, UsageStream, bedrock_arn_account, classify_error,
+    classify_known_error, datadog_series, datadog_tag_value, gen_ai_provider_name,
+    is_deployment_value, is_person_identifier, is_service_tier, pack_dogstatsd_joined,
+    pack_dogstatsd_limited, parse_provider_body, project_result, provider_id_attributes,
+    retain_metrics, with_deployment_attributes_json,
 };
 use serde_json::{Value, json};
 
@@ -42,10 +43,15 @@ use serde_json::{Value, json};
 pub const UDP_MAX_PAYLOAD: usize = 1432;
 /// The largest DogStatsD datagram over a Unix domain socket.
 pub const UDS_MAX_PAYLOAD: usize = 8192;
+/// The longest DogStatsD line sent by default: a longer line than the
+/// payload goes alone in a datagram of its own up to this, and only a
+/// longer one is dropped.
+pub const MAX_LINE_BYTES: usize = 8192;
 
 // The header states the values; they are the crate's.
 const _: () = assert!(UDP_MAX_PAYLOAD == DOGSTATSD_UDP_MAX_PAYLOAD);
 const _: () = assert!(UDS_MAX_PAYLOAD == DOGSTATSD_UDS_MAX_PAYLOAD);
+const _: () = assert!(MAX_LINE_BYTES == DOGSTATSD_MAX_LINE_BYTES);
 
 /// How a call ended.
 #[repr(C)]
@@ -412,9 +418,11 @@ pub unsafe extern "C" fn ddog_ai_usage_dogstatsd_lines(
 /// each line, and write them to `out` as text: each datagram's lines joined
 /// by `\n`, datagrams separated by a NUL byte, no trailing NUL. Neither the
 /// input nor the output is JSON. A line longer than `max_payload` with its
-/// tags is dropped (the Agent would refuse it), and the number dropped is
-/// written to `dropped_lines` when it is not null. [`Status::Rejected`] for
-/// a `max_payload` of 0.
+/// tags (one with many tags can pass [`UDP_MAX_PAYLOAD`]) is sent alone in a
+/// datagram of its own; only a line longer than [`MAX_LINE_BYTES`] (or
+/// `max_payload`, if larger) is dropped, as the Agent would refuse it, and
+/// the number dropped is written to `dropped_lines` when it is not null.
+/// [`Status::Rejected`] for a `max_payload` of 0.
 ///
 /// # Safety
 ///
@@ -729,8 +737,10 @@ pub unsafe extern "C" fn ddog_ai_usage_batch_len(batch: *const Batch) -> usize {
 /// Take every point of `batch`, leaving it empty, and write it as DogStatsD
 /// datagrams: `{"datagrams": ["line\nline", ...], "dropped_lines": 0}`. Each
 /// datagram is at most `max_payload` bytes ([`UDP_MAX_PAYLOAD`] or
-/// [`UDS_MAX_PAYLOAD`]); a line longer than that with its tags is dropped and
-/// counted in `dropped_lines`. `constant_tags` is a comma-separated list of
+/// [`UDS_MAX_PAYLOAD`]); a line longer than that with its tags goes alone in
+/// a datagram of its own, and only one longer than [`MAX_LINE_BYTES`] (or
+/// `max_payload`, if larger) is dropped and counted in `dropped_lines`.
+/// `constant_tags` is a comma-separated list of
 /// `key:value` tags added to every line, such as the client's `env`; it may
 /// be empty.
 ///
@@ -777,8 +787,9 @@ fn take_batch(batch: &Batch) -> Result<MetricBatch, Failure> {
 /// [`ddog_ai_usage_batch_take_dogstatsd`], writing the datagrams as text
 /// rather than JSON: each datagram's lines joined by `\n`, datagrams
 /// separated by a NUL byte, no trailing NUL. An empty batch writes an empty
-/// buffer. The number of lines dropped for being longer than `max_payload`
-/// is written to `dropped_lines` when it is not null.
+/// buffer. The number of lines dropped for being longer than
+/// [`MAX_LINE_BYTES`] (or `max_payload`, if larger) is written to
+/// `dropped_lines` when it is not null.
 ///
 /// # Safety
 ///
@@ -1401,9 +1412,12 @@ pub unsafe extern "C" fn ddog_ai_usage_provider_ids(
 
 /// Pack DogStatsD lines into datagrams, from the request document
 /// `input[..input_len]`: `{"lines": [...], "constant_tags": [...],
-/// "max_payload": 1432}` (`constant_tags` optional, `max_payload` defaults to
-/// [`UDP_MAX_PAYLOAD`]). Writes `{"datagrams": [...], "dropped_lines": 0}`; a
-/// line longer than `max_payload` with its tags is dropped and counted.
+/// "max_payload": 1432, "max_line_bytes": 8192}` (`constant_tags` optional,
+/// `max_payload` defaults to [`UDP_MAX_PAYLOAD`], `max_line_bytes` to
+/// [`MAX_LINE_BYTES`]). Writes `{"datagrams": [...], "dropped_lines": 0}`. A
+/// line longer than `max_payload` with its tags goes alone in a datagram of
+/// its own; one longer than `max_line_bytes` (or `max_payload`, if larger)
+/// is dropped and counted.
 ///
 /// # Safety
 ///
@@ -1433,20 +1447,25 @@ pub unsafe extern "C" fn ddog_ai_usage_pack_dogstatsd(
                         Some(_) => Err(invalid(format!("{key} must be an array"))),
                     }
                 };
-                let max_payload = match document.get("max_payload") {
-                    None | Some(Json::Null) => UDP_MAX_PAYLOAD,
-                    Some(value) => value
-                        .as_f64()
-                        .filter(|n| n.is_finite() && *n >= 1.0 && n.fract() == 0.0)
-                        // Whole and at least 1; a larger value than usize
-                        // holds saturates, which no datagram reaches.
-                        .map(|n| n as usize)
-                        .ok_or_else(|| invalid("max_payload must be a positive integer"))?,
+                let size = |key: &str, default: usize| -> Result<usize, Failure> {
+                    match document.get(key) {
+                        None | Some(Json::Null) => Ok(default),
+                        Some(value) => value
+                            .as_f64()
+                            .filter(|n| n.is_finite() && *n >= 1.0 && n.fract() == 0.0)
+                            // Whole and at least 1; a larger value than usize
+                            // holds saturates, which no datagram reaches.
+                            .map(|n| n as usize)
+                            .ok_or_else(|| invalid(format!("{key} must be a positive integer"))),
+                    }
                 };
-                let (datagrams, dropped) = pack_dogstatsd_counted(
+                let max_payload = size("max_payload", UDP_MAX_PAYLOAD)?;
+                let max_line = size("max_line_bytes", MAX_LINE_BYTES)?;
+                let (datagrams, dropped) = pack_dogstatsd_limited(
                     &strings("lines")?,
                     &strings("constant_tags")?,
                     max_payload,
+                    max_line,
                 );
                 Ok(json!({"datagrams": datagrams, "dropped_lines": dropped}))
             }))

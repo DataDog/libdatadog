@@ -619,17 +619,44 @@ fn dogstatsd_packing() {
         datagrams.iter().map(|d| d.lines().count()).sum::<usize>(),
         5
     );
-    // A line longer than the payload is dropped, and counted.
+    // A line longer than the payload but not than the longest line sent
+    // goes alone in a datagram of its own, and is never joined.
     let long = format!("m:1|c|#a:{}", "x".repeat(64));
-    let datagrams = pack_dogstatsd(&[line, long.as_str(), line], &[""; 0], 32);
-    assert_eq!(datagrams, vec![format!("{line}\n{line}")]);
+    let datagrams = pack_dogstatsd(&[line, long.as_str(), line, line], &[""; 0], 32);
+    assert_eq!(
+        datagrams,
+        vec![line.to_string(), long.clone(), format!("{line}\n{line}")]
+    );
+    // Only a line longer than that is dropped, and counted.
     let (datagrams, dropped) =
-        libdd_ai_usage::pack_dogstatsd_counted(&[line, long.as_str()], &[""; 0], 32);
-    assert_eq!((datagrams, dropped), (vec![line.to_string()], 1));
+        libdd_ai_usage::pack_dogstatsd_limited(&[line, long.as_str(), line], &[""; 0], 32, 40);
+    assert_eq!((datagrams, dropped), (vec![format!("{line}\n{line}")], 1));
     // The constant tags count toward the length.
-    let (datagrams, dropped) = libdd_ai_usage::pack_dogstatsd_counted(&[line], &["env:prod"], 15);
+    let (datagrams, dropped) =
+        libdd_ai_usage::pack_dogstatsd_limited(&[line], &["env:prod"], 15, 15);
     assert_eq!((datagrams.len(), dropped), (0, 1));
     assert!(pack_dogstatsd(&[""; 0], &[""; 0], 1432).is_empty());
+
+    // Over UDP, a line with many tags passes 1432 bytes and is still sent,
+    // alone; one past 8192 bytes is dropped.
+    let tags: Vec<String> = (0..120)
+        .map(|i| format!("tag_{i:03}:value_{i:03}"))
+        .collect();
+    let wide = format!("m:1|c|#{}", tags.join(","));
+    assert!(wide.len() > 1432 && wide.len() <= libdd_ai_usage::DOGSTATSD_MAX_LINE_BYTES);
+    let huge = format!("m:1|c|#a:{}", "x".repeat(9000));
+    let lines = [line, wide.as_str(), huge.as_str(), line];
+    let (datagrams, dropped) = libdd_ai_usage::pack_dogstatsd_counted(&lines, &["env:prod"], 1432);
+    assert_eq!(dropped, 1);
+    assert_eq!(datagrams.len(), 3);
+    assert_eq!(datagrams[1], format!("{wide},env:prod"));
+    let (joined, joined_dropped) =
+        libdd_ai_usage::pack_dogstatsd_joined(lines, &["env:prod"], 1432, '\0');
+    assert_eq!((joined, joined_dropped), (datagrams.join("\0"), 1));
+    // A payload larger than the default longest line is the longest line.
+    let (datagrams, dropped) =
+        libdd_ai_usage::pack_dogstatsd_counted(&[huge.as_str()], &[""; 0], 16384);
+    assert_eq!((datagrams.len(), dropped), (1, 0));
 
     // Packed into one text, the datagrams are the same.
     let lines = [

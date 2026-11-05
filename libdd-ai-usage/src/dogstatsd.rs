@@ -36,11 +36,25 @@ pub fn with_constant_tags<S: AsRef<str>>(line: &str, constant_tags: &[S]) -> Str
     out
 }
 
+/// The longest DogStatsD line sent by default, in a datagram of its own when
+/// it is longer than the target payload: the Agent's default buffer
+/// (`dogstatsd_buffer_size`) and the largest datagram Datadog's clients
+/// send over a Unix domain socket. Only a longer line is dropped.
+pub const DOGSTATSD_MAX_LINE_BYTES: usize = 8192;
+
+/// The longest line sent with a target of `max_payload`: the target itself
+/// when it is larger than [`DOGSTATSD_MAX_LINE_BYTES`].
+fn default_max_line(max_payload: usize) -> usize {
+    max_payload.max(DOGSTATSD_MAX_LINE_BYTES)
+}
+
 /// Join DogStatsD lines, with `constant_tags` appended to each, into
-/// newline-separated datagrams of at most `max_payload` bytes, in order. A
-/// line longer than `max_payload` with its tags is dropped: the Agent
-/// refuses a datagram that long ([`DOGSTATSD_UDP_MAX_PAYLOAD`],
-/// [`DOGSTATSD_UDS_MAX_PAYLOAD`]). [`pack_dogstatsd_counted`] also counts
+/// newline-separated datagrams of at most `max_payload` bytes, in order.
+/// A line longer than `max_payload` with its tags (one with many tags can
+/// pass the 1432 bytes of [`DOGSTATSD_UDP_MAX_PAYLOAD`]) is sent alone in a
+/// datagram of its own; only a line longer than
+/// [`DOGSTATSD_MAX_LINE_BYTES`] (or `max_payload`, if larger) is dropped,
+/// as the Agent would refuse it. [`pack_dogstatsd_counted`] also counts
 /// them. Empty lines are skipped.
 pub fn pack_dogstatsd<L: AsRef<str>, S: AsRef<str>>(
     lines: &[L],
@@ -51,18 +65,37 @@ pub fn pack_dogstatsd<L: AsRef<str>, S: AsRef<str>>(
 }
 
 /// [`pack_dogstatsd`], also returning the number of lines dropped for being
-/// longer than `max_payload`.
+/// longer than the longest line sent.
 pub fn pack_dogstatsd_counted<L: AsRef<str>, S: AsRef<str>>(
     lines: &[L],
     constant_tags: &[S],
     max_payload: usize,
 ) -> (Vec<String>, usize) {
+    pack_dogstatsd_limited(
+        lines,
+        constant_tags,
+        max_payload,
+        default_max_line(max_payload),
+    )
+}
+
+/// [`pack_dogstatsd_counted`] with the longest line sent stated: a line
+/// longer than `max_payload` but at most `max_line` bytes with its tags goes
+/// alone in a datagram of its own, and a longer one is dropped and counted.
+/// A `max_line` below `max_payload` is read as `max_payload`.
+pub fn pack_dogstatsd_limited<L: AsRef<str>, S: AsRef<str>>(
+    lines: &[L],
+    constant_tags: &[S],
+    max_payload: usize,
+    max_line: usize,
+) -> (Vec<String>, usize) {
+    let max_line = max_line.max(max_payload);
     let mut datagrams = Vec::new();
     let mut packet = String::new();
     let mut dropped = 0;
     for line in lines.iter().map(AsRef::as_ref).filter(|l| !l.is_empty()) {
         let line = with_constant_tags(line, constant_tags);
-        if line.len() > max_payload {
+        if line.len() > max_line {
             dropped += 1;
             continue;
         }
@@ -73,6 +106,10 @@ pub fn pack_dogstatsd_counted<L: AsRef<str>, S: AsRef<str>>(
             packet.push('\n');
         }
         packet.push_str(&line);
+        if line.len() > max_payload {
+            // An oversized line is never joined with another.
+            datagrams.push(std::mem::take(&mut packet));
+        }
     }
     if !packet.is_empty() {
         datagrams.push(packet);
@@ -84,13 +121,32 @@ pub fn pack_dogstatsd_counted<L: AsRef<str>, S: AsRef<str>>(
 /// order, each separated from the next by `separator` (a NUL byte for a
 /// caller that splits them itself), with no line or datagram copied on its
 /// own. Returns the text and the number of lines dropped for being longer
-/// than `max_payload` with their tags.
+/// than the longest line sent with their tags.
 pub fn pack_dogstatsd_joined<'a, S: AsRef<str>>(
     lines: impl IntoIterator<Item = &'a str>,
     constant_tags: &[S],
     max_payload: usize,
     separator: char,
 ) -> (String, usize) {
+    pack_dogstatsd_joined_limited(
+        lines,
+        constant_tags,
+        max_payload,
+        default_max_line(max_payload),
+        separator,
+    )
+}
+
+/// [`pack_dogstatsd_joined`] with the longest line sent stated, as
+/// [`pack_dogstatsd_limited`] reads it.
+pub fn pack_dogstatsd_joined_limited<'a, S: AsRef<str>>(
+    lines: impl IntoIterator<Item = &'a str>,
+    constant_tags: &[S],
+    max_payload: usize,
+    max_line: usize,
+    separator: char,
+) -> (String, usize) {
+    let max_line = max_line.max(max_payload);
     let tags: Vec<&str> = constant_tags
         .iter()
         .map(AsRef::as_ref)
@@ -101,15 +157,17 @@ pub fn pack_dogstatsd_joined<'a, S: AsRef<str>>(
     let suffix_len = if tags.is_empty() { 0 } else { joined.len() + 1 };
     let mut out = String::new();
     let mut datagram = 0;
+    // The datagram being written holds an oversized line: nothing joins it.
+    let mut alone = false;
     let mut dropped = 0;
     for line in lines.into_iter().filter(|line| !line.is_empty()) {
         let tagged = line.contains("|#");
         let len = line.len() + suffix_len + usize::from(suffix_len > 0 && !tagged);
-        if len > max_payload {
+        if len > max_line {
             dropped += 1;
             continue;
         }
-        if datagram > 0 && datagram + 1 + len > max_payload {
+        if datagram > 0 && (alone || datagram + 1 + len > max_payload) {
             out.push(separator);
             datagram = 0;
         } else if datagram > 0 {
@@ -122,6 +180,7 @@ pub fn pack_dogstatsd_joined<'a, S: AsRef<str>>(
             out.push_str(&joined);
         }
         datagram += len;
+        alone = len > max_payload;
     }
     (out, dropped)
 }

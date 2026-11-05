@@ -573,8 +573,13 @@ fn text_lines_and_packing_match_the_json_path() {
         ddog_ai_usage_pack_dogstatsd_lines(ptr::null(), 0, ptr::null(), 0, 0, ptr::null_mut(), out)
     });
     assert_eq!(status, Status::Rejected);
-    // A line longer than the payload is dropped and counted.
-    let lines = format!("a:1|c\nb:1|c|#t:{}\nc:1|c", "x".repeat(64));
+    // A line longer than the payload goes alone in its own datagram; one
+    // longer than 8192 bytes is dropped and counted.
+    let lines = format!(
+        "a:1|c\nb:1|c|#t:{}\nc:1|c\nd:1|c|#t:{}",
+        "x".repeat(64),
+        "y".repeat(9000)
+    );
     let mut dropped = 0;
     // SAFETY: valid inputs and output.
     let (status, packed) = text_of(|out| unsafe {
@@ -588,9 +593,38 @@ fn text_lines_and_packing_match_the_json_path() {
             out,
         )
     });
+    let alone = format!("b:1|c|#t:{}", "x".repeat(64));
     assert_eq!(
-        (status, packed.as_str(), dropped),
-        (Status::Ok, "a:1|c\nc:1|c", 1)
+        (status, packed, dropped),
+        (Status::Ok, format!("a:1|c\0{alone}\0c:1|c"), 1)
+    );
+    // The JSON path agrees, and takes the longest line to send.
+    let request = json!({
+        "lines": lines.split('\n').collect::<Vec<_>>(),
+        "max_payload": 32,
+    })
+    .to_string();
+    let mut out = empty();
+    // SAFETY: valid input and output.
+    let status = unsafe { ddog_ai_usage_pack_dogstatsd(request.as_ptr(), request.len(), &mut out) };
+    assert_eq!(status, Status::Ok);
+    assert_eq!(
+        json_of(out),
+        json!({"datagrams": ["a:1|c", alone, "c:1|c"], "dropped_lines": 1})
+    );
+    let request = json!({
+        "lines": lines.split('\n').collect::<Vec<_>>(),
+        "max_payload": 32,
+        "max_line_bytes": 40,
+    })
+    .to_string();
+    let mut out = empty();
+    // SAFETY: valid input and output.
+    let status = unsafe { ddog_ai_usage_pack_dogstatsd(request.as_ptr(), request.len(), &mut out) };
+    assert_eq!(status, Status::Ok);
+    assert_eq!(
+        json_of(out),
+        json!({"datagrams": ["a:1|c\nc:1|c"], "dropped_lines": 2})
     );
 }
 
