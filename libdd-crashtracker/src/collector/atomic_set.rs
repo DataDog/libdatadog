@@ -468,6 +468,19 @@ mod tests {
         );
     }
 
+    #[test]
+    fn formal_counterexample_consumed_set_can_be_reused() {
+        let s: AtomicSpanSet<4> = AtomicSpanSet::new();
+        s.insert(nz(1)).unwrap();
+        s.insert(nz(2)).unwrap();
+
+        s.consume_and_emit(&mut Vec::new(), false).unwrap();
+
+        assert!(s.values().unwrap().is_empty());
+        assert_eq!(s.len(), 0);
+        assert!(s.insert(nz(3)).is_ok());
+    }
+
     fn bs(s: &str) -> String {
         s.to_string()
     }
@@ -484,6 +497,17 @@ mod tests {
             actual == "[\"hello\", \"world\"]\n" || actual == "[\"world\", \"hello\"]\n",
             "actual was {actual}"
         );
+    }
+
+    #[test]
+    fn formal_counterexample_string_emit_is_valid_json() {
+        let s: AtomicStringMultiset<4> = AtomicStringMultiset::new();
+        s.insert(bs("contains \" quote")).unwrap();
+
+        let mut buf = Vec::new();
+        s.consume_and_emit(&mut buf, false).unwrap();
+
+        serde_json::from_slice::<serde_json::Value>(&buf).unwrap();
     }
 
     fn remove_and_compare<T: Atomic>(

@@ -136,6 +136,14 @@ mod tests {
     }
 
     #[test]
+    fn formal_counterexample_nan_rate_is_clamped_to_documented_range() {
+        let sampler = RateSampler::new(f64::NAN);
+
+        assert!(sampler.sample_rate().is_finite());
+        assert!((rate::MIN_SAMPLE_RATE..=rate::MAX_SAMPLE_RATE).contains(&sampler.sample_rate()));
+    }
+
+    #[test]
     fn test_rate_sampler_should_sample() {
         // Sample Rate 0.0: Should always return false
         let sampler_zero = RateSampler::new(0.0);
