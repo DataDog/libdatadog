@@ -3611,6 +3611,7 @@ name = "libdd-trace-protobuf"
 version = "5.1.1"
 dependencies = [
  "bolero",
+ "libdd-trace-model",
  "prost",
  "prost-build",
  "protoc-bin-vendored",
@@ -3639,6 +3640,8 @@ dependencies = [
  "libdd-dogstatsd-client",
  "libdd-shared-runtime",
  "libdd-telemetry",
+ "libdd-tinybytes",
+ "libdd-trace-model",
  "libdd-trace-obfuscation",
  "libdd-trace-protobuf",
  "libdd-trace-utils",
