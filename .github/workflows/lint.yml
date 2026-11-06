@@ -182,6 +182,10 @@ jobs:
           rustup install "$VERSION"
           rustup component add clippy --toolchain "$VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+      - name: Install cargo-hack
+        uses: taiki-e/cache-cargo-install-action@7447f04c51f2ba27ca35e7f1e28fab848c5b3ba7 # 2.3.1
+        with:
+          tool: cargo-hack@0.6.42
       - name: sccache
         id: sccache
         uses: ./.github/actions/setup-sccache
@@ -197,15 +201,12 @@ jobs:
             export AWS_LC_FIPS_SYS_NO_ASM=1
             git config --global core.longpaths true
           fi
-          if [[ -z "$CLIPPY_PACKAGES" ]]; then
-            cargo clippy --workspace --all-targets --keep-going -- -D warnings
-            cargo clippy --workspace --all-targets --all-features --keep-going -- -D warnings
-          else
-            # shellcheck disable=SC2086
-            cargo clippy $CLIPPY_PACKAGES --all-targets --keep-going -- -D warnings
-            # shellcheck disable=SC2086
-            cargo clippy $CLIPPY_PACKAGES --all-targets --all-features --keep-going -- -D warnings
-          fi
+          CLIPPY_ARGS=${CLIPPY_PACKAGES:---workspace}
+          # `standalone` (libdd-library-config-ffi) is no_std and only builds with panic=abort.
+          # shellcheck disable=SC2086
+          cargo hack clippy $CLIPPY_ARGS --all-targets --each-feature --exclude-features standalone --keep-going -- -D warnings
+          # shellcheck disable=SC2086
+          cargo      clippy $CLIPPY_ARGS --all-targets --all-features --keep-going -- -D warnings
       - name: sccache statistics
         if: always() && steps.sccache.outputs.enabled == 'true'
         shell: bash
