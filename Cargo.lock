@@ -3323,6 +3323,7 @@ dependencies = [
  "libdd-data-pipeline-ffi",
  "libdd-ddsketch-ffi",
  "libdd-ffe-ffi",
+ "libdd-http-client-ffi",
  "libdd-library-config-ffi",
  "libdd-log-ffi",
  "libdd-otel-thread-ctx-ffi",

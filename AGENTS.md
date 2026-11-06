@@ -129,5 +129,5 @@ All code source files (e.g. `.rs`, `.sh`) and TOML files (e.g. `Cargo.toml`) mus
   ```bash
   cargo run --bin release -- --out output-folder
   ```
-  Feature flags control what's built: `crashtracker`, `profiling`, `telemetry`, `data-pipeline`, `symbolizer`, `library-config`, `log`, `ddsketch`, `ffe`
+  Feature flags control what's built: `crashtracker`, `profiling`, `telemetry`, `data-pipeline`, `symbolizer`, `library-config`, `log`, `ddsketch`, `ffe`, `http-client`
 - **tools** — dev binaries: header dedup, FFI test runner, JUnit attribute injection

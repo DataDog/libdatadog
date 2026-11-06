@@ -52,6 +52,7 @@ libdd-ddsketch*/                     @DataDog/libdatadog-apm @DataDog/apm-common
 libdd-dogstatsd-client               @DataDog/apm-common-components-core
 libdd-gotter/                        @DataDog/libdatadog @DataDog/libdatadog-profiling
 libdd-http-client                    @DataDog/apm-common-components-core
+libdd-http-client-ffi/               @DataDog/apm-common-components-core
 libdd-library-config*/               @DataDog/apm-sdk-capabilities
 libdd-log*/                          @DataDog/apm-common-components-core
 libdd-otel-thread-ctx/               @DataDog/apm-common-components-core
@@ -143,6 +144,7 @@ libdd-data-pipeline/CHANGELOG.md             @DataDog/apm-common-components-core
 libdd-data-pipeline/Cargo.toml               @DataDog/apm-common-components-core @DataDog/libdatadog-release
 libdd-dogstatsd-client/CHANGELOG.md          @DataDog/apm-common-components-core @DataDog/libdatadog-release
 libdd-dogstatsd-client/Cargo.toml            @DataDog/apm-common-components-core @DataDog/libdatadog-release
+libdd-http-client-ffi/Cargo.toml             @DataDog/apm-common-components-core @DataDog/libdatadog-release
 libdd-http-client/CHANGELOG.md               @DataDog/apm-common-components-core @DataDog/libdatadog-release
 libdd-http-client/Cargo.toml                 @DataDog/apm-common-components-core @DataDog/libdatadog-release
 libdd-log-ffi/Cargo.toml                     @DataDog/apm-common-components-core @DataDog/libdatadog-release
