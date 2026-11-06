@@ -60,6 +60,18 @@ pub struct Set<T: Hash + Eq + 'static> {
     pub(crate) table: HashTable<ptr::NonNull<T>>,
 }
 
+// SAFETY: a `Set<T>` uniquely owns the `T`s it stores (they live in `arena`,
+// which it owns, and `table` only points into it), much like a `Vec<T>`.
+// Moving the set to another thread moves those values, which may then be
+// accessed and dropped there (see `Drop`), so `T: Send` is required.
+unsafe impl<T: Hash + Eq + Send + 'static> Send for Set<T> {}
+
+// SAFETY: the `&self` methods only read `table` and never touch `arena`
+// (whose non-thread-safe interior mutability is only used from `&mut self`
+// methods). Through `&Set<T>`, other threads can obtain `&T` (e.g. via `get`),
+// so `T: Sync` is required, like for `&Vec<T>`.
+unsafe impl<T: Hash + Eq + Sync + 'static> Sync for Set<T> {}
+
 impl<T: Eq + Hash + 'static> Set<T> {
     pub const SIZE_HINT: usize = 1024 * 1024;
 
