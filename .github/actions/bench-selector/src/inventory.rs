@@ -17,7 +17,7 @@ use crate::cluster::clusters_of;
 use anyhow::{Context, Result, bail};
 use cargo_metadata::{MetadataCommand, TargetKind};
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// Serialized inventory of every bench binary and its name clusters.
@@ -27,7 +27,7 @@ pub struct Inventory {
 }
 
 /// One bench binary: a crate's `[[bench]]` target.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BenchBinary {
     pub crate_name: String,
     /// The `[[bench]]` target name (`cargo bench --bench <target>`).
@@ -97,8 +97,9 @@ pub fn discover(
         ),
     }
 
-    let mut binaries = Vec::new();
-    let mut step = 0;
+    // Enumerate every bench target first: in instrumented mode they are all
+    // built in ONE cargo pass and then listed directly, without cargo.
+    let mut candidates = Vec::new();
     for pkg in members {
         // Not a let-chain: the tool builds on checkouts older than Rust 1.88,
         // where let-chains are not stable.
@@ -125,43 +126,70 @@ pub fn discover(
                 }
             }
             features.sort();
-            step += 1;
-            let listing = std::time::Instant::now();
-            log::info!(
-                "inventory: [{step}] listing {} --bench {}",
-                pkg.name,
-                target.name
-            );
-            let bench_ids = list_bench_ids(
-                workspace_root,
-                pkg.name.as_ref(),
-                &target.name,
-                &features,
-                instrumented_target_dir,
-            )?;
-            log::info!(
-                "inventory: [{step}] {} --bench {}: {} benchmark ID(s) in {:.1?}",
-                pkg.name,
-                target.name,
-                bench_ids.len(),
-                listing.elapsed()
-            );
-            if bench_ids.is_empty() {
-                log::warn!(
-                    "no benchmarks listed for {} --bench {}; skipping",
-                    pkg.name,
-                    target.name
-                );
-                continue;
-            }
-            binaries.push(BenchBinary {
+            candidates.push(BenchBinary {
                 crate_name: pkg.name.to_string(),
                 target: target.name.clone(),
                 crate_dir: crate_dir.clone(),
                 features,
-                bench_ids,
+                bench_ids: Vec::new(),
             });
         }
+    }
+    candidates.sort_by(|a, b| (&a.crate_name, &a.target).cmp(&(&b.crate_name, &b.target)));
+
+    // Resolve the executable paths: in instrumented mode one union build
+    // compiles them all (and later serves the coverage pass, whose own union
+    // build becomes a pure cache hit); in plain mode each listing goes
+    // through cargo, which also builds its target.
+    let executables = match instrumented_target_dir {
+        Some(dir) => Some(crate::coverage::build_all_benches(
+            workspace_root,
+            &candidates.iter().collect::<Vec<_>>(),
+            dir,
+        )?),
+        None => None,
+    };
+
+    let mut binaries = Vec::new();
+    let mut step = 0;
+    for bin in &candidates {
+        step += 1;
+        let listing = std::time::Instant::now();
+        log::info!(
+            "inventory: [{step}/{}] listing {} --bench {}",
+            candidates.len(),
+            bin.crate_name,
+            bin.target
+        );
+        let bench_ids = list_bench_ids(
+            workspace_root,
+            bin,
+            executables
+                .as_ref()
+                .and_then(|exec| exec.get(&(bin.crate_name.clone(), bin.target.clone())))
+                .map(PathBuf::as_path),
+            instrumented_target_dir,
+        )?;
+        log::info!(
+            "inventory: [{step}/{}] {} --bench {}: {} benchmark ID(s) in {:.1?}",
+            candidates.len(),
+            bin.crate_name,
+            bin.target,
+            bench_ids.len(),
+            listing.elapsed()
+        );
+        if bench_ids.is_empty() {
+            log::warn!(
+                "no benchmarks listed for {} --bench {}; skipping",
+                bin.crate_name,
+                bin.target
+            );
+            continue;
+        }
+        binaries.push(BenchBinary {
+            bench_ids,
+            ..(*bin).clone()
+        });
     }
     binaries.sort_by(|a, b| (&a.crate_name, &a.target).cmp(&(&b.crate_name, &b.target)));
     log::info!(
@@ -208,50 +236,59 @@ pub fn validate_crates_filter<'a>(
 /// through this path.
 fn list_bench_ids(
     workspace_root: &Path,
-    crate_name: &str,
-    target: &str,
-    features: &[String],
+    bin: &BenchBinary,
+    executable: Option<&Path>,
     instrumented_target_dir: Option<&Path>,
 ) -> Result<Vec<String>> {
-    let mut cmd = Command::new("cargo");
-    cmd.current_dir(workspace_root);
-    match instrumented_target_dir {
-        // Instrumented build in the coverage pass's target dir, so the two
-        // passes share ONE build of the dependency graph: same RUSTFLAGS and
-        // CARGO_TARGET_DIR make every coverage `--no-run` a cache hit. Bench
-        // IDs are statically registered, so an instrumented `--list` reports
-        // the same IDs as a clean one. The `--list` process itself writes a
-        // junk profile (see coverage::BUILD_JUNK_PROFILE_PATTERN): its
-        // coverage data is garbage by definition and is never read.
-        Some(dir) => {
-            for (key, value) in crate::coverage::cargo_env(dir) {
-                cmd.env(key, value);
-            }
+    // Instrumented mode: run the bench binary directly (one union build
+    // already produced it) with cargo's runtime environment and a junk
+    // profile for the process's own instrumentation. Plain mode: go through
+    // cargo, which also builds the target with the fast debug-like profile.
+    let mut cmd = match (instrumented_target_dir, executable) {
+        (Some(dir), Some(executable)) => {
+            let mut cmd =
+                crate::coverage::direct_bench_command(workspace_root, bin, executable, dir);
             cmd.env(
                 "LLVM_PROFILE_FILE",
                 dir.join(crate::coverage::BUILD_JUNK_PROFILE_PATTERN),
             );
+            cmd
         }
-        // Standalone use (local runs, tests): fast debug-like profile, no
-        // instrumentation, default target dir.
-        None => {
+        (Some(_), None) => {
+            anyhow::bail!(
+                "no executable for {} --bench {} (union build must provide it)",
+                bin.crate_name,
+                bin.target
+            );
+        }
+        _ => {
+            let mut cmd = Command::new("cargo");
+            cmd.current_dir(workspace_root);
             cmd.env("CARGO_PROFILE_BENCH_OPT_LEVEL", "0")
                 .env("CARGO_PROFILE_BENCH_CODEGEN_UNITS", "16")
                 .env("CARGO_PROFILE_BENCH_LTO", "false");
+            cmd.args(["bench", "-p", &bin.crate_name, "--bench", &bin.target]);
+            if !bin.features.is_empty() {
+                cmd.arg("--features").arg(bin.features.join(","));
+            }
+            cmd.args(["--", "--list", "--format", "terse"]);
+            return run_listing(cmd, bin);
         }
-    }
-    cmd.args(["bench", "-p", crate_name, "--bench", target]);
-    if !features.is_empty() {
-        cmd.arg("--features").arg(features.join(","));
-    }
-    cmd.args(["--", "--list", "--format", "terse"]);
+    };
+    cmd.args(["--list", "--format", "terse"]);
+    run_listing(cmd, bin)
+}
+
+fn run_listing(mut cmd: Command, bin: &BenchBinary) -> Result<Vec<String>> {
     let output = cmd
         .output()
-        .with_context(|| format!("failed to run cargo bench --list for {crate_name}/{target}"))?;
+        .with_context(|| format!("listing {} --bench {}", bin.crate_name, bin.target))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         bail!(
-            "cargo bench -p {crate_name} --bench {target} -- --list failed (status {:?}): {stderr}",
+            "listing {} --bench {} failed (status {:?}): {stderr}",
+            bin.crate_name,
+            bin.target,
             output.status.code()
         );
     }

@@ -114,20 +114,6 @@ pub fn run(
         profdata: ensure_tool("llvm-profdata")?,
         cov: ensure_tool("llvm-cov")?,
     };
-    let started = std::time::Instant::now();
-    let in_scope: Vec<&BenchBinary> = inventory
-        .binaries
-        .iter()
-        .filter(|bin| crates_filter.is_none_or(|f| f.iter().any(|c| c == &bin.crate_name)))
-        .collect();
-    log::info!(
-        "coverage: {} binaries, {} clusters, debug-like instrumented build",
-        in_scope.len(),
-        in_scope
-            .iter()
-            .map(|bin| bin.clusters().len())
-            .sum::<usize>()
-    );
     // llvm-cov reports absolute file paths, and coverage files are normalized
     // against this root — canonicalize so a relative `--workspace-root .` works.
     let workspace_root = workspace_root
@@ -139,16 +125,31 @@ pub fn run(
     let target_dir = prepare_directory(&workspace_root.join(target_dir))?;
 
     let mut entries = Vec::new();
-    for bin in &inventory.binaries {
-        // Not a let-chain: the tool builds on checkouts older than Rust 1.88,
-        // where let-chains are not stable.
-        if crates_filter.is_some_and(|filter| !filter.iter().any(|c| c == &bin.crate_name)) {
-            continue;
-        }
-        let executables = build_instrumented(&workspace_root, bin, &target_dir, &work)?;
-        let Some(executable) = executables.get(&bin.target) else {
-            // Build succeeded but cargo reported no executable for this target:
-            // treat every cluster as failed rather than guessing.
+    let in_scope: Vec<&BenchBinary> = inventory
+        .binaries
+        .iter()
+        .filter(|bin| {
+            crates_filter.is_none_or(|filter| filter.iter().any(|c| c == &bin.crate_name))
+        })
+        .collect();
+    log::info!(
+        "coverage: {} binaries, {} clusters, debug-like instrumented build",
+        in_scope.len(),
+        in_scope
+            .iter()
+            .map(|bin| bin.clusters().len())
+            .sum::<usize>()
+    );
+    // ONE build for every binary: per-binary invocations would each pay a
+    // whole-workspace cargo fingerprint check and compile shared dependencies
+    // per feature set. After it, bench binaries run directly without cargo.
+    let executables = build_all_benches(&workspace_root, &in_scope, &target_dir)?;
+    let started = std::time::Instant::now();
+    for bin in in_scope {
+        let Some(executable) = executables.get(&(bin.crate_name.clone(), bin.target.clone()))
+        else {
+            // The union build reported no executable for this target: treat
+            // every cluster as failed rather than guessing.
             log::warn!(
                 "no bench executable reported for {}/{}; marking all clusters failed",
                 bin.crate_name,
@@ -325,66 +326,141 @@ fn apply_env(cmd: &mut Command, env: &[(String, String)]) {
     }
 }
 
-fn cargo_cmd(workspace_root: &Path, env: &[(String, String)], bin: &BenchBinary) -> Command {
-    let mut cmd = Command::new("cargo");
-    cmd.current_dir(workspace_root);
-    apply_env(&mut cmd, env);
-    cmd.args(["bench", "-p", &bin.crate_name, "--bench", &bin.target]);
-    if !bin.features.is_empty() {
-        cmd.arg("--features").arg(bin.features.join(","));
-    }
+/// Junk profile pattern for compiler-side profiles: `RUSTFLAGS`
+/// instrumentation also applies to proc-macros and build scripts, whose code
+/// runs *inside rustc/cargo* during compilation; without `LLVM_PROFILE_FILE`
+/// they write `default_%m_%p.profraw` files in the cwd. The junk pattern
+/// keeps the checkout clean and is never read.
+pub(crate) const BUILD_JUNK_PROFILE_PATTERN: &str = "junk/%m_%p.profraw";
+
+/// Run a bench binary DIRECTLY, without going through cargo. Cargo
+/// re-fingerprints the whole workspace for every `cargo bench` invocation,
+/// which dominates wall time on this many-crate workspace; after one union
+/// build ([`build_all_benches`]) the binaries need no cargo at all.
+///
+/// The environment replicates what `cargo bench` provides to the process:
+/// the working directory is the package root (benches load relative
+/// fixtures from there), plus the common CARGO_* variables and criterion's
+/// target dir. Benches needing something beyond this fail their cluster,
+/// which fails conservative (always run) - never silently skipped.
+pub(crate) fn direct_bench_command(
+    workspace_root: &Path,
+    bin: &BenchBinary,
+    executable: &Path,
+    target_dir: &Path,
+) -> Command {
+    let crate_dir = workspace_root.join(&bin.crate_dir);
+    let mut cmd = Command::new(executable);
+    cmd.current_dir(&crate_dir)
+        .env("CARGO_MANIFEST_DIR", &crate_dir)
+        .env("CARGO_PKG_NAME", &bin.crate_name)
+        .env("CARGO_TARGET_DIR", target_dir);
     cmd
 }
 
-/// Junk profile pattern for the `--no-run` build phase.
+/// Build every bench binary of `bins` in ONE cargo invocation and return
+/// their executable paths, keyed by (crate name, bench target name).
 ///
-/// `RUSTFLAGS` instrumentation also applies to proc-macros and build
-/// scripts, whose code runs *inside rustc/cargo* during compilation. Without
-/// `LLVM_PROFILE_FILE` set, each such process writes a `default_%m_%p.profraw`
-/// in its cwd — the checkout root — littering dozens of files per build.
-/// Pointing the build phase at a scratch pattern under the work dir keeps the
-/// checkout clean and collects the junk with all other scratch files; the
-/// cluster runs override this with their own per-cluster file, and
-/// `LLVM_PROFILE_FILE` is not a cargo fingerprint input, so the two phases
-/// share one build cache.
-pub(crate) const BUILD_JUNK_PROFILE_PATTERN: &str = "junk/%m_%p.profraw";
-
-/// Build `bin` instrumented and return the executable path per bench target of
-/// its crate, parsed from cargo's JSON build messages.
-fn build_instrumented(
+/// One invocation instead of one per binary: cargo pays a whole-workspace
+/// fingerprint check per invocation, and a single union build also compiles
+/// shared dependencies with the same feature unification as the measuring
+/// run (`run_benchmarks_ci.sh` builds its whole selection in one invocation
+/// too), where per-target builds could compile several variants of a shared
+/// dependency.
+pub(crate) fn build_all_benches(
     workspace_root: &Path,
-    bin: &BenchBinary,
+    bins: &[&BenchBinary],
     target_dir: &Path,
-    work: &Path,
-) -> Result<BTreeMap<String, PathBuf>> {
+) -> Result<BTreeMap<(String, String), PathBuf>> {
     let env = cargo_env(target_dir);
-    let mut cmd = cargo_cmd(workspace_root, &env, bin);
+    let mut cmd = Command::new("cargo");
+    cmd.current_dir(workspace_root);
+    apply_env(&mut cmd, &env);
+    cmd.arg("bench");
+    let mut crates: BTreeSet<&str> = BTreeSet::new();
+    for bin in bins {
+        crates.insert(bin.crate_name.as_str());
+    }
+    for name in &crates {
+        cmd.args(["-p", name]);
+    }
+    let features: BTreeSet<&str> = bins
+        .iter()
+        .flat_map(|bin| bin.features.iter().map(String::as_str))
+        .collect();
+    if !features.is_empty() {
+        cmd.arg("--features")
+            .arg(features.into_iter().collect::<Vec<_>>().join(","));
+    }
     cmd.args(["--no-run", "--message-format", "json"]);
-    cmd.env("LLVM_PROFILE_FILE", work.join(BUILD_JUNK_PROFILE_PATTERN));
+    // Compiler-side profiles (proc-macros, build scripts) run inside rustc:
+    // route them to the junk pattern like the build phase always has.
+    cmd.env(
+        "LLVM_PROFILE_FILE",
+        target_dir.join(BUILD_JUNK_PROFILE_PATTERN),
+    );
     log::info!(
-        "coverage: building {} --bench {} instrumented",
-        bin.crate_name,
-        bin.target
+        "build: {} bench binary(ies) of {} crate(s) in one cargo pass",
+        bins.len(),
+        crates.len()
     );
     let started = std::time::Instant::now();
-    let output = cmd
-        .output()
-        .with_context(|| format!("failed to build {} instrumented", bin.target))?;
-    log::info!(
-        "coverage: built {} --bench {} in {:.1?}",
-        bin.crate_name,
-        bin.target,
-        started.elapsed()
-    );
+    let output = cmd.output().context("failed to build the bench binaries")?;
+    log::info!("build: done in {:.1?}", started.elapsed());
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!(
-            "instrumented build of {} --bench {} failed: {stderr}",
-            bin.crate_name,
-            bin.target
-        );
+        bail!("instrumented bench build failed: {stderr}");
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
+    let executables = parse_bench_executables(&stdout, workspace_root, bins);
+    for bin in bins {
+        if !executables.contains_key(&(bin.crate_name.clone(), bin.target.clone())) {
+            // Diagnose: the artifacts seen vs the expected selection.
+            let bench_targets: Vec<String> = stdout
+                .lines()
+                .filter_map(|line| {
+                    let message = serde_json::from_str::<serde_json::Value>(line).ok()?;
+                    let target = message.get("target")?;
+                    let bench = target
+                        .get("kind")
+                        .and_then(|k| k.as_array())
+                        .map(|k| k.iter().any(|v| v.as_str() == Some("bench")))
+                        .unwrap_or(false);
+                    if bench {
+                        Some(format!(
+                            "{}/{}",
+                            message
+                                .get("manifest_path")
+                                .and_then(|m| m.as_str())
+                                .unwrap_or("?"),
+                            target.get("name").and_then(|n| n.as_str()).unwrap_or("?"),
+                        ))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            anyhow::bail!(
+                "no bench executable reported for {} --bench {}; bench artifacts seen: {bench_targets:?}; root: {}",
+                bin.crate_name,
+                bin.target,
+                workspace_root.canonicalize().unwrap_or_default().display()
+            );
+        }
+    }
+    Ok(executables)
+}
+
+/// Extract the bench executable paths from cargo's `--message-format=json`
+/// build output, keyed by (package name, bench target name).
+fn parse_bench_executables(
+    stdout: &str,
+    workspace_root: &Path,
+    bins: &[&BenchBinary],
+) -> BTreeMap<(String, String), PathBuf> {
+    let root = workspace_root
+        .canonicalize()
+        .unwrap_or_else(|_| workspace_root.to_path_buf());
     let mut executables = BTreeMap::new();
     for line in stdout.lines() {
         let Ok(message) = serde_json::from_str::<serde_json::Value>(line) else {
@@ -407,12 +483,23 @@ fn build_instrumented(
         let Some(name) = target.get("name").and_then(|n| n.as_str()) else {
             continue;
         };
+        let Some(manifest) = message.get("manifest_path").and_then(|m| m.as_str()) else {
+            continue;
+        };
         let Some(executable) = message.get("executable").and_then(|e| e.as_str()) else {
             continue;
         };
-        executables.insert(name.to_string(), PathBuf::from(executable));
+        let Some(bin) = bins.iter().find(|bin| {
+            bin.target == name && Path::new(manifest).starts_with(root.join(&bin.crate_dir))
+        }) else {
+            continue;
+        };
+        executables.insert(
+            (bin.crate_name.clone(), bin.target.clone()),
+            PathBuf::from(executable),
+        );
     }
-    Ok(executables)
+    executables
 }
 
 /// Run one cluster once under instrumentation and reduce its profile to
@@ -476,10 +563,9 @@ fn cover_cluster_inner(
     let _ = std::fs::remove_file(&profraw);
     let profdata = work.join(format!("{slug}.profdata"));
 
-    let env = cargo_env(target_dir);
-    let mut cmd = cargo_cmd(workspace_root, &env, bin);
+    let mut cmd = direct_bench_command(workspace_root, bin, executable, target_dir);
     cmd.env("LLVM_PROFILE_FILE", &profraw);
-    cmd.args(["--", "--test", "--noplot", &cluster.coverage_filter()]);
+    cmd.args(["--test", "--noplot", &cluster.coverage_filter()]);
     let output = cmd
         .output()
         .with_context(|| format!("failed to run cluster {}", cluster.name))?;
@@ -777,6 +863,53 @@ mod tests {
             Path::new("work"),
         );
         assert!(result.unwrap_err().to_string().contains("unknown crate"));
+    }
+
+    #[test]
+    fn parses_bench_executables_from_build_messages() {
+        let messages = r#"
+{"reason":"compiler-artifact","manifest_path":"/ws/libdd-ddsketch/Cargo.toml","target":{"name":"ddsketch_bench","kind":["bench"]},"executable":"/ws/target/bench-selection/debug/deps/ddsketch_bench-123","profile":{}}
+{"reason":"compiler-artifact","manifest_path":"/ws/libdd-trace-utils/Cargo.toml","target":{"name":"main","kind":["bench"]},"executable":"/ws/target/bench-selection/debug/deps/main-456","profile":{}}
+{"reason":"compiler-artifact","manifest_path":"/ws/libdd-trace-utils/Cargo.toml","target":{"name":"libdd-trace-utils","kind":["lib"]},"executable":null,"profile":{}}
+{"reason":"compiler-artifact","manifest_path":"/ws/unrelated-crate/Cargo.toml","target":{"name":"main","kind":["bench"]},"executable":"/ws/other","profile":{}}
+{"reason":"build-finished","success":true}
+"#;
+        let bin = |name: &str, target: &str| BenchBinary {
+            crate_name: name.to_string(),
+            target: target.to_string(),
+            crate_dir: name.to_string(),
+            features: Vec::new(),
+            bench_ids: Vec::new(),
+        };
+        let bins = [
+            bin("libdd-ddsketch", "ddsketch_bench"),
+            bin("libdd-trace-utils", "main"),
+        ];
+        // /ws does not exist locally: the canonicalization fallback keeps the
+        // literal path, which is exactly what the matching needs.
+        let executables =
+            parse_bench_executables(messages, Path::new("/ws"), &bins.iter().collect::<Vec<_>>());
+        assert_eq!(
+            executables.get(&("libdd-ddsketch".to_string(), "ddsketch_bench".to_string())),
+            Some(&std::path::PathBuf::from(
+                "/ws/target/bench-selection/debug/deps/ddsketch_bench-123"
+            ))
+        );
+        assert_eq!(
+            executables.get(&("libdd-trace-utils".to_string(), "main".to_string())),
+            Some(&std::path::PathBuf::from(
+                "/ws/target/bench-selection/debug/deps/main-456"
+            ))
+        );
+        // Non-bench targets and artifacts of crates outside the selection
+        // are not recorded.
+        assert!(!executables.contains_key(&(
+            "libdd-trace-utils".to_string(),
+            "libdd-trace-utils".to_string()
+        )));
+        assert!(
+            !executables.contains_key(&("libdd-trace-utils".to_string(), "unrelated".to_string()))
+        );
     }
 
     #[test]
