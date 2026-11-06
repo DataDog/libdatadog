@@ -376,11 +376,11 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
     }
 
     async fn recv_next_action(&mut self) -> TelemetryActions {
-        loop {
+        let action = loop {
             // Fold any points published to the ring buffer into the aggregates before we wait.
             self.drain_metric_ring();
 
-            let action = if let Some((deadline, deadline_action)) = self.deadlines.next_deadline() {
+            if let Some((deadline, deadline_action)) = self.deadlines.next_deadline() {
                 let deadline_action = *deadline_action;
                 // If deadline passed, service any already-queued mailbox action first, then
                 // return the associated action.
@@ -394,31 +394,28 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
                 };
 
                 let sleeper = <C as SleepCapability>::new();
-                let ring = self.metric_ring.clone();
                 tokio::select! {
                     biased;
-                    mailbox_action = self.mailbox.recv() => mailbox_action,
-                    _ = sleeper.sleep(remaining) => Some(TelemetryActions::Lifecycle(deadline_action)),
-                    // The ring buffer has points to drain: loop back to fold them in.
-                    _ = ring.notified() => continue,
+                    mailbox_action = self.mailbox.recv() => break mailbox_action,
+                    _ = sleeper.sleep(remaining) => return TelemetryActions::Lifecycle(deadline_action),
+                    _ = self.metric_ring.notified() => (),
                 }
             } else {
-                let ring = self.metric_ring.clone();
                 tokio::select! {
                     biased;
-                    mailbox_action = self.mailbox.recv() => mailbox_action,
-                    _ = ring.notified() => continue,
+                    mailbox_action = self.mailbox.recv() => break mailbox_action,
+                    _ = self.metric_ring.notified() => (),
                 }
-            };
+            }
+            tokio::task::yield_now().await;
+        };
 
-            // if no action is received, then it means the channel is stopped
-            return action.unwrap_or_else(|| {
-                // the worker handle no longer lives - remove restartable here to avoid leaks
-                self.config.restartable = false;
-                self.stopped = true;
-                TelemetryActions::Lifecycle(LifecycleAction::Stop)
-            });
-        }
+        action.unwrap_or_else(|| {
+            // the worker handle no longer lives - remove restartable here to avoid leaks
+            self.config.restartable = false;
+            self.stopped = true;
+            TelemetryActions::Lifecycle(LifecycleAction::Stop)
+        })
     }
 
     async fn dispatch_metrics_logs_action(&mut self, action: TelemetryActions) -> ControlFlow<()> {
@@ -1338,16 +1335,27 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static>
         Ok(())
     }
 
+    /// Enqueue a metric point without waiting for space.
+    ///
+    /// The point is dropped when the buffer appears full. This method returns `Ok(())` even when
+    /// the point is dropped. Use [`Self::try_add_point`] to detect drops.
     pub fn add_point(
         &self,
         value: f64,
         context: &ContextKey,
         extra_tags: Vec<Tag>,
     ) -> anyhow::Result<()> {
-        // Points are the highest-frequency action; publish to the lock-free ring buffer rather
-        // than boxing a message + waking the receiver per point. The worker batch-drains it.
-        self.metric_ring.push(value, *context, extra_tags);
+        let _ = self.try_add_point(value, context, extra_tags);
         Ok(())
+    }
+
+    /// Attempt to enqueue a metric point without waiting for space.
+    ///
+    /// Returns `false` if the buffer appears full and the point is dropped.
+    #[must_use = "a `false` result means that the point was dropped"]
+    pub fn try_add_point(&self, value: f64, context: &ContextKey, extra_tags: Vec<Tag>) -> bool {
+        // The worker does not drain the ring while it waits for a telemetry response.
+        self.metric_ring.try_push(value, *context, extra_tags)
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -2601,5 +2609,72 @@ mod tests {
         <TelemetryWorker<_> as libdd_shared_runtime::Worker>::shutdown(&mut worker).await;
 
         metric_mock.assert_calls(1);
+    }
+
+    /// The worker does not drain the metric buffer while it waits for the response to a telemetry
+    /// request, and a slow agent can keep it there for the whole request timeout. `add_point` is
+    /// called from application threads, so it must return at once and drop the point when the
+    /// buffer is full. The worker of this test never runs, which is that state.
+    #[cfg_attr(miri, ignore)] // too slow for the deadline; the metric_ring tests cover the buffer
+    #[test]
+    fn add_point_does_not_wait_for_a_worker_that_does_not_drain() {
+        use crate::data::metrics::{MetricNamespace, MetricType};
+
+        let runtime = Runtime::new().unwrap();
+        let _guard = runtime.enter();
+        let (handle, mut worker) = {
+            let mut builder = TelemetryWorkerBuilder::new(
+                "host".into(),
+                "svc".into(),
+                "lang".into(),
+                "1".into(),
+                "tv".into(),
+            );
+            builder.runtime_id = Some("rid".into());
+            builder.build_worker::<NativeCapabilities>(Some(runtime.handle().clone()))
+        };
+        let context = handle.register_metric_context(
+            "regression.full_metric_buffer".into(),
+            Vec::new(),
+            MetricType::Count,
+            false,
+            MetricNamespace::Tracers,
+        );
+
+        // The worker does not run, so the buffer eventually fills.
+        let producer = {
+            let handle = handle.clone();
+            std::thread::spawn(move || {
+                let mut accepted = 0usize;
+                while handle.try_add_point(1.0, &context, Vec::new()) {
+                    accepted += 1;
+                }
+                let legacy_result = handle.add_point(1.0, &context, Vec::new());
+                (accepted, legacy_result)
+            })
+        };
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while !producer.is_finished() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "add_point waited for a worker that does not drain the metric buffer"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let (accepted, legacy_result) = producer.join().unwrap();
+        assert!(accepted > 0);
+        assert!(
+            legacy_result.is_ok(),
+            "a full metric buffer must not turn a best-effort point into an error"
+        );
+
+        // The worker reads every accepted point when it drains again.
+        worker.drain_metric_ring();
+        worker.data.metric_buckets.flush_aggregates();
+        let series: Vec<_> = worker.data.metric_buckets.flush_series().collect();
+        assert_eq!(series.len(), 1);
+        assert_eq!(series[0].0, context);
+        assert_eq!(series[0].2[0].1, accepted as f64);
+        assert!(handle.try_add_point(1.0, &context, Vec::new()));
     }
 }
