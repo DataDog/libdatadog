@@ -101,6 +101,9 @@ pub(crate) enum StdinState {
     RuntimeStackFrame(Vec<StackFrame>),
     RuntimeStackString(Vec<String>),
     Message,
+    /// A single OTel thread context record. The tid comes from the begin
+    /// marker; the hex-encoded 640-byte record is on the next line.
+    OtelThreadCtx(i32),
 }
 
 /// A state machine that processes data from the crash-tracker collector line by
@@ -337,6 +340,31 @@ fn process_line(
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_WHOLE_STACKTRACE) => {
             StdinState::WholeStackTrace
         }
+        StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_OTEL_THREAD_CTX) => {
+            // "DD_CRASHTRACK_BEGIN_OTEL_THREAD_CTX <tid>"
+            let tid = line
+                .strip_prefix(DD_CRASHTRACK_BEGIN_OTEL_THREAD_CTX)
+                .unwrap_or("")
+                .trim()
+                .parse::<i32>()
+                .unwrap_or(0);
+            StdinState::OtelThreadCtx(tid)
+        }
+        StdinState::OtelThreadCtx(_) if line.starts_with(DD_CRASHTRACK_END_OTEL_THREAD_CTX) => {
+            StdinState::Waiting
+        }
+        StdinState::OtelThreadCtx(tid) => {
+            #[cfg(target_os = "linux")]
+            if let Some(ctx) = decode_hex_otel_record(tid, line.trim()) {
+                builder
+                    .otel_thread_contexts
+                    .get_or_insert_with(Vec::new)
+                    .push(ctx);
+            }
+            #[cfg(not(target_os = "linux"))]
+            let _ = tid;
+            StdinState::OtelThreadCtx(tid)
+        }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_DONE) => {
             builder.with_incomplete(false)?;
             StdinState::Done
@@ -516,6 +544,17 @@ pub(crate) async fn receive_report_from_stream(
     }
 
     enrich_thread_name(&mut builder)?;
+
+    #[cfg(target_os = "linux")]
+    if let Some(ref mut contexts) = builder.otel_thread_contexts
+        && let Some(proc_info) = builder.proc_info.as_ref()
+    {
+        let pid = proc_info.pid;
+        for ctx in contexts.iter_mut() {
+            ctx.thread_name = crate::otel_tls_reader::read_thread_name(pid, ctx.tid);
+        }
+    }
+
     builder.with_os_info_this_machine()?;
 
     // Without a config, we don't even know the endpoint to transmit to.  Not much to do to recover.
@@ -671,6 +710,21 @@ fn collect_and_add_thread_contexts(
     }
     let _ = builder.with_threads(threads);
     Ok(())
+}
+
+/// Decode a hex-encoded 640-byte OTel record into an `OtelThreadContext`.
+#[cfg(target_os = "linux")]
+fn decode_hex_otel_record(tid: i32, hex: &str) -> Option<crate::crash_info::OtelThreadContext> {
+    use crate::otel_tls_reader::OTEL_RECORD_SIZE;
+
+    if hex.len() != OTEL_RECORD_SIZE * 2 {
+        return None;
+    }
+    let mut record = [0u8; OTEL_RECORD_SIZE];
+    for (i, byte) in record.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).ok()?;
+    }
+    crate::otel_tls_reader::decode_record(tid, &record)
 }
 
 /// Recover callers before a collector-emitted stack replaces the one that has them.

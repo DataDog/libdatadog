@@ -371,6 +371,15 @@ impl ThreadContext {
     }
 }
 
+/// Return the virtual address of the `otel_thread_ctx_v1` TLS slot for the current thread.
+///
+/// This is the address of the slot itself (not the value stored in it). Combined with a
+/// thread's thread-pointer register, the TLS offset can be computed as
+/// `tls_offset = slot_address - TP`. That offset is constant across all threads in the process.
+pub fn tls_slot_address() -> usize {
+    with_tls_slot(|slot| slot as *const _ as usize)
+}
+
 /// Read the TLS pointer for the current thread (the value stored in the TLS slot, not the address
 /// of the slot itself). Shared by the tests of both ownership modes.
 #[cfg(any(test, feature = "test-utils"))]
