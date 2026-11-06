@@ -1099,8 +1099,10 @@ pub struct FfeFlagEvaluation<'a> {
 /// an SDK explicitly sends this action.
 ///
 /// # Safety
-/// `context` and every element in `exposures` must contain valid UTF-8
-/// `CharSlice` values. Empty `exposures` is a no-op.
+/// All slices must reference valid memory under the CharSlice contract. The
+/// context and the required exposure fields must be UTF-8. Invalid
+/// `features_json` is allowed and only omits the features. Empty `exposures`
+/// is a no-op.
 #[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_send_ffe_exposure_batch(
@@ -1164,7 +1166,8 @@ fn ddog_sidecar_send_ffe_exposure_batch_impl(
 /// # Safety
 /// All slices must reference valid memory under the CharSlice contract. Context
 /// metadata and flag keys must be UTF-8. Malformed optional variant, allocation,
-/// rule, targeting, and context text is omitted; malformed error text becomes GENERAL.
+/// rule, targeting, context and `features_json` text is omitted; malformed error
+/// text becomes GENERAL.
 /// A null/zero targeting slice means missing; a non-null empty slice means empty.
 /// Empty `flag_evaluations` is a no-op. Use headers and library from the same build.
 #[unsafe(no_mangle)]
