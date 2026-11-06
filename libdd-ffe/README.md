@@ -142,3 +142,8 @@ SDKs must stage eligible exposures until the complete OpenFeature evaluation suc
 application hooks, and admit them to deduplication only at that point. Evaluation records remain
 reportable when a hook fails. The trace does not emit telemetry itself. SDKs should advertise dependent-flag support only
 after integrating and testing both evaluation and exposure reporting.
+
+The public trace result and prerequisite record types are non-exhaustive. Consumers that need
+to represent a failure before evaluation should use `EvaluationResult::from_error(error)`.
+Both public evaluation APIs emit the root's trace-level diagnostic exactly once, including
+early failures; returning a trace does not publish evaluation or exposure telemetry.

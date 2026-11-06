@@ -151,9 +151,9 @@ fn invalid_dependency_conditions_are_isolated_to_the_containing_flag() {
         json!({"flagEvaluation": {"key": "parent"}, "attribute": "country", "operator": "ONE_OF", "value": ["on"]}),
         json!({"flagEvaluation": {"key": "parent"}, "attribute": "", "operator": "ONE_OF", "value": ["on"]}),
         json!({"flagEvaluation": {"key": "parent"}, "attribute": null, "operator": "ONE_OF", "value": ["on"]}),
-        json!({"flagEvaluation": {"key": "parent", "extra": true}, "operator": "ONE_OF", "value": ["on"]}),
         json!({"flagEvaluation": null, "attribute": "country", "operator": "ONE_OF", "value": ["FR"]}),
         json!({"flagEvaluation": null, "operator": "ONE_OF", "value": ["on"]}),
+        json!({"flagEvaluation": {}, "operator": "ONE_OF", "value": ["on"]}),
         json!({"flagEvaluation": {"key": ""}, "operator": "ONE_OF", "value": ["on"]}),
         json!({"flagEvaluation": {"key": "parent"}, "operator": "IS_NULL", "value": false}),
         json!({"flagEvaluation": {"key": "parent"}, "operator": "ONE_OF", "value": "on"}),
@@ -686,4 +686,53 @@ fn independent_flags_ignore_unrelated_dependency_graphs() {
     let result = eval(w);
     assert_eq!(result.result.unwrap().variation_key.as_str(), "on");
     assert!(result.evaluations.is_empty());
+}
+
+#[test]
+fn memoized_transitive_prerequisite_keeps_nested_exposures_when_reused() {
+    let mut root = flag(vec![]);
+    root["allocations"][0]["rules"] = json!([
+        {"conditions": [dependency("parent"), fails()]},
+        {"conditions": [dependency("parent")]}
+    ]);
+    let r = eval(wire(
+        json!({"root": root, "parent": flag(vec![dependency("leaf")]), "leaf": flag(vec![])}),
+    ));
+    assert_eq!(r.result.unwrap().variation_key.as_str(), "on");
+    assert_eq!(
+        r.evaluations
+            .iter()
+            .map(|e| e.flag_key.as_str())
+            .collect::<Vec<_>>(),
+        ["leaf", "parent"]
+    );
+    assert!(r.evaluations.iter().all(|e| e.exposure_eligible));
+}
+
+#[test]
+fn transitive_success_then_root_rule_rejection_exposes_nothing() {
+    let r = eval(wire(
+        json!({"root": flag(vec![dependency("parent"), fails()]),
+        "parent": flag(vec![dependency("leaf")]), "leaf": flag(vec![])}),
+    ));
+    assert_eq!(r.result.unwrap().variation_key.as_str(), "off");
+    assert_eq!(r.evaluations.len(), 2);
+    assert!(
+        r.evaluations
+            .iter()
+            .all(|e| e.result.is_ok() && !e.exposure_eligible)
+    );
+}
+
+#[test]
+fn prerequisite_first_reached_in_rejected_allocation_is_exposed_once_by_later_allocation() {
+    let mut root = flag(vec![dependency("parent"), fails()]);
+    root["allocations"]
+        .as_array_mut()
+        .unwrap()
+        .insert(1, allocation(vec![dependency("parent")], "on"));
+    let r = eval(wire(json!({"root": root, "parent": flag(vec![])})));
+    assert_eq!(r.result.unwrap().variation_key.as_str(), "on");
+    assert_eq!(r.evaluations.len(), 1);
+    assert!(r.evaluations[0].exposure_eligible);
 }

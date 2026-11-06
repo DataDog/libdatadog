@@ -54,6 +54,12 @@ pub struct FfeSnapshotState {
 /// a snapshot failure retains the evaluation without context. Use matching headers
 /// and library. No diagnostic is recursively submitted through this EVP path.
 ///
+/// When all batch `context` fields (service, env and version) are empty, the sidecar
+/// fills them from the application set on this transport with
+/// `ddog_sidecar_set_application`. If no application is set or any of its identity
+/// fields exceeds 256 characters, the batch context stays empty. Explicit batch
+/// context is preserved.
+///
 /// # Safety
 /// All references must be valid for the call, with exclusive access to the transport.
 /// Non-null slices that are read must
