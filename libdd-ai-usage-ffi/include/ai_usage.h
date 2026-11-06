@@ -162,7 +162,9 @@ enum ddog_ai_usage_Status ddog_ai_usage_batch_new(struct ddog_ai_usage_Batch **o
 /**
  * Project the request document `input[..input_len]`, as
  * [`ddog_ai_usage_project`] reads it, and add its points to `batch`. Writes
- * `{"issues": [...], "dropped": false}` to `out`. A rejected document adds
+ * `{"issues": [...], "dropped": false, "full": false}` to `out` (`full`
+ * when the batch reached its high-water mark, see
+ * [`ddog_ai_usage_batch_set_high_water`]). A rejected document adds
  * nothing. `dropped` is true when a bounded batch (see
  * [`ddog_ai_usage_batch_set_max_len`]) had no room for the observation,
  * which then adds nothing and is counted by [`ddog_ai_usage_batch_dropped`];
@@ -204,8 +206,10 @@ enum ddog_ai_usage_Status ddog_ai_usage_batch_add_quiet(const struct ddog_ai_usa
  * and counts each in [`ddog_ai_usage_batch_dropped`]. A rejected document
  * rejects the request, adds nothing, and writes `{"error": {"code",
  * "message"}}` whose message names the document's index. On success writes
- * `{"issues": [[...], ...], "dropped": false}` (one issue list per
- * document) to `out`, or nothing when `out` is null.
+ * `{"issues": [[...], ...], "dropped": false, "full": false}` (one issue
+ * list per document; `full` when the batch reached its high-water mark, see
+ * [`ddog_ai_usage_batch_set_high_water`]) to `out`, or nothing when `out` is
+ * null.
  *
  * # Safety
  *
@@ -359,6 +363,42 @@ void ddog_ai_usage_batch_set_max_len(const struct ddog_ai_usage_Batch *batch, ui
 uint64_t ddog_ai_usage_batch_dropped(const struct ddog_ai_usage_Batch *batch);
 
 /**
+ * The observations `batch` dropped since the last call (since it was
+ * created, for the first), so a caller reports drops per flush without a
+ * count of its own. A null batch dropped none.
+ *
+ * # Safety
+ *
+ * `batch` must be null or a live batch from [`ddog_ai_usage_batch_new`].
+ */
+uint64_t ddog_ai_usage_batch_take_dropped(const struct ddog_ai_usage_Batch *batch);
+
+/**
+ * Ask for `batch` to be sent early once it holds `high_water` points (as
+ * [`ddog_ai_usage_batch_len`] counts them), or never with 0. Adds then
+ * report `"full": true`, and [`ddog_ai_usage_batch_is_full`] says so, so a
+ * gateway sends at once instead of waiting for its timer. Nothing is
+ * dropped for it; [`ddog_ai_usage_batch_set_max_len`] bounds the batch. A
+ * null batch is a no-op.
+ *
+ * # Safety
+ *
+ * `batch` must be null or a live batch from [`ddog_ai_usage_batch_new`].
+ */
+void ddog_ai_usage_batch_set_high_water(const struct ddog_ai_usage_Batch *batch,
+                                        uintptr_t high_water);
+
+/**
+ * Whether `batch` holds at least its high-water mark of points (see
+ * [`ddog_ai_usage_batch_set_high_water`]). A null batch is not full.
+ *
+ * # Safety
+ *
+ * `batch` must be null or a live batch from [`ddog_ai_usage_batch_new`].
+ */
+bool ddog_ai_usage_batch_is_full(const struct ddog_ai_usage_Batch *batch);
+
+/**
  * Release a batch. A null batch is a no-op.
  *
  * # Safety
@@ -493,6 +533,68 @@ void ddog_ai_usage_stream_drop(struct ddog_ai_usage_Stream *stream);
 enum ddog_ai_usage_Status ddog_ai_usage_provider_name(const uint8_t *name,
                                                       uintptr_t name_len,
                                                       struct ddog_ai_usage_Buffer *out);
+
+/**
+ * Write the `gen_ai.operation.name` of a gateway route or request path
+ * `route[..route_len]` to `out`: Kong's AI route types (`llm/v1/chat`, ...),
+ * an upstream path (`/v1/chat/completions`, `/v1/messages`, `/v1/responses`,
+ * `/v1/embeddings`, `/v1/completions`, Gemini's `:generateContent`,
+ * Bedrock's `/converse`; a query string is ignored), or an operation name.
+ * [`Status::Rejected`] for anything else.
+ *
+ * # Safety
+ *
+ * `route` must point to `route_len` readable bytes (or `route_len` must be
+ * 0), and `out` must be null or writable.
+ */
+enum ddog_ai_usage_Status ddog_ai_usage_operation_name(const uint8_t *route,
+                                                       uintptr_t route_len,
+                                                       struct ddog_ai_usage_Buffer *out);
+
+/**
+ * Write the `error.type` of a call to `out` from how it failed: its HTTP
+ * `status` (0 when there is none), whether it got `no_response` from the
+ * provider, whether it `timed_out`, and its error name `name[..name_len]`
+ * (may be empty). No response is `timeout_error` when it timed out or the
+ * status is 504, else `api_connection_error`; a status other than 200 that
+ * is not a failure is `api_error`. [`Status::Rejected`] when the call did
+ * not fail.
+ *
+ * # Safety
+ *
+ * `name` must point to `name_len` readable bytes (or `name_len` must be 0),
+ * and `out` must be null or writable.
+ */
+enum ddog_ai_usage_Status ddog_ai_usage_error_type_for_failure(uint16_t status,
+                                                               bool no_response,
+                                                               bool timed_out,
+                                                               const uint8_t *name,
+                                                               uintptr_t name_len,
+                                                               struct ddog_ai_usage_Buffer *out);
+
+/**
+ * The cost of a call at per-million prices, in nano-USD, written to
+ * `cost_nano_usd`: `input_tokens` (all input, cache included) of which
+ * `cache_read_tokens` and `cache_write_tokens` are priced at
+ * `cache_read_per_million` and `cache_write_per_million` (a negative price
+ * means "as input"), and `output_tokens` (reasoning included). False, with
+ * nothing written, for a price that is not a finite non-negative number.
+ * An observation can instead state `prices_per_million` and get its cost
+ * from its own counts.
+ *
+ * # Safety
+ *
+ * `cost_nano_usd` must be null or writable.
+ */
+bool ddog_ai_usage_estimated_cost(double input_per_million,
+                                  double output_per_million,
+                                  double cache_read_per_million,
+                                  double cache_write_per_million,
+                                  uint64_t input_tokens,
+                                  uint64_t cache_read_tokens,
+                                  uint64_t cache_write_tokens,
+                                  uint64_t output_tokens,
+                                  uint64_t *cost_nano_usd);
 
 /**
  * Write the `error.type` of a failure to `out`: from its error name

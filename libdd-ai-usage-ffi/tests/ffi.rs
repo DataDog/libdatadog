@@ -152,7 +152,10 @@ fn batch_to_dogstatsd_datagrams() {
             let mut out = empty();
             let status = ddog_ai_usage_batch_add(batch, ATTEMPT.as_ptr(), ATTEMPT.len(), &mut out);
             assert_eq!(status, Status::Ok);
-            assert_eq!(json_of(out), json!({"issues": [], "dropped": false}));
+            assert_eq!(
+                json_of(out),
+                json!({"issues": [], "dropped": false, "full": false})
+            );
             // Counters are summed into their series; each Histogram sample
             // is a point of its own.
             let len = ddog_ai_usage_batch_len(batch);
@@ -667,7 +670,10 @@ fn a_bounded_batch_drops_and_counts() {
         add(batch);
         let one = ddog_ai_usage_batch_len(batch);
         ddog_ai_usage_batch_set_max_len(batch, one);
-        assert_eq!(add(batch), json!({"issues": [], "dropped": true}));
+        assert_eq!(
+            add(batch),
+            json!({"issues": [], "dropped": true, "full": false})
+        );
         assert_eq!(ddog_ai_usage_batch_len(batch), one);
         assert_eq!(ddog_ai_usage_batch_dropped(batch), 1);
         // Taking keeps the bound and the count.
@@ -1124,6 +1130,149 @@ fn batch_deployment_attributes_merge_with_the_document() {
         ddog_ai_usage_batch_add_quiet(batch, document.as_ptr(), document.len(), ptr::null_mut());
         assert!(ddog_ai_usage_batch_len(batch) > 1);
         ddog_ai_usage_batch_reset_metrics(ptr::null());
+        ddog_ai_usage_batch_drop(batch);
+    }
+}
+
+/// A text call's status and output.
+fn text_out(call: impl FnOnce(*mut Buffer) -> Status) -> (Status, String) {
+    let mut out = empty();
+    let status = call(&mut out);
+    (status, take(out))
+}
+
+#[test]
+fn operation_names_errors_and_costs_cross_the_boundary() {
+    // SAFETY: valid inputs and outputs.
+    unsafe {
+        let route = "/v1/chat/completions?x=1";
+        assert_eq!(
+            text_out(|out| ddog_ai_usage_operation_name(route.as_ptr(), route.len(), out)),
+            (Status::Ok, "chat".to_string())
+        );
+        let route = "/v1/models";
+        assert_eq!(
+            text_out(|out| ddog_ai_usage_operation_name(route.as_ptr(), route.len(), out)).0,
+            Status::Rejected
+        );
+        assert_eq!(
+            text_out(|out| ddog_ai_usage_error_type_for_failure(
+                504,
+                true,
+                false,
+                ptr::null(),
+                0,
+                out
+            )),
+            (Status::Ok, "timeout_error".to_string())
+        );
+        assert_eq!(
+            text_out(|out| ddog_ai_usage_error_type_for_failure(
+                0,
+                true,
+                false,
+                ptr::null(),
+                0,
+                out
+            )),
+            (Status::Ok, "api_connection_error".to_string())
+        );
+        assert_eq!(
+            text_out(|out| ddog_ai_usage_error_type_for_failure(
+                200,
+                false,
+                false,
+                ptr::null(),
+                0,
+                out
+            ))
+            .0,
+            Status::Rejected
+        );
+        let mut cost = 0;
+        assert!(ddog_ai_usage_estimated_cost(
+            3.0, 15.0, 0.3, -1.0, 1_000_000, 400_000, 100_000, 10_000, &mut cost
+        ));
+        // 0.5M at 3 + 0.4M at 0.3 + 0.1M at 3 (as input) + 0.01M at 15.
+        assert_eq!(cost, 2_070_000_000);
+        assert!(!ddog_ai_usage_estimated_cost(
+            f64::NAN,
+            15.0,
+            -1.0,
+            -1.0,
+            1,
+            0,
+            0,
+            1,
+            &mut cost
+        ));
+    }
+}
+
+#[test]
+fn extended_observations_high_water_and_drops_since_last_take() {
+    let document = r#"{"profile": "gen_ai.client.provider_attempt@0.1.0",
+        "observation": {"operation_name": "chat", "provider_name": "openai",
+            "duration_ns": 500000000, "streaming": false, "input_tokens": 1000,
+            "input_basis": "includes_cache", "output_tokens": 100,
+            "output_basis": "includes_reasoning", "observation_point": "gateway",
+            "prices_per_million": {"input": 2.5, "output": 10}}}"#;
+    let mut batch = ptr::null_mut();
+    // SAFETY: `batch` is written by `batch_new` and used until dropped.
+    unsafe {
+        assert_eq!(ddog_ai_usage_batch_new(&mut batch), Status::Ok);
+        let mut out = empty();
+        assert_eq!(
+            ddog_ai_usage_batch_add(batch, document.as_ptr(), document.len(), &mut out),
+            Status::Ok
+        );
+        assert_eq!(json_of(out)["full"], false);
+        let one = ddog_ai_usage_batch_len(batch);
+        ddog_ai_usage_batch_set_high_water(batch, one + 1);
+        let mut out = empty();
+        ddog_ai_usage_batch_add(batch, document.as_ptr(), document.len(), &mut out);
+        assert_eq!(json_of(out)["full"], true);
+        assert!(ddog_ai_usage_batch_is_full(batch));
+        let mut out = empty();
+        ddog_ai_usage_batch_take_dogstatsd_text(
+            batch,
+            ptr::null(),
+            0,
+            8192,
+            ptr::null_mut(),
+            &mut out,
+        );
+        let lines = take(out);
+        // (1000 at 2.5 + 100 at 10) per million = 0.0035 USD, twice.
+        assert!(
+            lines.contains("trajectory.gen_ai.client.inference.usage.cost:0.007|c|#"),
+            "{lines}"
+        );
+        assert!(
+            lines.contains("trajectory.cost.source:estimated"),
+            "{lines}"
+        );
+        assert!(
+            lines.contains("gen_ai.client.inference.duration:0.5|d|#"),
+            "{lines}"
+        );
+        assert!(!ddog_ai_usage_batch_is_full(batch));
+        // Drops since the last take.
+        ddog_ai_usage_batch_set_max_len(batch, 1);
+        for _ in 0..3 {
+            ddog_ai_usage_batch_add_quiet(
+                batch,
+                document.as_ptr(),
+                document.len(),
+                ptr::null_mut(),
+            );
+        }
+        assert_eq!(ddog_ai_usage_batch_take_dropped(batch), 3);
+        assert_eq!(ddog_ai_usage_batch_take_dropped(batch), 0);
+        assert_eq!(ddog_ai_usage_batch_dropped(batch), 3);
+        ddog_ai_usage_batch_set_high_water(ptr::null(), 1);
+        assert!(!ddog_ai_usage_batch_is_full(ptr::null()));
+        assert_eq!(ddog_ai_usage_batch_take_dropped(ptr::null()), 0);
         ddog_ai_usage_batch_drop(batch);
     }
 }

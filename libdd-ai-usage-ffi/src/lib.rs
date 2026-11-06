@@ -29,12 +29,13 @@ use std::sync::Mutex;
 use std::{ptr, slice};
 
 use libdd_ai_usage::{
-    Attributes, DOGSTATSD_MAX_LINE_BYTES, DOGSTATSD_UDP_MAX_PAYLOAD, DOGSTATSD_UDS_MAX_PAYLOAD,
-    ErrorCode, Json, MetricBatch, MetricError, PROVIDER_ID_HEADERS, Profile, ProviderResponse,
-    StreamOutcome, UsageFormat, UsageStream, bedrock_arn_account, classify_error,
-    classify_known_error, datadog_series, datadog_tag_value, gen_ai_provider_name,
-    is_deployment_value, is_person_identifier, is_service_tier, pack_dogstatsd_joined,
-    pack_dogstatsd_limited, parse_provider_body, project_result, provider_id_attributes,
+    Attributes, BillableTokens, DOGSTATSD_MAX_LINE_BYTES, DOGSTATSD_UDP_MAX_PAYLOAD,
+    DOGSTATSD_UDS_MAX_PAYLOAD, ErrorCode, Json, MetricBatch, MetricError, PROVIDER_ID_HEADERS,
+    PricesPerMillion, Profile, ProviderResponse, StreamOutcome, UsageFormat, UsageStream,
+    bedrock_arn_account, classify_error, classify_known_error, datadog_series, datadog_tag_value,
+    error_type_for_failure, estimated_cost_nano_usd, gen_ai_provider_name, is_deployment_value,
+    is_person_identifier, is_service_tier, operation_name_for, pack_dogstatsd_joined,
+    pack_dogstatsd_limited, parse_provider_body, project_extended, provider_id_attributes,
     retain_metrics, with_deployment_attributes_json,
 };
 use serde_json::{Value, json};
@@ -284,7 +285,7 @@ fn projection_with(
         )
     })?;
     let observation = document.get(profile.input_key()).unwrap_or(&Json::Null);
-    let projection = project_result(profile, observation)?;
+    let projection = project_extended(profile, observation)?;
     // The batch's attributes, with the document's on top: a document states
     // only what differs, and `null` for an attribute removes the batch's.
     let merged;
@@ -504,7 +505,9 @@ pub unsafe extern "C" fn ddog_ai_usage_batch_new(out: *mut *mut Batch) -> Status
 
 /// Project the request document `input[..input_len]`, as
 /// [`ddog_ai_usage_project`] reads it, and add its points to `batch`. Writes
-/// `{"issues": [...], "dropped": false}` to `out`. A rejected document adds
+/// `{"issues": [...], "dropped": false, "full": false}` to `out` (`full`
+/// when the batch reached its high-water mark, see
+/// [`ddog_ai_usage_batch_set_high_water`]). A rejected document adds
 /// nothing. `dropped` is true when a bounded batch (see
 /// [`ddog_ai_usage_batch_set_max_len`]) had no room for the observation,
 /// which then adds nothing and is counted by [`ddog_ai_usage_batch_dropped`];
@@ -530,8 +533,8 @@ pub unsafe extern "C" fn ddog_ai_usage_batch_add(
                 let batch = batch
                     .as_ref()
                     .ok_or(Failure::Internal("the batch is null"))?;
-                let (issues, added) = add_document(batch, bytes(input, input_len), true)?;
-                Ok(json!({"issues": issues, "dropped": !added}))
+                let (issues, added, full) = add_document(batch, bytes(input, input_len), true)?;
+                Ok(json!({"issues": issues, "dropped": !added, "full": full}))
             }))
             .unwrap_or(Err(Failure::Internal("adding to the batch panicked")))
         })
@@ -539,12 +542,13 @@ pub unsafe extern "C" fn ddog_ai_usage_batch_add(
 }
 
 /// Project a request document with the batch's settings and add it,
-/// returning its issues (when asked for) and whether it was added.
+/// returning its issues (when asked for), whether it was added, and whether
+/// the batch reached its high-water mark.
 fn add_document(
     batch: &Batch,
     input: Option<&[u8]>,
     want_issues: bool,
-) -> Result<(Option<Value>, bool), Failure> {
+) -> Result<(Option<Value>, bool, bool), Failure> {
     let document = parse_document(input)?;
     let (profile, projection) = {
         let settings = batch
@@ -554,12 +558,12 @@ fn add_document(
         projection_with(&document, &settings)?
     };
     let issues = want_issues.then(|| issues(&projection));
-    let added = batch
+    let mut inner = batch
         .inner
         .lock()
-        .map_err(|_| Failure::Internal("the batch is poisoned"))?
-        .try_add_owned(profile, projection)?;
-    Ok((issues, added))
+        .map_err(|_| Failure::Internal("the batch is poisoned"))?;
+    let added = inner.try_add_owned(profile, projection)?;
+    Ok((issues, added, inner.is_full()))
 }
 
 /// [`ddog_ai_usage_batch_add`] without its output: nothing is written on
@@ -605,8 +609,10 @@ pub unsafe extern "C" fn ddog_ai_usage_batch_add_quiet(
 /// and counts each in [`ddog_ai_usage_batch_dropped`]. A rejected document
 /// rejects the request, adds nothing, and writes `{"error": {"code",
 /// "message"}}` whose message names the document's index. On success writes
-/// `{"issues": [[...], ...], "dropped": false}` (one issue list per
-/// document) to `out`, or nothing when `out` is null.
+/// `{"issues": [[...], ...], "dropped": false, "full": false}` (one issue
+/// list per document; `full` when the batch reached its high-water mark, see
+/// [`ddog_ai_usage_batch_set_high_water`]) to `out`, or nothing when `out` is
+/// null.
 ///
 /// # Safety
 ///
@@ -654,17 +660,20 @@ pub unsafe extern "C" fn ddog_ai_usage_batch_add_request(
                 .map(|(_, projection)| issues(projection))
                 .collect::<Vec<Value>>()
         });
-        let added = batch
+        let mut inner = batch
             .inner
             .lock()
-            .map_err(|_| Failure::Internal("the batch is poisoned"))?
-            .try_add_all(projections)?;
-        Ok((issues, added))
+            .map_err(|_| Failure::Internal("the batch is poisoned"))?;
+        let added = inner.try_add_all(projections)?;
+        Ok((issues, added, inner.is_full()))
     }))
     .unwrap_or(Err(Failure::Internal("adding to the batch panicked")));
     let (status, value) = match result {
-        Ok((Some(issues), added)) => (Status::Ok, json!({"issues": issues, "dropped": !added})),
-        Ok((None, _)) => return Status::Ok,
+        Ok((Some(issues), added, full)) => (
+            Status::Ok,
+            json!({"issues": issues, "dropped": !added, "full": full}),
+        ),
+        Ok((None, ..)) => return Status::Ok,
         Err(Failure::Rejected(error)) => (Status::Rejected, rejection(&error)),
         Err(Failure::Internal(message)) => (Status::Internal, error_value("internal", message)),
     };
@@ -985,6 +994,69 @@ pub unsafe extern "C" fn ddog_ai_usage_batch_dropped(batch: *const Batch) -> u64
     .unwrap_or(0)
 }
 
+/// The observations `batch` dropped since the last call (since it was
+/// created, for the first), so a caller reports drops per flush without a
+/// count of its own. A null batch dropped none.
+///
+/// # Safety
+///
+/// `batch` must be null or a live batch from [`ddog_ai_usage_batch_new`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ddog_ai_usage_batch_take_dropped(batch: *const Batch) -> u64 {
+    catch_unwind(AssertUnwindSafe(|| {
+        // SAFETY: the caller guarantees a live batch or null.
+        unsafe { batch.as_ref() }.map_or(0, |batch| {
+            batch
+                .inner
+                .lock()
+                .map(|mut inner| inner.take_dropped())
+                .unwrap_or(0)
+        })
+    }))
+    .unwrap_or(0)
+}
+
+/// Ask for `batch` to be sent early once it holds `high_water` points (as
+/// [`ddog_ai_usage_batch_len`] counts them), or never with 0. Adds then
+/// report `"full": true`, and [`ddog_ai_usage_batch_is_full`] says so, so a
+/// gateway sends at once instead of waiting for its timer. Nothing is
+/// dropped for it; [`ddog_ai_usage_batch_set_max_len`] bounds the batch. A
+/// null batch is a no-op.
+///
+/// # Safety
+///
+/// `batch` must be null or a live batch from [`ddog_ai_usage_batch_new`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ddog_ai_usage_batch_set_high_water(
+    batch: *const Batch,
+    high_water: usize,
+) {
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        // SAFETY: the caller guarantees a live batch or null.
+        if let Some(batch) = unsafe { batch.as_ref() }
+            && let Ok(mut inner) = batch.inner.lock()
+        {
+            inner.set_high_water((high_water != 0).then_some(high_water));
+        }
+    }));
+}
+
+/// Whether `batch` holds at least its high-water mark of points (see
+/// [`ddog_ai_usage_batch_set_high_water`]). A null batch is not full.
+///
+/// # Safety
+///
+/// `batch` must be null or a live batch from [`ddog_ai_usage_batch_new`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ddog_ai_usage_batch_is_full(batch: *const Batch) -> bool {
+    catch_unwind(AssertUnwindSafe(|| {
+        // SAFETY: the caller guarantees a live batch or null.
+        unsafe { batch.as_ref() }
+            .is_some_and(|batch| batch.inner.lock().is_ok_and(|inner| inner.is_full()))
+    }))
+    .unwrap_or(false)
+}
+
 /// Release a batch. A null batch is a no-op.
 ///
 /// # Safety
@@ -1303,6 +1375,130 @@ pub unsafe extern "C" fn ddog_ai_usage_provider_name(
             }))
             .unwrap_or(None)
         })
+    }
+}
+
+/// Write the `gen_ai.operation.name` of a gateway route or request path
+/// `route[..route_len]` to `out`: Kong's AI route types (`llm/v1/chat`, ...),
+/// an upstream path (`/v1/chat/completions`, `/v1/messages`, `/v1/responses`,
+/// `/v1/embeddings`, `/v1/completions`, Gemini's `:generateContent`,
+/// Bedrock's `/converse`; a query string is ignored), or an operation name.
+/// [`Status::Rejected`] for anything else.
+///
+/// # Safety
+///
+/// `route` must point to `route_len` readable bytes (or `route_len` must be
+/// 0), and `out` must be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ddog_ai_usage_operation_name(
+    route: *const u8,
+    route_len: usize,
+    out: *mut Buffer,
+) -> Status {
+    // SAFETY: forwarded from the caller.
+    unsafe {
+        text_call(out, || {
+            catch_unwind(AssertUnwindSafe(|| {
+                text(route, route_len).map(|route| operation_name_for(route).map(str::to_string))
+            }))
+            .unwrap_or(None)
+        })
+    }
+}
+
+/// Write the `error.type` of a call to `out` from how it failed: its HTTP
+/// `status` (0 when there is none), whether it got `no_response` from the
+/// provider, whether it `timed_out`, and its error name `name[..name_len]`
+/// (may be empty). No response is `timeout_error` when it timed out or the
+/// status is 504, else `api_connection_error`; a status other than 200 that
+/// is not a failure is `api_error`. [`Status::Rejected`] when the call did
+/// not fail.
+///
+/// # Safety
+///
+/// `name` must point to `name_len` readable bytes (or `name_len` must be 0),
+/// and `out` must be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ddog_ai_usage_error_type_for_failure(
+    status: u16,
+    no_response: bool,
+    timed_out: bool,
+    name: *const u8,
+    name_len: usize,
+    out: *mut Buffer,
+) -> Status {
+    // SAFETY: forwarded from the caller.
+    unsafe {
+        text_call(out, || {
+            catch_unwind(AssertUnwindSafe(|| {
+                text(name, name_len).map(|name| {
+                    error_type_for_failure(&libdd_ai_usage::Failure {
+                        status: (status != 0).then_some(status),
+                        no_response,
+                        timed_out,
+                        name: (!name.is_empty()).then_some(name),
+                    })
+                    .map(str::to_string)
+                })
+            }))
+            .unwrap_or(None)
+        })
+    }
+}
+
+/// The cost of a call at per-million prices, in nano-USD, written to
+/// `cost_nano_usd`: `input_tokens` (all input, cache included) of which
+/// `cache_read_tokens` and `cache_write_tokens` are priced at
+/// `cache_read_per_million` and `cache_write_per_million` (a negative price
+/// means "as input"), and `output_tokens` (reasoning included). False, with
+/// nothing written, for a price that is not a finite non-negative number.
+/// An observation can instead state `prices_per_million` and get its cost
+/// from its own counts.
+///
+/// # Safety
+///
+/// `cost_nano_usd` must be null or writable.
+#[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn ddog_ai_usage_estimated_cost(
+    input_per_million: f64,
+    output_per_million: f64,
+    cache_read_per_million: f64,
+    cache_write_per_million: f64,
+    input_tokens: u64,
+    cache_read_tokens: u64,
+    cache_write_tokens: u64,
+    output_tokens: u64,
+    cost_nano_usd: *mut u64,
+) -> bool {
+    let cost = catch_unwind(|| {
+        let separate = |price: f64| (price >= 0.0 || price.is_nan()).then_some(price);
+        estimated_cost_nano_usd(
+            &PricesPerMillion {
+                input: input_per_million,
+                output: output_per_million,
+                cache_read: separate(cache_read_per_million),
+                cache_write: separate(cache_write_per_million),
+            },
+            &BillableTokens {
+                input: input_tokens,
+                cache_read: cache_read_tokens,
+                cache_write: cache_write_tokens,
+                output: output_tokens,
+            },
+        )
+    })
+    .ok()
+    .flatten();
+    match cost {
+        Some(cost) => {
+            if !cost_nano_usd.is_null() {
+                // SAFETY: the caller guarantees it is writable.
+                unsafe { cost_nano_usd.write(cost) };
+            }
+            true
+        }
+        None => false,
     }
 }
 

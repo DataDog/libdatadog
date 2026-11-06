@@ -278,6 +278,22 @@ fn main() {
             assert_eq!(status, Status::Ok);
         });
     }
+    // The same attempt stating what a gateway derives (Kong): integer
+    // nanoseconds, per-million prices, and zeros that mean "not reported".
+    let extended = attempt
+        .replace("\"duration_seconds\": 1.2,", "\"duration_ns\": 1200000000,")
+        .replace(
+            "\"cost_nano_usd\": 11500000, \"cost_source\": \"calculated\", \"cost_rate_card\": \"openai@1\",",
+            "\"prices_per_million\": {\"input\": 2.5, \"output\": 10}, \"zero_is_unreported\": true,",
+        );
+    assert_ne!(extended, attempt);
+    measure("batch_add_quiet provider_attempt, extended", || {
+        // SAFETY: a live batch and valid input.
+        let status = unsafe {
+            ddog_ai_usage_batch_add_quiet(batch, extended.as_ptr(), extended.len(), ptr::null_mut())
+        };
+        assert_eq!(status, Status::Ok);
+    });
     // SAFETY: a live batch, released once.
     unsafe { ddog_ai_usage_batch_drop(batch) };
 
