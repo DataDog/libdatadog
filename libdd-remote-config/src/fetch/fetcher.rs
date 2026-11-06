@@ -7,7 +7,9 @@ use super::agentless;
 use super::shared::RefcountedFile;
 
 use crate::targets::{Root, TargetsList};
-use crate::{RemoteConfigCapabilities, RemoteConfigPath, RemoteConfigProduct, Target};
+use crate::{
+    CapabilityMask, RemoteConfigCapabilities, RemoteConfigPath, RemoteConfigProduct, Target,
+};
 use base64::Engine;
 use hashbrown::HashMap;
 use http::StatusCode;
@@ -96,11 +98,13 @@ pub enum ConfigApplyState {
     Error(String),
 }
 
+/// Products with enum capabilities by default, or an explicit opaque mask from
+/// [`ConfigProductCapabilities::from_mask`].
 #[derive(Debug, Clone)]
-pub struct ConfigProductCapabilities {
+pub struct ConfigProductCapabilities<C = Vec<RemoteConfigCapabilities>> {
     products: Vec<RemoteConfigProduct>,
-    capabilities: Vec<RemoteConfigCapabilities>,
-    encoded_capabilities: Vec<u8>,
+    capabilities: C,
+    encoded_capabilities: CapabilityMask,
 }
 
 impl ConfigProductCapabilities {
@@ -109,27 +113,29 @@ impl ConfigProductCapabilities {
         capabilities: Vec<RemoteConfigCapabilities>,
     ) -> Self {
         ConfigProductCapabilities {
-            encoded_capabilities: Self::encode_capatibilites(&capabilities),
+            encoded_capabilities: capabilities.iter().copied().collect(),
             products,
             capabilities,
         }
     }
 
-    fn encode_capatibilites(capabilities: &[RemoteConfigCapabilities]) -> Vec<u8> {
-        let capability_len = capabilities
-            .iter()
-            .map(|c| *c as usize / 8 + 1)
-            .max()
-            .unwrap_or(0);
-        let mut encoded_capabilities = vec![0; capability_len];
-        for capability in capabilities.iter().map(|c| *c as usize) {
-            encoded_capabilities[capability_len - (capability >> 3) - 1] |= 1 << (capability & 7);
-        }
-        encoded_capabilities
-    }
-
     pub fn into_parts(self) -> (Vec<RemoteConfigProduct>, Vec<RemoteConfigCapabilities>) {
         (self.products, self.capabilities)
+    }
+}
+
+impl ConfigProductCapabilities<()> {
+    /// Opts into an owned mask without retaining an enum list.
+    pub fn from_mask(products: Vec<RemoteConfigProduct>, capabilities: CapabilityMask) -> Self {
+        Self {
+            products,
+            capabilities: (),
+            encoded_capabilities: capabilities,
+        }
+    }
+
+    pub fn into_mask_parts(self) -> (Vec<RemoteConfigProduct>, CapabilityMask) {
+        (self.products, self.encoded_capabilities)
     }
 }
 
@@ -380,11 +386,11 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
         (self.file_storage, self.state)
     }
 
-    fn build_config_request(
+    fn build_config_request<T>(
         &self,
         runtime_id: &str,
         target: &Target,
-        product_capabilities: &ConfigProductCapabilities,
+        product_capabilities: &ConfigProductCapabilities<T>,
         client_id: &str,
         client_state: &ConfigClientState,
     ) -> ClientGetConfigsRequest {
@@ -447,7 +453,7 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
                 is_agent: false,
                 client_agent: None,
                 last_seen: 0,
-                capabilities: product_capabilities.encoded_capabilities.clone(),
+                capabilities: product_capabilities.encoded_capabilities.as_ref().to_vec(),
                 is_updater: false,
                 client_updater: None,
             }),
@@ -751,11 +757,11 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
     /// It also makes sure that old files are dropped before new files are inserted.
     ///
     /// Returns None if nothing changed. Otherwise Some(active configs).
-    pub async fn fetch_once(
+    pub async fn fetch_once<T: Sync>(
         &mut self,
         runtime_id: &str,
         target: &Target,
-        product_capabilities: &ConfigProductCapabilities,
+        product_capabilities: &ConfigProductCapabilities<T>,
         client_id: &str,
         client_state: &mut ConfigClientState,
     ) -> anyhow::Result<Option<Vec<Arc<S::StoredFile>>>> {
@@ -830,11 +836,11 @@ fn make_agent_configs_endpoint(endpoint: &Endpoint) -> Endpoint {
 #[cfg(test)]
 pub mod tests {
     use super::*;
+    use crate::RemoteConfigCapabilities;
     use crate::fetch::test_server::RemoteConfigServer;
     use http::Response;
     use libdd_capabilities_impl::NativeCapabilities;
     use libdd_common::http_common;
-    use std::mem::transmute;
     use std::sync::LazyLock;
 
     pub(crate) static PATH_FIRST: LazyLock<RemoteConfigPath> = LazyLock::new(|| {
@@ -1439,20 +1445,26 @@ pub mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_capability_encoding() {
-        let state = ConfigProductCapabilities::new(vec![], unsafe {
-            vec![
-                transmute::<u32, RemoteConfigCapabilities>(1u32),
-                transmute::<u32, RemoteConfigCapabilities>(24u32),
-                transmute::<u32, RemoteConfigCapabilities>(31u32),
-            ]
-        });
-        assert_eq!(state.encoded_capabilities.len(), 4);
-        assert_eq!(
-            state.encoded_capabilities,
-            (2u32 | (1 << 24) | (1 << 31)).to_be_bytes()
-        );
+        let mask: CapabilityMask = [
+            RemoteConfigCapabilities::AsmActivation,
+            RemoteConfigCapabilities::AsmActivation,
+            RemoteConfigCapabilities::AsmCustomRules,
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(mask.as_ref(), &[1, 2]);
+        let state =
+            ConfigProductCapabilities::from_mask(vec![RemoteConfigProduct::ApmTracing], mask);
+        let (products, mask) = state.into_mask_parts();
+        assert_eq!(products, [RemoteConfigProduct::ApmTracing]);
+        assert_eq!(mask.as_ref(), &[1, 2]);
+
+        let enums = vec![RemoteConfigCapabilities::AsmActivation];
+        let legacy = ConfigProductCapabilities::new(vec![], enums.clone());
+        let (products, capabilities) = legacy.into_parts();
+        assert!(products.is_empty());
+        assert_eq!(capabilities, enums);
     }
 
     #[test]
@@ -1461,7 +1473,7 @@ pub mod tests {
             vec![RemoteConfigProduct::FfeFlags],
             vec![RemoteConfigCapabilities::FfeFlagConfigurationRules],
         );
-        assert_eq!(legacy.encoded_capabilities, [0x40, 0, 0, 0, 0, 0]);
+        assert_eq!(legacy.encoded_capabilities.as_ref(), [0x40, 0, 0, 0, 0, 0]);
 
         let capable = ConfigProductCapabilities::new(
             vec![RemoteConfigProduct::FfeFlags],
@@ -1470,7 +1482,10 @@ pub mod tests {
                 RemoteConfigCapabilities::FfeFlagDependentFlagVariantKeyV1,
             ],
         );
-        assert_eq!(capable.encoded_capabilities, [0x04, 0x40, 0, 0, 0, 0, 0]);
+        assert_eq!(
+            capable.encoded_capabilities.as_ref(),
+            [0x04, 0x40, 0, 0, 0, 0, 0]
+        );
         assert_eq!(
             serde_json::to_string(&RemoteConfigCapabilities::FfeFlagDependentFlagVariantKeyV1)
                 .unwrap(),

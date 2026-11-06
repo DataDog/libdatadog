@@ -791,6 +791,60 @@ impl SidecarServer {
     }
 }
 
+impl ConnectionSidecarHandler {
+    fn configure_connection(
+        &mut self,
+        instance_id: InstanceId,
+        #[cfg(windows)] remote_config_notify_target: Option<RemoteConfigNotifyTarget>,
+        mut config: SessionConfig,
+        capabilities: Option<libdd_remote_config::CapabilityMask>,
+    ) {
+        if capabilities.is_some() {
+            config.remote_config_capabilities.clear();
+        }
+        debug!("Set connection config for {instance_id:?} to {config:?}");
+
+        self.server.trace_flusher.interval_ms.store(
+            u64::try_from(config.flush_interval.as_millis()).unwrap_or(u64::MAX),
+            Ordering::Relaxed,
+        );
+        self.server.trace_flusher.min_force_flush_size_bytes.store(
+            u32::try_from(config.force_flush_size).unwrap_or(u32::MAX),
+            Ordering::Relaxed,
+        );
+        self.server.trace_flusher.min_force_drop_size_bytes.store(
+            u32::try_from(config.force_drop_size).unwrap_or(u32::MAX),
+            Ordering::Relaxed,
+        );
+
+        let mut session = ConnectionSession::from_config(
+            instance_id,
+            config,
+            #[cfg(unix)]
+            self.connection.peer().pid,
+            #[cfg(windows)]
+            remote_config_notify_target,
+            &self.server.agent_infos,
+            &self.server.dogstatsd,
+        );
+        session.remote_config_capability_mask = capabilities;
+        if let Some(previous) = self.session.load() {
+            session.preserve_evp_transports(&previous);
+        }
+
+        if let Some(completer) = self.server.self_telemetry_config.lock_or_panic().take() {
+            let config = session.telemetry_config.clone();
+            tokio::spawn(async move {
+                completer.complete(config).await;
+            });
+        }
+
+        self.session.store(session);
+        // The application is registered for the previous session: the client sends it again.
+        self.application.modify(|app| *app = None);
+    }
+}
+
 impl SidecarInterface for ConnectionSidecarHandler {
     fn recv_counter(&self) -> &AtomicU64 {
         &self.submitted_payloads
@@ -834,45 +888,29 @@ impl SidecarInterface for ConnectionSidecarHandler {
         #[cfg(windows)] remote_config_notify_target: Option<RemoteConfigNotifyTarget>,
         config: SessionConfig,
     ) {
-        debug!("Set connection config for {instance_id:?} to {config:?}");
-
-        self.server.trace_flusher.interval_ms.store(
-            u64::try_from(config.flush_interval.as_millis()).unwrap_or(u64::MAX),
-            Ordering::Relaxed,
-        );
-        self.server.trace_flusher.min_force_flush_size_bytes.store(
-            u32::try_from(config.force_flush_size).unwrap_or(u32::MAX),
-            Ordering::Relaxed,
-        );
-        self.server.trace_flusher.min_force_drop_size_bytes.store(
-            u32::try_from(config.force_drop_size).unwrap_or(u32::MAX),
-            Ordering::Relaxed,
-        );
-
-        let mut session = ConnectionSession::from_config(
+        self.configure_connection(
             instance_id,
-            config,
-            #[cfg(unix)]
-            self.connection.peer().pid,
             #[cfg(windows)]
             remote_config_notify_target,
-            &self.server.agent_infos,
-            &self.server.dogstatsd,
+            config,
+            None,
         );
-        if let Some(previous) = self.session.load() {
-            session.preserve_evp_transports(&previous);
-        }
+    }
 
-        if let Some(completer) = self.server.self_telemetry_config.lock_or_panic().take() {
-            let config = session.telemetry_config.clone();
-            tokio::spawn(async move {
-                completer.complete(config).await;
-            });
-        }
-
-        self.session.store(session);
-        // The application is registered for the previous session: the client sends it again.
-        self.application.modify(|app| *app = None);
+    async fn set_connection_config_with_capability_mask(
+        &mut self,
+        instance_id: InstanceId,
+        #[cfg(windows)] remote_config_notify_target: Option<RemoteConfigNotifyTarget>,
+        config: SessionConfig,
+        capabilities: libdd_remote_config::CapabilityMask,
+    ) {
+        self.configure_connection(
+            instance_id,
+            #[cfg(windows)]
+            remote_config_notify_target,
+            config,
+            Some(capabilities),
+        );
     }
 
     async fn add_session_evp_transports(&mut self, configs: Vec<EvpTransportConfigWithIdentity>) {
@@ -1637,6 +1675,100 @@ mod tests {
             )
             .await;
         assert!(handler.application.app.is_none());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn capability_masks_require_explicit_connection_opt_in() {
+        use libdd_remote_config::{RemoteConfigCapabilities, RemoteConfigProduct};
+
+        let agent = MockServer::start_async().await;
+        let server = SidecarServer::default();
+        let (local, _peer) = SeqpacketConn::socketpair().unwrap();
+        let connection = OwnedServerConn::from_async(
+            local.into_async_conn().unwrap(),
+            PeerCredentials {
+                pid: std::process::id(),
+                uid: 0,
+                gid: 0,
+            },
+        );
+        let mut handler = ConnectionSidecarHandler::new(server.clone(), connection);
+        let instance = InstanceId::new("session", "runtime");
+        let config = SessionConfig {
+            endpoint: Endpoint::from_slice(&agent.url("/")),
+            remote_config_enabled: true,
+            remote_config_poll_interval: Duration::from_secs(1000),
+            remote_config_products: vec![RemoteConfigProduct::ApmTracing],
+            remote_config_capabilities: vec![RemoteConfigCapabilities::AsmActivation],
+            ..SessionConfig::for_test()
+        };
+        for (index, (expected, opt_in)) in
+            [(vec![2], false), (vec![0x80, 1], true), (vec![2], false)]
+                .into_iter()
+                .enumerate()
+        {
+            let (telemetry_config, completer) = manual_future::ManualFuture::new();
+            server
+                .self_telemetry_config
+                .lock_or_panic()
+                .replace(completer);
+            let service = format!("mask-service-{index}");
+            let request = agent
+                .mock_async(|when, then| {
+                    when.method(POST).path("/v0.7/config").json_body_includes(
+                        serde_json::json!({
+                            "client": {
+                                "capabilities": expected,
+                                "products": ["APM_TRACING"],
+                                "client_tracer": { "service": service },
+                            },
+                        })
+                        .to_string(),
+                    );
+                    then.status(200).body("{}");
+                })
+                .await;
+            let unmatched = agent
+                .mock_async(|when, then| {
+                    when.method(POST).path("/v0.7/config");
+                    then.status(400);
+                })
+                .await;
+            if !opt_in {
+                handler
+                    .set_connection_config(instance.clone(), config.clone())
+                    .await;
+                let session = handler.session.load().unwrap();
+                assert_eq!(
+                    session.remote_config_options.capabilities,
+                    [RemoteConfigCapabilities::AsmActivation]
+                );
+            } else {
+                handler
+                    .set_connection_config_with_capability_mask(
+                        instance.clone(),
+                        config.clone(),
+                        vec![0x80, 1].into(),
+                    )
+                    .await;
+            }
+            assert_eq!(
+                telemetry_config.await.session_id.as_deref(),
+                Some("session")
+            );
+            handler
+                .set_application(Some(test_application(&service)), 0)
+                .await;
+            while request.calls_async().await + unmatched.calls_async().await == 0 {
+                tokio::task::yield_now().await;
+            }
+            request.assert_calls_async(1).await;
+            unmatched.delete_async().await;
+        }
+        drop(handler);
+        server.remote_configs.shutdown();
     }
 
     #[tokio::test]

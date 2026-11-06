@@ -86,6 +86,7 @@ struct ConnectionConfig {
     #[cfg(windows)]
     remote_config_notify_target: Option<crate::service::remote_configs::RemoteConfigNotifyTarget>,
     config: SessionConfig,
+    capability_mask: Option<libdd_remote_config::CapabilityMask>,
 }
 
 /// Mirror of the state the sidecar associates with this connection.
@@ -109,11 +110,21 @@ impl ConnectionState {
     /// which stays pending with all following ones. Returns whether everything was sent.
     fn send_pending(&mut self, mut submit: impl FnMut(&SidecarInterfaceRequest) -> bool) -> bool {
         if !self.connection_config.send_with(&mut submit, |connection| {
-            SidecarInterfaceRequest::SetConnectionConfig {
-                instance_id: connection.instance_id.clone(),
-                #[cfg(windows)]
-                remote_config_notify_target: connection.remote_config_notify_target.clone(),
-                config: connection.config.clone(),
+            if let Some(capabilities) = &connection.capability_mask {
+                SidecarInterfaceRequest::SetConnectionConfigWithCapabilityMask {
+                    instance_id: connection.instance_id.clone(),
+                    #[cfg(windows)]
+                    remote_config_notify_target: connection.remote_config_notify_target.clone(),
+                    config: connection.config.clone(),
+                    capabilities: capabilities.clone(),
+                }
+            } else {
+                SidecarInterfaceRequest::SetConnectionConfig {
+                    instance_id: connection.instance_id.clone(),
+                    #[cfg(windows)]
+                    remote_config_notify_target: connection.remote_config_notify_target.clone(),
+                    config: connection.config.clone(),
+                }
             }
         }) {
             return false;
@@ -265,12 +276,37 @@ impl SidecarSender {
         >,
         config: SessionConfig,
     ) {
-        self.state.connection_config.replace(ConnectionConfig {
+        self.replace_connection_config(ConnectionConfig {
             instance_id,
             #[cfg(windows)]
             remote_config_notify_target,
             config,
+            capability_mask: None,
         });
+    }
+
+    /// Opts into an opaque capability mask and replays it with the configuration.
+    pub fn set_connection_config_with_capability_mask(
+        &mut self,
+        instance_id: InstanceId,
+        #[cfg(windows)] remote_config_notify_target: Option<
+            crate::service::remote_configs::RemoteConfigNotifyTarget,
+        >,
+        mut config: SessionConfig,
+        capabilities: libdd_remote_config::CapabilityMask,
+    ) {
+        config.remote_config_capabilities.clear();
+        self.replace_connection_config(ConnectionConfig {
+            instance_id,
+            #[cfg(windows)]
+            remote_config_notify_target,
+            config,
+            capability_mask: Some(capabilities),
+        });
+    }
+
+    fn replace_connection_config(&mut self, config: ConnectionConfig) {
+        self.state.connection_config.replace(config);
         // The sidecar starts over with a new session: all state layered on it is sent again.
         self.state.resend_all();
         self.try_drain_outbox();
@@ -581,7 +617,11 @@ mod tests {
         let instance_id = InstanceId::new("session", "runtime");
         let process_tags = vec![Tag::new("entrypoint.name", "php").unwrap()];
         let (mut previous, previous_peer) = sender();
-        previous.set_connection_config(instance_id.clone(), SessionConfig::for_test());
+        previous.set_connection_config_with_capability_mask(
+            instance_id.clone(),
+            SessionConfig::for_test(),
+            vec![0, 0x80, 0, 0, 0, 0, 0, 0, 0, 1].into(),
+        );
         previous.set_process_tags(process_tags.clone());
         previous.set_application(Some(application("svc")), 7);
         assert_eq!(received(&previous_peer).len(), 3);
@@ -594,9 +634,10 @@ mod tests {
 
         match received(&peer).as_slice() {
             [
-                SidecarInterfaceRequest::SetConnectionConfig {
+                SidecarInterfaceRequest::SetConnectionConfigWithCapabilityMask {
                     instance_id: replayed_instance_id,
                     config,
+                    capabilities,
                 },
                 SidecarInterfaceRequest::SetProcessTags {
                     process_tags: replayed_process_tags,
@@ -609,6 +650,7 @@ mod tests {
             ] => {
                 assert_eq!(replayed_instance_id, &instance_id);
                 assert_eq!(config.language, "php");
+                assert_eq!(capabilities.as_ref(), &[0, 0x80, 0, 0, 0, 0, 0, 0, 0, 1]);
                 assert_eq!(replayed_process_tags, &process_tags);
                 assert_eq!(replayed_application.as_ref(), Some(&application("svc")));
                 // The new connection may reach another sidecar, which notifies about anything.
@@ -624,9 +666,10 @@ mod tests {
     fn new_instance_replays_the_state_with_the_given_generation() {
         let process_tags = vec![Tag::new("entrypoint.name", "php").unwrap()];
         let (mut previous, previous_peer) = sender();
-        previous.set_connection_config(
+        previous.set_connection_config_with_capability_mask(
             InstanceId::new("session", "parent"),
             SessionConfig::for_test(),
+            vec![0, 0x80, 0, 0, 0, 0, 0, 0, 0, 1].into(),
         );
         previous.set_process_tags(process_tags.clone());
         previous.set_application(Some(application("svc")), 7);
@@ -639,7 +682,11 @@ mod tests {
 
         match received(&peer).as_slice() {
             [
-                SidecarInterfaceRequest::SetConnectionConfig { instance_id, .. },
+                SidecarInterfaceRequest::SetConnectionConfigWithCapabilityMask {
+                    instance_id,
+                    capabilities,
+                    ..
+                },
                 SidecarInterfaceRequest::SetProcessTags {
                     process_tags: replayed_process_tags,
                 },
@@ -649,11 +696,65 @@ mod tests {
                 },
             ] => {
                 assert_eq!(instance_id, &child);
+                assert_eq!(capabilities.as_ref(), &[0, 0x80, 0, 0, 0, 0, 0, 0, 0, 1]);
                 assert_eq!(replayed_process_tags, &process_tags);
                 assert_eq!(replayed_application.as_ref(), Some(&application("svc")));
                 assert_eq!(*remote_config_generation, 9);
             }
             other => panic!("unexpected requests for the new instance: {other:?}"),
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn capability_mask_opt_in_is_replaced_by_legacy_configuration() {
+        let (mut sender, peer) = sender();
+        let instance = InstanceId::new("session", "runtime");
+        let config = SessionConfig {
+            remote_config_capabilities: vec![
+                libdd_remote_config::RemoteConfigCapabilities::AsmActivation,
+            ],
+            ..SessionConfig::for_test()
+        };
+        sender.set_connection_config(instance.clone(), config.clone());
+        match received(&peer).as_slice() {
+            [SidecarInterfaceRequest::SetConnectionConfig { config, .. }] => {
+                assert_eq!(
+                    config.remote_config_capabilities,
+                    [libdd_remote_config::RemoteConfigCapabilities::AsmActivation]
+                );
+            }
+            requests => panic!("expected legacy configuration, got {requests:?}"),
+        }
+
+        sender.set_connection_config_with_capability_mask(
+            instance.clone(),
+            config.clone(),
+            vec![0, 0x80, 1].into(),
+        );
+        match received(&peer).as_slice() {
+            [
+                SidecarInterfaceRequest::SetConnectionConfigWithCapabilityMask {
+                    config,
+                    capabilities,
+                    ..
+                },
+            ] => {
+                assert!(config.remote_config_capabilities.is_empty());
+                assert_eq!(capabilities.as_ref(), &[0, 0x80, 1]);
+            }
+            requests => panic!("expected opted-in configuration, got {requests:?}"),
+        }
+
+        sender.set_connection_config(instance, config);
+        match received(&peer).as_slice() {
+            [SidecarInterfaceRequest::SetConnectionConfig { config, .. }] => {
+                assert_eq!(
+                    config.remote_config_capabilities,
+                    [libdd_remote_config::RemoteConfigCapabilities::AsmActivation]
+                );
+            }
+            requests => panic!("expected legacy configuration after opt-in, got {requests:?}"),
         }
     }
 
