@@ -25,6 +25,7 @@ mod coverage;
 mod diff;
 mod inventory;
 mod lockfile;
+mod manifest;
 mod select;
 
 #[derive(Parser)]
@@ -169,6 +170,10 @@ fn main() -> Result<()> {
             // workspace source diff; scope them by package name against the
             // packages each cluster executes.
             let lockfile = lockfile::lockfile_changes(&base_ref, &workspace_root)?;
+            // Manifests that only change dependency declarations are scoped
+            // like lockfile bumps: the changed package names join the same
+            // coverage intersection.
+            let manifests = manifest::manifest_changes(&base_ref, &workspace_root, &changed);
             if lockfile.is_changed() {
                 log::info!(
                     "lockfile changed packages: {} (unattributable: {})",
@@ -184,7 +189,7 @@ fn main() -> Result<()> {
             let self_test = std::env::var("BENCH_SELECTOR_SELF_TEST")
                 .map(|v| v == "1")
                 .unwrap_or(false);
-            let selection = select::select(&inv, &cov, &changed, &lockfile, self_test);
+            let selection = select::select(&inv, &cov, &changed, &lockfile, &manifests, self_test);
             log::info!(
                 "selected {}/{} clusters across {}/{} binaries",
                 selection.summary.clusters_selected,
