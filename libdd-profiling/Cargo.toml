@@ -24,6 +24,7 @@ otel = ["dep:opentelemetry-proto"]
 [[bench]]
 name = "main"
 harness = false
+path = "benches/main.rs"
 
 [dependencies]
 allocator-api2 = { workspace = true, features = ["alloc"] }
@@ -75,6 +76,7 @@ zrip = { workspace = true, features = ["frame"] }
 [dev-dependencies]
 bolero = { workspace = true, features = ["std"] }
 criterion.workspace = true
+libdd-process-utils = { version = "1.0.0", path = "../libdd-process-utils" }
 tools = { path = "../tools", default-features = false, features = ["test-utils"] }
 # rand is only used by tests/exporter_e2e.rs (rand::random), never by the
 # library itself, so it lives in dev-dependencies. `rand::random` needs the
@@ -86,10 +88,3 @@ tempfile.workspace = true
 
 [build-dependencies]
 cxx-build = { workspace = true, optional = true }
-
-[lints.clippy]
-# TODO(paullgdc): This fails a lot because of if-let chaining which became
-# allowed with the 1.91.1 MSRV bump.
-# I am planning to fix each crate as an individual PR in order to not have 
-# too many conflicts
-collapsible_if = "allow"

@@ -226,13 +226,13 @@ impl StackFrame {
         // be gone by the time we symbolize (the sidecar receiver outlives it), so fall
         // back to the ELF file and virtual offset that normalize_ip already recorded,
         // which needs nothing from the live process.
-        if !matches!(symbolized, Ok(Symbolized::Sym(_))) {
-            if let Some((path, virt_offset)) = self.normalized_elf_location() {
-                let elf = Source::Elf(Elf::new(path));
-                let fallback = symbolizer.symbolize_single(&elf, Input::VirtOffset(virt_offset));
-                if matches!(fallback, Ok(Symbolized::Sym(_))) {
-                    symbolized = fallback;
-                }
+        if !matches!(symbolized, Ok(Symbolized::Sym(_)))
+            && let Some((path, virt_offset)) = self.normalized_elf_location()
+        {
+            let elf = Source::Elf(Elf::new(path));
+            let fallback = symbolizer.symbolize_single(&elf, Input::VirtOffset(virt_offset));
+            if matches!(fallback, Ok(Symbolized::Sym(_))) {
+                symbolized = fallback;
             }
         }
 

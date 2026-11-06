@@ -3,6 +3,8 @@
 
 #[cfg(feature = "agentless")]
 use super::agentless;
+#[cfg(not(target_arch = "wasm32"))]
+use super::shared::RefcountedFile;
 
 use crate::targets::{Root, TargetsList};
 use crate::{RemoteConfigCapabilities, RemoteConfigPath, RemoteConfigProduct, Target};
@@ -21,7 +23,9 @@ use sha2::{Digest, Sha256, Sha512};
 use std::collections::HashSet;
 use std::marker::PhantomData;
 use std::ops::Add;
-use std::sync::{Arc, Mutex, MutexGuard};
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::MutexGuard;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tracing::{debug, trace, warn};
 
@@ -32,7 +36,13 @@ use tracing::{debug, trace, warn};
 pub trait FileStorage {
     type StoredFile;
 
-    /// A new, currently unknown file was received.
+    /// A file was received for which the fetcher holds no stored file to update.
+    ///
+    /// When the fetcher state is shared between targets (as with `RefcountingStorage`), this is
+    /// also how a new version of a known path is received: targets which haven't fetched it yet
+    /// keep the previous stored file of that path alive. Implementations must therefore not
+    /// assume a path has a single live stored file, e.g. by keying backing resources by path
+    /// alone.
     fn store(
         &self,
         version: u64,
@@ -41,6 +51,9 @@ pub trait FileStorage {
     ) -> anyhow::Result<Arc<Self::StoredFile>>;
 
     /// A file at a given path was updated (new contents).
+    ///
+    /// Only called when the fetcher is the sole user of its files, i.e. not when the fetcher
+    /// state is shared between targets (see [`FileStorage::store`]).
     fn update(
         &self,
         file: &Arc<Self::StoredFile>,
@@ -126,7 +139,7 @@ pub struct ConfigFetcherState<S, C: HttpClientCapability + SleepCapability> {
     pub invariants: ConfigInvariants,
     endpoint: Endpoint,
     pub expire_unused_files: bool,
-    http_client: C,
+    pub(super) http_client: C,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -144,27 +157,32 @@ impl Add for ConfigFetcherStateStats {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub struct ConfigFetcherFilesLock<'a, S> {
     inner: MutexGuard<'a, HashMap<Arc<RemoteConfigPath>, StoredTargetFile<S>>>,
 }
 
-impl<S> ConfigFetcherFilesLock<'_, S> {
+// A path's entry may already hold a newer version than the file being expired: these only act on
+// the entry if it still holds that very file.
+#[cfg(not(target_arch = "wasm32"))]
+impl<S: RefcountedFile> ConfigFetcherFilesLock<'_, S> {
     /// Actually remove the file from the known files.
     /// It may only be expired if already marked as expiring.
-    pub fn expire_file(&mut self, path: &RemoteConfigPath) {
-        if let Some(target_file) = self.inner.get(path) {
-            if !target_file.expiring {
-                return;
-            }
-        } else {
-            return;
+    pub fn expire_file(&mut self, file: &Arc<S>) {
+        let path = &file.refcount().path;
+        if let Some(target_file) = self.inner.get(path)
+            && target_file.expiring
+            && Arc::ptr_eq(&target_file.handle, file)
+        {
+            self.inner.remove(path);
         }
-        self.inner.remove(path);
     }
 
     /// Stop advertising the file as known. It's the predecessor to expire_file().
-    pub fn mark_expiring(&mut self, path: &RemoteConfigPath) {
-        if let Some(target_file) = self.inner.get_mut(path) {
+    pub fn mark_expiring(&mut self, file: &Arc<S>) {
+        if let Some(target_file) = self.inner.get_mut(&file.refcount().path)
+            && Arc::ptr_eq(&target_file.handle, file)
+        {
             target_file.expiring = true;
         }
     }
@@ -199,6 +217,7 @@ impl<S, C: HttpClientCapability + SleepCapability> ConfigFetcherState<S, C> {
         }
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     /// To remove unused remote files manually. Must not be called when auto expiration is active.
     /// Note: careful attention must be paid when using this API in order to not deadlock:
     /// - This files_lock() must always be called prior to locking any data structure locked within
@@ -214,26 +233,48 @@ impl<S, C: HttpClientCapability + SleepCapability> ConfigFetcherState<S, C> {
     /// Sets the apply state on a stored file.
     pub fn set_config_state(&self, file: &RemoteConfigPath, state: ConfigApplyState) {
         if let Some(target_file) = self.target_files_by_path.lock_or_panic().get_mut(file) {
-            match state {
-                ConfigApplyState::Unacknowledged => {
-                    target_file.state.apply_state = 1;
-                    target_file.state.apply_error = "".to_string();
-                }
-                ConfigApplyState::Acknowledged => {
-                    target_file.state.apply_state = 2;
-                    target_file.state.apply_error = "".to_string();
-                }
-                ConfigApplyState::Error(error) => {
-                    target_file.state.apply_state = 3;
-                    target_file.state.apply_error = error;
-                }
-            }
+            set_apply_state(&mut target_file.state, state);
+        }
+    }
+
+    /// Sets the apply state of `file`, unless its path has already moved on to a newer version,
+    /// in which case the state is dropped. See `RefcountingStorage::set_config_state` for the
+    /// known bugs of this.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn set_file_config_state(&self, file: &S, state: ConfigApplyState)
+    where
+        S: RefcountedFile,
+    {
+        if let Some(target_file) = self
+            .target_files_by_path
+            .lock_or_panic()
+            .get_mut(&file.refcount().path)
+            && std::ptr::eq(Arc::as_ptr(&target_file.handle), file)
+        {
+            set_apply_state(&mut target_file.state, state);
         }
     }
 
     pub fn stats(&self) -> ConfigFetcherStateStats {
         ConfigFetcherStateStats {
             active_files: self.target_files_by_path.lock_or_panic().len() as u32,
+        }
+    }
+}
+
+fn set_apply_state(target: &mut ConfigState, state: ConfigApplyState) {
+    match state {
+        ConfigApplyState::Unacknowledged => {
+            target.apply_state = 1;
+            target.apply_error = "".to_string();
+        }
+        ConfigApplyState::Acknowledged => {
+            target.apply_state = 2;
+            target.apply_error = "".to_string();
+        }
+        ConfigApplyState::Error(error) => {
+            target.apply_state = 3;
+            target.apply_error = error;
         }
     }
 }
@@ -259,7 +300,7 @@ pub struct ConfigClientState {
     last_error: Option<String>,
     /// Services discovered at runtime. Sent to the agent on each poll so it can route configs
     /// targeting those services to this client. Updated out-of-band by the consumer
-    extra_services: Vec<String>,
+    pub(super) extra_services: Vec<String>,
     /// Server-recommended interval between consecutive polls.
     refresh_interval: Option<Duration>,
 }
@@ -332,6 +373,11 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
     /// Sets the apply state on a stored file.
     pub fn set_config_state(&self, file: &RemoteConfigPath, state: ConfigApplyState) {
         self.state.set_config_state(file, state)
+    }
+
+    /// Destructures the fetcher into its file storage and state.
+    pub fn into_parts(self) -> (S, Arc<ConfigFetcherState<S::StoredFile, C>>) {
+        (self.file_storage, self.state)
     }
 
     fn build_config_request(
@@ -459,13 +505,28 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
         }
         client_state.last_error = None;
 
+        let result = self.process_agent_response(&body_bytes, target, client_state);
+        if let Err(e) = &result {
+            // Contrary to transport errors, failures to process the response are reported back
+            // to the agent with the next request.
+            client_state.last_error = Some(format!("{e:#}"));
+        }
+        result
+    }
+
+    fn process_agent_response(
+        &mut self,
+        body_bytes: &[u8],
+        target: &Target,
+        client_state: &mut ConfigClientState,
+    ) -> anyhow::Result<Option<Vec<Arc<S::StoredFile>>>> {
         // Nothing changed
         if body_bytes.len() <= 3 {
             trace!("Requested remote config and got an empty reply");
             return Ok(None);
         }
 
-        let response: ClientGetConfigsResponse = serde_json::from_slice(body_bytes.as_ref())?;
+        let response: ClientGetConfigsResponse = serde_json::from_slice(body_bytes)?;
 
         if response.config_status == ConfigStatus::Expired as i32 {
             debug!(
@@ -528,7 +589,7 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
         // continuously
         let mut target_files = self.state.target_files_by_path.lock_or_panic();
 
-        let mut config_paths = HashSet::new();
+        let mut config_paths: HashSet<RemoteConfigPath> = HashSet::new();
         for path in response.client_configs.iter() {
             match RemoteConfigPath::try_parse(path) {
                 Ok(parsed) => {
@@ -542,6 +603,10 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
             target_files.retain(|k, _| config_paths.contains(k.as_ref()));
         }
 
+        // Errors of individual files don't prevent applying the other files: they are reported to
+        // the agent, and retried with the next response.
+        let mut errors = vec![];
+        let mut failed_paths = HashSet::new();
         for (path, target_file) in targets_list.signed.targets {
             fn hash_sha256(v: &[u8]) -> String {
                 format!("{:x}", Sha256::digest(v))
@@ -581,22 +646,53 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
                 // If the file isn't there, it's not meant for us.
                 continue;
             };
+            let mut fail = |error: String| {
+                warn!("{error}");
+                errors.push(error);
+                failed_paths.insert(path);
+            };
             let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(raw_file) else {
-                anyhow::bail!("Failed base64 decoding config for path {path}")
+                fail(format!("Failed base64 decoding config for path {path}"));
+                continue;
             };
             let computed_hash = hasher(decoded.as_slice());
             if hash != computed_hash {
-                anyhow::bail!(
+                fail(format!(
                     "Computed hash of file {computed_hash} did not match remote config targets \
                     file hash {hash} for path {path}"
-                );
+                ));
+                continue;
             }
             let Some(version) = target_file.try_parse_version() else {
-                anyhow::bail!("Failed parsing version from remote config path {path}");
+                fail(format!(
+                    "Failed parsing version from remote config path {path}"
+                ));
+                continue;
             };
             debug!("Fetched new remote config file at path {path} targeting {target:?}");
 
             let parsed_path: Arc<RemoteConfigPath> = Arc::new(parsed_path.into());
+            let length = decoded.len() as i64;
+            let stored = match handle {
+                // Only this fetcher's target uses the file: replace its contents.
+                Some(handle) if self.state.expire_unused_files => self
+                    .file_storage
+                    .update(&handle, version, decoded)
+                    .map(|()| handle),
+                // With shared state, other targets may still list the previous version until
+                // their own next fetch. Store the new version as a new file; the previous one
+                // expires once no target holds it anymore.
+                _ => self
+                    .file_storage
+                    .store(version, parsed_path.clone(), decoded),
+            };
+            let handle = match stored {
+                Ok(handle) => handle,
+                Err(e) => {
+                    fail(format!("Failed storing remote config {path}: {e:#}"));
+                    continue;
+                }
+            };
             target_files.insert(
                 parsed_path.clone(),
                 StoredTargetFile {
@@ -610,7 +706,7 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
                     },
                     meta: TargetFileMeta {
                         path: path.to_string(),
-                        length: decoded.len() as i64,
+                        length,
                         hashes: target_file
                             .hashes
                             .iter()
@@ -620,12 +716,7 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
                             })
                             .collect(),
                     },
-                    handle: if let Some(handle) = handle {
-                        self.file_storage.update(&handle, version, decoded)?;
-                        handle
-                    } else {
-                        self.file_storage.store(version, parsed_path, decoded)?
-                    },
+                    handle,
                     expiring: false,
                 },
             );
@@ -636,11 +727,14 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
             if let Some(target_file) = target_files.get_mut(config) {
                 target_file.expiring = false;
                 configs.push(target_file.handle.clone());
-            } else {
+            } else if !failed_paths.contains(config.as_str()) {
                 anyhow::bail!("Found {config} in client_configs response, but it isn't stored.");
             }
         }
 
+        if !errors.is_empty() {
+            client_state.last_error = Some(errors.join("\n"));
+        }
         client_state.targets_version = targets_list.signed.version as u64;
         client_state.last_config_paths = config_paths;
         Ok(Some(configs))
@@ -796,7 +890,14 @@ pub mod tests {
 
     impl Drop for PathStore {
         fn drop(&mut self) {
-            self.storage.files.lock().unwrap().remove(&self.path);
+            let mut files = self.storage.files.lock().unwrap();
+            // A newer version of the path may have been stored while this one was alive.
+            if files
+                .get(&self.path)
+                .is_some_and(|data| Arc::ptr_eq(data, &self.data))
+            {
+                files.remove(&self.path);
+            }
         }
     }
 
@@ -813,13 +914,12 @@ pub mod tests {
                 version,
                 contents: String::from_utf8(contents).unwrap(),
             }));
-            assert!(
-                self.files
-                    .lock()
-                    .unwrap()
-                    .insert(path.clone(), data.clone())
-                    .is_none()
-            );
+            // A previous version may still be alive, held by targets that haven't fetched
+            // the new one yet; the map tracks the latest version of each path.
+            self.files
+                .lock()
+                .unwrap()
+                .insert(path.clone(), data.clone());
             Ok(Arc::new(PathStore {
                 path: path.clone(),
                 storage: self.clone(),
@@ -1352,6 +1452,29 @@ pub mod tests {
         assert_eq!(
             state.encoded_capabilities,
             (2u32 | (1 << 24) | (1 << 31)).to_be_bytes()
+        );
+    }
+
+    #[test]
+    fn test_dependent_flag_capability_encoding() {
+        let legacy = ConfigProductCapabilities::new(
+            vec![RemoteConfigProduct::FfeFlags],
+            vec![RemoteConfigCapabilities::FfeFlagConfigurationRules],
+        );
+        assert_eq!(legacy.encoded_capabilities, [0x40, 0, 0, 0, 0, 0]);
+
+        let capable = ConfigProductCapabilities::new(
+            vec![RemoteConfigProduct::FfeFlags],
+            vec![
+                RemoteConfigCapabilities::FfeFlagConfigurationRules,
+                RemoteConfigCapabilities::FfeFlagDependentFlagVariantKeyV1,
+            ],
+        );
+        assert_eq!(capable.encoded_capabilities, [0x04, 0x40, 0, 0, 0, 0, 0]);
+        assert_eq!(
+            serde_json::to_string(&RemoteConfigCapabilities::FfeFlagDependentFlagVariantKeyV1)
+                .unwrap(),
+            r#""FFE_FLAG_DEPENDENT_FLAG_VARIANT_KEY_V1""#,
         );
     }
 }

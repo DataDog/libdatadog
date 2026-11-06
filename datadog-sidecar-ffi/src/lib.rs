@@ -71,10 +71,10 @@ fn otlp_metrics_endpoint_with_agent_test_token(
     mut otlp_metrics_endpoint: Option<Endpoint>,
     agent_endpoint: &Endpoint,
 ) -> Option<Endpoint> {
-    if let Some(endpoint) = &mut otlp_metrics_endpoint {
-        if endpoint.test_token.is_none() {
-            endpoint.test_token = agent_endpoint.test_token.clone();
-        }
+    if let Some(endpoint) = &mut otlp_metrics_endpoint
+        && endpoint.test_token.is_none()
+    {
+        endpoint.test_token = agent_endpoint.test_token.clone();
     }
 
     otlp_metrics_endpoint

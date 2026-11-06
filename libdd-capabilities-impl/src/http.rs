@@ -86,7 +86,7 @@ mod native {
         // Worker endpoints need constrained file opens. Directory mode also creates and renames
         // paths without validation, so disable it when restrictions are enabled.
         #[cfg(unix)]
-        let restricted = libdd_common::unix_utils::worker_file_outputs_restricted();
+        let restricted = libdd_process_utils::unix_utils::worker_file_outputs_restricted();
         #[cfg(not(unix))]
         let restricted = false;
 
@@ -122,7 +122,7 @@ mod native {
 
             #[cfg(unix)]
             let mut file = if restricted {
-                libdd_common::unix_utils::open_regular_for_append(&path)
+                libdd_process_utils::unix_utils::open_regular_for_append(&path)
                     .map_err(|e| HttpError::Other(anyhow::anyhow!("opening {path:?}: {e}")))?
             } else {
                 OpenOptions::new()
