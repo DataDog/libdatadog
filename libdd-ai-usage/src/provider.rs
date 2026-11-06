@@ -435,8 +435,13 @@ pub struct ProviderError {
 
 impl ProviderResponse {
     /// Merge a later event of the same stream: usage as
-    /// [`ProviderUsage::merge`], the first model, tier and error named.
+    /// [`ProviderUsage::merge`], the first model and error named. The tier is
+    /// the one a usage-bearing event names (the latest such), else the first
+    /// named: a stream can echo the tier the request asked for before the
+    /// served one (Responses' `response.created` says `auto`, its
+    /// `response.completed` the `default` that served it).
     pub fn merge(&mut self, later: ProviderResponse) {
+        let later_bills = later.usage.is_some();
         match (&mut self.usage, later.usage) {
             (Some(usage), Some(next)) => usage.merge(&next),
             (usage @ None, next) => *usage = next,
@@ -445,7 +450,7 @@ impl ProviderResponse {
         if self.response_model.is_none() {
             self.response_model = later.response_model;
         }
-        if self.service_tier.is_none() {
+        if later.service_tier.is_some() && (self.service_tier.is_none() || later_bills) {
             self.service_tier = later.service_tier;
         }
         if self.error.is_none() {
