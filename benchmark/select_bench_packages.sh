@@ -76,8 +76,19 @@ bench_tooling_changed() {
 
 # Workspace-level dependency or toolchain changes can affect the performance of
 # every crate, even though crates-reporter maps them to no member crate.
+# Cargo.lock is NOT here: a lockfile bump changes exactly the packages named in
+# its diff, which bench-selector scopes against the packages each benchmark
+# cluster executes (Reason: dependency-changed). When no bench-level selection
+# is available, lockfile_changed() below restores the old full-suite fallback.
 workspace_level_changed() {
-  grep -qE '^(Cargo\.lock|Cargo\.toml|rust-toolchain\.toml|ci-toolchain\.toml)$' changed_files.txt 2>/dev/null
+  grep -qE '^(Cargo\.toml|rust-toolchain\.toml|ci-toolchain\.toml)$' changed_files.txt 2>/dev/null
+}
+
+# True when the lockfile changed. Only consulted when no bench-level
+# selection is available (selection job failed or did not run): with a
+# selection, bench-selector scopes the bump to the changed packages.
+lockfile_changed() {
+  grep -qE '^Cargo\.lock$' changed_files.txt 2>/dev/null
 }
 
 # Print the selection's binaries as shardable specs, or nothing when the file
@@ -195,6 +206,11 @@ if [ -z "$packages" ]; then
     force_full="Benchmark tooling changed"
   elif workspace_level_changed; then
     force_full="Workspace-level dependency/toolchain change"
+  elif [ "$selection_state" = "absent" ] && lockfile_changed; then
+    # No bench-level selection to scope the bump with: old behavior. (An
+    # "empty" selection means bench-selector scoped the bump and no cluster
+    # exercises the changed packages — trust it and run nothing.)
+    force_full="Cargo.lock changed without bench-level selection"
   fi
 
   if [ -n "$force_full" ]; then
