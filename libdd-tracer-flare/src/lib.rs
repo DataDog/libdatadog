@@ -513,9 +513,7 @@ pub async fn run_remote_config_listener(
 
 #[cfg(test)]
 mod tests {
-    #[cfg(feature = "listener")]
-    use crate::FlareAction;
-    use crate::{FlareError, LogLevel, TracerFlareManager};
+    use crate::{FlareAction, FlareError, LogLevel, TracerFlareManager};
     #[cfg(feature = "listener")]
     use libdd_remote_config::{
         RemoteConfigPath,

@@ -248,36 +248,41 @@ mod tests {
             );
             assert_eq!(builder.runtime_id.as_deref(), Some("abcd"));
 
-            assert_eq!(
-                ddog_telemetry_builder_with_property_str(
-                    &mut builder,
-                    TelemetryWorkerBuilderStrProperty::SessionId,
-                    ffi::CharSlice::from("sess-1")
-                ),
-                MaybeError::None,
-            );
-            assert_eq!(builder.config.session_id.as_deref(), Some("sess-1"));
-            assert_eq!(
-                ddog_telemetry_builder_with_property_str(
-                    &mut builder,
-                    TelemetryWorkerBuilderStrProperty::RootSessionId,
-                    ffi::CharSlice::from("root-9")
-                ),
-                MaybeError::None,
-            );
-            assert_eq!(builder.config.root_session_id.as_deref(), Some("root-9"));
-            assert_eq!(
-                ddog_telemetry_builder_with_property_str(
-                    &mut builder,
-                    TelemetryWorkerBuilderStrProperty::ParentSessionId,
-                    ffi::CharSlice::from("parent-2")
-                ),
-                MaybeError::None,
-            );
-            assert_eq!(
-                builder.config.parent_session_id.as_deref(),
-                Some("parent-2")
-            );
+            // The macro-generated enum (without `expanded_builder_macros`) names these
+            // variants `ConfigSessionId` etc., so only the expanded names are tested.
+            #[cfg(feature = "expanded_builder_macros")]
+            {
+                assert_eq!(
+                    ddog_telemetry_builder_with_property_str(
+                        &mut builder,
+                        TelemetryWorkerBuilderStrProperty::SessionId,
+                        ffi::CharSlice::from("sess-1")
+                    ),
+                    MaybeError::None,
+                );
+                assert_eq!(builder.config.session_id.as_deref(), Some("sess-1"));
+                assert_eq!(
+                    ddog_telemetry_builder_with_property_str(
+                        &mut builder,
+                        TelemetryWorkerBuilderStrProperty::RootSessionId,
+                        ffi::CharSlice::from("root-9")
+                    ),
+                    MaybeError::None,
+                );
+                assert_eq!(builder.config.root_session_id.as_deref(), Some("root-9"));
+                assert_eq!(
+                    ddog_telemetry_builder_with_property_str(
+                        &mut builder,
+                        TelemetryWorkerBuilderStrProperty::ParentSessionId,
+                        ffi::CharSlice::from("parent-2")
+                    ),
+                    MaybeError::None,
+                );
+                assert_eq!(
+                    builder.config.parent_session_id.as_deref(),
+                    Some("parent-2")
+                );
+            }
 
             assert_eq!(
                 ddog_telemetry_builder_with_property_str(

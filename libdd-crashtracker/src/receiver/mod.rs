@@ -19,8 +19,8 @@ pub mod benchmark;
 #[cfg(test)]
 mod tests {
     use super::receive_report::*;
-    use crate::collector::default_signals;
     use crate::crash_info::{SiCodes, SigInfo, SignalNames};
+    use crate::shared::constants::default_signals;
     use crate::shared::constants::*;
     use crate::{CrashtrackerConfiguration, ErrorKind};
     use std::time::Duration;

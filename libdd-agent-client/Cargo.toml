@@ -36,4 +36,5 @@ tracing.workspace = true
 [dev-dependencies]
 httpmock.workspace = true
 rustls = { workspace = true, features = ["ring"] }
-tokio = { workspace = true, features = ["rt", "macros"] }
+# `net` is needed by httpmock, which relies on another crate enabling it.
+tokio = { workspace = true, features = ["rt", "macros", "net"] }

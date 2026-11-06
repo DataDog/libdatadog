@@ -31,6 +31,8 @@ const MAX_FRAMES: usize = 512;
 pub struct CapturedThreadContext {
     pub stack_trace: StackTrace,
     /// Whether the unwind started from the saved crash registers.
+    // Only the receiver reads this; collector-only builds just set it.
+    #[cfg_attr(not(feature = "receiver"), expect(dead_code))]
     pub used_saved_context: bool,
 }
 

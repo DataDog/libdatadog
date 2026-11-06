@@ -28,7 +28,11 @@
 //! fork-safe.
 
 pub(crate) mod agent_info;
+// `AgentClient` needs an HTTP backend from `libdd-http-client` (`reqwest-backend` or
+// `hyper-backend`). Without one, only the request and response types are available.
+#[cfg(any(feature = "hyper-backend", feature = "reqwest-backend"))]
 mod builder;
+#[cfg(any(feature = "hyper-backend", feature = "reqwest-backend"))]
 pub(crate) mod client;
 pub(crate) mod error;
 pub(crate) mod evp;
@@ -37,7 +41,9 @@ pub(crate) mod telemetry;
 pub(crate) mod traces;
 
 pub use agent_info::AgentInfo;
+#[cfg(any(feature = "hyper-backend", feature = "reqwest-backend"))]
 pub use builder::{AgentClientBuilder, AgentTransport};
+#[cfg(any(feature = "hyper-backend", feature = "reqwest-backend"))]
 pub use client::AgentClient;
 pub use error::{BuildError, SendError};
 pub use evp::EvpEventRequest;

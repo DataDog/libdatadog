@@ -169,6 +169,8 @@ impl CrashtrackerConfiguration {
         self.use_alt_stack
     }
 
+    // Only the receiver reads the endpoint.
+    #[cfg_attr(not(feature = "receiver"), allow(dead_code))]
     pub(crate) fn endpoint(&self) -> &Option<Endpoint> {
         &self.endpoint
     }

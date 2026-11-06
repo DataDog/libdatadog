@@ -33,7 +33,7 @@ receiver = []
 collector_windows = []
 generate-unit-test-files = []
 # Enables benchmark functionality
-benchmarking = ["generate-unit-test-files"]
+benchmarking = ["generate-unit-test-files", "receiver"]
 # Enables C++ bindings via cxx
 cxx = ["dep:cxx", "dep:cxx-build"]
 
