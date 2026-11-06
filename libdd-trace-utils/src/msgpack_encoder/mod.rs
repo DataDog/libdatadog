@@ -26,9 +26,18 @@
 //!   | `v04::` | `to_vec_from_v1`, `write_to_slice_from_v1`, `to_encoded_byte_len_from_v1`   | v1  → v0.4 (downgrade) |
 //!   | `v1::`  | `to_vec_from_v04`, `write_to_slice_from_v04`, `to_encoded_byte_len_from_v04` | v04 → V1  (upgrade) |
 //!   | `v1::`  | `to_vec_from_v1`, `write_to_slice_from_v1`, `to_encoded_byte_len_from_v1`     | v1  → V1  (native) |
+//!
+//! Each output module also has a `ChunkPacker`, which builds a payload from v0.4 chunks one at
+//! a time and rejects those that would make it exceed a byte limit. Splitting a batch across
+//! payloads that way encodes each chunk once, plus one bounded rejected attempt per payload
+//! boundary or oversized chunk.
 
+mod packing;
 pub mod v04;
+pub mod v05;
 pub mod v1;
+
+pub use packing::PushError;
 
 use rmp::encode::ValueWriteError;
 use std::convert::Infallible;
