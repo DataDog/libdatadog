@@ -1,0 +1,40 @@
+# Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "libdd-http-client-ffi"
+edition.workspace = true
+version.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+crate-type = ["lib", "staticlib", "cdylib"]
+bench = false
+
+[features]
+default = ["cbindgen", "catch_panic", "hyper-backend", "https"]
+# Catch panics at the FFI boundary and turn them into an error return. Must also be listed in the
+# aggregating crate's own `catch_panic` feature (see `libdd-profiling-ffi/Cargo.toml`).
+catch_panic = []
+cbindgen = ["build_common/cbindgen", "libdd-common-ffi/cbindgen"]
+regex-lite = ["libdd-common-ffi/regex-lite", "libdd-shared-runtime/regex-lite"]
+# Backend selection is forwarded to `libdd-http-client`. Cargo does not enforce exclusivity, so each
+# backend must be built and tested on its own (`--no-default-features --features ...`).
+https = ["libdd-http-client/https"]
+hyper-backend = ["libdd-http-client/hyper-backend"]
+reqwest-backend = ["libdd-http-client/reqwest-backend"]
+
+[build-dependencies]
+build_common = { path = "../build-common" }
+
+[dependencies]
+libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false, features = ["std"] }
+libdd-http-client = { path = "../libdd-http-client", default-features = false }
+libdd-shared-runtime = { version = "6.0.0", path = "../libdd-shared-runtime" }
+tokio-util.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
