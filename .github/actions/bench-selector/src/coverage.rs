@@ -83,8 +83,10 @@ pub fn run(
         log::warn!("path-remapping rustflags prevent trustworthy coverage; all clusters will run");
         let mut entries = Vec::new();
         for bin in &inventory.binaries {
-            if let Some(filter) = crates_filter
-                && !filter.iter().any(|name| name == &bin.crate_name)
+            // Not a let-chain: the tool builds on checkouts older than Rust
+            // 1.88, where let-chains are not stable.
+            if crates_filter
+                .is_some_and(|filter| !filter.iter().any(|name| name == &bin.crate_name))
             {
                 continue;
             }
@@ -116,9 +118,9 @@ pub fn run(
 
     let mut entries = Vec::new();
     for bin in &inventory.binaries {
-        if let Some(filter) = crates_filter
-            && !filter.iter().any(|c| c == &bin.crate_name)
-        {
+        // Not a let-chain: the tool builds on checkouts older than Rust 1.88,
+        // where let-chains are not stable.
+        if crates_filter.is_some_and(|filter| !filter.iter().any(|c| c == &bin.crate_name)) {
             continue;
         }
         let executables = build_instrumented(&workspace_root, bin, &target_dir, &work)?;
