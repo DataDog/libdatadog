@@ -472,7 +472,7 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
                 libdd_common::header::APPLICATION_JSON,
             )
             .body(bytes::Bytes::from(serde_json::to_string(&config_req)?))?;
-        let sleeper = <C as SleepCapability>::new();
+        let sleeper = &self.state.http_client;
         let response = tokio::select! {
             biased;
             result = self.state.http_client.request(req) => result
@@ -836,6 +836,93 @@ pub mod tests {
     use libdd_common::http_common;
     use std::mem::transmute;
     use std::sync::LazyLock;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[derive(Clone, Debug, Default)]
+    struct ControlledClient {
+        immediate_response: bool,
+        sleeps: Arc<AtomicUsize>,
+    }
+
+    impl HttpClientCapability for ControlledClient {
+        fn new_client() -> Self {
+            Self::default()
+        }
+
+        fn new_periodic() -> Self {
+            Self::default()
+        }
+
+        async fn request(
+            &self,
+            _request: http::Request<bytes::Bytes>,
+        ) -> Result<http::Response<bytes::Bytes>, libdd_capabilities::HttpError> {
+            if self.immediate_response {
+                Ok(http::Response::new(bytes::Bytes::from_static(b"{}")))
+            } else {
+                std::future::pending().await
+            }
+        }
+    }
+
+    impl SleepCapability for ControlledClient {
+        fn new() -> Self {
+            Self::default()
+        }
+
+        async fn sleep(&self, _duration: std::time::Duration) {
+            self.sleeps.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    #[tokio::test]
+    async fn injected_client_owns_timeout_and_ready_response_wins() {
+        for immediate_response in [false, true] {
+            let client = ControlledClient {
+                immediate_response,
+                ..Default::default()
+            };
+            let sleeps = client.sleeps.clone();
+            let mut fetcher = ConfigFetcher::new_no_agentless(
+                Arc::new(Storage::default()),
+                Arc::new(ConfigFetcherState::with_client(
+                    ConfigInvariants {
+                        language: "test".into(),
+                        tracer_version: "test".into(),
+                        endpoint: Endpoint::from_slice("http://localhost:8126"),
+                        agentless: None,
+                    },
+                    client,
+                )),
+            );
+            let result = fetcher
+                .fetch_once(
+                    DUMMY_RUNTIME_ID,
+                    &DUMMY_TARGET,
+                    &ConfigProductCapabilities::new(vec![RemoteConfigProduct::ApmTracing], vec![]),
+                    "test-client",
+                    &mut ConfigClientState::default(),
+                )
+                .await;
+            if immediate_response {
+                assert!(
+                    result.is_ok(),
+                    "ready HTTP response must win: {:?}",
+                    result.err()
+                );
+                assert_eq!(sleeps.load(Ordering::Relaxed), 0);
+            } else {
+                assert!(
+                    result
+                        .err()
+                        .expect("pending HTTP must time out")
+                        .to_string()
+                        .contains("timed out")
+                );
+                assert_eq!(sleeps.load(Ordering::Relaxed), 1);
+            }
+        }
+    }
 
     pub(crate) static PATH_FIRST: LazyLock<RemoteConfigPath> = LazyLock::new(|| {
         RemoteConfigPath::parse("employee/APM_TRACING/1234/config")
