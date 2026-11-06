@@ -181,4 +181,33 @@ mod tests {
             assert_eq!(got, expected);
         }
     }
+
+    /// A message larger than the buffer is rejected rather than decoded from its head, and the
+    /// handles sent with it are closed.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_truncated_message_is_rejected() {
+        let (client, server) = SeqpacketConn::socketpair().expect("socketpair");
+        let mut pipe = [0; 2];
+        // SAFETY: `pipe` has room for both fds.
+        assert_eq!(unsafe { libc::pipe(pipe.as_mut_ptr()) }, 0);
+        client.try_send_raw(vec![7; 100], &[pipe[0]]).expect("send");
+        // SAFETY: closes our copy of the read end, which nothing else uses.
+        unsafe { libc::close(pipe[0]) };
+        // SAFETY: the write end is a fresh fd owned by nothing else.
+        let pipe_write = unsafe { OwnedFd::from_raw_fd(pipe[1]) };
+
+        let err = server.try_recv_raw(&mut [0; 10]).expect_err("truncated");
+        assert_eq!(err.raw_os_error(), Some(libc::EMSGSIZE));
+        // The received copy of the read end is gone too, so writing hits a closed pipe.
+        // SAFETY: valid fd and a live one-byte buffer. Rust ignores SIGPIPE, so this fails.
+        let written = unsafe { libc::write(pipe_write.as_raw_fd(), b"x".as_ptr().cast(), 1) };
+        assert_eq!(written, -1);
+        assert_eq!(io::Error::last_os_error().raw_os_error(), Some(libc::EPIPE));
+
+        client.try_send_raw(vec![8; 10], &[]).expect("send");
+        let mut buf = [0; 10];
+        assert_eq!(server.try_recv_raw(&mut buf).expect("recv").0, 10);
+        assert_eq!(buf, [8; 10]);
+    }
 }

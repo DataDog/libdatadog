@@ -12,7 +12,6 @@ pub use nix::sys::socket::{ControlMessage, ControlMessageOwned, MsgFlags, UnixAd
 #[cfg(target_os = "linux")]
 use std::mem::MaybeUninit;
 use std::{
-    cell::RefCell,
     io,
     os::unix::io::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd, RawFd},
     sync::atomic::{AtomicUsize, Ordering},
@@ -24,6 +23,8 @@ use tokio::io::unix::AsyncFd;
 mod linux;
 #[cfg(not(target_os = "linux"))]
 mod macos;
+mod recv_buf;
+use recv_buf::with_recv_buf;
 
 #[cfg(target_os = "linux")]
 pub use linux::{bind_abstract, connect_abstract, is_listening};
@@ -132,6 +133,11 @@ pub(super) fn recvmsg_raw(
                 owned_fds.push(unsafe { OwnedFd::from_raw_fd(raw_fd) });
             }
         }
+    }
+    if msg.flags.contains(MsgFlags::MSG_TRUNC) {
+        // The kernel discarded the tail of the message: decoding the remainder would misread it.
+        // Dropping `owned_fds` closes the handles that came with it.
+        return Err(io::Error::from_raw_os_error(libc::EMSGSIZE));
     }
     Ok((bytes, owned_fds))
 }
@@ -466,6 +472,12 @@ impl SeqpacketConn {
         // unix_dgram_sendmsg() rejects messages larger than sk_sndbuf - 32 with EMSGSIZE.
         #[cfg(target_os = "linux")]
         let size = size - 32;
+        // macOS queues a datagram on the receiving socket along with a 16-byte record of the
+        // sender's address, and fails the send with ENOBUFS when both don't fit in its receive
+        // buffer. Both ends of a connection get the same buffer size (see `set_dgram_buffers`),
+        // so the largest datagram is 16 bytes smaller than our send buffer.
+        #[cfg(target_os = "macos")]
+        let size = size - 16;
         usize::try_from(size).unwrap_or(0).min(max_message_size())
     }
 
@@ -514,10 +526,10 @@ pub type AsyncConn = AsyncFd<SeqpacketConn>;
 
 /// Async receive on a Tokio `AsyncFd`-wrapped IPC connection.
 ///
-/// Receives into a thread-local buffer pre-sized to `max_message_size()` (avoids a per-call
-/// heap allocation of up to 4 MB), then calls `decode` with the received byte slice so the
-/// caller can decode in-place without an intermediate `Vec<u8>`.  Zero buffer allocations per
-/// call once the thread-local has grown to full size.
+/// Receives into a thread-local buffer of `max_message_size()` bytes (avoids a per-call heap
+/// allocation of up to 4 MB; see `with_recv_buf` for how it is kept mostly unresident), then
+/// calls `decode` with the received byte slice so the caller can decode in-place without an
+/// intermediate `Vec<u8>`.  Zero buffer allocations per call once the thread-local exists.
 ///
 /// The buffer is borrowed only inside the synchronous `try_io` closure and is always released
 /// before the next `.await`, so it is safe to reuse across concurrent tasks on the same thread
@@ -532,10 +544,6 @@ where
     F: FnOnce(&[u8]) -> T,
     C: AsRawFd + LivenessAware,
 {
-    thread_local! {
-        /// Reusable receive buffer. Grows on first use; never shrinks.
-        static RECV_BUF: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
-    }
     // Wrap in Option to satisfy FnMut (take() is only called on successful receive).
     let mut decode = Some(decode);
 
@@ -570,11 +578,7 @@ where
             None => fd.readable().await?,
         };
         match guard.try_io(|inner| {
-            RECV_BUF.with_borrow_mut(|buf| {
-                let size = max_message_size();
-                if buf.len() < size {
-                    buf.resize(size, 0u8);
-                }
+            with_recv_buf(|buf| {
                 let mut result = recvmsg_raw(inner.as_raw_fd(), buf, MsgFlags::empty());
                 // A peer closing with unread data (e.g. acks) resets the connection. Linux reports
                 // that before the messages the peer sent earlier: receive those, EOF follows them.
@@ -582,16 +586,23 @@ where
                     result = recvmsg_raw(inner.as_raw_fd(), buf, MsgFlags::empty());
                 }
                 match result {
-                    Err(e) => Err(e),
+                    Err(e) => {
+                        // A truncated message filled the whole buffer before being rejected.
+                        let touched = match e.raw_os_error() {
+                            Some(libc::EMSGSIZE) => buf.len(),
+                            _ => 0,
+                        };
+                        (Err(e), touched)
+                    }
                     Ok((n, fds)) => {
                         // recvmsg_raw's &mut borrow of buf has ended; safe to read &buf[..n].
                         #[allow(clippy::unwrap_used)] // SAFETY: take() is only reached once
-                        unsafe {
-                            Ok((decode.take().unwrap_unchecked()(&buf[..n]), fds))
-                        }
+                        let decoded = unsafe { decode.take().unwrap_unchecked()(&buf[..n]) };
+                        (Ok((decoded, fds)), n)
                     }
                 }
             })
+            .and_then(|result| result)
         }) {
             Ok(Ok(x)) => return Ok(x),
             Ok(Err(e)) => return Err(e),
