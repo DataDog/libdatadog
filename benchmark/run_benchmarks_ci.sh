@@ -47,9 +47,12 @@ bench_features_for_crate() {
 
 # Escape regex metacharacters outside character classes; criterion's benchmark
 # filter is a regex and bench IDs are arbitrary text. Mirrors bench-selector's
-# cluster::escape_regex (.github/actions/bench-selector).
+# cluster::escape_regex (.github/actions/bench-selector). The bracket
+# expression lists `]` first: a `]` anywhere else would close the class (as
+# the previous revision's did — its pattern required a literal `{}]` after
+# the class, so it never matched and nothing was ever escaped).
 escape_bench_regex() {
-  printf '%s' "$1" | sed -e 's/[\\.*+?^$|()\[\]{}]/\\&/g'
+  printf '%s' "$1" | sed -e 's/[][\\.*+?^$|(){}]/\\&/g'
 }
 
 # Run benchmarks.

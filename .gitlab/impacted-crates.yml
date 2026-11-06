@@ -192,6 +192,15 @@ compute_bench_selection:
       CRATES_ARGS=()
       if ! grep -qE '^Cargo\.lock$' changed_files.txt 2>/dev/null; then
         CRATES="$(jq -r '.[]' <<< "${AFFECTED_CRATES}" | paste -sd ',')"
+        if [[ -z "$CRATES" ]]; then
+          # No crate is impacted (docs/CI-only PR) and the lockfile did not
+          # change: there is nothing for the selector to scope. Skip cleanly
+          # instead of passing `--crates ""` (rejected by the selector):
+          # the benchmarks job falls back to its crate-level path, whose own
+          # guards still widen to the full suite where they must.
+          status skipped
+          exit 0
+        fi
         CRATES_ARGS=(--crates "$CRATES")
       fi
       "$SELECTOR" inventory --workspace-root . "${CRATES_ARGS[@]}" \

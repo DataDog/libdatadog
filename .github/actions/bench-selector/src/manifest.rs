@@ -24,8 +24,12 @@
 //! coverage cannot attribute those.
 //!
 //! Path dependencies (workspace members) are excluded from the package set:
-//! their code changes arrive as source diffs the regular line intersection
-//! already handles.
+//! their *source* changes arrive as diffs the regular line intersection
+//! already handles. A *declaration* change of a member (e.g. enabling a
+//! feature on `libdd-x = { path = ... }`) is different: the member's
+//! compiled code changes with no source line moving, so nothing in the
+//! dependency package set can scope it — such a manifest is marked
+//! not-deps-only and keeps the conservative full run.
 
 use crate::diff::ChangedLines;
 use serde::{Deserialize, Serialize};
@@ -44,7 +48,8 @@ pub struct ManifestChanges {
     pub deps_only: BTreeMap<String, bool>,
     /// External packages whose wiring changed anywhere (dependency added,
     /// removed, or re-specified in a deps-only manifest). Workspace members
-    /// (path dependencies) are excluded.
+    /// (path dependencies) are excluded: a *declaration* change of a member
+    /// instead makes the manifest not-deps-only (see [`ParsedManifest`]).
     pub packages: BTreeSet<String>,
 }
 
@@ -120,26 +125,34 @@ pub fn manifest_changes(
             }
         };
         let parsed = compare_manifests(&base, &head, &members);
-        log::info!(
-            "manifests: {path} {}",
-            if parsed.deps_only {
-                format!(
-                    "dependencies-only (changed: {})",
-                    if parsed.packages.is_empty() {
-                        "none".to_string()
-                    } else {
-                        parsed
-                            .packages
-                            .iter()
-                            .cloned()
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    }
-                )
-            } else {
-                "not dependencies-only -> full run".to_string()
-            }
-        );
+        let verdict = if parsed.deps_only {
+            format!(
+                "dependencies-only (changed: {})",
+                if parsed.packages.is_empty() {
+                    "none".to_string()
+                } else {
+                    parsed
+                        .packages
+                        .iter()
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                }
+            )
+        } else if parsed.changed_members.is_empty() {
+            "not dependencies-only -> full run".to_string()
+        } else {
+            format!(
+                "workspace-member dependency declaration changed ({}) -> full run",
+                parsed
+                    .changed_members
+                    .iter()
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        };
+        log::info!("manifests: {path} {verdict}");
         out.deps_only.insert(path.clone(), parsed.deps_only);
         out.packages.extend(parsed.packages);
     }
@@ -165,6 +178,11 @@ fn is_manifest(path: &str) -> bool {
 struct ParsedManifest {
     deps_only: bool,
     packages: BTreeSet<String>,
+    /// Workspace members whose runtime-dependency *declaration* changed.
+    /// Their compiled code changes with no source line moving (e.g. a
+    /// feature enabled on `libdd-x = { path = ... }`), so the dependency
+    /// packages cannot scope the manifest: it must keep the full run.
+    changed_members: BTreeSet<String>,
 }
 
 /// The merge base of HEAD and `origin/<base_ref>`, matching the three-dot
@@ -222,6 +240,7 @@ fn compare_manifests(base: &str, head: &str, members: &BTreeSet<String>) -> Pars
     let conservative = || ParsedManifest {
         deps_only: false,
         packages: BTreeSet::new(),
+        changed_members: BTreeSet::new(),
     };
     // An unparseable document on either side is never scoping-safe.
     let Ok(base) = base.parse::<Table>() else {
@@ -238,20 +257,30 @@ fn compare_manifests(base: &str, head: &str, members: &BTreeSet<String>) -> Pars
     let base_deps = runtime_dependencies(&base);
     let head_deps = runtime_dependencies(&head);
     let mut packages = BTreeSet::new();
+    let mut changed_members = BTreeSet::new();
     for name in base_deps.keys().chain(head_deps.keys()) {
-        if base_deps.get(name) != head_deps.get(name) && !members.contains(name) {
-            packages.insert(name.clone());
+        if base_deps.get(name) != head_deps.get(name) {
+            if members.contains(name) {
+                // The member's declaration changed: its compiled code
+                // changes with no source diff to scope it, so this manifest
+                // must not be treated as deps-only (see ParsedManifest).
+                changed_members.insert(name.clone());
+            } else {
+                packages.insert(name.clone());
+            }
         }
     }
 
     // Everything outside the runtime dependency tables — the crate's own
     // features, profiles, metadata, build-dependencies (compile time),
     // patches, membership — must be identical for the manifest to be
-    // scoped by coverage.
-    let deps_only = stripped(&base) == stripped(&head);
+    // scoped by coverage, and no workspace member's dependency
+    // declaration may have changed either.
+    let deps_only = stripped(&base) == stripped(&head) && changed_members.is_empty();
     ParsedManifest {
         deps_only,
         packages,
+        changed_members,
     }
 }
 
@@ -541,11 +570,27 @@ name = \"x\"
     }
 
     #[test]
-    fn path_dependencies_to_members_are_excluded_from_packages() {
-        // The wiring of a workspace member changed (excluded from the
-        // package signal), but the manifest is still deps-only.
+    fn changed_member_dependency_declaration_is_not_deps_only() {
+        // Enabling a feature on a member path dependency changes the
+        // member's compiled code with no source line moving: the dependency
+        // package set cannot scope it (it excludes members), so the
+        // manifest must keep the conservative full run.
         let base = "[dependencies]\nlibdd-trace-utils = { path = \"../trace-utils\" }\n";
-        let head = "[dependencies]\nlibdd-trace-utils = { path = \"../trace-utils\", features = [\"x\"] }\nserde = \"1\"\n";
+        let head = "[dependencies]\nlibdd-trace-utils = { path = \"../trace-utils\", features = [\"x\"] }\n";
+        let parsed = compare_manifests(base, head, &set(&["libdd-trace-utils"]));
+        assert!(!parsed.deps_only);
+        assert_eq!(parsed.packages, set(&[]));
+        assert_eq!(parsed.changed_members, set(&["libdd-trace-utils"]));
+    }
+
+    #[test]
+    fn unchanged_member_entries_stay_excluded_from_packages() {
+        // The member's declaration is unchanged (only an external dependency
+        // was added), so the manifest is still deps-only and the member
+        // stays out of the package signal.
+        let base = "[dependencies]\nlibdd-trace-utils = { path = \"../trace-utils\" }\n";
+        let head =
+            "[dependencies]\nlibdd-trace-utils = { path = \"../trace-utils\" }\nserde = \"1\"\n";
         let parsed = compare_manifests(base, head, &set(&["libdd-trace-utils"]));
         assert!(parsed.deps_only);
         assert_eq!(parsed.packages, set(&["serde"]));

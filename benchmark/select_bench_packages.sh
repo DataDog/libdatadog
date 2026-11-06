@@ -68,10 +68,13 @@ bench_tooling_changed() {
   # same escape hatch exists in bench-selector's select). Only a deliberate
   # CI configuration change can set it, and editing that configuration is
   # itself a tooling change that re-enables this guard on real PRs.
+  # The affected-crate list itself comes from crates-reporter, and the
+  # selector is built by the helper workspace's own manifests: a change to
+  # either can skew the very list this selection narrows with.
   if [ "${BENCH_SELECTOR_SELF_TEST:-}" = "1" ]; then
     return 1
   fi
-  grep -qE '^(benchmark/|\.gitlab/benchmarks\.yml|\.gitlab/impacted-crates\.yml|\.github/actions/bench-selector/|\.github/actions/ci-shared/)' changed_files.txt 2>/dev/null
+  grep -qE '^(benchmark/|\.gitlab/benchmarks\.yml|\.gitlab/impacted-crates\.yml|\.github/actions/bench-selector/|\.github/actions/crates-reporter/|\.github/actions/ci-shared/|\.github/actions/(Cargo\.toml|Cargo\.lock))' changed_files.txt 2>/dev/null
 }
 
 # Workspace-level dependency or toolchain changes can affect the performance of

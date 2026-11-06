@@ -362,16 +362,24 @@ pub(crate) fn direct_bench_command(
 /// their executable paths, keyed by (crate name, bench target name).
 ///
 /// One invocation instead of one per binary: cargo pays a whole-workspace
-/// fingerprint check per invocation, and a single union build also compiles
-/// shared dependencies with the same feature unification as the measuring
-/// run (`run_benchmarks_ci.sh` builds its whole selection in one invocation
-/// too), where per-target builds could compile several variants of a shared
-/// dependency.
+/// fingerprint check per invocation, and a single union build compiles a
+/// shared dependency once with unified features, where per-target builds
+/// could compile several variants of it. (The measuring run's spec mode is
+/// not identical here: `run_benchmarks_ci.sh` compiles each selected target
+/// in its own `cargo bench -p … --bench … --no-run` invocation, so its
+/// feature unification differs per target — close enough that the same
+/// source functions are entered, which is all the selection needs.)
 pub(crate) fn build_all_benches(
     workspace_root: &Path,
     bins: &[&BenchBinary],
     target_dir: &Path,
 ) -> Result<BTreeMap<(String, String), PathBuf>> {
+    // An empty selection must not reach cargo: a bare `cargo bench --no-run`
+    // has no `-p` restriction and would build EVERY workspace bench target
+    // instrumented (e.g. on a PR that affects no bench crate).
+    if bins.is_empty() {
+        return Ok(BTreeMap::new());
+    }
     let env = cargo_env(target_dir);
     let mut cmd = Command::new("cargo");
     cmd.current_dir(workspace_root);
@@ -726,9 +734,7 @@ fn external_package_name(path: &str) -> Option<String> {
         let mut segments = path[idx + REGISTRY.len()..].split('/');
         segments.next(); // registry identifier (URL or hash)
         let name_version = segments.next()?;
-        // Strip the trailing `-<semver>` from `<name>-<version>`.
-        let (name, version) = name_version.rsplit_once('-')?;
-        return is_version(version).then(|| name.to_string());
+        return registry_package_name(name_version);
     }
     if let Some(idx) = path.rfind(CHECKOUTS) {
         let mut segments = path[idx + CHECKOUTS.len()..].split('/');
@@ -740,6 +746,49 @@ fn external_package_name(path: &str) -> Option<String> {
             .then(|| repo.to_string());
     }
     None
+}
+
+/// Split `<name>-<version>` into the package name, where the version may
+/// carry prerelease (`-…`) and build-metadata (`+…`) suffixes — e.g.
+/// `httpmock-0.8.0-alpha.1` -> `httpmock`,
+/// `wasi-0.11.0+wasi-snapshot-preview1` -> `wasi` — and the name itself
+/// may contain `-` (e.g. `allocator-api2-0.2.1`). The split is the FIRST
+/// `-` whose tail parses as a full semver, so a version-looking name
+/// segment (`ast-grep-0.34.0`) is never mistaken for the version.
+fn registry_package_name(name_version: &str) -> Option<String> {
+    let mut start = 0;
+    while let Some(offset) = name_version[start..].find('-') {
+        let idx = start + offset;
+        if is_semver(&name_version[idx + 1..]) {
+            return Some(name_version[..idx].to_string());
+        }
+        start = idx + 1;
+    }
+    None
+}
+
+/// Full semver: a numeric `major.minor.patch` core, an optional `-prerelease`
+/// (dot-separated identifiers of ASCII alphanumerics and `-`), and an
+/// optional `+build` metadata tail (any nonempty remainder).
+fn is_semver(s: &str) -> bool {
+    let core = match s.split_once('+') {
+        Some((core, build)) if !build.is_empty() => core,
+        Some(_) => return false,
+        None => s,
+    };
+    let core = match core.split_once('-') {
+        Some((core, prerelease)) if is_prerelease(prerelease) => core,
+        Some(_) => return false,
+        None => core,
+    };
+    is_version(core)
+}
+
+fn is_prerelease(s: &str) -> bool {
+    !s.is_empty()
+        && s.split('.').all(|seg| {
+            !seg.is_empty() && seg.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+        })
 }
 
 fn is_version(s: &str) -> bool {
@@ -916,6 +965,32 @@ mod tests {
     fn merges_overlapping_ranges() {
         let merged = merge_ranges(vec![(5, 9), (1, 2), (10, 12), (20, 25), (24, 30)]);
         assert_eq!(merged, [(1, 2), (5, 12), (20, 30)]);
+    }
+
+    #[test]
+    fn registry_package_names_resolve_with_prerelease_and_build_suffixes() {
+        let pkg = |dir: &str| {
+            external_package_name(&format!(
+                "/home/u/.cargo/registry/src/index/{dir}/src/lib.rs"
+            ))
+        };
+        // Plain semver.
+        assert_eq!(pkg("serde-1.0.210").as_deref(), Some("serde"));
+        // Hyphenated package names are not over-stripped.
+        assert_eq!(
+            pkg("allocator-api2-0.2.1").as_deref(),
+            Some("allocator-api2")
+        );
+        assert_eq!(pkg("ast-grep-0.34.0").as_deref(), Some("ast-grep"));
+        // Prerelease and build-metadata versions must still resolve.
+        assert_eq!(pkg("httpmock-0.8.0-alpha.1").as_deref(), Some("httpmock"));
+        assert_eq!(
+            pkg("wasi-0.11.0+wasi-snapshot-preview1").as_deref(),
+            Some("wasi")
+        );
+        assert_eq!(pkg("foo-1.0.0-rc.1+build.2").as_deref(), Some("foo"));
+        // Not a version tail at all.
+        assert_eq!(pkg("not-a-version").as_deref(), None);
     }
 
     #[test]

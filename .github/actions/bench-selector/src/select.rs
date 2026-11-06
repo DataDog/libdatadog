@@ -831,6 +831,47 @@ mod tests {
     }
 
     #[test]
+    fn member_manifest_changing_a_member_dep_never_selects_nothing() {
+        // A member manifest whose workspace-member path dependency got a new
+        // feature: compare_manifests marks it not-deps-only with an EMPTY
+        // package set (members are excluded from the dependency signal). An
+        // empty selection here would be a SKIP in CI; selection must widen
+        // instead — the compiled member code changed without any source
+        // line moving.
+        let inv = Inventory {
+            binaries: vec![binary(&["a/x", "b/y"])],
+        };
+        let cov = coverage(vec![
+            entry("a", vec![("libdd-x/src/hot.rs", vec![(1, 5)])]),
+            entry("b", vec![("libdd-x/src/other.rs", vec![(1, 5)])]),
+        ]);
+        let ch = changed(vec![("libdd-sampling/Cargo.toml", vec![(30, 30)])]);
+        let manifests = crate::manifest::ManifestChanges {
+            deps_only: [("libdd-sampling/Cargo.toml".to_string(), false)]
+                .into_iter()
+                .collect(),
+            packages: std::collections::BTreeSet::new(),
+        };
+        let selection = select(
+            &inv,
+            &cov,
+            &ch,
+            &LockfileChanges::default(),
+            &manifests,
+            false,
+        );
+        assert_eq!(selection.summary.clusters_selected, 2);
+        assert!(
+            selection.binaries[0]
+                .clusters
+                .iter()
+                .all(|c| c.reason == Reason::UncoveredInputChanged)
+        );
+        // A member manifest stays scoped to the inventory, not the suite.
+        assert!(!selection.full_suite);
+    }
+
+    #[test]
     fn member_manifest_with_other_changes_keeps_the_full_run() {
         let inv = Inventory {
             binaries: vec![binary(&["a/x"])],

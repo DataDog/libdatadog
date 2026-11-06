@@ -97,10 +97,18 @@ pub fn parse_lockfile_diff(diff: &str, workspace_members: &BTreeSet<String>) -> 
     let mut current_package: Option<String> = None;
 
     for line in diff.lines() {
+        // A hunk header cuts the context: a package block seen before it no
+        // longer encloses the following lines. Reset, so a hunk that starts
+        // below the `name = "..."` line of its (out-of-view) block is
+        // unattributable — the conservative fallback — instead of
+        // inheriting the previous hunk's package.
+        if line.starts_with("@@") {
+            current_package = None;
+            continue;
+        }
         if line.starts_with("diff --git")
             || line.starts_with("--- ")
             || line.starts_with("+++ ")
-            || line.starts_with("@@")
             || line.starts_with("index ")
             || line.starts_with("new file")
             || line.starts_with("deleted file")
@@ -109,6 +117,14 @@ pub fn parse_lockfile_diff(diff: &str, workspace_members: &BTreeSet<String>) -> 
         }
         let changed = matches!(line.chars().next(), Some('+' | '-'));
         let body = if changed { &line[1..] } else { line }.trim_start();
+
+        // Block headers carry no signal of their own: an added
+        // `+[[package]]` opens the block whose `name = "..."` line follows
+        // it (and attributes everything after it); it must not be
+        // attributed to the package of the block above.
+        if body.starts_with("[[package]]") {
+            continue;
+        }
 
         // `name = "..."` identifies the enclosing package block; a changed
         // name line marks a package added, removed, or renamed (both sides of
@@ -259,6 +275,50 @@ diff --git a/Cargo.lock b/Cargo.lock
 ";
         let changes = parse_lockfile_diff(diff, &members(&[]));
         assert_eq!(changes.packages, set(&["proptest"]));
+    }
+
+    #[test]
+    fn hunk_boundary_does_not_inherit_the_previous_hunks_package() {
+        // The second hunk starts mid-block, below the name line of a package
+        // that is out of view; its changes belong to that unknown package,
+        // not to zstd (the first hunk's package).
+        let diff = "\
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -100,4 +100,4 @@
+ [[package]]
+ name = \"zstd\"
+-version = \"0.13.3\"
++version = \"0.14.3\"
+@@ -2000,3 +2000,3 @@
+-source = \"registry+https://github.com/rust-lang/crates.io-index\"
++source = \"registry+https://github.com/rust-lang/crates.io-index\"
+ checksum = \"...\"
+";
+        let changes = parse_lockfile_diff(diff, &members(&[]));
+        assert_eq!(changes.packages, set(&["zstd"]));
+        assert!(changes.unattributable);
+        assert!(changes.is_changed());
+    }
+
+    #[test]
+    fn added_package_block_header_is_not_attributed_to_the_previous_package() {
+        // A new block starts right after serde's: its `+[[package]]` header
+        // and its entries belong to the new package, never to serde.
+        let diff = "\
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -100,5 +100,8 @@
+ [[package]]
+ name = \"serde\"
+ version = \"1.0.210\"
++[[package]]
++name = \"paste\"
++version = \"1.0.15\"
+";
+        let changes = parse_lockfile_diff(diff, &members(&[]));
+        assert_eq!(changes.packages, set(&["paste"]));
+        assert!(!changes.unattributable);
     }
 
     #[test]
