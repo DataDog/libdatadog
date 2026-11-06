@@ -244,7 +244,7 @@ fn which_in_path(name: &str) -> Option<PathBuf> {
 /// selected clusters. `CARGO_PROFILE_*` overrides are cargo-native and scoped
 /// to this pass's invocations only; the measuring run still uses the real
 /// `[profile.bench]`.
-fn cargo_env(target_dir: &Path) -> Vec<(String, String)> {
+pub(crate) fn cargo_env(target_dir: &Path) -> Vec<(String, String)> {
     vec![
         ("CARGO_ENCODED_RUSTFLAGS".into(), inherited_rustflags()),
         (
@@ -310,7 +310,7 @@ fn cargo_cmd(workspace_root: &Path, env: &[(String, String)], bin: &BenchBinary)
 /// cluster runs override this with their own per-cluster file, and
 /// `LLVM_PROFILE_FILE` is not a cargo fingerprint input, so the two phases
 /// share one build cache.
-const BUILD_JUNK_PROFILE_PATTERN: &str = "junk/%m_%p.profraw";
+pub(crate) const BUILD_JUNK_PROFILE_PATTERN: &str = "junk/%m_%p.profraw";
 
 /// Build `bin` instrumented and return the executable path per bench target of
 /// its crate, parsed from cargo's JSON build messages.
