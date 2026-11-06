@@ -446,3 +446,111 @@ pub fn project_extended(
     let expanded = expand_observation(profile, observation)?;
     crate::project_result(profile, expanded.as_ref())
 }
+
+/// A metric of an OpenTelemetry GenAI exporter as the profiles name it: the
+/// profile metric, the profile that defines it, and its attributes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TranslatedMetric {
+    pub name: &'static str,
+    pub profile: Profile,
+    pub attributes: crate::Attributes,
+}
+
+/// Prometheus label names of the attributes [`translate_otel_genai_metric`]
+/// reads, with the OpenTelemetry names they stand for.
+const PROMETHEUS_ATTRIBUTES: [(&str, &str); 8] = [
+    ("error_type", "error.type"),
+    ("gen_ai_operation_name", "gen_ai.operation.name"),
+    ("gen_ai_provider_name", "gen_ai.provider.name"),
+    ("gen_ai_request_model", "gen_ai.request.model"),
+    ("gen_ai_response_model", "gen_ai.response.model"),
+    ("gen_ai_system", "gen_ai.system"),
+    ("gen_ai_token_type", "gen_ai.token.type"),
+    ("server_address", "server.address"),
+];
+
+/// The profile metric an OpenTelemetry GenAI metric stands for, as a proxy
+/// that relabels OpenTelemetry or Prometheus aggregates (Envoy AI Gateway)
+/// reports them:
+///
+/// - the removed `gen_ai.client.token.usage` with `gen_ai.token.type` `input` or `output` is
+///   `gen_ai.client.inference.usage.input_tokens` or `..output_tokens` (its sum is the Counter's
+///   value; `PORTABLE-METRICS.md` replaced it with these Counters);
+/// - a name a profile defines is kept;
+/// - the Prometheus spelling (`gen_ai_client_token_usage_sum`, `gen_ai_token_type`, ...) is read as
+///   the OpenTelemetry one, `_sum` and `_total` suffixes dropped; a `_count` or `_bucket` series
+///   has no profile metric.
+///
+/// Attributes: `gen_ai.system` becomes `gen_ai.provider.name` unless that is
+/// stated; the provider name is canonicalized by [`crate::gen_ai_provider_name`];
+/// `gen_ai.token.type` is dropped; the rest are kept. `None` for any other
+/// metric.
+pub fn translate_otel_genai_metric(
+    name: &str,
+    attributes: &crate::Attributes,
+) -> Option<TranslatedMetric> {
+    let mut name = name.trim();
+    let prometheus = !name.contains('.');
+    if prometheus {
+        if name.ends_with("_count") || name.ends_with("_bucket") {
+            return None;
+        }
+        name = name
+            .strip_suffix("_sum")
+            .or_else(|| name.strip_suffix("_total"))
+            .unwrap_or(name);
+    }
+    let mut attrs: crate::Attributes = attributes
+        .iter()
+        .map(|(key, value)| {
+            let key = PROMETHEUS_ATTRIBUTES
+                .iter()
+                .find(|(label, _)| prometheus && label == key)
+                .map_or(key.as_str(), |(_, dotted)| *dotted);
+            (key.to_string(), value.clone())
+        })
+        .collect();
+    let token_type = attrs.remove("gen_ai.token.type");
+    let translated = match name {
+        "gen_ai.client.token.usage" | "gen_ai_client_token_usage" => match token_type.as_deref() {
+            Some("input") => "gen_ai.client.inference.usage.input_tokens",
+            Some("output") => "gen_ai.client.inference.usage.output_tokens",
+            _ => return None,
+        },
+        name => {
+            let dotted = if prometheus {
+                Profile::ALL
+                    .iter()
+                    .flat_map(|p| p.metric_names())
+                    .find(|m| m.replace('.', "_") == name)?
+            } else {
+                Profile::ALL
+                    .iter()
+                    .flat_map(|p| p.metric_names())
+                    .find(|m| **m == name)?
+            };
+            dotted
+        }
+    };
+    let profile = *Profile::ALL
+        .iter()
+        .find(|p| p.metric_names().contains(&translated))?;
+    if let Some(system) = attrs.remove("gen_ai.system") {
+        attrs.entry("gen_ai.provider.name".into()).or_insert(system);
+    }
+    if let Some(provider) = attrs.get("gen_ai.provider.name") {
+        match crate::gen_ai_provider_name(provider) {
+            Some(canonical) => {
+                attrs.insert("gen_ai.provider.name".into(), canonical);
+            }
+            None => {
+                attrs.remove("gen_ai.provider.name");
+            }
+        }
+    }
+    Some(TranslatedMetric {
+        name: translated,
+        profile,
+        attributes: attrs,
+    })
+}

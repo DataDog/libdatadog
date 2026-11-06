@@ -552,6 +552,26 @@ enum ddog_ai_usage_Status ddog_ai_usage_operation_name(const uint8_t *route,
                                                        struct ddog_ai_usage_Buffer *out);
 
 /**
+ * Translate an OpenTelemetry GenAI metric, from the request document
+ * `input[..input_len]` (`{"name": "gen_ai.client.token.usage",
+ * "attributes": {"gen_ai.token.type": "input", ...}}`, in OpenTelemetry or
+ * Prometheus spelling), to the profile metric it stands for, and write
+ * `{"name", "profile", "attributes"}` to `out`: the removed token-usage
+ * histogram becomes the input or output token Counter (its sum is the
+ * value), `gen_ai.system` becomes a canonical `gen_ai.provider.name`, and
+ * `gen_ai.token.type` is dropped. [`Status::Rejected`] with
+ * `value_not_allowed` for a metric no profile defines.
+ *
+ * # Safety
+ *
+ * `input` must point to `input_len` readable bytes (or `input_len` must be
+ * 0), and `out` must be null or writable.
+ */
+enum ddog_ai_usage_Status ddog_ai_usage_translate_otel_metric(const uint8_t *input,
+                                                              uintptr_t input_len,
+                                                              struct ddog_ai_usage_Buffer *out);
+
+/**
  * Write the `error.type` of a call to `out` from how it failed: its HTTP
  * `status` (0 when there is none), whether it got `no_response` from the
  * provider, whether it `timed_out`, and its error name `name[..name_len]`

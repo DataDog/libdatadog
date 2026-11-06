@@ -1276,3 +1276,32 @@ fn extended_observations_high_water_and_drops_since_last_take() {
         ddog_ai_usage_batch_drop(batch);
     }
 }
+
+#[test]
+fn otel_metrics_translate_across_the_boundary() {
+    let translate = |input: &str| {
+        let mut out = empty();
+        // SAFETY: valid input and output.
+        let status =
+            unsafe { ddog_ai_usage_translate_otel_metric(input.as_ptr(), input.len(), &mut out) };
+        (status, json_of(out))
+    };
+    let (status, value) = translate(
+        r#"{"name": "gen_ai_client_token_usage_sum",
+            "attributes": {"gen_ai_token_type": "input", "gen_ai_system": "amazon-bedrock"}}"#,
+    );
+    assert_eq!(status, Status::Ok);
+    assert_eq!(
+        value,
+        json!({
+            "name": "gen_ai.client.inference.usage.input_tokens",
+            "profile": "gen_ai.client.provider_attempt@0.1.0",
+            "attributes": {"gen_ai.provider.name": "aws.bedrock"},
+        })
+    );
+    let (status, value) = translate(r#"{"name": "process.cpu.time"}"#);
+    assert_eq!(status, Status::Rejected);
+    assert_eq!(value["error"]["code"], "value_not_allowed");
+    let (status, _) = translate(r#"{"name": 1}"#);
+    assert_eq!(status, Status::Rejected);
+}

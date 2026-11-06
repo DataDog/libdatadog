@@ -1406,6 +1406,64 @@ pub unsafe extern "C" fn ddog_ai_usage_operation_name(
     }
 }
 
+/// Translate an OpenTelemetry GenAI metric, from the request document
+/// `input[..input_len]` (`{"name": "gen_ai.client.token.usage",
+/// "attributes": {"gen_ai.token.type": "input", ...}}`, in OpenTelemetry or
+/// Prometheus spelling), to the profile metric it stands for, and write
+/// `{"name", "profile", "attributes"}` to `out`: the removed token-usage
+/// histogram becomes the input or output token Counter (its sum is the
+/// value), `gen_ai.system` becomes a canonical `gen_ai.provider.name`, and
+/// `gen_ai.token.type` is dropped. [`Status::Rejected`] with
+/// `value_not_allowed` for a metric no profile defines.
+///
+/// # Safety
+///
+/// `input` must point to `input_len` readable bytes (or `input_len` must be
+/// 0), and `out` must be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ddog_ai_usage_translate_otel_metric(
+    input: *const u8,
+    input_len: usize,
+    out: *mut Buffer,
+) -> Status {
+    // SAFETY: forwarded from the caller.
+    unsafe {
+        json_call(out, || {
+            catch_unwind(AssertUnwindSafe(|| {
+                let document = parse_document(bytes(input, input_len))?;
+                let name = document
+                    .get("name")
+                    .and_then(Json::as_str)
+                    .ok_or_else(|| invalid("name must be a string"))?;
+                let attributes = match document.get("attributes") {
+                    None | Some(Json::Null) => Attributes::new(),
+                    Some(Json::Object(members)) => members
+                        .iter()
+                        .map(|(key, value)| match value {
+                            Json::String(text) => Ok((key.clone(), text.clone())),
+                            _ => Err(invalid("attributes must be strings")),
+                        })
+                        .collect::<Result<_, _>>()?,
+                    Some(_) => return Err(invalid("attributes must be an object")),
+                };
+                let translated = libdd_ai_usage::translate_otel_genai_metric(name, &attributes)
+                    .ok_or_else(|| {
+                        Failure::Rejected(MetricError::new(
+                            ErrorCode::ValueNotAllowed,
+                            format!("{name} is not a metric of a profile"),
+                        ))
+                    })?;
+                Ok(json!({
+                    "name": translated.name,
+                    "profile": translated.profile.id(),
+                    "attributes": translated.attributes,
+                }))
+            }))
+            .unwrap_or(Err(Failure::Internal("translating the metric panicked")))
+        })
+    }
+}
+
 /// Write the `error.type` of a call to `out` from how it failed: its HTTP
 /// `status` (0 when there is none), whether it got `no_response` from the
 /// provider, whether it `timed_out`, and its error name `name[..name_len]`

@@ -248,3 +248,89 @@ fn an_observation_without_extensions_is_not_copied() {
         std::borrow::Cow::Borrowed(_)
     ));
 }
+
+#[test]
+fn otel_genai_metrics_translate_to_profile_metrics() {
+    use libdd_ai_usage::{Attributes, translate_otel_genai_metric};
+    let attrs = |pairs: &[(&str, &str)]| -> Attributes {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    };
+    let input = translate_otel_genai_metric(
+        "gen_ai.client.token.usage",
+        &attrs(&[
+            ("gen_ai.token.type", "input"),
+            ("gen_ai.system", "aws_bedrock"),
+            ("gen_ai.operation.name", "chat"),
+        ]),
+    )
+    .unwrap();
+    assert_eq!(input.name, "gen_ai.client.inference.usage.input_tokens");
+    assert_eq!(input.profile, Profile::ProviderAttempt);
+    assert_eq!(
+        input.attributes,
+        attrs(&[
+            ("gen_ai.operation.name", "chat"),
+            ("gen_ai.provider.name", "aws.bedrock"),
+        ])
+    );
+    // Prometheus spelling, as Envoy exposes it.
+    let output = translate_otel_genai_metric(
+        "gen_ai_client_token_usage_sum",
+        &attrs(&[
+            ("gen_ai_token_type", "output"),
+            ("gen_ai_provider_name", "google-vertex-ai"),
+        ]),
+    )
+    .unwrap();
+    assert_eq!(output.name, "gen_ai.client.inference.usage.output_tokens");
+    assert_eq!(
+        output
+            .attributes
+            .get("gen_ai.provider.name")
+            .map(String::as_str),
+        Some("gcp.vertex_ai")
+    );
+    // A stated provider wins over gen_ai.system.
+    let stated = translate_otel_genai_metric(
+        "gen_ai.client.token.usage",
+        &attrs(&[
+            ("gen_ai.token.type", "input"),
+            ("gen_ai.system", "openai"),
+            ("gen_ai.provider.name", "azure-openai"),
+        ]),
+    )
+    .unwrap();
+    assert_eq!(
+        stated
+            .attributes
+            .get("gen_ai.provider.name")
+            .map(String::as_str),
+        Some("azure.ai.openai")
+    );
+    // Profile names are kept, in either spelling.
+    let breakdown = translate_otel_genai_metric(
+        "gen_ai_client_inference_usage_cache_read_input_tokens_total",
+        &attrs(&[]),
+    )
+    .unwrap();
+    assert_eq!(
+        breakdown.name,
+        "gen_ai.client.inference.usage.cache_read.input_tokens"
+    );
+    assert_eq!(breakdown.profile, Profile::TokenBreakdown);
+    for (name, token_type) in [
+        ("gen_ai_client_token_usage_count", "input"),
+        ("gen_ai_client_token_usage_bucket", "input"),
+        ("gen_ai.client.token.usage", "cached"),
+        ("http.server.request.duration", "input"),
+    ] {
+        assert!(
+            translate_otel_genai_metric(name, &attrs(&[("gen_ai.token.type", token_type)]))
+                .is_none(),
+            "{name}"
+        );
+    }
+}

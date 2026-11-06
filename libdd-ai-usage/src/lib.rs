@@ -94,9 +94,9 @@ pub use error_type::{
     error_type_for_name, error_type_for_status, error_type_identifier,
 };
 pub use extensions::{
-    BillableTokens, Failure, OBSERVATION_EXTENSIONS, PricesPerMillion, ZERO_IS_UNREPORTED_DEFAULT,
-    error_type_for_failure, estimated_cost_nano_usd, expand_observation, operation_name_for,
-    project_extended,
+    BillableTokens, Failure, OBSERVATION_EXTENSIONS, PricesPerMillion, TranslatedMetric,
+    ZERO_IS_UNREPORTED_DEFAULT, error_type_for_failure, estimated_cost_nano_usd,
+    expand_observation, operation_name_for, project_extended, translate_otel_genai_metric,
 };
 pub use json::{Json, JsonError, JsonErrorKind, JsonObject};
 pub use number::{MAX_SAFE_INTEGER, nano_usd_from_number, nano_usd_from_usd, usd_from_nano_usd};
