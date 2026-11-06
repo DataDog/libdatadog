@@ -80,8 +80,18 @@ bench_tooling_changed() {
 # its diff, which bench-selector scopes against the packages each benchmark
 # cluster executes (Reason: dependency-changed). When no bench-level selection
 # is available, lockfile_changed() below restores the old full-suite fallback.
+# Cargo.toml (root) is NOT here: a dependencies-only manifest change is
+# scoped by bench-selector exactly like a lockfile bump (the tool parses the
+# manifest diff and marks it deps-only); any other root-manifest change makes
+# the tool emit full_suite=true, which the decision chain below turns into
+# the full suite. Without a selection (job failed), root_manifest_changed()
+# restores the old full-suite fallback.
 workspace_level_changed() {
-  grep -qE '^(Cargo\.toml|rust-toolchain\.toml|ci-toolchain\.toml)$' changed_files.txt 2>/dev/null
+  grep -qE '^(rust-toolchain\.toml|ci-toolchain\.toml)$' changed_files.txt 2>/dev/null
+}
+
+root_manifest_changed() {
+  grep -qE '^Cargo\.toml$' changed_files.txt 2>/dev/null
 }
 
 # True when the lockfile changed. Only consulted when no bench-level
@@ -183,6 +193,7 @@ esac
 # Only decided here when a full suite was not already forced (main).
 selection_state="absent"
 specs=""
+full_suite="false"
 if [ -z "$packages" ] && [ "${IMPACTED_STATUS:-}" = "success" ] && [ -n "${AFFECTED_CRATES:-}" ] && [ -n "$all_bench" ]; then
   specs="$(bench_selection_specs || true)"
   if [ -n "$specs" ]; then
@@ -192,6 +203,10 @@ if [ -z "$packages" ] && [ "${IMPACTED_STATUS:-}" = "success" ] && [ -n "${AFFEC
       selection_state="specs"
       log "Bench-level selection available."
     fi
+    # The tool signals inputs it cannot scope below the whole suite (a
+    # non-dependencies-only ROOT manifest change: profiles, workspace
+    # features, membership).
+    full_suite="$(jq -r '.full_suite // false' "$BENCH_SELECTION_FILE" 2>/dev/null || echo false)"
   fi
 fi
 
@@ -206,11 +221,17 @@ if [ -z "$packages" ]; then
     force_full="Benchmark tooling changed"
   elif workspace_level_changed; then
     force_full="Workspace-level dependency/toolchain change"
+  elif [ "$selection_state" != "absent" ] && [ "$full_suite" = "true" ]; then
+    force_full="Selection requires the full suite (unscopable root manifest change)"
   elif [ "$selection_state" = "absent" ] && lockfile_changed; then
     # No bench-level selection to scope the bump with: old behavior. (An
     # "empty" selection means bench-selector scoped the bump and no cluster
     # exercises the changed packages — trust it and run nothing.)
     force_full="Cargo.lock changed without bench-level selection"
+  elif [ "$selection_state" = "absent" ] && root_manifest_changed; then
+    # No bench-level selection to decide dependencies-only with: old
+    # behavior for root manifest changes.
+    force_full="Root Cargo.toml changed without bench-level selection"
   fi
 
   if [ -n "$force_full" ]; then
