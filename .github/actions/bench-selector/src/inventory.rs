@@ -70,7 +70,11 @@ fn supplemental_features(crate_name: &str) -> &'static [&'static str] {
 /// Discover every bench binary of the workspace rooted at `workspace_root`
 /// (optionally restricted to the given crate names) by running
 /// `cargo bench ... -- --list` per bench target.
-pub fn discover(workspace_root: &Path, crates_filter: Option<&[String]>) -> Result<Inventory> {
+pub fn discover(
+    workspace_root: &Path,
+    crates_filter: Option<&[String]>,
+    instrumented_target_dir: Option<&Path>,
+) -> Result<Inventory> {
     let metadata = MetadataCommand::new()
         .manifest_path(workspace_root.join("Cargo.toml"))
         .no_deps()
@@ -109,8 +113,13 @@ pub fn discover(workspace_root: &Path, crates_filter: Option<&[String]>) -> Resu
                 }
             }
             features.sort();
-            let bench_ids =
-                list_bench_ids(workspace_root, pkg.name.as_ref(), &target.name, &features)?;
+            let bench_ids = list_bench_ids(
+                workspace_root,
+                pkg.name.as_ref(),
+                &target.name,
+                &features,
+                instrumented_target_dir,
+            )?;
             if bench_ids.is_empty() {
                 log::warn!(
                     "no benchmarks listed for {} --bench {}; skipping",
@@ -170,12 +179,35 @@ fn list_bench_ids(
     crate_name: &str,
     target: &str,
     features: &[String],
+    instrumented_target_dir: Option<&Path>,
 ) -> Result<Vec<String>> {
     let mut cmd = Command::new("cargo");
     cmd.current_dir(workspace_root);
-    cmd.env("CARGO_PROFILE_BENCH_OPT_LEVEL", "0")
-        .env("CARGO_PROFILE_BENCH_CODEGEN_UNITS", "16")
-        .env("CARGO_PROFILE_BENCH_LTO", "false");
+    match instrumented_target_dir {
+        // Instrumented build in the coverage pass's target dir, so the two
+        // passes share ONE build of the dependency graph: same RUSTFLAGS and
+        // CARGO_TARGET_DIR make every coverage `--no-run` a cache hit. Bench
+        // IDs are statically registered, so an instrumented `--list` reports
+        // the same IDs as a clean one. The `--list` process itself writes a
+        // junk profile (see coverage::BUILD_JUNK_PROFILE_PATTERN): its
+        // coverage data is garbage by definition and is never read.
+        Some(dir) => {
+            for (key, value) in crate::coverage::cargo_env(dir) {
+                cmd.env(key, value);
+            }
+            cmd.env(
+                "LLVM_PROFILE_FILE",
+                dir.join(crate::coverage::BUILD_JUNK_PROFILE_PATTERN),
+            );
+        }
+        // Standalone use (local runs, tests): fast debug-like profile, no
+        // instrumentation, default target dir.
+        None => {
+            cmd.env("CARGO_PROFILE_BENCH_OPT_LEVEL", "0")
+                .env("CARGO_PROFILE_BENCH_CODEGEN_UNITS", "16")
+                .env("CARGO_PROFILE_BENCH_LTO", "false");
+        }
+    }
     cmd.args(["bench", "-p", crate_name, "--bench", target]);
     if !features.is_empty() {
         cmd.arg("--features").arg(features.join(","));
@@ -303,7 +335,7 @@ warning: something
     #[test]
     fn discover_finds_ddsketch_binary() {
         let inventory =
-            discover(&repo_root(), Some(&["libdd-ddsketch".to_string()])).expect("discovery");
+            discover(&repo_root(), Some(&["libdd-ddsketch".to_string()]), None).expect("discovery");
         assert_eq!(inventory.binaries.len(), 1);
         let bin = &inventory.binaries[0];
         assert_eq!(bin.crate_name, "libdd-ddsketch");
