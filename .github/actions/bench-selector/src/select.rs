@@ -64,6 +64,8 @@ pub enum Reason {
     CoverageFailed,
     /// An input not attributable by Rust line coverage changed.
     UncoveredInputChanged,
+    /// A dependency the cluster executes was changed in the lockfile diff.
+    DependencyChanged,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -72,6 +74,22 @@ pub struct Summary {
     pub binaries_selected: usize,
     pub clusters_total: usize,
     pub clusters_selected: usize,
+}
+
+/// Does this cluster execute a dependency that the lockfile diff changed?
+/// An unattributable lockfile diff conservatively matches every cluster: the
+/// parser could not tell which packages moved, so none can be excluded.
+fn dependency_exercised(
+    entry: &crate::coverage::CoverageEntry,
+    lockfile: &crate::lockfile::LockfileChanges,
+) -> bool {
+    if !lockfile.is_changed() {
+        return false;
+    }
+    if lockfile.unattributable {
+        return true;
+    }
+    entry.deps.iter().any(|dep| lockfile.packages.contains(dep))
 }
 
 /// Do two inclusive ranges overlap?
@@ -84,6 +102,7 @@ pub fn select(
     inventory: &Inventory,
     coverage: &Coverage,
     changed: &ChangedLines,
+    lockfile: &crate::lockfile::LockfileChanges,
     self_test: bool,
 ) -> Selection {
     let coverage_by_key: BTreeMap<(&str, &str, &str), &crate::coverage::CoverageEntry> = coverage
@@ -131,6 +150,8 @@ pub fn select(
                     Some(entry) => {
                         if cluster_touches_changes(&entry.files, changed) {
                             Some(Reason::CoveredChange)
+                        } else if dependency_exercised(entry, lockfile) {
+                            Some(Reason::DependencyChanged)
                         } else {
                             None
                         }
@@ -188,11 +209,16 @@ pub fn select(
 /// CI configuration change can set (and editing the CI configuration is
 /// itself a tooling change that re-enables the full-suite guard on real PRs).
 fn requires_full_run(path: &str, ranges: &[(u32, u32)], self_test: bool) -> bool {
-    // Under self-test, the CI helper workspace (.github/actions) is the
-    // tooling under validation; its manifests and build scripts cannot affect
-    // the benchmarked crates, so they are ignored instead of forcing the full
-    // suite through the generic Cargo.toml/Cargo.lock filename rules below.
-    if self_test && (path.starts_with(".github/actions/") || path == ".github/actions") {
+    // The CI helper workspace (.github/actions) is a separate workspace the
+    // benchmarked crates never build against; its manifests and build
+    // scripts cannot affect the benchmarks, so they never force a full run.
+    // bench-selector itself is exempt from that exemption outside self-test:
+    // a change to the selection tooling must validate against the full
+    // suite (mirrors the guard in select_bench_packages.sh). Under self-test
+    // the whole directory is the tooling under validation and is ignored.
+    let helper_workspace = path.starts_with(".github/actions/") || path == ".github/actions";
+    let tooling = path.starts_with(".github/actions/bench-selector/");
+    if helper_workspace && (self_test || !tooling) {
         return false;
     }
     let path_obj = std::path::Path::new(path);
@@ -201,7 +227,6 @@ fn requires_full_run(path: &str, ranges: &[(u32, u32)], self_test: bool) -> bool
         name,
         Some(
             "Cargo.toml"
-                | "Cargo.lock"
                 | "build.rs"
                 | "rust-toolchain"
                 | "rust-toolchain.toml"
@@ -219,6 +244,14 @@ fn requires_full_run(path: &str, ranges: &[(u32, u32)], self_test: bool) -> bool
         return true;
     }
     match path_obj.extension().and_then(|ext| ext.to_str()) {
+        // Root Cargo.lock is not here: a lockfile bump changes exactly the
+        // packages named in its diff, which the caller scopes by intersecting
+        // the changed packages with the packages each cluster executes
+        // (Reason::DependencyChanged). It still forces a full run when the
+        // diff cannot be attributed to packages (see lockfile.rs), when a
+        // member manifest or the root Cargo.toml changes (profiles, feature
+        // toggles — nothing in the lockfile names them), or when no selection
+        // is available at all (the CI fallback path).
         Some(
             "c" | "h" | "cc" | "cpp" | "cxx" | "hpp" | "hh" | "hxx" | "s" | "S" | "asm" | "m"
             | "mm" | "inc" | "proto",
@@ -254,6 +287,8 @@ mod tests {
     use crate::coverage::{Coverage, CoverageEntry};
     use crate::diff::LineRange;
     use crate::inventory::{BenchBinary, Inventory};
+    use crate::lockfile::LockfileChanges;
+    use std::collections::BTreeSet;
 
     fn binary(ids: &[&str]) -> BenchBinary {
         let bench_ids = ids.iter().map(|s| s.to_string()).collect();
@@ -267,12 +302,21 @@ mod tests {
     }
 
     fn entry(cluster: &str, files: Vec<(&str, Vec<LineRange>)>) -> CoverageEntry {
+        entry_with_deps(cluster, files, Vec::new())
+    }
+
+    fn entry_with_deps(
+        cluster: &str,
+        files: Vec<(&str, Vec<LineRange>)>,
+        deps: Vec<&str>,
+    ) -> CoverageEntry {
         CoverageEntry {
             crate_name: "libdd-x".into(),
             target: "main".into(),
             cluster: cluster.into(),
             status: "ok".into(),
             files: files.into_iter().map(|(f, r)| (f.to_string(), r)).collect(),
+            deps: deps.into_iter().map(|d| d.to_string()).collect(),
         }
     }
 
@@ -294,7 +338,7 @@ mod tests {
             entry("b", vec![("libdd-x/src/cold.rs", vec![(1, 5)])]),
         ]);
         let ch = changed(vec![("libdd-x/src/hot.rs", vec![(15, 15)])]);
-        let selection = select(&inv, &cov, &ch, false);
+        let selection = select(&inv, &cov, &ch, &LockfileChanges::default(), false);
         assert_eq!(selection.binaries.len(), 1);
         assert_eq!(selection.binaries[0].clusters.len(), 1);
         assert_eq!(selection.binaries[0].clusters[0].name, "a");
@@ -317,7 +361,7 @@ mod tests {
             entry("b", vec![("libdd-x/src/other.rs", vec![(1, 5)])]),
         ]);
         let ch = changed(vec![("libdd-x/src/hot.rs", vec![(50, 60)])]);
-        let selection = select(&inv, &cov, &ch, false);
+        let selection = select(&inv, &cov, &ch, &LockfileChanges::default(), false);
         assert!(selection.binaries.is_empty());
         assert_eq!(selection.summary.clusters_selected, 0);
     }
@@ -335,10 +379,11 @@ mod tests {
                 cluster: "b".into(),
                 status: "failed".into(),
                 files: BTreeMap::new(),
+                deps: BTreeSet::new(),
             },
         ]);
         let ch = changed(vec![("libdd-x/src/unrelated.rs", vec![(1, 1)])]);
-        let selection = select(&inv, &cov, &ch, false);
+        let selection = select(&inv, &cov, &ch, &LockfileChanges::default(), false);
         let selected: Vec<&str> = selection.binaries[0]
             .clusters
             .iter()
@@ -363,7 +408,7 @@ mod tests {
             entry("b", vec![("libdd-x/src/other.rs", vec![(1, 5)])]),
         ]);
         let ch = changed(vec![("libdd-x/benches/main.rs", vec![(1, 1)])]);
-        let selection = select(&inv, &cov, &ch, false);
+        let selection = select(&inv, &cov, &ch, &LockfileChanges::default(), false);
         assert_eq!(selection.binaries.len(), 1);
         assert_eq!(selection.binaries[0].clusters.len(), 2);
         assert!(
@@ -386,7 +431,6 @@ mod tests {
         ]);
         for path in [
             "Cargo.toml",
-            "Cargo.lock",
             "libdd-x/Cargo.toml",
             "rust-toolchain.toml",
             "ci-toolchain.toml",
@@ -401,7 +445,13 @@ mod tests {
             "libdd-x/src/hot.S",
             "libdd-x/schema.proto",
         ] {
-            let selection = select(&inv, &cov, &changed(vec![(path, vec![(100, 100)])]), false);
+            let selection = select(
+                &inv,
+                &cov,
+                &changed(vec![(path, vec![(100, 100)])]),
+                &LockfileChanges::default(),
+                false,
+            );
             assert_eq!(selection.summary.clusters_selected, 2, "{path}");
             assert!(
                 selection.binaries[0]
@@ -434,12 +484,24 @@ mod tests {
             ".github/actions/Cargo.toml",
             ".github/actions/Cargo.lock",
         ] {
-            let selection = select(&inv, &cov, &changed(vec![(path, vec![(100, 100)])]), true);
+            let selection = select(
+                &inv,
+                &cov,
+                &changed(vec![(path, vec![(100, 100)])]),
+                &LockfileChanges::default(),
+                true,
+            );
             assert_eq!(selection.summary.clusters_selected, 0, "{path}");
         }
         // Non-tooling uncovered inputs still force a full run under self-test.
-        for path in ["libdd-x/src/hot.c", "libdd-x/build.rs", "Cargo.lock"] {
-            let selection = select(&inv, &cov, &changed(vec![(path, vec![(100, 100)])]), true);
+        for path in ["libdd-x/src/hot.c", "libdd-x/build.rs"] {
+            let selection = select(
+                &inv,
+                &cov,
+                &changed(vec![(path, vec![(100, 100)])]),
+                &LockfileChanges::default(),
+                true,
+            );
             assert_eq!(selection.summary.clusters_selected, 2, "{path}");
         }
     }
@@ -454,7 +516,7 @@ mod tests {
             entry("b", vec![("libdd-x/src/other.rs", vec![(1, 5)])]),
         ]);
         let ch = crate::diff::parse_unified_diff("diff --git a/libdd-x/benches/old.rs b/libdd-x/benches/new.rs\nsimilarity index 100%\nrename from libdd-x/benches/old.rs\nrename to libdd-x/benches/new.rs\n").unwrap();
-        let selection = select(&inv, &cov, &ch, false);
+        let selection = select(&inv, &cov, &ch, &LockfileChanges::default(), false);
         assert_eq!(selection.summary.clusters_selected, 2);
         assert!(
             selection.binaries[0]
@@ -474,11 +536,18 @@ mod tests {
             &inv,
             &cov,
             &changed(vec![("libdd-x/src/deleted.rs", vec![])]),
+            &LockfileChanges::default(),
             false,
         );
         assert_eq!(selection.summary.clusters_selected, 1);
         let cov = coverage(vec![entry("a", vec![])]);
-        let selection = select(&inv, &cov, &ChangedLines::new(), false);
+        let selection = select(
+            &inv,
+            &cov,
+            &ChangedLines::new(),
+            &LockfileChanges::default(),
+            false,
+        );
         assert_eq!(
             selection.binaries[0].clusters[0].reason,
             Reason::CoverageFailed
@@ -498,6 +567,132 @@ mod tests {
             crate::cluster::exact_filter(&["b".into(), "a/x".into()]),
             "^(a/x|b)$"
         );
+    }
+
+    #[test]
+    fn lockfile_bump_selects_clusters_exercising_the_changed_dep() {
+        let inv = Inventory {
+            binaries: vec![binary(&["a/x", "b/y"])],
+        };
+        // Both clusters are healthy, neither overlaps the (empty) source diff;
+        // cluster a executes the bumped dependency, cluster b does not.
+        let cov = coverage(vec![
+            entry_with_deps(
+                "a",
+                vec![("libdd-x/src/hot.rs", vec![(1, 5)])],
+                vec!["zstd"],
+            ),
+            entry_with_deps(
+                "b",
+                vec![("libdd-x/src/other.rs", vec![(1, 5)])],
+                vec!["serde"],
+            ),
+        ]);
+        let lockfile = crate::lockfile::parse_lockfile_diff(
+            "\
+[[package]]
+ name = \"zstd\"
+-version = \"0.13\"
++version = \"0.14\"
+",
+            &std::collections::BTreeSet::new(),
+        );
+        let selection = select(&inv, &cov, &ChangedLines::new(), &lockfile, false);
+        assert_eq!(selection.summary.clusters_selected, 1);
+        let cluster = &selection.binaries[0].clusters[0];
+        assert_eq!(cluster.name, "a");
+        assert_eq!(cluster.reason, Reason::DependencyChanged);
+    }
+
+    #[test]
+    fn lockfile_bump_of_unexercised_dep_selects_nothing() {
+        let inv = Inventory {
+            binaries: vec![binary(&["a/x", "b/y"])],
+        };
+        let cov = coverage(vec![
+            entry_with_deps(
+                "a",
+                vec![("libdd-x/src/hot.rs", vec![(1, 5)])],
+                vec!["serde"],
+            ),
+            entry_with_deps(
+                "b",
+                vec![("libdd-x/src/other.rs", vec![(1, 5)])],
+                vec!["libc"],
+            ),
+        ]);
+        let lockfile = crate::lockfile::parse_lockfile_diff(
+            "\
+[[package]]
+ name = \"zstd\"
+-version = \"0.13\"
++version = \"0.14\"
+",
+            &std::collections::BTreeSet::new(),
+        );
+        let selection = select(&inv, &cov, &ChangedLines::new(), &lockfile, false);
+        assert_eq!(selection.summary.clusters_selected, 0);
+        assert!(selection.binaries.is_empty());
+    }
+
+    #[test]
+    fn unattributable_lockfile_diff_selects_everything() {
+        let inv = Inventory {
+            binaries: vec![binary(&["a/x", "b/y"])],
+        };
+        let cov = coverage(vec![
+            entry_with_deps(
+                "a",
+                vec![("libdd-x/src/hot.rs", vec![(1, 5)])],
+                vec!["serde"],
+            ),
+            entry_with_deps(
+                "b",
+                vec![("libdd-x/src/other.rs", vec![(1, 5)])],
+                vec!["libc"],
+            ),
+        ]);
+        let lockfile = crate::lockfile::LockfileChanges {
+            packages: std::collections::BTreeSet::new(),
+            unattributable: true,
+        };
+        let selection = select(&inv, &cov, &ChangedLines::new(), &lockfile, false);
+        assert_eq!(selection.summary.clusters_selected, 2);
+        assert!(
+            selection.binaries[0]
+                .clusters
+                .iter()
+                .all(|c| c.reason == Reason::DependencyChanged)
+        );
+    }
+
+    #[test]
+    fn root_lockfile_alone_no_longer_forces_full_run_but_member_manifests_do() {
+        assert!(!requires_full_run("Cargo.lock", &[(1, 2)], false));
+        assert!(requires_full_run("libdd-x/Cargo.toml", &[(1, 2)], false));
+        assert!(requires_full_run("Cargo.toml", &[(1, 2)], false));
+        // The CI helper workspace never affects the benchmarked crates, even
+        // outside self-test; bench-selector's own sources still do.
+        assert!(!requires_full_run(
+            ".github/actions/Cargo.toml",
+            &[(1, 2)],
+            false
+        ));
+        assert!(!requires_full_run(
+            ".github/actions/Cargo.lock",
+            &[(1, 2)],
+            false
+        ));
+        assert!(requires_full_run(
+            ".github/actions/bench-selector/src/select.rs",
+            &[(1, 2)],
+            false
+        ));
+        assert!(!requires_full_run(
+            ".github/actions/bench-selector/src/select.rs",
+            &[(1, 2)],
+            true
+        ));
     }
 
     #[test]
