@@ -122,6 +122,19 @@ compute_bench_selection:
   variables:
     # select diffs against origin/main; full history makes the merge-base resolve.
     GIT_DEPTH: 0
+    # sccache for this job's cargo builds (bench-selector and the selection
+    # pass's dependency graphs). Own key prefix: this job's RUSTFLAGS
+    # (-C instrument-coverage) and target dirs never match the benchmarks
+    # job's cache keys, exactly like that job's prefix never matches the
+    # release-build pipeline's. BASEDIRS strips the checkout path so hits
+    # survive different runner build directories.
+    SCCACHE_BUCKET: dd-sccache-storage-us1-ddbuild-io
+    SCCACHE_REGION: us-east-1
+    SCCACHE_S3_KEY_PREFIX: libdatadog/bench-selection/sccache
+    SCCACHE_ERROR_LOG: /tmp/sccache.log
+    SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
+    SCCACHE_BASEDIRS: $CI_PROJECT_DIR
+    CARGO_INCREMENTAL: "0"
   # Same posture as compute_impacted_crates: a failure falls back downstream
   # instead of failing the pipeline.
   allow_failure: true
@@ -156,17 +169,32 @@ compute_bench_selection:
       # them (bench-selector prefers it over any system LLVM, whose profile
       # format may not match).
       rustup component add llvm-tools-preview
-      (cd .github/actions && cargo build --release -p bench-selector)
-      SELECTOR=./.github/actions/target/release/bench-selector
+      # Best-effort compiler cache for everything this job builds (the tool
+      # and the selection pass's cargo builds). No cache problem may fail
+      # the job: fall back to building without it.
+      if command -v sccache > /dev/null 2>&1 && sccache --start-server > /dev/null 2>&1; then
+        export RUSTC_WRAPPER=sccache
+      else
+        echo "sccache unavailable or failed to start; building without a compiler cache"
+      fi
+      # The tool's own runtime is negligible against the job's cargo builds,
+      # so a debug build keeps its compile cost down.
+      (cd .github/actions && cargo build -p bench-selector)
+      SELECTOR=./.github/actions/target/debug/bench-selector
       # Restrict to the crates this PR affects; inventory/coverage skip the rest.
       # A lockfile bump can affect any crate's benchmarks (the changed packages
       # may be exercised by any bench cluster), so it spans every bench crate.
+      # inventory and coverage share the same --target-dir: the `--list` builds
+      # are instrumented in it, so the coverage pass's builds are cache hits —
+      # one build of the dependency graph instead of two.
       CRATES_ARGS=()
       if ! grep -qE '^Cargo\.lock$' changed_files.txt 2>/dev/null; then
         CRATES="$(jq -r '.[]' <<< "${AFFECTED_CRATES}" | paste -sd ',')"
         CRATES_ARGS=(--crates "$CRATES")
       fi
-      "$SELECTOR" inventory --workspace-root . "${CRATES_ARGS[@]}" --out bench-inventory.json
+      "$SELECTOR" inventory --workspace-root . "${CRATES_ARGS[@]}" \
+        --target-dir target/bench-selection \
+        --out bench-inventory.json
       "$SELECTOR" coverage \
         --inventory bench-inventory.json \
         "${CRATES_ARGS[@]}" \
@@ -177,6 +205,8 @@ compute_bench_selection:
         --coverage bench-coverage.json \
         --base-ref main \
         --out bench-selection.json
+      sccache --show-stats || :
+      sccache --stop-server > /dev/null 2>&1 || :
       status success
   artifacts:
     when: always

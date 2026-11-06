@@ -44,6 +44,12 @@ enum Cmd {
         /// Restrict to these crate names (space or comma separated).
         #[arg(long, value_delimiter = ',', num_args = 1..)]
         crates: Option<Vec<String>>,
+        /// Build the `--list` invocations in the coverage pass's instrumented
+        /// target dir, so a following `coverage --target-dir <dir>` reuses the
+        /// same build (one build of the dependency graph instead of two).
+        /// Standalone invocations without this flag stay uninstrumented.
+        #[arg(long)]
+        target_dir: Option<PathBuf>,
         /// Output file (default: stdout).
         #[arg(long)]
         out: Option<PathBuf>,
@@ -99,10 +105,12 @@ fn main() -> Result<()> {
         Cmd::Inventory {
             workspace_root,
             crates,
+            target_dir,
             out,
         } => {
             let crates = normalize_crates(crates);
-            let inv = inventory::discover(&workspace_root, crates.as_deref())?;
+            let inv =
+                inventory::discover(&workspace_root, crates.as_deref(), target_dir.as_deref())?;
             log::info!(
                 "discovered {} bench binaries, {} benchmark IDs",
                 inv.binaries.len(),
