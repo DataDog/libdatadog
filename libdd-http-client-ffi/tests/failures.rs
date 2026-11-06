@@ -1,9 +1,6 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Requests that do not produce a response: refused connections, timeouts, retries and
-//! cancellation.
-
 mod common;
 
 use common::*;
@@ -84,7 +81,6 @@ fn a_dropped_connection_is_an_error_without_retries() {
 
 #[test]
 fn retries_recover_from_a_dropped_connection() {
-    // The first connection is closed without an answer; the retry succeeds.
     let server = spawn_tcp(|connection| {
         if connection == 0 {
             Behavior::CloseImmediately
@@ -124,10 +120,9 @@ fn an_http_error_status_is_never_retried() {
 #[test]
 fn cancelling_from_another_thread_aborts_a_blocked_send() {
     let server = spawn_tcp(|_| Behavior::Hang);
-    // The client timeout is far longer than the test: only the cancellation can end the send.
+    // The timeout is far longer than the test: only cancellation can end the send.
     let client = server.cfg().timeout_ms(60_000).build().expect("client");
-    // One token shared by both threads. Each holds an `Arc`, so the token outlives the send and
-    // the `cancel` call, which is what the API requires.
+    // Shared through `Arc` so the token outlives both the send and the cancel.
     let token = Arc::new(Token::new());
     let canceller_token = token.clone();
 
@@ -197,7 +192,6 @@ fn the_token_is_still_usable_after_a_cancelled_send() {
     let first = client.send_with(&Req::get("/a"), Some(&token));
     let second = client.send_with(&Req::get("/b"), Some(&token));
 
-    // Cancellation is terminal: the same token cancels every later send too.
     assert_eq!(
         first.err().expect("first").code,
         HttpClientErrorCode::Cancelled
@@ -219,6 +213,5 @@ fn cancelling_is_idempotent_and_reports_only_the_first_call() {
 
 #[test]
 fn dropping_a_null_token_is_a_no_op() {
-    // SAFETY: `None` (NULL) is part of the documented contract of `drop`.
     unsafe { ddog_http_cancel_token_drop(None) };
 }

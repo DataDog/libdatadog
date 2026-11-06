@@ -7,24 +7,7 @@
 #![cfg_attr(not(test), deny(clippy::todo))]
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
-//! C bindings for [`libdd_http_client`]: a blocking HTTP client meant to be embedded in other
-//! languages' runtimes (Ruby, Python, ...).
-//!
-//! # Model
-//!
-//! * A client ([`HttpClient`]) is created once with [`ddog_http_client_new`] and reused. Creating
-//!   it opens no connection; connections are pooled and opened lazily by the first request.
-//! * [`ddog_http_client_send`] **blocks the calling thread** until a response arrives, an error
-//!   occurs, the request times out, or the optional [`HttpCancellationToken`] is cancelled from
-//!   another thread. It can be called concurrently from several threads on the same client.
-//! * Every HTTP status is returned as a normal response, including 4xx and 5xx: inspect
-//!   [`ddog_http_response_status`]. Errors are reserved for requests that did not produce a
-//!   response.
-//!
-//! # Panics
-//!
-//! With the `catch_panic` feature (a default) every entry point catches unwinds and returns an
-//! error with code [`HttpClientErrorCode::Panic`] instead of aborting the host process.
+//! C bindings for [`libdd_http_client`]: a blocking HTTP client.
 
 mod cancel;
 mod client;
