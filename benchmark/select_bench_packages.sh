@@ -63,6 +63,14 @@ log() { echo "$@" >&2; }
 # True when benchmark selection tooling itself changed: its behavior cannot be
 # trusted for this PR, so run everything.
 bench_tooling_changed() {
+  # BENCH_SELECTOR_SELF_TEST=1 skips this guard: the validation branches'
+  # diffs necessarily contain the tooling changes they are validating (the
+  # same escape hatch exists in bench-selector's select). Only a deliberate
+  # CI configuration change can set it, and editing that configuration is
+  # itself a tooling change that re-enables this guard on real PRs.
+  if [ "${BENCH_SELECTOR_SELF_TEST:-}" = "1" ]; then
+    return 1
+  fi
   grep -qE '^(benchmark/|\.gitlab/benchmarks\.yml|\.gitlab/impacted-crates\.yml|\.github/actions/bench-selector/|\.github/actions/ci-shared/)' changed_files.txt 2>/dev/null
 }
 
