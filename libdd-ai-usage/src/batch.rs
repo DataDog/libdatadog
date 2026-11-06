@@ -89,6 +89,10 @@ pub struct MetricBatch {
     max_len: Option<usize>,
     /// Projections refused because the batch was full, since it was created.
     dropped: u64,
+    /// The part of `dropped` already returned by [`MetricBatch::take_dropped`].
+    dropped_reported: u64,
+    /// The points at which the batch asks to be sent early, if set.
+    high_water: Option<usize>,
 }
 
 impl MetricBatch {
@@ -124,12 +128,41 @@ impl MetricBatch {
         self.dropped
     }
 
-    /// Take the points of the batch, leaving it empty with the same bound
-    /// and dropped count.
+    /// The projections dropped since the last call (since the batch was
+    /// created, for the first), so a caller reports drops per flush without
+    /// keeping a count of its own.
+    pub fn take_dropped(&mut self) -> u64 {
+        let since = self.dropped - self.dropped_reported;
+        self.dropped_reported = self.dropped;
+        since
+    }
+
+    /// Ask for the batch to be sent early once it holds `high_water` points
+    /// (as [`MetricBatch::len`] counts them), or never with `None`. It
+    /// changes nothing the batch keeps: [`MetricBatch::is_full`] reports it.
+    pub fn set_high_water(&mut self, high_water: Option<usize>) {
+        self.high_water = high_water;
+    }
+
+    /// The mark set by [`MetricBatch::set_high_water`], if any.
+    pub fn high_water(&self) -> Option<usize> {
+        self.high_water
+    }
+
+    /// Whether the batch holds at least its high-water mark of points: time
+    /// to send it rather than wait for the next flush.
+    pub fn is_full(&self) -> bool {
+        self.high_water.is_some_and(|mark| self.len >= mark)
+    }
+
+    /// Take the points of the batch, leaving it empty with the same bound,
+    /// high-water mark and dropped count.
     pub fn take(&mut self) -> MetricBatch {
         let empty = MetricBatch {
             max_len: self.max_len,
             dropped: self.dropped,
+            dropped_reported: self.dropped_reported,
+            high_water: self.high_water,
             ..MetricBatch::default()
         };
         std::mem::replace(self, empty)
@@ -441,6 +474,32 @@ mod tests {
         assert_eq!(batch.len(), points);
         batch.set_max_len(None);
         assert_eq!(batch.max_len(), None);
+    }
+
+    #[test]
+    fn drops_since_the_last_take_and_the_high_water_mark() {
+        let call = attempt(CALL);
+        let mut batch = MetricBatch::new();
+        assert!(!batch.is_full());
+        batch.add(Profile::ProviderAttempt, &call).unwrap();
+        let one = batch.len();
+        batch.set_high_water(Some(one + 1));
+        assert_eq!(batch.high_water(), Some(one + 1));
+        assert!(!batch.is_full());
+        batch.add(Profile::ProviderAttempt, &call).unwrap();
+        assert!(batch.is_full());
+        batch.set_max_len(Some(batch.len()));
+        batch.add(Profile::ProviderAttempt, &call).unwrap();
+        batch.add(Profile::ProviderAttempt, &call).unwrap();
+        assert_eq!(batch.take_dropped(), 2);
+        assert_eq!(batch.take_dropped(), 0);
+        // Taking the batch keeps the mark and what was reported.
+        drop(batch.take());
+        assert!(!batch.is_full());
+        assert_eq!(batch.high_water(), Some(one + 1));
+        batch.set_max_len(Some(0));
+        batch.add(Profile::ProviderAttempt, &call).unwrap();
+        assert_eq!((batch.dropped(), batch.take_dropped()), (3, 1));
     }
 
     #[test]
