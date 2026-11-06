@@ -23,6 +23,7 @@ use std::path::PathBuf;
 mod cluster;
 mod coverage;
 mod diff;
+mod git;
 mod inventory;
 mod lockfile;
 mod manifest;

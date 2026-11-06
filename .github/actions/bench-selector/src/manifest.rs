@@ -93,7 +93,7 @@ pub fn manifest_changes(
     // three-dot semantics of every other diff in the pipeline: `origin/main`
     // itself has moved on since the PR branched, and its unrelated changes
     // (e.g. version bumps) would wrongly disqualify the manifest.
-    let merge_base = match merge_base(base_ref, workspace_root) {
+    let merge_base = match crate::git::merge_base(base_ref, workspace_root) {
         Ok(rev) => rev,
         Err(err) => {
             log::warn!("no merge base with origin/{base_ref} ({err}); full run");
@@ -110,14 +110,14 @@ pub fn manifest_changes(
         // empty document: the [package] table then differs, which correctly
         // disqualifies — a whole manifest never appears or disappears via a
         // dependency-only change.
-        let base = match show_blob(&merge_base, path, workspace_root) {
+        let base = match crate::git::show_blob(&merge_base, path, workspace_root) {
             Ok(content) => content.unwrap_or_default(),
             Err(err) => {
                 log::warn!("cannot read {path} at {merge_base} ({err}); full run");
                 return out;
             }
         };
-        let head = match show_blob("HEAD", path, workspace_root) {
+        let head = match crate::git::show_blob("HEAD", path, workspace_root) {
             Ok(content) => content.unwrap_or_default(),
             Err(err) => {
                 log::warn!("cannot read {path} on HEAD ({err}); full run");
@@ -183,56 +183,6 @@ struct ParsedManifest {
     /// feature enabled on `libdd-x = { path = ... }`), so the dependency
     /// packages cannot scope the manifest: it must keep the full run.
     changed_members: BTreeSet<String>,
-}
-
-/// The merge base of HEAD and `origin/<base_ref>`, matching the three-dot
-/// diff semantics used everywhere else in the pipeline.
-fn merge_base(base_ref: &str, workspace_root: &Path) -> anyhow::Result<String> {
-    let spec = format!("origin/{base_ref}");
-    let output = Command::new("git")
-        .current_dir(workspace_root)
-        .args(["merge-base", &spec, "HEAD"])
-        .output()
-        .map_err(|err| anyhow::anyhow!("git merge-base: {err}"))?;
-    anyhow::ensure!(
-        output.status.success(),
-        "git merge-base {spec} HEAD failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-}
-
-/// Fetch a blob from a revision. `Ok(None)` means the path does not exist on
-/// that side; an error means git itself failed (conservative handling).
-fn show_blob(rev: &str, path: &str, workspace_root: &Path) -> anyhow::Result<Option<String>> {
-    let rev_exists = Command::new("git")
-        .current_dir(workspace_root)
-        .args(["cat-file", "-e", rev])
-        .status()
-        .map_err(|err| anyhow::anyhow!("git cat-file: {err}"))?
-        .success();
-    anyhow::ensure!(rev_exists, "revision {rev} does not exist");
-    let spec = format!("{rev}:{path}");
-    let exists = Command::new("git")
-        .current_dir(workspace_root)
-        .args(["cat-file", "-e", &spec])
-        .status()
-        .map_err(|err| anyhow::anyhow!("git cat-file: {err}"))?
-        .success();
-    if !exists {
-        return Ok(None);
-    }
-    let output = Command::new("git")
-        .current_dir(workspace_root)
-        .args(["show", &spec])
-        .output()
-        .map_err(|err| anyhow::anyhow!("git show: {err}"))?;
-    anyhow::ensure!(
-        output.status.success(),
-        "git show {spec} failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    Ok(Some(String::from_utf8_lossy(&output.stdout).into_owned()))
 }
 
 /// Compare a manifest's base and head documents.

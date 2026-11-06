@@ -360,6 +360,13 @@ mod tests {
         files.into_iter().map(|(f, r)| (f.to_string(), r)).collect()
     }
 
+    fn lockfile_changed(packages: &[&str]) -> LockfileChanges {
+        LockfileChanges {
+            packages: packages.iter().map(|s| s.to_string()).collect(),
+            unattributable: false,
+        }
+    }
+
     #[test]
     fn selects_cluster_covering_changed_line() {
         let inv = Inventory {
@@ -660,15 +667,7 @@ mod tests {
                 vec!["serde"],
             ),
         ]);
-        let lockfile = crate::lockfile::parse_lockfile_diff(
-            "\
-[[package]]
- name = \"zstd\"
--version = \"0.13\"
-+version = \"0.14\"
-",
-            &std::collections::BTreeSet::new(),
-        );
+        let lockfile = lockfile_changed(&["zstd"]);
         let selection = select(
             &inv,
             &cov,
@@ -700,15 +699,7 @@ mod tests {
                 vec!["libc"],
             ),
         ]);
-        let lockfile = crate::lockfile::parse_lockfile_diff(
-            "\
-[[package]]
- name = \"zstd\"
--version = \"0.13\"
-+version = \"0.14\"
-",
-            &std::collections::BTreeSet::new(),
-        );
+        let lockfile = lockfile_changed(&["zstd"]);
         let selection = select(
             &inv,
             &cov,
@@ -985,10 +976,7 @@ mod tests {
         ]);
         // Lockfile bumped zstd (unexercised); a member manifest re-wired
         // bytes (exercised by cluster b).
-        let lockfile = crate::lockfile::parse_lockfile_diff(
-            "[[package]]\nname = \"zstd\"\n-version = \"0.13\"\n+version = \"0.14\"\n",
-            &std::collections::BTreeSet::new(),
-        );
+        let lockfile = lockfile_changed(&["zstd"]);
         let ch = changed(vec![("libdd-x/Cargo.toml", vec![(30, 30)])]);
         let manifests = crate::manifest::ManifestChanges {
             deps_only: [("libdd-x/Cargo.toml".to_string(), true)]
