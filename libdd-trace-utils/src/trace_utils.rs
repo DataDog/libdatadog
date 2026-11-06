@@ -723,7 +723,7 @@ mod tests {
         test_utils::{create_test_no_alloc_span, create_test_span},
     };
     use http::Request;
-    use libdd_networking::endpoint::Endpoint;
+    use libdd_common::Endpoint;
     use libdd_networking::http_common;
     use serde_json::json;
 

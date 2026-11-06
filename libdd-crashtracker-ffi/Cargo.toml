@@ -37,7 +37,6 @@ build_common = { path = "../build-common" }
 anyhow.workspace = true
 libdd-crashtracker = { path = "../libdd-crashtracker" }
 libdd-common = { path = "../libdd-common" }
-libdd-networking = { path = "../libdd-networking" }
 libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false, features = ["std"] }
 libdd-regex = { path = "../libdd-regex" }
 symbolic-demangle = { workspace = true, features = ["rust", "cpp", "msvc"], optional = true }

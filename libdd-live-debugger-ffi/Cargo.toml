@@ -13,7 +13,6 @@ bench = false
 [dependencies]
 libdd-live-debugger = { path = "../libdd-live-debugger" }
 libdd-common = { path = "../libdd-common" }
-libdd-networking = { path = "../libdd-networking" }
 libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false, features = ["std"] }
 libdd-regex = { path = "../libdd-regex" }
 percent-encoding = { workspace = true, features = ["std"] }

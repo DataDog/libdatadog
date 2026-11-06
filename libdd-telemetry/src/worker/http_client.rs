@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use http::request::Builder as HttpRequestBuilder;
+use libdd_networking::endpoint::EndpointExt;
 
 use crate::config::Config;
 use tracing::{debug, error};

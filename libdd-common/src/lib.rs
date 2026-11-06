@@ -15,6 +15,8 @@ pub mod azure_app_services;
 #[cfg(feature = "std")]
 pub mod config;
 #[cfg(feature = "std")]
+mod endpoint;
+#[cfg(feature = "std")]
 pub mod entity_id;
 #[cfg(feature = "std")]
 pub mod error;
@@ -89,7 +91,10 @@ pub mod header {
 }
 
 #[cfg(feature = "std")]
-pub use lock_ext::{MutexExt, RwLockExt};
+pub use {
+    endpoint::{Endpoint, decode_uri_path_in_authority, parse_uri},
+    lock_ext::{MutexExt, RwLockExt},
+};
 
 // Used by tag! macro
 #[cfg(feature = "alloc")]

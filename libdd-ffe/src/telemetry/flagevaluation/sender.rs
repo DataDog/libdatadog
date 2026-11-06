@@ -6,7 +6,8 @@ use http::Method;
 use http::header::HeaderValue;
 use http::uri::PathAndQuery;
 use libdd_capabilities::{Bytes, HttpClientCapability, SleepCapability};
-use libdd_networking::endpoint::Endpoint;
+use libdd_common::Endpoint;
+use libdd_networking::endpoint::EndpointExt;
 use std::time::Duration;
 
 /// EVP proxy path for FFE flag evaluation intake.

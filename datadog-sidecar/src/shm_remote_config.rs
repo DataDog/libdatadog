@@ -897,7 +897,7 @@ mod tests {
         let mut invariants = ConfigInvariants {
             language: "php".into(),
             tracer_version: "1.0".into(),
-            endpoint: libdd_networking::endpoint::Endpoint::from_slice("http://agent-a:8126"),
+            endpoint: libdd_common::Endpoint::from_slice("http://agent-a:8126"),
             agentless: None,
         };
         let path = path_for_remote_config(&invariants, &DUMMY_TARGET);
@@ -909,8 +909,7 @@ mod tests {
             vec![],
         ));
         assert_ne!(path, path_for_remote_config(&invariants, &target));
-        invariants.endpoint =
-            libdd_networking::endpoint::Endpoint::from_slice("http://agent-b:8126");
+        invariants.endpoint = libdd_common::Endpoint::from_slice("http://agent-b:8126");
         assert_ne!(path, path_for_remote_config(&invariants, &DUMMY_TARGET));
     }
 
@@ -945,7 +944,7 @@ mod tests {
             language: "php".to_string(),
             tracer_version: "test".to_string(),
             // The file scheme disables background fetching for this registration test.
-            endpoint: libdd_networking::endpoint::Endpoint::from_slice(&format!(
+            endpoint: libdd_common::Endpoint::from_slice(&format!(
                 "file:///rc-generation-{}",
                 std::process::id()
             )),
@@ -1301,7 +1300,7 @@ mod tests {
         let invariants = ConfigInvariants {
             language: "php".to_string(),
             tracer_version: "1.0.0".to_string(),
-            endpoint: libdd_networking::endpoint::Endpoint::from_slice(&format!(
+            endpoint: libdd_common::Endpoint::from_slice(&format!(
                 "http://replaced-{}.invalid",
                 std::process::id()
             )),

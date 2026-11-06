@@ -7,9 +7,9 @@ mod tracing_integration_tests {
     #[cfg(target_os = "linux")]
     use hyper::Uri;
     use libdd_capabilities_impl::{HttpClientCapability, NativeCapabilities};
+    use libdd_common::Endpoint;
     #[cfg(target_os = "linux")]
     use libdd_networking::connector::uds::socket_path_to_uri;
-    use libdd_networking::endpoint::Endpoint;
     use libdd_networking::http_common;
     use libdd_tinybytes::{Bytes, BytesString};
     use libdd_trace_utils::send_data::SendData;

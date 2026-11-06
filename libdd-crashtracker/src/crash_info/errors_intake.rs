@@ -3,6 +3,7 @@
 
 use alloc::borrow::Cow;
 use core::time::Duration;
+use libdd_networking::endpoint::EndpointExt;
 use std::time::SystemTime;
 
 use crate::parse_tags;
@@ -17,7 +18,7 @@ use anyhow::Context;
 use chrono::{DateTime, Utc};
 use http::{Uri, uri::PathAndQuery};
 use libdd_common::config::parse_env;
-use libdd_networking::endpoint::{Endpoint, parse_uri};
+use libdd_common::{Endpoint, parse_uri};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -519,7 +520,7 @@ impl ErrorsIntakeUploader {
 
         // Handle file endpoint
         if endpoint.url.scheme_str() == Some("file") {
-            let path = libdd_networking::endpoint::decode_uri_path_in_authority(&endpoint.url)
+            let path = libdd_common::decode_uri_path_in_authority(&endpoint.url)
                 .context("errors intake file path is not valid")?;
 
             let file_path = path.with_extension("errors");
@@ -992,8 +993,7 @@ mod tests {
 
         assert_eq!(endpoint.url.scheme_str(), Some("unix"));
         // The original socket path is preserved in authority for unix:// URLs (URL encoded)
-        let decoded_path =
-            libdd_networking::endpoint::decode_uri_path_in_authority(&endpoint.url).unwrap();
+        let decoded_path = libdd_common::decode_uri_path_in_authority(&endpoint.url).unwrap();
         assert_eq!(
             decoded_path.to_string_lossy(),
             "/var/run/datadog/apm.socket"
@@ -1019,8 +1019,7 @@ mod tests {
 
         assert_eq!(endpoint.url.scheme_str(), Some("windows"));
         // For windows: scheme, the pipe name is URL-encoded in the authority
-        let decoded_path =
-            libdd_networking::endpoint::decode_uri_path_in_authority(&endpoint.url).unwrap();
+        let decoded_path = libdd_common::decode_uri_path_in_authority(&endpoint.url).unwrap();
         assert_eq!(decoded_path.to_string_lossy(), "my_custom_pipe");
 
         // Should use agent proxy path
@@ -1041,8 +1040,7 @@ mod tests {
         let endpoint = cfg.endpoint().unwrap();
 
         assert_eq!(endpoint.url.scheme_str(), Some("unix"));
-        let decoded_path =
-            libdd_networking::endpoint::decode_uri_path_in_authority(&endpoint.url).unwrap();
+        let decoded_path = libdd_common::decode_uri_path_in_authority(&endpoint.url).unwrap();
         assert_eq!(decoded_path.to_string_lossy(), "/tmp/custom.socket");
 
         // Should use agent proxy path

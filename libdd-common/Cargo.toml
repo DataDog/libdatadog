@@ -18,6 +18,7 @@ bench = false
 [dependencies]
 anyhow = { workspace = true, optional = true }
 arc-swap = { workspace = true, optional = true }
+hex = { workspace = true, features = ["std"], optional = true }
 http = { workspace = true, features = ["std"], optional = true }
 libdd-regex = { version = "0.1.0", path = "../libdd-regex", optional = true }
 serde = { workspace = true, features = ["derive"] }
@@ -53,6 +54,7 @@ std = [
     "alloc",
     "anyhow/std",
     "dep:arc-swap",
+    "dep:hex",
     "dep:http",
     "dep:libc",
     "dep:libdd-regex",

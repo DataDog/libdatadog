@@ -122,7 +122,6 @@ https = [
     "libdd-telemetry?/https",
     "libdd-trace-stats/https",
     "libdd-trace-utils/https",
-    "libdd-dogstatsd-client/https",
 ]
 # Lets hosts that run their own telemetry client collect exporter observations instead of
 # the native telemetry worker. Requires `telemetry`: SDKs compile both and pick one at
@@ -143,7 +142,6 @@ fips = [
     "libdd-telemetry?/fips",
     "libdd-trace-stats/fips",
     "libdd-trace-utils/fips",
-    "libdd-dogstatsd-client/fips",
 ]
 test-utils = []
 regex-lite = ["libdd-regex/regex-lite"]

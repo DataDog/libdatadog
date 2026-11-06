@@ -165,7 +165,7 @@ pub(crate) mod https {
 
     /// Builds the TLS configuration shared by every libdd-networking HTTPS client:
     /// the hyper connector, the hyper-proxy tunnel and dialer, and the reqwest
-    /// client builder (see `Endpoint::to_reqwest_client_builder`).
+    /// client builder (see `EndpointExt::to_reqwest_client_builder`).
     #[cfg(feature = "use_webpki_roots")]
     pub(crate) fn build_tls_config() -> anyhow::Result<ClientConfig> {
         ensure_crypto_provider_initialized(); // One-time initialization of a crypto provider if needed
