@@ -19,7 +19,8 @@ use super::ValueType;
 /// the `Custom1` through `Custom5` slots and configure its concrete `(type,
 /// unit)` string pair on the profile before serialization. Once the type is
 /// stable and agreed upon across profiler teams, add a dedicated variant here
-/// so callers can use the type-safe path.
+/// so callers can use the type-safe path. Append new variants to preserve existing
+/// discriminants, including in the CXX mirror.
 #[cfg_attr(test, derive(bolero::generator::TypeGenerator, strum::EnumIter))]
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -101,6 +102,8 @@ pub enum SampleType {
     GcTime,
     /// Number of garbage-collection samples / pause events.
     GcSamples,
+    /// Time spent in UI hangs, in nanoseconds.
+    UiHangTime,
 }
 
 impl SampleType {
@@ -203,6 +206,7 @@ impl From<SampleType> for ValueType<'static> {
             SampleType::Custom5 => ValueType::new("custom-5", "count"),
             SampleType::GcTime => ValueType::new("gc-time", "nanoseconds"),
             SampleType::GcSamples => ValueType::new("gc-samples", "count"),
+            SampleType::UiHangTime => ValueType::new("ui-hang-time", "nanoseconds"),
         }
     }
 }
@@ -271,6 +275,7 @@ impl<'a> TryFrom<ValueType<'a>> for SampleType {
             ("custom-5", "count") => SampleType::Custom5,
             ("gc-time", "nanoseconds") => SampleType::GcTime,
             ("gc-samples", "count") => SampleType::GcSamples,
+            ("ui-hang-time", "nanoseconds") => SampleType::UiHangTime,
             _ => anyhow::bail!("Unknown sample type: ({}, {})", vt.r#type, vt.unit),
         })
     }
@@ -290,6 +295,28 @@ mod tests {
             let round_trip: SampleType = value_type.try_into().expect("round-trip conversion");
             assert_eq!(original, round_trip);
         }
+    }
+
+    #[test]
+    fn ui_hang_time_conversion() {
+        let expected = ValueType::new("ui-hang-time", "nanoseconds");
+        assert_eq!(ValueType::from(SampleType::UiHangTime), expected);
+        assert_eq!(ValueType::from(&SampleType::UiHangTime), expected);
+        assert_eq!(
+            SampleType::try_from(expected).unwrap(),
+            SampleType::UiHangTime
+        );
+        assert!(!SampleType::UiHangTime.is_custom());
+        assert!(SampleType::try_from(ValueType::new("ui-hang-time", "count")).is_err());
+    }
+
+    #[test]
+    fn appended_sample_type_discriminants() {
+        assert_eq!(SampleType::Custom1 as u32, 52);
+        assert_eq!(SampleType::Custom5 as u32, 56);
+        assert_eq!(SampleType::GcTime as u32, 57);
+        assert_eq!(SampleType::GcSamples as u32, 58);
+        assert_eq!(SampleType::UiHangTime as u32, 59);
     }
 
     #[test]

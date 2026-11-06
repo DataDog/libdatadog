@@ -1049,6 +1049,40 @@ mod tests {
     }
 
     #[test]
+    fn ui_hang_time_profile_serializes_without_custom_configuration() -> Result<(), Error> {
+        unsafe {
+            let sample_types = [SampleType::UiHangTime];
+            let period = Period {
+                sample_type: SampleType::UiHangTime,
+                value: 10_000_000,
+            };
+            let mut profile = Result::from(ddog_prof_Profile_new(
+                Slice::from(&sample_types[..]),
+                Some(&period),
+            ))?;
+            let values = [123_000_000];
+            let sample = Sample {
+                locations: Slice::empty(),
+                values: Slice::from(&values[..]),
+                labels: Slice::empty(),
+            };
+            Result::from(ddog_prof_Profile_add(&mut profile, sample, None))?;
+            let mut encoded = match ddog_prof_Profile_serialize(&mut profile, None, None) {
+                SerializeResult::Ok(encoded) => encoded,
+                SerializeResult::Err(err) => return Err(err),
+            };
+            let bytes = match ddog_prof_EncodedProfile_bytes(&mut encoded) {
+                libdd_common_ffi::Result::Ok(bytes) => bytes,
+                libdd_common_ffi::Result::Err(err) => return Err(err),
+            };
+            assert!(!bytes.is_empty());
+            ddog_prof_EncodedProfile_drop(&mut encoded);
+            ddog_prof_Profile_drop(&mut profile);
+            Ok(())
+        }
+    }
+
+    #[test]
     fn profile_set_custom_sample_type_accepts_slot() -> Result<(), Error> {
         unsafe {
             let sample_type = SampleType::Custom1;

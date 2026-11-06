@@ -3279,6 +3279,52 @@ mod api_tests {
         assert_eq!(io_err.kind(), io::ErrorKind::InvalidData);
     }
 
+    #[test]
+    fn ui_hang_time_matches_custom_slot_wire_format() -> anyhow::Result<()> {
+        for sample_type in [api::SampleType::UiHangTime, api::SampleType::Custom1] {
+            let mut profile = Profile::new(
+                &[sample_type],
+                Some(api::Period {
+                    sample_type,
+                    value: 10_000_000,
+                }),
+            );
+            if sample_type.is_custom() {
+                profile.set_custom_sample_type(
+                    sample_type,
+                    api::ValueType::new("ui-hang-time", "nanoseconds"),
+                )?;
+            }
+            profile.try_add_sample(
+                api::Sample {
+                    locations: vec![],
+                    values: &[123_000_000],
+                    labels: vec![],
+                },
+                None,
+            )?;
+
+            let pprof = roundtrip_to_pprof(profile)?;
+            assert_eq!(pprof.sample_types.len(), 1);
+            let sample_type = &pprof.sample_types[0];
+            assert_eq!(
+                string_table_fetch(&pprof, sample_type.r#type),
+                "ui-hang-time"
+            );
+            assert_eq!(string_table_fetch(&pprof, sample_type.unit), "nanoseconds");
+            let period_type = pprof.period_type.expect("period type should be present");
+            assert_eq!(
+                string_table_fetch(&pprof, period_type.r#type),
+                "ui-hang-time"
+            );
+            assert_eq!(string_table_fetch(&pprof, period_type.unit), "nanoseconds");
+            assert_eq!(pprof.period, 10_000_000);
+            assert_eq!(pprof.samples.len(), 1);
+            assert_eq!(pprof.samples[0].values, vec![123_000_000]);
+        }
+        Ok(())
+    }
+
     // -----------------------------------------------------------------------
     // Custom sample type slot tests
     // -----------------------------------------------------------------------
