@@ -289,6 +289,30 @@ mod tests {
         assert!(matches!(m.fetch_update(), RemoteConfigUpdate::None));
     }
     #[test]
+    #[cfg_attr(miri, ignore = "requires native shared memory and timed waits")]
+    fn ordinary_rc_waits_do_not_spin_with_or_without_a_source() {
+        fn assert_waits(manager: &mut RemoteConfigManager) {
+            // Consume any initial generation edge before checking the idle wait.
+            manager.wait_for_change(Duration::ZERO);
+            let started = std::time::Instant::now();
+            for _ in 0..8 {
+                manager.wait_for_change(Duration::from_millis(5));
+            }
+            assert!(started.elapsed() >= Duration::from_millis(20));
+        }
+        let r = registration();
+        let mut manager = RemoteConfigManager::new(r.invariants().unwrap());
+        assert_waits(&mut manager);
+        manager.track_target(&r.target);
+        assert_waits(&mut manager); // The directory is not available yet.
+        let store = PublicationStore::default();
+        let publisher = store.cdn(&r).unwrap();
+        assert_waits(&mut manager); // The writer has no accepted snapshot yet.
+        publisher.apply(config("ready")).unwrap();
+        assert_waits(&mut manager);
+    }
+
+    #[test]
     #[cfg_attr(miri, ignore = "requires native shared memory")]
     fn ordinary_rc_retains_flags_during_failure_and_writer_replacement() {
         let r = registration();

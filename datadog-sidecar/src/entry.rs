@@ -46,7 +46,9 @@ pub struct MainLoopConfig {
     /// must not hold up the exit of its host for the connections of other processes, like forked
     /// children: these lose their connection and reconnect to a listener of their own.
     pub drain_only_own_process: bool,
-    /// CDN HTTP is allowed only in a dedicated sidecar process.
+    /// Whether connections may register a CDN source, causing this process to poll over HTTP.
+    /// In-process listeners set this to false so applications open no CDN connections;
+    /// their registration messages are ignored without starting a fetcher.
     pub enable_cdn_fetching: bool,
 }
 
