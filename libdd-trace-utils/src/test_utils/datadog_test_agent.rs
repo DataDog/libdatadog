@@ -105,8 +105,16 @@ impl Drop for DatadogTestAgentContainer {
     fn drop(&mut self) {
         use std::process::*;
         if let Err(e) = (|| -> anyhow::Result<()> {
-            run_command(Command::new("docker").arg("stop").arg(&self.container_id))
-                .context("docker stop container")?;
+            run_command(
+                Command::new("docker")
+                    // The test agent does not handle SIGTERM, so a default
+                    // `docker stop` always burns its full 10s grace before
+                    // SIGKILL once per test. One second is plenty for a
+                    // stateless container.
+                    .args(["stop", "-t", "1"])
+                    .arg(&self.container_id),
+            )
+            .context("docker stop container")?;
             Ok(())
         })() {
             eprintln!("error stopping test agent container: {e}");
