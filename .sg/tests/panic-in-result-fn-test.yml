@@ -1,0 +1,78 @@
+id: panic-in-result-fn
+valid:
+  - |
+    pub fn propagates() -> Result<i32, Error> {
+        let value = compute()?;
+        Ok(value)
+    }
+  - |
+    pub fn matches_explicitly() -> Result<i32, Error> {
+        match compute() {
+            Ok(v) => Ok(v),
+            Err(e) => Err(e),
+        }
+    }
+  - |
+    fn private_helper() -> Result<i32, Error> {
+        compute().unwrap()
+    }
+  - |
+    pub(crate) fn crate_visible() -> Result<i32, Error> {
+        compute().unwrap()
+    }
+  - |
+    pub fn not_a_result() -> i32 {
+        compute().unwrap()
+    }
+  - |
+    pub fn returns_option() -> Option<i32> {
+        compute().unwrap()
+    }
+  - |
+    // allow(panic-in-result-fn): compute() is infallible here, see test below
+    pub fn justified() -> Result<i32, Error> {
+        compute().unwrap()
+    }
+  - |
+    pub fn no_panic_call() -> Result<i32, Error> {
+        let value = compute().unwrap_or_default();
+        Ok(value)
+    }
+invalid:
+  - |
+    pub fn panics_with_unwrap() -> Result<i32, Error> {
+        let value = compute().unwrap();
+        Ok(value)
+    }
+  - |
+    pub fn panics_with_expect() -> Result<i32, Error> {
+        let value = compute().expect("compute should not fail");
+        Ok(value)
+    }
+  - |
+    pub unsafe fn unsafe_panics() -> Result<i32, Error> {
+        compute().unwrap()
+    }
+  - |
+    pub fn qualified_result() -> anyhow::Result<i32> {
+        compute().unwrap()
+    }
+  - |
+    pub fn std_io_result() -> std::io::Result<i32> {
+        compute().unwrap()
+    }
+  - |
+    // allow(panic-in-result-fn):
+    pub fn empty_justification() -> Result<i32, Error> {
+        compute().unwrap()
+    }
+  - |
+    // allow(panic-in-result-fn)
+    pub fn marker_without_colon() -> Result<i32, Error> {
+        compute().unwrap()
+    }
+  - |
+    pub fn nested_unwrap() -> Result<i32, Error> {
+        let value = if flag { compute().unwrap() } else { 0 };
+        Ok(value)
+    }

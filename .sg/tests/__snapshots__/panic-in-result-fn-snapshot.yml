@@ -1,0 +1,205 @@
+id: panic-in-result-fn
+snapshots:
+  "// allow(panic-in-result-fn)\npub fn marker_without_colon() -> Result<i32, Error> {\n    compute().unwrap()\n}\n":
+    labels:
+    - source: |-
+        pub fn marker_without_colon() -> Result<i32, Error> {
+            compute().unwrap()
+        }
+      style: primary
+      start: 29
+      end: 107
+    - source: pub
+      style: secondary
+      start: 29
+      end: 32
+    - source: Result
+      style: secondary
+      start: 62
+      end: 68
+    - source: Result<i32, Error>
+      style: secondary
+      start: 62
+      end: 80
+    - source: compute().unwrap()
+      style: secondary
+      start: 87
+      end: 105
+  "// allow(panic-in-result-fn):\npub fn empty_justification() -> Result<i32, Error> {\n    compute().unwrap()\n}\n":
+    labels:
+    - source: |-
+        pub fn empty_justification() -> Result<i32, Error> {
+            compute().unwrap()
+        }
+      style: primary
+      start: 30
+      end: 107
+    - source: pub
+      style: secondary
+      start: 30
+      end: 33
+    - source: Result
+      style: secondary
+      start: 62
+      end: 68
+    - source: Result<i32, Error>
+      style: secondary
+      start: 62
+      end: 80
+    - source: compute().unwrap()
+      style: secondary
+      start: 87
+      end: 105
+  "pub fn nested_unwrap() -> Result<i32, Error> {\n    let value = if flag { compute().unwrap() } else { 0 };\n    Ok(value)\n}\n":
+    labels:
+    - source: |-
+        pub fn nested_unwrap() -> Result<i32, Error> {
+            let value = if flag { compute().unwrap() } else { 0 };
+            Ok(value)
+        }
+      style: primary
+      start: 0
+      end: 121
+    - source: pub
+      style: secondary
+      start: 0
+      end: 3
+    - source: Result
+      style: secondary
+      start: 26
+      end: 32
+    - source: Result<i32, Error>
+      style: secondary
+      start: 26
+      end: 44
+    - source: compute().unwrap()
+      style: secondary
+      start: 73
+      end: 91
+  "pub fn panics_with_expect() -> Result<i32, Error> {\n    let value = compute().expect(\"compute should not fail\");\n    Ok(value)\n}\n":
+    labels:
+    - source: |-
+        pub fn panics_with_expect() -> Result<i32, Error> {
+            let value = compute().expect("compute should not fail");
+            Ok(value)
+        }
+      style: primary
+      start: 0
+      end: 128
+    - source: pub
+      style: secondary
+      start: 0
+      end: 3
+    - source: Result
+      style: secondary
+      start: 31
+      end: 37
+    - source: Result<i32, Error>
+      style: secondary
+      start: 31
+      end: 49
+    - source: compute().expect("compute should not fail")
+      style: secondary
+      start: 68
+      end: 111
+  "pub fn panics_with_unwrap() -> Result<i32, Error> {\n    let value = compute().unwrap();\n    Ok(value)\n}\n":
+    labels:
+    - source: |-
+        pub fn panics_with_unwrap() -> Result<i32, Error> {
+            let value = compute().unwrap();
+            Ok(value)
+        }
+      style: primary
+      start: 0
+      end: 103
+    - source: pub
+      style: secondary
+      start: 0
+      end: 3
+    - source: Result
+      style: secondary
+      start: 31
+      end: 37
+    - source: Result<i32, Error>
+      style: secondary
+      start: 31
+      end: 49
+    - source: compute().unwrap()
+      style: secondary
+      start: 68
+      end: 86
+  "pub fn qualified_result() -> anyhow::Result<i32> {\n    compute().unwrap()\n}\n":
+    labels:
+    - source: |-
+        pub fn qualified_result() -> anyhow::Result<i32> {
+            compute().unwrap()
+        }
+      style: primary
+      start: 0
+      end: 75
+    - source: pub
+      style: secondary
+      start: 0
+      end: 3
+    - source: Result
+      style: secondary
+      start: 37
+      end: 43
+    - source: anyhow::Result<i32>
+      style: secondary
+      start: 29
+      end: 48
+    - source: compute().unwrap()
+      style: secondary
+      start: 55
+      end: 73
+  "pub fn std_io_result() -> std::io::Result<i32> {\n    compute().unwrap()\n}\n":
+    labels:
+    - source: |-
+        pub fn std_io_result() -> std::io::Result<i32> {
+            compute().unwrap()
+        }
+      style: primary
+      start: 0
+      end: 73
+    - source: pub
+      style: secondary
+      start: 0
+      end: 3
+    - source: Result
+      style: secondary
+      start: 35
+      end: 41
+    - source: std::io::Result<i32>
+      style: secondary
+      start: 26
+      end: 46
+    - source: compute().unwrap()
+      style: secondary
+      start: 53
+      end: 71
+  "pub unsafe fn unsafe_panics() -> Result<i32, Error> {\n    compute().unwrap()\n}\n":
+    labels:
+    - source: |-
+        pub unsafe fn unsafe_panics() -> Result<i32, Error> {
+            compute().unwrap()
+        }
+      style: primary
+      start: 0
+      end: 78
+    - source: pub
+      style: secondary
+      start: 0
+      end: 3
+    - source: Result
+      style: secondary
+      start: 33
+      end: 39
+    - source: Result<i32, Error>
+      style: secondary
+      start: 33
+      end: 51
+    - source: compute().unwrap()
+      style: secondary
+      start: 58
+      end: 76

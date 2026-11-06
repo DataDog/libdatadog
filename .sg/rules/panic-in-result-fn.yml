@@ -1,0 +1,66 @@
+id: panic-in-result-fn
+language: rust
+severity: warning
+message: >-
+  This `pub fn` returns a `Result` but panics (`.unwrap()` / `.expect(...)`)
+  instead of propagating the error through that `Result`. Bubble the error
+  up (e.g. with `?` or an explicit `match`/`map_err`) so callers can decide
+  what to do with it. If a panic here is genuinely impossible or intentional,
+  add `// allow(panic-in-result-fn): <justification>` on a line directly
+  above the function (attributes may sit in between).
+note: |
+  A function signature that returns `Result<_, _>` is a promise to the
+  caller that failure is reported, not that the process aborts. Panicking
+  inside such a function breaks that contract: callers who already wrote
+  `match`/`?` to handle the `Err` case never get the chance, and a libdatadog
+  panic can still cross into a caller's runtime (see the FFI panic
+  containment rules for the `extern "C"` boundary specifically). Review
+  feedback on PRs #1945, #2303, #2446, and #2614 repeatedly asked for
+  `unwrap`/`expect` call sites in `Result`-returning functions to be turned
+  into propagated errors instead. See AGENTS.md "Reliability & integrability":
+  "Avoid `unwrap`/`panic!` outside of tests; bubble errors up instead."
+
+  This rule is deliberately narrow: it only looks at `pub fn`/`pub unsafe fn`
+  items whose declared return type is a (possibly qualified) `Result<...>`,
+  and only flags direct `.unwrap()` / `.expect(...)` calls anywhere in the
+  body. It does not flag `unwrap`/`expect` in non-`pub` helpers, functions
+  that do not return `Result`, or test code (see `ignores` and `clippy.toml`'s
+  `allow-unwrap-in-tests` / `allow-expect-in-tests`). `#[test]` functions are
+  essentially never `pub`, so they fall outside this rule's scope already.
+files:
+  - "**/*.rs"
+ignores:
+  - "**/tests/**"
+  - "**/examples/**"
+  - "**/benches/**"
+  - "symbolizer-ffi/**"
+rule:
+  all:
+    - kind: function_item
+    - has:
+        kind: visibility_modifier
+        regex: "^pub$"
+    - has:
+        # The return type sits directly under function_item (field
+        # `return_type`). A bare `Result<...>` or a qualified one like
+        # `anyhow::Result<...>` / `std::io::Result<...>` both parse as a
+        # `generic_type` whose name ends in a `type_identifier` "Result".
+        kind: generic_type
+        has:
+          stopBy: end
+          kind: type_identifier
+          regex: "^Result$"
+    - has:
+        stopBy: end
+        any:
+          - pattern: $RECEIVER.unwrap()
+          - pattern: $RECEIVER.expect($MSG)
+    - not:
+        follows:
+          stopBy:
+            not:
+              any:
+                - kind: attribute_item
+                - kind: line_comment
+          kind: line_comment
+          regex: "allow\\(panic-in-result-fn\\):\\s+\\S"
