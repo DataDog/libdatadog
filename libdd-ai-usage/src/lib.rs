@@ -96,8 +96,8 @@ pub use error_type::{
     error_type_for_name, error_type_for_status, error_type_identifier,
 };
 pub use extensions::{
-    BillableTokens, Failure, OBSERVATION_EXTENSIONS, PricesPerMillion, TranslatedMetric,
-    ZERO_IS_UNREPORTED_DEFAULT, error_type_for_failure, estimated_cost_nano_usd,
+    ATTEMPT_ENDING_EXTENSIONS, BillableTokens, Failure, OBSERVATION_EXTENSIONS, PricesPerMillion,
+    TranslatedMetric, ZERO_IS_UNREPORTED_DEFAULT, error_type_for_failure, estimated_cost_nano_usd,
     expand_observation, observation_usage_from_normalized, operation_name_for, project_extended,
     translate_otel_genai_metric,
 };

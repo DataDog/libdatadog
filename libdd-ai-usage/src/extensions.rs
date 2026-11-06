@@ -21,17 +21,23 @@ use crate::point::{ErrorCode, MetricError, reject};
 
 /// The observation members [`expand_observation`] reads. None is a member of
 /// a profile; each is removed once expanded.
-pub const OBSERVATION_EXTENSIONS: [&str; 10] = [
+pub const OBSERVATION_EXTENSIONS: [&str; 6] = [
     "duration_ns",
     "time_to_first_chunk_ns",
     "output_chunk_intervals_ns",
     "zero_is_unreported",
     "failure",
+    "prices_per_million",
+];
+
+/// The observation members that say how an attempt ended, which
+/// [`expand_observation`] also reads (see its step 3). None is a member of a
+/// profile; each is removed once expanded.
+pub const ATTEMPT_ENDING_EXTENSIONS: [&str; 4] = [
     "outcome",
     "stream_completed",
     "http_status",
     "usage_reported",
-    "prices_per_million",
 ];
 
 /// The observation members of usage and cost, which an attempt that is not
@@ -572,6 +578,7 @@ pub fn expand_observation(
     };
     if !OBSERVATION_EXTENSIONS
         .iter()
+        .chain(&ATTEMPT_ENDING_EXTENSIONS)
         .any(|key| members.contains_key(*key))
     {
         return Ok(Cow::Borrowed(observation));
