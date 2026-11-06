@@ -136,11 +136,24 @@ impl Configuration {
         now: DateTime<Utc>,
         options: EvaluationOptions,
     ) -> Result<Assignment, EvaluationError> {
-        let result = self
-            .eval_flag_with_trace(flag_key, context, expected_type, now, options)
-            .result;
+        self.eval_flag_with_trace(flag_key, context, expected_type, now, options)
+            .result
+    }
 
-        match &result {
+    /// Evaluate with the prerequisite records needed for SDK evaluation and exposure logging.
+    /// Records exclude the requested root flag and occur once per evaluated prerequisite.
+    /// An unsuccessful root has no eligible prerequisite exposures. SDKs must additionally
+    /// honor each assignment's `do_log`, consent, and exposure deduplication policy.
+    pub fn eval_flag_with_trace(
+        &self,
+        flag_key: &str,
+        context: &EvaluationContext,
+        expected_type: ExpectedFlagType,
+        now: DateTime<Utc>,
+        options: EvaluationOptions,
+    ) -> EvaluationResult {
+        let trace = self.eval_flag_with_trace_impl(flag_key, context, expected_type, now, options);
+        match &trace.result {
             Ok(assignment) => {
                 log::trace!(
                     flag_key,
@@ -157,14 +170,10 @@ impl Configuration {
             }
         }
 
-        result
+        trace
     }
 
-    /// Evaluate with the prerequisite records needed for SDK evaluation and exposure logging.
-    /// Records exclude the requested root flag and occur once per evaluated prerequisite.
-    /// An unsuccessful root has no eligible prerequisite exposures. SDKs must additionally
-    /// honor each assignment's `do_log`, consent, and exposure deduplication policy.
-    pub fn eval_flag_with_trace(
+    fn eval_flag_with_trace_impl(
         &self,
         flag_key: &str,
         context: &EvaluationContext,
@@ -175,10 +184,7 @@ impl Configuration {
         let exclusion = match options.experimentation_exclusion(context) {
             Ok(exclusion) => exclusion,
             Err(error) => {
-                return EvaluationResult {
-                    result: Err(error),
-                    evaluations: Vec::new(),
-                };
+                return EvaluationResult::from_error(error);
             }
         };
         // Most evaluations have no dependencies. Preserve their allocation-only path rather
@@ -191,10 +197,7 @@ impl Configuration {
                 };
             }
             Err(error) => {
-                return EvaluationResult {
-                    result: Err(error),
-                    evaluations: Vec::new(),
-                };
+                return EvaluationResult::from_error(error);
             }
             Ok(_) => {}
         }
@@ -204,6 +207,7 @@ impl Configuration {
             context,
             now,
             exclusion,
+            max_dependency_depth: None,
             active: Vec::new(),
             memo: HashMap::new(),
             evaluations: Vec::new(),
@@ -223,6 +227,7 @@ impl Configuration {
 
 /// One requested evaluation and the prerequisites it actually evaluated.
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct EvaluationResult {
     /// The requested flag's result; SDKs return their caller default on failure.
     pub result: Result<Assignment, EvaluationError>,
@@ -230,8 +235,19 @@ pub struct EvaluationResult {
     pub evaluations: Vec<EvaluationRecord>,
 }
 
+impl EvaluationResult {
+    /// Construct a failed root evaluation without prerequisite records.
+    pub fn from_error(error: EvaluationError) -> Self {
+        Self {
+            result: Err(error),
+            evaluations: Vec::new(),
+        }
+    }
+}
+
 /// Telemetry for a prerequisite reached within one root evaluation.
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct EvaluationRecord {
     /// Key of the evaluated prerequisite.
     pub flag_key: Str,
@@ -257,6 +273,7 @@ struct EvaluationSession<'a> {
     context: &'a EvaluationContext,
     now: Timestamp,
     exclusion: ExperimentationExclusion,
+    max_dependency_depth: Option<u16>,
     active: Vec<Str>,
     memo: HashMap<Str, EvaluatedFlag>,
     evaluations: Vec<EvaluationRecord>,
@@ -386,12 +403,15 @@ impl EvaluationSession<'_> {
                 values,
             } = &condition.check
             {
-                let dependency = self.evaluate_dependency(key, depth + 1).map_err(|source| {
-                    EvaluationError::DependencyEvaluationFailed {
-                        flag_key: key.clone(),
-                        source: Box::new(source),
-                    }
-                })?;
+                // Validate only after authored-order evaluation reaches a dependency. An invalid
+                // evaluator setting must not affect independent flags or skipped conditions.
+                let limit = self.dependency_depth_limit()?;
+                let dependency =
+                    self.evaluate_dependency(key, depth + 1, limit)
+                        .map_err(|source| EvaluationError::DependencyEvaluationFailed {
+                            flag_key: key.clone(),
+                            source: Box::new(source),
+                        })?;
                 *height = (*height).max(1 + dependency.height);
                 let matched = values
                     .iter()
@@ -412,13 +432,42 @@ impl EvaluationSession<'_> {
         Ok(Some(exposures))
     }
 
+    fn dependency_depth_limit(&mut self) -> Result<u16, EvaluationError> {
+        if let Some(limit) = self.max_dependency_depth {
+            return Ok(limit);
+        }
+        let limit = match &self.config.max_dependency_depth {
+            None => 10,
+            Some(value) => {
+                let depth = value
+                    .as_f64()
+                    .filter(|depth| depth.fract() == 0.0 && (0.0..=255.0).contains(depth))
+                    .ok_or(EvaluationError::ConfigurationParseError)?;
+                // The checked value is an integer in 0..=255, so this conversion is lossless.
+                depth as u16
+            }
+        };
+        self.max_dependency_depth = Some(limit);
+        Ok(limit)
+    }
+
     fn evaluate_dependency(
         &mut self,
         key: &Str,
         depth: u16,
+        limit: u16,
     ) -> Result<EvaluatedFlag, EvaluationError> {
-        let limit = u16::from(self.config.max_dependency_depth);
         if depth > limit {
+            if key.as_str() != self.root_key
+                && !self.active.contains(key)
+                && !self.memo.contains_key(key)
+            {
+                self.evaluations.push(EvaluationRecord {
+                    flag_key: key.clone(),
+                    result: Err(EvaluationError::DependencyDepthExceeded),
+                    exposure_eligible: false,
+                });
+            }
             return Err(EvaluationError::DependencyDepthExceeded);
         }
         if key.as_str() == self.root_key || self.active.contains(key) {
@@ -469,6 +518,7 @@ impl Allocation {
             reason: self.assignment_reason(split),
             serial_id: split.serial_id,
             do_log: self.do_log,
+            features: split.features.clone(),
         }
     }
 
@@ -862,7 +912,76 @@ mod tests {
     use std::{collections::HashMap, sync::Arc};
 
     use super::*;
-    use crate::rules_based::{AssignmentReason, AssignmentValue, UniversalFlagConfig};
+    use crate::rules_based::{
+        AssignmentReason, AssignmentValue, FeatureValue, UniversalFlagConfig,
+    };
+
+    #[test]
+    fn assignment_carries_features_of_selected_split() {
+        let config = UniversalFlagConfig::from_json(
+            br#"
+            {
+              "createdAt": "2026-08-11T00:00:00Z",
+              "environment": {"name": "test"},
+              "flags": {
+                "with-features": {
+                  "key": "with-features",
+                  "enabled": true,
+                  "variationType": "STRING",
+                  "variations": {"on": {"key": "on", "value": "on"}},
+                  "allocations": [{
+                    "key": "static",
+                    "splits": [{
+                      "variationKey": "on",
+                      "shards": [],
+                      "serialId": 7,
+                      "features": [
+                        {"key": "holdout.key", "value": "abc", "destinations": ["HOOK"]},
+                        {"key": "holdout.fraction", "value": 0.5, "destinations": ["EXPOSURE"]},
+                        {"key": "holdout.enabled", "value": false, "destinations": ["HOOK"]}
+                      ]
+                    }]
+                  }]
+                },
+                "without-features": {
+                  "key": "without-features",
+                  "enabled": true,
+                  "variationType": "STRING",
+                  "variations": {"on": {"key": "on", "value": "on"}},
+                  "allocations": [{
+                    "key": "static",
+                    "splits": [{"variationKey": "on", "shards": []}]
+                  }]
+                }
+              }
+            }
+            "#
+            .to_vec(),
+        )
+        .unwrap();
+        let config = Configuration::from_server_response(config);
+        let context = EvaluationContext::new(None, Arc::new(HashMap::new()));
+        let now = chrono::Utc::now();
+
+        let assignment = config
+            .eval_flag("with-features", &context, ExpectedFlagType::String, now)
+            .unwrap();
+        let features = assignment.features_slice();
+        assert_eq!(features.len(), 3);
+        assert_eq!(features[0].key.as_str(), "holdout.key");
+        assert_eq!(features[0].value, FeatureValue::String("abc".into()));
+        assert_eq!(features[0].destinations.len(), 1);
+        assert_eq!(features[0].destinations[0].as_str(), "HOOK");
+        assert_eq!(features[1].value, FeatureValue::Number(0.5));
+        assert_eq!(features[2].value, FeatureValue::Boolean(false));
+        assert_eq!(assignment.serial_id, Some(7));
+
+        let assignment = config
+            .eval_flag("without-features", &context, ExpectedFlagType::String, now)
+            .unwrap();
+        assert!(assignment.features.is_none());
+        assert!(assignment.features_slice().is_empty());
+    }
 
     #[test]
     fn invalid_flag_does_not_poison_valid_neighbor() {

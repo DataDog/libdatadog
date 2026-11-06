@@ -3,7 +3,7 @@
 
 use alloc::borrow::Cow;
 use core::net::Ipv6Addr;
-use libdd_common::regex_engine::Regex;
+use libdd_regex::Regex;
 use std::{collections::HashSet, sync::LazyLock};
 
 const ALLOWED_IP_ADDRESSES: [&str; 5] = [

@@ -13,6 +13,7 @@ use super::OtlpResourceInfo;
 use crate::span::trace_utils::SDK_OTLP_EXPORT_KEY;
 use crate::span::v04::{Span, SpanEvent, SpanLink};
 use crate::span::{SPAN_LINK_FLAGS_SET_SENTINEL, TraceData};
+use hashbrown::HashMap;
 use std::borrow::Borrow;
 
 use libdd_trace_protobuf::opentelemetry::proto::collector::trace::v1::ExportTraceServiceRequest as ProtoReq;
@@ -165,6 +166,76 @@ pub(super) fn proto_kv(key: String, value: ProtoValue) -> ProtoKeyValue {
     }
 }
 
+// Resolve fixed keys once from the emitted resource; only values are reused across spans.
+#[derive(Clone, Copy)]
+pub(super) struct SpanResourceAttributes<'a> {
+    pub strings: &'a HashMap<String, String>,
+    pub service: Option<&'a str>,
+    pub operation: Option<&'a str>,
+    pub span_type: Option<&'a str>,
+    pub resource: Option<&'a str>,
+    pub env: Option<&'a str>,
+    pub version: Option<&'a str>,
+    pub component: Option<&'a str>,
+    pub origin: Option<&'a str>,
+    pub sampling_mechanism: Option<&'a str>,
+}
+
+impl<'a> SpanResourceAttributes<'a> {
+    // A span's semantic attributes can override the resource fallback for env/version.
+    pub fn for_span(mut self, contains: impl Fn(&str) -> bool) -> Self {
+        if self.env.is_some()
+            && (contains("deployment.environment.name") || contains("deployment.environment"))
+        {
+            self.env = None;
+        }
+        if self.version.is_some() && contains("service.version") {
+            self.version = None;
+        }
+        self
+    }
+
+    pub fn matches(&self, key: &str, value: &str) -> bool {
+        match key {
+            "env" => self.env == Some(value),
+            "version" => self.version == Some(value),
+            _ => self
+                .strings
+                .get(key)
+                .is_some_and(|resource| resource == value),
+        }
+    }
+
+    pub fn new(strings: &'a HashMap<String, String>) -> Self {
+        Self {
+            strings,
+            service: strings.get("service.name").map(String::as_str),
+            operation: strings.get("operation.name").map(String::as_str),
+            span_type: strings.get("span.type").map(String::as_str),
+            resource: strings.get("resource.name").map(String::as_str),
+            env: strings.get("env").map(String::as_str),
+            version: strings.get("version").map(String::as_str),
+            component: strings.get("component").map(String::as_str),
+            origin: strings.get("_dd.origin").map(String::as_str),
+            sampling_mechanism: strings.get("_dd.p.dm").map(String::as_str),
+        }
+    }
+}
+
+fn push_span_string_attribute(
+    attrs: &mut Vec<ProtoKeyValue>,
+    resource_value: Option<&str>,
+    key: &str,
+    value: &str,
+) {
+    if resource_value != Some(value) {
+        attrs.push(proto_kv(
+            key.to_string(),
+            ProtoValue::StringValue(value.to_string()),
+        ));
+    }
+}
+
 /// Collect a span's OTLP attributes directly as prost `KeyValue`s plus the dropped count.
 /// Per-span service.name (only when it differs from the resource service), operation.name,
 /// span.type, resource.name, then meta (string), metrics (int when integral and in i64 range
@@ -172,6 +243,7 @@ pub(super) fn proto_kv(key: String, value: ProtoValue) -> ProtoKeyValue {
 fn collect_span_attributes<T: TraceData>(
     span: &Span<T>,
     resource_service: &str,
+    resource_attributes: &SpanResourceAttributes<'_>,
     otel_trace_semantics_enabled: bool,
 ) -> (Vec<ProtoKeyValue>, usize) {
     // Pre-size to avoid reallocations as attributes accumulate. Upper bound is the 4 synthetic
@@ -185,41 +257,48 @@ fn collect_span_attributes<T: TraceData>(
     let span_service = span.service.borrow();
     let has_per_span_service = !span_service.is_empty() && span_service != resource_service;
     if has_per_span_service && !otel_trace_semantics_enabled {
-        attrs.push(proto_kv(
-            "service.name".to_string(),
-            ProtoValue::StringValue(span_service.to_string()),
-        ));
+        push_span_string_attribute(
+            &mut attrs,
+            resource_attributes.service,
+            "service.name",
+            span_service,
+        );
     }
     let operation_name = span.name.borrow();
     let has_operation_name = !operation_name.is_empty();
     if has_operation_name && !otel_trace_semantics_enabled {
-        attrs.push(proto_kv(
-            "operation.name".to_string(),
-            ProtoValue::StringValue(operation_name.to_string()),
-        ));
+        push_span_string_attribute(
+            &mut attrs,
+            resource_attributes.operation,
+            "operation.name",
+            operation_name,
+        );
     }
     let span_type = span.r#type.borrow();
     let has_span_type = !span_type.is_empty();
     if has_span_type && !otel_trace_semantics_enabled {
-        attrs.push(proto_kv(
-            "span.type".to_string(),
-            ProtoValue::StringValue(span_type.to_string()),
-        ));
+        push_span_string_attribute(
+            &mut attrs,
+            resource_attributes.span_type,
+            "span.type",
+            span_type,
+        );
     }
     let resource_name = span.resource.borrow();
     let has_resource_name = !resource_name.is_empty();
     if has_resource_name && !otel_trace_semantics_enabled {
-        attrs.push(proto_kv(
-            "resource.name".to_string(),
-            ProtoValue::StringValue(resource_name.to_string()),
-        ));
+        push_span_string_attribute(
+            &mut attrs,
+            resource_attributes.resource,
+            "resource.name",
+            resource_name,
+        );
     }
+    let promoted = attrs.len();
     let meta = span.meta.defensive_dedup();
     let meta_len = meta.len();
+    let mut resource_duplicates = 0;
     for (k, v) in meta.iter() {
-        if attrs.len() >= MAX_ATTRIBUTES_PER_SPAN {
-            break;
-        }
         let key = k.borrow();
         if key == SDK_OTLP_EXPORT_KEY {
             continue;
@@ -229,10 +308,16 @@ fn collect_span_attributes<T: TraceData>(
         {
             continue;
         }
-        attrs.push(proto_kv(
-            key.to_string(),
-            ProtoValue::StringValue(v.borrow().to_string()),
-        ));
+        if resource_attributes.matches(key, v.borrow()) {
+            resource_duplicates += 1;
+            continue;
+        }
+        if attrs.len() < MAX_ATTRIBUTES_PER_SPAN {
+            attrs.push(proto_kv(
+                key.to_string(),
+                ProtoValue::StringValue(v.borrow().to_string()),
+            ));
+        }
     }
     let metrics = span.metrics.defensive_dedup();
     let metrics_len = metrics.len();
@@ -269,16 +354,8 @@ fn collect_span_attributes<T: TraceData>(
     } else {
         0
     };
-    let promoted = if otel_trace_semantics_enabled {
-        0
-    } else {
-        (has_per_span_service as usize)
-            + (has_operation_name as usize)
-            + (has_span_type as usize)
-            + (has_resource_name as usize)
-    };
     let total = promoted
-        + (meta_len - excluded_compat_tags - excluded_marker)
+        + (meta_len - excluded_compat_tags - excluded_marker - resource_duplicates)
         + metrics_len
         + meta_struct_len;
     let dropped = total.saturating_sub(attrs.len());
@@ -339,7 +416,9 @@ pub fn map_traces_to_otlp<T: TraceData>(
     resource_info: &OtlpResourceInfo,
     otel_trace_semantics_enabled: bool,
 ) -> ProtoReq {
-    let resource = build_resource(resource_info, otel_trace_semantics_enabled);
+    let (resource, resource_attributes) =
+        build_resource(resource_info, otel_trace_semantics_enabled);
+    let resource_attributes = SpanResourceAttributes::new(&resource_attributes);
     // Pre-size to the total span count so the per-span push loop never reallocates.
     let total_spans: usize = trace_chunks.iter().map(|chunk| chunk.len()).sum();
     let mut all_spans: Vec<ProtoSpan> = Vec::with_capacity(total_spans);
@@ -356,6 +435,7 @@ pub fn map_traces_to_otlp<T: TraceData>(
             all_spans.push(map_span(
                 span,
                 &resource_info.service,
+                &resource_attributes,
                 high,
                 flags,
                 otel_trace_semantics_enabled,
@@ -388,7 +468,7 @@ pub fn map_traces_to_otlp<T: TraceData>(
 pub(super) fn build_resource(
     resource_info: &OtlpResourceInfo,
     otel_trace_semantics_enabled: bool,
-) -> ProtoResource {
+) -> (ProtoResource, HashMap<String, String>) {
     fn push_str_attr(attrs: &mut Vec<ProtoKeyValue>, k: &str, v: &str) {
         if !v.is_empty() {
             attrs.push(proto_kv(
@@ -442,17 +522,96 @@ pub(super) fn build_resource(
             "datadog"
         },
     );
-    // `entity_refs` is a profiling-signal-only field; explicit default.
-    ProtoResource {
-        attributes,
-        dropped_attributes_count: 0,
-        entity_refs: Vec::new(),
+    let sdk_attribute_count = attributes.len();
+    for (key, value) in &resource_info.resource_attributes {
+        if !key.is_empty()
+            && !attributes[..sdk_attribute_count]
+                .iter()
+                .any(|attribute| attribute.key == *key)
+        {
+            attributes.push(proto_kv(
+                key.clone(),
+                ProtoValue::StringValue(value.clone()),
+            ));
+        }
     }
+    let mut resource_attributes: HashMap<String, String> = attributes
+        .iter()
+        .filter_map(
+            |attribute| match attribute.value.as_ref()?.value.as_ref()? {
+                ProtoValue::StringValue(value) => Some((attribute.key.clone(), value.clone())),
+                _ => None,
+            },
+        )
+        .collect();
+    // The Agent consumes these resource keys as container tags, not span metadata.
+    resource_attributes.retain(|key, _| {
+        !key.starts_with("datadog.container.tag.")
+            && !matches!(
+                key.as_str(),
+                "container_id"
+                    | "container_name"
+                    | "image_name"
+                    | "image_tag"
+                    | "runtime"
+                    | "cloud_provider"
+                    | "region"
+                    | "zone"
+                    | "task_family"
+                    | "task_arn"
+                    | "ecs_cluster_name"
+                    | "task_version"
+                    | "ecs_container_name"
+                    | "kube_container_name"
+                    | "kube_cluster_name"
+                    | "kube_deployment"
+                    | "kube_replica_set"
+                    | "kube_stateful_set"
+                    | "kube_daemon_set"
+                    | "kube_job"
+                    | "kube_cronjob"
+                    | "kube_namespace"
+                    | "pod_name"
+                    | "kube_node"
+            )
+    });
+    for (key, fallback) in [
+        ("env", "deployment.environment.name"),
+        ("version", "service.version"),
+    ] {
+        // Only omit values that survive the Agent's semantic fallback unchanged.
+        // Conservatively keep non-ASCII values rather than duplicating its normalizer.
+        let safe = resource_attributes.get(key).is_some_and(|value| {
+            resource_attributes.get(fallback) == Some(value)
+                && !value.is_empty()
+                && value.len() <= 200
+                && !value.ends_with('_')
+                && !value.contains("__")
+                && value.bytes().all(|b| {
+                    b.is_ascii_lowercase()
+                        || b.is_ascii_digit()
+                        || matches!(b, b'.' | b'/' | b'-' | b':' | b'_')
+                })
+        });
+        if !safe {
+            resource_attributes.remove(key);
+        }
+    }
+    // `entity_refs` is a profiling-signal-only field; explicit default.
+    (
+        ProtoResource {
+            attributes,
+            dropped_attributes_count: 0,
+            entity_refs: Vec::new(),
+        },
+        resource_attributes,
+    )
 }
 
 fn map_span<T: TraceData>(
     span: &Span<T>,
     resource_service: &str,
+    resource_attributes: &SpanResourceAttributes<'_>,
     chunk_trace_id_high: u64,
     flags: u32,
     otel_trace_semantics_enabled: bool,
@@ -466,8 +625,13 @@ fn map_span<T: TraceData>(
     } else {
         Vec::new()
     };
-    let (attributes, dropped_attributes_count) =
-        collect_span_attributes(span, resource_service, otel_trace_semantics_enabled);
+    let resource_attributes = resource_attributes.for_span(|key| span.meta.contains_key(key));
+    let (attributes, dropped_attributes_count) = collect_span_attributes(
+        span,
+        resource_service,
+        &resource_attributes,
+        otel_trace_semantics_enabled,
+    );
     let (code, message) = span_status(span);
     let trace_state = span
         .meta
@@ -546,6 +710,167 @@ mod tests {
     use super::*;
     use crate::otlp_encoder::OtlpResourceInfo;
     use crate::span::BytesData;
+
+    #[test]
+    fn resource_deduplication_uses_emitted_sdk_identity() {
+        let info = OtlpResourceInfo {
+            service: "configured".into(),
+            resource_attributes: [("service.name", "ignored"), ("", "invalid"), ("empty", "")]
+                .map(|(k, v)| (k.into(), v.into()))
+                .into(),
+            ..Default::default()
+        };
+        let mut span = Span::<BytesData>::default();
+        span.meta.insert("service.name".into(), "ignored".into());
+        span.meta.insert("empty".into(), "".into());
+        span.meta
+            .insert("telemetry.sdk.name".into(), "datadog".into());
+        let request = map_traces_to_otlp(&[vec![span]], &info, false);
+        let group = &request.resource_spans[0];
+        assert_eq!(resource_str_attr(&request, ""), None);
+        assert_eq!(resource_str_attr(&request, "empty"), Some(""));
+        assert_eq!(
+            resource_str_attr(&request, "service.name"),
+            Some("configured")
+        );
+        assert_eq!(
+            group.scope_spans[0].spans[0].attributes,
+            [proto_kv(
+                "service.name".into(),
+                ProtoValue::StringValue("ignored".into())
+            )]
+        );
+    }
+
+    #[test]
+    fn resource_deduplication_preserves_agent_span_metadata() {
+        use crate::otlp_encoder::map_traces_to_otlp_v1;
+        use crate::span::v1::{AttributeValue, Span as SpanV1, TraceChunk};
+
+        for (key, value, fallback, span_fallback, retained) in [
+            ("region", "same", "", "", true),
+            ("datadog.container.tag.team", "same", "", "", true),
+            ("cloud.region", "same", "", "", false),
+            ("env", "prod", "prod", "", false),
+            ("env", "prod", "staging", "", true),
+            ("env", "prod", "", "", true),
+            ("env", "PROD", "PROD", "", true),
+            ("env", "prod", "prod", "staging", true),
+            ("version", "1.2.3", "1.2.3", "", false),
+            (
+                "version",
+                "release candidate",
+                "release candidate",
+                "",
+                true,
+            ),
+            ("version", "1.2.3", "1.2.3", "2.0", true),
+        ] {
+            let info = OtlpResourceInfo {
+                env: fallback.into(),
+                app_version: fallback.into(),
+                resource_attributes: [(key.into(), value.into())].into(),
+                ..Default::default()
+            };
+            let mut span = Span::<BytesData>::default();
+            span.meta.insert(key.into(), value.into());
+            let mut span_v1 = SpanV1::<BytesData>::default();
+            match key {
+                "env" => span_v1.env = value.into(),
+                "version" => span_v1.version = value.into(),
+                _ => {
+                    span_v1
+                        .attributes
+                        .insert(key.into(), AttributeValue::String(value.into()));
+                }
+            }
+            if !span_fallback.is_empty() {
+                let alias = if key == "env" {
+                    "deployment.environment.name"
+                } else {
+                    "service.version"
+                };
+                span.meta.insert(alias.into(), span_fallback.into());
+                span_v1
+                    .attributes
+                    .insert(alias.into(), AttributeValue::String(span_fallback.into()));
+            }
+            let chunks = [vec![span]];
+            let chunks_v1 = [TraceChunk {
+                spans: vec![span_v1],
+                ..Default::default()
+            }];
+            for semantics in [false, true] {
+                for request in [
+                    map_traces_to_otlp(&chunks, &info, semantics),
+                    map_traces_to_otlp_v1(&chunks_v1, &info, semantics),
+                ] {
+                    assert_eq!(resource_str_attr(&request, key), Some(value));
+                    let mapped = &request.resource_spans[0].scope_spans[0].spans[0];
+                    assert_eq!(
+                        mapped
+                            .attributes
+                            .contains(&proto_kv(key.into(), ProtoValue::StringValue(value.into()))),
+                        retained,
+                        "{key}={value}, fallback={fallback}, span fallback={span_fallback}"
+                    );
+                    assert_eq!(mapped.dropped_attributes_count, 0);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn resource_duplicates_do_not_consume_span_attribute_limit() {
+        let field_keys = [
+            "service.name",
+            "operation.name",
+            "resource.name",
+            "span.type",
+        ];
+        for key in ["a-duplicate", "z-duplicate"] {
+            let info = OtlpResourceInfo {
+                resource_attributes: std::iter::once(key)
+                    .chain(field_keys)
+                    .map(|key| (key.into(), "same".into()))
+                    .collect(),
+                ..Default::default()
+            };
+            for field_value in ["same", "different"] {
+                let mut span = Span::<BytesData> {
+                    service: field_value.into(),
+                    name: field_value.into(),
+                    resource: field_value.into(),
+                    r#type: field_value.into(),
+                    ..Default::default()
+                };
+                span.meta.insert(key.into(), "same".into());
+                for i in 0..MAX_ATTRIBUTES_PER_SPAN {
+                    span.meta
+                        .insert(format!("key-{i:05}").into(), "value".into());
+                }
+                let chunks = [vec![span]];
+                for semantics in [false, true] {
+                    let request = map_traces_to_otlp(&chunks, &info, semantics);
+                    let group = &request.resource_spans[0];
+                    for (key, value) in &info.resource_attributes {
+                        assert_eq!(resource_str_attr(&request, key), Some(value.as_str()));
+                    }
+                    let mapped = &group.scope_spans[0].spans[0];
+                    assert_eq!(mapped.attributes.len(), MAX_ATTRIBUTES_PER_SPAN);
+                    let overrides = field_value != "same" && !semantics;
+                    assert_eq!(
+                        mapped.dropped_attributes_count,
+                        if overrides { 4 } else { 0 }
+                    );
+                    assert!(!mapped.attributes.iter().any(|a| a.key == key));
+                    for key in field_keys {
+                        assert_eq!(mapped.attributes.iter().any(|a| a.key == key), overrides);
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn maps_native_span_to_prost_ir() {
