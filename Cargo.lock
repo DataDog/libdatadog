@@ -3183,6 +3183,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "libdd-http-client-ffi"
+version = "46.0.0"
+dependencies = [
+ "build_common",
+ "libdd-common-ffi",
+ "libdd-http-client",
+ "libdd-shared-runtime",
+ "tempfile",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
 name = "libdd-ipc"
 version = "2.0.0"
 dependencies = [
