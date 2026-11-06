@@ -3,7 +3,13 @@
 use std::time::{self, Duration, SystemTime};
 
 use criterion::{Criterion, criterion_group};
-use libdd_trace_stats::span_concentrator::SpanConcentrator;
+use libdd_tinybytes::BytesString;
+use libdd_trace_model::AttributeValue;
+use libdd_trace_model::TraceChunk as _;
+use libdd_trace_protobuf::pb;
+use libdd_trace_stats::span_concentrator::{ChunkSpanView, SpanConcentrator};
+use libdd_trace_utils::span::RootSpanChunk;
+use libdd_trace_utils::span::v1;
 use libdd_trace_utils::span::v04::{SpanBytes, VecMap};
 
 fn get_bucket_start(now: SystemTime, n: u64) -> i64 {
@@ -36,6 +42,71 @@ fn get_span(now: SystemTime, trace_id: u64, span_id: u64) -> SpanBytes {
     }
 }
 
+fn get_pb_span(span: &SpanBytes) -> pb::Span {
+    pb::Span {
+        service: span.service.as_str().to_string(),
+        name: span.name.as_str().to_string(),
+        resource: span.resource.as_str().to_string(),
+        trace_id: span.trace_id as u64,
+        span_id: span.span_id,
+        parent_id: span.parent_id,
+        start: span.start,
+        duration: span.duration,
+        error: span.error,
+        meta: span
+            .meta
+            .iter()
+            .map(|(k, v)| (k.as_str().to_string(), v.as_str().to_string()))
+            .collect(),
+        metrics: span
+            .metrics
+            .iter()
+            .map(|(k, v)| (k.as_str().to_string(), *v))
+            .collect(),
+        ..Default::default()
+    }
+}
+
+fn get_v1_chunk(trace: &[SpanBytes]) -> v1::TraceChunkBytes {
+    let spans = trace
+        .iter()
+        .map(|span| {
+            let mut s = v1::SpanBytes {
+                service: span.service.clone(),
+                name: span.name.clone(),
+                resource: span.resource.clone(),
+                span_id: span.span_id,
+                parent_id: span.parent_id,
+                start: span.start,
+                duration: span.duration,
+                error: span.error != 0,
+                ..Default::default()
+            };
+            for (k, v) in span.meta.iter() {
+                s.attributes
+                    .insert(k.clone(), AttributeValue::String(v.clone()));
+            }
+            for (k, v) in span.metrics.iter() {
+                s.attributes.insert(k.clone(), AttributeValue::Float(*v));
+            }
+            s
+        })
+        .collect();
+    let mut chunk = v1::TraceChunkBytes {
+        spans,
+        origin: BytesString::from_static("lambda"),
+        ..Default::default()
+    };
+    // Values common to every span, as a v1 tracer would hoist them to the chunk.
+    for (k, v) in [("team", "core"), ("peer.service", "db"), ("_dd.p.dm", "-1")] {
+        chunk.attributes.insert(
+            BytesString::from_static(k),
+            AttributeValue::String(BytesString::from_static(v)),
+        );
+    }
+    chunk
+}
+
 pub fn criterion_benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("concentrator");
     let now = SystemTime::now() - Duration::from_secs(10 * 100);
@@ -49,20 +120,62 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         #[cfg(feature = "stats-obfuscation")]
         None,
     );
-    let mut spans = vec![];
-    for trace_id in 1..100 {
-        for span_id in 1..100 {
-            spans.push(get_span(now, trace_id, span_id));
-        }
-    }
+    let traces: Vec<Vec<SpanBytes>> = (1..100)
+        .map(|trace_id| {
+            (1..100)
+                .map(|span_id| get_span(now, trace_id, span_id))
+                .collect()
+        })
+        .collect();
+    let chunks: Vec<_> = traces
+        .iter()
+        .map(|trace| RootSpanChunk::new(trace))
+        .collect();
     group.bench_function("add_spans_to_concentrator", |b| {
         b.iter_batched_ref(
-            || (concentrator.clone(), spans.clone()),
-            |data| {
-                let concentrator = &mut data.0;
-                let spans = &data.1;
-                for span in spans {
-                    concentrator.add_span(span);
+            || concentrator.clone(),
+            |concentrator| {
+                for chunk in &chunks {
+                    for span in chunk.spans() {
+                        concentrator.add_span(&ChunkSpanView { span, chunk });
+                    }
+                }
+            },
+            criterion::BatchSize::LargeInput,
+        );
+    });
+
+    let pb_traces: Vec<Vec<pb::Span>> = traces
+        .iter()
+        .map(|trace| trace.iter().map(get_pb_span).collect())
+        .collect();
+    let pb_chunks: Vec<_> = pb_traces
+        .iter()
+        .map(|trace| RootSpanChunk::new(trace))
+        .collect();
+    group.bench_function("add_spans_to_concentrator_pb", |b| {
+        b.iter_batched_ref(
+            || concentrator.clone(),
+            |concentrator| {
+                for chunk in &pb_chunks {
+                    for span in chunk.spans() {
+                        concentrator.add_span(&ChunkSpanView { span, chunk });
+                    }
+                }
+            },
+            criterion::BatchSize::LargeInput,
+        );
+    });
+
+    let v1_chunks: Vec<_> = traces.iter().map(|trace| get_v1_chunk(trace)).collect();
+    group.bench_function("add_spans_to_concentrator_v1", |b| {
+        b.iter_batched_ref(
+            || concentrator.clone(),
+            |concentrator| {
+                for chunk in &v1_chunks {
+                    for span in chunk.spans() {
+                        concentrator.add_span(&ChunkSpanView { span, chunk });
+                    }
                 }
             },
             criterion::BatchSize::LargeInput,

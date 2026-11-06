@@ -110,7 +110,7 @@ ignored = [
 [workspace.package]
 rust-version = "1.91.1"
 edition = "2024"
-version = "47.0.0"
+version = "48.0.0"
 license = "Apache-2.0"
 authors = ["Datadog Inc. <info@datadoghq.com>"]
 
@@ -251,7 +251,7 @@ proptest = { version = "1", default-features = false }
 prost = { version = "0.14.1", default-features = false }
 prost-build = { version = "0.14.1", default-features = false }
 protoc-bin-vendored = { version = "3.0.0", default-features = false }
-pyo3 = { version = "0.29", default-features = false }
+pyo3 = { version = "0.30", default-features = false }
 quick-xml = { version = "0.37", default-features = false }
 quote = { version = "1", default-features = false }
 rand = { version = "0.8", default-features = false }
