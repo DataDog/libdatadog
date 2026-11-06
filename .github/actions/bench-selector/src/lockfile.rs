@@ -59,7 +59,7 @@ pub fn lockfile_changes(base_ref: &str, workspace_root: &Path) -> Result<Lockfil
 /// Workspace member names, for excluding path dependencies from the results.
 /// Cargo metadata is the source of truth; failure falls back to no exclusions
 /// (over-selecting is safe, under-selecting is not).
-fn workspace_members(workspace_root: &Path) -> BTreeSet<String> {
+pub(crate) fn workspace_members(workspace_root: &Path) -> BTreeSet<String> {
     let Ok(output) = Command::new("cargo")
         .current_dir(workspace_root)
         .args(["metadata", "--no-deps", "--format-version", "1"])
