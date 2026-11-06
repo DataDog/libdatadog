@@ -188,6 +188,13 @@ pub fn select(
 /// CI configuration change can set (and editing the CI configuration is
 /// itself a tooling change that re-enables the full-suite guard on real PRs).
 fn requires_full_run(path: &str, ranges: &[(u32, u32)], self_test: bool) -> bool {
+    // Under self-test, the CI helper workspace (.github/actions) is the
+    // tooling under validation; its manifests and build scripts cannot affect
+    // the benchmarked crates, so they are ignored instead of forcing the full
+    // suite through the generic Cargo.toml/Cargo.lock filename rules below.
+    if self_test && (path.starts_with(".github/actions/") || path == ".github/actions") {
+        return false;
+    }
     let path_obj = std::path::Path::new(path);
     let name = path_obj.file_name().and_then(|name| name.to_str());
     if matches!(
@@ -421,6 +428,11 @@ mod tests {
             ".gitlab/benchmarks.yml",
             ".gitlab/impacted-crates.yml",
             ".github/actions/bench-selector/src/select.rs",
+            // The CI helper workspace's manifests cannot affect the
+            // benchmarked crates; ignored under self-test rather than
+            // triggering the generic Cargo.toml/Cargo.lock filename rule.
+            ".github/actions/Cargo.toml",
+            ".github/actions/Cargo.lock",
         ] {
             let selection = select(&inv, &cov, &changed(vec![(path, vec![(100, 100)])]), true);
             assert_eq!(selection.summary.clusters_selected, 0, "{path}");
