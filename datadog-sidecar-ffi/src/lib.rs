@@ -1151,6 +1151,12 @@ fn ddog_sidecar_send_ffe_exposure_batch_impl(
 /// caller-driven; callers must aggregate and bound event cardinality before passing
 /// a batch.
 ///
+/// When all batch `context` fields (service, env and version) are empty, the sidecar
+/// fills them from the application set on this transport with
+/// `ddog_sidecar_set_application`. If no application is set or any of its identity
+/// fields exceeds 256 characters, the batch context stays empty. Explicit batch
+/// context is preserved.
+///
 /// # Safety
 /// All slices must reference valid memory under the CharSlice contract. Context
 /// metadata and flag keys must be UTF-8. Malformed optional variant, allocation,
