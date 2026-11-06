@@ -1,41 +1,50 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Parsing of `Cargo.toml` diffs into "this manifest changed only
-//! dependencies" and the packages whose wiring changed.
+//! Structural comparison of the changed `Cargo.toml` manifests between the
+//! base branch and the PR head.
 //!
-//! A manifest change that only touches dependency declarations (version,
-//! source, features, or `package =` rename of a normal/dev dependency, or a
-//! `[workspace.dependencies]` entry) is scoped exactly like a lockfile bump:
-//! the changed package names are intersected with the packages each benchmark
-//! cluster executes (see `coverage::CoverageEntry::deps`), so only the
-//! benchmarks actually measuring the changed dependency run.
+//! Both sides are fetched with git (`git show <ref>:<path>`) and parsed with
+//! a real TOML parser; the decision compares the parsed data, never the text
+//! format — comments, key order, and formatting differences compare equal,
+//! and section attribution cannot be fooled by hunk context the way diff
+//! parsing can.
 //!
-//! Anything else in the manifest — the crate's own `[features]`, `[profile]`,
-//! `[package]` metadata, `build-dependencies`, or a dependency that is a
-//! proc-macro (compile-time effect, invisible to runtime line coverage) —
-//! keeps the conservative full run: line coverage cannot attribute those.
+//! A manifest whose two sides differ ONLY in runtime dependency declarations
+//! (normal/dev dependencies, `[workspace.dependencies]`, target-scoped
+//! variants — version, source, features, `package =` renames) is scoped
+//! exactly like a lockfile bump: the changed package names are intersected
+//! with the packages each benchmark cluster executes (see
+//! `coverage::CoverageEntry::deps`), so only the benchmarks actually
+//! measuring the changed dependency run.
+//!
+//! Anything else — the crate's own `[features]`, `[profile]`, `[package]`
+//! metadata, `build-dependencies` (compile-time effect), `[patch]`, or a
+//! dependency that is a proc-macro — keeps the conservative full run: line
+//! coverage cannot attribute those.
 //!
 //! Path dependencies (workspace members) are excluded from the package set:
 //! their code changes arrive as source diffs the regular line intersection
-//! already handles, and their wiring is visible in the lockfile.
+//! already handles.
 
 use crate::diff::ChangedLines;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::process::Command;
+use toml::Table;
+use toml::Value;
 
 /// Dependency-scoping analysis of the changed manifests.
 #[derive(Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ManifestChanges {
-    /// Per changed manifest path: true when every changed line in it is a
-    /// dependency declaration that runtime coverage can scope. False keeps
-    /// the conservative full run for that manifest.
+    /// Per changed manifest path: true when the base and head documents
+    /// differ only in runtime dependency declarations that coverage can
+    /// scope. False keeps the conservative full run for that manifest.
     pub deps_only: BTreeMap<String, bool>,
-    /// External packages whose wiring changed anywhere (dep added, removed,
-    /// re-required, or re-versioned in a deps-only manifest). Workspace
-    /// members (path dependencies) are excluded.
+    /// External packages whose wiring changed anywhere (dependency added,
+    /// removed, or re-specified in a deps-only manifest). Workspace members
+    /// (path dependencies) are excluded.
     pub packages: BTreeSet<String>,
 }
 
@@ -50,7 +59,7 @@ impl ManifestChanges {
 
 /// Analyze the changed manifests of a diff. `changed` supplies the paths;
 /// each manifest-shaped one (a `Cargo.toml` outside the CI helper workspace)
-/// is diffed against `origin/<base>...HEAD` and parsed.
+/// is fetched on both sides and compared.
 ///
 /// Any failure (git, metadata, parsing) is conservative: the affected
 /// manifests are marked not-deps-only, i.e. they fall back to the full run.
@@ -59,65 +68,63 @@ pub fn manifest_changes(
     workspace_root: &Path,
     changed: &ChangedLines,
 ) -> ManifestChanges {
-    let manifests: Vec<&String> = changed.keys().filter(|path| is_manifest(path)).collect();
+    let manifests: Vec<String> = changed
+        .keys()
+        .filter(|path| is_manifest(path))
+        .cloned()
+        .collect();
     let mut out = ManifestChanges::default();
     if manifests.is_empty() {
         return out;
     }
-    // Mark everything conservative up front; each successfully parsed
+    // Mark everything conservative up front; each successfully compared
     // deps-only manifest flips its entry to true.
     for path in &manifests {
-        out.deps_only.insert((*path).clone(), false);
+        out.deps_only.insert(path.clone(), false);
     }
+    let members = crate::lockfile::workspace_members(workspace_root);
 
-    let spec = format!("origin/{base_ref}...HEAD");
-    let mut cmd = Command::new("git");
-    cmd.current_dir(workspace_root);
-    // Whole-file context (-U200): a mid-table hunk would otherwise lack its
-    // section header and could not be attributed safely.
-    cmd.arg("diff")
-        .arg("-U200")
-        .arg("--no-color")
-        .arg(&spec)
-        .arg("--");
-    cmd.args(manifests.iter().map(|p| p.as_str()));
-    let Ok(output) = cmd.output() else {
-        return out;
-    };
-    if !output.status.success() {
-        return out;
-    }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    // Split the multi-file diff into per-file sections and parse each.
-    let mut file: Option<String> = None;
-    let mut lines: Vec<String> = Vec::new();
-    let flush =
-        |file: &mut Option<String>, lines: &mut Vec<String>, out: &mut ManifestChanges| {
-            if let Some(path) = file.take() {
-                let parsed = parse_manifest_diff(lines.join("\n").as_str());
-                out.deps_only.insert(path.clone(), parsed.deps_only);
-                out.packages.extend(parsed.packages);
-            }
-            lines.clear();
-        };
-    for line in stdout.lines() {
-        if let Some(rest) = line.strip_prefix("diff --git a/") {
-            flush(&mut file, &mut lines, &mut out);
-            let path = rest.split(' ').next().unwrap_or(rest);
-            // Strip the b/ side prefix of "path b/path".
-            file = Some(path.strip_prefix("b/").unwrap_or(path).to_string());
-            continue;
+    // Compare against the MERGE-BASE with the base branch, matching the
+    // three-dot semantics of every other diff in the pipeline: `origin/main`
+    // itself has moved on since the PR branched, and its unrelated changes
+    // (e.g. version bumps) would wrongly disqualify the manifest.
+    let merge_base = match merge_base(base_ref, workspace_root) {
+        Ok(rev) => rev,
+        Err(err) => {
+            log::warn!("no merge base with origin/{base_ref} ({err}); full run");
+            return out;
         }
-        lines.push(line.to_string());
+    };
+
+    for path in &manifests {
+        // Missing on a side (manifest added or deleted) compares against an
+        // empty document: the [package] table then differs, which correctly
+        // disqualifies — a whole manifest never appears or disappears via a
+        // dependency-only change.
+        let base = match show_blob(&merge_base, path, workspace_root) {
+            Ok(content) => content.unwrap_or_default(),
+            Err(err) => {
+                log::warn!("cannot read {path} at {merge_base} ({err}); full run");
+                return out;
+            }
+        };
+        let head = match show_blob("HEAD", path, workspace_root) {
+            Ok(content) => content.unwrap_or_default(),
+            Err(err) => {
+                log::warn!("cannot read {path} on HEAD ({err}); full run");
+                return out;
+            }
+        };
+        let parsed = compare_manifests(&base, &head, &members);
+        out.deps_only.insert(path.clone(), parsed.deps_only);
+        out.packages.extend(parsed.packages);
     }
-    flush(&mut file, &mut lines, &mut out);
 
     // Dependencies whose code runs at compile time (proc-macros) have no
     // runtime coverage to scope with: treat their manifests as conservative.
     if !out.packages.is_empty() && workspace_has_proc_macro(workspace_root, &out.packages) {
-        for path in manifests {
-            out.deps_only.insert((*path).clone(), false);
+        for path in &manifests {
+            out.deps_only.insert(path.clone(), false);
         }
     }
     out
@@ -129,124 +136,191 @@ fn is_manifest(path: &str) -> bool {
     path == "Cargo.toml" || (path.ends_with("/Cargo.toml") && !path.starts_with(".github/actions/"))
 }
 
-/// The result of parsing one manifest diff.
+/// The result of comparing one manifest's two sides.
 #[derive(Debug, Default, PartialEq, Eq)]
 struct ParsedManifest {
     deps_only: bool,
     packages: BTreeSet<String>,
 }
 
-/// Parse a single `Cargo.toml` unified diff.
-fn parse_manifest_diff(diff: &str) -> ParsedManifest {
-    let mut result = ParsedManifest {
-        deps_only: true,
+/// The merge base of HEAD and `origin/<base_ref>`, matching the three-dot
+/// diff semantics used everywhere else in the pipeline.
+fn merge_base(base_ref: &str, workspace_root: &Path) -> anyhow::Result<String> {
+    let spec = format!("origin/{base_ref}");
+    let output = Command::new("git")
+        .current_dir(workspace_root)
+        .args(["merge-base", &spec, "HEAD"])
+        .output()
+        .map_err(|err| anyhow::anyhow!("git merge-base: {err}"))?;
+    anyhow::ensure!(
+        output.status.success(),
+        "git merge-base {spec} HEAD failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// Fetch a blob from a revision. `Ok(None)` means the path does not exist on
+/// that side; an error means git itself failed (conservative handling).
+fn show_blob(rev: &str, path: &str, workspace_root: &Path) -> anyhow::Result<Option<String>> {
+    let rev_exists = Command::new("git")
+        .current_dir(workspace_root)
+        .args(["cat-file", "-e", rev])
+        .status()
+        .map_err(|err| anyhow::anyhow!("git cat-file: {err}"))?
+        .success();
+    anyhow::ensure!(rev_exists, "revision {rev} does not exist");
+    let spec = format!("{rev}:{path}");
+    let exists = Command::new("git")
+        .current_dir(workspace_root)
+        .args(["cat-file", "-e", &spec])
+        .status()
+        .map_err(|err| anyhow::anyhow!("git cat-file: {err}"))?
+        .success();
+    if !exists {
+        return Ok(None);
+    }
+    let output = Command::new("git")
+        .current_dir(workspace_root)
+        .args(["show", &spec])
+        .output()
+        .map_err(|err| anyhow::anyhow!("git show: {err}"))?;
+    anyhow::ensure!(
+        output.status.success(),
+        "git show {spec} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Ok(Some(String::from_utf8_lossy(&output.stdout).into_owned()))
+}
+
+/// Compare a manifest's base and head documents.
+fn compare_manifests(base: &str, head: &str, members: &BTreeSet<String>) -> ParsedManifest {
+    let conservative = || ParsedManifest {
+        deps_only: false,
         packages: BTreeSet::new(),
     };
-    let mut section: Option<String> = None;
-    // The dependency declaration the current line belongs to (for multi-line
-    // inline tables), tracked across context and changed lines alike.
-    let mut current_dep: Option<String> = None;
+    // An unparseable document on either side is never scoping-safe.
+    let Ok(base) = base.parse::<Table>() else {
+        return conservative();
+    };
+    let Ok(head) = head.parse::<Table>() else {
+        return conservative();
+    };
 
-    for line in diff.lines() {
-        if line.starts_with("--- ")
-            || line.starts_with("+++ ")
-            || line.starts_with("@@")
-            || line.starts_with("index ")
-            || line.starts_with("new file")
-            || line.starts_with("deleted file")
-            || line.starts_with("similarity ")
-            || line.starts_with("rename ")
-        {
-            continue;
+    // Packages whose runtime wiring changed: entries of the runtime
+    // dependency tables that appear, disappear, or change on either side,
+    // resolved through `package = "..."` renames and excluding workspace
+    // members (path dependencies).
+    let base_deps = runtime_dependencies(&base);
+    let head_deps = runtime_dependencies(&head);
+    let mut packages = BTreeSet::new();
+    for name in base_deps.keys().chain(head_deps.keys()) {
+        if base_deps.get(name) != head_deps.get(name) && !members.contains(name) {
+            packages.insert(name.clone());
         }
-        let changed = matches!(line.chars().next(), Some('+' | '-'));
-        let body = if changed { &line[1..] } else { line };
-        let body = body.trim_start();
+    }
 
-        // Comments never change compilation.
-        if body.starts_with('#') {
-            continue;
+    // Everything outside the runtime dependency tables — the crate's own
+    // features, profiles, metadata, build-dependencies (compile time),
+    // patches, membership — must be identical for the manifest to be
+    // scoped by coverage.
+    let deps_only = stripped(&base) == stripped(&head);
+    ParsedManifest {
+        deps_only,
+        packages,
+    }
+}
+
+/// Collect the runtime dependency declarations of a parsed manifest, keyed by
+/// resolved package name. Covers `[dependencies]`, `[dev-dependencies]`,
+/// `[workspace.dependencies]`, and their `target.'cfg(...)'.` variants. A
+/// name maps to every declaration of it (a crate can depend on the same
+/// package under several target scopes); two sides differ only when the
+/// collected declarations differ.
+fn runtime_dependencies(doc: &Table) -> BTreeMap<String, Vec<&Value>> {
+    // Not a closure: closures cannot accept higher-ranked lifetime
+    // parameters, and these borrows must flow from `doc` through to the
+    // return value.
+    fn collect<'a>(table: &'a Table, out: &mut BTreeMap<String, Vec<&'a Value>>) {
+        for (key, value) in table {
+            out.entry(package_name(key, value)).or_default().push(value);
         }
-
-        // Section headers: `[[...]]` or `[...]`, possibly added/removed.
-        if body.starts_with('[') {
-            let inner = body.trim_start_matches('[').trim_end_matches(']');
-            section = Some(inner.to_string());
-            current_dep = None;
-            if changed && !is_dependency_section(inner) {
-                // Adding or removing a non-dependency section (features,
-                // profile, benches, ...) is not scoping-safe.
-                result.deps_only = false;
-            }
-            continue;
+    }
+    let mut out: BTreeMap<String, Vec<&Value>> = BTreeMap::new();
+    for section in ["dependencies", "dev-dependencies"] {
+        if let Some(Value::Table(table)) = doc.get(section) {
+            collect(table, &mut out);
         }
-
-        let dep_section = section.as_deref().is_some_and(is_dependency_section);
-        // `name = ...` starts a declaration.
-        if let Some((name, _)) = parse_declaration(body) {
-            if dep_section {
-                current_dep = Some(name.to_string());
-                if changed {
-                    result.packages.insert(name.to_string());
+    }
+    if let Some(Value::Table(workspace)) = doc.get("workspace") {
+        if let Some(Value::Table(table)) = workspace.get("dependencies") {
+            collect(table, &mut out);
+        }
+    }
+    if let Some(Value::Table(targets)) = doc.get("target") {
+        for target in targets.values() {
+            let Value::Table(target) = target else {
+                continue;
+            };
+            for section in ["dependencies", "dev-dependencies"] {
+                if let Some(Value::Table(table)) = target.get(section) {
+                    collect(table, &mut out);
                 }
-            } else {
-                // A changed declaration outside dependency tables is never
-                // scoping-safe — [package] metadata, [features], build
-                // dependencies (not a scoping section), anything else.
-                if changed {
-                    result.deps_only = false;
-                }
-                current_dep = None;
-            }
-            continue;
-        }
-
-        if changed {
-            if !dep_section {
-                // A changed line outside dependency tables: features,
-                // profile values, package metadata, anything else.
-                result.deps_only = false;
-            } else if let Some(dep) = &current_dep {
-                // Continuation of a dependency declaration (multi-line inline
-                // table: features lists, etc.) — still a dependency change.
-                result.packages.insert(dep.clone());
-            } else {
-                // Changed line in a dependency section with no declaration in
-                // view: the hunk context cut it off.
-                result.deps_only = false;
             }
         }
     }
-    result
+    out
 }
 
-/// Dependency tables whose changes runtime coverage can scope. Build
-/// dependencies are deliberately NOT dependency sections (their effect is
-/// at compile time), so changes there disqualify conservatively.
-fn is_dependency_section(section: &str) -> bool {
-    let last = section.split('.').next_back().unwrap_or(section);
-    matches!(last, "dependencies" | "dev-dependencies")
-        || section == "workspace.dependencies"
-        || section.starts_with("workspace.dependencies.")
-        // Target-scoped tables: [target.'cfg(unix)'.dependencies] etc.
-        || section.contains(".dependencies")
-        || section.contains(".dev-dependencies")
-}
-
-/// Parse a `name = ...` TOML key line, returning the key and the rest.
-/// Handles `package = "..."` renames inside inline tables on the same line.
-fn parse_declaration(body: &str) -> Option<(&str, &str)> {
-    let (name, rest) = body.split_once(" = ")?;
-    if name.contains('.') || name.contains('[') || name.is_empty() || !is_key_like(name) {
-        return None;
+/// The dependency's package name: `package = "..."` renames inside the
+/// declaration win over the table key.
+fn package_name(key: &str, value: &Value) -> String {
+    if let Some(renamed) = value.get("package").and_then(Value::as_str) {
+        renamed.to_string()
+    } else {
+        key.to_string()
     }
-    Some((name, rest))
 }
 
-fn is_key_like(s: &str) -> bool {
-    !s.is_empty()
-        && s.chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+/// A copy of the document with the runtime dependency tables removed and
+/// empty leftover sub-tables pruned, so the remaining data can be compared
+/// structurally. Everything that remains — build-dependencies, the crate's
+/// own features, profiles, package metadata, patches — must be identical
+/// between the two sides.
+fn stripped(doc: &Table) -> Table {
+    fn strip_table(table: &mut Table) {
+        table.remove("dependencies");
+        table.remove("dev-dependencies");
+    }
+    let mut rest: Table = doc.clone();
+    strip_table(&mut rest);
+    if let Some(Value::Table(workspace)) = rest.get_mut("workspace") {
+        workspace.remove("dependencies");
+    }
+    if let Some(Value::Table(targets)) = rest.get_mut("target") {
+        for (_, target) in targets.iter_mut() {
+            if let Value::Table(target) = target {
+                strip_table(target);
+            }
+        }
+    }
+    prune_empty_tables(&mut rest);
+    rest
+}
+
+/// Recursively remove empty sub-tables left behind by the stripping above
+/// (a target scope that contained only dependencies), so a fully removed
+/// dependency section compares equal to a never-existing one. Empty arrays
+/// are kept: `benches = []` is meaningful data.
+fn prune_empty_tables(table: &mut Table) {
+    table.retain(|_, value| {
+        if let Value::Table(inner) = value {
+            prune_empty_tables(inner);
+            !inner.is_empty()
+        } else {
+            true
+        }
+    });
 }
 
 /// Does any of the packages resolve to a proc-macro in this workspace?
@@ -293,174 +367,170 @@ fn workspace_has_proc_macro(workspace_root: &Path, packages: &BTreeSet<String>) 
 mod tests {
     use super::*;
 
+    fn set(names: &[&str]) -> BTreeSet<String> {
+        names.iter().map(|s| s.to_string()).collect()
+    }
+
     #[test]
-    fn empty_diff_is_vacuously_deps_only() {
-        let parsed = parse_manifest_diff("");
+    fn identical_documents_are_deps_only() {
+        let doc = "[package]\nname = \"x\"\n\n[dependencies]\nserde = \"1\"\n";
+        let parsed = compare_manifests(doc, doc, &set(&[]));
+        assert!(parsed.deps_only);
+        assert!(parsed.packages.is_empty());
+    }
+
+    #[test]
+    fn formatting_and_comments_only_compare_equal() {
+        // Same data, different text: reordered keys, added comments, inline
+        // table layout. Parsed data is identical, so nothing changes.
+        let base = "\
+[package]
+name = \"x\"
+version = \"1.0.0\"
+
+[dependencies]
+serde = \"1\"
+anyhow = \"1\"
+";
+        let head = "\
+# crate x
+[dependencies]
+anyhow = \"1\" # unchanged
+serde = \"1\"
+
+[package]
+version = \"1.0.0\"
+name = \"x\"
+";
+        let parsed = compare_manifests(base, head, &set(&[]));
         assert!(parsed.deps_only);
         assert!(parsed.packages.is_empty());
     }
 
     #[test]
     fn version_bump_is_deps_only() {
-        let diff = "\
-diff --git a/libdd-x/Cargo.toml b/libdd-x/Cargo.toml
---- a/libdd-x/Cargo.toml
-+++ b/libdd-x/Cargo.toml
-@@ -20,7 +20,7 @@ license = \"Apache-2.0\"
- [dependencies]
--serde = \"1.0.200\"
-+serde = \"1.0.210\"
- anyhow.workspace = true
-";
-        let parsed = parse_manifest_diff(diff);
+        let base = "[dependencies]\nserde = \"1.0.200\"\n";
+        let head = "[dependencies]\nserde = \"1.0.210\"\n";
+        let parsed = compare_manifests(base, head, &set(&[]));
         assert!(parsed.deps_only);
-        assert_eq!(parsed.packages, ["serde".to_string()].into_iter().collect());
+        assert_eq!(parsed.packages, set(&["serde"]));
     }
 
     #[test]
-    fn added_dependency_is_deps_only() {
-        let diff = "\
---- a/libdd-x/Cargo.toml
-+++ b/libdd-x/Cargo.toml
-@@ -25,3 +25,4 @@
- [dev-dependencies]
- criterion = \"0.5\"
-+allocator-api2 = \"0.2\"
-";
-        let parsed = parse_manifest_diff(diff);
+    fn added_and_removed_dependencies_are_deps_only() {
+        let base = "[dev-dependencies]\ncriterion = \"0.5\"\n";
+        let head = "[dev-dependencies]\ncriterion = \"0.5\"\nallocator-api2 = \"0.2\"\n";
+        let parsed = compare_manifests(base, head, &set(&[]));
         assert!(parsed.deps_only);
-        assert_eq!(
-            parsed.packages,
-            ["allocator-api2".to_string()].into_iter().collect()
-        );
+        assert_eq!(parsed.packages, set(&["allocator-api2"]));
+        // And the other direction records the removal.
+        let parsed = compare_manifests(head, base, &set(&[]));
+        assert!(parsed.deps_only);
+        assert_eq!(parsed.packages, set(&["allocator-api2"]));
     }
 
     #[test]
-    fn multiline_feature_change_attributes_to_the_dep() {
-        let diff = "\
---- a/libdd-x/Cargo.toml
-+++ b/libdd-x/Cargo.toml
-@@ -1,8 +1,8 @@
- [package]
- name = \"libdd-x\"
-
- [dependencies]
- serde = { version = \"1\", features = [
--  \"derive\",
-+  \"derive\", \"rc\",
- ] }
-";
-        let parsed = parse_manifest_diff(diff);
+    fn feature_change_on_a_dep_is_deps_only() {
+        let base = "[dependencies]\nserde = { version = \"1\", features = [\"derive\"] }\n";
+        let head = "[dependencies]\nserde = { version = \"1\", features = [\"derive\", \"rc\"] }\n";
+        let parsed = compare_manifests(base, head, &set(&[]));
         assert!(parsed.deps_only);
-        assert_eq!(parsed.packages, ["serde".to_string()].into_iter().collect());
+        assert_eq!(parsed.packages, set(&["serde"]));
+    }
+
+    #[test]
+    fn workspace_dependencies_section_changes_are_deps_only() {
+        let base = "[workspace.dependencies]\nzstd = \"0.13\"\n";
+        let head = "[workspace.dependencies]\nzstd = \"0.14\"\n";
+        let parsed = compare_manifests(base, head, &set(&[]));
+        assert!(parsed.deps_only);
+        assert_eq!(parsed.packages, set(&["zstd"]));
+    }
+
+    #[test]
+    fn target_scoped_dependency_changes_are_deps_only() {
+        let base = "[target.'cfg(unix)'.dependencies]\nlibc = \"0.2\"\n";
+        let head = "[target.'cfg(unix)'.dependencies]\nlibc = \"0.2\"\nmemmap2 = \"0.9\"\n";
+        let parsed = compare_manifests(base, head, &set(&[]));
+        assert!(parsed.deps_only);
+        assert_eq!(parsed.packages, set(&["memmap2"]));
+    }
+
+    #[test]
+    fn removing_a_whole_target_scope_is_deps_only() {
+        let base = "[target.'cfg(unix)'.dependencies]\nmemmap2 = \"0.9\"\n";
+        let head = "";
+        let parsed = compare_manifests(base, head, &set(&[]));
+        assert!(parsed.deps_only);
+        assert_eq!(parsed.packages, set(&["memmap2"]));
+    }
+
+    #[test]
+    fn renamed_packages_resolve_through_package_field() {
+        let base = "[dependencies]\nserde2 = { package = \"serde\", version = \"1\" }\n";
+        let head = "[dependencies]\nserde2 = { package = \"serde\", version = \"1\", features = [\"rc\"] }\n";
+        let parsed = compare_manifests(base, head, &set(&[]));
+        assert!(parsed.deps_only);
+        assert_eq!(parsed.packages, set(&["serde"]));
     }
 
     #[test]
     fn crate_features_change_is_not_deps_only() {
-        let diff = "\
---- a/libdd-x/Cargo.toml
-+++ b/libdd-x/Cargo.toml
-@@ -40,3 +40,6 @@
- [features]
- default = [\"v04\"]
-+v05 = []
-+
-+[profile.release]
-";
-        let parsed = parse_manifest_diff(diff);
+        let base = "[features]\ndefault = [\"v04\"]\n";
+        let head = "[features]\ndefault = [\"v04\"]\nv05 = []\n";
+        let parsed = compare_manifests(base, head, &set(&[]));
         assert!(!parsed.deps_only);
-        assert!(parsed.packages.is_empty());
     }
 
     #[test]
     fn package_metadata_change_is_not_deps_only() {
-        let diff = "\
---- a/libdd-x/Cargo.toml
-+++ b/libdd-x/Cargo.toml
-@@ -3,3 +3,3 @@
- [package]
--version = \"1.0.0\"
-+version = \"1.0.1\"
-";
-        let parsed = parse_manifest_diff(diff);
+        let base = "[package]\nversion = \"1.0.0\"\n";
+        let head = "[package]\nversion = \"1.0.1\"\n";
+        let parsed = compare_manifests(base, head, &set(&[]));
         assert!(!parsed.deps_only);
     }
 
     #[test]
     fn build_dependencies_are_not_scoping_safe() {
-        let diff = "\
---- a/libdd-x/Cargo.toml
-+++ b/libdd-x/Cargo.toml
-@@ -30,3 +30,4 @@
- [build-dependencies]
- cc = \"1\"
-+anyhow = \"1\"
-";
-        let parsed = parse_manifest_diff(diff);
+        let base = "[build-dependencies]\ncc = \"1\"\n";
+        let head = "[build-dependencies]\ncc = \"1\"\nanyhow = \"1\"\n";
+        let parsed = compare_manifests(base, head, &set(&[]));
         assert!(!parsed.deps_only);
     }
 
     #[test]
-    fn workspace_dependencies_section_is_dep_section() {
-        let diff = "\
---- a/Cargo.toml
-+++ b/Cargo.toml
-@@ -60,7 +60,7 @@
- [workspace.dependencies]
--zstd = \"0.13\"
-+zstd = \"0.14\"
-";
-        let parsed = parse_manifest_diff(diff);
-        assert!(parsed.deps_only);
-        assert_eq!(parsed.packages, ["zstd".to_string()].into_iter().collect());
-    }
-
-    #[test]
-    fn target_scoped_dependencies_are_dep_sections() {
-        let diff = "\
---- a/libdd-x/Cargo.toml
-+++ b/libdd-x/Cargo.toml
-@@ -30,3 +30,4 @@
- [target.'cfg(unix)'.dependencies]
- libc = \"0.2\"
-+memmap2 = \"0.9\"
-";
-        let parsed = parse_manifest_diff(diff);
-        assert!(parsed.deps_only);
-        assert_eq!(
-            parsed.packages,
-            ["memmap2".to_string()].into_iter().collect()
-        );
-    }
-
-    #[test]
-    fn comments_never_disqualify() {
-        let diff = "\
---- a/libdd-x/Cargo.toml
-+++ b/libdd-x/Cargo.toml
-@@ -20,3 +20,4 @@
- [dependencies]
-+# TODO: bump serde
- serde = \"1\"
-";
-        let parsed = parse_manifest_diff(diff);
-        assert!(parsed.deps_only);
-        assert!(parsed.packages.is_empty());
-    }
-
-    #[test]
-    fn dep_context_in_other_sections_does_not_record() {
-        // A changed line under a non-dependency section is not a package.
-        let diff = "\
---- a/libdd-x/Cargo.toml
-+++ b/libdd-x/Cargo.toml
-@@ -60,3 +60,4 @@
- [package.metadata.docs.rs]
-+targets = [\"x86_64\"]
-";
-        let parsed = parse_manifest_diff(diff);
+    fn patch_section_change_is_not_deps_only() {
+        let base = "";
+        let head = "[patch.crates-io]\nproptest = { git = 'https://github.com/x/proptest' }\n";
+        let parsed = compare_manifests(base, head, &set(&[]));
         assert!(!parsed.deps_only);
-        assert!(parsed.packages.is_empty());
+    }
+
+    #[test]
+    fn new_or_deleted_manifests_are_not_deps_only() {
+        let doc = "[package]\nname = \"x\"\n\n[dependencies]\nserde = \"1\"\n";
+        // A whole manifest appearing means [package] appeared too.
+        let parsed = compare_manifests("", doc, &set(&[]));
+        assert!(!parsed.deps_only);
+        let parsed = compare_manifests(doc, "", &set(&[]));
+        assert!(!parsed.deps_only);
+    }
+
+    #[test]
+    fn path_dependencies_to_members_are_excluded_from_packages() {
+        // The wiring of a workspace member changed (excluded from the
+        // package signal), but the manifest is still deps-only.
+        let base = "[dependencies]\nlibdd-trace-utils = { path = \"../trace-utils\" }\n";
+        let head = "[dependencies]\nlibdd-trace-utils = { path = \"../trace-utils\", features = [\"x\"] }\nserde = \"1\"\n";
+        let parsed = compare_manifests(base, head, &set(&["libdd-trace-utils"]));
+        assert!(parsed.deps_only);
+        assert_eq!(parsed.packages, set(&["serde"]));
+    }
+
+    #[test]
+    fn unparseable_documents_are_conservative() {
+        let parsed = compare_manifests("[dependencies]\nserde = ", "not toml at all", &set(&[]));
+        assert!(!parsed.deps_only);
     }
 
     #[test]
