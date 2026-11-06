@@ -8,11 +8,11 @@
     "response_model": null,
     "service_tier": null,
     "outcome": "failed",
-    "error_name": "429",
+    "error_name": "RESOURCE_EXHAUSTED",
     "error": {
       "code": "429",
       "message": "quota",
-      "name": "429"
+      "name": "RESOURCE_EXHAUSTED"
     }
   }
 }

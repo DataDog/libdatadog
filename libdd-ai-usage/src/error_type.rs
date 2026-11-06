@@ -38,7 +38,7 @@ pub const ERROR_TYPES: [&str; 12] = [
 
 /// The error names providers and SDKs report, other than the vocabulary's
 /// own values, which map to themselves.
-const ERROR_NAMES: [(&str, &str); 39] = [
+const ERROR_NAMES: [(&str, &str); 55] = [
     // Anthropic and OpenAI error types and codes.
     ("invalid_request_error", ERROR_TYPE_BAD_REQUEST),
     // Anthropic's type for HTTP 413, which has no `error.type` of its own:
@@ -86,6 +86,24 @@ const ERROR_NAMES: [(&str, &str); 39] = [
     ("incomplete_stream", ERROR_TYPE_API_CONNECTION),
     ("local_error", ERROR_TYPE_API),
     ("provider_error", ERROR_TYPE_API),
+    // Google's `google.rpc.Code` names, the `status` of Gemini and Vertex AI
+    // errors, by the HTTP status Google maps each to.
+    ("INVALID_ARGUMENT", ERROR_TYPE_BAD_REQUEST),
+    ("FAILED_PRECONDITION", ERROR_TYPE_BAD_REQUEST),
+    ("OUT_OF_RANGE", ERROR_TYPE_BAD_REQUEST),
+    ("UNAUTHENTICATED", ERROR_TYPE_AUTHENTICATION),
+    ("PERMISSION_DENIED", ERROR_TYPE_PERMISSION_DENIED),
+    ("NOT_FOUND", ERROR_TYPE_NOT_FOUND),
+    ("ALREADY_EXISTS", ERROR_TYPE_CONFLICT),
+    ("ABORTED", ERROR_TYPE_CONFLICT),
+    ("RESOURCE_EXHAUSTED", ERROR_TYPE_RATE_LIMIT),
+    ("CANCELLED", ERROR_TYPE_CANCELLED),
+    ("DEADLINE_EXCEEDED", ERROR_TYPE_TIMEOUT),
+    ("UNAVAILABLE", ERROR_TYPE_INTERNAL_SERVER),
+    ("INTERNAL", ERROR_TYPE_INTERNAL_SERVER),
+    ("UNIMPLEMENTED", ERROR_TYPE_INTERNAL_SERVER),
+    ("DATA_LOSS", ERROR_TYPE_INTERNAL_SERVER),
+    ("UNKNOWN", ERROR_TYPE_INTERNAL_SERVER),
 ];
 
 /// The `error.type` of a failed HTTP status, or `None` below 400. A 5xx
@@ -179,6 +197,34 @@ pub fn classify_error(name: Option<&str>, status: Option<u16>) -> Option<&'stati
 /// cause unknown").
 pub fn classify_failure(name: Option<&str>, status: Option<u16>) -> &'static str {
     classify_error(name, status).unwrap_or(ERROR_TYPE_API)
+}
+
+/// The `error.type` of a provider attempt that ended with the gateway
+/// outcome `outcome` (the Datadog AI Gateway's names) and, when one came,
+/// the provider's HTTP `status`:
+///
+/// - `provider_http_error` and the vendor subscription refusals (`subscription_auth`,
+///   `subscription_forbidden`, `subscription_limit`) by their status, `api_error` without one;
+/// - `timeout` is `timeout_error`;
+/// - `unavailable`, `stream_read_error`, `early_close` and `incomplete_stream` are
+///   `api_connection_error`: the connection or the stream broke;
+/// - `canceled` is `cancelled`;
+/// - `credentials` (the gateway's own credentials failed), an empty outcome and any other name are
+///   [`classify_failure`] of the name and status.
+pub fn error_type_for_gateway_outcome(outcome: &str, status: Option<u16>) -> &'static str {
+    match outcome.trim() {
+        "provider_http_error"
+        | "subscription_auth"
+        | "subscription_forbidden"
+        | "subscription_limit" => classify_failure(None, status),
+        "timeout" => ERROR_TYPE_TIMEOUT,
+        "unavailable" | "stream_read_error" | "early_close" | "incomplete_stream" => {
+            ERROR_TYPE_API_CONNECTION
+        }
+        "canceled" => ERROR_TYPE_CANCELLED,
+        "credentials" | "unknown" | "" => classify_failure(None, status),
+        other => classify_failure(Some(other), status),
+    }
 }
 
 /// [`classify_error`] without its fallback: `None` also for a name the

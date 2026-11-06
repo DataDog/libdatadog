@@ -114,7 +114,16 @@ pub struct Batch {
 /// A provider stream being read. Use one from one thread at a time.
 pub struct Stream {
     inner: UsageStream,
+    /// Report usage with inclusive totals ([`INCLUSIVE_TOTALS`]).
+    inclusive: bool,
 }
+
+/// An option of [`ddog_ai_usage_parse_provider_response_with`] and
+/// [`ddog_ai_usage_stream_new_with`]: report usage with inclusive totals,
+/// cache reads and writes added to an input that excludes them and
+/// reasoning added to an output that excludes it, both bases then
+/// `includes_*`.
+pub const INCLUSIVE_TOTALS: u32 = 1;
 
 fn error_value(code: &str, message: &str) -> Value {
     json!({"error": {"code": code, "message": message}})
@@ -1477,12 +1486,18 @@ fn response_value(
     response: &ProviderResponse,
     outcome: StreamOutcome,
     error_name: Option<&str>,
+    inclusive: bool,
 ) -> Value {
     let error_type = (outcome == StreamOutcome::Failed)
         .then(|| classify_error(error_name.or(Some("provider_error")), None))
         .flatten();
+    let usage = if inclusive {
+        response.usage.as_ref().map(|usage| usage.inclusive())
+    } else {
+        response.usage.clone()
+    };
     json!({
-        "usage": response.usage,
+        "usage": usage,
         "response_model": response.response_model,
         "service_tier": response.service_tier,
         "outcome": outcome.as_str(),
@@ -1501,8 +1516,15 @@ fn response_value(
 /// `{"usage": {...} | null, "response_model", "service_tier", "outcome",
 /// "error_name", "error_type", "error_code", "error_message", "issues"}` to
 /// `out`. `issues` says why something reported was not kept:
-/// `service_tier_dropped` for a tier outside `^[A-Za-z0-9._-]{1,32}$`.
-/// `usage` holds the members to merge into an observation. `error_code` and
+/// `service_tier_dropped` for a tier outside `^[A-Za-z0-9._-]{1,32}$`, and
+/// `response_model_dropped` for a served model outside the deployment value
+/// grammar (so a provider cannot mint tag values from free text).
+/// `usage` holds the members to merge into an observation. Its
+/// `input_tokens_by_modality` and `output_tokens_by_modality` hold the
+/// provider's own `image` and `audio` parts, counted within the totals:
+/// OpenAI-shaped usage reports image output tokens (image generation) as
+/// `output_tokens_by_modality.image`, which a caller prices at the model's
+/// image rate. `error_code` and
 /// `error_message` are the provider's own, from the body or an in-band
 /// stream error: control characters removed, the message cut to 256 bytes,
 /// so a gateway can log them without parsing the error itself. `embeddings`
@@ -1528,9 +1550,131 @@ pub unsafe extern "C" fn ddog_ai_usage_parse_provider_response(
                 let format = format_of(text(format, format_len))?;
                 let body = bytes(body, body_len).ok_or(Failure::Internal("the body is null"))?;
                 let (response, outcome, error) = parse_provider_body(format, body, embeddings);
-                Ok(response_value(&response, outcome, error.as_deref()))
+                Ok(response_value(&response, outcome, error.as_deref(), false))
             }))
             .unwrap_or(Err(Failure::Internal("reading the response panicked")))
+        })
+    }
+}
+
+/// [`ddog_ai_usage_parse_provider_response`] with `options`, a bit set:
+/// [`INCLUSIVE_TOTALS`] reports usage with inclusive totals. Unknown bits
+/// are [`Status::Rejected`].
+///
+/// # Safety
+///
+/// As [`ddog_ai_usage_parse_provider_response`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ddog_ai_usage_parse_provider_response_with(
+    format: *const u8,
+    format_len: usize,
+    embeddings: bool,
+    options: u32,
+    body: *const u8,
+    body_len: usize,
+    out: *mut Buffer,
+) -> Status {
+    // SAFETY: forwarded from the caller.
+    unsafe {
+        json_call(out, || {
+            catch_unwind(AssertUnwindSafe(|| {
+                let inclusive = options_of(options)?;
+                let format = format_of(text(format, format_len))?;
+                let body = bytes(body, body_len).ok_or(Failure::Internal("the body is null"))?;
+                let (response, outcome, error) = parse_provider_body(format, body, embeddings);
+                Ok(response_value(
+                    &response,
+                    outcome,
+                    error.as_deref(),
+                    inclusive,
+                ))
+            }))
+            .unwrap_or(Err(Failure::Internal("reading the response panicked")))
+        })
+    }
+}
+
+/// Whether `options` asks for inclusive totals; unknown bits are refused.
+fn options_of(options: u32) -> Result<bool, Failure> {
+    if options & !INCLUSIVE_TOTALS != 0 {
+        return Err(invalid(format!("unknown options: {options:#x}")));
+    }
+    Ok(options & INCLUSIVE_TOTALS != 0)
+}
+
+/// [`ddog_ai_usage_stream_new`] with `options`, as
+/// [`ddog_ai_usage_parse_provider_response_with`] reads them: with
+/// [`INCLUSIVE_TOTALS`], `_finish` and `_take` report inclusive totals.
+///
+/// # Safety
+///
+/// As [`ddog_ai_usage_stream_new`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ddog_ai_usage_stream_new_with(
+    format: *const u8,
+    format_len: usize,
+    embeddings: bool,
+    options: u32,
+    out: *mut *mut Stream,
+) -> Status {
+    if out.is_null() {
+        return Status::Internal;
+    }
+    let created = catch_unwind(AssertUnwindSafe(|| {
+        let inclusive = options_of(options)?;
+        // SAFETY: forwarded from the caller.
+        let format = format_of(unsafe { text(format, format_len) })?;
+        Ok::<_, Failure>(Box::into_raw(Box::new(Stream {
+            inner: UsageStream::new(format, embeddings),
+            inclusive,
+        })))
+    }));
+    match created {
+        Ok(Ok(stream)) => {
+            // SAFETY: `out` is not null and the caller guarantees it is
+            // writable.
+            unsafe { out.write(stream) };
+            Status::Ok
+        }
+        Ok(Err(Failure::Rejected(_))) => Status::Rejected,
+        Ok(Err(Failure::Internal(_))) | Err(_) => Status::Internal,
+    }
+}
+
+/// Write the `error.type` of a provider attempt that ended with the gateway
+/// outcome `outcome[..outcome_len]` and the provider's HTTP `status` (0 for
+/// none) to `out`: `provider_http_error` and the subscription refusals by
+/// status, `timeout` as `timeout_error`, `unavailable`, `stream_read_error`,
+/// `early_close` and `incomplete_stream` as `api_connection_error`,
+/// `canceled` as `cancelled`, and any other outcome by its name and status
+/// (`api_error` when neither says why). Never [`Status::Rejected`].
+///
+/// # Safety
+///
+/// `outcome` must point to `outcome_len` readable bytes (or `outcome_len`
+/// must be 0), and `out` must be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ddog_ai_usage_error_type_for_outcome(
+    outcome: *const u8,
+    outcome_len: usize,
+    status: u16,
+    out: *mut Buffer,
+) -> Status {
+    // SAFETY: forwarded from the caller.
+    unsafe {
+        text_call(out, || {
+            catch_unwind(AssertUnwindSafe(|| {
+                text(outcome, outcome_len).map(|outcome| {
+                    Some(
+                        libdd_ai_usage::error_type_for_gateway_outcome(
+                            outcome,
+                            (status != 0).then_some(status),
+                        )
+                        .to_string(),
+                    )
+                })
+            }))
+            .unwrap_or(None)
         })
     }
 }
@@ -1558,6 +1702,7 @@ pub unsafe extern "C" fn ddog_ai_usage_stream_new(
         let format = format_of(unsafe { text(format, format_len) })?;
         Ok::<_, Failure>(Box::into_raw(Box::new(Stream {
             inner: UsageStream::new(format, embeddings),
+            inclusive: false,
         })))
     }));
     match created {
@@ -1663,7 +1808,12 @@ pub unsafe extern "C" fn ddog_ai_usage_stream_finish(
                     .as_ref()
                     .ok_or(Failure::Internal("the stream is null"))?;
                 let (response, outcome, error) = stream.inner.report();
-                Ok(response_value(&response, outcome, error.as_deref()))
+                Ok(response_value(
+                    &response,
+                    outcome,
+                    error.as_deref(),
+                    stream.inclusive,
+                ))
             }))
             .unwrap_or(Err(Failure::Internal("reading the stream panicked")))
         })
@@ -1695,8 +1845,14 @@ pub unsafe extern "C" fn ddog_ai_usage_stream_take(
     unsafe {
         json_call(out, move || {
             catch_unwind(AssertUnwindSafe(move || {
+                let inclusive = stream.inclusive;
                 let (response, outcome, error) = stream.inner.finish();
-                Ok(response_value(&response, outcome, error.as_deref()))
+                Ok(response_value(
+                    &response,
+                    outcome,
+                    error.as_deref(),
+                    inclusive,
+                ))
             }))
             .unwrap_or(Err(Failure::Internal("reading the stream panicked")))
         })

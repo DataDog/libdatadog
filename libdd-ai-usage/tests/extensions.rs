@@ -416,3 +416,125 @@ fn refused_datagrams_are_repacked_and_batches_joined() {
         pack_dogstatsd_joined(lines.iter().map(String::as_str), &["env:prod"], 1432, '\0')
     );
 }
+
+#[test]
+fn gateway_outcomes_models_inclusive_totals_and_google_errors() {
+    use libdd_ai_usage::{
+        RESPONSE_MODEL_DROPPED, UsageFormat, error_type_for_gateway_outcome, parse_provider_body,
+        parse_provider_response,
+    };
+    for (outcome, status, expected) in [
+        ("timeout", None, "timeout_error"),
+        ("unavailable", None, "api_connection_error"),
+        ("stream_read_error", None, "api_connection_error"),
+        ("early_close", None, "api_connection_error"),
+        ("incomplete_stream", None, "api_connection_error"),
+        ("canceled", None, "cancelled"),
+        ("credentials", None, "api_error"),
+        ("unknown", None, "api_error"),
+        ("provider_http_error", Some(400), "bad_request_error"),
+        ("provider_http_error", Some(401), "authentication_error"),
+        ("provider_http_error", Some(403), "permission_denied_error"),
+        ("provider_http_error", Some(404), "not_found_error"),
+        ("provider_http_error", Some(408), "timeout_error"),
+        ("provider_http_error", Some(504), "timeout_error"),
+        ("provider_http_error", Some(409), "conflict_error"),
+        (
+            "provider_http_error",
+            Some(422),
+            "unprocessable_entity_error",
+        ),
+        ("provider_http_error", Some(429), "rate_limit_error"),
+        ("provider_http_error", Some(502), "internal_server_error"),
+        ("provider_http_error", Some(418), "api_error"),
+        ("provider_http_error", None, "api_error"),
+        ("subscription_auth", Some(401), "authentication_error"),
+        (
+            "subscription_forbidden",
+            Some(403),
+            "permission_denied_error",
+        ),
+        ("subscription_limit", Some(429), "rate_limit_error"),
+    ] {
+        assert_eq!(
+            error_type_for_gateway_outcome(outcome, status),
+            expected,
+            "{outcome} {status:?}"
+        );
+    }
+
+    // A served model outside the grammar is not kept, and says so.
+    let payload = json(r#"{"model": "free text model", "usage": {"prompt_tokens": 1}}"#);
+    let response = parse_provider_response(UsageFormat::OpenAiChat, &payload, false);
+    assert_eq!(response.response_model, None);
+    assert_eq!(response.issues, vec![RESPONSE_MODEL_DROPPED]);
+    let payload = json(r#"{"model": "gpt-4.1-2025-04-14", "usage": {"prompt_tokens": 1}}"#);
+    assert!(
+        parse_provider_response(UsageFormat::OpenAiChat, &payload, false)
+            .issues
+            .is_empty()
+    );
+
+    // Inclusive totals: Anthropic's cache and a separate reasoning count.
+    let payload = json(
+        r#"{"usage": {"input_tokens": 10, "output_tokens": 5, "cache_read_input_tokens": 100,
+            "cache_creation_input_tokens": 20}}"#,
+    );
+    let usage = parse_provider_response(UsageFormat::Anthropic, &payload, false)
+        .usage
+        .unwrap()
+        .inclusive();
+    assert_eq!(
+        (usage.input_tokens, usage.input_basis),
+        (Some(130), Some("includes_cache"))
+    );
+    let payload = json(
+        r#"{"usage": {"prompt_tokens": 14, "completion_tokens": 1212, "total_tokens": 1459,
+            "completion_tokens_details": {"reasoning_tokens": 233}}}"#,
+    );
+    let usage = parse_provider_response(UsageFormat::OpenAiChat, &payload, false)
+        .usage
+        .unwrap()
+        .inclusive();
+    assert_eq!(
+        (usage.output_tokens, usage.output_basis),
+        (Some(1445), Some("includes_reasoning"))
+    );
+
+    // Google's array-wrapped error envelope, typed by its `status`.
+    for (status, expected) in [
+        ("RESOURCE_EXHAUSTED", "rate_limit_error"),
+        ("CANCELLED", "cancelled"),
+        ("DEADLINE_EXCEEDED", "timeout_error"),
+        ("UNAUTHENTICATED", "authentication_error"),
+    ] {
+        let body =
+            format!(r#"[{{"error": {{"code": 499, "message": "m", "status": "{status}"}}}}]"#);
+        let (_, outcome, name) = parse_provider_body(UsageFormat::Gemini, body.as_bytes(), false);
+        assert_eq!(outcome, libdd_ai_usage::StreamOutcome::Failed);
+        assert_eq!(
+            libdd_ai_usage::classify_error(name.as_deref(), None),
+            Some(expected),
+            "{status}"
+        );
+    }
+
+    // OpenAI image output tokens are their own modality part, within the
+    // output total.
+    let payload = json(
+        r#"{"usage": {"input_tokens": 50, "output_tokens": 4160,
+            "output_tokens_details": {"image_tokens": 4160}}}"#,
+    );
+    let usage = parse_provider_response(UsageFormat::OpenAiResponses, &payload, false)
+        .usage
+        .unwrap();
+    assert_eq!(usage.output_tokens, Some(4160));
+    assert_eq!(
+        usage
+            .output_tokens_by_modality
+            .unwrap()
+            .get("image")
+            .copied(),
+        Some(4160)
+    );
+}

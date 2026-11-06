@@ -92,7 +92,8 @@ pub use error_type::{
     ERROR_TYPE_CANCELLED, ERROR_TYPE_CONFLICT, ERROR_TYPE_INTERNAL_SERVER, ERROR_TYPE_NOT_FOUND,
     ERROR_TYPE_PERMISSION_DENIED, ERROR_TYPE_RATE_LIMIT, ERROR_TYPE_TIMEOUT,
     ERROR_TYPE_UNPROCESSABLE_ENTITY, ERROR_TYPES, classify_error, classify_failure,
-    classify_known_error, error_type_for_name, error_type_for_status, error_type_identifier,
+    classify_known_error, error_type_for_gateway_outcome, error_type_for_name,
+    error_type_for_status, error_type_identifier,
 };
 pub use extensions::{
     BillableTokens, Failure, OBSERVATION_EXTENSIONS, PricesPerMillion, TranslatedMetric,
@@ -119,8 +120,8 @@ pub use project::{
 };
 pub use provider::{
     MAX_ERROR_MESSAGE_BYTES, MAX_KEPT_STRING_BYTES, MAX_STREAM_LINE_BYTES, PROVIDER_ID_HEADERS,
-    ProviderError, ProviderResponse, ProviderUsage, SERVICE_TIER_DROPPED, StreamOutcome,
-    UsageFormat, UsageStream, bedrock_arn_account, billing_id, gen_ai_provider_name,
+    ProviderError, ProviderResponse, ProviderUsage, RESPONSE_MODEL_DROPPED, SERVICE_TIER_DROPPED,
+    StreamOutcome, UsageFormat, UsageStream, bedrock_arn_account, billing_id, gen_ai_provider_name,
     is_person_identifier, is_service_tier, parse_provider_body, parse_provider_response,
     parse_provider_usage, provider_id_attributes,
 };

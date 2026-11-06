@@ -334,6 +334,32 @@ impl ProviderUsage {
         }
     }
 
+    /// The usage with inclusive totals: cache reads and writes added to an
+    /// input that excludes them, reasoning added to an output that excludes
+    /// it, and both bases then inclusive. For a caller that prices or
+    /// displays totals itself; an observation takes either form.
+    pub fn inclusive(&self) -> ProviderUsage {
+        let mut usage = self.clone();
+        if usage.input_basis == Some(EXCLUDES_CACHE)
+            && let Some(input) = usage.input_tokens
+        {
+            usage.input_tokens = Some(
+                input
+                    .saturating_add(usage.cache_read_input_tokens.unwrap_or(0))
+                    .saturating_add(usage.cache_write_input_tokens.unwrap_or(0)),
+            );
+            usage.input_basis = Some(INCLUDES_CACHE);
+        }
+        if usage.output_basis == Some(EXCLUDES_REASONING)
+            && let Some(output) = usage.output_tokens
+        {
+            usage.output_tokens =
+                Some(output.saturating_add(usage.reasoning_output_tokens.unwrap_or(0)));
+            usage.output_basis = Some(INCLUDES_REASONING);
+        }
+        usage
+    }
+
     /// Set the usage members of a provider attempt observation, keeping its
     /// server tool counts.
     pub fn apply_to_attempt(&self, observation: &mut ProviderAttemptObservation) {
@@ -379,6 +405,12 @@ pub struct ProviderResponse {
 /// `^[A-Za-z0-9._-]{1,32}$`: the tier is not kept, as the profiles require,
 /// and this says why it is missing.
 pub const SERVICE_TIER_DROPPED: &str = "service_tier_dropped";
+
+/// The issue of a response whose model is outside the deployment value
+/// grammar (`^[A-Za-z0-9][A-Za-z0-9._@+:/'|-]{0,127}$`): it is not kept as
+/// `gen_ai.response.model`, so a provider cannot mint tag values from free
+/// text.
+pub const RESPONSE_MODEL_DROPPED: &str = "response_model_dropped";
 
 /// The longest provider error message kept, in bytes.
 pub const MAX_ERROR_MESSAGE_BYTES: usize = 256;
@@ -427,6 +459,9 @@ impl ProviderResponse {
         if self.service_tier.is_some() {
             // A tier was kept after all, from another event.
             self.issues.retain(|issue| *issue != SERVICE_TIER_DROPPED);
+        }
+        if self.response_model.is_some() {
+            self.issues.retain(|issue| *issue != RESPONSE_MODEL_DROPPED);
         }
     }
 }
@@ -854,16 +889,23 @@ pub fn parse_provider_response(
         }
     };
     let (service_tier, tier_dropped) = service_tier(payload, usage);
+    let named_model = response_model(payload);
+    let model_dropped = named_model
+        .as_deref()
+        .is_some_and(|model| !crate::is_deployment_value(model));
+    let mut issues = Vec::new();
+    if tier_dropped {
+        issues.push(SERVICE_TIER_DROPPED);
+    }
+    if model_dropped {
+        issues.push(RESPONSE_MODEL_DROPPED);
+    }
     ProviderResponse {
         usage: parsed.filter(|usage| !usage.is_placeholder()),
-        response_model: response_model(payload),
+        response_model: named_model.filter(|_| !model_dropped),
         service_tier,
         error: provider_error(payload),
-        issues: if tier_dropped {
-            vec![SERVICE_TIER_DROPPED]
-        } else {
-            Vec::new()
-        },
+        issues,
     }
 }
 
@@ -1530,8 +1572,17 @@ impl UsageStream {
 }
 
 /// The name an error object gives its failure: `type`, else `code`, else
-/// `status`. A numeric code is read as its digits.
+/// `status`. A numeric code is read as its digits, except beside a `status`
+/// name (Google's `{"code": 429, "status": "RESOURCE_EXHAUSTED"}`), which
+/// says more than the HTTP status it repeats.
 fn error_name(error: Option<&Json>) -> Option<String> {
+    if member(error, "type").is_none()
+        && matches!(member(error, "code"), Some(Json::Number(_)))
+        && let Some(Json::String(status)) = member(error, "status")
+        && crate::error_type_for_name(status).is_some()
+    {
+        return Some(status.trim().to_string());
+    }
     for key in ["type", "code", "status"] {
         match member(error, key) {
             Some(Json::String(name)) if !name.trim().is_empty() => {

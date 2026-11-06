@@ -32,6 +32,15 @@
 #define ddog_ai_usage_MAX_LINE_BYTES 8192
 
 /**
+ * An option of [`ddog_ai_usage_parse_provider_response_with`] and
+ * [`ddog_ai_usage_stream_new_with`]: report usage with inclusive totals,
+ * cache reads and writes added to an input that excludes them and
+ * reasoning added to an output that excludes it, both bases then
+ * `includes_*`.
+ */
+#define ddog_ai_usage_INCLUSIVE_TOTALS 1
+
+/**
  * How a call ended.
  */
 typedef enum ddog_ai_usage_Status {
@@ -579,8 +588,15 @@ void ddog_ai_usage_batch_drop(struct ddog_ai_usage_Batch *batch);
  * `{"usage": {...} | null, "response_model", "service_tier", "outcome",
  * "error_name", "error_type", "error_code", "error_message", "issues"}` to
  * `out`. `issues` says why something reported was not kept:
- * `service_tier_dropped` for a tier outside `^[A-Za-z0-9._-]{1,32}$`.
- * `usage` holds the members to merge into an observation. `error_code` and
+ * `service_tier_dropped` for a tier outside `^[A-Za-z0-9._-]{1,32}$`, and
+ * `response_model_dropped` for a served model outside the deployment value
+ * grammar (so a provider cannot mint tag values from free text).
+ * `usage` holds the members to merge into an observation. Its
+ * `input_tokens_by_modality` and `output_tokens_by_modality` hold the
+ * provider's own `image` and `audio` parts, counted within the totals:
+ * OpenAI-shaped usage reports image output tokens (image generation) as
+ * `output_tokens_by_modality.image`, which a caller prices at the model's
+ * image rate. `error_code` and
  * `error_message` are the provider's own, from the body or an in-band
  * stream error: control characters removed, the message cut to 256 bytes,
  * so a gateway can log them without parsing the error itself. `embeddings`
@@ -597,6 +613,57 @@ enum ddog_ai_usage_Status ddog_ai_usage_parse_provider_response(const uint8_t *f
                                                                 const uint8_t *body,
                                                                 uintptr_t body_len,
                                                                 struct ddog_ai_usage_Buffer *out);
+
+/**
+ * [`ddog_ai_usage_parse_provider_response`] with `options`, a bit set:
+ * [`INCLUSIVE_TOTALS`] reports usage with inclusive totals. Unknown bits
+ * are [`Status::Rejected`].
+ *
+ * # Safety
+ *
+ * As [`ddog_ai_usage_parse_provider_response`].
+ */
+enum ddog_ai_usage_Status ddog_ai_usage_parse_provider_response_with(const uint8_t *format,
+                                                                     uintptr_t format_len,
+                                                                     bool embeddings,
+                                                                     uint32_t options,
+                                                                     const uint8_t *body,
+                                                                     uintptr_t body_len,
+                                                                     struct ddog_ai_usage_Buffer *out);
+
+/**
+ * [`ddog_ai_usage_stream_new`] with `options`, as
+ * [`ddog_ai_usage_parse_provider_response_with`] reads them: with
+ * [`INCLUSIVE_TOTALS`], `_finish` and `_take` report inclusive totals.
+ *
+ * # Safety
+ *
+ * As [`ddog_ai_usage_stream_new`].
+ */
+enum ddog_ai_usage_Status ddog_ai_usage_stream_new_with(const uint8_t *format,
+                                                        uintptr_t format_len,
+                                                        bool embeddings,
+                                                        uint32_t options,
+                                                        struct ddog_ai_usage_Stream **out);
+
+/**
+ * Write the `error.type` of a provider attempt that ended with the gateway
+ * outcome `outcome[..outcome_len]` and the provider's HTTP `status` (0 for
+ * none) to `out`: `provider_http_error` and the subscription refusals by
+ * status, `timeout` as `timeout_error`, `unavailable`, `stream_read_error`,
+ * `early_close` and `incomplete_stream` as `api_connection_error`,
+ * `canceled` as `cancelled`, and any other outcome by its name and status
+ * (`api_error` when neither says why). Never [`Status::Rejected`].
+ *
+ * # Safety
+ *
+ * `outcome` must point to `outcome_len` readable bytes (or `outcome_len`
+ * must be 0), and `out` must be null or writable.
+ */
+enum ddog_ai_usage_Status ddog_ai_usage_error_type_for_outcome(const uint8_t *outcome,
+                                                               uintptr_t outcome_len,
+                                                               uint16_t status,
+                                                               struct ddog_ai_usage_Buffer *out);
 
 /**
  * Start reading a provider stream in the usage `format`, as

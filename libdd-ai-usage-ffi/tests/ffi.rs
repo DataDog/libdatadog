@@ -1499,3 +1499,81 @@ fn a_batch_taken_as_intake_series() {
         ddog_ai_usage_batch_drop(batch);
     }
 }
+
+#[test]
+fn outcomes_and_inclusive_totals_across_the_boundary() {
+    // SAFETY: valid inputs and outputs throughout; the stream is used until
+    // taken.
+    unsafe {
+        let outcome = "early_close";
+        assert_eq!(
+            text_out(|out| ddog_ai_usage_error_type_for_outcome(
+                outcome.as_ptr(),
+                outcome.len(),
+                0,
+                out
+            )),
+            (Status::Ok, "api_connection_error".to_string())
+        );
+        let outcome = "provider_http_error";
+        assert_eq!(
+            text_out(|out| ddog_ai_usage_error_type_for_outcome(
+                outcome.as_ptr(),
+                outcome.len(),
+                429,
+                out
+            ))
+            .1,
+            "rate_limit_error"
+        );
+        let format = "anthropic";
+        let body = r#"{"model": "claude-sonnet-4-5", "usage": {"input_tokens": 10, "output_tokens": 5,
+            "cache_read_input_tokens": 100}}"#;
+        let mut out = empty();
+        assert_eq!(
+            ddog_ai_usage_parse_provider_response_with(
+                format.as_ptr(),
+                format.len(),
+                false,
+                INCLUSIVE_TOTALS,
+                body.as_ptr(),
+                body.len(),
+                &mut out
+            ),
+            Status::Ok
+        );
+        let value = json_of(out);
+        assert_eq!(value["usage"]["input_tokens"], 110);
+        assert_eq!(value["usage"]["input_basis"], "includes_cache");
+        let mut out = empty();
+        assert_eq!(
+            ddog_ai_usage_parse_provider_response_with(
+                format.as_ptr(),
+                format.len(),
+                false,
+                8,
+                body.as_ptr(),
+                body.len(),
+                &mut out
+            ),
+            Status::Rejected
+        );
+        take(out);
+        let mut stream = ptr::null_mut();
+        assert_eq!(
+            ddog_ai_usage_stream_new_with(
+                format.as_ptr(),
+                format.len(),
+                false,
+                INCLUSIVE_TOTALS,
+                &mut stream
+            ),
+            Status::Ok
+        );
+        let chunk = format!("data: {}\n\n", body.replace('\n', " "));
+        ddog_ai_usage_stream_feed(stream, chunk.as_ptr(), chunk.len());
+        let mut out = empty();
+        assert_eq!(ddog_ai_usage_stream_take(stream, &mut out), Status::Ok);
+        assert_eq!(json_of(out)["usage"]["input_tokens"], 110);
+    }
+}
