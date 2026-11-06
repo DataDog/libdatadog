@@ -75,6 +75,7 @@ pub fn discover(
     crates_filter: Option<&[String]>,
     instrumented_target_dir: Option<&Path>,
 ) -> Result<Inventory> {
+    let started = std::time::Instant::now();
     let metadata = MetadataCommand::new()
         .manifest_path(workspace_root.join("Cargo.toml"))
         .no_deps()
@@ -85,8 +86,19 @@ pub fn discover(
     validate_crates_filter(crates_filter, members.iter().map(|pkg| pkg.name.as_ref()))?;
     let wanted: Option<std::collections::BTreeSet<&str>> =
         crates_filter.map(|c| c.iter().map(|s| s.as_str()).collect());
+    match crates_filter {
+        Some(crates) => log::info!(
+            "inventory: {} crate(s) in scope, discovering their bench targets",
+            crates.len()
+        ),
+        None => log::info!(
+            "inventory: discovering bench targets of all {} workspace crates",
+            members.len()
+        ),
+    }
 
     let mut binaries = Vec::new();
+    let mut step = 0;
     for pkg in members {
         // Not a let-chain: the tool builds on checkouts older than Rust 1.88,
         // where let-chains are not stable.
@@ -113,6 +125,13 @@ pub fn discover(
                 }
             }
             features.sort();
+            step += 1;
+            let listing = std::time::Instant::now();
+            log::info!(
+                "inventory: [{step}] listing {} --bench {}",
+                pkg.name,
+                target.name
+            );
             let bench_ids = list_bench_ids(
                 workspace_root,
                 pkg.name.as_ref(),
@@ -120,6 +139,13 @@ pub fn discover(
                 &features,
                 instrumented_target_dir,
             )?;
+            log::info!(
+                "inventory: [{step}] {} --bench {}: {} benchmark ID(s) in {:.1?}",
+                pkg.name,
+                target.name,
+                bench_ids.len(),
+                listing.elapsed()
+            );
             if bench_ids.is_empty() {
                 log::warn!(
                     "no benchmarks listed for {} --bench {}; skipping",
@@ -138,6 +164,12 @@ pub fn discover(
         }
     }
     binaries.sort_by(|a, b| (&a.crate_name, &a.target).cmp(&(&b.crate_name, &b.target)));
+    log::info!(
+        "inventory: {} bench binary(ies), {} benchmark ID(s) in {:.1?}",
+        binaries.len(),
+        binaries.iter().map(|b| b.bench_ids.len()).sum::<usize>(),
+        started.elapsed()
+    );
     Ok(Inventory { binaries })
 }
 

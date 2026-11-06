@@ -100,7 +100,9 @@ enum Cmd {
 }
 
 fn main() -> Result<()> {
-    env_logger::init();
+    // Default to info so CI job logs show the pass's progress without env
+    // plumbing; RUST_LOG still overrides (e.g. RUST_LOG=warn to silence).
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     let cli = Cli::parse();
     match cli.cmd {
         Cmd::Inventory {

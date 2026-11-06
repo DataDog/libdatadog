@@ -114,6 +114,20 @@ pub fn run(
         profdata: ensure_tool("llvm-profdata")?,
         cov: ensure_tool("llvm-cov")?,
     };
+    let started = std::time::Instant::now();
+    let in_scope: Vec<&BenchBinary> = inventory
+        .binaries
+        .iter()
+        .filter(|bin| crates_filter.is_none_or(|f| f.iter().any(|c| c == &bin.crate_name)))
+        .collect();
+    log::info!(
+        "coverage: {} binaries, {} clusters, debug-like instrumented build",
+        in_scope.len(),
+        in_scope
+            .iter()
+            .map(|bin| bin.clusters().len())
+            .sum::<usize>()
+    );
     // llvm-cov reports absolute file paths, and coverage files are normalized
     // against this root — canonicalize so a relative `--workspace-root .` works.
     let workspace_root = workspace_root
@@ -153,6 +167,12 @@ pub fn run(
             continue;
         };
         for cluster in bin.clusters() {
+            log::info!(
+                "coverage: cluster \'{}\' ({} benchmark ID(s))",
+                cluster.name,
+                cluster.bench_ids.len()
+            );
+            let started = std::time::Instant::now();
             let entry = cover_cluster(
                 &workspace_root,
                 bin,
@@ -162,9 +182,26 @@ pub fn run(
                 &work,
                 &tools,
             );
+            log::info!(
+                "coverage: cluster \'{}\' {} in {:.1?}",
+                cluster.name,
+                if entry.status == "ok" {
+                    format!("{} file(s), {} dep(s)", entry.files.len(), entry.deps.len())
+                } else {
+                    "FAILED (will always run)".to_string()
+                },
+                started.elapsed()
+            );
             entries.push(entry);
         }
     }
+    let ok = entries.iter().filter(|e| e.status == "ok").count();
+    log::info!(
+        "coverage: {} of {} clusters covered in {:.1?}",
+        ok,
+        entries.len(),
+        started.elapsed()
+    );
     Ok(Coverage { entries })
 }
 
@@ -324,9 +361,21 @@ fn build_instrumented(
     let mut cmd = cargo_cmd(workspace_root, &env, bin);
     cmd.args(["--no-run", "--message-format", "json"]);
     cmd.env("LLVM_PROFILE_FILE", work.join(BUILD_JUNK_PROFILE_PATTERN));
+    log::info!(
+        "coverage: building {} --bench {} instrumented",
+        bin.crate_name,
+        bin.target
+    );
+    let started = std::time::Instant::now();
     let output = cmd
         .output()
         .with_context(|| format!("failed to build {} instrumented", bin.target))?;
+    log::info!(
+        "coverage: built {} --bench {} in {:.1?}",
+        bin.crate_name,
+        bin.target,
+        started.elapsed()
+    );
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         bail!(
