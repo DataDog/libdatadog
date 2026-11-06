@@ -517,20 +517,19 @@ pub fn translate_otel_genai_metric(
             Some("output") => "gen_ai.client.inference.usage.output_tokens",
             _ => return None,
         },
-        name => {
-            let dotted = if prometheus {
-                Profile::ALL
-                    .iter()
-                    .flat_map(|p| p.metric_names())
-                    .find(|m| m.replace('.', "_") == name)?
-            } else {
-                Profile::ALL
-                    .iter()
-                    .flat_map(|p| p.metric_names())
-                    .find(|m| **m == name)?
-            };
-            dotted
-        }
+        name => Profile::ALL
+            .iter()
+            .flat_map(|p| p.metric_names())
+            .find(|m| {
+                if prometheus {
+                    m.len() == name.len()
+                        && m.bytes()
+                            .zip(name.bytes())
+                            .all(|(a, b)| a == b || (a == b'.' && b == b'_'))
+                } else {
+                    **m == name
+                }
+            })?,
     };
     let profile = *Profile::ALL
         .iter()
