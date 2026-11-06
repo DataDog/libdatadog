@@ -138,5 +138,7 @@ SDKs can log these evaluations even if a later condition rejects their rule. Onl
 marked `exposure_eligible` belong to the root's successful rule/split path; a failed root has
 no eligible prerequisite exposures. SDKs must
 also apply each assignment's `do_log`, consent, and ordinary exposure deduplication policy.
-The trace does not emit telemetry itself. SDKs should advertise dependent-flag support only
+SDKs must stage eligible exposures until the complete OpenFeature evaluation succeeds, including
+application hooks, and admit them to deduplication only at that point. Evaluation records remain
+reportable when a hook fails. The trace does not emit telemetry itself. SDKs should advertise dependent-flag support only
 after integrating and testing both evaluation and exposure reporting.
