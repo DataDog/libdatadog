@@ -3,35 +3,33 @@
 
 use crate::catch_panic;
 use libdd_common_ffi::CharSlice;
+use libdd_http_client::HttpClientError as InnerError;
 
-/// Why a call failed. Callers are expected to branch on this, for example to tell a timeout from a
-/// refused connection.
+/// Why a call failed.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum HttpClientErrorCode {
-    /// A pointer argument was null, a string was not valid UTF-8, or a request was malformed
-    /// (invalid header, relative URL without a leading `/`, both `body` and `multipart` set, ...).
+    /// A `NULL` pointer, a non-UTF-8 string, or a malformed request.
     InvalidArgument,
-    /// The client configuration was rejected (missing `base_url`, zero `timeout_ms`, ...).
+    /// The client configuration was rejected.
     InvalidConfig,
-    /// The connection to the server could not be established.
+    /// The connection could not be established.
     ConnectionFailed,
-    /// The request did not complete within its timeout.
+    /// The request exceeded its timeout.
     TimedOut,
-    /// The request was cancelled through its [`crate::HttpCancellationToken`].
+    /// The request's cancellation token was cancelled.
     Cancelled,
-    /// Any other I/O error while sending the request or reading the response.
+    /// Any other I/O error.
     Io,
-    /// The runtime needed to drive the request could not be used.
+    /// The runtime could not run the request.
     Runtime,
     /// A panic was caught at the FFI boundary.
     #[cfg(feature = "catch_panic")]
     Panic,
 }
 
-/// Error returned by the fallible functions of this crate. Opaque: use
-/// [`ddog_http_client_error_code`] and [`ddog_http_client_error_message`], and release it with
-/// [`ddog_http_client_error_free`]. A `NULL` return always means success.
+/// Error of a fallible call, where `NULL` means success. Release it with
+/// [`ddog_http_client_error_free`].
 #[derive(Debug)]
 pub struct HttpClientError {
     code: HttpClientErrorCode,
@@ -45,11 +43,43 @@ impl HttpClientError {
             message: message.into(),
         }
     }
+
+    pub(crate) fn invalid_argument(message: impl Into<String>) -> Self {
+        Self::new(HttpClientErrorCode::InvalidArgument, message)
+    }
+
+    pub(crate) fn invalid_config(message: impl Into<String>) -> Self {
+        Self::new(HttpClientErrorCode::InvalidConfig, message)
+    }
+
+    pub(crate) fn from_build(error: InnerError) -> Self {
+        Self::from_inner(error, HttpClientErrorCode::InvalidConfig)
+    }
+
+    /// When sending, an invalid configuration can only come from the request.
+    pub(crate) fn from_send(error: InnerError) -> Self {
+        Self::from_inner(error, HttpClientErrorCode::InvalidArgument)
+    }
+
+    fn from_inner(error: InnerError, invalid_config_code: HttpClientErrorCode) -> Self {
+        match error {
+            InnerError::ConnectionFailed(message) => {
+                Self::new(HttpClientErrorCode::ConnectionFailed, message)
+            }
+            InnerError::TimedOut => Self::new(HttpClientErrorCode::TimedOut, "request timed out"),
+            InnerError::InvalidConfig(message) => Self::new(invalid_config_code, message),
+            InnerError::IoError(message) => Self::new(HttpClientErrorCode::Io, message),
+            // Unreachable: HTTP errors are returned as responses.
+            InnerError::RequestFailed { status, body } => Self::new(
+                HttpClientErrorCode::Io,
+                format!("unexpected HTTP error status {status}: {body}"),
+            ),
+        }
+    }
 }
 
-/// Error value used when a panic is caught at the FFI boundary.
 #[cfg(feature = "catch_panic")]
-#[allow(dead_code)] // unused when `panic = "abort"` turns `catch_panic!` into a pass-through
+#[allow(dead_code)] // unused with `panic = "abort"`
 pub(crate) fn panic_error() -> Option<Box<HttpClientError>> {
     Some(Box::new(HttpClientError::new(
         HttpClientErrorCode::Panic,
@@ -57,63 +87,47 @@ pub(crate) fn panic_error() -> Option<Box<HttpClientError>> {
     )))
 }
 
-/// Error returned by the mocked entry points. Removed when the real implementation lands.
-pub(crate) fn not_implemented(function: &str) -> Option<Box<HttpClientError>> {
-    Some(Box::new(HttpClientError::new(
-        HttpClientErrorCode::Runtime,
-        format!("{function}: not implemented"),
-    )))
-}
-
 /// Returns the code of an error.
 ///
 /// # Safety
 ///
-/// `error` must be a pointer returned by this library that has not been freed.
+/// `error` must be a live error pointer.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_http_client_error_code(
     error: *const HttpClientError,
 ) -> HttpClientErrorCode {
     catch_panic!(
-        {
-            // SAFETY: guaranteed by the caller, see the `# Safety` section.
-            match unsafe { error.as_ref() } {
-                Some(error) => error.code,
-                None => HttpClientErrorCode::InvalidArgument,
-            }
+        match unsafe { error.as_ref() } {
+            Some(error) => error.code,
+            None => HttpClientErrorCode::InvalidArgument,
         },
         HttpClientErrorCode::Runtime
     )
 }
 
-/// Returns the human-readable message of an error, as UTF-8 without a trailing NUL. The slice is
-/// valid until the error is freed.
+/// Returns the message of an error, valid until the error is freed.
 ///
 /// # Safety
 ///
-/// `error` must be a pointer returned by this library that has not been freed.
+/// `error` must be a live error pointer.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_http_client_error_message(
     error: *const HttpClientError,
 ) -> CharSlice<'static> {
     catch_panic!(
-        {
-            // SAFETY: guaranteed by the caller, see the `# Safety` section. The returned lifetime
-            // is only nominal: the caller must not use the slice after freeing the error.
-            match unsafe { error.as_ref() } {
-                Some(error) => CharSlice::from(error.message.as_str()),
-                None => CharSlice::default(),
-            }
+        match unsafe { error.as_ref() } {
+            Some(error) => CharSlice::from(error.message.as_str()),
+            None => CharSlice::default(),
         },
         CharSlice::default()
     )
 }
 
-/// Frees an error. Passing `NULL` is a no-op. The pointer is invalid afterwards.
+/// Frees an error. Passing `NULL` is a no-op.
 ///
 /// # Safety
 ///
-/// `error` must be `NULL` or a pointer returned by this library that has not been freed.
+/// `error` must be `NULL` or a live error pointer.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_http_client_error_free(error: Option<Box<HttpClientError>>) {
     catch_panic!(drop(error), ())

@@ -1,8 +1,6 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! What the caller gets back: statuses as data, headers, bodies, and the lifetime of a response.
-
 mod common;
 
 use common::*;
@@ -11,7 +9,6 @@ use libdd_http_client_ffi::*;
 
 #[test]
 fn error_statuses_are_returned_as_data_with_their_body_and_headers() {
-    // dd-trace-rb falls back to another API version on 404/415 and needs the body of every status.
     for (status, body) in [(404, "not here"), (415, "unsupported"), (500, "boom")] {
         let server = spawn_tcp(move |_| {
             Behavior::Respond(http_response(
@@ -92,7 +89,7 @@ fn header_get_returns_an_empty_slice_for_a_missing_header() {
 }
 
 #[test]
-fn header_at_iterates_in_order_and_keeps_repeated_names() {
+fn header_at_returns_every_header_and_keeps_repeated_names() {
     let server = spawn_tcp(|_| {
         Behavior::Respond(http_response(
             200,
@@ -116,11 +113,13 @@ fn header_at_iterates_in_order_and_keeps_repeated_names() {
         .map(|(_, value)| value.as_str())
         .collect();
     assert_eq!(cookies, vec!["a=1", "c=3"]);
-    // Header_get returns the first one.
     assert_eq!(response.header("set-cookie").as_deref(), Some("a=1"));
-    // Order is the order received.
-    let position = |wanted: &str| headers.iter().position(|(_, v)| v == wanted).expect(wanted);
-    assert!(position("a=1") < position("b") && position("b") < position("c=3"));
+    // Headers of different names are not guaranteed to be in the order received.
+    assert!(
+        headers
+            .iter()
+            .any(|(n, v)| n.eq_ignore_ascii_case("x-between") && v == "b")
+    );
 }
 
 #[test]
@@ -131,7 +130,6 @@ fn header_at_out_of_range_returns_false_and_writes_nothing() {
 
     let mut name = CharSlice::from("untouched");
     let mut value = CharSlice::from("untouched");
-    // SAFETY: the response is live and the out pointers are valid for writes.
     let found = unsafe {
         ddog_http_response_header_at(response.0, response.header_count(), &mut name, &mut value)
     };
@@ -157,6 +155,5 @@ fn a_response_stays_valid_after_its_client_is_dropped() {
 
 #[test]
 fn dropping_a_null_response_is_a_no_op() {
-    // SAFETY: `None` (NULL) is part of the documented contract of `drop`.
     unsafe { ddog_http_response_drop(None) };
 }

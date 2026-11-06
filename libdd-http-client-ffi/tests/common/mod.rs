@@ -1,11 +1,7 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Shared helpers for the integration tests: thin safe wrappers over the C API, and a small
-//! in-process HTTP server (TCP and Unix socket) that records what it receives.
-//!
-//! The tests drive the `extern "C"` functions exactly as a C caller would; the wrappers only own
-//! the pointers and build the `#[repr(C)]` argument structs.
+//! Safe wrappers over the C API, and a small in-process HTTP server that records requests.
 
 #![allow(dead_code)]
 
@@ -22,11 +18,6 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread;
 use std::time::Duration;
 
-// ---------------------------------------------------------------------------------------------
-// Errors
-// ---------------------------------------------------------------------------------------------
-
-/// An error returned by the C API, copied out and freed.
 #[derive(Debug)]
 pub struct FfiError {
     pub code: HttpClientErrorCode,
@@ -36,7 +27,6 @@ pub struct FfiError {
 pub fn take_error(error: Option<Box<HttpClientError>>) -> Result<(), FfiError> {
     let Some(error) = error else { return Ok(()) };
     let raw = Box::into_raw(error);
-    // SAFETY: `raw` comes from the API and is freed exactly once, right after being read.
     unsafe {
         let code = ddog_http_client_error_code(raw);
         let message =
@@ -45,10 +35,6 @@ pub fn take_error(error: Option<Box<HttpClientError>>) -> Result<(), FfiError> {
         Err(FfiError { code, message })
     }
 }
-
-// ---------------------------------------------------------------------------------------------
-// Client
-// ---------------------------------------------------------------------------------------------
 
 #[derive(Clone, Debug)]
 pub struct Cfg {
@@ -99,12 +85,15 @@ impl Cfg {
         self
     }
 
-    /// Builds a client that owns a private runtime.
     pub fn build(&self) -> Result<Client, FfiError> {
         self.build_with_runtime(null())
     }
 
     pub fn build_with_runtime(&self, runtime: *const ForkSafeRuntime) -> Result<Client, FfiError> {
+        // reqwest panics when building a client without an installed crypto provider.
+        #[cfg(feature = "reqwest-backend")]
+        let _ = rustls::crypto::ring::default_provider().install_default();
+
         let headers: Vec<HttpHeader<'_>> = self
             .default_headers
             .iter()
@@ -123,15 +112,13 @@ impl Cfg {
             retry_initial_delay_ms: self.retry_initial_delay_ms,
         };
         let mut out: *mut HttpClient = null_mut();
-        // SAFETY: `config` and its slices outlive the call; `out` is valid for writes.
         let error = unsafe { ddog_http_client_new(&config, runtime, &mut out) };
         take_error(error)?;
         Ok(Client(out))
     }
 }
 
-/// Owns a client pointer. The C API documents clients as usable from several threads at once,
-/// which is what the `Send`/`Sync` impls below assert (and the concurrency test checks).
+/// Clients are documented as usable from several threads, hence `Send` and `Sync`.
 pub struct Client(pub *mut HttpClient);
 
 unsafe impl Send for Client {}
@@ -145,9 +132,8 @@ impl Client {
     pub fn send_with(&self, request: &Req, cancel: Option<&Token>) -> Result<Response, FfiError> {
         let cancel_ptr: *const HttpCancellationToken = cancel.map_or(null(), |t| t.0.cast_const());
         let mut out: *mut HttpResponse = null_mut();
-        let error = request.with_ffi(|request| {
-            // SAFETY: all pointers are valid for the duration of the call.
-            unsafe { ddog_http_client_send(self.0, request, cancel_ptr, &mut out) }
+        let error = request.with_ffi(|request| unsafe {
+            ddog_http_client_send(self.0, request, cancel_ptr, &mut out)
         });
         take_error(error)?;
         Ok(Response(out))
@@ -156,7 +142,6 @@ impl Client {
 
 impl Drop for Client {
     fn drop(&mut self) {
-        // SAFETY: the pointer came from `ddog_http_client_new` and is dropped once.
         unsafe {
             ddog_http_client_drop(if self.0.is_null() {
                 None
@@ -166,10 +151,6 @@ impl Drop for Client {
         }
     }
 }
-
-// ---------------------------------------------------------------------------------------------
-// Requests
-// ---------------------------------------------------------------------------------------------
 
 #[derive(Clone, Debug)]
 pub struct Part {
@@ -250,7 +231,6 @@ impl Req {
         self
     }
 
-    /// Builds the `#[repr(C)]` request over this request's data and hands it to `f`.
     pub fn with_ffi<R>(&self, f: impl FnOnce(&HttpRequest<'_>) -> R) -> R {
         let headers: Vec<HttpHeader<'_>> = self
             .headers
@@ -282,34 +262,26 @@ impl Req {
     }
 }
 
-// ---------------------------------------------------------------------------------------------
-// Responses
-// ---------------------------------------------------------------------------------------------
-
 pub struct Response(pub *mut HttpResponse);
 
 impl Response {
     pub fn status(&self) -> u16 {
-        // SAFETY: the pointer is live until `Drop`.
         unsafe { ddog_http_response_status(self.0) }
     }
 
     pub fn body(&self) -> Vec<u8> {
-        // SAFETY: the pointer is live until `Drop`.
         unsafe { ddog_http_response_body(self.0) }
             .as_slice()
             .to_vec()
     }
 
     pub fn header_count(&self) -> usize {
-        // SAFETY: the pointer is live until `Drop`.
         unsafe { ddog_http_response_header_count(self.0) }
     }
 
     pub fn header_at(&self, index: usize) -> Option<(String, String)> {
         let mut name = CharSlice::default();
         let mut value = CharSlice::default();
-        // SAFETY: the pointer is live and the out pointers are valid for writes.
         let found = unsafe { ddog_http_response_header_at(self.0, index, &mut name, &mut value) };
         found.then(|| {
             (
@@ -325,9 +297,8 @@ impl Response {
             .collect()
     }
 
-    /// Value of the first header called `name`, `None` if the API returned an empty slice.
+    /// `None` when the API returns an empty slice.
     pub fn header(&self, name: &str) -> Option<String> {
-        // SAFETY: the pointer is live and `name` is valid for reads.
         let value = unsafe { ddog_http_response_header_get(self.0, CharSlice::from(name)) };
         let value = String::from_utf8_lossy(value.as_bytes()).into_owned();
         (!value.is_empty()).then_some(value)
@@ -336,7 +307,6 @@ impl Response {
 
 impl Drop for Response {
     fn drop(&mut self) {
-        // SAFETY: the pointer came from `ddog_http_client_send` and is dropped once.
         unsafe {
             ddog_http_response_drop(if self.0.is_null() {
                 None
@@ -346,10 +316,6 @@ impl Drop for Response {
         }
     }
 }
-
-// ---------------------------------------------------------------------------------------------
-// Cancellation tokens
-// ---------------------------------------------------------------------------------------------
 
 pub struct Token(pub *mut HttpCancellationToken);
 
@@ -364,23 +330,17 @@ impl Token {
     }
 
     pub fn cancel(&self) -> bool {
-        // SAFETY: the pointer is live until `Drop`.
         unsafe { ddog_http_cancel_token_cancel(self.0) }
     }
 }
 
 impl Drop for Token {
     fn drop(&mut self) {
-        // SAFETY: the pointer came from the API and is dropped once.
         unsafe { ddog_http_cancel_token_drop(Some(Box::from_raw(self.0))) }
     }
 }
 
-// ---------------------------------------------------------------------------------------------
-// Shared runtime, as an integrator would hand it over (`ddog_shared_runtime_new` returns an
-// `Arc::into_raw` pointer).
-// ---------------------------------------------------------------------------------------------
-
+/// Mimics the `Arc::into_raw` pointer that `ddog_shared_runtime_new` returns.
 pub fn new_shared_runtime() -> *const ForkSafeRuntime {
     Arc::into_raw(Arc::new(
         ForkSafeRuntime::with_worker_threads(1).expect("runtime creation failed"),
@@ -390,15 +350,10 @@ pub fn new_shared_runtime() -> *const ForkSafeRuntime {
 /// # Safety
 /// `runtime` must come from [`new_shared_runtime`] and not have been freed.
 pub unsafe fn free_shared_runtime(runtime: *const ForkSafeRuntime) {
-    // SAFETY: guaranteed by the caller.
     drop(unsafe { Arc::from_raw(runtime) });
 }
 
-// ---------------------------------------------------------------------------------------------
-// Test server
-// ---------------------------------------------------------------------------------------------
-
-/// What the server received for one request. Header names are lower-cased.
+/// Header names are lower-cased.
 #[derive(Clone, Debug)]
 pub struct Recorded {
     pub method: String,
@@ -422,7 +377,6 @@ impl Recorded {
     }
 }
 
-/// What the server does with a connection, chosen when the connection is accepted.
 pub enum Behavior {
     /// Read the request, then write these bytes and close.
     Respond(Vec<u8>),
@@ -432,8 +386,7 @@ pub enum Behavior {
     Hang,
 }
 
-/// Builds a raw HTTP/1.1 response. `Connection: close` keeps the client from reusing a socket the
-/// server is about to close.
+/// `Connection: close` keeps the client from reusing a socket the server closes.
 pub fn http_response(status: u16, headers: &[(&str, &str)], body: &[u8]) -> Vec<u8> {
     let reason = match status {
         200 => "OK",
@@ -481,14 +434,12 @@ impl Server {
         format!("http://{}{path}", self.addr())
     }
 
-    /// Waits for the next request the server received.
     pub fn recv(&self) -> Recorded {
         self.requests
             .recv_timeout(Duration::from_secs(5))
             .expect("no request reached the server")
     }
 
-    /// True if no request reaches the server within `wait`.
     pub fn nothing_within(&self, wait: Duration) -> bool {
         self.requests.recv_timeout(wait).is_err()
     }
@@ -500,8 +451,7 @@ impl Drop for Server {
     }
 }
 
-/// Starts a TCP server on a free local port. `handler` receives the index of each accepted
-/// connection (0, 1, ...) and decides what to do with it.
+/// `handler` gets the index of each accepted connection and decides what to do with it.
 pub fn spawn_tcp(handler: impl Fn(usize) -> Behavior + Send + 'static) -> Server {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind failed");
     let addr = listener.local_addr().expect("no local addr");
@@ -533,7 +483,6 @@ pub fn spawn_tcp(handler: impl Fn(usize) -> Behavior + Send + 'static) -> Server
     }
 }
 
-/// Starts a Unix-domain-socket server at `path`.
 #[cfg(unix)]
 pub fn spawn_uds(
     path: &std::path::Path,
@@ -569,7 +518,6 @@ pub fn spawn_uds(
     }
 }
 
-/// An address on which nothing listens, so connecting to it is refused.
 pub fn refused_addr() -> SocketAddr {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind failed");
     let addr = listener.local_addr().expect("no local addr");
