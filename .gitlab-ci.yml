@@ -1,4 +1,11 @@
 variables:
+  # SELF-TEST MODE (temporary validation branch): relax the benchmark-tooling
+  # full-suite guard so this branch's own tooling changes do not force the
+  # full suite, and the granular benchmark selection can be observed. Remove
+  # this branch after validating.
+  BENCH_SELECTOR_SELF_TEST:
+    value: "1"
+    description: "bench-selection validation branch; see benchmark/select_bench_packages.sh"
   # These are gitlab variables so that it's easier to do a manual deploy
   # If these are set witih value and description, then it gives you UI elements
   DOWNSTREAM_BRANCH:
