@@ -349,6 +349,7 @@ fn points_of(
 }
 
 #[test]
+#[cfg_attr(miri, ignore)] // many encodings are too slow under Miri
 fn parts_are_bounded_and_never_split_a_series() {
     let batch = batch();
     let whole = batch.encode_otlp_with(SCOPE, WINDOW, libdd_ai_usage::OtlpBinding::OpenTelemetry);

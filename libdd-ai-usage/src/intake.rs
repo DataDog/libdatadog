@@ -314,6 +314,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // many encodings are too slow under Miri
     fn sketches_count_and_fold() {
         let sketch = Sketch::of(&[1.0, 1.0, 2.0, f64::NAN, 0.5]).unwrap();
         assert_eq!(sketch.count, 4);
