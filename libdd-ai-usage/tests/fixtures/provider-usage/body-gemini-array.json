@@ -1,0 +1,19 @@
+{
+  "description": "Vertex AI can return a stream as one JSON array of its chunks.",
+  "format": "gemini",
+  "operation_name": "chat",
+  "body": "[\n  {\n    \"candidates\": [\n      {\n        \"content\": {\n          \"parts\": [\n            {\n              \"text\": \"Hel\"\n            }\n          ]\n        }\n      }\n    ],\n    \"modelVersion\": \"gemini-2.5-flash\",\n    \"usageMetadata\": {\n      \"promptTokenCount\": 10,\n      \"candidatesTokenCount\": 1,\n      \"totalTokenCount\": 11\n    }\n  },\n  {\n    \"candidates\": [\n      {\n        \"content\": {\n          \"parts\": [\n            {\n              \"text\": \"lo\"\n            }\n          ]\n        },\n        \"finishReason\": \"STOP\"\n      }\n    ],\n    \"modelVersion\": \"gemini-2.5-flash\",\n    \"usageMetadata\": {\n      \"promptTokenCount\": 10,\n      \"candidatesTokenCount\": 2,\n      \"thoughtsTokenCount\": 3,\n      \"totalTokenCount\": 15\n    }\n  }\n]",
+  "expected": {
+    "usage": {
+      "input_tokens": 10,
+      "input_basis": "includes_cache",
+      "output_tokens": 5,
+      "output_basis": "includes_reasoning",
+      "reasoning_output_tokens": 3
+    },
+    "response_model": "gemini-2.5-flash",
+    "service_tier": null,
+    "outcome": "completed",
+    "error_name": null
+  }
+}

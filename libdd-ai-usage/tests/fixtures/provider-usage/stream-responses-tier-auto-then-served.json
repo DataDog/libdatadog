@@ -1,0 +1,18 @@
+{
+  "description": "A Responses stream echoes the requested tier (auto) in response.created and response.in_progress, and names the served tier (default) in response.completed, which carries the usage: the served tier is kept.",
+  "format": "openai_responses",
+  "operation_name": "chat",
+  "body": "event: response.created\ndata: {\"type\": \"response.created\", \"response\": {\"model\": \"gpt-5\", \"status\": \"in_progress\", \"service_tier\": \"auto\", \"usage\": null}}\n\nevent: response.in_progress\ndata: {\"type\": \"response.in_progress\", \"response\": {\"model\": \"gpt-5\", \"status\": \"in_progress\", \"service_tier\": \"auto\", \"usage\": null}}\n\nevent: response.output_text.delta\ndata: {\"type\": \"response.output_text.delta\", \"delta\": \"text\"}\n\nevent: response.completed\ndata: {\"type\": \"response.completed\", \"response\": {\"model\": \"gpt-5\", \"service_tier\": \"default\", \"usage\": {\"input_tokens\": 100, \"output_tokens\": 20}}}\n\n",
+  "expected": {
+    "usage": {
+      "input_tokens": 100,
+      "input_basis": "includes_cache",
+      "output_tokens": 20,
+      "output_basis": "includes_reasoning"
+    },
+    "response_model": "gpt-5",
+    "service_tier": "default",
+    "outcome": "completed",
+    "error_name": null
+  }
+}

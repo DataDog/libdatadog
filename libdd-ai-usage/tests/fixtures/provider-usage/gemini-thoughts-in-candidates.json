@@ -1,0 +1,24 @@
+{
+  "description": "When prompt, candidates and tool-use prompt add up to the total, the candidates already count the thoughts.",
+  "format": "gemini",
+  "operation_name": "chat",
+  "payload": {
+    "usageMetadata": {
+      "promptTokenCount": 10,
+      "candidatesTokenCount": 8,
+      "thoughtsTokenCount": 3,
+      "totalTokenCount": 18
+    }
+  },
+  "expected": {
+    "usage": {
+      "input_tokens": 10,
+      "input_basis": "includes_cache",
+      "output_tokens": 8,
+      "output_basis": "includes_reasoning",
+      "reasoning_output_tokens": 3
+    },
+    "response_model": null,
+    "service_tier": null
+  }
+}
