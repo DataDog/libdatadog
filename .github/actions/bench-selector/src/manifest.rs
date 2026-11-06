@@ -96,6 +96,10 @@ pub fn manifest_changes(
         }
     };
 
+    log::info!(
+        "manifests: comparing {} changed Cargo.toml against merge base {merge_base}",
+        manifests.len()
+    );
     for path in &manifests {
         // Missing on a side (manifest added or deleted) compares against an
         // empty document: the [package] table then differs, which correctly
@@ -116,6 +120,26 @@ pub fn manifest_changes(
             }
         };
         let parsed = compare_manifests(&base, &head, &members);
+        log::info!(
+            "manifests: {path} {}",
+            if parsed.deps_only {
+                format!(
+                    "dependencies-only (changed: {})",
+                    if parsed.packages.is_empty() {
+                        "none".to_string()
+                    } else {
+                        parsed
+                            .packages
+                            .iter()
+                            .cloned()
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    }
+                )
+            } else {
+                "not dependencies-only -> full run".to_string()
+            }
+        );
         out.deps_only.insert(path.clone(), parsed.deps_only);
         out.packages.extend(parsed.packages);
     }
