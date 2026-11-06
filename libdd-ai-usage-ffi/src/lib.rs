@@ -1322,6 +1322,127 @@ pub unsafe extern "C" fn ddog_ai_usage_batch_take_otlp_parts(
     status
 }
 
+/// Standard base64 with padding, for binary values inside JSON output.
+fn base64(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b = [
+            chunk[0],
+            chunk.get(1).copied().unwrap_or(0),
+            chunk.get(2).copied().unwrap_or(0),
+        ];
+        let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
+        for (i, shift) in [18, 12, 6, 0].into_iter().enumerate() {
+            if i <= chunk.len() {
+                out.push(char::from(ALPHABET[((n >> shift) & 63) as usize]));
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
+}
+
+/// Tag every series [`ddog_ai_usage_batch_take_series`] takes from `batch`
+/// with this writer's `host.name` (`host[..host_len]`, normalized as Datadog
+/// stores a tag value; empty leaves it out) and `process.pid` (`pid`), so
+/// replicas and processes never share a series. A null batch is a no-op.
+///
+/// # Safety
+///
+/// `batch` must be null or a live batch from [`ddog_ai_usage_batch_new`],
+/// and `host` must point to `host_len` readable bytes (or `host_len` must be
+/// 0).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ddog_ai_usage_batch_set_writer(
+    batch: *const Batch,
+    host: *const u8,
+    host_len: usize,
+    pid: u32,
+) {
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        // SAFETY: the caller guarantees a live batch or null, and readable
+        // bytes.
+        if let (Some(batch), Some(host)) = unsafe { (batch.as_ref(), text(host, host_len)) }
+            && let Ok(mut inner) = batch.inner.lock()
+        {
+            inner.set_writer(host, pid);
+        }
+    }));
+}
+
+/// Take every point of `batch`, leaving it empty, as Datadog metrics intake
+/// takes it from a writer that submits to the API, and write
+/// `{"timestamp", "interval", "dropped", "series": [{"metric", "tags",
+/// "value"}], "distributions": [{"metric", "tags", "sketch"}]}` to `out`:
+///
+/// - `series` are RATE points over `interval_secs` (0 is read as 1): the sum since the last take
+///   divided by the interval, to submit with type RATE, that interval and aggregation SUM. The
+///   `.count` and `.sum` companions of distributions are among them.
+/// - `distributions` hold one sketch per series, `sketch` being the base64 of intake's
+///   `sketchpb.Sparse` protobuf (keys and counts with min, max, count and sum), as metrics intake
+///   computes a DDSketch (relative accuracy 1/128, 4096 bins).
+/// - Every point is stamped at `timestamp`: `now_unix_seconds` (0 for the system clock), or the
+///   second after this batch's previous take when that is later, so one writer never writes a
+///   series twice at the same second.
+/// - `tags` are sorted and carry the writer's tags (see [`ddog_ai_usage_batch_set_writer`]).
+/// - `dropped` is the observations the batch dropped since the last take.
+///
+/// # Safety
+///
+/// `batch` must be a live batch from [`ddog_ai_usage_batch_new`], and `out`
+/// must be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ddog_ai_usage_batch_take_series(
+    batch: *const Batch,
+    interval_secs: u32,
+    now_unix_seconds: i64,
+    out: *mut Buffer,
+) -> Status {
+    // SAFETY: forwarded from the caller.
+    unsafe {
+        json_call(out, || {
+            catch_unwind(AssertUnwindSafe(|| {
+                // SAFETY: the caller guarantees a live batch or null.
+                let batch = batch
+                    .as_ref()
+                    .ok_or(Failure::Internal("the batch is null"))?;
+                let now = if now_unix_seconds == 0 {
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map_or(0, |elapsed| {
+                            i64::try_from(elapsed.as_secs()).unwrap_or(i64::MAX)
+                        })
+                } else {
+                    now_unix_seconds
+                };
+                let taken = batch
+                    .inner
+                    .lock()
+                    .map_err(|_| Failure::Internal("the batch is poisoned"))?
+                    .take_intake(interval_secs, now)?;
+                Ok(json!({
+                    "timestamp": taken.timestamp,
+                    "interval": taken.interval,
+                    "dropped": taken.dropped,
+                    "series": taken.rates.iter().map(|s| json!({
+                        "metric": s.metric,
+                        "tags": s.tags,
+                        "value": s.value,
+                    })).collect::<Vec<_>>(),
+                    "distributions": taken.sketches.iter().map(|s| json!({
+                        "metric": s.metric,
+                        "tags": s.tags,
+                        "sketch": base64(&s.sketch.encode_sparse()),
+                    })).collect::<Vec<_>>(),
+                }))
+            }))
+            .unwrap_or(Err(Failure::Internal("taking the batch panicked")))
+        })
+    }
+}
+
 /// Release a batch. A null batch is a no-op.
 ///
 /// # Safety

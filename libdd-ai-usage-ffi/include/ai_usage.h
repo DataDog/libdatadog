@@ -517,6 +517,51 @@ enum ddog_ai_usage_Status ddog_ai_usage_batch_take_otlp_parts(const struct ddog_
                                                               struct ddog_ai_usage_Buffer *out);
 
 /**
+ * Tag every series [`ddog_ai_usage_batch_take_series`] takes from `batch`
+ * with this writer's `host.name` (`host[..host_len]`, normalized as Datadog
+ * stores a tag value; empty leaves it out) and `process.pid` (`pid`), so
+ * replicas and processes never share a series. A null batch is a no-op.
+ *
+ * # Safety
+ *
+ * `batch` must be null or a live batch from [`ddog_ai_usage_batch_new`],
+ * and `host` must point to `host_len` readable bytes (or `host_len` must be
+ * 0).
+ */
+void ddog_ai_usage_batch_set_writer(const struct ddog_ai_usage_Batch *batch,
+                                    const uint8_t *host,
+                                    uintptr_t host_len,
+                                    uint32_t pid);
+
+/**
+ * Take every point of `batch`, leaving it empty, as Datadog metrics intake
+ * takes it from a writer that submits to the API, and write
+ * `{"timestamp", "interval", "dropped", "series": [{"metric", "tags",
+ * "value"}], "distributions": [{"metric", "tags", "sketch"}]}` to `out`:
+ *
+ * - `series` are RATE points over `interval_secs` (0 is read as 1): the sum since the last take
+ *   divided by the interval, to submit with type RATE, that interval and aggregation SUM. The
+ *   `.count` and `.sum` companions of distributions are among them.
+ * - `distributions` hold one sketch per series, `sketch` being the base64 of intake's
+ *   `sketchpb.Sparse` protobuf (keys and counts with min, max, count and sum), as metrics intake
+ *   computes a DDSketch (relative accuracy 1/128, 4096 bins).
+ * - Every point is stamped at `timestamp`: `now_unix_seconds` (0 for the system clock), or the
+ *   second after this batch's previous take when that is later, so one writer never writes a
+ *   series twice at the same second.
+ * - `tags` are sorted and carry the writer's tags (see [`ddog_ai_usage_batch_set_writer`]).
+ * - `dropped` is the observations the batch dropped since the last take.
+ *
+ * # Safety
+ *
+ * `batch` must be a live batch from [`ddog_ai_usage_batch_new`], and `out`
+ * must be null or writable.
+ */
+enum ddog_ai_usage_Status ddog_ai_usage_batch_take_series(const struct ddog_ai_usage_Batch *batch,
+                                                          uint32_t interval_secs,
+                                                          int64_t now_unix_seconds,
+                                                          struct ddog_ai_usage_Buffer *out);
+
+/**
  * Release a batch. A null batch is a no-op.
  *
  * # Safety

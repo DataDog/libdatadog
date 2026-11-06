@@ -64,6 +64,7 @@ mod deployment;
 mod dogstatsd;
 mod error_type;
 mod extensions;
+mod intake;
 mod json;
 mod number;
 mod observation;
@@ -98,6 +99,7 @@ pub use extensions::{
     ZERO_IS_UNREPORTED_DEFAULT, error_type_for_failure, estimated_cost_nano_usd,
     expand_observation, operation_name_for, project_extended, translate_otel_genai_metric,
 };
+pub use intake::{IntakeTake, RateSeries, Sketch, SketchSeries};
 pub use json::{Json, JsonError, JsonErrorKind, JsonObject};
 pub use number::{MAX_SAFE_INTEGER, nano_usd_from_number, nano_usd_from_usd, usd_from_nano_usd};
 pub use observation::{

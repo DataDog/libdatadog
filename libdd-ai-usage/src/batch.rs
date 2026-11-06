@@ -93,6 +93,10 @@ pub struct MetricBatch {
     dropped_reported: u64,
     /// The points at which the batch asks to be sent early, if set.
     high_water: Option<usize>,
+    /// The earliest second the next intake take may stamp.
+    pub(crate) next_second: i64,
+    /// This writer's `host.name` and `process.pid` tags, for intake takes.
+    pub(crate) writer_tags: Vec<String>,
 }
 
 impl MetricBatch {
@@ -156,13 +160,15 @@ impl MetricBatch {
     }
 
     /// Take the points of the batch, leaving it empty with the same bound,
-    /// high-water mark and dropped count.
+    /// high-water mark, dropped count, writer and next intake second.
     pub fn take(&mut self) -> MetricBatch {
         let empty = MetricBatch {
             max_len: self.max_len,
             dropped: self.dropped,
             dropped_reported: self.dropped_reported,
             high_water: self.high_water,
+            next_second: self.next_second,
+            writer_tags: self.writer_tags.clone(),
             ..MetricBatch::default()
         };
         std::mem::replace(self, empty)

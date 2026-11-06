@@ -1435,3 +1435,67 @@ fn otlp_parts_are_framed_by_length() {
         ddog_ai_usage_batch_drop(batch);
     }
 }
+
+#[test]
+fn a_batch_taken_as_intake_series() {
+    let request = format!("[{ATTEMPT}, {BREAKDOWN}]");
+    let host = "gateway-7f9";
+    let mut batch = ptr::null_mut();
+    // SAFETY: `batch` is written by `batch_new` and used until dropped.
+    unsafe {
+        assert_eq!(ddog_ai_usage_batch_new(&mut batch), Status::Ok);
+        ddog_ai_usage_batch_set_writer(batch, host.as_ptr(), host.len(), 7);
+        for _ in 0..3 {
+            assert_eq!(
+                ddog_ai_usage_batch_add_request(
+                    batch,
+                    request.as_ptr(),
+                    request.len(),
+                    ptr::null_mut()
+                ),
+                Status::Ok
+            );
+        }
+        let mut out = empty();
+        assert_eq!(
+            ddog_ai_usage_batch_take_series(batch, 10, 1_700_000_000, &mut out),
+            Status::Ok
+        );
+        let value = json_of(out);
+        assert_eq!(value["timestamp"], 1_700_000_000);
+        assert_eq!(value["interval"], 10);
+        assert_eq!(value["dropped"], 0);
+        let series = value["series"].as_array().unwrap();
+        let input = series
+            .iter()
+            .find(|s| s["metric"] == "gen_ai.client.inference.usage.input_tokens")
+            .unwrap();
+        // Three attempts of 10 input tokens over 10 s.
+        assert_eq!(input["value"], 3.0);
+        let tags: Vec<&str> = input["tags"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t.as_str().unwrap())
+            .collect();
+        assert!(
+            tags.contains(&"host.name:gateway-7f9") && tags.contains(&"process.pid:7"),
+            "{tags:?}"
+        );
+        let distributions = value["distributions"].as_array().unwrap();
+        assert!(!distributions.is_empty());
+        assert!(
+            distributions
+                .iter()
+                .all(|d| !d["sketch"].as_str().unwrap().is_empty())
+        );
+        // The next take never reuses the second.
+        let mut out = empty();
+        ddog_ai_usage_batch_take_series(batch, 10, 1_700_000_000, &mut out);
+        let value = json_of(out);
+        assert_eq!(value["timestamp"], 1_700_000_001);
+        assert_eq!(value["series"], json!([]));
+        ddog_ai_usage_batch_set_writer(ptr::null(), host.as_ptr(), host.len(), 1);
+        ddog_ai_usage_batch_drop(batch);
+    }
+}

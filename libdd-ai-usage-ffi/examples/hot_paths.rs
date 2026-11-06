@@ -237,6 +237,68 @@ fn main() {
             drop_out(&mut out);
         });
     }
+    // The public gateway's request path. Before: `project` for the attempt
+    // and for its breakdown, each JSON output decoded by the caller. After:
+    // the request's documents added to the org's batch in one call with no
+    // output, and the batch taken as intake series once per flush.
+    let attempt_doc = ATTEMPT.replace(
+        ",\n  \"deployment_attributes\": {\"user.id\": \"ada@example.com\"}",
+        "",
+    );
+    let request = format!("[{attempt_doc}, {BREAKDOWN}]");
+    measure("gateway request, before: project x2 + decode", || {
+        for doc in [attempt_doc.as_str(), BREAKDOWN] {
+            let mut out = Buffer {
+                ptr: ptr::null_mut(),
+                len: 0,
+            };
+            // SAFETY: valid input and output; the output is the library's.
+            unsafe {
+                ddog_ai_usage_project(doc.as_ptr(), doc.len(), &mut out);
+                let text = std::slice::from_raw_parts(out.ptr, out.len);
+                let value: serde_json::Value = serde_json::from_slice(text).unwrap();
+                assert!(value["series"].is_array());
+            }
+            drop_out(&mut out);
+        }
+    });
+    let mut batch = ptr::null_mut();
+    // SAFETY: written by `batch_new`.
+    unsafe { ddog_ai_usage_batch_new(&mut batch) };
+    measure("gateway request, after: batch_add_request", || {
+        // SAFETY: a live batch and valid input.
+        let status = unsafe {
+            ddog_ai_usage_batch_add_request(batch, request.as_ptr(), request.len(), ptr::null_mut())
+        };
+        assert_eq!(status, Status::Ok);
+    });
+    // SAFETY: a live batch, released once.
+    unsafe { ddog_ai_usage_batch_drop(batch) };
+    measure_burst("gateway flush: 1k requests, take_series", || {
+        let mut batch = ptr::null_mut();
+        let mut out = Buffer {
+            ptr: ptr::null_mut(),
+            len: 0,
+        };
+        // SAFETY: a live batch, valid inputs and output.
+        unsafe {
+            ddog_ai_usage_batch_new(&mut batch);
+            for _ in 0..1_000 {
+                ddog_ai_usage_batch_add_request(
+                    batch,
+                    request.as_ptr(),
+                    request.len(),
+                    ptr::null_mut(),
+                );
+            }
+            assert_eq!(
+                ddog_ai_usage_batch_take_series(batch, 10, 1, &mut out),
+                Status::Ok
+            );
+            ddog_ai_usage_batch_drop(batch);
+        }
+        drop_out(&mut out);
+    });
     measure("dogstatsd_lines provider_attempt (text)", || {
         let mut out = Buffer {
             ptr: ptr::null_mut(),
