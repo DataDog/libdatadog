@@ -1875,6 +1875,248 @@ pub unsafe extern "C" fn ddog_ai_usage_stream_drop(stream: *mut Stream) {
     let _ = catch_unwind(AssertUnwindSafe(|| drop(stream)));
 }
 
+/// How a provider stream ended so far, as [`ddog_ai_usage_stream_outcome`]
+/// reports it.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Outcome {
+    /// No terminal event yet: a stream that ends here was cut short.
+    Open = 0,
+    /// The provider's terminal event arrived.
+    Completed = 1,
+    /// The provider reported a failure in the stream.
+    Failed = 2,
+}
+
+/// How `stream` ended so far, without building any output: cheap enough to
+/// call after every chunk, so a gateway needs no end-of-stream detection of
+/// its own. A line still held without its line ending is not read (see
+/// [`ddog_ai_usage_stream_finish`]). A null stream is [`Outcome::Open`].
+///
+/// # Safety
+///
+/// `stream` must be null or a live stream from [`ddog_ai_usage_stream_new`],
+/// not used by another thread during the call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ddog_ai_usage_stream_outcome(stream: *const Stream) -> Outcome {
+    // SAFETY: the caller guarantees a live stream or null.
+    match unsafe { stream.as_ref() }.map(|stream| stream.inner.outcome()) {
+        Some(StreamOutcome::Completed) => Outcome::Completed,
+        Some(StreamOutcome::Failed) => Outcome::Failed,
+        Some(StreamOutcome::Open) | None => Outcome::Open,
+    }
+}
+
+/// Write the `error.type` of a failure to `out` from the names that describe
+/// it, most specific first, `names[..names_len]` separated by `\n` (an
+/// exception's class and base classes, then its cause's): the first name the
+/// vocabulary knows (in any case), else the HTTP `status` (0 for none), else
+/// `api_error`. Never [`Status::Rejected`].
+///
+/// # Safety
+///
+/// `names` must point to `names_len` readable bytes (or `names_len` must be
+/// 0), and `out` must be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ddog_ai_usage_error_type_first_known(
+    names: *const u8,
+    names_len: usize,
+    status: u16,
+    out: *mut Buffer,
+) -> Status {
+    // SAFETY: forwarded from the caller.
+    unsafe {
+        text_call(out, || {
+            catch_unwind(AssertUnwindSafe(|| {
+                text(names, names_len).map(|names| {
+                    Some(
+                        libdd_ai_usage::classify_first_known(
+                            names.split('\n').map(str::trim).filter(|n| !n.is_empty()),
+                            (status != 0).then_some(status),
+                        )
+                        .to_string(),
+                    )
+                })
+            }))
+            .unwrap_or(None)
+        })
+    }
+}
+
+/// Write an observation's usage members, as a JSON object to merge into it,
+/// from usage a gateway already normalized, `usage[..usage_len]`
+/// (`{"input_tokens", "output_tokens", "cache_read_input_tokens",
+/// "cache_write_input_tokens", "ephemeral_5m_input_tokens",
+/// "ephemeral_1h_input_tokens", "total_cost"}`, input including cache), in
+/// the usage `format` (as [`ddog_ai_usage_parse_provider_response`] names
+/// them; `anthropic` states input without cache). Only reported cache counts
+/// are kept, both cache lifetimes are stated when either is, an
+/// `embeddings` operation has no output, and `total_cost` is an estimated
+/// `cost_usd`. [`Status::Rejected`] when the usage has no input total.
+///
+/// # Safety
+///
+/// `format` and `usage` must point to their lengths of readable bytes (or
+/// the length must be 0), and `out` must be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ddog_ai_usage_observation_from_usage(
+    format: *const u8,
+    format_len: usize,
+    embeddings: bool,
+    usage: *const u8,
+    usage_len: usize,
+    out: *mut Buffer,
+) -> Status {
+    // SAFETY: forwarded from the caller.
+    unsafe {
+        json_call(out, || {
+            catch_unwind(AssertUnwindSafe(|| {
+                let format = format_of(text(format, format_len))?;
+                let usage = parse_document(bytes(usage, usage_len))?;
+                let usage = usage
+                    .as_object()
+                    .ok_or_else(|| invalid("usage must be an object"))?;
+                let members =
+                    libdd_ai_usage::observation_usage_from_normalized(format, embeddings, usage)
+                        .ok_or_else(|| {
+                            Failure::Rejected(MetricError::new(
+                                ErrorCode::RequiredFieldMissing,
+                                "usage has no input_tokens",
+                            ))
+                        })?;
+                Ok(json_value(&Json::Object(members)))
+            }))
+            .unwrap_or(Err(Failure::Internal("reading the usage panicked")))
+        })
+    }
+}
+
+/// A [`Json`] value as a `serde_json` value.
+fn json_value(value: &Json) -> Value {
+    match value {
+        Json::Null => Value::Null,
+        Json::Bool(flag) => json!(flag),
+        Json::Number(n) if n.fract() == 0.0 && n.abs() < 9.0e15 => json!(*n as i64),
+        Json::Number(n) => json!(n),
+        Json::String(text) => json!(text),
+        Json::Array(items) => Value::Array(items.iter().map(json_value).collect()),
+        Json::Object(members) => Value::Object(
+            members
+                .iter()
+                .map(|(key, value)| (key.clone(), json_value(value)))
+                .collect(),
+        ),
+    }
+}
+
+/// Write the tier a provider response or its usage names to `out`, from the
+/// JSON `payload[..payload_len]`: the usage object's `service_tier` (or a
+/// gateway's `_response_service_tier`), Gemini's
+/// `usageMetadata.trafficType`, then the body's `service_tier`.
+/// [`Status::Rejected`] when none names a tier within the grammar.
+///
+/// # Safety
+///
+/// `payload` must point to `payload_len` readable bytes (or `payload_len`
+/// must be 0), and `out` must be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ddog_ai_usage_service_tier(
+    payload: *const u8,
+    payload_len: usize,
+    out: *mut Buffer,
+) -> Status {
+    // SAFETY: forwarded from the caller.
+    unsafe {
+        text_call(out, || {
+            catch_unwind(AssertUnwindSafe(|| {
+                let payload = text(payload, payload_len)?;
+                Some(
+                    Json::parse(payload)
+                        .ok()
+                        .and_then(|payload| libdd_ai_usage::service_tier_of(&payload)),
+                )
+            }))
+            .unwrap_or(None)
+        })
+    }
+}
+
+/// Write the `gen_ai.provider.name` of the provider `name[..name_len]` to
+/// `out`, told apart by the host the call reached,
+/// `upstream_host[..upstream_host_len]` (a host or a URL; may be empty):
+/// Google's names are `gcp.gemini` on `generativelanguage.googleapis.com`
+/// and `gcp.vertex_ai` on another Google host. Otherwise as
+/// [`ddog_ai_usage_provider_name`]. [`Status::Rejected`] when no identifier
+/// can be formed.
+///
+/// # Safety
+///
+/// `name` and `upstream_host` must point to their lengths of readable bytes
+/// (or the length must be 0), and `out` must be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ddog_ai_usage_provider_name_at(
+    name: *const u8,
+    name_len: usize,
+    upstream_host: *const u8,
+    upstream_host_len: usize,
+    out: *mut Buffer,
+) -> Status {
+    // SAFETY: forwarded from the caller.
+    unsafe {
+        text_call(out, || {
+            catch_unwind(AssertUnwindSafe(|| {
+                let name = text(name, name_len)?;
+                let host = text(upstream_host, upstream_host_len)?;
+                Some(libdd_ai_usage::gen_ai_provider_name_at(name, host))
+            }))
+            .unwrap_or(None)
+        })
+    }
+}
+
+/// Write the coding agent a request came from (`claude-code`, `codex` or
+/// `opencode`, as `trajectory.client_source`) to `out`, from the request
+/// document `input[..input_len]`: `{"user_agents": [...], "originator":
+/// "...", "source": "..."}` (each `User-Agent` header, comma-separated
+/// entries allowed; Codex's `originator` header; the request's own source
+/// label). Bits Code's traffic (`source` starting `code-gen` or `bits-code`)
+/// is not theirs. [`Status::Rejected`] with an empty `out` when none fits.
+///
+/// # Safety
+///
+/// `input` must point to `input_len` readable bytes (or `input_len` must be
+/// 0), and `out` must be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ddog_ai_usage_client_source(
+    input: *const u8,
+    input_len: usize,
+    out: *mut Buffer,
+) -> Status {
+    // SAFETY: forwarded from the caller.
+    unsafe {
+        text_call(out, || {
+            catch_unwind(AssertUnwindSafe(|| {
+                let document = Json::parse(text(input, input_len)?).ok()?;
+                let user_agents: Vec<&str> = match document.get("user_agents") {
+                    Some(Json::Array(items)) => items.iter().filter_map(Json::as_str).collect(),
+                    Some(Json::String(one)) => vec![one.as_str()],
+                    _ => Vec::new(),
+                };
+                let field = |key: &str| document.get(key).and_then(Json::as_str).unwrap_or("");
+                Some(
+                    libdd_ai_usage::client_source(
+                        user_agents,
+                        field("originator"),
+                        field("source"),
+                    )
+                    .map(str::to_string),
+                )
+            }))
+            .unwrap_or(None)
+        })
+    }
+}
+
 /// Run a call whose output is text: [`Status::Ok`] with the text in `out`,
 /// [`Status::Rejected`] with an empty `out` when there is none.
 ///
@@ -2250,8 +2492,26 @@ pub unsafe extern "C" fn ddog_ai_usage_provider_id_headers(
     unsafe {
         json_call(out, || {
             catch_unwind(AssertUnwindSafe(|| {
-                let provider = text(provider_name, provider_name_len)
+                let raw = text(provider_name, provider_name_len)
                     .ok_or(Failure::Internal("provider_name is not UTF-8"))?;
+                // The name as text, or as a JSON string like the other calls
+                // take; a JSON object or array is a mistake, not a provider.
+                let decoded;
+                let provider = match raw.trim_start().as_bytes().first() {
+                    Some(b'"') => {
+                        decoded = Json::parse(raw)
+                            .ok()
+                            .and_then(|name| name.as_str().map(str::to_string))
+                            .ok_or_else(|| invalid("provider_name is not a JSON string"))?;
+                        decoded.as_str()
+                    }
+                    Some(b'{' | b'[') => {
+                        return Err(invalid(
+                            "provider_name must be a provider name, not a JSON object or array",
+                        ));
+                    }
+                    _ => raw,
+                };
                 let mut headers: Vec<&str> = Vec::new();
                 for (name, _, header) in PROVIDER_ID_HEADERS {
                     if (provider.is_empty() || provider == name) && !headers.contains(&header) {
@@ -2267,11 +2527,14 @@ pub unsafe extern "C" fn ddog_ai_usage_provider_id_headers(
 
 /// The deployment attributes a provider's response names, from the request
 /// document `input[..input_len]`: `{"provider_name": "anthropic",
-/// "headers": {"anthropic-organization-id": "..."}, "models": ["arn:..."]}`.
+/// "headers": {"anthropic-organization-id": "..."}, "models": ["arn:..."],
+/// "upstream_url": "https://...aiplatform.googleapis.com/v1/projects/{p}/..."}`.
 /// Header names are matched in lower case. Writes `{attribute: value}`:
 /// `trajectory.request.provider_account_id` and
 /// `trajectory.request.project_id` from the provider's headers, or for
-/// `aws.bedrock` the account a model ARN names. Without a `provider_name`
+/// `aws.bedrock` the account a model ARN names, and the Vertex AI project
+/// an `upstream_url` path names as `trajectory.request.project_id` when no
+/// header named one. Without a `provider_name`
 /// (absent or empty), every known header and the model ARNs are tried, as
 /// [`ddog_ai_usage_provider_id_headers`] lists them for an empty name.
 ///
@@ -2325,6 +2588,16 @@ pub unsafe extern "C" fn ddog_ai_usage_provider_ids(
                             .entry("trajectory.request.provider_account_id".to_string())
                             .or_insert_with(|| account.to_string());
                     }
+                }
+                // The Vertex AI project a URL bills, when no header named one.
+                if let Some(project) = document
+                    .get("upstream_url")
+                    .and_then(Json::as_str)
+                    .and_then(libdd_ai_usage::vertex_project_id)
+                {
+                    attributes
+                        .entry("trajectory.request.project_id".to_string())
+                        .or_insert_with(|| project.to_string());
                 }
                 Ok(json!(attributes))
             }))

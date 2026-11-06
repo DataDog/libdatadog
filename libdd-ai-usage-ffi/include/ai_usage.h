@@ -41,6 +41,25 @@
 #define ddog_ai_usage_INCLUSIVE_TOTALS 1
 
 /**
+ * How a provider stream ended so far, as [`ddog_ai_usage_stream_outcome`]
+ * reports it.
+ */
+typedef enum ddog_ai_usage_Outcome {
+  /**
+   * No terminal event yet: a stream that ends here was cut short.
+   */
+  DDOG_AI_USAGE_OUTCOME_OPEN = 0,
+  /**
+   * The provider's terminal event arrived.
+   */
+  DDOG_AI_USAGE_OUTCOME_COMPLETED = 1,
+  /**
+   * The provider reported a failure in the stream.
+   */
+  DDOG_AI_USAGE_OUTCOME_FAILED = 2,
+} ddog_ai_usage_Outcome;
+
+/**
  * How a call ended.
  */
 typedef enum ddog_ai_usage_Status {
@@ -751,6 +770,114 @@ enum ddog_ai_usage_Status ddog_ai_usage_stream_take(struct ddog_ai_usage_Stream 
 void ddog_ai_usage_stream_drop(struct ddog_ai_usage_Stream *stream);
 
 /**
+ * How `stream` ended so far, without building any output: cheap enough to
+ * call after every chunk, so a gateway needs no end-of-stream detection of
+ * its own. A line still held without its line ending is not read (see
+ * [`ddog_ai_usage_stream_finish`]). A null stream is [`Outcome::Open`].
+ *
+ * # Safety
+ *
+ * `stream` must be null or a live stream from [`ddog_ai_usage_stream_new`],
+ * not used by another thread during the call.
+ */
+enum ddog_ai_usage_Outcome ddog_ai_usage_stream_outcome(const struct ddog_ai_usage_Stream *stream);
+
+/**
+ * Write the `error.type` of a failure to `out` from the names that describe
+ * it, most specific first, `names[..names_len]` separated by `\n` (an
+ * exception's class and base classes, then its cause's): the first name the
+ * vocabulary knows (in any case), else the HTTP `status` (0 for none), else
+ * `api_error`. Never [`Status::Rejected`].
+ *
+ * # Safety
+ *
+ * `names` must point to `names_len` readable bytes (or `names_len` must be
+ * 0), and `out` must be null or writable.
+ */
+enum ddog_ai_usage_Status ddog_ai_usage_error_type_first_known(const uint8_t *names,
+                                                               uintptr_t names_len,
+                                                               uint16_t status,
+                                                               struct ddog_ai_usage_Buffer *out);
+
+/**
+ * Write an observation's usage members, as a JSON object to merge into it,
+ * from usage a gateway already normalized, `usage[..usage_len]`
+ * (`{"input_tokens", "output_tokens", "cache_read_input_tokens",
+ * "cache_write_input_tokens", "ephemeral_5m_input_tokens",
+ * "ephemeral_1h_input_tokens", "total_cost"}`, input including cache), in
+ * the usage `format` (as [`ddog_ai_usage_parse_provider_response`] names
+ * them; `anthropic` states input without cache). Only reported cache counts
+ * are kept, both cache lifetimes are stated when either is, an
+ * `embeddings` operation has no output, and `total_cost` is an estimated
+ * `cost_usd`. [`Status::Rejected`] when the usage has no input total.
+ *
+ * # Safety
+ *
+ * `format` and `usage` must point to their lengths of readable bytes (or
+ * the length must be 0), and `out` must be null or writable.
+ */
+enum ddog_ai_usage_Status ddog_ai_usage_observation_from_usage(const uint8_t *format,
+                                                               uintptr_t format_len,
+                                                               bool embeddings,
+                                                               const uint8_t *usage,
+                                                               uintptr_t usage_len,
+                                                               struct ddog_ai_usage_Buffer *out);
+
+/**
+ * Write the tier a provider response or its usage names to `out`, from the
+ * JSON `payload[..payload_len]`: the usage object's `service_tier` (or a
+ * gateway's `_response_service_tier`), Gemini's
+ * `usageMetadata.trafficType`, then the body's `service_tier`.
+ * [`Status::Rejected`] when none names a tier within the grammar.
+ *
+ * # Safety
+ *
+ * `payload` must point to `payload_len` readable bytes (or `payload_len`
+ * must be 0), and `out` must be null or writable.
+ */
+enum ddog_ai_usage_Status ddog_ai_usage_service_tier(const uint8_t *payload,
+                                                     uintptr_t payload_len,
+                                                     struct ddog_ai_usage_Buffer *out);
+
+/**
+ * Write the `gen_ai.provider.name` of the provider `name[..name_len]` to
+ * `out`, told apart by the host the call reached,
+ * `upstream_host[..upstream_host_len]` (a host or a URL; may be empty):
+ * Google's names are `gcp.gemini` on `generativelanguage.googleapis.com`
+ * and `gcp.vertex_ai` on another Google host. Otherwise as
+ * [`ddog_ai_usage_provider_name`]. [`Status::Rejected`] when no identifier
+ * can be formed.
+ *
+ * # Safety
+ *
+ * `name` and `upstream_host` must point to their lengths of readable bytes
+ * (or the length must be 0), and `out` must be null or writable.
+ */
+enum ddog_ai_usage_Status ddog_ai_usage_provider_name_at(const uint8_t *name,
+                                                         uintptr_t name_len,
+                                                         const uint8_t *upstream_host,
+                                                         uintptr_t upstream_host_len,
+                                                         struct ddog_ai_usage_Buffer *out);
+
+/**
+ * Write the coding agent a request came from (`claude-code`, `codex` or
+ * `opencode`, as `trajectory.client_source`) to `out`, from the request
+ * document `input[..input_len]`: `{"user_agents": [...], "originator":
+ * "...", "source": "..."}` (each `User-Agent` header, comma-separated
+ * entries allowed; Codex's `originator` header; the request's own source
+ * label). Bits Code's traffic (`source` starting `code-gen` or `bits-code`)
+ * is not theirs. [`Status::Rejected`] with an empty `out` when none fits.
+ *
+ * # Safety
+ *
+ * `input` must point to `input_len` readable bytes (or `input_len` must be
+ * 0), and `out` must be null or writable.
+ */
+enum ddog_ai_usage_Status ddog_ai_usage_client_source(const uint8_t *input,
+                                                      uintptr_t input_len,
+                                                      struct ddog_ai_usage_Buffer *out);
+
+/**
  * Write the `gen_ai.provider.name` of the provider `name[..name_len]` (a
  * gateway's or SDK's name for it, such as `bedrock` or `vertex_ai`) to
  * `out`. [`Status::Rejected`] when no identifier can be formed.
@@ -928,11 +1055,14 @@ enum ddog_ai_usage_Status ddog_ai_usage_provider_id_headers(const uint8_t *provi
 /**
  * The deployment attributes a provider's response names, from the request
  * document `input[..input_len]`: `{"provider_name": "anthropic",
- * "headers": {"anthropic-organization-id": "..."}, "models": ["arn:..."]}`.
+ * "headers": {"anthropic-organization-id": "..."}, "models": ["arn:..."],
+ * "upstream_url": "https://...aiplatform.googleapis.com/v1/projects/{p}/..."}`.
  * Header names are matched in lower case. Writes `{attribute: value}`:
  * `trajectory.request.provider_account_id` and
  * `trajectory.request.project_id` from the provider's headers, or for
- * `aws.bedrock` the account a model ARN names. Without a `provider_name`
+ * `aws.bedrock` the account a model ARN names, and the Vertex AI project
+ * an `upstream_url` path names as `trajectory.request.project_id` when no
+ * header named one. Without a `provider_name`
  * (absent or empty), every known header and the model ARNs are tried, as
  * [`ddog_ai_usage_provider_id_headers`] lists them for an empty name.
  *

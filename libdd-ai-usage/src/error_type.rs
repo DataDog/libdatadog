@@ -130,7 +130,7 @@ pub fn error_type_for_status(status: u16) -> Option<&'static str> {
 /// vocabulary is itself.
 pub fn error_type_for_name(name: &str) -> Option<&'static str> {
     let name = name.trim();
-    ERROR_TYPES
+    let exact = ERROR_TYPES
         .iter()
         .find(|known| **known == name)
         .copied()
@@ -139,7 +139,21 @@ pub fn error_type_for_name(name: &str) -> Option<&'static str> {
                 .iter()
                 .find(|(known, _)| *known == name)
                 .map(|(_, error_type)| *error_type)
-        })
+        });
+    // A name in another case (`RATE_LIMIT_ERROR`, `Overloaded_Error`), as
+    // some compatible servers spell the provider's types.
+    exact.or_else(|| {
+        ERROR_TYPES
+            .iter()
+            .find(|known| known.eq_ignore_ascii_case(name))
+            .copied()
+            .or_else(|| {
+                ERROR_NAMES
+                    .iter()
+                    .find(|(known, _)| known.eq_ignore_ascii_case(name))
+                    .map(|(_, error_type)| *error_type)
+            })
+    })
 }
 
 /// An exception class name as a low-cardinality identifier:
@@ -197,6 +211,22 @@ pub fn classify_error(name: Option<&str>, status: Option<u16>) -> Option<&'stati
 /// cause unknown").
 pub fn classify_failure(name: Option<&str>, status: Option<u16>) -> &'static str {
     classify_error(name, status).unwrap_or(ERROR_TYPE_API)
+}
+
+/// The `error.type` of a failure from the names that describe it, most
+/// specific first (an exception's class and its base classes, then its
+/// cause's): the first name the vocabulary knows, else the HTTP `status`,
+/// else `api_error`. So a subclass the vocabulary does not know is read as
+/// the base class it does, and a transport failure wrapped in an HTTP error
+/// keeps its own type over the translated status.
+pub fn classify_first_known<'a>(
+    names: impl IntoIterator<Item = &'a str>,
+    status: Option<u16>,
+) -> &'static str {
+    names
+        .into_iter()
+        .find_map(|name| classify_known_error(Some(name), None))
+        .unwrap_or_else(|| classify_failure(None, status))
 }
 
 /// The `error.type` of a provider attempt that ended with the gateway

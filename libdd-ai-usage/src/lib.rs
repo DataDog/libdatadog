@@ -92,13 +92,14 @@ pub use error_type::{
     ERROR_TYPE_CANCELLED, ERROR_TYPE_CONFLICT, ERROR_TYPE_INTERNAL_SERVER, ERROR_TYPE_NOT_FOUND,
     ERROR_TYPE_PERMISSION_DENIED, ERROR_TYPE_RATE_LIMIT, ERROR_TYPE_TIMEOUT,
     ERROR_TYPE_UNPROCESSABLE_ENTITY, ERROR_TYPES, classify_error, classify_failure,
-    classify_known_error, error_type_for_gateway_outcome, error_type_for_name,
-    error_type_for_status, error_type_identifier,
+    classify_first_known, classify_known_error, error_type_for_gateway_outcome,
+    error_type_for_name, error_type_for_status, error_type_identifier,
 };
 pub use extensions::{
-    BillableTokens, Failure, OBSERVATION_EXTENSIONS, PricesPerMillion, TranslatedMetric,
-    ZERO_IS_UNREPORTED_DEFAULT, error_type_for_failure, estimated_cost_nano_usd,
-    expand_observation, operation_name_for, project_extended, translate_otel_genai_metric,
+    ATTEMPT_ENDING_EXTENSIONS, BillableTokens, Failure, OBSERVATION_EXTENSIONS, PricesPerMillion,
+    TranslatedMetric, ZERO_IS_UNREPORTED_DEFAULT, error_type_for_failure, estimated_cost_nano_usd,
+    expand_observation, observation_usage_from_normalized, operation_name_for, project_extended,
+    translate_otel_genai_metric,
 };
 pub use intake::{IntakeTake, RateSeries, Sketch, SketchSeries};
 pub use json::{Json, JsonError, JsonErrorKind, JsonObject};
@@ -121,9 +122,10 @@ pub use project::{
 pub use provider::{
     MAX_ERROR_MESSAGE_BYTES, MAX_KEPT_STRING_BYTES, MAX_STREAM_LINE_BYTES, PROVIDER_ID_HEADERS,
     ProviderError, ProviderResponse, ProviderUsage, RESPONSE_MODEL_DROPPED, SERVICE_TIER_DROPPED,
-    StreamOutcome, UsageFormat, UsageStream, bedrock_arn_account, billing_id, gen_ai_provider_name,
-    is_person_identifier, is_service_tier, parse_provider_body, parse_provider_response,
-    parse_provider_usage, provider_id_attributes,
+    StreamOutcome, UsageFormat, UsageStream, bedrock_arn_account, billing_id, client_source,
+    gen_ai_provider_name, gen_ai_provider_name_at, is_person_identifier, is_service_tier,
+    parse_provider_body, parse_provider_response, parse_provider_usage, provider_id_attributes,
+    service_tier_of, vertex_project_id,
 };
 pub use registry::{
     AttributeDefinition, DeploymentAttributeDefinition, Finding, FindingCode, MetricDefinition,

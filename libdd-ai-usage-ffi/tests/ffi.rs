@@ -1577,3 +1577,98 @@ fn outcomes_and_inclusive_totals_across_the_boundary() {
         assert_eq!(json_of(out)["usage"]["input_tokens"], 110);
     }
 }
+
+#[test]
+fn internal_gateway_entry_points() {
+    // SAFETY: valid inputs and outputs throughout; the stream is used until
+    // dropped.
+    unsafe {
+        let names = "SDKTimeout\nAPITimeoutError\nException";
+        assert_eq!(
+            text_out(|out| ddog_ai_usage_error_type_first_known(
+                names.as_ptr(),
+                names.len(),
+                500,
+                out
+            )),
+            (Status::Ok, "timeout_error".to_string())
+        );
+        let usage = r#"{"input_tokens": 100, "cache_read_input_tokens": 40, "output_tokens": 3}"#;
+        let format = "anthropic";
+        let mut out = empty();
+        assert_eq!(
+            ddog_ai_usage_observation_from_usage(
+                format.as_ptr(),
+                format.len(),
+                false,
+                usage.as_ptr(),
+                usage.len(),
+                &mut out
+            ),
+            Status::Ok
+        );
+        assert_eq!(
+            json_of(out),
+            json!({"input_tokens": 60, "input_basis": "excludes_cache",
+                "cache_read_input_tokens": 40, "output_tokens": 3,
+                "output_basis": "includes_reasoning"})
+        );
+        let payload = r#"{"usageMetadata": {"trafficType": "PROVISIONED_THROUGHPUT"}}"#;
+        assert_eq!(
+            text_out(|out| ddog_ai_usage_service_tier(payload.as_ptr(), payload.len(), out)),
+            (Status::Ok, "PROVISIONED_THROUGHPUT".to_string())
+        );
+        let (name, host) = ("google", "generativelanguage.googleapis.com");
+        assert_eq!(
+            text_out(|out| ddog_ai_usage_provider_name_at(
+                name.as_ptr(),
+                name.len(),
+                host.as_ptr(),
+                host.len(),
+                out
+            )),
+            (Status::Ok, "gcp.gemini".to_string())
+        );
+        let request = r#"{"user_agents": ["claude-code/2.0"], "originator": "", "source": ""}"#;
+        assert_eq!(
+            text_out(|out| ddog_ai_usage_client_source(request.as_ptr(), request.len(), out)),
+            (Status::Ok, "claude-code".to_string())
+        );
+        let request = r#"{"user_agents": ["claude-code/2.0"], "source": "bits-code"}"#;
+        assert_eq!(
+            text_out(|out| ddog_ai_usage_client_source(request.as_ptr(), request.len(), out)).0,
+            Status::Rejected
+        );
+        let ids = r#"{"upstream_url": "https://us-east5-aiplatform.googleapis.com/v1/projects/p-1/locations/x"}"#;
+        let mut out = empty();
+        ddog_ai_usage_provider_ids(ids.as_ptr(), ids.len(), &mut out);
+        assert_eq!(
+            json_of(out),
+            json!({"trajectory.request.project_id": "p-1"})
+        );
+        // Provider id headers: text or a JSON string; other JSON is an error.
+        for (input, expected) in [
+            ("openai", Status::Ok),
+            ("\"openai\"", Status::Ok),
+            ("{\"provider\": 1}", Status::Rejected),
+        ] {
+            let mut out = empty();
+            let status = ddog_ai_usage_provider_id_headers(input.as_ptr(), input.len(), &mut out);
+            let value = json_of(out);
+            assert_eq!(status, expected, "{input}");
+            if expected == Status::Ok {
+                assert_eq!(value, json!(["openai-organization", "openai-project"]));
+            }
+        }
+        // The outcome without any output.
+        let mut stream = ptr::null_mut();
+        let format = "openai_responses";
+        ddog_ai_usage_stream_new(format.as_ptr(), format.len(), false, &mut stream);
+        assert_eq!(ddog_ai_usage_stream_outcome(stream), Outcome::Open);
+        let chunk = b"data: {\"type\": \"response.failed\", \"response\": {\"error\": {\"code\": \"server_error\"}}}\n\n";
+        ddog_ai_usage_stream_feed(stream, chunk.as_ptr(), chunk.len());
+        assert_eq!(ddog_ai_usage_stream_outcome(stream), Outcome::Failed);
+        ddog_ai_usage_stream_drop(stream);
+        assert_eq!(ddog_ai_usage_stream_outcome(ptr::null()), Outcome::Open);
+    }
+}
