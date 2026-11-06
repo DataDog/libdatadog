@@ -149,7 +149,16 @@ compute_bench_selection:
       # them (bench-selector prefers it over any system LLVM, whose profile
       # format may not match).
       rustup component add llvm-tools-preview
-      (cd .github/actions && cargo build --release -p bench-selector)
+      # Validation-branch adjustment: the checkout's MSRV (1.87) predates this
+      # tool's dependencies, so build bench-selector on the pinned stable; and
+      # pin the rustup llvm-tools first in PATH so they win over any system
+      # llvm (the coverage tooling prefers PATH, and versions must match the
+      # rustc that produces the profiles).
+      rustup toolchain install 1.99.1 --profile minimal
+      SYSROOT="$(rustc --print sysroot)"
+      HOST_TRIPLE="$(rustc -vV | sed -n 's/^host: //p')"
+      export PATH="${SYSROOT}/lib/rustlib/${HOST_TRIPLE}/bin:${PATH}"
+      (cd .github/actions && RUSTUP_TOOLCHAIN=1.99.1 cargo build --release -p bench-selector)
       SELECTOR=./.github/actions/target/release/bench-selector
       # Restrict to the crates this PR affects; inventory/coverage skip the rest.
       CRATES="$(jq -r '.[]' <<< "${AFFECTED_CRATES}" | paste -sd ',')"
