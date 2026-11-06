@@ -12,8 +12,6 @@ extern crate alloc;
 
 #[cfg(feature = "std")]
 pub mod azure_app_services;
-#[cfg(feature = "std")]
-pub mod config;
 #[cfg(all(feature = "std", not(target_arch = "wasm32")))]
 pub mod connector;
 #[cfg(feature = "reqwest")]

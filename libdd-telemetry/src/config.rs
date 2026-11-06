@@ -1,8 +1,9 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use core::str::FromStr;
 use http::{Uri, uri::PathAndQuery};
-use libdd_common::{Endpoint, config::parse_env, parse_uri};
+use libdd_common::{Endpoint, parse_uri};
 use std::{borrow::Cow, time::Duration};
 use tracing::debug;
 
@@ -102,8 +103,27 @@ fn endpoint_with_telemetry_path(
     Ok(endpoint)
 }
 
-/// Settings gathers configuration options we receive from the environment
-/// (either through env variable, or that could be set from the )
+fn env_duration(name: &str) -> Option<Duration> {
+    Some(Duration::from_secs_f32(
+        std::env::var(name).ok()?.parse::<f32>().ok()?,
+    ))
+}
+
+fn env_int<T: FromStr>(name: &str) -> Option<T> {
+    std::env::var(name).ok()?.parse::<T>().ok()
+}
+
+fn env_bool(name: &str) -> Option<bool> {
+    let var = std::env::var(name).ok()?;
+    Some(var == "true" || var == "1")
+}
+
+fn env_str_not_empty(name: &str) -> Option<String> {
+    std::env::var(name).ok().filter(|s| !s.is_empty())
+}
+
+/// Settings gathers configuration options from the environment, plus a
+/// filesystem check for the agent's Unix socket.
 #[derive(Debug)]
 pub struct Settings {
     // Env parameter
@@ -174,27 +194,25 @@ impl Settings {
         );
         let default = Self::default();
         Self {
-            agent_host: parse_env::str_not_empty(Self::DD_AGENT_HOST),
-            trace_agent_port: parse_env::int(Self::DD_TRACE_AGENT_PORT),
-            trace_agent_url: parse_env::str_not_empty(Self::DD_TRACE_AGENT_URL)
+            agent_host: env_str_not_empty(Self::DD_AGENT_HOST),
+            trace_agent_port: env_int(Self::DD_TRACE_AGENT_PORT),
+            trace_agent_url: env_str_not_empty(Self::DD_TRACE_AGENT_URL)
                 .or(default.trace_agent_url),
-            trace_pipe_name: parse_env::str_not_empty(Self::DD_TRACE_PIPE_NAME)
+            trace_pipe_name: env_str_not_empty(Self::DD_TRACE_PIPE_NAME)
                 .or(default.trace_pipe_name),
-            direct_submission_enabled: parse_env::bool(Self::_DD_DIRECT_SUBMISSION_ENABLED)
+            direct_submission_enabled: env_bool(Self::_DD_DIRECT_SUBMISSION_ENABLED)
                 .unwrap_or(default.direct_submission_enabled),
-            api_key: parse_env::str_not_empty(Self::DD_API_KEY),
-            site: parse_env::str_not_empty(Self::DD_SITE),
-            telemetry_dd_url: parse_env::str_not_empty(Self::DD_APM_TELEMETRY_DD_URL),
-            telemetry_heartbeat_interval: parse_env::duration(
-                Self::DD_TELEMETRY_HEARTBEAT_INTERVAL,
-            )
-            .unwrap_or(Duration::from_secs(60)),
-            telemetry_extended_heartbeat_interval: parse_env::duration(
+            api_key: env_str_not_empty(Self::DD_API_KEY),
+            site: env_str_not_empty(Self::DD_SITE),
+            telemetry_dd_url: env_str_not_empty(Self::DD_APM_TELEMETRY_DD_URL),
+            telemetry_heartbeat_interval: env_duration(Self::DD_TELEMETRY_HEARTBEAT_INTERVAL)
+                .unwrap_or(Duration::from_secs(60)),
+            telemetry_extended_heartbeat_interval: env_duration(
                 Self::DD_TELEMETRY_EXTENDED_HEARTBEAT_INTERVAL,
             )
             .unwrap_or(Duration::from_secs(60 * 60 * 24)),
-            shared_lib_debug: parse_env::bool(Self::_DD_SHARED_LIB_DEBUG).unwrap_or(false),
-            endpoints_message_limit: parse_env::int(
+            shared_lib_debug: env_bool(Self::_DD_SHARED_LIB_DEBUG).unwrap_or(false),
+            endpoints_message_limit: env_int(
                 Self::DD_API_SECURITY_ENDPOINT_COLLECTION_MESSAGE_LIMIT,
             )
             .unwrap_or(default_endpoints_message_limit()),
