@@ -3,10 +3,10 @@
 
 use libdd_common::Endpoint;
 #[cfg(unix)]
-use libdd_common::connector::uds;
+use libdd_networking::connector::uds;
 
 #[cfg(windows)]
-use libdd_common::connector::named_pipe;
+use libdd_networking::connector::named_pipe;
 
 use http::Uri;
 use std::borrow::Cow;

@@ -26,7 +26,8 @@ use arc_swap::ArcSwap;
 use arc_swap::ArcSwapOption;
 use libdd_capabilities::{HttpClientCapability, LogWriterCapability, MaybeSend, SleepCapability};
 use libdd_common::mutable_metadata::{MutableMetadata, MutableMetadataHandle};
-use libdd_common::{Endpoint, parse_uri, tag};
+use libdd_common::tag;
+use libdd_common::{Endpoint, parse_uri};
 use libdd_dogstatsd_client::DogStatsDClient;
 use libdd_shared_runtime::SharedRuntime;
 #[cfg(not(target_arch = "wasm32"))]
