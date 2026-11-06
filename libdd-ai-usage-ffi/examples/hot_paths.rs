@@ -299,6 +299,35 @@ fn main() {
         }
         drop_out(&mut out);
     });
+    // Per chunk and per failure (internal gateway).
+    let mut stream = ptr::null_mut();
+    let responses_format = "openai_responses";
+    // SAFETY: written by `stream_new`, used until dropped.
+    unsafe {
+        ddog_ai_usage_stream_new(
+            responses_format.as_ptr(),
+            responses_format.len(),
+            false,
+            &mut stream,
+        )
+    };
+    measure("stream_outcome (per chunk)", || {
+        // SAFETY: a live stream.
+        let outcome = unsafe { ddog_ai_usage_stream_outcome(stream) };
+        assert_eq!(outcome, Outcome::Open);
+    });
+    // SAFETY: a live stream, released once.
+    unsafe { ddog_ai_usage_stream_drop(stream) };
+    let names = "ReadTimeout\nTimeoutException\nHTTPError\nException";
+    measure("error_type_first_known, 4-class chain", || {
+        let mut out = Buffer {
+            ptr: ptr::null_mut(),
+            len: 0,
+        };
+        // SAFETY: valid inputs and output.
+        unsafe { ddog_ai_usage_error_type_first_known(names.as_ptr(), names.len(), 500, &mut out) };
+        drop_out(&mut out);
+    });
     measure("dogstatsd_lines provider_attempt (text)", || {
         let mut out = Buffer {
             ptr: ptr::null_mut(),

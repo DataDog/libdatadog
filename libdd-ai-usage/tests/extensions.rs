@@ -538,3 +538,206 @@ fn gateway_outcomes_models_inclusive_totals_and_google_errors() {
         Some(4160)
     );
 }
+
+#[test]
+fn internal_gateway_rules() {
+    use libdd_ai_usage::{
+        UsageFormat, classify_first_known, client_source, error_type_for_name,
+        gen_ai_provider_name, gen_ai_provider_name_at, observation_usage_from_normalized,
+        service_tier_of, vertex_project_id,
+    };
+    // 1. The first known name of a class chain, else the status.
+    assert_eq!(
+        classify_first_known(["MyTimeout", "APITimeoutError", "Exception"], Some(500)),
+        "timeout_error"
+    );
+    assert_eq!(
+        classify_first_known(["Weird"], Some(429)),
+        "rate_limit_error"
+    );
+    assert_eq!(classify_first_known([], None), "api_error");
+    // 2. Names in another case.
+    assert_eq!(
+        error_type_for_name("RATE_LIMIT_ERROR"),
+        Some("rate_limit_error")
+    );
+    assert_eq!(
+        error_type_for_name("ratelimiterror"),
+        Some("rate_limit_error")
+    );
+    assert_eq!(error_type_for_name("not_found"), Some("not_found_error"));
+    // 6. Tiers, Gemini's trafficType included.
+    for (payload, tier) in [
+        (
+            r#"{"usage": {"_response_service_tier": "flex"}}"#,
+            Some("flex"),
+        ),
+        (
+            r#"{"usageMetadata": {"trafficType": "ON_DEMAND"}}"#,
+            Some("ON_DEMAND"),
+        ),
+        (
+            r#"{"service_tier": "priority", "usage": {}}"#,
+            Some("priority"),
+        ),
+        (r#"{"service_tier": "two words"}"#, None),
+        ("{}", None),
+    ] {
+        assert_eq!(
+            service_tier_of(&json(payload)).as_deref(),
+            tier,
+            "{payload}"
+        );
+    }
+    // 7. Provider names by upstream host.
+    for (name, host, expected) in [
+        ("gemini", "generativelanguage.googleapis.com", "gcp.gemini"),
+        (
+            "google",
+            "https://us-east5-aiplatform.googleapis.com/v1/x",
+            "gcp.vertex_ai",
+        ),
+        (
+            "gemini",
+            "us-east5-aiplatform.googleapis.com",
+            "gcp.vertex_ai",
+        ),
+        ("gemini", "", "gcp.gemini"),
+        ("openai", "generativelanguage.googleapis.com", "openai"),
+    ] {
+        assert_eq!(
+            gen_ai_provider_name_at(name, host).as_deref(),
+            Some(expected),
+            "{name} {host}"
+        );
+    }
+    assert_eq!(
+        gen_ai_provider_name("bedrock-anthropic").as_deref(),
+        Some("aws.bedrock")
+    );
+    assert_eq!(
+        gen_ai_provider_name("bedrock-openai").as_deref(),
+        Some("aws.bedrock")
+    );
+    assert_eq!(
+        gen_ai_provider_name("aws-anthropic").as_deref(),
+        Some("anthropic")
+    );
+    // 8. Vertex projects from the URL.
+    assert_eq!(
+        vertex_project_id(
+            "https://us-east5-aiplatform.googleapis.com/v1/projects/my-proj/locations/us-east5/publishers/anthropic/models/claude:rawPredict"
+        ),
+        Some("my-proj")
+    );
+    assert_eq!(
+        vertex_project_id("https://api.openai.com/v1/projects/x"),
+        None
+    );
+    assert_eq!(
+        vertex_project_id("https://aiplatform.googleapis.com/v1/models"),
+        None
+    );
+    // 9. Client sources.
+    assert_eq!(
+        client_source(["claude-cli/2.0.1 (external, cli)"], "", ""),
+        Some("claude-code")
+    );
+    assert_eq!(
+        client_source(["proxy/1, codex_cli_rs/0.40"], "", ""),
+        Some("codex")
+    );
+    assert_eq!(
+        client_source(["python-httpx/0.27"], "codex_exec", ""),
+        Some("codex")
+    );
+    assert_eq!(client_source(["opencode/0.9"], "", ""), Some("opencode"));
+    assert_eq!(
+        client_source(["claude-cli/2.0.1"], "", "code-gen-eval"),
+        None
+    );
+    assert_eq!(client_source(["curl/8"], "", ""), None);
+    // 4. An observation from normalized usage.
+    let usage = json(
+        r#"{"input_tokens": 1000, "output_tokens": 50, "cache_read_input_tokens": 600,
+            "cache_write_input_tokens": 100, "ephemeral_5m_input_tokens": 100, "total_cost": 0.25}"#,
+    );
+    let members = observation_usage_from_normalized(
+        UsageFormat::Anthropic,
+        false,
+        usage.as_object().unwrap(),
+    )
+    .unwrap();
+    let number = |key: &str| members.get(key).and_then(Json::as_f64);
+    assert_eq!(number("input_tokens"), Some(300.0));
+    assert_eq!(
+        members.get("input_basis").and_then(Json::as_str),
+        Some("excludes_cache")
+    );
+    assert_eq!(number("cache_write_1h_input_tokens"), Some(0.0));
+    assert_eq!(number("cost_usd"), Some(0.25));
+    let members = observation_usage_from_normalized(
+        UsageFormat::OpenAiChat,
+        true,
+        json(r#"{"input_tokens": 8, "output_tokens": 0}"#)
+            .as_object()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(number_of(&members, "input_tokens"), Some(8.0));
+    assert!(!members.contains_key("output_tokens"));
+    assert!(!members.contains_key("cache_read_input_tokens"));
+}
+
+fn number_of(members: &libdd_ai_usage::JsonObject, key: &str) -> Option<f64> {
+    members.get(key).and_then(Json::as_f64)
+}
+
+#[test]
+fn attempt_endings_set_the_error_and_billing() {
+    let base = r#""operation_name": "chat", "provider_name": "anthropic", "streaming": true,
+        "observation_point": "gateway", "duration_seconds": 1, "input_tokens": 10,
+        "input_basis": "includes_cache", "output_tokens": 5, "output_basis": "includes_reasoning",
+        "cost_usd": 0.01, "cost_source": "estimated""#;
+    let expand = |extra: &str| expanded(Profile::ProviderAttempt, &format!("{{{base}, {extra}}}"));
+    // A stream outcome is the error.
+    let value = expand(r#""outcome": "upstream_error""#);
+    assert_eq!(
+        value.get("error_type").and_then(Json::as_str),
+        Some("api_connection_error")
+    );
+    assert!(value.get("input_tokens").is_some());
+    // Cancelled after the terminal event is completed.
+    let value = expand(r#""outcome": "cancelled", "stream_completed": true"#);
+    assert!(value.get("error_type").is_none());
+    let value = expand(r#""outcome": "cancelled""#);
+    assert_eq!(
+        value.get("error_type").and_then(Json::as_str),
+        Some("cancelled")
+    );
+    // A rejected request is not billed.
+    let value = expand(r#""http_status": 429"#);
+    assert_eq!(
+        value.get("error_type").and_then(Json::as_str),
+        Some("rate_limit_error")
+    );
+    assert!(value.get("input_tokens").is_none() && value.get("cost_usd").is_none());
+    assert!(value.get("cost_source").is_none());
+    // A failure that reported no usage of its own keeps none.
+    let value = expand(r#""outcome": "provider_error", "usage_reported": false"#);
+    assert!(value.get("output_tokens").is_none());
+    // A completed 200 is untouched, and the projection takes it.
+    let value = expand(r#""outcome": "completed", "http_status": 200"#);
+    assert!(value.get("error_type").is_none() && value.get("cost_usd").is_some());
+    let projection = project_extended(
+        Profile::ProviderAttempt,
+        &json(&format!("{{{base}, \"http_status\": 503}}")),
+    )
+    .unwrap();
+    assert!(
+        projection
+            .points
+            .iter()
+            .all(|p| p.name != "gen_ai.client.inference.usage.input_tokens")
+    );
+}

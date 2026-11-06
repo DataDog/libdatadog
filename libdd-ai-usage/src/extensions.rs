@@ -21,14 +21,48 @@ use crate::point::{ErrorCode, MetricError, reject};
 
 /// The observation members [`expand_observation`] reads. None is a member of
 /// a profile; each is removed once expanded.
-pub const OBSERVATION_EXTENSIONS: [&str; 6] = [
+pub const OBSERVATION_EXTENSIONS: [&str; 10] = [
     "duration_ns",
     "time_to_first_chunk_ns",
     "output_chunk_intervals_ns",
     "zero_is_unreported",
     "failure",
+    "outcome",
+    "stream_completed",
+    "http_status",
+    "usage_reported",
     "prices_per_million",
 ];
+
+/// The observation members of usage and cost, which an attempt that is not
+/// billed leaves out.
+const BILLED_MEMBERS: [&str; 22] = [
+    "input_tokens",
+    "input_basis",
+    "output_tokens",
+    "output_basis",
+    "cache_read_input_tokens",
+    "cache_write_input_tokens",
+    "cache_write_5m_input_tokens",
+    "cache_write_1h_input_tokens",
+    "reasoning_output_tokens",
+    "input_tokens_by_modality",
+    "output_tokens_by_modality",
+    "input_token_source",
+    "output_token_source",
+    "web_search_requests",
+    "web_search_requests_secondary",
+    "cost_usd",
+    "cost_nano_usd",
+    "cost_source",
+    "cost_rate_card",
+    "cost_bound",
+    "cost_priced_as_model",
+    "prices_per_million",
+];
+
+/// Outcomes of an attempt that are not failures.
+const SUCCESS_OUTCOMES: [&str; 4] = ["", "completed", "ok", "success"];
 
 /// The counts `"zero_is_unreported": true` drops when they are zero: the
 /// parts an SDK or proxy fills with zero when it does not know them. A side
@@ -382,6 +416,132 @@ fn priced_cost(map: &mut JsonObject, prices: Json) -> Result<(), MetricError> {
     Ok(())
 }
 
+/// The attempt-ending rules: `outcome` (how the attempt or its stream ended,
+/// such as `provider_error`, `upstream_error`, `local_error` or
+/// `cancelled`), `stream_completed` (the provider's terminal event was
+/// forwarded), `http_status` (the status of the attempt's response) and
+/// `usage_reported` (whether this attempt reported usage of its own).
+fn attempt_outcome(map: &mut JsonObject) -> Result<(), MetricError> {
+    let outcome = match map.remove("outcome") {
+        None | Some(Json::Null) => None,
+        Some(Json::String(outcome)) => Some(outcome),
+        Some(_) => return invalid("outcome must be a string"),
+    };
+    let flag = |map: &mut JsonObject, key: &str| -> Result<Option<bool>, MetricError> {
+        match map.remove(key) {
+            None | Some(Json::Null) => Ok(None),
+            Some(Json::Bool(flag)) => Ok(Some(flag)),
+            Some(_) => invalid(format!("{key} must be a boolean")),
+        }
+    };
+    let completed = flag(map, "stream_completed")?.unwrap_or(false);
+    let reported = flag(map, "usage_reported")?;
+    let status = match map.remove("http_status") {
+        None | Some(Json::Null) => None,
+        Some(value) => match count(Some(&value)).filter(|s| (100..=599).contains(s)) {
+            Some(status) => Some(status as u16),
+            None => return invalid("http_status must be an HTTP status"),
+        },
+    };
+    // A client may close the stream once it has the terminal event: that
+    // attempt completed.
+    let failed_as = outcome
+        .as_deref()
+        .map(str::trim)
+        .filter(|o| !SUCCESS_OUTCOMES.contains(o))
+        .filter(|o| !(*o == "cancelled" && completed));
+    if map.get("error_type").is_none_or(Json::is_null)
+        && let Some(error_type) = match failed_as {
+            Some(name) => Some(crate::error_type::classify_failure(Some(name), status)),
+            None => status.and_then(|status| classify_error(None, Some(status))),
+        }
+    {
+        map.insert("error_type".into(), Json::String(error_type.into()));
+    }
+    let failed = map.get("error_type").is_some_and(|e| !e.is_null());
+    // An attempt that reported no usage of its own has none (not a reused
+    // earlier figure), and a rejected request (HTTP 4xx or 5xx) is not
+    // billed.
+    if reported == Some(false) || (failed && status.is_some_and(|s| s >= 400)) {
+        for key in BILLED_MEMBERS {
+            map.remove(key);
+        }
+    }
+    Ok(())
+}
+
+/// The usage members of an observation from usage a gateway already
+/// normalized: `input_tokens` with cache included, `output_tokens`,
+/// `cache_read_input_tokens` and `cache_write_input_tokens` when reported,
+/// `ephemeral_5m_input_tokens` and `ephemeral_1h_input_tokens`, and an
+/// optional `total_cost` in USD from the gateway's own prices.
+///
+/// - Anthropic's input is stated as the provider reports it, cache left out (`excludes_cache`),
+///   when the normalized total less the cache parts is not negative; any other format's input
+///   includes the cache.
+/// - A cache count is kept only when the usage reported it; never zero for unreported.
+/// - Both cache lifetimes are stated when either is, the other being zero: Anthropic's
+///   `cache_creation` reports both.
+/// - An embeddings operation has no output side.
+/// - `total_cost`, when finite and not negative, is `cost_usd` with `cost_source: estimated`.
+///
+/// `None` when the usage has no input total.
+pub fn observation_usage_from_normalized(
+    format: crate::UsageFormat,
+    embeddings: bool,
+    usage: &JsonObject,
+) -> Option<JsonObject> {
+    let get = |key: &str| count(usage.get(key));
+    let input = get("input_tokens")?;
+    let cache_read = get("cache_read_input_tokens");
+    let cache_write = get("cache_write_input_tokens");
+    let mut members = JsonObject::new();
+    let number = |n: u64| Json::Number(n as f64);
+    let raw = input
+        .checked_sub(cache_read.unwrap_or(0))
+        .and_then(|rest| rest.checked_sub(cache_write.unwrap_or(0)));
+    match (format, raw) {
+        (crate::UsageFormat::Anthropic, Some(raw)) => {
+            members.insert("input_tokens".into(), number(raw));
+            members.insert("input_basis".into(), "excludes_cache".into());
+        }
+        _ => {
+            members.insert("input_tokens".into(), number(input));
+            members.insert("input_basis".into(), "includes_cache".into());
+        }
+    }
+    if let Some(n) = cache_read {
+        members.insert("cache_read_input_tokens".into(), number(n));
+    }
+    if let Some(n) = cache_write {
+        members.insert("cache_write_input_tokens".into(), number(n));
+    }
+    if !embeddings && let Some(output) = get("output_tokens") {
+        members.insert("output_tokens".into(), number(output));
+        members.insert("output_basis".into(), "includes_reasoning".into());
+    }
+    let five = get("ephemeral_5m_input_tokens");
+    let hour = get("ephemeral_1h_input_tokens");
+    if five.is_some() || hour.is_some() {
+        members.insert(
+            "cache_write_5m_input_tokens".into(),
+            number(five.unwrap_or(0)),
+        );
+        members.insert(
+            "cache_write_1h_input_tokens".into(),
+            number(hour.unwrap_or(0)),
+        );
+    }
+    if let Some(Json::Number(cost)) = usage.get("total_cost")
+        && cost.is_finite()
+        && *cost >= 0.0
+    {
+        members.insert("cost_usd".into(), Json::Number(*cost));
+        members.insert("cost_source".into(), "estimated".into());
+    }
+    Some(members)
+}
+
 /// `observation` with its [`OBSERVATION_EXTENSIONS`] expanded into the
 /// members `profile` defines, in this order:
 ///
@@ -391,7 +551,12 @@ fn priced_cost(map: &mut JsonObject, prices: Json) -> Result<(), MetricError> {
 /// 2. `zero_is_unreported` (`true` for [`ZERO_IS_UNREPORTED_DEFAULT`], or a list of counts) removes
 ///    the counts that are zero, as an SDK or proxy that fills unknown counts with zero means them.
 /// 3. `failure` (`{"status", "no_response", "timed_out", "name"}`) sets `error_type`, as
-///    [`error_type_for_failure`] derives it, when `error_type` is not stated.
+///    [`error_type_for_failure`] derives it, when `error_type` is not stated. Then the attempt's
+///    ending: an `outcome` other than `completed` (`provider_error`, `upstream_error`,
+///    `local_error`, `cancelled`, ...) is its `error_type`, by name and `http_status`, unless it is
+///    `cancelled` with `stream_completed` (closed after the terminal event: completed); without
+///    one, a failed `http_status` is. `usage_reported: false`, or a failure with an `http_status`
+///    of 400 or more (a rejected request is not billed), removes every usage and cost member.
 /// 4. `prices_per_million` (`{"input", "output", "cache_read", "cache_write"}`), for a provider
 ///    attempt, sets `cost_nano_usd` and `cost_source: estimated` from the token counts, as
 ///    [`estimated_cost_nano_usd`] computes it, when no cost is stated. Input that excludes cache
@@ -429,6 +594,7 @@ pub fn expand_observation(
     if let Some(failure) = map.remove("failure") {
         failure_error_type(&mut map, failure)?;
     }
+    attempt_outcome(&mut map)?;
     if let Some(prices) = map.remove("prices_per_million")
         && profile == Profile::ProviderAttempt
     {
