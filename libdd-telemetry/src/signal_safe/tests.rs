@@ -15,10 +15,11 @@ use crate::data::{Application, Host};
 #[cfg(feature = "std")]
 #[test]
 fn encoding_matches_the_owned_serde_model() {
-    let tags = [
-        TagRef::new("component", "signal-safe").unwrap(),
-        TagRef::new("escaped", "\"yes\"\n").unwrap(),
-    ];
+    let tags = ["component:signal-safe", "standalone", "escaped:\"yes\"\n"];
+    let (mut owned_tags, tag_error) =
+        libdd_common::tag::parse_tags("component:signal-safe standalone");
+    assert!(tag_error.is_none());
+    owned_tags.push(Tag::new("escaped", "\"yes\"\n").unwrap());
     let points = [(1_234, 1.5), (1_235, 2.0)];
     let series = [MetricSeriesRef {
         namespace: MetricNamespace::Telemetry,
@@ -65,10 +66,7 @@ fn encoding_matches_the_owned_serde_model() {
             namespace: MetricNamespace::Telemetry,
             metric: "submission.count".to_string(),
             points: points.to_vec(),
-            tags: vec![
-                Tag::new("component", "signal-safe").unwrap(),
-                Tag::new("escaped", "\"yes\"\n").unwrap(),
-            ],
+            tags: owned_tags,
             common: false,
             _type: MetricType::Count,
             interval: 10,

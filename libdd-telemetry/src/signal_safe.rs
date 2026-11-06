@@ -12,8 +12,6 @@
 
 use serde::{Serialize, Serializer};
 
-pub use libdd_common::tag::{TagRef, TagValidationError};
-
 use crate::{
     data::{
         Application, Host,
@@ -41,8 +39,8 @@ pub struct MetricSeriesRef<'a> {
     pub metric: &'a str,
     /// Unix timestamp and metric value pairs.
     pub points: &'a [(u64, f64)],
-    /// Validated metric tags.
-    pub tags: &'a [TagRef<'a>],
+    /// Complete metric tag strings.
+    pub tags: &'a [&'a str],
     /// Whether this is a common metric defined by the telemetry specification.
     pub common: bool,
     /// Metric aggregation type.

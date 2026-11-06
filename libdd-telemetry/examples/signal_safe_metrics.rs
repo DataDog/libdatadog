@@ -10,7 +10,7 @@ use libdd_telemetry::{
         Application, Host,
         metrics::{MetricNamespace, MetricType},
     },
-    signal_safe::{MetricSeriesRef, MetricsRequest, TagRef, send_metrics},
+    signal_safe::{MetricSeriesRef, MetricsRequest, send_metrics},
 };
 use reqwless::client::{HttpConnection, HttpResource};
 use support::{FixedConnection, poll_once};
@@ -30,7 +30,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         hostname: "unknown_hostname".to_owned(),
         ..Host::default()
     };
-    let tags = [TagRef::new("component", "signal-safe")?];
+    let tags = ["component:signal-safe"];
     let points = [(timestamp, 1.0)];
     let series = [MetricSeriesRef {
         namespace: MetricNamespace::Telemetry,

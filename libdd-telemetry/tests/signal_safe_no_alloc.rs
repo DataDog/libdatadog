@@ -10,7 +10,7 @@ use libdd_telemetry::{
         Application, Host,
         metrics::{MetricNamespace, MetricType},
     },
-    signal_safe::{Error, MetricSeriesRef, MetricsRequest, TagRef, send_metrics},
+    signal_safe::{Error, MetricSeriesRef, MetricsRequest, send_metrics},
 };
 use reqwless::client::{HttpConnection, HttpResource};
 use support::{FixedConnection, poll_once};
@@ -32,7 +32,7 @@ fn submits_metrics_without_allocator_calls() {
         hostname: "localhost".to_owned(),
         ..Host::default()
     };
-    let tags = [TagRef::new("component", "signal-safe").unwrap()];
+    let tags = ["component:signal-safe", "standalone"];
     let points = [(1, 1.0)];
     let series = [MetricSeriesRef {
         namespace: MetricNamespace::Telemetry,
@@ -102,5 +102,6 @@ fn submits_metrics_without_allocator_calls() {
             body["payload"]["series"][0]["tags"][0],
             "component:signal-safe"
         );
+        assert_eq!(body["payload"]["series"][0]["tags"][1], "standalone");
     }
 }
