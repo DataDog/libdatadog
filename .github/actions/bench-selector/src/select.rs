@@ -30,6 +30,14 @@ use std::collections::BTreeMap;
 pub struct Selection {
     pub binaries: Vec<SelectedBinary>,
     pub summary: Summary,
+    /// True when a changed input cannot be scoped below the whole suite —
+    /// currently a non-dependency-only ROOT manifest change (profiles,
+    /// membership, features of the workspace itself). The benchmarks job
+    /// turns this into the full suite; cluster-level reasons cannot express
+    /// it because the crate-detection maps root manifests to no crate, so no
+    /// inventory would exist to mark.
+    #[serde(default)]
+    pub full_suite: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -81,15 +89,16 @@ pub struct Summary {
 /// parser could not tell which packages moved, so none can be excluded.
 fn dependency_exercised(
     entry: &crate::coverage::CoverageEntry,
-    lockfile: &crate::lockfile::LockfileChanges,
+    changed_packages: &std::collections::BTreeSet<String>,
+    unattributable: bool,
 ) -> bool {
-    if !lockfile.is_changed() {
+    if changed_packages.is_empty() && !unattributable {
         return false;
     }
-    if lockfile.unattributable {
+    if unattributable {
         return true;
     }
-    entry.deps.iter().any(|dep| lockfile.packages.contains(dep))
+    entry.deps.iter().any(|dep| changed_packages.contains(dep))
 }
 
 /// Do two inclusive ranges overlap?
@@ -103,6 +112,7 @@ pub fn select(
     coverage: &Coverage,
     changed: &ChangedLines,
     lockfile: &crate::lockfile::LockfileChanges,
+    manifests: &crate::manifest::ManifestChanges,
     self_test: bool,
 ) -> Selection {
     let coverage_by_key: BTreeMap<(&str, &str, &str), &crate::coverage::CoverageEntry> = coverage
@@ -116,9 +126,29 @@ pub fn select(
         })
         .collect();
 
-    let full_run = changed
-        .iter()
-        .any(|(path, ranges)| requires_full_run(path, ranges, self_test));
+    // Lockfile bumps and dependency-only manifest changes feed the same
+    // signal: the packages whose code (or wiring) changed, intersected with
+    // the packages each cluster executes.
+    let mut changed_packages = lockfile.packages.clone();
+    changed_packages.extend(manifests.packages.iter().cloned());
+    let unattributable = lockfile.unattributable;
+
+    // A changed manifest that is NOT dependencies-only is unscopable by
+    // coverage (its own features, profiles, metadata) and keeps the full-run
+    // treatment. A dependencies-only manifest is scoped like a lockfile
+    // bump instead. Unanalyzed manifests keep requires_full_run's default.
+    let full_run = changed.iter().any(|(path, ranges)| {
+        if manifests.deps_only.contains_key(path) {
+            return !manifests.is_deps_only(path);
+        }
+        requires_full_run(path, ranges, self_test)
+    });
+    // A non-dependency-only ROOT manifest (profiles, workspace features,
+    // membership) can affect every crate in the workspace, and the crate
+    // detection maps root manifests to no crate — so no inventory scope
+    // could ever express it. Signal the benchmarks job to run everything.
+    let full_suite =
+        !manifests.is_deps_only("Cargo.toml") && manifests.deps_only.contains_key("Cargo.toml");
     let mut binaries = Vec::new();
     let mut clusters_total = 0usize;
     let mut clusters_selected = 0usize;
@@ -150,7 +180,7 @@ pub fn select(
                     Some(entry) => {
                         if cluster_touches_changes(&entry.files, changed) {
                             Some(Reason::CoveredChange)
-                        } else if dependency_exercised(entry, lockfile) {
+                        } else if dependency_exercised(entry, &changed_packages, unattributable) {
                             Some(Reason::DependencyChanged)
                         } else {
                             None
@@ -194,6 +224,7 @@ pub fn select(
             clusters_total,
             clusters_selected,
         },
+        full_suite,
         binaries,
     }
 }
@@ -288,6 +319,7 @@ mod tests {
     use crate::diff::LineRange;
     use crate::inventory::{BenchBinary, Inventory};
     use crate::lockfile::LockfileChanges;
+    use crate::manifest::ManifestChanges;
     use std::collections::BTreeSet;
 
     fn binary(ids: &[&str]) -> BenchBinary {
@@ -338,7 +370,14 @@ mod tests {
             entry("b", vec![("libdd-x/src/cold.rs", vec![(1, 5)])]),
         ]);
         let ch = changed(vec![("libdd-x/src/hot.rs", vec![(15, 15)])]);
-        let selection = select(&inv, &cov, &ch, &LockfileChanges::default(), false);
+        let selection = select(
+            &inv,
+            &cov,
+            &ch,
+            &LockfileChanges::default(),
+            &ManifestChanges::default(),
+            false,
+        );
         assert_eq!(selection.binaries.len(), 1);
         assert_eq!(selection.binaries[0].clusters.len(), 1);
         assert_eq!(selection.binaries[0].clusters[0].name, "a");
@@ -361,7 +400,14 @@ mod tests {
             entry("b", vec![("libdd-x/src/other.rs", vec![(1, 5)])]),
         ]);
         let ch = changed(vec![("libdd-x/src/hot.rs", vec![(50, 60)])]);
-        let selection = select(&inv, &cov, &ch, &LockfileChanges::default(), false);
+        let selection = select(
+            &inv,
+            &cov,
+            &ch,
+            &LockfileChanges::default(),
+            &ManifestChanges::default(),
+            false,
+        );
         assert!(selection.binaries.is_empty());
         assert_eq!(selection.summary.clusters_selected, 0);
     }
@@ -383,7 +429,14 @@ mod tests {
             },
         ]);
         let ch = changed(vec![("libdd-x/src/unrelated.rs", vec![(1, 1)])]);
-        let selection = select(&inv, &cov, &ch, &LockfileChanges::default(), false);
+        let selection = select(
+            &inv,
+            &cov,
+            &ch,
+            &LockfileChanges::default(),
+            &ManifestChanges::default(),
+            false,
+        );
         let selected: Vec<&str> = selection.binaries[0]
             .clusters
             .iter()
@@ -408,7 +461,14 @@ mod tests {
             entry("b", vec![("libdd-x/src/other.rs", vec![(1, 5)])]),
         ]);
         let ch = changed(vec![("libdd-x/benches/main.rs", vec![(1, 1)])]);
-        let selection = select(&inv, &cov, &ch, &LockfileChanges::default(), false);
+        let selection = select(
+            &inv,
+            &cov,
+            &ch,
+            &LockfileChanges::default(),
+            &ManifestChanges::default(),
+            false,
+        );
         assert_eq!(selection.binaries.len(), 1);
         assert_eq!(selection.binaries[0].clusters.len(), 2);
         assert!(
@@ -450,6 +510,7 @@ mod tests {
                 &cov,
                 &changed(vec![(path, vec![(100, 100)])]),
                 &LockfileChanges::default(),
+                &ManifestChanges::default(),
                 false,
             );
             assert_eq!(selection.summary.clusters_selected, 2, "{path}");
@@ -489,6 +550,7 @@ mod tests {
                 &cov,
                 &changed(vec![(path, vec![(100, 100)])]),
                 &LockfileChanges::default(),
+                &ManifestChanges::default(),
                 true,
             );
             assert_eq!(selection.summary.clusters_selected, 0, "{path}");
@@ -500,6 +562,7 @@ mod tests {
                 &cov,
                 &changed(vec![(path, vec![(100, 100)])]),
                 &LockfileChanges::default(),
+                &ManifestChanges::default(),
                 true,
             );
             assert_eq!(selection.summary.clusters_selected, 2, "{path}");
@@ -516,7 +579,14 @@ mod tests {
             entry("b", vec![("libdd-x/src/other.rs", vec![(1, 5)])]),
         ]);
         let ch = crate::diff::parse_unified_diff("diff --git a/libdd-x/benches/old.rs b/libdd-x/benches/new.rs\nsimilarity index 100%\nrename from libdd-x/benches/old.rs\nrename to libdd-x/benches/new.rs\n").unwrap();
-        let selection = select(&inv, &cov, &ch, &LockfileChanges::default(), false);
+        let selection = select(
+            &inv,
+            &cov,
+            &ch,
+            &LockfileChanges::default(),
+            &ManifestChanges::default(),
+            false,
+        );
         assert_eq!(selection.summary.clusters_selected, 2);
         assert!(
             selection.binaries[0]
@@ -537,6 +607,7 @@ mod tests {
             &cov,
             &changed(vec![("libdd-x/src/deleted.rs", vec![])]),
             &LockfileChanges::default(),
+            &ManifestChanges::default(),
             false,
         );
         assert_eq!(selection.summary.clusters_selected, 1);
@@ -546,6 +617,7 @@ mod tests {
             &cov,
             &ChangedLines::new(),
             &LockfileChanges::default(),
+            &ManifestChanges::default(),
             false,
         );
         assert_eq!(
@@ -597,7 +669,14 @@ mod tests {
 ",
             &std::collections::BTreeSet::new(),
         );
-        let selection = select(&inv, &cov, &ChangedLines::new(), &lockfile, false);
+        let selection = select(
+            &inv,
+            &cov,
+            &ChangedLines::new(),
+            &lockfile,
+            &ManifestChanges::default(),
+            false,
+        );
         assert_eq!(selection.summary.clusters_selected, 1);
         let cluster = &selection.binaries[0].clusters[0];
         assert_eq!(cluster.name, "a");
@@ -630,7 +709,14 @@ mod tests {
 ",
             &std::collections::BTreeSet::new(),
         );
-        let selection = select(&inv, &cov, &ChangedLines::new(), &lockfile, false);
+        let selection = select(
+            &inv,
+            &cov,
+            &ChangedLines::new(),
+            &lockfile,
+            &ManifestChanges::default(),
+            false,
+        );
         assert_eq!(selection.summary.clusters_selected, 0);
         assert!(selection.binaries.is_empty());
     }
@@ -656,7 +742,14 @@ mod tests {
             packages: std::collections::BTreeSet::new(),
             unattributable: true,
         };
-        let selection = select(&inv, &cov, &ChangedLines::new(), &lockfile, false);
+        let selection = select(
+            &inv,
+            &cov,
+            &ChangedLines::new(),
+            &lockfile,
+            &ManifestChanges::default(),
+            false,
+        );
         assert_eq!(selection.summary.clusters_selected, 2);
         assert!(
             selection.binaries[0]
@@ -693,6 +786,182 @@ mod tests {
             &[(1, 2)],
             true
         ));
+    }
+
+    #[test]
+    fn member_manifest_deps_only_scopes_like_a_lockfile_bump() {
+        let inv = Inventory {
+            binaries: vec![binary(&["a/x", "b/y"])],
+        };
+        // Cluster a executes the re-wired dependency; cluster b does not.
+        let cov = coverage(vec![
+            entry_with_deps(
+                "a",
+                vec![("libdd-x/src/hot.rs", vec![(1, 5)])],
+                vec!["allocator-api2"],
+            ),
+            entry_with_deps(
+                "b",
+                vec![("libdd-x/src/other.rs", vec![(1, 5)])],
+                vec!["serde"],
+            ),
+        ]);
+        let ch = changed(vec![("libdd-x/Cargo.toml", vec![(30, 30)])]);
+        let manifests = crate::manifest::ManifestChanges {
+            deps_only: [("libdd-x/Cargo.toml".to_string(), true)]
+                .into_iter()
+                .collect(),
+            packages: ["allocator-api2".to_string()].into_iter().collect(),
+        };
+        let selection = select(
+            &inv,
+            &cov,
+            &ch,
+            &LockfileChanges::default(),
+            &manifests,
+            false,
+        );
+        assert_eq!(selection.summary.clusters_selected, 1);
+        assert_eq!(selection.binaries[0].clusters[0].name, "a");
+        assert_eq!(
+            selection.binaries[0].clusters[0].reason,
+            Reason::DependencyChanged
+        );
+        assert!(!selection.full_suite);
+    }
+
+    #[test]
+    fn member_manifest_with_other_changes_keeps_the_full_run() {
+        let inv = Inventory {
+            binaries: vec![binary(&["a/x"])],
+        };
+        let cov = coverage(vec![entry("a", vec![("libdd-x/src/hot.rs", vec![(1, 5)])])]);
+        let ch = changed(vec![("libdd-x/Cargo.toml", vec![(40, 40)])]);
+        let manifests = crate::manifest::ManifestChanges {
+            deps_only: [("libdd-x/Cargo.toml".to_string(), false)]
+                .into_iter()
+                .collect(),
+            packages: std::collections::BTreeSet::new(),
+        };
+        let selection = select(
+            &inv,
+            &cov,
+            &ch,
+            &LockfileChanges::default(),
+            &manifests,
+            false,
+        );
+        assert_eq!(selection.summary.clusters_selected, 1);
+        assert_eq!(
+            selection.binaries[0].clusters[0].reason,
+            Reason::UncoveredInputChanged
+        );
+        // A member manifest stays scoped to the affected crates, not the
+        // whole suite.
+        assert!(!selection.full_suite);
+    }
+
+    #[test]
+    fn root_manifest_deps_only_does_not_force_anything() {
+        let inv = Inventory {
+            binaries: vec![binary(&["a/x", "b/y"])],
+        };
+        let cov = coverage(vec![
+            entry_with_deps(
+                "a",
+                vec![("libdd-x/src/hot.rs", vec![(1, 5)])],
+                vec!["serde"],
+            ),
+            entry_with_deps(
+                "b",
+                vec![("libdd-x/src/other.rs", vec![(1, 5)])],
+                vec!["libc"],
+            ),
+        ]);
+        // Root [workspace.dependencies] zstd bump, dependencies-only. Nothing
+        // here exercises zstd, so nothing runs.
+        let ch = changed(vec![("Cargo.toml", vec![(60, 60)])]);
+        let manifests = crate::manifest::ManifestChanges {
+            deps_only: [("Cargo.toml".to_string(), true)].into_iter().collect(),
+            packages: ["zstd".to_string()].into_iter().collect(),
+        };
+        let selection = select(
+            &inv,
+            &cov,
+            &ch,
+            &LockfileChanges::default(),
+            &manifests,
+            false,
+        );
+        assert_eq!(selection.summary.clusters_selected, 0);
+        assert!(!selection.full_suite);
+    }
+
+    #[test]
+    fn root_manifest_with_other_changes_requires_the_full_suite() {
+        let inv = Inventory {
+            binaries: vec![binary(&["a/x"])],
+        };
+        let cov = coverage(vec![entry("a", vec![("libdd-x/src/hot.rs", vec![(1, 5)])])]);
+        // A profile or membership change in the root manifest.
+        let ch = changed(vec![("Cargo.toml", vec![(80, 80)])]);
+        let manifests = crate::manifest::ManifestChanges {
+            deps_only: [("Cargo.toml".to_string(), false)].into_iter().collect(),
+            packages: std::collections::BTreeSet::new(),
+        };
+        let selection = select(
+            &inv,
+            &cov,
+            &ch,
+            &LockfileChanges::default(),
+            &manifests,
+            false,
+        );
+        assert!(selection.full_suite);
+        assert_eq!(selection.summary.clusters_selected, 1);
+        assert_eq!(
+            selection.binaries[0].clusters[0].reason,
+            Reason::UncoveredInputChanged
+        );
+    }
+
+    #[test]
+    fn manifest_and_lockfile_signals_merge() {
+        let inv = Inventory {
+            binaries: vec![binary(&["a/x", "b/y"])],
+        };
+        let cov = coverage(vec![
+            entry_with_deps(
+                "a",
+                vec![("libdd-x/src/hot.rs", vec![(1, 5)])],
+                vec!["serde"],
+            ),
+            entry_with_deps(
+                "b",
+                vec![("libdd-x/src/other.rs", vec![(1, 5)])],
+                vec!["bytes"],
+            ),
+        ]);
+        // Lockfile bumped zstd (unexercised); a member manifest re-wired
+        // bytes (exercised by cluster b).
+        let lockfile = crate::lockfile::parse_lockfile_diff(
+            "[[package]]\nname = \"zstd\"\n-version = \"0.13\"\n+version = \"0.14\"\n",
+            &std::collections::BTreeSet::new(),
+        );
+        let ch = changed(vec![("libdd-x/Cargo.toml", vec![(30, 30)])]);
+        let manifests = crate::manifest::ManifestChanges {
+            deps_only: [("libdd-x/Cargo.toml".to_string(), true)]
+                .into_iter()
+                .collect(),
+            packages: ["bytes".to_string()].into_iter().collect(),
+        };
+        let selection = select(&inv, &cov, &ch, &lockfile, &manifests, false);
+        assert_eq!(selection.summary.clusters_selected, 1);
+        assert_eq!(selection.binaries[0].clusters[0].name, "b");
+        assert_eq!(
+            selection.binaries[0].clusters[0].reason,
+            Reason::DependencyChanged
+        );
     }
 
     #[test]
