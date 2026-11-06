@@ -3190,9 +3190,11 @@ dependencies = [
  "libdd-common-ffi",
  "libdd-http-client",
  "libdd-shared-runtime",
+ "rustls",
  "tempfile",
  "tokio-util",
  "tracing",
+ "url",
 ]
 
 [[package]]

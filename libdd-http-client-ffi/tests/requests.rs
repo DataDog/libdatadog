@@ -1,9 +1,6 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! What reaches the server: methods, URLs, headers and bodies, plus argument validation of
-//! `ddog_http_client_send`.
-
 mod common;
 
 use common::*;
@@ -58,7 +55,6 @@ fn every_method_is_supported() {
 fn post_sends_a_binary_body_and_its_headers_unchanged() {
     let server = spawn_tcp(respond_ok);
     let client = server.cfg().build().expect("client");
-    // Not valid UTF-8, and contains NUL: the body is opaque bytes.
     let body = vec![0x00, 0xff, 0x92, 0xa1, b'a', 0x00, 0x80];
 
     let request = Req::post("/v0.4/traces")
@@ -129,7 +125,7 @@ fn the_path_prefix_of_the_base_url_is_kept() {
 #[test]
 fn an_absolute_url_ignores_the_base_url() {
     let server = spawn_tcp(respond_ok);
-    // The base URL points at an address nothing listens on.
+    // The base URL is unreachable: only the absolute URL can succeed.
     let client = Cfg::for_addr(refused_addr()).build().expect("client");
 
     let response = client.send(&Req::get(server.url("/abs"))).expect("send");
@@ -282,7 +278,6 @@ fn send_rejects_null_pointers() {
     let client = server.cfg().build().expect("client");
     let request = Req::get("/x");
 
-    // SAFETY: NULL arguments are part of the documented contract.
     unsafe {
         let mut out: *mut HttpResponse = null_mut();
         let no_client = request.with_ffi(|r| ddog_http_client_send(null(), r, null(), &mut out));
@@ -321,7 +316,6 @@ fn send_rejects_a_url_that_is_not_utf8() {
     };
 
     let mut out: *mut HttpResponse = null_mut();
-    // SAFETY: all pointers are valid for the call.
     let error = take_error(unsafe { ddog_http_client_send(client.0, &request, null(), &mut out) })
         .expect_err("non-UTF-8 url");
 
