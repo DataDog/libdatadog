@@ -185,7 +185,44 @@ pub fn pack_dogstatsd_joined_limited<'a, S: AsRef<str>>(
     (out, dropped)
 }
 
+/// Re-split a datagram the socket refused as too long (`EMSGSIZE`: macOS,
+/// for one, takes Unix datagrams of only 2 KiB by default) into datagrams of
+/// at most `max_payload` bytes. Each of its lines is kept whole; a line
+/// longer than `max_payload` cannot be sent on that socket and is dropped
+/// and counted. A caller that does not know the socket's limit can halve
+/// its payload on each refusal (with a floor such as 512 bytes). Returns the
+/// datagrams joined by `separator` and the number of lines dropped.
+pub fn repack_dogstatsd(datagram: &str, max_payload: usize, separator: char) -> (String, usize) {
+    pack_dogstatsd_joined_limited(
+        datagram
+            .split('\n')
+            .map(|line| line.strip_suffix('\r').unwrap_or(line)),
+        &[] as &[&str],
+        max_payload,
+        max_payload,
+        separator,
+    )
+}
+
 impl MetricBatch {
+    /// The batch as DogStatsD datagrams written into one text, each
+    /// separated from the next by `separator`, as [`pack_dogstatsd_joined`]
+    /// writes them, and the number of lines dropped for being too long.
+    pub fn dogstatsd_datagrams_joined<S: AsRef<str>>(
+        &self,
+        constant_tags: &[S],
+        max_payload: usize,
+        separator: char,
+    ) -> Result<(String, usize), MetricError> {
+        let lines = self.dogstatsd_lines()?;
+        Ok(pack_dogstatsd_joined(
+            lines.iter().map(String::as_str),
+            constant_tags,
+            max_payload,
+            separator,
+        ))
+    }
+
     /// The batch as DogStatsD datagrams: [`MetricBatch::dogstatsd_lines`]
     /// packed by [`pack_dogstatsd`].
     pub fn dogstatsd_datagrams<S: AsRef<str>>(

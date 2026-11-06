@@ -23,7 +23,8 @@ crate-type = ["lib", "staticlib", "cdylib"]
 bench = false
 
 [dependencies]
-libdd-ai-usage = { path = "../libdd-ai-usage", version = "0.1.0", default-features = false }
+# `otlp` for the size-bounded OTLP export and its partial-success replies.
+libdd-ai-usage = { path = "../libdd-ai-usage", version = "0.1.0", default-features = false, features = ["otlp"] }
 serde_json = { workspace = true, features = ["std"] }
 
 [dev-dependencies]

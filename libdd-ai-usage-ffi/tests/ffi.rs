@@ -1305,3 +1305,133 @@ fn otel_metrics_translate_across_the_boundary() {
     let (status, _) = translate(r#"{"name": 1}"#);
     assert_eq!(status, Status::Rejected);
 }
+
+#[test]
+fn batch_two_entry_points() {
+    // SAFETY: valid inputs and outputs throughout.
+    unsafe {
+        let id = " acct-1 ";
+        assert_eq!(
+            text_out(|out| ddog_ai_usage_billing_id(id.as_ptr(), id.len(), out)),
+            (Status::Ok, "acct-1".to_string())
+        );
+        let long = "a".repeat(129);
+        assert_eq!(
+            text_out(|out| ddog_ai_usage_billing_id(long.as_ptr(), long.len(), out)).0,
+            Status::Rejected
+        );
+        assert_eq!(
+            text_out(|out| ddog_ai_usage_error_type_failed(ptr::null(), 0, 0, out)),
+            (Status::Ok, "api_error".to_string())
+        );
+        assert_eq!(
+            text_out(|out| ddog_ai_usage_error_type_failed(ptr::null(), 0, 503, out)).1,
+            "internal_server_error"
+        );
+        let url = "https://generativelanguage.googleapis.com/v1beta/openai/";
+        let provider = "openai";
+        assert_eq!(
+            text_out(|out| ddog_ai_usage_usage_format_for_base_url(
+                url.as_ptr(),
+                url.len(),
+                provider.as_ptr(),
+                provider.len(),
+                out
+            )),
+            (Status::Ok, "gemini_openai_compat".to_string())
+        );
+        let datagram = "a:1|c\nb:1|c\nc:1|c";
+        let mut dropped = 9;
+        assert_eq!(
+            text_out(|out| ddog_ai_usage_repack_dogstatsd(
+                datagram.as_ptr(),
+                datagram.len(),
+                11,
+                &mut dropped,
+                out
+            )),
+            (Status::Ok, "a:1|c\nb:1|c\0c:1|c".to_string()),
+        );
+        assert_eq!(dropped, 0);
+        let mut rejected = 0;
+        let body = br#"{"partialSuccess": {"rejectedDataPoints": "4", "errorMessage": "late"}}"#;
+        assert_eq!(
+            text_out(|out| ddog_ai_usage_otlp_partial_success(
+                body.as_ptr(),
+                body.len(),
+                &mut rejected,
+                out
+            )),
+            (Status::Ok, "late".to_string())
+        );
+        assert_eq!(rejected, 4);
+        assert_eq!(
+            text_out(|out| ddog_ai_usage_otlp_partial_success(ptr::null(), 0, &mut rejected, out))
+                .0,
+            Status::Rejected
+        );
+    }
+}
+
+#[test]
+fn otlp_parts_are_framed_by_length() {
+    let mut batch = ptr::null_mut();
+    let scope = "litellm";
+    let version = "1.0";
+    // SAFETY: `batch` is written by `batch_new` and used until dropped.
+    unsafe {
+        assert_eq!(ddog_ai_usage_batch_new(&mut batch), Status::Ok);
+        for user in 0..40 {
+            let document = ATTEMPT.replace("ada@example.com", &format!("user{user}@example.com"));
+            ddog_ai_usage_batch_add_quiet(
+                batch,
+                document.as_ptr(),
+                document.len(),
+                ptr::null_mut(),
+            );
+        }
+        let mut out = empty();
+        let status = ddog_ai_usage_batch_take_otlp_parts(
+            batch,
+            scope.as_ptr(),
+            scope.len(),
+            version.as_ptr(),
+            version.len(),
+            1,
+            2,
+            false,
+            2048,
+            &mut out,
+        );
+        assert_eq!(status, Status::Ok);
+        let framed = std::slice::from_raw_parts(out.ptr, out.len).to_vec();
+        ddog_ai_usage_buffer_drop(&mut out);
+        let mut parts = 0;
+        let mut at = 0;
+        while at < framed.len() {
+            let len = u32::from_le_bytes(framed[at..at + 4].try_into().unwrap()) as usize;
+            at += 4 + len;
+            assert!(len > 0);
+            parts += 1;
+        }
+        assert_eq!(at, framed.len());
+        assert!(parts > 1, "{parts}");
+        assert!(ddog_ai_usage_batch_is_empty(batch));
+        // An empty batch writes nothing.
+        let mut out = empty();
+        let status = ddog_ai_usage_batch_take_otlp_parts(
+            batch,
+            scope.as_ptr(),
+            scope.len(),
+            version.as_ptr(),
+            version.len(),
+            1,
+            2,
+            true,
+            0,
+            &mut out,
+        );
+        assert_eq!((status, out.len), (Status::Ok, 0));
+        ddog_ai_usage_batch_drop(batch);
+    }
+}

@@ -191,6 +191,52 @@ fn main() {
         drop(datagrams);
         drop_out(&mut out);
     });
+    // 2,000 attempts of distinct users taken as OTLP: one request, and
+    // requests of at most 64 KiB. Both fill the batch the same way, so the
+    // difference is the cost of splitting.
+    let users: Vec<String> = (0..2_000)
+        .map(|user| ATTEMPT.replace("ada@example.com", &format!("user{user}@example.com")))
+        .collect();
+    for (label, max_bytes) in [
+        ("take_otlp_parts 2k attempts, one request", 0),
+        ("take_otlp_parts 2k attempts, 64 KiB parts", 64 * 1024),
+    ] {
+        measure_burst(label, || {
+            let mut batch = ptr::null_mut();
+            let mut out = Buffer {
+                ptr: ptr::null_mut(),
+                len: 0,
+            };
+            let scope = "bench";
+            // SAFETY: a live batch, valid inputs and output.
+            unsafe {
+                ddog_ai_usage_batch_new(&mut batch);
+                for document in &users {
+                    ddog_ai_usage_batch_add_quiet(
+                        batch,
+                        document.as_ptr(),
+                        document.len(),
+                        ptr::null_mut(),
+                    );
+                }
+                let status = ddog_ai_usage_batch_take_otlp_parts(
+                    batch,
+                    scope.as_ptr(),
+                    scope.len(),
+                    scope.as_ptr(),
+                    scope.len(),
+                    1,
+                    2,
+                    false,
+                    max_bytes,
+                    &mut out,
+                );
+                assert_eq!(status, Status::Ok);
+                ddog_ai_usage_batch_drop(batch);
+            }
+            drop_out(&mut out);
+        });
+    }
     measure("dogstatsd_lines provider_attempt (text)", || {
         let mut out = Buffer {
             ptr: ptr::null_mut(),

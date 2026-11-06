@@ -30,13 +30,14 @@ use std::{ptr, slice};
 
 use libdd_ai_usage::{
     Attributes, BillableTokens, DOGSTATSD_MAX_LINE_BYTES, DOGSTATSD_UDP_MAX_PAYLOAD,
-    DOGSTATSD_UDS_MAX_PAYLOAD, ErrorCode, Json, MetricBatch, MetricError, PROVIDER_ID_HEADERS,
-    PricesPerMillion, Profile, ProviderResponse, StreamOutcome, UsageFormat, UsageStream,
-    bedrock_arn_account, classify_error, classify_known_error, datadog_series, datadog_tag_value,
-    error_type_for_failure, estimated_cost_nano_usd, gen_ai_provider_name, is_deployment_value,
-    is_person_identifier, is_service_tier, operation_name_for, pack_dogstatsd_joined,
-    pack_dogstatsd_limited, parse_provider_body, project_extended, provider_id_attributes,
-    retain_metrics, with_deployment_attributes_json,
+    DOGSTATSD_UDS_MAX_PAYLOAD, ErrorCode, Json, MetricBatch, MetricError, OtlpBinding, OtlpScope,
+    OtlpWindow, PROVIDER_ID_HEADERS, PricesPerMillion, Profile, ProviderResponse, StreamOutcome,
+    UsageFormat, UsageStream, bedrock_arn_account, classify_error, classify_known_error,
+    datadog_series, datadog_tag_value, error_type_for_failure, estimated_cost_nano_usd,
+    gen_ai_provider_name, is_deployment_value, is_person_identifier, is_service_tier,
+    operation_name_for, pack_dogstatsd_joined, pack_dogstatsd_limited,
+    parse_export_partial_success, parse_provider_body, project_extended, provider_id_attributes,
+    repack_dogstatsd, retain_metrics, with_deployment_attributes_json,
 };
 use serde_json::{Value, json};
 
@@ -87,10 +88,14 @@ impl Buffer {
     };
 
     fn from_string(text: String) -> Buffer {
-        if text.is_empty() {
+        Buffer::from_bytes(text.into_bytes())
+    }
+
+    fn from_bytes(bytes: Vec<u8>) -> Buffer {
+        if bytes.is_empty() {
             return Buffer::EMPTY;
         }
-        let bytes = text.into_bytes().into_boxed_slice();
+        let bytes = bytes.into_boxed_slice();
         let len = bytes.len();
         Buffer {
             ptr: Box::into_raw(bytes).cast::<u8>(),
@@ -1055,6 +1060,266 @@ pub unsafe extern "C" fn ddog_ai_usage_batch_is_full(batch: *const Batch) -> boo
             .is_some_and(|batch| batch.inner.lock().is_ok_and(|inner| inner.is_full()))
     }))
     .unwrap_or(false)
+}
+
+/// Write `value[..value_len]` to `out` as an account, project or key id is
+/// kept (trimmed; non-blank, at most 128 bytes), so ids an operator
+/// configures are checked as the provider's headers are.
+/// [`Status::Rejected`] for one that is not kept.
+///
+/// # Safety
+///
+/// `value` must point to `value_len` readable bytes (or `value_len` must be
+/// 0), and `out` must be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ddog_ai_usage_billing_id(
+    value: *const u8,
+    value_len: usize,
+    out: *mut Buffer,
+) -> Status {
+    // SAFETY: forwarded from the caller.
+    unsafe {
+        text_call(out, || {
+            catch_unwind(AssertUnwindSafe(|| {
+                text(value, value_len)
+                    .map(|value| libdd_ai_usage::billing_id(value).map(str::to_string))
+            }))
+            .unwrap_or(None)
+        })
+    }
+}
+
+/// Write the `error.type` of a call known to have failed to `out`: as
+/// [`ddog_ai_usage_error_type`], and `api_error` when neither its name
+/// `name[..name_len]` nor its HTTP `status` (0 for none) says why. Never
+/// [`Status::Rejected`].
+///
+/// # Safety
+///
+/// `name` must point to `name_len` readable bytes (or `name_len` must be 0),
+/// and `out` must be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ddog_ai_usage_error_type_failed(
+    name: *const u8,
+    name_len: usize,
+    status: u16,
+    out: *mut Buffer,
+) -> Status {
+    // SAFETY: forwarded from the caller.
+    unsafe {
+        text_call(out, || {
+            catch_unwind(AssertUnwindSafe(|| {
+                text(name, name_len).map(|name| {
+                    Some(
+                        libdd_ai_usage::classify_failure(
+                            (!name.is_empty()).then_some(name),
+                            (status != 0).then_some(status),
+                        )
+                        .to_string(),
+                    )
+                })
+            }))
+            .unwrap_or(None)
+        })
+    }
+}
+
+/// Write the usage format of a deployment's responses to `out`, from its
+/// base URL `base_url[..base_url_len]` and its `gen_ai.provider.name`
+/// `provider_name[..provider_name_len]` (may be empty):
+/// `gemini_openai_compat` for Google's OpenAI-compatible Gemini endpoint
+/// (`generativelanguage.googleapis.com` reached as `openai`), else `auto`.
+///
+/// # Safety
+///
+/// `base_url` and `provider_name` must point to their lengths of readable
+/// bytes (or the length must be 0), and `out` must be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ddog_ai_usage_usage_format_for_base_url(
+    base_url: *const u8,
+    base_url_len: usize,
+    provider_name: *const u8,
+    provider_name_len: usize,
+    out: *mut Buffer,
+) -> Status {
+    // SAFETY: forwarded from the caller.
+    unsafe {
+        text_call(out, || {
+            catch_unwind(AssertUnwindSafe(|| {
+                let url = text(base_url, base_url_len)?;
+                let provider = text(provider_name, provider_name_len)?;
+                Some(Some(
+                    UsageFormat::for_base_url(url, provider)
+                        .as_str()
+                        .to_string(),
+                ))
+            }))
+            .unwrap_or(None)
+        })
+    }
+}
+
+/// Re-split a DogStatsD datagram the socket refused as too long
+/// (`EMSGSIZE`), `datagram[..datagram_len]`, into datagrams of at most
+/// `max_payload` bytes, written to `out` as text: lines joined by `\n`,
+/// datagrams separated by a NUL byte. Lines are kept whole; one longer than
+/// `max_payload` cannot be sent on that socket and is dropped, and the
+/// number dropped is written to `dropped_lines` when it is not null.
+/// [`Status::Rejected`] for a `max_payload` of 0.
+///
+/// # Safety
+///
+/// `datagram` must point to `datagram_len` readable bytes (or the length
+/// must be 0), `dropped_lines` must be null or writable, and `out` must be
+/// null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ddog_ai_usage_repack_dogstatsd(
+    datagram: *const u8,
+    datagram_len: usize,
+    max_payload: usize,
+    dropped_lines: *mut usize,
+    out: *mut Buffer,
+) -> Status {
+    // SAFETY: forwarded from the caller.
+    unsafe {
+        text_or_error_call(out, || {
+            catch_unwind(AssertUnwindSafe(|| {
+                let datagram = text(datagram, datagram_len)
+                    .ok_or(Failure::Internal("the datagram is null or not UTF-8"))?;
+                if max_payload == 0 {
+                    return Err(invalid("max_payload must be a positive integer"));
+                }
+                let (text, dropped) = repack_dogstatsd(datagram, max_payload, '\0');
+                write_count(dropped_lines, dropped);
+                Ok(text)
+            }))
+            .unwrap_or(Err(Failure::Internal("repacking panicked")))
+        })
+    }
+}
+
+/// Read an OTLP `ExportMetricsServiceResponse` body `body[..body_len]`
+/// (protobuf, or its JSON form): when it states a partial success, write the
+/// rejected data points to `rejected_points` (when not null) and the
+/// endpoint's message, cut to 256 bytes, to `out` as text, and return
+/// [`Status::Ok`]. [`Status::Rejected`] with an empty `out` for a full
+/// success or a body that is neither.
+///
+/// # Safety
+///
+/// `body` must point to `body_len` readable bytes (or `body_len` must be 0),
+/// `rejected_points` must be null or writable, and `out` must be null or
+/// writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ddog_ai_usage_otlp_partial_success(
+    body: *const u8,
+    body_len: usize,
+    rejected_points: *mut u64,
+    out: *mut Buffer,
+) -> Status {
+    // SAFETY: forwarded from the caller.
+    unsafe {
+        text_call(out, || {
+            catch_unwind(AssertUnwindSafe(|| {
+                let body = bytes(body, body_len)?;
+                Some(
+                    parse_export_partial_success(body).map(|(rejected, message)| {
+                        if !rejected_points.is_null() {
+                            // SAFETY: the caller guarantees it is writable.
+                            rejected_points.write(rejected);
+                        }
+                        message
+                    }),
+                )
+            }))
+            .unwrap_or(None)
+        })
+    }
+}
+
+/// Take every point of `batch`, leaving it empty, and write it as OTLP
+/// `ExportMetricsServiceRequest`s of at most `max_bytes` each (0 for one
+/// request) to `out`: each request preceded by its length as 4
+/// little-endian bytes. The instrumentation scope is
+/// `scope_name[..scope_name_len]` at `scope_version[..scope_version_len]`,
+/// the delta window runs from `start_time_unix_nano` to `time_unix_nano`,
+/// and `datadog` selects the Datadog binding (cost in USD, versioned values
+/// with `/`). Points are split by series, and one series is never split, so
+/// a request exceeds `max_bytes` only when one series alone does. A batch
+/// that fits is one request; an empty batch writes an empty buffer.
+///
+/// # Safety
+///
+/// `batch` must be a live batch from [`ddog_ai_usage_batch_new`], the scope
+/// strings must point to their lengths of readable bytes (or the length must
+/// be 0), and `out` must be null or writable.
+#[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn ddog_ai_usage_batch_take_otlp_parts(
+    batch: *const Batch,
+    scope_name: *const u8,
+    scope_name_len: usize,
+    scope_version: *const u8,
+    scope_version_len: usize,
+    start_time_unix_nano: u64,
+    time_unix_nano: u64,
+    datadog: bool,
+    max_bytes: usize,
+    out: *mut Buffer,
+) -> Status {
+    if out.is_null() {
+        return Status::Internal;
+    }
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        // SAFETY: the caller guarantees a live batch or null.
+        let batch = unsafe { batch.as_ref() }.ok_or(Failure::Internal("the batch is null"))?;
+        // SAFETY: forwarded from the caller.
+        let (name, version) = unsafe {
+            (
+                text(scope_name, scope_name_len),
+                text(scope_version, scope_version_len),
+            )
+        };
+        let (Some(name), Some(version)) = (name, version) else {
+            return Err(Failure::Internal("the scope is null or not UTF-8"));
+        };
+        let taken = take_batch(batch)?;
+        let parts = taken.encode_otlp_parts(
+            OtlpScope { name, version },
+            OtlpWindow {
+                start_time_unix_nano,
+                time_unix_nano,
+            },
+            if datadog {
+                OtlpBinding::Datadog
+            } else {
+                OtlpBinding::OpenTelemetry
+            },
+            max_bytes,
+        );
+        let mut framed = Vec::with_capacity(parts.iter().map(|p| p.len() + 4).sum());
+        for part in parts {
+            let len = u32::try_from(part.len())
+                .map_err(|_| Failure::Internal("an OTLP request is longer than 4 GiB"))?;
+            framed.extend_from_slice(&len.to_le_bytes());
+            framed.extend_from_slice(&part);
+        }
+        Ok(framed)
+    }))
+    .unwrap_or(Err(Failure::Internal("encoding the batch panicked")));
+    let (status, bytes) = match result {
+        Ok(framed) => (Status::Ok, framed),
+        Err(Failure::Rejected(error)) => {
+            (Status::Rejected, rejection(&error).to_string().into_bytes())
+        }
+        Err(Failure::Internal(message)) => (
+            Status::Internal,
+            error_value("internal", message).to_string().into_bytes(),
+        ),
+    };
+    // SAFETY: `out` is not null and the caller guarantees it is writable.
+    unsafe { out.write(Buffer::from_bytes(bytes)) };
+    status
 }
 
 /// Release a batch. A null batch is a no-op.

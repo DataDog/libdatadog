@@ -174,6 +174,13 @@ pub fn classify_error(name: Option<&str>, status: Option<u16>) -> Option<&'stati
     })
 }
 
+/// The `error.type` of a call known to have failed: [`classify_error`], and
+/// `api_error` when neither its name nor its status says why ("failed,
+/// cause unknown").
+pub fn classify_failure(name: Option<&str>, status: Option<u16>) -> &'static str {
+    classify_error(name, status).unwrap_or(ERROR_TYPE_API)
+}
+
 /// [`classify_error`] without its fallback: `None` also for a name the
 /// vocabulary does not know and no failed status, which [`classify_error`]
 /// reads as `api_error`. So a caller tells an `api_error` the provider

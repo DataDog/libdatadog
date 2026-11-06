@@ -151,6 +151,29 @@ impl UsageFormat {
     pub fn from_name(name: &str) -> Option<UsageFormat> {
         UsageFormat::ALL.into_iter().find(|f| f.as_str() == name)
     }
+
+    /// The format of a deployment's responses from its base URL and its
+    /// `gen_ai.provider.name`: Google's OpenAI-compatible Gemini endpoint
+    /// (a base URL on `generativelanguage.googleapis.com` reached through an
+    /// OpenAI-shaped deployment) is [`UsageFormat::GeminiOpenAiCompat`],
+    /// whose completion leaves thinking out. Anything else is
+    /// [`UsageFormat::Auto`], which tells the others apart by their usage.
+    pub fn for_base_url(base_url: &str, provider_name: &str) -> UsageFormat {
+        let openai_shaped = provider_name.is_empty() || provider_name == "openai";
+        let host = base_url
+            .split_once("://")
+            .map_or(base_url, |(_, rest)| rest)
+            .split(['/', '?', '#'])
+            .next()
+            .unwrap_or("");
+        let host = host.rsplit_once('@').map_or(host, |(_, host)| host);
+        let host = host.split(':').next().unwrap_or(host);
+        if openai_shaped && host.eq_ignore_ascii_case("generativelanguage.googleapis.com") {
+            UsageFormat::GeminiOpenAiCompat
+        } else {
+            UsageFormat::Auto
+        }
+    }
 }
 
 /// The token usage a provider reported for one operation, as the members of
@@ -1588,11 +1611,12 @@ pub const PROVIDER_ID_HEADERS: [(&str, &str, &str); 3] = [
     ("openai", "trajectory.request.project_id", "openai-project"),
 ];
 
-/// An account, project or key id as written: non-blank, at most 128 bytes.
+/// An account, project or key id as written: non-blank, at most 128 bytes,
+/// whether a provider's header or an operator's configuration states it.
 /// Leading and trailing whitespace is trimmed on purpose: it is not part of
 /// an HTTP field value (RFC 9110, section 5.5), and a proxy or client that
 /// leaves it in would otherwise split one account into several series.
-fn billing_id(value: &str) -> Option<&str> {
+pub fn billing_id(value: &str) -> Option<&str> {
     let value = value.trim();
     (!value.is_empty() && value.len() <= MAX_ID_LENGTH).then_some(value)
 }

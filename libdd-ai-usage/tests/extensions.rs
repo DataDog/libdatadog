@@ -334,3 +334,85 @@ fn otel_genai_metrics_translate_to_profile_metrics() {
         );
     }
 }
+
+#[test]
+fn billing_ids_failures_and_formats() {
+    use libdd_ai_usage::{UsageFormat, billing_id, classify_failure};
+    assert_eq!(billing_id("  org-123 "), Some("org-123"));
+    assert_eq!(billing_id("   "), None);
+    assert_eq!(billing_id(&"a".repeat(128)).map(str::len), Some(128));
+    assert_eq!(billing_id(&"a".repeat(129)), None);
+
+    assert_eq!(classify_failure(None, None), "api_error");
+    assert_eq!(classify_failure(None, Some(200)), "api_error");
+    assert_eq!(classify_failure(None, Some(429)), "rate_limit_error");
+    assert_eq!(classify_failure(Some("Timeout"), None), "timeout_error");
+
+    for (url, provider, format) in [
+        (
+            "https://generativelanguage.googleapis.com/v1beta/openai/",
+            "openai",
+            UsageFormat::GeminiOpenAiCompat,
+        ),
+        (
+            "https://user@GenerativeLanguage.googleapis.com:443/v1beta/openai",
+            "",
+            UsageFormat::GeminiOpenAiCompat,
+        ),
+        (
+            "https://generativelanguage.googleapis.com/v1beta",
+            "gcp.gemini",
+            UsageFormat::Auto,
+        ),
+        (
+            "https://proxy.example.com/?next=generativelanguage.googleapis.com",
+            "openai",
+            UsageFormat::Auto,
+        ),
+        ("https://api.openai.com/v1", "openai", UsageFormat::Auto),
+        ("", "openai", UsageFormat::Auto),
+    ] {
+        assert_eq!(UsageFormat::for_base_url(url, provider), format, "{url}");
+    }
+}
+
+#[test]
+fn refused_datagrams_are_repacked_and_batches_joined() {
+    use libdd_ai_usage::{MetricBatch, pack_dogstatsd_joined, project_result, repack_dogstatsd};
+    let line = "m:1|c|#".to_string() + &"t".repeat(23); // 30 bytes
+    let datagram = [line.as_str(); 4].join("\n");
+    let (text, dropped) = repack_dogstatsd(&datagram, 64, '\0');
+    assert_eq!(dropped, 0);
+    let parts: Vec<&str> = text.split('\0').collect();
+    assert_eq!(parts.len(), 2);
+    assert!(
+        parts
+            .iter()
+            .all(|p| p.len() <= 64 && p.lines().count() == 2)
+    );
+    // A line longer than the socket takes cannot be sent there.
+    let long = format!("{datagram}\nm:1|c|#{}", "x".repeat(80));
+    let (text, dropped) = repack_dogstatsd(&long, 64, '\0');
+    assert_eq!(dropped, 1);
+    assert_eq!(text.split('\0').count(), 2);
+
+    let mut batch = MetricBatch::new();
+    let observation = json(
+        r#"{"operation_name": "chat", "provider_name": "openai", "duration_seconds": 1,
+            "streaming": false, "input_tokens": 1, "input_basis": "includes_cache",
+            "output_tokens": 1, "output_basis": "includes_reasoning", "observation_point": "gateway"}"#,
+    );
+    batch
+        .add(
+            Profile::ProviderAttempt,
+            &project_result(Profile::ProviderAttempt, &observation).unwrap(),
+        )
+        .unwrap();
+    let lines = batch.dogstatsd_lines().unwrap();
+    assert_eq!(
+        batch
+            .dogstatsd_datagrams_joined(&["env:prod"], 1432, '\0')
+            .unwrap(),
+        pack_dogstatsd_joined(lines.iter().map(String::as_str), &["env:prod"], 1432, '\0')
+    );
+}

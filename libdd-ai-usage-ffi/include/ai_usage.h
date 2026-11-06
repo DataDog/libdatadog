@@ -399,6 +399,124 @@ void ddog_ai_usage_batch_set_high_water(const struct ddog_ai_usage_Batch *batch,
 bool ddog_ai_usage_batch_is_full(const struct ddog_ai_usage_Batch *batch);
 
 /**
+ * Write `value[..value_len]` to `out` as an account, project or key id is
+ * kept (trimmed; non-blank, at most 128 bytes), so ids an operator
+ * configures are checked as the provider's headers are.
+ * [`Status::Rejected`] for one that is not kept.
+ *
+ * # Safety
+ *
+ * `value` must point to `value_len` readable bytes (or `value_len` must be
+ * 0), and `out` must be null or writable.
+ */
+enum ddog_ai_usage_Status ddog_ai_usage_billing_id(const uint8_t *value,
+                                                   uintptr_t value_len,
+                                                   struct ddog_ai_usage_Buffer *out);
+
+/**
+ * Write the `error.type` of a call known to have failed to `out`: as
+ * [`ddog_ai_usage_error_type`], and `api_error` when neither its name
+ * `name[..name_len]` nor its HTTP `status` (0 for none) says why. Never
+ * [`Status::Rejected`].
+ *
+ * # Safety
+ *
+ * `name` must point to `name_len` readable bytes (or `name_len` must be 0),
+ * and `out` must be null or writable.
+ */
+enum ddog_ai_usage_Status ddog_ai_usage_error_type_failed(const uint8_t *name,
+                                                          uintptr_t name_len,
+                                                          uint16_t status,
+                                                          struct ddog_ai_usage_Buffer *out);
+
+/**
+ * Write the usage format of a deployment's responses to `out`, from its
+ * base URL `base_url[..base_url_len]` and its `gen_ai.provider.name`
+ * `provider_name[..provider_name_len]` (may be empty):
+ * `gemini_openai_compat` for Google's OpenAI-compatible Gemini endpoint
+ * (`generativelanguage.googleapis.com` reached as `openai`), else `auto`.
+ *
+ * # Safety
+ *
+ * `base_url` and `provider_name` must point to their lengths of readable
+ * bytes (or the length must be 0), and `out` must be null or writable.
+ */
+enum ddog_ai_usage_Status ddog_ai_usage_usage_format_for_base_url(const uint8_t *base_url,
+                                                                  uintptr_t base_url_len,
+                                                                  const uint8_t *provider_name,
+                                                                  uintptr_t provider_name_len,
+                                                                  struct ddog_ai_usage_Buffer *out);
+
+/**
+ * Re-split a DogStatsD datagram the socket refused as too long
+ * (`EMSGSIZE`), `datagram[..datagram_len]`, into datagrams of at most
+ * `max_payload` bytes, written to `out` as text: lines joined by `\n`,
+ * datagrams separated by a NUL byte. Lines are kept whole; one longer than
+ * `max_payload` cannot be sent on that socket and is dropped, and the
+ * number dropped is written to `dropped_lines` when it is not null.
+ * [`Status::Rejected`] for a `max_payload` of 0.
+ *
+ * # Safety
+ *
+ * `datagram` must point to `datagram_len` readable bytes (or the length
+ * must be 0), `dropped_lines` must be null or writable, and `out` must be
+ * null or writable.
+ */
+enum ddog_ai_usage_Status ddog_ai_usage_repack_dogstatsd(const uint8_t *datagram,
+                                                         uintptr_t datagram_len,
+                                                         uintptr_t max_payload,
+                                                         uintptr_t *dropped_lines,
+                                                         struct ddog_ai_usage_Buffer *out);
+
+/**
+ * Read an OTLP `ExportMetricsServiceResponse` body `body[..body_len]`
+ * (protobuf, or its JSON form): when it states a partial success, write the
+ * rejected data points to `rejected_points` (when not null) and the
+ * endpoint's message, cut to 256 bytes, to `out` as text, and return
+ * [`Status::Ok`]. [`Status::Rejected`] with an empty `out` for a full
+ * success or a body that is neither.
+ *
+ * # Safety
+ *
+ * `body` must point to `body_len` readable bytes (or `body_len` must be 0),
+ * `rejected_points` must be null or writable, and `out` must be null or
+ * writable.
+ */
+enum ddog_ai_usage_Status ddog_ai_usage_otlp_partial_success(const uint8_t *body,
+                                                             uintptr_t body_len,
+                                                             uint64_t *rejected_points,
+                                                             struct ddog_ai_usage_Buffer *out);
+
+/**
+ * Take every point of `batch`, leaving it empty, and write it as OTLP
+ * `ExportMetricsServiceRequest`s of at most `max_bytes` each (0 for one
+ * request) to `out`: each request preceded by its length as 4
+ * little-endian bytes. The instrumentation scope is
+ * `scope_name[..scope_name_len]` at `scope_version[..scope_version_len]`,
+ * the delta window runs from `start_time_unix_nano` to `time_unix_nano`,
+ * and `datadog` selects the Datadog binding (cost in USD, versioned values
+ * with `/`). Points are split by series, and one series is never split, so
+ * a request exceeds `max_bytes` only when one series alone does. A batch
+ * that fits is one request; an empty batch writes an empty buffer.
+ *
+ * # Safety
+ *
+ * `batch` must be a live batch from [`ddog_ai_usage_batch_new`], the scope
+ * strings must point to their lengths of readable bytes (or the length must
+ * be 0), and `out` must be null or writable.
+ */
+enum ddog_ai_usage_Status ddog_ai_usage_batch_take_otlp_parts(const struct ddog_ai_usage_Batch *batch,
+                                                              const uint8_t *scope_name,
+                                                              uintptr_t scope_name_len,
+                                                              const uint8_t *scope_version,
+                                                              uintptr_t scope_version_len,
+                                                              uint64_t start_time_unix_nano,
+                                                              uint64_t time_unix_nano,
+                                                              bool datadog,
+                                                              uintptr_t max_bytes,
+                                                              struct ddog_ai_usage_Buffer *out);
+
+/**
  * Release a batch. A null batch is a no-op.
  *
  * # Safety
