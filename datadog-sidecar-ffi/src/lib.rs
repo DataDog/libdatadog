@@ -1096,7 +1096,10 @@ pub struct FfeFlagEvaluation<'a> {
 /// Send structured Feature Flags exposure events to the sidecar. The sidecar owns
 /// route selection, deduplication, JSON serialization, and EVP delivery. This
 /// function is caller-driven; shared libdatadog evaluator calls do not log unless
-/// an SDK explicitly sends this action.
+/// an SDK explicitly sends this action. A batch larger than one IPC message is
+/// sent in several messages. An exposure that does not fit one message on its
+/// own is dropped, the others are sent, and the returned error says how many
+/// were dropped. Other send failures are not reported.
 ///
 /// # Safety
 /// All slices must reference valid memory under the CharSlice contract. The
@@ -1148,20 +1151,27 @@ fn ddog_sidecar_send_ffe_exposure_batch_impl(
         return MaybeError::None;
     }
 
-    try_c!(blocking::enqueue_actions(
+    let dropped = blocking::enqueue_ffe_exposure_batch(
         transport,
-        vec![SidecarAction::FfeExposureBatch(SidecarFfeExposureBatch {
-            context,
-            exposures,
-        })],
-    ));
-    MaybeError::None
+        SidecarFfeExposureBatch { context, exposures },
+    );
+    oversized_records_error(dropped, "exposure")
+}
+
+fn oversized_records_error(dropped: usize, record: &str) -> MaybeError {
+    if dropped == 0 {
+        return MaybeError::None;
+    }
+    MaybeError::Some(libdd_common_ffi::Error::from(format!(
+        "dropped {dropped} {record}(s) larger than one IPC message; the others were sent"
+    )))
 }
 
 /// Send structured Feature Flags evaluation events to the sidecar. The sidecar owns
 /// route selection, JSON serialization, and EVP delivery. This function is
 /// caller-driven; callers must aggregate and bound event cardinality before passing
-/// a batch.
+/// a batch. Batches are split and oversized events reported as for
+/// `ddog_sidecar_send_ffe_exposure_batch`.
 ///
 /// # Safety
 /// All slices must reference valid memory under the CharSlice contract. Context
@@ -1215,16 +1225,14 @@ fn ddog_sidecar_send_ffe_flag_evaluation_batch_impl(
         return MaybeError::None;
     }
 
-    try_c!(blocking::enqueue_actions(
+    let dropped = blocking::enqueue_ffe_flag_evaluation_batch(
         transport,
-        vec![SidecarAction::FfeFlagEvaluationBatch(
-            SidecarFfeFlagEvaluationBatch {
-                context,
-                flag_evaluations,
-            }
-        )],
-    ));
-    MaybeError::None
+        SidecarFfeFlagEvaluationBatch {
+            context,
+            flag_evaluations,
+        },
+    );
+    oversized_records_error(dropped, "flag evaluation")
 }
 
 /// Send structured Feature Flags evaluation metric events to the sidecar. The sidecar
