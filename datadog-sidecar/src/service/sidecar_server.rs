@@ -241,6 +241,10 @@ impl ConnectionSidecarHandler {
             .into_iter()
             .any(|field| field.chars().nth(MAX_FIELD_LENGTH).is_some())
         {
+            debug!(
+                "ffe_flagevaluation: application identity exceeds {MAX_FIELD_LENGTH} characters, \
+                 batch left unattributed"
+            );
             return;
         }
         batch.context = FfeTelemetryContext {
