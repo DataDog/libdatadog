@@ -61,15 +61,25 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 /// Writes `contents` to `dest` only when they differ from what's already there, so
 /// regenerating an unchanged file leaves its mtime — and cargo's fingerprints for
-/// everything downstream — alone. Missing files are written unconditionally.
+/// everything downstream — alone. Line endings are ignored: Windows runners check
+/// out with `core.autocrlf=true`, so the file on disk is CRLF while prost emits LF,
+/// and rewriting it for that alone would dirty the build graph on every
+/// regeneration. Missing files are written unconditionally.
 #[cfg(feature = "generate-protobuf")]
 fn write_if_changed(dest: &Path, contents: &[u8]) -> Result<(), Box<dyn Error>> {
     if fs::read(dest)
-        .map(|existing| existing == contents)
+        .map(|existing| strip_cr(&existing) == strip_cr(contents))
         .unwrap_or(false)
     {
         return Ok(());
     }
     fs::write(dest, contents)?;
     Ok(())
+}
+
+/// Compares equal modulo CR bytes, i.e. treats LF and CRLF as the same content —
+/// the same normalization `git status` applies under `core.autocrlf`.
+#[cfg(feature = "generate-protobuf")]
+fn strip_cr(bytes: &[u8]) -> Vec<u8> {
+    bytes.iter().copied().filter(|&b| b != b'\r').collect()
 }
