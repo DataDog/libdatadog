@@ -24,6 +24,7 @@ mod cluster;
 mod coverage;
 mod diff;
 mod inventory;
+mod lockfile;
 mod select;
 
 #[derive(Parser)]
@@ -156,10 +157,26 @@ fn main() -> Result<()> {
             let cov: coverage::Coverage = read_json(&coverage, "coverage")?;
             fetch_base(&base_ref, &workspace_root)?;
             let changed = diff::changed_ranges(&base_ref, &workspace_root)?;
+            // Lockfile bumps change compiled dependency code without any
+            // workspace source diff; scope them by package name against the
+            // packages each cluster executes.
+            let lockfile = lockfile::lockfile_changes(&base_ref, &workspace_root)?;
+            if lockfile.is_changed() {
+                log::info!(
+                    "lockfile changed packages: {} (unattributable: {})",
+                    lockfile
+                        .packages
+                        .iter()
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    lockfile.unattributable
+                );
+            }
             let self_test = std::env::var("BENCH_SELECTOR_SELF_TEST")
                 .map(|v| v == "1")
                 .unwrap_or(false);
-            let selection = select::select(&inv, &cov, &changed, self_test);
+            let selection = select::select(&inv, &cov, &changed, &lockfile, self_test);
             log::info!(
                 "selected {}/{} clusters across {}/{} binaries",
                 selection.summary.clusters_selected,

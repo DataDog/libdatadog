@@ -139,8 +139,15 @@ compute_bench_selection:
         status skipped
         exit 0
       fi
-      if [[ "${WORKSPACE_LEVEL_CHANGE:-}" == "true" ]]; then
-        echo "Workspace-level change -> full benchmark suite."
+      # Workspace-level changes that per-benchmark selection cannot scope
+      # (profiles, toolchain, cargo config) -> the benchmarks job runs the
+      # full suite. Cargo.lock is deliberately NOT in this list: a lockfile
+      # bump is scoped by bench-selector against the packages each bench
+      # cluster executes, so it flows through below. (WORKSPACE_LEVEL_CHANGE
+      # is not used here because it still includes Cargo.lock.)
+      if grep -qE '^(Cargo\.toml|rust-toolchain\.toml|ci-toolchain\.toml)$' changed_files.txt 2>/dev/null \
+         || grep -qE '^(\.cargo/|\.config/nextest\.toml)' changed_files.txt 2>/dev/null; then
+        echo "Workspace-level profile/toolchain change -> full benchmark suite."
         status skipped
         exit 0
       fi
@@ -161,10 +168,17 @@ compute_bench_selection:
       (cd .github/actions && RUSTUP_TOOLCHAIN=1.99.1 cargo build --release -p bench-selector)
       SELECTOR=./.github/actions/target/release/bench-selector
       # Restrict to the crates this PR affects; inventory/coverage skip the rest.
-      CRATES="$(jq -r '.[]' <<< "${AFFECTED_CRATES}" | paste -sd ',')"
-      "$SELECTOR" inventory --workspace-root . --crates "$CRATES" --out bench-inventory.json
+      # A lockfile bump can affect any crate's benchmarks (the changed packages
+      # may be exercised by any bench cluster), so it spans every bench crate.
+      CRATES_ARGS=()
+      if ! grep -qE '^Cargo\.lock$' changed_files.txt 2>/dev/null; then
+        CRATES="$(jq -r '.[]' <<< "${AFFECTED_CRATES}" | paste -sd ',')"
+        CRATES_ARGS=(--crates "$CRATES")
+      fi
+      "$SELECTOR" inventory --workspace-root . "${CRATES_ARGS[@]}" --out bench-inventory.json
       "$SELECTOR" coverage \
         --inventory bench-inventory.json \
+        "${CRATES_ARGS[@]}" \
         --target-dir target/bench-selection \
         --out bench-coverage.json
       "$SELECTOR" select \

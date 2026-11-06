@@ -28,7 +28,7 @@ use crate::inventory::BenchBinary;
 use crate::inventory::Inventory;
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -49,6 +49,13 @@ pub struct CoverageEntry {
     pub status: String,
     /// Merged, sorted, non-overlapping inclusive `[start, end]` line ranges.
     pub files: BTreeMap<String, Vec<(u32, u32)>>,
+    /// External (registry/git-checkout) packages whose code this cluster
+    /// executed, by package name. Used to scope lockfile bumps to the
+    /// benchmarks that actually measure the changed dependencies; empty when
+    /// the cluster exercises no non-workspace code (or in coverage data from
+    /// before this field existed).
+    #[serde(default)]
+    pub deps: BTreeSet<String>,
 }
 
 /// Resolved llvm coverage tools matching the active rustc.
@@ -97,6 +104,7 @@ pub fn run(
                     cluster: cluster.name,
                     status: "failed".into(),
                     files: BTreeMap::new(),
+                    deps: BTreeSet::new(),
                 });
             }
         }
@@ -139,6 +147,7 @@ pub fn run(
                     cluster: cluster.name,
                     status: "failed".into(),
                     files: BTreeMap::new(),
+                    deps: BTreeSet::new(),
                 });
             }
             continue;
@@ -377,12 +386,13 @@ fn cover_cluster(
         work,
         tools,
     ) {
-        Ok(files) => CoverageEntry {
+        Ok(coverage) => CoverageEntry {
             crate_name: bin.crate_name.clone(),
             target: bin.target.clone(),
             cluster: cluster.name.clone(),
             status: "ok".into(),
-            files,
+            files: coverage.files,
+            deps: coverage.deps,
         },
         Err(err) => {
             log::warn!(
@@ -397,6 +407,7 @@ fn cover_cluster(
                 cluster: cluster.name.clone(),
                 status: "failed".into(),
                 files: BTreeMap::new(),
+                deps: BTreeSet::new(),
             }
         }
     }
@@ -410,7 +421,7 @@ fn cover_cluster_inner(
     target_dir: &Path,
     work: &Path,
     tools: &Tools,
-) -> Result<BTreeMap<String, Vec<(u32, u32)>>> {
+) -> Result<ClusterCoverage> {
     let slug = format!("{}-{}-{}", bin.crate_name, bin.target, cluster.name);
     let profraw = work.join(format!("{slug}.profraw"));
     let _ = std::fs::remove_file(&profraw);
@@ -480,7 +491,7 @@ const REGION_FILE_ID: usize = 5;
 fn reduce_executed_functions(
     llvm_cov_json: &str,
     workspace_root: &Path,
-) -> Result<BTreeMap<String, Vec<(u32, u32)>>> {
+) -> Result<ClusterCoverage> {
     #[derive(Deserialize)]
     struct CovJson {
         data: Vec<Data>,
@@ -502,6 +513,7 @@ fn reduce_executed_functions(
     let parsed: CovJson =
         serde_json::from_str(llvm_cov_json).context("failed to parse llvm-cov export JSON")?;
     let mut files: BTreeMap<String, Vec<(u32, u32)>> = BTreeMap::new();
+    let mut deps: BTreeSet<String> = BTreeSet::new();
     for data in &parsed.data {
         for function in &data.functions {
             if function.count == 0 {
@@ -521,23 +533,27 @@ fn reduce_executed_functions(
                 let Some(path) = function.filenames.get(file_id) else {
                     continue;
                 };
-                // Normalize to workspace-relative; anything not under the
-                // workspace root is third-party and cannot change with the PR.
-                let Ok(rel) = Path::new(path).strip_prefix(workspace_root) else {
-                    continue;
-                };
-                let rel = rel
-                    .to_str()
-                    .filter(|path| !path.is_empty())
-                    .context("invalid workspace coverage path")?
-                    .to_owned();
-                let Ok(start) = u32::try_from(line_start) else {
-                    continue;
-                };
-                let Ok(end) = u32::try_from(line_end) else {
-                    continue;
-                };
-                files.entry(rel).or_default().push((start, end));
+                if let Ok(rel) = Path::new(path).strip_prefix(workspace_root) {
+                    // Workspace file: normalize to a workspace-relative path so
+                    // it can be intersected with the PR diff.
+                    let rel = rel
+                        .to_str()
+                        .filter(|path| !path.is_empty())
+                        .context("invalid workspace coverage path")?
+                        .to_owned();
+                    let Ok(start) = u32::try_from(line_start) else {
+                        continue;
+                    };
+                    let Ok(end) = u32::try_from(line_end) else {
+                        continue;
+                    };
+                    files.entry(rel).or_default().push((start, end));
+                } else if let Some(name) = external_package_name(path) {
+                    // Third-party file: record the package name so lockfile
+                    // bumps can be scoped to the benchmarks that actually
+                    // execute the changed dependency.
+                    deps.insert(name);
+                }
             }
         }
     }
@@ -548,7 +564,56 @@ fn reduce_executed_functions(
         !files.is_empty(),
         "coverage has no attributable workspace ranges (possibly remapped paths)"
     );
-    Ok(files)
+    Ok(ClusterCoverage { files, deps })
+}
+
+/// Reduced per-cluster coverage: workspace line ranges plus the external
+/// packages whose code the cluster executed.
+#[derive(Debug, PartialEq)]
+struct ClusterCoverage {
+    files: BTreeMap<String, Vec<(u32, u32)>>,
+    deps: BTreeSet<String>,
+}
+
+/// Extract the external package name from a cargo registry or git-checkout
+/// source path, e.g.
+/// `…/.cargo/registry/src/<registry>/serde-1.0.210/src/…` -> `serde`, or
+/// `…/.cargo/git/checkouts/proptest-9e6d…/<sha>/…` -> `proptest`.
+///
+/// Git checkouts are named after the *repository*, which is assumed to match
+/// the package name (true for this workspace's patched dependencies); when it
+/// does not, the lockfile scoping under-selects for that package, which the
+/// unattributable-diff fallback cannot see — accepted as a documented gap.
+fn external_package_name(path: &str) -> Option<String> {
+    const REGISTRY: &str = "registry/src/";
+    const CHECKOUTS: &str = "git/checkouts/";
+    if let Some(idx) = path.rfind(REGISTRY) {
+        let mut segments = path[idx + REGISTRY.len()..].split('/');
+        segments.next(); // registry identifier (URL or hash)
+        let name_version = segments.next()?;
+        // Strip the trailing `-<semver>` from `<name>-<version>`.
+        let (name, version) = name_version.rsplit_once('-')?;
+        return is_version(version).then(|| name.to_string());
+    }
+    if let Some(idx) = path.rfind(CHECKOUTS) {
+        let mut segments = path[idx + CHECKOUTS.len()..].split('/');
+        let repo_hash = segments.next()?;
+        // Strip the trailing `-<hash>` from `<repo>-<hash>`; cargo's checkout
+        // hashes are ≥ 16 hex characters.
+        let (repo, hash) = repo_hash.rsplit_once('-')?;
+        return (hash.len() >= 16 && hash.chars().all(|c| c.is_ascii_hexdigit()))
+            .then(|| repo.to_string());
+    }
+    None
+}
+
+fn is_version(s: &str) -> bool {
+    let mut parts = s.split('.');
+    let mut numeric = parts
+        .next()
+        .is_some_and(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()));
+    numeric &= parts.all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()));
+    numeric
 }
 
 /// Merge inclusive ranges into sorted, non-overlapping ones (adjacent ranges
@@ -628,8 +693,8 @@ mod tests {
             {"count":1,"filenames":["/redacted/lib.rs"],"regions":[[10,1,20,1,1,0,0]]}
         ]}]}"#;
         let reduced = reduce_executed_functions(mixed, Path::new("/workspace")).unwrap();
-        assert_eq!(reduced.len(), 1);
-        assert!(reduced.contains_key("benches/main.rs"));
+        assert_eq!(reduced.files.len(), 1);
+        assert!(reduced.files.contains_key("benches/main.rs"));
         // The export alone cannot distinguish a remapped library from a
         // third-party dependency; the active compiler flags must reject it.
         let flags = instrumented_rustflags(Some("--remap-path-prefix=src=/redacted"), None);
@@ -722,12 +787,17 @@ mod tests {
         }"#;
         let reduced = reduce_executed_functions(fixture, Path::new("/ws")).expect("reduce fixture");
 
-        let mut expected: BTreeMap<String, Vec<(u32, u32)>> = BTreeMap::new();
+        let mut expected = ClusterCoverage {
+            files: BTreeMap::new(),
+            deps: BTreeSet::new(),
+        };
         // All regions of the executed function, merged; the cold function
         // never runs; the registry file is dropped; expansion regions (8
         // elements) contribute their invocation-site range.
-        expected.insert("libdd-x/src/hot.rs".to_string(), vec![(10, 10), (12, 14)]);
-        expected.insert(
+        expected
+            .files
+            .insert("libdd-x/src/hot.rs".to_string(), vec![(10, 10), (12, 14)]);
+        expected.files.insert(
             "libdd-x/src/macro_user.rs".to_string(),
             vec![(5, 5), (30, 30)],
         );
