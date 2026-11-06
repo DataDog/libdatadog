@@ -56,6 +56,8 @@ fn scalar(value: Value) -> Option<Value> {
         Value::Bool(_) => Some(value),
         Value::Number(number) => number
             .as_f64()
+            // -0.0 == 0.0, but it serializes with its sign and would split buckets.
+            .map(|value| if value == 0.0 { 0.0 } else { value })
             .and_then(serde_json::Number::from_f64)
             .map(Value::Number),
         Value::Null | Value::Array(_) | Value::Object(_) => None,
@@ -123,6 +125,18 @@ mod tests {
         assert_ne!(
             canonical_features_json(r#"{"a":true}"#),
             canonical_features_json(r#"{"a":"true"}"#)
+        );
+    }
+
+    #[test]
+    fn negative_zero_encodes_like_zero() {
+        assert_eq!(
+            canonical_features_json(r#"{"a":-0.0}"#),
+            canonical_features_json(r#"{"a":0}"#)
+        );
+        assert_eq!(
+            canonical_features_json(r#"{"a":-0.0}"#).unwrap(),
+            r#"{"a":0.0}"#
         );
     }
 
