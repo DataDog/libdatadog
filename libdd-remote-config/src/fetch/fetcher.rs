@@ -67,6 +67,8 @@ pub trait FileStorage {
 pub struct ConfigInvariants {
     pub language: String,
     pub tracer_version: String,
+    /// Optional local publication identity; not sent to the RC service.
+    pub publication_scope: Option<String>,
     pub endpoint: Endpoint,
     #[cfg(feature = "agentless")]
     /// Enables and configures agentless mode. If some the fetcher will
@@ -1093,6 +1095,7 @@ pub mod tests {
         let storage = Arc::new(Storage::default());
 
         let invariants = ConfigInvariants {
+            publication_scope: None,
             language: "php".to_string(),
             tracer_version: "1.2.3".to_string(),
             endpoint: server.endpoint.clone(),

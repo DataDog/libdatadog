@@ -604,44 +604,14 @@ pub fn ensure_appsec_started(
     })
 }
 
-/// A transport failure or a subscription rejected by the sidecar.
-#[derive(Debug)]
-pub enum SubscribeCdnConfigurationError {
-    Transport(io::Error),
-    Rejected(CdnSubscriptionError),
-}
-
-impl std::fmt::Display for SubscribeCdnConfigurationError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Transport(error) => write!(formatter, "CDN subscription IPC failed: {error}"),
-            Self::Rejected(error) => std::fmt::Display::fmt(error, formatter),
-        }
-    }
-}
-
-impl std::error::Error for SubscribeCdnConfigurationError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Transport(error) => Some(error),
-            Self::Rejected(error) => Some(error),
-        }
-    }
-}
-
-/// Subscribe this connection and return the handle for RemoteConfigManager.
-/// Call again after reconnecting: the new sidecar may use another segment.
-/// `Ok(None)` means explicit unsubscribe or CDN is disabled for this listener.
-/// A rejected replacement releases the previous subscription; it does not keep
-/// fetching the old environment. Rejections leave the IPC connection usable.
-pub fn subscribe_cdn_configuration(
+/// Enqueue CDN registration without waiting for a sidecar response.
+pub fn set_cdn_configuration(
     transport: &mut SidecarTransport,
-    config: Option<libdd_ffe::cdn::CdnConfig>,
-) -> Result<Option<crate::shm_remote_config::RemoteConfigHandle>, SubscribeCdnConfigurationError> {
+    config: Option<crate::shm_remote_config::CdnRegistration>,
+) -> io::Result<()> {
     transport.with_retry(|s| {
-        s.subscribe_cdn_configuration(config.clone())
-            .map_err(|error| SubscribeCdnConfigurationError::Transport(decode_error_to_io(error)))?
-            .map_err(SubscribeCdnConfigurationError::Rejected)
+        s.set_cdn_configuration(config.clone());
+        Ok(())
     })
 }
 

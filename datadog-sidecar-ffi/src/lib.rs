@@ -267,6 +267,7 @@ pub unsafe extern "C" fn ddog_remote_config_reader_for_endpoint<'a>(
 ) -> Box<RemoteConfigReader> {
     Box::new(RemoteConfigReader::new(
         &ConfigInvariants {
+            publication_scope: None,
             language: language.to_utf8_lossy().into(),
             tracer_version: tracer_version.to_utf8_lossy().into(),
             endpoint: endpoint.clone(),

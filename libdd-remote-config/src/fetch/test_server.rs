@@ -218,6 +218,7 @@ impl RemoteConfigServer {
     pub fn dummy_options(&self) -> ConfigOptions {
         ConfigOptions {
             invariants: ConfigInvariants {
+                publication_scope: None,
                 language: "php".to_string(),
                 tracer_version: "1.2.3".to_string(),
                 endpoint: self.endpoint.clone(),

@@ -358,17 +358,10 @@ pub trait SidecarInterface {
     /// Targets absent from the batch are unchanged; this is not a full snapshot.
     async fn add_session_evp_transports(configs: Vec<EvpTransportConfigWithIdentity>);
 
-    /// Subscribe this connection to CDN configuration; None unsubscribes.
-    /// Returns a handle for RemoteConfigManager, Ok(None) for in-process listeners
-    /// or explicit unsubscribe, and Err if subscription setup fails. Resubscribe
-    /// after reconnecting. Appending methods preserves existing method-request
-    /// ordinals, but moves the generated `_Oversized` envelope.
-    /// Sender and sidecar must use matching builds in the same versioned IPC namespace.
-    #[blocking]
-    #[SerializedHandle]
-    async fn subscribe_cdn_configuration(
-        config: Option<libdd_ffe::cdn::CdnConfig>,
-    ) -> Result<Option<crate::shm_remote_config::RemoteConfigHandle>, CdnSubscriptionError>;
+    /// Queue CDN configuration for this connection. No acknowledgement or returned handle:
+    /// readers open the ordinary RC directory immediately using registration.invariants().
+    /// Replay after reconnect. In-process listeners reject this to keep CDN HTTP out of PHP.
+    async fn set_cdn_configuration(config: Option<crate::shm_remote_config::CdnRegistration>);
 }
 
 #[cfg(test)]

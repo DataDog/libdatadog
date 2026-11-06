@@ -1,267 +1,396 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Local products publish configuration under an RC path without an agent fetch.
-//! Unix payloads have anonymous, kernel-managed lifetime. The manager consumes
-//! these entries through the same registry and add/remove events as agent RC.
+//! CDN is a writer-side input to the ordinary RC directory. Readers consume the
+//! same directory and product parser as agent RC, with no second snapshot format.
 
-#[cfg(windows)]
-use super::{RemoteConfigReader, RemoteConfigWriter};
-#[cfg(windows)]
-use base64::{Engine, prelude::BASE64_URL_SAFE_NO_PAD};
-use bincode::Options;
-use libdd_common::MutexExt;
-use libdd_ipc::handles::{HandlesTransport, TransferHandles};
-#[cfg(unix)]
-use libdd_ipc::one_way_shared_memory::{
-    OneWayShmReader, OneWayShmWriter, create_anon_read_only_pair,
-};
-#[cfg(unix)]
-use libdd_ipc::platform::{FileBackedHandle, ReadOnlyShmHandle, ShmHandle};
-use libdd_remote_config::RemoteConfigPath;
+use super::*;
+use libdd_ffe::cdn::{ApplyError, CdnConfig, ConfigurationSink};
+use libdd_ffe::rules_based::Configuration;
 use serde::{Deserialize, Serialize};
-#[cfg(windows)]
-use std::ffi::CString;
-use std::io;
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::sync::Weak;
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
-pub enum RemoteConfigDeliveryState {
-    #[default]
-    Starting,
-    Ready,
-    Stale,
-    Stopped,
+pub const CDN_PATH: &str = "datadog/0/FFE_FLAGS/cdn/config";
+
+/// Asynchronous registration. The client can derive its RC directory before the
+/// sidecar processes this message. Credentials select a separate publication.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct CdnRegistration {
+    /// Validated endpoint, client identity, and polling settings.
+    pub config: CdnConfig,
+    /// Agent source whose non-FFE products are included in this directory.
+    pub agent_endpoint: libdd_common::Endpoint,
+    /// The same application target used by the agent RC writer and this reader.
+    pub target: Arc<Target>,
 }
 
-#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub(super) struct PublicationSnapshot {
-    /// Advances for accepted configuration, not for readiness-only changes.
-    pub revision: u64,
-    pub state: RemoteConfigDeliveryState,
-    /// Product payload, without its transport envelope; empty before first publication.
-    pub configuration: Vec<u8>,
+impl CdnRegistration {
+    /// Derive the ordinary RC directory identity without contacting the sidecar.
+    pub fn invariants(&self) -> io::Result<ConfigInvariants> {
+        let identity = serde_json::to_vec(&self.config).map_err(io::Error::other)?;
+        Ok(ConfigInvariants {
+            language: self.config.language.clone(),
+            tracer_version: self.config.version.clone(),
+            endpoint: self.agent_endpoint.clone(),
+            agentless: None,
+            publication_scope: Some(BASE64_URL_SAFE_NO_PAD.encode(Sha224::digest(identity))),
+        })
+    }
 }
 
-/// A connection-owned local RC publication. Obtain a new handle after reconnecting.
-/// Unix uses anonymous memory; Windows names live only while mappings are open.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct RemoteConfigHandle {
-    config_path: String,
-    #[cfg(unix)]
-    pub(super) handle: ReadOnlyShmHandle,
-    #[cfg(windows)]
-    path: String,
+type Key = (ConfigInvariants, Arc<Target>);
+type Notify = Arc<dyn Fn() + Send + Sync>;
+
+#[derive(Default)]
+struct Sources {
+    agent: Vec<u8>,
+    // Retain the files referenced by the directory while any scoped publisher uses them.
+    files: Vec<Arc<StoredShmFile>>,
+    cdn: Vec<Weak<Mutex<Publication>>>,
 }
 
-impl TransferHandles for RemoteConfigHandle {
-    fn copy_handles<T: HandlesTransport>(&self, transport: T) -> Result<(), T::Error> {
-        #[cfg(unix)]
-        return self.handle.copy_handles(transport);
-        #[cfg(windows)]
-        {
-            let _ = transport;
-            Ok(())
+/// Shared by the agent writer and CDN pollers within one sidecar server.
+#[derive(Clone, Default)]
+pub(crate) struct PublicationStore(Arc<Mutex<HashMap<Key, Sources>>>);
+
+impl PublicationStore {
+    pub(super) fn agent_changed(
+        &self,
+        invariants: &ConfigInvariants,
+        target: &Arc<Target>,
+        directory: &[u8],
+        files: &[Arc<StoredShmFile>],
+    ) {
+        let mut sources = self.0.lock_or_panic();
+        let source = sources
+            .entry((invariants.clone(), target.clone()))
+            .or_default();
+        source.agent = directory.to_vec();
+        source.files = files.to_vec();
+        source.cdn.retain(|p| p.strong_count() != 0);
+        for publication in source.cdn.iter().filter_map(Weak::upgrade) {
+            let mut publication = publication.lock_or_panic();
+            publication.agent = directory.to_vec();
+            publication.agent_files = files.to_vec();
+            if let Err(error) = publication.publish() {
+                warn!("Could not publish combined remote configuration: {error}");
+            }
         }
     }
 
-    fn receive_handles<T: HandlesTransport>(&mut self, transport: T) -> Result<(), T::Error> {
-        #[cfg(unix)]
-        return self.handle.receive_handles(transport);
-        #[cfg(windows)]
-        {
-            let _ = transport;
-            Ok(())
+    pub(super) fn expire_agent(&self, invariants: &ConfigInvariants, target: &Arc<Target>) {
+        self.agent_changed(invariants, target, &[], &[]);
+        self.0.lock_or_panic().retain(|_, source| {
+            !source.agent.is_empty() || source.cdn.iter().any(|p| p.strong_count() != 0)
+        });
+    }
+
+    pub(crate) fn cdn(&self, registration: &CdnRegistration) -> io::Result<CdnPublisher> {
+        let invariants = registration.invariants()?;
+        let mut base = invariants.clone();
+        base.publication_scope = None;
+        let mut sources = self.0.lock_or_panic();
+        sources.retain(|_, source| {
+            !source.agent.is_empty() || source.cdn.iter().any(|p| p.strong_count() != 0)
+        });
+        let source = sources
+            .entry((base, registration.target.clone()))
+            .or_default();
+        let publisher = Arc::new(Mutex::new(Publication {
+            writer: RemoteConfigWriter::new(&invariants, &registration.target)?,
+            invariants,
+            target: registration.target.clone(),
+            agent: source.agent.clone(),
+            agent_files: source.files.clone(),
+            configuration: Vec::new(),
+            file: None,
+            notifiers: HashMap::new(),
+        }));
+        source.cdn.push(Arc::downgrade(&publisher));
+        // A source with no accepted configuration does not publish an empty snapshot.
+        // Existing agent products can be delivered without waiting for CDN HTTP.
+        if !source.agent.is_empty() {
+            publisher.lock_or_panic().publish()?;
         }
-    }
-}
-
-#[cfg(unix)]
-type SnapshotReader = OneWayShmReader<ReadOnlyShmHandle, ()>;
-#[cfg(windows)]
-type SnapshotReader = RemoteConfigReader;
-#[cfg(unix)]
-type SnapshotWriter = OneWayShmWriter<ShmHandle>;
-#[cfg(windows)]
-type SnapshotWriter = RemoteConfigWriter;
-
-pub(super) struct PublicationReader {
-    reader: SnapshotReader,
-    pub path: RemoteConfigPath,
-}
-
-impl PublicationReader {
-    pub fn new(handle: RemoteConfigHandle) -> io::Result<Self> {
-        let path = RemoteConfigPath::parse(&handle.config_path).map_err(io::Error::other)?;
-        #[cfg(unix)]
-        let reader = OneWayShmReader::new(handle.handle.map()?, ());
-        #[cfg(windows)]
-        let reader =
-            RemoteConfigReader::from_path(&CString::new(handle.path).map_err(io::Error::other)?);
-        Ok(Self { reader, path })
-    }
-
-    pub fn read(&mut self) -> io::Result<Option<PublicationSnapshot>> {
-        let (changed, bytes) = self.reader.read();
-        if !changed || bytes.is_empty() {
-            return Ok(None);
-        }
-        bincode::DefaultOptions::new()
-            .with_fixint_encoding()
-            // Allow the CDN transport's 10 MiB body limit plus 1 KiB for the
-            // serialized snapshot metadata (revision, delivery state, and length).
-            .with_limit((10 << 20) + 1024)
-            .reject_trailing_bytes()
-            .deserialize(bytes)
-            .map(Some)
-            .map_err(|_| io::Error::other("invalid local RC snapshot"))
-    }
-
-    /// A bounded shared-memory wait. No HTTP or PHP signal handler is involved.
-    pub fn wait_for_change(&mut self, timeout: Duration) {
-        #[cfg(unix)]
-        self.reader.wait_for_change(timeout);
-        #[cfg(windows)]
-        self.reader.0.wait_for_change(timeout);
+        Ok(CdnPublisher(publisher))
     }
 }
 
 struct Publication {
-    owner_pid: u32,
-    writer: SnapshotWriter,
-    snapshot: PublicationSnapshot,
+    writer: RemoteConfigWriter,
+    invariants: ConfigInvariants,
+    target: Arc<Target>,
+    agent: Vec<u8>,
+    agent_files: Vec<Arc<StoredShmFile>>,
+    configuration: Vec<u8>,
+    file: Option<NamedShmHandle>,
+    notifiers: HashMap<u64, Notify>,
 }
 
-impl Drop for Publication {
-    fn drop(&mut self) {
-        if self.owner_pid != std::process::id() {
-            return;
-        }
-        // Runtime teardown may abort the task before its explicit stopped() call.
-        if self.snapshot.state != RemoteConfigDeliveryState::Stopped {
-            self.snapshot.state = RemoteConfigDeliveryState::Stopped;
-            if let Ok(bytes) = bincode::serialize(&self.snapshot) {
-                let _ = self.writer.write(&bytes);
+impl Publication {
+    fn publish(&mut self) -> io::Result<()> {
+        let mut lines = self.agent.split(|byte| *byte == b'\n');
+        let mut directory = lines.next().unwrap_or_default().to_vec();
+        directory.push(b'\n');
+        for line in lines.filter(|line| !line.is_empty()) {
+            let product = std::str::from_utf8(line)
+                .ok()
+                .and_then(|line| line.split(':').nth(2))
+                .and_then(|path| BASE64_URL_SAFE_NO_PAD.decode(path).ok())
+                .and_then(|path| String::from_utf8(path).ok())
+                .and_then(|path| RemoteConfigPath::parse(&path).ok())
+                .map(|path| path.product());
+            if product != Some(RemoteConfigProduct::FfeFlags) {
+                directory.extend_from_slice(line);
+                directory.push(b'\n');
             }
         }
-    }
-}
-
-// Clones share one writer and serialize payload updates through the same mutex.
-// Unix subscribers receive read-only handles, so they can copy snapshots but cannot
-// become payload writers. Reads may overlap publication; the one-way channel checks
-// generations around each copy and documents the remaining memory-model limitation.
-#[derive(Clone)]
-pub(super) struct RemoteConfigPublisher(Arc<Mutex<Publication>>);
-
-impl RemoteConfigPublisher {
-    pub(super) fn new(path: RemoteConfigPath) -> io::Result<(Self, RemoteConfigHandle)> {
-        let config_path = path.to_string();
-        #[cfg(unix)]
-        let (writer, handle) = {
-            let (writer, handle) = create_anon_read_only_pair().map_err(io::Error::other)?;
-            (
-                writer,
-                RemoteConfigHandle {
-                    handle,
-                    config_path,
-                },
-            )
-        };
-        #[cfg(windows)]
-        let (writer, handle) = {
-            // Windows mappings have kernel-managed lifetime; do not duplicate handles
-            // into a client that might disconnect before reading its reply.
-            let path = format!(
-                "/ddcdn{}",
-                BASE64_URL_SAFE_NO_PAD.encode(rand::random::<[u8; 16]>())
-            );
-            let writer = RemoteConfigWriter::from_path(
-                CString::new(path.clone()).map_err(io::Error::other)?,
-            )?;
-            (writer, RemoteConfigHandle { path, config_path })
-        };
-        let publisher = Self(Arc::new(Mutex::new(Publication {
-            owner_pid: std::process::id(),
-            writer,
-            snapshot: PublicationSnapshot::default(),
-        })));
-        Ok((publisher, handle))
-    }
-
-    fn update(&self, update: impl FnOnce(&mut PublicationSnapshot)) -> io::Result<()> {
-        let mut publication = self.0.lock_or_panic();
-        let mut next = publication.snapshot.clone();
-        update(&mut next);
-        if next == publication.snapshot {
-            return Ok(());
+        if let Some(file) = &self.file {
+            // SAFETY: the publication owns the handle, with no concurrent unlink.
+            directory.extend_from_slice(unsafe { file.get_path() });
+            directory.extend_from_slice(b":0:");
+            directory.extend_from_slice(BASE64_URL_SAFE_NO_PAD.encode(CDN_PATH).as_bytes());
+            directory.push(b'\n');
         }
-        let bytes = bincode::serialize(&next).map_err(io::Error::other)?;
-        if !publication.writer.write(&bytes) {
-            return Err(io::Error::other("failed to publish local RC configuration"));
+        if publish_directory(&self.writer, &self.invariants, &self.target, &directory)? {
+            for notify in self.notifiers.values() {
+                notify();
+            }
         }
-        publication.snapshot = next;
         Ok(())
     }
-
-    pub(crate) fn stopped(&self) {
-        let _ = self.update(|snapshot| snapshot.state = RemoteConfigDeliveryState::Stopped);
-    }
 }
 
-impl RemoteConfigPublisher {
-    pub(super) fn publish(&self, bytes: Vec<u8>) -> io::Result<()> {
-        self.update(|snapshot| {
-            snapshot.configuration = bytes;
-            snapshot.revision = snapshot.revision.wrapping_add(1);
-            snapshot.state = RemoteConfigDeliveryState::Ready;
-        })
-    }
+#[derive(Clone)]
+pub(crate) struct CdnPublisher(Arc<Mutex<Publication>>);
 
-    pub(super) fn failed(&self) {
-        let _ = self.update(|snapshot| {
-            snapshot.state = if snapshot.configuration.is_empty() {
-                RemoteConfigDeliveryState::Starting
-            } else {
-                RemoteConfigDeliveryState::Stale
-            };
-        });
-    }
-
-    pub(super) fn confirmed(&self) {
-        let _ = self.update(|snapshot| {
-            if !snapshot.configuration.is_empty() {
-                snapshot.state = RemoteConfigDeliveryState::Ready;
-            }
-        });
+pub(crate) struct NotificationGuard {
+    publisher: CdnPublisher,
+    id: u64,
+}
+impl NotificationGuard {
+    pub(crate) fn notify_current(&self, generation: u64) {
+        let publication = self.publisher.0.lock_or_panic();
+        if publication.writer.current_generation() != 0
+            && publication.writer.current_generation() != generation
+            && let Some(notify) = publication.notifiers.get(&self.id)
+        {
+            notify();
+        }
     }
 }
+impl Drop for NotificationGuard {
+    fn drop(&mut self) {
+        self.publisher.0.lock_or_panic().notifiers.remove(&self.id);
+    }
+}
+impl CdnPublisher {
+    pub(crate) fn register(&self, notify: Notify, generation: u64) -> NotificationGuard {
+        let mut publication = self.0.lock_or_panic();
+        let id = rand::random();
+        if publication.writer.current_generation() != 0
+            && publication.writer.current_generation() != generation
+        {
+            notify();
+        }
+        publication.notifiers.insert(id, notify);
+        NotificationGuard {
+            publisher: self.clone(),
+            id,
+        }
+    }
+}
+impl ConfigurationSink for CdnPublisher {
+    fn apply(&self, configuration: Configuration) -> Result<(), ApplyError> {
+        let bytes = configuration.get_flags_configuration().ok_or(ApplyError)?;
+        let mut publication = self.0.lock_or_panic();
+        if publication.configuration == bytes.as_ref() {
+            return Ok(());
+        }
+        let path = RemoteConfigPath::parse(CDN_PATH).map_err(|_| ApplyError)?;
+        let file = store_shm(rand::random(), &path, bytes.to_vec()).map_err(|error| {
+            warn!("Could not store CDN configuration in remote config shared memory: {error}");
+            ApplyError
+        })?;
+        let old_file = publication.file.replace(file);
+        if let Err(error) = publication.publish() {
+            publication.file = old_file;
+            warn!("Could not publish CDN remote configuration: {error}");
+            return Err(ApplyError);
+        }
+        publication.configuration = bytes.into_owned();
+        Ok(())
+    }
+    fn failed(&self) {} // Existing RC retains last good files through transport failures.
+    fn confirmed(&self) {}
+}
 
-#[cfg(all(test, unix))]
+/// Both agent and CDN publication paths use the same write/dedup/callback rule.
+pub(super) fn publish_directory(
+    writer: &RemoteConfigWriter,
+    invariants: &ConfigInvariants,
+    target: &Arc<Target>,
+    bytes: &[u8],
+) -> io::Result<bool> {
+    if writer.writer.as_slice() == bytes {
+        return Ok(false);
+    }
+    if !writer.write(bytes) {
+        return Err(io::Error::other("remote config shared memory write failed"));
+    }
+    if let Some(notify) = unsafe { IN_PROC_NOTIFY_FUN } {
+        notify(invariants, target);
+    }
+    Ok(true)
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
+    use libdd_ffe::{cdn::CdnEndpoint, rules_based::UniversalFlagConfig};
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
+    fn registration() -> CdnRegistration {
+        CdnRegistration {
+            config: CdnConfig {
+                endpoint: CdnEndpoint::managed("datadoghq.com", "test", "key-one").unwrap(),
+                language: "php".into(),
+                version: "test".into(),
+                poll_interval: Duration::from_secs(30),
+                request_timeout: Duration::from_secs(1),
+            },
+            agent_endpoint: libdd_common::Endpoint::default(),
+            target: Arc::new(Target::new(
+                format!("cdn-{}", rand::random::<u64>()),
+                "test".into(),
+                "".into(),
+                vec![],
+                vec![],
+            )),
+        }
+    }
+    fn config(value: &str) -> Configuration {
+        Configuration::from_server_response(UniversalFlagConfig::from_json(format!(
+            r#"{{"createdAt":"2026-11-06T00:00:00Z","environment":{{"name":"{value}"}},"flags":{{}}}}"#).into_bytes()).unwrap())
+    }
+    fn manager(r: &CdnRegistration) -> RemoteConfigManager {
+        let mut m = RemoteConfigManager::new_with_registry(
+            r.invariants().unwrap(),
+            Arc::new(default_registry().with::<UniversalFlagConfig>().unwrap()),
+        );
+        m.track_target(&r.target);
+        m
+    }
+    fn assert_add(m: &mut RemoteConfigManager) {
+        match m.fetch_update() {
+            RemoteConfigUpdate::Add { value, .. } => assert_eq!(value.path.as_str(), CDN_PATH),
+            _ => panic!("expected CDN Add"),
+        }
+        assert!(matches!(m.fetch_update(), RemoteConfigUpdate::None));
+    }
     #[test]
     #[cfg_attr(miri, ignore = "requires native shared memory")]
-    fn read_only_publication_grows_and_preserves_terminal_snapshot() {
-        let (publisher, handle) = RemoteConfigPublisher::new(
-            RemoteConfigPath::parse("datadog/0/FFE_FLAGS/cdn/config").unwrap(),
-        )
-        .unwrap();
-        let mut reader = PublicationReader::new(handle).unwrap();
-        for (revision, size) in [(1, 8192), (2, 1 << 20)] {
-            let configuration = vec![42; size];
-            publisher.publish(configuration.clone()).unwrap();
-            let snapshot = reader.read().unwrap().unwrap();
-            assert_eq!(snapshot.revision, revision);
-            assert_eq!(snapshot.configuration, configuration);
-            assert_eq!(snapshot.state, RemoteConfigDeliveryState::Ready);
+    fn ordinary_rc_retains_flags_during_failure_and_writer_replacement() {
+        let r = registration();
+        let store = PublicationStore::default();
+        let p = store.cdn(&r).unwrap();
+        let mut m = manager(&r);
+        p.apply(config("first")).unwrap();
+        assert_add(&mut m);
+        p.failed();
+        assert!(matches!(m.fetch_update(), RemoteConfigUpdate::None));
+        drop(p);
+        let p = store.cdn(&r).unwrap();
+        assert!(
+            matches!(m.fetch_update(), RemoteConfigUpdate::None),
+            "empty replacement cleared config"
+        );
+        p.apply(config("second")).unwrap();
+        assert!(matches!(m.fetch_update(), RemoteConfigUpdate::Remove(_)));
+        assert_add(&mut m);
+    }
+    #[test]
+    #[cfg_attr(miri, ignore = "requires native shared memory")]
+    fn credentials_select_another_directory_and_identical_bytes_do_not_notify() {
+        let r = registration();
+        let store = PublicationStore::default();
+        let p = store.cdn(&r).unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let count = calls.clone();
+        let _guard = p.register(
+            Arc::new(move || {
+                count.fetch_add(1, Ordering::SeqCst);
+            }),
+            0,
+        );
+        p.apply(config("first")).unwrap();
+        p.apply(config("first")).unwrap();
+        p.confirmed();
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        let count = calls.clone();
+        let _second = p.register(
+            Arc::new(move || {
+                count.fetch_add(1, Ordering::SeqCst);
+            }),
+            0,
+        );
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            2,
+            "late subscriber was not notified"
+        );
+        let mut changed = r.clone();
+        changed.config.endpoint = CdnEndpoint::managed("datadoghq.com", "test", "key-two").unwrap();
+        assert_ne!(
+            path_for_remote_config(&r.invariants().unwrap(), &r.target),
+            path_for_remote_config(&changed.invariants().unwrap(), &changed.target)
+        );
+        let mut other = manager(&changed);
+        assert!(matches!(other.fetch_update(), RemoteConfigUpdate::None));
+    }
+    #[test]
+    #[cfg_attr(miri, ignore = "requires native shared memory")]
+    fn writer_reconciles_agent_ffe_and_preserves_other_products() {
+        let r = registration();
+        let store = PublicationStore::default();
+        let p = store.cdn(&r).unwrap();
+        let mut base = r.invariants().unwrap();
+        base.publication_scope = None;
+        let agent_ffe = RemoteConfigPath::parse("datadog/0/FFE_FLAGS/agent/config").unwrap();
+        let apm = RemoteConfigPath::parse("datadog/0/APM_TRACING/apm/config").unwrap();
+        let ffe = store_shm(rand::random(), &agent_ffe, b"{}".to_vec()).unwrap();
+        let other = store_shm(rand::random(), &apm, b"{}".to_vec()).unwrap();
+        let mut directory = b"runtime\n".to_vec();
+        for (path, file) in [(&agent_ffe, &ffe), (&apm, &other)] {
+            directory.extend_from_slice(unsafe { file.get_path() });
+            directory.extend_from_slice(b":0:");
+            directory.extend_from_slice(BASE64_URL_SAFE_NO_PAD.encode(path.as_str()).as_bytes());
+            directory.push(b'\n');
         }
-        publisher.stopped();
-        let stopped = reader.read().unwrap().unwrap();
-        assert_eq!(stopped.state, RemoteConfigDeliveryState::Stopped);
-        assert_eq!(stopped.revision, 2);
-        assert_eq!(stopped.configuration, vec![42; 1 << 20]);
+        store.agent_changed(&base, &r.target, &directory, &[]);
+        let mut initial = RemoteConfigReader::new(&r.invariants().unwrap(), &r.target);
+        let (changed, data) = initial.read();
+        assert!(
+            changed,
+            "unrelated agent products waited for a CDN response"
+        );
+        let text = std::str::from_utf8(data).unwrap();
+        assert!(text.contains(&BASE64_URL_SAFE_NO_PAD.encode(apm.as_str())));
+        assert!(!text.contains(&BASE64_URL_SAFE_NO_PAD.encode(agent_ffe.as_str())));
+        p.apply(config("cdn")).unwrap();
+        let mut reader = RemoteConfigReader::new(&r.invariants().unwrap(), &r.target);
+        let (changed, data) = reader.read();
+        assert!(changed);
+        let text = std::str::from_utf8(data).unwrap();
+        assert!(text.contains(&BASE64_URL_SAFE_NO_PAD.encode(apm.as_str())));
+        assert!(text.contains(&BASE64_URL_SAFE_NO_PAD.encode(CDN_PATH)));
+        assert!(!text.contains(&BASE64_URL_SAFE_NO_PAD.encode(agent_ffe.as_str())));
+        // The normal reader never has a reconciliation filter that unload can bypass.
+        let mut m = manager(&r);
+        let _ = m.fetch_update();
+        m.unload_configs(&[RemoteConfigProduct::FfeFlags]);
+        while let RemoteConfigUpdate::Add { value, .. } = m.fetch_update() {
+            assert_ne!(value.path, agent_ffe);
+        }
     }
 }

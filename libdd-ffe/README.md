@@ -68,16 +68,49 @@ external I/O, such as the sidecar; constructing it does not spawn a worker.
 `CdnConfig::validate` identifies the invalid setting through `InvalidConfig`
 variants without including URLs, credentials, or rejected values in diagnostics.
 
-Sidecar subscriptions return a structured rejection for invalid configuration or
-unavailable publication memory. `Ok(None)` means unsubscribe or CDN fetching is
-disabled for the listener. Replacing a subscription releases the previous one
-even when the replacement is rejected.
+Sidecar clients queue `set_cdn_configuration(Some(CdnRegistration { .. }))` without
+waiting for a reply or a returned handle. Derive `registration.invariants()`,
+construct an ordinary `RemoteConfigManager` with the `UniversalFlagConfig` parser,
+and track `registration.target` before checking for existing configuration.
+`set_cdn_configuration(None)` unregisters the source. Reconnect replays the
+registration through the normal sender state. Invalid registrations are logged
+by the sidecar and replace the previous subscription; clients should validate
+`CdnConfig` locally before selecting it.
 
-Unix publication handles are read-only. Linux additionally seals the backing
-memory against shrinking and new writes, including through a reopened descriptor.
-This requires Linux 5.1+ memfd seals and `/proc/self/fd`; unavailable protections
-reject subscription setup instead of exporting an unsealed fallback. Existing
-publisher mappings can still grow and publish new snapshots.
+The sidecar combines agent products and CDN flags in the writer. A CDN-selected
+directory excludes agent `FFE_FLAGS` files and retains other agent products,
+including before the first CDN response. Ordinary RC readers and
+`IN_PROC_NOTIFY_FUN` observe that same directory. Identical accepted CDN bytes
+leave its generation unchanged. Existing RC notification targets receive changes
+only while the connection has an active application and RC notifications enabled;
+late application registration is notified of an existing publication. Thread-mode
+listeners reject CDN registration so HTTP stays outside the application process.
+
+```mermaid
+flowchart LR
+  Agent[Agent RC products] --> Writer[RC directory writer]
+  CDN[CDN HTTP poller in sidecar] --> Writer
+  Writer --> SHM[Ordinary RC shared memory]
+  SHM --> Reader[Existing RC reader and product parser]
+  Writer --> Notify[RC notification target and in-process callback]
+```
+
+Retention follows RC publication semantics: a failed poll or a 304 keeps the
+accepted files; a reader keeps its parsed configuration while no replacement
+directory is available. A replacement writer publishes only when it has an
+accepted source snapshot. Other agent products may produce that snapshot before
+the first CDN response; no separate durable CDN cache or cross-restart freshness
+lease is introduced. An empty *valid* CDN configuration still replaces the old
+flags. Changing credentials, endpoint, or configuration identity selects a new
+directory; the client must select that directory and clear its former evaluator
+state rather than applying the previous identity's flags.
+
+The publication uses the existing OS-user trust boundary and normal named RC
+shared memory on each platform. It does not add sealed memfds, read-only
+subscriber descriptors, a Linux kernel floor, or a second binary snapshot format.
+Connections with identical registrations share one poller. Closing the last
+connection cancels polling and releases its credentials and publisher; existing
+readers retain their parsed last-good configuration under the normal RC rules.
 
 `CdnEndpoint` wraps `libdd_common::Endpoint` while retaining CDN validation,
 credential isolation and redacted diagnostics. URL credentials remain

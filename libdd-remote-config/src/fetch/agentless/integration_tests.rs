@@ -189,6 +189,7 @@ impl FileStorage for NoopStorage {
 fn test_state() -> ConfigFetcherState<(), libdd_capabilities_impl::NativeCapabilities> {
     ConfigFetcherState::with_client(
         ConfigInvariants {
+            publication_scope: None,
             language: "test".to_string(),
             tracer_version: "0.0.0".to_string(),
             endpoint: Endpoint::from_slice("http://localhost/"),

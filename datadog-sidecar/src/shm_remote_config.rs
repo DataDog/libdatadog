@@ -1,12 +1,9 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache
 // License Version 2.0. This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
-pub(crate) mod cdn;
-#[cfg(test)]
-mod local_tests;
-mod publication;
-use publication::{PublicationReader, PublicationSnapshot};
-pub use publication::{RemoteConfigDeliveryState, RemoteConfigHandle};
+pub(crate) mod publication;
+pub use publication::CdnRegistration;
+use publication::{PublicationStore, publish_directory};
 
 use crate::service::{DynamicInstrumentationConfigState, InstanceId};
 use crate::shm_path::keyed_shm_path;
@@ -139,12 +136,8 @@ impl RemoteConfigReader {
 
 impl RemoteConfigWriter {
     pub fn new(id: &ConfigInvariants, target: &Arc<Target>) -> io::Result<RemoteConfigWriter> {
-        Self::from_path(path_for_remote_config(id, target))
-    }
-
-    fn from_path(path: CString) -> io::Result<Self> {
         Ok(RemoteConfigWriter {
-            writer: OneWayShmWriter::<NamedShmHandle>::new(path)?,
+            writer: OneWayShmWriter::<NamedShmHandle>::new(path_for_remote_config(id, target))?,
             dynamic_instrumentation: None,
         })
     }
@@ -175,6 +168,7 @@ struct ConfigFileStorage<N: NotifyTarget + 'static> {
     targets: Arc<Mutex<HashMap<Arc<Target>, TargetInfo>>>,
     #[allow(clippy::type_complexity)]
     on_dead: Arc<Mutex<Option<Box<dyn Fn() + Sync + Send>>>>,
+    publications: PublicationStore,
     _phantom: PhantomData<N>,
 }
 
@@ -370,20 +364,18 @@ impl<N: NotifyTarget + 'static> MultiTargetHandlers<N, Self, NativeCapabilities>
             }
         }
 
-        if writer.writer.as_slice() != serialized {
-            writer.write(&serialized);
-
+        self.publications
+            .agent_changed(&self.invariants, target, &serialized, files);
+        if publish_directory(writer, &self.invariants, target, &serialized).unwrap_or_else(
+            |error| {
+                warn!("Could not publish remote configuration: {error}");
+                false
+            },
+        ) {
             debug!(
                 "Active configuration files are: {}",
                 String::from_utf8_lossy(&serialized)
             );
-
-            if let Some(in_proc_notify) = unsafe { IN_PROC_NOTIFY_FUN } {
-                in_proc_notify(
-                    &self.invariants as *const ConfigInvariants,
-                    target as *const Arc<Target>,
-                );
-            }
 
             true
         } else {
@@ -392,6 +384,7 @@ impl<N: NotifyTarget + 'static> MultiTargetHandlers<N, Self, NativeCapabilities>
     }
 
     fn expired(&self, target: &Arc<Target>) {
+        self.publications.expire_agent(&self.invariants, target);
         if let Some(writer) = self.writers.lock_or_panic().remove(target) {
             // clear to signal it's no longer being fetched
             writer.write(&[]);
@@ -488,12 +481,29 @@ impl<N: NotifyTarget + 'static> ShmRemoteConfigs<N> {
         interval: Duration,
         limiter: Option<Arc<Mutex<ShmLimiterMemory<()>>>>,
     ) -> Self {
+        Self::with_publications(
+            invariants,
+            on_dead,
+            interval,
+            limiter,
+            PublicationStore::default(),
+        )
+    }
+
+    pub(crate) fn with_publications(
+        invariants: ConfigInvariants,
+        on_dead: Box<dyn Fn() + Sync + Send>,
+        interval: Duration,
+        limiter: Option<Arc<Mutex<ShmLimiterMemory<()>>>>,
+        publications: PublicationStore,
+    ) -> Self {
         let storage = ConfigFileStorage {
             invariants: invariants.clone(),
             limiter,
             writers: Default::default(),
             targets: Arc::new(Mutex::new(Default::default())),
             on_dead: Arc::new(Mutex::new(Some(on_dead))),
+            publications,
             _phantom: Default::default(),
         };
         let fetcher =
@@ -627,13 +637,8 @@ pub struct RemoteConfigManager {
     unexpired_targets: PriorityQueue<Arc<Target>, Reverse<Instant>>,
     active_configs: HashMap<String, RemoteConfigPath>,
     last_read_configs: Vec<String>,
-    /// Latest complete agent directory, retained while local sources override a product.
-    remote_file_refs: Vec<String>,
-    local_reader: Option<PublicationReader>,
-    local_snapshot: Option<PublicationSnapshot>,
-    local_attachment: u64,
     check_configs: Vec<String>,
-    /// Reapply agent configs after replacement: unchanged limiter indices refer to a new arena.
+    /// Reapply every config after replacement: unchanged limiter indices refer to a new arena.
     reapply_all: bool,
     pub current_runtime_id: String,
 }
@@ -671,10 +676,6 @@ impl RemoteConfigManager {
             unexpired_targets: Default::default(),
             active_configs: Default::default(),
             last_read_configs: Default::default(),
-            remote_file_refs: vec![],
-            local_reader: None,
-            local_snapshot: None,
-            local_attachment: 0,
             check_configs: vec![],
             reapply_all: false,
             current_runtime_id: "".to_string(),
@@ -704,6 +705,18 @@ impl RemoteConfigManager {
         self.active_reader
             .as_ref()
             .map(RemoteConfigReader::get_path)
+    }
+
+    /// Wait at most timeout for the ordinary RC directory to change. Does not consume updates.
+    pub fn wait_for_change(&mut self, timeout: Duration) {
+        if let Some(target) = &self.active_target {
+            let reader = self
+                .active_reader
+                .get_or_insert_with(|| RemoteConfigReader::new(&self.invariants, target));
+            reader.0.wait_for_change(timeout);
+        } else {
+            std::thread::sleep(timeout);
+        }
     }
 
     /// Polls one configuration change.
@@ -751,8 +764,8 @@ impl RemoteConfigManager {
                             break 'fetch_new;
                         }
                     }
-                    self.remote_file_refs = configs;
-                    self.reconcile_sources();
+                    self.last_read_configs = configs;
+                    self.check_configs = self.active_configs.keys().cloned().collect();
                 }
                 if self
                     .active_reader
@@ -777,39 +790,8 @@ impl RemoteConfigManager {
             }
         }
 
-        if let Some(reader) = &mut self.local_reader {
-            match reader.read() {
-                Ok(Some(snapshot)) => {
-                    let changed = self.local_snapshot.as_ref().is_none_or(|previous| {
-                        previous.revision != snapshot.revision
-                            || previous.configuration.is_empty()
-                                != snapshot.configuration.is_empty()
-                    });
-                    self.local_snapshot = Some(snapshot);
-                    if changed {
-                        self.reconcile_sources();
-                    }
-                }
-                Ok(None) => {}
-                Err(error) => {
-                    warn!("Failed reading local remote configuration: {error}");
-                    if let Some(snapshot) = &mut self.local_snapshot {
-                        snapshot.state = if snapshot.configuration.is_empty() {
-                            RemoteConfigDeliveryState::Starting
-                        } else {
-                            RemoteConfigDeliveryState::Stale
-                        };
-                    }
-                }
-            }
-        }
-
-        let local_key = self.local_config_key();
         while let Some(config) = self.check_configs.pop() {
-            // Local publications do not belong to the replaced agent limiter arena.
-            if (self.reapply_all && local_key.as_ref() != Some(&config))
-                || !self.last_read_configs.contains(&config)
-            {
+            if self.reapply_all || !self.last_read_configs.contains(&config) {
                 trace!("Removing remote config file {config}");
                 if let Some(path) = self.active_configs.remove(&config) {
                     return RemoteConfigUpdate::Remove(path);
@@ -820,23 +802,7 @@ impl RemoteConfigManager {
 
         while let Some(config) = self.last_read_configs.pop() {
             if let Entry::Vacant(entry) = self.active_configs.entry(config) {
-                let parsed = if local_key.as_ref() == Some(entry.key()) {
-                    self.local_reader
-                        .as_ref()
-                        .zip(self.local_snapshot.as_ref())
-                        .ok_or_else(|| anyhow::anyhow!("local configuration detached"))
-                        .and_then(|(reader, snapshot)| {
-                            RemoteConfigValue::try_parse(
-                                reader.path.as_str(),
-                                &snapshot.configuration,
-                                &self.registry,
-                            )
-                            .map(|value| (value, 0))
-                        })
-                } else {
-                    read_config(entry.key(), &self.registry)
-                };
-                match parsed {
+                match read_config(entry.key(), &self.registry) {
                     Ok((parsed, limiter_index)) => {
                         trace!("Adding remote config file {}: {:?}", entry.key(), parsed);
                         entry.insert(parsed.path.clone());
@@ -857,101 +823,15 @@ impl RemoteConfigManager {
         RemoteConfigUpdate::None
     }
 
-    /// Attach a local source such as CDN. It overrides agent files of the same
-    /// product, including while it is starting; unrelated agent products continue.
-    /// Reattach after reconnecting. The next fetch_update removes the old source
-    /// before adding the replacement, even if its revision starts at one again.
-    pub fn set_local_configuration(
-        &mut self,
-        handle: Option<RemoteConfigHandle>,
-    ) -> io::Result<()> {
-        let reader = handle.map(PublicationReader::new).transpose()?;
-        self.local_reader = reader;
-        self.local_snapshot = None;
-        self.local_attachment = self.local_attachment.wrapping_add(1);
-        self.reconcile_sources();
-        Ok(())
-    }
-
-    /// State of the attached local source, updated by fetch_update.
-    pub fn local_configuration_state(&self) -> Option<RemoteConfigDeliveryState> {
-        self.local_reader.as_ref().map(|_| {
-            self.local_snapshot
-                .as_ref()
-                .map_or(RemoteConfigDeliveryState::Starting, |snapshot| {
-                    snapshot.state
-                })
-        })
-    }
-
-    /// Wait at most `timeout` before the caller polls with `fetch_update` again.
-    /// With both sources active, check pending agent notifications and cap the
-    /// local wait at 50 ms so agent changes cannot be hidden by an idle local
-    /// source. The wait may return without a change and never consumes updates.
-    pub fn wait_for_change(&mut self, timeout: Duration) {
-        if let Some(reader) = &mut self.local_reader {
-            let timeout = if let Some(target) = &self.active_target {
-                let started = std::time::Instant::now();
-                let agent = self
-                    .active_reader
-                    .get_or_insert_with(|| RemoteConfigReader::new(&self.invariants, target));
-                if agent.0.wait_for_change(Duration::ZERO) {
-                    return;
-                }
-                timeout
-                    .min(Duration::from_millis(50))
-                    .saturating_sub(started.elapsed())
-            } else {
-                timeout
-            };
-            reader.wait_for_change(timeout);
-        } else if let Some(reader) = &mut self.active_reader {
-            reader.0.wait_for_change(timeout);
-        } else {
-            std::thread::sleep(timeout);
-        }
-    }
-
-    fn local_config_key(&self) -> Option<String> {
-        self.local_snapshot
-            .as_ref()
-            .filter(|snapshot| !snapshot.configuration.is_empty())
-            .map(|snapshot| format!("local:{}:{}", self.local_attachment, snapshot.revision))
-    }
-
-    fn reconcile_sources(&mut self) {
-        let local_product = self
-            .local_reader
-            .as_ref()
-            .map(|reader| reader.path.product());
-        self.last_read_configs = self
-            .remote_file_refs
-            .iter()
-            .filter(|reference| {
-                let product = reference
-                    .split(':')
-                    .nth(2)
-                    .and_then(|encoded| BASE64_URL_SAFE_NO_PAD.decode(encoded).ok())
-                    .and_then(|bytes| String::from_utf8(bytes).ok())
-                    .and_then(|path| RemoteConfigPath::parse(&path).ok())
-                    .map(|path| path.product());
-                local_product.is_none() || product != local_product
-            })
-            .cloned()
-            .collect();
-        if let Some(key) = self.local_config_key() {
-            self.last_read_configs.push(key);
-        }
-        self.check_configs = self.active_configs.keys().cloned().collect();
-    }
-
     fn set_target(&mut self, target: Option<Arc<Target>>) {
-        // Keep the complete agent reference list, including configurations already consumed
-        // by fetch_update. Local publication keys must not enter the per-target agent cache.
-        let current_configs = std::mem::take(&mut self.remote_file_refs);
+        let mut current_configs = std::mem::take(&mut self.last_read_configs);
         if let Some(old_target) = std::mem::replace(&mut self.active_target, target)
             && let Some(reader) = self.active_reader.take()
         {
+            // Reconstruct currently active configurations
+            if self.check_configs.is_empty() {
+                current_configs.extend(self.active_configs.keys().cloned());
+            }
             self.encountered_targets
                 .insert(old_target.clone(), (reader, current_configs));
             self.unexpired_targets
@@ -961,10 +841,9 @@ impl RemoteConfigManager {
             && let Some((reader, last_fetch)) = self.encountered_targets.remove(target)
         {
             self.active_reader = Some(reader);
-            self.remote_file_refs = last_fetch;
+            self.last_read_configs = last_fetch;
             self.unexpired_targets.remove(target);
         }
-        self.reconcile_sources();
     }
 
     /// Sets the currently active target.
@@ -976,8 +855,6 @@ impl RemoteConfigManager {
     /// Resets the currently active target. The next configuration change polls will emit Remove()
     /// for all current tracked active configurations.
     pub fn reset_target(&mut self) {
-        self.local_reader = None;
-        self.local_snapshot = None;
         self.set_target(None);
         self.check_configs = self.active_configs.keys().cloned().collect();
     }
@@ -988,8 +865,6 @@ impl RemoteConfigManager {
 
     /// Resets everything, giving up the target and all tracked state of active configurations.
     pub fn reset(&mut self) {
-        self.local_reader = None;
-        self.local_snapshot = None;
         self.set_target(None);
         self.check_configs.clear();
         self.active_configs.clear();
@@ -1053,6 +928,7 @@ mod tests {
     #[test]
     fn shm_paths_distinguish_targets_and_endpoints() {
         let mut invariants = ConfigInvariants {
+            publication_scope: None,
             language: "php".into(),
             tracer_version: "1.0".into(),
             endpoint: libdd_common::Endpoint::from_slice("http://agent-a:8126"),
@@ -1099,6 +975,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     async fn new_client_opening_an_old_directory_is_notified_by_its_replacement() {
         let invariants = ConfigInvariants {
+            publication_scope: None,
             language: "php".to_string(),
             tracer_version: "test".to_string(),
             // The file scheme disables background fetching for this registration test.
@@ -1456,6 +1333,7 @@ mod tests {
             return;
         }
         let invariants = ConfigInvariants {
+            publication_scope: None,
             language: "php".to_string(),
             tracer_version: "1.0.0".to_string(),
             endpoint: libdd_common::Endpoint::from_slice(&format!(
