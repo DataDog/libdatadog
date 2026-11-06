@@ -1,15 +1,33 @@
 # Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 # SPDX-License-Identifier: Apache-2.0
 
-# Computes the set of crates impacted by a PR (the changed crates plus their transitive
-# dependents) and publishes it for downstream test-stage jobs to consume.
+# Computes the change-detection signals for the pipeline, in one runner:
 #
-# It reuses the crates-reporter tool that already backs GitHub CI (.github/actions/). That
-# tool writes its results to the file named by $GITHUB_OUTPUT, so we point $GITHUB_OUTPUT at
-# a temp file and parse it here -- no changes to the Rust code are required.
+# 1. The set of crates impacted by a PR (the changed crates plus their
+#    transitive dependents) via the crates-reporter tool that already backs
+#    GitHub CI (.github/actions/). That tool writes its results to the file
+#    named by $GITHUB_OUTPUT, so we point $GITHUB_OUTPUT at a temp file and
+#    parse it here -- no changes to the Rust code are required. Forwarded to
+#    the libddprof-build pipeline as trigger variables by trigger_internal_build.
 #
-# The benchmarks job consumes this directly; trigger_internal_build forwards it to the
-# libddprof-build pipeline as trigger variables.
+# 2. Which *individual benchmarks* (benchmark clusters: every bench binary,
+#    then the first `/`-segment of each criterion bench ID inside it) the PR
+#    should run, via bench-selector (.github/actions/bench-selector): build
+#    the affected bench crates with `-C instrument-coverage`, run every
+#    cluster once (criterion `--test`), and intersect the executed-function
+#    line coverage with the PR's changed lines -- plus lockfile bumps scoped
+#    against the packages each cluster executes.
+#
+# Both were separate jobs once; they merged because the bench selection needs
+# the crate detection's outputs and a second runner costs more than the few
+# minutes the merged job adds before trigger_internal_build fires. Note that
+# delay: the downstream pipeline starts after the coverage pass finishes.
+#
+# The benchmarks job consumes bench-selection.json when this job produces
+# it; anything else (missing output, undetermined impacted crates,
+# workspace-level profile/toolchain changes) makes it fall back to the
+# crate-level selection it already had, which itself falls back to the full
+# suite. A failure here can only widen what runs downstream.
 
 compute_impacted_crates:
   stage: test
@@ -33,16 +51,21 @@ compute_impacted_crates:
       when: never
     - when: on_success
   variables:
-    # Full history so the three-dot merge-base diff against origin/main resolves.
+    # Full history so the three-dot merge-base diff against origin/main resolves
+    # (crates-reporter, bench-selector, and the lockfile diff all use it).
     GIT_DEPTH: 0
   # A failure leaves the outputs absent; downstream jobs then fall back to running everything.
   allow_failure: true
   script:
-    # Always emit impacted-crates.env and changed_files.txt, even if crate detection fails -- that
-    # way the benchmarks job always receives its needed artifacts and falls back to the full suite
-    # (IMPACTED_STATUS=skipped) instead of erroring on a missing archive.
+    # Always emit impacted-crates.env and changed_files.txt, even if a later phase
+    # fails -- that way the benchmarks job always receives its needed artifacts and
+    # falls back to the full suite (IMPACTED_STATUS=skipped) instead of erroring on
+    # a missing archive.
     - |
+      set -eu
       export GITHUB_OUTPUT="$(mktemp)"
+
+      # ---------------------------------------------------------------- phase 1: crates
       git fetch --no-tags origin main || :
       if (cd .github/actions && cargo build --release -p crates-reporter) \
          && ./.github/actions/target/release/crates-reporter main; then
@@ -75,68 +98,14 @@ compute_impacted_crates:
           echo "WORKSPACE_LEVEL_CHANGE=false" >> impacted-crates.env
         fi
       fi
-  artifacts:
-    when: always
-    reports:
-      dotenv: impacted-crates.env
-    paths:
-      - changed_files.txt
-    expire_in: 1 week
 
-# Computes which *individual benchmarks* (well: benchmark clusters — every bench
-# binary, then the first `/`-segment of each criterion bench ID inside it) a PR
-# should run, by building the affected bench crates with `-C
-# instrument-coverage`, running every cluster once (criterion `--test`), and
-# intersecting the executed-function line coverage with the PR's changed lines.
-# The tool lives in .github/actions/bench-selector (see its sources for the
-# design and the fail-conservative rules).
-#
-# The benchmarks job consumes bench-selection.json when this job succeeds;
-# anything else (missing output, non-success status, undetermined impacted
-# crates, workspace-level changes) makes it fall back to the crate-level
-# selection it already had, so this job can never reduce what runs on failure.
-compute_bench_selection:
-  stage: test
-  tags: ["arch:amd64"]
-  image:
-    name: $BASE_CI_IMAGE
-  needs:
-    # Optional: absent on main / release / merge-queue pipelines, and this job
-    # never runs there either (same rules as compute_impacted_crates).
-    - job: compute_impacted_crates
-      artifacts: true
-      optional: true
-  rules:
-    - !reference [.untrusted_ref_guard, rules]
-    - if: '$CI_COMMIT_BRANCH == "main"'
-      when: never
-    - if: '$CI_COMMIT_BRANCH =~ /^(release|hotfix)\//'
-      when: never
-    - if: '$CI_EXTERNAL_PULL_REQUEST_SOURCE_BRANCH_NAME =~ /^(release|hotfix)\//'
-      when: never
-    - if: '$CI_COMMIT_BRANCH =~ /^mq-working-branch-/'
-      when: never
-    - if: '$CI_PIPELINE_SOURCE == "schedule"'
-      when: never
-    - when: on_success
-  variables:
-    # select diffs against origin/main; full history makes the merge-base resolve.
-    GIT_DEPTH: 0
-  # Same posture as compute_impacted_crates: a failure falls back downstream
-  # instead of failing the pipeline.
-  allow_failure: true
-  script:
-    # Always emit a dotenv so the benchmarks job always receives its needed
-    # artifacts and falls back to crate-level selection on anything unexpected.
-    - |
-      set -eu
-      # Write the dotenv up front ("failed" by default) so the artifact always
-      # exists, even if a later step dies; each early exit rewrites it.
-      printf 'BENCH_SELECTION_STATUS=failed\n' | tee bench-selection.env
-      status() { printf 'BENCH_SELECTION_STATUS=%s\n' "$1" | tee bench-selection.env; }
+      # ------------------------------------------------- phase 2: benchmark selection
+      # Every exit below appends the selection status to the dotenv for
+      # observability; the benchmarks job keys off bench-selection.json's
+      # presence (present = usable, absent = fall back), not off this value.
       if [[ "${IMPACTED_STATUS:-}" != "success" || -z "${AFFECTED_CRATES:-}" ]]; then
+        echo "BENCH_SELECTION_STATUS=skipped" >> impacted-crates.env
         echo "Impacted crates undetermined -> benchmarks fall back to crate-level selection."
-        status skipped
         exit 0
       fi
       # Workspace-level changes that per-benchmark selection cannot scope
@@ -147,8 +116,8 @@ compute_bench_selection:
       # is not used here because it still includes Cargo.lock.)
       if grep -qE '^(Cargo\.toml|rust-toolchain\.toml|ci-toolchain\.toml)$' changed_files.txt 2>/dev/null \
          || grep -qE '^(\.cargo/|\.config/nextest\.toml)' changed_files.txt 2>/dev/null; then
+        echo "BENCH_SELECTION_STATUS=skipped" >> impacted-crates.env
         echo "Workspace-level profile/toolchain change -> full benchmark suite."
-        status skipped
         exit 0
       fi
       # The coverage pass needs llvm-profdata/llvm-cov matching rustc: the
@@ -177,12 +146,13 @@ compute_bench_selection:
         --coverage bench-coverage.json \
         --base-ref main \
         --out bench-selection.json
-      status success
+      echo "BENCH_SELECTION_STATUS=success" >> impacted-crates.env
   artifacts:
     when: always
     reports:
-      dotenv: bench-selection.env
+      dotenv: impacted-crates.env
     paths:
+      - changed_files.txt
       - bench-selection.json
       - bench-inventory.json
       - bench-coverage.json
