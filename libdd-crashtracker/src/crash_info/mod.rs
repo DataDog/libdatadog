@@ -65,6 +65,11 @@ macro_rules! parse_tags {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct CrashInfo {
+    /// Pre-encoded v0.4 trace payload from `DD_CRASHTRACK_BEGIN_APM_TRACE_PAYLOAD`.
+    /// Internal only — not serialized to the crash report JSON.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub apm_trace_payload: Option<ApmTracePayload>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub counters: HashMap<String, i64>,
     pub data_schema_version: String,
@@ -308,6 +313,7 @@ mod tests {
             );
 
             Self {
+                apm_trace_payload: None,
                 counters,
                 data_schema_version: CrashInfo::current_schema_version(),
                 error: ErrorData::test_instance(seed),

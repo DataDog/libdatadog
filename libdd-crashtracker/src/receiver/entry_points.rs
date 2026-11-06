@@ -143,6 +143,43 @@ pub(crate) async fn receiver_entry_point(
         crash_info
             .async_upload_to_endpoint(config.endpoint())
             .await?;
+
+        // Submit the crash-time APM trace payload to the agent if present.
+        // Patch in the crash UUID and error message — these are only known on
+        // the receiver side (the collector pre-encodes everything else).
+        if let Some(ref mut payload) = crash_info.apm_trace_payload {
+            let signal = crash_info
+                .sig_info
+                .as_ref()
+                .map(|sig| format!("{:?}", sig.si_signo_human_readable))
+                .unwrap_or_else(|| "unknown signal".to_string());
+            let error_message = format!(
+                "Process crashed ({signal}). Crash report: {uuid}",
+                uuid = crash_info.uuid
+            );
+
+            let extra_meta = [
+                ("error.message", error_message.as_str()),
+                ("error.type", "crash"),
+                ("dd.crash_tracking.uuid", crash_info.uuid.as_str()),
+            ];
+
+            if let Some(patched) = super::msgpack_patch::patch_span_meta(&payload.data, &extra_meta)
+            {
+                payload.data = patched;
+            }
+
+            if let Err(e) = super::apm_span_submit::submit_trace_payload(
+                payload,
+                &crash_info.metadata.library_version,
+            )
+            .await
+            {
+                crash_info
+                    .log_messages
+                    .push(format!("Failed to submit crash trace payload: {e}"));
+            }
+        }
     }
     Ok(())
 }
