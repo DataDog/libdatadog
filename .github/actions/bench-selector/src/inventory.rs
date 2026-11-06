@@ -84,9 +84,9 @@ pub fn discover(workspace_root: &Path, crates_filter: Option<&[String]>) -> Resu
 
     let mut binaries = Vec::new();
     for pkg in members {
-        if let Some(wanted) = &wanted
-            && !wanted.contains(pkg.name.as_ref())
-        {
+        // Not a let-chain: the tool builds on checkouts older than Rust 1.88,
+        // where let-chains are not stable.
+        if matches!(&wanted, Some(wanted) if !wanted.contains(pkg.name.as_ref())) {
             continue;
         }
         let Some(crate_dir) = pkg
