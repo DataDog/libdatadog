@@ -28,23 +28,40 @@ use crate::point::Attributes;
 use crate::usage::ReportedUsage;
 
 /// Provider names that differ from their OpenTelemetry well-known
-/// `gen_ai.provider.name`, as gateways and SDKs spell them.
-const PROVIDER_ALIASES: [(&str, &str); 21] = [
+/// `gen_ai.provider.name`, as gateways and SDKs spell them: LiteLLM, Kong,
+/// Envoy AI Gateway, Cloudflare AI Gateway, Databricks and the Vercel AI SDK.
+const PROVIDER_ALIASES: [(&str, &str); 35] = [
+    ("amazon-bedrock", "aws.bedrock"),
+    ("amazon_bedrock", "aws.bedrock"),
     ("anthropic_text", "anthropic"),
     ("aws-bedrock", "aws.bedrock"),
     ("aws_bedrock", "aws.bedrock"),
     ("azure", "azure.ai.openai"),
+    ("azure-openai", "azure.ai.openai"),
     ("azure_ai", "azure.ai.inference"),
     ("azure_openai", "azure.ai.openai"),
     ("azure_text", "azure.ai.openai"),
     ("bedrock", "aws.bedrock"),
     ("bedrock_converse", "aws.bedrock"),
     ("cohere_chat", "cohere"),
-    // The Gemini API (Google AI Studio). Gemini served by Vertex AI is
-    // `vertex_ai`.
+    // Databricks' Model Serving endpoints; no OpenTelemetry value yet.
+    ("databricks-model-serving", "databricks"),
+    ("databricks_model_serving", "databricks"),
+    // The Gemini API (Google AI Studio), and PaLM before it. Gemini served
+    // by Vertex AI is `vertex_ai`.
     ("gemini", "gcp.gemini"),
+    ("google-ai-studio", "gcp.gemini"),
+    ("google-cloud-vertex-ai", "gcp.vertex_ai"),
+    ("google-vertex-ai", "gcp.vertex_ai"),
+    ("google_ai_studio", "gcp.gemini"),
+    ("google_vertex_ai", "gcp.vertex_ai"),
+    // xAI's models, as some gateways name the provider.
+    ("grok", "x_ai"),
     ("mistral", "mistral_ai"),
     ("moonshot", "moonshot_ai"),
+    ("palm", "gcp.gemini"),
+    ("perplexity-ai", "perplexity"),
+    ("perplexity_ai", "perplexity"),
     ("text-completion-openai", "openai"),
     ("vertex", "gcp.vertex_ai"),
     ("vertex_ai", "gcp.vertex_ai"),
@@ -65,8 +82,9 @@ const PROVIDER_ALIASES: [(&str, &str); 21] = [
 /// does not start with a letter.
 pub fn gen_ai_provider_name(name: &str) -> Option<String> {
     let lowered = name.trim().to_ascii_lowercase();
-    if let Some((_, known)) = PROVIDER_ALIASES.iter().find(|(alias, _)| *alias == lowered) {
-        return Some((*known).to_string());
+    // The table is sorted, as a test checks.
+    if let Ok(at) = PROVIDER_ALIASES.binary_search_by_key(&lowered.as_str(), |(alias, _)| alias) {
+        return Some(PROVIDER_ALIASES[at].1.to_string());
     }
     let identifier: String = lowered
         .chars()
@@ -1707,6 +1725,35 @@ mod tests {
                 pieces.push(piece);
             }
             assert_eq!(pieces.out, whole, "{step}");
+        }
+    }
+
+    #[test]
+    fn provider_aliases_are_sorted_and_canonical() {
+        assert!(PROVIDER_ALIASES.windows(2).all(|w| w[0].0 < w[1].0));
+        for (alias, known) in PROVIDER_ALIASES {
+            assert_eq!(gen_ai_provider_name(alias).as_deref(), Some(known));
+            assert_eq!(
+                gen_ai_provider_name(&alias.to_ascii_uppercase()).as_deref(),
+                Some(known)
+            );
+        }
+        for (alias, known) in [
+            ("amazon-bedrock", "aws.bedrock"),
+            ("google-cloud-vertex-ai", "gcp.vertex_ai"),
+            ("palm", "gcp.gemini"),
+            ("databricks-model-serving", "databricks"),
+            ("google-ai-studio", "gcp.gemini"),
+            ("google-vertex-ai", "gcp.vertex_ai"),
+            ("azure-openai", "azure.ai.openai"),
+            ("grok", "x_ai"),
+            ("perplexity-ai", "perplexity"),
+        ] {
+            assert_eq!(
+                gen_ai_provider_name(alias).as_deref(),
+                Some(known),
+                "{alias}"
+            );
         }
     }
 
