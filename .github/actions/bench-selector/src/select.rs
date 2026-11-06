@@ -80,7 +80,12 @@ fn overlaps(a: (u32, u32), b: (u32, u32)) -> bool {
 }
 
 /// Compute the selection for every binary of `inventory`.
-pub fn select(inventory: &Inventory, coverage: &Coverage, changed: &ChangedLines) -> Selection {
+pub fn select(
+    inventory: &Inventory,
+    coverage: &Coverage,
+    changed: &ChangedLines,
+    self_test: bool,
+) -> Selection {
     let coverage_by_key: BTreeMap<(&str, &str, &str), &crate::coverage::CoverageEntry> = coverage
         .entries
         .iter()
@@ -94,7 +99,7 @@ pub fn select(inventory: &Inventory, coverage: &Coverage, changed: &ChangedLines
 
     let full_run = changed
         .iter()
-        .any(|(path, ranges)| requires_full_run(path, ranges));
+        .any(|(path, ranges)| requires_full_run(path, ranges, self_test));
     let mut binaries = Vec::new();
     let mut clusters_total = 0usize;
     let mut clusters_selected = 0usize;
@@ -174,7 +179,15 @@ pub fn select(inventory: &Inventory, coverage: &Coverage, changed: &ChangedLines
 
 /// Inputs outside Rust runtime coverage need a conservative full run. This
 /// includes the existing benchmark script's infrastructure/toolchain fallback.
-fn requires_full_run(path: &str, ranges: &[(u32, u32)]) -> bool {
+///
+/// `self_test` skips the benchmark-tooling paths (not the C/proto/toolchain
+/// ones): it exists only for validating the selection itself on PRs whose diff
+/// contains the tooling changes, which would otherwise always force a full
+/// suite and make the selection impossible to measure. It is enabled via the
+/// `BENCH_SELECTOR_SELF_TEST` environment variable, which only a deliberate
+/// CI configuration change can set (and editing the CI configuration is
+/// itself a tooling change that re-enables the full-suite guard on real PRs).
+fn requires_full_run(path: &str, ranges: &[(u32, u32)], self_test: bool) -> bool {
     let path_obj = std::path::Path::new(path);
     let name = path_obj.file_name().and_then(|name| name.to_str());
     if matches!(
@@ -189,12 +202,12 @@ fn requires_full_run(path: &str, ranges: &[(u32, u32)]) -> bool {
         )
     ) || path.starts_with(".cargo/")
         || path.contains("/.cargo/")
-        || path.starts_with("benchmark/")
-        || path.starts_with(".github/actions/bench-selector/")
-        || matches!(
+        || (path.starts_with("benchmark/") && !self_test)
+        || (path.starts_with(".github/actions/bench-selector/") && !self_test)
+        || (matches!(
             path,
             ".gitlab/benchmarks.yml" | ".gitlab/impacted-crates.yml"
-        )
+        ) && !self_test)
     {
         return true;
     }
@@ -274,7 +287,7 @@ mod tests {
             entry("b", vec![("libdd-x/src/cold.rs", vec![(1, 5)])]),
         ]);
         let ch = changed(vec![("libdd-x/src/hot.rs", vec![(15, 15)])]);
-        let selection = select(&inv, &cov, &ch);
+        let selection = select(&inv, &cov, &ch, false);
         assert_eq!(selection.binaries.len(), 1);
         assert_eq!(selection.binaries[0].clusters.len(), 1);
         assert_eq!(selection.binaries[0].clusters[0].name, "a");
@@ -297,7 +310,7 @@ mod tests {
             entry("b", vec![("libdd-x/src/other.rs", vec![(1, 5)])]),
         ]);
         let ch = changed(vec![("libdd-x/src/hot.rs", vec![(50, 60)])]);
-        let selection = select(&inv, &cov, &ch);
+        let selection = select(&inv, &cov, &ch, false);
         assert!(selection.binaries.is_empty());
         assert_eq!(selection.summary.clusters_selected, 0);
     }
@@ -318,7 +331,7 @@ mod tests {
             },
         ]);
         let ch = changed(vec![("libdd-x/src/unrelated.rs", vec![(1, 1)])]);
-        let selection = select(&inv, &cov, &ch);
+        let selection = select(&inv, &cov, &ch, false);
         let selected: Vec<&str> = selection.binaries[0]
             .clusters
             .iter()
@@ -343,7 +356,7 @@ mod tests {
             entry("b", vec![("libdd-x/src/other.rs", vec![(1, 5)])]),
         ]);
         let ch = changed(vec![("libdd-x/benches/main.rs", vec![(1, 1)])]);
-        let selection = select(&inv, &cov, &ch);
+        let selection = select(&inv, &cov, &ch, false);
         assert_eq!(selection.binaries.len(), 1);
         assert_eq!(selection.binaries[0].clusters.len(), 2);
         assert!(
@@ -381,7 +394,7 @@ mod tests {
             "libdd-x/src/hot.S",
             "libdd-x/schema.proto",
         ] {
-            let selection = select(&inv, &cov, &changed(vec![(path, vec![(100, 100)])]));
+            let selection = select(&inv, &cov, &changed(vec![(path, vec![(100, 100)])]), false);
             assert_eq!(selection.summary.clusters_selected, 2, "{path}");
             assert!(
                 selection.binaries[0]
@@ -389,6 +402,33 @@ mod tests {
                     .iter()
                     .all(|c| c.reason == Reason::UncoveredInputChanged)
             );
+        }
+    }
+
+    #[test]
+    fn self_test_skips_tooling_paths_but_not_others() {
+        let inv = Inventory {
+            binaries: vec![binary(&["a/x", "b/y"])],
+        };
+        let cov = coverage(vec![
+            entry("a", vec![("libdd-x/src/hot.rs", vec![(1, 5)])]),
+            entry("b", vec![("libdd-x/src/other.rs", vec![(1, 5)])]),
+        ]);
+        // Tooling paths: ignored under self-test, so the unrelated .rs change
+        // selects nothing.
+        for path in [
+            "benchmark/run_benchmarks_ci.sh",
+            ".gitlab/benchmarks.yml",
+            ".gitlab/impacted-crates.yml",
+            ".github/actions/bench-selector/src/select.rs",
+        ] {
+            let selection = select(&inv, &cov, &changed(vec![(path, vec![(100, 100)])]), true);
+            assert_eq!(selection.summary.clusters_selected, 0, "{path}");
+        }
+        // Non-tooling uncovered inputs still force a full run under self-test.
+        for path in ["libdd-x/src/hot.c", "libdd-x/build.rs", "Cargo.lock"] {
+            let selection = select(&inv, &cov, &changed(vec![(path, vec![(100, 100)])]), true);
+            assert_eq!(selection.summary.clusters_selected, 2, "{path}");
         }
     }
 
@@ -402,7 +442,7 @@ mod tests {
             entry("b", vec![("libdd-x/src/other.rs", vec![(1, 5)])]),
         ]);
         let ch = crate::diff::parse_unified_diff("diff --git a/libdd-x/benches/old.rs b/libdd-x/benches/new.rs\nsimilarity index 100%\nrename from libdd-x/benches/old.rs\nrename to libdd-x/benches/new.rs\n").unwrap();
-        let selection = select(&inv, &cov, &ch);
+        let selection = select(&inv, &cov, &ch, false);
         assert_eq!(selection.summary.clusters_selected, 2);
         assert!(
             selection.binaries[0]
@@ -422,10 +462,11 @@ mod tests {
             &inv,
             &cov,
             &changed(vec![("libdd-x/src/deleted.rs", vec![])]),
+            false,
         );
         assert_eq!(selection.summary.clusters_selected, 1);
         let cov = coverage(vec![entry("a", vec![])]);
-        let selection = select(&inv, &cov, &ChangedLines::new());
+        let selection = select(&inv, &cov, &ChangedLines::new(), false);
         assert_eq!(
             selection.binaries[0].clusters[0].reason,
             Reason::CoverageFailed
@@ -434,8 +475,8 @@ mod tests {
 
     #[test]
     fn unrelated_documentation_does_not_force_a_full_run() {
-        assert!(!requires_full_run("README.md", &[(1, 2)]));
-        assert!(!requires_full_run("docs/README.md", &[]));
+        assert!(!requires_full_run("README.md", &[(1, 2)], false));
+        assert!(!requires_full_run("docs/README.md", &[], false));
     }
 
     #[test]
