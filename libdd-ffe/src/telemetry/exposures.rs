@@ -608,6 +608,21 @@ mod tests {
     }
 
     #[test]
+    fn exposure_features_are_truncated_at_the_byte_cap() {
+        use crate::telemetry::features::{MAX_FEATURES_BYTES, features_of_encoded_len};
+        let over_cap = features_of_encoded_len(MAX_FEATURES_BYTES + 1);
+        let payload = encode_one(
+            &ExposureDeduplicator::new(4),
+            exposure_with_features(&over_cap),
+        )
+        .unwrap();
+        let features = &payload["exposures"][0]["features"];
+        let input: serde_json::Map<String, Value> = serde_json::from_str(&over_cap).unwrap();
+        assert_eq!(features.as_object().unwrap().len(), input.len() - 1);
+        assert!(serde_json::to_string(features).unwrap().len() <= MAX_FEATURES_BYTES);
+    }
+
+    #[test]
     fn features_round_trip_via_bincode() {
         let batch = FfeExposureBatch {
             context: context(),

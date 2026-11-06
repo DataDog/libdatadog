@@ -27,7 +27,9 @@
 
 use super::FfeTelemetryContext;
 use super::features::features_map;
-pub use super::features::{MAX_FEATURE_TEXT_LENGTH, MAX_FEATURES, canonical_features_json};
+pub use super::features::{
+    MAX_FEATURE_TEXT_LENGTH, MAX_FEATURES, MAX_FEATURES_BYTES, canonical_features_json,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::hash::Hash;
@@ -2362,6 +2364,36 @@ mod tests {
         assert_eq!(result.degraded_oversized_rows, 42);
         let v: Value = serde_json::from_str(&result.payloads[0]).unwrap();
         assert_eq!(v["flagEvaluations"][0]["features"]["holdout.key"], "h1");
+    }
+
+    #[test]
+    fn full_and_degraded_buckets_keep_features_up_to_the_byte_cap() {
+        use crate::telemetry::features::features_of_encoded_len;
+        let at_cap = features_of_encoded_len(MAX_FEATURES_BYTES);
+        let over_cap = features_of_encoded_len(MAX_FEATURES_BYTES + 1);
+        let truncated = canonical_features_json(&over_cap).unwrap();
+        assert!(truncated.len() < MAX_FEATURES_BYTES);
+        for degraded in [false, true] {
+            let coalescer = FlagEvaluationEvpCoalescer::<String>::default();
+            if degraded {
+                coalescer.force_bucket_counts_for_test(GLOBAL_CAP, 0);
+            }
+            coalesce(
+                &coalescer,
+                vec![event_with_features(&at_cap), event_with_features(&over_cap)],
+            );
+            let batches = coalescer.take_batches();
+            let events = &batches[0].1.flag_evaluations;
+            assert!(events.iter().all(|event| event.is_degraded == degraded));
+            let mut stored: Vec<_> = events
+                .iter()
+                .map(|event| event.features.clone().unwrap())
+                .collect();
+            stored.sort();
+            let mut expected = vec![at_cap.clone(), truncated.clone()];
+            expected.sort();
+            assert_eq!(stored, expected, "degraded={degraded}");
+        }
     }
 
     #[test]

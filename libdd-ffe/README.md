@@ -103,9 +103,9 @@ headers are set explicitly, without the common builder's entity headers.
 The SDK routes each split feature by destination and sends one flat JSON
 object per destination: `FfeExposure.features_json` for exposures and
 `FfeFlagEvaluation.features_json` for evaluation counts. Values are strings,
-numbers or booleans; other values are skipped. At most 256 features are kept,
-in sorted key order, and keys or strings over 256 Unicode characters are
-skipped. Numbers are written as doubles. Empty, invalid or non-object JSON
+numbers or booleans; other values are skipped. Keys or strings over 256
+Unicode characters are skipped. Features are kept in sorted key order, up to
+256 features and 4096 bytes of canonical JSON; the rest are dropped. Numbers are written as doubles. Empty, invalid or non-object JSON
 means no features and never rejects the event.
 
 - Exposures write a top-level `features` object, omitted when empty. Features
