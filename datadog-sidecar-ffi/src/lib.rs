@@ -33,7 +33,7 @@ use datadog_sidecar::service::{
     FlagKey, InstanceId, RuntimeMetadata, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
     SidecarFlushOptions, TargetingRuleKey, VariantKey,
     blocking::{self, SidecarTransport},
-    prune_context_json,
+    canonical_features_json, prune_context_json,
 };
 use datadog_sidecar::shm_remote_config::{RemoteConfigReader, path_for_remote_config};
 use libc::c_char;
@@ -1047,6 +1047,11 @@ pub struct FfeExposure<'a> {
     pub variant: CharSlice<'a>,
     pub serial_id: i32,
     pub has_serial_id: bool,
+    /// UTF-8 JSON object of the split features routed to exposures, mapping a
+    /// key to a string, number or boolean. Empty, invalid or non-object input
+    /// means no features and never rejects the exposure. Input larger than one
+    /// IPC packet is ignored. Not part of deduplication.
+    pub features_json: CharSlice<'a>,
 }
 
 #[repr(C)]
@@ -1080,16 +1085,27 @@ pub struct FfeFlagEvaluation<'a> {
     pub runtime_default_used: bool,
     /// Consent captured from the configuration used for this evaluation.
     pub observe_full_evaluation_data: bool,
+    /// UTF-8 JSON object of the split features routed to evaluation counts,
+    /// mapping a key to a string, number or boolean. Rows with different
+    /// features are counted separately. Kept regardless of consent. Empty,
+    /// invalid or non-object input means no features and never rejects the
+    /// evaluation. Input larger than one IPC packet is ignored.
+    pub features_json: CharSlice<'a>,
 }
 
 /// Send structured Feature Flags exposure events to the sidecar. The sidecar owns
 /// route selection, deduplication, JSON serialization, and EVP delivery. This
 /// function is caller-driven; shared libdatadog evaluator calls do not log unless
-/// an SDK explicitly sends this action.
+/// an SDK explicitly sends this action. A batch larger than one IPC message is
+/// sent in several messages. An exposure that does not fit one message on its
+/// own is dropped, the others are sent, and the returned error says how many
+/// were dropped. Other send failures are not reported.
 ///
 /// # Safety
-/// `context` and every element in `exposures` must contain valid UTF-8
-/// `CharSlice` values. Empty `exposures` is a no-op.
+/// All slices must reference valid memory under the CharSlice contract. The
+/// context and the required exposure fields must be UTF-8. Invalid
+/// `features_json` is allowed and only omits the features. Empty `exposures`
+/// is a no-op.
 #[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_send_ffe_exposure_batch(
@@ -1135,20 +1151,27 @@ fn ddog_sidecar_send_ffe_exposure_batch_impl(
         return MaybeError::None;
     }
 
-    try_c!(blocking::enqueue_actions(
+    let dropped = blocking::enqueue_ffe_exposure_batch(
         transport,
-        vec![SidecarAction::FfeExposureBatch(SidecarFfeExposureBatch {
-            context,
-            exposures,
-        })],
-    ));
-    MaybeError::None
+        SidecarFfeExposureBatch { context, exposures },
+    );
+    oversized_records_error(dropped, "exposure")
+}
+
+fn oversized_records_error(dropped: usize, record: &str) -> MaybeError {
+    if dropped == 0 {
+        return MaybeError::None;
+    }
+    MaybeError::Some(libdd_common_ffi::Error::from(format!(
+        "dropped {dropped} {record}(s) larger than one IPC message; the others were sent"
+    )))
 }
 
 /// Send structured Feature Flags evaluation events to the sidecar. The sidecar owns
 /// route selection, JSON serialization, and EVP delivery. This function is
 /// caller-driven; callers must aggregate and bound event cardinality before passing
-/// a batch.
+/// a batch. Batches are split and oversized events reported as for
+/// `ddog_sidecar_send_ffe_exposure_batch`.
 ///
 /// When all batch `context` fields (service, env and version) are empty, the sidecar
 /// fills them from the application set on this transport with
@@ -1159,7 +1182,8 @@ fn ddog_sidecar_send_ffe_exposure_batch_impl(
 /// # Safety
 /// All slices must reference valid memory under the CharSlice contract. Context
 /// metadata and flag keys must be UTF-8. Malformed optional variant, allocation,
-/// rule, targeting, and context text is omitted; malformed error text becomes GENERAL.
+/// rule, targeting, context and `features_json` text is omitted; malformed error
+/// text becomes GENERAL.
 /// A null/zero targeting slice means missing; a non-null empty slice means empty.
 /// Empty `flag_evaluations` is a no-op. Use headers and library from the same build.
 #[unsafe(no_mangle)]
@@ -1207,16 +1231,14 @@ fn ddog_sidecar_send_ffe_flag_evaluation_batch_impl(
         return MaybeError::None;
     }
 
-    try_c!(blocking::enqueue_actions(
+    let dropped = blocking::enqueue_ffe_flag_evaluation_batch(
         transport,
-        vec![SidecarAction::FfeFlagEvaluationBatch(
-            SidecarFfeFlagEvaluationBatch {
-                context,
-                flag_evaluations,
-            }
-        )],
-    ));
-    MaybeError::None
+        SidecarFfeFlagEvaluationBatch {
+            context,
+            flag_evaluations,
+        },
+    );
+    oversized_records_error(dropped, "flag evaluation")
 }
 
 /// Send structured Feature Flags evaluation metric events to the sidecar. The sidecar
@@ -1287,7 +1309,17 @@ fn ffe_exposure_from_ffi(exposure: &FfeExposure<'_>) -> Result<SidecarFfeExposur
         allocation_key: char_slice_to_string(exposure.allocation_key)?,
         variant: char_slice_to_string(exposure.variant)?,
         serial_id: exposure.has_serial_id.then_some(exposure.serial_id),
+        features_json: ffi_features(exposure.features_json).unwrap_or_default(),
     })
+}
+
+// Malformed input must not grow the IPC request past the packet limit, which
+// drops the whole batch; only the bounded canonical object crosses IPC.
+fn ffi_features(features_json: CharSlice) -> Option<String> {
+    if features_json.is_empty() || features_json.len() > libdd_ipc::max_message_size() {
+        return None;
+    }
+    canonical_features_json(features_json.try_to_utf8().ok()?)
 }
 
 fn ffe_flag_evaluation_from_ffi(
@@ -1354,6 +1386,7 @@ fn ffe_flag_evaluation_from_ffi(
             EvalError::from_message(event.error_message.try_to_utf8().unwrap_or("GENERAL"))
         },
         runtime_default_used: event.runtime_default_used,
+        features: ffi_features(event.features_json),
         observe_full_evaluation_data: event.observe_full_evaluation_data,
         is_degraded: false,
         field_omissions,
@@ -1961,6 +1994,7 @@ mod tests {
             error_message: CharSlice::empty(),
             runtime_default_used: false,
             observe_full_evaluation_data: true,
+            features_json: CharSlice::empty(),
         }
     }
 
@@ -2008,6 +2042,74 @@ mod tests {
             variant: CharSlice::from("blue"),
             serial_id,
             has_serial_id,
+            features_json: CharSlice::empty(),
+        }
+    }
+
+    #[test]
+    fn ffe_exposure_carries_features_and_tolerates_malformed_input() {
+        let mut exposure = ffi_exposure(0, false);
+        exposure.features_json = CharSlice::from(r#"{"holdout.key":"h1"}"#);
+        let converted = ffe_exposure_from_ffi(&exposure).unwrap();
+        assert_eq!(converted.features_json, r#"{"holdout.key":"h1"}"#);
+
+        exposure.features_json = CharSlice::from(r#"{"b":1,"a":"x","n":null}"#);
+        let converted = ffe_exposure_from_ffi(&exposure).unwrap();
+        assert_eq!(converted.features_json, r#"{"a":"x","b":1.0}"#);
+
+        let invalid = [0xffu8];
+        // Valid features padded past the packet limit, so only the size guard drops them.
+        let oversized = format!(
+            r#"{{"a":"x"{}}}"#,
+            " ".repeat(libdd_ipc::max_message_size())
+        );
+        for features in [
+            // SAFETY: the borrowed bytes outlive the conversion.
+            unsafe { CharSlice::from_raw_parts(invalid.as_ptr().cast(), 1) },
+            CharSlice::from("not json"),
+            CharSlice::from(oversized.as_str()),
+        ] {
+            exposure.features_json = features;
+            let converted = ffe_exposure_from_ffi(&exposure).unwrap();
+            assert_eq!(converted.features_json, "");
+            assert_eq!(converted.flag_key, "flag-a");
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "parses a packet-sized input")]
+    fn ffe_exposure_keeps_features_exactly_one_packet_long() {
+        let at_limit = format!(
+            r#"{{"a":"x"{}}}"#,
+            " ".repeat(libdd_ipc::max_message_size() - 9)
+        );
+        assert_eq!(at_limit.len(), libdd_ipc::max_message_size());
+        let mut exposure = ffi_exposure(0, false);
+        exposure.features_json = CharSlice::from(at_limit.as_str());
+        let converted = ffe_exposure_from_ffi(&exposure).unwrap();
+        assert_eq!(converted.features_json, r#"{"a":"x"}"#);
+    }
+
+    #[test]
+    fn ffe_flag_evaluation_canonicalizes_features_regardless_of_consent() {
+        for consent in [false, true] {
+            let mut event = ffi_flag_evaluation("");
+            event.observe_full_evaluation_data = consent;
+            event.features_json = CharSlice::from(r#"{"b":1,"a":"x","n":null}"#);
+            let converted = ffe_flag_evaluation_from_ffi(&event, "svc").unwrap();
+            assert_eq!(converted.features.as_deref(), Some(r#"{"a":"x","b":1.0}"#));
+        }
+        // Valid features padded past the packet limit, so only the size guard drops them.
+        let oversized = format!(
+            r#"{{"a":"x"{}}}"#,
+            " ".repeat(libdd_ipc::max_message_size())
+        );
+        for raw in ["", "not json", "{}", "[1]", oversized.as_str()] {
+            let mut event = ffi_flag_evaluation("");
+            event.features_json = CharSlice::from(raw);
+            let converted = ffe_flag_evaluation_from_ffi(&event, "svc").unwrap();
+            assert_eq!(converted.features, None, "{raw}");
+            assert_eq!(converted.evaluation_count, 7);
         }
     }
 
