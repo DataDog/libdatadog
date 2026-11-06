@@ -156,7 +156,10 @@ fn main() -> Result<()> {
             let cov: coverage::Coverage = read_json(&coverage, "coverage")?;
             fetch_base(&base_ref, &workspace_root)?;
             let changed = diff::changed_ranges(&base_ref, &workspace_root)?;
-            let selection = select::select(&inv, &cov, &changed);
+            let self_test = std::env::var("BENCH_SELECTOR_SELF_TEST")
+                .map(|v| v == "1")
+                .unwrap_or(false);
+            let selection = select::select(&inv, &cov, &changed, self_test);
             log::info!(
                 "selected {}/{} clusters across {}/{} binaries",
                 selection.summary.clusters_selected,
