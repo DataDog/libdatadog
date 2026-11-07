@@ -63,6 +63,6 @@ For the sampled-old case:
   `memmove` them down to the front. It has to be `memmove`, not `memcpy`,
   because when realloc grows a block in place, `new_raw` and `old_raw` are
   the same address and the ranges overlap.
-* We fire the `ddheap:free` USDT for the old address, since as far as the
+* We fire the `otel_memory:free` USDT for the old address, since as far as the
   profiler is concerned that allocation no longer exists.
 * We return `new_raw` as a plain, unsampled pointer.

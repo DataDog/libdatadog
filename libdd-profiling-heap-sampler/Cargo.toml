@@ -19,7 +19,7 @@ bench = false
 default = []
 # Live-heap tracking: flag each sampled allocation so frees can be balanced
 # against allocs for retained/live-heap profiling, and sample
-# frees to emit ddheap:free.
+# frees to emit otel_memory:free.
 live-heap = []
 # Runtime ELF self-inspection of the USDT notes (see src/usdt_check.rs). Opt-in
 # so the crate keeps zero runtime deps by default; only pulls in elf/anyhow.

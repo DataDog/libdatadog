@@ -28,7 +28,7 @@
 //! install_heap_overrides();
 //! // ... application runs for the rest of its life; malloc/free/calloc/
 //! //     realloc/etc. flow through libdd-profiling-heap-sampler and emit
-//! //     ddheap:alloc / ddheap:free USDTs ...
+//! //     otel_memory:alloc / otel_memory:free USDTs ...
 //! ```
 //!
 //! # Installation is permanent (there is no uninstall)
