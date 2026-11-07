@@ -853,6 +853,52 @@ fn served_models_google_errors_names_and_vertex_projects() {
         error_type_for_name("ratelimiterror"),
         Some("rate_limit_error")
     );
+    assert_eq!(
+        error_type_for_name("Overloaded_Error"),
+        Some("internal_server_error")
+    );
+    assert_eq!(error_type_for_name("timeout"), Some("timeout_error"));
+
+    // Google's status names match only as Google spells them. In another case
+    // they are ordinary words, which name no failure of their own.
+    for (google, plain, expected) in [
+        ("UNKNOWN", "unknown", "internal_server_error"),
+        ("INTERNAL", "internal", "internal_server_error"),
+        ("NOT_FOUND", "not_found", "not_found_error"),
+        ("UNAVAILABLE", "unavailable", "internal_server_error"),
+        ("ABORTED", "aborted", "conflict_error"),
+        (
+            "PERMISSION_DENIED",
+            "permission_denied",
+            "permission_denied_error",
+        ),
+        (
+            "RESOURCE_EXHAUSTED",
+            "resource_exhausted",
+            "rate_limit_error",
+        ),
+        ("DEADLINE_EXCEEDED", "Deadline_Exceeded", "timeout_error"),
+    ] {
+        assert_eq!(error_type_for_name(google), Some(expected), "{google}");
+        assert_eq!(error_type_for_name(plain), None, "{plain}");
+        assert_eq!(classify_known_error(Some(plain), None), None, "{plain}");
+        // A plain name is a failure whose cause is unknown, or its status.
+        assert_eq!(
+            classify_error(Some(plain), None),
+            Some("api_error"),
+            "{plain}"
+        );
+        assert_eq!(
+            classify_error(Some(plain), Some(404)),
+            Some("not_found_error"),
+            "{plain}"
+        );
+    }
+    // `cancelled` is a value of the vocabulary itself, in any case; Google's
+    // `CANCELLED` means the same.
+    for name in ["cancelled", "Cancelled", "CANCELLED"] {
+        assert_eq!(error_type_for_name(name), Some("cancelled"), "{name}");
+    }
 
     // The Vertex AI project an upstream URL bills.
     assert_eq!(

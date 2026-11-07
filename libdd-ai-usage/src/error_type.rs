@@ -37,8 +37,8 @@ pub const ERROR_TYPES: [&str; 12] = [
 ];
 
 /// The error names providers and SDKs report, other than the vocabulary's
-/// own values, which map to themselves.
-const ERROR_NAMES: [(&str, &str); 45] = [
+/// own values, which map to themselves. Matched in any case.
+const ERROR_NAMES: [(&str, &str); 29] = [
     // Anthropic and OpenAI error types and codes.
     ("invalid_request_error", ERROR_TYPE_BAD_REQUEST),
     // Anthropic's type for HTTP 413, which has no `error.type` of its own:
@@ -74,8 +74,14 @@ const ERROR_NAMES: [(&str, &str); 45] = [
     ("RemoteProtocolError", ERROR_TYPE_API_CONNECTION),
     ("CancelledError", ERROR_TYPE_CANCELLED),
     ("GeneratorExit", ERROR_TYPE_CANCELLED),
-    // Google's `google.rpc.Code` names, the `status` of Gemini and Vertex AI
-    // errors, by the HTTP status Google maps each to.
+];
+
+/// Google's `google.rpc.Code` names, the `status` of Gemini and Vertex AI
+/// errors, by the HTTP status Google maps each to. Matched only as Google
+/// spells them, in upper case: in another case they are ordinary words
+/// (`unknown`, `internal`, `not_found`) that other providers and gateways
+/// use for other failures.
+const GOOGLE_STATUS_NAMES: [(&str, &str); 16] = [
     ("INVALID_ARGUMENT", ERROR_TYPE_BAD_REQUEST),
     ("FAILED_PRECONDITION", ERROR_TYPE_BAD_REQUEST),
     ("OUT_OF_RANGE", ERROR_TYPE_BAD_REQUEST),
@@ -115,33 +121,31 @@ pub fn error_type_for_status(status: u16) -> Option<&'static str> {
 
 /// The `error.type` of an error name a provider, an SDK or a transport
 /// reported, or `None` for a name it does not know. A value of the
-/// vocabulary is itself.
+/// vocabulary is itself. Names match in any case (`RATE_LIMIT_ERROR`,
+/// `Overloaded_Error`, as some compatible servers spell the provider's
+/// types), except Google's status names, which match only in upper case.
 pub fn error_type_for_name(name: &str) -> Option<&'static str> {
     let name = name.trim();
-    let exact = ERROR_TYPES
-        .iter()
-        .find(|known| **known == name)
-        .copied()
-        .or_else(|| {
-            ERROR_NAMES
-                .iter()
-                .find(|(known, _)| *known == name)
-                .map(|(_, error_type)| *error_type)
-        });
-    // A name in another case (`RATE_LIMIT_ERROR`, `Overloaded_Error`), as
-    // some compatible servers spell the provider's types.
-    exact.or_else(|| {
+    let named = |matches: &dyn Fn(&str) -> bool| {
         ERROR_TYPES
             .iter()
-            .find(|known| known.eq_ignore_ascii_case(name))
+            .find(|known| matches(known))
             .copied()
             .or_else(|| {
                 ERROR_NAMES
                     .iter()
-                    .find(|(known, _)| known.eq_ignore_ascii_case(name))
+                    .find(|(known, _)| matches(known))
                     .map(|(_, error_type)| *error_type)
             })
-    })
+    };
+    named(&|known| known == name)
+        .or_else(|| {
+            GOOGLE_STATUS_NAMES
+                .iter()
+                .find(|(known, _)| *known == name)
+                .map(|(_, error_type)| *error_type)
+        })
+        .or_else(|| named(&|known| known.eq_ignore_ascii_case(name)))
 }
 
 /// An exception class name as a low-cardinality identifier:
