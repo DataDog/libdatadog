@@ -9,8 +9,8 @@ use crate::rules_based::{
     error::EvaluationError,
     timestamp::OptOutTimestamp,
     ufc::{
-        Allocation, Assignment, AssignmentReason, CompiledFlagsConfig, ConditionCheck, Flag,
-        RuleWire, Shard, Split,
+        Allocation, Assignment, AssignmentReason, CompiledFlagsConfig, ConditionCheck, Flag, Shard,
+        Split,
     },
 };
 
@@ -334,6 +334,128 @@ impl Flag {
     }
 }
 
+// Each frame holds the loop cursors that recursive calls would otherwise leave on the
+// caller's stack. A dependency suspends its parent's current condition until completion.
+struct EvaluationFrame<'a> {
+    key: Str,
+    flag: &'a Flag,
+    depth: u16,
+    allocation: usize,
+    allocation_started: bool,
+    rule: usize,
+    condition: usize,
+    height: u16,
+    exposures: HashSet<Str>,
+}
+
+enum FrameStep {
+    Dependency { key: Str, limit: u16 },
+    Complete(EvaluatedFlag),
+}
+
+impl<'a> EvaluationFrame<'a> {
+    fn new(key: Str, flag: &'a Flag, depth: u16) -> Self {
+        Self {
+            key,
+            flag,
+            depth,
+            allocation: 0,
+            allocation_started: false,
+            rule: 0,
+            condition: 0,
+            height: 0,
+            exposures: HashSet::new(),
+        }
+    }
+
+    fn next_allocation(&mut self) {
+        self.allocation += 1;
+        self.allocation_started = false;
+        self.rule = 0;
+        self.condition = 0;
+        self.exposures.clear();
+    }
+
+    fn next_rule(&mut self) {
+        self.rule += 1;
+        self.condition = 0;
+        self.exposures.clear();
+    }
+
+    fn advance(
+        &mut self,
+        session: &mut EvaluationSession<'_>,
+        mut dependency: Option<Result<EvaluatedFlag, EvaluationError>>,
+    ) -> Result<FrameStep, EvaluationError> {
+        while let Some(allocation) = self.flag.allocations.get(self.allocation) {
+            if !self.allocation_started {
+                if !allocation.is_active(session.now, session.exclusion) {
+                    self.next_allocation();
+                    continue;
+                }
+                self.allocation_started = true;
+            }
+            if !allocation.rules.is_empty() {
+                let Some(rule) = allocation.rules.get(self.rule) else {
+                    self.next_allocation();
+                    continue;
+                };
+                if let Some(condition) = rule.conditions.get(self.condition) {
+                    let matched = if let ConditionCheck::FlagEvaluation {
+                        key,
+                        expected_membership,
+                        values,
+                    } = &condition.check
+                    {
+                        let Some(result) = dependency.take() else {
+                            // Invalid limits only affect dependency conditions actually reached.
+                            return Ok(FrameStep::Dependency {
+                                key: key.clone(),
+                                limit: session.dependency_depth_limit()?,
+                            });
+                        };
+                        let result = result.map_err(|source| {
+                            EvaluationError::DependencyEvaluationFailed {
+                                flag_key: key.clone(),
+                                source: Box::new(source),
+                            }
+                        })?;
+                        // Retain visited height even if this condition or a later one rejects
+                        // the rule, so memoized results cannot bypass the depth guard.
+                        self.height = self.height.max(1 + result.height);
+                        let matched = values.iter().any(|value| {
+                            value.as_ref() == result.assignment.variation_key.as_str()
+                        }) == *expected_membership;
+                        if matched {
+                            self.exposures.insert(key.clone());
+                            self.exposures.extend(result.exposures);
+                        }
+                        matched
+                    } else {
+                        condition.eval(session.context)
+                    };
+                    if matched {
+                        self.condition += 1;
+                    } else {
+                        self.next_rule();
+                    }
+                    continue;
+                }
+            }
+            let Some(split) = allocation.find_split(session.context)? else {
+                self.next_allocation();
+                continue;
+            };
+            return Ok(FrameStep::Complete(EvaluatedFlag {
+                assignment: allocation.assignment(split),
+                height: self.height,
+                exposures: std::mem::take(&mut self.exposures),
+            }));
+        }
+        Err(EvaluationError::DefaultAllocationNull)
+    }
+}
+
 impl EvaluationSession<'_> {
     fn evaluate_flag(
         &mut self,
@@ -343,93 +465,45 @@ impl EvaluationSession<'_> {
     ) -> Result<EvaluatedFlag, EvaluationError> {
         let flag = self.config.get_flag(flag_key)?;
         flag.validate(expected_type, self.exclusion)?;
-        if depth > 0 {
-            self.active.push(flag_key.into());
-        }
-        let result = self.evaluate_allocations(&flag.allocations, depth);
-        if depth > 0 {
-            self.active.pop();
-        }
-        result
-    }
-
-    fn evaluate_allocations(
-        &mut self,
-        allocations: &[Allocation],
-        depth: u16,
-    ) -> Result<EvaluatedFlag, EvaluationError> {
-        let mut height = 0;
-        for allocation in allocations {
-            if !allocation.is_active(self.now, self.exclusion) {
-                continue;
-            }
-            let mut selected_exposures = None;
-            if allocation.rules.is_empty() {
-                selected_exposures = Some(HashSet::new());
-            } else {
-                for rule in &allocation.rules {
-                    if let Some(exposures) = self.evaluate_rule(rule, depth, &mut height)? {
-                        selected_exposures = Some(exposures);
-                        break;
+        let mut stack = vec![EvaluationFrame::new(flag_key.into(), flag, depth)];
+        let mut dependency = None;
+        while let Some(mut frame) = stack.pop() {
+            let result = match frame.advance(self, dependency.take()) {
+                Ok(FrameStep::Dependency { key, limit }) => {
+                    let depth = frame.depth + 1;
+                    stack.push(frame);
+                    match self.resolve_dependency(&key, depth, limit) {
+                        Ok(Some(result)) => dependency = Some(Ok(result)),
+                        Err(error) => dependency = Some(Err(error)),
+                        Ok(None) => {
+                            let flag = self.config.get_flag(&key).and_then(|flag| {
+                                flag.validate(ExpectedFlagType::Any, self.exclusion)?;
+                                Ok(flag)
+                            });
+                            match flag {
+                                Ok(flag) => {
+                                    self.active.push(key.clone());
+                                    stack.push(EvaluationFrame::new(key, flag, depth));
+                                }
+                                Err(error) => {
+                                    dependency = Some(self.complete_dependency(key, Err(error)));
+                                }
+                            }
+                        }
                     }
+                    continue;
                 }
+                Ok(FrameStep::Complete(result)) => Ok(result),
+                Err(error) => Err(error),
+            };
+            if frame.depth == 0 {
+                return result;
             }
-            let Some(exposures) = selected_exposures else {
-                continue;
-            };
-            let Some(split) = allocation.find_split(self.context)? else {
-                continue;
-            };
-            return Ok(EvaluatedFlag {
-                assignment: allocation.assignment(split),
-                height,
-                exposures,
-            });
+            self.active.pop();
+            dependency = Some(self.complete_dependency(frame.key, result));
         }
+        // The root frame always returns above, including when evaluation fails.
         Err(EvaluationError::DefaultAllocationNull)
-    }
-
-    fn evaluate_rule(
-        &mut self,
-        rule: &RuleWire,
-        depth: u16,
-        height: &mut u16,
-    ) -> Result<Option<HashSet<Str>>, EvaluationError> {
-        let mut exposures = HashSet::new();
-        for condition in &rule.conditions {
-            let matched = if let ConditionCheck::FlagEvaluation {
-                key,
-                expected_membership,
-                values,
-            } = &condition.check
-            {
-                // Validate only after authored-order evaluation reaches a dependency. An invalid
-                // evaluator setting must not affect independent flags or skipped conditions.
-                let limit = self.dependency_depth_limit()?;
-                let dependency =
-                    self.evaluate_dependency(key, depth + 1, limit)
-                        .map_err(|source| EvaluationError::DependencyEvaluationFailed {
-                            flag_key: key.clone(),
-                            source: Box::new(source),
-                        })?;
-                *height = (*height).max(1 + dependency.height);
-                let matched = values
-                    .iter()
-                    .any(|value| value.as_ref() == dependency.assignment.variation_key.as_str())
-                    == *expected_membership;
-                if matched {
-                    exposures.insert(key.clone());
-                    exposures.extend(dependency.exposures);
-                }
-                matched
-            } else {
-                condition.eval(self.context)
-            };
-            if !matched {
-                return Ok(None);
-            }
-        }
-        Ok(Some(exposures))
     }
 
     fn dependency_depth_limit(&mut self) -> Result<u16, EvaluationError> {
@@ -451,12 +525,12 @@ impl EvaluationSession<'_> {
         Ok(limit)
     }
 
-    fn evaluate_dependency(
+    fn resolve_dependency(
         &mut self,
         key: &Str,
         depth: u16,
         limit: u16,
-    ) -> Result<EvaluatedFlag, EvaluationError> {
+    ) -> Result<Option<EvaluatedFlag>, EvaluationError> {
         if depth > limit {
             if key.as_str() != self.root_key
                 && !self.active.contains(key)
@@ -477,30 +551,54 @@ impl EvaluationSession<'_> {
             if depth + result.height > limit {
                 return Err(EvaluationError::DependencyDepthExceeded);
             }
-            return Ok(result.clone());
+            return Ok(Some(result.clone()));
         }
-        let result = self
-            .evaluate_flag(key, ExpectedFlagType::Any, depth)
-            .and_then(|result| {
-                if result.assignment.variation_key.is_empty() {
-                    Err(EvaluationError::DefaultAllocationNull)
-                } else {
-                    Ok(result)
-                }
-            });
+        Ok(None)
+    }
+
+    fn complete_dependency(
+        &mut self,
+        key: Str,
+        result: Result<EvaluatedFlag, EvaluationError>,
+    ) -> Result<EvaluatedFlag, EvaluationError> {
+        let result = result.and_then(|result| {
+            if result.assignment.variation_key.is_empty() {
+                Err(EvaluationError::DefaultAllocationNull)
+            } else {
+                Ok(result)
+            }
+        });
         self.evaluations.push(EvaluationRecord {
             flag_key: key.clone(),
             result: result
                 .as_ref()
                 .map(|result| result.assignment.clone())
-                .map_err(Clone::clone),
+                .map_err(clone_dependency_error),
             exposure_eligible: false,
         });
         if let Ok(result) = &result {
-            self.memo.insert(key.clone(), result.clone());
+            self.memo.insert(key, result.clone());
         }
         result
     }
+}
+
+// Derived Clone recurses through Box<EvaluationError>. Trace recording clones an
+// error for every ancestor, so copy the dependency chain iteratively as well.
+fn clone_dependency_error(mut error: &EvaluationError) -> EvaluationError {
+    let mut keys = Vec::new();
+    while let EvaluationError::DependencyEvaluationFailed { flag_key, source } = error {
+        keys.push(flag_key.clone());
+        error = source;
+    }
+    let mut cloned = error.clone();
+    for flag_key in keys.into_iter().rev() {
+        cloned = EvaluationError::DependencyEvaluationFailed {
+            flag_key,
+            source: Box::new(cloned),
+        };
+    }
+    cloned
 }
 
 impl Allocation {

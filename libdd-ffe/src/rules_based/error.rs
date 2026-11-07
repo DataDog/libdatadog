@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
 use crate::rules_based::{ExpectedFlagType, FlagType, Str};
 
@@ -16,7 +17,7 @@ use crate::rules_based::{ExpectedFlagType, FlagType, Str};
 pub enum EvaluationError {
     /// A prerequisite failed. Its cause is preserved, while SDKs can distinguish this from
     /// a directly requested flag's normal disabled/default result.
-    #[error("prerequisite {flag_key} failed: {source}")]
+    #[error("prerequisite {flag_key} failed: {}", DependencyErrorDisplay(.source))]
     DependencyEvaluationFailed {
         /// Referenced prerequisite key.
         flag_key: Str,
@@ -81,4 +82,19 @@ pub enum EvaluationError {
 
     #[error("internal error: {0}")]
     Internal(Str),
+}
+
+// Error logging must not reintroduce recursion after dependency evaluation has
+// moved to an explicit stack. Preserve the same message and source-chain API.
+struct DependencyErrorDisplay<'a>(&'a EvaluationError);
+
+impl fmt::Display for DependencyErrorDisplay<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut error = self.0;
+        while let EvaluationError::DependencyEvaluationFailed { flag_key, source } = error {
+            write!(formatter, "prerequisite {flag_key} failed: ")?;
+            error = source;
+        }
+        fmt::Display::fmt(error, formatter)
+    }
 }
