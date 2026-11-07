@@ -29,11 +29,10 @@ use std::sync::Mutex;
 use std::{ptr, slice};
 
 use libdd_ai_usage::{
-    Attributes, BillableTokens, DOGSTATSD_MAX_LINE_BYTES, DOGSTATSD_UDP_MAX_PAYLOAD,
-    DOGSTATSD_UDS_MAX_PAYLOAD, ERROR_TYPE_API, ErrorCode, Json, MetricBatch, MetricError,
-    PROVIDER_ID_HEADERS, PricesPerMillion, Profile, ProviderResponse, StreamOutcome, UsageFormat,
-    UsageStream, bedrock_arn_account, classify_error, classify_known_error, datadog_series,
-    datadog_tag_value, error_type_for_failure, estimated_cost_nano_usd, gen_ai_provider_name,
+    Attributes, DOGSTATSD_MAX_LINE_BYTES, DOGSTATSD_UDP_MAX_PAYLOAD, DOGSTATSD_UDS_MAX_PAYLOAD,
+    ERROR_TYPE_API, ErrorCode, Json, MetricBatch, MetricError, PROVIDER_ID_HEADERS, Profile,
+    ProviderResponse, StreamOutcome, UsageFormat, UsageStream, bedrock_arn_account, classify_error,
+    classify_known_error, datadog_series, datadog_tag_value, gen_ai_provider_name,
     is_deployment_value, is_person_identifier, is_service_tier, operation_name_for,
     pack_dogstatsd_joined, parse_provider_body, project_result, provider_id_attributes,
     retain_metrics, with_deployment_attributes_json,
@@ -113,7 +112,16 @@ pub struct Batch {
 /// A provider stream being read. Use one from one thread at a time.
 pub struct Stream {
     inner: UsageStream,
+    /// Report usage with inclusive totals ([`INCLUSIVE_TOTALS`]).
+    inclusive: bool,
 }
+
+/// An option of [`ddog_ai_usage_parse_provider_response_with`] and
+/// [`ddog_ai_usage_stream_new_with`]: report usage with inclusive totals,
+/// cache reads and writes added to an input that excludes them and
+/// reasoning added to an output that excludes it, both bases then
+/// `includes_*`.
+pub const INCLUSIVE_TOTALS: u32 = 1;
 
 fn error_value(code: &str, message: &str) -> Value {
     json!({"error": {"code": code, "message": message}})
@@ -826,12 +834,17 @@ fn response_value(
     response: &ProviderResponse,
     outcome: StreamOutcome,
     error_name: Option<&str>,
+    inclusive: bool,
 ) -> Value {
     // A failure that names no cause is `api_error`.
     let error_type = (outcome == StreamOutcome::Failed)
         .then(|| classify_error(error_name, None).unwrap_or(ERROR_TYPE_API));
     json!({
-        "usage": response.usage,
+        "usage": if inclusive {
+            response.usage.as_ref().map(|usage| usage.inclusive())
+        } else {
+            response.usage.clone()
+        },
         "response_model": response.response_model,
         "service_tier": response.service_tier,
         "outcome": outcome.as_str(),
@@ -879,16 +892,55 @@ pub unsafe extern "C" fn ddog_ai_usage_parse_provider_response(
 ) -> Status {
     // SAFETY: forwarded from the caller.
     unsafe {
+        ddog_ai_usage_parse_provider_response_with(
+            format, format_len, embeddings, 0, body, body_len, out,
+        )
+    }
+}
+
+/// [`ddog_ai_usage_parse_provider_response`] with `options`, a bit set:
+/// [`INCLUSIVE_TOTALS`] reports usage with inclusive totals. Unknown bits
+/// are [`Status::Rejected`].
+///
+/// # Safety
+///
+/// As [`ddog_ai_usage_parse_provider_response`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ddog_ai_usage_parse_provider_response_with(
+    format: *const u8,
+    format_len: usize,
+    embeddings: bool,
+    options: u32,
+    body: *const u8,
+    body_len: usize,
+    out: *mut Buffer,
+) -> Status {
+    // SAFETY: forwarded from the caller.
+    unsafe {
         json_call(out, || {
             catch_unwind(AssertUnwindSafe(|| {
+                let inclusive = options_of(options)?;
                 let format = format_of(text(format, format_len))?;
                 let body = bytes(body, body_len).ok_or(Failure::Internal("the body is null"))?;
                 let (response, outcome, error) = parse_provider_body(format, body, embeddings);
-                Ok(response_value(&response, outcome, error.as_deref()))
+                Ok(response_value(
+                    &response,
+                    outcome,
+                    error.as_deref(),
+                    inclusive,
+                ))
             }))
             .unwrap_or(Err(Failure::Internal("reading the response panicked")))
         })
     }
+}
+
+/// Whether `options` asks for inclusive totals; unknown bits are refused.
+fn options_of(options: u32) -> Result<bool, Failure> {
+    if options & !INCLUSIVE_TOTALS != 0 {
+        return Err(invalid(format!("unknown options: {options:#x}")));
+    }
+    Ok(options & INCLUSIVE_TOTALS != 0)
 }
 
 /// Start reading a provider stream in the usage `format`, as
@@ -906,14 +958,35 @@ pub unsafe extern "C" fn ddog_ai_usage_stream_new(
     embeddings: bool,
     out: *mut *mut Stream,
 ) -> Status {
+    // SAFETY: forwarded from the caller.
+    unsafe { ddog_ai_usage_stream_new_with(format, format_len, embeddings, 0, out) }
+}
+
+/// [`ddog_ai_usage_stream_new`] with `options`, as
+/// [`ddog_ai_usage_parse_provider_response_with`] reads them: with
+/// [`INCLUSIVE_TOTALS`], `_take` reports inclusive totals.
+///
+/// # Safety
+///
+/// As [`ddog_ai_usage_stream_new`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ddog_ai_usage_stream_new_with(
+    format: *const u8,
+    format_len: usize,
+    embeddings: bool,
+    options: u32,
+    out: *mut *mut Stream,
+) -> Status {
     if out.is_null() {
         return Status::Internal;
     }
     let created = catch_unwind(AssertUnwindSafe(|| {
+        let inclusive = options_of(options)?;
         // SAFETY: forwarded from the caller.
         let format = format_of(unsafe { text(format, format_len) })?;
         Ok::<_, Failure>(Box::into_raw(Box::new(Stream {
             inner: UsageStream::new(format, embeddings),
+            inclusive,
         })))
     }));
     match created {
@@ -1023,8 +1096,14 @@ pub unsafe extern "C" fn ddog_ai_usage_stream_take(
     unsafe {
         json_call(out, move || {
             catch_unwind(AssertUnwindSafe(move || {
+                let inclusive = stream.inclusive;
                 let (response, outcome, error) = stream.inner.finish();
-                Ok(response_value(&response, outcome, error.as_deref()))
+                Ok(response_value(
+                    &response,
+                    outcome,
+                    error.as_deref(),
+                    inclusive,
+                ))
             }))
             .unwrap_or(Err(Failure::Internal("reading the stream panicked")))
         })
@@ -1125,9 +1204,8 @@ pub unsafe extern "C" fn ddog_ai_usage_provider_name(
 }
 
 /// Write the `gen_ai.operation.name` of a gateway route or request path
-/// `route[..route_len]` to `out`: Kong's AI route types (`llm/v1/chat`, ...),
-/// an upstream path (`/v1/chat/completions`, `/v1/messages`, `/v1/responses`,
-/// `/v1/embeddings`, `/v1/completions`, Gemini's `:generateContent`,
+/// `route[..route_len]` to `out`: an upstream path (`/v1/chat/completions`, `/v1/messages`,
+/// `/v1/responses`, `/v1/embeddings`, `/v1/completions`, Gemini's `:generateContent`,
 /// Bedrock's `/converse`; a query string is ignored), or an operation name.
 /// [`Status::Rejected`] for anything else.
 ///
@@ -1149,100 +1227,6 @@ pub unsafe extern "C" fn ddog_ai_usage_operation_name(
             }))
             .unwrap_or(None)
         })
-    }
-}
-
-/// Write the `error.type` of a call to `out` from how it failed: its HTTP
-/// `status` (0 when there is none), whether it got `no_response` from the
-/// provider, whether it `timed_out`, and its error name `name[..name_len]`
-/// (may be empty). No response is `timeout_error` when it timed out or the
-/// status is 504, else `api_connection_error`; a status other than 200 that
-/// is not a failure is `api_error`. [`Status::Rejected`] when the call did
-/// not fail.
-///
-/// # Safety
-///
-/// `name` must point to `name_len` readable bytes (or `name_len` must be 0),
-/// and `out` must be null or writable.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_ai_usage_error_type_for_failure(
-    status: u16,
-    no_response: bool,
-    timed_out: bool,
-    name: *const u8,
-    name_len: usize,
-    out: *mut Buffer,
-) -> Status {
-    // SAFETY: forwarded from the caller.
-    unsafe {
-        text_call(out, || {
-            catch_unwind(AssertUnwindSafe(|| {
-                text(name, name_len).map(|name| {
-                    error_type_for_failure(&libdd_ai_usage::Failure {
-                        status: (status != 0).then_some(status),
-                        no_response,
-                        timed_out,
-                        name: (!name.is_empty()).then_some(name),
-                    })
-                    .map(str::to_string)
-                })
-            }))
-            .unwrap_or(None)
-        })
-    }
-}
-
-/// The cost of a call at per-million prices, in nano-USD, written to
-/// `cost_nano_usd`: `input_tokens` (all input, cache included) of which
-/// `cache_read_tokens` and `cache_write_tokens` are priced at
-/// `cache_read_per_million` and `cache_write_per_million` (a negative price
-/// means "as input"), and `output_tokens` (reasoning included). False, with
-/// nothing written, for a price that is not a finite non-negative number.
-///
-/// # Safety
-///
-/// `cost_nano_usd` must be null or writable.
-#[unsafe(no_mangle)]
-#[allow(clippy::too_many_arguments)]
-pub unsafe extern "C" fn ddog_ai_usage_estimated_cost(
-    input_per_million: f64,
-    output_per_million: f64,
-    cache_read_per_million: f64,
-    cache_write_per_million: f64,
-    input_tokens: u64,
-    cache_read_tokens: u64,
-    cache_write_tokens: u64,
-    output_tokens: u64,
-    cost_nano_usd: *mut u64,
-) -> bool {
-    let cost = catch_unwind(|| {
-        let separate = |price: f64| (price >= 0.0 || price.is_nan()).then_some(price);
-        estimated_cost_nano_usd(
-            &PricesPerMillion {
-                input: input_per_million,
-                output: output_per_million,
-                cache_read: separate(cache_read_per_million),
-                cache_write: separate(cache_write_per_million),
-            },
-            &BillableTokens {
-                input: input_tokens,
-                cache_read: cache_read_tokens,
-                cache_write: cache_write_tokens,
-                output: output_tokens,
-            },
-        )
-    })
-    .ok()
-    .flatten();
-    match cost {
-        Some(cost) => {
-            if !cost_nano_usd.is_null() {
-                // SAFETY: the caller guarantees it is writable.
-                unsafe { cost_nano_usd.write(cost) };
-            }
-            true
-        }
-        None => false,
     }
 }
 

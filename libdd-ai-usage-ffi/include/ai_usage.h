@@ -32,6 +32,15 @@
 #define ddog_ai_usage_MAX_LINE_BYTES 8192
 
 /**
+ * An option of [`ddog_ai_usage_parse_provider_response_with`] and
+ * [`ddog_ai_usage_stream_new_with`]: report usage with inclusive totals,
+ * cache reads and writes added to an input that excludes them and
+ * reasoning added to an output that excludes it, both bases then
+ * `includes_*`.
+ */
+#define ddog_ai_usage_INCLUSIVE_TOTALS 1
+
+/**
  * How a provider stream ended so far, as [`ddog_ai_usage_stream_outcome`]
  * reports it.
  */
@@ -336,6 +345,23 @@ enum ddog_ai_usage_Status ddog_ai_usage_parse_provider_response(const uint8_t *f
                                                                 struct ddog_ai_usage_Buffer *out);
 
 /**
+ * [`ddog_ai_usage_parse_provider_response`] with `options`, a bit set:
+ * [`INCLUSIVE_TOTALS`] reports usage with inclusive totals. Unknown bits
+ * are [`Status::Rejected`].
+ *
+ * # Safety
+ *
+ * As [`ddog_ai_usage_parse_provider_response`].
+ */
+enum ddog_ai_usage_Status ddog_ai_usage_parse_provider_response_with(const uint8_t *format,
+                                                                     uintptr_t format_len,
+                                                                     bool embeddings,
+                                                                     uint32_t options,
+                                                                     const uint8_t *body,
+                                                                     uintptr_t body_len,
+                                                                     struct ddog_ai_usage_Buffer *out);
+
+/**
  * Start reading a provider stream in the usage `format`, as
  * [`ddog_ai_usage_parse_provider_response`] names them, and write the
  * stream to `out`. Release it with [`ddog_ai_usage_stream_drop`].
@@ -349,6 +375,21 @@ enum ddog_ai_usage_Status ddog_ai_usage_stream_new(const uint8_t *format,
                                                    uintptr_t format_len,
                                                    bool embeddings,
                                                    struct ddog_ai_usage_Stream **out);
+
+/**
+ * [`ddog_ai_usage_stream_new`] with `options`, as
+ * [`ddog_ai_usage_parse_provider_response_with`] reads them: with
+ * [`INCLUSIVE_TOTALS`], `_take` reports inclusive totals.
+ *
+ * # Safety
+ *
+ * As [`ddog_ai_usage_stream_new`].
+ */
+enum ddog_ai_usage_Status ddog_ai_usage_stream_new_with(const uint8_t *format,
+                                                        uintptr_t format_len,
+                                                        bool embeddings,
+                                                        uint32_t options,
+                                                        struct ddog_ai_usage_Stream **out);
 
 /**
  * Read the next `chunk[..chunk_len]` of the stream, which may end anywhere.
@@ -437,9 +478,8 @@ enum ddog_ai_usage_Status ddog_ai_usage_provider_name(const uint8_t *name,
 
 /**
  * Write the `gen_ai.operation.name` of a gateway route or request path
- * `route[..route_len]` to `out`: Kong's AI route types (`llm/v1/chat`, ...),
- * an upstream path (`/v1/chat/completions`, `/v1/messages`, `/v1/responses`,
- * `/v1/embeddings`, `/v1/completions`, Gemini's `:generateContent`,
+ * `route[..route_len]` to `out`: an upstream path (`/v1/chat/completions`, `/v1/messages`,
+ * `/v1/responses`, `/v1/embeddings`, `/v1/completions`, Gemini's `:generateContent`,
  * Bedrock's `/converse`; a query string is ignored), or an operation name.
  * [`Status::Rejected`] for anything else.
  *
@@ -451,49 +491,6 @@ enum ddog_ai_usage_Status ddog_ai_usage_provider_name(const uint8_t *name,
 enum ddog_ai_usage_Status ddog_ai_usage_operation_name(const uint8_t *route,
                                                        uintptr_t route_len,
                                                        struct ddog_ai_usage_Buffer *out);
-
-/**
- * Write the `error.type` of a call to `out` from how it failed: its HTTP
- * `status` (0 when there is none), whether it got `no_response` from the
- * provider, whether it `timed_out`, and its error name `name[..name_len]`
- * (may be empty). No response is `timeout_error` when it timed out or the
- * status is 504, else `api_connection_error`; a status other than 200 that
- * is not a failure is `api_error`. [`Status::Rejected`] when the call did
- * not fail.
- *
- * # Safety
- *
- * `name` must point to `name_len` readable bytes (or `name_len` must be 0),
- * and `out` must be null or writable.
- */
-enum ddog_ai_usage_Status ddog_ai_usage_error_type_for_failure(uint16_t status,
-                                                               bool no_response,
-                                                               bool timed_out,
-                                                               const uint8_t *name,
-                                                               uintptr_t name_len,
-                                                               struct ddog_ai_usage_Buffer *out);
-
-/**
- * The cost of a call at per-million prices, in nano-USD, written to
- * `cost_nano_usd`: `input_tokens` (all input, cache included) of which
- * `cache_read_tokens` and `cache_write_tokens` are priced at
- * `cache_read_per_million` and `cache_write_per_million` (a negative price
- * means "as input"), and `output_tokens` (reasoning included). False, with
- * nothing written, for a price that is not a finite non-negative number.
- *
- * # Safety
- *
- * `cost_nano_usd` must be null or writable.
- */
-bool ddog_ai_usage_estimated_cost(double input_per_million,
-                                  double output_per_million,
-                                  double cache_read_per_million,
-                                  double cache_write_per_million,
-                                  uint64_t input_tokens,
-                                  uint64_t cache_read_tokens,
-                                  uint64_t cache_write_tokens,
-                                  uint64_t output_tokens,
-                                  uint64_t *cost_nano_usd);
 
 /**
  * Write the `error.type` of a failure to `out`: from its error name

@@ -102,10 +102,7 @@ pub use error_type::{
     ERROR_TYPE_UNPROCESSABLE_ENTITY, ERROR_TYPES, classify_error, classify_known_error,
     error_type_for_name, error_type_for_status, error_type_identifier,
 };
-pub use gateway::{
-    BillableTokens, Failure, PricesPerMillion, error_type_for_failure, estimated_cost_nano_usd,
-    operation_name_for,
-};
+pub use gateway::operation_name_for;
 pub use intake::{IntakeTake, RateSeries, Sketch, SketchSeries};
 pub use json::{Json, JsonError, JsonErrorKind, JsonObject};
 pub use number::{MAX_SAFE_INTEGER, nano_usd_from_number, nano_usd_from_usd, usd_from_nano_usd};

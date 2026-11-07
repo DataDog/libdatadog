@@ -326,6 +326,32 @@ impl ProviderUsage {
         }
     }
 
+    /// The usage with inclusive totals: cache reads and writes added to an
+    /// input that excludes them, reasoning added to an output that excludes
+    /// it, and both bases then inclusive. For a caller that prices totals
+    /// itself; an observation takes either form.
+    pub fn inclusive(&self) -> ProviderUsage {
+        let mut usage = self.clone();
+        if usage.input_basis == Some(EXCLUDES_CACHE)
+            && let Some(input) = usage.input_tokens
+        {
+            usage.input_tokens = Some(
+                input
+                    .saturating_add(usage.cache_read_input_tokens.unwrap_or(0))
+                    .saturating_add(usage.cache_write_input_tokens.unwrap_or(0)),
+            );
+            usage.input_basis = Some(INCLUDES_CACHE);
+        }
+        if usage.output_basis == Some(EXCLUDES_REASONING)
+            && let Some(output) = usage.output_tokens
+        {
+            usage.output_tokens =
+                Some(output.saturating_add(usage.reasoning_output_tokens.unwrap_or(0)));
+            usage.output_basis = Some(INCLUDES_REASONING);
+        }
+        usage
+    }
+
     /// Set the usage members of a provider attempt observation, keeping its
     /// server tool counts.
     pub fn apply_to_attempt(&self, observation: &mut ProviderAttemptObservation) {
