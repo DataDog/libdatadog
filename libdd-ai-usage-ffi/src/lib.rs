@@ -881,6 +881,7 @@ fn response_value(
 ///
 /// `format` and `body` must point to their lengths of readable bytes (or the
 /// length must be 0), and `out` must be null or writable.
+// allow(ffi-panic-boundary): delegates to `_with`, which catches panics.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_ai_usage_parse_provider_response(
     format: *const u8,
@@ -951,6 +952,7 @@ fn options_of(options: u32) -> Result<bool, Failure> {
 ///
 /// `format` must point to `format_len` readable bytes (or `format_len` must
 /// be 0), and `out` must be null or writable.
+// allow(ffi-panic-boundary): delegates to `_with`, which catches panics.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_ai_usage_stream_new(
     format: *const u8,
@@ -1150,12 +1152,15 @@ pub enum Outcome {
 /// not used by another thread during the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_ai_usage_stream_outcome(stream: *const Stream) -> Outcome {
-    // SAFETY: the caller guarantees a live stream or null.
-    match unsafe { stream.as_ref() }.map(|stream| stream.inner.outcome()) {
-        Some(StreamOutcome::Completed) => Outcome::Completed,
-        Some(StreamOutcome::Failed) => Outcome::Failed,
-        Some(StreamOutcome::Open) | None => Outcome::Open,
-    }
+    catch_unwind(AssertUnwindSafe(|| {
+        // SAFETY: the caller guarantees a live stream or null.
+        match unsafe { stream.as_ref() }.map(|stream| stream.inner.outcome()) {
+            Some(StreamOutcome::Completed) => Outcome::Completed,
+            Some(StreamOutcome::Failed) => Outcome::Failed,
+            Some(StreamOutcome::Open) | None => Outcome::Open,
+        }
+    }))
+    .unwrap_or(Outcome::Open)
 }
 
 /// Run a call whose output is text: [`Status::Ok`] with the text in `out`,
