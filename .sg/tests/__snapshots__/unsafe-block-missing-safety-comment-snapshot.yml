@@ -1,0 +1,114 @@
+id: unsafe-block-missing-safety-comment
+snapshots:
+  "fn comment_on_wrong_statement() {\n    // SAFETY: this explains the line below, not the unsafe block.\n    let _ = 1;\n    unsafe {\n        risky();\n    }\n}\n":
+    labels:
+    - source: |-
+        unsafe {
+                risky();
+            }
+      style: primary
+      start: 120
+      end: 151
+    - source: |-
+        unsafe {
+                risky();
+            }
+      style: secondary
+      start: 120
+      end: 151
+  "fn empty_safety_marker() {\n    // SAFETY:\n    unsafe {\n        risky();\n    }\n}\n":
+    labels:
+    - source: |-
+        unsafe {
+                risky();
+            }
+      style: primary
+      start: 46
+      end: 77
+    - source: |-
+        unsafe {
+                risky();
+            }
+      style: secondary
+      start: 46
+      end: 77
+  "fn let_binding_no_comment() {\n    let x = unsafe { *ptr };\n}\n":
+    labels:
+    - source: let x = unsafe { *ptr };
+      style: primary
+      start: 34
+      end: 58
+    - source: unsafe { *ptr }
+      style: secondary
+      start: 42
+      end: 57
+  "fn marker_without_colon() {\n    // SAFETY\n    unsafe {\n        risky();\n    }\n}\n":
+    labels:
+    - source: |-
+        unsafe {
+                risky();
+            }
+      style: primary
+      start: 46
+      end: 77
+    - source: |-
+        unsafe {
+                risky();
+            }
+      style: secondary
+      start: 46
+      end: 77
+  "fn match_arm_no_comment() {\n    match x {\n        Some(v) => unsafe { use_it(v) },\n        None => 0,\n    }\n}\n":
+    labels:
+    - source: unsafe { use_it(v) }
+      style: primary
+      start: 61
+      end: 81
+  "fn nested_arg_no_comment() {\n    foo(unsafe { *ptr })\n}\n":
+    labels:
+    - source: unsafe { *ptr }
+      style: primary
+      start: 37
+      end: 52
+  "fn tail_expr_no_comment(x: *mut u8) -> u8 {\n    unsafe { *x }\n}\n":
+    labels:
+    - source: unsafe { *x }
+      style: primary
+      start: 48
+      end: 61
+    - source: unsafe { *x }
+      style: secondary
+      start: 48
+      end: 61
+  "fn uncontained() {\n    unsafe {\n        risky();\n    }\n}\n":
+    labels:
+    - source: |-
+        unsafe {
+                risky();
+            }
+      style: primary
+      start: 23
+      end: 54
+    - source: |-
+        unsafe {
+                risky();
+            }
+      style: secondary
+      start: 23
+      end: 54
+  "fn unrelated_comment() {\n    // This does a thing.\n    unsafe {\n        risky();\n    }\n}\n":
+    labels:
+    - source: |-
+        unsafe {
+                risky();
+            }
+      style: primary
+      start: 55
+      end: 86
+    - source: |-
+        unsafe {
+                risky();
+            }
+      style: secondary
+      start: 55
+      end: 86
