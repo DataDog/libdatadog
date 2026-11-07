@@ -9,8 +9,9 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::registry::{FindingCode, Registry};
 use libdd_ai_usage::{
-    DEPLOYMENT_ATTRIBUTES, ErrorCode, FindingCode, IssueCode, Json, MetricPoint, Profile, Registry,
+    DEPLOYMENT_ATTRIBUTES, ErrorCode, IssueCode, Json, MetricPoint, Profile,
     project_fixture_result, sort_metric_points,
 };
 

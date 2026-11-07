@@ -14,13 +14,12 @@
 
 use std::collections::BTreeMap;
 
+use libdd_ddsketch::DDSketch;
+
 use crate::MetricBatch;
 use crate::datadog::{DatadogSeries, SeriesType, datadog_tag_value};
 use crate::point::MetricError;
 
-/// The most bins a sketch keeps: the lowest are folded into the next, as
-/// intake's own sketches do.
-const BIN_LIMIT: usize = 4096;
 /// `ε` of intake's DDSketch: `γ = 1 + 2ε`, a relative accuracy slightly
 /// better than 1%.
 const EPSILON: f64 = 1.0 / 128.0;
@@ -87,10 +86,17 @@ pub struct Sketch {
 impl Sketch {
     /// The sketch of `samples`; NaNs are left out. `None` when none is left.
     pub fn of(samples: &[f64]) -> Option<Sketch> {
-        let mut bins: BTreeMap<i32, u64> = BTreeMap::new();
+        // libdatadog's DDSketch holds the bins: intake's keys, its logarithmic
+        // mapping (gamma `1 + 2/128`, offset the key bias), and its store,
+        // which folds the lowest bins together past its size.
+        let mut sketch = DDSketch::with_log_mapping(gamma(), f64::from(key_bias()))?;
         let (mut min, mut max, mut sum, mut count) = (f64::INFINITY, f64::NEG_INFINITY, 0.0, 0u64);
         for &v in samples.iter().filter(|v| !v.is_nan()) {
-            *bins.entry(sketch_key(v)).or_insert(0) += 1;
+            // Usage values are never negative; one would be counted as zero.
+            match sketch_key(v) {
+                key if key > 0 => sketch.add_to_bin(key, 1.0).ok()?,
+                _ => sketch.add(0.0).ok()?,
+            }
             min = min.min(v);
             max = max.max(v);
             sum += v;
@@ -99,29 +105,28 @@ impl Sketch {
         if count == 0 {
             return None;
         }
-        let mut keys: Vec<i32> = bins.keys().copied().collect();
-        let mut wide: Vec<u64> = bins.values().copied().collect();
-        if keys.len() > BIN_LIMIT {
-            // Fold the lowest bins into the lowest one kept.
-            let excess = keys.len() - BIN_LIMIT;
-            let folded: u64 = wide[..excess].iter().sum();
-            wide[excess] += folded;
-            keys.drain(..excess);
-            wide.drain(..excess);
-        }
         // A bin past u32 is written as several bins with the same key.
-        let (mut out_keys, mut counts) = (Vec::with_capacity(keys.len()), Vec::new());
-        for (key, mut n) in keys.into_iter().zip(wide) {
+        let (mut keys, mut counts) = (Vec::new(), Vec::new());
+        for (value, weight) in sketch.ordered_bins() {
+            let mut n = weight as u64;
+            if n == 0 {
+                continue;
+            }
+            let key = if value == 0.0 {
+                0
+            } else {
+                sketch.bin_index(value)?
+            };
             while n > u64::from(u32::MAX) {
-                out_keys.push(key);
+                keys.push(key);
                 counts.push(u32::MAX);
                 n -= u64::from(u32::MAX);
             }
-            out_keys.push(key);
+            keys.push(key);
             counts.push(n as u32);
         }
         Some(Sketch {
-            keys: out_keys,
+            keys,
             counts,
             min,
             max,
@@ -316,18 +321,41 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)] // many encodings are too slow under Miri
     fn sketches_count_and_fold() {
-        let sketch = Sketch::of(&[1.0, 1.0, 2.0, f64::NAN, 0.5]).unwrap();
-        assert_eq!(sketch.count, 4);
-        assert_eq!((sketch.min, sketch.max, sketch.sum), (0.5, 2.0, 4.5));
-        assert_eq!(sketch.counts.iter().sum::<u32>(), 4);
+        let sketch = Sketch::of(&[1.0, 1.0, 2.0, f64::NAN, 0.5, 0.0]).unwrap();
+        assert_eq!(sketch.count, 5);
+        assert_eq!((sketch.min, sketch.max, sketch.sum), (0.0, 2.0, 4.5));
+        assert_eq!(sketch.counts.iter().sum::<u32>(), 5);
+        assert_eq!(sketch.keys[0], 0);
         assert!(sketch.keys.windows(2).all(|w| w[0] < w[1]));
         assert!(Sketch::of(&[f64::NAN]).is_none());
+        // Past the store's size the lowest bins fold together; no count is lost.
         let many: Vec<f64> = (0..5000).map(|i| 1.02f64.powi(i)).collect();
         let folded = Sketch::of(&many).unwrap();
-        assert_eq!(folded.keys.len(), BIN_LIMIT);
+        assert!(folded.keys.len() < 5000);
         assert_eq!(
             folded.counts.iter().map(|&n| u64::from(n)).sum::<u64>(),
             5000
         );
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)] // every key is too slow under Miri
+    fn every_key_is_read_back_as_put() {
+        for key in 1..=INF_KEY {
+            let mut sketch = DDSketch::with_log_mapping(gamma(), f64::from(key_bias())).unwrap();
+            sketch.add_to_bin(key, 1.0).unwrap();
+            let read: Vec<i32> = sketch
+                .ordered_bins()
+                .into_iter()
+                .filter(|(_, w)| *w > 0.0)
+                .filter_map(|(value, _)| sketch.bin_index(value))
+                .collect();
+            assert_eq!(read, [key], "{key}");
+        }
+        // And a value's key is intake's.
+        let sketch = Sketch::of(&[1.0, 1e-3, 42.0, 1e6]).unwrap();
+        let mut expected: Vec<i32> = [1.0, 1e-3, 42.0, 1e6].map(sketch_key).to_vec();
+        expected.sort_unstable();
+        assert_eq!(sketch.keys, expected);
     }
 }

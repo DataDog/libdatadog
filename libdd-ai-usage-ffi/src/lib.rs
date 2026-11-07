@@ -30,14 +30,13 @@ use std::{ptr, slice};
 
 use libdd_ai_usage::{
     Attributes, BillableTokens, DOGSTATSD_MAX_LINE_BYTES, DOGSTATSD_UDP_MAX_PAYLOAD,
-    DOGSTATSD_UDS_MAX_PAYLOAD, ErrorCode, Json, MetricBatch, MetricError, OtlpBinding, OtlpScope,
-    OtlpWindow, PROVIDER_ID_HEADERS, PricesPerMillion, Profile, ProviderResponse, StreamOutcome,
-    UsageFormat, UsageStream, bedrock_arn_account, classify_error, classify_known_error,
-    datadog_series, datadog_tag_value, error_type_for_failure, estimated_cost_nano_usd,
-    gen_ai_provider_name, is_deployment_value, is_person_identifier, is_service_tier,
-    operation_name_for, pack_dogstatsd_joined, pack_dogstatsd_limited,
-    parse_export_partial_success, parse_provider_body, project_extended, provider_id_attributes,
-    repack_dogstatsd, retain_metrics, with_deployment_attributes_json,
+    DOGSTATSD_UDS_MAX_PAYLOAD, ERROR_TYPE_API, ErrorCode, Json, MetricBatch, MetricError,
+    PROVIDER_ID_HEADERS, PricesPerMillion, Profile, ProviderResponse, StreamOutcome, UsageFormat,
+    UsageStream, bedrock_arn_account, classify_error, classify_known_error, datadog_series,
+    datadog_tag_value, error_type_for_failure, estimated_cost_nano_usd, gen_ai_provider_name,
+    is_deployment_value, is_person_identifier, is_service_tier, operation_name_for,
+    pack_dogstatsd_joined, parse_provider_body, project_result, provider_id_attributes,
+    retain_metrics, with_deployment_attributes_json,
 };
 use serde_json::{Value, json};
 
@@ -114,16 +113,7 @@ pub struct Batch {
 /// A provider stream being read. Use one from one thread at a time.
 pub struct Stream {
     inner: UsageStream,
-    /// Report usage with inclusive totals ([`INCLUSIVE_TOTALS`]).
-    inclusive: bool,
 }
-
-/// An option of [`ddog_ai_usage_parse_provider_response_with`] and
-/// [`ddog_ai_usage_stream_new_with`]: report usage with inclusive totals,
-/// cache reads and writes added to an input that excludes them and
-/// reasoning added to an output that excludes it, both bases then
-/// `includes_*`.
-pub const INCLUSIVE_TOTALS: u32 = 1;
 
 fn error_value(code: &str, message: &str) -> Value {
     json!({"error": {"code": code, "message": message}})
@@ -275,12 +265,11 @@ fn projection_of(document: &Json) -> Result<(Profile, libdd_ai_usage::Projection
     projection_with(document, &BatchSettings::default())
 }
 
-/// The metric list and deployment attributes a batch applies to every
-/// document that does not state its own.
+/// The metric list a batch applies to every document that does not state
+/// its own.
 #[derive(Default)]
 struct BatchSettings {
     metrics: Option<Vec<String>>,
-    deployment_attributes: Option<Json>,
 }
 
 /// [`projection_of`], with `defaults` for what the document leaves out.
@@ -299,27 +288,8 @@ fn projection_with(
         )
     })?;
     let observation = document.get(profile.input_key()).unwrap_or(&Json::Null);
-    let projection = project_extended(profile, observation)?;
-    // The batch's attributes, with the document's on top: a document states
-    // only what differs, and `null` for an attribute removes the batch's.
-    let merged;
-    let deployment = match (
-        document.get("deployment_attributes"),
-        &defaults.deployment_attributes,
-    ) {
-        (None | Some(Json::Null), Some(defaults)) => defaults,
-        (None | Some(Json::Null), None) => &Json::Null,
-        (Some(Json::Object(own)), Some(Json::Object(defaults))) => {
-            let mut all = defaults.clone();
-            all.extend(
-                own.iter()
-                    .map(|(name, value)| (name.clone(), value.clone())),
-            );
-            merged = Json::Object(all);
-            &merged
-        }
-        (Some(attributes), _) => attributes,
-    };
+    let projection = project_result(profile, observation)?;
+    let deployment = document.get("deployment_attributes").unwrap_or(&Json::Null);
     let mut projection = with_deployment_attributes_json(projection, deployment)?;
     match document.get("metrics") {
         None | Some(Json::Null) => {
@@ -397,98 +367,6 @@ pub unsafe extern "C" fn ddog_ai_usage_project(
     }
 }
 
-/// Project the request document `input[..input_len]`, as
-/// [`ddog_ai_usage_project`] reads it, and write its DogStatsD lines to
-/// `out` as text: one line per series, separated by `\n`, without a trailing
-/// newline. The lines are this observation's alone (never merged with
-/// another's) and in a fixed order (by name, then tags). Pack them with
-/// [`ddog_ai_usage_pack_dogstatsd_lines`]. No JSON is built for the output,
-/// so a caller that sends each observation as it ends parses nothing. The
-/// issues of the projection are not reported; use [`ddog_ai_usage_project`]
-/// for them. A rejected document writes `{"error": {"code", "message"}}`, as
-/// [`ddog_ai_usage_project`] does.
-///
-/// # Safety
-///
-/// `input` must point to `input_len` readable bytes (or `input_len` must be
-/// 0), and `out` must be null or writable.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_ai_usage_dogstatsd_lines(
-    input: *const u8,
-    input_len: usize,
-    out: *mut Buffer,
-) -> Status {
-    // SAFETY: forwarded from the caller.
-    unsafe {
-        text_or_error_call(out, || {
-            catch_unwind(AssertUnwindSafe(|| {
-                let document = parse_document(bytes(input, input_len))?;
-                let (profile, projection) = projection_of(&document)?;
-                let series =
-                    datadog_series(profile, &projection.points, &projection.resource, false)?;
-                let mut text = String::with_capacity(series.len() * 128);
-                for (at, s) in series.iter().enumerate() {
-                    if at > 0 {
-                        text.push('\n');
-                    }
-                    text.push_str(&s.to_dogstatsd());
-                }
-                Ok(text)
-            }))
-            .unwrap_or(Err(Failure::Internal("the projection panicked")))
-        })
-    }
-}
-
-/// Pack the DogStatsD lines `lines[..lines_len]` (separated by `\n`; a `\r`
-/// before it and empty lines are dropped) into datagrams of at most
-/// `max_payload` bytes, with the comma-separated `constant_tags` appended to
-/// each line, and write them to `out` as text: each datagram's lines joined
-/// by `\n`, datagrams separated by a NUL byte, no trailing NUL. Neither the
-/// input nor the output is JSON. A line longer than `max_payload` with its
-/// tags (one with many tags can pass [`UDP_MAX_PAYLOAD`]) is sent alone in a
-/// datagram of its own; only a line longer than [`MAX_LINE_BYTES`] (or
-/// `max_payload`, if larger) is dropped, as the Agent would refuse it, and
-/// the number dropped is written to `dropped_lines` when it is not null.
-/// [`Status::Rejected`] for a `max_payload` of 0.
-///
-/// # Safety
-///
-/// `lines` and `constant_tags` must point to their lengths of readable bytes
-/// (or the length must be 0), `dropped_lines` must be null or writable, and
-/// `out` must be null or writable.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_ai_usage_pack_dogstatsd_lines(
-    lines: *const u8,
-    lines_len: usize,
-    constant_tags: *const u8,
-    constant_tags_len: usize,
-    max_payload: usize,
-    dropped_lines: *mut usize,
-    out: *mut Buffer,
-) -> Status {
-    // SAFETY: forwarded from the caller.
-    unsafe {
-        text_or_error_call(out, || {
-            catch_unwind(AssertUnwindSafe(|| {
-                let lines = text(lines, lines_len)
-                    .ok_or(Failure::Internal("lines are null or not UTF-8"))?;
-                let tags = constant_tags_of(text(constant_tags, constant_tags_len))?;
-                if max_payload == 0 {
-                    return Err(invalid("max_payload must be a positive integer"));
-                }
-                let lines = lines
-                    .split('\n')
-                    .map(|line| line.strip_suffix('\r').unwrap_or(line));
-                let (text, dropped) = pack_dogstatsd_joined(lines, &tags, max_payload, '\0');
-                write_count(dropped_lines, dropped);
-                Ok(text)
-            }))
-            .unwrap_or(Err(Failure::Internal("packing panicked")))
-        })
-    }
-}
-
 /// Create an empty [`Batch`] and write it to `out`. Release it with
 /// [`ddog_ai_usage_batch_drop`].
 ///
@@ -517,116 +395,17 @@ pub unsafe extern "C" fn ddog_ai_usage_batch_new(out: *mut *mut Batch) -> Status
     }
 }
 
-/// Project the request document `input[..input_len]`, as
-/// [`ddog_ai_usage_project`] reads it, and add its points to `batch`. Writes
-/// `{"issues": [...], "dropped": false, "full": false}` to `out` (`full`
-/// when the batch reached its high-water mark, see
-/// [`ddog_ai_usage_batch_set_high_water`]). A rejected document adds
-/// nothing. `dropped` is true when a bounded batch (see
-/// [`ddog_ai_usage_batch_set_max_len`]) had no room for the observation,
-/// which then adds nothing and is counted by [`ddog_ai_usage_batch_dropped`];
-/// the status is still [`Status::Ok`].
-///
-/// # Safety
-///
-/// `batch` must be a live batch from [`ddog_ai_usage_batch_new`], `input`
-/// must point to `input_len` readable bytes (or `input_len` must be 0), and
-/// `out` must be null or writable.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_ai_usage_batch_add(
-    batch: *const Batch,
-    input: *const u8,
-    input_len: usize,
-    out: *mut Buffer,
-) -> Status {
-    // SAFETY: forwarded from the caller.
-    unsafe {
-        json_call(out, || {
-            catch_unwind(AssertUnwindSafe(|| {
-                // SAFETY: the caller guarantees a live batch or null.
-                let batch = batch
-                    .as_ref()
-                    .ok_or(Failure::Internal("the batch is null"))?;
-                let (issues, added, full) = add_document(batch, bytes(input, input_len), true)?;
-                Ok(json!({"issues": issues, "dropped": !added, "full": full}))
-            }))
-            .unwrap_or(Err(Failure::Internal("adding to the batch panicked")))
-        })
-    }
-}
-
-/// Project a request document with the batch's settings and add it,
-/// returning its issues (when asked for), whether it was added, and whether
-/// the batch reached its high-water mark.
-fn add_document(
-    batch: &Batch,
-    input: Option<&[u8]>,
-    want_issues: bool,
-) -> Result<(Option<Value>, bool, bool), Failure> {
-    let document = parse_document(input)?;
-    let (profile, projection) = {
-        let settings = batch
-            .settings
-            .lock()
-            .map_err(|_| Failure::Internal("the batch is poisoned"))?;
-        projection_with(&document, &settings)?
-    };
-    let issues = want_issues.then(|| issues(&projection));
-    let mut inner = batch
-        .inner
-        .lock()
-        .map_err(|_| Failure::Internal("the batch is poisoned"))?;
-    let added = inner.try_add_owned(profile, projection)?;
-    Ok((issues, added, inner.is_full()))
-}
-
-/// [`ddog_ai_usage_batch_add`] without its output: nothing is written on
-/// success, so a gateway that does not read the issues builds no JSON. A
-/// rejected document writes `{"error": {"code", "message"}}` to `out` when
-/// `out` is not null. Whether a bounded batch dropped the observation is
-/// counted by [`ddog_ai_usage_batch_dropped`].
-///
-/// # Safety
-///
-/// As [`ddog_ai_usage_batch_add`]; `out` may be null.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_ai_usage_batch_add_quiet(
-    batch: *const Batch,
-    input: *const u8,
-    input_len: usize,
-    out: *mut Buffer,
-) -> Status {
-    let result = catch_unwind(AssertUnwindSafe(|| {
-        // SAFETY: the caller guarantees a live batch or null.
-        let batch = unsafe { batch.as_ref() }.ok_or(Failure::Internal("the batch is null"))?;
-        // SAFETY: forwarded from the caller.
-        add_document(batch, unsafe { bytes(input, input_len) }, false).map(|_| ())
-    }))
-    .unwrap_or(Err(Failure::Internal("adding to the batch panicked")));
-    let (status, error) = match result {
-        Ok(()) => return Status::Ok,
-        Err(Failure::Rejected(error)) => (Status::Rejected, rejection(&error)),
-        Err(Failure::Internal(message)) => (Status::Internal, error_value("internal", message)),
-    };
-    if !out.is_null() {
-        // SAFETY: `out` is not null and the caller guarantees it is writable.
-        unsafe { write(out, error.to_string()) };
-    }
-    status
-}
-
 /// Add every observation of one request to `batch` together: `input[..input_len]`
-/// is a JSON array of request documents, each as [`ddog_ai_usage_batch_add`]
-/// reads it (its provider attempts, token breakdowns and gateway request).
+/// is a JSON array of request documents, each `{"profile", "observation",
+/// "deployment_attributes", "metrics"}` as [`ddog_ai_usage_project`] reads
+/// it (its provider attempts, token breakdowns and gateway request).
 /// Either all are added or none: a bounded batch without room for all of
 /// them drops them all, so it never keeps an attempt without its breakdown,
 /// and counts each in [`ddog_ai_usage_batch_dropped`]. A rejected document
 /// rejects the request, adds nothing, and writes `{"error": {"code",
 /// "message"}}` whose message names the document's index. On success writes
-/// `{"issues": [[...], ...], "dropped": false, "full": false}` (one issue
-/// list per document; `full` when the batch reached its high-water mark, see
-/// [`ddog_ai_usage_batch_set_high_water`]) to `out`, or nothing when `out` is
-/// null.
+/// `{"issues": [[...], ...], "dropped": false}` (one issue list per
+/// document) to `out`, or nothing when `out` is null.
 ///
 /// # Safety
 ///
@@ -679,15 +458,12 @@ pub unsafe extern "C" fn ddog_ai_usage_batch_add_request(
             .lock()
             .map_err(|_| Failure::Internal("the batch is poisoned"))?;
         let added = inner.try_add_all(projections)?;
-        Ok((issues, added, inner.is_full()))
+        Ok((issues, added))
     }))
     .unwrap_or(Err(Failure::Internal("adding to the batch panicked")));
     let (status, value) = match result {
-        Ok((Some(issues), added, full)) => (
-            Status::Ok,
-            json!({"issues": issues, "dropped": !added, "full": full}),
-        ),
-        Ok((None, ..)) => return Status::Ok,
+        Ok((Some(issues), added)) => (Status::Ok, json!({"issues": issues, "dropped": !added})),
+        Ok((None, _)) => return Status::Ok,
         Err(Failure::Rejected(error)) => (Status::Rejected, rejection(&error)),
         Err(Failure::Internal(message)) => (Status::Internal, error_value("internal", message)),
     };
@@ -704,9 +480,8 @@ pub unsafe extern "C" fn ddog_ai_usage_batch_add_request(
 /// document stating none. Parsed once here rather than in every document.
 ///
 /// **An empty list `[]` keeps no metric**, as `"metrics": []` in a document
-/// does: every observation added then projects to nothing. To keep every
-/// metric again, call [`ddog_ai_usage_batch_reset_metrics`] (or pass `null`
-/// or zero-length input, which do the same).
+/// does: every observation added then projects to nothing. `null` or
+/// zero-length input keeps every metric again.
 ///
 /// # Safety
 ///
@@ -758,83 +533,6 @@ pub unsafe extern "C" fn ddog_ai_usage_batch_set_metrics(
     }
 }
 
-/// Clear the metric list of `batch`, so it keeps every metric of a document
-/// stating none, as a new batch does. A null batch is a no-op.
-///
-/// # Safety
-///
-/// `batch` must be null or a live batch from [`ddog_ai_usage_batch_new`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_ai_usage_batch_reset_metrics(batch: *const Batch) {
-    let _ = catch_unwind(AssertUnwindSafe(|| {
-        // SAFETY: the caller guarantees a live batch or null.
-        if let Some(batch) = unsafe { batch.as_ref() }
-            && let Ok(mut settings) = batch.settings.lock()
-        {
-            settings.metrics = None;
-        }
-    }));
-}
-
-/// Set the deployment attributes `input[..input_len]` (a JSON object, as a
-/// request document's `deployment_attributes` states it) that `batch`
-/// applies to every document, such as a gateway's fixed `service`, `env`
-/// and `version`. A document's own `deployment_attributes` are merged on
-/// top: an attribute it states replaces the batch's, `null` for an
-/// attribute removes the batch's, and the others are kept, so a document
-/// states only what differs (a per-request `user.id`). Checked once here: an unknown attribute
-/// is [`Status::Rejected`] with `deployment_attribute_unknown`, and the
-/// setting is left as it was. `null` or empty input clears them.
-///
-/// # Safety
-///
-/// As [`ddog_ai_usage_batch_set_metrics`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_ai_usage_batch_set_deployment_attributes(
-    batch: *const Batch,
-    input: *const u8,
-    input_len: usize,
-    out: *mut Buffer,
-) -> Status {
-    // SAFETY: forwarded from the caller.
-    unsafe {
-        json_call(out, || {
-            catch_unwind(AssertUnwindSafe(|| {
-                // SAFETY: the caller guarantees a live batch or null.
-                let batch = batch
-                    .as_ref()
-                    .ok_or(Failure::Internal("the batch is null"))?;
-                let attributes = if input_len == 0 {
-                    None
-                } else {
-                    match parse_document(bytes(input, input_len))? {
-                        Json::Null => None,
-                        attributes => {
-                            // Unknown names and other types are refused now,
-                            // not on every document.
-                            let checked = with_deployment_attributes_json(
-                                libdd_ai_usage::Projection::default(),
-                                &attributes,
-                            )?;
-                            drop(checked);
-                            Some(attributes)
-                        }
-                    }
-                };
-                batch
-                    .settings
-                    .lock()
-                    .map_err(|_| Failure::Internal("the batch is poisoned"))?
-                    .deployment_attributes = attributes;
-                Ok(json!({}))
-            }))
-            .unwrap_or(Err(Failure::Internal(
-                "setting the deployment attributes panicked",
-            )))
-        })
-    }
-}
-
 /// Whether `batch` holds no points. A null batch is empty.
 ///
 /// # Safety
@@ -875,47 +573,6 @@ pub unsafe extern "C" fn ddog_ai_usage_batch_len(batch: *const Batch) -> usize {
     .unwrap_or(0)
 }
 
-/// Take every point of `batch`, leaving it empty, and write it as DogStatsD
-/// datagrams: `{"datagrams": ["line\nline", ...], "dropped_lines": 0}`. Each
-/// datagram is at most `max_payload` bytes ([`UDP_MAX_PAYLOAD`] or
-/// [`UDS_MAX_PAYLOAD`]); a line longer than that with its tags goes alone in
-/// a datagram of its own, and only one longer than [`MAX_LINE_BYTES`] (or
-/// `max_payload`, if larger) is dropped and counted in `dropped_lines`.
-/// `constant_tags` is a comma-separated list of
-/// `key:value` tags added to every line, such as the client's `env`; it may
-/// be empty.
-///
-/// # Safety
-///
-/// `batch` must be a live batch from [`ddog_ai_usage_batch_new`],
-/// `constant_tags` must point to `constant_tags_len` readable bytes (or
-/// `constant_tags_len` must be 0), and `out` must be null or writable.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_ai_usage_batch_take_dogstatsd(
-    batch: *const Batch,
-    constant_tags: *const u8,
-    constant_tags_len: usize,
-    max_payload: usize,
-    out: *mut Buffer,
-) -> Status {
-    // SAFETY: forwarded from the caller.
-    unsafe {
-        json_call(out, || {
-            catch_unwind(AssertUnwindSafe(|| {
-                // SAFETY: the caller guarantees a live batch or null.
-                let batch = batch
-                    .as_ref()
-                    .ok_or(Failure::Internal("the batch is null"))?;
-                let tags = constant_tags_of(text(constant_tags, constant_tags_len))?;
-                let (datagrams, dropped) =
-                    take_batch(batch)?.dogstatsd_datagrams_counted(&tags, max_payload)?;
-                Ok(json!({"datagrams": datagrams, "dropped_lines": dropped}))
-            }))
-            .unwrap_or(Err(Failure::Internal("encoding the batch panicked")))
-        })
-    }
-}
-
 /// The points of `batch`, leaving it empty with its bound and dropped count.
 fn take_batch(batch: &Batch) -> Result<MetricBatch, Failure> {
     Ok(batch
@@ -925,17 +582,23 @@ fn take_batch(batch: &Batch) -> Result<MetricBatch, Failure> {
         .take())
 }
 
-/// [`ddog_ai_usage_batch_take_dogstatsd`], writing the datagrams as text
-/// rather than JSON: each datagram's lines joined by `\n`, datagrams
-/// separated by a NUL byte, no trailing NUL. An empty batch writes an empty
-/// buffer. The number of lines dropped for being longer than
-/// [`MAX_LINE_BYTES`] (or `max_payload`, if larger) is written to
-/// `dropped_lines` when it is not null.
+/// Take every point of `batch`, leaving it empty, and write it as DogStatsD
+/// datagrams of at most `max_payload` bytes ([`UDP_MAX_PAYLOAD`] or
+/// [`UDS_MAX_PAYLOAD`]), as text: each datagram's lines joined by `\n`,
+/// datagrams separated by a NUL byte, no trailing NUL. `constant_tags` is a
+/// comma-separated list of `key:value` tags added to every line, such as the
+/// client's `env`; it may be empty. A line longer than `max_payload` with
+/// its tags goes alone in a datagram of its own; only one longer than
+/// [`MAX_LINE_BYTES`] (or `max_payload`, if larger) is dropped, and the
+/// number dropped is written to `dropped_lines` when it is not null. An empty
+/// batch writes an empty buffer.
 ///
 /// # Safety
 ///
-/// As [`ddog_ai_usage_batch_take_dogstatsd`]; `dropped_lines` must be null or
-/// writable.
+/// `batch` must be a live batch from [`ddog_ai_usage_batch_new`],
+/// `constant_tags` must point to `constant_tags_len` readable bytes (or
+/// `constant_tags_len` must be 0), `dropped_lines` must be null or writable,
+/// and `out` must be null or writable.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_ai_usage_batch_take_dogstatsd_text(
     batch: *const Batch,
@@ -1006,329 +669,6 @@ pub unsafe extern "C" fn ddog_ai_usage_batch_dropped(batch: *const Batch) -> u64
         })
     }))
     .unwrap_or(0)
-}
-
-/// The observations `batch` dropped since the last call (since it was
-/// created, for the first), so a caller reports drops per flush without a
-/// count of its own. A null batch dropped none.
-///
-/// # Safety
-///
-/// `batch` must be null or a live batch from [`ddog_ai_usage_batch_new`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_ai_usage_batch_take_dropped(batch: *const Batch) -> u64 {
-    catch_unwind(AssertUnwindSafe(|| {
-        // SAFETY: the caller guarantees a live batch or null.
-        unsafe { batch.as_ref() }.map_or(0, |batch| {
-            batch
-                .inner
-                .lock()
-                .map(|mut inner| inner.take_dropped())
-                .unwrap_or(0)
-        })
-    }))
-    .unwrap_or(0)
-}
-
-/// Ask for `batch` to be sent early once it holds `high_water` points (as
-/// [`ddog_ai_usage_batch_len`] counts them), or never with 0. Adds then
-/// report `"full": true`, and [`ddog_ai_usage_batch_is_full`] says so, so a
-/// gateway sends at once instead of waiting for its timer. Nothing is
-/// dropped for it; [`ddog_ai_usage_batch_set_max_len`] bounds the batch. A
-/// null batch is a no-op.
-///
-/// # Safety
-///
-/// `batch` must be null or a live batch from [`ddog_ai_usage_batch_new`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_ai_usage_batch_set_high_water(
-    batch: *const Batch,
-    high_water: usize,
-) {
-    let _ = catch_unwind(AssertUnwindSafe(|| {
-        // SAFETY: the caller guarantees a live batch or null.
-        if let Some(batch) = unsafe { batch.as_ref() }
-            && let Ok(mut inner) = batch.inner.lock()
-        {
-            inner.set_high_water((high_water != 0).then_some(high_water));
-        }
-    }));
-}
-
-/// Whether `batch` holds at least its high-water mark of points (see
-/// [`ddog_ai_usage_batch_set_high_water`]). A null batch is not full.
-///
-/// # Safety
-///
-/// `batch` must be null or a live batch from [`ddog_ai_usage_batch_new`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_ai_usage_batch_is_full(batch: *const Batch) -> bool {
-    catch_unwind(AssertUnwindSafe(|| {
-        // SAFETY: the caller guarantees a live batch or null.
-        unsafe { batch.as_ref() }
-            .is_some_and(|batch| batch.inner.lock().is_ok_and(|inner| inner.is_full()))
-    }))
-    .unwrap_or(false)
-}
-
-/// Write `value[..value_len]` to `out` as an account, project or key id is
-/// kept (trimmed; non-blank, at most 128 bytes), so ids an operator
-/// configures are checked as the provider's headers are.
-/// [`Status::Rejected`] for one that is not kept.
-///
-/// # Safety
-///
-/// `value` must point to `value_len` readable bytes (or `value_len` must be
-/// 0), and `out` must be null or writable.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_ai_usage_billing_id(
-    value: *const u8,
-    value_len: usize,
-    out: *mut Buffer,
-) -> Status {
-    // SAFETY: forwarded from the caller.
-    unsafe {
-        text_call(out, || {
-            catch_unwind(AssertUnwindSafe(|| {
-                text(value, value_len)
-                    .map(|value| libdd_ai_usage::billing_id(value).map(str::to_string))
-            }))
-            .unwrap_or(None)
-        })
-    }
-}
-
-/// Write the `error.type` of a call known to have failed to `out`: as
-/// [`ddog_ai_usage_error_type`], and `api_error` when neither its name
-/// `name[..name_len]` nor its HTTP `status` (0 for none) says why. Never
-/// [`Status::Rejected`].
-///
-/// # Safety
-///
-/// `name` must point to `name_len` readable bytes (or `name_len` must be 0),
-/// and `out` must be null or writable.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_ai_usage_error_type_failed(
-    name: *const u8,
-    name_len: usize,
-    status: u16,
-    out: *mut Buffer,
-) -> Status {
-    // SAFETY: forwarded from the caller.
-    unsafe {
-        text_call(out, || {
-            catch_unwind(AssertUnwindSafe(|| {
-                text(name, name_len).map(|name| {
-                    Some(
-                        libdd_ai_usage::classify_failure(
-                            (!name.is_empty()).then_some(name),
-                            (status != 0).then_some(status),
-                        )
-                        .to_string(),
-                    )
-                })
-            }))
-            .unwrap_or(None)
-        })
-    }
-}
-
-/// Write the usage format of a deployment's responses to `out`, from its
-/// base URL `base_url[..base_url_len]` and its `gen_ai.provider.name`
-/// `provider_name[..provider_name_len]` (may be empty):
-/// `gemini_openai_compat` for Google's OpenAI-compatible Gemini endpoint
-/// (`generativelanguage.googleapis.com` reached as `openai`), else `auto`.
-///
-/// # Safety
-///
-/// `base_url` and `provider_name` must point to their lengths of readable
-/// bytes (or the length must be 0), and `out` must be null or writable.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_ai_usage_usage_format_for_base_url(
-    base_url: *const u8,
-    base_url_len: usize,
-    provider_name: *const u8,
-    provider_name_len: usize,
-    out: *mut Buffer,
-) -> Status {
-    // SAFETY: forwarded from the caller.
-    unsafe {
-        text_call(out, || {
-            catch_unwind(AssertUnwindSafe(|| {
-                let url = text(base_url, base_url_len)?;
-                let provider = text(provider_name, provider_name_len)?;
-                Some(Some(
-                    UsageFormat::for_base_url(url, provider)
-                        .as_str()
-                        .to_string(),
-                ))
-            }))
-            .unwrap_or(None)
-        })
-    }
-}
-
-/// Re-split a DogStatsD datagram the socket refused as too long
-/// (`EMSGSIZE`), `datagram[..datagram_len]`, into datagrams of at most
-/// `max_payload` bytes, written to `out` as text: lines joined by `\n`,
-/// datagrams separated by a NUL byte. Lines are kept whole; one longer than
-/// `max_payload` cannot be sent on that socket and is dropped, and the
-/// number dropped is written to `dropped_lines` when it is not null.
-/// [`Status::Rejected`] for a `max_payload` of 0.
-///
-/// # Safety
-///
-/// `datagram` must point to `datagram_len` readable bytes (or the length
-/// must be 0), `dropped_lines` must be null or writable, and `out` must be
-/// null or writable.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_ai_usage_repack_dogstatsd(
-    datagram: *const u8,
-    datagram_len: usize,
-    max_payload: usize,
-    dropped_lines: *mut usize,
-    out: *mut Buffer,
-) -> Status {
-    // SAFETY: forwarded from the caller.
-    unsafe {
-        text_or_error_call(out, || {
-            catch_unwind(AssertUnwindSafe(|| {
-                let datagram = text(datagram, datagram_len)
-                    .ok_or(Failure::Internal("the datagram is null or not UTF-8"))?;
-                if max_payload == 0 {
-                    return Err(invalid("max_payload must be a positive integer"));
-                }
-                let (text, dropped) = repack_dogstatsd(datagram, max_payload, '\0');
-                write_count(dropped_lines, dropped);
-                Ok(text)
-            }))
-            .unwrap_or(Err(Failure::Internal("repacking panicked")))
-        })
-    }
-}
-
-/// Read an OTLP `ExportMetricsServiceResponse` body `body[..body_len]`
-/// (protobuf, or its JSON form): when it states a partial success, write the
-/// rejected data points to `rejected_points` (when not null) and the
-/// endpoint's message, cut to 256 bytes, to `out` as text, and return
-/// [`Status::Ok`]. [`Status::Rejected`] with an empty `out` for a full
-/// success or a body that is neither.
-///
-/// # Safety
-///
-/// `body` must point to `body_len` readable bytes (or `body_len` must be 0),
-/// `rejected_points` must be null or writable, and `out` must be null or
-/// writable.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_ai_usage_otlp_partial_success(
-    body: *const u8,
-    body_len: usize,
-    rejected_points: *mut u64,
-    out: *mut Buffer,
-) -> Status {
-    // SAFETY: forwarded from the caller.
-    unsafe {
-        text_call(out, || {
-            catch_unwind(AssertUnwindSafe(|| {
-                let body = bytes(body, body_len)?;
-                Some(
-                    parse_export_partial_success(body).map(|(rejected, message)| {
-                        if !rejected_points.is_null() {
-                            // SAFETY: the caller guarantees it is writable.
-                            rejected_points.write(rejected);
-                        }
-                        message
-                    }),
-                )
-            }))
-            .unwrap_or(None)
-        })
-    }
-}
-
-/// Take every point of `batch`, leaving it empty, and write it as OTLP
-/// `ExportMetricsServiceRequest`s of at most `max_bytes` each (0 for one
-/// request) to `out`: each request preceded by its length as 4
-/// little-endian bytes. The instrumentation scope is
-/// `scope_name[..scope_name_len]` at `scope_version[..scope_version_len]`,
-/// the delta window runs from `start_time_unix_nano` to `time_unix_nano`,
-/// and `datadog` selects the Datadog binding (cost in USD, versioned values
-/// with `/`). Points are split by series, and one series is never split, so
-/// a request exceeds `max_bytes` only when one series alone does. A batch
-/// that fits is one request; an empty batch writes an empty buffer.
-///
-/// # Safety
-///
-/// `batch` must be a live batch from [`ddog_ai_usage_batch_new`], the scope
-/// strings must point to their lengths of readable bytes (or the length must
-/// be 0), and `out` must be null or writable.
-#[unsafe(no_mangle)]
-#[allow(clippy::too_many_arguments)]
-pub unsafe extern "C" fn ddog_ai_usage_batch_take_otlp_parts(
-    batch: *const Batch,
-    scope_name: *const u8,
-    scope_name_len: usize,
-    scope_version: *const u8,
-    scope_version_len: usize,
-    start_time_unix_nano: u64,
-    time_unix_nano: u64,
-    datadog: bool,
-    max_bytes: usize,
-    out: *mut Buffer,
-) -> Status {
-    if out.is_null() {
-        return Status::Internal;
-    }
-    let result = catch_unwind(AssertUnwindSafe(|| {
-        // SAFETY: the caller guarantees a live batch or null.
-        let batch = unsafe { batch.as_ref() }.ok_or(Failure::Internal("the batch is null"))?;
-        // SAFETY: forwarded from the caller.
-        let (name, version) = unsafe {
-            (
-                text(scope_name, scope_name_len),
-                text(scope_version, scope_version_len),
-            )
-        };
-        let (Some(name), Some(version)) = (name, version) else {
-            return Err(Failure::Internal("the scope is null or not UTF-8"));
-        };
-        let taken = take_batch(batch)?;
-        let parts = taken.encode_otlp_parts(
-            OtlpScope { name, version },
-            OtlpWindow {
-                start_time_unix_nano,
-                time_unix_nano,
-            },
-            if datadog {
-                OtlpBinding::Datadog
-            } else {
-                OtlpBinding::OpenTelemetry
-            },
-            max_bytes,
-        );
-        let mut framed = Vec::with_capacity(parts.iter().map(|p| p.len() + 4).sum());
-        for part in parts {
-            let len = u32::try_from(part.len())
-                .map_err(|_| Failure::Internal("an OTLP request is longer than 4 GiB"))?;
-            framed.extend_from_slice(&len.to_le_bytes());
-            framed.extend_from_slice(&part);
-        }
-        Ok(framed)
-    }))
-    .unwrap_or(Err(Failure::Internal("encoding the batch panicked")));
-    let (status, bytes) = match result {
-        Ok(framed) => (Status::Ok, framed),
-        Err(Failure::Rejected(error)) => {
-            (Status::Rejected, rejection(&error).to_string().into_bytes())
-        }
-        Err(Failure::Internal(message)) => (
-            Status::Internal,
-            error_value("internal", message).to_string().into_bytes(),
-        ),
-    };
-    // SAFETY: `out` is not null and the caller guarantees it is writable.
-    unsafe { out.write(Buffer::from_bytes(bytes)) };
-    status
 }
 
 /// Standard base64 with padding, for binary values inside JSON output.
@@ -1486,18 +826,12 @@ fn response_value(
     response: &ProviderResponse,
     outcome: StreamOutcome,
     error_name: Option<&str>,
-    inclusive: bool,
 ) -> Value {
+    // A failure that names no cause is `api_error`.
     let error_type = (outcome == StreamOutcome::Failed)
-        .then(|| classify_error(error_name.or(Some("provider_error")), None))
-        .flatten();
-    let usage = if inclusive {
-        response.usage.as_ref().map(|usage| usage.inclusive())
-    } else {
-        response.usage.clone()
-    };
+        .then(|| classify_error(error_name, None).unwrap_or(ERROR_TYPE_API));
     json!({
-        "usage": usage,
+        "usage": response.usage,
         "response_model": response.response_model,
         "service_tier": response.service_tier,
         "outcome": outcome.as_str(),
@@ -1550,131 +884,9 @@ pub unsafe extern "C" fn ddog_ai_usage_parse_provider_response(
                 let format = format_of(text(format, format_len))?;
                 let body = bytes(body, body_len).ok_or(Failure::Internal("the body is null"))?;
                 let (response, outcome, error) = parse_provider_body(format, body, embeddings);
-                Ok(response_value(&response, outcome, error.as_deref(), false))
+                Ok(response_value(&response, outcome, error.as_deref()))
             }))
             .unwrap_or(Err(Failure::Internal("reading the response panicked")))
-        })
-    }
-}
-
-/// [`ddog_ai_usage_parse_provider_response`] with `options`, a bit set:
-/// [`INCLUSIVE_TOTALS`] reports usage with inclusive totals. Unknown bits
-/// are [`Status::Rejected`].
-///
-/// # Safety
-///
-/// As [`ddog_ai_usage_parse_provider_response`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_ai_usage_parse_provider_response_with(
-    format: *const u8,
-    format_len: usize,
-    embeddings: bool,
-    options: u32,
-    body: *const u8,
-    body_len: usize,
-    out: *mut Buffer,
-) -> Status {
-    // SAFETY: forwarded from the caller.
-    unsafe {
-        json_call(out, || {
-            catch_unwind(AssertUnwindSafe(|| {
-                let inclusive = options_of(options)?;
-                let format = format_of(text(format, format_len))?;
-                let body = bytes(body, body_len).ok_or(Failure::Internal("the body is null"))?;
-                let (response, outcome, error) = parse_provider_body(format, body, embeddings);
-                Ok(response_value(
-                    &response,
-                    outcome,
-                    error.as_deref(),
-                    inclusive,
-                ))
-            }))
-            .unwrap_or(Err(Failure::Internal("reading the response panicked")))
-        })
-    }
-}
-
-/// Whether `options` asks for inclusive totals; unknown bits are refused.
-fn options_of(options: u32) -> Result<bool, Failure> {
-    if options & !INCLUSIVE_TOTALS != 0 {
-        return Err(invalid(format!("unknown options: {options:#x}")));
-    }
-    Ok(options & INCLUSIVE_TOTALS != 0)
-}
-
-/// [`ddog_ai_usage_stream_new`] with `options`, as
-/// [`ddog_ai_usage_parse_provider_response_with`] reads them: with
-/// [`INCLUSIVE_TOTALS`], `_finish` and `_take` report inclusive totals.
-///
-/// # Safety
-///
-/// As [`ddog_ai_usage_stream_new`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_ai_usage_stream_new_with(
-    format: *const u8,
-    format_len: usize,
-    embeddings: bool,
-    options: u32,
-    out: *mut *mut Stream,
-) -> Status {
-    if out.is_null() {
-        return Status::Internal;
-    }
-    let created = catch_unwind(AssertUnwindSafe(|| {
-        let inclusive = options_of(options)?;
-        // SAFETY: forwarded from the caller.
-        let format = format_of(unsafe { text(format, format_len) })?;
-        Ok::<_, Failure>(Box::into_raw(Box::new(Stream {
-            inner: UsageStream::new(format, embeddings),
-            inclusive,
-        })))
-    }));
-    match created {
-        Ok(Ok(stream)) => {
-            // SAFETY: `out` is not null and the caller guarantees it is
-            // writable.
-            unsafe { out.write(stream) };
-            Status::Ok
-        }
-        Ok(Err(Failure::Rejected(_))) => Status::Rejected,
-        Ok(Err(Failure::Internal(_))) | Err(_) => Status::Internal,
-    }
-}
-
-/// Write the `error.type` of a provider attempt that ended with the gateway
-/// outcome `outcome[..outcome_len]` and the provider's HTTP `status` (0 for
-/// none) to `out`: `provider_http_error` and the subscription refusals by
-/// status, `timeout` as `timeout_error`, `unavailable`, `stream_read_error`,
-/// `early_close` and `incomplete_stream` as `api_connection_error`,
-/// `canceled` as `cancelled`, and any other outcome by its name and status
-/// (`api_error` when neither says why). Never [`Status::Rejected`].
-///
-/// # Safety
-///
-/// `outcome` must point to `outcome_len` readable bytes (or `outcome_len`
-/// must be 0), and `out` must be null or writable.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_ai_usage_error_type_for_outcome(
-    outcome: *const u8,
-    outcome_len: usize,
-    status: u16,
-    out: *mut Buffer,
-) -> Status {
-    // SAFETY: forwarded from the caller.
-    unsafe {
-        text_call(out, || {
-            catch_unwind(AssertUnwindSafe(|| {
-                text(outcome, outcome_len).map(|outcome| {
-                    Some(
-                        libdd_ai_usage::error_type_for_gateway_outcome(
-                            outcome,
-                            (status != 0).then_some(status),
-                        )
-                        .to_string(),
-                    )
-                })
-            }))
-            .unwrap_or(None)
         })
     }
 }
@@ -1702,7 +914,6 @@ pub unsafe extern "C" fn ddog_ai_usage_stream_new(
         let format = format_of(unsafe { text(format, format_len) })?;
         Ok::<_, Failure>(Box::into_raw(Box::new(Stream {
             inner: UsageStream::new(format, embeddings),
-            inclusive: false,
         })))
     }));
     match created {
@@ -1786,43 +997,10 @@ pub unsafe extern "C" fn ddog_ai_usage_stream_feed_event(
     .unwrap_or(Status::Internal)
 }
 
-/// Write what the stream reported so far, as
+/// Write what the stream reported, as
 /// [`ddog_ai_usage_parse_provider_response`] does, reading a last line that
-/// had no line ending. The stream can still be fed afterwards.
-///
-/// # Safety
-///
-/// `stream` must be a live stream from [`ddog_ai_usage_stream_new`], and
-/// `out` must be null or writable.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_ai_usage_stream_finish(
-    stream: *const Stream,
-    out: *mut Buffer,
-) -> Status {
-    // SAFETY: forwarded from the caller.
-    unsafe {
-        json_call(out, || {
-            catch_unwind(AssertUnwindSafe(|| {
-                // SAFETY: the caller guarantees a live stream or null.
-                let stream = stream
-                    .as_ref()
-                    .ok_or(Failure::Internal("the stream is null"))?;
-                let (response, outcome, error) = stream.inner.report();
-                Ok(response_value(
-                    &response,
-                    outcome,
-                    error.as_deref(),
-                    stream.inclusive,
-                ))
-            }))
-            .unwrap_or(Err(Failure::Internal("reading the stream panicked")))
-        })
-    }
-}
-
-/// [`ddog_ai_usage_stream_finish`] and [`ddog_ai_usage_stream_drop`] in one
-/// call: write what the stream reported, taking its state rather than
-/// copying it, and release it. The stream must not be used afterwards, and
+/// had no line ending, and release the stream, taking its state rather than
+/// copying it. The stream must not be used afterwards, and
 /// is released even when the call fails. A null stream is
 /// [`Status::Internal`].
 ///
@@ -1845,14 +1023,8 @@ pub unsafe extern "C" fn ddog_ai_usage_stream_take(
     unsafe {
         json_call(out, move || {
             catch_unwind(AssertUnwindSafe(move || {
-                let inclusive = stream.inclusive;
                 let (response, outcome, error) = stream.inner.finish();
-                Ok(response_value(
-                    &response,
-                    outcome,
-                    error.as_deref(),
-                    inclusive,
-                ))
+                Ok(response_value(&response, outcome, error.as_deref()))
             }))
             .unwrap_or(Err(Failure::Internal("reading the stream panicked")))
         })
@@ -1891,7 +1063,7 @@ pub enum Outcome {
 /// How `stream` ended so far, without building any output: cheap enough to
 /// call after every chunk, so a gateway needs no end-of-stream detection of
 /// its own. A line still held without its line ending is not read (see
-/// [`ddog_ai_usage_stream_finish`]). A null stream is [`Outcome::Open`].
+/// [`ddog_ai_usage_stream_take`]). A null stream is [`Outcome::Open`].
 ///
 /// # Safety
 ///
@@ -1904,216 +1076,6 @@ pub unsafe extern "C" fn ddog_ai_usage_stream_outcome(stream: *const Stream) -> 
         Some(StreamOutcome::Completed) => Outcome::Completed,
         Some(StreamOutcome::Failed) => Outcome::Failed,
         Some(StreamOutcome::Open) | None => Outcome::Open,
-    }
-}
-
-/// Write the `error.type` of a failure to `out` from the names that describe
-/// it, most specific first, `names[..names_len]` separated by `\n` (an
-/// exception's class and base classes, then its cause's): the first name the
-/// vocabulary knows (in any case), else the HTTP `status` (0 for none), else
-/// `api_error`. Never [`Status::Rejected`].
-///
-/// # Safety
-///
-/// `names` must point to `names_len` readable bytes (or `names_len` must be
-/// 0), and `out` must be null or writable.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_ai_usage_error_type_first_known(
-    names: *const u8,
-    names_len: usize,
-    status: u16,
-    out: *mut Buffer,
-) -> Status {
-    // SAFETY: forwarded from the caller.
-    unsafe {
-        text_call(out, || {
-            catch_unwind(AssertUnwindSafe(|| {
-                text(names, names_len).map(|names| {
-                    Some(
-                        libdd_ai_usage::classify_first_known(
-                            names.split('\n').map(str::trim).filter(|n| !n.is_empty()),
-                            (status != 0).then_some(status),
-                        )
-                        .to_string(),
-                    )
-                })
-            }))
-            .unwrap_or(None)
-        })
-    }
-}
-
-/// Write an observation's usage members, as a JSON object to merge into it,
-/// from usage a gateway already normalized, `usage[..usage_len]`
-/// (`{"input_tokens", "output_tokens", "cache_read_input_tokens",
-/// "cache_write_input_tokens", "ephemeral_5m_input_tokens",
-/// "ephemeral_1h_input_tokens", "total_cost"}`, input including cache), in
-/// the usage `format` (as [`ddog_ai_usage_parse_provider_response`] names
-/// them; `anthropic` states input without cache). Only reported cache counts
-/// are kept, both cache lifetimes are stated when either is, an
-/// `embeddings` operation has no output, and `total_cost` is an estimated
-/// `cost_usd`. [`Status::Rejected`] when the usage has no input total.
-///
-/// # Safety
-///
-/// `format` and `usage` must point to their lengths of readable bytes (or
-/// the length must be 0), and `out` must be null or writable.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_ai_usage_observation_from_usage(
-    format: *const u8,
-    format_len: usize,
-    embeddings: bool,
-    usage: *const u8,
-    usage_len: usize,
-    out: *mut Buffer,
-) -> Status {
-    // SAFETY: forwarded from the caller.
-    unsafe {
-        json_call(out, || {
-            catch_unwind(AssertUnwindSafe(|| {
-                let format = format_of(text(format, format_len))?;
-                let usage = parse_document(bytes(usage, usage_len))?;
-                let usage = usage
-                    .as_object()
-                    .ok_or_else(|| invalid("usage must be an object"))?;
-                let members =
-                    libdd_ai_usage::observation_usage_from_normalized(format, embeddings, usage)
-                        .ok_or_else(|| {
-                            Failure::Rejected(MetricError::new(
-                                ErrorCode::RequiredFieldMissing,
-                                "usage has no input_tokens",
-                            ))
-                        })?;
-                Ok(json_value(&Json::Object(members)))
-            }))
-            .unwrap_or(Err(Failure::Internal("reading the usage panicked")))
-        })
-    }
-}
-
-/// A [`Json`] value as a `serde_json` value.
-fn json_value(value: &Json) -> Value {
-    match value {
-        Json::Null => Value::Null,
-        Json::Bool(flag) => json!(flag),
-        Json::Number(n) if n.fract() == 0.0 && n.abs() < 9.0e15 => json!(*n as i64),
-        Json::Number(n) => json!(n),
-        Json::String(text) => json!(text),
-        Json::Array(items) => Value::Array(items.iter().map(json_value).collect()),
-        Json::Object(members) => Value::Object(
-            members
-                .iter()
-                .map(|(key, value)| (key.clone(), json_value(value)))
-                .collect(),
-        ),
-    }
-}
-
-/// Write the tier a provider response or its usage names to `out`, from the
-/// JSON `payload[..payload_len]`: the usage object's `service_tier` (or a
-/// gateway's `_response_service_tier`), Gemini's
-/// `usageMetadata.trafficType`, then the body's `service_tier`.
-/// [`Status::Rejected`] when none names a tier within the grammar.
-///
-/// # Safety
-///
-/// `payload` must point to `payload_len` readable bytes (or `payload_len`
-/// must be 0), and `out` must be null or writable.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_ai_usage_service_tier(
-    payload: *const u8,
-    payload_len: usize,
-    out: *mut Buffer,
-) -> Status {
-    // SAFETY: forwarded from the caller.
-    unsafe {
-        text_call(out, || {
-            catch_unwind(AssertUnwindSafe(|| {
-                let payload = text(payload, payload_len)?;
-                Some(
-                    Json::parse(payload)
-                        .ok()
-                        .and_then(|payload| libdd_ai_usage::service_tier_of(&payload)),
-                )
-            }))
-            .unwrap_or(None)
-        })
-    }
-}
-
-/// Write the `gen_ai.provider.name` of the provider `name[..name_len]` to
-/// `out`, told apart by the host the call reached,
-/// `upstream_host[..upstream_host_len]` (a host or a URL; may be empty):
-/// Google's names are `gcp.gemini` on `generativelanguage.googleapis.com`
-/// and `gcp.vertex_ai` on another Google host. Otherwise as
-/// [`ddog_ai_usage_provider_name`]. [`Status::Rejected`] when no identifier
-/// can be formed.
-///
-/// # Safety
-///
-/// `name` and `upstream_host` must point to their lengths of readable bytes
-/// (or the length must be 0), and `out` must be null or writable.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_ai_usage_provider_name_at(
-    name: *const u8,
-    name_len: usize,
-    upstream_host: *const u8,
-    upstream_host_len: usize,
-    out: *mut Buffer,
-) -> Status {
-    // SAFETY: forwarded from the caller.
-    unsafe {
-        text_call(out, || {
-            catch_unwind(AssertUnwindSafe(|| {
-                let name = text(name, name_len)?;
-                let host = text(upstream_host, upstream_host_len)?;
-                Some(libdd_ai_usage::gen_ai_provider_name_at(name, host))
-            }))
-            .unwrap_or(None)
-        })
-    }
-}
-
-/// Write the coding agent a request came from (`claude-code`, `codex` or
-/// `opencode`, as `trajectory.client_source`) to `out`, from the request
-/// document `input[..input_len]`: `{"user_agents": [...], "originator":
-/// "...", "source": "..."}` (each `User-Agent` header, comma-separated
-/// entries allowed; Codex's `originator` header; the request's own source
-/// label). Bits Code's traffic (`source` starting `code-gen` or `bits-code`)
-/// is not theirs. [`Status::Rejected`] with an empty `out` when none fits.
-///
-/// # Safety
-///
-/// `input` must point to `input_len` readable bytes (or `input_len` must be
-/// 0), and `out` must be null or writable.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_ai_usage_client_source(
-    input: *const u8,
-    input_len: usize,
-    out: *mut Buffer,
-) -> Status {
-    // SAFETY: forwarded from the caller.
-    unsafe {
-        text_call(out, || {
-            catch_unwind(AssertUnwindSafe(|| {
-                let document = Json::parse(text(input, input_len)?).ok()?;
-                let user_agents: Vec<&str> = match document.get("user_agents") {
-                    Some(Json::Array(items)) => items.iter().filter_map(Json::as_str).collect(),
-                    Some(Json::String(one)) => vec![one.as_str()],
-                    _ => Vec::new(),
-                };
-                let field = |key: &str| document.get(key).and_then(Json::as_str).unwrap_or("");
-                Some(
-                    libdd_ai_usage::client_source(
-                        user_agents,
-                        field("originator"),
-                        field("source"),
-                    )
-                    .map(str::to_string),
-                )
-            }))
-            .unwrap_or(None)
-        })
     }
 }
 
@@ -2190,64 +1152,6 @@ pub unsafe extern "C" fn ddog_ai_usage_operation_name(
     }
 }
 
-/// Translate an OpenTelemetry GenAI metric, from the request document
-/// `input[..input_len]` (`{"name": "gen_ai.client.token.usage",
-/// "attributes": {"gen_ai.token.type": "input", ...}}`, in OpenTelemetry or
-/// Prometheus spelling), to the profile metric it stands for, and write
-/// `{"name", "profile", "attributes"}` to `out`: the removed token-usage
-/// histogram becomes the input or output token Counter (its sum is the
-/// value), `gen_ai.system` becomes a canonical `gen_ai.provider.name`, and
-/// `gen_ai.token.type` is dropped. [`Status::Rejected`] with
-/// `value_not_allowed` for a metric no profile defines.
-///
-/// # Safety
-///
-/// `input` must point to `input_len` readable bytes (or `input_len` must be
-/// 0), and `out` must be null or writable.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_ai_usage_translate_otel_metric(
-    input: *const u8,
-    input_len: usize,
-    out: *mut Buffer,
-) -> Status {
-    // SAFETY: forwarded from the caller.
-    unsafe {
-        json_call(out, || {
-            catch_unwind(AssertUnwindSafe(|| {
-                let document = parse_document(bytes(input, input_len))?;
-                let name = document
-                    .get("name")
-                    .and_then(Json::as_str)
-                    .ok_or_else(|| invalid("name must be a string"))?;
-                let attributes = match document.get("attributes") {
-                    None | Some(Json::Null) => Attributes::new(),
-                    Some(Json::Object(members)) => members
-                        .iter()
-                        .map(|(key, value)| match value {
-                            Json::String(text) => Ok((key.clone(), text.clone())),
-                            _ => Err(invalid("attributes must be strings")),
-                        })
-                        .collect::<Result<_, _>>()?,
-                    Some(_) => return Err(invalid("attributes must be an object")),
-                };
-                let translated = libdd_ai_usage::translate_otel_genai_metric(name, &attributes)
-                    .ok_or_else(|| {
-                        Failure::Rejected(MetricError::new(
-                            ErrorCode::ValueNotAllowed,
-                            format!("{name} is not a metric of a profile"),
-                        ))
-                    })?;
-                Ok(json!({
-                    "name": translated.name,
-                    "profile": translated.profile.id(),
-                    "attributes": translated.attributes,
-                }))
-            }))
-            .unwrap_or(Err(Failure::Internal("translating the metric panicked")))
-        })
-    }
-}
-
 /// Write the `error.type` of a call to `out` from how it failed: its HTTP
 /// `status` (0 when there is none), whether it got `no_response` from the
 /// provider, whether it `timed_out`, and its error name `name[..name_len]`
@@ -2294,8 +1198,6 @@ pub unsafe extern "C" fn ddog_ai_usage_error_type_for_failure(
 /// `cache_read_per_million` and `cache_write_per_million` (a negative price
 /// means "as input"), and `output_tokens` (reasoning included). False, with
 /// nothing written, for a price that is not a finite non-negative number.
-/// An observation can instead state `prices_per_million` and get its cost
-/// from its own counts.
 ///
 /// # Safety
 ///
@@ -2602,70 +1504,6 @@ pub unsafe extern "C" fn ddog_ai_usage_provider_ids(
                 Ok(json!(attributes))
             }))
             .unwrap_or(Err(Failure::Internal("reading the ids panicked")))
-        })
-    }
-}
-
-/// Pack DogStatsD lines into datagrams, from the request document
-/// `input[..input_len]`: `{"lines": [...], "constant_tags": [...],
-/// "max_payload": 1432, "max_line_bytes": 8192}` (`constant_tags` optional,
-/// `max_payload` defaults to [`UDP_MAX_PAYLOAD`], `max_line_bytes` to
-/// [`MAX_LINE_BYTES`]). Writes `{"datagrams": [...], "dropped_lines": 0}`. A
-/// line longer than `max_payload` with its tags goes alone in a datagram of
-/// its own; one longer than `max_line_bytes` (or `max_payload`, if larger)
-/// is dropped and counted.
-///
-/// # Safety
-///
-/// `input` must point to `input_len` readable bytes (or `input_len` must be
-/// 0), and `out` must be null or writable.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_ai_usage_pack_dogstatsd(
-    input: *const u8,
-    input_len: usize,
-    out: *mut Buffer,
-) -> Status {
-    // SAFETY: forwarded from the caller.
-    unsafe {
-        json_call(out, || {
-            catch_unwind(AssertUnwindSafe(|| {
-                let document = parse_document(bytes(input, input_len))?;
-                let strings = |key: &str| -> Result<Vec<&str>, Failure> {
-                    match document.get(key) {
-                        None | Some(Json::Null) => Ok(Vec::new()),
-                        Some(Json::Array(items)) => items
-                            .iter()
-                            .map(|item| {
-                                item.as_str()
-                                    .ok_or_else(|| invalid(format!("{key} must be strings")))
-                            })
-                            .collect(),
-                        Some(_) => Err(invalid(format!("{key} must be an array"))),
-                    }
-                };
-                let size = |key: &str, default: usize| -> Result<usize, Failure> {
-                    match document.get(key) {
-                        None | Some(Json::Null) => Ok(default),
-                        Some(value) => value
-                            .as_f64()
-                            .filter(|n| n.is_finite() && *n >= 1.0 && n.fract() == 0.0)
-                            // Whole and at least 1; a larger value than usize
-                            // holds saturates, which no datagram reaches.
-                            .map(|n| n as usize)
-                            .ok_or_else(|| invalid(format!("{key} must be a positive integer"))),
-                    }
-                };
-                let max_payload = size("max_payload", UDP_MAX_PAYLOAD)?;
-                let max_line = size("max_line_bytes", MAX_LINE_BYTES)?;
-                let (datagrams, dropped) = pack_dogstatsd_limited(
-                    &strings("lines")?,
-                    &strings("constant_tags")?,
-                    max_payload,
-                    max_line,
-                );
-                Ok(json!({"datagrams": datagrams, "dropped_lines": dropped}))
-            }))
-            .unwrap_or(Err(Failure::Internal("packing panicked")))
         })
     }
 }

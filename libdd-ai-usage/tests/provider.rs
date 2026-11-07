@@ -485,7 +485,6 @@ fn error_types() {
         ("Timeout", Some("timeout_error")),
         ("APIConnectionError", Some("api_connection_error")),
         ("CancelledError", Some("cancelled")),
-        ("ClientDisconnected", Some("cancelled")),
         ("ReadError", Some("api_connection_error")),
         ("ConnectError", Some("api_connection_error")),
         ("RemoteProtocolError", Some("api_connection_error")),
@@ -687,14 +686,17 @@ fn dogstatsd_packing() {
         datagrams,
         vec![line.to_string(), long.clone(), format!("{line}\n{line}")]
     );
-    // Only a line longer than that is dropped, and counted.
+    // Only a line longer than 8192 bytes is dropped, and counted; the
+    // constant tags count toward its length.
+    let edge = format!("m:1|c|#a:{}", "x".repeat(8192 - 9));
+    assert_eq!(edge.len(), 8192);
     let (datagrams, dropped) =
-        libdd_ai_usage::pack_dogstatsd_limited(&[line, long.as_str(), line], &[""; 0], 32, 40);
-    assert_eq!((datagrams, dropped), (vec![format!("{line}\n{line}")], 1));
-    // The constant tags count toward the length.
+        libdd_ai_usage::pack_dogstatsd_counted(&[line, edge.as_str(), line], &[""; 0], 32);
+    assert_eq!((datagrams.len(), dropped), (3, 0));
     let (datagrams, dropped) =
-        libdd_ai_usage::pack_dogstatsd_limited(&[line], &["env:prod"], 15, 15);
-    assert_eq!((datagrams.len(), dropped), (0, 1));
+        libdd_ai_usage::pack_dogstatsd_counted(&[line, edge.as_str(), line], &["env:prod"], 32);
+    let tagged = format!("{line},env:prod");
+    assert_eq!((datagrams, dropped), (vec![tagged.clone(), tagged], 1));
     assert!(pack_dogstatsd(&[""; 0], &[""; 0], 1432).is_empty());
 
     // Over UDP, a line with many tags passes 1432 bytes and is still sent,
@@ -780,4 +782,91 @@ fn content_chunks_are_skipped_without_losing_what_they_carry() {
     stream.feed(b"data: {\"usage\": {\"prompt_tokens\": 2, \"completion_tokens\": 1}}");
     assert_eq!(stream.report().0.usage.unwrap().input_tokens, Some(2));
     assert_eq!(stream.response().usage, None);
+}
+
+#[test]
+fn served_models_google_errors_names_and_vertex_projects() {
+    use libdd_ai_usage::{RESPONSE_MODEL_DROPPED, error_type_for_name, vertex_project_id};
+    // A served model outside the grammar is not kept, and says so.
+    let payload =
+        Json::parse(r#"{"model": "free text model", "usage": {"prompt_tokens": 1}}"#).unwrap();
+    let response = parse_provider_response(UsageFormat::OpenAiChat, &payload, false);
+    assert_eq!(response.response_model, None);
+    assert_eq!(response.issues, vec![RESPONSE_MODEL_DROPPED]);
+
+    // Google's array-wrapped error envelope, typed by its `status`.
+    for (status, expected) in [
+        ("RESOURCE_EXHAUSTED", "rate_limit_error"),
+        ("CANCELLED", "cancelled"),
+        ("DEADLINE_EXCEEDED", "timeout_error"),
+        ("UNAUTHENTICATED", "authentication_error"),
+    ] {
+        let body =
+            format!(r#"[{{"error": {{"code": 499, "message": "m", "status": "{status}"}}}}]"#);
+        let (_, outcome, name) = parse_provider_body(UsageFormat::Gemini, body.as_bytes(), false);
+        assert_eq!(outcome, StreamOutcome::Failed);
+        assert_eq!(
+            classify_error(name.as_deref(), None),
+            Some(expected),
+            "{status}"
+        );
+    }
+
+    // Vertex AI's served tier.
+    let payload = Json::parse(
+        r#"{"usageMetadata": {"promptTokenCount": 3, "candidatesTokenCount": 1,
+            "trafficType": "ON_DEMAND"}}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        parse_provider_response(UsageFormat::Gemini, &payload, false)
+            .service_tier
+            .as_deref(),
+        Some("ON_DEMAND")
+    );
+
+    // OpenAI image output tokens are their own modality part, within the
+    // output total.
+    let payload = Json::parse(
+        r#"{"usage": {"input_tokens": 50, "output_tokens": 4160,
+            "output_tokens_details": {"image_tokens": 4160}}}"#,
+    )
+    .unwrap();
+    let usage = parse_provider_response(UsageFormat::OpenAiResponses, &payload, false)
+        .usage
+        .unwrap();
+    assert_eq!(
+        usage
+            .output_tokens_by_modality
+            .unwrap()
+            .get("image")
+            .copied(),
+        Some(4160)
+    );
+
+    // Error names in any case.
+    assert_eq!(
+        error_type_for_name("RATE_LIMIT_ERROR"),
+        Some("rate_limit_error")
+    );
+    assert_eq!(
+        error_type_for_name("ratelimiterror"),
+        Some("rate_limit_error")
+    );
+
+    // The Vertex AI project an upstream URL bills.
+    assert_eq!(
+        vertex_project_id(
+            "https://us-east5-aiplatform.googleapis.com/v1/projects/my-proj/locations/us-east5/publishers/anthropic/models/claude:rawPredict"
+        ),
+        Some("my-proj")
+    );
+    assert_eq!(
+        vertex_project_id("https://api.openai.com/v1/projects/x"),
+        None
+    );
+    assert_eq!(
+        vertex_project_id("https://aiplatform.googleapis.com/v1/models"),
+        None
+    );
 }

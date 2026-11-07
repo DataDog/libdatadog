@@ -30,12 +30,10 @@ use crate::usage::ReportedUsage;
 /// Provider names that differ from their OpenTelemetry well-known
 /// `gen_ai.provider.name`, as gateways and SDKs spell them: LiteLLM, Kong,
 /// Envoy AI Gateway, Cloudflare AI Gateway, Databricks and the Vercel AI SDK.
-const PROVIDER_ALIASES: [(&str, &str); 36] = [
+const PROVIDER_ALIASES: [(&str, &str); 35] = [
     ("amazon-bedrock", "aws.bedrock"),
     ("amazon_bedrock", "aws.bedrock"),
     ("anthropic_text", "anthropic"),
-    // Anthropic's API sold through AWS Marketplace: billed by Anthropic.
-    ("aws-anthropic", "anthropic"),
     ("aws-bedrock", "aws.bedrock"),
     ("aws_bedrock", "aws.bedrock"),
     ("azure", "azure.ai.openai"),
@@ -88,11 +86,6 @@ pub fn gen_ai_provider_name(name: &str) -> Option<String> {
     if let Ok(at) = PROVIDER_ALIASES.binary_search_by_key(&lowered.as_str(), |(alias, _)| alias) {
         return Some(PROVIDER_ALIASES[at].1.to_string());
     }
-    // A gateway's Bedrock deployments by model family (`bedrock-anthropic`,
-    // `bedrock-openai`) are all Bedrock.
-    if lowered.starts_with("bedrock-") || lowered.starts_with("bedrock_") {
-        return Some("aws.bedrock".to_string());
-    }
     let identifier: String = lowered
         .chars()
         .map(|c| {
@@ -104,46 +97,6 @@ pub fn gen_ai_provider_name(name: &str) -> Option<String> {
         })
         .collect();
     is_identifier(&identifier).then_some(identifier)
-}
-
-/// The host of a URL (or of a bare host), lower-cased, without user info or
-/// port.
-fn url_host(url: &str) -> String {
-    let rest = url
-        .trim()
-        .split_once("://")
-        .map_or(url.trim(), |(_, rest)| rest);
-    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
-    let host = authority
-        .rsplit_once('@')
-        .map_or(authority, |(_, host)| host);
-    host.split(':').next().unwrap_or(host).to_ascii_lowercase()
-}
-
-/// The `gen_ai.provider.name` of a provider as [`gen_ai_provider_name`]
-/// reads it, told apart by the host the call reached: Google's names
-/// (`gemini`, `google`, `vertex`, `vertex_ai`, ...) are `gcp.gemini` on
-/// `generativelanguage.googleapis.com` (the Gemini API, AI Studio) and
-/// `gcp.vertex_ai` on any other Google host (`*aiplatform.googleapis.com`),
-/// as they are priced apart. Without a host they are as
-/// [`gen_ai_provider_name`] maps them.
-pub fn gen_ai_provider_name_at(name: &str, upstream_host: &str) -> Option<String> {
-    let canonical = gen_ai_provider_name(name)?;
-    let google = matches!(canonical.as_str(), "gcp.gemini" | "gcp.vertex_ai")
-        || name.trim().eq_ignore_ascii_case("google");
-    let host = url_host(upstream_host);
-    if !google || host.is_empty() {
-        return Some(canonical);
-    }
-    if host == "generativelanguage.googleapis.com"
-        || host.ends_with(".generativelanguage.googleapis.com")
-    {
-        Some("gcp.gemini".to_string())
-    } else if host.ends_with("googleapis.com") {
-        Some("gcp.vertex_ai".to_string())
-    } else {
-        Some(canonical)
-    }
 }
 
 /// The Google Cloud project a Vertex AI URL bills, from its path
@@ -159,70 +112,6 @@ pub fn vertex_project_id(url: &str) -> Option<&str> {
     let project = path.split_once("projects/")?.1;
     let project = project.split(['/', '?', '#']).next()?;
     billing_id(project)
-}
-
-/// The tier a response or its usage names, as gateways read it: the usage
-/// object's `service_tier` (or a gateway's own `_response_service_tier`),
-/// Gemini's `usageMetadata.trafficType`, then the body's own
-/// `service_tier` (also under `response`). `None` when none names a tier
-/// within the grammar.
-pub fn service_tier_of(payload: &Json) -> Option<String> {
-    let usage = usage_object(payload);
-    let gemini = gemini_usage_object(payload);
-    [
-        member(usage, "_response_service_tier"),
-        member(usage, "service_tier"),
-        member(gemini, "trafficType"),
-        member(usage, "trafficType"),
-        member(Some(payload), "service_tier"),
-        member(member(Some(payload), "response"), "service_tier"),
-    ]
-    .into_iter()
-    .find_map(text)
-    .filter(|tier| is_service_tier(tier))
-}
-
-/// The coding agent a request came from, as `trajectory.client_source`:
-/// `claude-code` for Claude Code's user agent (`claude-cli/`,
-/// `claude-code/`), `codex` for Codex's (`codex...` as user agent or
-/// `originator`, or its Agent Client Protocol adapter
-/// `@agentclientprotocol/codex-acp/`), `opencode` for `opencode/`. Each
-/// `User-Agent` header may hold several comma-separated entries (proxies
-/// prepend their own); any of them counts. `source` is the request's own
-/// source label: Bits Code (`code-gen...`, `bits-code...`) runs these agents
-/// in its sandboxes, and its traffic is not theirs, so it is `None`.
-pub fn client_source<'a>(
-    user_agents: impl IntoIterator<Item = &'a str>,
-    originator: &str,
-    source: &str,
-) -> Option<&'static str> {
-    let source = source.trim().to_ascii_lowercase();
-    if source.starts_with("code-gen") || source.starts_with("bits-code") {
-        return None;
-    }
-    let entries: Vec<String> = user_agents
-        .into_iter()
-        .flat_map(|header| header.split(','))
-        .map(|entry| entry.trim().to_ascii_lowercase())
-        .collect();
-    let any = |prefixes: &[&str]| {
-        entries
-            .iter()
-            .any(|entry| prefixes.iter().any(|p| entry.starts_with(p)))
-    };
-    let codex = ["codex", "@agentclientprotocol/codex-acp/"];
-    if any(&["claude-cli/", "claude-code/"]) {
-        Some("claude-code")
-    } else if any(&codex) || {
-        let originator = originator.trim().to_ascii_lowercase();
-        codex.iter().any(|p| originator.starts_with(p))
-    } {
-        Some("codex")
-    } else if any(&["opencode/"]) {
-        Some("opencode")
-    } else {
-        None
-    }
 }
 
 /// Whether `value` is a service tier an observation can carry: the
@@ -276,29 +165,6 @@ impl UsageFormat {
 
     pub fn from_name(name: &str) -> Option<UsageFormat> {
         UsageFormat::ALL.into_iter().find(|f| f.as_str() == name)
-    }
-
-    /// The format of a deployment's responses from its base URL and its
-    /// `gen_ai.provider.name`: Google's OpenAI-compatible Gemini endpoint
-    /// (a base URL on `generativelanguage.googleapis.com` reached through an
-    /// OpenAI-shaped deployment) is [`UsageFormat::GeminiOpenAiCompat`],
-    /// whose completion leaves thinking out. Anything else is
-    /// [`UsageFormat::Auto`], which tells the others apart by their usage.
-    pub fn for_base_url(base_url: &str, provider_name: &str) -> UsageFormat {
-        let openai_shaped = provider_name.is_empty() || provider_name == "openai";
-        let host = base_url
-            .split_once("://")
-            .map_or(base_url, |(_, rest)| rest)
-            .split(['/', '?', '#'])
-            .next()
-            .unwrap_or("");
-        let host = host.rsplit_once('@').map_or(host, |(_, host)| host);
-        let host = host.split(':').next().unwrap_or(host);
-        if openai_shaped && host.eq_ignore_ascii_case("generativelanguage.googleapis.com") {
-            UsageFormat::GeminiOpenAiCompat
-        } else {
-            UsageFormat::Auto
-        }
     }
 }
 
@@ -458,32 +324,6 @@ impl ProviderUsage {
             output_tokens_by_modality: parts(&self.output_tokens_by_modality),
             ..ReportedUsage::default()
         }
-    }
-
-    /// The usage with inclusive totals: cache reads and writes added to an
-    /// input that excludes them, reasoning added to an output that excludes
-    /// it, and both bases then inclusive. For a caller that prices or
-    /// displays totals itself; an observation takes either form.
-    pub fn inclusive(&self) -> ProviderUsage {
-        let mut usage = self.clone();
-        if usage.input_basis == Some(EXCLUDES_CACHE)
-            && let Some(input) = usage.input_tokens
-        {
-            usage.input_tokens = Some(
-                input
-                    .saturating_add(usage.cache_read_input_tokens.unwrap_or(0))
-                    .saturating_add(usage.cache_write_input_tokens.unwrap_or(0)),
-            );
-            usage.input_basis = Some(INCLUDES_CACHE);
-        }
-        if usage.output_basis == Some(EXCLUDES_REASONING)
-            && let Some(output) = usage.output_tokens
-        {
-            usage.output_tokens =
-                Some(output.saturating_add(usage.reasoning_output_tokens.unwrap_or(0)));
-            usage.output_basis = Some(INCLUDES_REASONING);
-        }
-        usage
     }
 
     /// Set the usage members of a provider attempt observation, keeping its
@@ -1800,7 +1640,7 @@ pub const PROVIDER_ID_HEADERS: [(&str, &str, &str); 3] = [
 /// Leading and trailing whitespace is trimmed on purpose: it is not part of
 /// an HTTP field value (RFC 9110, section 5.5), and a proxy or client that
 /// leaves it in would otherwise split one account into several series.
-pub fn billing_id(value: &str) -> Option<&str> {
+fn billing_id(value: &str) -> Option<&str> {
     let value = value.trim();
     (!value.is_empty() && value.len() <= MAX_ID_LENGTH).then_some(value)
 }

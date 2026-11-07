@@ -32,15 +32,6 @@
 #define ddog_ai_usage_MAX_LINE_BYTES 8192
 
 /**
- * An option of [`ddog_ai_usage_parse_provider_response_with`] and
- * [`ddog_ai_usage_stream_new_with`]: report usage with inclusive totals,
- * cache reads and writes added to an input that excludes them and
- * reasoning added to an output that excludes it, both bases then
- * `includes_*`.
- */
-#define ddog_ai_usage_INCLUSIVE_TOTALS 1
-
-/**
  * How a provider stream ended so far, as [`ddog_ai_usage_stream_outcome`]
  * reports it.
  */
@@ -130,54 +121,6 @@ enum ddog_ai_usage_Status ddog_ai_usage_project(const uint8_t *input,
                                                 struct ddog_ai_usage_Buffer *out);
 
 /**
- * Project the request document `input[..input_len]`, as
- * [`ddog_ai_usage_project`] reads it, and write its DogStatsD lines to
- * `out` as text: one line per series, separated by `\n`, without a trailing
- * newline. The lines are this observation's alone (never merged with
- * another's) and in a fixed order (by name, then tags). Pack them with
- * [`ddog_ai_usage_pack_dogstatsd_lines`]. No JSON is built for the output,
- * so a caller that sends each observation as it ends parses nothing. The
- * issues of the projection are not reported; use [`ddog_ai_usage_project`]
- * for them. A rejected document writes `{"error": {"code", "message"}}`, as
- * [`ddog_ai_usage_project`] does.
- *
- * # Safety
- *
- * `input` must point to `input_len` readable bytes (or `input_len` must be
- * 0), and `out` must be null or writable.
- */
-enum ddog_ai_usage_Status ddog_ai_usage_dogstatsd_lines(const uint8_t *input,
-                                                        uintptr_t input_len,
-                                                        struct ddog_ai_usage_Buffer *out);
-
-/**
- * Pack the DogStatsD lines `lines[..lines_len]` (separated by `\n`; a `\r`
- * before it and empty lines are dropped) into datagrams of at most
- * `max_payload` bytes, with the comma-separated `constant_tags` appended to
- * each line, and write them to `out` as text: each datagram's lines joined
- * by `\n`, datagrams separated by a NUL byte, no trailing NUL. Neither the
- * input nor the output is JSON. A line longer than `max_payload` with its
- * tags (one with many tags can pass [`UDP_MAX_PAYLOAD`]) is sent alone in a
- * datagram of its own; only a line longer than [`MAX_LINE_BYTES`] (or
- * `max_payload`, if larger) is dropped, as the Agent would refuse it, and
- * the number dropped is written to `dropped_lines` when it is not null.
- * [`Status::Rejected`] for a `max_payload` of 0.
- *
- * # Safety
- *
- * `lines` and `constant_tags` must point to their lengths of readable bytes
- * (or the length must be 0), `dropped_lines` must be null or writable, and
- * `out` must be null or writable.
- */
-enum ddog_ai_usage_Status ddog_ai_usage_pack_dogstatsd_lines(const uint8_t *lines,
-                                                             uintptr_t lines_len,
-                                                             const uint8_t *constant_tags,
-                                                             uintptr_t constant_tags_len,
-                                                             uintptr_t max_payload,
-                                                             uintptr_t *dropped_lines,
-                                                             struct ddog_ai_usage_Buffer *out);
-
-/**
  * Create an empty [`Batch`] and write it to `out`. Release it with
  * [`ddog_ai_usage_batch_drop`].
  *
@@ -188,56 +131,17 @@ enum ddog_ai_usage_Status ddog_ai_usage_pack_dogstatsd_lines(const uint8_t *line
 enum ddog_ai_usage_Status ddog_ai_usage_batch_new(struct ddog_ai_usage_Batch **out);
 
 /**
- * Project the request document `input[..input_len]`, as
- * [`ddog_ai_usage_project`] reads it, and add its points to `batch`. Writes
- * `{"issues": [...], "dropped": false, "full": false}` to `out` (`full`
- * when the batch reached its high-water mark, see
- * [`ddog_ai_usage_batch_set_high_water`]). A rejected document adds
- * nothing. `dropped` is true when a bounded batch (see
- * [`ddog_ai_usage_batch_set_max_len`]) had no room for the observation,
- * which then adds nothing and is counted by [`ddog_ai_usage_batch_dropped`];
- * the status is still [`Status::Ok`].
- *
- * # Safety
- *
- * `batch` must be a live batch from [`ddog_ai_usage_batch_new`], `input`
- * must point to `input_len` readable bytes (or `input_len` must be 0), and
- * `out` must be null or writable.
- */
-enum ddog_ai_usage_Status ddog_ai_usage_batch_add(const struct ddog_ai_usage_Batch *batch,
-                                                  const uint8_t *input,
-                                                  uintptr_t input_len,
-                                                  struct ddog_ai_usage_Buffer *out);
-
-/**
- * [`ddog_ai_usage_batch_add`] without its output: nothing is written on
- * success, so a gateway that does not read the issues builds no JSON. A
- * rejected document writes `{"error": {"code", "message"}}` to `out` when
- * `out` is not null. Whether a bounded batch dropped the observation is
- * counted by [`ddog_ai_usage_batch_dropped`].
- *
- * # Safety
- *
- * As [`ddog_ai_usage_batch_add`]; `out` may be null.
- */
-enum ddog_ai_usage_Status ddog_ai_usage_batch_add_quiet(const struct ddog_ai_usage_Batch *batch,
-                                                        const uint8_t *input,
-                                                        uintptr_t input_len,
-                                                        struct ddog_ai_usage_Buffer *out);
-
-/**
  * Add every observation of one request to `batch` together: `input[..input_len]`
- * is a JSON array of request documents, each as [`ddog_ai_usage_batch_add`]
- * reads it (its provider attempts, token breakdowns and gateway request).
+ * is a JSON array of request documents, each `{"profile", "observation",
+ * "deployment_attributes", "metrics"}` as [`ddog_ai_usage_project`] reads
+ * it (its provider attempts, token breakdowns and gateway request).
  * Either all are added or none: a bounded batch without room for all of
  * them drops them all, so it never keeps an attempt without its breakdown,
  * and counts each in [`ddog_ai_usage_batch_dropped`]. A rejected document
  * rejects the request, adds nothing, and writes `{"error": {"code",
  * "message"}}` whose message names the document's index. On success writes
- * `{"issues": [[...], ...], "dropped": false, "full": false}` (one issue
- * list per document; `full` when the batch reached its high-water mark, see
- * [`ddog_ai_usage_batch_set_high_water`]) to `out`, or nothing when `out` is
- * null.
+ * `{"issues": [[...], ...], "dropped": false}` (one issue list per
+ * document) to `out`, or nothing when `out` is null.
  *
  * # Safety
  *
@@ -256,9 +160,8 @@ enum ddog_ai_usage_Status ddog_ai_usage_batch_add_request(const struct ddog_ai_u
  * document stating none. Parsed once here rather than in every document.
  *
  * **An empty list `[]` keeps no metric**, as `"metrics": []` in a document
- * does: every observation added then projects to nothing. To keep every
- * metric again, call [`ddog_ai_usage_batch_reset_metrics`] (or pass `null`
- * or zero-length input, which do the same).
+ * does: every observation added then projects to nothing. `null` or
+ * zero-length input keeps every metric again.
  *
  * # Safety
  *
@@ -270,36 +173,6 @@ enum ddog_ai_usage_Status ddog_ai_usage_batch_set_metrics(const struct ddog_ai_u
                                                           const uint8_t *input,
                                                           uintptr_t input_len,
                                                           struct ddog_ai_usage_Buffer *out);
-
-/**
- * Clear the metric list of `batch`, so it keeps every metric of a document
- * stating none, as a new batch does. A null batch is a no-op.
- *
- * # Safety
- *
- * `batch` must be null or a live batch from [`ddog_ai_usage_batch_new`].
- */
-void ddog_ai_usage_batch_reset_metrics(const struct ddog_ai_usage_Batch *batch);
-
-/**
- * Set the deployment attributes `input[..input_len]` (a JSON object, as a
- * request document's `deployment_attributes` states it) that `batch`
- * applies to every document, such as a gateway's fixed `service`, `env`
- * and `version`. A document's own `deployment_attributes` are merged on
- * top: an attribute it states replaces the batch's, `null` for an
- * attribute removes the batch's, and the others are kept, so a document
- * states only what differs (a per-request `user.id`). Checked once here: an unknown attribute
- * is [`Status::Rejected`] with `deployment_attribute_unknown`, and the
- * setting is left as it was. `null` or empty input clears them.
- *
- * # Safety
- *
- * As [`ddog_ai_usage_batch_set_metrics`].
- */
-enum ddog_ai_usage_Status ddog_ai_usage_batch_set_deployment_attributes(const struct ddog_ai_usage_Batch *batch,
-                                                                        const uint8_t *input,
-                                                                        uintptr_t input_len,
-                                                                        struct ddog_ai_usage_Buffer *out);
 
 /**
  * Whether `batch` holds no points. A null batch is empty.
@@ -325,39 +198,22 @@ uintptr_t ddog_ai_usage_batch_len(const struct ddog_ai_usage_Batch *batch);
 
 /**
  * Take every point of `batch`, leaving it empty, and write it as DogStatsD
- * datagrams: `{"datagrams": ["line\nline", ...], "dropped_lines": 0}`. Each
- * datagram is at most `max_payload` bytes ([`UDP_MAX_PAYLOAD`] or
- * [`UDS_MAX_PAYLOAD`]); a line longer than that with its tags goes alone in
- * a datagram of its own, and only one longer than [`MAX_LINE_BYTES`] (or
- * `max_payload`, if larger) is dropped and counted in `dropped_lines`.
- * `constant_tags` is a comma-separated list of
- * `key:value` tags added to every line, such as the client's `env`; it may
- * be empty.
+ * datagrams of at most `max_payload` bytes ([`UDP_MAX_PAYLOAD`] or
+ * [`UDS_MAX_PAYLOAD`]), as text: each datagram's lines joined by `\n`,
+ * datagrams separated by a NUL byte, no trailing NUL. `constant_tags` is a
+ * comma-separated list of `key:value` tags added to every line, such as the
+ * client's `env`; it may be empty. A line longer than `max_payload` with
+ * its tags goes alone in a datagram of its own; only one longer than
+ * [`MAX_LINE_BYTES`] (or `max_payload`, if larger) is dropped, and the
+ * number dropped is written to `dropped_lines` when it is not null. An empty
+ * batch writes an empty buffer.
  *
  * # Safety
  *
  * `batch` must be a live batch from [`ddog_ai_usage_batch_new`],
  * `constant_tags` must point to `constant_tags_len` readable bytes (or
- * `constant_tags_len` must be 0), and `out` must be null or writable.
- */
-enum ddog_ai_usage_Status ddog_ai_usage_batch_take_dogstatsd(const struct ddog_ai_usage_Batch *batch,
-                                                             const uint8_t *constant_tags,
-                                                             uintptr_t constant_tags_len,
-                                                             uintptr_t max_payload,
-                                                             struct ddog_ai_usage_Buffer *out);
-
-/**
- * [`ddog_ai_usage_batch_take_dogstatsd`], writing the datagrams as text
- * rather than JSON: each datagram's lines joined by `\n`, datagrams
- * separated by a NUL byte, no trailing NUL. An empty batch writes an empty
- * buffer. The number of lines dropped for being longer than
- * [`MAX_LINE_BYTES`] (or `max_payload`, if larger) is written to
- * `dropped_lines` when it is not null.
- *
- * # Safety
- *
- * As [`ddog_ai_usage_batch_take_dogstatsd`]; `dropped_lines` must be null or
- * writable.
+ * `constant_tags_len` must be 0), `dropped_lines` must be null or writable,
+ * and `out` must be null or writable.
  */
 enum ddog_ai_usage_Status ddog_ai_usage_batch_take_dogstatsd_text(const struct ddog_ai_usage_Batch *batch,
                                                                   const uint8_t *constant_tags,
@@ -389,160 +245,6 @@ void ddog_ai_usage_batch_set_max_len(const struct ddog_ai_usage_Batch *batch, ui
  * `batch` must be null or a live batch from [`ddog_ai_usage_batch_new`].
  */
 uint64_t ddog_ai_usage_batch_dropped(const struct ddog_ai_usage_Batch *batch);
-
-/**
- * The observations `batch` dropped since the last call (since it was
- * created, for the first), so a caller reports drops per flush without a
- * count of its own. A null batch dropped none.
- *
- * # Safety
- *
- * `batch` must be null or a live batch from [`ddog_ai_usage_batch_new`].
- */
-uint64_t ddog_ai_usage_batch_take_dropped(const struct ddog_ai_usage_Batch *batch);
-
-/**
- * Ask for `batch` to be sent early once it holds `high_water` points (as
- * [`ddog_ai_usage_batch_len`] counts them), or never with 0. Adds then
- * report `"full": true`, and [`ddog_ai_usage_batch_is_full`] says so, so a
- * gateway sends at once instead of waiting for its timer. Nothing is
- * dropped for it; [`ddog_ai_usage_batch_set_max_len`] bounds the batch. A
- * null batch is a no-op.
- *
- * # Safety
- *
- * `batch` must be null or a live batch from [`ddog_ai_usage_batch_new`].
- */
-void ddog_ai_usage_batch_set_high_water(const struct ddog_ai_usage_Batch *batch,
-                                        uintptr_t high_water);
-
-/**
- * Whether `batch` holds at least its high-water mark of points (see
- * [`ddog_ai_usage_batch_set_high_water`]). A null batch is not full.
- *
- * # Safety
- *
- * `batch` must be null or a live batch from [`ddog_ai_usage_batch_new`].
- */
-bool ddog_ai_usage_batch_is_full(const struct ddog_ai_usage_Batch *batch);
-
-/**
- * Write `value[..value_len]` to `out` as an account, project or key id is
- * kept (trimmed; non-blank, at most 128 bytes), so ids an operator
- * configures are checked as the provider's headers are.
- * [`Status::Rejected`] for one that is not kept.
- *
- * # Safety
- *
- * `value` must point to `value_len` readable bytes (or `value_len` must be
- * 0), and `out` must be null or writable.
- */
-enum ddog_ai_usage_Status ddog_ai_usage_billing_id(const uint8_t *value,
-                                                   uintptr_t value_len,
-                                                   struct ddog_ai_usage_Buffer *out);
-
-/**
- * Write the `error.type` of a call known to have failed to `out`: as
- * [`ddog_ai_usage_error_type`], and `api_error` when neither its name
- * `name[..name_len]` nor its HTTP `status` (0 for none) says why. Never
- * [`Status::Rejected`].
- *
- * # Safety
- *
- * `name` must point to `name_len` readable bytes (or `name_len` must be 0),
- * and `out` must be null or writable.
- */
-enum ddog_ai_usage_Status ddog_ai_usage_error_type_failed(const uint8_t *name,
-                                                          uintptr_t name_len,
-                                                          uint16_t status,
-                                                          struct ddog_ai_usage_Buffer *out);
-
-/**
- * Write the usage format of a deployment's responses to `out`, from its
- * base URL `base_url[..base_url_len]` and its `gen_ai.provider.name`
- * `provider_name[..provider_name_len]` (may be empty):
- * `gemini_openai_compat` for Google's OpenAI-compatible Gemini endpoint
- * (`generativelanguage.googleapis.com` reached as `openai`), else `auto`.
- *
- * # Safety
- *
- * `base_url` and `provider_name` must point to their lengths of readable
- * bytes (or the length must be 0), and `out` must be null or writable.
- */
-enum ddog_ai_usage_Status ddog_ai_usage_usage_format_for_base_url(const uint8_t *base_url,
-                                                                  uintptr_t base_url_len,
-                                                                  const uint8_t *provider_name,
-                                                                  uintptr_t provider_name_len,
-                                                                  struct ddog_ai_usage_Buffer *out);
-
-/**
- * Re-split a DogStatsD datagram the socket refused as too long
- * (`EMSGSIZE`), `datagram[..datagram_len]`, into datagrams of at most
- * `max_payload` bytes, written to `out` as text: lines joined by `\n`,
- * datagrams separated by a NUL byte. Lines are kept whole; one longer than
- * `max_payload` cannot be sent on that socket and is dropped, and the
- * number dropped is written to `dropped_lines` when it is not null.
- * [`Status::Rejected`] for a `max_payload` of 0.
- *
- * # Safety
- *
- * `datagram` must point to `datagram_len` readable bytes (or the length
- * must be 0), `dropped_lines` must be null or writable, and `out` must be
- * null or writable.
- */
-enum ddog_ai_usage_Status ddog_ai_usage_repack_dogstatsd(const uint8_t *datagram,
-                                                         uintptr_t datagram_len,
-                                                         uintptr_t max_payload,
-                                                         uintptr_t *dropped_lines,
-                                                         struct ddog_ai_usage_Buffer *out);
-
-/**
- * Read an OTLP `ExportMetricsServiceResponse` body `body[..body_len]`
- * (protobuf, or its JSON form): when it states a partial success, write the
- * rejected data points to `rejected_points` (when not null) and the
- * endpoint's message, cut to 256 bytes, to `out` as text, and return
- * [`Status::Ok`]. [`Status::Rejected`] with an empty `out` for a full
- * success or a body that is neither.
- *
- * # Safety
- *
- * `body` must point to `body_len` readable bytes (or `body_len` must be 0),
- * `rejected_points` must be null or writable, and `out` must be null or
- * writable.
- */
-enum ddog_ai_usage_Status ddog_ai_usage_otlp_partial_success(const uint8_t *body,
-                                                             uintptr_t body_len,
-                                                             uint64_t *rejected_points,
-                                                             struct ddog_ai_usage_Buffer *out);
-
-/**
- * Take every point of `batch`, leaving it empty, and write it as OTLP
- * `ExportMetricsServiceRequest`s of at most `max_bytes` each (0 for one
- * request) to `out`: each request preceded by its length as 4
- * little-endian bytes. The instrumentation scope is
- * `scope_name[..scope_name_len]` at `scope_version[..scope_version_len]`,
- * the delta window runs from `start_time_unix_nano` to `time_unix_nano`,
- * and `datadog` selects the Datadog binding (cost in USD, versioned values
- * with `/`). Points are split by series, and one series is never split, so
- * a request exceeds `max_bytes` only when one series alone does. A batch
- * that fits is one request; an empty batch writes an empty buffer.
- *
- * # Safety
- *
- * `batch` must be a live batch from [`ddog_ai_usage_batch_new`], the scope
- * strings must point to their lengths of readable bytes (or the length must
- * be 0), and `out` must be null or writable.
- */
-enum ddog_ai_usage_Status ddog_ai_usage_batch_take_otlp_parts(const struct ddog_ai_usage_Batch *batch,
-                                                              const uint8_t *scope_name,
-                                                              uintptr_t scope_name_len,
-                                                              const uint8_t *scope_version,
-                                                              uintptr_t scope_version_len,
-                                                              uint64_t start_time_unix_nano,
-                                                              uint64_t time_unix_nano,
-                                                              bool datadog,
-                                                              uintptr_t max_bytes,
-                                                              struct ddog_ai_usage_Buffer *out);
 
 /**
  * Tag every series [`ddog_ai_usage_batch_take_series`] takes from `batch`
@@ -634,57 +336,6 @@ enum ddog_ai_usage_Status ddog_ai_usage_parse_provider_response(const uint8_t *f
                                                                 struct ddog_ai_usage_Buffer *out);
 
 /**
- * [`ddog_ai_usage_parse_provider_response`] with `options`, a bit set:
- * [`INCLUSIVE_TOTALS`] reports usage with inclusive totals. Unknown bits
- * are [`Status::Rejected`].
- *
- * # Safety
- *
- * As [`ddog_ai_usage_parse_provider_response`].
- */
-enum ddog_ai_usage_Status ddog_ai_usage_parse_provider_response_with(const uint8_t *format,
-                                                                     uintptr_t format_len,
-                                                                     bool embeddings,
-                                                                     uint32_t options,
-                                                                     const uint8_t *body,
-                                                                     uintptr_t body_len,
-                                                                     struct ddog_ai_usage_Buffer *out);
-
-/**
- * [`ddog_ai_usage_stream_new`] with `options`, as
- * [`ddog_ai_usage_parse_provider_response_with`] reads them: with
- * [`INCLUSIVE_TOTALS`], `_finish` and `_take` report inclusive totals.
- *
- * # Safety
- *
- * As [`ddog_ai_usage_stream_new`].
- */
-enum ddog_ai_usage_Status ddog_ai_usage_stream_new_with(const uint8_t *format,
-                                                        uintptr_t format_len,
-                                                        bool embeddings,
-                                                        uint32_t options,
-                                                        struct ddog_ai_usage_Stream **out);
-
-/**
- * Write the `error.type` of a provider attempt that ended with the gateway
- * outcome `outcome[..outcome_len]` and the provider's HTTP `status` (0 for
- * none) to `out`: `provider_http_error` and the subscription refusals by
- * status, `timeout` as `timeout_error`, `unavailable`, `stream_read_error`,
- * `early_close` and `incomplete_stream` as `api_connection_error`,
- * `canceled` as `cancelled`, and any other outcome by its name and status
- * (`api_error` when neither says why). Never [`Status::Rejected`].
- *
- * # Safety
- *
- * `outcome` must point to `outcome_len` readable bytes (or `outcome_len`
- * must be 0), and `out` must be null or writable.
- */
-enum ddog_ai_usage_Status ddog_ai_usage_error_type_for_outcome(const uint8_t *outcome,
-                                                               uintptr_t outcome_len,
-                                                               uint16_t status,
-                                                               struct ddog_ai_usage_Buffer *out);
-
-/**
  * Start reading a provider stream in the usage `format`, as
  * [`ddog_ai_usage_parse_provider_response`] names them, and write the
  * stream to `out`. Release it with [`ddog_ai_usage_stream_drop`].
@@ -732,22 +383,10 @@ enum ddog_ai_usage_Status ddog_ai_usage_stream_feed_event(struct ddog_ai_usage_S
                                                           uintptr_t data_len);
 
 /**
- * Write what the stream reported so far, as
+ * Write what the stream reported, as
  * [`ddog_ai_usage_parse_provider_response`] does, reading a last line that
- * had no line ending. The stream can still be fed afterwards.
- *
- * # Safety
- *
- * `stream` must be a live stream from [`ddog_ai_usage_stream_new`], and
- * `out` must be null or writable.
- */
-enum ddog_ai_usage_Status ddog_ai_usage_stream_finish(const struct ddog_ai_usage_Stream *stream,
-                                                      struct ddog_ai_usage_Buffer *out);
-
-/**
- * [`ddog_ai_usage_stream_finish`] and [`ddog_ai_usage_stream_drop`] in one
- * call: write what the stream reported, taking its state rather than
- * copying it, and release it. The stream must not be used afterwards, and
+ * had no line ending, and release the stream, taking its state rather than
+ * copying it. The stream must not be used afterwards, and
  * is released even when the call fails. A null stream is
  * [`Status::Internal`].
  *
@@ -773,7 +412,7 @@ void ddog_ai_usage_stream_drop(struct ddog_ai_usage_Stream *stream);
  * How `stream` ended so far, without building any output: cheap enough to
  * call after every chunk, so a gateway needs no end-of-stream detection of
  * its own. A line still held without its line ending is not read (see
- * [`ddog_ai_usage_stream_finish`]). A null stream is [`Outcome::Open`].
+ * [`ddog_ai_usage_stream_take`]). A null stream is [`Outcome::Open`].
  *
  * # Safety
  *
@@ -781,101 +420,6 @@ void ddog_ai_usage_stream_drop(struct ddog_ai_usage_Stream *stream);
  * not used by another thread during the call.
  */
 enum ddog_ai_usage_Outcome ddog_ai_usage_stream_outcome(const struct ddog_ai_usage_Stream *stream);
-
-/**
- * Write the `error.type` of a failure to `out` from the names that describe
- * it, most specific first, `names[..names_len]` separated by `\n` (an
- * exception's class and base classes, then its cause's): the first name the
- * vocabulary knows (in any case), else the HTTP `status` (0 for none), else
- * `api_error`. Never [`Status::Rejected`].
- *
- * # Safety
- *
- * `names` must point to `names_len` readable bytes (or `names_len` must be
- * 0), and `out` must be null or writable.
- */
-enum ddog_ai_usage_Status ddog_ai_usage_error_type_first_known(const uint8_t *names,
-                                                               uintptr_t names_len,
-                                                               uint16_t status,
-                                                               struct ddog_ai_usage_Buffer *out);
-
-/**
- * Write an observation's usage members, as a JSON object to merge into it,
- * from usage a gateway already normalized, `usage[..usage_len]`
- * (`{"input_tokens", "output_tokens", "cache_read_input_tokens",
- * "cache_write_input_tokens", "ephemeral_5m_input_tokens",
- * "ephemeral_1h_input_tokens", "total_cost"}`, input including cache), in
- * the usage `format` (as [`ddog_ai_usage_parse_provider_response`] names
- * them; `anthropic` states input without cache). Only reported cache counts
- * are kept, both cache lifetimes are stated when either is, an
- * `embeddings` operation has no output, and `total_cost` is an estimated
- * `cost_usd`. [`Status::Rejected`] when the usage has no input total.
- *
- * # Safety
- *
- * `format` and `usage` must point to their lengths of readable bytes (or
- * the length must be 0), and `out` must be null or writable.
- */
-enum ddog_ai_usage_Status ddog_ai_usage_observation_from_usage(const uint8_t *format,
-                                                               uintptr_t format_len,
-                                                               bool embeddings,
-                                                               const uint8_t *usage,
-                                                               uintptr_t usage_len,
-                                                               struct ddog_ai_usage_Buffer *out);
-
-/**
- * Write the tier a provider response or its usage names to `out`, from the
- * JSON `payload[..payload_len]`: the usage object's `service_tier` (or a
- * gateway's `_response_service_tier`), Gemini's
- * `usageMetadata.trafficType`, then the body's `service_tier`.
- * [`Status::Rejected`] when none names a tier within the grammar.
- *
- * # Safety
- *
- * `payload` must point to `payload_len` readable bytes (or `payload_len`
- * must be 0), and `out` must be null or writable.
- */
-enum ddog_ai_usage_Status ddog_ai_usage_service_tier(const uint8_t *payload,
-                                                     uintptr_t payload_len,
-                                                     struct ddog_ai_usage_Buffer *out);
-
-/**
- * Write the `gen_ai.provider.name` of the provider `name[..name_len]` to
- * `out`, told apart by the host the call reached,
- * `upstream_host[..upstream_host_len]` (a host or a URL; may be empty):
- * Google's names are `gcp.gemini` on `generativelanguage.googleapis.com`
- * and `gcp.vertex_ai` on another Google host. Otherwise as
- * [`ddog_ai_usage_provider_name`]. [`Status::Rejected`] when no identifier
- * can be formed.
- *
- * # Safety
- *
- * `name` and `upstream_host` must point to their lengths of readable bytes
- * (or the length must be 0), and `out` must be null or writable.
- */
-enum ddog_ai_usage_Status ddog_ai_usage_provider_name_at(const uint8_t *name,
-                                                         uintptr_t name_len,
-                                                         const uint8_t *upstream_host,
-                                                         uintptr_t upstream_host_len,
-                                                         struct ddog_ai_usage_Buffer *out);
-
-/**
- * Write the coding agent a request came from (`claude-code`, `codex` or
- * `opencode`, as `trajectory.client_source`) to `out`, from the request
- * document `input[..input_len]`: `{"user_agents": [...], "originator":
- * "...", "source": "..."}` (each `User-Agent` header, comma-separated
- * entries allowed; Codex's `originator` header; the request's own source
- * label). Bits Code's traffic (`source` starting `code-gen` or `bits-code`)
- * is not theirs. [`Status::Rejected`] with an empty `out` when none fits.
- *
- * # Safety
- *
- * `input` must point to `input_len` readable bytes (or `input_len` must be
- * 0), and `out` must be null or writable.
- */
-enum ddog_ai_usage_Status ddog_ai_usage_client_source(const uint8_t *input,
-                                                      uintptr_t input_len,
-                                                      struct ddog_ai_usage_Buffer *out);
 
 /**
  * Write the `gen_ai.provider.name` of the provider `name[..name_len]` (a
@@ -909,26 +453,6 @@ enum ddog_ai_usage_Status ddog_ai_usage_operation_name(const uint8_t *route,
                                                        struct ddog_ai_usage_Buffer *out);
 
 /**
- * Translate an OpenTelemetry GenAI metric, from the request document
- * `input[..input_len]` (`{"name": "gen_ai.client.token.usage",
- * "attributes": {"gen_ai.token.type": "input", ...}}`, in OpenTelemetry or
- * Prometheus spelling), to the profile metric it stands for, and write
- * `{"name", "profile", "attributes"}` to `out`: the removed token-usage
- * histogram becomes the input or output token Counter (its sum is the
- * value), `gen_ai.system` becomes a canonical `gen_ai.provider.name`, and
- * `gen_ai.token.type` is dropped. [`Status::Rejected`] with
- * `value_not_allowed` for a metric no profile defines.
- *
- * # Safety
- *
- * `input` must point to `input_len` readable bytes (or `input_len` must be
- * 0), and `out` must be null or writable.
- */
-enum ddog_ai_usage_Status ddog_ai_usage_translate_otel_metric(const uint8_t *input,
-                                                              uintptr_t input_len,
-                                                              struct ddog_ai_usage_Buffer *out);
-
-/**
  * Write the `error.type` of a call to `out` from how it failed: its HTTP
  * `status` (0 when there is none), whether it got `no_response` from the
  * provider, whether it `timed_out`, and its error name `name[..name_len]`
@@ -956,8 +480,6 @@ enum ddog_ai_usage_Status ddog_ai_usage_error_type_for_failure(uint16_t status,
  * `cache_read_per_million` and `cache_write_per_million` (a negative price
  * means "as input"), and `output_tokens` (reasoning included). False, with
  * nothing written, for a price that is not a finite non-negative number.
- * An observation can instead state `prices_per_million` and get its cost
- * from its own counts.
  *
  * # Safety
  *
@@ -1074,25 +596,6 @@ enum ddog_ai_usage_Status ddog_ai_usage_provider_id_headers(const uint8_t *provi
 enum ddog_ai_usage_Status ddog_ai_usage_provider_ids(const uint8_t *input,
                                                      uintptr_t input_len,
                                                      struct ddog_ai_usage_Buffer *out);
-
-/**
- * Pack DogStatsD lines into datagrams, from the request document
- * `input[..input_len]`: `{"lines": [...], "constant_tags": [...],
- * "max_payload": 1432, "max_line_bytes": 8192}` (`constant_tags` optional,
- * `max_payload` defaults to [`UDP_MAX_PAYLOAD`], `max_line_bytes` to
- * [`MAX_LINE_BYTES`]). Writes `{"datagrams": [...], "dropped_lines": 0}`. A
- * line longer than `max_payload` with its tags goes alone in a datagram of
- * its own; one longer than `max_line_bytes` (or `max_payload`, if larger)
- * is dropped and counted.
- *
- * # Safety
- *
- * `input` must point to `input_len` readable bytes (or `input_len` must be
- * 0), and `out` must be null or writable.
- */
-enum ddog_ai_usage_Status ddog_ai_usage_pack_dogstatsd(const uint8_t *input,
-                                                       uintptr_t input_len,
-                                                       struct ddog_ai_usage_Buffer *out);
 
 /**
  * Whether `value[..value_len]` is a service tier an observation can carry.

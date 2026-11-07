@@ -56,7 +56,8 @@ fn sketches_decode_as_intake_sparse() {
         (basic.min, basic.max, basic.count, basic.sum, basic.avg),
         (-3.0, 1.5, 5, 0.25, 0.0)
     );
-    assert!(decoded.k.contains(&0) && decoded.k.iter().any(|k| *k < 0));
+    // A negative sample, never a usage value, is counted as zero.
+    assert!(decoded.k.contains(&0) && decoded.k.iter().all(|k| *k >= 0));
 }
 
 #[test]

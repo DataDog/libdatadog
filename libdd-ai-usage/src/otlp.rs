@@ -25,11 +25,10 @@ use std::borrow::Cow;
 
 use prost::Message;
 
-use crate::Profile;
-use crate::batch::{MetricBatch, Samples, SeriesKey};
+use crate::PROFILE_ATTRIBUTE;
+use crate::batch::MetricBatch;
 use crate::datadog::{NANO_USD, NANO_USD_PER_USD, is_versioned};
 use crate::point::{Attributes, Sum};
-use crate::registry::PROFILE_ATTRIBUTE;
 
 /// The unit of a `{nanoUSD}` counter under [`OtlpBinding::Datadog`].
 const USD: &str = "USD";
@@ -114,33 +113,9 @@ impl MetricBatch {
         window: OtlpWindow,
         binding: OtlpBinding,
     ) -> pb::ExportMetricsServiceRequest {
-        request_of(
-            self.groups
-                .iter()
-                .map(|(key, group)| (key, group.counters.iter(), group.histograms.iter())),
-            scope,
-            window,
-            binding,
-        )
-    }
-}
-
-/// The request of `groups` (each with its Counter and Histogram series), in
-/// order: a whole batch's, or the series of one part of it, borrowed.
-fn request_of<'a, C, H>(
-    groups: impl Iterator<Item = (&'a (Attributes, Profile), C, H)>,
-    scope: OtlpScope,
-    window: OtlpWindow,
-    binding: OtlpBinding,
-) -> pb::ExportMetricsServiceRequest
-where
-    C: Iterator<Item = (&'a SeriesKey, &'a (String, Sum))>,
-    H: Iterator<Item = (&'a SeriesKey, &'a (String, Samples))>,
-{
-    {
         let datadog = binding == OtlpBinding::Datadog;
         let mut resource_metrics: Vec<pb::ResourceMetrics> = Vec::new();
-        for ((resource, profile), counters, histograms_of) in groups {
+        for ((resource, profile), group) in &self.groups {
             // Groups are sorted by resource, so one resource's profiles are adjacent.
             let same_resource = resource_metrics.last().is_some_and(|last| {
                 last.resource.as_ref().map(|r| &r.attributes)
@@ -172,7 +147,7 @@ where
                 }
             };
             let mut sums: Vec<(usize, pb::NumberDataPoint)> = Vec::new();
-            for ((name, attributes), (unit, sum)) in counters {
+            for ((name, attributes), (unit, sum)) in &group.counters {
                 let in_usd = datadog && unit == NANO_USD;
                 let value = match sum {
                     // One division of the exact sum, converted to a double once.
@@ -197,7 +172,7 @@ where
                 ));
             }
             let mut histograms: Vec<(usize, pb::HistogramDataPoint)> = Vec::new();
-            for ((name, attributes), (unit, samples)) in histograms_of {
+            for ((name, attributes), (unit, samples)) in &group.histograms {
                 histograms.push((
                     metric(name, unit),
                     histogram_point(
@@ -260,227 +235,6 @@ where
         resource_metrics.retain(|r| !r.scope_metrics.is_empty());
         pb::ExportMetricsServiceRequest { resource_metrics }
     }
-}
-
-/// One series of a batch, as it is encoded: a Counter's sum, or every sample
-/// of a Histogram.
-#[derive(Clone, Copy)]
-enum Series<'a> {
-    Counter(&'a (Attributes, Profile), &'a SeriesKey, &'a (String, Sum)),
-    Histogram(
-        &'a (Attributes, Profile),
-        &'a SeriesKey,
-        &'a (String, Samples),
-    ),
-}
-
-impl Series<'_> {
-    /// A rough size of the series in a request: its attributes and one data
-    /// point (a Histogram's buckets are encoded once per series).
-    fn estimate(&self) -> usize {
-        let (key, point) = match self {
-            Series::Counter(_, key, _) => (key, 32),
-            Series::Histogram(_, key, _) => (key, 160),
-        };
-        let attributes: usize = key.1.iter().map(|(k, v)| k.len() + v.len() + 8).sum();
-        key.0.len() + attributes + point
-    }
-}
-
-/// The size aimed at when packing a request, with room for the estimate's
-/// error.
-fn target(max_bytes: usize) -> usize {
-    (max_bytes - max_bytes / 8).max(1)
-}
-
-impl MetricBatch {
-    fn series(&self) -> Vec<Series<'_>> {
-        let mut series = Vec::new();
-        for (group_key, group) in &self.groups {
-            series.extend(
-                group
-                    .counters
-                    .iter()
-                    .map(|(key, value)| Series::Counter(group_key, key, value)),
-            );
-            series.extend(
-                group
-                    .histograms
-                    .iter()
-                    .map(|(key, value)| Series::Histogram(group_key, key, value)),
-            );
-        }
-        series
-    }
-
-    /// The batch as OTLP `ExportMetricsServiceRequest`s of at most
-    /// `max_bytes` each (0 for no bound), following `binding`. A batch that
-    /// fits is one request, the same bytes [`MetricBatch::encode_otlp_with`]
-    /// writes; an empty batch is none. The points are split by series and
-    /// the points of one series always go in the same request, which then
-    /// exceeds `max_bytes` only when that series alone does.
-    pub fn encode_otlp_parts(
-        &self,
-        scope: OtlpScope,
-        window: OtlpWindow,
-        binding: OtlpBinding,
-        max_bytes: usize,
-    ) -> Vec<Vec<u8>> {
-        if self.is_empty() {
-            return Vec::new();
-        }
-        // Sizes come from the request before it is written, so each part's
-        // bytes are written once.
-        let request = |series: &[Series<'_>]| request_of_series(series, scope, window, binding);
-        let series = self.series();
-        let estimates: Vec<usize> = series.iter().map(Series::estimate).collect();
-        let estimated: usize = estimates.iter().sum();
-        // A batch far over the bound is not built whole just to be measured:
-        // the estimates are close to the encoded size, and a part they get
-        // wrong is cut again below. Otherwise the whole request is built,
-        // sent as it is when it fits, and its size calibrates the estimates.
-        let scale = if max_bytes == 0 || estimated <= 2 * max_bytes {
-            let whole = self.otlp_request(scope, window, binding);
-            let whole_len = whole.encoded_len();
-            if max_bytes == 0 || whole_len <= max_bytes {
-                return vec![whole.encode_to_vec()];
-            }
-            whole_len as f64 / estimated.max(1) as f64
-        } else {
-            1.0
-        };
-        let aim = target(max_bytes) as f64;
-        let mut parts = Vec::new();
-        let mut start = 0;
-        let mut size = 0.0;
-        for (at, estimate) in estimates.iter().enumerate() {
-            let estimate = *estimate as f64 * scale;
-            if at > start && size + estimate > aim {
-                encode_series(&series[start..at], &request, max_bytes, &mut parts);
-                start = at;
-                size = 0.0;
-            }
-            size += estimate;
-        }
-        encode_series(&series[start..], &request, max_bytes, &mut parts);
-        parts
-    }
-}
-
-/// The request of `series`, a run of a batch's series in its order.
-fn request_of_series(
-    series: &[Series<'_>],
-    scope: OtlpScope,
-    window: OtlpWindow,
-    binding: OtlpBinding,
-) -> pb::ExportMetricsServiceRequest {
-    type Counters<'a> = Vec<(&'a SeriesKey, &'a (String, Sum))>;
-    type Histograms<'a> = Vec<(&'a SeriesKey, &'a (String, Samples))>;
-    let mut groups: Vec<(&(Attributes, Profile), Counters<'_>, Histograms<'_>)> = Vec::new();
-    for one in series {
-        let group = match one {
-            Series::Counter(group, ..) | Series::Histogram(group, ..) => *group,
-        };
-        if !groups
-            .last()
-            .is_some_and(|last| std::ptr::eq(last.0, group))
-        {
-            groups.push((group, Vec::new(), Vec::new()));
-        }
-        if let Some(last) = groups.last_mut() {
-            match *one {
-                Series::Counter(_, key, value) => last.1.push((key, value)),
-                Series::Histogram(_, key, value) => last.2.push((key, value)),
-            }
-        }
-    }
-    request_of(
-        groups.into_iter().map(|(group, counters, histograms)| {
-            (group, counters.into_iter(), histograms.into_iter())
-        }),
-        scope,
-        window,
-        binding,
-    )
-}
-
-/// Encode `series` into `parts`, each at most `max_bytes` unless it holds a
-/// single series: a request that does not fit is cut into as many even
-/// pieces as its size needs.
-fn encode_series(
-    series: &[Series<'_>],
-    request: &dyn Fn(&[Series<'_>]) -> pb::ExportMetricsServiceRequest,
-    max_bytes: usize,
-    parts: &mut Vec<Vec<u8>>,
-) {
-    if series.is_empty() {
-        return;
-    }
-    let message = request(series);
-    let len = message.encoded_len();
-    if len <= max_bytes || series.len() == 1 {
-        parts.push(message.encode_to_vec());
-        return;
-    }
-    drop(message);
-    let pieces = (len / target(max_bytes) + 1).clamp(2, series.len());
-    for piece in series.chunks(series.len().div_ceil(pieces)) {
-        encode_series(piece, request, max_bytes, parts);
-    }
-}
-
-/// What an OTLP `ExportMetricsServiceResponse` says the endpoint rejected:
-/// its `partial_success` rejected data points and error message (cut to
-/// 256 bytes at a character boundary), when it states either. Read from the
-/// protobuf body of an OTLP/HTTP or gRPC reply, or its JSON form
-/// (`{"partialSuccess": {"rejectedDataPoints": "3", "errorMessage": ...}}`).
-/// `None` for a full success or a body that is neither.
-pub fn parse_export_partial_success(body: &[u8]) -> Option<(u64, String)> {
-    let (rejected, message) = match body.iter().find(|b| !b.is_ascii_whitespace()) {
-        Some(b'{') => partial_success_json(body)?,
-        _ => {
-            let response = pb::ExportMetricsServiceResponse::decode(body).ok()?;
-            let partial = response.partial_success?;
-            (
-                u64::try_from(partial.rejected_data_points).unwrap_or(0),
-                partial.error_message,
-            )
-        }
-    };
-    let mut cut = message.trim().to_string();
-    if cut.len() > 256 {
-        let mut end = 256;
-        while !cut.is_char_boundary(end) {
-            end -= 1;
-        }
-        cut.truncate(end);
-    }
-    (rejected > 0 || !cut.is_empty()).then_some((rejected, cut))
-}
-
-fn partial_success_json(body: &[u8]) -> Option<(u64, String)> {
-    let text = std::str::from_utf8(body).ok()?;
-    let document = crate::Json::parse(text).ok()?;
-    let partial = document
-        .get("partialSuccess")
-        .or_else(|| document.get("partial_success"))?;
-    let rejected = partial
-        .get("rejectedDataPoints")
-        .or_else(|| partial.get("rejected_data_points"))
-        .and_then(|value| match value {
-            // proto3 JSON writes int64 as a string.
-            crate::Json::String(text) => text.parse::<u64>().ok(),
-            crate::Json::Number(n) if *n >= 0.0 && n.fract() == 0.0 => Some(*n as u64),
-            _ => None,
-        })
-        .unwrap_or(0);
-    let message = partial
-        .get("errorMessage")
-        .or_else(|| partial.get("error_message"))
-        .and_then(crate::Json::as_str)
-        .unwrap_or("")
-        .to_string();
-    Some((rejected, message))
 }
 
 fn histogram_point(
@@ -547,20 +301,6 @@ fn key_values(attributes: &Attributes, binding: OtlpBinding) -> Vec<pb::KeyValue
 /// The OTLP messages and fields this encoder writes.
 #[allow(missing_docs)]
 pub(crate) mod pb {
-    #[derive(Clone, PartialEq, ::prost::Message)]
-    pub(crate) struct ExportMetricsServiceResponse {
-        #[prost(message, optional, tag = "1")]
-        pub partial_success: Option<ExportMetricsPartialSuccess>,
-    }
-
-    #[derive(Clone, PartialEq, ::prost::Message)]
-    pub(crate) struct ExportMetricsPartialSuccess {
-        #[prost(int64, tag = "1")]
-        pub rejected_data_points: i64,
-        #[prost(string, tag = "2")]
-        pub error_message: String,
-    }
-
     #[derive(Clone, PartialEq, ::prost::Message)]
     pub(crate) struct ExportMetricsServiceRequest {
         #[prost(message, repeated, tag = "1")]

@@ -15,9 +15,9 @@
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
+use crate::PROFILE_ATTRIBUTE;
 use crate::Profile;
 use crate::point::{Attributes, ErrorCode, Instrument, MetricError, MetricPoint, Sum, reject};
-use crate::registry::PROFILE_ATTRIBUTE;
 
 pub(crate) const NANO_USD: &str = "{nanoUSD}";
 pub(crate) const NANO_USD_PER_USD: f64 = 1_000_000_000.0;

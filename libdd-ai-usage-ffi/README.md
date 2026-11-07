@@ -14,11 +14,9 @@ The artifacts are named for the C prefix: `libdd_ai_usage_ffi.so`
 
 ## Conventions
 
-- Structured values are UTF-8 JSON. Every input is a pointer and a length. The hot DogStatsD
-  path also has a text form with no JSON: `_dogstatsd_lines` writes one observation's lines
-  separated by `\n`, and `_pack_dogstatsd_lines` / `_batch_take_dogstatsd_text` write datagrams
-  (lines joined by `\n`) separated by a NUL byte, with no trailing NUL. On failure these
-  functions still write the JSON error.
+- Structured values are UTF-8 JSON. Every input is a pointer and a length. DogStatsD comes out as
+  text with no JSON: `_batch_take_dogstatsd_text` writes datagrams (lines joined by `\n`)
+  separated by a NUL byte, with no trailing NUL. On failure it still writes the JSON error.
 - Output is written to a `ddog_ai_usage_Buffer` the caller passes by pointer and releases with
   `ddog_ai_usage_buffer_drop`. No structure is passed by value.
 - Every call returns a `ddog_ai_usage_Status`: `OK`, `REJECTED` (the input broke a rule; a JSON
@@ -35,29 +33,28 @@ The artifacts are named for the C prefix: `libdd_ai_usage_ffi.so`
 
 ## Functions
 
-| Function | Does |
-| --- | --- |
-| `ddog_ai_usage_project` | One observation (`{profile, observation, deployment_attributes, metrics}`) to its Datadog series and issues |
-| `ddog_ai_usage_dogstatsd_lines` | One observation (the same request document) to its DogStatsD lines as `\n`-separated text: this observation's alone, never merged with another's, ordered by name then tags |
-| `ddog_ai_usage_pack_dogstatsd_lines` | `\n`-separated lines and comma-separated constant tags to NUL-separated datagrams of at most a given size, with no JSON either way. A line longer than the size with its tags goes alone in a datagram of its own; only one longer than 8192 bytes (`MAX_LINE_BYTES`, or the size if larger) is dropped and counted in the optional `dropped_lines` |
-| `ddog_ai_usage_batch_new` / `_add` / `_is_empty` / `_len` / `_take_dogstatsd` / `_take_dogstatsd_text` / `_drop` | Collect projections over an export window and take them as DogStatsD datagrams of at most a given size, with constant tags (`_text`: NUL-separated, no JSON). Lines longer than the size go alone in a datagram of their own; only lines longer than 8192 bytes are dropped and counted (`dropped_lines` in the JSON, an optional out-parameter for `_text`). `_len` is the number of points held (one per Counter series, one per Histogram sample), for a flush threshold: not a line count, as each Histogram series also writes `.count` and `.sum` lines and series whose tags normalize alike share lines |
-| `ddog_ai_usage_batch_add_request` | One request's documents (a JSON array: its provider attempts, token breakdowns and gateway request) added together: all or none, so a full batch drops whole requests and never keeps an attempt without its breakdown. A rejected document rejects the request |
-| `ddog_ai_usage_batch_add_quiet` | `_add` without output: nothing is written on success (`out` may be null), the JSON error on rejection |
-| `ddog_ai_usage_batch_set_metrics` / `_reset_metrics` / `_set_deployment_attributes` | Set once on the batch the metric list (applied to every document that states none) and the fixed deployment attributes (checked when set; a document's own are merged on top, `null` removing one), so documents stay small and nothing is parsed twice. **`[]` keeps no metric**, as a document's `"metrics": []` does; `_reset_metrics` keeps every metric again |
-| `ddog_ai_usage_batch_set_max_len` / `_dropped` | Bound a batch to a number of points (0 lifts it). An observation that does not fit is dropped whole: `_add` still returns `OK` with `"dropped": true`, and `_dropped` counts it. The count only grows (taking keeps it and the bound), so report the difference at each flush |
-| `ddog_ai_usage_parse_provider_response` | A whole provider response body (JSON, or buffered server-sent events) to the observation's usage members, the model and service tier, how it ended, its `error.type`, and the provider's own error code and message (control characters removed, cut to 256 bytes). `issues` says why something reported was not kept (`service_tier_dropped`) |
-| `ddog_ai_usage_stream_new` / `_feed` / `_finish` / `_drop` | The same for a stream read as it passes through, in chunks that may end anywhere. Strings longer than 1 KiB (generated text) are cut as they pass, so a line holding a whole response, such as Responses' `response.completed`, keeps its usage without being held. A data line is decoded only when a byte scan finds something it can carry (usage that is not `null`, an error, a terminal event, or the model and tier until they are known), so OpenAI content chunks are not decoded. `[DONE]` ends only OpenAI-shaped streams. Anthropic's `message_start` output count is a placeholder and is not reported: only `message_delta` reports output, so a stream cut before it has no output count to mistake for a reported one |
-| `ddog_ai_usage_stream_take` | `_finish` and `_drop` in one call, taking the stream's state instead of copying it |
-| `ddog_ai_usage_stream_feed_event` | One server-sent event the caller already split (its `event` name, possibly empty, and its `data`), read as `_feed` reads it; the two can be mixed on one stream |
-| `ddog_ai_usage_provider_name` | A gateway's or SDK's provider name to `gen_ai.provider.name` |
-| `ddog_ai_usage_error_type` | An error name and HTTP status to `error.type`. A three-digit name is read as a status only when no status is given, so the response's status wins |
-| `ddog_ai_usage_error_type_known` | The same without the fallback: `REJECTED` for a name the vocabulary does not know and no failed status, which `_error_type` writes as `api_error` |
-| `ddog_ai_usage_provider_ids` | Provider response headers and Bedrock model ARNs to the account and project attributes. Without a `provider_name`, every known header and ARN is tried. Values are trimmed of surrounding whitespace, which is not part of an HTTP field value |
-| `ddog_ai_usage_provider_id_headers` | The lower-case response header names `_provider_ids` reads for a provider (all providers for an empty name), so a gateway fetches exactly those |
-| `ddog_ai_usage_pack_dogstatsd` | DogStatsD lines to datagrams (JSON form), with `dropped_lines` |
-| `ddog_ai_usage_known_metrics` | The metric names of a profile, or of every profile for an empty one: what a request's `metrics` list can keep |
-| `ddog_ai_usage_datadog_tag_value` | A value as Datadog stores it in a tag |
-| `ddog_ai_usage_is_service_tier` / `_is_deployment_value` / `_is_person_identifier` | The grammars of a service tier, a deployment attribute value and `user.id` |
+| Function | Does | Called by |
+| --- | --- | --- |
+| `ddog_ai_usage_project` | One observation (`{profile, observation, deployment_attributes, metrics}`) to its Datadog series and issues | AI Gateway, OpenRouter |
+| `ddog_ai_usage_known_metrics` | The metric names of a profile, or of every profile for an empty one: what a request's `metrics` list can keep | AI Gateway, OpenRouter |
+| `ddog_ai_usage_batch_new` / `_drop` / `_is_empty` / `_len` | A batch of projections over an export window. `_len` is the number of points held (one per Counter series, one per Histogram sample), for a flush threshold; not a line count | Kong, internal AI Gateway |
+| `ddog_ai_usage_batch_add_request` | One request's documents (a JSON array: its provider attempts, token breakdowns and gateway request) added together: all or none, so a full batch drops whole requests and never keeps an attempt without its breakdown. A rejected document rejects the request. `out` may be null | Kong, internal AI Gateway |
+| `ddog_ai_usage_batch_set_metrics` | The metric list kept of every document that states none. **`[]` keeps no metric**, as a document's `"metrics": []` does; `null` keeps every metric again | Kong, internal AI Gateway |
+| `ddog_ai_usage_batch_set_max_len` / `_dropped` | Bound a batch to a number of points (0 lifts it). A request that does not fit is dropped whole and counted; the count only grows (taking keeps it and the bound) | Kong, internal AI Gateway |
+| `ddog_ai_usage_batch_take_dogstatsd_text` | Take the batch as NUL-separated DogStatsD datagrams of at most a given size, with constant tags. A line longer than the size goes alone in a datagram of its own; only one longer than 8192 bytes (`MAX_LINE_BYTES`) is dropped and counted in the optional `dropped_lines` | Kong, internal AI Gateway |
+| `ddog_ai_usage_batch_take_series` / `_set_writer` | Take the batch as metrics intake takes it from a writer that submits to the API: Counters as RATE points over the interval (aggregation SUM), distributions as intake `sketchpb.Sparse` sketches (base64), every point at a second no earlier take used, tags sorted with the writer's `host.name` and `process.pid` | AI Gateway, OpenRouter |
+| `ddog_ai_usage_parse_provider_response` | A whole provider response body (JSON, or buffered server-sent events) to the observation's usage members, the model and service tier, how it ended, its `error.type`, and the provider's own error code and message (control characters removed, cut to 256 bytes). `issues` says why something reported was not kept (`service_tier_dropped`, `response_model_dropped`) | AI Gateway, OpenRouter, Kong |
+| `ddog_ai_usage_stream_new` / `_feed` / `_feed_event` / `_take` / `_drop` | The same for a stream read as it passes through, in chunks that may end anywhere, or as events the caller already split. Strings longer than 1 KiB are cut as they pass; only lines that can carry usage, an error, a terminal event, or the model and tier are decoded. A stream keeps the tier a usage-bearing event names over one echoed earlier. `_take` reports and releases | AI Gateway, OpenRouter, Kong |
+| `ddog_ai_usage_stream_outcome` | How a stream ended so far (`OPEN`, `COMPLETED`, `FAILED`), with no JSON: cheap enough per chunk | internal AI Gateway |
+| `ddog_ai_usage_provider_name` | A gateway's or SDK's provider name to `gen_ai.provider.name` | every consumer |
+| `ddog_ai_usage_error_type` / `_error_type_known` | An error name and HTTP status to `error.type`; `_known` without the `api_error` fallback for an unknown name. Names match in any case | every consumer |
+| `ddog_ai_usage_error_type_for_failure` | The `error.type` of a call with no response (`timeout_error`, `api_connection_error`), or a non-200 that is not a failure (`api_error`) | Kong |
+| `ddog_ai_usage_operation_name` | A gateway route or request path (`llm/v1/chat`, `/v1/chat/completions`, `/v1/messages`, `/v1/embeddings`, Gemini `:generateContent`, Bedrock `/converse`) to `gen_ai.operation.name` | Kong |
+| `ddog_ai_usage_estimated_cost` | A cost in nano-USD from per-million prices | Kong |
+| `ddog_ai_usage_provider_ids` / `_provider_id_headers` | Provider response headers, Bedrock model ARNs and a Vertex AI upstream URL to the account and project attributes; the header names to fetch (text or a JSON string; other JSON is refused) | Kong, internal AI Gateway |
+| `ddog_ai_usage_datadog_tag_value` | A value as Datadog stores it in a tag | AI Gateway, OpenRouter |
+| `ddog_ai_usage_is_service_tier` / `_is_deployment_value` / `_is_person_identifier` | The grammars of a service tier, a deployment attribute value and `user.id` | every consumer |
+| `ddog_ai_usage_buffer_drop` | Release an output buffer | every consumer |
 
 Observations follow the profiles of the Open Trajectory metric specification. The specification
 requires `streaming` on a provider attempt (`streaming: null` or a missing flag is
@@ -81,15 +78,19 @@ ddog_ai_usage_Batch *batch = NULL;
 ddog_ai_usage_batch_new(&batch);
 
 ddog_ai_usage_Buffer out = {0};
-if (ddog_ai_usage_batch_add(batch, (const uint8_t *)request, strlen(request), &out) !=
+/* One request: a JSON array of its documents. */
+char documents[1024];
+snprintf(documents, sizeof documents, "[%s]", request);
+if (ddog_ai_usage_batch_add_request(batch, (const uint8_t *)documents, strlen(documents), &out) !=
     DDOG_AI_USAGE_STATUS_OK) {
   /* out holds {"error": {"code", "message"}} */
 }
 ddog_ai_usage_buffer_drop(&out);
 
-/* At each flush: {"datagrams": [...]}, each ready for one send. */
-ddog_ai_usage_batch_take_dogstatsd(batch, (const uint8_t *)"env:prod", 8,
-                                   ddog_ai_usage_UDP_MAX_PAYLOAD, &out);
+/* At each flush: datagrams separated by NUL, each ready for one send. */
+size_t dropped = 0;
+ddog_ai_usage_batch_take_dogstatsd_text(batch, (const uint8_t *)"env:prod", 8,
+                                        ddog_ai_usage_UDP_MAX_PAYLOAD, &dropped, &out);
 ddog_ai_usage_buffer_drop(&out);
 ddog_ai_usage_batch_drop(batch);
 ```

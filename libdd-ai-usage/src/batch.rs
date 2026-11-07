@@ -10,12 +10,12 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::PROFILE_ATTRIBUTE;
 use crate::Profile;
 use crate::datadog::{DatadogSeries, SeriesBuilder};
 use crate::point::{
     Attributes, ErrorCode, Instrument, MetricError, MetricPoint, Projection, Sum, reject,
 };
-use crate::registry::PROFILE_ATTRIBUTE;
 
 /// One series of a batch: a metric name and an attribute set.
 pub(crate) type SeriesKey = (String, Attributes);

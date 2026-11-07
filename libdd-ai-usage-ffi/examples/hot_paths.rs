@@ -132,126 +132,46 @@ fn chat_body(size: usize) -> String {
     )
 }
 
+fn empty() -> Buffer {
+    Buffer {
+        ptr: ptr::null_mut(),
+        len: 0,
+    }
+}
+
 fn main() {
-    // 50,000 DogStatsD lines packed into UDS datagrams, caller's encoding
-    // and decoding included, as a gateway in another language pays them.
-    let lines: Vec<String> = (0..50_000)
-        .map(|i| {
-            format!(
-                "gen_ai.client.inference.usage.input_tokens:{i}|c|#gen_ai.operation.name:chat,\
-                 gen_ai.provider.name:openai,gen_ai.request.model:gpt-4o,\
-                 gen_ai.token.modality:unknown,trajectory.observation.point:gateway,\
-                 trajectory.profile:gen_ai.client.provider_attempt/0.1.0"
-            )
-        })
-        .collect();
-    measure_burst("pack 50k lines, JSON path", || {
-        let request = serde_json::json!({
-            "lines": lines,
-            "constant_tags": ["env:prod", "version:1.2"],
-            "max_payload": UDS_MAX_PAYLOAD,
-        })
-        .to_string();
-        let mut out = Buffer {
-            ptr: ptr::null_mut(),
-            len: 0,
-        };
-        // SAFETY: valid input and output.
-        unsafe { ddog_ai_usage_pack_dogstatsd(request.as_ptr(), request.len(), &mut out) };
-        // SAFETY: written by the library.
-        let text = unsafe { std::slice::from_raw_parts(out.ptr, out.len) };
-        let value: serde_json::Value = serde_json::from_slice(text).unwrap();
-        assert!(value["datagrams"].as_array().unwrap().len() > 100);
-        drop(value);
-        drop_out(&mut out);
-    });
-    measure_burst("pack 50k lines, text path", || {
-        let request = lines.join("\n");
-        let tags = "env:prod,version:1.2";
-        let mut out = Buffer {
-            ptr: ptr::null_mut(),
-            len: 0,
-        };
-        // SAFETY: valid inputs and output.
-        unsafe {
-            ddog_ai_usage_pack_dogstatsd_lines(
-                request.as_ptr(),
-                request.len(),
-                tags.as_ptr(),
-                tags.len(),
-                UDS_MAX_PAYLOAD,
-                ptr::null_mut(),
-                &mut out,
-            )
-        };
-        // SAFETY: written by the library.
-        let text = unsafe { std::slice::from_raw_parts(out.ptr, out.len) };
-        let datagrams: Vec<&[u8]> = text.split(|b| *b == 0).collect();
-        assert!(datagrams.len() > 100);
-        drop(datagrams);
-        drop_out(&mut out);
-    });
-    // 2,000 attempts of distinct users taken as OTLP: one request, and
-    // requests of at most 64 KiB. Both fill the batch the same way, so the
-    // difference is the cost of splitting.
-    let users: Vec<String> = (0..2_000)
-        .map(|user| ATTEMPT.replace("ada@example.com", &format!("user{user}@example.com")))
-        .collect();
-    for (label, max_bytes) in [
-        ("take_otlp_parts 2k attempts, one request", 0),
-        ("take_otlp_parts 2k attempts, 64 KiB parts", 64 * 1024),
+    // The documents of one request, as gateways add them.
+    let attempt = ATTEMPT.replace(
+        ",\n  \"deployment_attributes\": {\"user.id\": \"ada@example.com\"}",
+        "",
+    );
+    assert_ne!(attempt, ATTEMPT);
+    let request = format!("[{attempt}, {BREAKDOWN}]");
+
+    for (label, doc) in [
+        ("project provider_attempt", ATTEMPT),
+        ("project token_breakdown", BREAKDOWN),
+        ("project gateway_request", GATEWAY),
     ] {
-        measure_burst(label, || {
-            let mut batch = ptr::null_mut();
-            let mut out = Buffer {
-                ptr: ptr::null_mut(),
-                len: 0,
-            };
-            let scope = "bench";
-            // SAFETY: a live batch, valid inputs and output.
-            unsafe {
-                ddog_ai_usage_batch_new(&mut batch);
-                for document in &users {
-                    ddog_ai_usage_batch_add_quiet(
-                        batch,
-                        document.as_ptr(),
-                        document.len(),
-                        ptr::null_mut(),
-                    );
-                }
-                let status = ddog_ai_usage_batch_take_otlp_parts(
-                    batch,
-                    scope.as_ptr(),
-                    scope.len(),
-                    scope.as_ptr(),
-                    scope.len(),
-                    1,
-                    2,
-                    false,
-                    max_bytes,
-                    &mut out,
-                );
-                assert_eq!(status, Status::Ok);
-                ddog_ai_usage_batch_drop(batch);
-            }
+        let mut out = empty();
+        // SAFETY: valid input and output.
+        let status = unsafe { ddog_ai_usage_project(doc.as_ptr(), doc.len(), &mut out) };
+        assert_eq!(status, Status::Ok, "{label}");
+        drop_out(&mut out);
+        measure(label, || {
+            // SAFETY: valid input and output.
+            unsafe { ddog_ai_usage_project(doc.as_ptr(), doc.len(), &mut out) };
             drop_out(&mut out);
         });
     }
+
     // The public gateway's request path. Before: `project` for the attempt
     // and for its breakdown, each JSON output decoded by the caller. After:
     // the request's documents added to the org's batch in one call with no
     // output, and the batch taken as intake series once per flush.
-    let attempt_doc = ATTEMPT.replace(
-        ",\n  \"deployment_attributes\": {\"user.id\": \"ada@example.com\"}",
-        "",
-    );
-    let request = format!("[{attempt_doc}, {BREAKDOWN}]");
     measure("gateway request, before: project x2 + decode", || {
-        for doc in [attempt_doc.as_str(), BREAKDOWN] {
-            let mut out = Buffer {
-                ptr: ptr::null_mut(),
-                len: 0,
-            };
+        for doc in [attempt.as_str(), BREAKDOWN] {
+            let mut out = empty();
             // SAFETY: valid input and output; the output is the library's.
             unsafe {
                 ddog_ai_usage_project(doc.as_ptr(), doc.len(), &mut out);
@@ -274,217 +194,81 @@ fn main() {
     });
     // SAFETY: a live batch, released once.
     unsafe { ddog_ai_usage_batch_drop(batch) };
-    measure_burst("gateway flush: 1k requests, take_series", || {
-        let mut batch = ptr::null_mut();
-        let mut out = Buffer {
-            ptr: ptr::null_mut(),
-            len: 0,
-        };
-        // SAFETY: a live batch, valid inputs and output.
-        unsafe {
-            ddog_ai_usage_batch_new(&mut batch);
-            for _ in 0..1_000 {
-                ddog_ai_usage_batch_add_request(
-                    batch,
-                    request.as_ptr(),
-                    request.len(),
-                    ptr::null_mut(),
-                );
+
+    // A flush: 1,000 requests added, then taken as intake series or as
+    // DogStatsD datagrams.
+    for (label, intake) in [
+        ("flush: 1k requests, take_series", true),
+        ("flush: 1k requests, take_dogstatsd_text", false),
+    ] {
+        measure_burst(label, || {
+            let mut batch = ptr::null_mut();
+            let mut out = empty();
+            let tags = "env:prod,version:1.2";
+            // SAFETY: a live batch, valid inputs and output.
+            unsafe {
+                ddog_ai_usage_batch_new(&mut batch);
+                for _ in 0..1_000 {
+                    ddog_ai_usage_batch_add_request(
+                        batch,
+                        request.as_ptr(),
+                        request.len(),
+                        ptr::null_mut(),
+                    );
+                }
+                let status = if intake {
+                    ddog_ai_usage_batch_take_series(batch, 10, 1, &mut out)
+                } else {
+                    ddog_ai_usage_batch_take_dogstatsd_text(
+                        batch,
+                        tags.as_ptr(),
+                        tags.len(),
+                        UDS_MAX_PAYLOAD,
+                        ptr::null_mut(),
+                        &mut out,
+                    )
+                };
+                assert_eq!(status, Status::Ok);
+                ddog_ai_usage_batch_drop(batch);
             }
-            assert_eq!(
-                ddog_ai_usage_batch_take_series(batch, 10, 1, &mut out),
-                Status::Ok
-            );
-            ddog_ai_usage_batch_drop(batch);
-        }
-        drop_out(&mut out);
-    });
-    // Per chunk and per failure (internal gateway).
-    let mut stream = ptr::null_mut();
-    let responses_format = "openai_responses";
-    // SAFETY: written by `stream_new`, used until dropped.
-    unsafe {
-        ddog_ai_usage_stream_new(
-            responses_format.as_ptr(),
-            responses_format.len(),
-            false,
-            &mut stream,
-        )
-    };
-    measure("stream_outcome (per chunk)", || {
-        // SAFETY: a live stream.
-        let outcome = unsafe { ddog_ai_usage_stream_outcome(stream) };
-        assert_eq!(outcome, Outcome::Open);
-    });
-    // SAFETY: a live stream, released once.
-    unsafe { ddog_ai_usage_stream_drop(stream) };
-    let names = "ReadTimeout\nTimeoutException\nHTTPError\nException";
-    measure("error_type_first_known, 4-class chain", || {
-        let mut out = Buffer {
-            ptr: ptr::null_mut(),
-            len: 0,
-        };
-        // SAFETY: valid inputs and output.
-        unsafe { ddog_ai_usage_error_type_first_known(names.as_ptr(), names.len(), 500, &mut out) };
-        drop_out(&mut out);
-    });
-    measure("dogstatsd_lines provider_attempt (text)", || {
-        let mut out = Buffer {
-            ptr: ptr::null_mut(),
-            len: 0,
-        };
-        // SAFETY: valid input and output.
-        unsafe { ddog_ai_usage_dogstatsd_lines(ATTEMPT.as_ptr(), ATTEMPT.len(), &mut out) };
-        drop_out(&mut out);
-    });
-
-    for (label, doc) in [
-        ("project provider_attempt", ATTEMPT),
-        ("project token_breakdown", BREAKDOWN),
-        ("project gateway_request", GATEWAY),
-    ] {
-        let mut out = Buffer {
-            ptr: ptr::null_mut(),
-            len: 0,
-        };
-        // SAFETY: valid input and output.
-        let status = unsafe { ddog_ai_usage_project(doc.as_ptr(), doc.len(), &mut out) };
-        assert_eq!(status, Status::Ok, "{label}");
-        drop_out(&mut out);
-        measure(label, || {
-            // SAFETY: valid input and output.
-            unsafe { ddog_ai_usage_project(doc.as_ptr(), doc.len(), &mut out) };
             drop_out(&mut out);
         });
     }
 
-    let mut batch = ptr::null_mut();
-    // SAFETY: written by `batch_new`.
-    unsafe { ddog_ai_usage_batch_new(&mut batch) };
-    for (label, doc) in [
-        ("batch_add provider_attempt", ATTEMPT),
-        ("batch_add token_breakdown", BREAKDOWN),
-    ] {
-        measure(label, || {
-            let mut out = Buffer {
-                ptr: ptr::null_mut(),
-                len: 0,
-            };
-            // SAFETY: a live batch, valid input and output.
-            unsafe { ddog_ai_usage_batch_add(batch, doc.as_ptr(), doc.len(), &mut out) };
-            drop_out(&mut out);
-        });
-    }
-    // SAFETY: a live batch, released once.
-    unsafe { ddog_ai_usage_batch_drop(batch) };
-
-    // The same documents with the deployment attributes set once on the
-    // batch, added without output.
-    let mut batch = ptr::null_mut();
-    let fixed = r#"{"user.id": "ada@example.com"}"#;
-    // SAFETY: written by `batch_new`; valid inputs and outputs.
-    unsafe {
-        ddog_ai_usage_batch_new(&mut batch);
-        let mut out = Buffer {
-            ptr: ptr::null_mut(),
-            len: 0,
-        };
-        let status = ddog_ai_usage_batch_set_deployment_attributes(
-            batch,
-            fixed.as_ptr(),
-            fixed.len(),
-            &mut out,
-        );
-        assert_eq!(status, Status::Ok);
-        drop_out(&mut out);
-    }
-    let attempt = ATTEMPT.replace(
-        ",\n  \"deployment_attributes\": {\"user.id\": \"ada@example.com\"}",
-        "",
-    );
-    assert_ne!(attempt, ATTEMPT);
-    for (label, doc) in [
-        ("batch_add_quiet provider_attempt", attempt.as_str()),
-        ("batch_add_quiet token_breakdown", BREAKDOWN),
-    ] {
-        measure(label, || {
-            // SAFETY: a live batch and valid input.
-            let status = unsafe {
-                ddog_ai_usage_batch_add_quiet(batch, doc.as_ptr(), doc.len(), ptr::null_mut())
-            };
-            assert_eq!(status, Status::Ok);
-        });
-    }
-    // The same attempt stating what a gateway derives (Kong): integer
-    // nanoseconds, per-million prices, and zeros that mean "not reported".
-    let extended = attempt
-        .replace("\"duration_seconds\": 1.2,", "\"duration_ns\": 1200000000,")
-        .replace(
-            "\"cost_nano_usd\": 11500000, \"cost_source\": \"calculated\", \"cost_rate_card\": \"openai@1\",",
-            "\"prices_per_million\": {\"input\": 2.5, \"output\": 10}, \"zero_is_unreported\": true,",
-        );
-    assert_ne!(extended, attempt);
-    measure("batch_add_quiet provider_attempt, extended", || {
-        // SAFETY: a live batch and valid input.
-        let status = unsafe {
-            ddog_ai_usage_batch_add_quiet(batch, extended.as_ptr(), extended.len(), ptr::null_mut())
-        };
-        assert_eq!(status, Status::Ok);
-    });
-    // SAFETY: a live batch, released once.
-    unsafe { ddog_ai_usage_batch_drop(batch) };
-
+    let format = "openai_chat";
     let body = r#"{"id": "chatcmpl-1", "object": "chat.completion", "model": "gpt-4o-2024-08-06",
       "service_tier": "default", "choices": [{"index": 0, "message": {"role": "assistant",
       "content": "Hello! How can I help you today?"}, "finish_reason": "stop"}],
       "usage": {"prompt_tokens": 19, "completion_tokens": 10, "total_tokens": 29,
       "prompt_tokens_details": {"cached_tokens": 0}, "completion_tokens_details":
-      {"reasoning_tokens": 0}}}"#;
-    let format = "openai_chat";
-    measure("parse_provider_response openai_chat", || {
-        let mut out = Buffer {
-            ptr: ptr::null_mut(),
-            len: 0,
-        };
-        // SAFETY: valid inputs and output.
-        unsafe {
-            ddog_ai_usage_parse_provider_response(
-                format.as_ptr(),
-                format.len(),
-                false,
-                body.as_ptr(),
-                body.len(),
-                &mut out,
-            )
-        };
-        drop_out(&mut out);
-    });
-
-    // Chat Completions bodies of 50 and 500 KB, mostly generated text with
-    // the escapes prose and tool arguments carry.
-    for kb in [50, 500] {
-        let body = chat_body(kb * 1024);
-        measure(
-            &format!("parse_provider_response openai_chat {kb} KB"),
-            || {
-                let mut out = Buffer {
-                    ptr: ptr::null_mut(),
-                    len: 0,
-                };
-                // SAFETY: valid inputs and output.
-                unsafe {
-                    ddog_ai_usage_parse_provider_response(
-                        format.as_ptr(),
-                        format.len(),
-                        false,
-                        body.as_ptr(),
-                        body.len(),
-                        &mut out,
-                    )
-                };
-                drop_out(&mut out);
-            },
-        );
+      {"reasoning_tokens": 0}}}"#
+        .to_string();
+    for (label, body) in [
+        ("parse_provider_response openai_chat".to_string(), body),
+        (
+            "parse_provider_response openai_chat 50 KB".to_string(),
+            chat_body(50 * 1024),
+        ),
+        (
+            "parse_provider_response openai_chat 500 KB".to_string(),
+            chat_body(500 * 1024),
+        ),
+    ] {
+        measure(&label, || {
+            let mut out = empty();
+            // SAFETY: valid inputs and output.
+            unsafe {
+                ddog_ai_usage_parse_provider_response(
+                    format.as_ptr(),
+                    format.len(),
+                    false,
+                    body.as_ptr(),
+                    body.len(),
+                    &mut out,
+                )
+            };
+            drop_out(&mut out);
+        });
     }
 
     // A small Responses `response.completed` event, fed as one line.
@@ -492,10 +276,7 @@ fn main() {
     let completed = format!("event: response.completed\ndata: {RESPONSE_COMPLETED}\n\n");
     measure("stream response.completed: new + feed + take", || {
         let mut stream = ptr::null_mut();
-        let mut out = Buffer {
-            ptr: ptr::null_mut(),
-            len: 0,
-        };
+        let mut out = empty();
         // SAFETY: the stream is used until taken; valid inputs and output.
         unsafe {
             ddog_ai_usage_stream_new(responses.as_ptr(), responses.len(), false, &mut stream);
@@ -525,29 +306,9 @@ fn main() {
             .to_string(),
     );
     chunks.push("data: [DONE]\n\n".to_string());
-    measure("stream 34 chunks: new + feed + finish + drop", || {
-        let mut stream = ptr::null_mut();
-        let mut out = Buffer {
-            ptr: ptr::null_mut(),
-            len: 0,
-        };
-        // SAFETY: the stream is used until dropped; valid inputs and output.
-        unsafe {
-            ddog_ai_usage_stream_new(format.as_ptr(), format.len(), false, &mut stream);
-            for chunk in &chunks {
-                ddog_ai_usage_stream_feed(stream, chunk.as_ptr(), chunk.len());
-            }
-            ddog_ai_usage_stream_finish(stream, &mut out);
-            ddog_ai_usage_stream_drop(stream);
-        }
-        drop_out(&mut out);
-    });
     measure("stream 34 chunks: new + feed + take", || {
         let mut stream = ptr::null_mut();
-        let mut out = Buffer {
-            ptr: ptr::null_mut(),
-            len: 0,
-        };
+        let mut out = empty();
         // SAFETY: the stream is used until taken; valid inputs and output.
         unsafe {
             ddog_ai_usage_stream_new(format.as_ptr(), format.len(), false, &mut stream);
@@ -558,4 +319,16 @@ fn main() {
         }
         drop_out(&mut out);
     });
+
+    // How a stream ended so far, per chunk.
+    let mut stream = ptr::null_mut();
+    // SAFETY: written by `stream_new`, used until dropped.
+    unsafe { ddog_ai_usage_stream_new(format.as_ptr(), format.len(), false, &mut stream) };
+    measure("stream_outcome (per chunk)", || {
+        // SAFETY: a live stream.
+        let outcome = unsafe { ddog_ai_usage_stream_outcome(stream) };
+        assert_eq!(outcome, Outcome::Open);
+    });
+    // SAFETY: a live stream, released once.
+    unsafe { ddog_ai_usage_stream_drop(stream) };
 }

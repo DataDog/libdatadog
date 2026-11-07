@@ -63,7 +63,7 @@ mod datadog;
 mod deployment;
 mod dogstatsd;
 mod error_type;
-mod extensions;
+mod gateway;
 mod intake;
 mod json;
 mod number;
@@ -73,7 +73,16 @@ mod otlp;
 mod point;
 mod project;
 mod provider;
+// The metric registry (`tests/data/registry.json`), read only by the tests
+// that check the crate against it.
+#[cfg(test)]
 mod registry;
+#[cfg(test)]
+extern crate self as libdd_ai_usage;
+#[cfg(test)]
+mod conformance_tests;
+#[cfg(test)]
+mod robustness_tests;
 mod usage;
 
 pub use batch::MetricBatch;
@@ -84,22 +93,18 @@ pub use deployment::{
 };
 pub use dogstatsd::{
     DOGSTATSD_MAX_LINE_BYTES, DOGSTATSD_UDP_MAX_PAYLOAD, DOGSTATSD_UDS_MAX_PAYLOAD, pack_dogstatsd,
-    pack_dogstatsd_counted, pack_dogstatsd_joined, pack_dogstatsd_joined_limited,
-    pack_dogstatsd_limited, repack_dogstatsd, with_constant_tags,
+    pack_dogstatsd_counted, pack_dogstatsd_joined, with_constant_tags,
 };
 pub use error_type::{
     ERROR_TYPE_API, ERROR_TYPE_API_CONNECTION, ERROR_TYPE_AUTHENTICATION, ERROR_TYPE_BAD_REQUEST,
     ERROR_TYPE_CANCELLED, ERROR_TYPE_CONFLICT, ERROR_TYPE_INTERNAL_SERVER, ERROR_TYPE_NOT_FOUND,
     ERROR_TYPE_PERMISSION_DENIED, ERROR_TYPE_RATE_LIMIT, ERROR_TYPE_TIMEOUT,
-    ERROR_TYPE_UNPROCESSABLE_ENTITY, ERROR_TYPES, classify_error, classify_failure,
-    classify_first_known, classify_known_error, error_type_for_gateway_outcome,
+    ERROR_TYPE_UNPROCESSABLE_ENTITY, ERROR_TYPES, classify_error, classify_known_error,
     error_type_for_name, error_type_for_status, error_type_identifier,
 };
-pub use extensions::{
-    ATTEMPT_ENDING_EXTENSIONS, BillableTokens, Failure, OBSERVATION_EXTENSIONS, PricesPerMillion,
-    TranslatedMetric, ZERO_IS_UNREPORTED_DEFAULT, error_type_for_failure, estimated_cost_nano_usd,
-    expand_observation, observation_usage_from_normalized, operation_name_for, project_extended,
-    translate_otel_genai_metric,
+pub use gateway::{
+    BillableTokens, Failure, PricesPerMillion, error_type_for_failure, estimated_cost_nano_usd,
+    operation_name_for,
 };
 pub use intake::{IntakeTake, RateSeries, Sketch, SketchSeries};
 pub use json::{Json, JsonError, JsonErrorKind, JsonObject};
@@ -110,7 +115,7 @@ pub use observation::{
     is_identifier, is_rate_card,
 };
 #[cfg(feature = "otlp")]
-pub use otlp::{OtlpBinding, OtlpScope, OtlpWindow, parse_export_partial_success};
+pub use otlp::{OtlpBinding, OtlpScope, OtlpWindow};
 pub use point::{
     Attributes, ErrorCode, Instrument, IssueCode, Issues, MetricError, MetricPoint, Projection,
     compare_metric_points, merge_counter_points, sort_metric_points,
@@ -122,15 +127,13 @@ pub use project::{
 pub use provider::{
     MAX_ERROR_MESSAGE_BYTES, MAX_KEPT_STRING_BYTES, MAX_STREAM_LINE_BYTES, PROVIDER_ID_HEADERS,
     ProviderError, ProviderResponse, ProviderUsage, RESPONSE_MODEL_DROPPED, SERVICE_TIER_DROPPED,
-    StreamOutcome, UsageFormat, UsageStream, bedrock_arn_account, billing_id, client_source,
-    gen_ai_provider_name, gen_ai_provider_name_at, is_person_identifier, is_service_tier,
-    parse_provider_body, parse_provider_response, parse_provider_usage, provider_id_attributes,
-    service_tier_of, vertex_project_id,
+    StreamOutcome, UsageFormat, UsageStream, bedrock_arn_account, gen_ai_provider_name,
+    is_person_identifier, is_service_tier, parse_provider_body, parse_provider_response,
+    parse_provider_usage, provider_id_attributes, vertex_project_id,
 };
-pub use registry::{
-    AttributeDefinition, DeploymentAttributeDefinition, Finding, FindingCode, MetricDefinition,
-    MetricOrigin, PROFILE_ATTRIBUTE, ProfileDefinition, ProfileIdentifier, Registry, parse_profile,
-};
+/// The attribute that carries the profile identifier: on the OTLP scope, or
+/// on each point when the SDK cannot set scope attributes.
+pub const PROFILE_ATTRIBUTE: &str = "trajectory.profile";
 pub use usage::{
     InputBasis, Modality, NormalizedUsage, OutputBasis, ReportedUsage, normalize_usage,
 };
