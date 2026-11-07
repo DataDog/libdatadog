@@ -85,7 +85,7 @@ mod conformance_tests;
 mod robustness_tests;
 mod usage;
 
-pub use batch::MetricBatch;
+pub use batch::{Document, DocumentError, MetricBatch, Observation};
 pub use datadog::{DatadogSeries, SeriesType, datadog_series, datadog_tag_value};
 pub use deployment::{
     Carrier, DEPLOYMENT_ATTRIBUTES, deployment_attribute_carrier, is_deployment_value,

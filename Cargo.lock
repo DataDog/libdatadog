@@ -2794,6 +2794,7 @@ dependencies = [
 name = "libdd-ai-usage"
 version = "0.1.0"
 dependencies = [
+ "hashbrown 0.17.1",
  "libdd-ddsketch",
  "memchr",
  "opentelemetry-proto",

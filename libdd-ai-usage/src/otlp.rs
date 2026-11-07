@@ -26,7 +26,7 @@ use std::borrow::Cow;
 use prost::Message;
 
 use crate::PROFILE_ATTRIBUTE;
-use crate::batch::MetricBatch;
+use crate::batch::{Data, MetricBatch};
 use crate::datadog::{NANO_USD, NANO_USD_PER_USD, is_versioned};
 use crate::point::{Attributes, Sum};
 
@@ -115,7 +115,8 @@ impl MetricBatch {
     ) -> pb::ExportMetricsServiceRequest {
         let datadog = binding == OtlpBinding::Datadog;
         let mut resource_metrics: Vec<pb::ResourceMetrics> = Vec::new();
-        for ((resource, profile), group) in &self.groups {
+        for group in &self.groups() {
+            let (resource, profile) = (group.resource, group.profile);
             // Groups are sorted by resource, so one resource's profiles are adjacent.
             let same_resource = resource_metrics.last().is_some_and(|last| {
                 last.resource.as_ref().map(|r| &r.attributes)
@@ -147,7 +148,11 @@ impl MetricBatch {
                 }
             };
             let mut sums: Vec<(usize, pb::NumberDataPoint)> = Vec::new();
-            for ((name, attributes), (unit, sum)) in &group.counters {
+            for series in &group.series {
+                let Data::Counter(sum) = &series.data else {
+                    continue;
+                };
+                let (name, attributes, unit) = (&series.name, &series.attributes, &series.unit);
                 let in_usd = datadog && unit == NANO_USD;
                 let value = match sum {
                     // One division of the exact sum, converted to a double once.
@@ -172,7 +177,11 @@ impl MetricBatch {
                 ));
             }
             let mut histograms: Vec<(usize, pb::HistogramDataPoint)> = Vec::new();
-            for ((name, attributes), (unit, samples)) in &group.histograms {
+            for series in &group.series {
+                let Data::Histogram(samples) = &series.data else {
+                    continue;
+                };
+                let (name, attributes, unit) = (&series.name, &series.attributes, &series.unit);
                 histograms.push((
                     metric(name, unit),
                     histogram_point(

@@ -333,3 +333,79 @@ fn counters_are_aggregated_per_attribute_set() {
         "one counter point per attribute set"
     );
 }
+
+/// Adding a request to a batch projects it into the batch's series without
+/// a `Projection`: every case gives the same points, issues and error code
+/// both ways.
+#[test]
+#[cfg_attr(
+    miri,
+    ignore = "projects every case; the rule tests cover these paths under Miri"
+)]
+fn adding_a_request_matches_adding_its_projection() {
+    use libdd_ai_usage::{
+        Document, GatewayRequestObservation, MetricBatch, Observation, ProviderAttemptObservation,
+        ProviderStreamingObservation, TokenBreakdownObservation,
+    };
+    let mut failures = Vec::new();
+    for (dir, profile, ..) in PROFILE_DIRS {
+        for kind in ["valid", "invalid"] {
+            for path in fixtures(dir, kind) {
+                let name = path.display().to_string();
+                let fixture = read_json(&path);
+                let input = fixture.get("observation").unwrap_or(&Json::Null);
+                let mut old = MetricBatch::new();
+                let expected = project_fixture_result(&fixture).map(|projection| {
+                    old.try_add(profile, &projection).unwrap();
+                    projection.issues
+                });
+                let deployment: Vec<(&str, Option<&str>)> =
+                    match fixture.get("deployment_attributes") {
+                        Some(Json::Object(members)) => members
+                            .iter()
+                            .filter(|(_, value)| !value.is_null())
+                            .map(|(key, value)| (key.as_str(), value.as_str()))
+                            .collect(),
+                        _ => Vec::new(),
+                    };
+                let decoded = match profile {
+                    Profile::ProviderAttempt => ProviderAttemptObservation::from_json(input)
+                        .map(|o| (Some(o), None, None, None)),
+                    Profile::ProviderStreaming => ProviderStreamingObservation::from_json(input)
+                        .map(|o| (None, Some(o), None, None)),
+                    Profile::TokenBreakdown => TokenBreakdownObservation::from_json(input)
+                        .map(|o| (None, None, Some(o), None)),
+                    Profile::GatewayRequest => GatewayRequestObservation::from_json(input)
+                        .map(|o| (None, None, None, Some(o))),
+                };
+                let mut new = MetricBatch::new();
+                let got = decoded.and_then(|(a, s, b, g)| {
+                    let observation = match (&a, &s, &b, &g) {
+                        (Some(o), ..) => Observation::ProviderAttempt(o),
+                        (_, Some(o), ..) => Observation::ProviderStreaming(o),
+                        (_, _, Some(o), _) => Observation::TokenBreakdown(o),
+                        (.., Some(o)) => Observation::GatewayRequest(o),
+                        _ => unreachable!(),
+                    };
+                    new.try_add_request(&[Document {
+                        observation,
+                        deployment_attributes: &deployment,
+                        metrics: None,
+                    }])
+                    .map(|(_, mut issues)| issues.remove(0))
+                    .map_err(|error| error.error)
+                });
+                match (&expected, &got) {
+                    (Ok(a), Ok(b)) if a == b => {
+                        if old.points() != new.points() {
+                            failures.push(format!("{name}: points differ"));
+                        }
+                    }
+                    (Err(a), Err(b)) if a.code() == b.code() => {}
+                    _ => failures.push(format!("{name}: {expected:?} vs {got:?}")),
+                }
+            }
+        }
+    }
+    report(failures);
+}

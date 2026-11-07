@@ -12,8 +12,6 @@
 //! them apart) and one writer must never stamp a series twice at the same
 //! second.
 
-use std::collections::BTreeMap;
-
 use libdd_ddsketch::DDSketch;
 
 use crate::MetricBatch;
@@ -260,34 +258,31 @@ impl MetricBatch {
             }
             tags
         };
-        let mut rates = Vec::new();
-        let mut samples: BTreeMap<(String, Vec<String>), Vec<f64>> = BTreeMap::new();
-        for DatadogSeries {
-            name,
-            series_type,
-            value,
-            tags,
-        } in taken.datadog_series(false)?
-        {
-            match series_type {
-                SeriesType::Count => rates.push(RateSeries {
+        let (counts, distributions) = taken.datadog_parts()?;
+        let rates = counts
+            .into_iter()
+            .filter(|series| series.series_type == SeriesType::Count)
+            .map(
+                |DatadogSeries {
+                     name, value, tags, ..
+                 }| RateSeries {
                     metric: name,
                     tags: with_writer(tags),
                     value: value / f64::from(interval),
-                }),
-                SeriesType::Distribution => samples.entry((name, tags)).or_default().push(value),
-            }
-        }
-        let sketches = samples
+                },
+            )
+            .collect();
+        let mut sketches: Vec<SketchSeries> = distributions
             .into_iter()
-            .filter_map(|((metric, tags), values)| {
+            .filter_map(|held| {
                 Some(SketchSeries {
-                    metric,
-                    tags: with_writer(tags),
-                    sketch: Sketch::of(&values)?,
+                    sketch: Sketch::of(&held.samples)?,
+                    metric: held.name,
+                    tags: with_writer(held.tags),
                 })
             })
             .collect();
+        sketches.sort_by(|a, b| a.metric.cmp(&b.metric).then_with(|| a.tags.cmp(&b.tags)));
         Ok(IntakeTake {
             timestamp,
             interval,

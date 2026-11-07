@@ -41,6 +41,72 @@
 #define ddog_ai_usage_INCLUSIVE_TOTALS 1
 
 /**
+ * Bits of [`ddog_ai_usage_batch_add`]'s `profiles`: project the fields as a
+ * provider attempt.
+ */
+#define ddog_ai_usage_PROFILE_PROVIDER_ATTEMPT 1
+
+/**
+ * Project the fields as a token breakdown (the attempt's cache and
+ * reasoning parts).
+ */
+#define ddog_ai_usage_PROFILE_TOKEN_BREAKDOWN 2
+
+/**
+ * Project the fields as a gateway request.
+ */
+#define ddog_ai_usage_PROFILE_GATEWAY_REQUEST 4
+
+/**
+ * The numbers of [`ddog_ai_usage_batch_add`], by index. NaN is absent;
+ * `STREAMING` and `BATCH` are 0 or 1. The `CACHE_*` numbers are how many
+ * times the gateway request's cache had each outcome.
+ */
+enum ddog_ai_usage_Number
+#ifdef __cplusplus
+  : uint32_t
+#endif // __cplusplus
+ {
+  DDOG_AI_USAGE_NUMBER_DURATION_SECONDS,
+  DDOG_AI_USAGE_NUMBER_TIME_TO_FIRST_CHUNK_SECONDS,
+  DDOG_AI_USAGE_NUMBER_STREAMING,
+  DDOG_AI_USAGE_NUMBER_BATCH,
+  DDOG_AI_USAGE_NUMBER_INPUT_TOKENS,
+  DDOG_AI_USAGE_NUMBER_OUTPUT_TOKENS,
+  DDOG_AI_USAGE_NUMBER_CACHE_READ_INPUT_TOKENS,
+  DDOG_AI_USAGE_NUMBER_CACHE_WRITE_INPUT_TOKENS,
+  DDOG_AI_USAGE_NUMBER_CACHE_WRITE5M_INPUT_TOKENS,
+  DDOG_AI_USAGE_NUMBER_CACHE_WRITE1H_INPUT_TOKENS,
+  DDOG_AI_USAGE_NUMBER_REASONING_OUTPUT_TOKENS,
+  DDOG_AI_USAGE_NUMBER_WEB_SEARCH_REQUESTS,
+  DDOG_AI_USAGE_NUMBER_WEB_SEARCH_REQUESTS_SECONDARY,
+  DDOG_AI_USAGE_NUMBER_INPUT_TEXT_TOKENS,
+  DDOG_AI_USAGE_NUMBER_INPUT_IMAGE_TOKENS,
+  DDOG_AI_USAGE_NUMBER_INPUT_AUDIO_TOKENS,
+  DDOG_AI_USAGE_NUMBER_OUTPUT_TEXT_TOKENS,
+  DDOG_AI_USAGE_NUMBER_OUTPUT_IMAGE_TOKENS,
+  DDOG_AI_USAGE_NUMBER_OUTPUT_AUDIO_TOKENS,
+  DDOG_AI_USAGE_NUMBER_COST_USD,
+  DDOG_AI_USAGE_NUMBER_COST_NANO_USD,
+  DDOG_AI_USAGE_NUMBER_GATEWAY_DURATION_SECONDS,
+  DDOG_AI_USAGE_NUMBER_PROVIDER_OPERATIONS,
+  DDOG_AI_USAGE_NUMBER_RETRIES,
+  DDOG_AI_USAGE_NUMBER_FALLBACKS,
+  DDOG_AI_USAGE_NUMBER_ESTIMATED_COST_USD,
+  DDOG_AI_USAGE_NUMBER_ESTIMATED_COST_NANO_USD,
+  DDOG_AI_USAGE_NUMBER_CACHE_HITS,
+  DDOG_AI_USAGE_NUMBER_CACHE_MISSES,
+  DDOG_AI_USAGE_NUMBER_CACHE_WRITES,
+  /**
+   * The number of numbers.
+   */
+  DDOG_AI_USAGE_NUMBER_COUNT,
+};
+#ifndef __cplusplus
+typedef uint32_t ddog_ai_usage_Number;
+#endif // __cplusplus
+
+/**
  * How a provider stream ended so far, as [`ddog_ai_usage_stream_outcome`]
  * reports it.
  */
@@ -79,6 +145,47 @@ typedef enum ddog_ai_usage_Status {
    */
   DDOG_AI_USAGE_STATUS_INTERNAL = 2,
 } ddog_ai_usage_Status;
+
+/**
+ * The strings of [`ddog_ai_usage_batch_add`], by index. An empty string is
+ * absent. The gateway request reads `OPERATION_NAME`, `REQUEST_MODEL`,
+ * `GATEWAY_ERROR_TYPE` and `PROVIDER_OPERATION_COVERAGE`; the attempt and
+ * the breakdown read the others.
+ */
+enum ddog_ai_usage_Text
+#ifdef __cplusplus
+  : uint32_t
+#endif // __cplusplus
+ {
+  DDOG_AI_USAGE_TEXT_OPERATION_NAME,
+  DDOG_AI_USAGE_TEXT_PROVIDER_NAME,
+  DDOG_AI_USAGE_TEXT_REQUEST_MODEL,
+  DDOG_AI_USAGE_TEXT_RESPONSE_MODEL,
+  DDOG_AI_USAGE_TEXT_OBSERVATION_POINT,
+  DDOG_AI_USAGE_TEXT_ERROR_TYPE,
+  DDOG_AI_USAGE_TEXT_SERVICE_TIER,
+  DDOG_AI_USAGE_TEXT_CONTEXT_BAND,
+  DDOG_AI_USAGE_TEXT_INPUT_BASIS,
+  DDOG_AI_USAGE_TEXT_OUTPUT_BASIS,
+  DDOG_AI_USAGE_TEXT_INPUT_TOKEN_SOURCE,
+  DDOG_AI_USAGE_TEXT_OUTPUT_TOKEN_SOURCE,
+  DDOG_AI_USAGE_TEXT_COST_SOURCE,
+  DDOG_AI_USAGE_TEXT_COST_RATE_CARD,
+  DDOG_AI_USAGE_TEXT_COST_BOUND,
+  DDOG_AI_USAGE_TEXT_CANONICAL_PROVIDER,
+  DDOG_AI_USAGE_TEXT_CANONICAL_MODEL,
+  DDOG_AI_USAGE_TEXT_MODEL_FAMILY,
+  DDOG_AI_USAGE_TEXT_COST_PRICED_AS_MODEL,
+  DDOG_AI_USAGE_TEXT_GATEWAY_ERROR_TYPE,
+  DDOG_AI_USAGE_TEXT_PROVIDER_OPERATION_COVERAGE,
+  /**
+   * The number of strings before the deployment attributes.
+   */
+  DDOG_AI_USAGE_TEXT_COUNT,
+};
+#ifndef __cplusplus
+typedef uint32_t ddog_ai_usage_Text;
+#endif // __cplusplus
 
 /**
  * Projections collected over one export window. Safe to share between
@@ -162,6 +269,38 @@ enum ddog_ai_usage_Status ddog_ai_usage_batch_add_request(const struct ddog_ai_u
                                                           const uint8_t *input,
                                                           uintptr_t input_len,
                                                           struct ddog_ai_usage_Buffer *out);
+
+/**
+ * Add one request to `batch` from flat fields, without JSON: the
+ * observations `profiles` names (a bit set of `PROFILE_*`), projected from
+ * one set of fields and added together, all or none, as
+ * [`ddog_ai_usage_batch_add_request`] adds documents.
+ *
+ * `strings[..strings_len]` is every string back to back, and
+ * `string_lens[..string_count]` their lengths in [`Text`] order. Strings
+ * past [`Text::Count`] are deployment attributes, as name and value pairs,
+ * applied to every observation. `numbers[..number_count]` are in [`Number`]
+ * order. Fields past the counts given are absent, so a caller states only
+ * what it has, and fields added later keep this call compatible. A
+ * rejection, an issue list, and `"dropped"` are written to `out` as
+ * [`ddog_ai_usage_batch_add_request`] writes them, with one issue list per
+ * profile in bit order; nothing is written on success when `out` is null.
+ *
+ * # Safety
+ *
+ * `batch` must be a live batch from [`ddog_ai_usage_batch_new`]; `strings`,
+ * `string_lens` and `numbers` must point to their lengths of readable
+ * values (or the length must be 0); and `out` must be null or writable.
+ */
+enum ddog_ai_usage_Status ddog_ai_usage_batch_add(const struct ddog_ai_usage_Batch *batch,
+                                                  uint32_t profiles,
+                                                  const uint8_t *strings,
+                                                  uintptr_t strings_len,
+                                                  const uint32_t *string_lens,
+                                                  uintptr_t string_count,
+                                                  const double *numbers,
+                                                  uintptr_t number_count,
+                                                  struct ddog_ai_usage_Buffer *out);
 
 /**
  * Set the metric list `input[..input_len]` (a JSON array of names, as a

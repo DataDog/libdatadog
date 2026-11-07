@@ -15,8 +15,7 @@ use crate::observation::{
     is_identifier, is_rate_card,
 };
 use crate::point::{
-    Attributes, CounterSet, ErrorCode, IssueCode, Issues, MetricError, MetricPoint, Projection,
-    reject,
+    Attrs, ErrorCode, IssueCode, Issues, MetricError, MetricPoint, Projection, Sink, reject,
 };
 use crate::usage::{Modality, NormalizedUsage, normalize_usage};
 
@@ -32,19 +31,6 @@ const TOKEN: &str = "{token}";
 const USAGE_OPERATIONS: [&str; 3] = ["chat", "text_completion", "embeddings"];
 const CHAT_OPERATIONS: [&str; 2] = ["chat", "text_completion"];
 
-fn with(base: &Attributes, key: &str, value: &str) -> Attributes {
-    let mut attributes = base.clone();
-    attributes.insert(key.into(), value.into());
-    attributes
-}
-
-fn with_some(base: &Attributes, key: &str, value: Option<&str>) -> Attributes {
-    match value {
-        Some(value) => with(base, key, value),
-        None => base.clone(),
-    }
-}
-
 /// What a token or cost Counter carries beyond its base attributes: the
 /// context band, the service tier and the batch flag, each when the
 /// observation states it.
@@ -56,16 +42,10 @@ struct PriceTags<'a> {
 }
 
 /// The batch attribute has one value, `true`: a false batch adds nothing.
-fn with_price_tags(base: &Attributes, tags: PriceTags) -> Attributes {
-    let mut out = with_some(
-        &with_some(base, CONTEXT_BAND, tags.band),
-        SERVICE_TIER,
-        tags.tier,
-    );
-    if tags.batch {
-        out.insert(BATCH.into(), "true".into());
-    }
-    out
+fn with_price_tags<'a>(base: Attrs<'a>, tags: PriceTags<'a>) -> Attrs<'a> {
+    base.with_some(CONTEXT_BAND, tags.band)
+        .with_some(SERVICE_TIER, tags.tier)
+        .with_some(BATCH, tags.batch.then_some("true"))
 }
 
 fn count_value(count: u64) -> f64 {
@@ -238,35 +218,24 @@ fn estimated_side(source: &Option<String>) -> bool {
 }
 
 /// The attributes of a token point, marked when its side was estimated.
-fn with_token_source(base: &Attributes, estimated: bool) -> Attributes {
-    if estimated {
-        with(base, TOKEN_SOURCE, "estimated")
-    } else {
-        base.clone()
-    }
+fn with_token_source(base: Attrs<'_>, estimated: bool) -> Attrs<'_> {
+    base.with_some(TOKEN_SOURCE, estimated.then_some("estimated"))
 }
 
-fn provider_attributes(
-    operation_name: &str,
-    provider_name: &str,
-    request_model: &Option<String>,
-    response_model: &Option<String>,
-    observation_point: Option<&str>,
-) -> Attributes {
-    let mut attributes = Attributes::new();
-    attributes.insert("gen_ai.operation.name".into(), operation_name.into());
-    attributes.insert("gen_ai.provider.name".into(), provider_name.into());
-    if let Some(model) = request_model {
-        attributes.insert("gen_ai.request.model".into(), model.clone());
-    }
-    if let Some(model) = response_model {
-        attributes.insert("gen_ai.response.model".into(), model.clone());
-    }
+fn provider_attributes<'a>(
+    operation_name: &'a str,
+    provider_name: &'a str,
+    request_model: &'a Option<String>,
+    response_model: &'a Option<String>,
+    observation_point: Option<&'a str>,
+) -> Attrs<'a> {
     // Every point says where the operation was observed, when stated.
-    if let Some(point) = observation_point {
-        attributes.insert(OBSERVATION_POINT.into(), point.into());
-    }
-    attributes
+    Attrs::new()
+        .with("gen_ai.operation.name", operation_name)
+        .with("gen_ai.provider.name", provider_name)
+        .with_some("gen_ai.request.model", request_model.as_deref())
+        .with_some("gen_ai.response.model", response_model.as_deref())
+        .with_some(OBSERVATION_POINT, observation_point)
 }
 
 /// The cost of one observation after the contradiction checks of step 9.
@@ -425,37 +394,69 @@ fn token_breakdown_issues(usage: &NormalizedUsage) -> Issues {
         .collect()
 }
 
-fn token_points(
-    points: &mut Vec<MetricPoint>,
-    direction: &str,
+/// The two metrics of one token direction: the per-operation Histogram and
+/// the usage Counter.
+struct Direction {
+    operation: &'static str,
+    usage: &'static str,
+}
+
+const INPUT: Direction = Direction {
+    operation: "gen_ai.client.inference.operation.input_tokens",
+    usage: "gen_ai.client.inference.usage.input_tokens",
+};
+const OUTPUT: Direction = Direction {
+    operation: "gen_ai.client.inference.operation.output_tokens",
+    usage: "gen_ai.client.inference.usage.output_tokens",
+};
+
+#[allow(clippy::too_many_arguments)]
+fn token_points<'a>(
+    sink: &mut impl Sink<'a>,
+    direction: &Direction,
     total: Option<u64>,
     by_modality: &[(Modality, u64)],
-    base: &Attributes,
-    tags: PriceTags,
+    base: Attrs<'a>,
+    tags: PriceTags<'a>,
     estimated: bool,
 ) {
-    let base = &with_token_source(base, estimated);
+    let base = with_token_source(base, estimated);
     if let Some(total) = total {
-        points.push(MetricPoint::histogram(
-            &format!("gen_ai.client.inference.operation.{direction}_tokens"),
-            TOKEN,
-            count_value(total),
-            base.clone(),
-        ));
+        sink.histogram(direction.operation, TOKEN, count_value(total), &base);
     }
     let counter = with_price_tags(base, tags);
     for (modality, count) in by_modality {
-        points.push(MetricPoint::counter(
-            &format!("gen_ai.client.inference.usage.{direction}_tokens"),
+        sink.counter(
+            direction.usage,
             TOKEN,
             count_value(*count),
-            with(&counter, TOKEN_MODALITY, modality.as_str()),
-        ));
+            &counter.with(TOKEN_MODALITY, modality.as_str()),
+        );
     }
+}
+
+/// Run a projector into a [`Projection`].
+fn into_projection(
+    project: impl FnOnce(&mut Vec<MetricPoint>) -> Result<Issues, MetricError>,
+) -> Result<Projection, MetricError> {
+    let mut points = Vec::new();
+    let issues = project(&mut points)?;
+    Ok(Projection {
+        points,
+        issues,
+        ..Projection::default()
+    })
 }
 
 /// Project one provider operation (`gen_ai.client.provider_attempt@0.1.0`).
 pub fn project_provider_attempt(o: &ProviderAttemptObservation) -> Result<Projection, MetricError> {
+    into_projection(|sink| provider_attempt(o, sink))
+}
+
+pub(crate) fn provider_attempt<'a>(
+    o: &'a ProviderAttemptObservation,
+    sink: &mut impl Sink<'a>,
+) -> Result<Issues, MetricError> {
     o.usage.check_counts()?;
     o.usage.check_values()?;
     let (input_estimated, output_estimated) =
@@ -500,45 +501,45 @@ pub fn project_provider_attempt(o: &ProviderAttemptObservation) -> Result<Projec
         observation_point,
     );
 
-    let mut points = vec![MetricPoint::histogram(
+    sink.histogram(
         duration_metric(operation),
         "s",
         duration,
-        with_some(&base, "error.type", error_type),
-    )];
+        &base.with_some("error.type", error_type),
+    );
     token_points(
-        &mut points,
-        "input",
+        sink,
+        &INPUT,
         usage.input_total,
         &usage.input_by_modality,
-        &base,
+        base,
         tags,
         input_estimated,
     );
     token_points(
-        &mut points,
-        "output",
+        sink,
+        &OUTPUT,
         usage.output_total,
         &usage.output_by_modality,
-        &base,
+        base,
         tags,
         output_estimated,
     );
     if let Some(seconds) = first_chunk {
-        points.push(MetricPoint::histogram(
+        sink.histogram(
             "gen_ai.client.inference.time_to_first_chunk",
             "s",
             seconds,
-            base.clone(),
-        ));
+            &base,
+        );
     }
     if let Some(requests) = usage.web_search_requests {
-        points.push(MetricPoint::counter(
+        sink.counter(
             "trajectory.gen_ai.client.inference.usage.server_tool.requests",
             "{request}",
             count_value(requests),
-            with(&base, "trajectory.server_tool.kind", "web_search"),
-        ));
+            &base.with("trajectory.server_tool.kind", "web_search"),
+        );
     }
     if let Some(cost) = cost {
         match cost.amount {
@@ -557,43 +558,37 @@ pub fn project_provider_attempt(o: &ProviderAttemptObservation) -> Result<Projec
                 };
                 // Both cost points carry the canonical name beside the names
                 // as received; no other point does, and nothing is filled in.
-                let mut sourced = with(&base, "trajectory.cost.source", cost.source);
-                for (key, value) in [
-                    ("trajectory.canonical.provider", &o.canonical_provider),
-                    ("trajectory.canonical.model", &o.canonical_model),
-                    ("trajectory.canonical.family", &o.model_family),
-                ] {
-                    if let Some(value) = value {
-                        sourced.insert(key.into(), value.clone());
-                    }
-                }
-                let mut counter = with_some(&sourced, "trajectory.cost.rate_card", rate_card);
-                if let Some(model) = o.cost_priced_as_model.as_deref() {
-                    counter.insert("trajectory.cost.priced_as".into(), model.into());
-                }
-                if let Some(bound) = o.cost_bound.as_deref() {
-                    counter.insert("trajectory.cost.bound".into(), bound.into());
-                }
-                points.push(MetricPoint::counter(
+                let sourced = base
+                    .with("trajectory.cost.source", cost.source)
+                    .with_some(
+                        "trajectory.canonical.provider",
+                        o.canonical_provider.as_deref(),
+                    )
+                    .with_some("trajectory.canonical.model", o.canonical_model.as_deref())
+                    .with_some("trajectory.canonical.family", o.model_family.as_deref());
+                let counter = sourced
+                    .with_some("trajectory.cost.rate_card", rate_card)
+                    .with_some(
+                        "trajectory.cost.priced_as",
+                        o.cost_priced_as_model.as_deref(),
+                    )
+                    .with_some("trajectory.cost.bound", o.cost_bound.as_deref());
+                sink.counter(
                     "trajectory.gen_ai.client.inference.usage.cost",
                     "{nanoUSD}",
                     count_value(nano_usd),
-                    with_price_tags(&counter, tags),
-                ));
-                points.push(MetricPoint::histogram(
+                    &with_price_tags(counter, tags),
+                );
+                sink.histogram(
                     "trajectory.gen_ai.client.operation.cost",
                     "{USD}",
                     usd,
-                    sourced,
-                ));
+                    &sourced,
+                );
             }
         }
     }
-    Ok(Projection {
-        points,
-        issues,
-        ..Projection::default()
-    })
+    Ok(issues)
 }
 
 /// Project the chunk intervals of one streamed operation
@@ -601,6 +596,13 @@ pub fn project_provider_attempt(o: &ProviderAttemptObservation) -> Result<Projec
 pub fn project_provider_streaming(
     o: &ProviderStreamingObservation,
 ) -> Result<Projection, MetricError> {
+    into_projection(|sink| provider_streaming(o, sink))
+}
+
+pub(crate) fn provider_streaming<'a>(
+    o: &'a ProviderStreamingObservation,
+    sink: &mut impl Sink<'a>,
+) -> Result<Issues, MetricError> {
     let operation = check_operation(&o.operation_name, &CHAT_OPERATIONS)?;
     let provider = check_provider(&o.provider_name)?;
     match o.streaming {
@@ -628,25 +630,27 @@ pub fn project_provider_streaming(
         &o.response_model,
         observation_point,
     );
-    Ok(Projection {
-        points: intervals
-            .iter()
-            .map(|interval| {
-                MetricPoint::histogram(
-                    "gen_ai.client.inference.time_per_output_chunk",
-                    "s",
-                    *interval,
-                    base.clone(),
-                )
-            })
-            .collect(),
-        ..Projection::default()
-    })
+    for interval in intervals {
+        sink.histogram(
+            "gen_ai.client.inference.time_per_output_chunk",
+            "s",
+            *interval,
+            &base,
+        );
+    }
+    Ok(Issues::default())
 }
 
 /// Project the cache and reasoning parts of one provider operation
 /// (`trajectory.gen_ai.client.token_breakdown@0.1.0`).
 pub fn project_token_breakdown(o: &TokenBreakdownObservation) -> Result<Projection, MetricError> {
+    into_projection(|sink| token_breakdown(o, sink))
+}
+
+pub(crate) fn token_breakdown<'a>(
+    o: &'a TokenBreakdownObservation,
+    sink: &mut impl Sink<'a>,
+) -> Result<Issues, MetricError> {
     o.usage.check_counts()?;
     o.usage.check_values()?;
     let (input_estimated, output_estimated) =
@@ -676,21 +680,17 @@ pub fn project_token_breakdown(o: &TokenBreakdownObservation) -> Result<Projecti
         &o.response_model,
         observation_point,
     );
-    let base = with_price_tags(
-        &with(&base, TOKEN_MODALITY, Modality::Unknown.as_str()),
-        tags,
-    );
-    let input_side = with_token_source(&base, input_estimated);
-    let counter = |name: &str, count: u64, attributes: Attributes| {
-        MetricPoint::counter(name, TOKEN, count_value(count), attributes)
+    let base = with_price_tags(base.with(TOKEN_MODALITY, Modality::Unknown.as_str()), tags);
+    let input_side = with_token_source(base, input_estimated);
+    let mut counter = |name: &'static str, count: u64, attributes: &Attrs<'a>| {
+        sink.counter(name, TOKEN, count_value(count), attributes);
     };
-    let mut points = Vec::new();
     if let Some(read) = usage.cache_read {
-        points.push(counter(
+        counter(
             "gen_ai.client.inference.usage.cache_read.input_tokens",
             read,
-            input_side.clone(),
-        ));
+            &input_side,
+        );
     }
     for (lifetime, count) in [
         ("5m", usage.cache_write_5m),
@@ -698,32 +698,28 @@ pub fn project_token_breakdown(o: &TokenBreakdownObservation) -> Result<Projecti
         ("unspecified", usage.cache_write_unspecified),
     ] {
         if let Some(count) = count {
-            points.push(counter(
+            counter(
                 "gen_ai.client.inference.usage.cache_write.input_tokens",
                 count,
-                with(&input_side, CACHE_LIFETIME, lifetime),
-            ));
+                &input_side.with(CACHE_LIFETIME, lifetime),
+            );
         }
     }
     if let Some(uncached) = usage.uncached_input {
-        points.push(counter(
+        counter(
             "trajectory.gen_ai.client.inference.usage.uncached.input_tokens",
             uncached,
-            input_side.clone(),
-        ));
+            &input_side,
+        );
     }
     if let Some(reasoning) = usage.reasoning {
-        points.push(counter(
+        counter(
             "gen_ai.client.inference.usage.reasoning.output_tokens",
             reasoning,
-            with_token_source(&base, output_estimated),
-        ));
+            &with_token_source(base, output_estimated),
+        );
     }
-    Ok(Projection {
-        points,
-        issues: token_breakdown_issues(&usage),
-        ..Projection::default()
-    })
+    Ok(token_breakdown_issues(&usage))
 }
 
 /// A count of a profile that has no issue codes: negative, fractional, or
@@ -744,6 +740,13 @@ fn check_plain_count(value: Option<f64>, name: &str) -> Result<Option<f64>, Metr
 /// Project one logical gateway request
 /// (`trajectory.gen_ai.gateway.request@0.1.0`).
 pub fn project_gateway_request(o: &GatewayRequestObservation) -> Result<Projection, MetricError> {
+    into_projection(|sink| gateway_request(o, sink))
+}
+
+pub(crate) fn gateway_request<'a>(
+    o: &'a GatewayRequestObservation,
+    sink: &mut impl Sink<'a>,
+) -> Result<Issues, MetricError> {
     // The operations the provider profiles cover (`GATEWAY-METRICS.md#operations`).
     let operation = check_operation(&o.operation_name, &USAGE_OPERATIONS)?;
     let duration = check_duration(o.duration_seconds, "duration_seconds")?;
@@ -802,25 +805,23 @@ pub fn project_gateway_request(o: &GatewayRequestObservation) -> Result<Projecti
     }
 
     // Every point says it was observed at a gateway, stated or not.
-    let mut base = Attributes::new();
-    base.insert("gen_ai.operation.name".into(), operation.into());
-    base.insert(OBSERVATION_POINT.into(), "gateway".into());
-    if let Some(model) = &o.request_model {
-        base.insert("gen_ai.request.model".into(), model.clone());
-    }
-    let mut points = vec![MetricPoint::histogram(
+    let base = Attrs::new()
+        .with("gen_ai.operation.name", operation)
+        .with(OBSERVATION_POINT, "gateway")
+        .with_some("gen_ai.request.model", o.request_model.as_deref());
+    sink.histogram(
         "trajectory.gen_ai.gateway.request.duration",
         "s",
         duration,
-        with_some(&base, "error.type", error_type),
-    )];
+        &base.with_some("error.type", error_type),
+    );
     if let (Some(count), Some(coverage)) = (operations, coverage) {
-        points.push(MetricPoint::histogram(
+        sink.histogram(
             "trajectory.gen_ai.gateway.request.provider_operations",
             "{operation}",
             count,
-            with(&base, "trajectory.provider.operation.coverage", coverage),
-        ));
+            &base.with("trajectory.provider.operation.coverage", coverage),
+        );
     }
     for (name, unit, value) in [
         (
@@ -835,19 +836,25 @@ pub fn project_gateway_request(o: &GatewayRequestObservation) -> Result<Projecti
         ),
     ] {
         if let Some(value) = value {
-            points.push(MetricPoint::histogram(name, unit, value, base.clone()));
+            sink.histogram(name, unit, value, &base);
         }
     }
-    let mut cache = CounterSet::default();
+    // One Counter per outcome, in first-seen order, with the times it was seen.
+    let mut seen: Vec<(&str, u64)> = Vec::new();
     for outcome in outcomes {
-        cache.add_count(
+        match seen.iter_mut().find(|(kind, _)| *kind == outcome.as_str()) {
+            Some((_, count)) => *count += 1,
+            None => seen.push((outcome.as_str(), 1)),
+        }
+    }
+    for (outcome, count) in seen {
+        sink.counter(
             "trajectory.gen_ai.gateway.cache.operations",
             "{operation}",
-            1,
-            with(&base, "trajectory.cache.outcome", outcome),
+            count_value(count),
+            &base.with("trajectory.cache.outcome", outcome),
         );
     }
-    points.extend(cache.into_points());
     // The gateway's own figure for the request. It names no source: the
     // metric's name says it is an estimate. One unusable stated amount makes
     // the figure unusable.
@@ -858,17 +865,13 @@ pub fn project_gateway_request(o: &GatewayRequestObservation) -> Result<Projecti
             issues.insert(IssueCode::CostUnusable);
         }
         (Some(Some(nano)), _) | (None, Some(Some(nano))) => {
-            points.push(MetricPoint::counter(
+            sink.counter(
                 "trajectory.gen_ai.gateway.request.estimated_cost",
                 "{nanoUSD}",
                 count_value(nano),
-                base.clone(),
-            ));
+                &base,
+            );
         }
     }
-    Ok(Projection {
-        points,
-        issues,
-        ..Projection::default()
-    })
+    Ok(issues)
 }

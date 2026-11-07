@@ -408,44 +408,103 @@ impl Sum {
     }
 }
 
-/// Counter points aggregated per (name, attribute set), in first-seen order:
-/// one point per identity. Whole-number increments are added as integers and
-/// the sum is converted to a double once.
-#[derive(Default)]
-pub(crate) struct CounterSet {
-    index: BTreeMap<(String, Attributes), usize>,
-    entries: Vec<(String, String, Attributes, Sum)>,
+/// The most attributes a projector puts on one point (a cost Counter has 17).
+const MAX_ATTRS: usize = 18;
+
+/// Whether two keys are equal, comparing their addresses first: the
+/// projectors' keys are constants.
+#[inline]
+pub(crate) fn same_key(a: &str, b: &str) -> bool {
+    a.len() == b.len() && (std::ptr::eq(a.as_ptr(), b.as_ptr()) || a == b)
 }
 
-impl CounterSet {
-    fn add_sum(&mut self, name: &str, unit: &str, increment: Sum, attributes: Attributes) {
-        let key = (name.to_string(), attributes);
-        match self
-            .index
-            .get(&key)
-            .and_then(|at| self.entries.get_mut(*at))
-        {
-            Some(entry) => entry.3 = entry.3.add(increment),
-            None => {
-                self.index.insert(key.clone(), self.entries.len());
-                self.entries
-                    .push((key.0, unit.to_string(), key.1, increment));
-            }
+/// An attribute set as a projector builds it: borrowed pairs, each key at
+/// most once, in a fixed order per call site. Copying one allocates nothing.
+#[derive(Clone, Copy)]
+pub(crate) struct Attrs<'a> {
+    pairs: [(&'a str, &'a str); MAX_ATTRS],
+    len: u8,
+}
+
+impl<'a> Attrs<'a> {
+    pub(crate) fn new() -> Self {
+        Self {
+            pairs: [("", ""); MAX_ATTRS],
+            len: 0,
         }
     }
 
-    pub(crate) fn add_count(&mut self, name: &str, unit: &str, value: u64, attributes: Attributes) {
-        self.add_sum(name, unit, Sum::Integer(u128::from(value)), attributes);
+    /// The set with `key` set to `value`, replacing a value it had.
+    #[inline]
+    pub(crate) fn with(mut self, key: &'a str, value: &'a str) -> Self {
+        let len = usize::from(self.len);
+        match self.pairs[..len].iter_mut().find(|(k, _)| same_key(k, key)) {
+            Some(pair) => pair.1 = value,
+            None => {
+                // The projectors set fewer keys than the array holds.
+                if let Some(slot) = self.pairs.get_mut(len) {
+                    *slot = (key, value);
+                    self.len += 1;
+                }
+            }
+        }
+        self
     }
 
-    pub(crate) fn into_points(self) -> Vec<MetricPoint> {
-        self.entries
-            .into_iter()
-            .map(|(name, unit, attributes, sum)| match sum {
-                Sum::Integer(total) => MetricPoint::counter_exact(&name, &unit, total, attributes),
-                Sum::Double(total) => MetricPoint::counter(&name, &unit, total, attributes),
-            })
+    #[inline]
+    pub(crate) fn with_some(self, key: &'a str, value: Option<&'a str>) -> Self {
+        match value {
+            Some(value) => self.with(key, value),
+            None => self,
+        }
+    }
+
+    pub(crate) fn pairs(&self) -> &[(&'a str, &'a str)] {
+        &self.pairs[..usize::from(self.len)]
+    }
+
+    pub(crate) fn to_map(self) -> Attributes {
+        self.pairs()
+            .iter()
+            .map(|(key, value)| ((*key).to_string(), (*value).to_string()))
             .collect()
+    }
+}
+
+/// Where a projector writes its points: a [`Projection`]'s list, or a batch
+/// that adds them to its series without building an attribute map each.
+pub(crate) trait Sink<'a> {
+    fn point(
+        &mut self,
+        name: &'static str,
+        instrument: Instrument,
+        unit: &'static str,
+        value: f64,
+        attributes: &Attrs<'a>,
+    );
+
+    fn histogram(&mut self, name: &'static str, unit: &'static str, value: f64, a: &Attrs<'a>) {
+        self.point(name, Instrument::Histogram, unit, value, a);
+    }
+
+    fn counter(&mut self, name: &'static str, unit: &'static str, value: f64, a: &Attrs<'a>) {
+        self.point(name, Instrument::Counter, unit, value, a);
+    }
+}
+
+impl<'a> Sink<'a> for Vec<MetricPoint> {
+    fn point(
+        &mut self,
+        name: &'static str,
+        instrument: Instrument,
+        unit: &'static str,
+        value: f64,
+        attributes: &Attrs<'a>,
+    ) {
+        self.push(match instrument {
+            Instrument::Counter => MetricPoint::counter(name, unit, value, attributes.to_map()),
+            Instrument::Histogram => MetricPoint::histogram(name, unit, value, attributes.to_map()),
+        });
     }
 }
 
@@ -514,13 +573,21 @@ mod tests {
             .fold(0.0, |sum, n| sum + integer_to_f64(u128::from(*n)));
         assert_eq!(as_doubles, 9_007_199_254_740_992.0);
         for rotation in 0..increments.len() {
-            let mut set = CounterSet::default();
             let mut order = increments;
             order.rotate_left(rotation);
-            for increment in order {
-                set.add_count("m", "{token}", increment, Attributes::new());
-            }
-            let points = set.into_points();
+            let points = merge_counter_points(
+                order
+                    .iter()
+                    .map(|n| {
+                        MetricPoint::counter_exact(
+                            "m",
+                            "{token}",
+                            u128::from(*n),
+                            Attributes::new(),
+                        )
+                    })
+                    .collect(),
+            );
             assert_eq!(points.len(), 1);
             assert_eq!(points[0].value, 9_007_199_254_740_994.0, "{order:?}");
             assert_eq!(points[0].exact_value, Some(9_007_199_254_740_994));

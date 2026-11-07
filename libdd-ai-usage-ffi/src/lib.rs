@@ -28,6 +28,8 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Mutex;
 use std::{ptr, slice};
 
+use std::collections::BTreeMap;
+
 use libdd_ai_usage::{
     Attributes, DOGSTATSD_MAX_LINE_BYTES, DOGSTATSD_UDP_MAX_PAYLOAD, DOGSTATSD_UDS_MAX_PAYLOAD,
     ERROR_TYPE_API, ErrorCode, Json, MetricBatch, MetricError, PROVIDER_ID_HEADERS, Profile,
@@ -36,6 +38,11 @@ use libdd_ai_usage::{
     is_deployment_value, is_person_identifier, is_service_tier, operation_name_for,
     pack_dogstatsd_joined, parse_provider_body, project_result, provider_id_attributes,
     retain_metrics, with_deployment_attributes_json,
+};
+use libdd_ai_usage::{
+    Document, DocumentError, GatewayRequestObservation, Issues, Observation,
+    ProviderAttemptObservation, ProviderStreamingObservation, ReportedUsage,
+    TokenBreakdownObservation,
 };
 use serde_json::{Value, json};
 
@@ -107,6 +114,19 @@ impl Buffer {
 pub struct Batch {
     inner: Mutex<MetricBatch>,
     settings: Mutex<BatchSettings>,
+    /// The observations the last [`ddog_ai_usage_batch_add`] decoded, kept
+    /// so a request with the same strings decodes only its numbers.
+    recent: Mutex<Recent>,
+}
+
+/// The observations of the last flat add, and the strings and profiles
+/// they were decoded from.
+#[derive(Default)]
+struct Recent {
+    profiles: u32,
+    strings: Vec<u8>,
+    lens: Vec<u32>,
+    observations: Vec<OwnedObservation>,
 }
 
 /// A provider stream being read. Use one from one thread at a time.
@@ -390,6 +410,7 @@ pub unsafe extern "C" fn ddog_ai_usage_batch_new(out: *mut *mut Batch) -> Status
         Box::into_raw(Box::new(Batch {
             inner: Mutex::new(MetricBatch::new()),
             settings: Mutex::new(BatchSettings::default()),
+            recent: Mutex::new(Recent::default()),
         }))
     });
     match batch {
@@ -427,7 +448,6 @@ pub unsafe extern "C" fn ddog_ai_usage_batch_add_request(
     input_len: usize,
     out: *mut Buffer,
 ) -> Status {
-    let want_output = !out.is_null();
     let result = catch_unwind(AssertUnwindSafe(|| {
         // SAFETY: the caller guarantees a live batch or null.
         let batch = unsafe { batch.as_ref() }.ok_or(Failure::Internal("the batch is null"))?;
@@ -436,46 +456,609 @@ pub unsafe extern "C" fn ddog_ai_usage_batch_add_request(
         let documents = request
             .as_array()
             .ok_or_else(|| invalid("a request must be an array of documents"))?;
-        let projections = {
-            let settings = batch
-                .settings
-                .lock()
-                .map_err(|_| Failure::Internal("the batch is poisoned"))?;
-            documents
-                .iter()
-                .enumerate()
-                .map(|(at, document)| {
-                    projection_with(document, &settings).map_err(|failure| match failure {
+        let defaults = batch_metrics(batch)?;
+        let defaults: Option<Vec<&str>> = defaults
+            .as_ref()
+            .map(|names| names.iter().map(String::as_str).collect());
+        let mut decoded = Vec::with_capacity(documents.len());
+        for (at, document) in documents.iter().enumerate() {
+            match decode_document(document) {
+                Ok(document) => decoded.push(document),
+                Err(failure) => {
+                    // An earlier document that is rejected is the one reported.
+                    let earlier = request_documents(&decoded, defaults.as_deref());
+                    if let Err(error) = MetricBatch::new().try_add_request(&earlier) {
+                        return Err(document_failure(error));
+                    }
+                    return Err(match failure {
                         Failure::Rejected(error) => Failure::Rejected(MetricError::new(
                             error.code(),
                             format!("document {at}: {}", error.message()),
                         )),
                         internal => internal,
-                    })
-                })
-                .collect::<Result<Vec<_>, Failure>>()?
-        };
-        let issues = want_output.then(|| {
-            projections
-                .iter()
-                .map(|(_, projection)| issues(projection))
-                .collect::<Vec<Value>>()
-        });
-        let mut inner = batch
-            .inner
-            .lock()
-            .map_err(|_| Failure::Internal("the batch is poisoned"))?;
-        let added = inner.try_add_all(projections)?;
-        Ok((issues, added))
+                    });
+                }
+            }
+        }
+        let documents = request_documents(&decoded, defaults.as_deref());
+        add_documents(batch, &documents)
     }))
     .unwrap_or(Err(Failure::Internal("adding to the batch panicked")));
+    // SAFETY: forwarded from the caller.
+    unsafe { added_status(result, out) }
+}
+
+/// Bits of [`ddog_ai_usage_batch_add`]'s `profiles`: project the fields as a
+/// provider attempt.
+pub const PROFILE_PROVIDER_ATTEMPT: u32 = 1;
+/// Project the fields as a token breakdown (the attempt's cache and
+/// reasoning parts).
+pub const PROFILE_TOKEN_BREAKDOWN: u32 = 2;
+/// Project the fields as a gateway request.
+pub const PROFILE_GATEWAY_REQUEST: u32 = 4;
+
+/// The strings of [`ddog_ai_usage_batch_add`], by index. An empty string is
+/// absent. The gateway request reads `OPERATION_NAME`, `REQUEST_MODEL`,
+/// `GATEWAY_ERROR_TYPE` and `PROVIDER_OPERATION_COVERAGE`; the attempt and
+/// the breakdown read the others.
+#[repr(u32)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Text {
+    OperationName,
+    ProviderName,
+    RequestModel,
+    ResponseModel,
+    ObservationPoint,
+    ErrorType,
+    ServiceTier,
+    ContextBand,
+    InputBasis,
+    OutputBasis,
+    InputTokenSource,
+    OutputTokenSource,
+    CostSource,
+    CostRateCard,
+    CostBound,
+    CanonicalProvider,
+    CanonicalModel,
+    ModelFamily,
+    CostPricedAsModel,
+    GatewayErrorType,
+    ProviderOperationCoverage,
+    /// The number of strings before the deployment attributes.
+    Count,
+}
+
+/// The numbers of [`ddog_ai_usage_batch_add`], by index. NaN is absent;
+/// `STREAMING` and `BATCH` are 0 or 1. The `CACHE_*` numbers are how many
+/// times the gateway request's cache had each outcome.
+#[repr(u32)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Number {
+    DurationSeconds,
+    TimeToFirstChunkSeconds,
+    Streaming,
+    Batch,
+    InputTokens,
+    OutputTokens,
+    CacheReadInputTokens,
+    CacheWriteInputTokens,
+    CacheWrite5mInputTokens,
+    CacheWrite1hInputTokens,
+    ReasoningOutputTokens,
+    WebSearchRequests,
+    WebSearchRequestsSecondary,
+    InputTextTokens,
+    InputImageTokens,
+    InputAudioTokens,
+    OutputTextTokens,
+    OutputImageTokens,
+    OutputAudioTokens,
+    CostUsd,
+    CostNanoUsd,
+    GatewayDurationSeconds,
+    ProviderOperations,
+    Retries,
+    Fallbacks,
+    EstimatedCostUsd,
+    EstimatedCostNanoUsd,
+    CacheHits,
+    CacheMisses,
+    CacheWrites,
+    /// The number of numbers.
+    Count,
+}
+
+/// Add one request to `batch` from flat fields, without JSON: the
+/// observations `profiles` names (a bit set of `PROFILE_*`), projected from
+/// one set of fields and added together, all or none, as
+/// [`ddog_ai_usage_batch_add_request`] adds documents.
+///
+/// `strings[..strings_len]` is every string back to back, and
+/// `string_lens[..string_count]` their lengths in [`Text`] order. Strings
+/// past [`Text::Count`] are deployment attributes, as name and value pairs,
+/// applied to every observation. `numbers[..number_count]` are in [`Number`]
+/// order. Fields past the counts given are absent, so a caller states only
+/// what it has, and fields added later keep this call compatible. A
+/// rejection, an issue list, and `"dropped"` are written to `out` as
+/// [`ddog_ai_usage_batch_add_request`] writes them, with one issue list per
+/// profile in bit order; nothing is written on success when `out` is null.
+///
+/// # Safety
+///
+/// `batch` must be a live batch from [`ddog_ai_usage_batch_new`]; `strings`,
+/// `string_lens` and `numbers` must point to their lengths of readable
+/// values (or the length must be 0); and `out` must be null or writable.
+#[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn ddog_ai_usage_batch_add(
+    batch: *const Batch,
+    profiles: u32,
+    strings: *const u8,
+    strings_len: usize,
+    string_lens: *const u32,
+    string_count: usize,
+    numbers: *const f64,
+    number_count: usize,
+    out: *mut Buffer,
+) -> Status {
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        // SAFETY: the caller guarantees a live batch or null.
+        let batch = unsafe { batch.as_ref() }.ok_or(Failure::Internal("the batch is null"))?;
+        // SAFETY: forwarded from the caller.
+        let (strings, lens, numbers) = unsafe {
+            (
+                bytes(strings, strings_len).ok_or(Failure::Internal("strings is null"))?,
+                values(string_lens, string_count)
+                    .ok_or(Failure::Internal("string_lens is null"))?,
+                values(numbers, number_count).ok_or(Failure::Internal("numbers is null"))?,
+            )
+        };
+        let fields = Fields::read(strings, lens, numbers)?;
+        let mut recent = batch
+            .recent
+            .lock()
+            .map_err(|_| Failure::Internal("the batch is poisoned"))?;
+        let fixed = lens.len().min(Text::Count as usize);
+        let (fixed_lens, fixed_strings) = (&lens[..fixed], &strings[..fields.fixed_len]);
+        if recent.profiles == profiles
+            && recent.lens == fixed_lens
+            && recent.strings == fixed_strings
+        {
+            fields.renumber(&mut recent.observations)?;
+        } else {
+            recent.profiles = 0;
+            recent.observations = fields.observations(profiles)?;
+            recent.profiles = profiles;
+            recent.lens.clear();
+            recent.lens.extend_from_slice(fixed_lens);
+            recent.strings.clear();
+            recent.strings.extend_from_slice(fixed_strings);
+        }
+        let defaults = batch_metrics(batch)?;
+        let defaults: Option<Vec<&str>> = defaults
+            .as_ref()
+            .map(|names| names.iter().map(String::as_str).collect());
+        let documents: Vec<Document<'_>> = recent
+            .observations
+            .iter()
+            .map(|observation| Document {
+                observation: observation.as_ref(),
+                deployment_attributes: &fields.deployment,
+                metrics: defaults.as_deref(),
+            })
+            .collect();
+        add_documents(batch, &documents)
+    }))
+    .unwrap_or(Err(Failure::Internal("adding to the batch panicked")));
+    // SAFETY: forwarded from the caller.
+    unsafe { added_status(result, out) }
+}
+
+/// The values `ptr[..len]`, or `None` for a null `ptr` with a non-zero `len`.
+///
+/// # Safety
+///
+/// `ptr` must point to `len` readable values, or `len` must be 0.
+unsafe fn values<'a, T>(ptr: *const T, len: usize) -> Option<&'a [T]> {
+    if len == 0 {
+        return Some(&[]);
+    }
+    if ptr.is_null() {
+        return None;
+    }
+    // SAFETY: the caller guarantees `len` readable values.
+    Some(unsafe { slice::from_raw_parts(ptr, len) })
+}
+
+/// The fields of one [`ddog_ai_usage_batch_add`] call.
+struct Fields<'a> {
+    texts: [Option<&'a str>; Text::Count as usize],
+    /// The bytes of the strings before the deployment attributes.
+    fixed_len: usize,
+    numbers: [Option<f64>; Number::Count as usize],
+    deployment: Vec<(&'a str, Option<&'a str>)>,
+}
+
+impl<'a> Fields<'a> {
+    fn read(strings: &'a [u8], lens: &[u32], numbers: &[f64]) -> Result<Self, Failure> {
+        let mut texts = [None; Text::Count as usize];
+        let mut rest = strings;
+        let mut extra = Vec::new();
+        let mut fixed_len = 0;
+        for (at, len) in lens.iter().enumerate() {
+            let len = *len as usize;
+            if len > rest.len() {
+                return Err(invalid("string_lens add up to more than strings_len"));
+            }
+            let (head, tail) = rest.split_at(len);
+            rest = tail;
+            let text = std::str::from_utf8(head)
+                .map_err(|_| invalid(format!("string {at} is not UTF-8")))?;
+            match texts.get_mut(at) {
+                Some(slot) => {
+                    *slot = (!text.is_empty()).then_some(text);
+                    fixed_len += text.len();
+                }
+                None => extra.push(text),
+            }
+        }
+        if !rest.is_empty() {
+            return Err(invalid("string_lens add up to less than strings_len"));
+        }
+        if extra.len() % 2 != 0 {
+            return Err(invalid(
+                "deployment attributes must be name and value pairs",
+            ));
+        }
+        let deployment = extra
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .filter(|[_, value]| !value.is_empty())
+            .map(|[name, value]| (*name, Some(*value)))
+            .collect();
+        let mut values = [None; Number::Count as usize];
+        for (slot, value) in values.iter_mut().zip(numbers) {
+            *slot = (!value.is_nan()).then_some(*value);
+        }
+        Ok(Fields {
+            texts,
+            fixed_len,
+            numbers: values,
+            deployment,
+        })
+    }
+
+    fn text(&self, field: Text) -> Option<String> {
+        self.texts[field as usize].map(str::to_string)
+    }
+
+    fn number(&self, field: Number) -> Option<f64> {
+        self.numbers[field as usize]
+    }
+
+    fn flag(&self, field: Number) -> Result<Option<bool>, Failure> {
+        match self.number(field) {
+            None => Ok(None),
+            Some(0.0) => Ok(Some(false)),
+            Some(1.0) => Ok(Some(true)),
+            Some(_) => Err(invalid(format!("number {} must be 0 or 1", field as u32))),
+        }
+    }
+
+    fn modalities(&self, parts: [(Number, &str); 3]) -> Option<BTreeMap<String, f64>> {
+        let map: BTreeMap<String, f64> = parts
+            .into_iter()
+            .filter_map(|(field, key)| Some((key.to_string(), self.number(field)?)))
+            .collect();
+        (!map.is_empty()).then_some(map)
+    }
+
+    /// Set the numbers of `usage`, the modality parts only when `extras`
+    /// (the breakdown reads no modality or server-tool member).
+    fn set_usage(&self, usage: &mut ReportedUsage, extras: bool) {
+        usage.input_tokens = self.number(Number::InputTokens);
+        usage.output_tokens = self.number(Number::OutputTokens);
+        usage.cache_read_input_tokens = self.number(Number::CacheReadInputTokens);
+        usage.cache_write_input_tokens = self.number(Number::CacheWriteInputTokens);
+        usage.cache_write_5m_input_tokens = self.number(Number::CacheWrite5mInputTokens);
+        usage.cache_write_1h_input_tokens = self.number(Number::CacheWrite1hInputTokens);
+        usage.reasoning_output_tokens = self.number(Number::ReasoningOutputTokens);
+        if extras {
+            usage.web_search_requests = self.number(Number::WebSearchRequests);
+            usage.web_search_requests_secondary = self.number(Number::WebSearchRequestsSecondary);
+            usage.input_tokens_by_modality = self.modalities([
+                (Number::InputTextTokens, "text"),
+                (Number::InputImageTokens, "image"),
+                (Number::InputAudioTokens, "audio"),
+            ]);
+            usage.output_tokens_by_modality = self.modalities([
+                (Number::OutputTextTokens, "text"),
+                (Number::OutputImageTokens, "image"),
+                (Number::OutputAudioTokens, "audio"),
+            ]);
+        }
+    }
+
+    fn cache_outcomes(&self) -> Result<Option<Vec<String>>, Failure> {
+        let mut outcomes = Vec::new();
+        let mut stated = false;
+        for (field, outcome) in [
+            (Number::CacheHits, "hit"),
+            (Number::CacheMisses, "miss"),
+            (Number::CacheWrites, "write"),
+        ] {
+            let Some(times) = self.number(field) else {
+                continue;
+            };
+            stated = true;
+            if !(times.fract() == 0.0 && (0.0..=1024.0).contains(&times)) {
+                return Err(invalid(format!(
+                    "number {} must be a whole number of cache operations up to 1024",
+                    field as u32
+                )));
+            }
+            outcomes.extend(std::iter::repeat_n(outcome.to_string(), times as usize));
+        }
+        Ok(stated.then_some(outcomes))
+    }
+
+    /// Set every number of `observations`, decoded from strings like these.
+    fn renumber(&self, observations: &mut [OwnedObservation]) -> Result<(), Failure> {
+        for observation in observations {
+            match observation {
+                OwnedObservation::Attempt(o) => {
+                    o.duration_seconds = self.number(Number::DurationSeconds);
+                    o.streaming = self.flag(Number::Streaming)?;
+                    o.time_to_first_chunk_seconds = self.number(Number::TimeToFirstChunkSeconds);
+                    o.cost_usd = self.number(Number::CostUsd);
+                    o.cost_nano_usd = self.number(Number::CostNanoUsd);
+                    o.batch = self.flag(Number::Batch)?;
+                    self.set_usage(&mut o.usage, true);
+                }
+                OwnedObservation::Breakdown(o) => {
+                    o.batch = self.flag(Number::Batch)?;
+                    self.set_usage(&mut o.usage, false);
+                }
+                OwnedObservation::Gateway(o) => {
+                    o.duration_seconds = self.number(Number::GatewayDurationSeconds);
+                    o.provider_operations = self.number(Number::ProviderOperations);
+                    o.retries = self.number(Number::Retries);
+                    o.fallbacks = self.number(Number::Fallbacks);
+                    o.estimated_cost_usd = self.number(Number::EstimatedCostUsd);
+                    o.estimated_cost_nano_usd = self.number(Number::EstimatedCostNanoUsd);
+                    o.cache_outcomes = self.cache_outcomes()?;
+                }
+                OwnedObservation::Streaming(_) => {}
+            }
+        }
+        Ok(())
+    }
+
+    /// The observations `profiles` names, in bit order.
+    fn observations(&self, profiles: u32) -> Result<Vec<OwnedObservation>, Failure> {
+        let known = PROFILE_PROVIDER_ATTEMPT | PROFILE_TOKEN_BREAKDOWN | PROFILE_GATEWAY_REQUEST;
+        if profiles == 0 || profiles & !known != 0 {
+            return Err(invalid(format!(
+                "profiles must be a set of PROFILE_* bits, not {profiles:#x}"
+            )));
+        }
+        let usage = || ReportedUsage {
+            input_basis: self.text(Text::InputBasis),
+            output_basis: self.text(Text::OutputBasis),
+            ..ReportedUsage::default()
+        };
+        let mut observations = Vec::with_capacity(3);
+        if profiles & PROFILE_PROVIDER_ATTEMPT != 0 {
+            observations.push(OwnedObservation::Attempt(ProviderAttemptObservation {
+                operation_name: self.text(Text::OperationName),
+                provider_name: self.text(Text::ProviderName),
+                request_model: self.text(Text::RequestModel),
+                response_model: self.text(Text::ResponseModel),
+                usage: usage(),
+                cost_source: self.text(Text::CostSource),
+                cost_rate_card: self.text(Text::CostRateCard),
+                cost_bound: self.text(Text::CostBound),
+                canonical_provider: self.text(Text::CanonicalProvider),
+                canonical_model: self.text(Text::CanonicalModel),
+                model_family: self.text(Text::ModelFamily),
+                cost_priced_as_model: self.text(Text::CostPricedAsModel),
+                context_band: self.text(Text::ContextBand),
+                service_tier: self.text(Text::ServiceTier),
+                error_type: self.text(Text::ErrorType),
+                observation_point: self.text(Text::ObservationPoint),
+                input_token_source: self.text(Text::InputTokenSource),
+                output_token_source: self.text(Text::OutputTokenSource),
+                ..ProviderAttemptObservation::default()
+            }));
+        }
+        if profiles & PROFILE_TOKEN_BREAKDOWN != 0 {
+            observations.push(OwnedObservation::Breakdown(TokenBreakdownObservation {
+                operation_name: self.text(Text::OperationName),
+                provider_name: self.text(Text::ProviderName),
+                request_model: self.text(Text::RequestModel),
+                response_model: self.text(Text::ResponseModel),
+                usage: usage(),
+                context_band: self.text(Text::ContextBand),
+                service_tier: self.text(Text::ServiceTier),
+                observation_point: self.text(Text::ObservationPoint),
+                input_token_source: self.text(Text::InputTokenSource),
+                output_token_source: self.text(Text::OutputTokenSource),
+                ..TokenBreakdownObservation::default()
+            }));
+        }
+        if profiles & PROFILE_GATEWAY_REQUEST != 0 {
+            observations.push(OwnedObservation::Gateway(GatewayRequestObservation {
+                operation_name: self.text(Text::OperationName),
+                request_model: self.text(Text::RequestModel),
+                provider_operation_coverage: self.text(Text::ProviderOperationCoverage),
+                error_type: self.text(Text::GatewayErrorType),
+                ..GatewayRequestObservation::default()
+            }));
+        }
+        self.renumber(&mut observations)?;
+        Ok(observations)
+    }
+}
+
+/// An observation decoded from a request document or from flat fields. A
+/// request holds a few, so they are not boxed.
+#[allow(clippy::large_enum_variant)]
+enum OwnedObservation {
+    Attempt(ProviderAttemptObservation),
+    Streaming(ProviderStreamingObservation),
+    Breakdown(TokenBreakdownObservation),
+    Gateway(GatewayRequestObservation),
+}
+
+impl OwnedObservation {
+    fn as_ref(&self) -> Observation<'_> {
+        match self {
+            OwnedObservation::Attempt(o) => Observation::ProviderAttempt(o),
+            OwnedObservation::Streaming(o) => Observation::ProviderStreaming(o),
+            OwnedObservation::Breakdown(o) => Observation::TokenBreakdown(o),
+            OwnedObservation::Gateway(o) => Observation::GatewayRequest(o),
+        }
+    }
+}
+
+/// A request document decoded: its observation, its deployment attributes,
+/// and the metrics it keeps (`None`: the batch's list).
+struct DecodedDocument<'j> {
+    observation: OwnedObservation,
+    deployment: Vec<(&'j str, Option<&'j str>)>,
+    metrics: Option<Vec<&'j str>>,
+}
+
+fn decode_document(document: &Json) -> Result<DecodedDocument<'_>, Failure> {
+    let id = document
+        .get("profile")
+        .and_then(Json::as_str)
+        .ok_or_else(|| MetricError::new(ErrorCode::RequiredFieldMissing, "profile is required"))?;
+    let profile = Profile::from_id(id).ok_or_else(|| {
+        MetricError::new(
+            ErrorCode::ProfileInvalid,
+            format!("unsupported profile: {id}"),
+        )
+    })?;
+    let input = document.get(profile.input_key()).unwrap_or(&Json::Null);
+    let observation = match profile {
+        Profile::ProviderAttempt => {
+            OwnedObservation::Attempt(ProviderAttemptObservation::from_json(input)?)
+        }
+        Profile::ProviderStreaming => {
+            OwnedObservation::Streaming(ProviderStreamingObservation::from_json(input)?)
+        }
+        Profile::TokenBreakdown => {
+            OwnedObservation::Breakdown(TokenBreakdownObservation::from_json(input)?)
+        }
+        Profile::GatewayRequest => {
+            OwnedObservation::Gateway(GatewayRequestObservation::from_json(input)?)
+        }
+    };
+    let deployment = match document.get("deployment_attributes") {
+        None | Some(Json::Null) => Vec::new(),
+        Some(Json::Object(members)) => members
+            .iter()
+            .filter(|(_, value)| !value.is_null())
+            .map(|(name, value)| (name.as_str(), value.as_str()))
+            .collect(),
+        Some(_) => {
+            return Err(Failure::Rejected(MetricError::new(
+                ErrorCode::FieldTypeInvalid,
+                "deployment attributes must be an object",
+            )));
+        }
+    };
+    let metrics = match document.get("metrics") {
+        None | Some(Json::Null) => None,
+        Some(Json::Array(names)) => Some(
+            names
+                .iter()
+                .map(|name| {
+                    name.as_str()
+                        .ok_or_else(|| invalid("metrics must be strings"))
+                })
+                .collect::<Result<Vec<&str>, Failure>>()?,
+        ),
+        Some(_) => return Err(invalid("metrics must be an array of strings")),
+    };
+    Ok(DecodedDocument {
+        observation,
+        deployment,
+        metrics,
+    })
+}
+
+fn request_documents<'d>(
+    decoded: &'d [DecodedDocument<'_>],
+    defaults: Option<&'d [&'d str]>,
+) -> Vec<Document<'d>> {
+    decoded
+        .iter()
+        .map(|document| Document {
+            observation: document.observation.as_ref(),
+            deployment_attributes: &document.deployment,
+            metrics: document.metrics.as_deref().or(defaults),
+        })
+        .collect()
+}
+
+/// The metric list a batch applies to documents that state none.
+fn batch_metrics(batch: &Batch) -> Result<Option<Vec<String>>, Failure> {
+    Ok(batch
+        .settings
+        .lock()
+        .map_err(|_| Failure::Internal("the batch is poisoned"))?
+        .metrics
+        .clone())
+}
+
+fn document_failure(error: DocumentError) -> Failure {
+    Failure::Rejected(MetricError::new(
+        error.error.code(),
+        format!("document {}: {}", error.document, error.error.message()),
+    ))
+}
+
+/// Add a request's documents to `batch`: their issues and whether they were
+/// added.
+fn add_documents(
+    batch: &Batch,
+    documents: &[Document<'_>],
+) -> Result<(Vec<Issues>, bool), Failure> {
+    let mut inner = batch
+        .inner
+        .lock()
+        .map_err(|_| Failure::Internal("the batch is poisoned"))?;
+    let (added, issues) = inner.try_add_request(documents).map_err(document_failure)?;
+    Ok((issues, added))
+}
+
+/// The status of an add, with its issues or rejection written to `out`
+/// when it is not null.
+///
+/// # Safety
+///
+/// `out` must be null or writable.
+unsafe fn added_status(result: Result<(Vec<Issues>, bool), Failure>, out: *mut Buffer) -> Status {
     let (status, value) = match result {
-        Ok((Some(issues), added)) => (Status::Ok, json!({"issues": issues, "dropped": !added})),
-        Ok((None, _)) => return Status::Ok,
+        Ok(_) if out.is_null() => return Status::Ok,
+        Ok((issues, added)) => (
+            Status::Ok,
+            json!({
+                "issues": issues
+                    .iter()
+                    .map(|issues| issues.iter().map(|issue| issue.as_str()).collect::<Vec<_>>())
+                    .collect::<Vec<_>>(),
+                "dropped": !added,
+            }),
+        ),
         Err(Failure::Rejected(error)) => (Status::Rejected, rejection(&error)),
         Err(Failure::Internal(message)) => (Status::Internal, error_value("internal", message)),
     };
-    if want_output {
+    if !out.is_null() {
         let text = catch_unwind(|| value.to_string()).unwrap_or_default();
         // SAFETY: `out` is not null and the caller guarantees it is writable.
         unsafe { write(out, text) };

@@ -19,6 +19,8 @@ sys_includes = ["stdbool.h", "stddef.h", "stdint.h"]
 [export]
 prefix = "ddog_ai_usage_"
 renaming_overrides_prefixing = true
+# Field indices of `ddog_ai_usage_batch_add`, which no signature names.
+include = ["Text", "Number"]
 
 [enum]
 prefix_with_name = true
