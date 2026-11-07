@@ -132,51 +132,6 @@ fn chat_body(size: usize) -> String {
     )
 }
 
-/// One request's flat fields for `batch_add`.
-struct Flat {
-    strings: Vec<u8>,
-    lens: Vec<u32>,
-    numbers: Vec<f64>,
-}
-
-impl Flat {
-    fn new(texts: &[(Text, &str)], numbers: &[(Number, f64)]) -> Flat {
-        let mut by_index = vec![""; Text::Count as usize];
-        for (field, value) in texts {
-            by_index[*field as usize] = value;
-        }
-        let mut values = vec![f64::NAN; Number::Count as usize];
-        for (field, value) in numbers {
-            values[*field as usize] = *value;
-        }
-        Flat {
-            strings: by_index.concat().into_bytes(),
-            lens: by_index.iter().map(|s| s.len() as u32).collect(),
-            numbers: values,
-        }
-    }
-
-    /// # Safety
-    ///
-    /// `batch` must be a live batch.
-    unsafe fn add(&self, batch: *const Batch, profiles: u32) -> Status {
-        // SAFETY: valid buffers of their lengths.
-        unsafe {
-            ddog_ai_usage_batch_add(
-                batch,
-                profiles,
-                self.strings.as_ptr(),
-                self.strings.len(),
-                self.lens.as_ptr(),
-                self.lens.len(),
-                self.numbers.as_ptr(),
-                self.numbers.len(),
-                ptr::null_mut(),
-            )
-        }
-    }
-}
-
 fn empty() -> Buffer {
     Buffer {
         ptr: ptr::null_mut(),
@@ -237,38 +192,6 @@ fn main() {
         };
         assert_eq!(status, Status::Ok);
     });
-    // The same request as flat fields: the attempt and its breakdown from
-    // one set, with no JSON.
-    let flat = Flat::new(
-        &[
-            (Text::OperationName, "chat"),
-            (Text::ProviderName, "openai"),
-            (Text::RequestModel, "gpt-4o"),
-            (Text::ResponseModel, "gpt-4o-2024-08-06"),
-            (Text::InputBasis, "includes_cache"),
-            (Text::OutputBasis, "includes_reasoning"),
-            (Text::ServiceTier, "default"),
-            (Text::CostSource, "calculated"),
-            (Text::CostRateCard, "openai@1"),
-            (Text::ObservationPoint, "gateway"),
-        ],
-        &[
-            (Number::DurationSeconds, 1.2),
-            (Number::Streaming, 1.0),
-            (Number::TimeToFirstChunkSeconds, 0.3),
-            (Number::InputTokens, 1000.0),
-            (Number::OutputTokens, 500.0),
-            (Number::CacheReadInputTokens, 400.0),
-            (Number::CacheWriteInputTokens, 20.0),
-            (Number::ReasoningOutputTokens, 10.0),
-            (Number::CostNanoUsd, 11_500_000.0),
-        ],
-    );
-    let profiles = PROFILE_PROVIDER_ATTEMPT | PROFILE_TOKEN_BREAKDOWN;
-    measure("gateway request, flat: batch_add", || {
-        // SAFETY: a live batch and valid fields.
-        assert_eq!(unsafe { flat.add(batch, profiles) }, Status::Ok);
-    });
     // SAFETY: a live batch, released once.
     unsafe { ddog_ai_usage_batch_drop(batch) };
 
@@ -281,7 +204,12 @@ fn main() {
         unsafe {
             ddog_ai_usage_batch_new(&mut batch);
             for _ in 0..1_000 {
-                flat.add(batch, profiles);
+                ddog_ai_usage_batch_add_request(
+                    batch,
+                    request.as_ptr(),
+                    request.len(),
+                    ptr::null_mut(),
+                );
             }
             let start = Instant::now();
             assert_eq!(
