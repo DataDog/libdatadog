@@ -28,6 +28,17 @@ use serde_json::Value;
 
 pub use schema::Schema;
 
+/// Representation choices for callers whose input has different scalar or
+/// array-length semantics. These do not bound input processing.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SchemaOptions {
+    /// Represent integer tokens as floating-point numbers before deduplication.
+    pub numbers_as_float: bool,
+    /// Cap reported array lengths before deduplication, without truncating input.
+    /// The truncation flag continues to describe the original array length.
+    pub array_length_limit: Option<usize>,
+}
+
 /// Maximum number of visited value levels, including the root.
 ///
 /// A container at level 18 has no extracted children. Depth exhaustion alone
@@ -104,6 +115,37 @@ pub fn extract_schema(input: &Value) -> Schema<'_> {
 /// # Ok::<(), libdd_api_security::SchemaError>(())
 /// ```
 pub fn extract_schema_json(input: &str) -> Result<String, SchemaError> {
-    let schema = Schema::from_json(input).map_err(SchemaError::InvalidJson)?;
+    extract_schema_json_with_options(input, SchemaOptions::default())
+}
+
+/// Parse JSON with caller-selected representation semantics.
+///
+/// Normalization happens during extraction, before nested array variants are
+/// deduplicated. Scalar values are still discarded. All input is validated;
+/// `array_length_limit` changes metadata only, not processing limits.
+///
+/// # Errors
+///
+/// Returns the same input and serialization errors as [`extract_schema_json`].
+///
+/// # Examples
+///
+/// ```
+/// use libdd_api_security::{SchemaOptions, extract_schema_json_with_options};
+/// let options = SchemaOptions {
+///     numbers_as_float: true,
+///     array_length_limit: Some(256),
+/// };
+/// assert_eq!(
+///     extract_schema_json_with_options("[1, 1.5]", options)?,
+///     "[[[16]],{\"len\":2}]",
+/// );
+/// # Ok::<(), libdd_api_security::SchemaError>(())
+/// ```
+pub fn extract_schema_json_with_options(
+    input: &str,
+    options: SchemaOptions,
+) -> Result<String, SchemaError> {
+    let schema = Schema::from_json(input, options).map_err(SchemaError::InvalidJson)?;
     serde_json::to_string(&schema).map_err(SchemaError::Serialization)
 }

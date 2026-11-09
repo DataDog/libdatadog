@@ -8,12 +8,13 @@ use serde::de::{self, DeserializeSeed, IgnoredAny, MapAccess, SeqAccess, Visitor
 use serde::{Deserialize, Deserializer};
 
 use crate::schema::Node;
-use crate::{MAX_ARRAY_NODES, MAX_CONTAINER_DEPTH, MAX_RECORD_NODES};
+use crate::{MAX_ARRAY_NODES, MAX_CONTAINER_DEPTH, MAX_RECORD_NODES, SchemaOptions};
 
-pub fn parse(input: &str) -> Result<Node<'_>, serde_json::Error> {
+pub fn parse(input: &str, options: SchemaOptions) -> Result<Node<'_>, serde_json::Error> {
     let mut deserializer = serde_json::Deserializer::from_str(input);
     let schema = Seed {
         depth: MAX_CONTAINER_DEPTH,
+        options,
     }
     .deserialize(&mut deserializer)?;
     deserializer.end()?;
@@ -26,6 +27,7 @@ struct Key<'a>(#[serde(borrow)] Cow<'a, str>);
 
 struct Seed {
     depth: usize,
+    options: SchemaOptions,
 }
 
 impl<'de> DeserializeSeed<'de> for Seed {
@@ -52,11 +54,19 @@ impl<'de> Visitor<'de> for Seed {
     }
 
     fn visit_i64<E: de::Error>(self, _: i64) -> Result<Self::Value, E> {
-        Ok(Node::Scalar(4))
+        Ok(Node::Scalar(if self.options.numbers_as_float {
+            16
+        } else {
+            4
+        }))
     }
 
     fn visit_u64<E: de::Error>(self, _: u64) -> Result<Self::Value, E> {
-        Ok(Node::Scalar(4))
+        Ok(Node::Scalar(if self.options.numbers_as_float {
+            16
+        } else {
+            4
+        }))
     }
 
     fn visit_f64<E: de::Error>(self, _: f64) -> Result<Self::Value, E> {
@@ -74,9 +84,10 @@ impl<'de> Visitor<'de> for Seed {
         while len < limit {
             let Some(value) = input.next_element_seed(Self {
                 depth: self.depth - 1,
+                options: self.options,
             })?
             else {
-                return Ok(Node::array(variants, len));
+                return Ok(self.array(variants, len));
             };
             variants.push(value);
             len += 1;
@@ -86,7 +97,7 @@ impl<'de> Visitor<'de> for Seed {
         while input.next_element::<IgnoredAny>()?.is_some() {
             len += 1;
         }
-        Ok(Node::array(variants, len))
+        Ok(self.array(variants, len))
     }
 
     fn visit_map<A: MapAccess<'de>>(self, mut input: A) -> Result<Self::Value, A::Error> {
@@ -102,6 +113,7 @@ impl<'de> Visitor<'de> for Seed {
             } else {
                 let value = input.next_value_seed(Self {
                     depth: self.depth - 1,
+                    options: self.options,
                 })?;
                 fields.push((key, value));
             }
@@ -112,5 +124,16 @@ impl<'de> Visitor<'de> for Seed {
             len += 1;
         }
         Ok(Node::record(fields, len))
+    }
+}
+
+impl Seed {
+    fn array<'a>(&self, variants: Vec<Node<'a>>, original_len: usize) -> Node<'a> {
+        let mut node = Node::array(variants, original_len);
+        if let (Node::Array { len, .. }, Some(limit)) = (&mut node, self.options.array_length_limit)
+        {
+            *len = (*len).min(limit);
+        }
+        node
     }
 }

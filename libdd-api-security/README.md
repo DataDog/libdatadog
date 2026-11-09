@@ -120,3 +120,12 @@ The shared trace attribute model does not currently represent JSON null or
 unsigned integers, so this PoC uses the existing serde_json dependency rather
 than changing that model or inventing another input DOM. A future adapter can
 reuse structured-value tokens without coupling this crate to tracer exporting.
+
+## Caller representation options
+
+`extract_schema_json_with_options` accepts `SchemaOptions` for languages with
+different input representations. `numbers_as_float` normalizes integer tokens
+before deduplication; `array_length_limit` caps length metadata before nested
+variants are deduplicated. Defaults preserve the existing JSON API exactly.
+Neither option bounds input processing. The original length still determines
+the truncation flag, and discarded JSON tails are still syntax-checked.

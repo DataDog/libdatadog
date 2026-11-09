@@ -7,7 +7,7 @@ use serde::ser::{SerializeMap, SerializeSeq};
 use serde::{Serialize, Serializer};
 use serde_json::Value;
 
-use crate::{MAX_ARRAY_NODES, MAX_CONTAINER_DEPTH, MAX_RECORD_NODES};
+use crate::{MAX_ARRAY_NODES, MAX_CONTAINER_DEPTH, MAX_RECORD_NODES, SchemaOptions};
 
 /// An extracted schema with property names borrowed from its input.
 ///
@@ -19,8 +19,11 @@ use crate::{MAX_ARRAY_NODES, MAX_CONTAINER_DEPTH, MAX_RECORD_NODES};
 pub struct Schema<'a>(Node<'a>);
 
 impl<'a> Schema<'a> {
-    pub(crate) fn from_json(input: &'a str) -> Result<Self, serde_json::Error> {
-        crate::json::parse(input).map(Self)
+    pub(crate) fn from_json(
+        input: &'a str,
+        options: SchemaOptions,
+    ) -> Result<Self, serde_json::Error> {
+        crate::json::parse(input, options).map(Self)
     }
 
     pub(crate) fn extract(input: &'a Value) -> Self {
