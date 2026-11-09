@@ -5,6 +5,7 @@
 members = [
   "builder",
   "libdd-alloc",
+  "libdd-api-security",
   "libdd-profiling-heap-sampler",
   "libdd-profiling-heap-allocator",
   "libdd-gotter",

@@ -2811,6 +2811,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "libdd-api-security"
+version = "0.1.0"
+dependencies = [
+ "criterion",
+ "proptest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.17",
+]
+
+[[package]]
 name = "libdd-capabilities"
 version = "4.0.1"
 dependencies = [

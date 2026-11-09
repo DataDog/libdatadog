@@ -1,0 +1,33 @@
+# Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "libdd-api-security"
+version = "0.1.0"
+description = "Structural API Security schema extraction"
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-api-security"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-api-security"
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+autobenches = false
+
+[lib]
+bench = false
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+proptest = { workspace = true, features = ["std"] }
+
+[[bench]]
+name = "schema"
+harness = false
+
+[lints]
+workspace = true

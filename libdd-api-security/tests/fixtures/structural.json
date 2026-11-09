@@ -1,0 +1,503 @@
+[
+  {
+    "name": "null",
+    "input": "null",
+    "schema": [
+      1
+    ]
+  },
+  {
+    "name": "boolean_true",
+    "input": "true",
+    "schema": [
+      2
+    ]
+  },
+  {
+    "name": "boolean_false",
+    "input": "false",
+    "schema": [
+      2
+    ]
+  },
+  {
+    "name": "zero",
+    "input": "0",
+    "schema": [
+      4
+    ]
+  },
+  {
+    "name": "negative_integer",
+    "input": "-42",
+    "schema": [
+      4
+    ]
+  },
+  {
+    "name": "signed_min",
+    "input": "-9223372036854775808",
+    "schema": [
+      4
+    ]
+  },
+  {
+    "name": "signed_max",
+    "input": "9223372036854775807",
+    "schema": [
+      4
+    ]
+  },
+  {
+    "name": "unsigned_max",
+    "input": "18446744073709551615",
+    "schema": [
+      4
+    ]
+  },
+  {
+    "name": "float",
+    "input": "1.5",
+    "schema": [
+      16
+    ]
+  },
+  {
+    "name": "integral_float",
+    "input": "1.0",
+    "schema": [
+      16
+    ]
+  },
+  {
+    "name": "negative_zero",
+    "input": "-0.0",
+    "schema": [
+      16
+    ]
+  },
+  {
+    "name": "exponent",
+    "input": "1e10",
+    "schema": [
+      16
+    ]
+  },
+  {
+    "name": "empty_string",
+    "input": "\"\"",
+    "schema": [
+      8
+    ]
+  },
+  {
+    "name": "string",
+    "input": "\"private value\"",
+    "schema": [
+      8
+    ]
+  },
+  {
+    "name": "unicode_string",
+    "input": "\"é漢字😀\"",
+    "schema": [
+      8
+    ]
+  },
+  {
+    "name": "empty_array",
+    "input": "[]",
+    "schema": [
+      [],
+      {
+        "len": 0
+      }
+    ]
+  },
+  {
+    "name": "empty_record",
+    "input": "{}",
+    "schema": [
+      {}
+    ]
+  },
+  {
+    "name": "heterogeneous_scalars",
+    "input": "[null,true,42,\"value\",1.5]",
+    "schema": [
+      [
+        [
+          1
+        ],
+        [
+          2
+        ],
+        [
+          4
+        ],
+        [
+          8
+        ],
+        [
+          16
+        ]
+      ],
+      {
+        "len": 5
+      }
+    ]
+  },
+  {
+    "name": "duplicate_scalars",
+    "input": "[\"one\",\"two\",\"three\",\"four\"]",
+    "schema": [
+      [
+        [
+          8
+        ]
+      ],
+      {
+        "len": 4
+      }
+    ]
+  },
+  {
+    "name": "signed_unsigned_collapse",
+    "input": "[-1,18446744073709551615]",
+    "schema": [
+      [
+        [
+          4
+        ]
+      ],
+      {
+        "len": 2
+      }
+    ]
+  },
+  {
+    "name": "integer_float_distinction",
+    "input": "[1,1.0]",
+    "schema": [
+      [
+        [
+          4
+        ],
+        [
+          16
+        ]
+      ],
+      {
+        "len": 2
+      }
+    ]
+  },
+  {
+    "name": "duplicate_records",
+    "input": "[{\"unsigned\":5,\"string\":\"str\"},{\"signed\":-5},{\"unsigned\":5},{\"unsigned\":109,\"string\":\"different\"}]",
+    "schema": [
+      [
+        [
+          {
+            "unsigned": [
+              4
+            ]
+          }
+        ],
+        [
+          {
+            "signed": [
+              4
+            ]
+          }
+        ],
+        [
+          {
+            "unsigned": [
+              4
+            ],
+            "string": [
+              8
+            ]
+          }
+        ]
+      ],
+      {
+        "len": 4
+      }
+    ]
+  },
+  {
+    "name": "duplicate_arrays",
+    "input": "[[5,\"str\"],[-5],[5],[109,\"different\"]]",
+    "schema": [
+      [
+        [
+          [
+            [
+              4
+            ]
+          ],
+          {
+            "len": 1
+          }
+        ],
+        [
+          [
+            [
+              8
+            ],
+            [
+              4
+            ]
+          ],
+          {
+            "len": 2
+          }
+        ]
+      ],
+      {
+        "len": 4
+      }
+    ]
+  },
+  {
+    "name": "duplicate_containers",
+    "input": "[{\"unsigned\":5,\"string\":\"str\"},[-5],[5],{\"string\":\"different\",\"unsigned\":109}]",
+    "schema": [
+      [
+        [
+          [
+            [
+              4
+            ]
+          ],
+          {
+            "len": 1
+          }
+        ],
+        [
+          {
+            "unsigned": [
+              4
+            ],
+            "string": [
+              8
+            ]
+          }
+        ]
+      ],
+      {
+        "len": 4
+      }
+    ]
+  },
+  {
+    "name": "record",
+    "input": "{\"unsigned\":22,\"string\":\"str\",\"null\":null,\"map\":{\"unsigned\":5,\"string\":\"str\"},\"array\":[-5]}",
+    "schema": [
+      {
+        "unsigned": [
+          4
+        ],
+        "string": [
+          8
+        ],
+        "null": [
+          1
+        ],
+        "map": [
+          {
+            "unsigned": [
+              4
+            ],
+            "string": [
+              8
+            ]
+          }
+        ],
+        "array": [
+          [
+            [
+              4
+            ]
+          ],
+          {
+            "len": 1
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "empty_keys",
+    "input": "{\"\":42,\"child\":{\"\":\"ignored\",\"name\":\"kept\"}}",
+    "schema": [
+      {
+        "child": [
+          {
+            "name": [
+              8
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "reordered_records",
+    "input": "[{\"a\":1,\"b\":\"x\"},{\"b\":\"y\",\"a\":2}]",
+    "schema": [
+      [
+        [
+          {
+            "a": [
+              4
+            ],
+            "b": [
+              8
+            ]
+          }
+        ]
+      ],
+      {
+        "len": 2
+      }
+    ]
+  },
+  {
+    "name": "reordered_nested_arrays",
+    "input": "[[1,\"x\"],[\"y\",2]]",
+    "schema": [
+      [
+        [
+          [
+            [
+              4
+            ],
+            [
+              8
+            ]
+          ],
+          {
+            "len": 2
+          }
+        ]
+      ],
+      {
+        "len": 2
+      }
+    ]
+  },
+  {
+    "name": "different_nested_lengths",
+    "input": "[[1],[2,3]]",
+    "schema": [
+      [
+        [
+          [
+            [
+              4
+            ]
+          ],
+          {
+            "len": 1
+          }
+        ],
+        [
+          [
+            [
+              4
+            ]
+          ],
+          {
+            "len": 2
+          }
+        ]
+      ],
+      {
+        "len": 2
+      }
+    ]
+  },
+  {
+    "name": "empty_container_types",
+    "input": "[{},[]]",
+    "schema": [
+      [
+        [
+          {}
+        ],
+        [
+          [],
+          {
+            "len": 0
+          }
+        ]
+      ],
+      {
+        "len": 2
+      }
+    ]
+  },
+  {
+    "name": "first_ten_elements",
+    "input": "[0,1,2,3,4,5,6,7,8,9,\"ignored\"]",
+    "schema": [
+      [
+        [
+          4
+        ]
+      ],
+      {
+        "len": 11,
+        "truncated": true
+      }
+    ]
+  },
+  {
+    "name": "nested_record_array_order",
+    "input": "[{\"b\":[1,\"a\"],\"a\":true},{\"a\":false,\"b\":[\"b\",2]}]",
+    "schema": [
+      [
+        [
+          {
+            "a": [
+              2
+            ],
+            "b": [
+              [
+                [
+                  4
+                ],
+                [
+                  8
+                ]
+              ],
+              {
+                "len": 2
+              }
+            ]
+          }
+        ]
+      ],
+      {
+        "len": 2
+      }
+    ]
+  },
+  {
+    "name": "no_scanner_metadata",
+    "input": "{\"email\":\"person@example.com\",\"card\":\"4111111111111111\"}",
+    "schema": [
+      {
+        "email": [
+          8
+        ],
+        "card": [
+          8
+        ]
+      }
+    ]
+  }
+]
