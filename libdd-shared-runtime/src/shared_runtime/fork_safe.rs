@@ -70,6 +70,62 @@ impl ForkSafeRuntime {
         });
     }
 
+    /// Pauses all workers before the process closes inherited file descriptors, including the
+    /// runtime's own, and keeps running (as daemonizing code does). Follow with
+    /// [`after_descriptors_closed`](Self::after_descriptors_closed).
+    ///
+    /// Unlike [`before_fork`](Self::before_fork), this waits for `block_on` calls in flight on
+    /// other threads to finish, so that the runtime is shut down while its descriptors are
+    /// still valid. It also never releases the runtime's drivers: worker state preserved for
+    /// the restart (timers, for one) can keep them alive, and releasing them once the
+    /// descriptors have been closed would close descriptor numbers that the process may have
+    /// reused since.
+    pub fn before_descriptors_closed(&self) {
+        debug!("before_descriptors_closed: pausing all workers");
+        let mut runtime_lock = self.runtime.lock_or_panic();
+        let Some(mut runtime) = runtime_lock.take() else {
+            return;
+        };
+        std::mem::forget(runtime.handle().clone());
+        {
+            let mut workers_lock = self.workers.lock_or_panic();
+            runtime.block_on(async {
+                let futures: FuturesUnordered<_> = workers_lock
+                    .iter_mut()
+                    .map(|worker_entry| async {
+                        if let Err(e) = worker_entry.worker.pause().await {
+                            error!("Worker failed to pause before closing descriptors: {:?}", e);
+                        }
+                    })
+                    .collect();
+
+                futures.collect::<()>().await;
+            });
+        }
+        drop(runtime_lock);
+        // In-flight block_on calls hold their own reference; the runtime shuts down when the
+        // last one is released.
+        loop {
+            match Arc::try_unwrap(runtime) {
+                Ok(runtime) => {
+                    drop(runtime);
+                    return;
+                }
+                Err(shared) => {
+                    runtime = shared;
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+            }
+        }
+    }
+
+    /// Restarts the runtime and workers after the descriptors have been closed; worker state
+    /// is preserved.
+    pub fn after_descriptors_closed(&self) -> Result<(), SharedRuntimeError> {
+        debug!("after_descriptors_closed: restarting runtime and workers");
+        self.after_fork_parent()
+    }
+
     fn restart_runtime(&self) -> Result<(), SharedRuntimeError> {
         let mut runtime_lock = self.runtime.lock_or_panic();
         if runtime_lock.is_none() {
@@ -356,6 +412,74 @@ mod tests {
             after_fork_value > state_before_fork,
             "after_fork_parent should preserve state: got {after_fork_value}, expected > {state_before_fork}"
         );
+    }
+
+    #[test]
+    fn test_before_and_after_descriptors_closed_preserve_state() {
+        let shared_runtime = ForkSafeRuntime::new().unwrap();
+        let (worker, receiver) = make_test_worker();
+
+        let _ = shared_runtime.spawn_worker(worker, true).unwrap();
+
+        let mut state_before = 0;
+        while state_before == 0 {
+            state_before = receiver
+                .recv_timeout(Duration::from_secs(1))
+                .expect("worker did not advance state");
+        }
+
+        shared_runtime.before_descriptors_closed();
+        while receiver.try_recv().is_ok() {}
+        assert!(
+            receiver.recv_timeout(Duration::from_millis(300)).is_err(),
+            "worker should not run while paused"
+        );
+
+        assert!(shared_runtime.after_descriptors_closed().is_ok());
+
+        let after = receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("worker did not resume");
+        assert!(
+            after > state_before,
+            "worker state should be preserved: got {after}, expected > {state_before}"
+        );
+    }
+
+    #[test]
+    fn test_before_descriptors_closed_waits_for_block_on() {
+        use std::sync::atomic::AtomicBool;
+
+        let shared_runtime = Arc::new(ForkSafeRuntime::new().unwrap());
+        let (started_tx, started_rx) = channel::<()>();
+        let finished = Arc::new(AtomicBool::new(false));
+
+        let in_flight = {
+            let shared_runtime = shared_runtime.clone();
+            let finished = finished.clone();
+            std::thread::spawn(move || {
+                shared_runtime
+                    .block_on(async {
+                        let _ = started_tx.send(());
+                        sleep(Duration::from_millis(300)).await;
+                        finished.store(true, Ordering::Release);
+                    })
+                    .unwrap();
+            })
+        };
+
+        started_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("block_on did not start");
+        shared_runtime.before_descriptors_closed();
+        assert!(
+            finished.load(Ordering::Acquire),
+            "the runtime was shut down while a block_on call was still using it"
+        );
+
+        in_flight.join().unwrap();
+        assert!(shared_runtime.after_descriptors_closed().is_ok());
+        assert_eq!(shared_runtime.block_on(async { 42 }).unwrap(), 42);
     }
 
     #[test]
