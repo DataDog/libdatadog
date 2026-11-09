@@ -103,13 +103,14 @@ fn endpoint_with_telemetry_path(
     Ok(endpoint)
 }
 
+// One-shot environment reads; concurrent `setenv` from host code can race with these.
 fn env_duration(name: &str) -> Option<Duration> {
     Some(Duration::from_secs_f32(
         std::env::var(name).ok()?.parse::<f32>().ok()?,
     ))
 }
 
-fn env_int<T: FromStr>(name: &str) -> Option<T> {
+fn env_from_str<T: FromStr>(name: &str) -> Option<T> {
     std::env::var(name).ok()?.parse::<T>().ok()
 }
 
@@ -195,7 +196,7 @@ impl Settings {
         let default = Self::default();
         Self {
             agent_host: env_str_not_empty(Self::DD_AGENT_HOST),
-            trace_agent_port: env_int(Self::DD_TRACE_AGENT_PORT),
+            trace_agent_port: env_from_str(Self::DD_TRACE_AGENT_PORT),
             trace_agent_url: env_str_not_empty(Self::DD_TRACE_AGENT_URL)
                 .or(default.trace_agent_url),
             trace_pipe_name: env_str_not_empty(Self::DD_TRACE_PIPE_NAME)
@@ -212,7 +213,7 @@ impl Settings {
             )
             .unwrap_or(Duration::from_secs(60 * 60 * 24)),
             shared_lib_debug: env_bool(Self::_DD_SHARED_LIB_DEBUG).unwrap_or(false),
-            endpoints_message_limit: env_int(
+            endpoints_message_limit: env_from_str(
                 Self::DD_API_SECURITY_ENDPOINT_COLLECTION_MESSAGE_LIMIT,
             )
             .unwrap_or(default_endpoints_message_limit()),

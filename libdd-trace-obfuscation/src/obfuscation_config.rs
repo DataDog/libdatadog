@@ -156,6 +156,7 @@ pub struct StatsObfuscationConfig {
 }
 
 /// Reads a `"true"`/`"1"` boolean flag from the environment, defaulting to `false`.
+/// Concurrent `setenv` from host code can race with this one-shot read.
 #[cfg(not(target_arch = "wasm32"))]
 fn env_flag(name: &str) -> bool {
     matches!(std::env::var(name).as_deref(), Ok("true" | "1"))

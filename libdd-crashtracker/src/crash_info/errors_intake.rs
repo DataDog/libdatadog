@@ -61,7 +61,8 @@ fn endpoint_with_errors_intake_path(
     Ok(endpoint)
 }
 
-fn env_int<T: FromStr>(name: &str) -> Option<T> {
+// One-shot environment reads; concurrent `setenv` from host code can race with these.
+fn env_from_str<T: FromStr>(name: &str) -> Option<T> {
     std::env::var(name).ok()?.parse::<T>().ok()
 }
 
@@ -118,7 +119,7 @@ impl ErrorsIntakeSettings {
         let default = Self::default();
         Self {
             agent_host: env_str_not_empty(Self::DD_AGENT_HOST),
-            trace_agent_port: env_int(Self::DD_TRACE_AGENT_PORT),
+            trace_agent_port: env_from_str(Self::DD_TRACE_AGENT_PORT),
             trace_agent_url: env_str_not_empty(Self::DD_TRACE_AGENT_URL)
                 .or(default.trace_agent_url),
             trace_pipe_name: env_str_not_empty(Self::DD_TRACE_PIPE_NAME)
