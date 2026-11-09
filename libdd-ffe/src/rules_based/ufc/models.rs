@@ -8,7 +8,7 @@ use std::{
     sync::Arc,
 };
 
-use libdd_common::regex_engine::Regex;
+use libdd_regex::Regex;
 use serde::{Deserialize, Serialize};
 
 use crate::rules_based::timestamp::OptOutTimestamp;

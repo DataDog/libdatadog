@@ -35,7 +35,7 @@ pub struct CaptureValue<'a> {
     pub is_null: bool,
     pub truncated: bool,
     pub not_captured_reason: CharSlice<'a>,
-    pub size: CharSlice<'a>,
+    pub size: u64,
 }
 
 impl<'a> From<CaptureValue<'a>> for DebuggerValueAlias<'a> {
@@ -63,11 +63,7 @@ impl<'a> From<CaptureValue<'a>> for DebuggerValueAlias<'a> {
             } else {
                 Some(val.not_captured_reason.to_utf8_lossy())
             },
-            size: if val.size.is_empty() {
-                None
-            } else {
-                Some(val.size.to_utf8_lossy())
-            },
+            size: (val.size != 0).then_some(val.size),
         }
     }
 }

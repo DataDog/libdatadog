@@ -122,7 +122,7 @@ pub(crate) fn initialize_worker(peer: &PeerCredentials) {
         let host_uid = unsafe { libc::geteuid() };
         libdd_ipc::platform::set_shm_owner_uid(peer.uid);
         if host_uid != peer.uid {
-            libdd_common::unix_utils::set_restrict_worker_file_outputs(true);
+            libdd_process_utils::unix_utils::set_restrict_worker_file_outputs(true);
         }
         (peer.uid, peer.gid)
     });
