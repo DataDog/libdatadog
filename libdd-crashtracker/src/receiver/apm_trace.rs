@@ -356,6 +356,7 @@ mod tests {
     }
 
     /// The spans carry the error errors intake reports for the same crash.
+    #[cfg_attr(miri, ignore)] // CrashInfo::test_instance spawns a process
     #[test]
     fn spans_carry_the_errors_intake_error() {
         let crash_info = CrashInfo::test_instance(1);
