@@ -415,6 +415,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "leaks the runtime's drivers by design")]
     fn test_before_and_after_descriptors_closed_preserve_state() {
         let shared_runtime = ForkSafeRuntime::new().unwrap();
         let (worker, receiver) = make_test_worker();
@@ -447,6 +448,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "leaks the runtime's drivers by design")]
     fn test_before_descriptors_closed_waits_for_block_on() {
         use std::sync::atomic::AtomicBool;
 
