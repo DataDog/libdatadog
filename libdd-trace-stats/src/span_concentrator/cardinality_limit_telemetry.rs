@@ -49,24 +49,32 @@ const COLLAPSED_FIELD_METRIC_SIZE: usize = 1 << CollapsedFieldSet::FIELDS.len();
 // Verify the array is of a reasonable size
 const_assert!(COLLAPSED_FIELD_METRIC_SIZE <= 64);
 /// Counter of combination of collapsed stats key fields
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Default, Copy)]
 pub struct CollapsedFieldsMetrics {
     // Note: slot 0 is a counter for non_collapsed spans. It's not used for emitting telemetry
-    collapsed: [usize; COLLAPSED_FIELD_METRIC_SIZE],
+    collapsed: Counters,
+}
+
+/// One counter per combination of collapsed fields. Arrays this size don't implement `Default`.
+#[derive(Debug, Clone, Copy)]
+struct Counters([usize; COLLAPSED_FIELD_METRIC_SIZE]);
+
+impl Default for Counters {
+    fn default() -> Self {
+        Self([0; COLLAPSED_FIELD_METRIC_SIZE])
+    }
 }
 
 impl CollapsedFieldsMetrics {
     /// Default value every combination of collapsed fields set to 0
     pub fn zero() -> Self {
-        Self {
-            collapsed: [0; COLLAPSED_FIELD_METRIC_SIZE],
-        }
+        Self::default()
     }
 
     #[cfg(feature = "dogstatsd")]
     pub fn emit_dogstatsd(&self, dogstatsd: &libdd_dogstatsd_client::DogStatsDClient) {
         // skip the first slot that is used to count span which have no collapsed fields
-        for (mask, &count) in self.collapsed.iter().enumerate().skip(1) {
+        for (mask, &count) in self.collapsed.0.iter().enumerate().skip(1) {
             if count > 0 {
                 let tags = Self::fields_mask_to_list(mask);
                 dogstatsd.send(vec![libdd_dogstatsd_client::DogStatsDAction::Count(
@@ -87,7 +95,7 @@ impl CollapsedFieldsMetrics {
         context_key: &libdd_telemetry::metrics::ContextKey,
     ) {
         // skip the first slot that is used to count span which have no collapsed fields
-        for (mask, &count) in self.collapsed.iter().enumerate().skip(1) {
+        for (mask, &count) in self.collapsed.0.iter().enumerate().skip(1) {
             if count > 0 {
                 let tags = Self::fields_mask_to_list(mask);
                 let _ = handle.add_point(count as f64, context_key, tags);
@@ -146,25 +154,19 @@ impl CollapsedFieldsMetrics {
 
     /// Add `count` to the telemetry counter corresponding to this collapsed field combination
     pub fn add(&mut self, field_set: CollapsedFieldSet, count: usize) {
-        self.collapsed[field_set.0] += count;
+        self.collapsed.0[field_set.0] += count;
     }
 
     /// Add `count` spans with additional metric tag values over the length limit
     pub fn add_oversized_additional_tags(&mut self, count: usize) {
-        self.collapsed[CollapsedFieldSet::OVERSIZED_ADDITIONAL_TAGS] += count;
-    }
-}
-
-impl Default for CollapsedFieldsMetrics {
-    fn default() -> Self {
-        Self::zero()
+        self.collapsed.0[CollapsedFieldSet::OVERSIZED_ADDITIONAL_TAGS] += count;
     }
 }
 
 impl std::ops::AddAssign for CollapsedFieldsMetrics {
     fn add_assign(&mut self, rhs: Self) {
-        for i in 0..self.collapsed.len() {
-            self.collapsed[i] += rhs.collapsed[i];
+        for i in 0..self.collapsed.0.len() {
+            self.collapsed.0[i] += rhs.collapsed.0[i];
         }
     }
 }
