@@ -1,0 +1,30 @@
+# Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "libdd-regex"
+version = "0.1.0"
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-regex"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-regex"
+description = "Workspace-wide regex engine facade, switching between the full `regex` crate and `regex-lite`"
+
+[lib]
+bench = false
+
+[dependencies]
+regex = { workspace = true, features = ["std", "unicode", "perf"], optional = true }
+regex-lite = { workspace = true, default-features = true, optional = true }
+
+[features]
+default = ["full"]
+# Full `regex` engine, with Unicode tables and the `perf` optimizations.
+full = ["dep:regex"]
+# Use `regex-lite` instead of `regex` for smaller binary size and faster
+# compile times.
+regex-lite = ["dep:regex-lite"]
+# Consumers that handle user-provided regexes can enable this feature to force
+# the full `regex` crate, overriding `regex-lite` when both are active.
+require-regex-full = ["full"]

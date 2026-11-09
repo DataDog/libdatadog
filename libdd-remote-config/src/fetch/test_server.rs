@@ -28,7 +28,6 @@ use std::collections::HashMap;
 use std::convert::Infallible;
 use std::net::TcpListener;
 use std::sync::{Arc, Mutex};
-use time::OffsetDateTime;
 use tokio::select;
 use tokio::sync::mpsc::Sender;
 
@@ -124,15 +123,11 @@ impl RemoteConfigServer {
                     })
                     .collect();
                 let targets = TargetsList {
-                    signatures: vec![],
                     signed: TargetsData {
-                        _type: "",
                         custom: TargetsCustom {
                             agent_refresh_interval: Some(1000),
                             opaque_backend_state: "some state",
                         },
-                        expires: OffsetDateTime::from_unix_timestamp(253402300799).unwrap(),
-                        spec_version: "1.0.0",
                         targets: target_info
                             .iter()
                             .map(|(p, hash, version, _)| {

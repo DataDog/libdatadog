@@ -2,6 +2,7 @@
 // License Version 2.0. This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
 use crate::service::{DynamicInstrumentationConfigState, InstanceId};
+use crate::shm_path::keyed_shm_path;
 use base64::Engine;
 use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use libdd_capabilities_impl::{HttpClientCapability, NativeCapabilities};
@@ -26,7 +27,6 @@ use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::default::Default;
 use std::ffi::{CStr, CString};
-use std::hash::{Hash, Hasher};
 use std::io;
 #[cfg(windows)]
 use std::io::Write;
@@ -37,7 +37,6 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::time::Instant;
 use tracing::{debug, error, trace, warn};
-use zwohash::ZwoHasher;
 
 pub struct RemoteConfigWriter {
     writer: OneWayShmWriter<NamedShmHandle>,
@@ -88,21 +87,7 @@ pub unsafe extern "C" fn ddog_set_rc_notify_fn(notify_fn: Option<InProcNotifyFn>
 }
 
 pub fn path_for_remote_config(id: &ConfigInvariants, target: &Arc<Target>) -> CString {
-    // We need a stable hash so that the outcome is independent of the process
-    let mut hasher = ZwoHasher::default();
-    id.hash(&mut hasher);
-    target.hash(&mut hasher);
-    let mut path = format!(
-        "/ddrc{}-{}",
-        crate::shm_namespace(),
-        BASE64_URL_SAFE_NO_PAD.encode(hasher.finish().to_ne_bytes()),
-    );
-    if cfg!(unix) {
-        path.truncate(31);
-    }
-
-    #[allow(clippy::unwrap_used)]
-    CString::new(path).unwrap()
+    keyed_shm_path("ddrc", &(id, target))
 }
 
 impl RemoteConfigReader {
@@ -184,13 +169,30 @@ struct ConfigFileStorage<N: NotifyTarget + 'static> {
 
 struct StoredShmFile {
     handle: Mutex<Option<NamedShmHandle>>, // just an option to use the handle under lock
-    limiter: Option<ShmLimiter<()>>,
+    limiter: Mutex<Option<ShmLimiter<()>>>,
     refcount: FileRefcountData,
 }
 
 impl RefcountedFile for StoredShmFile {
     fn refcount(&self) -> &FileRefcountData {
         &self.refcount
+    }
+}
+
+impl<N: NotifyTarget + 'static> ConfigFileStorage<N> {
+    /// No limiter means no rate limiting: either the segment could not be created, which is
+    /// already reported where it happened, or no slot is available right now. The latter is
+    /// retried on the next update of the file.
+    fn alloc_live_debugging_limiter(&self, path: &RemoteConfigPath) -> Option<ShmLimiter<()>> {
+        let limiter = self.limiter.as_ref()?;
+        let allocated = limiter.lock_or_panic().alloc();
+        if allocated.is_none() {
+            warn!(
+                "No rate limiter slot available for live debugging config {path}; \
+                 not rate limited (will retry on the next update)"
+            );
+        }
+        allocated
     }
 }
 
@@ -205,22 +207,11 @@ impl<N: NotifyTarget + 'static> FileStorage for ConfigFileStorage<N> {
     ) -> anyhow::Result<Arc<StoredShmFile>> {
         Ok(Arc::new(StoredShmFile {
             handle: Mutex::new(Some(store_shm(version, &path, file)?)),
-            // No limiter means no rate limiting: the segment could not be created, which is
-            // already reported where it happened.
-            limiter: if path.product() == RemoteConfigProduct::LiveDebugging {
-                self.limiter.as_ref().and_then(|limiter| {
-                    let allocated = limiter.lock_or_panic().alloc();
-                    if allocated.is_none() {
-                        warn!(
-                            "No rate limiter slot available for live debugging config {path}; \
-                             not rate limited"
-                        );
-                    }
-                    allocated
-                })
+            limiter: Mutex::new(if path.product() == RemoteConfigProduct::LiveDebugging {
+                self.alloc_live_debugging_limiter(&path)
             } else {
                 None
-            },
+            }),
             refcount: FileRefcountData::new(version, path),
         }))
     }
@@ -232,6 +223,13 @@ impl<N: NotifyTarget + 'static> FileStorage for ConfigFileStorage<N> {
         contents: Vec<u8>,
     ) -> anyhow::Result<()> {
         *file.handle.lock_or_panic() = Some(store_shm(version, &file.refcount.path, contents)?);
+        // Retry a slot allocation which failed when the file was first stored.
+        if file.refcount.path.product() == RemoteConfigProduct::LiveDebugging {
+            let mut limiter = file.limiter.lock_or_panic();
+            if limiter.is_none() {
+                *limiter = self.alloc_live_debugging_limiter(&file.refcount.path);
+            }
+        }
         Ok(())
     }
 }
@@ -316,7 +314,7 @@ impl<N: NotifyTarget + 'static> MultiTargetHandlers<N, Self, NativeCapabilities>
                 serialized.extend_from_slice(path);
             }
             serialized.push(b':');
-            if let Some(ref limiter) = file.limiter {
+            if let Some(ref limiter) = *file.limiter.lock_or_panic() {
                 serialized.extend_from_slice(limiter.index().to_string().as_bytes());
             } else {
                 serialized.push(b'0');
@@ -869,6 +867,7 @@ mod tests {
     };
     use libdd_remote_config::fetch::test_server::RemoteConfigServer;
     use manual_future::ManualFuture;
+    use std::hash::{Hash, Hasher};
     use std::sync::LazyLock;
 
     static PATH_FIRST: LazyLock<RemoteConfigPath> = LazyLock::new(|| {
