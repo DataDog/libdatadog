@@ -445,7 +445,9 @@ mod tracing_integration_tests {
     /// supports.
     ///
     /// APMSP-3479 - TODO: `AttributeValue::Array` and `AttributeValue::KeyValueList` are
-    /// deliberately omitted because not yet supported by `ddapm-test-agent` v1.56.0. Once
+    /// deliberately omitted: `ddapm-test-agent` v1.62.0 decodes arrays only in span event
+    /// attributes (covered by `compare_v04_and_v1_encoders_snapshot_test`) and rejects them on
+    /// span, chunk and span link attributes, and it rejects key-value lists everywhere. Once
     /// test-agent V1 support catches up, add them here too.
     fn make_v1_payload(name_prefix: &str) -> libdd_trace_utils::span::v1::TracerPayloadBytes {
         use libdd_trace_utils::span::v1::{
@@ -683,19 +685,21 @@ mod tracing_integration_tests {
         post_msgpack_traces(uri.clone(), bytes_v04).await;
         post_msgpack_traces(uri, bytes_v1).await;
 
-        // Both POSTs share trace_id=1, so the test-agent merges them into a single trace of
-        // 2 decoded spans. The checked-in snapshot is the canonical equivalent decoded form.
+        // The snapshot holds two traces (trace_id 1 and 2), one per encoder, which must decode
+        // to the same form.
         test_agent.assert_snapshot(snapshot_name).await;
     }
 
-    /// Builds a V1 payload exercising the full attribute surface that the current test-agent
-    /// (v1.56.0) is able to decode: `AttributeValue::String/Bool/Int/Float`, span links with
+    /// Builds a V1 payload exercising the attribute surface that the current test-agent
+    /// (v1.62.0) is able to decode: `AttributeValue::String/Bool/Int/Float`, span links with
     /// non-empty attributes, span events with non-empty attributes, plus chunk-level attributes.
     ///
     /// APMSP-3479 - TODO: `AttributeValue::Bytes`, `AttributeValue::Array` and
-    /// `AttributeValue::KeyValueList` are deliberately omitted — `ddapm-test-agent` v1.56.0 rejects
-    /// Bytes with `400 "Bytes values are not supported yet."` and does not handle List / KeyValue.
-    /// Add them here once test-agent V1 support catches up.
+    /// `AttributeValue::KeyValueList` are deliberately omitted. `ddapm-test-agent` v1.62.0
+    /// rejects Bytes and key-value lists everywhere (`400 "... values are not supported yet."`),
+    /// and decodes arrays only in span event attributes, which
+    /// `compare_v04_and_v1_encoders_snapshot_test` already covers. Add them here once test-agent
+    /// V1 support catches up.
     fn make_v1_full_payload(name_prefix: &str) -> libdd_trace_utils::span::v1::TracerPayloadBytes {
         use libdd_trace_utils::span::v1::{
             AttributeValue, AttributeValueBytes, SpanBytes as V1SpanBytes, SpanEventBytes,
@@ -790,8 +794,9 @@ mod tracing_integration_tests {
     /// span_event attribute maps, then POSTs to `/v1.0/traces` and asserts the snapshot.
     ///
     /// APMSP-3479 - TODO: extend this with `AttributeValue::Bytes`, `AttributeValue::Array`
-    /// and `AttributeValue::KeyValueList` once `ddapm-test-agent` v1 support catches up. See
-    /// [`make_v1_full_payload`] for the payload builder and the omitted variants.
+    /// (beyond span event attributes) and `AttributeValue::KeyValueList` once `ddapm-test-agent`
+    /// V1 support catches up. See [`make_v1_full_payload`] for the payload builder and the
+    /// omitted variants.
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn compare_v1_full_payload_snapshot_test() {
