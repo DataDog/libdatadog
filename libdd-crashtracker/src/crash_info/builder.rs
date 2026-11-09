@@ -219,11 +219,6 @@ impl CrashInfoBuilder {
         Self::default()
     }
 
-    pub fn with_apm_trace_payload(&mut self, payload: ApmTracePayload) -> anyhow::Result<()> {
-        self.apm_trace_payload = Some(payload);
-        Ok(())
-    }
-
     /// Inserts the given counter to the current set of counters in the builder.
     pub fn with_counter(&mut self, name: String, value: i64) -> anyhow::Result<()> {
         anyhow::ensure!(!name.is_empty(), "Empty counter name not allowed");

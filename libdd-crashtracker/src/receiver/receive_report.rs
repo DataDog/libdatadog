@@ -85,6 +85,7 @@ impl ReceiverFileAccess {
 pub(crate) enum StdinState {
     AdditionalTags,
     ApmTracePayload,
+    ApmTracePayloadDropped,
     Config,
     Counters,
     Done,
@@ -132,17 +133,33 @@ fn process_line(
         }
 
         StdinState::ApmTracePayload if line.starts_with(DD_CRASHTRACK_END_APM_TRACE_PAYLOAD) => {
+            // A block that cannot be submitted is dropped, not the report.
+            if let Some(Err(e)) = builder.apm_trace_payload.as_ref().map(|p| p.validate()) {
+                builder.apm_trace_payload = None;
+                builder.with_log_message(format!("Dropped APM trace payload: {e}"), true)?;
+            }
             StdinState::Waiting
         }
         StdinState::ApmTracePayload => {
-            // The payload is a single line of hex-encoded v0.4 msgpack.
-            let data = hex::decode(line)?;
-            // Resolve the agent URL from the environment inherited from the
-            // crashing process (same vars the tracer used).
-            let agent_url = super::apm_span_submit::agent_url();
-            builder.with_apm_trace_payload(ApmTracePayload { agent_url, data })?;
-            StdinState::ApmTracePayload
+            let payload = builder
+                .apm_trace_payload
+                .get_or_insert_with(Default::default);
+            match payload.apply_line(line) {
+                Ok(()) => StdinState::ApmTracePayload,
+                Err(e) => {
+                    // Drop the block, not the report: skip to its end.
+                    builder.apm_trace_payload = None;
+                    builder.with_log_message(format!("Dropped APM trace payload: {e}"), true)?;
+                    StdinState::ApmTracePayloadDropped
+                }
+            }
         }
+        StdinState::ApmTracePayloadDropped
+            if line.starts_with(DD_CRASHTRACK_END_APM_TRACE_PAYLOAD) =>
+        {
+            StdinState::Waiting
+        }
+        StdinState::ApmTracePayloadDropped => StdinState::ApmTracePayloadDropped,
 
         StdinState::Config if line.starts_with(DD_CRASHTRACK_END_CONFIG) => StdinState::Waiting,
         StdinState::Config => {
@@ -319,6 +336,7 @@ fn process_line(
             StdinState::AdditionalTags
         }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_APM_TRACE_PAYLOAD) => {
+            builder.apm_trace_payload = Some(ApmTracePayload::default());
             StdinState::ApmTracePayload
         }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_CONFIG) => StdinState::Config,
