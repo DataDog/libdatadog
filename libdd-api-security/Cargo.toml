@@ -17,7 +17,7 @@ autobenches = false
 bench = false
 
 [dependencies]
-serde = { workspace = true, features = ["derive"] }
+serde = { workspace = true, features = ["alloc", "derive"] }
 serde_json.workspace = true
 thiserror.workspace = true
 
