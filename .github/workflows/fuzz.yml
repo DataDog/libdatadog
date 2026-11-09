@@ -53,9 +53,9 @@ jobs:
       CARGO_INCREMENTAL: 0
     steps:
     - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
-    - name: Read nightly version from nightly-toolchain.toml
+    - name: Read nightly version from ci-toolchain.toml
       id: nightly-version
-      run: echo "version=$(grep -Po '^channel = "\K[^"]+' nightly-toolchain.toml)" >> $GITHUB_OUTPUT
+      run: echo "version=$(grep -Po '^nightly = "\K[^"]+' ci-toolchain.toml)" >> $GITHUB_OUTPUT
     - name: Set up Rust
       run: |
         set -e

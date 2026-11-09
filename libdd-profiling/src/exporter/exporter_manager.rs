@@ -620,9 +620,6 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn test_full_fork_workflow() {
         // Test a complete fork workflow: create -> queue -> prefork -> postfork
-        let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
-        let child_file = temp_dir.path().join("test_fork_child.http");
-
         // Parent: create manager and queue some work
         let mut fixture = TestFixture::new("test_fork_parent");
         fixture
@@ -641,25 +638,12 @@ mod tests {
         std::thread::sleep(Duration::from_millis(200));
         fixture.manager.abort().expect("Failed to abort parent");
 
-        // Child process: start fresh with new exporter
-        let child_exporter = TestFixture::create_exporter(&child_file);
-        let mut child_manager =
-            ExporterManager::new(child_exporter).expect("Failed to create child manager");
+        let mut child = TestFixture::new("test_fork_child");
+        child.queue_profile().expect("Failed to queue in child");
 
-        // Child does its own work
-        let profile = EncodedProfile::test_instance().expect("Failed to create test profile");
-        child_manager
-            .queue(profile, &[], &[], None, None, None)
-            .expect("Failed to queue in child");
+        let processed = child.wait_for_request(Duration::from_secs(5));
+        child.manager.abort().expect("Failed to abort child");
 
-        std::thread::sleep(Duration::from_millis(200));
-        child_manager.abort().expect("Failed to abort child");
-
-        // Verify child processed its work
-        let content = std::fs::read(&child_file).ok();
-        assert!(
-            content.is_some_and(|c| c.starts_with(b"POST")),
-            "Child should process its work"
-        );
+        assert!(processed, "Child should process its work");
     }
 }

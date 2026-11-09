@@ -4,7 +4,7 @@
 use std::alloc::System;
 
 use criterion::criterion_main;
-use libdd_common::bench_utils::ReportingAllocator;
+use tools::bench_utils::ReportingAllocator;
 
 #[global_allocator]
 pub static GLOBAL: ReportingAllocator<System> = ReportingAllocator::new(System);

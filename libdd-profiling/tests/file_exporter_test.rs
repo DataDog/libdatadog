@@ -3,9 +3,9 @@
 
 mod common;
 
-use libdd_common::test_utils::{TempFileGuard, create_temp_file_path, parse_http_request_sync};
 use libdd_profiling::exporter::ProfileExporter;
 use libdd_profiling::internal::EncodedProfile;
+use tools::test_utils::{TempFileGuard, create_temp_file_path, parse_http_request_sync};
 
 /// Create a file-based exporter and return the temp file path with auto-cleanup
 fn create_file_exporter(

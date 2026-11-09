@@ -1,8 +1,8 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use core::sync::atomic::{AtomicU64, Ordering};
-use core::time::Duration;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 /// A rate limiter whose complete mutable state is one atomic deadline.
 ///
@@ -152,9 +152,7 @@ fn debt(deadline: &AtomicU64, granularity: u64, now: u64) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use crate::rate_limiter::{
-        LocalLimiter, MOCK_NOW, TIME_PER_SECOND, admit, debt, duration_nanos, now,
-    };
+    use super::{LocalLimiter, MOCK_NOW, TIME_PER_SECOND, admit, debt, duration_nanos, now};
     use core::sync::atomic::{AtomicU64, Ordering};
     use core::time::Duration;
 

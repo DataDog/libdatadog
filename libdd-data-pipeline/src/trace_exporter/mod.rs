@@ -73,6 +73,7 @@ use libdd_trace_utils::span::{SpanText, TraceData, trace_utils_v1, v04::Span, v0
 use libdd_trace_utils::trace_utils::TracerHeaderTags;
 #[cfg(all(feature = "telemetry", not(target_arch = "wasm32")))]
 use prost::Message;
+use std::collections::BTreeMap;
 use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Once};
@@ -314,7 +315,7 @@ pub struct TraceExporter<
     /// When set, traces are exported via OTLP instead of the Datadog agent.
     otlp: Option<OtlpExportMode>,
     /// OTLP Resource attributes derived from tracer metadata.
-    otlp_resource_info: OtlpResourceInfo,
+    otlp_resource_info: ArcSwap<OtlpResourceInfo>,
     /// When set, APM trace spans are exported directly to the Datadog HTTP intake (agentless)
     /// instead of via the Datadog Agent
     agentless_config: Option<AgentlessTraceConfig>,
@@ -343,6 +344,21 @@ impl<
     #[allow(missing_docs)]
     pub fn builder() -> TraceExporterBuilder<R> {
         TraceExporterBuilder::new()
+    }
+
+    /// Atomically replace custom string resource attributes for subsequent OTLP trace exports.
+    /// An empty map clears them. Matching span string tags are omitted from OTLP output;
+    /// native payloads and metric resources are unchanged. Metrics use
+    /// TraceExporterBuilder::set_tracer_tags, configured separately at build time.
+    /// Empty keys are ignored; empty string values are preserved.
+    /// Span copies are retained when Agent resource conversion could change their meaning.
+    /// SDK-generated values take precedence for service.name, deployment.environment.name,
+    /// service.version, telemetry.sdk.{name,language,version}, runtime-id, _dd.stats_computed,
+    /// _dd.sdk.otlp_export, and datadog.sdk.semantics when emitted. Each export uses one snapshot.
+    pub fn set_otlp_resource_attributes(&self, attributes: BTreeMap<String, String>) {
+        let mut resource_info = (**self.otlp_resource_info.load()).clone();
+        resource_info.resource_attributes = attributes;
+        self.otlp_resource_info.store(Arc::new(resource_info));
     }
 
     /// Re-point health-metric reporting at a different telemetry worker, or at none.
@@ -381,10 +397,10 @@ impl<
         if observations::record_payload(payload) {
             return;
         }
-        if let Some(telemetry) = self.telemetry.load_full().as_deref() {
-            if let Err(e) = telemetry.send(&payload()) {
-                error!(?e, "Error sending telemetry");
-            }
+        if let Some(telemetry) = self.telemetry.load_full().as_deref()
+            && let Err(e) = telemetry.send(&payload())
+        {
+            error!(?e, "Error sending telemetry");
         }
     }
 
@@ -425,7 +441,7 @@ impl<
     /// Workers from other components sharing the same `R` runtime are unaffected.
     ///
     /// # Errors
-    /// Returns [`TraceExporterError::Shutdown(ShutdownError::TimedOut)`] if a timeout was
+    /// Returns [`TraceExporterError::Shutdown`] with [`ShutdownError::TimedOut`] if a timeout was
     /// given and elapsed before all workers finished.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn shutdown(self, timeout: Option<Duration>) -> Result<(), TraceExporterError>
@@ -439,7 +455,7 @@ impl<
     /// Async version of [`Self::shutdown`].
     ///
     /// # Errors
-    /// Returns [`TraceExporterError::Shutdown(ShutdownError::TimedOut)`] if a timeout was
+    /// Returns [`TraceExporterError::Shutdown`] with [`ShutdownError::TimedOut`] if a timeout was
     /// given and elapsed before all workers finished.
     pub async fn shutdown_async(self, timeout: Option<Duration>) -> Result<(), TraceExporterError> {
         let Some(timeout) = timeout else {
@@ -488,10 +504,10 @@ impl<
         // Telemetry goes through `stop_worker` so its stop is bounded by the shutdown timeout.
         #[cfg(feature = "telemetry")]
         let telemetry = async {
-            if let Some((worker_handle, telemetry)) = self.workers.telemetry {
-                if let Err(e) = telemetry.stop_worker(worker_handle).await {
-                    error!("Telemetry worker failed to shutdown: {:?}", e);
-                }
+            if let Some((worker_handle, telemetry)) = self.workers.telemetry
+                && let Err(e) = telemetry.stop_worker(worker_handle).await
+            {
+                error!("Telemetry worker failed to shutdown: {:?}", e);
             }
         };
         #[cfg(not(feature = "telemetry"))]
@@ -608,7 +624,7 @@ impl<
             StatsComputationStatus::DisabledByAgent { .. } => {
                 let ctx = stats::StatsContext {
                     metadata: &self.metadata,
-                    endpoint_url: &self.endpoint.url,
+                    endpoint: &self.endpoint,
                     shared_runtime: &*self.shared_runtime,
                     stats_cardinality_limits: self.client_side_stats.stats_cardinality_limits,
                     additional_metric_tag_keys: &self.client_side_stats.additional_metric_tag_keys,
@@ -903,7 +919,7 @@ impl<
         let counts = PayloadCounts::from_traces(traces);
         let request = map_traces_to_otlp(
             traces,
-            &self.otlp_resource_info,
+            &self.otlp_resource_info.load(),
             config.otel_trace_semantics_enabled,
         );
         let body = config
@@ -971,7 +987,7 @@ impl<
         let counts = PayloadCounts::from_traces(traces);
         let request = Arc::new(map_traces_to_otlp(
             traces,
-            &self.otlp_resource_info,
+            &self.otlp_resource_info.load(),
             transport.otel_trace_semantics_enabled,
         ));
         #[cfg(feature = "telemetry")]
@@ -1018,7 +1034,7 @@ impl<
         let counts = PayloadCounts::from_v1_chunks(traces);
         let request = map_traces_to_otlp_v1(
             traces,
-            &self.otlp_resource_info,
+            &self.otlp_resource_info.load(),
             config.otel_trace_semantics_enabled,
         );
         let body = config
@@ -1085,7 +1101,7 @@ impl<
         let counts = PayloadCounts::from_v1_chunks(traces);
         let request = Arc::new(map_traces_to_otlp_v1(
             traces,
-            &self.otlp_resource_info,
+            &self.otlp_resource_info.load(),
             transport.otel_trace_semantics_enabled,
         ));
         #[cfg(feature = "telemetry")]
@@ -1207,10 +1223,8 @@ impl<
         // Agent and agentless both send the Datadog format; the builder rejects agentless + OTLP.
         let native_export = self.otlp.is_none();
         for chunk in traces.iter_mut() {
-            if native_export {
-                if let Some(first) = chunk.first_mut() {
-                    add_native_export_marker(first);
-                }
+            if native_export && let Some(first) = chunk.first_mut() {
+                add_native_export_marker(first);
             }
             for span in chunk.iter_mut() {
                 span.dedup();
@@ -1288,17 +1302,15 @@ impl<
         // interval). On a 404 to `/v1.0/traces`, fail closed immediately and force an `/info`
         // refresh so the next send uses V0.4 and V1 support is re-detected as soon as the agent
         // advertises it again.
-        if effective_format == TraceExporterOutputFormat::V1 {
-            if let Err(TraceExporterError::Request(ref e)) = result {
-                if e.status() == http::StatusCode::NOT_FOUND
-                    && self.v1_active.swap(false, Ordering::Relaxed)
-                {
-                    warn!(
-                        "V1 trace send returned 404; agent no longer advertises {V1_TRACES_ENDPOINT} — falling back to V0.4"
-                    );
-                    self.info_response_observer.manual_trigger();
-                }
-            }
+        if effective_format == TraceExporterOutputFormat::V1
+            && let Err(TraceExporterError::Request(ref e)) = result
+            && e.status() == http::StatusCode::NOT_FOUND
+            && self.v1_active.swap(false, Ordering::Relaxed)
+        {
+            warn!(
+                "V1 trace send returned 404; agent no longer advertises {V1_TRACES_ENDPOINT} — falling back to V0.4"
+            );
+            self.info_response_observer.manual_trigger();
         }
 
         result
@@ -1507,17 +1519,15 @@ impl<
         // Same rationale as `process_and_send_trace_chunks`: on a 404 to `/v1.0/traces`, fail
         // closed immediately and force an `/info` refresh so the next send downgrades to v0.4
         // without waiting for the fetcher's next poll.
-        if effective_format == TraceExporterOutputFormat::V1 {
-            if let Err(TraceExporterError::Request(ref e)) = result {
-                if e.status() == http::StatusCode::NOT_FOUND
-                    && self.v1_active.swap(false, Ordering::Relaxed)
-                {
-                    warn!(
-                        "V1 trace send returned 404; agent no longer advertises {V1_TRACES_ENDPOINT} — falling back to V0.4"
-                    );
-                    self.info_response_observer.manual_trigger();
-                }
-            }
+        if effective_format == TraceExporterOutputFormat::V1
+            && let Err(TraceExporterError::Request(ref e)) = result
+            && e.status() == http::StatusCode::NOT_FOUND
+            && self.v1_active.swap(false, Ordering::Relaxed)
+        {
+            warn!(
+                "V1 trace send returned 404; agent no longer advertises {V1_TRACES_ENDPOINT} — falling back to V0.4"
+            );
+            self.info_response_observer.manual_trigger();
         }
 
         result
@@ -2958,6 +2968,40 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_otlp_resource_updates_preserve_in_flight_snapshot() {
+        let exporter = Arc::new(
+            TraceExporterBuilder::default()
+                .build::<NativeCapabilities>()
+                .unwrap(),
+        );
+        exporter.set_otlp_resource_attributes(BTreeMap::from([("team".into(), "old".into())]));
+        let snapshot = exporter.otlp_resource_info.load_full();
+        let shared = exporter.clone();
+        std::thread::spawn(move || {
+            shared.set_otlp_resource_attributes(BTreeMap::from([("region".into(), "new".into())]));
+        })
+        .join()
+        .unwrap();
+        assert_eq!(
+            snapshot.resource_attributes,
+            BTreeMap::from([("team".into(), "old".into())])
+        );
+        assert_eq!(
+            exporter.otlp_resource_info.load().resource_attributes,
+            BTreeMap::from([("region".into(), "new".into())])
+        );
+        exporter.set_otlp_resource_attributes(BTreeMap::new());
+        assert!(
+            exporter
+                .otlp_resource_info
+                .load()
+                .resource_attributes
+                .is_empty()
+        );
+    }
+
+    #[test]
     fn test_add_native_export_marker() {
         let mut span = SpanBytes::default();
         add_native_export_marker(&mut span);
@@ -3001,6 +3045,10 @@ mod tests {
                     && is_marked(&chunks[0][0])
                     && !chunks[0][1].meta.contains_key(SDK_OTLP_EXPORT_KEY)
                     && is_marked(&chunks[1][0])
+                    && chunks
+                        .iter()
+                        .flatten()
+                        .all(|span| !span.meta.contains_key("team"))
             });
             then.status(200)
                 .header("content-type", "application/json")
@@ -3018,6 +3066,10 @@ mod tests {
             .set_input_format(TraceExporterInputFormat::V04)
             .set_output_format(TraceExporterOutputFormat::V04);
         let exporter = builder.build::<NativeCapabilities>().unwrap();
+        exporter.set_otlp_resource_attributes(BTreeMap::from([(
+            "team".into(),
+            "resource-only".into(),
+        )]));
 
         let span = |trace_id, span_id, parent_id| SpanBytes {
             name: BytesString::from_slice(b"op").unwrap(),

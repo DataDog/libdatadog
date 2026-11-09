@@ -4,24 +4,21 @@
 use crate::service::{
     ConnectionSessionHandle, InstanceId, RuntimeMetadata, SidecarAction, SidecarServer,
 };
+use crate::shm_path::keyed_shm_path;
 use anyhow::Result;
 use libdd_common::MutexExt;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
-use base64::Engine;
-use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use libdd_ipc::one_way_shared_memory::OneWayShmWriter;
 use libdd_ipc::platform::NamedShmHandle;
 use std::collections::{HashMap, HashSet, VecDeque, hash_map::Entry};
 use std::ffi::CString;
-use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 use tokio::task::JoinHandle;
-use zwohash::ZwoHasher;
 
 use libdd_capabilities_impl::NativeCapabilities;
 use libdd_common::tag::Tag;
@@ -405,7 +402,9 @@ pub struct TelemetryCachedEntry {
 
 pub struct TelemetryCachedClient {
     pub worker: TelemetryWorkerHandle,
+    /// `None` when the segment hasn't been created yet, or a previous attempt failed.
     pub shm_writer: Option<OneWayShmWriter<NamedShmHandle>>,
+    shm_path: CString,
     pub telemetry_metrics: HashMap<String, ContextKey>,
     pub handle: Option<JoinHandle<()>>,
     pub shared: TelemetryCachedClientShmData,
@@ -471,19 +470,10 @@ impl TelemetryCachedClient {
         // Queue Start before another batch can send Stop to this worker.
         handle.send_start().ok();
 
-        let client = Self {
+        let mut client = Self {
             worker: handle,
-            shm_writer: {
-                let path = path_for_telemetry(service, env);
-                OneWayShmWriter::<NamedShmHandle>::new(path.clone())
-                    .inspect_err(|e| {
-                        warn!(
-                            "Could not create the telemetry cache at {}: {e}. Continuing without it.",
-                            path.to_string_lossy()
-                        )
-                    })
-                    .ok()
-            },
+            shm_writer: None,
+            shm_path: path_for_telemetry(service, env),
             shared: TelemetryCachedClientShmData::default(),
             telemetry_metrics: Default::default(),
             handle: None,
@@ -505,14 +495,27 @@ impl TelemetryCachedClient {
         }
     }
 
-    pub fn write_shm_file(&self) {
-        let Some(shm_writer) = &self.shm_writer else {
+    /// Creates the segment on first use, and again on later writes if a previous attempt
+    /// failed, so a transient failure does not disable the telemetry cache for good.
+    pub fn write_shm_file(&mut self) {
+        let Ok(buf) = bincode::serialize(&self.shared) else {
+            warn!("Failed to serialize telemetry data for shared memory");
             return;
         };
-        if let Ok(buf) = bincode::serialize(&self.shared) {
+        if self.shm_writer.is_none() {
+            match OneWayShmWriter::<NamedShmHandle>::new(self.shm_path.clone()) {
+                Ok(writer) => self.shm_writer = Some(writer),
+                Err(e) => {
+                    warn!(
+                        "Could not create the telemetry cache at {}: {e}. Continuing without it.",
+                        self.shm_path.to_string_lossy()
+                    );
+                    return;
+                }
+            }
+        }
+        if let Some(shm_writer) = &self.shm_writer {
             shm_writer.write(&buf);
-        } else {
-            warn!("Failed to serialize telemetry data for shared memory");
         }
     }
 
@@ -588,8 +591,8 @@ impl TelemetryCachedClient {
             let opened = async {
                 let file = {
                     #[cfg(unix)]
-                    if libdd_common::unix_utils::worker_file_outputs_restricted() {
-                        libdd_common::unix_utils::open_regular_for_read(&path)
+                    if libdd_process_utils::unix_utils::worker_file_outputs_restricted() {
+                        libdd_process_utils::unix_utils::open_regular_for_read(&path)
                             .map(tokio::fs::File::from_std)
                             .map_err(std::io::Error::from)
                     } else {
@@ -614,11 +617,11 @@ impl TelemetryCachedClient {
             };
 
             let now = SystemTime::now();
-            if let Some((last_update, actions)) = cache.get(&path) {
-                if modification < *last_update {
-                    completer.complete(actions.clone()).await;
-                    return;
-                }
+            if let Some((last_update, actions)) = cache.get(&path)
+                && modification < *last_update
+            {
+                completer.complete(actions.clone()).await;
+                return;
             }
 
             async fn parse(mut file: tokio::fs::File) -> anyhow::Result<Vec<data::Dependency>> {
@@ -830,22 +833,7 @@ impl TelemetryCachedClientSet {
 }
 
 pub fn path_for_telemetry(service: &str, env: &str) -> CString {
-    let mut hasher = ZwoHasher::default();
-    service.hash(&mut hasher);
-    env.hash(&mut hasher);
-    let hash = hasher.finish();
-
-    let mut path = format!(
-        "/ddtl{}-{}",
-        crate::shm_namespace(),
-        BASE64_URL_SAFE_NO_PAD.encode(hash.to_ne_bytes()),
-    );
-    if cfg!(unix) {
-        path.truncate(31);
-    }
-
-    #[allow(clippy::unwrap_used)]
-    CString::new(path).unwrap()
+    keyed_shm_path("ddtl", &(service, env))
 }
 
 pub(crate) fn init_telemetry_sender() -> (

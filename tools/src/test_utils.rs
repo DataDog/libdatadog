@@ -14,8 +14,8 @@ use std::path::PathBuf;
 ///
 /// # Example
 /// ```no_run
-/// use libdd_common::test_utils::TempFileGuard;
 /// use std::path::PathBuf;
+/// use tools::test_utils::TempFileGuard;
 ///
 /// let file = TempFileGuard::new(PathBuf::from("/tmp/test.txt"));
 /// // Use file...
@@ -54,7 +54,7 @@ impl AsRef<std::path::Path> for TempFileGuard {
 ///
 /// # Example
 /// ```no_run
-/// use libdd_common::test_utils::EnvGuard;
+/// use tools::test_utils::EnvGuard;
 ///
 /// let _guard = EnvGuard::set("MY_VAR", "value");
 /// // MY_VAR is set to "value"; when _guard drops, it is restored
@@ -103,7 +103,7 @@ impl Drop for EnvGuard {
 ///
 /// # Example
 /// ```no_run
-/// use libdd_common::test_utils::count_active_threads;
+/// use tools::test_utils::count_active_threads;
 ///
 /// let thread_count = count_active_threads().unwrap();
 /// println!("Current process has {} threads", thread_count);
@@ -214,7 +214,7 @@ pub fn count_active_threads() -> anyhow::Result<usize> {
 ///
 /// # Example
 /// ```no_run
-/// use libdd_common::test_utils::create_temp_file_path;
+/// use tools::test_utils::create_temp_file_path;
 ///
 /// let file = create_temp_file_path("test", "txt");
 /// // file path is something like /tmp/test_12345_abc123.txt
@@ -316,7 +316,7 @@ fn extract_multipart_boundary(content_type: &str) -> anyhow::Result<String> {
 ///
 /// # Example
 /// ```no_run
-/// use libdd_common::test_utils::parse_http_request;
+/// use tools::test_utils::parse_http_request;
 ///
 /// # async fn example() -> anyhow::Result<()> {
 /// let request_bytes = b"POST /v1/input HTTP/1.1\r\nHost: example.com\r\n\r\nbody";
@@ -364,7 +364,7 @@ pub async fn parse_http_request(data: &[u8]) -> anyhow::Result<HttpRequest> {
 ///
 /// # Example
 /// ```no_run
-/// use libdd_common::test_utils::parse_http_request_sync;
+/// use tools::test_utils::parse_http_request_sync;
 ///
 /// let request_bytes = b"POST /v1/input HTTP/1.1\r\nHost: example.com\r\n\r\nbody";
 /// let request = parse_http_request_sync(request_bytes).unwrap();
@@ -531,7 +531,7 @@ mod tests {
         );
 
         // Spawn some threads and verify the count increases
-        use alloc::sync::Arc;
+        use std::sync::Arc;
         use std::sync::Barrier;
         let barrier = Arc::new(Barrier::new(6)); // 5 spawned threads + main thread
 

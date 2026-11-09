@@ -4,10 +4,10 @@
 use super::*;
 use crate::api;
 use crate::pprof::test_utils::{deserialize_compressed_pprof, string_table_fetch};
-use libdd_common::test_utils::{
+use serde_json::json;
+use tools::test_utils::{
     HttpRequest, TempFileGuard, create_temp_file_path, parse_http_request_sync,
 };
-use serde_json::json;
 
 const TEST_LIB_NAME: &[u8] = b"dd-trace-test";
 const TEST_LIB_VERSION: &[u8] = b"1.0.0";
