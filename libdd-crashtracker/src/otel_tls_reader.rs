@@ -97,8 +97,8 @@ impl ProcMemReader {
     /// Works for both static TLS (initial-exec / local-exec) and dynamic TLS
     /// (global-dynamic / TLSDESC backed by `__tls_get_addr`).
     ///
-    /// `dtv_offset` is the byte offset from the thread pointer (TP) to the DTV pointer.
-    /// Use [`discover_dtv_offset`] to determine this at runtime.
+    /// `dtv_offset` is the signed byte offset from TP to the DTV pointer
+    /// (see [`validated_dtv_offset`]).
     ///
     /// # DTV entry layout
     ///
@@ -107,11 +107,14 @@ impl ProcMemReader {
     pub fn resolve_tls_addr(
         &mut self,
         tp: u64,
-        dtv_offset: u64,
+        dtv_offset: isize,
         modid: usize,
         offset: usize,
     ) -> Result<u64, OtelTlsError> {
-        let dtv_ptr = self.read_u64(tp + dtv_offset)?;
+        let Some(dtv_addr) = tp.checked_add_signed(dtv_offset as i64) else {
+            return Err(OtelTlsError::DtvNull);
+        };
+        let dtv_ptr = self.read_u64(dtv_addr)?;
         if dtv_ptr == 0 {
             return Err(OtelTlsError::DtvNull);
         }
@@ -253,59 +256,78 @@ pub(crate) fn tls_module_info() -> Option<TlsModuleInfo> {
     state.result
 }
 
-/// Discover the byte offset of the DTV pointer from the thread pointer (TP).
+/// Return the signed byte offset from the thread pointer (TP) to the DTV pointer for the
+/// current (architecture, libc) combination.
 ///
-/// On glibc the DTV is always at `TP + 8` (second field of `tcbhead_t`). On musl with
-/// `TLS_ABOVE_TP` (aarch64, riscv64) it's at an architecture-dependent offset at the end
-/// of `struct __pthread`. Rather than hardcoding per-platform offsets, this function
-/// discovers it at runtime by probing the calling thread's memory.
+/// Referred to the offsets in GDB's `get_tls_dtv_addr` implementation
 ///
-/// Given a known `modid` and the corresponding `tls_block_base` (from `dl_iterate_phdr`),
-/// we scan pointer-sized slots starting from `TP` looking for a value `P` such that
-/// `*(P + modid * entry_size) == tls_block_base`. That `P` is the DTV pointer and the
-/// scan offset is the DTV-pointer-to-TP offset.
+/// GDB references:
+/// - x86_64: <https://sourceware.org/git/?p=binutils-gdb.git;a=blob;f=gdb/amd64-linux-tdep.c>
+///   (`amd64_linux_get_tls_dtv_addr`)
+/// - aarch64: <https://sourceware.org/git/?p=binutils-gdb.git;a=blob;f=gdb/aarch64-linux-tdep.c>
+///   (`aarch64_linux_get_tls_dtv_addr`)
 ///
-/// Returns the byte offset from TP to the DTV pointer, or `None` if not found.
-pub(crate) fn discover_dtv_offset(tp: u64, modid: usize, tls_block_base: usize) -> Option<u64> {
-    // DTV entry size: 16 bytes on glibc, 8 bytes on musl.
-    #[cfg(target_env = "gnu")]
-    const DTV_ENTRY_SIZE: usize = 16;
-    #[cfg(target_env = "musl")]
-    const DTV_ENTRY_SIZE: usize = 8;
+/// - **x86_64 glibc**: `+8` — second field of `tcbhead_t` (`{void *tcb; dtv_t *dtv; …}`), glibc
+///   `sysdeps/x86_64/nptl/tls.h`
+/// - **aarch64 glibc**: `+0` — first field of `tcbhead_t` (`{dtv_t *dtv; …}`), glibc
+///   `sysdeps/aarch64/nptl/tls.h`
+/// - **x86_64 musl**: `+8` — second field of `struct __pthread` (`{self, *dtv, …}`), musl
+///   `src/internal/pthread_impl.h` with `!TLS_ABOVE_TP`
+/// - **aarch64 musl**: `-8` — TP points just past the end of `struct __pthread` (`TP_ADJ` adds
+///   `sizeof(struct __pthread)`), and `*dtv` is the last field, musl `src/internal/pthread_impl.h`
+///   with `TLS_ABOVE_TP`
+///
+/// Returns `None` for unknown combinations (the caller should fall back to the
+/// single TP-relative offset approach).
+fn dtv_pointer_offset() -> Option<isize> {
+    #[cfg(all(target_arch = "x86_64", target_env = "gnu"))]
+    return Some(8);
 
-    // struct __pthread / tcbhead_t is at most ~200 bytes on musl, ~700 on glibc.
-    // Scan a generous window.
-    const MAX_SCAN: usize = 1024;
+    #[cfg(all(target_arch = "aarch64", target_env = "gnu"))]
+    return Some(0);
 
-    let tp = tp as usize;
+    #[cfg(all(target_arch = "x86_64", target_env = "musl"))]
+    return Some(8);
 
-    // Use /proc/self/mem for all reads so we never segfault on unmapped addresses.
-    let mut mem = match std::fs::File::open("/proc/self/mem") {
-        Ok(f) => f,
-        Err(_) => return None,
-    };
+    #[cfg(all(target_arch = "aarch64", target_env = "musl"))]
+    return Some(-8);
 
-    let read_usize = |mem: &mut std::fs::File, addr: usize| -> Option<usize> {
-        use std::io::{Read, Seek, SeekFrom};
-        mem.seek(SeekFrom::Start(addr as u64)).ok()?;
-        let mut buf = [0u8; core::mem::size_of::<usize>()];
-        mem.read_exact(&mut buf).ok()?;
-        Some(usize::from_ne_bytes(buf))
-    };
-
-    for byte_offset in (0..MAX_SCAN).step_by(core::mem::size_of::<usize>()) {
-        let Some(candidate_ptr) = read_usize(&mut mem, tp + byte_offset) else {
-            continue;
-        };
-        if candidate_ptr == 0 {
-            continue;
-        }
-        let entry_addr = candidate_ptr + modid * DTV_ENTRY_SIZE;
-        if read_usize(&mut mem, entry_addr).is_some_and(|v| v == tls_block_base) {
-            return Some(byte_offset as u64);
-        }
-    }
+    #[allow(unreachable_code)]
     None
+}
+
+/// Resolve the DTV pointer offset and validate it against a known `(modid, tls_block_base)`
+/// pair from `dl_iterate_phdr`.
+///
+/// Returns the validated signed offset, or `None` if the platform is unsupported or
+/// validation fails (which would indicate a libc ABI change).
+pub(crate) fn validated_dtv_offset(tp: u64, modid: usize, tls_block_base: usize) -> Option<isize> {
+    let offset = dtv_pointer_offset()?;
+    let dtv_addr = tp.checked_add_signed(offset as i64)?;
+
+    // Validate: read the DTV pointer, then check dtv[modid] == tls_block_base.
+    #[cfg(target_env = "gnu")]
+    const DTV_ENTRY_SIZE: u64 = 16;
+    #[cfg(target_env = "musl")]
+    const DTV_ENTRY_SIZE: u64 = 8;
+
+    // SAFETY: dtv_addr is within the calling thread's own TCB, which is valid and
+    // readable memory. The offset is a well-known libc ABI constant.
+    let dtv_ptr = unsafe { *(dtv_addr as *const u64) };
+    if dtv_ptr == 0 {
+        return None;
+    }
+
+    let entry_addr = dtv_ptr.checked_add((modid as u64).checked_mul(DTV_ENTRY_SIZE)?)?;
+    // SAFETY: if dtv_ptr is the real DTV and modid is valid (from dl_iterate_phdr),
+    // this entry is within the allocated DTV array.
+    let entry_value = unsafe { *(entry_addr as *const u64) };
+
+    if entry_value as usize == tls_block_base {
+        Some(offset)
+    } else {
+        None // ABI mismatch -- offset didn't lead to the expected DTV entry.
+    }
 }
 
 /// Decode a record (at least 28 bytes) into an `OtelThreadContext`.

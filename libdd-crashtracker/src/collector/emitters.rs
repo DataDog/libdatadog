@@ -1003,7 +1003,7 @@ fn emit_otel_thread_contexts(
     max_threads: usize,
     deadline: Instant,
 ) -> Result<(), EmitterError> {
-    use crate::otel_tls_reader::{ProcMemReader, discover_dtv_offset, tls_module_info};
+    use crate::otel_tls_reader::{ProcMemReader, tls_module_info, validated_dtv_offset};
     use crate::ptrace_collector::{
         attach_thread, detach_thread, enumerate_threads, read_thread_pointer,
     };
@@ -1033,16 +1033,15 @@ fn emit_otel_thread_contexts(
 
     // Resolution strategy:
     //
-    // 1. DTV walk (preferred): discover the DTV pointer offset from TP by probing the collector's
-    //    own TCB (using dl_iterate_phdr metadata to validate), then walk each remote thread's DTV.
-    //    Correct for both static and dynamic TLS on all platforms.
+    // 1. DTV walk (preferred): look up the DTV pointer at a known (arch, libc)-specific offset from
+    //    TP, validate it against dl_iterate_phdr metadata, then walk each remote thread's DTV.
+    //    Correct for both static and dynamic TLS.
     //
     // 2. TP-relative offset (fallback): compute `slot_addr - TP` once and apply it to every thread.
-    //    Only correct when the TLS variable is in the static TLS block (constant TP-relative
-    //    offset). Used when DTV discovery fails (e.g. older glibc where dl_iterate_phdr returns
-    //    NULL tls_data).
+    //    Only correct for static TLS (constant TP-relative offset). Used when the DTV layout is
+    //    unknown or dl_iterate_phdr returns NULL tls_data (e.g. older glibc like CentOS 7).
     let dtv_resolution = tls_module_info().and_then(|info| {
-        let dtv_off = discover_dtv_offset(own_tp, info.modid, info.tls_block_base)?;
+        let dtv_off = validated_dtv_offset(own_tp, info.modid, info.tls_block_base)?;
         Some((info.modid, info.offset, dtv_off))
     });
 
