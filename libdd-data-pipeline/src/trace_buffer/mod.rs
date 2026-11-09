@@ -859,7 +859,9 @@ where
                     .await
             };
             if force_flush {
-                self.trace_exporter.flush_client_side_stats_async().await;
+                // Don't wait for the stats flush: this runs on a worker task, and the stats
+                // worker defers flushes while paused, which would block `before_fork`.
+                let _ = self.trace_exporter.request_client_side_stats_flush();
             }
             res
         })

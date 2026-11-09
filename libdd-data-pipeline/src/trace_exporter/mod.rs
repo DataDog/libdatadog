@@ -801,19 +801,39 @@ impl<
     /// the flush completed: if the stats worker was concurrently shut down (during forks
     /// for instance), no flush is performed.
     pub async fn flush_client_side_stats_async(&self) -> bool {
-        let status = self.client_side_stats.status.load_full();
-        if let StatsComputationStatus::Enabled { worker_handle, .. } = &*status {
-            match worker_handle.flush() {
-                Ok(token) => {
-                    if let Err(e) = token.wait().await {
-                        debug!("Client-side stats flush did not complete: {e}");
-                    }
+        match self.request_client_side_stats_flush() {
+            Some(Some(token)) => {
+                if let Err(e) = token.wait().await {
+                    debug!("Client-side stats flush did not complete: {e}");
                 }
-                Err(e) => debug!("Failed to request client-side stats flush: {e}"),
+                true
             }
-            true
-        } else {
-            false
+            Some(None) => true,
+            None => false,
+        }
+    }
+
+    /// Request a flush of client-computed stats without waiting for it to complete.
+    ///
+    /// Must be used instead of [`Self::flush_client_side_stats_async`] from a worker running on
+    /// the shared runtime: the stats worker defers flushes while paused, so awaiting completion
+    /// there would block that worker's pause in `before_fork`.
+    ///
+    /// Returns `None` when stats computation is disabled, `Some(None)` when the flush could not
+    /// be requested.
+    pub(crate) fn request_client_side_stats_flush(
+        &self,
+    ) -> Option<Option<libdd_shared_runtime::FlushToken>> {
+        let status = self.client_side_stats.status.load_full();
+        let StatsComputationStatus::Enabled { worker_handle, .. } = &*status else {
+            return None;
+        };
+        match worker_handle.flush() {
+            Ok(token) => Some(Some(token)),
+            Err(e) => {
+                debug!("Failed to request client-side stats flush: {e}");
+                Some(None)
+            }
         }
     }
 
