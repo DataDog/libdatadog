@@ -1003,9 +1003,7 @@ fn emit_otel_thread_contexts(
     max_threads: usize,
     deadline: Instant,
 ) -> Result<(), EmitterError> {
-    use crate::otel_tls_reader::{
-        OTEL_RECORD_SIZE, read_raw_record, read_tls_slot_value, resolve_tls_addr_via_dtv,
-    };
+    use crate::otel_tls_reader::ProcMemReader;
     use crate::ptrace_collector::{
         attach_thread, detach_thread, enumerate_threads, read_thread_pointer,
     };
@@ -1023,7 +1021,12 @@ fn emit_otel_thread_contexts(
     };
 
     let pid = ppid as u32;
-    let mut record_buf = [0u8; OTEL_RECORD_SIZE];
+    let Ok(mut mem) = ProcMemReader::open(pid) else {
+        return Ok(());
+    };
+    // Stack workspace reused across threads; only the first `record_len` bytes
+    // are valid after each read.
+    let mut record_buf = [0u8; 640];
     let mut processed = 0;
 
     // attach, resolve TLS via DTV while stopped, read record, detach, emit.
@@ -1041,21 +1044,21 @@ fn emit_otel_thread_contexts(
                 Err(_) => return Ok(false),
             };
 
-            // Walk this thread's DTV to find the TLS block base for our module.
-            let slot_addr = match resolve_tls_addr_via_dtv(pid, tp, modid, tls_offset) {
+            let slot_addr = match mem.resolve_tls_addr(tp, modid, tls_offset) {
                 Ok(addr) => addr,
-                Err(_) => return Ok(false), // DTV null, TLS not allocated, or I/O error.
+                Err(_) => return Ok(false),
             };
-            let record_ptr = match read_tls_slot_value(pid, slot_addr) {
+            let record_ptr = match mem.read_tls_slot(slot_addr) {
                 Ok(ptr) if ptr != 0 => ptr,
                 _ => return Ok(false),
             };
-            if !matches!(read_raw_record(pid, record_ptr, &mut record_buf), Ok(true)) {
-                return Ok(false);
-            }
+            let record_len = match mem.read_record(record_ptr, &mut record_buf) {
+                Ok(Some(n)) => n,
+                _ => return Ok(false),
+            };
 
             writeln!(w, "{DD_CRASHTRACK_BEGIN_OTEL_THREAD_CTX} {tid}")?;
-            for byte in &record_buf {
+            for byte in &record_buf[..record_len] {
                 write!(w, "{byte:02x}")?;
             }
             writeln!(w)?;

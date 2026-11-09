@@ -1,7 +1,7 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Read an OTel `ThreadContextRecord` from the crashing process's memory.
+//! Read an OTel `ThreadContextRecord` from a remote process via `/proc/<pid>/mem`.
 
 use alloc::fmt;
 use std::fs::File;
@@ -9,7 +9,11 @@ use std::io::{Read, Seek, SeekFrom};
 
 use crate::crash_info::{OtelAttribute, OtelThreadContext};
 
-const RECORD_SIZE: usize = 640;
+/// Size of the fixed record header (trace_id + span_id + valid + trace_flags + attrs_data_size).
+pub(crate) const RECORD_HEADER_SIZE: usize = 28;
+
+/// Maximum `attrs_data` the spec allows (keeps the total record at or under 640 bytes).
+const MAX_ATTRS_DATA: usize = 612;
 
 #[derive(Debug)]
 pub(crate) enum OtelTlsError {
@@ -37,111 +41,145 @@ impl From<std::io::Error> for OtelTlsError {
     }
 }
 
-/// Read the raw 640-byte record into `buf`. Returns `Ok(false)` if the record
-/// is not valid (e.g. mid-update).
-pub(crate) fn read_raw_record(
-    pid: u32,
-    record_addr: u64,
-    buf: &mut [u8; RECORD_SIZE],
-) -> Result<bool, OtelTlsError> {
-    read_remote_memory(pid, record_addr, buf)?;
-    Ok(buf[24] == 1) // valid flag
+/// Reader for a remote process's memory via `/proc/<pid>/mem`.
+///
+/// Opens the file once; all subsequent reads reuse the same file descriptor.
+pub(crate) struct ProcMemReader {
+    file: File,
 }
 
-pub(crate) const OTEL_RECORD_SIZE: usize = RECORD_SIZE;
-
-/// Decode a raw 640-byte record into an `OtelThreadContext` (no thread name).
-pub(crate) fn decode_record(tid: i32, record: &[u8; RECORD_SIZE]) -> Option<OtelThreadContext> {
-    decode_thread_context_record(tid, record)
-}
-
-fn read_remote_memory(pid: u32, addr: u64, buf: &mut [u8]) -> Result<(), OtelTlsError> {
-    let mut file = File::open(format!("/proc/{pid}/mem"))?;
-    file.seek(SeekFrom::Start(addr))?;
-    file.read_exact(buf)?;
-    Ok(())
-}
-
-/// Read the 8-byte TLS slot value (a record pointer) from `/proc/<pid>/mem`.
-///
-/// Returns `Ok(0)` if the slot is null (no context attached on that thread).
-pub(crate) fn read_tls_slot_value(pid: u32, slot_addr: u64) -> Result<u64, OtelTlsError> {
-    let mut buf = [0u8; 8];
-    read_remote_memory(pid, slot_addr, &mut buf)?;
-    Ok(u64::from_ne_bytes(buf))
-}
-
-/// Resolve the address of a TLS variable for a remote thread by walking its
-/// Dynamic Thread Vector
-///
-/// This is correct for both static TLS (initial-exec / local-exec) and dynamic TLS
-/// (global-dynamic / TLSDESC backed by `__tls_get_addr`)
-///
-/// # Arguments
-///
-/// * `pid`    – process ID (for `/proc/<pid>/mem` reads)
-/// * `tp`     – thread pointer (`fs_base` on x86_64, `tpidr_el0` on aarch64)
-/// * `modid`  – TLS module ID (from `dl_iterate_phdr`)
-/// * `offset` – byte offset of the variable within the module's TLS block
-///
-/// # DTV layout
-///
-/// On both glibc and musl the DTV pointer lives at `TP + 8` (this is the second field of the TCB).
-///
-/// - **glibc**: each DTV entry is a 16-byte `dtv_t` union (`{ void *val; bool is_static; }`).
-///   `dtv[0].counter` is the generation; `dtv[modid].pointer.val` is the TLS block base.
-///   `TLS_DTV_UNALLOCATED = (void *)-1`.
-///
-/// - **musl**: each DTV entry is a plain `uintptr_t` (8 bytes). `dtv[0]` is unused/count;
-///   `dtv[modid]` is the TLS block base.
-pub(crate) fn resolve_tls_addr_via_dtv(
-    pid: u32,
-    tp: u64,
-    modid: usize,
-    offset: usize,
-) -> Result<u64, OtelTlsError> {
-    // The DTV pointer is at TP + 8 on both 64 bit glibc and musl.
-    const DTV_PTR_OFFSET: u64 = 8;
-    let mut buf = [0u8; 8];
-    read_remote_memory(pid, tp + DTV_PTR_OFFSET, &mut buf)?;
-    let dtv_ptr = u64::from_ne_bytes(buf);
-
-    if dtv_ptr == 0 {
-        return Err(OtelTlsError::DtvNull);
+impl ProcMemReader {
+    pub fn open(pid: u32) -> Result<Self, OtelTlsError> {
+        Ok(Self {
+            file: File::open(format!("/proc/{pid}/mem"))?,
+        })
     }
 
-    // glibc: sizeof(dtv_t) = 16 (union of {void*, bool} padded to 16 bytes).
-    // musl:  sizeof(uintptr_t) = 8.
-    #[cfg(target_env = "gnu")]
-    const DTV_ENTRY_SIZE: u64 = 16;
-    #[cfg(target_env = "musl")]
-    const DTV_ENTRY_SIZE: u64 = 8;
-
-    // modid fits in u64 on all 64-bit targets
-    let entry_addr = dtv_ptr + (modid as u64) * DTV_ENTRY_SIZE;
-    read_remote_memory(pid, entry_addr, &mut buf)?;
-    let tls_block_base = u64::from_ne_bytes(buf);
-
-    // TLS_DTV_UNALLOCATED = (void *)-1 on glibc; treat 0 as unallocated too.
-    if tls_block_base == u64::MAX || tls_block_base == 0 {
-        return Err(OtelTlsError::TlsNotAllocated);
+    /// Read exactly `buf.len()` bytes at `addr`. Errors on short reads.
+    fn read_exact(&mut self, addr: u64, buf: &mut [u8]) -> Result<(), OtelTlsError> {
+        self.file.seek(SeekFrom::Start(addr))?;
+        self.file.read_exact(buf)?;
+        Ok(())
     }
 
-    Ok(tls_block_base + offset as u64)
+    /// Best-effort read: returns the number of bytes actually read.
+    /// `/proc/<pid>/mem` produces short reads at unmapped page boundaries;
+    /// this returns whatever data is available rather than erroring.
+    #[allow(clippy::std_instead_of_core)] // core::io::ErrorKind is unstable
+    fn read_up_to(&mut self, addr: u64, buf: &mut [u8]) -> Result<usize, OtelTlsError> {
+        self.file.seek(SeekFrom::Start(addr))?;
+        let mut total = 0;
+        while total < buf.len() {
+            match self.file.read(&mut buf[total..]) {
+                Ok(0) => break,
+                Ok(n) => total += n,
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(e) => return Err(e.into()),
+            }
+        }
+        Ok(total)
+    }
+
+    /// Read a native-endian `u64` at `addr`.
+    fn read_u64(&mut self, addr: u64) -> Result<u64, OtelTlsError> {
+        let mut buf = [0u8; 8];
+        self.read_exact(addr, &mut buf)?;
+        Ok(u64::from_ne_bytes(buf))
+    }
+
+    /// Read the 8-byte TLS slot value (a pointer to the record).
+    /// Returns `Ok(0)` if the slot is null (no context attached on that thread).
+    pub fn read_tls_slot(&mut self, slot_addr: u64) -> Result<u64, OtelTlsError> {
+        self.read_u64(slot_addr)
+    }
+
+    /// Resolve a TLS variable's address for a remote thread by walking its DTV.
+    ///
+    /// Works for both static TLS (initial-exec / local-exec) and dynamic TLS
+    /// (global-dynamic / TLSDESC backed by `__tls_get_addr`).
+    ///
+    /// # DTV layout
+    ///
+    /// On both glibc and musl the DTV pointer is at `TP + 8` (second TCB field).
+    ///
+    /// - **glibc**: 16-byte `dtv_t` entries. `dtv[0].counter` = generation;
+    ///   `dtv[modid].pointer.val` = TLS block base. `TLS_DTV_UNALLOCATED = (void*)-1`.
+    /// - **musl**: 8-byte `uintptr_t` entries. `dtv[modid]` = TLS block base.
+    pub fn resolve_tls_addr(
+        &mut self,
+        tp: u64,
+        modid: usize,
+        offset: usize,
+    ) -> Result<u64, OtelTlsError> {
+        let dtv_ptr = self.read_u64(tp + 8)?;
+        if dtv_ptr == 0 {
+            return Err(OtelTlsError::DtvNull);
+        }
+
+        #[cfg(target_env = "gnu")]
+        const DTV_ENTRY_SIZE: u64 = 16;
+        #[cfg(target_env = "musl")]
+        const DTV_ENTRY_SIZE: u64 = 8;
+
+        let tls_block_base = self.read_u64(dtv_ptr + (modid as u64) * DTV_ENTRY_SIZE)?;
+
+        if tls_block_base == u64::MAX || tls_block_base == 0 {
+            return Err(OtelTlsError::TlsNotAllocated);
+        }
+
+        Ok(tls_block_base + offset as u64)
+    }
+
+    /// Two-phase read of an OTel thread-context record.
+    ///
+    /// 1. Read the 28-byte header (exact) to get `valid` and `attrs_data_size`.
+    /// 2. Read up to `attrs_data_size` attribute bytes (best-effort / short-read tolerant).
+    ///
+    /// `buf` must be at least [`RECORD_HEADER_SIZE`] bytes. Only the bytes actually
+    /// read are touched; the rest is left unchanged.
+    ///
+    /// Returns `Ok(Some(n))` with the number of valid bytes, or `Ok(None)` if
+    /// the record is not valid (e.g. mid-update).
+    pub fn read_record(
+        &mut self,
+        record_addr: u64,
+        buf: &mut [u8],
+    ) -> Result<Option<usize>, OtelTlsError> {
+        debug_assert!(buf.len() >= RECORD_HEADER_SIZE);
+
+        self.read_exact(record_addr, &mut buf[..RECORD_HEADER_SIZE])?;
+
+        if buf[24] != 1 {
+            return Ok(None);
+        }
+
+        let attrs_data_size = u16::from_ne_bytes([buf[26], buf[27]]) as usize;
+        let attrs_to_read = attrs_data_size
+            .min(MAX_ATTRS_DATA)
+            .min(buf.len() - RECORD_HEADER_SIZE);
+
+        let attrs_read = if attrs_to_read > 0 {
+            self.read_up_to(
+                record_addr + RECORD_HEADER_SIZE as u64,
+                &mut buf[RECORD_HEADER_SIZE..RECORD_HEADER_SIZE + attrs_to_read],
+            )?
+        } else {
+            0
+        };
+
+        Ok(Some(RECORD_HEADER_SIZE + attrs_read))
+    }
 }
 
-/// Decode a raw 640-byte `ThreadContextRecord`.
+/// Decode a record (at least 28 bytes) into an `OtelThreadContext`.
 ///
-/// Layout (from `libdd-otel-thread-ctx/src/linux.rs`):
-/// - `[0..16]`   trace_id
-/// - `[16..24]`  span_id
-/// - `[24]`      valid (AtomicU8)
-/// - `[25]`      trace_flags
-/// - `[26..28]`  attrs_data_size (u16 native endian)
-/// - `[28..640]` attrs_data (packed key-value records)
-fn decode_thread_context_record(tid: i32, data: &[u8; RECORD_SIZE]) -> Option<OtelThreadContext> {
-    let valid = data[24];
-    if valid != 1 {
+/// The input may be exactly 28 bytes (header-only) or up to `28 + attrs_data_size` bytes.
+/// Attribute parsing is bounded by the smaller of `attrs_data_size` and the slice length.
+pub(crate) fn decode_record(tid: i32, data: &[u8]) -> Option<OtelThreadContext> {
+    if data.len() < RECORD_HEADER_SIZE {
+        return None;
+    }
+    if data[24] != 1 {
         return None;
     }
 
@@ -149,8 +187,8 @@ fn decode_thread_context_record(tid: i32, data: &[u8; RECORD_SIZE]) -> Option<Ot
     let span_id = bytes_to_hex(&data[16..24]);
     let trace_flags = data[25];
     let attrs_data_size = u16::from_ne_bytes([data[26], data[27]]) as usize;
-    let attrs_end = 28 + attrs_data_size.min(612);
-    let attributes = decode_attributes(&data[28..attrs_end]);
+    let attrs_end = RECORD_HEADER_SIZE + attrs_data_size.min(data.len() - RECORD_HEADER_SIZE);
+    let attributes = decode_attributes(&data[RECORD_HEADER_SIZE..attrs_end]);
 
     Some(OtelThreadContext {
         tid,
@@ -208,27 +246,33 @@ pub(crate) fn read_thread_name(pid: u32, tid: i32) -> Option<String> {
 mod tests {
     use super::*;
 
+    fn make_record(
+        trace_id: &[u8; 16],
+        span_id: &[u8; 8],
+        trace_flags: u8,
+        attrs: &[u8],
+    ) -> Vec<u8> {
+        let mut buf = Vec::with_capacity(RECORD_HEADER_SIZE + attrs.len());
+        buf.extend_from_slice(trace_id);
+        buf.extend_from_slice(span_id);
+        buf.push(1); // valid
+        buf.push(trace_flags);
+        buf.extend_from_slice(&(attrs.len() as u16).to_ne_bytes());
+        buf.extend_from_slice(attrs);
+        buf
+    }
+
     #[test]
     fn decode_valid_record() {
-        let mut data = [0u8; RECORD_SIZE];
-
-        for (i, byte) in data[..16].iter_mut().enumerate() {
-            *byte = (i + 1) as u8;
-        }
-        for (i, byte) in data[16..24].iter_mut().enumerate() {
-            *byte = (0x11 + i) as u8;
-        }
-        data[24] = 1;
-        data[25] = 0x01;
-
-        let attr_data = &[
+        let trace_id: [u8; 16] = core::array::from_fn(|i| (i + 1) as u8);
+        let span_id: [u8; 8] = core::array::from_fn(|i| (0x11 + i) as u8);
+        let attrs = [
             0u8, 16, b'a', b'b', b'c', b'd', b'e', b'f', b'0', b'1', b'2', b'3', b'4', b'5', b'6',
             b'7', b'8', b'9',
         ];
-        data[26..28].copy_from_slice(&(attr_data.len() as u16).to_ne_bytes());
-        data[28..28 + attr_data.len()].copy_from_slice(attr_data);
 
-        let ctx = decode_thread_context_record(42, &data).expect("should be Some");
+        let data = make_record(&trace_id, &span_id, 0x01, &attrs);
+        let ctx = decode_record(42, &data).expect("should be Some");
 
         assert_eq!(ctx.tid, 42);
         assert_eq!(ctx.trace_id, "0102030405060708090a0b0c0d0e0f10");
@@ -240,10 +284,23 @@ mod tests {
     }
 
     #[test]
+    fn decode_header_only_record() {
+        let data = make_record(&[0xAA; 16], &[0xBB; 8], 0x00, &[]);
+        let ctx = decode_record(1, &data).expect("should be Some");
+        assert_eq!(ctx.trace_id, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        assert!(ctx.attributes.is_empty());
+    }
+
+    #[test]
     fn decode_invalid_record_returns_none() {
-        let mut data = [0u8; RECORD_SIZE];
+        let mut data = make_record(&[0; 16], &[0; 8], 0, &[]);
         data[24] = 0; // valid = 0 (mid-update)
-        assert!(decode_thread_context_record(1, &data).is_none());
+        assert!(decode_record(1, &data).is_none());
+    }
+
+    #[test]
+    fn decode_too_short_returns_none() {
+        assert!(decode_record(1, &[0u8; 10]).is_none());
     }
 
     #[test]

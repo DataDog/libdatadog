@@ -422,7 +422,10 @@ pub fn tls_module_and_offset() -> Option<(usize, usize)> {
         _size: libc::size_t,
         data: *mut core::ffi::c_void,
     ) -> core::ffi::c_int {
+        // SAFETY: `data` points to the `State` local in the enclosing function, which is
+        // live for the duration of the `dl_iterate_phdr` call.
         let state = unsafe { &mut *(data as *mut State) };
+        // SAFETY: `info` is a valid `dl_phdr_info` provided by `dl_iterate_phdr`.
         let info = unsafe { &*info };
 
         let tls_data = info.dlpi_tls_data;
@@ -431,6 +434,8 @@ pub fn tls_module_and_offset() -> Option<(usize, usize)> {
         }
 
         // Walk program headers to find PT_TLS and check whether our slot falls inside it.
+        // SAFETY: `dlpi_phdr` points to a valid array of `dlpi_phnum` program headers for
+        // a currently-loaded ELF object, as guaranteed by `dl_iterate_phdr`.
         let phdrs =
             unsafe { core::slice::from_raw_parts(info.dlpi_phdr, info.dlpi_phnum as usize) };
         for phdr in phdrs {

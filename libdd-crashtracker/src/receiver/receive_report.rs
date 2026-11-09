@@ -715,16 +715,20 @@ fn collect_and_add_thread_contexts(
 /// Decode a hex-encoded 640-byte OTel record into an `OtelThreadContext`.
 #[cfg(target_os = "linux")]
 fn decode_hex_otel_record(tid: i32, hex: &str) -> Option<crate::crash_info::OtelThreadContext> {
-    use crate::otel_tls_reader::OTEL_RECORD_SIZE;
+    use crate::otel_tls_reader::RECORD_HEADER_SIZE;
 
-    if hex.len() != OTEL_RECORD_SIZE * 2 {
+    let hex_len = hex.len();
+    // At least the 28-byte header (56 hex chars), at most 640 bytes (1280 hex chars), even.
+    if !(RECORD_HEADER_SIZE * 2..=1280).contains(&hex_len) || !hex_len.is_multiple_of(2) {
         return None;
     }
-    let mut record = [0u8; OTEL_RECORD_SIZE];
-    for (i, byte) in record.iter_mut().enumerate() {
-        *byte = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).ok()?;
+
+    let byte_len = hex_len / 2;
+    let mut buf = [0u8; 640];
+    for i in 0..byte_len {
+        buf[i] = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).ok()?;
     }
-    crate::otel_tls_reader::decode_record(tid, &record)
+    crate::otel_tls_reader::decode_record(tid, &buf[..byte_len])
 }
 
 /// Recover callers before a collector-emitted stack replaces the one that has them.
