@@ -47,7 +47,7 @@ mod roots {
 }
 
 /// Datadog site selection used to pick a default TUF trust-root pair.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 enum Site {
     Prod,
     Staging,
@@ -123,8 +123,7 @@ pub fn make_agentless_configs_endpoint(e: &Endpoint) -> Option<Endpoint> {
 ///
 /// Construction is fallible: an `AgentlessConfig` value is proof that the
 /// hostname is non-empty and that the caller-supplied endpoint has been
-/// successfully rewritten to the agentless URL (`config.<site>/api/v0.1/
-/// configurations`).
+/// successfully rewritten to an HTTPS Remote Config endpoint with an API key.
 ///
 /// Downstream code (`ConfigFetcherState::with_client`,
 /// `MultiTargetFetcher::new`, ...) can therefore consume this type
@@ -136,6 +135,8 @@ pub struct AgentlessConfig {
     /// Pre-rewritten agentless endpoint (`config.<site>/api/v0.1/configurations`).
     /// Guaranteed valid (https, authority present, API key present) by [`Self::new`].
     agentless_endpoint: Endpoint,
+    /// Logical Datadog site, independent of a Collector transport endpoint.
+    site: Site,
     /// Override the `agent_uuid` field sent to the RC backend.
     agent_uuid: Option<String>,
     /// Override the embedded TUF config trust root, mirroring the Datadog Agent's
@@ -155,6 +156,8 @@ pub enum AgentlessConfigError {
          or the URI cannot be rewritten)"
     )]
     InvalidEndpoint,
+    #[error("Collector Remote Config endpoint must be an HTTPS origin without user info or query")]
+    InvalidCollectorEndpoint,
 }
 
 impl AgentlessConfig {
@@ -169,11 +172,45 @@ impl AgentlessConfig {
             .ok_or(AgentlessConfigError::InvalidEndpoint)?;
         Ok(Self {
             hostname,
+            site: agentless_endpoint
+                .url
+                .host()
+                .map(Site::from_host)
+                .unwrap_or(Site::Prod),
             agentless_endpoint,
             agent_uuid: None,
             config_root_override: None,
             director_root_override: None,
         })
+    }
+
+    /// Route through an explicit Collector HTTPS origin when OTel semantics is enabled.
+    /// Disabled semantics or an absent origin keeps the direct agentless route.
+    ///
+    /// Returns [`AgentlessConfigError::InvalidCollectorEndpoint`] for an invalid active origin.
+    pub fn with_otel_collector_endpoint(
+        mut self,
+        otel_semantics_enabled: bool,
+        collector_endpoint: Option<Uri>,
+    ) -> Result<Self, AgentlessConfigError> {
+        let Some(collector_endpoint) = collector_endpoint.filter(|_| otel_semantics_enabled) else {
+            return Ok(self);
+        };
+        if collector_endpoint.scheme_str() != Some("https")
+            || collector_endpoint.host().is_none_or(str::is_empty)
+            || collector_endpoint
+                .authority()
+                .is_some_and(|authority| authority.as_str().contains('@'))
+            || !matches!(collector_endpoint.path(), "" | "/")
+            || collector_endpoint.query().is_some()
+        {
+            return Err(AgentlessConfigError::InvalidCollectorEndpoint);
+        }
+        let mut parts = collector_endpoint.into_parts();
+        parts.path_and_query = Some(PathAndQuery::from_static("/api/v0.1/configurations"));
+        self.agentless_endpoint.url =
+            Uri::from_parts(parts).map_err(|_| AgentlessConfigError::InvalidCollectorEndpoint)?;
+        Ok(self)
     }
 
     /// Override the `agent_uuid` field sent to the RC backend.
@@ -346,12 +383,7 @@ impl<C: HttpClientCapability + SleepCapability> AgentlessFetcher<C> {
         endpoint: Endpoint,
         http_client: C,
     ) -> anyhow::Result<Self> {
-        // Pick the embedded trust roots based on the endpoint's host, unless overridden.
-        let site = endpoint
-            .url
-            .host()
-            .map(Site::from_host)
-            .unwrap_or(Site::Prod);
+        let site = cfg.site;
 
         let director_root = cfg
             .director_root_override
