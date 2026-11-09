@@ -1654,7 +1654,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_collapsed_spans_telemetry() {
-        use libdd_shared_runtime::{BasicRuntime, SharedRuntime};
+        use libdd_shared_runtime::{SharedRuntime, WeakHandleRuntime};
         use libdd_telemetry::worker::TelemetryWorkerBuilder;
 
         let server = MockServer::start_async().await;
@@ -1672,7 +1672,7 @@ mod tests {
             "0.0.0".to_string(),
         )
         .build_worker();
-        let runtime = BasicRuntime::from_tokio_handle(tokio::runtime::Handle::current());
+        let runtime = WeakHandleRuntime::from_handle(tokio::runtime::Handle::current());
         let worker_handle = runtime
             .spawn_worker(worker, false)
             .expect("failed to spawn telemetry worker");

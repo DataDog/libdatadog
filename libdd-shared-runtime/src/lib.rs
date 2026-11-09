@@ -16,13 +16,16 @@
 //! | Runtime             | Target | Threads | Fork-safe           | `block_on` | When to use                                                                                                                                 |
 //! |---------------------|--------|---------|---------------------|------------|---------------------------------------------------------------------------------------------------------------------------------------------|
 //! | [`ForkSafeRuntime`] | native | multi   | yes — full protocol | yes        | Default for native code that may run in a forking process (e.g. Ruby, Python runtimes).                                                     |
-//! | [`BasicRuntime`]    | native | multi*  | no                  | yes        | Native code where `fork()` is not a concern; optionally share an existing runtime via [`BasicRuntime::from_handle`] / [`BasicRuntime::from_tokio_handle`]. |
+//! | [`BasicRuntime`]    | native | multi*  | no                  | yes        | Native code where `fork()` is not a concern; optionally share an existing `Arc<tokio::runtime::Runtime>` via [`BasicRuntime::from_handle`]. |
+//! | [`WeakHandleRuntime`] | native | caller's | no              | yes**      | Code already running inside a tokio runtime it does not own; the caller must keep that runtime alive until shutdown.                       |
 //! | `LocalRuntime`      | wasm32 | single  | n/a                 | no         | WebAssembly; spawns via `wasm_bindgen_futures::spawn_local`.                                                                                |
 //!
 //! \* [`BasicRuntime::new`] and [`BasicRuntime::with_worker_threads`] build a multi-thread runtime;
 //! [`BasicRuntime::from_handle`] accepts any `Arc<tokio::runtime::Runtime>`, including
-//! single-thread ones. [`BasicRuntime::from_tokio_handle`] wraps a borrowed
-//! `tokio::runtime::Handle` (e.g. the ambient runtime); the caller keeps that runtime alive.
+//! single-thread ones.
+//!
+//! \*\* [`WeakHandleRuntime`] uses `Handle::block_on`: it panics inside an async context, and on a
+//! current-thread runtime only progresses while that runtime is driven elsewhere.
 //!
 //! ## Fork protocol ([`ForkSafeRuntime`] only)
 //!
@@ -48,5 +51,7 @@ pub use shared_runtime::BlockingRuntime;
 pub use shared_runtime::ForkSafeRuntime;
 #[cfg(target_arch = "wasm32")]
 pub use shared_runtime::LocalRuntime;
+#[cfg(not(target_arch = "wasm32"))]
+pub use shared_runtime::WeakHandleRuntime;
 pub use shared_runtime::{SharedRuntime, SharedRuntimeError, WorkerHandle, WorkerHandleError};
 pub use worker::Worker;

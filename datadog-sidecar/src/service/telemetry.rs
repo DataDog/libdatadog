@@ -25,7 +25,7 @@ use zwohash::ZwoHasher;
 
 use libdd_capabilities_impl::NativeCapabilities;
 use libdd_common::tag::Tag;
-use libdd_shared_runtime::{BasicRuntime, SharedRuntime, WorkerHandle};
+use libdd_shared_runtime::{SharedRuntime, WeakHandleRuntime, WorkerHandle};
 use libdd_telemetry::worker::TelemetryWorkerBuilder;
 use serde::{Deserialize, Serialize};
 use std::ops::Sub;
@@ -434,7 +434,7 @@ impl Default for TelemetryCachedClientShmData {
 
 impl TelemetryCachedClient {
     fn new(
-        runtime: &BasicRuntime,
+        runtime: &WeakHandleRuntime,
         service: &str,
         env: &str,
         instance_id: &InstanceId,
@@ -699,7 +699,7 @@ pub struct TelemetryCachedClientSet {
     pub(crate) inner: Arc<Mutex<HashMap<TelemetryCachedClientKey, TelemetryCachedEntry>>>,
     cleanup_handle: Option<tokio::task::JoinHandle<()>>,
     /// Shared runtime running every telemetry worker, on top of the sidecar's tokio runtime.
-    runtime: Arc<BasicRuntime>,
+    runtime: Arc<WeakHandleRuntime>,
 }
 
 impl Default for TelemetryCachedClientSet {
@@ -718,7 +718,7 @@ impl Default for TelemetryCachedClientSet {
         Self {
             inner,
             cleanup_handle: Some(handle),
-            runtime: Arc::new(BasicRuntime::from_tokio_handle(
+            runtime: Arc::new(WeakHandleRuntime::from_handle(
                 tokio::runtime::Handle::current(),
             )),
         }
@@ -745,7 +745,7 @@ impl Clone for TelemetryCachedClientSet {
 
 impl TelemetryCachedClientSet {
     /// The shared runtime running the sidecar's telemetry workers.
-    pub(crate) fn runtime(&self) -> &Arc<BasicRuntime> {
+    pub(crate) fn runtime(&self) -> &Arc<WeakHandleRuntime> {
         &self.runtime
     }
 
@@ -972,7 +972,7 @@ mod tests {
                 libdd_common::parse_uri(&format!("file://{}", path.display())).unwrap(),
             )
             .unwrap();
-        let runtime = BasicRuntime::from_tokio_handle(tokio::runtime::Handle::current());
+        let runtime = WeakHandleRuntime::from_handle(tokio::runtime::Handle::current());
         let client = TelemetryCachedClient::new(
             &runtime,
             &format!("telemetry-start-stop-{}", std::process::id()),
@@ -1121,7 +1121,7 @@ mod tests {
         assert!(reader.read().0);
         let generation = reader.last_read_generation();
 
-        let runtime = BasicRuntime::from_tokio_handle(tokio::runtime::Handle::current());
+        let runtime = WeakHandleRuntime::from_handle(tokio::runtime::Handle::current());
         let _new = TelemetryCachedClient::new(
             &runtime,
             &service,
@@ -1186,7 +1186,7 @@ mod tests {
         let clients = TelemetryCachedClientSet {
             inner: Arc::new(Mutex::new(HashMap::new())),
             cleanup_handle: None,
-            runtime: Arc::new(BasicRuntime::from_tokio_handle(
+            runtime: Arc::new(WeakHandleRuntime::from_handle(
                 tokio::runtime::Handle::current(),
             )),
         };

@@ -15,20 +15,18 @@ use tracing::{debug, error, warn};
 
 /// Non-fork-safe [`SharedRuntime`] implementation.
 ///
-/// The tokio runtime is either library-built ([`BasicRuntime::new`] /
-/// [`BasicRuntime::with_worker_threads`]), caller-provided as an owned `Arc`
-/// ([`BasicRuntime::from_handle`], kept alive for the lifetime of this struct), or
-/// borrowed through a [`tokio::runtime::Handle`] ([`BasicRuntime::from_tokio_handle`],
-/// which the caller must keep alive).
+/// The internal `Arc<tokio::runtime::Runtime>` is either library-built
+/// ([`BasicRuntime::new`] / [`BasicRuntime::with_worker_threads`]) or
+/// caller-provided ([`BasicRuntime::from_handle`]). The `Arc` keeps the runtime
+/// alive for the lifetime of this struct even if the caller drops their clone of
+/// the handle.
 ///
 /// This type does **not** implement the fork protocol. If the process forks,
 /// use [`crate::ForkSafeRuntime`] instead — or handle the fork at the
 /// outer runtime layer that owns the tokio runtime passed in.
 #[derive(Debug)]
 pub struct BasicRuntime {
-    handle: tokio::runtime::Handle,
-    /// Keep-alive for an owned runtime; `None` when built from a borrowed handle.
-    runtime: Option<Arc<tokio::runtime::Runtime>>,
+    runtime: Arc<tokio::runtime::Runtime>,
     workers: Arc<Mutex<Vec<WorkerEntry>>>,
     next_worker_id: AtomicU64,
 }
@@ -50,24 +48,7 @@ impl BasicRuntime {
     /// even if the caller drops their clone.
     pub fn from_handle(runtime: Arc<tokio::runtime::Runtime>) -> Self {
         Self {
-            handle: runtime.handle().clone(),
-            runtime: Some(runtime),
-            workers: Arc::new(Mutex::new(Vec::new())),
-            next_worker_id: AtomicU64::new(1),
-        }
-    }
-
-    /// Creates a new `BasicRuntime` spawning workers on an existing tokio runtime through its
-    /// [`tokio::runtime::Handle`] (e.g. `Handle::current()` inside a tokio context).
-    ///
-    /// The runtime is not owned: the caller must keep it alive for as long as workers run.
-    /// [`BlockingRuntime::block_on`] uses [`tokio::runtime::Handle::block_on`]; on a
-    /// current-thread runtime it only makes progress on spawned workers while that runtime is
-    /// driven elsewhere, and it panics if called from within an async context.
-    pub fn from_tokio_handle(handle: tokio::runtime::Handle) -> Self {
-        Self {
-            handle,
-            runtime: None,
+            runtime,
             workers: Arc::new(Mutex::new(Vec::new())),
             next_worker_id: AtomicU64::new(1),
         }
@@ -116,7 +97,7 @@ impl SharedRuntime for BasicRuntime {
         // drain the registry between starting the task and recording it — which would
         // otherwise leave a live worker behind that shutdown_async never paused.
         let mut workers_guard = self.workers.lock_or_panic();
-        pausable_worker.start(tokio_spawn_fn(&self.handle))?;
+        pausable_worker.start(tokio_spawn_fn(self.runtime.handle()))?;
         Ok(self.push_worker(&mut workers_guard, pausable_worker))
     }
 
@@ -144,10 +125,7 @@ impl SharedRuntime for BasicRuntime {
 
 impl BlockingRuntime for BasicRuntime {
     fn block_on<F: std::future::Future>(&self, f: F) -> Result<F::Output, io::Error> {
-        match &self.runtime {
-            Some(runtime) => Ok(runtime.block_on(f)),
-            None => Ok(self.handle.block_on(f)),
-        }
+        Ok(self.runtime.block_on(f))
     }
 }
 
@@ -350,54 +328,6 @@ mod tests {
             .expect_err("block_on_with_timeout should error when timers are disabled");
 
         assert!(matches!(err, BlockOnTimeoutError::Io(_)));
-    }
-
-    #[test]
-    fn test_from_tokio_handle_multi_thread_spawn_and_shutdown() {
-        let rt = new_outer_runtime();
-        let shared_runtime = BasicRuntime::from_tokio_handle(rt.handle().clone());
-        let (worker, receiver) = make_test_worker();
-
-        let _handle = shared_runtime.spawn_worker(worker, false).unwrap();
-        assert_eq!(receiver.recv_timeout(Duration::from_secs(1)).unwrap(), 0);
-
-        shared_runtime
-            .block_on(shared_runtime.shutdown_async())
-            .unwrap();
-        let mut last = receiver.recv_timeout(Duration::from_secs(1)).unwrap();
-        while let Ok(v) = receiver.try_recv() {
-            last = v;
-        }
-        assert_eq!(last, -1);
-        assert_eq!(shared_runtime.workers.lock_or_panic().len(), 0);
-    }
-
-    #[tokio::test]
-    async fn test_from_tokio_handle_current_thread_spawn_and_shutdown() {
-        let shared_runtime = BasicRuntime::from_tokio_handle(tokio::runtime::Handle::current());
-        let (worker, receiver) = make_test_worker();
-
-        let _handle = shared_runtime.spawn_worker(worker, false).unwrap();
-        // Yield until the worker ran once (its trigger sleeps 100ms first).
-        let first = tokio::time::timeout(Duration::from_secs(1), async {
-            loop {
-                if let Ok(v) = receiver.try_recv() {
-                    return v;
-                }
-                sleep(Duration::from_millis(5)).await;
-            }
-        })
-        .await
-        .unwrap();
-        assert_eq!(first, 0);
-
-        shared_runtime.shutdown_async().await;
-        let mut last = receiver.try_recv().unwrap();
-        while let Ok(v) = receiver.try_recv() {
-            last = v;
-        }
-        assert_eq!(last, -1);
-        assert_eq!(shared_runtime.workers.lock_or_panic().len(), 0);
     }
 
     #[test]
