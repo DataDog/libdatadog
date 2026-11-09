@@ -971,7 +971,10 @@ impl SidecarInterface for ConnectionSidecarHandler {
             tokio::spawn(async move {
                 match handle.map() {
                     Ok(mapped) => {
-                        let bytes = tinybytes::Bytes::from(mapped);
+                        // The spans decoded from the payload borrow the mapping until their flush;
+                        // detached, it holds no descriptor meanwhile, so a burst of payloads cannot
+                        // exhaust the sidecar's descriptors.
+                        let bytes = tinybytes::Bytes::from(mapped.into_detached());
                         server.send_trace_v04(&headers, bytes, &endpoint, retry_interval);
                     }
                     Err(e) => error!("Failed mapping shared trace data memory: {}", e),
@@ -1026,7 +1029,8 @@ impl SidecarInterface for ConnectionSidecarHandler {
             tokio::spawn(async move {
                 match handle.map() {
                     Ok(mapped) => {
-                        let bytes = tinybytes::Bytes::from(mapped);
+                        // Detached for the same reason as in `send_trace_v04_shm`.
+                        let bytes = tinybytes::Bytes::from(mapped.into_detached());
                         server.send_trace_v1(
                             generic,
                             &lang_interpreter,
