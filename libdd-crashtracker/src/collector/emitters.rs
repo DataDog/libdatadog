@@ -1003,31 +1003,51 @@ fn emit_otel_thread_contexts(
     max_threads: usize,
     deadline: Instant,
 ) -> Result<(), EmitterError> {
-    use crate::otel_tls_reader::ProcMemReader;
+    use crate::otel_tls_reader::{ProcMemReader, discover_dtv_offset, tls_module_info};
     use crate::ptrace_collector::{
         attach_thread, detach_thread, enumerate_threads, read_thread_pointer,
     };
 
-    // Strategy for resolving each thread's TLS slot address:
-    //
-    // 1. DTV walk (preferred): use dl_iterate_phdr to get the TLS module ID and intra-module
-    //    offset, then walk each thread's DTV. Correct for both static and dynamic TLS.
-    //
-    // 2. Single-offset fallback: compute `slot_addr - crashing_thread_TP` once and apply it to
-    //    every thread. Only correct when the TLS variable is in the static TLS block (constant
-    //    TP-relative offset across threads). Used when dl_iterate_phdr cannot locate the TLS
-    //    module, which happens on some older glibc versions (e.g. CentOS 7 / glibc 2.17).
-    let dtv_info = crate::otel_tls_reader::tls_module_and_offset();
-
     let slot_addr = libdd_otel_thread_ctx::linux::tls_slot_address();
-    if slot_addr == 0 && dtv_info.is_none() {
+    if slot_addr == 0 {
         return Ok(()); // Symbol not linked.
     }
 
     let stop_timeout = core::time::Duration::from_millis(100);
 
-    // For the single-offset fallback we need the crashing thread's TP.
-    let tp_offset = if dtv_info.is_none() && slot_addr != 0 {
+    // Read the collector's own TP for computing offsets.
+    #[cfg(target_arch = "x86_64")]
+    let own_tp: u64 = unsafe {
+        let tp: u64;
+        // SAFETY: reading fs:0 is a single register read with no side effects.
+        core::arch::asm!("movq %fs:0, {}", out(reg) tp, options(att_syntax, nomem, nostack));
+        tp
+    };
+    #[cfg(target_arch = "aarch64")]
+    let own_tp: u64 = unsafe {
+        let tp: u64;
+        // SAFETY: reading tpidr_el0 is a single register read with no side effects.
+        core::arch::asm!("mrs {}, tpidr_el0", out(reg) tp, options(nomem, nostack));
+        tp
+    };
+
+    // Resolution strategy:
+    //
+    // 1. DTV walk (preferred): discover the DTV pointer offset from TP by probing the collector's
+    //    own TCB (using dl_iterate_phdr metadata to validate), then walk each remote thread's DTV.
+    //    Correct for both static and dynamic TLS on all platforms.
+    //
+    // 2. TP-relative offset (fallback): compute `slot_addr - TP` once and apply it to every thread.
+    //    Only correct when the TLS variable is in the static TLS block (constant TP-relative
+    //    offset). Used when DTV discovery fails (e.g. older glibc where dl_iterate_phdr returns
+    //    NULL tls_data).
+    let dtv_resolution = tls_module_info().and_then(|info| {
+        let dtv_off = discover_dtv_offset(own_tp, info.modid, info.tls_block_base)?;
+        Some((info.modid, info.offset, dtv_off))
+    });
+
+    // Fallback: single TP-relative offset from the crashing thread.
+    let tp_offset = if dtv_resolution.is_none() {
         let stop_deadline = (Instant::now() + stop_timeout).min(deadline);
         let Ok(()) = attach_thread(crashing_tid, stop_deadline) else {
             return Ok(());
@@ -1055,7 +1075,7 @@ fn emit_otel_thread_contexts(
     let mut mem: Option<ProcMemReader> = None;
     let mut processed = 0;
 
-    // attach, resolve TLS while stopped, read record, detach, emit.
+    // attach, resolve TLS, read record, detach, emit.
     let mut try_emit_otel = |tid: libc::pid_t| -> Result<bool, EmitterError> {
         let stop_deadline = (Instant::now() + stop_timeout).min(deadline);
         if attach_thread(tid, stop_deadline).is_err() {
@@ -1078,9 +1098,9 @@ fn emit_otel_thread_contexts(
                 Err(_) => return Ok(false),
             };
 
-            // Try DTV walk first; fall back to single TP-relative offset.
-            let slot_addr = if let Some((modid, offset)) = dtv_info {
-                match mem.resolve_tls_addr(tp, modid, offset) {
+            // Try DTV walk; fall back to TP-relative offset.
+            let slot_addr = if let Some((modid, offset, dtv_off)) = dtv_resolution {
+                match mem.resolve_tls_addr(tp, dtv_off, modid, offset) {
                     Ok(addr) => addr,
                     Err(_) => return Ok(false),
                 }

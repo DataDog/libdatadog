@@ -97,20 +97,21 @@ impl ProcMemReader {
     /// Works for both static TLS (initial-exec / local-exec) and dynamic TLS
     /// (global-dynamic / TLSDESC backed by `__tls_get_addr`).
     ///
-    /// # DTV layout
+    /// `dtv_offset` is the byte offset from the thread pointer (TP) to the DTV pointer.
+    /// Use [`discover_dtv_offset`] to determine this at runtime.
     ///
-    /// On both glibc and musl the DTV pointer is at `TP + 8` (second TCB field).
+    /// # DTV entry layout
     ///
-    /// - **glibc**: 16-byte `dtv_t` entries. `dtv[0].counter` = generation;
-    ///   `dtv[modid].pointer.val` = TLS block base. `TLS_DTV_UNALLOCATED = (void*)-1`.
+    /// - **glibc**: 16-byte `dtv_t` entries. `dtv[modid].pointer.val` = TLS block base.
     /// - **musl**: 8-byte `uintptr_t` entries. `dtv[modid]` = TLS block base.
     pub fn resolve_tls_addr(
         &mut self,
         tp: u64,
+        dtv_offset: u64,
         modid: usize,
         offset: usize,
     ) -> Result<u64, OtelTlsError> {
-        let dtv_ptr = self.read_u64(tp + 8)?;
+        let dtv_ptr = self.read_u64(tp + dtv_offset)?;
         if dtv_ptr == 0 {
             return Err(OtelTlsError::DtvNull);
         }
@@ -170,13 +171,23 @@ impl ProcMemReader {
     }
 }
 
-/// Discover the TLS module ID and intra-module byte offset for `otel_thread_ctx_v1` by
-/// walking loaded objects via `dl_iterate_phdr`.
+/// TLS module metadata discovered via `dl_iterate_phdr`.
+pub(crate) struct TlsModuleInfo {
+    /// TLS module ID (index into the DTV).
+    pub modid: usize,
+    /// Byte offset of the `otel_thread_ctx_v1` slot within the module's TLS block.
+    pub offset: usize,
+    /// The calling thread's TLS block base for this module (`dlpi_tls_data`).
+    /// Equal to `dtv[modid]` for the calling thread.
+    pub tls_block_base: usize,
+}
+
+/// Discover TLS module metadata for `otel_thread_ctx_v1` via `dl_iterate_phdr`.
 ///
 /// Returns `None` if `tls_slot_address()` is 0 (symbol not linked) or no module's TLS range
 /// contains the slot address (can happen on older glibc where `_dl_tls_get_addr_soft` returns
 /// NULL after fork).
-pub(crate) fn tls_module_and_offset() -> Option<(usize, usize)> {
+pub(crate) fn tls_module_info() -> Option<TlsModuleInfo> {
     let slot_addr = libdd_otel_thread_ctx::linux::tls_slot_address();
     if slot_addr == 0 {
         return None;
@@ -184,7 +195,7 @@ pub(crate) fn tls_module_and_offset() -> Option<(usize, usize)> {
 
     struct State {
         slot_addr: usize,
-        result: Option<(usize, usize)>,
+        result: Option<TlsModuleInfo>,
     }
 
     unsafe extern "C" fn callback(
@@ -213,7 +224,11 @@ pub(crate) fn tls_module_and_offset() -> Option<(usize, usize)> {
                 let base = tls_data as usize;
                 let end = base + phdr.p_memsz as usize;
                 if state.slot_addr >= base && state.slot_addr < end {
-                    state.result = Some((info.dlpi_tls_modid, state.slot_addr - base));
+                    state.result = Some(TlsModuleInfo {
+                        modid: info.dlpi_tls_modid,
+                        offset: state.slot_addr - base,
+                        tls_block_base: base,
+                    });
                     return 1; // stop iteration
                 }
             }
@@ -236,6 +251,61 @@ pub(crate) fn tls_module_and_offset() -> Option<(usize, usize)> {
     }
 
     state.result
+}
+
+/// Discover the byte offset of the DTV pointer from the thread pointer (TP).
+///
+/// On glibc the DTV is always at `TP + 8` (second field of `tcbhead_t`). On musl with
+/// `TLS_ABOVE_TP` (aarch64, riscv64) it's at an architecture-dependent offset at the end
+/// of `struct __pthread`. Rather than hardcoding per-platform offsets, this function
+/// discovers it at runtime by probing the calling thread's memory.
+///
+/// Given a known `modid` and the corresponding `tls_block_base` (from `dl_iterate_phdr`),
+/// we scan pointer-sized slots starting from `TP` looking for a value `P` such that
+/// `*(P + modid * entry_size) == tls_block_base`. That `P` is the DTV pointer and the
+/// scan offset is the DTV-pointer-to-TP offset.
+///
+/// Returns the byte offset from TP to the DTV pointer, or `None` if not found.
+pub(crate) fn discover_dtv_offset(tp: u64, modid: usize, tls_block_base: usize) -> Option<u64> {
+    // DTV entry size: 16 bytes on glibc, 8 bytes on musl.
+    #[cfg(target_env = "gnu")]
+    const DTV_ENTRY_SIZE: usize = 16;
+    #[cfg(target_env = "musl")]
+    const DTV_ENTRY_SIZE: usize = 8;
+
+    // struct __pthread / tcbhead_t is at most ~200 bytes on musl, ~700 on glibc.
+    // Scan a generous window.
+    const MAX_SCAN: usize = 1024;
+
+    let tp = tp as usize;
+
+    // Use /proc/self/mem for all reads so we never segfault on unmapped addresses.
+    let mut mem = match std::fs::File::open("/proc/self/mem") {
+        Ok(f) => f,
+        Err(_) => return None,
+    };
+
+    let read_usize = |mem: &mut std::fs::File, addr: usize| -> Option<usize> {
+        use std::io::{Read, Seek, SeekFrom};
+        mem.seek(SeekFrom::Start(addr as u64)).ok()?;
+        let mut buf = [0u8; core::mem::size_of::<usize>()];
+        mem.read_exact(&mut buf).ok()?;
+        Some(usize::from_ne_bytes(buf))
+    };
+
+    for byte_offset in (0..MAX_SCAN).step_by(core::mem::size_of::<usize>()) {
+        let Some(candidate_ptr) = read_usize(&mut mem, tp + byte_offset) else {
+            continue;
+        };
+        if candidate_ptr == 0 {
+            continue;
+        }
+        let entry_addr = candidate_ptr + modid * DTV_ENTRY_SIZE;
+        if read_usize(&mut mem, entry_addr).is_some_and(|v| v == tls_block_base) {
+            return Some(byte_offset as u64);
+        }
+    }
+    None
 }
 
 /// Decode a record (at least 28 bytes) into an `OtelThreadContext`.
