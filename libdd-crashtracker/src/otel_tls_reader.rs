@@ -68,16 +68,15 @@ impl ProcMemReader {
     #[allow(clippy::std_instead_of_core)] // core::io::ErrorKind is unstable
     fn read_up_to(&mut self, addr: u64, buf: &mut [u8]) -> Result<usize, OtelTlsError> {
         self.file.seek(SeekFrom::Start(addr))?;
-        let mut total = 0;
-        while total < buf.len() {
-            match self.file.read(&mut buf[total..]) {
-                Ok(0) => break,
-                Ok(n) => total += n,
+        // A single read(2) on /proc/<pid>/mem returns all readable bytes up to
+        // the next unmapped page boundary. Retry only on EINTR.
+        loop {
+            match self.file.read(buf) {
+                Ok(n) => return Ok(n),
                 Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
                 Err(e) => return Err(e.into()),
             }
         }
-        Ok(total)
     }
 
     /// Read a native-endian `u64` at `addr`.
@@ -169,6 +168,74 @@ impl ProcMemReader {
 
         Ok(Some(RECORD_HEADER_SIZE + attrs_read))
     }
+}
+
+/// Discover the TLS module ID and intra-module byte offset for `otel_thread_ctx_v1` by
+/// walking loaded objects via `dl_iterate_phdr`.
+///
+/// Returns `None` if `tls_slot_address()` is 0 (symbol not linked) or no module's TLS range
+/// contains the slot address (can happen on older glibc where `_dl_tls_get_addr_soft` returns
+/// NULL after fork).
+pub(crate) fn tls_module_and_offset() -> Option<(usize, usize)> {
+    let slot_addr = libdd_otel_thread_ctx::linux::tls_slot_address();
+    if slot_addr == 0 {
+        return None;
+    }
+
+    struct State {
+        slot_addr: usize,
+        result: Option<(usize, usize)>,
+    }
+
+    unsafe extern "C" fn callback(
+        info: *mut libc::dl_phdr_info,
+        _size: libc::size_t,
+        data: *mut core::ffi::c_void,
+    ) -> core::ffi::c_int {
+        // SAFETY: `data` points to the `State` local in the enclosing function, which is
+        // live for the duration of the `dl_iterate_phdr` call.
+        let state = unsafe { &mut *(data as *mut State) };
+        // SAFETY: `info` is a valid `dl_phdr_info` provided by `dl_iterate_phdr`.
+        let info = unsafe { &*info };
+
+        let tls_data = info.dlpi_tls_data;
+        if tls_data.is_null() {
+            return 0; // continue
+        }
+
+        // SAFETY: `dl_iterate_phdr` holds the loader lock, so no concurrent dlopen/dlclose
+        // can invalidate the program headers. `dlpi_phdr` points to a valid array of
+        // `dlpi_phnum` entries for a currently-loaded ELF object.
+        let phdrs =
+            unsafe { core::slice::from_raw_parts(info.dlpi_phdr, info.dlpi_phnum as usize) };
+        for phdr in phdrs {
+            if phdr.p_type == libc::PT_TLS {
+                let base = tls_data as usize;
+                let end = base + phdr.p_memsz as usize;
+                if state.slot_addr >= base && state.slot_addr < end {
+                    state.result = Some((info.dlpi_tls_modid, state.slot_addr - base));
+                    return 1; // stop iteration
+                }
+            }
+        }
+        0 // continue
+    }
+
+    let mut state = State {
+        slot_addr,
+        result: None,
+    };
+
+    // SAFETY: `callback` has the correct signature for `dl_iterate_phdr`. `state` is live for
+    // the duration of the call.
+    unsafe {
+        libc::dl_iterate_phdr(
+            Some(callback),
+            &mut state as *mut State as *mut core::ffi::c_void,
+        );
+    }
+
+    state.result
 }
 
 /// Decode a record (at least 28 bytes) into an `OtelThreadContext`.

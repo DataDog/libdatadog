@@ -374,98 +374,9 @@ impl ThreadContext {
 /// Return the virtual address of the `otel_thread_ctx_v1` TLS slot for the current thread.
 ///
 /// This is the address of the slot itself (not the value stored in it). Combined with a
-/// thread's thread-pointer register, the TLS offset can be computed as
-/// `tls_offset = slot_address - TP`.
-///
-/// # TLS model assumption
-///
-/// The offset is only constant across all threads when the TLS variable resides in the
-/// static TLS block (initial-exec or local-exec models, or a TLSDESC/GD reference that
-/// the linker relaxed to one of those). This is the case when `libdd-otel-thread-ctx` is
-/// linked into the main executable or into a shared library loaded at process startup (before
-/// extra threads are created).
-///
-/// When the library is `dlopen`'d after threads already exist and glibc cannot place the TLS
-/// object in optional static TLS, the variable is backed by per-thread dynamic TLS allocated
-/// lazily through the DTV. In that scenario the TP-relative offset differs across threads,
-/// and callers must resolve each thread's TLS address individually (by walking the DTV)
-/// rather than reusing a single offset.
+/// thread's thread-pointer register.
 pub fn tls_slot_address() -> usize {
     with_tls_slot(|slot| slot as *const _ as usize)
-}
-
-/// Return the TLS module ID and the byte offset of the `otel_thread_ctx_v1` slot within its
-/// module's TLS block.
-///
-/// External readers use these two values to resolve the slot address for **any** thread by
-/// walking that thread's DTV, which is correct for both static and dynamic TLS.
-///
-/// Internally this calls [`tls_slot_address`] (which triggers TLS allocation for the calling
-/// thread) and then uses `dl_iterate_phdr` to find the matching module.
-///
-/// Returns `None` if the TLS slot address is 0 (symbol not linked) or `dl_iterate_phdr`
-/// cannot locate the owning module.
-#[cfg(feature = "dl-iterate")]
-pub fn tls_module_and_offset() -> Option<(usize, usize)> {
-    let slot_addr = tls_slot_address();
-    if slot_addr == 0 {
-        return None;
-    }
-
-    struct State {
-        slot_addr: usize,
-        result: Option<(usize, usize)>,
-    }
-
-    unsafe extern "C" fn callback(
-        info: *mut libc::dl_phdr_info,
-        _size: libc::size_t,
-        data: *mut core::ffi::c_void,
-    ) -> core::ffi::c_int {
-        // SAFETY: `data` points to the `State` local in the enclosing function, which is
-        // live for the duration of the `dl_iterate_phdr` call.
-        let state = unsafe { &mut *(data as *mut State) };
-        // SAFETY: `info` is a valid `dl_phdr_info` provided by `dl_iterate_phdr`.
-        let info = unsafe { &*info };
-
-        let tls_data = info.dlpi_tls_data;
-        if tls_data.is_null() {
-            return 0; // continue
-        }
-
-        // Walk program headers to find PT_TLS and check whether our slot falls inside it.
-        // SAFETY: `dlpi_phdr` points to a valid array of `dlpi_phnum` program headers for
-        // a currently-loaded ELF object, as guaranteed by `dl_iterate_phdr`.
-        let phdrs =
-            unsafe { core::slice::from_raw_parts(info.dlpi_phdr, info.dlpi_phnum as usize) };
-        for phdr in phdrs {
-            if phdr.p_type == libc::PT_TLS {
-                let base = tls_data as usize;
-                let end = base + phdr.p_memsz as usize;
-                if state.slot_addr >= base && state.slot_addr < end {
-                    state.result = Some((info.dlpi_tls_modid, state.slot_addr - base));
-                    return 1; // stop iteration
-                }
-            }
-        }
-        0 // continue
-    }
-
-    let mut state = State {
-        slot_addr,
-        result: None,
-    };
-
-    // SAFETY: `callback` has the correct signature for `dl_iterate_phdr`. `state` is live for
-    // the duration of the call.
-    unsafe {
-        libc::dl_iterate_phdr(
-            Some(callback),
-            &mut state as *mut State as *mut core::ffi::c_void,
-        );
-    }
-
-    state.result
 }
 
 /// Read the TLS pointer for the current thread (the value stored in the TLS slot, not the address

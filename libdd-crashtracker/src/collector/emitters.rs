@@ -1017,7 +1017,7 @@ fn emit_otel_thread_contexts(
     //    every thread. Only correct when the TLS variable is in the static TLS block (constant
     //    TP-relative offset across threads). Used when dl_iterate_phdr cannot locate the TLS
     //    module, which happens on some older glibc versions (e.g. CentOS 7 / glibc 2.17).
-    let dtv_info = libdd_otel_thread_ctx::linux::tls_module_and_offset();
+    let dtv_info = crate::otel_tls_reader::tls_module_and_offset();
 
     let slot_addr = libdd_otel_thread_ctx::linux::tls_slot_address();
     if slot_addr == 0 && dtv_info.is_none() {

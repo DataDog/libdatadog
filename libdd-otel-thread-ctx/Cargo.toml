@@ -18,7 +18,6 @@ bench = false
 [dependencies]
 anyhow = { workspace = true, optional = true }
 elf = { workspace = true, features = ["std"], optional = true }
-libc = { workspace = true, optional = true }
 object = { workspace = true, features = ["archive", "read_core"], optional = true }
 
 [features]
@@ -30,8 +29,6 @@ owned-context = []
 shared-context = []
 # Autoclean contexts on thread exit. See README.
 thread-exit-autoclean = []
-# Enables tls_module_and_offset() for resolving TLS addresses via DTV walk.
-dl-iterate = ["dep:libc"]
 sanity-check = ["dep:elf", "dep:anyhow"]
 # Test helpers used by this crate's own tests and `libdd-otel-thread-ctx-ffi`'s
 # integration tests.
