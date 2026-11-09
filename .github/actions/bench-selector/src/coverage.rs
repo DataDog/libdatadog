@@ -14,14 +14,16 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+pub(crate) type Executables = BTreeMap<(String, String), PathBuf>;
+
 /// Per-cluster coverage data, reduced to executed-function line ranges keyed
 /// by workspace-relative file path.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize)]
 pub struct Coverage {
     pub entries: Vec<CoverageEntry>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize)]
 pub struct CoverageEntry {
     pub crate_name: String,
     pub target: String,
@@ -32,7 +34,6 @@ pub struct CoverageEntry {
     /// Merged, sorted, non-overlapping inclusive `[start, end]` line ranges.
     pub files: BTreeMap<String, Vec<(u32, u32)>>,
     /// Executed external packages, used to scope dependency changes.
-    #[serde(default)]
     pub deps: BTreeSet<String>,
 }
 
@@ -58,21 +59,11 @@ struct Tools {
 pub fn run(
     workspace_root: &Path,
     inventory: &Inventory,
-    crates_filter: Option<&[String]>,
+    executables: &Executables,
     target_dir: &Path,
     work: &Path,
 ) -> Result<Coverage> {
-    crate::inventory::validate_crates_filter(
-        crates_filter,
-        inventory.binaries.iter().map(|bin| bin.crate_name.as_str()),
-    )?;
-    let in_scope: Vec<&BenchBinary> = inventory
-        .binaries
-        .iter()
-        .filter(|bin| {
-            crates_filter.is_none_or(|filter| filter.iter().any(|c| c == &bin.crate_name))
-        })
-        .collect();
+    let in_scope = &inventory.binaries;
     if has_path_remapping(&inherited_rustflags()) {
         // Remapped libraries can disappear even when benchmark-file ranges survive.
         log::warn!("path-remapping rustflags prevent trustworthy coverage; all clusters will run");
@@ -107,7 +98,6 @@ pub fn run(
             .map(|bin| bin.clusters().len())
             .sum::<usize>()
     );
-    let executables = build_all_benches(&workspace_root, &in_scope, &target_dir)?;
     let started = std::time::Instant::now();
     for bin in in_scope {
         let Some(executable) = executables.get(&(bin.crate_name.clone(), bin.target.clone()))
@@ -163,7 +153,7 @@ pub fn run(
     Ok(Coverage { entries })
 }
 
-fn prepare_directory(path: &Path) -> Result<PathBuf> {
+pub(crate) fn prepare_directory(path: &Path) -> Result<PathBuf> {
     std::fs::create_dir_all(path)
         .with_context(|| format!("failed to create {}", path.display()))?;
     path.canonicalize()
@@ -284,7 +274,7 @@ pub(crate) fn build_all_benches(
     workspace_root: &Path,
     bins: &[&BenchBinary],
     target_dir: &Path,
-) -> Result<BTreeMap<(String, String), PathBuf>> {
+) -> Result<Executables> {
     // Without -p, cargo would build every workspace bench.
     if bins.is_empty() {
         return Ok(BTreeMap::new());
@@ -361,7 +351,7 @@ fn parse_bench_executables(
     stdout: &str,
     workspace_root: &Path,
     bins: &[&BenchBinary],
-) -> BTreeMap<(String, String), PathBuf> {
+) -> Executables {
     let root = workspace_root
         .canonicalize()
         .unwrap_or_else(|_| workspace_root.to_path_buf());
@@ -741,18 +731,6 @@ mod tests {
         assert_eq!(work, temp.path().join("profiles").canonicalize().unwrap());
         assert_eq!(target, workspace.join("target/coverage"));
         assert_ne!(work, workspace.join(&relative));
-    }
-
-    #[test]
-    fn unknown_coverage_crate_filter_fails_before_tool_discovery() {
-        let result = run(
-            Path::new("/nonexistent"),
-            &Inventory { binaries: vec![] },
-            Some(&["missing".into()]),
-            Path::new("target"),
-            Path::new("work"),
-        );
-        assert!(result.unwrap_err().to_string().contains("unknown crate"));
     }
 
     #[test]

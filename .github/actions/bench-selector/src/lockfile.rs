@@ -66,7 +66,7 @@ pub fn lockfile_changes(base_ref: &str, workspace_root: &Path) -> Result<Lockfil
     let changes = compare_lockfiles(&base, &head, &members);
     if changes.unattributable {
         log::info!("lockfile: unattributable change -> full run");
-    } else if !changes.packages.is_empty() {
+    } else if changes.is_changed() {
         log::info!(
             "lockfile: changed packages: {}",
             changes

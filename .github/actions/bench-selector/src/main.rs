@@ -1,16 +1,13 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Select criterion benchmarks for a PR in three JSON-serialized stages:
-//! * `inventory`: discover binaries, features, and benchmark IDs with `--list`.
-//! * `coverage`: collect executed-function ranges per name cluster with instrumented `--test`.
-//! * `select`: intersect coverage with changed lines and dependencies, emitting exact ID filters.
-//!
-//! Missing or failed evidence widens the selection, never narrows it.
+//! Discover criterion benchmarks, collect per-cluster function coverage, and
+//! intersect it with changed lines and dependencies. Missing or failed evidence
+//! widens the selection. Intermediate JSON is available through `--debug-dir`.
 
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
-use std::path::PathBuf;
+use clap::Parser;
+use std::path::{Path, PathBuf};
 
 mod cluster;
 mod coverage;
@@ -24,161 +21,72 @@ mod select;
 #[derive(Parser)]
 #[command(about = "Select criterion benchmarks to run from a PR diff")]
 struct Cli {
-    #[command(subcommand)]
-    cmd: Cmd,
-}
-
-#[derive(Subcommand)]
-enum Cmd {
-    /// Enumerate bench binaries and their criterion benchmark IDs.
-    Inventory {
-        /// Workspace root of the benchmarked checkout (default: cwd).
-        #[arg(long, default_value = ".")]
-        workspace_root: PathBuf,
-        /// Restrict to these crate names (space or comma separated).
-        #[arg(long, value_delimiter = ',', num_args = 1..)]
-        crates: Option<Vec<String>>,
-        /// Instrumented build directory, shared with `coverage` to avoid rebuilding.
-        /// Without this flag, inventory builds are uninstrumented.
-        #[arg(long)]
-        target_dir: Option<PathBuf>,
-        /// Output file (default: stdout).
-        #[arg(long)]
-        out: Option<PathBuf>,
-    },
-    /// Run one instrumented criterion `--test` pass per name cluster.
-    Coverage {
-        /// Workspace root of the benchmarked checkout (default: cwd).
-        #[arg(long, default_value = ".")]
-        workspace_root: PathBuf,
-        /// Inventory JSON produced by `bench-selector inventory`.
-        #[arg(long)]
-        inventory: PathBuf,
-        /// Restrict to these crate names (space or comma separated).
-        #[arg(long, value_delimiter = ',', num_args = 1..)]
-        crates: Option<Vec<String>>,
-        /// Dedicated cargo target dir for the instrumented build (kept separate
-        /// from the clean measuring build cache). Relative to workspace-root.
-        #[arg(long, default_value = "target/bench-selector-coverage")]
-        target_dir: PathBuf,
-        /// Keep raw profiles here for debugging; defaults to an auto-cleaned temp dir.
-        #[arg(long)]
-        work: Option<PathBuf>,
-        /// Output file (default: stdout).
-        #[arg(long)]
-        out: Option<PathBuf>,
-    },
-    /// Intersect coverage with the changed lines and emit the run selection.
-    Select {
-        /// Workspace root of the benchmarked checkout (default: cwd).
-        #[arg(long, default_value = ".")]
-        workspace_root: PathBuf,
-        /// Inventory JSON produced by `bench-selector inventory`.
-        #[arg(long)]
-        inventory: PathBuf,
-        /// Coverage JSON produced by `bench-selector coverage`.
-        #[arg(long)]
-        coverage: PathBuf,
-        /// Base ref to diff against (without the `origin/` prefix), e.g. `main`.
-        #[arg(long)]
-        base_ref: String,
-        /// Output file (default: stdout).
-        #[arg(long)]
-        out: Option<PathBuf>,
-    },
+    /// Workspace root of the benchmarked checkout (default: cwd).
+    #[arg(long, default_value = ".")]
+    workspace_root: PathBuf,
+    /// Restrict to these crate names (space or comma separated).
+    #[arg(long, value_delimiter = ',', num_args = 1..)]
+    crates: Option<Vec<String>>,
+    /// Dedicated instrumented build directory, relative to workspace-root.
+    #[arg(long, default_value = "target/bench-selector-coverage")]
+    target_dir: PathBuf,
+    /// Base ref to diff against (without the `origin/` prefix), e.g. `main`.
+    #[arg(long)]
+    base_ref: String,
+    /// Write intermediate inventory and coverage JSON here for debugging.
+    #[arg(long)]
+    debug_dir: Option<PathBuf>,
+    /// Keep raw profiles here for debugging; defaults to an auto-cleaned temp dir.
+    #[arg(long)]
+    work: Option<PathBuf>,
+    /// Selection output file (default: stdout).
+    #[arg(long)]
+    out: Option<PathBuf>,
 }
 
 fn main() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     let cli = Cli::parse();
-    match cli.cmd {
-        Cmd::Inventory {
-            workspace_root,
-            crates,
-            target_dir,
-            out,
-        } => {
-            let crates = normalize_crates(crates);
-            let inv =
-                inventory::discover(&workspace_root, crates.as_deref(), target_dir.as_deref())?;
-            log::info!(
-                "discovered {} bench binaries, {} benchmark IDs",
-                inv.binaries.len(),
-                inv.binaries
-                    .iter()
-                    .map(|b| b.bench_ids.len())
-                    .sum::<usize>()
-            );
-            write_json(&out, &inv)
+    let crates = normalize_crates(cli.crates);
+    let (inventory, executables) =
+        inventory::discover(&cli.workspace_root, crates.as_deref(), &cli.target_dir)?;
+    write_debug(cli.debug_dir.as_deref(), "bench-inventory.json", &inventory)?;
+
+    let temp;
+    let work_dir = match &cli.work {
+        Some(path) => path.as_path(),
+        None => {
+            temp = tempfile::tempdir().context("failed to create temp dir")?;
+            temp.path()
         }
-        Cmd::Coverage {
-            workspace_root,
-            inventory,
-            crates,
-            target_dir,
-            work,
-            out,
-        } => {
-            let inv: inventory::Inventory = read_json(&inventory, "inventory")?;
-            let crates = normalize_crates(crates);
-            let temp;
-            let work_dir: &std::path::Path = match &work {
-                Some(path) => path,
-                None => {
-                    temp = tempfile::tempdir().context("failed to create temp dir")?;
-                    temp.path()
-                }
-            };
-            let cov = coverage::run(
-                &workspace_root,
-                &inv,
-                crates.as_deref(),
-                &target_dir,
-                work_dir,
-            )?;
-            let ok = cov.entries.iter().filter(|e| e.status == "ok").count();
-            log::info!("covered {} of {} clusters", ok, cov.entries.len());
-            write_json(&out, &cov)
-        }
-        Cmd::Select {
-            workspace_root,
-            inventory,
-            coverage,
-            base_ref,
-            out,
-        } => {
-            let inv: inventory::Inventory = read_json(&inventory, "inventory")?;
-            let cov: coverage::Coverage = read_json(&coverage, "coverage")?;
-            fetch_base(&base_ref, &workspace_root)?;
-            let changed = diff::changed_ranges(&base_ref, &workspace_root)?;
-            let lockfile = lockfile::lockfile_changes(&base_ref, &workspace_root)?;
-            let manifests = manifest::manifest_changes(&base_ref, &workspace_root, &changed);
-            if lockfile.is_changed() {
-                log::info!(
-                    "lockfile changed packages: {} (unattributable: {})",
-                    lockfile
-                        .packages
-                        .iter()
-                        .cloned()
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                    lockfile.unattributable
-                );
-            }
-            let self_test = std::env::var("BENCH_SELECTOR_SELF_TEST")
-                .map(|v| v == "1")
-                .unwrap_or(false);
-            let selection = select::select(&inv, &cov, &changed, &lockfile, &manifests, self_test);
-            log::info!(
-                "selected {}/{} clusters across {}/{} binaries",
-                selection.summary.clusters_selected,
-                selection.summary.clusters_total,
-                selection.summary.binaries_selected,
-                selection.summary.binaries_total
-            );
-            write_json(&out, &selection)
-        }
-    }
+    };
+    let coverage = coverage::run(
+        &cli.workspace_root,
+        &inventory,
+        &executables,
+        &cli.target_dir,
+        work_dir,
+    )?;
+    write_debug(cli.debug_dir.as_deref(), "bench-coverage.json", &coverage)?;
+
+    fetch_base(&cli.base_ref, &cli.workspace_root)?;
+    let changed = diff::changed_ranges(&cli.base_ref, &cli.workspace_root)?;
+    let lockfile = lockfile::lockfile_changes(&cli.base_ref, &cli.workspace_root)?;
+    let manifests = manifest::manifest_changes(&cli.base_ref, &cli.workspace_root, &changed);
+    let self_test = std::env::var("BENCH_SELECTOR_SELF_TEST")
+        .map(|v| v == "1")
+        .unwrap_or(false);
+    let selection = select::select(
+        &inventory, &coverage, &changed, &lockfile, &manifests, self_test,
+    );
+    log::info!(
+        "selected {}/{} clusters across {}/{} binaries",
+        selection.summary.clusters_selected,
+        selection.summary.clusters_total,
+        selection.summary.binaries_selected,
+        selection.summary.binaries_total
+    );
+    write_json(cli.out.as_deref(), &selection)
 }
 
 fn normalize_crates(crates: Option<Vec<String>>) -> Option<Vec<String>> {
@@ -192,9 +100,8 @@ fn normalize_crates(crates: Option<Vec<String>>) -> Option<Vec<String>> {
     })
 }
 
-// Keep fetch's working directory aligned with the subsequent diff. As in
-// ci_shared, a failed fetch may still use an already available local base ref.
-fn fetch_base(base_ref: &str, workspace_root: &std::path::Path) -> Result<()> {
+// Keep fetch's cwd aligned with the diff; a failed fetch can use a local base ref.
+fn fetch_base(base_ref: &str, workspace_root: &Path) -> Result<()> {
     let status = std::process::Command::new("git")
         .current_dir(workspace_root)
         .args([
@@ -212,7 +119,14 @@ fn fetch_base(base_ref: &str, workspace_root: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
-fn write_json<T: serde::Serialize>(out: &Option<PathBuf>, value: &T) -> Result<()> {
+fn write_debug<T: serde::Serialize>(dir: Option<&Path>, name: &str, value: &T) -> Result<()> {
+    if let Some(dir) = dir {
+        write_json(Some(&dir.join(name)), value)?;
+    }
+    Ok(())
+}
+
+fn write_json<T: serde::Serialize>(out: Option<&Path>, value: &T) -> Result<()> {
     let json = serde_json::to_string_pretty(value)?;
     match out {
         Some(path) => {
@@ -228,12 +142,6 @@ fn write_json<T: serde::Serialize>(out: &Option<PathBuf>, value: &T) -> Result<(
     Ok(())
 }
 
-fn read_json<T: serde::de::DeserializeOwned>(path: &std::path::Path, what: &str) -> Result<T> {
-    let content = std::fs::read_to_string(path)
-        .with_context(|| format!("failed to read {what} file {}", path.display()))?;
-    serde_json::from_str(&content).with_context(|| format!("failed to parse {what} JSON"))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -245,22 +153,16 @@ mod tests {
             vec!["libdd-x,libdd-y"],
             vec!["libdd-x libdd-y"],
         ] {
-            for command in ["inventory", "coverage"] {
-                let mut argv = vec!["bench-selector", command];
-                if command == "coverage" {
-                    argv.extend(["--inventory", "inventory.json"]);
-                }
-                argv.push("--crates");
-                argv.extend(arguments.iter().copied());
-                let cli = Cli::try_parse_from(argv).unwrap();
-                let crates = match cli.cmd {
-                    Cmd::Inventory { crates, .. } | Cmd::Coverage { crates, .. } => {
-                        normalize_crates(crates)
-                    }
-                    _ => unreachable!(),
-                };
-                assert_eq!(crates.unwrap(), ["libdd-x", "libdd-y"]);
-            }
+            let cli = Cli::try_parse_from(
+                ["bench-selector", "--base-ref", "main", "--crates"]
+                    .into_iter()
+                    .chain(arguments),
+            )
+            .unwrap();
+            assert_eq!(
+                normalize_crates(cli.crates).unwrap(),
+                ["libdd-x", "libdd-y"]
+            );
         }
     }
 

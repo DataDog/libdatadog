@@ -121,12 +121,8 @@ compute_bench_selection:
   script:
     - |
       set -eu
-      # Always publish a status, even if a later step fails.
-      printf 'BENCH_SELECTION_STATUS=failed\n' | tee bench-selection.env
-      status() { printf 'BENCH_SELECTION_STATUS=%s\n' "$1" | tee bench-selection.env; }
       if [[ "${IMPACTED_STATUS:-}" != "success" || -z "${AFFECTED_CRATES:-}" ]]; then
         echo "Impacted crates undetermined -> benchmarks fall back to crate-level selection."
-        status skipped
         exit 0
       fi
       # Root manifests/lockfiles are scoped by the selector; toolchain/config
@@ -134,7 +130,6 @@ compute_bench_selection:
       if grep -qE '^(rust-toolchain\.toml|ci-toolchain\.toml)$' changed_files.txt 2>/dev/null \
          || grep -qE '^(\.cargo/|\.config/nextest\.toml)' changed_files.txt 2>/dev/null; then
         echo "Workspace-level profile/toolchain change -> full benchmark suite."
-        status skipped
         exit 0
       fi
       # Coverage tools must match the active rustc's profile format.
@@ -146,41 +141,24 @@ compute_bench_selection:
         echo "sccache unavailable or failed to start; building without a compiler cache"
       fi
       (cd .github/actions && cargo build -p bench-selector)
-      SELECTOR=./.github/actions/target/debug/bench-selector
       # Lockfile changes need all crates; otherwise restrict to affected crates.
-      # Share inventory's instrumented build with coverage via --target-dir.
       CRATES_ARGS=()
       if ! grep -qE '^Cargo\.lock$' changed_files.txt 2>/dev/null; then
         CRATES="$(jq -r '.[]' <<< "${AFFECTED_CRATES}" | paste -sd ',')"
         if [[ -z "$CRATES" ]]; then
           # Nothing to scope; downstream guards still widen tooling-only PRs.
-          status skipped
           exit 0
         fi
         CRATES_ARGS=(--crates "$CRATES")
       fi
-      "$SELECTOR" inventory --workspace-root . "${CRATES_ARGS[@]}" \
+      ./.github/actions/target/debug/bench-selector "${CRATES_ARGS[@]}" \
         --target-dir target/bench-selection \
-        --out bench-inventory.json
-      "$SELECTOR" coverage \
-        --inventory bench-inventory.json \
-        "${CRATES_ARGS[@]}" \
-        --target-dir target/bench-selection \
-        --out bench-coverage.json
-      "$SELECTOR" select \
-        --inventory bench-inventory.json \
-        --coverage bench-coverage.json \
         --base-ref main \
         --out bench-selection.json
       sccache --show-stats || :
       sccache --stop-server > /dev/null 2>&1 || :
-      status success
   artifacts:
     when: always
-    reports:
-      dotenv: bench-selection.env
     paths:
       - bench-selection.json
-      - bench-inventory.json
-      - bench-coverage.json
     expire_in: 1 week

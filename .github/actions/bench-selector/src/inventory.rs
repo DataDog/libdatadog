@@ -6,17 +6,16 @@
 use crate::cluster::{Cluster, clusters_of};
 use anyhow::{Context, Result, bail};
 use cargo_metadata::{MetadataCommand, TargetKind};
-use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use serde::Serialize;
+use std::path::Path;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize)]
 pub struct Inventory {
     pub binaries: Vec<BenchBinary>,
 }
 
 /// One bench binary: a crate's `[[bench]]` target.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct BenchBinary {
     pub crate_name: String,
     /// The `[[bench]]` target name (`cargo bench --bench <target>`).
@@ -52,8 +51,8 @@ fn supplemental_features(crate_name: &str) -> &'static [&'static str] {
 pub fn discover(
     workspace_root: &Path,
     crates_filter: Option<&[String]>,
-    instrumented_target_dir: Option<&Path>,
-) -> Result<Inventory> {
+    target_dir: &Path,
+) -> Result<(Inventory, crate::coverage::Executables)> {
     let started = std::time::Instant::now();
     let metadata = MetadataCommand::new()
         .manifest_path(workspace_root.join("Cargo.toml"))
@@ -111,16 +110,12 @@ pub fn discover(
     }
     candidates.sort_by(|a, b| (&a.crate_name, &a.target).cmp(&(&b.crate_name, &b.target)));
 
-    // Share one instrumented build with coverage; plain listings build through cargo.
-    let executables = instrumented_target_dir
-        .map(|dir| {
-            crate::coverage::build_all_benches(
-                workspace_root,
-                &candidates.iter().collect::<Vec<_>>(),
-                dir,
-            )
-        })
-        .transpose()?;
+    let target_dir = crate::coverage::prepare_directory(&workspace_root.join(target_dir))?;
+    let executables = crate::coverage::build_all_benches(
+        workspace_root,
+        &candidates.iter().collect::<Vec<_>>(),
+        &target_dir,
+    )?;
 
     let mut binaries = Vec::new();
     for (index, bin) in candidates.iter().enumerate() {
@@ -136,10 +131,14 @@ pub fn discover(
             workspace_root,
             bin,
             executables
-                .as_ref()
-                .and_then(|exec| exec.get(&(bin.crate_name.clone(), bin.target.clone())))
-                .map(PathBuf::as_path),
-            instrumented_target_dir,
+                .get(&(bin.crate_name.clone(), bin.target.clone()))
+                .with_context(|| {
+                    format!(
+                        "no executable for {} --bench {}",
+                        bin.crate_name, bin.target
+                    )
+                })?,
+            &target_dir,
         )?;
         log::info!(
             "inventory: [{step}/{}] {} --bench {}: {} benchmark ID(s) in {:.1?}",
@@ -168,7 +167,7 @@ pub fn discover(
         binaries.iter().map(|b| b.bench_ids.len()).sum::<usize>(),
         started.elapsed()
     );
-    Ok(Inventory { binaries })
+    Ok((Inventory { binaries }, executables))
 }
 
 /// Reject unmatched restrictions instead of silently producing empty evidence.
@@ -196,49 +195,19 @@ pub fn validate_crates_filter<'a>(
     Ok(())
 }
 
-/// Use the prebuilt instrumented binary, or a fast uninstrumented cargo build.
 fn list_bench_ids(
     workspace_root: &Path,
     bin: &BenchBinary,
-    executable: Option<&Path>,
-    instrumented_target_dir: Option<&Path>,
+    executable: &Path,
+    target_dir: &Path,
 ) -> Result<Vec<String>> {
-    let mut cmd = match (instrumented_target_dir, executable) {
-        (Some(dir), Some(executable)) => {
-            let mut cmd =
-                crate::coverage::direct_bench_command(workspace_root, bin, executable, dir);
-            cmd.env(
-                "LLVM_PROFILE_FILE",
-                dir.join(crate::coverage::BUILD_JUNK_PROFILE_PATTERN),
-            );
-            cmd
-        }
-        (Some(_), None) => {
-            anyhow::bail!(
-                "no executable for {} --bench {} (union build must provide it)",
-                bin.crate_name,
-                bin.target
-            );
-        }
-        _ => {
-            let mut cmd = Command::new("cargo");
-            cmd.current_dir(workspace_root);
-            cmd.env("CARGO_PROFILE_BENCH_OPT_LEVEL", "0")
-                .env("CARGO_PROFILE_BENCH_CODEGEN_UNITS", "16")
-                .env("CARGO_PROFILE_BENCH_LTO", "false");
-            cmd.args(["bench", "-p", &bin.crate_name, "--bench", &bin.target]);
-            if !bin.features.is_empty() {
-                cmd.arg("--features").arg(bin.features.join(","));
-            }
-            cmd.args(["--", "--list", "--format", "terse"]);
-            return run_listing(cmd, bin);
-        }
-    };
-    cmd.args(["--list", "--format", "terse"]);
-    run_listing(cmd, bin)
-}
-
-fn run_listing(mut cmd: Command, bin: &BenchBinary) -> Result<Vec<String>> {
+    let mut cmd =
+        crate::coverage::direct_bench_command(workspace_root, bin, executable, target_dir);
+    cmd.env(
+        "LLVM_PROFILE_FILE",
+        target_dir.join(crate::coverage::BUILD_JUNK_PROFILE_PATTERN),
+    )
+    .args(["--list", "--format", "terse"]);
     let output = cmd
         .output()
         .with_context(|| format!("listing {} --bench {}", bin.crate_name, bin.target))?;
@@ -309,8 +278,12 @@ warning: something
 
     #[test]
     fn discover_finds_ddsketch_binary() {
-        let inventory =
-            discover(&repo_root(), Some(&["libdd-ddsketch".to_string()]), None).expect("discovery");
+        let (inventory, _) = discover(
+            &repo_root(),
+            Some(&["libdd-ddsketch".to_string()]),
+            Path::new("target/bench-selector-coverage"),
+        )
+        .expect("discovery");
         assert_eq!(inventory.binaries.len(), 1);
         let bin = &inventory.binaries[0];
         assert_eq!(bin.crate_name, "libdd-ddsketch");

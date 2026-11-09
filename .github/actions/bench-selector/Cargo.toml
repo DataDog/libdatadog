@@ -12,7 +12,6 @@ repository = "https://github.com/DataDog/libdatadog/tree/main/.github/actions/be
 publish = false
 
 [dependencies]
-ci-shared = { path = "../ci-shared" }
 anyhow = "1.0"
 clap = { version = "4", features = ["derive", "env"] }
 log = "0.4"
