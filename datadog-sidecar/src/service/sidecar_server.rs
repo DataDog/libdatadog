@@ -817,39 +817,32 @@ impl SidecarInterface for ConnectionSidecarHandler {
         if self
             .cdn_subscription
             .as_ref()
-            .is_some_and(|s| s.subscription.config == config)
+            .is_some_and(|s| s.config == config)
         {
             return;
         }
         self.cdn_subscription = None;
-        match self
-            .server
-            .cdn_configs
-            .subscribe(config, &self.server.remote_configs.publications)
-        {
-            Ok(subscription) => {
-                // Only an explicitly RC-enabled session with a registered application may
-                // receive signals. SIGVTALRM's default disposition terminates a process.
-                let session = self.session.clone();
-                let enabled = self.cdn_notify_enabled.clone();
-                let notification = Some(subscription.publisher.register(
-                    Arc::new(move || {
-                        use libdd_remote_config::fetch::NotifyTarget;
-                        if enabled.load(Ordering::Acquire)
-                            && let Some(session) =
-                                session.load().filter(|s| s.remote_config_enabled)
-                            && let Some(target) = session.notify_target()
-                        {
-                            target.notify();
-                        }
-                    }),
-                    self.cdn_remote_config_generation,
-                ));
-                self.cdn_subscription = Some(super::ffe_config::CdnConnection {
-                    subscription,
-                    _notification: notification,
-                });
+        // Only an explicitly RC-enabled session with a registered application may
+        // receive signals. SIGVTALRM's default disposition terminates a process.
+        let session = self.session.clone();
+        let enabled = self.cdn_notify_enabled.clone();
+        let notify = Arc::new(move || {
+            use libdd_remote_config::fetch::NotifyTarget;
+            if enabled.load(Ordering::Acquire)
+                && let Some(session) = session.load().filter(|s| s.remote_config_enabled)
+                && let Some(target) = session.notify_target()
+            {
+                target.notify();
             }
+        });
+        match super::ffe_config::CdnConnection::new(
+            self.server.cdn_configs.clone(),
+            self.server.remote_configs.publications.clone(),
+            config,
+            notify,
+            self.cdn_remote_config_generation,
+        ) {
+            Ok(connection) => self.cdn_subscription = Some(connection),
             Err(error) => warn!("Could not register CDN configuration: {error}"),
         }
     }
@@ -934,6 +927,9 @@ impl SidecarInterface for ConnectionSidecarHandler {
 
         self.cdn_notify_enabled.store(false, Ordering::Release);
         self.cdn_remote_config_generation = 0;
+        if let Some(cdn) = &self.cdn_subscription {
+            cdn.notify_current(0);
+        }
         self.session.store(session);
         // The application is registered for the previous session: the client sends it again.
         self.application.modify(|app| *app = None);
@@ -1019,10 +1015,8 @@ impl SidecarInterface for ConnectionSidecarHandler {
                 );
             }
         });
-        if let Some(cdn) = &self.cdn_subscription
-            && let Some(notification) = &cdn._notification
-        {
-            notification.notify_current(remote_config_generation);
+        if let Some(cdn) = &self.cdn_subscription {
+            cdn.notify_current(remote_config_generation);
         }
     }
 

@@ -65,6 +65,9 @@ impl PublicationStore {
         let source = sources
             .entry((invariants.clone(), target.clone()))
             .or_default();
+        if directory.is_empty() && source.agent.is_empty() {
+            return;
+        }
         source.agent = directory.to_vec();
         source.files = files.to_vec();
         source.cdn.retain(|p| p.strong_count() != 0);
@@ -93,11 +96,13 @@ impl PublicationStore {
         sources.retain(|_, source| {
             !source.agent.is_empty() || source.cdn.iter().any(|p| p.strong_count() != 0)
         });
+        // A failed allocation must not leave an empty source retaining the target.
+        let writer = RemoteConfigWriter::new(&invariants, &registration.target)?;
         let source = sources
             .entry((base, registration.target.clone()))
             .or_default();
         let publisher = Arc::new(Mutex::new(Publication {
-            writer: RemoteConfigWriter::new(&invariants, &registration.target)?,
+            writer,
             invariants,
             target: registration.target.clone(),
             agent: source.agent.clone(),
@@ -171,7 +176,8 @@ pub(crate) struct NotificationGuard {
 impl NotificationGuard {
     pub(crate) fn notify_current(&self, generation: u64) {
         let publication = self.publisher.0.lock_or_panic();
-        if publication.writer.current_generation() != 0
+        if generation != u64::MAX
+            && publication.writer.current_generation() != 0
             && publication.writer.current_generation() != generation
             && let Some(notify) = publication.notifiers.get(&self.id)
         {
@@ -188,7 +194,8 @@ impl CdnPublisher {
     pub(crate) fn register(&self, notify: Notify, generation: u64) -> NotificationGuard {
         let mut publication = self.0.lock_or_panic();
         let id = rand::random();
-        if publication.writer.current_generation() != 0
+        if generation != u64::MAX
+            && publication.writer.current_generation() != 0
             && publication.writer.current_generation() != generation
         {
             notify();
@@ -416,5 +423,138 @@ mod tests {
         while let RemoteConfigUpdate::Add { value, .. } = m.fetch_update() {
             assert_ne!(value.path, agent_ffe);
         }
+        store.expire_agent(&base, &r.target);
+        let mut after_expiry = RemoteConfigReader::new(&r.invariants().unwrap(), &r.target);
+        let (_, directory) = after_expiry.read();
+        let text = std::str::from_utf8(directory).unwrap();
+        assert!(
+            text.contains(&BASE64_URL_SAFE_NO_PAD.encode(CDN_PATH)),
+            "Agent expiry removed an accepted CDN file"
+        );
+        assert!(
+            !text.contains(&BASE64_URL_SAFE_NO_PAD.encode(apm.as_str())),
+            "Agent expiry retained withdrawn Agent products"
+        );
+    }
+    #[test]
+    #[cfg_attr(miri, ignore = "requires native shared memory")]
+    fn retained_agent_file_is_parseable_after_caller_releases_it() {
+        use libdd_remote_config::config::dynamic::DynamicConfigFile;
+        let r = registration();
+        let store = PublicationStore::default();
+        let mut base = r.invariants().unwrap();
+        base.publication_scope = None;
+        let path = Arc::new(RemoteConfigPath::parse("datadog/0/APM_TRACING/apm/config").unwrap());
+        let handle = store_shm(
+            1,
+            &path,
+            br#"{"action":"enable","lib_config":{"tracing_enabled":true}}"#.to_vec(),
+        )
+        .unwrap();
+        // SAFETY: the live handle owns the path during construction.
+        let directory = format!(
+            "runtime\n{}:0:{}\n",
+            unsafe { std::str::from_utf8(handle.get_path()).unwrap() },
+            BASE64_URL_SAFE_NO_PAD.encode(path.as_str())
+        );
+        let file = Arc::new(StoredShmFile {
+            handle: Mutex::new(Some(handle)),
+            limiter: Mutex::new(None),
+            refcount: FileRefcountData::new(1, path.clone()),
+        });
+        let weak = Arc::downgrade(&file);
+        store.agent_changed(&base, &r.target, directory.as_bytes(), &[file]);
+        // Only the source store owns the file now. A late CDN publisher must
+        // retain it too, and an ordinary manager must still open and parse it.
+        assert!(weak.upgrade().is_some());
+        let publisher = store.cdn(&r).unwrap();
+        publisher.apply(config("cdn")).unwrap();
+        let mut reader = manager(&r);
+        let mut saw_agent = false;
+        let mut saw_cdn = false;
+        while let RemoteConfigUpdate::Add { value, .. } = reader.fetch_update() {
+            if value.path == *path {
+                let data = value.data.unwrap();
+                let parsed = data.downcast::<DynamicConfigFile>().unwrap();
+                assert_eq!(parsed.action, "enable");
+                assert!(matches!(
+                    Vec::<Configs>::from(parsed.lib_config.clone()).as_slice(),
+                    [Configs::TracingEnabled(true)]
+                ));
+                saw_agent = true;
+            } else {
+                assert_eq!(value.path.as_str(), CDN_PATH);
+                saw_cdn = true;
+            }
+        }
+        assert!(
+            saw_agent && saw_cdn,
+            "both retained products must be readable"
+        );
+        store.expire_agent(&base, &r.target);
+        assert!(
+            weak.upgrade().is_none(),
+            "withdrawn Agent file was not released"
+        );
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "requires native shared memory")]
+    fn crucible_c07_expiring_absent_agent_keeps_retained_cdn() {
+        let r = registration();
+        let store = PublicationStore::default();
+        let p = store.cdn(&r).unwrap();
+        let mut m = manager(&r);
+        p.apply(config("first")).unwrap();
+        assert_add(&mut m);
+        drop(p);
+        let _replacement = store.cdn(&r).unwrap();
+        assert!(matches!(m.fetch_update(), RemoteConfigUpdate::None));
+        let mut base = r.invariants().unwrap();
+        base.publication_scope = None;
+        store.expire_agent(&base, &r.target);
+        assert!(
+            matches!(m.fetch_update(), RemoteConfigUpdate::None),
+            "expiry without an accepted Agent snapshot removed retained CDN flags"
+        );
+        store.agent_changed(&base, &r.target, b"accepted-agent\n", &[]);
+        assert!(
+            matches!(m.fetch_update(), RemoteConfigUpdate::Remove(_)),
+            "an accepted empty Agent directory must retain normal authoritative replacement"
+        );
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "requires native shared memory")]
+    fn crucible_c11_late_notification_respects_sentinel() {
+        let r = registration();
+        let store = PublicationStore::default();
+        let p = store.cdn(&r).unwrap();
+        p.apply(config("first")).unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let count = calls.clone();
+        let guard = p.register(
+            Arc::new(move || {
+                count.fetch_add(1, Ordering::SeqCst);
+            }),
+            u64::MAX,
+        );
+        let after_register = calls.load(Ordering::SeqCst);
+        guard.notify_current(u64::MAX);
+        let after_notify_current = calls.load(Ordering::SeqCst);
+        p.apply(config("changed")).unwrap();
+        let after_change = calls.load(Ordering::SeqCst);
+        eprintln!(
+            "register={after_register}, notify_current={after_notify_current}, changed={after_change}"
+        );
+        assert_eq!(
+            after_register, 0,
+            "late registration ignored no-notify sentinel"
+        );
+        assert_eq!(
+            after_notify_current, 0,
+            "late app update ignored no-notify sentinel"
+        );
+        assert_eq!(after_change, 1, "future publications must still notify");
     }
 }

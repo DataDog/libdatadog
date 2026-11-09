@@ -236,7 +236,7 @@ fn cdn_notifications_share_the_published_view_and_require_an_active_opted_in_app
         let r = registration("http://127.0.0.1:1/config");
         handler.set_connection_config(InstanceId::new("notify", "runtime"), SessionConfig::for_test()).await;
         handler.set_cdn_configuration(Some(r.clone())).await;
-        let publisher = handler.cdn_subscription.as_ref().unwrap().subscription.publisher.clone();
+        let publisher = handler.cdn_subscription.as_ref().unwrap().subscription().unwrap().publisher.clone();
         let config = |env: &str| Configuration::from_server_response(UniversalFlagConfig::from_json(format!(r#"{{"createdAt":"2026-11-06T00:00:00Z","environment":{{"name":"{env}"}},"flags":{{}}}}"#).into_bytes()).unwrap());
         publisher.apply(config("one")).unwrap();
         assert_eq!(SIGNALS.load(Ordering::SeqCst), 0);
@@ -252,7 +252,7 @@ fn cdn_notifications_share_the_published_view_and_require_an_active_opted_in_app
         assert_eq!(SIGNALS.load(Ordering::SeqCst), 1, "unchanged config notified again");
         let mut current = manager(&r);
         while !matches!(current.fetch_update(), RemoteConfigUpdate::None) {}
-        handler.set_application(Some(application), current.current_remote_config_generation()).await;
+        handler.set_application(Some(application.clone()), current.current_remote_config_generation()).await;
         tokio::time::sleep(Duration::from_millis(20)).await;
         assert_eq!(SIGNALS.load(Ordering::SeqCst), 1, "already-current application was notified again");
         publisher.apply(config("two")).unwrap();
@@ -262,6 +262,268 @@ fn cdn_notifications_share_the_published_view_and_require_an_active_opted_in_app
         handler.set_application(None, 0).await;
         publisher.apply(config("three")).unwrap();
         assert_eq!(SIGNALS.load(Ordering::SeqCst), 2, "inactive application received a signal");
+        handler.set_connection_config(InstanceId::new("notify", "runtime"), SessionConfig::for_test()).await;
+        handler.set_application(Some(application.clone()), 0).await;
+        publisher.apply(config("four")).unwrap();
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert_eq!(SIGNALS.load(Ordering::SeqCst), 2, "RC-disabled active app received a signal");
+        handler.set_connection_config(InstanceId::new("notify", "runtime"), SessionConfig { remote_config_enabled: true, endpoint: libdd_common::Endpoint { url: "http://127.0.0.1:1".parse().unwrap(), ..Default::default() }, ..SessionConfig::for_test() }).await;
+        handler.set_application(Some(application), 0).await;
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert_eq!(SIGNALS.load(Ordering::SeqCst), 3, "RC-enabled active app missed signal");
         handler.server.shutdown();
     });
+}
+
+#[tokio::test]
+#[cfg_attr(miri, ignore = "requires native HTTP and shared memory")]
+async fn crucible_c03_last_subscriber_cancels_http() {
+    use tokio::io::AsyncReadExt;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let store = crate::shm_remote_config::publication::PublicationStore::default();
+    let configs = super::super::ffe_config::CdnConfigs::default();
+    let mut r = registration(&format!("http://{}/config", listener.local_addr().unwrap()));
+    r.config.request_timeout = Duration::from_secs(30);
+    let first = configs.subscribe(r.clone(), &store).unwrap();
+    let second = configs.subscribe(r.clone(), &store).unwrap();
+    let (mut connection, _) = tokio::time::timeout(Duration::from_secs(2), listener.accept())
+        .await
+        .unwrap()
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(2), async {
+        let mut header = Vec::new();
+        while !header.ends_with(b"\r\n\r\n") {
+            header.push(connection.read_u8().await.unwrap());
+        }
+    })
+    .await
+    .expect("HTTP request headers should arrive");
+    drop(first);
+    let mut byte = [0];
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), connection.read(&mut byte))
+            .await
+            .is_err(),
+        "one remaining subscriber must keep its HTTP request"
+    );
+    drop(second);
+    let closed = tokio::time::timeout(Duration::from_millis(500), connection.read(&mut byte)).await;
+    assert!(
+        matches!(closed, Ok(Ok(0))),
+        "last subscriber did not cancel its HTTP request: {closed:?}"
+    );
+    let replacement = configs.subscribe(r, &store).unwrap();
+    let (_next, _) = tokio::time::timeout(Duration::from_secs(2), listener.accept())
+        .await
+        .unwrap()
+        .unwrap();
+    drop(replacement);
+}
+
+// Resource limits are process-global. Isolate these cases even under cargo test,
+// which otherwise runs unrelated tests in this process concurrently.
+#[cfg(target_os = "linux")]
+fn isolate_registration_test(name: &str) -> bool {
+    const CHILD: &str = "LIBDATADOG_CDN_RETRY_TEST_CHILD";
+    if std::env::var(CHILD).as_deref() == Ok(name) {
+        return false;
+    }
+    let result = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            &format!("service::sidecar_server::cdn_tests::{name}"),
+            "--nocapture",
+        ])
+        .env(CHILD, name)
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&result.stdout),
+        String::from_utf8_lossy(&result.stderr)
+    );
+    true
+}
+
+#[cfg(target_os = "linux")]
+struct RestoreFileLimit(libc::rlimit);
+#[cfg(target_os = "linux")]
+impl RestoreFileLimit {
+    fn exhaust() -> Self {
+        // SAFETY: the test is in an isolated child process and restores the soft
+        // limit with RAII, including on assertion failures.
+        unsafe {
+            let mut old: libc::rlimit = std::mem::zeroed();
+            assert_eq!(libc::getrlimit(libc::RLIMIT_NOFILE, &mut old), 0);
+            let limit = libc::rlimit {
+                rlim_cur: 0,
+                rlim_max: old.rlim_max,
+            };
+            assert_eq!(libc::setrlimit(libc::RLIMIT_NOFILE, &limit), 0);
+            Self(old)
+        }
+    }
+}
+#[cfg(target_os = "linux")]
+impl Drop for RestoreFileLimit {
+    fn drop(&mut self) {
+        // SAFETY: restore the unchanged hard limit and original soft limit.
+        assert_eq!(unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &self.0) }, 0);
+    }
+}
+
+#[tokio::test]
+#[cfg(target_os = "linux")]
+#[cfg_attr(miri, ignore = "requires native HTTP and resource limits")]
+async fn crucible_c08_registration_recovers_after_fd_pressure() {
+    if isolate_registration_test("crucible_c08_registration_recovers_after_fd_pressure") {
+        return;
+    }
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let r = registration(&format!("http://{}/config", listener.local_addr().unwrap()));
+    let server = SidecarServer::default().with_cdn_fetching(true);
+    let (connection, _peer) = SeqpacketConn::socketpair().unwrap();
+    let (other_connection, _other_peer) = SeqpacketConn::socketpair().unwrap();
+    let mut handler =
+        ConnectionSidecarHandler::new(server.clone(), OwnedServerConn::new(connection).unwrap());
+    let mut other =
+        ConnectionSidecarHandler::new(server, OwnedServerConn::new(other_connection).unwrap());
+    let restore = RestoreFileLimit::exhaust();
+    handler.set_cdn_configuration(Some(r.clone())).await;
+    other.set_cdn_configuration(Some(r.clone())).await;
+    // Identical messages must coalesce even while registration is pending.
+    handler.set_cdn_configuration(Some(r)).await;
+    assert!(
+        handler
+            .cdn_subscription
+            .as_ref()
+            .unwrap()
+            .subscription()
+            .is_none(),
+        "fault did not reject initial registration"
+    );
+    // The IPC handler still accepts unrelated work while resources are unavailable.
+    tokio::time::timeout(
+        Duration::from_millis(50),
+        handler.set_application(None, u64::MAX),
+    )
+    .await
+    .unwrap();
+    drop(restore);
+    let (_request, _) = tokio::time::timeout(Duration::from_secs(2), listener.accept())
+        .await
+        .expect("registration did not recover without a resend")
+        .unwrap();
+    // Both retries converge on the same cached poller.
+    let (first, second) = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let first = handler.cdn_subscription.as_ref().unwrap().subscription();
+            let second = other.cdn_subscription.as_ref().unwrap().subscription();
+            if let (Some(first), Some(second)) = (first, second) {
+                break (first, second);
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("both pending connections should recover");
+    assert!(Arc::ptr_eq(&first, &second));
+    let weak = Arc::downgrade(&first);
+    drop(first);
+    drop(second);
+    handler.set_cdn_configuration(None).await;
+    assert!(weak.upgrade().is_some());
+    drop(other);
+    assert!(
+        weak.upgrade().is_none(),
+        "disconnect retained the recovered subscription"
+    );
+}
+
+#[tokio::test]
+#[cfg(target_os = "linux")]
+#[cfg_attr(miri, ignore = "requires native HTTP and resource limits")]
+async fn cdn_pending_registration_cancels_on_clear_replacement_disconnect_and_shutdown() {
+    if isolate_registration_test(
+        "cdn_pending_registration_cancels_on_clear_replacement_disconnect_and_shutdown",
+    ) {
+        return;
+    }
+    for action in ["clear", "replace", "disconnect", "shutdown"] {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let replacement_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let r = registration(&format!("http://{}/config", listener.local_addr().unwrap()));
+        let target = Arc::downgrade(&r.target);
+        let server = SidecarServer::default().with_cdn_fetching(true);
+        let (connection, _peer) = SeqpacketConn::socketpair().unwrap();
+        let mut handler = ConnectionSidecarHandler::new(
+            server.clone(),
+            OwnedServerConn::new(connection).unwrap(),
+        );
+        let restore = RestoreFileLimit::exhaust();
+        handler.set_cdn_configuration(Some(r)).await;
+        assert!(
+            handler
+                .cdn_subscription
+                .as_ref()
+                .unwrap()
+                .subscription()
+                .is_none()
+        );
+        drop(restore);
+        match action {
+            "clear" => handler.set_cdn_configuration(None).await,
+            "replace" => {
+                handler
+                    .set_cdn_configuration(Some(registration(&format!(
+                        "http://{}/config",
+                        replacement_listener.local_addr().unwrap()
+                    ))))
+                    .await
+            }
+            "disconnect" => drop(handler),
+            "shutdown" => server.shutdown(),
+            _ => unreachable!(),
+        }
+        assert!(
+            tokio::time::timeout(Duration::from_millis(350), listener.accept())
+                .await
+                .is_err(),
+            "{action} left the old registration retrying"
+        );
+        if action == "replace" {
+            tokio::time::timeout(Duration::from_secs(2), replacement_listener.accept())
+                .await
+                .expect("replacement did not fetch")
+                .unwrap();
+        }
+        if action != "shutdown" {
+            assert!(
+                target.upgrade().is_none(),
+                "{action} retained the old registration identity"
+            );
+        }
+        server.shutdown();
+    }
+}
+
+#[tokio::test]
+#[cfg_attr(miri, ignore = "requires native HTTP and IPC")]
+async fn cdn_invalid_registration_is_terminal() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mut r = registration(&format!("http://{}/config", listener.local_addr().unwrap()));
+    r.config.poll_interval = Duration::ZERO;
+    let (connection, _peer) = SeqpacketConn::socketpair().unwrap();
+    let mut handler = ConnectionSidecarHandler::new(
+        SidecarServer::default().with_cdn_fetching(true),
+        OwnedServerConn::new(connection).unwrap(),
+    );
+    handler.set_cdn_configuration(Some(r)).await;
+    assert!(handler.cdn_subscription.is_none());
+    assert!(
+        tokio::time::timeout(Duration::from_millis(350), listener.accept())
+            .await
+            .is_err()
+    );
 }
