@@ -67,7 +67,7 @@ macro_rules! parse_tags {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct CrashInfo {
-    /// Pre-encoded v0.4 trace payload from `DD_CRASHTRACK_BEGIN_APM_TRACE_PAYLOAD`.
+    /// Pre-encoded v1 trace payload from `DD_CRASHTRACK_BEGIN_APM_TRACE_PAYLOAD`.
     /// Internal only — not serialized to the crash report JSON.
     #[serde(skip)]
     #[schemars(skip)]
@@ -108,6 +108,28 @@ impl CrashInfo {
 
     pub fn demangle_names(&mut self) -> anyhow::Result<()> {
         self.error.demangle_names()
+    }
+
+    /// The crash's error type, as reported to errors intake and on the spans the crash ended:
+    /// the signal name, else the error kind.
+    pub(crate) fn error_type(&self) -> String {
+        match &self.sig_info {
+            Some(sig_info) => format!("{:?}", sig_info.si_signo_human_readable),
+            None => format!("{:?}", self.error.kind),
+        }
+    }
+
+    /// The crash's error message, as reported to errors intake and on the spans the crash ended:
+    /// the collector's message, else one naming the signal.
+    pub(crate) fn error_message(&self) -> Option<String> {
+        self.error.message.clone().or_else(|| {
+            self.sig_info.as_ref().map(|sig_info| {
+                format!(
+                    "Process terminated with {:?} ({:?})",
+                    sig_info.si_code_human_readable, sig_info.si_signo_human_readable
+                )
+            })
+        })
     }
 
     /// Returns a comma-separated ddtags string for this crash report.

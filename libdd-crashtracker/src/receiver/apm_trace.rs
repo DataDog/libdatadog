@@ -13,14 +13,17 @@
 //!
 //! Every span in the payload is one the crash ends. Each gets:
 //! - `duration` ending at the crash, when the crash time is known and after the span's start;
-//! - `error = true`, `error.type = "crash"`, and an `error.message` naming the signal and crash
-//!   report;
-//! - `dd.crash_tracking.uuid`, linking the span to its crash report.
+//! - `error = true`, with the `error.type` and `error.message` errors intake reports;
+//! - `track_error = "false"`, so Error Tracking does not open an issue for the span: the crash
+//!   report sent to errors intake is the crash's one issue;
+//! - `error.is_crash = "true"` and `dd.crash_tracking.uuid`, which the trace view uses to find the
+//!   crash report and show its issue.
 //!
 //! If the payload cannot be decoded it is sent as staged: the tracer already
-//! marks its spans as failed crashes, only without the crash's details.
+//! marks its spans as failed crashes kept out of Error Tracking, only without the crash's
+//! details.
 
-use crate::crash_info::ApmTracePayload;
+use crate::crash_info::{ApmTracePayload, CrashInfo};
 use http::uri::PathAndQuery;
 use http_body_util::BodyExt;
 use libdd_common::{Endpoint, http_common, parse_uri};
@@ -33,14 +36,20 @@ use std::time::Duration;
 const V1_TRACES_PATH: &str = "/v1.0/traces";
 const SUBMIT_TIMEOUT: Duration = Duration::from_secs(3);
 
-pub(crate) const ERROR_TYPE: &str = "crash";
 pub(crate) const CRASH_UUID_KEY: &str = "dd.crash_tracking.uuid";
+/// With [`CRASH_UUID_KEY`], lets the trace view link the span to its crash report's issue.
+pub(crate) const IS_CRASH_KEY: &str = "error.is_crash";
+/// Error Tracking skips spans with `track_error = "false"`.
+pub(crate) const TRACK_ERROR_KEY: &str = "track_error";
 
 /// What the crash report knows about the crash, stamped into every span.
+/// The error fields are the ones the report sends to errors intake.
 pub(crate) struct CrashDetails<'a> {
     /// Wall-clock crash time in nanoseconds since the Unix epoch.
     pub crash_unix_ns: Option<u64>,
-    pub error_message: &'a str,
+    pub error_type: &'a str,
+    /// `None` keeps the message the tracer staged.
+    pub error_message: Option<&'a str>,
     pub uuid: &'a str,
 }
 
@@ -99,16 +108,38 @@ fn end_at_crash<'a>(span: &mut SpanSlice<'a>, crash: &CrashDetails<'a>) {
         span.duration = span.duration.max(end - span.start);
     }
     span.error = true;
-    for (key, value) in [
-        ("error.type", ERROR_TYPE),
+    let strings = [
+        ("error.type", Some(crash.error_type)),
         ("error.message", crash.error_message),
-        (CRASH_UUID_KEY, crash.uuid),
-    ] {
-        span.attributes.insert_or_replace(
-            Cow::Borrowed(key),
-            AttributeValue::String(Cow::Borrowed(value)),
-        );
+        (IS_CRASH_KEY, Some("true")),
+        (TRACK_ERROR_KEY, Some("false")),
+        (CRASH_UUID_KEY, Some(crash.uuid)),
+    ];
+    for (key, value) in strings {
+        if let Some(value) = value {
+            span.attributes.insert_or_replace(
+                Cow::Borrowed(key),
+                AttributeValue::String(Cow::Borrowed(value)),
+            );
+        }
     }
+}
+
+/// [`prepare`] with the crash details of `crash_info`: its crash time from the payload, and the
+/// error it reports to errors intake.
+pub(crate) fn prepare_from_report(
+    crash_info: &CrashInfo,
+    payload: &ApmTracePayload,
+) -> (TraceRequest, Option<String>) {
+    let error_type = crash_info.error_type();
+    let error_message = crash_info.error_message();
+    let crash = CrashDetails {
+        crash_unix_ns: payload.crash_unix_ns,
+        error_type: &error_type,
+        error_message: error_message.as_deref(),
+        uuid: &crash_info.uuid,
+    };
+    prepare(payload, &crash)
 }
 
 /// The crash payload's request: finalized when possible, else as staged.
@@ -195,6 +226,8 @@ pub(crate) async fn submit(agent_url: &str, request: TraceRequest) -> anyhow::Re
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::crash_info::ErrorsIntakePayload;
+    use crate::crash_info::test_utils::TestInstance;
     use libdd_trace_utils::span::SliceData;
     use libdd_trace_utils::span::v1::{SpanKind, TraceChunk, TracerPayload};
 
@@ -254,9 +287,16 @@ mod tests {
     fn crash(at: Option<u64>) -> CrashDetails<'static> {
         CrashDetails {
             crash_unix_ns: at,
-            error_message: "Process crashed (SIGSEGV). Crash report: abc",
+            error_type: "SIGSEGV",
+            error_message: Some("Crash during training (SIGSEGV)"),
             uuid: "abc",
         }
+    }
+
+    fn decoded_span(request: &TraceRequest) -> SpanSlice<'_> {
+        let (mut payload, used) = decode_v1::from_slice(&request.body).unwrap();
+        assert_eq!(used, request.body.len());
+        payload.chunks.remove(0).spans.remove(0)
     }
 
     fn string_attr<'s>(span: &'s SpanSlice<'_>, key: &str) -> Option<&'s str> {
@@ -280,11 +320,15 @@ mod tests {
         let span = &payload.chunks[0].spans[0];
         assert_eq!(span.duration, 42_000_000_000);
         assert!(span.error);
-        assert_eq!(string_attr(span, "error.type"), Some("crash"));
+        assert_eq!(string_attr(span, "error.type"), Some("SIGSEGV"));
         assert_eq!(
             string_attr(span, "error.message"),
-            Some("Process crashed (SIGSEGV). Crash report: abc")
+            Some("Crash during training (SIGSEGV)")
         );
+        // The crash report is the crash's issue: the span opens none.
+        assert_eq!(string_attr(span, IS_CRASH_KEY), Some("true"));
+        assert_eq!(string_attr(span, TRACK_ERROR_KEY), Some("false"));
+        assert_eq!(span.attributes.get("error.stack"), None);
         assert_eq!(string_attr(span, CRASH_UUID_KEY), Some("abc"));
         assert_eq!(string_attr(span, "training.status"), Some("failed"));
         // Strings interned after the new attributes keep their meaning.
@@ -294,6 +338,53 @@ mod tests {
         assert_eq!(payload.hostname, "gpu-host");
         assert_eq!(payload.chunks[0].priority, Some(1));
         assert_eq!(payload.chunks[0].trace_id, [3; 16]);
+    }
+
+    #[test]
+    fn keeps_the_staged_message_when_the_report_has_none() {
+        let details = CrashDetails {
+            error_message: None,
+            ..crash(None)
+        };
+        let request = finalize_v1(&staged_payload(), &details).unwrap();
+        let span = decoded_span(&request);
+        assert_eq!(
+            string_attr(&span, "error.message"),
+            Some("Process crashed during training")
+        );
+        assert_eq!(string_attr(&span, "error.type"), Some("SIGSEGV"));
+    }
+
+    /// The spans carry the error errors intake reports for the same crash.
+    #[test]
+    fn spans_carry_the_errors_intake_error() {
+        let crash_info = CrashInfo::test_instance(1);
+        let intake = ErrorsIntakePayload::from_crash_info(&crash_info)
+            .unwrap()
+            .error;
+        let payload = ApmTracePayload {
+            format: ApmTracePayload::FORMAT_V1.to_string(),
+            data: staged_payload(),
+            ..Default::default()
+        };
+        let (request, staged_because) = prepare_from_report(&crash_info, &payload);
+        assert_eq!(staged_because, None);
+        let span = decoded_span(&request);
+
+        assert_eq!(
+            string_attr(&span, "error.type"),
+            intake.error_type.as_deref()
+        );
+        assert_eq!(
+            string_attr(&span, "error.message"),
+            intake.message.as_deref()
+        );
+        assert_eq!(string_attr(&span, IS_CRASH_KEY), Some("true"));
+        assert_eq!(string_attr(&span, TRACK_ERROR_KEY), Some("false"));
+        assert_eq!(
+            string_attr(&span, CRASH_UUID_KEY),
+            Some(crash_info.uuid.as_str())
+        );
     }
 
     #[test]

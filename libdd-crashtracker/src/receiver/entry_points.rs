@@ -145,13 +145,7 @@ pub(crate) async fn receiver_entry_point(
         // as staged says why in the crash report, then sent alongside the
         // report so neither waits on, or is lost with, the other.
         let apm_trace = crash_info.apm_trace_payload.take().map(|payload| {
-            let message = crash_error_message(&crash_info);
-            let crash = apm_trace::CrashDetails {
-                crash_unix_ns: payload.crash_unix_ns,
-                error_message: &message,
-                uuid: &crash_info.uuid,
-            };
-            let (request, staged_because) = apm_trace::prepare(&payload, &crash);
+            let (request, staged_because) = apm_trace::prepare_from_report(&crash_info, &payload);
             (apm_trace::agent_url(&payload), request, staged_because)
         });
         let apm_trace = apm_trace.map(|(url, request, staged_because)| {
@@ -179,19 +173,6 @@ pub(crate) async fn receiver_entry_point(
         upload?;
     }
     Ok(())
-}
-
-/// `error.message` for spans the crash ended: the signal and the crash report.
-fn crash_error_message(crash_info: &crate::crash_info::CrashInfo) -> String {
-    let signal = crash_info
-        .sig_info
-        .as_ref()
-        .map(|sig| format!("{:?}", sig.si_signo_human_readable))
-        .unwrap_or_else(|| "unknown signal".to_string());
-    format!(
-        "Process crashed ({signal}). Crash report: {}",
-        crash_info.uuid
-    )
 }
 
 fn receiver_timeout() -> Duration {
