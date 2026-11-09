@@ -15,12 +15,18 @@ const RECORD_SIZE: usize = 640;
 pub(crate) enum OtelTlsError {
     /// I/O error reading `/proc/<pid>/mem`.
     Io(std::io::Error),
+    /// The DTV pointer read from the thread's TCB was null.
+    DtvNull,
+    /// The DTV entry for the TLS module is unallocated (the thread has never accessed it).
+    TlsNotAllocated,
 }
 
 impl fmt::Display for OtelTlsError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Io(e) => write!(f, "I/O error: {e}"),
+            Self::DtvNull => write!(f, "DTV pointer is null"),
+            Self::TlsNotAllocated => write!(f, "TLS block not allocated for this thread"),
         }
     }
 }
@@ -63,6 +69,65 @@ pub(crate) fn read_tls_slot_value(pid: u32, slot_addr: u64) -> Result<u64, OtelT
     let mut buf = [0u8; 8];
     read_remote_memory(pid, slot_addr, &mut buf)?;
     Ok(u64::from_ne_bytes(buf))
+}
+
+/// Resolve the address of a TLS variable for a remote thread by walking its
+/// Dynamic Thread Vector
+///
+/// This is correct for both static TLS (initial-exec / local-exec) and dynamic TLS
+/// (global-dynamic / TLSDESC backed by `__tls_get_addr`)
+///
+/// # Arguments
+///
+/// * `pid`    – process ID (for `/proc/<pid>/mem` reads)
+/// * `tp`     – thread pointer (`fs_base` on x86_64, `tpidr_el0` on aarch64)
+/// * `modid`  – TLS module ID (from `dl_iterate_phdr`)
+/// * `offset` – byte offset of the variable within the module's TLS block
+///
+/// # DTV layout
+///
+/// On both glibc and musl the DTV pointer lives at `TP + 8` (this is the second field of the TCB).
+///
+/// - **glibc**: each DTV entry is a 16-byte `dtv_t` union (`{ void *val; bool is_static; }`).
+///   `dtv[0].counter` is the generation; `dtv[modid].pointer.val` is the TLS block base.
+///   `TLS_DTV_UNALLOCATED = (void *)-1`.
+///
+/// - **musl**: each DTV entry is a plain `uintptr_t` (8 bytes). `dtv[0]` is unused/count;
+///   `dtv[modid]` is the TLS block base.
+pub(crate) fn resolve_tls_addr_via_dtv(
+    pid: u32,
+    tp: u64,
+    modid: usize,
+    offset: usize,
+) -> Result<u64, OtelTlsError> {
+    // The DTV pointer is at TP + 8 on both 64 bit glibc and musl.
+    const DTV_PTR_OFFSET: u64 = 8;
+    let mut buf = [0u8; 8];
+    read_remote_memory(pid, tp + DTV_PTR_OFFSET, &mut buf)?;
+    let dtv_ptr = u64::from_ne_bytes(buf);
+
+    if dtv_ptr == 0 {
+        return Err(OtelTlsError::DtvNull);
+    }
+
+    // glibc: sizeof(dtv_t) = 16 (union of {void*, bool} padded to 16 bytes).
+    // musl:  sizeof(uintptr_t) = 8.
+    #[cfg(target_env = "gnu")]
+    const DTV_ENTRY_SIZE: u64 = 16;
+    #[cfg(target_env = "musl")]
+    const DTV_ENTRY_SIZE: u64 = 8;
+
+    // modid fits in u64 on all 64-bit targets
+    let entry_addr = dtv_ptr + (modid as u64) * DTV_ENTRY_SIZE;
+    read_remote_memory(pid, entry_addr, &mut buf)?;
+    let tls_block_base = u64::from_ne_bytes(buf);
+
+    // TLS_DTV_UNALLOCATED = (void *)-1 on glibc; treat 0 as unallocated too.
+    if tls_block_base == u64::MAX || tls_block_base == 0 {
+        return Err(OtelTlsError::TlsNotAllocated);
+    }
+
+    Ok(tls_block_base + offset as u64)
 }
 
 /// Decode a raw 640-byte `ThreadContextRecord`.

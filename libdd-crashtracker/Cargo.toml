@@ -48,7 +48,7 @@ page_size.workspace = true
 [target.'cfg(target_os = "linux")'.dependencies]
 libdd-gotter = { version = "1.1.0", path = "../libdd-gotter" }
 libdd-libunwind-sys.workspace = true
-libdd-otel-thread-ctx = { version = "2.0.0", path = "../libdd-otel-thread-ctx", default-features = false, features = ["owned-context"], optional = true }
+libdd-otel-thread-ctx = { version = "2.0.0", path = "../libdd-otel-thread-ctx", default-features = false, features = ["owned-context", "dl-iterate"], optional = true }
 
 [dependencies]
 anyhow.workspace = true

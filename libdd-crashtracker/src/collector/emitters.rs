@@ -983,11 +983,18 @@ fn emit_text_file(w: &mut impl Write, path: &str) -> Result<(), EmitterError> {
 
 /// Stream per-thread OTel context records to the receiver one at a time.
 ///
-/// For each thread: ptrace-attach to read the TP register, compute the TLS
-/// slot address, read the record pointer and the 640-byte record from
-/// `/proc/<ppid>/mem` while the thread is still stopped, then detach. Each
-/// valid record is emitted as its own protocol section so the receiver decodes
-/// and collects them individually.
+/// For each thread: ptrace-attach to read the TP register, resolve the TLS
+/// slot address via DTV walk, read the record pointer and the 640-byte record
+/// from `/proc/<ppid>/mem` while the thread is still stopped, then detach.
+/// Each valid record is emitted as its own protocol section so the receiver
+/// decodes and collects them individually.
+///
+/// # Preconditions
+///
+/// * The process must use libdatadog's own `libdd-otel-thread-ctx` crate to publish OTel thread
+///   context. If another implementation defines the `otel_thread_ctx_v1` TLS symbol in a different
+///   shared object, this function will resolve libdatadog's unwritten copy and silently produce no
+///   results.
 #[cfg(all(target_os = "linux", feature = "otel-thread-ctx"))]
 fn emit_otel_thread_contexts(
     w: &mut impl Write,
@@ -996,30 +1003,20 @@ fn emit_otel_thread_contexts(
     max_threads: usize,
     deadline: Instant,
 ) -> Result<(), EmitterError> {
-    use crate::otel_tls_reader::{OTEL_RECORD_SIZE, read_raw_record, read_tls_slot_value};
+    use crate::otel_tls_reader::{
+        OTEL_RECORD_SIZE, read_raw_record, read_tls_slot_value, resolve_tls_addr_via_dtv,
+    };
     use crate::ptrace_collector::{
         attach_thread, detach_thread, enumerate_threads, read_thread_pointer,
     };
 
-    let slot_addr = libdd_otel_thread_ctx::linux::tls_slot_address();
-    if slot_addr == 0 {
-        return Ok(()); // Symbol not linked.
-    }
+    // Resolve the TLS module ID and intra-module offset for `otel_thread_ctx_v1`.
+    // This uses dl_iterate_phdr and works regardless of the TLS model (static or dynamic).
+    let Some((modid, tls_offset)) = libdd_otel_thread_ctx::linux::tls_module_and_offset() else {
+        return Ok(()); // Symbol not linked or module not found via dl_iterate_phdr.
+    };
 
     let stop_timeout = core::time::Duration::from_millis(100);
-
-    // Read the crashing thread's TP to derive the TLS offset.
-    let stop_deadline = (Instant::now() + stop_timeout).min(deadline);
-    let Ok(()) = attach_thread(crashing_tid, stop_deadline) else {
-        return Ok(());
-    };
-    let crashing_tp = read_thread_pointer(crashing_tid);
-    let _ = detach_thread(crashing_tid);
-    let Ok(crashing_tp) = crashing_tp else {
-        return Ok(());
-    };
-
-    let tls_offset = slot_addr as i64 - crashing_tp as i64;
 
     let Ok(tids) = enumerate_threads(ppid) else {
         return Ok(());
@@ -1029,23 +1026,27 @@ fn emit_otel_thread_contexts(
     let mut record_buf = [0u8; OTEL_RECORD_SIZE];
     let mut processed = 0;
 
-    // attach, read TLS while stopped, detach, emit.
+    // attach, resolve TLS via DTV while stopped, read record, detach, emit.
     let mut try_emit_otel = |tid: libc::pid_t| -> Result<bool, EmitterError> {
         let stop_deadline = (Instant::now() + stop_timeout).min(deadline);
         if attach_thread(tid, stop_deadline).is_err() {
             return Ok(false);
         }
 
-        // Keep the thread stopped while reading TP, TLS slot, and record so
-        // it cannot resume and invalidate the addresses.
+        // Keep the thread stopped while reading TP, walking DTV, and reading
+        // the record so it cannot resume and invalidate the addresses.
         let emitted = (|| -> Result<bool, EmitterError> {
             let tp = match read_thread_pointer(tid) {
                 Ok(tp) => tp,
                 Err(_) => return Ok(false),
             };
 
-            let this_slot = (tp as i64).wrapping_add(tls_offset) as u64;
-            let record_ptr = match read_tls_slot_value(pid, this_slot) {
+            // Walk this thread's DTV to find the TLS block base for our module.
+            let slot_addr = match resolve_tls_addr_via_dtv(pid, tp, modid, tls_offset) {
+                Ok(addr) => addr,
+                Err(_) => return Ok(false), // DTV null, TLS not allocated, or I/O error.
+            };
+            let record_ptr = match read_tls_slot_value(pid, slot_addr) {
                 Ok(ptr) if ptr != 0 => ptr,
                 _ => return Ok(false),
             };
