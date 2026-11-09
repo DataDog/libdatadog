@@ -12,7 +12,10 @@ use rmp::encode::{
 };
 use std::borrow::Borrow;
 
-use super::{AnyValueKey, SpanEventKey, SpanKey, SpanLinkKey, StringTable, normalize_span_start};
+use super::{
+    AnyValueKey, SpanEventKey, SpanKey, SpanLinkKey, StringTable, TYPED_VALUE_STRIDE,
+    normalize_span_start,
+};
 
 /// Maps the `span.kind` string tag (from v0.4 meta) to the OTEL SpanKind uint32.
 ///
@@ -164,7 +167,7 @@ fn encode_attribute_any_value<W: RmpWrite, T: TraceData>(
         }
         AttributeAnyValue::Array(array) => {
             write_uint8(writer, AnyValueKey::Array as u8)?;
-            rmp::encode::write_array_len(writer, array.len() as u32)?;
+            rmp::encode::write_array_len(writer, array.len() as u32 * TYPED_VALUE_STRIDE)?;
             for v in array {
                 encode_array_element(writer, v, table)?;
             }
