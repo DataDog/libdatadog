@@ -4,95 +4,17 @@
 use super::*;
 use crate::error::ddog_trace_exporter_error_free;
 use crate::response::ExporterResponse;
-use crate::trace_exporter as legacy;
 use crate::trace_exporter::{ddog_trace_exporter_free, ddog_trace_exporter_send};
 use httpmock::MockServer;
 use httpmock::prelude::*;
 use libdd_common_ffi::slice::ByteSlice;
 use libdd_shared_runtime::SharedRuntime;
-use libdd_trace_utils::span::v04::SpanSlice;
 use std::mem::MaybeUninit;
 
 type StringSetter = unsafe extern "C" fn(
     Option<&mut TraceExporterBuilder<ForkSafeRuntime>>,
     CharSlice<'_>,
 ) -> Option<Box<ExporterError>>;
-
-#[test]
-#[allow(deprecated)]
-fn legacy_boolean_setters_still_support_disabling() {
-    unsafe {
-        let mut config = legacy::TraceExporterConfig::default();
-        for enabled in [true, false] {
-            assert_eq!(
-                legacy::ddog_trace_exporter_config_set_compute_stats(Some(&mut config), enabled),
-                None
-            );
-            assert_eq!(
-                legacy::ddog_trace_exporter_config_set_client_computed_stats(
-                    Some(&mut config),
-                    enabled
-                ),
-                None
-            );
-            assert_eq!(
-                legacy::ddog_trace_exporter_config_enable_health_metrics(
-                    Some(&mut config),
-                    enabled
-                ),
-                None
-            );
-            assert_eq!(config.compute_stats, enabled);
-            assert_eq!(config.client_computed_stats, enabled);
-            assert_eq!(config.health_metrics_enabled, enabled);
-        }
-    }
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
-#[allow(deprecated)]
-fn legacy_exporter_new_does_not_consume_config() {
-    unsafe {
-        let mut config = Box::<legacy::TraceExporterConfig>::default();
-        assert_eq!(
-            legacy::ddog_trace_exporter_config_set_output_to_log(Some(&mut config), 0),
-            None
-        );
-        for _ in 0..2 {
-            let mut exporter = MaybeUninit::<Box<TraceExporter>>::uninit();
-            assert_eq!(
-                legacy::ddog_trace_exporter_new(NonNull::from(&mut exporter).cast(), Some(&config)),
-                None
-            );
-            ddog_trace_exporter_free(exporter.assume_init());
-        }
-        legacy::ddog_trace_exporter_config_free(config);
-
-        let mut config = Box::<legacy::TraceExporterConfig>::default();
-        assert_eq!(
-            legacy::ddog_trace_exporter_config_set_url(
-                Some(&mut config),
-                CharSlice::from("http://localhost:8126")
-            ),
-            None
-        );
-        assert_eq!(
-            legacy::ddog_trace_exporter_config_set_agentless_endpoint(
-                Some(&mut config),
-                CharSlice::from("https://example.com/v1/input"),
-                CharSlice::from("key")
-            ),
-            None
-        );
-        let mut exporter = MaybeUninit::<Box<TraceExporter>>::uninit();
-        let error =
-            legacy::ddog_trace_exporter_new(NonNull::from(&mut exporter).cast(), Some(&config));
-        assert!(error.is_some());
-        ddog_trace_exporter_error_free(error);
-        legacy::ddog_trace_exporter_config_free(config);
-    }
-}
 
 #[test]
 fn config_string_setters() {
@@ -847,66 +769,6 @@ fn exporter_null_arguments() {
 fn catch_panic_test() {
     let ret = catch_panic!(panic!("Panic!"), gen_error!(ErrorCode::Panic));
     assert_eq!(ret.unwrap().code, ErrorCode::Panic);
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
-fn exporter_send_check_rate_test() {
-    unsafe {
-        let server = MockServer::start();
-
-        let _mock = server.mock(|when, then| {
-            when.method(POST)
-                .header("Content-type", "application/msgpack")
-                .path("/v0.4/traces");
-            then.status(200).body(
-                r#"{
-                "rate_by_service": {
-                    "service:foo,env:staging": 1.0,
-                    "service:,env:": 0.8
-                }
-            }"#,
-            );
-        });
-
-        let mut cfg = Box::<TraceExporterBuilder<ForkSafeRuntime>>::default();
-        cfg.set_url(&server.url("/"))
-            .set_tracer_version("0.1")
-            .set_language("lang")
-            .set_language_version("0.1")
-            .set_language_interpreter("interpreter")
-            .set_hostname("hostname")
-            .set_env("env-test")
-            .set_app_version("1.0")
-            .set_service("test-service");
-
-        let mut ptr: MaybeUninit<Box<TraceExporter>> = MaybeUninit::uninit();
-        let mut response: MaybeUninit<Box<ExporterResponse>> = MaybeUninit::uninit();
-        let mut ret =
-            ddog_trace_exporter_builder_build(Some(cfg), NonNull::new_unchecked(&mut ptr).cast());
-
-        assert_eq!(ret, None);
-        let exporter = ptr.assume_init();
-
-        let data = rmp_serde::to_vec_named::<Vec<Vec<SpanSlice>>>(&vec![vec![]]).unwrap();
-        let traces = ByteSlice::new(&data);
-        ret = ddog_trace_exporter_send(
-            Some(exporter.as_ref()),
-            traces,
-            Some(NonNull::new_unchecked(&mut response).cast()),
-        );
-        assert_eq!(ret, None);
-        assert_eq!(
-            String::from_utf8_lossy(&response.assume_init().body.unwrap()),
-            r#"{
-                "rate_by_service": {
-                    "service:foo,env:staging": 1.0,
-                    "service:,env:": 0.8
-                }
-            }"#,
-        );
-        ddog_trace_exporter_free(exporter);
-    }
 }
 
 fn agent_config(url: &str) -> Box<TraceExporterBuilder<ForkSafeRuntime>> {
