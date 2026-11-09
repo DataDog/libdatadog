@@ -313,6 +313,9 @@ impl<T: Worker + MaybeSend + MaybeSync + 'static> PausableWorker<T> {
 }
 
 /// Token returned by a flush request, used to wait for the flush to complete.
+///
+/// If the worker is shut down before processing the request, the token is marked as completed:
+/// [`Worker::shutdown`] counts as a flush, so queued flush requests are acknowledged on shutdown.
 #[must_use = "a FlushToken should be awaited with wait() to observe flush completion"]
 #[derive(Debug)]
 pub struct FlushToken {
