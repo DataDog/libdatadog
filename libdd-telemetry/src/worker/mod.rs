@@ -1191,6 +1191,12 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static>
     /// moment it is called, including a request already in flight: when the bound elapses,
     /// requests are cancelled and the stop completes promptly. Prefer it over calling
     /// [`WorkerHandle::stop`](libdd_shared_runtime::WorkerHandle::stop) directly.
+    ///
+    /// # Cancel safety
+    /// This function is *NOT* cancel safe, the same contract as `WorkerHandle::stop`: dropping
+    /// or cancelling the returned future (e.g. in a `select!` or under an external timeout)
+    /// can leave the worker in an invalid state. The shutdown timeout itself never cancels it:
+    /// it only cancels the worker's requests and keeps driving the stop to completion.
     pub async fn stop_worker(
         &self,
         worker_handle: libdd_shared_runtime::WorkerHandle,

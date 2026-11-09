@@ -153,7 +153,7 @@ impl TelemetryClientBuilder {
 
         builder.mutable_metadata = self.mutable_metadata;
 
-        // The worker runs on a SharedRuntime and is shut down via WorkerHandle::stop.
+        // The worker runs on a SharedRuntime; stop it with TelemetryWorkerHandle::stop_worker.
         let (worker_handle, worker) = builder.build_worker::<C>();
 
         Ok((
@@ -186,6 +186,11 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> std
 }
 
 impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> TelemetryClient<C> {
+    /// The handle the worker was built with; pass it the worker's `WorkerHandle` to stop it.
+    pub(crate) fn worker_handle(&self) -> &TelemetryWorkerHandle<C> {
+        &self.worker
+    }
+
     /// Allow sharing a telemetry worker with data-pipeline
     pub fn with_handle(handle: TelemetryWorkerHandle<C>) -> Self {
         TelemetryClient {
