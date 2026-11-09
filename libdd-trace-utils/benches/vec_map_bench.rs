@@ -12,11 +12,12 @@ use criterion::{BatchSize, BenchmarkId, Criterion, criterion_group, criterion_ma
 use libdd_tinybytes::BytesString;
 use libdd_trace_utils::span::vec_map::VecMap;
 use std::hint::black_box;
+use std::time::Duration;
 
 /// Representative map sizes: the small end is the common case (a span carries a handful of tags),
 /// the larger end covers heavily-tagged spans. Deliberately bounded — `VecMap` is never expected
 /// to hold thousands of entries.
-const SIZES: &[usize] = &[8, 16, 64, 128];
+const SIZES: &[usize] = &[8, 64, 128];
 
 /// A small set of prefixes resembling real span meta namespaces. Includes an empty prefix so that
 /// not every key shares a common head — keys generated from different prefixes diverge on the very
@@ -63,10 +64,25 @@ fn populated_metrics(n: usize) -> VecMap<BytesString, f64> {
         .collect()
 }
 
+/// Group-level criterion settings override the runner's global flags (`--measurement-time 5
+/// --sample-size 200`); see `credit_cards_bench.rs` for the precedent. All VecMap ops are ns–µs
+/// and each sample already averages tens of thousands of iterations, so short sampling keeps the
+/// 8-group matrix cheap without losing signal.
+fn fast_group<'a>(
+    c: &'a mut Criterion,
+    name: &str,
+) -> criterion::BenchmarkGroup<'a, criterion::measurement::WallTime> {
+    let mut group = c.benchmark_group(name);
+    group.warm_up_time(Duration::from_secs(1));
+    group.measurement_time(Duration::from_secs(1));
+    group.sample_size(100);
+    group
+}
+
 /// Insert: builds a fresh map of `n` entries from scratch (the construction path on the client's
 /// hot path). `insert` mutates, so we rebuild the input each iteration with `iter_batched`.
 fn bench_insert(c: &mut Criterion) {
-    let mut group = c.benchmark_group("vec_map/insert");
+    let mut group = fast_group(c, "vec_map/insert");
 
     for &n in SIZES {
         group.throughput(criterion::Throughput::Elements(n as u64));
@@ -92,7 +108,7 @@ fn bench_insert(c: &mut Criterion) {
 /// Get (hit): looks up every present key once, reporting the average successful-lookup cost.
 /// `get` returns the last match (scanning from the back), so this averages over scan distances.
 fn bench_get_hit(c: &mut Criterion) {
-    let mut group = c.benchmark_group("vec_map/get_hit");
+    let mut group = fast_group(c, "vec_map/get_hit");
 
     for &n in SIZES {
         group.throughput(criterion::Throughput::Elements(n as u64));
@@ -111,7 +127,7 @@ fn bench_get_hit(c: &mut Criterion) {
 
 /// Get (miss): worst case for a linear-scan map — a full scan that finds nothing.
 fn bench_get_miss(c: &mut Criterion) {
-    let mut group = c.benchmark_group("vec_map/get_miss");
+    let mut group = fast_group(c, "vec_map/get_miss");
 
     for &n in SIZES {
         let map = populated_meta(n);
@@ -126,7 +142,7 @@ fn bench_get_miss(c: &mut Criterion) {
 
 /// Get_mut (hit): mutable lookup of every key.
 fn bench_get_mut(c: &mut Criterion) {
-    let mut group = c.benchmark_group("vec_map/get_mut");
+    let mut group = fast_group(c, "vec_map/get_mut");
 
     for &n in SIZES {
         group.throughput(criterion::Throughput::Elements(n as u64));
@@ -150,7 +166,7 @@ fn bench_get_mut(c: &mut Criterion) {
 
 /// Contains_key: full scan (`any`), checking every present key plus one absent key.
 fn bench_contains_key(c: &mut Criterion) {
-    let mut group = c.benchmark_group("vec_map/contains_key");
+    let mut group = fast_group(c, "vec_map/contains_key");
 
     for &n in SIZES {
         group.throughput(criterion::Throughput::Elements(n as u64));
@@ -170,7 +186,7 @@ fn bench_contains_key(c: &mut Criterion) {
 
 /// Iter: full traversal, as performed on the encode path.
 fn bench_iter(c: &mut Criterion) {
-    let mut group = c.benchmark_group("vec_map/iter");
+    let mut group = fast_group(c, "vec_map/iter");
 
     for &n in SIZES {
         group.throughput(criterion::Throughput::Elements(n as u64));
@@ -207,7 +223,7 @@ fn meta_with_duplicates(n: usize, period: usize) -> VecMap<BytesString, BytesStr
 /// dedup(): runs once per span on decode. `dedup` mutates and sets a flag, so we rebuild the
 /// (un-deduped) input each iteration. Benched both with and without duplicates.
 fn bench_dedup(c: &mut Criterion) {
-    let mut group = c.benchmark_group("vec_map/dedup");
+    let mut group = fast_group(c, "vec_map/dedup");
 
     for &n in SIZES {
         group.bench_with_input(BenchmarkId::new("no_duplicates", n), &n, |b, &n| {
@@ -244,7 +260,7 @@ fn bench_dedup(c: &mut Criterion) {
 /// it borrows for free; when not, it dedup on the fly with a side allocation. Both cases are
 /// benched, and iterated through.
 fn bench_as_deduped_map(c: &mut Criterion) {
-    let mut group = c.benchmark_group("vec_map/as_deduped_map");
+    let mut group = fast_group(c, "vec_map/as_deduped_map");
 
     for &n in SIZES {
         // Already-deduped: cheap borrow path (the common case on encode).

@@ -1,0 +1,67 @@
+{
+  "$schema": "../../../../schema/provider-token-breakdown-metric-fixture.schema.json",
+  "profile": "trajectory.gen_ai.client.token_breakdown@0.1.0",
+  "case": "service-tier-beside-context-band",
+  "description": "A 250,000-token prompt, 200,000 of it read from cache, served at the priority tier. Every breakdown Counter carries the band of the whole prompt and the tier the provider applied. Uncached input is 250,000 less 200,000 read and 0 written: 50,000.",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "exampleai",
+    "request_model": "ex-long-1",
+    "input_tokens": 250000,
+    "input_basis": "includes_cache",
+    "output_tokens": 100,
+    "cache_read_input_tokens": 200000,
+    "cache_write_input_tokens": 0,
+    "context_band": "200k-1M",
+    "service_tier": "priority",
+    "observation_point": "gateway"
+  },
+  "expected_metrics": [
+    {
+      "name": "gen_ai.client.inference.usage.cache_read.input_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 200000,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.request.model": "ex-long-1",
+        "gen_ai.token.modality": "unknown",
+        "trajectory.context.band": "200k-1M",
+        "trajectory.request.service_tier": "priority",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.usage.cache_write.input_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 0,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.request.model": "ex-long-1",
+        "gen_ai.token.modality": "unknown",
+        "trajectory.context.band": "200k-1M",
+        "trajectory.request.service_tier": "priority",
+        "trajectory.cache.lifetime": "unspecified",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "trajectory.gen_ai.client.inference.usage.uncached.input_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 50000,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.request.model": "ex-long-1",
+        "gen_ai.token.modality": "unknown",
+        "trajectory.context.band": "200k-1M",
+        "trajectory.request.service_tier": "priority",
+        "trajectory.observation.point": "gateway"
+      }
+    }
+  ]
+}

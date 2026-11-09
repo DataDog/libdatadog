@@ -2,6 +2,20 @@
 
 
 
+## [11.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-obfuscation-v10.0.0..libdd-trace-obfuscation-v11.0.0) - 2026-10-23
+
+### Added
+
+- Add basic no_std to libdd-common ([#2638](https://github.com/datadog/libdatadog/issues/2638)) - ([d0dd0a2](https://github.com/datadog/libdatadog/commit/d0dd0a21ffca664d7c6a0798dd8c178234fd6750))
+- Follow the full sql config in CSS obfuscation ([#2535](https://github.com/datadog/libdatadog/issues/2535)) - ([278117f](https://github.com/datadog/libdatadog/commit/278117feead185ad0f97863ee19af7e2b99ddfca))
+- Add v1-native span obfuscation ([#2565](https://github.com/datadog/libdatadog/issues/2565)) - ([75d4447](https://github.com/datadog/libdatadog/commit/75d4447eb19cac5b1f0337fccf85f34d08af6c36))
+
+### Fixed
+
+- Most doc warnings ([#2289](https://github.com/datadog/libdatadog/issues/2289)) - ([f52ab62](https://github.com/datadog/libdatadog/commit/f52ab62fdaa1acc0ca9e8812a9e9468cc59af6b5))
+
+
+
 ## [10.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-obfuscation-v9.0.0..libdd-trace-obfuscation-v10.0.0) - 2026-10-02
 
 ### Added

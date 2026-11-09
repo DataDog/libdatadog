@@ -1,0 +1,125 @@
+{
+  "binding": "0.1.0",
+  "case": "histogram-companions",
+  "description": "Three duration samples in one second, two of them with the same tags. Every sample is a Distribution sample, and each tag set also gets one sum Count and one count Count. Names are under trajectory, and every series carries the profile tag with / as its separator.",
+  "profile": "gen_ai.client.provider_attempt@0.1.0",
+  "historical": false,
+  "points": [
+    {
+      "name": "gen_ai.client.inference.duration",
+      "instrument": "histogram",
+      "unit": "s",
+      "value": 0.5,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.duration",
+      "instrument": "histogram",
+      "unit": "s",
+      "value": 0.25,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.duration",
+      "instrument": "histogram",
+      "unit": "s",
+      "value": 2,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "error.type": "timeout",
+        "trajectory.observation.point": "gateway"
+      }
+    }
+  ],
+  "expected_series": [
+    {
+      "name": "gen_ai.client.inference.duration",
+      "type": "distribution",
+      "value": 2,
+      "tags": [
+        "error.type:timeout",
+        "gen_ai.operation.name:chat",
+        "gen_ai.provider.name:exampleai",
+        "trajectory.observation.point:gateway",
+        "trajectory.profile:gen_ai.client.provider_attempt/0.1.0"
+      ]
+    },
+    {
+      "name": "gen_ai.client.inference.duration",
+      "type": "distribution",
+      "value": 0.25,
+      "tags": [
+        "gen_ai.operation.name:chat",
+        "gen_ai.provider.name:exampleai",
+        "trajectory.observation.point:gateway",
+        "trajectory.profile:gen_ai.client.provider_attempt/0.1.0"
+      ]
+    },
+    {
+      "name": "gen_ai.client.inference.duration",
+      "type": "distribution",
+      "value": 0.5,
+      "tags": [
+        "gen_ai.operation.name:chat",
+        "gen_ai.provider.name:exampleai",
+        "trajectory.observation.point:gateway",
+        "trajectory.profile:gen_ai.client.provider_attempt/0.1.0"
+      ]
+    },
+    {
+      "name": "gen_ai.client.inference.duration.count",
+      "type": "count",
+      "value": 1,
+      "tags": [
+        "error.type:timeout",
+        "gen_ai.operation.name:chat",
+        "gen_ai.provider.name:exampleai",
+        "trajectory.observation.point:gateway",
+        "trajectory.profile:gen_ai.client.provider_attempt/0.1.0"
+      ]
+    },
+    {
+      "name": "gen_ai.client.inference.duration.count",
+      "type": "count",
+      "value": 2,
+      "tags": [
+        "gen_ai.operation.name:chat",
+        "gen_ai.provider.name:exampleai",
+        "trajectory.observation.point:gateway",
+        "trajectory.profile:gen_ai.client.provider_attempt/0.1.0"
+      ]
+    },
+    {
+      "name": "gen_ai.client.inference.duration.sum",
+      "type": "count",
+      "value": 2,
+      "tags": [
+        "error.type:timeout",
+        "gen_ai.operation.name:chat",
+        "gen_ai.provider.name:exampleai",
+        "trajectory.observation.point:gateway",
+        "trajectory.profile:gen_ai.client.provider_attempt/0.1.0"
+      ]
+    },
+    {
+      "name": "gen_ai.client.inference.duration.sum",
+      "type": "count",
+      "value": 0.75,
+      "tags": [
+        "gen_ai.operation.name:chat",
+        "gen_ai.provider.name:exampleai",
+        "trajectory.observation.point:gateway",
+        "trajectory.profile:gen_ai.client.provider_attempt/0.1.0"
+      ]
+    }
+  ]
+}

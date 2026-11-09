@@ -395,16 +395,16 @@ impl TryFrom<&dyn RemoteConfigParsedData> for FlareAction {
 
     fn try_from(data: &dyn RemoteConfigParsedData) -> Result<Self, Self::Error> {
         if let Some(agent_config) = data.as_any().downcast_ref::<AgentConfigFile>() {
-            if agent_config.name.starts_with("flare-log-level.") {
-                if let Some(log_level) = &agent_config.config.log_level {
-                    let log_level = log_level.as_str().try_into()?;
-                    return Ok(FlareAction::Set(log_level));
-                }
+            if agent_config.name.starts_with("flare-log-level.")
+                && let Some(log_level) = &agent_config.config.log_level
+            {
+                let log_level = log_level.as_str().try_into()?;
+                return Ok(FlareAction::Set(log_level));
             }
-        } else if let Some(agent_task) = data.as_any().downcast_ref::<AgentTaskFile>() {
-            if agent_task.task_type.eq("tracer_flare") {
-                return Ok(FlareAction::Send(agent_task.to_owned()));
-            }
+        } else if let Some(agent_task) = data.as_any().downcast_ref::<AgentTaskFile>()
+            && agent_task.task_type.eq("tracer_flare")
+        {
+            return Ok(FlareAction::Send(agent_task.to_owned()));
         }
         Ok(FlareAction::None)
     }

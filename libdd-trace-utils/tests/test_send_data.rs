@@ -444,9 +444,9 @@ mod tracing_integration_tests {
     /// for n > 1), plus the primitive `AttributeValue` variants the test-agent currently
     /// supports.
     ///
-    /// APMSP-3479 - TODO: `AttributeValue::List` and `AttributeValue::KeyValue` are deliberately
-    /// omitted because not yet supported by `ddapm-test-agent` v1.56.0. Once test-agent V1
-    /// support catches up, add them here too.
+    /// APMSP-3479 - TODO: `AttributeValue::Array` and `AttributeValue::KeyValueList` are
+    /// deliberately omitted because not yet supported by `ddapm-test-agent` v1.56.0. Once
+    /// test-agent V1 support catches up, add them here too.
     fn make_v1_payload(name_prefix: &str) -> libdd_trace_utils::span::v1::TracerPayloadBytes {
         use libdd_trace_utils::span::v1::{
             AttributeValue, AttributeValueBytes, SpanBytes as V1SpanBytes, SpanEventBytes,
@@ -634,8 +634,8 @@ mod tracing_integration_tests {
     /// (v1.56.0) is able to decode: `AttributeValue::String/Bool/Int/Float`, span links with
     /// non-empty attributes, span events with non-empty attributes, plus chunk-level attributes.
     ///
-    /// APMSP-3479 - TODO: `AttributeValue::Bytes`, `AttributeValue::List` and
-    /// `AttributeValue::KeyValue` are deliberately omitted — `ddapm-test-agent` v1.56.0 rejects
+    /// APMSP-3479 - TODO: `AttributeValue::Bytes`, `AttributeValue::Array` and
+    /// `AttributeValue::KeyValueList` are deliberately omitted — `ddapm-test-agent` v1.56.0 rejects
     /// Bytes with `400 "Bytes values are not supported yet."` and does not handle List / KeyValue.
     /// Add them here once test-agent V1 support catches up.
     fn make_v1_full_payload(name_prefix: &str) -> libdd_trace_utils::span::v1::TracerPayloadBytes {
@@ -731,8 +731,8 @@ mod tracing_integration_tests {
     /// the test-agent supports today (String/Bool/Int/Float) plus non-empty span_link and
     /// span_event attribute maps, then POSTs to `/v1.0/traces` and asserts the snapshot.
     ///
-    /// APMSP-3479 - TODO: extend this with `AttributeValue::Bytes`, `AttributeValue::List`
-    /// and `AttributeValue::KeyValue` once `ddapm-test-agent` v1 support catches up. See
+    /// APMSP-3479 - TODO: extend this with `AttributeValue::Bytes`, `AttributeValue::Array`
+    /// and `AttributeValue::KeyValueList` once `ddapm-test-agent` v1 support catches up. See
     /// [`make_v1_full_payload`] for the payload builder and the omitted variants.
     #[cfg_attr(miri, ignore)]
     #[tokio::test]

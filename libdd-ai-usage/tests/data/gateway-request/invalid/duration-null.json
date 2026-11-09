@@ -1,0 +1,11 @@
+{
+  "$schema": "../../../../schema/gateway-request-metric-fixture.schema.json",
+  "profile": "trajectory.gen_ai.gateway.request@0.1.0",
+  "case": "duration-null",
+  "description": "A null member is absent, and the duration is required: duration_invalid.",
+  "observation": {
+    "operation_name": "chat",
+    "duration_seconds": null
+  },
+  "expected_error_code": "duration_invalid"
+}

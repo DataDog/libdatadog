@@ -1,0 +1,49 @@
+{
+  "$schema": "../../../../schema/provider-token-breakdown-metric-fixture.schema.json",
+  "profile": "trajectory.gen_ai.client.token_breakdown@0.1.0",
+  "case": "openai-responses-usage",
+  "description": "A usage object in a provider's API shape, from the synthetic interop corpus (conformance/interop/provider-observations.json, case \"Responses IDs and inclusive usage\"): input_tokens 33 with input_tokens_details.cached_tokens 20, output_tokens 5 with reasoning_tokens 2. Input includes cached tokens and output includes reasoning. No cache-write count is reported, so uncached input is not known.",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "openai",
+    "request_model": "gpt-4o-mini",
+    "input_tokens": 33,
+    "input_basis": "includes_cache",
+    "output_tokens": 5,
+    "output_basis": "includes_reasoning",
+    "cache_read_input_tokens": 20,
+    "reasoning_output_tokens": 2,
+    "observation_point": "gateway"
+  },
+  "expected_metrics": [
+    {
+      "name": "gen_ai.client.inference.usage.cache_read.input_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 20,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "openai",
+        "gen_ai.request.model": "gpt-4o-mini",
+        "gen_ai.token.modality": "unknown",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.usage.reasoning.output_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 2,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "openai",
+        "gen_ai.request.model": "gpt-4o-mini",
+        "gen_ai.token.modality": "unknown",
+        "trajectory.observation.point": "gateway"
+      }
+    }
+  ],
+  "expected_issues": [
+    "cache_write_missing"
+  ]
+}

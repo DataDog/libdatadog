@@ -1,0 +1,42 @@
+{
+  "binding": "0.1.0",
+  "case": "tag-key-from-point-and-resource",
+  "description": "A point attribute and a resource attribute both give the tag key service. The key appears once, with the point attribute's value.",
+  "profile": "gen_ai.client.provider_attempt@0.1.0",
+  "historical": false,
+  "points": [
+    {
+      "name": "gen_ai.client.inference.usage.input_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 12,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.token.modality": "unknown",
+        "service.name": "from-point",
+        "trajectory.observation.point": "gateway"
+      }
+    }
+  ],
+  "resource_attributes": {
+    "service.name": "from-resource",
+    "host.name": "build-17"
+  },
+  "expected_series": [
+    {
+      "name": "gen_ai.client.inference.usage.input_tokens",
+      "type": "count",
+      "value": 12,
+      "tags": [
+        "gen_ai.operation.name:chat",
+        "gen_ai.provider.name:exampleai",
+        "gen_ai.token.modality:unknown",
+        "host:build-17",
+        "service:from-point",
+        "trajectory.observation.point:gateway",
+        "trajectory.profile:gen_ai.client.provider_attempt/0.1.0"
+      ]
+    }
+  ]
+}

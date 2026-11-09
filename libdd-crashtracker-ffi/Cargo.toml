@@ -22,16 +22,13 @@ required-features = ["collector_windows"]
 [features]
 default = ["cbindgen", "collector", "demangler", "receiver"]
 cbindgen = ["build_common/cbindgen"]
-regex-lite = ["libdd-common-ffi/regex-lite"]
+regex-lite = ["libdd-regex/regex-lite"]
 # Enables the in-process collection of crash-info
 collector = []
 collector_windows = []
 demangler = ["dep:symbolic-demangle", "dep:symbolic-common"]
 # Enables the use of this library to receiver crash-info from a suitable collector
 receiver = []
-
-[target.'cfg(windows)'.features]
-default = ["collector_windows"]
 
 [build-dependencies]
 build_common = { path = "../build-common" }
@@ -41,6 +38,7 @@ anyhow.workspace = true
 libdd-crashtracker = { path = "../libdd-crashtracker" }
 libdd-common = { path = "../libdd-common" }
 libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false, features = ["std"] }
+libdd-regex = { path = "../libdd-regex" }
 symbolic-demangle = { workspace = true, features = ["rust", "cpp", "msvc"], optional = true }
 symbolic-common = { workspace = true, optional = true }
 function_name.workspace = true
@@ -55,3 +53,6 @@ tempfile.workspace = true
 
 [target.'cfg(windows)'.dev-dependencies]
 windows = { workspace = true, features = ["std", "Win32_System_LibraryLoader"] }
+
+[package.metadata.cargo-machete]
+ignored = ["libdd-regex"]

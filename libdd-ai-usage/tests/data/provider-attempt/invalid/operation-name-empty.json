@@ -1,0 +1,14 @@
+{
+  "$schema": "../../../../schema/provider-attempt-metric-fixture.schema.json",
+  "profile": "gen_ai.client.provider_attempt@0.1.0",
+  "case": "operation-name-empty",
+  "description": "An empty string is present. It is not one of the profile's operations.",
+  "observation": {
+    "operation_name": "",
+    "provider_name": "exampleai",
+    "duration_seconds": 1,
+    "streaming": false,
+    "observation_point": "gateway"
+  },
+  "expected_error_code": "value_not_allowed"
+}

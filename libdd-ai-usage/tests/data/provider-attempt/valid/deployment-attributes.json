@@ -1,0 +1,98 @@
+{
+  "$schema": "../../../../schema/provider-attempt-metric-fixture.schema.json",
+  "profile": "gen_ai.client.provider_attempt@0.1.0",
+  "case": "deployment-attributes",
+  "description": "A deployment that enabled four deployment attributes: a pseudonymous user, a team, the service, and the provider's key identifier. Every point carries the user, the team, and the key identifier. The service name is a resource attribute and is on no point.",
+  "deployment_attributes": {
+    "user.id": "u-7f3a9c",
+    "trajectory.team.id": "platform",
+    "service.name": "checkout-assistant",
+    "trajectory.request.api_key_id": "apikey_01Rj"
+  },
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "exampleai",
+    "duration_seconds": 0.5,
+    "streaming": false,
+    "input_tokens": 12,
+    "output_tokens": 2,
+    "observation_point": "gateway"
+  },
+  "expected_metrics": [
+    {
+      "name": "gen_ai.client.inference.duration",
+      "instrument": "histogram",
+      "unit": "s",
+      "value": 0.5,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "user.id": "u-7f3a9c",
+        "trajectory.team.id": "platform",
+        "trajectory.request.api_key_id": "apikey_01Rj",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.operation.input_tokens",
+      "instrument": "histogram",
+      "unit": "{token}",
+      "value": 12,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "user.id": "u-7f3a9c",
+        "trajectory.team.id": "platform",
+        "trajectory.request.api_key_id": "apikey_01Rj",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.operation.output_tokens",
+      "instrument": "histogram",
+      "unit": "{token}",
+      "value": 2,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "user.id": "u-7f3a9c",
+        "trajectory.team.id": "platform",
+        "trajectory.request.api_key_id": "apikey_01Rj",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.usage.input_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 12,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "user.id": "u-7f3a9c",
+        "trajectory.team.id": "platform",
+        "trajectory.request.api_key_id": "apikey_01Rj",
+        "gen_ai.token.modality": "unknown",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.usage.output_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 2,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "user.id": "u-7f3a9c",
+        "trajectory.team.id": "platform",
+        "trajectory.request.api_key_id": "apikey_01Rj",
+        "gen_ai.token.modality": "unknown",
+        "trajectory.observation.point": "gateway"
+      }
+    }
+  ],
+  "expected_resource_attributes": {
+    "service.name": "checkout-assistant"
+  }
+}

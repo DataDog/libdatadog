@@ -47,7 +47,6 @@ pub(crate) fn write_log_traces<C: LogWriterCapability + ?Sized, T: TraceData>(
 /// Writes are synchronous: on native targets this blocks on a stdout write, so
 /// log-export mode is intended for single-threaded / current-thread serverless
 /// runtimes (e.g. AWS Lambda) where there is no shared async reactor to stall.
-#[allow(dead_code)] // Not yet wired into a live send path; see APMSP-2812.
 pub(crate) fn write_log_traces_v1<C: LogWriterCapability + ?Sized, T: TraceData>(
     capabilities: &C,
     payload: &TracerPayload<T>,

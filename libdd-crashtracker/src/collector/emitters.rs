@@ -647,13 +647,13 @@ fn write_sanitized_message_line(w: &mut impl Write, message: &str) -> Result<(),
 }
 
 fn emit_message(w: &mut impl Write, message: Option<&str>) -> Result<(), EmitterError> {
-    if let Some(msg) = message {
-        if !msg.trim().is_empty() {
-            writeln!(w, "{DD_CRASHTRACK_BEGIN_MESSAGE}")?;
-            write_sanitized_message_line(w, msg)?;
-            writeln!(w, "{DD_CRASHTRACK_END_MESSAGE}")?;
-            w.flush()?;
-        }
+    if let Some(msg) = message
+        && !msg.trim().is_empty()
+    {
+        writeln!(w, "{DD_CRASHTRACK_BEGIN_MESSAGE}")?;
+        write_sanitized_message_line(w, msg)?;
+        writeln!(w, "{DD_CRASHTRACK_END_MESSAGE}")?;
+        w.flush()?;
     }
     Ok(())
 }

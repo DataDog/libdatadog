@@ -1,0 +1,44 @@
+{
+  "$schema": "../../../../schema/gateway-request-metric-fixture.schema.json",
+  "profile": "trajectory.gen_ai.gateway.request@0.1.0",
+  "case": "estimated-cost-route-and-key-alias",
+  "description": "A gateway that enabled the route and key alias attributes. The estimated cost point carries both, so the gateway's charges can be split by the caller's key alias and by route.",
+  "deployment_attributes": {
+    "trajectory.gateway.route": "chat-default",
+    "trajectory.gateway.key.alias": "search-team-prod"
+  },
+  "observation": {
+    "operation_name": "chat",
+    "request_model": "chat-default",
+    "duration_seconds": 1.1,
+    "estimated_cost_usd": 0.25
+  },
+  "expected_metrics": [
+    {
+      "name": "trajectory.gen_ai.gateway.request.duration",
+      "instrument": "histogram",
+      "unit": "s",
+      "value": 1.1,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.request.model": "chat-default",
+        "trajectory.observation.point": "gateway",
+        "trajectory.gateway.route": "chat-default",
+        "trajectory.gateway.key.alias": "search-team-prod"
+      }
+    },
+    {
+      "name": "trajectory.gen_ai.gateway.request.estimated_cost",
+      "instrument": "counter",
+      "unit": "{nanoUSD}",
+      "value": 250000000,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.request.model": "chat-default",
+        "trajectory.observation.point": "gateway",
+        "trajectory.gateway.route": "chat-default",
+        "trajectory.gateway.key.alias": "search-team-prod"
+      }
+    }
+  ]
+}

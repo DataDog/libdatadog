@@ -1,0 +1,89 @@
+{
+  "$schema": "../../../../schema/provider-attempt-metric-fixture.schema.json",
+  "profile": "gen_ai.client.provider_attempt@0.1.0",
+  "case": "canonical-name-beside-unusable-cost",
+  "description": "A negative amount is unusable: no cost point is recorded and cost_unusable is raised. The canonical name and the priced-as model have no point to ride on and raise nothing.",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "exampleai",
+    "request_model": "ex-large-1-20270101",
+    "duration_seconds": 0.9,
+    "streaming": false,
+    "input_tokens": 1000,
+    "output_tokens": 500,
+    "canonical_provider": "exampleai",
+    "canonical_model": "ex-large-1-20270101",
+    "cost_priced_as_model": "ex-large-1",
+    "cost_usd": -0.01,
+    "cost_source": "estimated",
+    "cost_rate_card": "synthetic-basic@1",
+    "observation_point": "gateway"
+  },
+  "expected_metrics": [
+    {
+      "name": "gen_ai.client.inference.duration",
+      "instrument": "histogram",
+      "unit": "s",
+      "value": 0.9,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.request.model": "ex-large-1-20270101",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.operation.input_tokens",
+      "instrument": "histogram",
+      "unit": "{token}",
+      "value": 1000,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.request.model": "ex-large-1-20270101",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.operation.output_tokens",
+      "instrument": "histogram",
+      "unit": "{token}",
+      "value": 500,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.request.model": "ex-large-1-20270101",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.usage.input_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 1000,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.request.model": "ex-large-1-20270101",
+        "trajectory.observation.point": "gateway",
+        "gen_ai.token.modality": "unknown"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.usage.output_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 500,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.request.model": "ex-large-1-20270101",
+        "trajectory.observation.point": "gateway",
+        "gen_ai.token.modality": "unknown"
+      }
+    }
+  ],
+  "expected_issues": [
+    "cost_unusable"
+  ]
+}

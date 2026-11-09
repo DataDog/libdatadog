@@ -1,0 +1,21 @@
+{
+  "$schema": "../../../../schema/provider-token-breakdown-metric-fixture.schema.json",
+  "profile": "trajectory.gen_ai.client.token_breakdown@0.1.0",
+  "case": "observation-point-outside-values",
+  "description": "observation_point is one of the seven observation points.",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "exampleai",
+    "request_model": "ex-large-1",
+    "input_tokens": 12000,
+    "output_tokens": 50,
+    "input_basis": "includes_cache",
+    "cache_read_input_tokens": 8000,
+    "cache_write_input_tokens": 3000,
+    "cache_write_5m_input_tokens": 1000,
+    "cache_write_1h_input_tokens": 2000,
+    "observation_point": "proxy"
+  },
+  "expected_error_code": "value_not_allowed",
+  "expected_error": "observation_point must be"
+}

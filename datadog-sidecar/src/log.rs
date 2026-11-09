@@ -31,8 +31,10 @@ use tracing_subscriber::{EnvFilter, Layer};
 fn create_logfile(path: &PathBuf) -> anyhow::Result<std::fs::File> {
     // Session configuration can supply this path, so apply worker path restrictions.
     #[cfg(unix)]
-    if libdd_common::unix_utils::worker_file_outputs_restricted() {
-        return Ok(libdd_common::unix_utils::open_regular_for_append(path)?);
+    if libdd_process_utils::unix_utils::worker_file_outputs_restricted() {
+        return Ok(libdd_process_utils::unix_utils::open_regular_for_append(
+            path,
+        )?);
     }
     let log_file = std::fs::File::options()
         .create(true)

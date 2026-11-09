@@ -1,0 +1,19 @@
+{
+  "$schema": "../../../../schema/provider-token-breakdown-metric-fixture.schema.json",
+  "profile": "trajectory.gen_ai.client.token_breakdown@0.1.0",
+  "case": "required-total-above-bound",
+  "description": "The required input total is stated and is 2^53, above the bound. The observation is kept; the total is treated as not reported.",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "exampleai",
+    "input_tokens": 9007199254740992,
+    "output_tokens": 5,
+    "observation_point": "gateway"
+  },
+  "expected_metrics": [],
+  "expected_issues": [
+    "cache_read_missing",
+    "cache_write_missing",
+    "count_out_of_range"
+  ]
+}

@@ -211,6 +211,13 @@ impl Debug for BytesString {
     }
 }
 
+#[cfg(feature = "trace-model")]
+impl libdd_trace_model::TraceText for BytesString {
+    fn from_static(s: &'static str) -> Self {
+        Self::from_static(s)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

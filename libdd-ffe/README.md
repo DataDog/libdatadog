@@ -2,6 +2,78 @@
 
 This is an internal DataDog library that supports Feature Flag evaluation. It is intended for use in tracers and DataDog services. Expect frequent breaking changes and major bumps before it's stabilized.
 
+## Subject experimentation opt-out
+
+The caller selects `EvaluationOptions.experimentation_opt_out_mode`; the evaluator reads no environment variables.
+Both enabled modes require a valid `dd_experimentation_opt_out_at` timestamp when the attribute is present.
+Cutoff and activation timestamps use `YYYY-MM-DD[Tt]HH:mm:ss[.fraction](Z|z|±HH:mm)`
+with ASCII digits and valid Gregorian calendar fields. Seconds are `00`–`59`;
+numeric offset hours are `00`–`23` and minutes are `00`–`59`.
+Fractions contain at least one digit and truncate after nine digits without rounding.
+Both the written year and the normalized UTC year must be `0000`–`9999`.
+Whitespace, named zones, compact offsets, and leap seconds are rejected.
+The existing `startAt`/`endAt` parsing is unchanged.
+Missing input preserves normal evaluation. Invalid input returns `InvalidContext` before flag lookup.
+
+| Mode | Exposure-logging allocations |
+| --- | --- |
+| `Disabled` | Evaluate normally |
+| `Immediate` | Skip when the subject supplies an opt-out timestamp |
+| `FutureExperimentsOnly` | Skip when activation is equal to or later than opt-out, or activation is unknown |
+
+Future mode uses `randomizationActivatedAt`, with nanosecond precision and timezone-aware comparisons.
+Older allocations remain eligible; this does not prove previous enrollment.
+Malformed activation rejects the affected flag only in future mode with a valid subject cutoff, including unreachable allocations.
+Other modes and subjects without a cutoff do not require valid activation. Missing or null activation is unknown.
+Skipped allocations produce no exposure. Ordinary allocations remain available, and evaluation telemetry is unchanged.
+
+The C API adds `ddog_ffe_get_assignment_with_opt_out_mode`.
+The existing `ddog_ffe_get_assignment_with_options` interface and boolean layout remain unchanged for immediate-mode callers.
+
+## CDN configuration
+
+Enable `cdn,https` to fetch managed or custom CDN configuration on an existing
+Tokio runtime using ring. For FIPS builds, disable default features and select
+`cdn,fips` instead; initialize the FIPS crypto provider before constructing the
+fetcher, as required by `libdd-common`. `cdn` itself does not select a TLS
+provider and enables the shared connector's `HTTP_PROXY`, `HTTPS_PROXY`, and
+`NO_PROXY` support. Implement `ConfigurationSink` to publish accepted
+configuration; return `ApplyError` if publication fails so the ETag stays at the
+last accepted version. `failed` and `confirmed` report stale and recovered
+delivery without deleting the last good configuration.
+
+```rust,ignore
+use libdd_ffe::cdn::{CdnConfig, CdnEndpoint, CdnFetcher};
+use std::time::Duration;
+
+let config = CdnConfig {
+    endpoint: CdnEndpoint::managed("datadoghq.com", "production", &api_key)?,
+    poll_interval: Duration::from_secs(30),
+    request_timeout: Duration::from_secs(5),
+    language: "php".into(),
+    version: tracer_version,
+};
+let mut fetcher = CdnFetcher::new(config, configuration_sink)?;
+fetcher.run(cancellation_token).await;
+```
+
+`CdnEndpoint::custom(url)` carries no Datadog API key. Redirects are not
+followed; invalid API-key header values fail endpoint construction. Custom URL
+Basic authentication accepts an empty username. Compressed and decoded responses
+are capped at 10 MiB, including the combined output of concatenated gzip members.
+Cancelling the token interrupts HTTP and retry waits. A final `Retry-After` also bounds the
+wait before the next poll. Run the fetcher in the process that owns
+external I/O, such as the sidecar; constructing it does not spawn a worker.
+
+`CdnConfig::validate` identifies the invalid setting through `InvalidConfig`
+variants without including URLs, credentials, or rejected values in diagnostics.
+
+`CdnEndpoint` wraps `libdd_common::Endpoint` while retaining CDN validation,
+credential isolation and redacted diagnostics. URL credentials remain
+case-sensitive in subscription identity. The endpoint IPC representation is
+unchanged; `CdnConfig::request_timeout` remains the request deadline. Request
+headers are set explicitly, without the common builder's entity headers.
+
 ## `flagevaluation` EVP privacy
 
 - Each observation carries the consent captured by its SDK at evaluation time.
@@ -25,6 +97,26 @@ This is an internal DataDog library that supports Feature Flag evaluation. It is
   happens at multiple boundaries; it is not an evaluation drop. Existing
   degradation/drop metrics retain their names and units. Internal field-loss
   metadata is never sent in EVP. Event Debug output omits customer fields.
+
+## Split features on exposures and evaluation counts
+
+The SDK routes each split feature by destination and sends one flat JSON
+object per destination: `FfeExposure.features_json` for exposures and
+`FfeFlagEvaluation.features_json` for evaluation counts. Values are strings,
+numbers or booleans; other values are skipped. Keys or strings over 256
+Unicode characters are skipped. Features are kept in sorted key order, up to
+256 features and 4096 bytes of canonical JSON; the rest are dropped. Numbers
+are written as doubles. Empty, invalid or non-object JSON means no features
+and never rejects the event.
+
+- Exposures write a top-level `features` object, omitted when empty. Features
+  are not part of exposure deduplication.
+- Evaluation counts write a top-level `features` object on each row, omitted
+  when empty, in every tier and consent mode. Rows whose retained features
+  differ are never merged, in the full or the degraded tier. Inputs that
+  differ only in features dropped by the limits share a row. Payload-limit
+  degradation keeps features, and an oversized single-observation
+  submission is retried with them.
 
 ### Native integration and compatibility
 

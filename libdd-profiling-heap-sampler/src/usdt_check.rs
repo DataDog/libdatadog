@@ -17,8 +17,10 @@
 //! list that matches the build under test rather than assume both are always
 //! present.
 //!
-//! Call [`sanity_check`] from within a shared object or statically linked
-//! executable, or point [`check_usdt_probes_in`] at a built artifact.
+//! Call [`sanity_check`](crate::usdt_check::sanity_check) from within a shared
+//! object or statically linked executable, or point
+//! [`check_usdt_probes_in`](crate::usdt_check::check_usdt_probes_in) at a built
+//! artifact.
 //!
 //! Only available on Linux (USDT/SystemTap notes are Linux-only) and only when
 //! the `sanity-check` feature is enabled.
@@ -126,10 +128,10 @@ fn check_one_note_per_probe(
         let mut parts = strings.split(|&b| b == 0);
         let provider = parts.next().unwrap_or(&[]);
         let probe = parts.next().unwrap_or(&[]);
-        if provider == PROVIDER.as_bytes() {
-            if let Ok(name) = std::str::from_utf8(probe) {
-                *counts.entry(name.to_string()).or_default() += 1;
-            }
+        if provider == PROVIDER.as_bytes()
+            && let Ok(name) = std::str::from_utf8(probe)
+        {
+            *counts.entry(name.to_string()).or_default() += 1;
         }
     }
 

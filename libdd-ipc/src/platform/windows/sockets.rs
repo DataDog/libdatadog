@@ -693,12 +693,20 @@ impl SeqpacketConn {
     /// Sets the pipe buffer size for future connections.
     ///
     /// Named-pipe buffer sizes are fixed at creation time on Windows, so this does not affect
-    /// the current connection.  It updates the global [`PIPE_BUFFER_SIZE`] used by all
-    /// subsequent [`SeqpacketListener::bind`] / [`try_accept`] / [`SeqpacketConn::socketpair`]
-    /// calls - i.e. it takes effect on the next reconnect.
+    /// the current connection.  It updates the global pipe buffer size (see
+    /// [`set_pipe_buffer_size`]) used by all subsequent [`SeqpacketListener::bind`] /
+    /// [`SeqpacketListener::try_accept`] / [`SeqpacketConn::socketpair`] calls - i.e. it takes
+    /// effect on the next reconnect.
+    // The global pipe buffer size is `PIPE_BUFFER_SIZE`.
     pub fn set_sndbuf_size(&self, size: usize) -> io::Result<()> {
         set_pipe_buffer_size(size);
         Ok(())
+    }
+
+    /// Largest message accepted on this connection. Message-mode pipes block on messages
+    /// exceeding the pipe buffer instead of rejecting them.
+    pub fn max_send_size(&self) -> usize {
+        max_message_size()
     }
 
     fn writer(&self) -> io::Result<&PipeWriter> {

@@ -10,6 +10,7 @@ members = [
   "libdd-gotter",
   "libdd-profiling-heap-gotter",
   "libdd-profiling-heap-gotter-ffi",
+  "libdd-ai-usage",
   "libdd-crashtracker",
   "libdd-crashtracker-ffi",
   "libdd-ffe",
@@ -39,12 +40,13 @@ members = [
   "libdd-tracer-flare",
   "libdd-capabilities",
   "libdd-capabilities-impl",
+  "libdd-regex",
   "libdd-common",
   "libdd-common-ffi",
+  "libdd-process-utils",
   "libdd-telemetry",
   "libdd-telemetry-ffi",
   "tools",
-  "tools/cc_utils",
   "tools/sidecar_mockgen",
   "spawn_worker",
   "tests/spawn_from_lib",
@@ -64,6 +66,7 @@ members = [
   "libdd-log",
   "libdd-log-ffi",
   "libdd-sampling",
+  "libdd-trace-model",
 ]
 
 # https://doc.rust-lang.org/cargo/reference/resolver.html
@@ -75,7 +78,6 @@ ignored = [
   "bindgen",
   "build_common",
   "cc",
-  "cc_utils",
   "cxx-build",
   "glibc_version",
   "prost-build",
@@ -105,9 +107,9 @@ ignored = [
 # The RHEL restrictions are for the dd-trace-php repository. Someone in the
 # community, Remi Collet, packages the extension for these systems.
 [workspace.package]
-rust-version = "1.87.0"
+rust-version = "1.91.1"
 edition = "2024"
-version = "46.0.0"
+version = "48.0.0"
 license = "Apache-2.0"
 authors = ["Datadog Inc. <info@datadoghq.com>"]
 
@@ -171,6 +173,8 @@ derive_more = { version = "2.0.0", default-features = false }
 duplicate = { version = "2.0.1", default-features = false }
 either = { version = "1.13.0", default-features = false }
 elf = { version = "0.7", default-features = false }
+embedded-io = { version = "0.6", default-features = false }
+embedded-io-async = { version = "0.6", default-features = false }
 env_logger = { version = "0.10", default-features = false }
 errno = { version = "0.3", default-features = false }
 fastrand = { version = "2", default-features = false }
@@ -195,6 +199,7 @@ hex = { version = "0.4", default-features = false }
 http = { version = "1.1", default-features = false }
 http-body = { version = "1", default-features = false }
 http-body-util = { version = "0.1", default-features = false }
+httpdate = { version = "1.0", default-features = false }
 # allow(workspace-deps-features): httpmock 0.8.0-alpha.1 does not compile
 # without the `cookies` feature: its own `readers.rs` calls `req.cookies()`
 # unconditionally while that method is gated behind `cookies`. Keep it as a
@@ -246,14 +251,19 @@ proptest = { version = "1", default-features = false }
 prost = { version = "0.14.1", default-features = false }
 prost-build = { version = "0.14.1", default-features = false }
 protoc-bin-vendored = { version = "3.0.0", default-features = false }
-pyo3 = { version = "0.29", default-features = false }
+pyo3 = { version = "0.30", default-features = false }
 quick-xml = { version = "0.37", default-features = false }
 quote = { version = "1", default-features = false }
 rand = { version = "0.8", default-features = false }
 rand_chacha = { version = "0.3.1", default-features = false }
+# Test-only: self-signed certificate generation for local TLS servers in integration tests.
+# allow(workspace-deps-features): `pem` is required for certificate generation and `ring` selects
+# the ring backend instead of rcgen's default aws-lc-rs, which the workspace avoids outside fips.
+rcgen = { version = "0.13", default-features = false, features = ["pem", "ring"] }
 regex = { version = "1.5", default-features = false }
 regex-lite = { version = "0.1", default-features = false }
 reqwest = { version = "0.13", default-features = false }
+reqwless = { version = "0.13.0", default-features = false }
 ring = { version = "0.17", default-features = false }
 rlimit = { version = "0.9", default-features = false }
 rmp = { version = "0.8.14", default-features = false }
@@ -266,6 +276,7 @@ rustls-webpki = { version = ">=0.103.13", default-features = false }
 schemars = { version = "0.8.21", default-features = false }
 semver = { version = "1.0", default-features = false }
 serde = { version = "1.0", default-features = false }
+serde-json-core = { version = "0.6.0", default-features = false }
 serde-transcode = { version = "1.1", default-features = false }
 serde_bytes = { version = "0.11.9", default-features = false }
 serde_ignored = { version = "0.1.14", default-features = false }
@@ -302,6 +313,9 @@ thiserror = { version = "2.0.3", default-features = false }
 thread_local = { version = "1.1", default-features = false }
 time = { version = "0.3", default-features = false }
 tokio = { version = "1.49", default-features = false }
+# Test-only: TLS acceptor for local TLS servers in integration tests.
+# allow(workspace-deps-features): `tls12` matches the TLS clients under test, which enable rustls/tls12.
+tokio-rustls = { version = "0.26", default-features = false, features = ["tls12"] }
 tokio-util = { version = "0.7.11", default-features = false }
 toml = { version = "0.8.19", default-features = false }
 tonic = { version = "0.14", default-features = false }
@@ -318,13 +332,16 @@ wait-timeout = { version = "0.2", default-features = false }
 walkdir = { version = "2.4", default-features = false }
 wasm-bindgen-futures = { version = "0.4", default-features = false }
 wasm-bindgen-test = { version = "=0.3.50", default-features = false }
+webpki-roots = { version = "1.0.10", default-features = false }
+webpki-root-certs = { version = "1.0.10", default-features = false }
 web-time = { version = "1", default-features = false }
 windows = { version = "0.59.0", default-features = false }
 windows-sys = { version = "0.52", default-features = false }
+winresource = { version = "0.1", default-features = false }
 winver = { version = "1.0.0", default-features = false }
 zip = { version = "4.0.0", default-features = false }
 zrip = { version = "=0.6.0", default-features = false }
-zstd = { version = "0.13", default-features = false }
+zstd = { version = "0.14.3", default-features = false }
 zwohash = { version = "0.1.2", default-features = false }
 
 [profile.dev]

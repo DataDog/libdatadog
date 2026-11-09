@@ -20,6 +20,7 @@ pub mod entry;
 pub mod log;
 mod self_telemetry;
 pub mod setup;
+mod shm_path;
 pub mod shm_remote_config;
 pub mod tracer;
 mod watchdog;

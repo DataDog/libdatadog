@@ -19,9 +19,9 @@ use rmp::decode::read_array_len;
 use rmpv::decode::read_value;
 use rmpv::{Integer, Value};
 use std::cmp::Ordering;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::env;
-use tracing::{debug, error};
+use tracing::error;
 
 /// The maximum payload size for a single request that can be sent to the trace agent. Payloads
 /// larger than this size will be dropped and the agent will return a 413 error if
@@ -280,19 +280,19 @@ pub struct TracerPayloadTags {
 /// Returns the first non-empty value of `field` found in `trace`, searching the root span first
 /// then all other spans.
 fn search_trace_for_field(root: &pb::Span, trace: &[pb::Span], field: &str) -> Option<String> {
-    if let Some(v) = root.meta.get(field) {
-        if !v.is_empty() {
-            return Some(v.clone());
-        }
+    if let Some(v) = root.meta.get(field)
+        && !v.is_empty()
+    {
+        return Some(v.clone());
     }
     for span in trace {
         if span.span_id == root.span_id {
             continue;
         }
-        if let Some(v) = span.meta.get(field) {
-            if !v.is_empty() {
-                return Some(v.clone());
-            }
+        if let Some(v) = span.meta.get(field)
+            && !v.is_empty()
+        {
+            return Some(v.clone());
         }
     }
     None
@@ -379,44 +379,10 @@ pub fn coalesce_send_data(mut data: Vec<SendData>) -> Vec<SendData> {
     data
 }
 
+/// Returns the index of the root span in `trace`, see
+/// [`crate::span::trace_utils::get_root_span_index`].
 pub fn get_root_span_index(trace: &[pb::Span]) -> anyhow::Result<usize> {
-    if trace.is_empty() {
-        anyhow::bail!("Cannot find root span index in an empty trace.");
-    }
-
-    // Do a first pass to find if we have an obvious root span (starting from the end) since some
-    // clients put the root span last.
-    for (i, span) in trace.iter().enumerate().rev() {
-        if span.parent_id == 0 {
-            return Ok(i);
-        }
-    }
-
-    let span_ids: HashSet<_> = trace.iter().map(|span| span.span_id).collect();
-
-    let mut root_span_id = None;
-    for (i, span) in trace.iter().enumerate() {
-        // If a span's parent is not in the trace, it is a root
-        if !span_ids.contains(&span.parent_id) {
-            if root_span_id.is_some() {
-                debug!(
-                    trace_id = &trace[0].trace_id,
-                    "trace has multiple root spans"
-                );
-            }
-            root_span_id = Some(i);
-        }
-    }
-    Ok(match root_span_id {
-        Some(i) => i,
-        None => {
-            debug!(
-                trace_id = &trace[0].trace_id,
-                "Could not find the root span for trace"
-            );
-            trace.len() - 1
-        }
-    })
+    crate::span::trace_utils::get_root_span_index(trace)
 }
 
 /// Updates all the spans top-level attribute.
@@ -561,20 +527,21 @@ pub fn enrich_span_with_google_cloud_function_metadata(
         todo!()
     };
 
-    if let Some(function) = function {
-        if !region.is_empty() && !project.is_empty() {
-            let resource_name = format!(
-                "projects/{}/locations/{}/functions/{}",
-                project, region, function
-            );
+    if let Some(function) = function
+        && !region.is_empty()
+        && !project.is_empty()
+    {
+        let resource_name = format!(
+            "projects/{}/locations/{}/functions/{}",
+            project, region, function
+        );
 
-            span.meta
-                .insert("gcrfx.location".to_string(), region.to_string());
-            span.meta
-                .insert("gcrfx.project_id".to_string(), project.to_string());
-            span.meta
-                .insert("gcrfx.resource_name".to_string(), resource_name.to_string());
-        }
+        span.meta
+            .insert("gcrfx.location".to_string(), region.to_string());
+        span.meta
+            .insert("gcrfx.project_id".to_string(), project.to_string());
+        span.meta
+            .insert("gcrfx.resource_name".to_string(), resource_name.to_string());
     }
 }
 
@@ -628,10 +595,8 @@ pub fn collect_pb_trace_chunks<T: tracer_payload::TraceChunkProcessor>(
     let mut tracer_payload_tags = TracerPayloadTags::default();
 
     for trace in traces.iter_mut() {
-        if is_agentless {
-            if let Err(e) = normalizer::normalize_trace(trace) {
-                error!("Error normalizing trace: {e}");
-            }
+        if is_agentless && let Err(e) = normalizer::normalize_trace(trace) {
+            error!("Error normalizing trace: {e}");
         }
 
         let mut chunk = construct_trace_chunk(trace.to_vec());
@@ -667,30 +632,30 @@ pub fn collect_pb_trace_chunks<T: tracer_payload::TraceChunkProcessor>(
             // Check each field independently so that a later trace can fill in fields missing
             // from an earlier trace.
             let root = &trace[root_span_index];
-            if tracer_payload_tags.env.is_empty() {
-                if let Some(mut v) = search_trace_for_field(root, trace, "env") {
-                    // Normalize env tag in case the span it was pulled from was skipped during
-                    // normalization
-                    libdd_trace_normalization::normalize_utils::normalize_tag(&mut v);
-                    if !v.is_empty() {
-                        tracer_payload_tags.env = v;
-                    }
+            if tracer_payload_tags.env.is_empty()
+                && let Some(mut v) = search_trace_for_field(root, trace, "env")
+            {
+                // Normalize env tag in case the span it was pulled from was skipped during
+                // normalization
+                libdd_trace_normalization::normalize_utils::normalize_tag(&mut v);
+                if !v.is_empty() {
+                    tracer_payload_tags.env = v;
                 }
             }
-            if tracer_payload_tags.app_version.is_empty() {
-                if let Some(v) = search_trace_for_field(root, trace, "version") {
-                    tracer_payload_tags.app_version = v;
-                }
+            if tracer_payload_tags.app_version.is_empty()
+                && let Some(v) = search_trace_for_field(root, trace, "version")
+            {
+                tracer_payload_tags.app_version = v;
             }
-            if tracer_payload_tags.hostname.is_empty() {
-                if let Some(v) = search_trace_for_field(root, trace, "_dd.hostname") {
-                    tracer_payload_tags.hostname = v;
-                }
+            if tracer_payload_tags.hostname.is_empty()
+                && let Some(v) = search_trace_for_field(root, trace, "_dd.hostname")
+            {
+                tracer_payload_tags.hostname = v;
             }
-            if tracer_payload_tags.runtime_id.is_empty() {
-                if let Some(v) = search_trace_for_field(root, trace, "runtime-id") {
-                    tracer_payload_tags.runtime_id = v;
-                }
+            if tracer_payload_tags.runtime_id.is_empty()
+                && let Some(v) = search_trace_for_field(root, trace, "runtime-id")
+            {
+                tracer_payload_tags.runtime_id = v;
             }
         }
     }

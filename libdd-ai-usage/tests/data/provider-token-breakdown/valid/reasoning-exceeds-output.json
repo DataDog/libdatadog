@@ -1,0 +1,22 @@
+{
+  "$schema": "../../../../schema/provider-token-breakdown-metric-fixture.schema.json",
+  "profile": "trajectory.gen_ai.client.token_breakdown@0.1.0",
+  "case": "reasoning-exceeds-output",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "openai",
+    "request_model": "gpt-4o-mini",
+    "input_tokens": 10,
+    "output_tokens": 5,
+    "output_basis": "includes_reasoning",
+    "reasoning_output_tokens": 6,
+    "observation_point": "gateway"
+  },
+  "description": "Reasoning tokens (6) exceed output tokens (5), so the output group records nothing. No cache part was reported, so the input group has nothing to record either. A rejection in 0.2.0.",
+  "expected_metrics": [],
+  "expected_issues": [
+    "cache_read_missing",
+    "cache_write_missing",
+    "usage_inconsistent"
+  ]
+}

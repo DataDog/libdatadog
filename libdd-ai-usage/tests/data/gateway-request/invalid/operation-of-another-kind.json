@@ -1,0 +1,12 @@
+{
+  "$schema": "../../../../schema/gateway-request-metric-fixture.schema.json",
+  "profile": "trajectory.gen_ai.gateway.request@0.1.0",
+  "case": "operation-of-another-kind",
+  "description": "invoke_agent is an operation name of the conventions, but it is not a model request a gateway routes; the profile covers chat, text_completion, and embeddings.",
+  "observation": {
+    "operation_name": "invoke_agent",
+    "duration_seconds": 1
+  },
+  "expected_error_code": "value_not_allowed",
+  "expected_error": "operation_name must be"
+}

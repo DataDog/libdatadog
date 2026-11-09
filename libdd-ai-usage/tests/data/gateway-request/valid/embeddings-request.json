@@ -1,0 +1,62 @@
+{
+  "$schema": "../../../../schema/gateway-request-metric-fixture.schema.json",
+  "profile": "trajectory.gen_ai.gateway.request@0.1.0",
+  "case": "embeddings-request",
+  "description": "An embeddings request is a logical request like any other: a duration, one observed provider operation with complete coverage, and reported counts of zero retries and zero fallbacks. The profile records no tokens and no cost; those are the provider operation's.",
+  "observation": {
+    "operation_name": "embeddings",
+    "request_model": "embed-default",
+    "duration_seconds": 0.12,
+    "provider_operations": 1,
+    "provider_operation_coverage": "complete",
+    "retries": 0,
+    "fallbacks": 0
+  },
+  "expected_metrics": [
+    {
+      "name": "trajectory.gen_ai.gateway.request.duration",
+      "instrument": "histogram",
+      "unit": "s",
+      "value": 0.12,
+      "attributes": {
+        "gen_ai.operation.name": "embeddings",
+        "gen_ai.request.model": "embed-default",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "trajectory.gen_ai.gateway.request.fallbacks",
+      "instrument": "histogram",
+      "unit": "{fallback}",
+      "value": 0,
+      "attributes": {
+        "gen_ai.operation.name": "embeddings",
+        "gen_ai.request.model": "embed-default",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "trajectory.gen_ai.gateway.request.provider_operations",
+      "instrument": "histogram",
+      "unit": "{operation}",
+      "value": 1,
+      "attributes": {
+        "gen_ai.operation.name": "embeddings",
+        "gen_ai.request.model": "embed-default",
+        "trajectory.observation.point": "gateway",
+        "trajectory.provider.operation.coverage": "complete"
+      }
+    },
+    {
+      "name": "trajectory.gen_ai.gateway.request.retries",
+      "instrument": "histogram",
+      "unit": "{retry}",
+      "value": 0,
+      "attributes": {
+        "gen_ai.operation.name": "embeddings",
+        "gen_ai.request.model": "embed-default",
+        "trajectory.observation.point": "gateway"
+      }
+    }
+  ]
+}

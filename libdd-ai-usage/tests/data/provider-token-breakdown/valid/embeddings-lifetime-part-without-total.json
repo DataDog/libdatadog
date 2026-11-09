@@ -1,0 +1,44 @@
+{
+  "$schema": "../../../../schema/provider-token-breakdown-metric-fixture.schema.json",
+  "profile": "trajectory.gen_ai.client.token_breakdown@0.1.0",
+  "case": "embeddings-lifetime-part-without-total",
+  "description": "An embeddings operation with a lifetime part and no cache-write total. The part is recorded under its lifetime. No missing-cache code is raised for embeddings, and the absent cache parts count as zero in the uncached input.",
+  "observation": {
+    "operation_name": "embeddings",
+    "provider_name": "openai",
+    "request_model": "text-embedding-3-small",
+    "input_tokens": 8,
+    "input_basis": "includes_cache",
+    "cache_write_1h_input_tokens": 2,
+    "observation_point": "gateway"
+  },
+  "expected_metrics": [
+    {
+      "name": "gen_ai.client.inference.usage.cache_write.input_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 2,
+      "attributes": {
+        "gen_ai.operation.name": "embeddings",
+        "gen_ai.provider.name": "openai",
+        "gen_ai.request.model": "text-embedding-3-small",
+        "gen_ai.token.modality": "unknown",
+        "trajectory.cache.lifetime": "1h",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "trajectory.gen_ai.client.inference.usage.uncached.input_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 8,
+      "attributes": {
+        "gen_ai.operation.name": "embeddings",
+        "gen_ai.provider.name": "openai",
+        "gen_ai.request.model": "text-embedding-3-small",
+        "gen_ai.token.modality": "unknown",
+        "trajectory.observation.point": "gateway"
+      }
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "$schema": "../../../../schema/provider-attempt-metric-fixture.schema.json",
+  "profile": "gen_ai.client.provider_attempt@0.1.0",
+  "case": "streaming-null",
+  "description": "A null member is absent, and the streaming flag is required.",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "exampleai",
+    "duration_seconds": 1,
+    "streaming": null,
+    "observation_point": "gateway"
+  },
+  "expected_error_code": "required_field_missing"
+}

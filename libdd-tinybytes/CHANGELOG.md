@@ -2,6 +2,14 @@
 
 
 
+## [1.2.0](https://github.com/datadog/libdatadog/compare/libdd-tinybytes-v1.1.5..libdd-tinybytes-v1.2.0) - 2026-10-23
+
+### Changed
+
+- Move AttributeValue into new libdd-trace-model crate ([#2644](https://github.com/datadog/libdatadog/issues/2644)) - ([ce77b3f](https://github.com/datadog/libdatadog/commit/ce77b3f5a60fa61f4bb4394f917b5d9d8949dc0a))
+
+
+
 ## [1.1.5](https://github.com/datadog/libdatadog/compare/libdd-tinybytes-v1.1.4..libdd-tinybytes-v1.1.5) - 2026-10-02
 
 ### Changed

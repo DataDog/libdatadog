@@ -29,7 +29,6 @@ tracing.workspace = true
 rmp-serde.workspace = true
 serde_json.workspace = true
 
-
 [target.'cfg(unix)'.dependencies]
 libdd-crashtracker = { path = "../libdd-crashtracker", default-features = false, features = ["collector"] }
 
@@ -41,6 +40,7 @@ build_common = { path = "../build-common", features = ["cbindgen"] }
 cc.workspace = true
 http = { workspace = true, features = ["std"] }
 libdd-trace-utils = { path = "../libdd-trace-utils", features = ["test-utils"] }
+httpmock.workspace = true
 tempfile.workspace = true
 tools = { path = "../tools" }
 

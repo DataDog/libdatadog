@@ -11,7 +11,7 @@ use std::{
 
 #[cfg(feature = "stats-obfuscation")]
 use crate::span_concentrator::CardinalityLimitConfig;
-use crate::span_concentrator::{FlushableConcentrator, SpanConcentrator};
+use crate::span_concentrator::{ChunkSpanView, FlushableConcentrator, SpanConcentrator};
 use async_trait::async_trait;
 use futures::future::join;
 use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
@@ -148,7 +148,8 @@ impl<Cap: StatsCap, Con: FlushableConcentrator + Debug + MaybeSend + Sync + 'sta
     }
 }
 
-/// Cloneable handle to a [`StatsExporter`] hosted on a [`SharedRuntime`].
+/// Cloneable handle to a [`StatsExporter`] hosted on a
+/// [`SharedRuntime`](libdd_shared_runtime::SharedRuntime).
 #[derive(Debug, Clone)]
 pub struct SharedStatsExporter<Cap: StatsCap, Con: FlushableConcentrator = SpanConcentrator>(
     Arc<StatsExporter<Cap, Con>>,
@@ -271,8 +272,14 @@ impl<Cap: HttpClientCapability + SleepCapability> AgentlessStatsExporter<Cap> {
         }
 
         let mut concentrator = self.concentrator.lock_or_panic();
-        for span in traces.iter().flatten() {
-            concentrator.add_span(span);
+        for trace in traces.iter() {
+            let chunk = libdd_trace_utils::span::RootSpanChunk::new(trace);
+            for span in trace {
+                concentrator.add_span(&ChunkSpanView {
+                    span,
+                    chunk: &chunk,
+                });
+            }
         }
     }
 
@@ -983,8 +990,12 @@ mod tests {
 
         trace_utils::compute_top_level_span(trace.as_mut_slice());
 
+        let chunk = libdd_trace_utils::span::RootSpanChunk::new(&trace);
         for span in trace.iter() {
-            concentrator.add_span(span);
+            concentrator.add_span(&ChunkSpanView {
+                span,
+                chunk: &chunk,
+            });
         }
         concentrator
     }
@@ -1468,8 +1479,12 @@ mod tests {
             },
         ];
         trace_utils::compute_top_level_span(trace.as_mut_slice());
+        let chunk = libdd_trace_utils::span::RootSpanChunk::new(&trace);
         for span in &trace {
-            concentrator.add_span(span);
+            concentrator.add_span(&ChunkSpanView {
+                span,
+                chunk: &chunk,
+            });
         }
         concentrator
     }

@@ -1,0 +1,31 @@
+{
+  "$schema": "../../../../schema/provider-attempt-metric-fixture.schema.json",
+  "profile": "gen_ai.client.provider_attempt@0.1.0",
+  "case": "cost-usd-too-large-for-double",
+  "description": "A cost of 1e400 USD, which no double holds. Whether a parser reads infinity or fails on the token, the cost is a number above every bound: unusable, never a wrong type. This file holds the literal 1e400 and must be read, not re-written, by tools.",
+  "observation": {
+    "observation_point": "gateway",
+    "operation_name": "chat",
+    "provider_name": "exampleai",
+    "duration_seconds": 0.5,
+    "streaming": false,
+    "cost_usd": 1e400,
+    "cost_source": "reported"
+  },
+  "expected_metrics": [
+    {
+      "name": "gen_ai.client.inference.duration",
+      "instrument": "histogram",
+      "unit": "s",
+      "value": 0.5,
+      "attributes": {
+        "trajectory.observation.point": "gateway",
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai"
+      }
+    }
+  ],
+  "expected_issues": [
+    "cost_unusable"
+  ]
+}

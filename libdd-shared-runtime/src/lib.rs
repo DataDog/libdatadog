@@ -17,7 +17,7 @@
 //! |---------------------|--------|---------|---------------------|------------|---------------------------------------------------------------------------------------------------------------------------------------------|
 //! | [`ForkSafeRuntime`] | native | multi   | yes — full protocol | yes        | Default for native code that may run in a forking process (e.g. Ruby, Python runtimes).                                                     |
 //! | [`BasicRuntime`]    | native | multi*  | no                  | yes        | Native code where `fork()` is not a concern; optionally share an existing `Arc<tokio::runtime::Runtime>` via [`BasicRuntime::from_handle`]. |
-//! | [`LocalRuntime`]    | wasm32 | single  | n/a                 | no         | WebAssembly; spawns via `wasm_bindgen_futures::spawn_local`.                                                                                |
+//! | `LocalRuntime`      | wasm32 | single  | n/a                 | no         | WebAssembly; spawns via `wasm_bindgen_futures::spawn_local`.                                                                                |
 //!
 //! \* [`BasicRuntime::new`] and [`BasicRuntime::with_worker_threads`] build a multi-thread runtime;
 //! [`BasicRuntime::from_handle`] accepts any `Arc<tokio::runtime::Runtime>`, including
@@ -47,5 +47,7 @@ pub use shared_runtime::BlockingRuntime;
 pub use shared_runtime::ForkSafeRuntime;
 #[cfg(target_arch = "wasm32")]
 pub use shared_runtime::LocalRuntime;
-pub use shared_runtime::{SharedRuntime, SharedRuntimeError, WorkerHandle, WorkerHandleError};
+pub use shared_runtime::{
+    FlushToken, SharedRuntime, SharedRuntimeError, WorkerHandle, WorkerHandleError,
+};
 pub use worker::Worker;

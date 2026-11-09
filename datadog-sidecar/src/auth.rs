@@ -7,7 +7,8 @@
 //! * [`AuthPolicy::OwnUid`]: a subprocess sidecar serves its own UID.
 //! * [`AuthPolicy::HostDescendants`]: a thread listener accepts the host's UID or a descendant that
 //!   dropped privileges. It then drops to the first worker's identity and requires later workers to
-//!   match that UID and GID. See [`crate::setup::thread_listener`].
+//!   match that UID and GID. See `crate::setup::thread_listener` (or
+//!   `crate::setup::thread_listener_windows` on windows).
 //! * [`AuthPolicy::OsEnforced`]: Windows named-pipe permissions restrict access before a connection
 //!   reaches the listener.
 

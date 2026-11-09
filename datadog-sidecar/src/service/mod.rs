@@ -11,7 +11,8 @@ pub use libdd_ffe::telemetry::exposures::{FfeExposure, FfeExposureBatch};
 pub use libdd_ffe::telemetry::flagevaluation::{
     AllocationKey, ContextDD, ContextTruncationReason, EvalError, FfeFlagEvaluationBatch,
     FfeFlagEvaluationEvent, FieldOmissions, FlagEvalEventContext, FlagKey, MAX_CONTEXT_DEPTH,
-    MAX_CONTEXT_FIELDS, MAX_FIELD_LENGTH, TargetingRuleKey, VariantKey, prune_context_json,
+    MAX_CONTEXT_FIELDS, MAX_FIELD_LENGTH, TargetingRuleKey, VariantKey, canonical_features_json,
+    prune_context_json,
 };
 use libdd_remote_config::{RemoteConfigCapabilities, RemoteConfigProduct};
 use libdd_telemetry::worker::TelemetryActions;
@@ -38,6 +39,7 @@ pub mod agent_info;
 mod application;
 pub mod blocking;
 mod connection_session;
+pub mod data_streams_flusher;
 mod debugger_diagnostics_bookkeeper;
 mod dogstatsd_pool;
 pub(crate) mod evp_proxy;
@@ -48,6 +50,7 @@ pub(crate) mod ffe_flagevaluation_flusher;
 pub(crate) mod ffe_metrics_flusher;
 pub mod ffe_submission;
 mod instance_id;
+pub mod kafka_cluster_ids;
 mod remote_configs;
 mod runtime_metadata;
 pub mod sender;
@@ -170,6 +173,16 @@ pub enum SidecarAction {
     /// Structured FFE flag evaluation batch for the EVP flagevaluation track.
     /// The sidecar serializes and POSTs the batch to
     /// `/evp_proxy/v2/api/v2/flagevaluation` (fire-and-forget).
+    ///
+    /// When all batch context fields are empty, the receiver snapshots service, environment,
+    /// and application version from this connection's current application before coalescing.
+    /// A non-empty application service also fills missing or empty per-event
+    /// `context.dd.service` on non-degraded rows. Explicit context is preserved; without a
+    /// registered application the batch remains unattributed.
+    /// If any application identity field exceeds [`MAX_FIELD_LENGTH`] characters, the batch
+    /// remains unattributed and its evaluation counts are preserved. Batches submitted through
+    /// `enqueue_actions_for_service` do not inherit the connection's application identity.
+    /// Set the application before submitting evaluations: the sender sends pending state first.
     ///
     /// Keep this appended after pre-existing variants: this enum crosses the
     /// bincode sidecar IPC boundary, so inserting a variant before existing

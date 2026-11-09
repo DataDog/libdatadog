@@ -95,7 +95,7 @@ const STN_UNDEF: u32 = 0;
 /// and rewrite GOT entries.
 ///
 /// Slice fields (`strtab`, `symtab`, `rels`, `relas`, `jmprels`) are
-/// validated once in [`from_phdr`] so all subsequent access is safe.
+/// validated once in [`Self::from_phdr`] so all subsequent access is safe.
 /// The hash table pointers remain raw because the hash lookup functions
 /// need arithmetic into their variable-layout internal structure.
 pub struct DynamicInfo<'a> {
@@ -465,10 +465,11 @@ pub unsafe fn sysv_hash_lookup(info: &DynamicInfo, name: &[u8]) -> Option<Elf64_
             if (u32_to_usize(idx)) >= u32_to_usize(nchain) {
                 break;
             }
-            if let Some((sym, sname)) = info.sym_entry(idx) {
-                if sname.to_bytes() == name && check_sym(sym) {
-                    return Some(*sym);
-                }
+            if let Some((sym, sname)) = info.sym_entry(idx)
+                && sname.to_bytes() == name
+                && check_sym(sym)
+            {
+                return Some(*sym);
             }
             // SAFETY: idx was bounds-checked above against nchain, and
             // chains points into the validated sysv hash table.
@@ -611,12 +612,12 @@ pub unsafe fn gnu_hash_lookup(info: &DynamicInfo, name: &[u8]) -> Option<Elf64_S
                 return None;
             }
             let chain_h = *hashtab.add(chains_start + chain_idx);
-            if ((chain_h ^ h) >> 1) == 0 {
-                if let Some((sym, sname)) = info.sym_entry(symidx) {
-                    if sname.to_bytes() == name && check_sym(sym) {
-                        return Some(*sym);
-                    }
-                }
+            if ((chain_h ^ h) >> 1) == 0
+                && let Some((sym, sname)) = info.sym_entry(symidx)
+                && sname.to_bytes() == name
+                && check_sym(sym)
+            {
+                return Some(*sym);
             }
             if chain_h & 1 != 0 {
                 break;
@@ -1053,10 +1054,10 @@ fn lookup_symbol_impl(
             return false;
         }
         // Skip the library containing skip_addr (the hook function).
-        if let Some(addr) = skip_addr {
-            if phdr_contains_addr(info, addr) {
-                return false;
-            }
+        if let Some(addr) = skip_addr
+            && phdr_contains_addr(info, addr)
+        {
+            return false;
         }
         let Some(dyn_info) = DynamicInfo::from_phdr(info) else {
             return false;
@@ -1070,13 +1071,13 @@ fn lookup_symbol_impl(
         } else {
             None
         };
-        if let Some(sym) = sym {
-            if sym.st_size > 0 {
-                let addr = u64_to_usize(sym.st_value) + dyn_info.base_address();
-                if addr != not_this_symbol {
-                    found = Some(LookupResult { address: addr });
-                    return true;
-                }
+        if let Some(sym) = sym
+            && sym.st_size > 0
+        {
+            let addr = u64_to_usize(sym.st_value) + dyn_info.base_address();
+            if addr != not_this_symbol {
+                found = Some(LookupResult { address: addr });
+                return true;
             }
         }
         false
@@ -1202,10 +1203,10 @@ unsafe fn hook_symbol_impl(
             }
 
             // Skip the library containing skip_addr (the hook function).
-            if let Some(addr) = skip_addr {
-                if phdr_contains_addr(info, addr) {
-                    return false;
-                }
+            if let Some(addr) = skip_addr
+                && phdr_contains_addr(info, addr)
+            {
+                return false;
             }
 
             // SAFETY: `info` points to a valid `dl_phdr_info` provided by
@@ -1274,17 +1275,17 @@ unsafe fn patch_got_entries(
                 continue;
             }
             let sym_idx = elf64_r_sym(reloc.r_info);
-            if let Some(cstr) = dyn_info.sym_name(sym_idx) {
-                if cstr.to_bytes() == symbol_name {
-                    let addr = u64_to_usize(reloc.r_offset) + dyn_info.base_address();
-                    if guard
-                        .get_or_insert_with(|| PageProtGuard::with_maps(maps.get(dlpi_adds)))
-                        .override_entry(addr, hook_fn)
-                    {
-                        *patched += 1;
-                    } else {
-                        *failed += 1;
-                    }
+            if let Some(cstr) = dyn_info.sym_name(sym_idx)
+                && cstr.to_bytes() == symbol_name
+            {
+                let addr = u64_to_usize(reloc.r_offset) + dyn_info.base_address();
+                if guard
+                    .get_or_insert_with(|| PageProtGuard::with_maps(maps.get(dlpi_adds)))
+                    .override_entry(addr, hook_fn)
+                {
+                    *patched += 1;
+                } else {
+                    *failed += 1;
                 }
             }
         }
@@ -1698,11 +1699,11 @@ mod tests {
             // relocations aren't needed
             let mut found_sym = false;
             for idx in 0..dyn_info.symtab.len() as u32 {
-                if let Some(name) = dyn_info.sym_name(idx) {
-                    if name.to_bytes() == b"sysv_test_symbol" {
-                        found_sym = true;
-                        break;
-                    }
+                if let Some(name) = dyn_info.sym_name(idx)
+                    && name.to_bytes() == b"sysv_test_symbol"
+                {
+                    found_sym = true;
+                    break;
                 }
             }
             assert!(

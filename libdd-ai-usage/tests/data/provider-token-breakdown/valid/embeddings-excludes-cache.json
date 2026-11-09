@@ -1,0 +1,29 @@
+{
+  "$schema": "../../../../schema/provider-token-breakdown-metric-fixture.schema.json",
+  "profile": "trajectory.gen_ai.client.token_breakdown@0.1.0",
+  "case": "embeddings-excludes-cache",
+  "description": "Embeddings with excludes_cache and no cache part. For embeddings an absent cache part counts as zero in the arithmetic, so nothing is missing; the uncached input is the reported input.",
+  "observation": {
+    "operation_name": "embeddings",
+    "provider_name": "openai",
+    "request_model": "text-embedding-3-small",
+    "input_tokens": 50,
+    "input_basis": "excludes_cache",
+    "observation_point": "gateway"
+  },
+  "expected_metrics": [
+    {
+      "name": "trajectory.gen_ai.client.inference.usage.uncached.input_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 50,
+      "attributes": {
+        "gen_ai.operation.name": "embeddings",
+        "gen_ai.provider.name": "openai",
+        "gen_ai.request.model": "text-embedding-3-small",
+        "gen_ai.token.modality": "unknown",
+        "trajectory.observation.point": "gateway"
+      }
+    }
+  ]
+}

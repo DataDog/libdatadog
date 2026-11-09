@@ -116,6 +116,15 @@ for pkg in "${PACKAGES[@]}"; do
         check "$manifest" "--features fips" --no-default-features --features fips \
             || errors=$((errors + 1))
     fi
+    # Optional CDN transport must not force ring into a FIPS consumer.
+    if crate_has_feature "$pkg" "cdn"; then
+        for provider in https fips; do
+            if crate_has_feature "$pkg" "$provider"; then
+                check "$manifest" "--features cdn,$provider" --no-default-features \
+                    --features "cdn,$provider" || errors=$((errors + 1))
+            fi
+        done
+    fi
 done
 
 if [ "$checked" -eq 0 ]; then

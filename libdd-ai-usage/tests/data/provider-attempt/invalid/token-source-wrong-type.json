@@ -1,0 +1,17 @@
+{
+  "$schema": "../../../../schema/provider-attempt-metric-fixture.schema.json",
+  "profile": "gen_ai.client.provider_attempt@0.1.0",
+  "case": "token-source-wrong-type",
+  "description": "output_token_source is a string. A wrong type is reported before any other rule.",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "exampleai",
+    "duration_seconds": 1,
+    "streaming": false,
+    "output_tokens": 5,
+    "output_token_source": true,
+    "observation_point": "gateway"
+  },
+  "expected_error_code": "field_type_invalid",
+  "expected_error": "output_token_source"
+}

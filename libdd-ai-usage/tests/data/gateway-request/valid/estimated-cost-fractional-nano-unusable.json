@@ -1,0 +1,28 @@
+{
+  "$schema": "../../../../schema/gateway-request-metric-fixture.schema.json",
+  "profile": "trajectory.gen_ai.gateway.request@0.1.0",
+  "case": "estimated-cost-fractional-nano-unusable",
+  "description": "A nano-USD amount that is not an integer is unusable. It adds nothing and raises cost_unusable.",
+  "observation": {
+    "operation_name": "embeddings",
+    "request_model": "embed-model",
+    "duration_seconds": 0.2,
+    "estimated_cost_nano_usd": 1500.5
+  },
+  "expected_metrics": [
+    {
+      "name": "trajectory.gen_ai.gateway.request.duration",
+      "instrument": "histogram",
+      "unit": "s",
+      "value": 0.2,
+      "attributes": {
+        "gen_ai.operation.name": "embeddings",
+        "gen_ai.request.model": "embed-model",
+        "trajectory.observation.point": "gateway"
+      }
+    }
+  ],
+  "expected_issues": [
+    "cost_unusable"
+  ]
+}
