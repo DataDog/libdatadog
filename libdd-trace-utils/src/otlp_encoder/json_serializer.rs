@@ -52,10 +52,11 @@ impl Serialize for HexId<'_> {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         let mut buf = [0u8; 64];
         let n = self.0.len() * 2;
-        if n <= buf.len() && hex::encode_to_slice(self.0, &mut buf[..n]).is_ok() {
-            if let Ok(hex) = std::str::from_utf8(&buf[..n]) {
-                return s.serialize_str(hex);
-            }
+        if n <= buf.len()
+            && hex::encode_to_slice(self.0, &mut buf[..n]).is_ok()
+            && let Ok(hex) = std::str::from_utf8(&buf[..n])
+        {
+            return s.serialize_str(hex);
         }
         s.serialize_str(&hex::encode(self.0))
     }

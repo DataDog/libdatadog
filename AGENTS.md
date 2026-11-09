@@ -66,6 +66,14 @@ Iterate fastest with `cargo check -p <crate>` while editing; validate each affec
   ```bash
   cargo nextest run -p libdd-otel-thread-ctx --no-default-features --features shared-context
   ```
+- **libdd-regex**: ships two alternative engine features (`full` is the default, `regex-lite` is
+  the alternative). Only one engine is re-exported per build, so each mode needs its own run:
+  ```bash
+  # Default (full) engine — covered by the workspace test run
+  cargo nextest run -p libdd-regex
+  # regex-lite engine
+  cargo nextest run -p libdd-regex --no-default-features --features regex-lite
+  ```
 - **test_spawn_from_lib**: `cargo nextest run --package test_spawn_from_lib --features prefer-dynamic`.
 
 ### Code exploration
@@ -104,10 +112,12 @@ Exceptions are per dependency and must be justified in a comment:
 - a workspace entry that enables a feature for every member needs
   `# allow(workspace-deps-features): <justification>` on the line(s) directly above it.
 
-This is enforced in CI by the "Workspace dependency declarations" job of `lint.yml`. You can run it locally from inside the CI helper workspace:
+This is enforced in CI by the "Workspace dependency declarations" job of `lint.yml`, which builds the
+helpers on the pinned latest stable from `ci-toolchain.toml` (their dependencies have moved past the
+workspace MSRV). Run it locally the same way:
 
 ```bash
-(cd .github/actions && cargo run -p workspace-deps-lint)
+(cd .github/actions && RUSTUP_TOOLCHAIN=$(awk -F'"' '/^stable[[:space:]]*=/ {print $2}' ../../ci-toolchain.toml) cargo run -p workspace-deps-lint)
 ```
 
 ### Cryptography
@@ -132,4 +142,6 @@ All code source files (e.g. `.rs`, `.sh`) and TOML files (e.g. `Cargo.toml`) mus
   cargo run --bin release -- --out output-folder
   ```
   Feature flags control what's built: `crashtracker`, `profiling`, `telemetry`, `data-pipeline`, `symbolizer`, `library-config`, `log`, `ddsketch`, `ffe`
+
+  `--file-version <major.minor.patch>` overrides the `FileVersion` embedded in the Windows artifacts' `VERSIONINFO` resource, forwarded to the build as `LIBDATADOG_PACKAGE_VERSION`. It exists for redistributors that ship these artifacts under a version of their own (libdatadog-dotnet), because `FileVersion` is what Windows Installer compares when deciding whether to replace a file on upgrade. Omit it — as every libdatadog build and all of CI does — and both `FileVersion` and `ProductVersion` are the workspace release version. It has no effect on non-Windows targets.
 - **tools** — dev binaries: header dedup, FFI test runner, JUnit attribute injection

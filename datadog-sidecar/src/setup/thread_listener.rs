@@ -122,7 +122,7 @@ pub(crate) fn initialize_worker(peer: &PeerCredentials) {
         let host_uid = unsafe { libc::geteuid() };
         libdd_ipc::platform::set_shm_owner_uid(peer.uid);
         if host_uid != peer.uid {
-            libdd_common::unix_utils::set_restrict_worker_file_outputs(true);
+            libdd_process_utils::unix_utils::set_restrict_worker_file_outputs(true);
         }
         (peer.uid, peer.gid)
     });
@@ -147,10 +147,10 @@ pub struct MasterListener {
 /// error, which matters because more than one path can reach this.
 fn reap(bound_files: &[std::path::PathBuf]) {
     for path in bound_files {
-        if let Err(e) = std::fs::remove_file(path) {
-            if e.kind() != io::ErrorKind::NotFound {
-                warn!("Could not remove {} on shutdown: {e}", path.display());
-            }
+        if let Err(e) = std::fs::remove_file(path)
+            && e.kind() != io::ErrorKind::NotFound
+        {
+            warn!("Could not remove {} on shutdown: {e}", path.display());
         }
     }
 }

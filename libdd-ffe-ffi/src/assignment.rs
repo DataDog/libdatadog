@@ -20,6 +20,15 @@ pub struct ResolutionDetails {
     // memoizing some fields, so we can hand off references to them:
     error_message: Option<String>,
     flag_metadata: Vec<KeyValue<BorrowedStr, BorrowedStr>>,
+    // Views of the selected split's features, borrowing from the pinned assignment. Empty (and
+    // unallocated) when the split has no features.
+    features: Vec<Feature>,
+    // Backing storage for every feature's `destinations` array, laid out contiguously so each
+    // feature can borrow a (ptr, count) slice into it.
+    // Read only through the raw pointers stored in `features`; must not be dropped or shrunk
+    // while the handle lives.
+    #[allow(dead_code)]
+    feature_destinations: Vec<BorrowedStr>,
 }
 impl ResolutionDetails {
     fn new(value: Result<Assignment, EvaluationError>) -> ResolutionDetails {
@@ -40,11 +49,80 @@ impl ResolutionDetails {
             });
         }
 
+        let (features, feature_destinations) = Self::borrow_features((*inner).as_ref());
+
         ResolutionDetails {
             inner,
             error_message,
             flag_metadata,
+            features,
+            feature_destinations,
         }
+    }
+
+    fn borrow_features(
+        result: Result<&Assignment, &EvaluationError>,
+    ) -> (Vec<Feature>, Vec<BorrowedStr>) {
+        let Ok(assignment) = result else {
+            return (Vec::new(), Vec::new());
+        };
+        let source = assignment.features_slice();
+        if source.is_empty() {
+            return (Vec::new(), Vec::new());
+        }
+
+        let total_destinations: usize = source
+            .iter()
+            .map(|feature| feature.destinations.len())
+            .sum();
+        // SAFETY: the same borrow-from-pinned-assignment discipline as `flag_metadata` above.
+        // All destination strings are borrowed up front, so the pointers handed out below stay
+        // valid: the Vec is never reallocated after this loop.
+        let mut feature_destinations = Vec::with_capacity(total_destinations);
+        for feature in source.iter() {
+            for destination in feature.destinations.iter() {
+                // SAFETY: borrows from the pinned assignment, which ResolutionDetails owns.
+                feature_destinations
+                    .push(unsafe { BorrowedStr::borrow_from_str(destination.as_str()) });
+            }
+        }
+
+        let mut offset = 0;
+        let features = source
+            .iter()
+            .map(|feature| {
+                let count = feature.destinations.len();
+                let destinations = BorrowedStrArray {
+                    elements: if count == 0 {
+                        std::ptr::null()
+                    } else {
+                        feature_destinations[offset..offset + count].as_ptr()
+                    },
+                    count,
+                };
+                offset += count;
+                Feature {
+                    // SAFETY: see above.
+                    key: unsafe { BorrowedStr::borrow_from_str(feature.key.as_str()) },
+                    value: match &feature.value {
+                        libdd_ffe::rules_based::FeatureValue::String(s) => {
+                            // SAFETY: borrows from the pinned assignment, which ResolutionDetails
+                            // owns.
+                            FeatureValue::String(unsafe {
+                                BorrowedStr::borrow_from_str(s.as_str())
+                            })
+                        }
+                        libdd_ffe::rules_based::FeatureValue::Number(n) => FeatureValue::Float(*n),
+                        libdd_ffe::rules_based::FeatureValue::Boolean(b) => {
+                            FeatureValue::Boolean(*b)
+                        }
+                    },
+                    destinations,
+                }
+            })
+            .collect();
+
+        (features, feature_destinations)
     }
 }
 impl From<Assignment> for ResolutionDetails {
@@ -315,6 +393,37 @@ pub enum VariantValue {
     Float(f64),
     Boolean(bool),
     Object(BorrowedStr),
+}
+
+/// Value of a feature attached to the selected split.
+#[repr(C)]
+pub enum FeatureValue {
+    /// The string is not NUL-terminated; see `BorrowedStr`.
+    String(BorrowedStr),
+    Float(f64),
+    Boolean(bool),
+}
+
+/// A borrowed array of `BorrowedStr`. `elements` is NULL when `count` is `0`.
+#[repr(C)]
+pub struct BorrowedStrArray {
+    pub elements: *const BorrowedStr,
+    pub count: usize,
+}
+
+/// A feature attached to the selected split.
+#[repr(C)]
+pub struct Feature {
+    pub key: BorrowedStr,
+    pub value: FeatureValue,
+    pub destinations: BorrowedStrArray,
+}
+
+/// A borrowed array of `Feature`. `elements` is NULL when `count` is `0`.
+#[repr(C)]
+pub struct FeatureArray {
+    pub elements: *const Feature,
+    pub count: usize,
 }
 
 /// A string that has been borrowed. Beware that it is NOT nul-terminated!
@@ -598,6 +707,40 @@ pub unsafe extern "C" fn ddog_ffe_assignnment_get_flag_metadata(
     unsafe { ArrayMap::borrow_from_slice(&a.flag_metadata) }
 }
 
+/// Get the features attached to the selected split.
+///
+/// Entries with unsupported value types, empty keys or no non-empty destinations are absent
+/// from the array. On a repeated key only the first valid feature is present. Destinations pass
+/// through unfiltered; the caller decides what to do with unknown values.
+///
+/// # Ownership
+///
+/// The returned array borrows from `assignment`. It must not be used after `assignment` is
+/// freed.
+///
+/// # Safety
+/// `assignment` must be a valid handle.
+// allow(ffi-panic-boundary): only reads a pointer and a length from the handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ddog_ffe_assignment_get_features(
+    assignment: Handle<ResolutionDetails>,
+) -> FeatureArray {
+    // SAFETY: the caller must ensure that assignment is valid
+    let a = unsafe { assignment.as_ref() };
+    if a.features.is_empty() {
+        FeatureArray {
+            elements: std::ptr::null(),
+            count: 0,
+        }
+    } else {
+        // SAFETY: the caller must not use returned value after `assignment` is freed.
+        FeatureArray {
+            elements: a.features.as_ptr(),
+            count: a.features.len(),
+        }
+    }
+}
+
 /// Frees an Assignment handle.
 ///
 /// # Safety
@@ -613,6 +756,36 @@ mod tests {
     use std::{collections::HashMap, sync::Arc};
 
     use super::*;
+    use libdd_ffe::rules_based::{AssignmentReason, Feature as FfeFeature};
+
+    fn assignment_with_features(features: Vec<FfeFeature>) -> ResolutionDetails {
+        ResolutionDetails::from(Assignment {
+            value: AssignmentValue::String(Str::from("on")),
+            variation_key: Str::from("on"),
+            allocation_key: Str::from("static"),
+            reason: AssignmentReason::Static,
+            serial_id: Some(7),
+            do_log: true,
+            features: (!features.is_empty()).then(|| features.into()),
+        })
+    }
+
+    fn ffe_feature(
+        key: &str,
+        value: libdd_ffe::rules_based::FeatureValue,
+        destinations: &[&str],
+    ) -> FfeFeature {
+        FfeFeature {
+            key: Str::from(key),
+            value,
+            destinations: destinations.iter().map(|d| Str::from(*d)).collect(),
+        }
+    }
+
+    fn borrowed(s: &BorrowedStr) -> &str {
+        // SAFETY: test-only view over a BorrowedStr constructed from a valid &str.
+        std::str::from_utf8(unsafe { s.as_bytes() }).unwrap()
+    }
 
     #[test]
     fn evaluation_panic_returns_owned_redacted_error() {
@@ -736,5 +909,109 @@ mod tests {
         let details = ResolutionDetails::from(EvaluationError::InvalidContext);
         assert!(matches!(Reason::from(&details), Reason::Error));
         assert_eq!(ErrorCode::from(&details), ErrorCode::InvalidContext);
+    }
+
+    #[test]
+    fn features_are_borrowed_from_the_assignment() {
+        let details = assignment_with_features(vec![
+            ffe_feature(
+                "holdout.key",
+                libdd_ffe::rules_based::FeatureValue::String(Str::from("abc")),
+                &["HOOK"],
+            ),
+            ffe_feature(
+                "holdout.fraction",
+                libdd_ffe::rules_based::FeatureValue::Number(0.5),
+                &["HOOK", "SOME_NEW_DESTINATION"],
+            ),
+            ffe_feature(
+                "holdout.enabled",
+                libdd_ffe::rules_based::FeatureValue::Boolean(false),
+                &["EXPOSURE"],
+            ),
+        ]);
+
+        assert_eq!(details.features.len(), 3);
+        assert_eq!(borrowed(&details.features[0].key), "holdout.key");
+        match &details.features[0].value {
+            FeatureValue::String(s) => assert_eq!(borrowed(s), "abc"),
+            _ => panic!("expected string"),
+        }
+        match &details.features[1].value {
+            FeatureValue::Float(f) => assert_eq!(*f, 0.5),
+            _ => panic!("expected float"),
+        }
+        match &details.features[2].value {
+            FeatureValue::Boolean(b) => assert!(!*b),
+            _ => panic!("expected boolean"),
+        }
+
+        for (feature, expected) in details.features.iter().zip([
+            &["HOOK"][..],
+            &["HOOK", "SOME_NEW_DESTINATION"][..],
+            &["EXPOSURE"][..],
+        ]) {
+            // SAFETY: the pointer and count come from borrow_features over a live handle.
+            let destinations = unsafe {
+                std::slice::from_raw_parts(
+                    feature.destinations.elements,
+                    feature.destinations.count,
+                )
+            };
+            assert_eq!(destinations.len(), expected.len());
+            for (destination, expected) in destinations.iter().zip(expected) {
+                assert_eq!(borrowed(destination), *expected);
+            }
+        }
+
+        let expected_elements = details.features.as_ptr();
+        let mut handle = Handle::new(details);
+        // SAFETY: Handle is a plain pointer wrapper; a bitwise copy is sound.
+        let handle_copy = unsafe { std::ptr::read(&handle) };
+        // SAFETY: the handle is valid; it is freed below.
+        let features = unsafe { ddog_ffe_assignment_get_features(handle_copy) };
+        assert_eq!(features.count, 3);
+        assert_eq!(features.elements, expected_elements);
+        // SAFETY: elements points at `count` live features owned by the handle.
+        let first = unsafe { &*features.elements };
+        assert_eq!(borrowed(&first.key), "holdout.key");
+
+        // SAFETY: freeing the test handle.
+        unsafe { ddog_ffe_assignment_drop(&mut handle) };
+    }
+
+    #[test]
+    fn assignment_without_features_exposes_an_empty_array() {
+        let details = assignment_with_features(vec![]);
+
+        assert!(details.features.is_empty());
+        assert!(details.feature_destinations.is_empty());
+
+        let mut handle = Handle::new(details);
+        // SAFETY: Handle is a plain pointer wrapper; a bitwise copy is sound.
+        let handle_copy = unsafe { std::ptr::read(&handle) };
+        // SAFETY: the handle is valid; the original is freed below.
+        let features = unsafe { ddog_ffe_assignment_get_features(handle_copy) };
+        assert_eq!(features.count, 0);
+        assert!(features.elements.is_null());
+
+        // SAFETY: freeing the test handle.
+        unsafe { ddog_ffe_assignment_drop(&mut handle) };
+    }
+
+    #[test]
+    fn error_result_exposes_an_empty_array() {
+        let mut handle = Handle::new(ResolutionDetails::from(
+            EvaluationError::ConfigurationMissing,
+        ));
+        // SAFETY: Handle is a plain pointer wrapper; a bitwise copy is sound.
+        let handle_copy = unsafe { std::ptr::read(&handle) };
+        // SAFETY: the handle is valid; the original is freed below.
+        let features = unsafe { ddog_ffe_assignment_get_features(handle_copy) };
+        assert_eq!(features.count, 0);
+        assert!(features.elements.is_null());
+
+        // SAFETY: freeing the test handle.
+        unsafe { ddog_ffe_assignment_drop(&mut handle) };
     }
 }

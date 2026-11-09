@@ -49,6 +49,7 @@ libdd-ai-usage                       @DataDog/agent-console
 libdd-alloc/                         @DataDog/libdatadog-profiling
 libdd-capabilities*/                 @DataDog/apm-common-components-core
 libdd-common*/                       @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
+libdd-regex/                          @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 libdd-crashtracker*/                 @DataDog/libdatadog-profiling @DataDog/libdatadog-crashtracking-reviewers
 libdd-data-pipeline*/                @DataDog/apm-common-components-core
 libdd-ddsketch*/                     @DataDog/apm-common-components-core
@@ -59,6 +60,7 @@ libdd-library-config*/               @DataDog/apm-sdk-capabilities
 libdd-log*/                          @DataDog/apm-common-components-core
 libdd-otel-thread-ctx/               @DataDog/apm-common-components-core
 libdd-otel-thread-ctx-ffi/           @DataDog/apm-common-components-core
+libdd-process-utils*/                @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 libdd-profiling*/                    @DataDog/libdatadog-profiling
 libdd-profiling-heap-*/              @DataDog/libdatadog-profiling
 libdd-sampling/                      @DataDog/apm-common-components-core
@@ -76,7 +78,7 @@ LICENSE*                             @DataDog/apm-common-components-core @DataDo
 license-tool.toml                    @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 local-linux.Dockerfile               @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 NOTICE                               @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
-nightly-toolchain.toml               @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
+ci-toolchain.toml                    @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 /README.md                           @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 # Placeholder for a deprecated crate, owned by libdatadog as a fallback
 ruby/README.md                       @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
@@ -159,6 +161,7 @@ libdd-log/Cargo.toml                         @DataDog/apm-common-components-core
 libdd-otel-thread-ctx-ffi/Cargo.toml         @DataDog/apm-common-components-core @DataDog/libdatadog-release
 libdd-otel-thread-ctx/CHANGELOG.md           @DataDog/apm-common-components-core @DataDog/libdatadog-release
 libdd-otel-thread-ctx/Cargo.toml             @DataDog/apm-common-components-core @DataDog/libdatadog-release
+libdd-process-utils/Cargo.toml               @DataDog/apm-common-components-core @DataDog/libdatadog-release @DataDog/libdatadog-guild-reviewers
 libdd-sampling/CHANGELOG.md                  @DataDog/apm-common-components-core @DataDog/libdatadog-release
 libdd-sampling/Cargo.toml                    @DataDog/apm-common-components-core @DataDog/libdatadog-release
 libdd-shared-runtime-ffi/Cargo.toml          @DataDog/apm-common-components-core @DataDog/libdatadog-release
@@ -189,6 +192,7 @@ builder/Cargo.toml                           @DataDog/apm-common-components-core
 libdd-common-ffi/Cargo.toml                  @DataDog/apm-common-components-core @DataDog/libdatadog-release @DataDog/libdatadog-guild-reviewers
 libdd-common/CHANGELOG.md                    @DataDog/apm-common-components-core @DataDog/libdatadog-release @DataDog/libdatadog-guild-reviewers
 libdd-common/Cargo.toml                      @DataDog/apm-common-components-core @DataDog/libdatadog-release @DataDog/libdatadog-guild-reviewers
+libdd-regex/Cargo.toml                        @DataDog/apm-common-components-core @DataDog/libdatadog-release @DataDog/libdatadog-guild-reviewers
 
 libdd-gotter/CHANGELOG.md                    @DataDog/libdatadog-profiling @DataDog/libdatadog-release @DataDog/libdatadog-crashtracking-reviewers
 libdd-gotter/Cargo.toml                      @DataDog/libdatadog-profiling @DataDog/libdatadog-release @DataDog/libdatadog-crashtracking-reviewers

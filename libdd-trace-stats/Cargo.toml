@@ -21,6 +21,7 @@ libdd-telemetry = { version = "11.0.0", path = "../libdd-telemetry", default-fea
 libdd-trace-protobuf = { version = "5.1.1", path = "../libdd-trace-protobuf" }
 libdd-trace-obfuscation = { version = "11.0.0", path = "../libdd-trace-obfuscation", default-features = false }
 libdd-trace-utils = { version = "15.0.0", path = "../libdd-trace-utils", default-features = false }
+libdd-trace-model = { version = "1.0.0", path = "../libdd-trace-model" }
 hashbrown = { workspace = true, default-features = true }
 http = { workspace = true, features = ["std"] }
 rmp-serde.workspace = true
@@ -45,6 +46,7 @@ path = "benches/main.rs"
 
 [dev-dependencies]
 criterion.workspace = true
+libdd-tinybytes = { path = "../libdd-tinybytes" }
 httpmock.workspace = true
 libdd-trace-utils = { path = "../libdd-trace-utils", features = ["test-utils"] }
 rand = { workspace = true, default-features = true }
@@ -59,10 +61,3 @@ telemetry = ["libdd-telemetry"]
 dogstatsd = ["libdd-dogstatsd-client"]
 https = ["libdd-common/https", "libdd-capabilities-impl/https", "libdd-shared-runtime/https", "libdd-telemetry?/https", "libdd-dogstatsd-client?/https"]
 fips = ["libdd-common/fips", "libdd-capabilities-impl/fips", "libdd-shared-runtime/fips", "libdd-telemetry?/fips", "libdd-dogstatsd-client?/fips"]
-
-[lints.clippy]
-# TODO(paullgdc): This fails a lot because of if-let chaining which became
-# allowed with the 1.91.1 MSRV bump.
-# I am planning to fix each crate as an individual PR in order to not have 
-# too many conflicts
-collapsible_if = "allow"

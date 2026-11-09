@@ -13,6 +13,7 @@ bench = false
 
 [dependencies]
 bolero = { workspace = true, features = ["std"], optional = true }
+libdd-trace-model = { version = "1.0.0", path = "../libdd-trace-model", optional = true }
 prost = { workspace = true, default-features = true }
 serde = { workspace = true, features = ["derive"] }
 # We tend to prefer the smaller `alloc` feature over `std` for crates that
@@ -28,6 +29,8 @@ protoc-bin-vendored = { workspace = true, optional = true }
 [features]
 generate-protobuf = ["dep:prost-build", "dep:protoc-bin-vendored"]
 fuzzing = ["dep:bolero"]
+# Implements the read-only `libdd_trace_model` span traits for the protobuf spans.
+trace-model = ["dep:libdd-trace-model"]
 
 [dev-dependencies]
 serde_json.workspace = true

@@ -242,10 +242,10 @@ fn build_attributes(
         ));
     }
     for tag in &group.additional_metric_tags {
-        if let Some((k, v)) = tag.split_once(':') {
-            if attrs.iter().all(|attr| attr["key"].as_str() != Some(k)) {
-                attrs.push(kv_str(k, v));
-            }
+        if let Some((k, v)) = tag.split_once(':')
+            && attrs.iter().all(|attr| attr["key"].as_str() != Some(k))
+        {
+            attrs.push(kv_str(k, v));
         }
     }
     attrs
@@ -787,7 +787,11 @@ mod tests {
                 metrics: vec![("_top_level".into(), 1.0)].into(),
                 ..Default::default()
             };
-            concentrator.add_span(&span);
+            let chunk = libdd_trace_utils::span::RootSpanChunk::new(std::slice::from_ref(&span));
+            concentrator.add_span(&libdd_trace_stats::span_concentrator::ChunkSpanView {
+                span: &span,
+                chunk: &chunk,
+            });
         }
         Arc::new(Mutex::new(concentrator))
     }

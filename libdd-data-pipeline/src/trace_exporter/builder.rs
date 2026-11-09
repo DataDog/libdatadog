@@ -1152,7 +1152,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
                 .agent_rates_payload_version_enabled
                 .then(AgentResponsePayloadVersion::new),
             otlp,
-            otlp_resource_info,
+            otlp_resource_info: ArcSwap::from_pointee(otlp_resource_info),
             agentless_config,
             trace_filterer: ArcSwap::from_pointee(TraceFilterer::with_empty_conf()),
             otlp_stats_enabled,
@@ -1681,7 +1681,12 @@ mod tests {
             };
             let resource = {
                 let mut concentrator = stats_concentrator.lock().unwrap();
-                concentrator.add_span(&span);
+                let chunk =
+                    libdd_trace_utils::span::RootSpanChunk::new(std::slice::from_ref(&span));
+                concentrator.add_span(&libdd_trace_stats::span_concentrator::ChunkSpanView {
+                    span: &span,
+                    chunk: &chunk,
+                });
                 let buckets = concentrator.flush_with_otlp_exact(web_time::SystemTime::now(), true);
                 buckets[0].bucket.stats[0].resource.clone()
             };
@@ -1709,14 +1714,9 @@ mod tests {
             .set_otlp_instrumentation_scope("dd-trace-js", "7.0.0-pre");
         let exporter = builder.build::<NativeCapabilities>().unwrap();
         assert!(matches!(exporter.otlp, Some(OtlpExportMode::Grpc(_))));
-        assert_eq!(
-            exporter.otlp_resource_info.instrumentation_scope_name,
-            "dd-trace-js"
-        );
-        assert_eq!(
-            exporter.otlp_resource_info.instrumentation_scope_version,
-            "7.0.0-pre"
-        );
+        let resource = exporter.otlp_resource_info.load();
+        assert_eq!(resource.instrumentation_scope_name, "dd-trace-js");
+        assert_eq!(resource.instrumentation_scope_version, "7.0.0-pre");
     }
 
     #[cfg_attr(miri, ignore)]
