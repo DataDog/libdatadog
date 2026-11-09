@@ -802,9 +802,14 @@ impl<
     /// for instance), no flush is performed.
     pub async fn flush_client_side_stats_async(&self) -> bool {
         let status = self.client_side_stats.status.load_full();
-        if let StatsComputationStatus::Enabled { flush_handle, .. } = &*status {
-            if let Some(exporter) = flush_handle.upgrade() {
-                exporter.force_flush().await;
+        if let StatsComputationStatus::Enabled { worker_handle, .. } = &*status {
+            match worker_handle.flush() {
+                Ok(token) => {
+                    if let Err(e) = token.wait().await {
+                        debug!("Client-side stats flush did not complete: {e}");
+                    }
+                }
+                Err(e) => debug!("Failed to request client-side stats flush: {e}"),
             }
             true
         } else {

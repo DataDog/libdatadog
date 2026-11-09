@@ -687,8 +687,8 @@ fn expect_stats_request(reqs: &[common::mock_http::CapturedRequest]) -> pb::Stat
 }
 
 /// `TraceExporter::flush_client_side_stats` must trigger an immediate forced flush of the
-/// agentless stats exporter through the `Weak<dyn FlushableStatsExport>` handle stored in
-/// `StatsComputationStatus::Enabled`, without waiting for the periodic worker or shutdown.
+/// agentless stats exporter through the stats worker's
+/// `WorkerHandle::flush`, without waiting for the periodic worker or shutdown.
 #[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_flush_client_side_stats_sends_agentless_stats() {
