@@ -1008,46 +1008,88 @@ fn emit_otel_thread_contexts(
         attach_thread, detach_thread, enumerate_threads, read_thread_pointer,
     };
 
-    // Resolve the TLS module ID and intra-module offset for `otel_thread_ctx_v1`.
-    // This uses dl_iterate_phdr and works regardless of the TLS model (static or dynamic).
-    let Some((modid, tls_offset)) = libdd_otel_thread_ctx::linux::tls_module_and_offset() else {
-        return Ok(()); // Symbol not linked or module not found via dl_iterate_phdr.
-    };
+    // Strategy for resolving each thread's TLS slot address:
+    //
+    // 1. DTV walk (preferred): use dl_iterate_phdr to get the TLS module ID and intra-module
+    //    offset, then walk each thread's DTV. Correct for both static and dynamic TLS.
+    //
+    // 2. Single-offset fallback: compute `slot_addr - crashing_thread_TP` once and apply it to
+    //    every thread. Only correct when the TLS variable is in the static TLS block (constant
+    //    TP-relative offset across threads). Used when dl_iterate_phdr cannot locate the TLS
+    //    module, which happens on some older glibc versions (e.g. CentOS 7 / glibc 2.17).
+    let dtv_info = libdd_otel_thread_ctx::linux::tls_module_and_offset();
+
+    let slot_addr = libdd_otel_thread_ctx::linux::tls_slot_address();
+    if slot_addr == 0 && dtv_info.is_none() {
+        return Ok(()); // Symbol not linked.
+    }
 
     let stop_timeout = core::time::Duration::from_millis(100);
+
+    // For the single-offset fallback we need the crashing thread's TP.
+    let tp_offset = if dtv_info.is_none() && slot_addr != 0 {
+        let stop_deadline = (Instant::now() + stop_timeout).min(deadline);
+        let Ok(()) = attach_thread(crashing_tid, stop_deadline) else {
+            return Ok(());
+        };
+        let crashing_tp = read_thread_pointer(crashing_tid);
+        let _ = detach_thread(crashing_tid);
+        let Ok(crashing_tp) = crashing_tp else {
+            return Ok(());
+        };
+        Some(slot_addr as i64 - crashing_tp as i64)
+    } else {
+        None
+    };
 
     let Ok(tids) = enumerate_threads(ppid) else {
         return Ok(());
     };
 
     let pid = ppid as u32;
-    let Ok(mut mem) = ProcMemReader::open(pid) else {
-        return Ok(());
-    };
     // Stack workspace reused across threads; only the first `record_len` bytes
     // are valid after each read.
     let mut record_buf = [0u8; 640];
+    // Opened lazily after the first ptrace attach, since some kernels require an
+    // active ptrace relationship before allowing /proc/<pid>/mem access.
+    let mut mem: Option<ProcMemReader> = None;
     let mut processed = 0;
 
-    // attach, resolve TLS via DTV while stopped, read record, detach, emit.
+    // attach, resolve TLS while stopped, read record, detach, emit.
     let mut try_emit_otel = |tid: libc::pid_t| -> Result<bool, EmitterError> {
         let stop_deadline = (Instant::now() + stop_timeout).min(deadline);
         if attach_thread(tid, stop_deadline).is_err() {
             return Ok(false);
         }
 
-        // Keep the thread stopped while reading TP, walking DTV, and reading
+        // Keep the thread stopped while reading TP, resolving TLS, and reading
         // the record so it cannot resume and invalidate the addresses.
         let emitted = (|| -> Result<bool, EmitterError> {
+            let mem = match mem.as_mut() {
+                Some(m) => m,
+                None => match ProcMemReader::open(pid) {
+                    Ok(m) => mem.insert(m),
+                    Err(_) => return Ok(false),
+                },
+            };
+
             let tp = match read_thread_pointer(tid) {
                 Ok(tp) => tp,
                 Err(_) => return Ok(false),
             };
 
-            let slot_addr = match mem.resolve_tls_addr(tp, modid, tls_offset) {
-                Ok(addr) => addr,
-                Err(_) => return Ok(false),
+            // Try DTV walk first; fall back to single TP-relative offset.
+            let slot_addr = if let Some((modid, offset)) = dtv_info {
+                match mem.resolve_tls_addr(tp, modid, offset) {
+                    Ok(addr) => addr,
+                    Err(_) => return Ok(false),
+                }
+            } else if let Some(off) = tp_offset {
+                (tp as i64).wrapping_add(off) as u64
+            } else {
+                return Ok(false);
             };
+
             let record_ptr = match mem.read_tls_slot(slot_addr) {
                 Ok(ptr) if ptr != 0 => ptr,
                 _ => return Ok(false),
