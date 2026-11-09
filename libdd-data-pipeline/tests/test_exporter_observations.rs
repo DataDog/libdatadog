@@ -75,6 +75,73 @@ fn reports_terminal_results_without_native_delivery() {
 
 #[cfg_attr(miri, ignore = "httpmock retains detached server threads")]
 #[test]
+fn serialized_send_reports_without_native_delivery() {
+    for status in [200, 503] {
+        let server = MockServer::start();
+        let request = server.mock(|when, then| {
+            when.method("POST").path("/v0.4/traces");
+            then.status(status).body("{}");
+        });
+        let telemetry = server.mock(|when, then| {
+            when.path("/telemetry/proxy/api/v2/apmtelemetry");
+            then.status(200);
+        });
+        let mut builder = TraceExporter::<NativeCapabilities, ForkSafeRuntime>::builder();
+        builder
+            .set_url(&server.base_url())
+            .set_output_format(TraceExporterOutputFormat::V04)
+            .enable_observations();
+        #[cfg(feature = "telemetry")]
+        builder.enable_telemetry(Default::default());
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
+        let span = || SpanBytes {
+            name: "span".into(),
+            service: "service".into(),
+            resource: "resource".into(),
+            ..Default::default()
+        };
+        let data = rmp_serde::to_vec_named(&vec![vec![span(), span()], vec![span()]]).unwrap();
+
+        let (result, report) = exporter.send_observed(&data);
+
+        assert_eq!(result.is_ok(), status == 200);
+        assert_eq!((report.status_code, report.responses_count), (status, 1));
+        assert_eq!(report.spans_enqueued_for_serialization, 3);
+        assert_eq!(report.chunks_sent, if status == 200 { 2 } else { 0 });
+        assert_eq!(
+            report.spans_dropped_api_error,
+            if status == 503 { 3 } else { 0 }
+        );
+        assert_eq!(report.bytes_sent > 0, status == 200);
+        assert!(request.calls() >= 1);
+        exporter.shutdown(None).unwrap();
+        telemetry.assert_calls(0);
+    }
+}
+
+#[cfg_attr(miri, ignore = "httpmock retains detached server threads")]
+#[test]
+fn malformed_serialized_send_reports_nothing() {
+    let server = MockServer::start();
+    let request = server.mock(|when, then| {
+        when.path("/v0.4/traces");
+        then.status(200).body("{}");
+    });
+    let mut builder = TraceExporter::<NativeCapabilities, ForkSafeRuntime>::builder();
+    builder.set_url(&server.base_url()).enable_observations();
+    let exporter = builder.build::<NativeCapabilities>().unwrap();
+
+    let (result, report) = exporter.send_observed(b"not msgpack");
+
+    assert!(result.is_err());
+    assert_eq!(report.requests_count, 0);
+    assert_eq!(report.spans_enqueued_for_serialization, 0);
+    request.assert_calls(0);
+    exporter.shutdown(None).unwrap();
+}
+
+#[cfg_attr(miri, ignore = "httpmock retains detached server threads")]
+#[test]
 fn cancellation_has_no_invented_terminal_result() {
     let server = MockServer::start();
     let mut builder = TraceExporter::<NativeCapabilities, ForkSafeRuntime>::builder();

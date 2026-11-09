@@ -126,6 +126,27 @@ impl<
             ))
             .unwrap_or_else(|e| (Err(e.into()), TraceExporterObservations::default()))
     }
+
+    /// Send serialized traces, like [`TraceExporter::send`], and return measurements as
+    /// [`Self::send_trace_chunks_observed`] does.
+    ///
+    /// `data` must be encoded per the `input_format` given to the builder. For hosts that
+    /// encode traces themselves and run their own telemetry client.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn send_observed(
+        &self,
+        data: &[u8],
+    ) -> (
+        Result<AgentResponse, TraceExporterError>,
+        TraceExporterObservations,
+    )
+    where
+        R: BlockingRuntime,
+    {
+        self.shared_runtime
+            .block_on(observe(self.send_async(data)))
+            .unwrap_or_else(|e| (Err(e.into()), TraceExporterObservations::default()))
+    }
 }
 
 #[cfg(test)]
