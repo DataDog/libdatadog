@@ -3553,7 +3553,6 @@ dependencies = [
  "libdd-common",
  "libdd-regex",
  "tokio",
- "tokio-util",
  "tracing",
  "wasm-bindgen-futures",
 ]
@@ -3562,6 +3561,7 @@ dependencies = [
 name = "libdd-shared-runtime-ffi"
 version = "48.0.0"
 dependencies = [
+ "async-trait",
  "build_common",
  "libdd-regex",
  "libdd-shared-runtime",
