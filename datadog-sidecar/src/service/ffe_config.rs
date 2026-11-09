@@ -173,7 +173,7 @@ impl CdnConnection {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(crate) fn subscription(&self) -> Option<Arc<CdnSubscription>> {
         self.state
             .lock_or_panic()
