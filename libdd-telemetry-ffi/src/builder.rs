@@ -94,6 +94,19 @@ pub unsafe extern "C" fn ddog_telemetry_builder_with_native_deps(
     MaybeError::None
 }
 
+#[unsafe(no_mangle)]
+/// Bounds how long `ddog_telemetry_worker_stop` waits for the final flush: once `timeout_ms`
+/// elapses, in-flight requests are cancelled. `0` waits indefinitely. Defaults to 1000 ms.
+// allow(ffi-panic-boundary): plain field assignment, cannot panic.
+pub extern "C" fn ddog_telemetry_builder_with_shutdown_timeout_ms(
+    builder: &mut TelemetryWorkerBuilder,
+    timeout_ms: u64,
+) -> MaybeError {
+    builder.config.shutdown_timeout =
+        (timeout_ms != 0).then(|| std::time::Duration::from_millis(timeout_ms));
+    MaybeError::None
+}
+
 #[allow(clippy::missing_safety_doc)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_telemetry_builder_with_rust_shared_lib_deps(
@@ -136,7 +149,6 @@ pub unsafe extern "C" fn ddog_telemetry_builder_with_config(
 /// released by `ddog_telemetry_worker_stop` or `ddog_telemetry_worker_drop`.
 pub struct TelemetryWorkerRuntimeHandle {
     worker: WorkerHandle,
-    telemetry: TelemetryWorkerHandle,
     runtime: Arc<ForkSafeRuntime>,
 }
 
@@ -163,14 +175,10 @@ unsafe fn spawn_on_runtime(
     let (telemetry, worker) = builder.build_worker::<NativeCapabilities>();
     let worker = crate::try_c!(runtime.spawn_worker(worker, restart_on_fork));
     unsafe {
-        out_handle.as_ptr().write(Box::new(telemetry.clone()));
+        out_handle.as_ptr().write(Box::new(telemetry));
         out_worker
             .as_ptr()
-            .write(Box::new(TelemetryWorkerRuntimeHandle {
-                worker,
-                telemetry,
-                runtime,
-            }));
+            .write(Box::new(TelemetryWorkerRuntimeHandle { worker, runtime }));
     }
     MaybeError::None
 }
@@ -219,38 +227,18 @@ pub unsafe extern "C" fn ddog_telemetry_builder_spawn_metric_logs(
 
 #[unsafe(no_mangle)]
 /// Stops the worker, blocking until queued actions are processed and the final flush is done.
-///
-/// When `timeout_ms > 0`, in-flight requests are cancelled after that delay so the stop finishes
-/// promptly. Must not be called from a runtime thread.
+/// The wait is bounded by the builder's shutdown timeout (see
+/// `ddog_telemetry_builder_with_shutdown_timeout_ms`). Must not be called from a runtime thread.
 ///
 /// Takes ownership of `worker`: the pointer is invalid after every call, including when an
 /// error is returned. Callers that already shut the runtime down must call
 /// `ddog_telemetry_worker_drop` instead of this function.
 pub extern "C" fn ddog_telemetry_worker_stop(
     worker: Box<TelemetryWorkerRuntimeHandle>,
-    timeout_ms: u64,
 ) -> MaybeError {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let TelemetryWorkerRuntimeHandle {
-            worker,
-            telemetry,
-            runtime,
-        } = *worker;
-        let stop = async move {
-            let stop = worker.stop();
-            if timeout_ms == 0 {
-                return stop.await;
-            }
-            tokio::pin!(stop);
-            tokio::select! {
-                res = &mut stop => return res,
-                _ = tokio::time::sleep(std::time::Duration::from_millis(timeout_ms)) => {}
-            }
-            // Never drop the stop future: cancel requests so it completes promptly.
-            telemetry.cancel_requests();
-            stop.await
-        };
-        let res = crate::try_c!(runtime.block_on(stop));
+        let TelemetryWorkerRuntimeHandle { worker, runtime } = *worker;
+        let res = crate::try_c!(runtime.block_on(worker.stop()));
         crate::try_c!(res);
         MaybeError::None
     }))

@@ -157,7 +157,7 @@ mod tests {
 
     /// Stops the worker and releases both handles.
     fn stop_worker(handle: Box<TelemetryWorkerHandle>, worker: Box<TelemetryWorkerRuntimeHandle>) {
-        ddog_telemetry_worker_stop(worker, 0).unwrap_none();
+        ddog_telemetry_worker_stop(worker).unwrap_none();
         ddog_telemetry_handle_drop(handle);
     }
 

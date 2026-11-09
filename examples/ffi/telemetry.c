@@ -34,6 +34,7 @@ int main(void) {
   TRY(ddog_telemetry_builder_with_str_application_env(builder, env));
 
   TRY(ddog_telemetry_builder_with_bool_config_telemetry_debug_logging_enabled(builder, true));
+  TRY(ddog_telemetry_builder_with_shutdown_timeout_ms(builder, 1000));
 
   ddog_TelemetryWorkerHandle *handle;
   const ddog_ForkSafeRuntime *runtime;
@@ -48,8 +49,8 @@ int main(void) {
   TRY(ddog_telemetry_handle_start(handle));
 
   TRY(ddog_telemetry_handle_stop(handle));
-  // Blocks until the final flush is done, cancelling requests after 1000 ms.
-  TRY(ddog_telemetry_worker_stop(worker, 1000));
+  // Blocks until the final flush is done, at most the shutdown timeout.
+  TRY(ddog_telemetry_worker_stop(worker));
   ddog_telemetry_handle_drop(handle);
   ddog_shared_runtime_free(runtime);
 

@@ -274,32 +274,23 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Wor
         self.data.products_pending.clear();
     }
 
+    /// Drains queued actions and sends the final flush. Bounded by [`Config::shutdown_timeout`]:
+    /// when it elapses, in-flight and later requests are cancelled so shutdown returns promptly.
     async fn shutdown(&mut self) {
-        // Drain queued actions before Stop so the final flush includes anything
-        // enqueued between the last runloop tick and shutdown.
-        for _ in 0..self.mailbox.len() {
-            if let Ok(action) = self.mailbox.try_recv() {
-                let action_result = match self.flavor {
-                    TelemetryWorkerFlavor::Full => self.dispatch_action(action).await,
-                    TelemetryWorkerFlavor::MetricsLogs => {
-                        self.dispatch_metrics_logs_action(action).await
-                    }
-                };
-                // A queued terminal Stop already did the final flush: drop what follows it.
-                if action_result.is_break() && !self.config.restartable {
-                    self.terminate();
-                    return;
-                }
-            }
-        }
-
-        let stop_action = TelemetryActions::Lifecycle(LifecycleAction::Stop);
-        let _action_result = match self.flavor {
-            TelemetryWorkerFlavor::Full => self.dispatch_action(stop_action).await,
-            TelemetryWorkerFlavor::MetricsLogs => {
-                self.dispatch_metrics_logs_action(stop_action).await
-            }
+        let Some(timeout) = self.config.shutdown_timeout else {
+            return self.drain_and_stop().await;
         };
+        let token = self.cancellation_token.clone();
+        let sleeper = <C as SleepCapability>::new();
+        let drain = self.drain_and_stop();
+        futures::pin_mut!(drain);
+        tokio::select! {
+            () = &mut drain => return,
+            () = sleeper.sleep(timeout) => {}
+        }
+        debug!("Telemetry shutdown timed out; cancelling in-flight requests");
+        token.cancel();
+        drain.await;
     }
 }
 
@@ -375,6 +366,35 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
     fn flush_metric_aggregates(&mut self) {
         self.drain_metric_ring();
         self.data.metric_buckets.flush_aggregates();
+    }
+
+    /// Drains the mailbox, then dispatches the final Stop.
+    async fn drain_and_stop(&mut self) {
+        // Drain queued actions before Stop so the final flush includes anything
+        // enqueued between the last runloop tick and shutdown.
+        for _ in 0..self.mailbox.len() {
+            if let Ok(action) = self.mailbox.try_recv() {
+                let action_result = match self.flavor {
+                    TelemetryWorkerFlavor::Full => self.dispatch_action(action).await,
+                    TelemetryWorkerFlavor::MetricsLogs => {
+                        self.dispatch_metrics_logs_action(action).await
+                    }
+                };
+                // A queued terminal Stop already did the final flush: drop what follows it.
+                if action_result.is_break() && !self.config.restartable {
+                    self.terminate();
+                    return;
+                }
+            }
+        }
+
+        let stop_action = TelemetryActions::Lifecycle(LifecycleAction::Stop);
+        let _action_result = match self.flavor {
+            TelemetryWorkerFlavor::Full => self.dispatch_action(stop_action).await,
+            TelemetryWorkerFlavor::MetricsLogs => {
+                self.dispatch_metrics_logs_action(stop_action).await
+            }
+        };
     }
 
     /// Ends the worker's processing after a terminal Stop: the mailbox is closed and anything
@@ -1061,7 +1081,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
 ///
 /// To stop the worker, call [`WorkerHandle::stop`](libdd_shared_runtime::WorkerHandle::stop) on
 /// the handle returned by `SharedRuntime::spawn_worker`: it drains queued actions and performs the
-/// final flush. Call [`TelemetryWorkerHandle::cancel_requests`] to bound how long that takes.
+/// final flush, bounded by [`Config::shutdown_timeout`](crate::config::Config::shutdown_timeout).
 pub struct TelemetryWorkerHandle<
     C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
 > {
@@ -1150,14 +1170,6 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static>
         Ok(self
             .sender
             .try_send(TelemetryActions::Lifecycle(LifecycleAction::Stop))?)
-    }
-
-    /// Cancel in-flight and future HTTP requests of the worker.
-    ///
-    /// Use it to bound [`WorkerHandle::stop`](libdd_shared_runtime::WorkerHandle::stop): the
-    /// final flush then completes without waiting for the agent to answer.
-    pub fn cancel_requests(&self) {
-        self.cancellation_token.cancel();
     }
 
     pub fn add_dependency(
@@ -2532,6 +2544,66 @@ mod tests {
     #[tokio::test]
     async fn shutdown_drops_actions_after_terminal_stop_metrics_logs() {
         shutdown_drops_actions_after_terminal_stop(TelemetryWorkerFlavor::MetricsLogs).await;
+    }
+
+    /// `WorkerHandle::stop` must return within `shutdown_timeout` even when the agent never
+    /// answers the final flush.
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn stop_is_bounded_by_shutdown_timeout_against_hanging_endpoint() {
+        use libdd_shared_runtime::{BasicRuntime, BlockingRuntime, SharedRuntime};
+        use std::time::{Duration, Instant};
+
+        // Accepts connections but never answers.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let _acceptor = std::thread::spawn(move || {
+            let _held: Vec<_> = listener.incoming().collect();
+        });
+
+        let mut builder = TelemetryWorkerBuilder::new(
+            "host".into(),
+            "svc".into(),
+            "lang".into(),
+            "1".into(),
+            "tv".into(),
+        );
+        builder
+            .config
+            .set_endpoint(TelemetryEndpoint {
+                url: Some(format!("http://{addr}/")),
+                timeout_ms: 60_000,
+                ..Default::default()
+            })
+            .unwrap();
+        // Metrics/logs flavor: Start sends nothing, so only the final flush can hang.
+        builder.flavor = TelemetryWorkerFlavor::MetricsLogs;
+        builder.config.shutdown_timeout = Some(Duration::from_millis(200));
+
+        let runtime = BasicRuntime::new().unwrap();
+        let (handle, worker) = builder.build_worker::<NativeCapabilities>();
+        let worker_handle = runtime.spawn_worker(worker, false).unwrap();
+        handle.send_start().unwrap();
+        handle
+            .add_log(
+                "id",
+                "pending log".into(),
+                crate::data::LogLevel::Error,
+                None,
+            )
+            .unwrap();
+
+        let start = Instant::now();
+        runtime.block_on(worker_handle.stop()).unwrap().unwrap();
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "stop took {elapsed:?}, expected about the 200ms shutdown timeout"
+        );
+        assert!(
+            elapsed >= Duration::from_millis(200),
+            "final flush should have been attempted"
+        );
     }
 
     /// An action enqueued into the mailbox but not yet processed by the runloop
