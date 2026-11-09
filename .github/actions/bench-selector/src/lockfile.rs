@@ -1,31 +1,10 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Structural comparison of the root `Cargo.lock` between the merge base
-//! and the PR head, into the set of packages whose resolved version (or
-//! source/checksum/dependencies) changed.
-//!
-//! Both sides are fetched with git (`git show <rev>:Cargo.lock`) and parsed
-//! with a real TOML parser; the decision compares the parsed `[[package]]`
-//! entries, never the textual unified diff — comments, key order, and entry
-//! formatting compare equal, and attribution cannot be fooled by hunk
-//! context the way diff parsing can.
-//!
-//! A lockfile bump changes the compiled code of exactly the named packages —
-//! no workspace source line moves, so line coverage alone cannot see it.
-//! The package names from this comparison are intersected with the packages
-//! each benchmark cluster actually *executes* (recorded during the coverage
-//! pass, where every dependency is instrumented) to select only the
-//! benchmarks that measure the changed dependencies, instead of re-running
-//! the whole suite.
-//!
-//! Path dependencies (workspace members) are excluded: their code changes come
-//! with source diffs that the regular line intersection already handles.
-//!
-//! Fail-conservative: a lockfile missing or unparseable on either side, a
-//! change outside the package entries (lockfile format `version`,
-//! `[[patch.unused]]`, workspace membership), or any git failure is
-//! `unattributable` — the caller then conservatively selects everything.
+//! Compare root lockfiles structurally at the merge base and HEAD, ignoring
+//! formatting. Changed external package names are scoped by executed coverage;
+//! workspace members use source diffs instead. Missing/invalid lockfiles, git
+//! failures, or changes outside package entries are unattributable (full run).
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -34,27 +13,20 @@ use std::path::Path;
 use std::process::Command;
 use toml::{Table, Value};
 
-/// Packages changed in the lockfile.
 #[derive(Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LockfileChanges {
-    /// External (registry/git) package names with a changed version, source,
-    /// checksum, or dependency list. Workspace members are excluded.
+    /// Changed external packages, excluding workspace members.
     pub packages: BTreeSet<String>,
-    /// True when the lockfile changed in a way the comparison could not
-    /// attribute to packages (lockfile missing or unparseable on either
-    /// side, a change outside the `[[package]]` entries). The caller must
-    /// then be conservative and select everything.
+    /// Changes cannot be scoped to packages; select everything.
     pub unattributable: bool,
 }
 
 impl LockfileChanges {
-    /// True when the lockfile changed anything.
     pub fn is_changed(&self) -> bool {
         !self.packages.is_empty() || self.unattributable
     }
 }
 
-/// The conservative verdict: something changed that packages cannot scope.
 fn unattributable() -> LockfileChanges {
     LockfileChanges {
         packages: BTreeSet::new(),
@@ -62,17 +34,9 @@ fn unattributable() -> LockfileChanges {
     }
 }
 
-/// Compare the root `Cargo.lock` at the merge base with `origin/<base_ref>`
-/// and at HEAD, structurally. Git failures, a lockfile missing on either
-/// side, or anything unparseable is swallowed with a warning and reported
-/// as unattributable — the conservative full run — instead of an error.
 pub fn lockfile_changes(base_ref: &str, workspace_root: &Path) -> Result<LockfileChanges> {
     let members = workspace_members(workspace_root);
 
-    // Compare against the MERGE-BASE with the base branch, matching the
-    // three-dot semantics of every other diff in the pipeline: `origin/main`
-    // itself has moved on since the PR branched, and its unrelated lockfile
-    // bumps would wrongly widen the selection.
     let merge_base = match crate::git::merge_base(base_ref, workspace_root) {
         Ok(rev) => rev,
         Err(err) => {
@@ -94,8 +58,6 @@ pub fn lockfile_changes(base_ref: &str, workspace_root: &Path) -> Result<Lockfil
             return Ok(unattributable());
         }
     };
-    // A lockfile appearing or disappearing cannot be attributed to the
-    // packages of either side alone.
     let (Some(base), Some(head)) = (base, head) else {
         log::warn!("Cargo.lock missing on one side of {merge_base}..HEAD; full run");
         return Ok(unattributable());
@@ -118,10 +80,7 @@ pub fn lockfile_changes(base_ref: &str, workspace_root: &Path) -> Result<Lockfil
     Ok(changes)
 }
 
-/// Compare the base and head lockfile documents. Pure: the git plumbing
-/// lives in [`lockfile_changes`], so tests can compare documents directly.
 fn compare_lockfiles(base: &str, head: &str, members: &BTreeSet<String>) -> LockfileChanges {
-    // An unparseable document on either side is never scoping-safe.
     let Ok(base) = base.parse::<Table>() else {
         return unattributable();
     };
@@ -140,24 +99,13 @@ fn compare_lockfiles(base: &str, head: &str, members: &BTreeSet<String>) -> Lock
         }
     }
 
-    // Everything outside the package entries — the lockfile format version,
-    // patches, workspace membership — differing while all package entries
-    // are identical cannot be attributed to any package.
     if stripped(&base) != stripped(&head) {
         changes.unattributable = true;
     }
     changes
 }
 
-/// Collect the `[[package]]` entries of a parsed lockfile, keyed by package
-/// name. A lockfile can hold two entries with the same name (different
-/// version or source), so a name maps to its full ordered entry list: any
-/// difference in that list marks the name changed — a field-level diff is
-/// unnecessary when the whole entry compares.
-///
-/// `None` — and with it the conservative verdict — when the `package` data
-/// is not the expected array of named tables: cargo never writes such a
-/// lockfile, so its changes cannot be attributed.
+/// Preserve duplicate-name entries as ordered lists; reject malformed package data.
 fn package_entries(doc: &Table) -> Option<BTreeMap<String, Vec<&Value>>> {
     let mut out: BTreeMap<String, Vec<&Value>> = BTreeMap::new();
     match doc.get("package") {
@@ -175,11 +123,6 @@ fn package_entries(doc: &Table) -> Option<BTreeMap<String, Vec<&Value>>> {
     Some(out)
 }
 
-/// A copy of the document with the `[[package]]` entries removed, so the
-/// remaining top-level data — lockfile format version, patches, workspace
-/// membership — can be compared structurally. Everything that remains must
-/// be identical between the two sides; a difference there cannot be
-/// attributed to any package.
 fn stripped(doc: &Table) -> Table {
     doc.iter()
         .filter(|(key, _)| key.as_str() != "package")
@@ -187,9 +130,7 @@ fn stripped(doc: &Table) -> Table {
         .collect()
 }
 
-/// Workspace member names, for excluding path dependencies from the results.
-/// Cargo metadata is the source of truth; failure falls back to no exclusions
-/// (over-selecting is safe, under-selecting is not).
+/// Metadata failures exclude no packages, conservatively over-selecting.
 pub(crate) fn workspace_members(workspace_root: &Path) -> BTreeSet<String> {
     let Ok(output) = Command::new("cargo")
         .current_dir(workspace_root)
@@ -221,9 +162,7 @@ pub(crate) fn workspace_members(workspace_root: &Path) -> BTreeSet<String> {
 mod tests {
     use super::*;
 
-    fn members(names: &[&str]) -> BTreeSet<String> {
-        names.iter().map(|s| s.to_string()).collect()
-    }
+    use set as members;
 
     fn set(names: &[&str]) -> BTreeSet<String> {
         names.iter().map(|s| s.to_string()).collect()
@@ -238,21 +177,7 @@ mod tests {
     }
 
     #[test]
-    fn unchanged_lockfile_is_no_change() {
-        let doc = lockfile(&format!(
-            "{}{}",
-            pkg("zstd", "0.13.3"),
-            pkg("serde", "1.0.210")
-        ));
-        let changes = compare_lockfiles(&doc, &doc, &members(&[]));
-        assert_eq!(changes, LockfileChanges::default());
-        assert!(!changes.is_changed());
-    }
-
-    #[test]
     fn formatting_only_differences_compare_equal() {
-        // Same resolved data, different text: added comments and reordered
-        // entry keys are invisible to the structural comparison.
         let base = lockfile(
             "[[package]]\nname = \"serde\"\nversion = \"1.0.210\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"aaa\"\n\n",
         );
@@ -265,76 +190,37 @@ mod tests {
     }
 
     #[test]
-    fn version_bump_is_attributed() {
-        let base = lockfile(&pkg("zstd", "0.13.3"));
-        let head = lockfile(&pkg("zstd", "0.14.3"));
-        let changes = compare_lockfiles(&base, &head, &members(&[]));
-        assert_eq!(changes.packages, set(&["zstd"]));
-        assert!(!changes.unattributable);
-        assert!(changes.is_changed());
-    }
-
-    #[test]
-    fn added_package_is_attributed() {
+    fn added_and_removed_packages_are_attributed() {
         let base = lockfile(&pkg("unicode-ident", "1.0.12"));
         let head = lockfile(&format!(
             "{}{}",
             pkg("paste", "1.0.15"),
             pkg("unicode-ident", "1.0.12")
         ));
-        let changes = compare_lockfiles(&base, &head, &members(&[]));
-        assert_eq!(changes.packages, set(&["paste"]));
-        assert!(!changes.unattributable);
+        for (base, head) in [(&base, &head), (&head, &base)] {
+            let changes = compare_lockfiles(base, head, &set(&[]));
+            assert_eq!(changes.packages, set(&["paste"]));
+            assert!(!changes.unattributable);
+        }
     }
 
     #[test]
-    fn removed_package_is_attributed() {
-        let base = lockfile(&format!(
-            "{}{}",
-            pkg("paste", "1.0.15"),
-            pkg("unicode-ident", "1.0.12")
-        ));
-        let head = lockfile(&pkg("unicode-ident", "1.0.12"));
-        let changes = compare_lockfiles(&base, &head, &members(&[]));
-        assert_eq!(changes.packages, set(&["paste"]));
-        assert!(!changes.unattributable);
-    }
-
-    #[test]
-    fn dependency_list_change_is_attributed() {
-        let base = lockfile(
-            "[[package]]\nname = \"serde\"\nversion = \"1.0.210\"\ndependencies = [\n \"itoa\",\n]\n\n",
-        );
-        let head = lockfile(
-            "[[package]]\nname = \"serde\"\nversion = \"1.0.210\"\ndependencies = [\n \"itoa\",\n \"ryu\",\n]\n\n",
-        );
-        let changes = compare_lockfiles(&base, &head, &members(&[]));
-        assert_eq!(changes.packages, set(&["serde"]));
-        assert!(!changes.unattributable);
-    }
-
-    #[test]
-    fn source_change_is_attributed() {
-        let base = lockfile(
-            "[[package]]\nname = \"proptest\"\nversion = \"1.4.0\"\nsource = \"git+https://github.com/x/proptest?branch=a#1111\"\n\n",
-        );
-        let head = lockfile(
-            "[[package]]\nname = \"proptest\"\nversion = \"1.4.0\"\nsource = \"git+https://github.com/x/proptest?branch=b#2222\"\n\n",
-        );
-        let changes = compare_lockfiles(&base, &head, &members(&[]));
-        assert_eq!(changes.packages, set(&["proptest"]));
-        assert!(!changes.unattributable);
-    }
-
-    #[test]
-    fn checksum_change_is_attributed() {
-        let base =
-            lockfile("[[package]]\nname = \"zstd\"\nversion = \"0.13.3\"\nchecksum = \"aaa\"\n\n");
-        let head =
-            lockfile("[[package]]\nname = \"zstd\"\nversion = \"0.13.3\"\nchecksum = \"bbb\"\n\n");
-        let changes = compare_lockfiles(&base, &head, &members(&[]));
-        assert_eq!(changes.packages, set(&["zstd"]));
-        assert!(!changes.unattributable);
+    fn changed_package_fields_are_attributed() {
+        for (base, head) in [
+            ("version = '0.13.3'", "version = '0.14.3'"),
+            ("dependencies = ['itoa']", "dependencies = ['itoa', 'ryu']"),
+            (
+                "source = 'git+https://github.com/x/proptest#1111'",
+                "source = 'git+https://github.com/x/proptest#2222'",
+            ),
+            ("checksum = 'aaa'", "checksum = 'bbb'"),
+        ] {
+            let doc = |field| lockfile(&format!("[[package]]\nname = 'dep'\n{field}\n"));
+            let changes = compare_lockfiles(&doc(base), &doc(head), &set(&[]));
+            assert_eq!(changes.packages, set(&["dep"]), "{base} -> {head}");
+            assert!(!changes.unattributable);
+            assert!(changes.is_changed());
+        }
     }
 
     #[test]
@@ -357,8 +243,6 @@ mod tests {
 
     #[test]
     fn duplicate_same_name_entries_compare_as_a_list() {
-        // The same name resolved twice (git override + registry): bumping
-        // either entry marks the name changed.
         let base = lockfile(
             "[[package]]\nname = \"proptest\"\nversion = \"1.4.0\"\nsource = \"git+https://github.com/x/proptest?branch=a#1111\"\n\n[[package]]\nname = \"proptest\"\nversion = \"1.4.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n\n",
         );
@@ -369,8 +253,7 @@ mod tests {
         assert_eq!(changes.packages, set(&["proptest"]));
         assert!(!changes.unattributable);
 
-        // Identical duplicates, reordered: the ordered entry list differs,
-        // and the name is marked changed (conservative).
+        // Reordering duplicate-name entries is conservatively treated as a change.
         let reordered = lockfile(
             "[[package]]\nname = \"proptest\"\nversion = \"1.4.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n\n[[package]]\nname = \"proptest\"\nversion = \"1.4.0\"\nsource = \"git+https://github.com/x/proptest?branch=a#1111\"\n\n",
         );
@@ -381,7 +264,6 @@ mod tests {
 
     #[test]
     fn top_level_version_change_is_unattributable() {
-        // Lockfile format version bump with identical package entries.
         let packages = format!("{}{}", pkg("zstd", "0.13.3"), pkg("serde", "1.0.210"));
         let base = format!("version = 3\n\n{packages}");
         let head = format!("version = 4\n\n{packages}");
@@ -402,21 +284,23 @@ mod tests {
     }
 
     #[test]
-    fn malformed_toml_on_either_side_is_unattributable() {
+    fn malformed_documents_on_either_side_are_unattributable() {
         let doc = lockfile(&pkg("zstd", "0.13.3"));
-        let changes = compare_lockfiles("not toml [", &doc, &members(&[]));
-        assert_eq!(changes, unattributable());
-        assert!(changes.is_changed());
-        let changes = compare_lockfiles(&doc, "not toml [", &members(&[]));
-        assert_eq!(changes, unattributable());
+        for invalid in [
+            "not toml [",
+            "[[package]]\nversion = '0.14.3'",
+            "package = 'not-an-array'",
+        ] {
+            for (base, head) in [(invalid, doc.as_str()), (doc.as_str(), invalid)] {
+                let changes = compare_lockfiles(base, head, &set(&[]));
+                assert_eq!(changes, unattributable());
+                assert!(changes.is_changed());
+            }
+        }
     }
 
     #[test]
     fn empty_document_on_a_side_marks_every_package_and_is_unattributable() {
-        // A missing lockfile at the fetch level reports unattributable
-        // directly; at the document level, the empty side removes every
-        // package (correct attribution) and drops the format version
-        // (unattributable, conservative).
         let doc = lockfile(&format!(
             "{}{}",
             pkg("zstd", "0.13.3"),
@@ -427,24 +311,6 @@ mod tests {
         assert!(changes.unattributable);
     }
 
-    #[test]
-    fn nameless_package_entry_is_unattributable() {
-        let base = lockfile(&pkg("zstd", "0.13.3"));
-        let head = lockfile("[[package]]\nversion = \"0.14.3\"\n\n");
-        let changes = compare_lockfiles(&base, &head, &members(&[]));
-        assert_eq!(changes, unattributable());
-    }
-
-    #[test]
-    fn non_array_package_data_is_unattributable() {
-        let base = lockfile(&pkg("zstd", "0.13.3"));
-        let head = "version = 4\n\npackage = \"not-an-array\"\n";
-        let changes = compare_lockfiles(&base, head, &members(&[]));
-        assert_eq!(changes, unattributable());
-    }
-
-    // Integration-style: the fetch plumbing reads the lockfile of the
-    // target checkout at the merge base, like the manifest path.
     #[test]
     fn lockfile_changes_reads_the_target_checkout_at_the_merge_base() {
         let temp = tempfile::tempdir().unwrap();

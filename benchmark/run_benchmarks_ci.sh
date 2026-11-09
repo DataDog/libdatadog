@@ -45,12 +45,7 @@ bench_features_for_crate() {
   esac
 }
 
-# Escape regex metacharacters outside character classes; criterion's benchmark
-# filter is a regex and bench IDs are arbitrary text. Mirrors bench-selector's
-# cluster::escape_regex (.github/actions/bench-selector). The bracket
-# expression lists `]` first: a `]` anywhere else would close the class (as
-# the previous revision's did — its pattern required a literal `{}]` after
-# the class, so it never matched and nothing was ever escaped).
+# Criterion filters are regexes. Put ] first so it remains part of the class.
 escape_bench_regex() {
   printf '%s' "$1" | sed -e 's/[][\\.*+?^$|(){}]/\\&/g'
 }
@@ -67,15 +62,9 @@ metadata="$(cargo metadata --no-deps --format-version 1)"
 # the GitLab benchmarks job so a PR only benchmarks the crates it impacts. When empty (e.g. a local
 # run) default to every crate that declares a benchmark target, which is equivalent to --workspace.
 #
-# BENCH_SELECTION (optional, a JSON array of per-binary specs
-# {"crate", "target", "features": [...], "ids": [...]}) scopes the run to
-# exactly the selected benchmark IDs -- set by the GitLab benchmarks job from
-# bench-selector output (see .github/actions/bench-selector). It takes
-# precedence over BENCH_PACKAGES. Specs whose crate, target, or benchmark IDs
-# are absent from THIS checkout (the baseline often predates a PR's new
-# benches) are skipped, so a new bench simply has no baseline counterpart to
-# compare against -- the same semantics the crate-level path has for new
-# crates.
+# BENCH_SELECTION is a JSON array of {crate, target, features, ids} specs and
+# takes precedence over BENCH_PACKAGES. Skip specs/IDs absent from this checkout:
+# newly added benchmarks may have no baseline counterpart.
 BENCH_SELECTION="${BENCH_SELECTION:-}"
 spec_mode=false
 if [[ -n "${BENCH_SELECTION}" ]]; then
@@ -88,10 +77,8 @@ if [[ -n "${BENCH_SELECTION}" ]]; then
   fi
 fi
 
-if [[ "${spec_mode}" != true ]]; then
-  if [[ -z "${BENCH_PACKAGES:-}" ]]; then
-    BENCH_PACKAGES="$(jq -r '.packages[] | select(any(.targets[]?; .kind[]? == "bench")) | .name' <<< "$metadata" | tr '\n' ' ')"
-  fi
+if [[ "${spec_mode}" != true && -z "${BENCH_PACKAGES:-}" ]]; then
+  BENCH_PACKAGES="$(jq -r '.packages[] | select(any(.targets[]?; .kind[]? == "bench")) | .name' <<< "$metadata" | tr '\n' ' ')"
 fi
 
 # Build the package and feature arguments from a single code path so the feature set always comes
@@ -159,8 +146,6 @@ check_sccache_io_errors() {
 criterion_args=(--warm-up-time 1 --measurement-time 5 --sample-size=200)
 
 if [[ "${spec_mode}" == true ]]; then
-  # Bench-level selection: run only the selected benchmark IDs, intersected
-  # with what exists in THIS checkout (the baseline often predates new ones).
   spec_crate=()
   spec_target=()
   spec_features=()
@@ -181,8 +166,7 @@ if [[ "${spec_mode}" == true ]]; then
   if (( ${#spec_crate[@]} == 0 )); then
     message "No selected benchmark binaries present in this checkout; nothing to run."
   else
-    # Compile and measure in separate invocations so no sccache server is alive
-    # while anything is timed (same contract as the crate-level path below).
+    # Stop sccache before measuring, as in the crate-level path.
     if start_compiler_cache; then
       for j in "${!spec_crate[@]}"; do
         spec_args=(-p "${spec_crate[$j]}" --bench "${spec_target[$j]}")
@@ -198,9 +182,7 @@ if [[ "${spec_mode}" == true ]]; then
       sccache --stop-server > /dev/null 2>&1 || :
     fi
 
-    # Measure each spec, filtered to the IDs this checkout actually has. The
-    # --list call is instant (the compile phase above just built the target)
-    # and tolerates a missing bench target on the baseline.
+    # Intersect with --list; tolerate missing targets on the baseline.
     for j in "${!spec_crate[@]}"; do
       spec_args=(-p "${spec_crate[$j]}" --bench "${spec_target[$j]}")
       if [[ -n "${spec_features[$j]}" ]]; then

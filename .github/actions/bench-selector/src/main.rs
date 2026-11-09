@@ -1,20 +1,12 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! `bench-selector` — selects which criterion benchmarks to run on a PR.
+//! Select criterion benchmarks for a PR in three JSON-serialized stages:
+//! * `inventory`: discover binaries, features, and benchmark IDs with `--list`.
+//! * `coverage`: collect executed-function ranges per name cluster with instrumented `--test`.
+//! * `select`: intersect coverage with changed lines and dependencies, emitting exact ID filters.
 //!
-//! Three stages, each independently runnable and JSON-serialized so CI can
-//! cache and inspect intermediate results:
-//!
-//! * `inventory`  — level-1 clustering: every bench binary, its features, and the benchmark IDs
-//!   criterion `--list` reports for it (level-2 name clusters are derived from the IDs).
-//! * `coverage`   — one instrumented `--test` run per name cluster, reduced to executed-function
-//!   line ranges (`-C instrument-coverage`).
-//! * `select`     — intersect the coverage with the PR's changed lines and emit, per binary, the
-//!   exact benchmark IDs (and regex filter) to run.
-//!
-//! All stages are fail-conservative: missing or failing evidence selects more
-//! benchmarks, never fewer.
+//! Missing or failed evidence widens the selection, never narrows it.
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -46,10 +38,8 @@ enum Cmd {
         /// Restrict to these crate names (space or comma separated).
         #[arg(long, value_delimiter = ',', num_args = 1..)]
         crates: Option<Vec<String>>,
-        /// Build the `--list` invocations in the coverage pass's instrumented
-        /// target dir, so a following `coverage --target-dir <dir>` reuses the
-        /// same build (one build of the dependency graph instead of two).
-        /// Standalone invocations without this flag stay uninstrumented.
+        /// Instrumented build directory, shared with `coverage` to avoid rebuilding.
+        /// Without this flag, inventory builds are uninstrumented.
         #[arg(long)]
         target_dir: Option<PathBuf>,
         /// Output file (default: stdout).
@@ -71,9 +61,7 @@ enum Cmd {
         /// from the clean measuring build cache). Relative to workspace-root.
         #[arg(long, default_value = "target/bench-selector-coverage")]
         target_dir: PathBuf,
-        /// Scratch dir for profile data. By default a system temp dir is used
-        /// and removed when the run finishes; pass an explicit directory to
-        /// keep the raw `.profraw`/`.profdata` files for debugging.
+        /// Keep raw profiles here for debugging; defaults to an auto-cleaned temp dir.
         #[arg(long)]
         work: Option<PathBuf>,
         /// Output file (default: stdout).
@@ -101,8 +89,6 @@ enum Cmd {
 }
 
 fn main() -> Result<()> {
-    // Default to info so CI job logs show the pass's progress without env
-    // plumbing; RUST_LOG still overrides (e.g. RUST_LOG=warn to silence).
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     let cli = Cli::parse();
     match cli.cmd {
@@ -135,8 +121,6 @@ fn main() -> Result<()> {
         } => {
             let inv: inventory::Inventory = read_json(&inventory, "inventory")?;
             let crates = normalize_crates(crates);
-            // Scratch space for profiles: an OS temp dir removed on exit by
-            // default; an explicit --work is kept for debugging.
             let temp;
             let work_dir: &std::path::Path = match &work {
                 Some(path) => path,
@@ -154,8 +138,6 @@ fn main() -> Result<()> {
             )?;
             let ok = cov.entries.iter().filter(|e| e.status == "ok").count();
             log::info!("covered {} of {} clusters", ok, cov.entries.len());
-            // Dropping `temp` here removes the profraw/profdata scratch space
-            // now that the reduced coverage JSON is written.
             write_json(&out, &cov)
         }
         Cmd::Select {
@@ -169,13 +151,7 @@ fn main() -> Result<()> {
             let cov: coverage::Coverage = read_json(&coverage, "coverage")?;
             fetch_base(&base_ref, &workspace_root)?;
             let changed = diff::changed_ranges(&base_ref, &workspace_root)?;
-            // Lockfile bumps change compiled dependency code without any
-            // workspace source diff; scope them by package name against the
-            // packages each cluster executes.
             let lockfile = lockfile::lockfile_changes(&base_ref, &workspace_root)?;
-            // Manifests that only change dependency declarations are scoped
-            // like lockfile bumps: the changed package names join the same
-            // coverage intersection.
             let manifests = manifest::manifest_changes(&base_ref, &workspace_root, &changed);
             if lockfile.is_changed() {
                 log::info!(

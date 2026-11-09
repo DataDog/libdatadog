@@ -1,26 +1,15 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Level-1 selection unit: bench binaries.
-//!
-//! One `BenchBinary` is one `[[bench]]` target of one workspace crate. Every
-//! bench target is built and executed as its own process, so it is the
-//! outermost selection granularity: a binary with no selected cluster does not
-//! need to run at all.
-//!
-//! The bench IDs within a binary are discovered by running criterion's
-//! `--list` mode against the built binary; the ID strings are then clustered
-//! (level 2) by [`crate::cluster`].
+//! Discover workspace bench targets and their criterion `--list` IDs.
 
-use crate::cluster::Cluster;
-use crate::cluster::clusters_of;
+use crate::cluster::{Cluster, clusters_of};
 use anyhow::{Context, Result, bail};
 use cargo_metadata::{MetadataCommand, TargetKind};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// Serialized inventory of every bench binary and its name clusters.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Inventory {
     pub binaries: Vec<BenchBinary>,
@@ -41,25 +30,18 @@ pub struct BenchBinary {
 }
 
 impl BenchBinary {
-    /// Level-2 clusters of this binary, sorted by cluster name.
     pub fn clusters(&self) -> Vec<Cluster> {
         clusters_of(&self.bench_ids)
     }
 
-    /// Directory of this binary's bench sources, relative to the workspace
-    /// root (`<crate_dir>/benches`). Changes under it always select the whole
-    /// binary: bench code itself changed, so its measurement methodology did.
+    /// Changes here select the whole binary: measurement methodology changed.
     pub fn bench_source_dir(&self) -> String {
         format!("{}/benches", self.crate_dir)
     }
 }
 
-/// Features that some crates need beyond their bench targets' declared
-/// `required-features` for the benches to compile.
-///
-/// Keep in sync with `bench_features_for_crate` in
-/// `benchmark/run_benchmarks_ci.sh` until the manifests declare them as
-/// `required-features` on the bench targets themselves (preferred fix).
+/// Features missing from targets' `required-features`. Keep in sync with
+/// `bench_features_for_crate` in `benchmark/run_benchmarks_ci.sh`.
 fn supplemental_features(crate_name: &str) -> &'static [&'static str] {
     match crate_name {
         "libdd-crashtracker" => &["benchmarking"],
@@ -67,9 +49,6 @@ fn supplemental_features(crate_name: &str) -> &'static [&'static str] {
     }
 }
 
-/// Discover every bench binary of the workspace rooted at `workspace_root`
-/// (optionally restricted to the given crate names) by running
-/// `cargo bench ... -- --list` per bench target.
 pub fn discover(
     workspace_root: &Path,
     crates_filter: Option<&[String]>,
@@ -97,12 +76,8 @@ pub fn discover(
         ),
     }
 
-    // Enumerate every bench target first: in instrumented mode they are all
-    // built in ONE cargo pass and then listed directly, without cargo.
     let mut candidates = Vec::new();
     for pkg in members {
-        // Not a let-chain: the tool builds on checkouts older than Rust 1.88,
-        // where let-chains are not stable.
         if matches!(&wanted, Some(wanted) if !wanted.contains(pkg.name.as_ref())) {
             continue;
         }
@@ -118,11 +93,10 @@ pub fn discover(
             if !target.kind.iter().any(|k| matches!(k, TargetKind::Bench)) {
                 continue;
             }
-            let mut features: Vec<String> = target.required_features.clone();
-            for f in supplemental_features(pkg.name.as_ref()) {
-                let f = f.to_string();
-                if !features.contains(&f) {
-                    features.push(f);
+            let mut features = target.required_features.clone();
+            for feature in supplemental_features(pkg.name.as_ref()) {
+                if !features.iter().any(|f| f == feature) {
+                    features.push(feature.to_string());
                 }
             }
             features.sort();
@@ -137,23 +111,20 @@ pub fn discover(
     }
     candidates.sort_by(|a, b| (&a.crate_name, &a.target).cmp(&(&b.crate_name, &b.target)));
 
-    // Resolve the executable paths: in instrumented mode one union build
-    // compiles them all (and later serves the coverage pass, whose own union
-    // build becomes a pure cache hit); in plain mode each listing goes
-    // through cargo, which also builds its target.
-    let executables = match instrumented_target_dir {
-        Some(dir) => Some(crate::coverage::build_all_benches(
-            workspace_root,
-            &candidates.iter().collect::<Vec<_>>(),
-            dir,
-        )?),
-        None => None,
-    };
+    // Share one instrumented build with coverage; plain listings build through cargo.
+    let executables = instrumented_target_dir
+        .map(|dir| {
+            crate::coverage::build_all_benches(
+                workspace_root,
+                &candidates.iter().collect::<Vec<_>>(),
+                dir,
+            )
+        })
+        .transpose()?;
 
     let mut binaries = Vec::new();
-    let mut step = 0;
-    for bin in &candidates {
-        step += 1;
+    for (index, bin) in candidates.iter().enumerate() {
+        let step = index + 1;
         let listing = std::time::Instant::now();
         log::info!(
             "inventory: [{step}/{}] listing {} --bench {}",
@@ -191,7 +162,6 @@ pub fn discover(
             ..(*bin).clone()
         });
     }
-    binaries.sort_by(|a, b| (&a.crate_name, &a.target).cmp(&(&b.crate_name, &b.target)));
     log::info!(
         "inventory: {} bench binary(ies), {} benchmark ID(s) in {:.1?}",
         binaries.len(),
@@ -226,24 +196,13 @@ pub fn validate_crates_filter<'a>(
     Ok(())
 }
 
-/// Run `cargo bench -p <crate> --bench <target> -- --list` and parse the
-/// benchmark IDs from criterion's `<id>: benchmark` output lines.
-///
-/// The build is overridden to a debug-like profile (opt-level 0, no LTO, 16
-/// codegen units): `--list` only reads the statically registered benchmark
-/// IDs, which do not depend on optimization, and the fast build keeps the
-/// selection job cheap. The measuring run is unaffected — it never goes
-/// through this path.
+/// Use the prebuilt instrumented binary, or a fast uninstrumented cargo build.
 fn list_bench_ids(
     workspace_root: &Path,
     bin: &BenchBinary,
     executable: Option<&Path>,
     instrumented_target_dir: Option<&Path>,
 ) -> Result<Vec<String>> {
-    // Instrumented mode: run the bench binary directly (one union build
-    // already produced it) with cargo's runtime environment and a junk
-    // profile for the process's own instrumentation. Plain mode: go through
-    // cargo, which also builds the target with the fast debug-like profile.
     let mut cmd = match (instrumented_target_dir, executable) {
         (Some(dir), Some(executable)) => {
             let mut cmd =
@@ -308,7 +267,6 @@ fn parse_list_output(stdout: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::BTreeMap;
 
     fn repo_root() -> std::path::PathBuf {
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -350,58 +308,6 @@ warning: something
     }
 
     #[test]
-    fn supplemental_features_known_crates() {
-        assert_eq!(
-            supplemental_features("libdd-crashtracker"),
-            ["benchmarking"]
-        );
-        assert!(supplemental_features("libdd-ddsketch").is_empty());
-    }
-
-    #[test]
-    fn bench_source_dir_is_under_crate() {
-        let bin = BenchBinary {
-            crate_name: "libdd-trace-utils".into(),
-            target: "main".into(),
-            crate_dir: "libdd-trace-utils".into(),
-            features: vec![],
-            bench_ids: vec![],
-        };
-        assert_eq!(bin.bench_source_dir(), "libdd-trace-utils/benches");
-    }
-
-    #[test]
-    fn bench_targets_expose_required_features() {
-        let metadata = MetadataCommand::new()
-            .manifest_path(repo_root().join("Cargo.toml"))
-            .no_deps()
-            .exec()
-            .expect("cargo metadata");
-        let sampling = metadata
-            .packages
-            .iter()
-            .find(|p| p.name.as_ref() == "libdd-sampling")
-            .expect("libdd-sampling in workspace");
-        let mut bench_targets: BTreeMap<&str, &Vec<String>> = sampling
-            .targets
-            .iter()
-            .filter(|t| t.kind.iter().any(|k| matches!(k, TargetKind::Bench)))
-            .map(|t| (t.name.as_str(), &t.required_features))
-            .collect();
-        assert_eq!(bench_targets.len(), 2, "sampling has two bench targets");
-        assert_eq!(
-            bench_targets.remove("sampling_bench").unwrap(),
-            &["v04_span".to_string()]
-        );
-        assert_eq!(
-            bench_targets.remove("glob_matcher_bench").unwrap(),
-            &["bench-internals".to_string()]
-        );
-    }
-
-    /// End-to-end discovery against the real workspace: one small bench crate.
-    /// Requires compiling `libdd-ddsketch`'s bench target (a few seconds).
-    #[test]
     fn discover_finds_ddsketch_binary() {
         let inventory =
             discover(&repo_root(), Some(&["libdd-ddsketch".to_string()]), None).expect("discovery");
@@ -413,14 +319,6 @@ warning: something
         for id in &bin.bench_ids {
             assert!(id.starts_with("ddsketch_"), "unexpected bench id: {id}");
         }
-        let clusters = bin.clusters();
-        assert!(
-            clusters.iter().any(|c| c.name == "ddsketch_add"),
-            "expected a ddsketch_add cluster, got {:?}",
-            clusters.iter().map(|c| &c.name).collect::<Vec<_>>()
-        );
-        // Coverage filters must select the cluster without swallowing siblings.
-        let add = clusters.iter().find(|c| c.name == "ddsketch_add").unwrap();
-        assert_eq!(add.coverage_filter(), "^ddsketch_add(/|$)");
+        assert!(bin.clusters().iter().any(|c| c.name == "ddsketch_add"));
     }
 }

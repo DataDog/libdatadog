@@ -83,26 +83,14 @@ compute_impacted_crates:
       - changed_files.txt
     expire_in: 1 week
 
-# Computes which *individual benchmarks* (well: benchmark clusters — every bench
-# binary, then the first `/`-segment of each criterion bench ID inside it) a PR
-# should run, by building the affected bench crates with `-C
-# instrument-coverage`, running every cluster once (criterion `--test`), and
-# intersecting the executed-function line coverage with the PR's changed lines.
-# The tool lives in .github/actions/bench-selector (see its sources for the
-# design and the fail-conservative rules).
-#
-# The benchmarks job consumes bench-selection.json when this job succeeds;
-# anything else (missing output, non-success status, undetermined impacted
-# crates, workspace-level changes) makes it fall back to the crate-level
-# selection it already had, so this job can never reduce what runs on failure.
+# Collect per-cluster coverage and intersect it with changed lines/dependencies.
+# Missing or failed selection falls back to crate-level selection downstream.
 compute_bench_selection:
   stage: test
   tags: ["arch:amd64"]
   image:
     name: $BASE_CI_IMAGE
   needs:
-    # Optional: absent on main / release / merge-queue pipelines, and this job
-    # never runs there either (same rules as compute_impacted_crates).
     - job: compute_impacted_crates
       artifacts: true
       optional: true
@@ -120,14 +108,8 @@ compute_bench_selection:
       when: never
     - when: on_success
   variables:
-    # select diffs against origin/main; full history makes the merge-base resolve.
     GIT_DEPTH: 0
-    # sccache for this job's cargo builds (bench-selector and the selection
-    # pass's dependency graphs). Own key prefix: this job's RUSTFLAGS
-    # (-C instrument-coverage) and target dirs never match the benchmarks
-    # job's cache keys, exactly like that job's prefix never matches the
-    # release-build pipeline's. BASEDIRS strips the checkout path so hits
-    # survive different runner build directories.
+    # Separate instrumented-build cache; BASEDIRS allows cross-runner hits.
     SCCACHE_BUCKET: dd-sccache-storage-us1-ddbuild-io
     SCCACHE_REGION: us-east-1
     SCCACHE_S3_KEY_PREFIX: libdatadog/bench-selection/sccache
@@ -135,16 +117,11 @@ compute_bench_selection:
     SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
     SCCACHE_BASEDIRS: $CI_PROJECT_DIR
     CARGO_INCREMENTAL: "0"
-  # Same posture as compute_impacted_crates: a failure falls back downstream
-  # instead of failing the pipeline.
   allow_failure: true
   script:
-    # Always emit a dotenv so the benchmarks job always receives its needed
-    # artifacts and falls back to crate-level selection on anything unexpected.
     - |
       set -eu
-      # Write the dotenv up front ("failed" by default) so the artifact always
-      # exists, even if a later step dies; each early exit rewrites it.
+      # Always publish a status, even if a later step fails.
       printf 'BENCH_SELECTION_STATUS=failed\n' | tee bench-selection.env
       status() { printf 'BENCH_SELECTION_STATUS=%s\n' "$1" | tee bench-selection.env; }
       if [[ "${IMPACTED_STATUS:-}" != "success" || -z "${AFFECTED_CRATES:-}" ]]; then
@@ -152,52 +129,31 @@ compute_bench_selection:
         status skipped
         exit 0
       fi
-      # Workspace-level changes that per-benchmark selection cannot scope
-      # (toolchain, cargo config) -> the benchmarks job runs the full suite.
-      # Root Cargo.toml is deliberately NOT here: a dependencies-only change
-      # to it is scoped by bench-selector like a lockfile bump (the tool parses
-      # the manifest diff); anything else in it makes the tool emit
-      # full_suite=true, which select_bench_packages.sh turns into the full
-      # suite. (WORKSPACE_LEVEL_CHANGE is not used because it still includes
-      # Cargo.lock and root Cargo.toml.)
+      # Root manifests/lockfiles are scoped by the selector; toolchain/config
+      # changes are not. WORKSPACE_LEVEL_CHANGE includes both, so is unsuitable.
       if grep -qE '^(rust-toolchain\.toml|ci-toolchain\.toml)$' changed_files.txt 2>/dev/null \
          || grep -qE '^(\.cargo/|\.config/nextest\.toml)' changed_files.txt 2>/dev/null; then
         echo "Workspace-level profile/toolchain change -> full benchmark suite."
         status skipped
         exit 0
       fi
-      # The coverage pass needs llvm-profdata/llvm-cov matching rustc: the
-      # llvm-tools-preview component of the active (MSRV) toolchain provides
-      # them (bench-selector prefers it over any system LLVM, whose profile
-      # format may not match).
+      # Coverage tools must match the active rustc's profile format.
       rustup component add llvm-tools-preview
-      # Best-effort compiler cache for everything this job builds (the tool
-      # and the selection pass's cargo builds). No cache problem may fail
-      # the job: fall back to building without it.
+      # Cache failures must not fail selection.
       if command -v sccache > /dev/null 2>&1 && sccache --start-server > /dev/null 2>&1; then
         export RUSTC_WRAPPER=sccache
       else
         echo "sccache unavailable or failed to start; building without a compiler cache"
       fi
-      # The tool's own runtime is negligible against the job's cargo builds,
-      # so a debug build keeps its compile cost down.
       (cd .github/actions && cargo build -p bench-selector)
       SELECTOR=./.github/actions/target/debug/bench-selector
-      # Restrict to the crates this PR affects; inventory/coverage skip the rest.
-      # A lockfile bump can affect any crate's benchmarks (the changed packages
-      # may be exercised by any bench cluster), so it spans every bench crate.
-      # inventory and coverage share the same --target-dir: the `--list` builds
-      # are instrumented in it, so the coverage pass's builds are cache hits —
-      # one build of the dependency graph instead of two.
+      # Lockfile changes need all crates; otherwise restrict to affected crates.
+      # Share inventory's instrumented build with coverage via --target-dir.
       CRATES_ARGS=()
       if ! grep -qE '^Cargo\.lock$' changed_files.txt 2>/dev/null; then
         CRATES="$(jq -r '.[]' <<< "${AFFECTED_CRATES}" | paste -sd ',')"
         if [[ -z "$CRATES" ]]; then
-          # No crate is impacted (docs/CI-only PR) and the lockfile did not
-          # change: there is nothing for the selector to scope. Skip cleanly
-          # instead of passing `--crates ""` (rejected by the selector):
-          # the benchmarks job falls back to its crate-level path, whose own
-          # guards still widen to the full suite where they must.
+          # Nothing to scope; downstream guards still widen tooling-only PRs.
           status skipped
           exit 0
         fi

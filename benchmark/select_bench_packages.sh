@@ -3,33 +3,13 @@
 # Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 # SPDX-License-Identifier: Apache-2.0
 
-# Decides which benchmarks THIS shard should run, and prints exactly one of:
-#   SKIP        - this shard has nothing to run (the job should exit 0)
-#   FULL        - run the whole workspace (run_benchmarks_ci.sh uses --workspace)
-#   <crate ...> - space-separated crates this shard should benchmark (the
-#                 crate-level fallback, used when bench-level selection is
-#                 unavailable or undetermined)
-#   <json>      - bench-level selection: this shard's share of the benchmark
-#                 binaries selected by bench-selector, as a JSON array of
-#                 specs {"crate", "target", "features": [...], "ids": [...]}
-#                 (consumed via $BENCH_SELECTION by run_benchmarks_ci.sh).
-#
-# Bench-level selection applies when the compute_bench_selection job produced
-# a valid bench-selection.json (see .gitlab/impacted-crates.yml and
-# .github/actions/bench-selector). Every unexpected condition — missing file,
-# malformed JSON, undetermined impacted crates, benchmark-tooling or
-# workspace-level changes — falls back to the crate-level logic below, which
-# itself falls back to the full suite. The decision can only widen what runs.
-#
-# Inputs (from the compute_impacted_crates / compute_bench_selection jobs,
-# consumed via the benchmarks job env):
-#   $CI_COMMIT_BRANCH, $IMPACTED_STATUS, $AFFECTED_CRATES (JSON array), and
-#   ./changed_files.txt and ./bench-selection.json in the current directory.
-#   Crates with benchmarks are discovered from `cargo metadata`.
-#
 # Usage: select_bench_packages.sh <node_index_1based> <node_total>
-#
-# Only diagnostics go to stderr; stdout is solely the decision token above.
+# Print this shard's decision: SKIP, FULL, a space-separated crate list, or a
+# JSON array of {crate, target, features, ids} specs for BENCH_SELECTION.
+# Diagnostics go to stderr. Missing/untrusted selection falls back to crates,
+# then the full suite. A valid empty selection skips the run.
+# Inputs: CI_COMMIT_BRANCH, IMPACTED_STATUS, AFFECTED_CRATES (JSON array),
+# changed_files.txt and bench-selection.json from the selection jobs.
 set -eu
 
 node_index="${1:-1}"
@@ -60,35 +40,17 @@ crate_weight() {
 
 log() { echo "$@" >&2; }
 
-# True when benchmark selection tooling itself changed: its behavior cannot be
-# trusted for this PR, so run everything.
+# Changed selection tooling cannot be trusted to narrow its own validation.
 bench_tooling_changed() {
-  # BENCH_SELECTOR_SELF_TEST=1 skips this guard: the validation branches'
-  # diffs necessarily contain the tooling changes they are validating (the
-  # same escape hatch exists in bench-selector's select). Only a deliberate
-  # CI configuration change can set it, and editing that configuration is
-  # itself a tooling change that re-enables this guard on real PRs.
-  # The affected-crate list itself comes from crates-reporter, and the
-  # selector is built by the helper workspace's own manifests: a change to
-  # either can skew the very list this selection narrows with.
+  # Explicit escape hatch for PRs validating the selector's narrowing behavior.
   if [ "${BENCH_SELECTOR_SELF_TEST:-}" = "1" ]; then
     return 1
   fi
   grep -qE '^(benchmark/|\.gitlab/benchmarks\.yml|\.gitlab/impacted-crates\.yml|\.github/actions/bench-selector/|\.github/actions/crates-reporter/|\.github/actions/ci-shared/|\.github/actions/(Cargo\.toml|Cargo\.lock))' changed_files.txt 2>/dev/null
 }
 
-# Workspace-level dependency or toolchain changes can affect the performance of
-# every crate, even though crates-reporter maps them to no member crate.
-# Cargo.lock is NOT here: a lockfile bump changes exactly the packages named in
-# its diff, which bench-selector scopes against the packages each benchmark
-# cluster executes (Reason: dependency-changed). When no bench-level selection
-# is available, lockfile_changed() below restores the old full-suite fallback.
-# Cargo.toml (root) is NOT here: a dependencies-only manifest change is
-# scoped by bench-selector exactly like a lockfile bump (the tool parses the
-# manifest diff and marks it deps-only); any other root-manifest change makes
-# the tool emit full_suite=true, which the decision chain below turns into
-# the full suite. Without a selection (job failed), root_manifest_changed()
-# restores the old full-suite fallback.
+# Toolchain changes affect every crate. Root manifests/lockfiles instead use
+# dependency scoping when a selection exists, with a full-suite fallback below.
 workspace_level_changed() {
   grep -qE '^(rust-toolchain\.toml|ci-toolchain\.toml)$' changed_files.txt 2>/dev/null
 }
@@ -97,28 +59,19 @@ root_manifest_changed() {
   grep -qE '^Cargo\.toml$' changed_files.txt 2>/dev/null
 }
 
-# True when the lockfile changed. Only consulted when no bench-level
-# selection is available (selection job failed or did not run): with a
-# selection, bench-selector scopes the bump to the changed packages.
 lockfile_changed() {
   grep -qE '^Cargo\.lock$' changed_files.txt 2>/dev/null
 }
 
-# Print the selection's binaries as shardable specs, or nothing when the file
-# is absent or malformed. Every spec carries the exact benchmark IDs
-# (run_benchmarks_ci.sh intersects them with what the checkout it runs in
-# actually has, so the baseline can predate new benches).
+# The runner intersects these IDs with each checkout's --list (baseline may differ).
 bench_selection_specs() {
   [ -s "$BENCH_SELECTION_FILE" ] || return 1
   jq -c '[.binaries[] | {crate: .crate_name, target: .target, features: .features, ids: .bench_ids}]' \
     "$BENCH_SELECTION_FILE" 2>/dev/null
 }
 
-# Longest-processing-time shard assignment: heaviest items first, each to the
-# currently-lightest shard. Deterministic, so every shard computes the same
-# assignment and just reads its own bucket. The load arrays are shared by the
-# bench-level (weight = selected benchmark IDs) and crate-level (weight =
-# crate_weight) callers, which pass "weight key" lines on stdin.
+# Deterministic longest-processing-time assignment: read sorted "weight key"
+# lines, placing each item on the lightest shard. Shared by both selection modes.
 lpt_assign() {
   local idx=0 j min_idx min_load weight key
   while [ "$idx" -lt "$node_total" ]; do
@@ -146,9 +99,7 @@ lpt_assign() {
 # Emit this shard's bench-level specs as a JSON array (or SKIP).
 print_bench_level_decision() {
   local specs="$1"
-  # Weight = number of selected benchmark IDs: each costs one criterion pass,
-  # which the fixed criterion_args make roughly uniform. A better proxy than
-  # the hand-tuned crate weights below, and it needs no maintenance.
+  # Each ID costs roughly one fixed-duration criterion pass.
   local weighted
   weighted="$(jq -r '.[] | "\(.ids | length) \(.crate):\(.target)"' <<< "$specs" | LC_ALL=C sort -k1,1nr -k2,2)"
 
@@ -188,35 +139,21 @@ case "${CI_COMMIT_BRANCH:-}" in
     ;;
 esac
 
-# Bench-level selection is only trustworthy when impacted crates were
-# determined; a valid selection file also implies the producing job succeeded.
-# Tri-state: "absent" (fall back to crate-level), "empty" (valid selection
-# that selected nothing — the whole point of per-benchmark selection, so the
-# run must skip, not widen), or "specs" (bench-level).
-# Only decided here when a full suite was not already forced (main).
-selection_state="absent"
+# Empty string: unavailable; []: valid selection with nothing to run.
 specs=""
 full_suite="false"
 if [ -z "$packages" ] && [ "${IMPACTED_STATUS:-}" = "success" ] && [ -n "${AFFECTED_CRATES:-}" ] && [ -n "$all_bench" ]; then
   specs="$(bench_selection_specs || true)"
   if [ -n "$specs" ]; then
-    if [ "$specs" = "[]" ]; then
-      selection_state="empty"
-    else
-      selection_state="specs"
+    if [ "$specs" != "[]" ]; then
       log "Bench-level selection available."
     fi
-    # The tool signals inputs it cannot scope below the whole suite (a
-    # non-dependencies-only ROOT manifest change: profiles, workspace
-    # features, membership).
     full_suite="$(jq -r '.full_suite // false' "$BENCH_SELECTION_FILE" 2>/dev/null || echo false)"
   fi
 fi
 
 if [ -z "$packages" ]; then
-  # Full-suite guards, in the original precedence order. They apply in both
-  # modes: when the selection tooling itself or the workspace-level build
-  # inputs changed, per-benchmark selection cannot be trusted for this PR.
+  # Full-suite guards take precedence over either selection mode.
   force_full=""
   if [ -z "$specs" ] && { [ "${IMPACTED_STATUS:-}" != "success" ] || [ -z "${AFFECTED_CRATES:-}" ] || [ -z "$all_bench" ]; }; then
     force_full="Impacted crates undetermined"
@@ -224,29 +161,24 @@ if [ -z "$packages" ]; then
     force_full="Benchmark tooling changed"
   elif workspace_level_changed; then
     force_full="Workspace-level dependency/toolchain change"
-  elif [ "$selection_state" != "absent" ] && [ "$full_suite" = "true" ]; then
+  elif [ -n "$specs" ] && [ "$full_suite" = "true" ]; then
     force_full="Selection requires the full suite (unscopable root manifest change)"
-  elif [ "$selection_state" = "absent" ] && lockfile_changed; then
-    # No bench-level selection to scope the bump with: old behavior. (An
-    # "empty" selection means bench-selector scoped the bump and no cluster
-    # exercises the changed packages — trust it and run nothing.)
+  elif [ -z "$specs" ] && lockfile_changed; then
     force_full="Cargo.lock changed without bench-level selection"
-  elif [ "$selection_state" = "absent" ] && root_manifest_changed; then
-    # No bench-level selection to decide dependencies-only with: old
-    # behavior for root manifest changes.
+  elif [ -z "$specs" ] && root_manifest_changed; then
     force_full="Root Cargo.toml changed without bench-level selection"
   fi
 
   if [ -n "$force_full" ]; then
     log "$force_full -> full benchmark suite."
     packages="$all_bench"
-  elif [ "$selection_state" = "specs" ]; then
-    # Bench-level: the selection already accounts for the affected crates.
-    print_bench_level_decision "$specs"
-    exit 0
-  elif [ "$selection_state" = "empty" ]; then
-    log "Bench-level selection selected no benchmarks for this PR."
-    echo "SKIP"
+  elif [ -n "$specs" ]; then
+    if [ "$specs" = "[]" ]; then
+      log "Bench-level selection selected no benchmarks for this PR."
+      echo "SKIP"
+    else
+      print_bench_level_decision "$specs"
+    fi
     exit 0
   else
     # Crate-level fallback: affected crates ∩ crates with benchmarks.

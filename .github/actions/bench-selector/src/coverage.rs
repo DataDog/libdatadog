@@ -1,31 +1,13 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! One-shot instrumented coverage per name cluster.
-//!
-//! For every bench binary:
-//!
-//! 1. Build the whole dependency graph (dependencies included, so changes in library crates
-//!    exercised by a bench are attributed to the library's source lines) with `-C
-//!    instrument-coverage`, in a dedicated target dir so the clean (measuring) build cache is never
-//!    polluted, and with a debug-like profile override (opt-level 0, no LTO, 16 codegen units) for
-//!    build speed — which source functions are entered does not depend on optimization.
-//! 2. For every name cluster of that binary, run the bench binary once per benchmark — criterion's
-//!    `--test` mode — filtered to the cluster, with a dedicated `LLVM_PROFILE_FILE`, so each
-//!    cluster's profile is attributable.
-//! 3. Merge the profile with `llvm-profdata` and export it with `llvm-cov` as JSON, then reduce it
-//!    to *executed function* line ranges: a function the cluster entered contributes ALL of its
-//!    line ranges, not just the ones taken in the single run, so a changed line inside a
-//!    partially-executed function of an entered function still selects the cluster
-//!    (function-granularity matching).
-//!
-//! A cluster whose instrumented run or coverage extraction fails is recorded
-//! with status `failed`; the selection step then always runs it (fail
-//! conservative), never skips it.
+//! Build all benches and dependencies with coverage in a separate, debug-like
+//! target directory, then run each name cluster with criterion `--test`.
+//! Reduce LLVM exports to all regions of entered functions (including untaken
+//! branches). Failed runs or exports always select the affected cluster.
 
 use crate::cluster::Cluster;
-use crate::inventory::BenchBinary;
-use crate::inventory::Inventory;
+use crate::inventory::{BenchBinary, Inventory};
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -49,30 +31,30 @@ pub struct CoverageEntry {
     pub status: String,
     /// Merged, sorted, non-overlapping inclusive `[start, end]` line ranges.
     pub files: BTreeMap<String, Vec<(u32, u32)>>,
-    /// External (registry/git-checkout) packages whose code this cluster
-    /// executed, by package name. Used to scope lockfile bumps to the
-    /// benchmarks that actually measure the changed dependencies; empty when
-    /// the cluster exercises no non-workspace code (or in coverage data from
-    /// before this field existed).
+    /// Executed external packages, used to scope dependency changes.
     #[serde(default)]
     pub deps: BTreeSet<String>,
 }
 
-/// Resolved llvm coverage tools matching the active rustc.
+impl CoverageEntry {
+    fn failed(bin: &BenchBinary, cluster: String) -> Self {
+        Self {
+            crate_name: bin.crate_name.clone(),
+            target: bin.target.clone(),
+            cluster,
+            status: "failed".into(),
+            files: BTreeMap::new(),
+            deps: BTreeSet::new(),
+        }
+    }
+}
+
 struct Tools {
     profdata: PathBuf,
     cov: PathBuf,
 }
 
-/// Run the coverage pass for every binary of `inventory` (optionally restricted
-/// to some crate names).
-///
-/// `work` is the scratch directory for profiles and profdata files. It is
-/// also where compiler-side junk profiles (from instrumented proc-macros and
-/// build scripts, see [`BUILD_JUNK_PROFILE_PATTERN`]) land, so everything is
-/// removed together when the caller drops the directory — which `main` does
-/// by default via a `tempfile::TempDir` unless `--work` pins an explicit,
-/// kept directory for debugging.
+/// Collect per-cluster coverage, using `work` for raw and merged profiles.
 pub fn run(
     workspace_root: &Path,
     inventory: &Inventory,
@@ -84,38 +66,30 @@ pub fn run(
         crates_filter,
         inventory.binaries.iter().map(|bin| bin.crate_name.as_str()),
     )?;
+    let in_scope: Vec<&BenchBinary> = inventory
+        .binaries
+        .iter()
+        .filter(|bin| {
+            crates_filter.is_none_or(|filter| filter.iter().any(|c| c == &bin.crate_name))
+        })
+        .collect();
     if has_path_remapping(&inherited_rustflags()) {
-        // A remapped library can disappear while benchmark-file ranges remain.
-        // A nonempty export therefore cannot prove complete source attribution.
+        // Remapped libraries can disappear even when benchmark-file ranges survive.
         log::warn!("path-remapping rustflags prevent trustworthy coverage; all clusters will run");
-        let mut entries = Vec::new();
-        for bin in &inventory.binaries {
-            // Not a let-chain: the tool builds on checkouts older than Rust
-            // 1.88, where let-chains are not stable.
-            if crates_filter
-                .is_some_and(|filter| !filter.iter().any(|name| name == &bin.crate_name))
-            {
-                continue;
-            }
-            for cluster in bin.clusters() {
-                entries.push(CoverageEntry {
-                    crate_name: bin.crate_name.clone(),
-                    target: bin.target.clone(),
-                    cluster: cluster.name,
-                    status: "failed".into(),
-                    files: BTreeMap::new(),
-                    deps: BTreeSet::new(),
-                });
-            }
-        }
+        let entries = in_scope
+            .iter()
+            .flat_map(|bin| {
+                bin.clusters()
+                    .into_iter()
+                    .map(|cluster| CoverageEntry::failed(bin, cluster.name))
+            })
+            .collect();
         return Ok(Coverage { entries });
     }
     let tools = Tools {
         profdata: ensure_tool("llvm-profdata")?,
         cov: ensure_tool("llvm-cov")?,
     };
-    // llvm-cov reports absolute file paths, and coverage files are normalized
-    // against this root — canonicalize so a relative `--workspace-root .` works.
     let workspace_root = workspace_root
         .canonicalize()
         .context("failed to canonicalize workspace root")?;
@@ -125,13 +99,6 @@ pub fn run(
     let target_dir = prepare_directory(&workspace_root.join(target_dir))?;
 
     let mut entries = Vec::new();
-    let in_scope: Vec<&BenchBinary> = inventory
-        .binaries
-        .iter()
-        .filter(|bin| {
-            crates_filter.is_none_or(|filter| filter.iter().any(|c| c == &bin.crate_name))
-        })
-        .collect();
     log::info!(
         "coverage: {} binaries, {} clusters, debug-like instrumented build",
         in_scope.len(),
@@ -140,31 +107,21 @@ pub fn run(
             .map(|bin| bin.clusters().len())
             .sum::<usize>()
     );
-    // ONE build for every binary: per-binary invocations would each pay a
-    // whole-workspace cargo fingerprint check and compile shared dependencies
-    // per feature set. After it, bench binaries run directly without cargo.
     let executables = build_all_benches(&workspace_root, &in_scope, &target_dir)?;
     let started = std::time::Instant::now();
     for bin in in_scope {
         let Some(executable) = executables.get(&(bin.crate_name.clone(), bin.target.clone()))
         else {
-            // The union build reported no executable for this target: treat
-            // every cluster as failed rather than guessing.
             log::warn!(
                 "no bench executable reported for {}/{}; marking all clusters failed",
                 bin.crate_name,
                 bin.target
             );
-            for cluster in bin.clusters() {
-                entries.push(CoverageEntry {
-                    crate_name: bin.crate_name.clone(),
-                    target: bin.target.clone(),
-                    cluster: cluster.name,
-                    status: "failed".into(),
-                    files: BTreeMap::new(),
-                    deps: BTreeSet::new(),
-                });
-            }
+            entries.extend(
+                bin.clusters()
+                    .into_iter()
+                    .map(|cluster| CoverageEntry::failed(bin, cluster.name)),
+            );
             continue;
         };
         for cluster in bin.clusters() {
@@ -222,13 +179,7 @@ fn ensure_tool(name: &str) -> Result<PathBuf> {
     })
 }
 
-/// Locate an LLVM coverage tool.
-///
-/// `llvm-profdata`/`llvm-cov` must match the rustc that produced the raw
-/// profiles: a newer system LLVM rejects the profile version rustc writes
-/// (seen with LLVM 20 vs rustc's format v10). The rustup `llvm-tools-preview`
-/// component ships tools that always match rustc, so it is the preferred
-/// source; PATH is used first so a caller can force an explicit LLVM.
+/// PATH overrides rustup's matching LLVM tools; callers must ensure version compatibility.
 fn find_llvm_tool(name: &str) -> Option<PathBuf> {
     if let Some(path) = which_in_path(name) {
         return Some(path);
@@ -267,21 +218,8 @@ fn which_in_path(name: &str) -> Option<PathBuf> {
         .find(|p| p.is_file())
 }
 
-/// Environment for every cargo invocation of the coverage pass: compiler flags
-/// and CARGO_TARGET_DIR must be identical between the `--no-run` build and the
-/// cluster runs, or cargo rebuilds (and the profile would differ).
-///
-/// The bench profile is overridden to a debug-like configuration
-/// (opt-level 0, no LTO, 16 codegen units): coverage of which *source
-/// functions* a benchmark executes does not depend on optimization — the same
-/// functions are entered at opt-level 0 as at the measuring run's opt-level 3,
-/// they just are not inlined into each other. The debug-like configuration
-/// (plus no LTO and parallel codegen instead of the profile's single codegen
-/// unit) builds the dependency graph several times faster, which matters
-/// because this pass runs on every PR while the measuring run only runs for
-/// selected clusters. `CARGO_PROFILE_*` overrides are cargo-native and scoped
-/// to this pass's invocations only; the measuring run still uses the real
-/// `[profile.bench]`.
+/// Fast instrumented profile shared by inventory and coverage, isolated from
+/// the measuring run's real `[profile.bench]`.
 pub(crate) fn cargo_env(target_dir: &Path) -> Vec<(String, String)> {
     vec![
         ("CARGO_ENCODED_RUSTFLAGS".into(), inherited_rustflags()),
@@ -320,29 +258,11 @@ fn has_path_remapping(encoded_rustflags: &str) -> bool {
         .any(|flag| flag == "--remap-path-prefix" || flag.starts_with("--remap-path-prefix="))
 }
 
-fn apply_env(cmd: &mut Command, env: &[(String, String)]) {
-    for (k, v) in env {
-        cmd.env(k, v);
-    }
-}
-
-/// Junk profile pattern for compiler-side profiles: `RUSTFLAGS`
-/// instrumentation also applies to proc-macros and build scripts, whose code
-/// runs *inside rustc/cargo* during compilation; without `LLVM_PROFILE_FILE`
-/// they write `default_%m_%p.profraw` files in the cwd. The junk pattern
-/// keeps the checkout clean and is never read.
+/// Discard proc-macro/build-script profiles without littering the checkout.
 pub(crate) const BUILD_JUNK_PROFILE_PATTERN: &str = "junk/%m_%p.profraw";
 
-/// Run a bench binary DIRECTLY, without going through cargo. Cargo
-/// re-fingerprints the whole workspace for every `cargo bench` invocation,
-/// which dominates wall time on this many-crate workspace; after one union
-/// build ([`build_all_benches`]) the binaries need no cargo at all.
-///
-/// The environment replicates what `cargo bench` provides to the process:
-/// the working directory is the package root (benches load relative
-/// fixtures from there), plus the common CARGO_* variables and criterion's
-/// target dir. Benches needing something beyond this fail their cluster,
-/// which fails conservative (always run) - never silently skipped.
+/// Avoid cargo's repeated fingerprint checks, preserving the package cwd for
+/// fixtures and the common cargo environment. Unsupported benches fail conservatively.
 pub(crate) fn direct_bench_command(
     workspace_root: &Path,
     bin: &BenchBinary,
@@ -358,37 +278,21 @@ pub(crate) fn direct_bench_command(
     cmd
 }
 
-/// Build every bench binary of `bins` in ONE cargo invocation and return
-/// their executable paths, keyed by (crate name, bench target name).
-///
-/// One invocation instead of one per binary: cargo pays a whole-workspace
-/// fingerprint check per invocation, and a single union build compiles a
-/// shared dependency once with unified features, where per-target builds
-/// could compile several variants of it. (The measuring run's spec mode is
-/// not identical here: `run_benchmarks_ci.sh` compiles each selected target
-/// in its own `cargo bench -p … --bench … --no-run` invocation, so its
-/// feature unification differs per target — close enough that the same
-/// source functions are entered, which is all the selection needs.)
+/// One union build avoids repeated fingerprinting and dependency builds.
+/// Unlike per-target measuring builds, it unifies features across all bins.
 pub(crate) fn build_all_benches(
     workspace_root: &Path,
     bins: &[&BenchBinary],
     target_dir: &Path,
 ) -> Result<BTreeMap<(String, String), PathBuf>> {
-    // An empty selection must not reach cargo: a bare `cargo bench --no-run`
-    // has no `-p` restriction and would build EVERY workspace bench target
-    // instrumented (e.g. on a PR that affects no bench crate).
+    // Without -p, cargo would build every workspace bench.
     if bins.is_empty() {
         return Ok(BTreeMap::new());
     }
-    let env = cargo_env(target_dir);
     let mut cmd = Command::new("cargo");
-    cmd.current_dir(workspace_root);
-    apply_env(&mut cmd, &env);
+    cmd.current_dir(workspace_root).envs(cargo_env(target_dir));
     cmd.arg("bench");
-    let mut crates: BTreeSet<&str> = BTreeSet::new();
-    for bin in bins {
-        crates.insert(bin.crate_name.as_str());
-    }
+    let crates: BTreeSet<&str> = bins.iter().map(|bin| bin.crate_name.as_str()).collect();
     for name in &crates {
         cmd.args(["-p", name]);
     }
@@ -401,8 +305,6 @@ pub(crate) fn build_all_benches(
             .arg(features.into_iter().collect::<Vec<_>>().join(","));
     }
     cmd.args(["--no-run", "--message-format", "json"]);
-    // Compiler-side profiles (proc-macros, build scripts) run inside rustc:
-    // route them to the junk pattern like the build phase always has.
     cmd.env(
         "LLVM_PROFILE_FILE",
         target_dir.join(BUILD_JUNK_PROFILE_PATTERN),
@@ -423,18 +325,12 @@ pub(crate) fn build_all_benches(
     let executables = parse_bench_executables(&stdout, workspace_root, bins);
     for bin in bins {
         if !executables.contains_key(&(bin.crate_name.clone(), bin.target.clone())) {
-            // Diagnose: the artifacts seen vs the expected selection.
             let bench_targets: Vec<String> = stdout
                 .lines()
                 .filter_map(|line| {
                     let message = serde_json::from_str::<serde_json::Value>(line).ok()?;
                     let target = message.get("target")?;
-                    let bench = target
-                        .get("kind")
-                        .and_then(|k| k.as_array())
-                        .map(|k| k.iter().any(|v| v.as_str() == Some("bench")))
-                        .unwrap_or(false);
-                    if bench {
+                    if is_bench_target(target) {
                         Some(format!(
                             "{}/{}",
                             message
@@ -469,45 +365,36 @@ fn parse_bench_executables(
     let root = workspace_root
         .canonicalize()
         .unwrap_or_else(|_| workspace_root.to_path_buf());
-    let mut executables = BTreeMap::new();
-    for line in stdout.lines() {
-        let Ok(message) = serde_json::from_str::<serde_json::Value>(line) else {
-            continue;
-        };
-        if message.get("reason").and_then(|r| r.as_str()) != Some("compiler-artifact") {
-            continue;
-        }
-        let Some(target) = message.get("target") else {
-            continue;
-        };
-        let is_bench = target
-            .get("kind")
-            .and_then(|k| k.as_array())
-            .map(|k| k.iter().any(|v| v.as_str() == Some("bench")))
-            .unwrap_or(false);
-        if !is_bench {
-            continue;
-        }
-        let Some(name) = target.get("name").and_then(|n| n.as_str()) else {
-            continue;
-        };
-        let Some(manifest) = message.get("manifest_path").and_then(|m| m.as_str()) else {
-            continue;
-        };
-        let Some(executable) = message.get("executable").and_then(|e| e.as_str()) else {
-            continue;
-        };
-        let Some(bin) = bins.iter().find(|bin| {
-            bin.target == name && Path::new(manifest).starts_with(root.join(&bin.crate_dir))
-        }) else {
-            continue;
-        };
-        executables.insert(
-            (bin.crate_name.clone(), bin.target.clone()),
-            PathBuf::from(executable),
-        );
-    }
-    executables
+    stdout
+        .lines()
+        .filter_map(|line| {
+            let message: serde_json::Value = serde_json::from_str(line).ok()?;
+            if message.get("reason")?.as_str()? != "compiler-artifact" {
+                return None;
+            }
+            let target = message.get("target")?;
+            if !is_bench_target(target) {
+                return None;
+            }
+            let name = target.get("name")?.as_str()?;
+            let manifest = message.get("manifest_path")?.as_str()?;
+            let executable = message.get("executable")?.as_str()?;
+            let bin = bins.iter().find(|bin| {
+                bin.target == name && Path::new(manifest).starts_with(root.join(&bin.crate_dir))
+            })?;
+            Some((
+                (bin.crate_name.clone(), bin.target.clone()),
+                PathBuf::from(executable),
+            ))
+        })
+        .collect()
+}
+
+fn is_bench_target(target: &serde_json::Value) -> bool {
+    target
+        .get("kind")
+        .and_then(|k| k.as_array())
+        .is_some_and(|k| k.iter().any(|v| v.as_str() == Some("bench")))
 }
 
 /// Run one cluster once under instrumentation and reduce its profile to
@@ -545,14 +432,7 @@ fn cover_cluster(
                 bin.target,
                 cluster.name
             );
-            CoverageEntry {
-                crate_name: bin.crate_name.clone(),
-                target: bin.target.clone(),
-                cluster: cluster.name.clone(),
-                status: "failed".into(),
-                files: BTreeMap::new(),
-                deps: BTreeSet::new(),
-            }
+            CoverageEntry::failed(bin, cluster.name.clone())
         }
     }
 }
@@ -585,8 +465,6 @@ fn cover_cluster_inner(
         bail!("no profile written for cluster {}", cluster.name);
     }
 
-    // Merge the single-run profile, dropping zero-count functions to shrink
-    // the export.
     let status = Command::new(&tools.profdata)
         .args(["merge", "-sparse"])
         .arg(&profraw)
@@ -598,9 +476,7 @@ fn cover_cluster_inner(
         bail!("llvm-profdata merge failed for cluster {}", cluster.name);
     }
 
-    // Export as JSON (llvm-cov's default export format; `-format=lcov/text`
-    // are the only accepted explicit values). Single-dash long-option style
-    // and `=`-joined values work on rustup's llvm-cov and system LLVM alike.
+    // JSON is the default export format, not an accepted -format value.
     let output = Command::new(&tools.cov)
         .arg("export")
         .arg(format!("-instr-profile={}", profdata.display()))
@@ -623,14 +499,8 @@ const REGION_LINE_START: usize = 0;
 const REGION_LINE_END: usize = 2;
 const REGION_FILE_ID: usize = 5;
 
-/// Reduce llvm-cov export JSON to executed-function line ranges per
-/// workspace-relative file path.
-///
-/// A function counts as executed when its entry count is > 0; ALL of its
-/// regions then contribute their line ranges (function-granularity matching),
-/// and ranges per file are merged into sorted, non-overlapping inclusive
-/// ranges. Files outside `workspace_root` (cargo registry, sysroot) are
-/// dropped: only this workspace's code can be changed by the PR.
+/// Retain all regions of entered functions, with workspace-relative paths and
+/// external package names. Non-workspace ranges cannot intersect source diffs.
 fn reduce_executed_functions(
     llvm_cov_json: &str,
     workspace_root: &Path,
@@ -677,8 +547,6 @@ fn reduce_executed_functions(
                     continue;
                 };
                 if let Ok(rel) = Path::new(path).strip_prefix(workspace_root) {
-                    // Workspace file: normalize to a workspace-relative path so
-                    // it can be intersected with the PR diff.
                     let rel = rel
                         .to_str()
                         .filter(|path| !path.is_empty())
@@ -692,9 +560,6 @@ fn reduce_executed_functions(
                     };
                     files.entry(rel).or_default().push((start, end));
                 } else if let Some(name) = external_package_name(path) {
-                    // Third-party file: record the package name so lockfile
-                    // bumps can be scoped to the benchmarks that actually
-                    // execute the changed dependency.
                     deps.insert(name);
                 }
             }
@@ -710,23 +575,15 @@ fn reduce_executed_functions(
     Ok(ClusterCoverage { files, deps })
 }
 
-/// Reduced per-cluster coverage: workspace line ranges plus the external
-/// packages whose code the cluster executed.
 #[derive(Debug, PartialEq)]
 struct ClusterCoverage {
     files: BTreeMap<String, Vec<(u32, u32)>>,
     deps: BTreeSet<String>,
 }
 
-/// Extract the external package name from a cargo registry or git-checkout
-/// source path, e.g.
-/// `…/.cargo/registry/src/<registry>/serde-1.0.210/src/…` -> `serde`, or
-/// `…/.cargo/git/checkouts/proptest-9e6d…/<sha>/…` -> `proptest`.
-///
-/// Git checkouts are named after the *repository*, which is assumed to match
-/// the package name (true for this workspace's patched dependencies); when it
-/// does not, the lockfile scoping under-selects for that package, which the
-/// unattributable-diff fallback cannot see — accepted as a documented gap.
+/// Extract a package name from registry or git-checkout paths.
+/// Known gap: git repository names are assumed to match package names;
+/// mismatches can under-select and are not caught by the lockfile fallback.
 fn external_package_name(path: &str) -> Option<String> {
     const REGISTRY: &str = "registry/src/";
     const CHECKOUTS: &str = "git/checkouts/";
@@ -748,28 +605,16 @@ fn external_package_name(path: &str) -> Option<String> {
     None
 }
 
-/// Split `<name>-<version>` into the package name, where the version may
-/// carry prerelease (`-…`) and build-metadata (`+…`) suffixes — e.g.
-/// `httpmock-0.8.0-alpha.1` -> `httpmock`,
-/// `wasi-0.11.0+wasi-snapshot-preview1` -> `wasi` — and the name itself
-/// may contain `-` (e.g. `allocator-api2-0.2.1`). The split is the FIRST
-/// `-` whose tail parses as a full semver, so a version-looking name
-/// segment (`ast-grep-0.34.0`) is never mistaken for the version.
+/// Split at the first version suffix, preserving hyphenated names and
+/// handling prerelease/build suffixes (e.g. `httpmock-0.8.0-alpha.1`).
 fn registry_package_name(name_version: &str) -> Option<String> {
-    let mut start = 0;
-    while let Some(offset) = name_version[start..].find('-') {
-        let idx = start + offset;
-        if is_semver(&name_version[idx + 1..]) {
-            return Some(name_version[..idx].to_string());
-        }
-        start = idx + 1;
-    }
-    None
+    name_version
+        .match_indices('-')
+        .find(|(idx, _)| is_semver(&name_version[idx + 1..]))
+        .map(|(idx, _)| name_version[..idx].to_owned())
 }
 
-/// Full semver: a numeric `major.minor.patch` core, an optional `-prerelease`
-/// (dot-separated identifiers of ASCII alphanumerics and `-`), and an
-/// optional `+build` metadata tail (any nonempty remainder).
+/// Accept numeric version components, optional prerelease, and nonempty build metadata.
 fn is_semver(s: &str) -> bool {
     let core = match s.split_once('+') {
         Some((core, build)) if !build.is_empty() => core,
@@ -792,12 +637,8 @@ fn is_prerelease(s: &str) -> bool {
 }
 
 fn is_version(s: &str) -> bool {
-    let mut parts = s.split('.');
-    let mut numeric = parts
-        .next()
-        .is_some_and(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()));
-    numeric &= parts.all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()));
-    numeric
+    s.split('.')
+        .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
 }
 
 /// Merge inclusive ranges into sorted, non-overlapping ones (adjacent ranges
@@ -934,8 +775,6 @@ mod tests {
             bin("libdd-ddsketch", "ddsketch_bench"),
             bin("libdd-trace-utils", "main"),
         ];
-        // /ws does not exist locally: the canonicalization fallback keeps the
-        // literal path, which is exactly what the matching needs.
         let executables =
             parse_bench_executables(messages, Path::new("/ws"), &bins.iter().collect::<Vec<_>>());
         assert_eq!(
@@ -950,15 +789,7 @@ mod tests {
                 "/ws/target/bench-selection/debug/deps/main-456"
             ))
         );
-        // Non-bench targets and artifacts of crates outside the selection
-        // are not recorded.
-        assert!(!executables.contains_key(&(
-            "libdd-trace-utils".to_string(),
-            "libdd-trace-utils".to_string()
-        )));
-        assert!(
-            !executables.contains_key(&("libdd-trace-utils".to_string(), "unrelated".to_string()))
-        );
+        assert_eq!(executables.len(), 2);
     }
 
     #[test]
@@ -974,83 +805,40 @@ mod tests {
                 "/home/u/.cargo/registry/src/index/{dir}/src/lib.rs"
             ))
         };
-        // Plain semver.
         assert_eq!(pkg("serde-1.0.210").as_deref(), Some("serde"));
-        // Hyphenated package names are not over-stripped.
         assert_eq!(
             pkg("allocator-api2-0.2.1").as_deref(),
             Some("allocator-api2")
         );
         assert_eq!(pkg("ast-grep-0.34.0").as_deref(), Some("ast-grep"));
-        // Prerelease and build-metadata versions must still resolve.
         assert_eq!(pkg("httpmock-0.8.0-alpha.1").as_deref(), Some("httpmock"));
         assert_eq!(
             pkg("wasi-0.11.0+wasi-snapshot-preview1").as_deref(),
             Some("wasi")
         );
         assert_eq!(pkg("foo-1.0.0-rc.1+build.2").as_deref(), Some("foo"));
-        // Not a version tail at all.
         assert_eq!(pkg("not-a-version").as_deref(), None);
     }
 
     #[test]
-    fn merges_adjacent_ranges() {
-        let merged = merge_ranges(vec![(1, 2), (3, 4)]);
-        assert_eq!(merged, [(1, 4)]);
-    }
-
-    #[test]
     fn reduces_executed_functions_fixture() {
-        // Two functions in one workspace file: one executed (count 2, two
-        // regions), one not (count 0). A third function lives outside the
-        // workspace (cargo registry) and must be dropped.
-        let fixture = r#"{
-          "data": [
-            {
-              "functions": [
-                {
-                  "name": "hot",
-                  "count": 2,
-                  "filenames": ["/ws/libdd-x/src/hot.rs"],
-                  "regions": [
-                    [10, 1, 10, 20, 2, 0, 0],
-                    [12, 1, 14, 2, 1, 0, 0]
-                  ]
-                },
-                {
-                  "name": "cold",
-                  "count": 0,
-                  "filenames": ["/ws/libdd-x/src/cold.rs"],
-                  "regions": [[1, 1, 9, 1, 0, 0, 0]]
-                },
-                {
-                  "name": "dep",
-                  "count": 7,
-                  "filenames": ["/home/u/.cargo/registry/src/x.rs"],
-                  "regions": [[1, 1, 2, 1, 7, 0, 0]]
-                },
-                {
-                  "name": "macro_user",
-                  "count": 1,
-                  "filenames": ["/ws/libdd-x/src/macro_user.rs"],
-                  "regions": [
-                    [5, 1, 5, 9, 1, 0, 3, 1],
-                    [30, 1, 30, 30, 1, 0, 0]
-                  ]
-                }
-              ]
-            }
-          ]
-        }"#;
+        let fixture = r#"{"data":[{"functions":[
+            {"count":2,"filenames":["/ws/libdd-x/src/hot.rs"],
+             "regions":[[10,1,10,20,2,0,0],[12,1,14,2,1,0,0]]},
+            {"count":0,"filenames":["/ws/libdd-x/src/cold.rs"],
+             "regions":[[1,1,9,1,0,0,0]]},
+            {"count":7,"filenames":["/home/u/.cargo/registry/src/x.rs"],
+             "regions":[[1,1,2,1,7,0,0]]},
+            {"count":1,"filenames":["/ws/libdd-x/src/macro_user.rs"],
+             "regions":[[5,1,5,9,1,0,3,1],[30,1,30,30,1,0,0]]}
+        ]}]}"#;
         let reduced = reduce_executed_functions(fixture, Path::new("/ws")).expect("reduce fixture");
 
         let mut expected = ClusterCoverage {
             files: BTreeMap::new(),
             deps: BTreeSet::new(),
         };
-        // All regions of the executed function, merged; the cold function
-        // never runs; the registry file is dropped; expansion regions (8
-        // elements) contribute their invocation-site range.
+        // Include macro invocation sites, but not unentered functions/external ranges.
         expected
             .files
             .insert("libdd-x/src/hot.rs".to_string(), vec![(10, 10), (12, 14)]);
