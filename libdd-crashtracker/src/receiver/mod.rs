@@ -3,10 +3,9 @@
 #![cfg(unix)]
 #![allow(clippy::std_instead_of_alloc, clippy::std_instead_of_core)]
 
-mod apm_span_submit;
+mod apm_trace;
 mod debug_logger;
 mod entry_points;
-mod msgpack_patch;
 pub use entry_points::{
     async_receiver_entry_point_stream, async_receiver_entry_point_unix_listener,
     async_receiver_entry_point_unix_socket, get_receiver_unix_socket, receiver_entry_point_stdin,

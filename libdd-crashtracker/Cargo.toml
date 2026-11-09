@@ -63,7 +63,9 @@ libdd-env = { version = "0.1.0", path = "../libdd-env" }
 libdd-networking = { path = "../libdd-networking", version = "1.0.0", features = ["hyper-proxy"] }
 libdd-process-utils = { version = "1.0.0", path = "../libdd-process-utils" }
 libdd-telemetry = { version = "11.0.0", path = "../libdd-telemetry" }
+libdd-trace-utils = { version = "15.0.0", path = "../libdd-trace-utils", default-features = false }
 http = { workspace = true, features = ["std"] }
+http-body-util = { workspace = true }
 libc.workspace = true
 nix = { workspace = true, features = ["poll", "signal", "socket"] }
 num-derive.workspace = true
@@ -88,8 +90,8 @@ windows = { workspace = true, features = ["std", "Win32_System_Diagnostics_Debug
 [dev-dependencies]
 criterion.workspace = true
 goblin = { workspace = true, features = ["std", "pe32", "pe64"] }
-rmpv = { workspace = true }
 tempfile.workspace = true
+tokio = { workspace = true, features = ["rt", "macros", "net", "io-util"] }
 
 [target.'cfg(windows)'.dev-dependencies]
 windows = { workspace = true, features = ["std", "Win32_System_LibraryLoader"] }

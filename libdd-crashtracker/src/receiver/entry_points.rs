@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 
+use super::apm_trace;
 use super::receive_report::{ReceiverFileAccess, receive_report_from_stream};
 use crate::CrashtrackerConfiguration;
 #[cfg(target_os = "linux")]
@@ -140,48 +141,57 @@ pub(crate) async fn receiver_entry_point(
                 .log_messages
                 .push(format!("Error demangling names: {e}"));
         }
-        crash_info
-            .async_upload_to_endpoint(config.endpoint())
-            .await?;
-
-        // Submit the crash-time APM trace payload to the agent if present.
-        // Patch in the crash UUID and error message — these are only known on
-        // the receiver side (the collector pre-encodes everything else).
-        if let Some(ref mut payload) = crash_info.apm_trace_payload {
-            let signal = crash_info
-                .sig_info
-                .as_ref()
-                .map(|sig| format!("{:?}", sig.si_signo_human_readable))
-                .unwrap_or_else(|| "unknown signal".to_string());
-            let error_message = format!(
-                "Process crashed ({signal}). Crash report: {uuid}",
-                uuid = crash_info.uuid
-            );
-
-            let extra_meta = [
-                ("error.message", error_message.as_str()),
-                ("error.type", "crash"),
-                ("dd.crash_tracking.uuid", crash_info.uuid.as_str()),
-            ];
-
-            if let Some(patched) = super::msgpack_patch::patch_span_meta(&payload.data, &extra_meta)
-            {
-                payload.data = patched;
-            }
-
-            if let Err(e) = super::apm_span_submit::submit_trace_payload(
-                payload,
-                &crash_info.metadata.library_version,
-            )
-            .await
-            {
+        // Finish the spans the crash ended. Prepared first, so a payload sent
+        // as staged says why in the crash report, then sent alongside the
+        // report so neither waits on, or is lost with, the other.
+        let apm_trace = crash_info.apm_trace_payload.take().map(|payload| {
+            let message = crash_error_message(&crash_info);
+            let crash = apm_trace::CrashDetails {
+                crash_unix_ns: payload.crash_unix_ns,
+                error_message: &message,
+                uuid: &crash_info.uuid,
+            };
+            let (request, staged_because) = apm_trace::prepare(&payload, &crash);
+            (apm_trace::agent_url(&payload), request, staged_because)
+        });
+        let apm_trace = apm_trace.map(|(url, request, staged_because)| {
+            if let Some(why) = staged_because {
                 crash_info
                     .log_messages
-                    .push(format!("Failed to submit crash trace payload: {e}"));
+                    .push(format!("APM trace payload sent as staged: {why}"));
             }
+            (url, request)
+        });
+        let submit_trace = async {
+            match apm_trace {
+                Some((url, request)) => Some(apm_trace::submit(&url, request).await),
+                None => None,
+            }
+        };
+        let (upload, submitted) = tokio::join!(
+            crash_info.async_upload_to_endpoint(config.endpoint()),
+            submit_trace
+        );
+        if let Some(Err(e)) = submitted {
+            // The report is already out; stderr is all that is left.
+            eprintln!("crashtracker: failed to submit crash APM trace payload: {e:#}");
         }
+        upload?;
     }
     Ok(())
+}
+
+/// `error.message` for spans the crash ended: the signal and the crash report.
+fn crash_error_message(crash_info: &crate::crash_info::CrashInfo) -> String {
+    let signal = crash_info
+        .sig_info
+        .as_ref()
+        .map(|sig| format!("{:?}", sig.si_signo_human_readable))
+        .unwrap_or_else(|| "unknown signal".to_string());
+    format!(
+        "Process crashed ({signal}). Crash report: {}",
+        crash_info.uuid
+    )
 }
 
 fn receiver_timeout() -> Duration {
