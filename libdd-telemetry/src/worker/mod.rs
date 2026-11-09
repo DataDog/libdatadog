@@ -2546,6 +2546,46 @@ mod tests {
         shutdown_drops_actions_after_terminal_stop(TelemetryWorkerFlavor::MetricsLogs).await;
     }
 
+    /// With a promptly answering endpoint, `WorkerHandle::stop` returns as soon as the final
+    /// flush is done instead of waiting for `shutdown_timeout`.
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn stop_returns_before_shutdown_timeout_with_prompt_endpoint() {
+        use libdd_shared_runtime::{BasicRuntime, BlockingRuntime, SharedRuntime};
+        use std::time::{Duration, Instant};
+
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let mut builder = TelemetryWorkerBuilder::new(
+            "host".into(),
+            "svc".into(),
+            "lang".into(),
+            "1".into(),
+            "tv".into(),
+        );
+        builder
+            .config
+            .set_endpoint(TelemetryEndpoint {
+                url: Some(format!("file://{}", file.path().display())),
+                ..Default::default()
+            })
+            .unwrap();
+        builder.config.shutdown_timeout = Some(Duration::from_secs(5));
+
+        let runtime = BasicRuntime::new().unwrap();
+        let (handle, worker) = builder.build_worker::<NativeCapabilities>();
+        let worker_handle = runtime.spawn_worker(worker, false).unwrap();
+        handle.send_start().unwrap();
+        // Like the C example: Stop through the handle, then stop the worker.
+        handle.send_stop().unwrap();
+
+        let start = Instant::now();
+        runtime.block_on(worker_handle.stop()).unwrap().unwrap();
+        let elapsed = start.elapsed();
+        assert!(elapsed < Duration::from_secs(1), "stop took {elapsed:?}");
+        let output = std::fs::read_to_string(file.path()).unwrap();
+        assert!(output.contains("app-closing"));
+    }
+
     /// `WorkerHandle::stop` must return within `shutdown_timeout` even when the agent never
     /// answers the final flush.
     #[cfg_attr(miri, ignore)]

@@ -94,6 +94,7 @@ libc = { workspace = true, optional = true }
 winver = { workspace = true, optional = true }
 
 [dev-dependencies]
+tempfile.workspace = true
 # Examples only call fmt(); ansi/tracing-log/smallvec extras not needed.
 tracing-subscriber = { workspace = true, features = ["fmt"] }
 tokio = { workspace = true, features = ["sync", "io-util", "rt-multi-thread"] }
