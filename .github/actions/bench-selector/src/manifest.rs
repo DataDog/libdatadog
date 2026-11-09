@@ -255,11 +255,10 @@ fn runtime_dependencies(doc: &Table) -> BTreeMap<String, Vec<&Value>> {
             collect(table, &mut out);
         }
     }
-    if let Some(Value::Table(workspace)) = doc.get("workspace") {
-        if let Some(Value::Table(table)) = workspace.get("dependencies") {
+    if let Some(Value::Table(workspace)) = doc.get("workspace")
+        && let Some(Value::Table(table)) = workspace.get("dependencies") {
             collect(table, &mut out);
         }
-    }
     if let Some(Value::Table(targets)) = doc.get("target") {
         for target in targets.values() {
             let Value::Table(target) = target else {

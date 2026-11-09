@@ -5,10 +5,7 @@
 name = "bench-selector"
 version = "0.1.0"
 edition = "2024"
-# Literal, not workspace-inherited: the tool must also build on historical
-# checkouts (see the bench-validation/* branches) whose helper workspace does
-# not define [workspace.package] rust-version yet.
-rust-version = "1.87.0"
+rust-version.workspace = true
 description = "Selects which criterion benchmark groups to run on a PR by intersecting one-shot instrumented-coverage of each group with the PR's changed lines"
 homepage = "https://github.com/DataDog/libdatadog/tree/main/.github/actions/bench-selector"
 repository = "https://github.com/DataDog/libdatadog/tree/main/.github/actions/bench-selector"
