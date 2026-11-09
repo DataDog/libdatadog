@@ -1,0 +1,10 @@
+{
+  "$schema": "../../../../schema/gateway-request-metric-fixture.schema.json",
+  "profile": "trajectory.gen_ai.gateway.request@0.1.0",
+  "case": "duration-missing",
+  "description": "The required duration is absent: duration_invalid, as in the provider-attempt profile.",
+  "observation": {
+    "operation_name": "chat"
+  },
+  "expected_error_code": "duration_invalid"
+}

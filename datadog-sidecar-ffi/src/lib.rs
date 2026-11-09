@@ -71,10 +71,10 @@ fn otlp_metrics_endpoint_with_agent_test_token(
     mut otlp_metrics_endpoint: Option<Endpoint>,
     agent_endpoint: &Endpoint,
 ) -> Option<Endpoint> {
-    if let Some(endpoint) = &mut otlp_metrics_endpoint {
-        if endpoint.test_token.is_none() {
-            endpoint.test_token = agent_endpoint.test_token.clone();
-        }
+    if let Some(endpoint) = &mut otlp_metrics_endpoint
+        && endpoint.test_token.is_none()
+    {
+        endpoint.test_token = agent_endpoint.test_token.clone();
     }
 
     otlp_metrics_endpoint
@@ -1149,6 +1149,12 @@ fn ddog_sidecar_send_ffe_exposure_batch_impl(
 /// route selection, JSON serialization, and EVP delivery. This function is
 /// caller-driven; callers must aggregate and bound event cardinality before passing
 /// a batch.
+///
+/// When all batch `context` fields (service, env and version) are empty, the sidecar
+/// fills them from the application set on this transport with
+/// `ddog_sidecar_set_application`. If no application is set or any of its identity
+/// fields exceeds 256 characters, the batch context stays empty. Explicit batch
+/// context is preserved.
 ///
 /// # Safety
 /// All slices must reference valid memory under the CharSlice contract. Context

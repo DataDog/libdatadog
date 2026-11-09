@@ -121,10 +121,10 @@ impl<S: SetOps, const N: usize> Sharded<S, N> {
         };
 
         let mut guard = lock.write();
-        if guard.len() != read_len {
-            if let Some(id) = unsafe { guard.find_with_hash(hash, lookup) } {
-                return Ok(id);
-            }
+        if guard.len() != read_len
+            && let Some(id) = unsafe { guard.find_with_hash(hash, lookup) }
+        {
+            return Ok(id);
         }
 
         unsafe { guard.insert_unique_uncontended_with_hash(hash, owned) }

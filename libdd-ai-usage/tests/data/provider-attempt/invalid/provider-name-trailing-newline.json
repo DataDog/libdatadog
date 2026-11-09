@@ -1,0 +1,14 @@
+{
+  "$schema": "../../../../schema/provider-attempt-metric-fixture.schema.json",
+  "profile": "gen_ai.client.provider_attempt@0.1.0",
+  "case": "provider-name-trailing-newline",
+  "description": "A provider name with a trailing newline. An identifier is matched as a whole string, so the newline makes it invalid; an end anchor that matches before a final newline would accept it.",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "openai\n",
+    "duration_seconds": 1,
+    "streaming": false,
+    "observation_point": "gateway"
+  },
+  "expected_error_code": "identifier_invalid"
+}

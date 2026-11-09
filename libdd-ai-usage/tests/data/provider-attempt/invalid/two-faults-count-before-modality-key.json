@@ -1,0 +1,19 @@
+{
+  "$schema": "../../../../schema/provider-attempt-metric-fixture.schema.json",
+  "profile": "gen_ai.client.provider_attempt@0.1.0",
+  "case": "two-faults-count-before-modality-key",
+  "description": "Two faults in one modality object: a negative text part and a key outside the three. The parts under the three keys are checked before other keys.",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "exampleai",
+    "duration_seconds": 1,
+    "streaming": false,
+    "input_tokens": 10,
+    "input_tokens_by_modality": {
+      "video": 3,
+      "text": -1
+    },
+    "observation_point": "gateway"
+  },
+  "expected_error_code": "count_invalid"
+}

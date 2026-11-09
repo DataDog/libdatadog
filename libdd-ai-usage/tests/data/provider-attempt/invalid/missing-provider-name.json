@@ -1,0 +1,13 @@
+{
+  "$schema": "../../../../schema/provider-attempt-metric-fixture.schema.json",
+  "profile": "gen_ai.client.provider_attempt@0.1.0",
+  "case": "missing-provider-name",
+  "description": "No provider name.",
+  "observation": {
+    "operation_name": "chat",
+    "duration_seconds": 1,
+    "streaming": false,
+    "observation_point": "gateway"
+  },
+  "expected_error_code": "required_field_missing"
+}

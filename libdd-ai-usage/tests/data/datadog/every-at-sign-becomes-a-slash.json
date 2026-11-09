@@ -1,0 +1,37 @@
+{
+  "binding": "0.1.0",
+  "case": "every-at-sign-becomes-a-slash",
+  "description": "A rate card value with two at signs. In the two identifier tags every at sign becomes a slash, not only the first.",
+  "profile": "gen_ai.client.provider_attempt@0.1.0",
+  "historical": false,
+  "points": [
+    {
+      "name": "trajectory.gen_ai.client.inference.usage.cost",
+      "instrument": "counter",
+      "unit": "{nanoUSD}",
+      "value": 1000000000,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "trajectory.cost.source": "calculated",
+        "trajectory.cost.rate_card": "a@b@c",
+        "trajectory.observation.point": "gateway"
+      }
+    }
+  ],
+  "expected_series": [
+    {
+      "name": "trajectory.gen_ai.client.inference.usage.cost",
+      "type": "count",
+      "value": 1,
+      "tags": [
+        "gen_ai.operation.name:chat",
+        "gen_ai.provider.name:exampleai",
+        "trajectory.cost.rate_card:a/b/c",
+        "trajectory.cost.source:calculated",
+        "trajectory.observation.point:gateway",
+        "trajectory.profile:gen_ai.client.provider_attempt/0.1.0"
+      ]
+    }
+  ]
+}

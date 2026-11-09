@@ -1,0 +1,28 @@
+{
+  "$schema": "../../../../schema/gateway-request-metric-fixture.schema.json",
+  "profile": "trajectory.gen_ai.gateway.request@0.1.0",
+  "case": "estimated-cost-negative-unusable",
+  "description": "A negative figure is an unusable amount. It adds nothing, the other points are kept, and cost_unusable is raised.",
+  "observation": {
+    "operation_name": "chat",
+    "request_model": "support-model",
+    "duration_seconds": 0.7,
+    "estimated_cost_usd": -0.01
+  },
+  "expected_metrics": [
+    {
+      "name": "trajectory.gen_ai.gateway.request.duration",
+      "instrument": "histogram",
+      "unit": "s",
+      "value": 0.7,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.request.model": "support-model",
+        "trajectory.observation.point": "gateway"
+      }
+    }
+  ],
+  "expected_issues": [
+    "cost_unusable"
+  ]
+}

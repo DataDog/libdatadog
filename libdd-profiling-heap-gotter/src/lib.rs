@@ -6,7 +6,7 @@
 //! This crate installs hook functions over a running process's dynamic
 //! symbol relocations (the GOT / PLT-resolved entries) so that calls
 //! such as `malloc` and `free` are routed through
-//! [`libdd-profiling-heap-sampler`] without recompiling or relinking the target
+//! \[`libdd-profiling-heap-sampler`\] without recompiling or relinking the target
 //! application. The approach mirrors ddprof's `src/lib/symbol_overrides.cc`
 //! + `src/lib/elfutils.cc`.
 //!

@@ -2,6 +2,22 @@
 
 
 
+## [7.0.0](https://github.com/datadog/libdatadog/compare/libdd-shared-runtime-v6.0.0..libdd-shared-runtime-v7.0.0) - 2026-10-23
+
+### Added
+
+- Add basic no_std to libdd-common ([#2638](https://github.com/datadog/libdatadog/issues/2638)) - ([d0dd0a2](https://github.com/datadog/libdatadog/commit/d0dd0a21ffca664d7c6a0798dd8c178234fd6750))
+
+### Changed
+
+- Fix last doc lints ([#2694](https://github.com/datadog/libdatadog/issues/2694)) - ([3e4a453](https://github.com/datadog/libdatadog/commit/3e4a4532fb7f79eebfb6daef022a2d0c6772a560))
+
+### Fixed
+
+- Most doc warnings ([#2289](https://github.com/datadog/libdatadog/issues/2289)) - ([f52ab62](https://github.com/datadog/libdatadog/commit/f52ab62fdaa1acc0ca9e8812a9e9468cc59af6b5))
+
+
+
 ## [6.0.0](https://github.com/datadog/libdatadog/compare/libdd-shared-runtime-v5.0.0..libdd-shared-runtime-v6.0.0) - 2026-10-02
 
 ### Changed

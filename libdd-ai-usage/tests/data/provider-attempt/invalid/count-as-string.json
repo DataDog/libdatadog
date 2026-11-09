@@ -1,0 +1,15 @@
+{
+  "$schema": "../../../../schema/provider-attempt-metric-fixture.schema.json",
+  "profile": "gen_ai.client.provider_attempt@0.1.0",
+  "case": "count-as-string",
+  "description": "A count given as a JSON string has the wrong type: a rejection with a code, never a failure to read the observation.",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "exampleai",
+    "duration_seconds": 1,
+    "streaming": false,
+    "input_tokens": "12",
+    "observation_point": "gateway"
+  },
+  "expected_error_code": "field_type_invalid"
+}

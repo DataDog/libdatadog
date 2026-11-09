@@ -1,0 +1,15 @@
+{
+  "$schema": "../../../../schema/provider-attempt-metric-fixture.schema.json",
+  "profile": "gen_ai.client.provider_attempt@0.1.0",
+  "case": "cost-bound-without-cost",
+  "description": "A bound with no cost at all. A bound is valid only on a calculated cost, or on an estimated cost that states its rate card, and there is no cost.",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "exampleai",
+    "duration_seconds": 1,
+    "streaming": false,
+    "cost_bound": "lower",
+    "observation_point": "gateway"
+  },
+  "expected_error_code": "fields_contradict"
+}

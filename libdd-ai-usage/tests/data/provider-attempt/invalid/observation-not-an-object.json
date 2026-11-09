@@ -1,0 +1,10 @@
+{
+  "$schema": "../../../../schema/provider-attempt-metric-fixture.schema.json",
+  "profile": "gen_ai.client.provider_attempt@0.1.0",
+  "case": "observation-not-an-object",
+  "description": "An observation that is an array has the wrong JSON type.",
+  "observation": [
+    "chat"
+  ],
+  "expected_error_code": "field_type_invalid"
+}

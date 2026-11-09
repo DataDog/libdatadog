@@ -1,0 +1,45 @@
+{
+  "$schema": "../../../../schema/provider-streaming-metric-fixture.schema.json",
+  "profile": "gen_ai.client.provider_streaming@0.1.0",
+  "case": "output-chunk-intervals",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "anthropic",
+    "request_model": "claude-haiku-4-5",
+    "response_model": "claude-haiku-4-5-20251001",
+    "streaming": true,
+    "output_chunk_intervals_seconds": [
+      0.1,
+      0.15
+    ],
+    "observation_point": "gateway"
+  },
+  "expected_metrics": [
+    {
+      "name": "gen_ai.client.inference.time_per_output_chunk",
+      "instrument": "histogram",
+      "unit": "s",
+      "value": 0.1,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "anthropic",
+        "gen_ai.request.model": "claude-haiku-4-5",
+        "gen_ai.response.model": "claude-haiku-4-5-20251001",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.time_per_output_chunk",
+      "instrument": "histogram",
+      "unit": "s",
+      "value": 0.15,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "anthropic",
+        "gen_ai.request.model": "claude-haiku-4-5",
+        "gen_ai.response.model": "claude-haiku-4-5-20251001",
+        "trajectory.observation.point": "gateway"
+      }
+    }
+  ]
+}

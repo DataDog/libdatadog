@@ -295,12 +295,12 @@ fn decode_attribute_array<T: DeserializableTraceData>(
         if let Some(attribute_type) = attribute_type {
             let value_type: u8 = (&value).into();
             if attribute_type == value_type {
-                if let Some(array_type) = array_type {
-                    if array_type != attribute_type {
-                        return Err(DecodeError::InvalidType(
-                            "Array must have same type element".to_owned(),
-                        ));
-                    }
+                if let Some(array_type) = array_type
+                    && array_type != attribute_type
+                {
+                    return Err(DecodeError::InvalidType(
+                        "Array must have same type element".to_owned(),
+                    ));
                 }
                 Ok(value)
             } else {

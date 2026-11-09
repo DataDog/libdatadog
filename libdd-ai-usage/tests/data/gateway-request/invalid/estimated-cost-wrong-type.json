@@ -1,0 +1,14 @@
+{
+  "$schema": "../../../../schema/gateway-request-metric-fixture.schema.json",
+  "profile": "trajectory.gen_ai.gateway.request@0.1.0",
+  "case": "estimated-cost-wrong-type",
+  "description": "An estimated cost given as a string has the wrong JSON type.",
+  "observation": {
+    "operation_name": "chat",
+    "request_model": "support-model",
+    "duration_seconds": 0.5,
+    "estimated_cost_usd": "0.1"
+  },
+  "expected_error_code": "field_type_invalid",
+  "expected_error": "estimated_cost_usd has the wrong JSON type"
+}

@@ -1,0 +1,124 @@
+{
+  "binding": "0.1.0",
+  "case": "canonical-model-is-a-tag",
+  "description": "The canonical provider, model and family are tags like any other attribute, under the attribute's name, beside the names as received. Two increments with the same names are one Count of their sum: 10,500,000 and 21,000,000 nano-USD are 0.0315 USD. A second spelling of the same model is its own series, because the name as received differs, and shares the canonical tags, so a query that groups by trajectory.canonical.model adds the two. A cost that states no canonical name has none of the three tags, and nothing is filled in from the name as received.",
+  "profile": "gen_ai.client.provider_attempt@0.1.0",
+  "historical": false,
+  "points": [
+    {
+      "name": "trajectory.gen_ai.client.inference.usage.cost",
+      "instrument": "counter",
+      "unit": "{nanoUSD}",
+      "value": 10500000,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.request.model": "ex-large-latest",
+        "trajectory.observation.point": "gateway",
+        "trajectory.cost.source": "calculated",
+        "trajectory.cost.rate_card": "synthetic-basic@1",
+        "trajectory.canonical.provider": "exampleai",
+        "trajectory.canonical.model": "ex-large-1",
+        "trajectory.canonical.family": "ex-large"
+      }
+    },
+    {
+      "name": "trajectory.gen_ai.client.inference.usage.cost",
+      "instrument": "counter",
+      "unit": "{nanoUSD}",
+      "value": 21000000,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.request.model": "ex-large-latest",
+        "trajectory.observation.point": "gateway",
+        "trajectory.cost.source": "calculated",
+        "trajectory.cost.rate_card": "synthetic-basic@1",
+        "trajectory.canonical.provider": "exampleai",
+        "trajectory.canonical.model": "ex-large-1",
+        "trajectory.canonical.family": "ex-large"
+      }
+    },
+    {
+      "name": "trajectory.gen_ai.client.inference.usage.cost",
+      "instrument": "counter",
+      "unit": "{nanoUSD}",
+      "value": 10500000,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "examplegateway",
+        "gen_ai.request.model": "exampleai/ex-large-1",
+        "trajectory.observation.point": "gateway",
+        "trajectory.cost.source": "calculated",
+        "trajectory.cost.rate_card": "synthetic-basic@1",
+        "trajectory.canonical.provider": "exampleai",
+        "trajectory.canonical.model": "ex-large-1",
+        "trajectory.canonical.family": "ex-large"
+      }
+    },
+    {
+      "name": "trajectory.gen_ai.client.inference.usage.cost",
+      "instrument": "counter",
+      "unit": "{nanoUSD}",
+      "value": 4200000,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.request.model": "ex-large-1",
+        "trajectory.observation.point": "gateway",
+        "trajectory.cost.source": "calculated",
+        "trajectory.cost.rate_card": "synthetic-basic@1"
+      }
+    }
+  ],
+  "expected_series": [
+    {
+      "name": "trajectory.gen_ai.client.inference.usage.cost",
+      "type": "count",
+      "value": 0.0042,
+      "tags": [
+        "gen_ai.operation.name:chat",
+        "gen_ai.provider.name:exampleai",
+        "gen_ai.request.model:ex-large-1",
+        "trajectory.cost.rate_card:synthetic-basic/1",
+        "trajectory.cost.source:calculated",
+        "trajectory.observation.point:gateway",
+        "trajectory.profile:gen_ai.client.provider_attempt/0.1.0"
+      ]
+    },
+    {
+      "name": "trajectory.gen_ai.client.inference.usage.cost",
+      "type": "count",
+      "value": 0.0315,
+      "tags": [
+        "gen_ai.operation.name:chat",
+        "gen_ai.provider.name:exampleai",
+        "gen_ai.request.model:ex-large-latest",
+        "trajectory.canonical.family:ex-large",
+        "trajectory.canonical.model:ex-large-1",
+        "trajectory.canonical.provider:exampleai",
+        "trajectory.cost.rate_card:synthetic-basic/1",
+        "trajectory.cost.source:calculated",
+        "trajectory.observation.point:gateway",
+        "trajectory.profile:gen_ai.client.provider_attempt/0.1.0"
+      ]
+    },
+    {
+      "name": "trajectory.gen_ai.client.inference.usage.cost",
+      "type": "count",
+      "value": 0.0105,
+      "tags": [
+        "gen_ai.operation.name:chat",
+        "gen_ai.provider.name:examplegateway",
+        "gen_ai.request.model:exampleai/ex-large-1",
+        "trajectory.canonical.family:ex-large",
+        "trajectory.canonical.model:ex-large-1",
+        "trajectory.canonical.provider:exampleai",
+        "trajectory.cost.rate_card:synthetic-basic/1",
+        "trajectory.cost.source:calculated",
+        "trajectory.observation.point:gateway",
+        "trajectory.profile:gen_ai.client.provider_attempt/0.1.0"
+      ]
+    }
+  ]
+}

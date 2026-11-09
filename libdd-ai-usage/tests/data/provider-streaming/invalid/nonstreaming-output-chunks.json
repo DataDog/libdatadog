@@ -1,0 +1,16 @@
+{
+  "$schema": "../../../../schema/provider-streaming-metric-fixture.schema.json",
+  "profile": "gen_ai.client.provider_streaming@0.1.0",
+  "case": "nonstreaming-output-chunks",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "openai",
+    "streaming": false,
+    "output_chunk_intervals_seconds": [
+      0.1
+    ],
+    "observation_point": "gateway"
+  },
+  "expected_error_code": "fields_contradict",
+  "expected_error": "streaming must be true"
+}

@@ -184,11 +184,11 @@ pub fn normalize_tag(tag: &mut String) {
         if c.is_uppercase() {
             // Take only first codepoint of the lowercase conversion
             // Lowercase the current character if it has the same width as it's lower
-            if let Some(lower) = c.to_lowercase().next() {
-                if lower.len_utf8() <= len_utf8 {
-                    c = lower;
-                    len_utf8 = c.len_utf8();
-                }
+            if let Some(lower) = c.to_lowercase().next()
+                && lower.len_utf8() <= len_utf8
+            {
+                c = lower;
+                len_utf8 = c.len_utf8();
             }
         }
 

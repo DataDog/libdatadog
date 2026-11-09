@@ -1,0 +1,17 @@
+{
+  "$schema": "../../../../schema/provider-streaming-metric-fixture.schema.json",
+  "profile": "gen_ai.client.provider_streaming@0.1.0",
+  "case": "interval-null-element",
+  "description": "A null array element is not absent: an array of numbers holds a value that is not a number.",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "exampleai",
+    "streaming": true,
+    "output_chunk_intervals_seconds": [
+      0.1,
+      null
+    ],
+    "observation_point": "gateway"
+  },
+  "expected_error_code": "field_type_invalid"
+}

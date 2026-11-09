@@ -5,9 +5,20 @@ use crate::span_concentrator::aggregation::{OwnedAggregationKey, TRACER_BLOCKED_
 
 use super::*;
 use libdd_trace_utils::span::v04::VecMap;
-use libdd_trace_utils::span::{trace_utils::compute_top_level_span, v04::SpanSlice};
+use libdd_trace_utils::span::{
+    RootSpanChunk, SpanWithTraceId, trace_utils::compute_top_level_span, v04::SpanSlice,
+};
 use rand::{Rng, thread_rng};
 use std::borrow::Cow;
+
+/// Adds `span` to the concentrator as its own single-span chunk.
+fn add_span_as_chunk<S: SpanWithTraceId>(concentrator: &mut SpanConcentrator, span: &S) {
+    let chunk = RootSpanChunk::new(std::slice::from_ref(span));
+    concentrator.add_span(&ChunkSpanView {
+        span,
+        chunk: &chunk,
+    });
+}
 
 const BUCKET_SIZE: u64 = Duration::from_secs(2).as_nanos() as u64;
 
@@ -121,7 +132,7 @@ fn test_concentrator_oldest_timestamp_cold() {
     ];
     compute_top_level_span(spans.as_mut_slice());
     for span in &spans {
-        concentrator.add_span(span);
+        add_span_as_chunk(&mut concentrator, span);
     }
 
     let mut flushtime = now;
@@ -187,7 +198,7 @@ fn test_concentrator_oldest_timestamp_hot() {
         * concentrator.bucket_size;
 
     for span in &spans {
-        concentrator.add_span(span);
+        add_span_as_chunk(&mut concentrator, span);
     }
 
     for _ in 0..(concentrator.buffer_len - 1) {
@@ -276,7 +287,7 @@ fn test_concentrator_stats_totals() {
     let mut total_top_level_hits = 0;
 
     for span in &spans {
-        concentrator.add_span(span);
+        add_span_as_chunk(&mut concentrator, span);
     }
 
     let mut flushtime = now;
@@ -527,7 +538,7 @@ fn test_concentrator_stats_counts() {
     compute_top_level_span(spans.as_mut_slice());
 
     for span in &spans {
-        concentrator.add_span(span);
+        add_span_as_chunk(&mut concentrator, span);
     }
 
     let mut flushtime = now;
@@ -618,7 +629,7 @@ fn test_span_should_be_included_in_stats() {
         None,
     );
     for span in &spans {
-        concentrator.add_span(span);
+        add_span_as_chunk(&mut concentrator, span);
     }
 
     let expected = vec![
@@ -702,7 +713,7 @@ fn test_ignore_partial_spans() {
         None,
     );
     for span in &spans {
-        concentrator.add_span(span);
+        add_span_as_chunk(&mut concentrator, span);
     }
 
     let stats = concentrator
@@ -731,7 +742,7 @@ fn test_force_flush() {
         None,
     );
     for span in &spans {
-        concentrator.add_span(span);
+        add_span_as_chunk(&mut concentrator, span);
     }
 
     // flushtime is 1h before now to make sure the bucket is not old enough to be flushed
@@ -826,10 +837,10 @@ fn test_peer_tags_aggregation() {
         None,
     );
     for span in &spans {
-        concentrator_without_peer_tags.add_span(span);
+        add_span_as_chunk(&mut concentrator_without_peer_tags, span);
     }
     for span in &spans {
-        concentrator_with_peer_tags.add_span(span);
+        add_span_as_chunk(&mut concentrator_with_peer_tags, span);
     }
 
     let flushtime = now
@@ -1015,7 +1026,7 @@ fn test_peer_tags_quantization_aggregation() {
         None,
     );
     for span in &spans {
-        concentrator_with_peer_tags.add_span(span);
+        add_span_as_chunk(&mut concentrator_with_peer_tags, span);
     }
 
     let flushtime = now
@@ -1146,7 +1157,7 @@ fn test_base_service_peer_tag() {
     );
 
     for span in &spans {
-        concentrator.add_span(span);
+        add_span_as_chunk(&mut concentrator, span);
     }
 
     let flushtime =
@@ -1207,6 +1218,460 @@ fn test_base_service_peer_tag() {
                 "db.system:postgres".to_string(),
             ],
             duration: 80,
+            hits: 1,
+            top_level_hits: 1,
+            errors: 0,
+            is_trace_root: pb::Trilean::True.into(),
+            ..Default::default()
+        },
+    ];
+
+    let stats = concentrator.flush(flushtime, false).all_buckets();
+    assert_counts_equal(
+        expected,
+        stats
+            .first()
+            .expect("There should be at least one time bucket")
+            .stats
+            .clone(),
+    );
+}
+
+/// Test peer-tag selection by span kind, mirroring the Go trace-agent:
+/// the base-service fallback applies only to absent/empty/internal kinds, server and unknown
+/// kinds never get peer tags, and the original kind casing is preserved in the aggregation key.
+#[test]
+fn test_base_service_peer_tag_kind_selection() {
+    let now = SystemTime::now();
+    let measured = &[("_dd.measured", 1.0)];
+    let mut spans = vec![
+        // Absent kind with a non-empty base service: fallback applies.
+        // Kind and resource deliberately shared with the next span where only the
+        // base-service value differs: different non-empty base services must separate buckets.
+        get_test_span_with_meta(
+            now,
+            1,
+            0,
+            100,
+            5,
+            "A1",
+            "op",
+            0,
+            &[("_dd.base_service", "svc-a"), ("db.instance", "i-1234")],
+            measured,
+        ),
+        // Empty kind with a different non-empty base service: same span kind (empty),
+        // different peer tag, so it stays in its own group.
+        get_test_span_with_meta(
+            now,
+            2,
+            0,
+            20,
+            5,
+            "A1",
+            "op",
+            0,
+            &[
+                ("span.kind", ""),
+                ("_dd.base_service", "svc-b"),
+                ("db.instance", "i-1234"),
+            ],
+            measured,
+        ),
+        // Explicit internal kind: fallback applies, other configured keys are ignored.
+        get_test_span_with_meta(
+            now,
+            3,
+            0,
+            30,
+            5,
+            "A1",
+            "op",
+            0,
+            &[
+                ("span.kind", "internal"),
+                ("_dd.base_service", "svc-a"),
+                ("db.instance", "i-1234"),
+            ],
+            measured,
+        ),
+        // Mixed-case internal kind: selected case-insensitively, casing preserved in the key.
+        get_test_span_with_meta(
+            now,
+            4,
+            0,
+            40,
+            5,
+            "A1",
+            "op",
+            0,
+            &[
+                ("span.kind", "InTeRnAl"),
+                ("_dd.base_service", "svc-a"),
+                ("db.instance", "i-1234"),
+            ],
+            measured,
+        ),
+        // Internal kind with an empty base-service value: no peer tags.
+        get_test_span_with_meta(
+            now,
+            5,
+            0,
+            50,
+            5,
+            "A1",
+            "op",
+            0,
+            &[
+                ("span.kind", "internal"),
+                ("_dd.base_service", ""),
+                ("db.instance", "i-1234"),
+            ],
+            measured,
+        ),
+        // Internal kind with a missing base service: no peer tags, and it merges with the
+        // empty-value span above since both yield no peer tags.
+        get_test_span_with_meta(
+            now,
+            6,
+            0,
+            60,
+            5,
+            "A1",
+            "op",
+            0,
+            &[("span.kind", "internal"), ("db.instance", "i-1234")],
+            measured,
+        ),
+        // Server span: never gets peer tags, even with a base service and configured keys.
+        get_test_span_with_meta(
+            now,
+            7,
+            0,
+            70,
+            5,
+            "A1",
+            "op",
+            0,
+            &[
+                ("span.kind", "server"),
+                ("_dd.base_service", "svc-a"),
+                ("db.instance", "i-1234"),
+            ],
+            measured,
+        ),
+        // Mixed-case server span: no peer tags either, casing preserved in the key.
+        get_test_span_with_meta(
+            now,
+            8,
+            0,
+            80,
+            5,
+            "A1",
+            "op",
+            0,
+            &[
+                ("span.kind", "SERVER"),
+                ("_dd.base_service", "svc-a"),
+                ("db.instance", "i-1234"),
+            ],
+            measured,
+        ),
+        // Unknown kind: no peer tags.
+        get_test_span_with_meta(
+            now,
+            9,
+            0,
+            90,
+            5,
+            "A1",
+            "op",
+            0,
+            &[
+                ("span.kind", "gateway"),
+                ("_dd.base_service", "svc-a"),
+                ("db.instance", "i-1234"),
+            ],
+            measured,
+        ),
+        // Client span: uses configured peer tags only; _dd.base_service is not appended.
+        get_test_span_with_meta(
+            now,
+            10,
+            0,
+            110,
+            5,
+            "A1",
+            "op",
+            0,
+            &[
+                ("span.kind", "client"),
+                ("_dd.base_service", "ignored-for-client"),
+                ("db.instance", "i-1234"),
+            ],
+            measured,
+        ),
+    ];
+    compute_top_level_span(spans.as_mut_slice());
+
+    let mut concentrator = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        get_span_kinds(),
+        vec!["db.instance".to_string()],
+        None,
+        vec![],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
+    );
+
+    for span in &spans {
+        add_span_as_chunk(&mut concentrator, span);
+    }
+
+    let flushtime =
+        now + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
+
+    let expected = vec![
+        // Absent kind, base service svc-a.
+        pb::ClientGroupedStats {
+            service: "A1".to_string(),
+            resource: "op".to_string(),
+            r#type: "db".to_string(),
+            name: "query".to_string(),
+            peer_tags: vec!["_dd.base_service:svc-a".to_string()],
+            duration: 100,
+            hits: 1,
+            top_level_hits: 1,
+            errors: 0,
+            is_trace_root: pb::Trilean::True.into(),
+            ..Default::default()
+        },
+        // Empty kind, base service svc-b: separated from svc-a by the peer tag.
+        pb::ClientGroupedStats {
+            service: "A1".to_string(),
+            resource: "op".to_string(),
+            r#type: "db".to_string(),
+            name: "query".to_string(),
+            peer_tags: vec!["_dd.base_service:svc-b".to_string()],
+            duration: 20,
+            hits: 1,
+            top_level_hits: 1,
+            errors: 0,
+            is_trace_root: pb::Trilean::True.into(),
+            ..Default::default()
+        },
+        // Internal kind, base service svc-a.
+        pb::ClientGroupedStats {
+            service: "A1".to_string(),
+            resource: "op".to_string(),
+            r#type: "db".to_string(),
+            name: "query".to_string(),
+            span_kind: "internal".to_string(),
+            peer_tags: vec!["_dd.base_service:svc-a".to_string()],
+            duration: 30,
+            hits: 1,
+            top_level_hits: 1,
+            errors: 0,
+            is_trace_root: pb::Trilean::True.into(),
+            ..Default::default()
+        },
+        // Mixed-case internal kind: own group, casing preserved, fallback still applies.
+        pb::ClientGroupedStats {
+            service: "A1".to_string(),
+            resource: "op".to_string(),
+            r#type: "db".to_string(),
+            name: "query".to_string(),
+            span_kind: "InTeRnAl".to_string(),
+            peer_tags: vec!["_dd.base_service:svc-a".to_string()],
+            duration: 40,
+            hits: 1,
+            top_level_hits: 1,
+            errors: 0,
+            is_trace_root: pb::Trilean::True.into(),
+            ..Default::default()
+        },
+        // Internal kind, empty and missing base service: merged, no peer tags.
+        pb::ClientGroupedStats {
+            service: "A1".to_string(),
+            resource: "op".to_string(),
+            r#type: "db".to_string(),
+            name: "query".to_string(),
+            span_kind: "internal".to_string(),
+            duration: 110,
+            hits: 2,
+            top_level_hits: 2,
+            errors: 0,
+            is_trace_root: pb::Trilean::True.into(),
+            ..Default::default()
+        },
+        // Server span: no peer tags despite base service and configured keys.
+        pb::ClientGroupedStats {
+            service: "A1".to_string(),
+            resource: "op".to_string(),
+            r#type: "db".to_string(),
+            name: "query".to_string(),
+            span_kind: "server".to_string(),
+            duration: 70,
+            hits: 1,
+            top_level_hits: 1,
+            errors: 0,
+            is_trace_root: pb::Trilean::True.into(),
+            ..Default::default()
+        },
+        // Mixed-case server span: no peer tags, casing preserved.
+        pb::ClientGroupedStats {
+            service: "A1".to_string(),
+            resource: "op".to_string(),
+            r#type: "db".to_string(),
+            name: "query".to_string(),
+            span_kind: "SERVER".to_string(),
+            duration: 80,
+            hits: 1,
+            top_level_hits: 1,
+            errors: 0,
+            is_trace_root: pb::Trilean::True.into(),
+            ..Default::default()
+        },
+        // Unknown kind: no peer tags.
+        pb::ClientGroupedStats {
+            service: "A1".to_string(),
+            resource: "op".to_string(),
+            r#type: "db".to_string(),
+            name: "query".to_string(),
+            span_kind: "gateway".to_string(),
+            duration: 90,
+            hits: 1,
+            top_level_hits: 1,
+            errors: 0,
+            is_trace_root: pb::Trilean::True.into(),
+            ..Default::default()
+        },
+        // Client span: configured peer tags only, base service not appended.
+        pb::ClientGroupedStats {
+            service: "A1".to_string(),
+            resource: "op".to_string(),
+            r#type: "db".to_string(),
+            name: "query".to_string(),
+            span_kind: "client".to_string(),
+            peer_tags: vec!["db.instance:i-1234".to_string()],
+            duration: 110,
+            hits: 1,
+            top_level_hits: 1,
+            errors: 0,
+            is_trace_root: pb::Trilean::True.into(),
+            ..Default::default()
+        },
+    ];
+
+    let stats = concentrator.flush(flushtime, false).all_buckets();
+    assert_counts_equal(
+        expected,
+        stats
+            .first()
+            .expect("There should be at least one time bucket")
+            .stats
+            .clone(),
+    );
+}
+
+/// Test that an empty configured peer-key list suppresses every peer tag, including the
+/// _dd.base_service fallback and the configured-key extraction for client spans.
+#[test]
+fn test_base_service_peer_tag_empty_key_list() {
+    let now = SystemTime::now();
+    let measured = &[("_dd.measured", 1.0)];
+    let mut spans = vec![
+        // Internal spans with differing base services: must merge (no peer tags at all).
+        get_test_span_with_meta(
+            now,
+            1,
+            0,
+            100,
+            5,
+            "A1",
+            "op",
+            0,
+            &[
+                ("span.kind", "internal"),
+                ("_dd.base_service", "svc-a"),
+                ("db.instance", "i-1234"),
+            ],
+            measured,
+        ),
+        get_test_span_with_meta(
+            now,
+            2,
+            0,
+            50,
+            5,
+            "A1",
+            "op",
+            0,
+            &[
+                ("span.kind", "internal"),
+                ("_dd.base_service", "svc-b"),
+                ("db.instance", "i-1234"),
+            ],
+            measured,
+        ),
+        // Client span: configured extraction is disabled too.
+        get_test_span_with_meta(
+            now,
+            3,
+            0,
+            75,
+            5,
+            "A1",
+            "op",
+            0,
+            &[("span.kind", "client"), ("db.instance", "i-1234")],
+            measured,
+        ),
+    ];
+    compute_top_level_span(spans.as_mut_slice());
+
+    let mut concentrator = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        get_span_kinds(),
+        vec![],
+        None,
+        vec![],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
+    );
+
+    for span in &spans {
+        add_span_as_chunk(&mut concentrator, span);
+    }
+
+    let flushtime =
+        now + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
+
+    let expected = vec![
+        // Both internal spans merge despite differing base services: no peer tags.
+        pb::ClientGroupedStats {
+            service: "A1".to_string(),
+            resource: "op".to_string(),
+            r#type: "db".to_string(),
+            name: "query".to_string(),
+            span_kind: "internal".to_string(),
+            duration: 150,
+            hits: 2,
+            top_level_hits: 2,
+            errors: 0,
+            is_trace_root: pb::Trilean::True.into(),
+            ..Default::default()
+        },
+        // Client span: no peer tags either.
+        pb::ClientGroupedStats {
+            service: "A1".to_string(),
+            resource: "op".to_string(),
+            r#type: "db".to_string(),
+            name: "query".to_string(),
+            span_kind: "client".to_string(),
+            duration: 75,
             hits: 1,
             top_level_hits: 1,
             errors: 0,
@@ -1353,6 +1818,61 @@ fn test_compute_stats_for_span_kind() {
     for (span, is_eligible) in test_cases {
         assert!(is_span_eligible(&span, &get_span_kinds()) == is_eligible)
     }
+}
+
+/// Verify the OTLP exact-scalar sidecar tracks per-cell (ok/error) duration/min/max in nanos
+/// independently and that ok_duration + error_duration matches the combined group duration
+/// (which the agent /v0.6/stats path uses).
+/// v0.4 spans carry the origin as a tag, which only the root is guaranteed to have: a child span
+/// of a synthetics trace must be counted as synthetics too, from its trace's root.
+#[test]
+fn test_v04_trace_synthetics_from_root() {
+    let now = SystemTime::now();
+    let mut concentrator = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        vec![],
+        vec![],
+        None,
+        vec![],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
+    );
+    let mut trace = vec![
+        get_test_span_with_meta(
+            now,
+            1,
+            0,
+            100,
+            5,
+            "A",
+            "resource",
+            0,
+            &[("_dd.origin", "synthetics-browser")],
+            &[],
+        ),
+        // A different service, so the child is top-level as well.
+        get_test_span(now, 2, 1, 50, 5, "B", "resource", 0),
+    ];
+    compute_top_level_span(trace.as_mut_slice());
+    let chunk = RootSpanChunk::new(&trace);
+    for span in &trace {
+        concentrator.add_span(&ChunkSpanView {
+            span,
+            chunk: &chunk,
+        });
+    }
+
+    let flushtime =
+        now + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
+    let stats = concentrator.flush(flushtime, false).all_buckets();
+    let mut synthetics: Vec<_> = stats
+        .iter()
+        .flat_map(|bucket| &bucket.stats)
+        .map(|group| (group.service.as_str(), group.synthetics))
+        .collect();
+    synthetics.sort_unstable();
+    assert_eq!(synthetics, [("A", true), ("B", true)]);
 }
 
 #[test]
@@ -1540,7 +2060,7 @@ fn test_pb_span() {
 
     // Add spans to concentrator
     for span in &pb_spans {
-        concentrator.add_span(span);
+        add_span_as_chunk(&mut concentrator, span);
     }
 
     // Flush and get stats
@@ -1645,9 +2165,6 @@ fn test_pb_span() {
     assert_counts_equal(expected_stats, bucket.stats.clone());
 }
 
-/// Verify the OTLP exact-scalar sidecar tracks per-cell (ok/error) duration/min/max in nanos
-/// independently and that ok_duration + error_duration matches the combined group duration
-/// (which the agent /v0.6/stats path uses).
 #[test]
 fn test_flush_with_otlp_exact_per_cell_scalars() {
     let now = SystemTime::now();
@@ -1671,7 +2188,7 @@ fn test_flush_with_otlp_exact_per_cell_scalars() {
     ];
     compute_top_level_span(spans.as_mut_slice());
     for s in &spans {
-        concentrator.add_span(s);
+        add_span_as_chunk(&mut concentrator, s);
     }
 
     let flushed = concentrator.flush_with_otlp_exact(now, true);
@@ -1741,7 +2258,7 @@ fn test_whole_key_cardinality_limit_collapse() {
             &[],
             &[("_dd.measured", 1.0)],
         );
-        concentrator.add_span(&span);
+        add_span_as_chunk(&mut concentrator, &span);
     }
 
     let buckets = concentrator.flush(SystemTime::now(), true).all_buckets();
@@ -1808,7 +2325,7 @@ fn test_per_key_cardinality_limit_collapse_http_endpoint() {
             &meta,
             &[("_dd.measured", 1.0)],
         );
-        concentrator.add_span(&span);
+        add_span_as_chunk(&mut concentrator, &span);
     }
     // Insert a distinct `resource` root span, this one won't get collapsed
     {
@@ -1825,7 +2342,7 @@ fn test_per_key_cardinality_limit_collapse_http_endpoint() {
             &meta,
             &[("_dd.measured", 1.0)],
         );
-        concentrator.add_span(&span);
+        add_span_as_chunk(&mut concentrator, &span);
     }
 
     let buckets = concentrator.flush(SystemTime::now(), true).all_buckets();
@@ -1903,7 +2420,7 @@ fn test_per_key_cardinality_limit_collapse_before_whole_key() {
             &meta,
             &[("_dd.measured", 1.0)],
         );
-        concentrator.add_span(&span);
+        add_span_as_chunk(&mut concentrator, &span);
     }
 
     let buckets = concentrator.flush(SystemTime::now(), true).all_buckets();
@@ -1972,7 +2489,7 @@ fn test_overflow_bucket_counts() {
             &[],
             &[("_dd.measured", 1.0)],
         );
-        concentrator.add_span(&span);
+        add_span_as_chunk(&mut concentrator, &span);
     }
 
     let buckets = concentrator.flush(SystemTime::now(), true).all_buckets();
@@ -2024,7 +2541,7 @@ fn test_no_collapse_within_limit() {
             &[],
             &[("_dd.measured", 1.0)],
         );
-        concentrator.add_span(&span);
+        add_span_as_chunk(&mut concentrator, &span);
     }
 
     let buckets = concentrator.flush(SystemTime::now(), true).all_buckets();
@@ -2079,8 +2596,8 @@ fn test_overflow_bucket_key_sentinel_values() {
         &[("_dd.measured", 1.0)],
     );
 
-    concentrator.add_span(&first);
-    concentrator.add_span(&second);
+    add_span_as_chunk(&mut concentrator, &first);
+    add_span_as_chunk(&mut concentrator, &second);
 
     let buckets = concentrator.flush(SystemTime::now(), true).all_buckets();
     assert!(!buckets.is_empty());
@@ -2196,8 +2713,8 @@ fn test_additional_metric_tags_aggregation() {
         None,
     );
     for span in &spans {
-        concentrator_without_additional_metric_tags.add_span(span);
-        concentrator_with_additional_metric_tags.add_span(span);
+        add_span_as_chunk(&mut concentrator_without_additional_metric_tags, span);
+        add_span_as_chunk(&mut concentrator_with_additional_metric_tags, span);
     }
 
     let flushtime = now
@@ -2299,7 +2816,7 @@ fn test_additional_metric_tag_value_length_cap_substitutes_blocked_value() {
         #[cfg(feature = "stats-obfuscation")]
         None,
     );
-    concentrator.add_span(&spans[0]);
+    add_span_as_chunk(&mut concentrator, &spans[0]);
 
     let flushtime =
         now + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
@@ -2337,7 +2854,7 @@ fn test_additional_metric_tag_value_at_length_cap_passes_through() {
         #[cfg(feature = "stats-obfuscation")]
         None,
     );
-    concentrator.add_span(&spans[0]);
+    add_span_as_chunk(&mut concentrator, &spans[0]);
 
     let flushtime =
         now + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
@@ -2376,7 +2893,7 @@ fn test_additional_metric_tag_value_multibyte_at_length_cap_passes_through() {
         #[cfg(feature = "stats-obfuscation")]
         None,
     );
-    concentrator.add_span(&spans[0]);
+    add_span_as_chunk(&mut concentrator, &spans[0]);
 
     let flushtime =
         now + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
@@ -2414,7 +2931,7 @@ fn test_additional_metric_tag_value_multibyte_over_length_cap_substitutes_blocke
         #[cfg(feature = "stats-obfuscation")]
         None,
     );
-    concentrator.add_span(&spans[0]);
+    add_span_as_chunk(&mut concentrator, &spans[0]);
 
     let flushtime =
         now + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
@@ -2505,7 +3022,7 @@ fn test_additional_metric_tags_max_entries_masks_overflow_entries() {
     );
     concentrator.cardinality_limits.additional_tags_limit = 1;
     for span in &spans {
-        concentrator.add_span(span);
+        add_span_as_chunk(&mut concentrator, span);
     }
 
     let flushtime =
@@ -2579,7 +3096,7 @@ fn test_additional_metric_tags_max_entries_existing_keys_merge_after_limit() {
     );
     concentrator.cardinality_limits.additional_tags_limit = 1;
     for span in &spans {
-        concentrator.add_span(span);
+        add_span_as_chunk(&mut concentrator, span);
     }
 
     let flushtime =
@@ -2642,7 +3159,7 @@ fn test_additional_metric_tags_max_entries_resets_on_flush() {
 
     // First bucket: cap of 1 means only us-east-1 is admitted unmasked.
     for span in &spans {
-        concentrator.add_span(span);
+        add_span_as_chunk(&mut concentrator, span);
     }
     let flush1_time =
         now + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
@@ -2664,7 +3181,7 @@ fn test_additional_metric_tags_max_entries_resets_on_flush() {
         &[("_dd.measured", 1.0)],
     )];
     compute_top_level_span(spans2.as_mut_slice());
-    concentrator.add_span(&spans2[0]);
+    add_span_as_chunk(&mut concentrator, &spans2[0]);
 
     let flush2_time =
         later + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
@@ -2729,7 +3246,7 @@ fn test_additional_metric_tags_new_key_collapses_into_overflow_before_masking() 
     );
     concentrator.cardinality_limits.additional_tags_limit = 5;
     for span in &spans {
-        concentrator.add_span(span);
+        add_span_as_chunk(&mut concentrator, span);
     }
 
     let flushtime =
@@ -2799,7 +3316,7 @@ fn test_additional_metric_tags_masked_entry_collapses_into_overflow() {
     );
     concentrator.cardinality_limits.additional_tags_limit = 1;
     for span in &spans {
-        concentrator.add_span(span);
+        add_span_as_chunk(&mut concentrator, span);
     }
 
     let flushtime =
@@ -2877,7 +3394,7 @@ fn test_additional_metric_tags_multiple_masked_entries_merge() {
     );
     concentrator.cardinality_limits.additional_tags_limit = 1;
     for span in &spans {
-        concentrator.add_span(span);
+        add_span_as_chunk(&mut concentrator, span);
     }
 
     let flushtime =
@@ -2942,7 +3459,7 @@ fn test_concentrator_truncate_fields_helper(big_resource: bool, obfuscation: boo
     let mut spans = vec![span];
     compute_top_level_span(spans.as_mut_slice());
     for span in &spans {
-        concentrator.add_span(span);
+        add_span_as_chunk(&mut concentrator, span);
     }
 
     let stats = concentrator.flush(SystemTime::now(), true).all_buckets();

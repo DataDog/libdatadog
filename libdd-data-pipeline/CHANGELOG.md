@@ -2,6 +2,25 @@
 
 
 
+## [13.0.0](https://github.com/datadog/libdatadog/compare/libdd-data-pipeline-v12.0.0..libdd-data-pipeline-v13.0.0) - 2026-10-23
+
+### Added
+
+- Add basic no_std to libdd-common ([#2638](https://github.com/datadog/libdatadog/issues/2638)) - ([d0dd0a2](https://github.com/datadog/libdatadog/commit/d0dd0a21ffca664d7c6a0798dd8c178234fd6750))
+- Expose exporter observations ([#2612](https://github.com/datadog/libdatadog/issues/2612)) - ([dc894c7](https://github.com/datadog/libdatadog/commit/dc894c707cac020d6c5fabd4644dd40455a4be5f))
+- Mark native trace exports with _dd.sdk.otlp_export ([#2636](https://github.com/datadog/libdatadog/issues/2636)) - ([7032fc6](https://github.com/datadog/libdatadog/commit/7032fc62f94e56de36a3915e694b1e998f7ac6d0))
+- Follow the full sql config in CSS obfuscation ([#2535](https://github.com/datadog/libdatadog/issues/2535)) - ([278117f](https://github.com/datadog/libdatadog/commit/278117feead185ad0f97863ee19af7e2b99ddfca))
+- Add basic no_std support to telemetry ([#2647](https://github.com/datadog/libdatadog/issues/2647)) - ([4e6f509](https://github.com/datadog/libdatadog/commit/4e6f5096ae1d5a0dafbe28f9002bc1be49c7d8bb))
+- Wire v1 payload to the trace exporter and add v1 pooling ([#2558](https://github.com/datadog/libdatadog/issues/2558)) - ([1967b81](https://github.com/datadog/libdatadog/commit/1967b8144736556a245d4f4b55eba41372752f45))
+
+### Fixed
+
+- Reject unfollowed redirects ([#2651](https://github.com/datadog/libdatadog/issues/2651)) - ([bbe81f7](https://github.com/datadog/libdatadog/commit/bbe81f75ae8dc58c607d6d5b1af1c3649d372d26))
+- Most doc warnings - semantic changes ([#2547](https://github.com/datadog/libdatadog/issues/2547)) - ([a887c16](https://github.com/datadog/libdatadog/commit/a887c1644be7b7b44829fcf71ed5e6058ae8d67e))
+- Most doc warnings ([#2289](https://github.com/datadog/libdatadog/issues/2289)) - ([f52ab62](https://github.com/datadog/libdatadog/commit/f52ab62fdaa1acc0ca9e8812a9e9468cc59af6b5))
+
+
+
 ## [12.0.0](https://github.com/datadog/libdatadog/compare/libdd-data-pipeline-v11.0.0..libdd-data-pipeline-v12.0.0) - 2026-10-02
 
 ### Added

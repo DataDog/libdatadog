@@ -1,0 +1,33 @@
+{
+  "$schema": "../../../../schema/provider-token-breakdown-metric-fixture.schema.json",
+  "profile": "trajectory.gen_ai.client.token_breakdown@0.1.0",
+  "case": "output-basis-missing",
+  "description": "Reasoning without an output basis: whether the 5 output tokens include the 2 reasoning tokens is not known, so the output total is not known. The reasoning count does not depend on the basis and is recorded.",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "exampleai",
+    "input_tokens": 10,
+    "output_tokens": 5,
+    "reasoning_output_tokens": 2,
+    "observation_point": "gateway"
+  },
+  "expected_metrics": [
+    {
+      "name": "gen_ai.client.inference.usage.reasoning.output_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 2,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.token.modality": "unknown",
+        "trajectory.observation.point": "gateway"
+      }
+    }
+  ],
+  "expected_issues": [
+    "cache_read_missing",
+    "cache_write_missing",
+    "output_basis_missing"
+  ]
+}

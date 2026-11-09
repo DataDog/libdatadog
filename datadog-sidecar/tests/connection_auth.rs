@@ -81,10 +81,10 @@ impl Drop for Sidecar {
     fn drop(&mut self) {
         self.stop.notify_one();
         // Join if shutdown finishes in time; otherwise detach so a stuck loop cannot hang CI.
-        if self.wait_for_exit() {
-            if let Some(thread) = self.thread.take() {
-                let _ = thread.join();
-            }
+        if self.wait_for_exit()
+            && let Some(thread) = self.thread.take()
+        {
+            let _ = thread.join();
         }
     }
 }

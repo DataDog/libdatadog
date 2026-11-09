@@ -1,0 +1,47 @@
+{
+  "$schema": "../../../../schema/gateway-request-metric-fixture.schema.json",
+  "profile": "trajectory.gen_ai.gateway.request@0.1.0",
+  "case": "terminal-error",
+  "observation": {
+    "operation_name": "text_completion",
+    "duration_seconds": 0.3,
+    "provider_operations": 1,
+    "provider_operation_coverage": "complete",
+    "retries": 0,
+    "error_type": "gateway.timeout_error"
+  },
+  "expected_metrics": [
+    {
+      "name": "trajectory.gen_ai.gateway.request.duration",
+      "instrument": "histogram",
+      "unit": "s",
+      "value": 0.3,
+      "attributes": {
+        "gen_ai.operation.name": "text_completion",
+        "error.type": "gateway.timeout_error",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "trajectory.gen_ai.gateway.request.provider_operations",
+      "instrument": "histogram",
+      "unit": "{operation}",
+      "value": 1,
+      "attributes": {
+        "gen_ai.operation.name": "text_completion",
+        "trajectory.provider.operation.coverage": "complete",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "trajectory.gen_ai.gateway.request.retries",
+      "instrument": "histogram",
+      "unit": "{retry}",
+      "value": 0,
+      "attributes": {
+        "gen_ai.operation.name": "text_completion",
+        "trajectory.observation.point": "gateway"
+      }
+    }
+  ]
+}

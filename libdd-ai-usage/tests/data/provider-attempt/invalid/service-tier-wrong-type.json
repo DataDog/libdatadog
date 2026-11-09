@@ -1,0 +1,17 @@
+{
+  "$schema": "../../../../schema/provider-attempt-metric-fixture.schema.json",
+  "profile": "gen_ai.client.provider_attempt@0.1.0",
+  "case": "service-tier-wrong-type",
+  "description": "service_tier is a string: the provider's own word for the tier. A number is a wrong type.",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "exampleai",
+    "duration_seconds": 1,
+    "streaming": false,
+    "input_tokens": 10,
+    "service_tier": 1,
+    "observation_point": "gateway"
+  },
+  "expected_error_code": "field_type_invalid",
+  "expected_error": "service_tier"
+}

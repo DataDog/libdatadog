@@ -1,0 +1,15 @@
+{
+  "$schema": "../../../../schema/provider-attempt-metric-fixture.schema.json",
+  "profile": "gen_ai.client.provider_attempt@0.1.0",
+  "case": "count-negative-too-large-for-double",
+  "description": "An input count of -1e400. A token that overflows a double keeps its sign, so this is a negative count and is rejected, not a count above the bound. This file holds the literal -1e400 and must be read, not re-written, by tools.",
+  "observation": {
+    "observation_point": "gateway",
+    "operation_name": "chat",
+    "provider_name": "exampleai",
+    "duration_seconds": 0.5,
+    "streaming": false,
+    "input_tokens": -1e400
+  },
+  "expected_error_code": "count_invalid"
+}

@@ -5,12 +5,12 @@ use std::alloc::System;
 use std::hint::black_box;
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use libdd_common::bench_utils::{
-    AllocatedBytesMeasurement, ReportingAllocator, memory_allocated_criterion,
-};
 use libdd_sampling::{DatadogSampler, SamplingRule, v04_span::V04SamplingData};
 use libdd_trace_utils::span::{SliceData, v04::Span};
 use std::borrow::Cow;
+use tools::bench_utils::{
+    AllocatedBytesMeasurement, ReportingAllocator, memory_allocated_criterion,
+};
 
 #[global_allocator]
 static GLOBAL: ReportingAllocator<System> = ReportingAllocator::new(System);

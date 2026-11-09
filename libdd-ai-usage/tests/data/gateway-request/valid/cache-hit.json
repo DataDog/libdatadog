@@ -1,0 +1,52 @@
+{
+  "$schema": "../../../../schema/gateway-request-metric-fixture.schema.json",
+  "profile": "trajectory.gen_ai.gateway.request@0.1.0",
+  "case": "cache-hit",
+  "observation": {
+    "operation_name": "chat",
+    "request_model": "cached-model",
+    "duration_seconds": 0.01,
+    "provider_operations": 0,
+    "provider_operation_coverage": "complete",
+    "cache_outcomes": [
+      "hit"
+    ]
+  },
+  "expected_metrics": [
+    {
+      "name": "trajectory.gen_ai.gateway.cache.operations",
+      "instrument": "counter",
+      "unit": "{operation}",
+      "value": 1,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.request.model": "cached-model",
+        "trajectory.cache.outcome": "hit",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "trajectory.gen_ai.gateway.request.duration",
+      "instrument": "histogram",
+      "unit": "s",
+      "value": 0.01,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.request.model": "cached-model",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "trajectory.gen_ai.gateway.request.provider_operations",
+      "instrument": "histogram",
+      "unit": "{operation}",
+      "value": 0,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.request.model": "cached-model",
+        "trajectory.provider.operation.coverage": "complete",
+        "trajectory.observation.point": "gateway"
+      }
+    }
+  ]
+}

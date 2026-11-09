@@ -60,7 +60,7 @@ pub(crate) struct StatsContext<
     R: SharedRuntime,
 > {
     pub metadata: &'a TracerMetadata,
-    pub endpoint_url: &'a http::Uri,
+    pub endpoint: &'a Endpoint,
     pub shared_runtime: &'a R,
     pub stats_cardinality_limits: Option<CardinalityLimitConfig>,
     pub additional_metric_tag_keys: &'a [String],
@@ -188,7 +188,10 @@ fn create_and_start_stats_worker<
         bucket_size,
         stats_concentrator.clone(),
         StatsMetadata::from(ctx.metadata.clone()),
-        Endpoint::from_url(add_path(ctx.endpoint_url, STATS_ENDPOINT)),
+        Endpoint {
+            test_token: ctx.endpoint.test_token.clone(),
+            ..Endpoint::from_url(add_path(&ctx.endpoint.url, STATS_ENDPOINT))
+        },
         capabilities.clone(),
         #[cfg(feature = "stats-obfuscation")]
         SUPPORTED_OBFUSCATION_VERSION_STR,
@@ -345,8 +348,14 @@ fn add_spans_to_stats<T: libdd_trace_utils::span::TraceData>(
     }
 
     let mut stats_concentrator = stats_concentrator.lock_or_panic();
-    for span in traces.iter().flatten() {
-        stats_concentrator.add_span(span);
+    for trace in traces.iter() {
+        let chunk = libdd_trace_utils::span::RootSpanChunk::new(trace);
+        for span in trace {
+            stats_concentrator.add_span(&ChunkSpanView {
+                span,
+                chunk: &chunk,
+            });
+        }
     }
 }
 
@@ -394,13 +403,13 @@ pub(crate) fn process_traces_for_stats<
 
         // Send dropped P0 stats directly to telemetry if available
         #[cfg(feature = "telemetry")]
-        if let Some(telemetry_client) = telemetry {
-            if let Err(e) = telemetry_client.send_client_side_stats_drops(
+        if let Some(telemetry_client) = telemetry
+            && let Err(e) = telemetry_client.send_client_side_stats_drops(
                 dropped_p0_stats.dropped_p0_traces,
                 dropped_by_trace_filter,
-            ) {
-                tracing::error!(?e, "Error sending dropped P0 stats to telemetry");
-            }
+            )
+        {
+            tracing::error!(?e, "Error sending dropped P0 stats to telemetry");
         }
         true
     } else {
@@ -475,13 +484,13 @@ pub(crate) fn process_traces_for_stats_v1<
 
         // Send dropped P0 stats directly to telemetry if available
         #[cfg(all(not(target_arch = "wasm32"), feature = "telemetry"))]
-        if let Some(telemetry_client) = telemetry {
-            if let Err(e) = telemetry_client.send_client_side_stats_drops(
+        if let Some(telemetry_client) = telemetry
+            && let Err(e) = telemetry_client.send_client_side_stats_drops(
                 dropped_p0_stats.dropped_p0_traces,
                 dropped_by_trace_filter,
-            ) {
-                tracing::error!(?e, "Error sending dropped P0 stats to telemetry");
-            }
+            )
+        {
+            tracing::error!(?e, "Error sending dropped P0 stats to telemetry");
         }
         true
     } else {
@@ -694,6 +703,30 @@ mod tests {
                 .map(|group| group.http_method.as_str())
                 .collect();
             assert_eq!(http_methods, vec!["POST"]);
+        }
+
+        #[test]
+        fn add_spans_to_stats_v1_reads_synthetics_from_chunk_origin() {
+            let stats_concentrator = new_concentrator();
+            let traces = vec![TraceChunkBytes {
+                spans: vec![top_level_span(1, 10)],
+                origin: "synthetics-browser".into(),
+                ..Default::default()
+            }];
+
+            add_spans_to_stats_v1(&stats_concentrator, &traces);
+
+            let flushed = stats_concentrator
+                .lock_or_panic()
+                .flush(SystemTime::now(), true);
+            let synthetics: Vec<bool> = flushed
+                .obfuscated_buckets
+                .iter()
+                .chain(flushed.unobfuscated_buckets.iter())
+                .flat_map(|bucket| bucket.stats.iter())
+                .map(|group| group.synthetics)
+                .collect();
+            assert_eq!(synthetics, vec![true]);
         }
 
         #[test]

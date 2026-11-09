@@ -1,0 +1,21 @@
+{
+  "$schema": "../../../../schema/provider-token-breakdown-metric-fixture.schema.json",
+  "profile": "trajectory.gen_ai.client.token_breakdown@0.1.0",
+  "case": "cached-exceeds-prompt",
+  "description": "A usage object in a provider's API shape, from the synthetic wire-format corpus (conformance/wire-formats/cases.json, case chat-usage-cache-exceeds-input-to-anthropic): prompt_tokens 20 with prompt_tokens_details.cached_tokens 80. A part above its total: the input group records nothing.",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "openai",
+    "request_model": "gpt-4o-mini",
+    "input_tokens": 20,
+    "input_basis": "includes_cache",
+    "output_tokens": 2,
+    "cache_read_input_tokens": 80,
+    "observation_point": "gateway"
+  },
+  "expected_metrics": [],
+  "expected_issues": [
+    "cache_write_missing",
+    "usage_inconsistent"
+  ]
+}

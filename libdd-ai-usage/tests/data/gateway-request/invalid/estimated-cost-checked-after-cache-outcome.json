@@ -1,0 +1,18 @@
+{
+  "$schema": "../../../../schema/gateway-request-metric-fixture.schema.json",
+  "profile": "trajectory.gen_ai.gateway.request@0.1.0",
+  "case": "estimated-cost-checked-after-cache-outcome",
+  "description": "Order of checks: a cache outcome outside its values is checked before two estimated cost amounts that differ.",
+  "observation": {
+    "operation_name": "chat",
+    "request_model": "support-model",
+    "duration_seconds": 0.5,
+    "cache_outcomes": [
+      "bypass"
+    ],
+    "estimated_cost_usd": 0.001,
+    "estimated_cost_nano_usd": 2000000
+  },
+  "expected_error_code": "value_not_allowed",
+  "expected_error": "cache_outcomes must contain hit, miss, or write"
+}

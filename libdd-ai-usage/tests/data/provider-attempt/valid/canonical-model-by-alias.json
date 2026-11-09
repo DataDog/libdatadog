@@ -1,0 +1,119 @@
+{
+  "$schema": "../../../../schema/provider-attempt-metric-fixture.schema.json",
+  "profile": "gen_ai.client.provider_attempt@0.1.0",
+  "case": "canonical-model-by-alias",
+  "description": "The caller asked for a moving name, ex-large-latest, and the aliases document resolves it to the canonical model ex-large-1 of the family ex-large. Usage points keep the name as received and carry no canonical attribute. Both cost points carry the canonical model, provider and family beside the name as received. 1,000 input at 3 per million and 500 output at 15 per million is 0.0105 USD.",
+  "observation": {
+    "operation_name": "chat",
+    "provider_name": "exampleai",
+    "request_model": "ex-large-latest",
+    "duration_seconds": 0.9,
+    "streaming": false,
+    "input_tokens": 1000,
+    "output_tokens": 500,
+    "canonical_provider": "exampleai",
+    "canonical_model": "ex-large-1",
+    "model_family": "ex-large",
+    "cost_nano_usd": 10500000,
+    "cost_source": "calculated",
+    "cost_rate_card": "synthetic-basic@1",
+    "observation_point": "gateway"
+  },
+  "expected_metrics": [
+    {
+      "name": "gen_ai.client.inference.duration",
+      "instrument": "histogram",
+      "unit": "s",
+      "value": 0.9,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.request.model": "ex-large-latest",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.operation.input_tokens",
+      "instrument": "histogram",
+      "unit": "{token}",
+      "value": 1000,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.request.model": "ex-large-latest",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.operation.output_tokens",
+      "instrument": "histogram",
+      "unit": "{token}",
+      "value": 500,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.request.model": "ex-large-latest",
+        "trajectory.observation.point": "gateway"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.usage.input_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 1000,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.request.model": "ex-large-latest",
+        "trajectory.observation.point": "gateway",
+        "gen_ai.token.modality": "unknown"
+      }
+    },
+    {
+      "name": "gen_ai.client.inference.usage.output_tokens",
+      "instrument": "counter",
+      "unit": "{token}",
+      "value": 500,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.request.model": "ex-large-latest",
+        "trajectory.observation.point": "gateway",
+        "gen_ai.token.modality": "unknown"
+      }
+    },
+    {
+      "name": "trajectory.gen_ai.client.inference.usage.cost",
+      "instrument": "counter",
+      "unit": "{nanoUSD}",
+      "value": 10500000,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.request.model": "ex-large-latest",
+        "trajectory.observation.point": "gateway",
+        "trajectory.cost.source": "calculated",
+        "trajectory.canonical.provider": "exampleai",
+        "trajectory.canonical.model": "ex-large-1",
+        "trajectory.canonical.family": "ex-large",
+        "trajectory.cost.rate_card": "synthetic-basic@1"
+      }
+    },
+    {
+      "name": "trajectory.gen_ai.client.operation.cost",
+      "instrument": "histogram",
+      "unit": "{USD}",
+      "value": 0.0105,
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "exampleai",
+        "gen_ai.request.model": "ex-large-latest",
+        "trajectory.observation.point": "gateway",
+        "trajectory.cost.source": "calculated",
+        "trajectory.canonical.provider": "exampleai",
+        "trajectory.canonical.model": "ex-large-1",
+        "trajectory.canonical.family": "ex-large"
+      }
+    }
+  ]
+}

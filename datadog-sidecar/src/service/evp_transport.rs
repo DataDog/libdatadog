@@ -942,10 +942,8 @@ mod tests {
                         .pop_front()
                         .expect("missing scripted HTTP response")
                 };
-                if is_info {
-                    if let Some(release) = info_release {
-                        release.notified().await;
-                    }
+                if is_info && let Some(release) = info_release {
+                    release.notified().await;
                 }
                 response
             }

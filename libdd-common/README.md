@@ -4,7 +4,7 @@ Common utilities and foundational components shared across Datadog telemetry lib
 
 ## Overview
 
-`libdd-common` provides shared functionality used across multiple Datadog Rust libraries including HTTP client support, entity ID detection, tag handling, and platform-specific utilities.
+`libdd-common` provides shared functionality used across multiple Datadog Rust libraries including HTTP client support, entity ID detection, and tag handling.
 
 ## Features
 
@@ -12,27 +12,23 @@ Common utilities and foundational components shared across Datadog telemetry lib
 - **Entity ID Detection**: Automatic container ID and entity ID detection from cgroups, Docker, Kubernetes, and Azure App Services
 - **Tag Management**: Compile-time validated tags with the `tag!` macro
 - **URI Parsing**: Special handling for Unix sockets, Windows named pipes, and file URIs  
-- **Rate Limiting**: Token bucket rate limiter implementation
-- **Platform Utilities**: Unix-specific utilities for fork, exec, and process management
 - **Datadog Headers**: Standard Datadog HTTP headers and constants
-- **Timeout Support**: Configurable timeouts for HTTP requests
-- **Worker Abstraction**: Generic worker pattern for background tasks
 
 ## Modules
 
 - `azure_app_services`: Azure App Services integration
 - `config`: Configuration utilities
 - `connector`: HTTP/HTTPS connector implementations
-- `cstr`: C string utilities and macros
+- `dump_server`: Local server that records received requests to a file (requires `reqwest`)
 - `entity_id`: Container and entity ID detection
 - `error`: Common error types
 - `header`: Datadog HTTP headers
 - `http_common`: Hyper version migration helpers
-- `rate_limiter`: Rate limiting implementation
+- `machine_id`: Stable host machine ID as a hyphenated UUID, cached for the process lifetime
+- `multipart`: Multipart form data construction
+- `mutable_metadata`: Tracer metadata updatable after startup (runtime ID, process tags, session ancestry)
+- `regex_engine`: Regex engine re-exports; the `regex-lite` feature switches to `regex-lite` for smaller binaries
 - `tag`: Tag creation and validation
-- `timeout`: Timeout utilities
-- `unix_utils`: Unix-specific process utilities
-- `worker`: Background worker abstraction
 
 ## Examples
 

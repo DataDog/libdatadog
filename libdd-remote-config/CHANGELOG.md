@@ -2,6 +2,19 @@
 
 
 
+## [8.0.0](https://github.com/datadog/libdatadog/compare/libdd-remote-config-v7.0.0..libdd-remote-config-v8.0.0) - 2026-10-23
+
+### Added
+
+- Add basic no_std to libdd-common ([#2638](https://github.com/datadog/libdatadog/issues/2638)) - ([d0dd0a2](https://github.com/datadog/libdatadog/commit/d0dd0a21ffca664d7c6a0798dd8c178234fd6750))
+- Add new `APM_PROFILING` product ([#2630](https://github.com/datadog/libdatadog/issues/2630)) - ([2416f4f](https://github.com/datadog/libdatadog/commit/2416f4fdb8f6c2e1f61e123971fd79063e135d27))
+
+### Fixed
+
+- Most doc warnings ([#2289](https://github.com/datadog/libdatadog/issues/2289)) - ([f52ab62](https://github.com/datadog/libdatadog/commit/f52ab62fdaa1acc0ca9e8812a9e9468cc59af6b5))
+
+
+
 ## [7.0.0](https://github.com/datadog/libdatadog/compare/libdd-remote-config-v6.0.0..libdd-remote-config-v7.0.0) - 2026-10-02
 
 ### Added
