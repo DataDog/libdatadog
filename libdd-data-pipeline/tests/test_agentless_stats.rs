@@ -751,3 +751,90 @@ async fn test_flush_client_side_stats_sends_agentless_stats() {
     let payload = expect_stats_request(&mock.captured_requests());
     assert_eq!(payload.stats.len(), 1, "expected one ClientStatsPayload");
 }
+
+/// A force-flush export through `DefaultExport` only requests the stats flush: it must return
+/// while the stats worker is paused for a fork (waiting would block `before_fork`), and the
+/// stats are sent once the worker restarts.
+#[cfg_attr(miri, ignore)]
+#[tokio::test]
+async fn test_default_export_force_flush_requests_stats_without_waiting() {
+    use libdd_data_pipeline::trace_buffer::{DefaultExport, Export};
+    use libdd_shared_runtime::SharedRuntime;
+    use std::sync::Arc;
+
+    let mock = MockHttpCapabilities::new();
+    mock.queue_response_for_path("/v1/input", 200, "{}");
+    mock.queue_response_for_path("/api/v0.2/stats", 202, "");
+    mock.queue_response_for_path("/api/v0.2/stats", 202, "");
+
+    let mock_clone = mock.clone();
+    let (while_paused, after_restart) = task::spawn_blocking(move || {
+        mock_clone.register_on_current_thread();
+
+        let runtime = Arc::new(ForkSafeRuntime::new().expect("runtime"));
+        let mut builder = TraceExporterBuilder::<ForkSafeRuntime>::new();
+        builder
+            .set_shared_runtime(runtime.clone())
+            .set_agentless_endpoint("https://traces.fake.example.com/v1/input", "key")
+            .set_agentless_stats_endpoint("https://stats.fake.example.com/api/v0.2/stats")
+            .enable_stats(STATS_BUCKET)
+            .set_language("rust")
+            .set_tracer_version("0.0.0-test")
+            .set_env("integration-test")
+            .set_service("test-svc")
+            .set_hostname("test-host");
+        let exporter = builder
+            .build::<MockHttpCapabilities>()
+            .expect("build failed");
+        exporter
+            .send_trace_chunks(
+                PooledChunks::unpooled(vec![vec![make_root_span(1, Some(1.0), 0)]]),
+                None,
+            )
+            .expect("send_trace_chunks failed");
+
+        let mut export = DefaultExport::new(exporter, None);
+        runtime.before_fork();
+
+        // Drive the export on a separate runtime: the shared runtime is paused.
+        let driver = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("driver runtime");
+        driver
+            .block_on(tokio::time::timeout(
+                Duration::from_secs(2),
+                export.export_trace_chunks(Vec::new(), true),
+            ))
+            .expect("force-flush export must not wait for the paused stats worker")
+            .expect("export failed");
+        let while_paused = mock_clone.captured_requests();
+
+        runtime.after_fork_parent().expect("after_fork_parent");
+        let mut after_restart = Vec::new();
+        for _ in 0..100 {
+            after_restart = mock_clone.captured_requests();
+            if after_restart
+                .iter()
+                .any(|r| r.uri.path() == "/api/v0.2/stats")
+            {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        drop(export);
+        runtime.shutdown(None).expect("shutdown failed");
+        (while_paused, after_restart)
+    })
+    .await
+    .expect("spawn_blocking panicked");
+
+    assert!(
+        !while_paused
+            .iter()
+            .any(|r| r.uri.path() == "/api/v0.2/stats"),
+        "stats must not be sent while the stats worker is paused"
+    );
+    let payload = expect_stats_request(&after_restart);
+    assert_eq!(payload.stats.len(), 1, "expected one ClientStatsPayload");
+}
