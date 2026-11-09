@@ -11,6 +11,9 @@ use crate::rules_based::{ExpectedFlagType, FlagType, Str};
 ///
 /// Not all of these are technically "errors"—some can be expected to occur frequently (e.g.,
 /// `FlagDisabled` or `DefaultAllocation`).
+///
+/// Destruction unlinks dependency errors iteratively. Because this type implements `Drop`,
+/// inspect owned fields by reference rather than moving them out of an error.
 #[derive(thiserror::Error, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 #[non_exhaustive]
@@ -84,6 +87,20 @@ pub enum EvaluationError {
     Internal(Str),
 }
 
+// Drop glue would recurse once per nested prerequisite; unlink the chain iteratively.
+impl Drop for EvaluationError {
+    fn drop(&mut self) {
+        let EvaluationError::DependencyEvaluationFailed { source, .. } = self else {
+            return;
+        };
+        let mut next = std::mem::replace(&mut **source, EvaluationError::DependencyCycle);
+        while let EvaluationError::DependencyEvaluationFailed { source, .. } = &mut next {
+            let inner = std::mem::replace(&mut **source, EvaluationError::DependencyCycle);
+            next = inner;
+        }
+    }
+}
+
 // Error logging must not reintroduce recursion after dependency evaluation has
 // moved to an explicit stack. Preserve the same message and source-chain API.
 struct DependencyErrorDisplay<'a>(&'a EvaluationError);
@@ -96,5 +113,34 @@ impl fmt::Display for DependencyErrorDisplay<'_> {
             error = source;
         }
         fmt::Display::fmt(error, formatter)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deep_dependency_errors_drop_on_a_bounded_thread_stack() {
+        for mut error in [
+            EvaluationError::FlagDisabled,
+            EvaluationError::Internal(String::from("owned terminal error").into()),
+        ] {
+            // Exceed the evaluator's depth cap to isolate recursive destruction from
+            // platform-specific differences in the size of each cleanup frame.
+            for _ in 0..10_000 {
+                error = EvaluationError::DependencyEvaluationFailed {
+                    flag_key: Str::from_static_str("prerequisite"),
+                    source: Box::new(error),
+                };
+            }
+            std::thread::Builder::new()
+                .name("small-stack-error-drop".into())
+                .stack_size(64 * 1024)
+                .spawn(move || drop(error))
+                .unwrap()
+                .join()
+                .unwrap();
+        }
     }
 }
