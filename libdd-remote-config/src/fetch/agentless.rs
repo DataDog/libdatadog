@@ -132,7 +132,7 @@ pub fn make_agentless_configs_endpoint(e: &Endpoint) -> Option<Endpoint> {
 pub struct AgentlessConfig {
     /// Hostname reported to the RC backend. Guaranteed non-empty by [`Self::new`].
     hostname: String,
-    /// Pre-rewritten agentless endpoint (`config.<site>/api/v0.1/configurations`).
+    /// Validated transport endpoint for `/api/v0.1/configurations`.
     /// Guaranteed valid (https, authority present, API key present) by [`Self::new`].
     agentless_endpoint: Endpoint,
     /// Logical Datadog site, independent of a Collector transport endpoint.
@@ -185,8 +185,7 @@ impl AgentlessConfig {
     }
 
     /// Route through an explicit Collector HTTPS origin when OTel semantics is enabled.
-    /// Disabled semantics or an absent origin keeps the direct agentless route.
-    ///
+    /// Disabled semantics or an absent origin leaves the transport unchanged.
     /// Returns [`AgentlessConfigError::InvalidCollectorEndpoint`] for an invalid active origin.
     pub fn with_otel_collector_endpoint(
         mut self,
@@ -1530,13 +1529,210 @@ pub fn debug_latest_configs_response(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use libdd_capabilities::{Bytes, HttpClientCapability, HttpError, SleepCapability};
     use libdd_common::Endpoint;
+    use prost::Message;
 
     use crate::fetch::AgentlessConfig;
     use crate::fetch::NativeAgentlessFetcher;
 
     use super::Site;
     use super::trim_hash_target_path;
+
+    #[derive(Clone, Debug, Default)]
+    struct CaptureHttp(Arc<Mutex<Vec<http::Request<Bytes>>>>);
+
+    impl HttpClientCapability for CaptureHttp {
+        fn new_client() -> Self {
+            Self::default()
+        }
+
+        fn new_periodic() -> Self {
+            Self::default()
+        }
+
+        async fn request(
+            &self,
+            request: http::Request<Bytes>,
+        ) -> Result<http::Response<Bytes>, HttpError> {
+            self.0.lock().unwrap().push(request);
+            Ok(http::Response::new(Bytes::new()))
+        }
+    }
+
+    impl SleepCapability for CaptureHttp {
+        fn new() -> Self {
+            Self::default()
+        }
+
+        async fn sleep(&self, _: std::time::Duration) {
+            std::future::pending::<()>().await;
+        }
+    }
+
+    #[test]
+    fn collector_route_requires_semantics_and_explicit_origin() {
+        let endpoint = Endpoint::agentless("datadoghq.com", "test-key".to_string()).unwrap();
+        let direct = AgentlessConfig::new("host".to_string(), &endpoint).unwrap();
+        let disabled = direct
+            .clone()
+            .with_otel_collector_endpoint(
+                false,
+                Some(
+                    "http://ignored.invalid/not-an-origin?query"
+                        .parse()
+                        .unwrap(),
+                ),
+            )
+            .unwrap();
+        let unconfigured = direct
+            .clone()
+            .with_otel_collector_endpoint(true, None)
+            .unwrap();
+        assert_eq!(disabled, direct);
+        assert_eq!(unconfigured, direct);
+    }
+
+    #[test]
+    fn collector_route_rejects_invalid_origins() {
+        let endpoint = Endpoint::agentless("datadoghq.com", "test-key".to_string()).unwrap();
+        for origin in [
+            "http://collector.example:8234",
+            "https://user:password@collector.example:8234",
+            "https://collector.example:8234/api/v0.1/configurations",
+            "https://collector.example:8234?query",
+            "/relative",
+        ] {
+            let result = AgentlessConfig::new("host".to_string(), &endpoint)
+                .unwrap()
+                .with_otel_collector_endpoint(true, Some(origin.parse().unwrap()));
+            assert!(matches!(
+                result,
+                Err(super::AgentlessConfigError::InvalidCollectorEndpoint)
+            ));
+        }
+    }
+
+    #[tokio::test]
+    async fn collector_routes_bootstrap_and_poll_without_changing_payloads() {
+        let mut endpoint = Endpoint::agentless("datadoghq.com", "test-key".to_string()).unwrap();
+        endpoint.timeout_ms = 1234;
+        endpoint.test_token = Some("test-session".into());
+        endpoint.use_system_resolver = true;
+        let cfg = AgentlessConfig::new("host".to_string(), &endpoint)
+            .unwrap()
+            .with_otel_collector_endpoint(
+                true,
+                Some("https://collector.example:8234/".parse().unwrap()),
+            )
+            .unwrap();
+        let routed = cfg.agentless_endpoint().clone();
+        assert_eq!(routed.timeout_ms, endpoint.timeout_ms);
+        assert_eq!(routed.test_token, endpoint.test_token);
+        assert_eq!(routed.api_key, endpoint.api_key);
+        assert!(routed.use_system_resolver);
+        let http = CaptureHttp::default();
+        let fetcher = super::AgentlessFetcher::new(cfg, routed, http.clone())
+            .await
+            .unwrap();
+        fetcher.get_org_data().await.unwrap();
+        let payload = super::remoteconfig::LatestConfigsRequest {
+            agent_version: "test-client-version".to_string(),
+            hostname: "test-hostname".to_string(),
+            ..Default::default()
+        };
+        fetcher.get_latest_config(payload.clone()).await.unwrap();
+        let requests = http.0.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        for request in requests.iter() {
+            assert_eq!(request.uri().scheme_str(), Some("https"));
+            assert_eq!(
+                request.uri().authority().unwrap().as_str(),
+                "collector.example:8234"
+            );
+            assert_eq!(request.headers()["dd-api-key"], "test-key");
+            assert_eq!(request.headers()["content-type"], "application/x-protobuf");
+        }
+        assert_eq!(requests[0].method(), http::Method::GET);
+        assert_eq!(requests[0].uri().path(), "/api/v0.1/org");
+        assert!(requests[0].body().is_empty());
+        assert_eq!(requests[1].method(), http::Method::POST);
+        assert_eq!(requests[1].uri().path(), "/api/v0.1/configurations");
+        assert_eq!(requests[1].body().as_ref(), payload.encode_to_vec());
+    }
+
+    #[tokio::test]
+    async fn inactive_collector_route_keeps_requests_direct() {
+        for (enabled, origin) in [
+            (
+                false,
+                Some("https://collector.example:8234".parse().unwrap()),
+            ),
+            (true, None),
+        ] {
+            let endpoint = Endpoint::agentless("datadoghq.com", "test-key".to_string()).unwrap();
+            let cfg = AgentlessConfig::new("host".to_string(), &endpoint)
+                .unwrap()
+                .with_otel_collector_endpoint(enabled, origin)
+                .unwrap();
+            let http = CaptureHttp::default();
+            let fetcher = super::AgentlessFetcher::new(
+                cfg.clone(),
+                cfg.agentless_endpoint().clone(),
+                http.clone(),
+            )
+            .await
+            .unwrap();
+            fetcher.get_org_data().await.unwrap();
+            fetcher.get_latest_config(Default::default()).await.unwrap();
+            let requests = http.0.lock().unwrap();
+            assert_eq!(requests.len(), 2);
+            assert!(
+                requests
+                    .iter()
+                    .all(|request| request.uri().host() == Some("config.datadoghq.com"))
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn collector_hostname_does_not_select_trust_roots() {
+        for site in ["datadoghq.com", "datad0g.com", "ddog-gov.com"] {
+            let endpoint = Endpoint::agentless(site, "test-key".to_string()).unwrap();
+            let direct = AgentlessConfig::new("host".to_string(), &endpoint).unwrap();
+            let routed = direct
+                .clone()
+                .with_otel_collector_endpoint(
+                    true,
+                    Some("https://collector.example:8234".parse().unwrap()),
+                )
+                .unwrap();
+            let direct_fetcher = super::AgentlessFetcher::new(
+                direct.clone(),
+                direct.agentless_endpoint().clone(),
+                CaptureHttp::default(),
+            )
+            .await
+            .unwrap();
+            let collector_fetcher = super::AgentlessFetcher::new(
+                routed.clone(),
+                routed.agentless_endpoint().clone(),
+                CaptureHttp::default(),
+            )
+            .await
+            .unwrap();
+            assert_eq!(
+                &**collector_fetcher.config_client.database().trusted_root(),
+                &**direct_fetcher.config_client.database().trusted_root(),
+            );
+            assert_eq!(
+                &**collector_fetcher.director_client.database().trusted_root(),
+                &**direct_fetcher.director_client.database().trusted_root(),
+            );
+        }
+    }
 
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
