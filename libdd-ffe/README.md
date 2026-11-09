@@ -105,14 +105,16 @@ object per destination: `FfeExposure.features_json` for exposures and
 `FfeFlagEvaluation.features_json` for evaluation counts. Values are strings,
 numbers or booleans; other values are skipped. Keys or strings over 256
 Unicode characters are skipped. Features are kept in sorted key order, up to
-256 features and 4096 bytes of canonical JSON; the rest are dropped. Numbers are written as doubles. Empty, invalid or non-object JSON
-means no features and never rejects the event.
+256 features and 4096 bytes of canonical JSON; the rest are dropped. Numbers
+are written as doubles. Empty, invalid or non-object JSON means no features
+and never rejects the event.
 
 - Exposures write a top-level `features` object, omitted when empty. Features
   are not part of exposure deduplication.
 - Evaluation counts write a top-level `features` object on each row, omitted
-  when empty, in every tier and consent mode. Rows with different features
-  are never merged, in the full or the degraded tier. Payload-limit
+  when empty, in every tier and consent mode. Rows whose retained features
+  differ are never merged, in the full or the degraded tier. Inputs that
+  differ only in features dropped by the limits share a row. Payload-limit
   degradation keeps features, and an oversized single-observation
   submission is retried with them.
 

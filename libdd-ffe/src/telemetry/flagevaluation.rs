@@ -147,7 +147,8 @@ pub struct FfeFlagEvaluationEvent {
     /// Split features routed to evaluation counts, as a canonical JSON object
     /// string (see [`canonical_features_json`]). Part of the bucket key in both
     /// tiers and kept regardless of consent, so a reduced row never merges
-    /// buckets that differ only by features.
+    /// buckets whose retained features differ. Inputs that differ only in
+    /// features dropped by the limits share a bucket.
     #[serde(default)]
     pub features: Option<String>,
 

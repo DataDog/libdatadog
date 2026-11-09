@@ -1096,9 +1096,14 @@ pub struct FfeFlagEvaluation<'a> {
 /// Send structured Feature Flags exposure events to the sidecar. The sidecar owns
 /// route selection, deduplication, JSON serialization, and EVP delivery. This
 /// function is caller-driven; shared libdatadog evaluator calls do not log unless
-/// an SDK explicitly sends this action. The batch is one IPC message; up to
-/// `max_message_size()` (4 MiB by default) it goes through shared memory when
-/// it exceeds the socket buffer, and a larger batch is dropped.
+/// an SDK explicitly sends this action.
+///
+/// Submission is non-blocking and best-effort. Success means the batch was
+/// converted and handed to the transport, not that the sidecar accepted it.
+/// The batch is sent as one IPC request, through shared memory when it exceeds
+/// the socket buffer. It is dropped without an error when the whole encoded
+/// request exceeds `max_message_size()` (4 MiB by default), when the sender
+/// sheds load, or when the socket is full or the connection is closed.
 ///
 /// # Safety
 /// All slices must reference valid memory under the CharSlice contract. The
@@ -1163,7 +1168,8 @@ fn ddog_sidecar_send_ffe_exposure_batch_impl(
 /// Send structured Feature Flags evaluation events to the sidecar. The sidecar owns
 /// route selection, JSON serialization, and EVP delivery. This function is
 /// caller-driven; callers must aggregate and bound event cardinality before passing
-/// a batch. Size limits are as for `ddog_sidecar_send_ffe_exposure_batch`.
+/// a batch. Submission is non-blocking and best-effort, with the same size
+/// limit and silent drops as `ddog_sidecar_send_ffe_exposure_batch`.
 ///
 /// # Safety
 /// All slices must reference valid memory under the CharSlice contract. Context
