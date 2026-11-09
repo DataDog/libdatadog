@@ -1779,6 +1779,7 @@ mod tests {
             allocation_key: "alloc".to_owned(),
             variant: "variant".to_owned(),
             serial_id: None,
+            features_json: String::new(),
         }
     }
 
@@ -1810,6 +1811,7 @@ mod tests {
                 context: None,
                 error: None,
                 runtime_default_used: false,
+                features: None,
                 observe_full_evaluation_data: false,
                 is_degraded: false,
                 field_omissions: Default::default(),
