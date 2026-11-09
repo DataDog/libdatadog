@@ -214,6 +214,21 @@ fn dnf_expansion_memoizes_but_restores_exposure_eligibility_for_the_winning_rule
 }
 
 #[test]
+fn prerequisite_from_rejected_rule_is_not_exposed_by_later_rule_in_same_allocation() {
+    let mut root = flag(vec![]);
+    root["allocations"][0]["rules"] = json!([
+        {"conditions": [dependency("parent"), fails()]},
+        {"conditions": []}
+    ]);
+    let result = eval(wire(json!({"root": root, "parent": flag(vec![])})));
+    assert_eq!(result.result.unwrap().variation_key.as_str(), "on");
+    assert_eq!(result.evaluations.len(), 1);
+    assert_eq!(result.evaluations[0].flag_key.as_str(), "parent");
+    assert!(result.evaluations[0].result.is_ok());
+    assert!(!result.evaluations[0].exposure_eligible);
+}
+
+#[test]
 fn rejected_rules_retain_evaluations_without_exposures() {
     let result = eval(wire(
         json!({"root": flag(vec![dependency("parent"), fails()]), "parent": flag(vec![])}),
