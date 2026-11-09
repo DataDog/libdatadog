@@ -501,7 +501,7 @@ impl TelemetryCachedClient {
             pending.await.ok();
         }
         if let Some(worker_handle) = self.worker_handle.take() {
-            worker_handle.stop().await.ok();
+            self.worker.stop_worker(worker_handle).await.ok();
         }
     }
 

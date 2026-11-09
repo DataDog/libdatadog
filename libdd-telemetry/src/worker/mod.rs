@@ -277,21 +277,31 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Wor
     /// Drains queued actions and sends the final flush. Bounded by [`Config::shutdown_timeout`]:
     /// when it elapses, in-flight and later requests are cancelled so shutdown returns promptly.
     async fn shutdown(&mut self) {
-        let Some(timeout) = self.config.shutdown_timeout else {
-            return self.drain_and_stop().await;
-        };
         let token = self.cancellation_token.clone();
-        let sleeper = <C as SleepCapability>::new();
-        let drain = self.drain_and_stop();
-        futures::pin_mut!(drain);
-        tokio::select! {
-            () = &mut drain => return,
-            () = sleeper.sleep(timeout) => {}
-        }
-        debug!("Telemetry shutdown timed out; cancelling in-flight requests");
-        token.cancel();
-        drain.await;
+        let timeout = self.config.shutdown_timeout;
+        bounded_by_cancel::<C, _>(token, timeout, self.drain_and_stop()).await;
     }
+}
+
+/// Drives `fut` to completion. Once `timeout` elapses, `token` is cancelled (aborting in-flight
+/// and later telemetry requests) and `fut` keeps being awaited: it is never dropped.
+async fn bounded_by_cancel<C: SleepCapability, F: std::future::Future>(
+    token: CancellationToken,
+    timeout: Option<Duration>,
+    fut: F,
+) -> F::Output {
+    let Some(timeout) = timeout else {
+        return fut.await;
+    };
+    let sleeper = <C as SleepCapability>::new();
+    futures::pin_mut!(fut);
+    tokio::select! {
+        out = &mut fut => return out,
+        () = sleeper.sleep(timeout) => {}
+    }
+    debug!("Telemetry shutdown timed out; cancelling in-flight requests");
+    token.cancel();
+    fut.await
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -1079,9 +1089,9 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
 ///
 /// The worker won't send data to the agent until you call `TelemetryWorkerHandle::send_start`.
 ///
-/// To stop the worker, call [`WorkerHandle::stop`](libdd_shared_runtime::WorkerHandle::stop) on
-/// the handle returned by `SharedRuntime::spawn_worker`: it drains queued actions and performs the
-/// final flush, bounded by [`Config::shutdown_timeout`](crate::config::Config::shutdown_timeout).
+/// To stop the worker, pass the handle returned by `SharedRuntime::spawn_worker` to
+/// [`TelemetryWorkerHandle::stop_worker`]: it drains queued actions and performs the final
+/// flush, bounded by [`Config::shutdown_timeout`](crate::config::Config::shutdown_timeout).
 pub struct TelemetryWorkerHandle<
     C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
 > {
@@ -1090,6 +1100,7 @@ pub struct TelemetryWorkerHandle<
     contexts: MetricContexts,
     /// Shared with the worker: `add_point` publishes here (see `metric_ring`).
     metric_ring: Arc<MetricRing>,
+    shutdown_timeout: Option<Duration>,
     _phantom: PhantomData<fn() -> C>,
 }
 
@@ -1102,6 +1113,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Clo
             cancellation_token: self.cancellation_token.clone(),
             contexts: self.contexts.clone(),
             metric_ring: self.metric_ring.clone(),
+            shutdown_timeout: self.shutdown_timeout,
             _phantom: PhantomData,
         }
     }
@@ -1170,6 +1182,25 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static>
         Ok(self
             .sender
             .try_send(TelemetryActions::Lifecycle(LifecycleAction::Stop))?)
+    }
+
+    /// Stops the worker spawned from this handle's builder: drains queued actions, sends the
+    /// final flush and releases its runtime slot.
+    ///
+    /// Bounded by [`Config::shutdown_timeout`](crate::config::Config::shutdown_timeout) from the
+    /// moment it is called, including a request already in flight: when the bound elapses,
+    /// requests are cancelled and the stop completes promptly. Prefer it over calling
+    /// [`WorkerHandle::stop`](libdd_shared_runtime::WorkerHandle::stop) directly.
+    pub async fn stop_worker(
+        &self,
+        worker_handle: libdd_shared_runtime::WorkerHandle,
+    ) -> Result<(), libdd_shared_runtime::WorkerHandleError> {
+        bounded_by_cancel::<C, _>(
+            self.cancellation_token.clone(),
+            self.shutdown_timeout,
+            worker_handle.stop(),
+        )
+        .await
     }
 
     pub fn add_dependency(
@@ -1305,7 +1336,7 @@ pub enum TelemetryWorkerFlavor {
 /// let worker_handle = runtime.spawn_worker(worker, false)?;
 /// telemetry.send_start()?;
 /// // ... record telemetry through `telemetry` ...
-/// runtime.block_on(worker_handle.stop())??;
+/// runtime.block_on(telemetry.stop_worker(worker_handle))??;
 /// # Ok(())
 /// # }
 /// ```
@@ -1383,7 +1414,7 @@ impl TelemetryWorkerBuilder {
     /// Build the corresponding worker and its handle.
     ///
     /// Spawn the worker with `SharedRuntime::spawn_worker` and stop it with
-    /// `WorkerHandle::stop` (see [`TelemetryWorkerBuilder`]).
+    /// [`TelemetryWorkerHandle::stop_worker`] (see [`TelemetryWorkerBuilder`]).
     pub fn build_worker<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static>(
         self,
     ) -> (TelemetryWorkerHandle<C>, TelemetryWorker<C>) {
@@ -1392,6 +1423,7 @@ impl TelemetryWorkerBuilder {
         let metric_ring = Arc::new(MetricRing::new());
         let token = CancellationToken::new();
         let config = self.config;
+        let shutdown_timeout = config.shutdown_timeout;
         let telemetry_heartbeat_interval = config.telemetry_heartbeat_interval;
         let telemetry_extended_heartbeat_interval = config.telemetry_extended_heartbeat_interval;
         let capabilities = C::new_periodic();
@@ -1450,6 +1482,7 @@ impl TelemetryWorkerBuilder {
                 cancellation_token: token,
                 contexts,
                 metric_ring,
+                shutdown_timeout,
                 _phantom: PhantomData,
             },
             worker,
@@ -2544,6 +2577,127 @@ mod tests {
     #[tokio::test]
     async fn shutdown_drops_actions_after_terminal_stop_metrics_logs() {
         shutdown_drops_actions_after_terminal_stop(TelemetryWorkerFlavor::MetricsLogs).await;
+    }
+
+    /// HTTP server that reports each received request on the returned channel. It answers the
+    /// first `answered` requests with 202 and never answers the following ones.
+    fn signalling_server(answered: usize) -> (String, std::sync::mpsc::Receiver<()>) {
+        use std::io::{BufRead, BufReader, Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            for (index, stream) in listener.incoming().enumerate() {
+                let Ok(mut stream) = stream else { return };
+                let tx = tx.clone();
+                std::thread::spawn(move || {
+                    let mut reader = BufReader::new(stream.try_clone().unwrap());
+                    let mut content_length = 0;
+                    loop {
+                        let mut line = String::new();
+                        if reader.read_line(&mut line).unwrap_or(0) == 0 {
+                            return;
+                        }
+                        if let Some(v) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                            content_length = v.trim().parse().unwrap_or(0);
+                        }
+                        if line == "\r\n" {
+                            break;
+                        }
+                    }
+                    let mut body = vec![0; content_length];
+                    let _ = reader.read_exact(&mut body);
+                    let _ = tx.send(());
+                    if index < answered {
+                        let _ = stream.write_all(
+                            b"HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                        );
+                    } else {
+                        // Hold the connection open without answering.
+                        std::thread::sleep(std::time::Duration::from_secs(120));
+                    }
+                });
+            }
+        });
+        (format!("http://{addr}/"), rx)
+    }
+
+    fn full_worker_against(
+        url: String,
+    ) -> (
+        libdd_shared_runtime::BasicRuntime,
+        TelemetryWorkerHandle<NativeCapabilities>,
+        libdd_shared_runtime::WorkerHandle,
+    ) {
+        use libdd_shared_runtime::{BasicRuntime, SharedRuntime};
+        let mut builder = TelemetryWorkerBuilder::new(
+            "host".into(),
+            "svc".into(),
+            "lang".into(),
+            "1".into(),
+            "tv".into(),
+        );
+        builder
+            .config
+            .set_endpoint(TelemetryEndpoint {
+                url: Some(url),
+                timeout_ms: 10_000,
+                ..Default::default()
+            })
+            .unwrap();
+        builder.config.shutdown_timeout = Some(std::time::Duration::from_millis(300));
+        let runtime = BasicRuntime::new().unwrap();
+        let (handle, worker) = builder.build_worker::<NativeCapabilities>();
+        let worker_handle = runtime.spawn_worker(worker, false).unwrap();
+        (runtime, handle, worker_handle)
+    }
+
+    fn assert_stop_bounded(
+        runtime: &libdd_shared_runtime::BasicRuntime,
+        handle: &TelemetryWorkerHandle<NativeCapabilities>,
+        worker_handle: libdd_shared_runtime::WorkerHandle,
+    ) {
+        use libdd_shared_runtime::BlockingRuntime;
+        let start = std::time::Instant::now();
+        runtime
+            .block_on(handle.stop_worker(worker_handle))
+            .unwrap()
+            .unwrap();
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed < std::time::Duration::from_millis(300) + std::time::Duration::from_secs(2),
+            "stop took {elapsed:?}, expected about the 300ms shutdown timeout"
+        );
+    }
+
+    /// A request already in flight when the stop begins (app-started from Start) is bounded too.
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn stop_worker_bounds_in_flight_start_request() {
+        let (url, received) = signalling_server(0);
+        let (runtime, handle, worker_handle) = full_worker_against(url);
+        handle.send_start().unwrap();
+        received
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        assert_stop_bounded(&runtime, &handle, worker_handle);
+    }
+
+    /// A Stop flush already in flight when the stop begins is bounded too.
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn stop_worker_bounds_in_flight_stop_flush() {
+        let (url, received) = signalling_server(1);
+        let (runtime, handle, worker_handle) = full_worker_against(url);
+        handle.send_start().unwrap();
+        received
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        handle.send_stop().unwrap();
+        received
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        assert_stop_bounded(&runtime, &handle, worker_handle);
     }
 
     /// With a promptly answering endpoint, `WorkerHandle::stop` returns as soon as the final

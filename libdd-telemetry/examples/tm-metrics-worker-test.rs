@@ -122,7 +122,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // About 200ms (the time it takes to send a app-closing request)
     timeit!("shutdown", {
-        runtime.block_on(worker_handle.stop())??;
+        runtime.block_on(handle.stop_worker(worker_handle))??;
     });
 
     Ok(())

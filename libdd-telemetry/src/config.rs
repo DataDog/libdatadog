@@ -48,12 +48,12 @@ pub struct Config {
     pub direct_submission_enabled: bool,
     /// Prevents `LifecycleAction::Stop` from ending the worker's processing (except if every
     /// `TelemetryWorkerHandle` is dropped). Without it, Stop closes the mailbox; the worker's
-    /// runtime slot is released by `WorkerHandle::stop`.
+    /// runtime slot is released by `TelemetryWorkerHandle::stop_worker`.
     pub restartable: bool,
-    /// Upper bound on the worker's shutdown (`WorkerHandle::stop`): queued actions are drained
-    /// and the final flush is sent, and once this delay elapses in-flight requests are cancelled
-    /// so shutdown returns. `None` waits for the agent indefinitely. Defaults to
-    /// [`Config::DEFAULT_SHUTDOWN_TIMEOUT`].
+    /// Upper bound on stopping the worker with `TelemetryWorkerHandle::stop_worker`, counted from
+    /// the call: once it elapses, in-flight and later requests are cancelled so the stop returns.
+    /// It also bounds the final flush when the runtime itself shuts the worker down. `None` waits
+    /// for the agent indefinitely. Defaults to [`Config::DEFAULT_SHUTDOWN_TIMEOUT`].
     pub shutdown_timeout: Option<Duration>,
 
     pub debug_enabled: bool,

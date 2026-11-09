@@ -418,7 +418,7 @@ impl SelfTelemetry {
                 },
                 _ = self.watchdog_handle.wait_for_shutdown() => {
                     metrics.collect_and_send().await;
-                    let _ = worker_handle.stop().await;
+                    let _ = worker.stop_worker(worker_handle).await;
                     return
                 },
             }

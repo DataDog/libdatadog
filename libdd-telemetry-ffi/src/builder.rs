@@ -149,6 +149,7 @@ pub unsafe extern "C" fn ddog_telemetry_builder_with_config(
 /// released by `ddog_telemetry_worker_stop` or `ddog_telemetry_worker_drop`.
 pub struct TelemetryWorkerRuntimeHandle {
     worker: WorkerHandle,
+    telemetry: TelemetryWorkerHandle,
     runtime: Arc<ForkSafeRuntime>,
 }
 
@@ -175,10 +176,14 @@ unsafe fn spawn_on_runtime(
     let (telemetry, worker) = builder.build_worker::<NativeCapabilities>();
     let worker = crate::try_c!(runtime.spawn_worker(worker, restart_on_fork));
     unsafe {
-        out_handle.as_ptr().write(Box::new(telemetry));
+        out_handle.as_ptr().write(Box::new(telemetry.clone()));
         out_worker
             .as_ptr()
-            .write(Box::new(TelemetryWorkerRuntimeHandle { worker, runtime }));
+            .write(Box::new(TelemetryWorkerRuntimeHandle {
+                worker,
+                telemetry,
+                runtime,
+            }));
     }
     MaybeError::None
 }
@@ -237,8 +242,12 @@ pub extern "C" fn ddog_telemetry_worker_stop(
     worker: Box<TelemetryWorkerRuntimeHandle>,
 ) -> MaybeError {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let TelemetryWorkerRuntimeHandle { worker, runtime } = *worker;
-        let res = crate::try_c!(runtime.block_on(worker.stop()));
+        let TelemetryWorkerRuntimeHandle {
+            worker,
+            telemetry,
+            runtime,
+        } = *worker;
+        let res = crate::try_c!(runtime.block_on(telemetry.stop_worker(worker)));
         crate::try_c!(res);
         MaybeError::None
     }))
