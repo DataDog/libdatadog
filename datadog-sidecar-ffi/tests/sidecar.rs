@@ -539,15 +539,15 @@ fn test_ddog_sidecar_ffe_exposure_features_reach_the_intake() {
     drop(sidecar);
 }
 
-// Both FFE batch APIs split a batch that does not fit one IPC message, and report records
-// that do not fit even alone instead of losing the whole batch.
+// Both FFE batch APIs deliver a batch larger than the kernel socket buffer, which the
+// transport moves to shared memory, as one message.
 #[test]
 #[cfg_attr(miri, ignore)]
 #[cfg_attr(
     windows,
     ignore = "the in-process listener is only exercised on Unix here"
 )]
-fn test_ddog_sidecar_ffe_batches_are_split_to_fit_ipc_messages() {
+fn test_ddog_sidecar_ffe_large_batches_reach_the_intake() {
     use datadog_sidecar::service::SidecarFlushOptions;
     use httpmock::{Method::POST, MockServer};
 
@@ -561,7 +561,7 @@ fn test_ddog_sidecar_ffe_batches_are_split_to_fit_ipc_messages() {
             "evp_proxy_allowed_headers": ["DD-EVP-ORIGIN", "DD-EVP-ORIGIN-VERSION"]
         }));
     });
-    let mut sidecar = FfeSidecar::start(&http, "ffe-split-session");
+    let mut sidecar = FfeSidecar::start(&http, "ffe-large-session");
     let producer = EvpProducerIdentity {
         origin: "dd-trace-php".into(),
         version: "1.0.0".into(),
@@ -586,11 +586,10 @@ fn test_ddog_sidecar_ffe_batches_are_split_to_fit_ipc_messages() {
         version: "1".into(),
     };
 
-    // Each record fits one message, but together they need several.
-    let flag_key = format!("ffe-split-{run}");
+    // Three 1 MiB records exceed the kernel send size on Linux and fit one message.
+    let flag_key = format!("ffe-large-{run}");
     let attributes = format!(r#"{{"blob":"{}"}}"#, "x".repeat(mib));
-    let too_large = format!(r#"{{"blob":"{}"}}"#, "x".repeat(5 * mib));
-    let subjects: Vec<String> = (0..6).map(|i| format!("split-user-{run}-{i}")).collect();
+    let subjects: Vec<String> = (0..3).map(|i| format!("large-user-{run}-{i}")).collect();
     // One request can carry several records, and httpmock credits a request to
     // a single mock, so record what each request carried instead.
     let received = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
@@ -616,49 +615,35 @@ fn test_ddog_sidecar_ffe_batches_are_split_to_fit_ipc_messages() {
             then.status(202);
         });
     }
-    let control_subject = format!("split-control-{run}");
+    let control_subject = format!("large-control-{run}");
     let small = [split_exposure(&flag_key, &control_subject, "{}")];
     assert_maybe_no_error!(unsafe {
         ddog_sidecar_send_ffe_exposure_batch(sidecar.transport(), &context, small[..].into())
     });
-    let mut batch: Vec<_> = subjects[..5]
+    let batch: Vec<_> = subjects
         .iter()
         .map(|subject| split_exposure(&flag_key, subject, &attributes))
         .collect();
-    batch.insert(2, split_exposure(&flag_key, &subjects[5], &too_large));
-    let error = unsafe {
+    assert_maybe_no_error!(unsafe {
         ddog_sidecar_send_ffe_exposure_batch(sidecar.transport(), &context, batch[..].into())
-    };
-    let libdd_common_ffi::Option::Some(error) = error else {
-        panic!("an exposure larger than one message must be reported");
-    };
-    assert!(
-        error.to_string().contains("dropped 1 exposure(s)"),
-        "{error}"
-    );
+    });
+    // Two large messages in a row overflow the macOS socket buffer (ENOBUFS), which closes
+    // the connection; let the sidecar read the first one.
+    assert_maybe_no_error!(ddog_sidecar_ping(sidecar.transport()));
 
-    let flags: Vec<String> = (0..6).map(|i| format!("split-flag-{run}-{i}")).collect();
+    let flags: Vec<String> = (0..3).map(|i| format!("large-flag-{run}-{i}")).collect();
     let large_key = "k".repeat(mib);
-    let too_large_key = "k".repeat(5 * mib);
-    let mut evaluations: Vec<_> = flags[..5]
+    let evaluations: Vec<_> = flags
         .iter()
         .map(|flag| split_evaluation(flag, &large_key))
         .collect();
-    evaluations.insert(2, split_evaluation(&flags[5], &too_large_key));
-    let error = unsafe {
+    assert_maybe_no_error!(unsafe {
         ddog_sidecar_send_ffe_flag_evaluation_batch(
             sidecar.transport(),
             &context,
             evaluations[..].into(),
         )
-    };
-    let libdd_common_ffi::Option::Some(error) = error else {
-        panic!("a flag evaluation larger than one message must be reported");
-    };
-    assert!(
-        error.to_string().contains("dropped 1 flag evaluation(s)"),
-        "{error}"
-    );
+    });
     assert_maybe_no_error!(ddog_sidecar_flush(
         sidecar.transport(),
         SidecarFlushOptions {
@@ -667,9 +652,9 @@ fn test_ddog_sidecar_ffe_batches_are_split_to_fit_ipc_messages() {
         }
     ));
 
-    let expected: Vec<&String> = subjects[..5]
+    let expected: Vec<&String> = subjects
         .iter()
-        .chain(&flags[..5])
+        .chain(&flags)
         .chain([&control_subject])
         .collect();
     let arrived = |id: &String| received.lock().unwrap().contains(id);
@@ -682,13 +667,53 @@ fn test_ddog_sidecar_ffe_batches_are_split_to_fit_ipc_messages() {
     for id in &expected {
         assert!(arrived(id), "{id} did not arrive");
     }
-    for id in [&subjects[5], &flags[5]] {
-        assert!(
-            !arrived(id),
-            "{id} is larger than one message and must be dropped"
-        );
-    }
     drop(sidecar);
+}
+
+// FFE batch submission never waits for the sidecar: a stalled sidecar must not block the
+// caller, which has no read timeout by default.
+#[test]
+#[cfg(unix)]
+#[cfg_attr(miri, ignore)]
+fn test_ddog_sidecar_ffe_batches_do_not_wait_for_a_stalled_sidecar() {
+    let (client, peer) = libdd_ipc::SeqpacketConn::socketpair().unwrap();
+    // Larger than half the kernel send size, so it cannot sit next to the first request.
+    let attributes = format!(
+        r#"{{"blob":"{}"}}"#,
+        "x".repeat(client.max_send_size() / 2 + 1)
+    );
+    let (done, finished) = std::sync::mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        let mut transport = Box::new(SidecarTransport::from(client));
+        let context = FfeTelemetryContext {
+            service: "svc".into(),
+            env: "prod".into(),
+            version: "1".into(),
+        };
+        let small = [split_exposure("flag", "user", "{}")];
+        let large = [split_exposure("flag", "user", &attributes)];
+        let evaluations = [split_evaluation("flag", &attributes)];
+        unsafe {
+            let _ =
+                ddog_sidecar_send_ffe_exposure_batch(&mut transport, &context, small[..].into());
+            let _ =
+                ddog_sidecar_send_ffe_exposure_batch(&mut transport, &context, large[..].into());
+            let _ = ddog_sidecar_send_ffe_flag_evaluation_batch(
+                &mut transport,
+                &context,
+                evaluations[..].into(),
+            );
+        }
+        done.send(()).unwrap();
+    });
+    // A blocked worker cannot be released: a closed datagram peer does not wake a
+    // pending receive on macOS. Fail without joining it; the process exit ends it.
+    assert!(
+        finished.recv_timeout(Duration::from_secs(2)).is_ok(),
+        "FFE batch submission waited for the sidecar"
+    );
+    worker.join().unwrap();
+    drop(peer);
 }
 
 fn split_exposure<'a>(flag_key: &'a str, subject: &'a str, attributes: &'a str) -> FfeExposure<'a> {
