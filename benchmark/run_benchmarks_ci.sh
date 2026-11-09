@@ -45,11 +45,6 @@ bench_features_for_crate() {
   esac
 }
 
-# Criterion filters are regexes. Put ] first so it remains part of the class.
-escape_bench_regex() {
-  printf '%s' "$1" | sed -e 's/[][\\.*+?^$|(){}]/\\&/g'
-}
-
 # Run benchmarks.
 message "Running benchmarks"
 
@@ -62,17 +57,17 @@ metadata="$(cargo metadata --no-deps --format-version 1)"
 # the GitLab benchmarks job so a PR only benchmarks the crates it impacts. When empty (e.g. a local
 # run) default to every crate that declares a benchmark target, which is equivalent to --workspace.
 #
-# BENCH_SELECTION is a JSON array of {crate, target, features, ids} specs and
-# takes precedence over BENCH_PACKAGES. Skip specs/IDs absent from this checkout:
-# newly added benchmarks may have no baseline counterpart.
+# BENCH_SELECTION supplies {crate, target, features, filter} specs and takes
+# precedence over BENCH_PACKAGES. Filtered --list checks skip specs with no
+# matching benchmarks in this checkout (new benches may have no baseline).
 BENCH_SELECTION="${BENCH_SELECTION:-}"
 spec_mode=false
 if [[ -n "${BENCH_SELECTION}" ]]; then
-  if jq -e 'type == "array"' <<< "${BENCH_SELECTION}" >/dev/null 2>&1; then
+  if jq -e 'type == "array" and all(.[]; .filter | type == "string")' <<< "${BENCH_SELECTION}" >/dev/null 2>&1; then
     spec_mode=true
     message "Bench-level selection: $(jq 'length' <<< "${BENCH_SELECTION}") benchmark binary(ies)."
   else
-    message "BENCH_SELECTION is set but is not a JSON array; falling back to crate-level selection."
+    message "BENCH_SELECTION is not an array of filtered specs; falling back to crate-level selection."
     BENCH_SELECTION=""
   fi
 fi
@@ -149,6 +144,7 @@ if [[ "${spec_mode}" == true ]]; then
   spec_crate=()
   spec_target=()
   spec_features=()
+  spec_filter=()
   spec_count="$(jq 'length' <<< "${BENCH_SELECTION}")"
   for ((i = 0; i < spec_count; i++)); do
     crate="$(jq -r ".[$i].crate" <<< "${BENCH_SELECTION}")"
@@ -161,6 +157,7 @@ if [[ "${spec_mode}" == true ]]; then
     spec_crate+=("${crate}")
     spec_target+=("${target}")
     spec_features+=("${crate_features}")
+    spec_filter+=("$(jq -r ".[$i].filter" <<< "${BENCH_SELECTION}")")
   done
 
   if (( ${#spec_crate[@]} == 0 )); then
@@ -182,26 +179,20 @@ if [[ "${spec_mode}" == true ]]; then
       sccache --stop-server > /dev/null 2>&1 || :
     fi
 
-    # Intersect with --list; tolerate missing targets on the baseline.
+    # Criterion applies the same exact filter to listing and measurement.
     for j in "${!spec_crate[@]}"; do
       spec_args=(-p "${spec_crate[$j]}" --bench "${spec_target[$j]}")
       if [[ -n "${spec_features[$j]}" ]]; then
         spec_args+=(--features "${spec_features[$j]}")
       fi
-      listed="$(cargo bench "${spec_args[@]}" -- --list --format terse 2>/dev/null | sed -n 's/: benchmark$//p' || true)"
-      filter=""
-      while read -r bench_id; do
-        [[ -z "${bench_id}" ]] && continue
-        if grep -qxF "${bench_id}" <<< "${listed}"; then
-          filter="${filter:+${filter}|}$(escape_bench_regex "${bench_id}")"
-        fi
-      done < <(jq -r ".[$j].ids[]" <<< "${BENCH_SELECTION}")
-      if [[ -z "${filter}" ]]; then
+      filter="${spec_filter[$j]}"
+      listed="$(cargo bench "${spec_args[@]}" -- --list --format terse "$filter" 2>/dev/null || true)"
+      if ! grep -q ': benchmark$' <<< "${listed}"; then
         message "Skipping '${spec_crate[$j]}/--bench ${spec_target[$j]}': none of the selected benchmark IDs exist in this checkout"
         continue
       fi
-      message "Benchmarking ${spec_crate[$j]}/--bench ${spec_target[$j]} with selection filter ^(${filter})$"
-      cargo bench "${spec_args[@]}" -- "${criterion_args[@]}" "^(${filter})$"
+      message "Benchmarking ${spec_crate[$j]}/--bench ${spec_target[$j]} with selection filter ${filter}"
+      cargo bench "${spec_args[@]}" -- "${criterion_args[@]}" "$filter"
     done
   fi
 elif (( ${#package_args[@]} == 0 )); then

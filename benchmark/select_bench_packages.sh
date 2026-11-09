@@ -5,7 +5,7 @@
 
 # Usage: select_bench_packages.sh <node_index_1based> <node_total>
 # Print this shard's decision: SKIP, FULL, a space-separated crate list, or a
-# JSON array of {crate, target, features, ids} specs for BENCH_SELECTION.
+# JSON array of {crate, target, features, ids, filter} specs for BENCH_SELECTION.
 # Diagnostics go to stderr. Missing/untrusted selection falls back to crates,
 # then the full suite. A valid empty selection skips the run.
 # Inputs: CI_COMMIT_BRANCH, IMPACTED_STATUS, AFFECTED_CRATES (JSON array),
@@ -63,10 +63,10 @@ lockfile_changed() {
   grep -qE '^Cargo\.lock$' changed_files.txt 2>/dev/null
 }
 
-# The runner intersects these IDs with each checkout's --list (baseline may differ).
+# Pass the selector's exact filter through; IDs determine shard weights.
 bench_selection_specs() {
   [ -s "$BENCH_SELECTION_FILE" ] || return 1
-  jq -c '[.binaries[] | {crate: .crate_name, target: .target, features: .features, ids: .bench_ids}]' \
+  jq -c '[.binaries[] | {crate: .crate_name, target: .target, features: .features, ids: .bench_ids, filter: .filter}]' \
     "$BENCH_SELECTION_FILE" 2>/dev/null
 }
 
