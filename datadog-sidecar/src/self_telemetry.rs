@@ -488,6 +488,7 @@ mod tests {
             }),
             error: None,
             runtime_default_used: false,
+            features: None,
             observe_full_evaluation_data: true,
             is_degraded: false,
             field_omissions: Default::default(),

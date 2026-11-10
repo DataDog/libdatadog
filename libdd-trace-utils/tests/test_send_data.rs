@@ -445,7 +445,9 @@ mod tracing_integration_tests {
     /// supports.
     ///
     /// APMSP-3479 - TODO: `AttributeValue::Array` and `AttributeValue::KeyValueList` are
-    /// deliberately omitted because not yet supported by `ddapm-test-agent` v1.56.0. Once
+    /// deliberately omitted: `ddapm-test-agent` v1.62.0 decodes arrays only in span event
+    /// attributes (covered by `compare_v04_and_v1_encoders_snapshot_test`) and rejects them on
+    /// span, chunk and span link attributes, and it rejects key-value lists everywhere. Once
     /// test-agent V1 support catches up, add them here too.
     fn make_v1_payload(name_prefix: &str) -> libdd_trace_utils::span::v1::TracerPayloadBytes {
         use libdd_trace_utils::span::v1::{
@@ -554,14 +556,21 @@ mod tracing_integration_tests {
     /// Both encodings are POSTed into the same session with distinct `trace_id`s, so the
     /// snapshot records two traces — one per encoder — that must each decode to the same
     /// shape. Any drift in either encoder makes its trace diverge from the checked-in form.
+    ///
+    /// Each span carries a span event with array attributes of odd and even length, which
+    /// pins the array header count (two msgpack items per element) on both encoders.
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn compare_v04_and_v1_encoders_snapshot_test() {
         use libdd_trace_utils::msgpack_encoder::v1::{to_vec_from_v1, to_vec_from_v04};
         use libdd_trace_utils::span::v1::{
-            AttributeValue, SpanBytes as V1SpanBytes, SpanKind, TraceChunkBytes, TracerPayloadBytes,
+            AttributeValue, SpanBytes as V1SpanBytes, SpanEventBytes as V1SpanEventBytes, SpanKind,
+            TraceChunkBytes, TracerPayloadBytes,
         };
-        use libdd_trace_utils::span::v04::SpanBytes as V04SpanBytes;
+        use libdd_trace_utils::span::v04::{
+            AttributeAnyValue, AttributeArrayValue, SpanBytes as V04SpanBytes,
+            SpanEventBytes as V04SpanEventBytes,
+        };
         use libdd_trace_utils::tracer_metadata::TracerMetadata;
 
         let relative_snapshot_path = "libdd-trace-utils/tests/snapshots/";
@@ -579,6 +588,33 @@ mod tracing_integration_tests {
         meta_v04.insert(bs_v1("http.method"), bs_v1("GET"));
         let mut metrics_v04 = VecMap::new();
         metrics_v04.insert(bs_v1("http.duration_ms"), 12.5_f64);
+        let v04_event = V04SpanEventBytes {
+            time_unix_nano: 1_002_000,
+            name: bs_v1("evt"),
+            attributes: [
+                (
+                    bs_v1("odd"),
+                    AttributeAnyValue::Array(vec![
+                        AttributeArrayValue::String(bs_v1("a")),
+                        AttributeArrayValue::Boolean(true),
+                        AttributeArrayValue::Integer(-7),
+                    ]),
+                ),
+                (
+                    bs_v1("even"),
+                    AttributeAnyValue::Array(vec![
+                        AttributeArrayValue::Double(1.5),
+                        AttributeArrayValue::String(bs_v1("b")),
+                    ]),
+                ),
+                (
+                    bs_v1("single"),
+                    AttributeAnyValue::SingleValue(AttributeArrayValue::Integer(9)),
+                ),
+            ]
+            .into_iter()
+            .collect(),
+        };
         let v04_traces: Vec<Vec<V04SpanBytes>> = vec![vec![V04SpanBytes {
             service: bs_v1("svc"),
             name: bs_v1("op"),
@@ -589,6 +625,7 @@ mod tracing_integration_tests {
             duration: 5_000,
             meta: meta_v04,
             metrics: metrics_v04,
+            span_events: vec![v04_event],
             ..Default::default()
         }]];
         let metadata = TracerMetadata::default();
@@ -599,6 +636,28 @@ mod tracing_integration_tests {
         let mut attrs_v1 = VecMap::new();
         attrs_v1.insert(bs_v1("http.method"), AttributeValue::String(bs_v1("GET")));
         attrs_v1.insert(bs_v1("http.duration_ms"), AttributeValue::Float(12.5));
+        let mut event_attrs_v1 = VecMap::new();
+        event_attrs_v1.insert(
+            bs_v1("odd"),
+            AttributeValue::Array(vec![
+                AttributeValue::String(bs_v1("a")),
+                AttributeValue::Bool(true),
+                AttributeValue::Int(-7),
+            ]),
+        );
+        event_attrs_v1.insert(
+            bs_v1("even"),
+            AttributeValue::Array(vec![
+                AttributeValue::Float(1.5),
+                AttributeValue::String(bs_v1("b")),
+            ]),
+        );
+        event_attrs_v1.insert(bs_v1("single"), AttributeValue::Int(9));
+        let v1_event = V1SpanEventBytes {
+            time_unix_nano: 1_002_000,
+            name: bs_v1("evt"),
+            attributes: event_attrs_v1,
+        };
         let v1_payload = TracerPayloadBytes {
             chunks: vec![TraceChunkBytes {
                 trace_id: tid_bytes(0, 2),
@@ -612,6 +671,7 @@ mod tracing_integration_tests {
                     span_kind: SpanKind::Internal,
                     env: bs_v1("test-env"),
                     attributes: attrs_v1,
+                    span_events: vec![v1_event].into(),
                     ..Default::default()
                 }],
                 ..Default::default()
@@ -625,19 +685,21 @@ mod tracing_integration_tests {
         post_msgpack_traces(uri.clone(), bytes_v04).await;
         post_msgpack_traces(uri, bytes_v1).await;
 
-        // Both POSTs share trace_id=1, so the test-agent merges them into a single trace of
-        // 2 decoded spans. The checked-in snapshot is the canonical equivalent decoded form.
+        // The snapshot holds two traces (trace_id 1 and 2), one per encoder, which must decode
+        // to the same form.
         test_agent.assert_snapshot(snapshot_name).await;
     }
 
-    /// Builds a V1 payload exercising the full attribute surface that the current test-agent
-    /// (v1.56.0) is able to decode: `AttributeValue::String/Bool/Int/Float`, span links with
+    /// Builds a V1 payload exercising the attribute surface that the current test-agent
+    /// (v1.62.0) is able to decode: `AttributeValue::String/Bool/Int/Float`, span links with
     /// non-empty attributes, span events with non-empty attributes, plus chunk-level attributes.
     ///
     /// APMSP-3479 - TODO: `AttributeValue::Bytes`, `AttributeValue::Array` and
-    /// `AttributeValue::KeyValueList` are deliberately omitted — `ddapm-test-agent` v1.56.0 rejects
-    /// Bytes with `400 "Bytes values are not supported yet."` and does not handle List / KeyValue.
-    /// Add them here once test-agent V1 support catches up.
+    /// `AttributeValue::KeyValueList` are deliberately omitted. `ddapm-test-agent` v1.62.0
+    /// rejects Bytes and key-value lists everywhere (`400 "... values are not supported yet."`),
+    /// and decodes arrays only in span event attributes, which
+    /// `compare_v04_and_v1_encoders_snapshot_test` already covers. Add them here once test-agent
+    /// V1 support catches up.
     fn make_v1_full_payload(name_prefix: &str) -> libdd_trace_utils::span::v1::TracerPayloadBytes {
         use libdd_trace_utils::span::v1::{
             AttributeValue, AttributeValueBytes, SpanBytes as V1SpanBytes, SpanEventBytes,
@@ -732,8 +794,9 @@ mod tracing_integration_tests {
     /// span_event attribute maps, then POSTs to `/v1.0/traces` and asserts the snapshot.
     ///
     /// APMSP-3479 - TODO: extend this with `AttributeValue::Bytes`, `AttributeValue::Array`
-    /// and `AttributeValue::KeyValueList` once `ddapm-test-agent` v1 support catches up. See
-    /// [`make_v1_full_payload`] for the payload builder and the omitted variants.
+    /// (beyond span event attributes) and `AttributeValue::KeyValueList` once `ddapm-test-agent`
+    /// V1 support catches up. See [`make_v1_full_payload`] for the payload builder and the
+    /// omitted variants.
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn compare_v1_full_payload_snapshot_test() {

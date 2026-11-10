@@ -491,6 +491,66 @@ async fn test_agentless_with_transport(transport: Transport) -> anyhow::Result<(
     Ok(())
 }
 
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_send_blocking_across_threads() -> anyhow::Result<()> {
+    fn send_profile(exporter: &mut ProfileExporter) -> anyhow::Result<()> {
+        let status = exporter.send_blocking(
+            EncodedProfile::test_instance()?,
+            &[],
+            &[],
+            None,
+            None,
+            None,
+            None,
+        )?;
+        assert_eq!(status, http::StatusCode::OK);
+        Ok(())
+    }
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+    let endpoint = config::agent(format!("http://{}", listener.local_addr()?).parse()?)?;
+    listener.set_nonblocking(true)?;
+    let received_requests = Arc::new(Mutex::new(Vec::new()));
+    let requests = received_requests.clone();
+    let server = std::thread::spawn(move || -> anyhow::Result<()> {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?
+            .block_on(async move {
+                let listener = tokio::net::TcpListener::from_std(listener)?;
+                tokio::time::timeout(std::time::Duration::from_secs(10), async {
+                    for _ in 0..3 {
+                        let (stream, _) = listener.accept().await?;
+                        read_and_capture_request(stream, requests.clone()).await;
+                    }
+                    anyhow::Ok(())
+                })
+                .await?
+            })
+    });
+
+    let mut exporter = ProfileExporter::new("test-lib", "1.0.0", "native", vec![], endpoint)?;
+    exporter.init_runtime()?;
+    send_profile(&mut exporter)?;
+    let mut exporter = std::thread::spawn(move || -> anyhow::Result<ProfileExporter> {
+        send_profile(&mut exporter)?;
+        Ok(exporter)
+    })
+    .join()
+    .expect("export thread panicked")?;
+    send_profile(&mut exporter)?;
+
+    server.join().expect("HTTP server thread panicked")?;
+    let requests = received_requests.lock().unwrap();
+    assert_eq!(requests.len(), 3);
+    for request in requests.iter() {
+        assert_eq!(request.method, "POST");
+        assert_eq!(request.path, "/profiling/v1/input");
+    }
+    Ok(())
+}
+
 #[tokio::test]
 #[cfg_attr(miri, ignore)]
 async fn test_export_agent_tcp() -> anyhow::Result<()> {

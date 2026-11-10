@@ -240,16 +240,12 @@ unsafe fn parse_json(
 /// This function creates the tokio runtime used by `ddog_prof_Exporter_send_blocking`.
 /// It can be called ahead of time to ensure the runtime is ready before sending.
 ///
-/// # Thread Affinity
-///
-/// **Important**: The runtime has thread affinity. This function should be called from
-/// the same thread that will later call `ddog_prof_Exporter_send_blocking`.
-///
 /// # Arguments
 /// * `exporter` - Borrows the exporter.
 ///
 /// # Safety
 /// The `exporter` must point to a valid ProfileExporter that has not been dropped.
+/// The caller must ensure exclusive access to the exporter for the duration of this call.
 #[unsafe(no_mangle)]
 #[must_use]
 #[named]
@@ -268,6 +264,9 @@ pub unsafe extern "C" fn ddog_prof_Exporter_init_runtime(
 ///
 /// Note: If the runtime has not been initialized via `ddog_prof_Exporter_init_runtime`,
 /// it will be lazily initialized on first call.
+///
+/// Successive calls may use different threads, but calls accessing the same exporter
+/// must not overlap.
 ///
 /// # Arguments
 /// * `exporter` - Borrows the exporter.
