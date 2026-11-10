@@ -27,6 +27,13 @@
 //! resource attributes; a rejected input returns a [`MetricError`] with a
 //! stable [`ErrorCode`].
 //!
+//! Beside the profiles, the crate reads what a provider reported, the way
+//! every integration needs it: the usage of a response or stream
+//! ([`parse_provider_response`], [`UsageStream`]), its `gen_ai.provider.name`
+//! ([`gen_ai_provider_name`]), its `error.type` ([`classify_error`]), and the
+//! account and project it billed ([`provider_id_attributes`]). It also packs
+//! DogStatsD lines into datagrams ([`pack_dogstatsd`]).
+//!
 //! ```
 //! use libdd_ai_usage::{Json, Profile, project_result};
 //!
@@ -54,6 +61,10 @@
 mod batch;
 mod datadog;
 mod deployment;
+mod dogstatsd;
+mod error_type;
+mod gateway;
+mod intake;
 mod json;
 mod number;
 mod observation;
@@ -61,15 +72,38 @@ mod observation;
 mod otlp;
 mod point;
 mod project;
+mod provider;
+// The metric registry (`tests/data/registry.json`), read only by the tests
+// that check the crate against it.
+#[cfg(test)]
 mod registry;
+#[cfg(test)]
+extern crate self as libdd_ai_usage;
+#[cfg(test)]
+mod conformance_tests;
+#[cfg(test)]
+mod robustness_tests;
 mod usage;
 
-pub use batch::MetricBatch;
+pub use batch::{Document, DocumentError, MetricBatch, Observation};
 pub use datadog::{DatadogSeries, SeriesType, datadog_series, datadog_tag_value};
 pub use deployment::{
     Carrier, DEPLOYMENT_ATTRIBUTES, deployment_attribute_carrier, is_deployment_value,
     with_deployment_attributes, with_deployment_attributes_json,
 };
+pub use dogstatsd::{
+    DOGSTATSD_MAX_LINE_BYTES, DOGSTATSD_UDP_MAX_PAYLOAD, DOGSTATSD_UDS_MAX_PAYLOAD, pack_dogstatsd,
+    pack_dogstatsd_counted, pack_dogstatsd_joined, with_constant_tags,
+};
+pub use error_type::{
+    ERROR_TYPE_API, ERROR_TYPE_API_CONNECTION, ERROR_TYPE_AUTHENTICATION, ERROR_TYPE_BAD_REQUEST,
+    ERROR_TYPE_CANCELLED, ERROR_TYPE_CONFLICT, ERROR_TYPE_INTERNAL_SERVER, ERROR_TYPE_NOT_FOUND,
+    ERROR_TYPE_PERMISSION_DENIED, ERROR_TYPE_RATE_LIMIT, ERROR_TYPE_TIMEOUT,
+    ERROR_TYPE_UNPROCESSABLE_ENTITY, ERROR_TYPES, classify_error, classify_known_error,
+    error_type_for_name, error_type_for_status, error_type_identifier,
+};
+pub use gateway::operation_name_for;
+pub use intake::{IntakeTake, RateSeries, Sketch, SketchSeries};
 pub use json::{Json, JsonError, JsonErrorKind, JsonObject};
 pub use number::{MAX_SAFE_INTEGER, nano_usd_from_number, nano_usd_from_usd, usd_from_nano_usd};
 pub use observation::{
@@ -87,10 +121,16 @@ pub use project::{
     project_gateway_request, project_provider_attempt, project_provider_streaming,
     project_token_breakdown,
 };
-pub use registry::{
-    AttributeDefinition, DeploymentAttributeDefinition, Finding, FindingCode, MetricDefinition,
-    MetricOrigin, PROFILE_ATTRIBUTE, ProfileDefinition, ProfileIdentifier, Registry, parse_profile,
+pub use provider::{
+    MAX_ERROR_MESSAGE_BYTES, MAX_KEPT_STRING_BYTES, MAX_STREAM_LINE_BYTES, PROVIDER_ID_HEADERS,
+    ProviderError, ProviderResponse, ProviderUsage, RESPONSE_MODEL_DROPPED, SERVICE_TIER_DROPPED,
+    StreamOutcome, UsageFormat, UsageStream, bedrock_arn_account, gen_ai_provider_name,
+    is_person_identifier, is_service_tier, parse_provider_body, parse_provider_response,
+    parse_provider_usage, provider_id_attributes, vertex_project_id,
 };
+/// The attribute that carries the profile identifier: on the OTLP scope, or
+/// on each point when the SDK cannot set scope attributes.
+pub const PROFILE_ATTRIBUTE: &str = "trajectory.profile";
 pub use usage::{
     InputBasis, Modality, NormalizedUsage, OutputBasis, ReportedUsage, normalize_usage,
 };
@@ -182,6 +222,15 @@ pub fn project_result(profile: Profile, input: &Json) -> Result<Projection, Metr
             project_gateway_request(&GatewayRequestObservation::from_json(input)?)
         }
     }
+}
+
+/// Keep only the points of the metrics named in `metrics`, as an exporter
+/// that sends a subset of a profile's metrics does. A Histogram's Datadog
+/// companions (`{name}.sum`, `{name}.count`) follow their metric.
+pub fn retain_metrics<S: AsRef<str>>(projection: &mut Projection, metrics: &[S]) {
+    projection
+        .points
+        .retain(|point| metrics.iter().any(|name| name.as_ref() == point.name));
 }
 
 /// Project a conformance fixture document: `profile`, the profile's input

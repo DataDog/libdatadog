@@ -10,6 +10,16 @@ header = """// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 include_guard = "DDOG_DATA_PIPELINE_H"
 includes = ["common.h"]
 after_includes = """
+#ifndef DDOG_TRACE_EXPORTER_DEPRECATED
+#if defined(_MSC_VER)
+#define DDOG_TRACE_EXPORTER_DEPRECATED(message) __declspec(deprecated(message))
+#elif defined(__GNUC__) || defined(__clang__)
+#define DDOG_TRACE_EXPORTER_DEPRECATED(message) __attribute__((deprecated(message)))
+#else
+#define DDOG_TRACE_EXPORTER_DEPRECATED(message)
+#endif
+#endif
+
 typedef struct ddog_TraceExporter ddog_TraceExporter;
 typedef struct ddog_TracerSpan ddog_TracerSpan;
 typedef struct ddog_TracerSpanEvent ddog_TracerSpanEvent;
@@ -58,6 +68,7 @@ rename_variants = "ScreamingSnakeCase"
 
 [fn]
 must_use = "DDOG_CHECK_RETURN"
+deprecated_with_note = "DDOG_TRACE_EXPORTER_DEPRECATED({})"
 
 [parse]
 parse_deps = true

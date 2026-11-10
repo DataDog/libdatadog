@@ -19,7 +19,7 @@ sgconfig.yml                         @DataDog/apm-common-components-core @DataDo
 .gitmodules                          @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 .gitlab-ci.yml                       @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 .gitlab/benchmarks.yml               @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
-.gitlab/fuzz.yml                     @DataDog/chaos-engineering
+.gitlab/fuzz.yml                     @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/chaos-engineering
 .gitlab/impacted-crates.yml          @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 benchmark/                           @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 bin_tests/                           @DataDog/libdatadog-profiling @DataDog/libdatadog-crashtracking-reviewers
@@ -45,7 +45,8 @@ deny.toml                            @DataDog/apm-common-components-core @DataDo
 /docs                                @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 /examples                            @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 libdd-agent-client                   @DataDog/apm-common-components-core
-libdd-ai-usage                       @DataDog/agent-console
+libdd-ai-usage                       @DataDog/agent-console @DataDog/trajectory
+libdd-ai-usage-ffi                   @DataDog/agent-console @DataDog/trajectory
 libdd-alloc/                         @DataDog/libdatadog-profiling
 libdd-capabilities*/                 @DataDog/apm-common-components-core
 libdd-common*/                       @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
@@ -58,6 +59,7 @@ libdd-gotter/                        @DataDog/libdatadog-profiling @DataDog/libd
 libdd-http-client                    @DataDog/apm-common-components-core
 libdd-library-config*/               @DataDog/apm-sdk-capabilities
 libdd-log*/                          @DataDog/apm-common-components-core
+libdd-networking/                    @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 libdd-otel-thread-ctx/               @DataDog/apm-common-components-core
 libdd-otel-thread-ctx-ffi/           @DataDog/apm-common-components-core
 libdd-process-utils*/                @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
@@ -92,6 +94,7 @@ scripts/create-release.sh            @DataDog/apm-common-components-core
 scripts/crates-to-package.sh         @DataDog/apm-common-components-core
 scripts/exclude-from-green-ci.sh     @DataDog/apm-common-components-core
 scripts/major-bumps-level.sh         @DataDog/apm-common-components-core
+scripts/mirror-community-pull-request.sh @DataDog/apm-common-components-core
 scripts/publication-order.sh         @DataDog/apm-common-components-core
 scripts/reformat_copyright.sh        @DataDog/apm-common-components-core
 scripts/release-excluded-crates-hints.sh  @DataDog/apm-common-components-core
@@ -141,7 +144,8 @@ datadog-sidecar/src/service/ffe_metrics_flusher.rs      @DataDog/libdatadog-php 
 # owner for Green CI / test-failure reporting.
 
 libdd-agent-client/Cargo.toml                @DataDog/apm-common-components-core @DataDog/libdatadog-release
-libdd-ai-usage/Cargo.toml                    @DataDog/agent-console @DataDog/libdatadog-release
+libdd-ai-usage/Cargo.toml                    @DataDog/agent-console @DataDog/trajectory @DataDog/libdatadog-release
+libdd-ai-usage-ffi/Cargo.toml                @DataDog/agent-console @DataDog/trajectory @DataDog/libdatadog-release
 libdd-capabilities-impl/CHANGELOG.md         @DataDog/apm-common-components-core @DataDog/libdatadog-release
 libdd-capabilities-impl/Cargo.toml           @DataDog/apm-common-components-core @DataDog/libdatadog-release
 libdd-capabilities/CHANGELOG.md              @DataDog/apm-common-components-core @DataDog/libdatadog-release

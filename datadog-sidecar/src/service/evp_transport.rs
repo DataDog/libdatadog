@@ -12,6 +12,7 @@ use http::uri::PathAndQuery;
 use libdd_capabilities::{Bytes, HttpClientCapability, HttpError, SleepCapability};
 use libdd_capabilities_impl::ResponseBodyLimit;
 use libdd_common::Endpoint;
+use libdd_networking::endpoint::EndpointExt;
 use serde::{Deserialize, Deserializer, Serialize};
 use sha2::{Digest, Sha256};
 use std::fmt::{Display, Formatter};

@@ -19,8 +19,7 @@ bench = false
 async-trait.workspace = true
 futures = { workspace = true, features = ["alloc"] }
 futures-util = { workspace = true, features = ["alloc"] }
-tokio = { workspace = true, features = ["rt", "macros", "time"] }
-tokio-util.workspace = true
+tokio = { workspace = true, features = ["rt", "macros", "time", "sync"] }
 tracing.workspace = true
 libdd-capabilities = { path = "../libdd-capabilities", version = "4.0.1" }
 libdd-common = { version = "9.0.0", path = "../libdd-common", default-features = false, features = ["std"] }

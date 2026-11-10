@@ -15,7 +15,8 @@ use crate::msgpack_decoder::decode::error::DecodeError;
 use crate::span::DeserializableTraceData;
 use crate::span::v1::{AttributeValue, Span, SpanEvent, SpanKind, SpanLink, ThinVec};
 use crate::span::vec_map::VecMap;
-use rmp::decode;
+use rmp::Marker;
+use rmp::decode::{self, RmpRead};
 use std::borrow::Borrow;
 
 /// Decodes a V1 span (msgpack map with integer keys) into a [`Span<T>`].
@@ -146,6 +147,17 @@ where
     Ok(map)
 }
 
+/// Reads a double written as float64, or as float32 when that holds the value exactly (as the
+/// agent's msgp decoder accepts, and some tracers emit to save space). Integers are rejected.
+fn read_double(buf: &mut &[u8]) -> Result<f64, DecodeError> {
+    let fail = || DecodeError::InvalidFormat("V1 attribute Double read failure".to_owned());
+    match decode::read_marker(buf).map_err(|_| fail())? {
+        Marker::F32 => buf.read_data_f32().map(f64::from).map_err(|_| fail()),
+        Marker::F64 => buf.read_data_f64().map_err(|_| fail()),
+        _ => Err(fail()),
+    }
+}
+
 /// Reads `[type_uint8, value]` and dispatches by type discriminant. Recurses into `Array` and
 /// `KeyValueList`.
 pub(super) fn read_typed_attribute_value<T: DeserializableTraceData>(
@@ -167,12 +179,7 @@ where
             })?;
             Ok(AttributeValue::Bool(b))
         }
-        ANY_VALUE_KEY_DOUBLE => {
-            let f = decode::read_f64(buf.as_mut_slice()).map_err(|_| {
-                DecodeError::InvalidFormat("V1 attribute Double read failure".to_owned())
-            })?;
-            Ok(AttributeValue::Float(f))
-        }
+        ANY_VALUE_KEY_DOUBLE => Ok(AttributeValue::Float(read_double(buf.as_mut_slice())?)),
         ANY_VALUE_KEY_INT64 => {
             // Encoder writes signed via `write_sint`, which can emit any int marker. `read_int`
             // accepts any integer marker that fits in i64.

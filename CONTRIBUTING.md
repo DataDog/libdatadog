@@ -59,6 +59,12 @@ To create a pull request:
    <https://github.com/datadog/libdatadog>
 
 The pull request will be run through our CI pipeline, and a project member will review the changes with you.
+
+Pull requests from forks run CI with a restricted token, so some checks are limited. To run full
+CI, a maintainer may mirror your pull request to an `external/community-pr-<N>` branch in this
+repository. Your original pull request stays open and remains the place for review, and both pull
+requests get the `external` label. No action is needed from you.
+
 At a minimum, to be accepted and merged, pull requests must:
 
 * Have a stated goal and detailed description of the changes made

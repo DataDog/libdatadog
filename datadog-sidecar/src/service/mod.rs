@@ -11,7 +11,8 @@ pub use libdd_ffe::telemetry::exposures::{FfeExposure, FfeExposureBatch};
 pub use libdd_ffe::telemetry::flagevaluation::{
     AllocationKey, ContextDD, ContextTruncationReason, EvalError, FfeFlagEvaluationBatch,
     FfeFlagEvaluationEvent, FieldOmissions, FlagEvalEventContext, FlagKey, MAX_CONTEXT_DEPTH,
-    MAX_CONTEXT_FIELDS, MAX_FIELD_LENGTH, TargetingRuleKey, VariantKey, prune_context_json,
+    MAX_CONTEXT_FIELDS, MAX_FIELD_LENGTH, TargetingRuleKey, VariantKey, canonical_features_json,
+    prune_context_json,
 };
 use libdd_remote_config::{RemoteConfigCapabilities, RemoteConfigProduct};
 use libdd_telemetry::worker::TelemetryActions;
@@ -44,6 +45,7 @@ mod dogstatsd_pool;
 pub(crate) mod evp_proxy;
 pub(crate) mod evp_transport;
 pub mod exception_hash_rate_limiter;
+pub(crate) mod ffe_config;
 pub(crate) mod ffe_exposures_flusher;
 pub(crate) mod ffe_flagevaluation_flusher;
 pub(crate) mod ffe_metrics_flusher;

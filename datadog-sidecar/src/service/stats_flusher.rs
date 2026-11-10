@@ -14,7 +14,8 @@ use crate::shm_path::keyed_shm_path;
 use futures::{TryFutureExt, future::join_all};
 use http::uri::PathAndQuery;
 use libdd_capabilities_impl::{HttpClientCapability, NativeCapabilities};
-use libdd_common::{Endpoint, MutexExt};
+use libdd_common::Endpoint;
+use libdd_common::MutexExt;
 use libdd_ipc::shm_stats::{
     DEFAULT_SLOT_COUNT, DEFAULT_STRING_POOL_BYTES, RELOAD_FILL_RATIO, ShmSpanConcentrator,
 };
