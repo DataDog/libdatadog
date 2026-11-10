@@ -3,6 +3,11 @@
 
 //! CDN is a writer-side input to the ordinary RC directory. Readers consume the
 //! same directory and product parser as agent RC, with no second snapshot format.
+//!
+//! `PublicationStore` retains Agent products and forwards changes to each scoped
+//! `Publication`, which combines them with the current CDN file. `CdnPublisher`
+//! accepts CDN updates and registers notifications; `NotificationGuard` removes
+//! a registration when its subscriber leaves.
 
 use super::*;
 use libdd_ffe::cdn::{ApplyError, CdnConfig, ConfigurationSink};
@@ -26,14 +31,16 @@ pub struct CdnRegistration {
 
 impl CdnRegistration {
     /// Derive the ordinary RC directory identity without contacting the sidecar.
-    pub fn invariants(&self) -> io::Result<ConfigInvariants> {
+    pub fn invariants(&self) -> io::Result<RemoteConfigInvariants> {
         let identity = serde_json::to_vec(&self.config).map_err(io::Error::other)?;
-        Ok(ConfigInvariants {
-            language: self.config.language.clone(),
-            tracer_version: self.config.version.clone(),
-            endpoint: self.agent_endpoint.clone(),
-            agentless: None,
+        Ok(RemoteConfigInvariants {
             publication_scope: Some(BASE64_URL_SAFE_NO_PAD.encode(Sha224::digest(identity))),
+            config: ConfigInvariants {
+                language: self.config.language.clone(),
+                tracer_version: self.config.version.clone(),
+                endpoint: self.agent_endpoint.clone(),
+                agentless: None,
+            },
         })
     }
 }
@@ -90,8 +97,7 @@ impl PublicationStore {
 
     pub(crate) fn cdn(&self, registration: &CdnRegistration) -> io::Result<CdnPublisher> {
         let invariants = registration.invariants()?;
-        let mut base = invariants.clone();
-        base.publication_scope = None;
+        let base = invariants.config.clone();
         let mut sources = self.0.lock_or_panic();
         sources.retain(|_, source| {
             !source.agent.is_empty() || source.cdn.iter().any(|p| p.strong_count() != 0)
@@ -123,7 +129,7 @@ impl PublicationStore {
 
 struct Publication {
     writer: RemoteConfigWriter,
-    invariants: ConfigInvariants,
+    invariants: RemoteConfigInvariants,
     target: Arc<Target>,
     agent: Vec<u8>,
     agent_files: Vec<Arc<StoredShmFile>>,
@@ -133,6 +139,7 @@ struct Publication {
 }
 
 impl Publication {
+    /// Replace Agent FFE entries with the current CDN file, preserving all other products.
     fn publish(&mut self) -> io::Result<()> {
         let mut lines = self.agent.split(|byte| *byte == b'\n');
         let mut directory = lines.next().unwrap_or_default().to_vec();
@@ -169,27 +176,6 @@ impl Publication {
 #[derive(Clone)]
 pub(crate) struct CdnPublisher(Arc<Mutex<Publication>>);
 
-pub(crate) struct NotificationGuard {
-    publisher: CdnPublisher,
-    id: u64,
-}
-impl NotificationGuard {
-    pub(crate) fn notify_current(&self, generation: u64) {
-        let publication = self.publisher.0.lock_or_panic();
-        if generation != u64::MAX
-            && publication.writer.current_generation() != 0
-            && publication.writer.current_generation() != generation
-            && let Some(notify) = publication.notifiers.get(&self.id)
-        {
-            notify();
-        }
-    }
-}
-impl Drop for NotificationGuard {
-    fn drop(&mut self) {
-        self.publisher.0.lock_or_panic().notifiers.remove(&self.id);
-    }
-}
 impl CdnPublisher {
     pub(crate) fn register(&self, notify: Notify, generation: u64) -> NotificationGuard {
         let mut publication = self.0.lock_or_panic();
@@ -232,10 +218,34 @@ impl ConfigurationSink for CdnPublisher {
     fn confirmed(&self) {}
 }
 
+pub(crate) struct NotificationGuard {
+    publisher: CdnPublisher,
+    id: u64,
+}
+
+impl NotificationGuard {
+    pub(crate) fn notify_current(&self, generation: u64) {
+        let publication = self.publisher.0.lock_or_panic();
+        if generation != u64::MAX
+            && publication.writer.current_generation() != 0
+            && publication.writer.current_generation() != generation
+            && let Some(notify) = publication.notifiers.get(&self.id)
+        {
+            notify();
+        }
+    }
+}
+
+impl Drop for NotificationGuard {
+    fn drop(&mut self) {
+        self.publisher.0.lock_or_panic().notifiers.remove(&self.id);
+    }
+}
+
 /// Both agent and CDN publication paths use the same write/dedup/callback rule.
 pub(super) fn publish_directory(
     writer: &RemoteConfigWriter,
-    invariants: &ConfigInvariants,
+    invariants: &RemoteConfigInvariants,
     target: &Arc<Target>,
     bytes: &[u8],
 ) -> io::Result<bool> {
@@ -372,6 +382,11 @@ mod tests {
         );
         let mut changed = r.clone();
         changed.config.endpoint = CdnEndpoint::managed("datadoghq.com", "test", "key-two").unwrap();
+        assert_eq!(
+            r.invariants().unwrap().config,
+            changed.invariants().unwrap().config,
+            "CDN identity must not change the Agent RC client's configuration"
+        );
         assert_ne!(
             path_for_remote_config(&r.invariants().unwrap(), &r.target),
             path_for_remote_config(&changed.invariants().unwrap(), &changed.target)
@@ -385,8 +400,7 @@ mod tests {
         let r = registration();
         let store = PublicationStore::default();
         let p = store.cdn(&r).unwrap();
-        let mut base = r.invariants().unwrap();
-        base.publication_scope = None;
+        let base = r.invariants().unwrap().config;
         let agent_ffe = RemoteConfigPath::parse("datadog/0/FFE_FLAGS/agent/config").unwrap();
         let apm = RemoteConfigPath::parse("datadog/0/APM_TRACING/apm/config").unwrap();
         let ffe = store_shm(rand::random(), &agent_ffe, b"{}".to_vec()).unwrap();
@@ -442,8 +456,7 @@ mod tests {
         use libdd_remote_config::config::dynamic::DynamicConfigFile;
         let r = registration();
         let store = PublicationStore::default();
-        let mut base = r.invariants().unwrap();
-        base.publication_scope = None;
+        let base = r.invariants().unwrap().config;
         let path = Arc::new(RemoteConfigPath::parse("datadog/0/APM_TRACING/apm/config").unwrap());
         let handle = store_shm(
             1,
@@ -510,8 +523,7 @@ mod tests {
         drop(p);
         let _replacement = store.cdn(&r).unwrap();
         assert!(matches!(m.fetch_update(), RemoteConfigUpdate::None));
-        let mut base = r.invariants().unwrap();
-        base.publication_scope = None;
+        let base = r.invariants().unwrap().config;
         store.expire_agent(&base, &r.target);
         assert!(
             matches!(m.fetch_update(), RemoteConfigUpdate::None),

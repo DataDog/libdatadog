@@ -203,7 +203,6 @@ impl ConnectionSession {
             dogstatsd: dogstatsd.client_for(&config.dogstatsd_endpoint),
             remote_config_options: ConfigOptions {
                 invariants: ConfigInvariants {
-                    publication_scope: None,
                     language: config.language,
                     tracer_version: config.tracer_version,
                     endpoint: config.endpoint,
@@ -250,7 +249,6 @@ impl ConnectionSession {
             dogstatsd: None,
             remote_config_options: ConfigOptions {
                 invariants: ConfigInvariants {
-                    publication_scope: None,
                     language: String::new(),
                     tracer_version: String::new(),
                     endpoint: Endpoint::default(),

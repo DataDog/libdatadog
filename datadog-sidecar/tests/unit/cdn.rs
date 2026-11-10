@@ -197,16 +197,16 @@ fn cdn_notifications_share_the_published_view_and_require_an_active_opted_in_app
         );
         return;
     }
+    use crate::shm_remote_config::RemoteConfigInvariants;
     use crate::shm_remote_config::{RemoteConfigReader, ddog_set_rc_notify_fn};
     use libdd_ffe::{cdn::ConfigurationSink, rules_based::Configuration};
-    use libdd_remote_config::fetch::ConfigInvariants;
     use std::sync::atomic::{AtomicUsize, Ordering};
     static SIGNALS: AtomicUsize = AtomicUsize::new(0);
     static VIEWS: Mutex<Vec<Vec<u8>>> = Mutex::new(Vec::new());
     extern "C" fn signal(_: libc::c_int) {
         SIGNALS.fetch_add(1, Ordering::SeqCst);
     }
-    extern "C" fn inproc(id: *const ConfigInvariants, target: *const Arc<Target>) {
+    extern "C" fn inproc(id: *const RemoteConfigInvariants, target: *const Arc<Target>) {
         // SAFETY: publication invokes the callback synchronously with live references.
         let mut reader = unsafe { RemoteConfigReader::new(&*id, &*target) };
         let (_, data) = reader.read();

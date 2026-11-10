@@ -179,7 +179,6 @@ impl TracerFlareManager {
         };
         let config_to_fetch = ConfigOptions {
             invariants: ConfigInvariants {
-                publication_scope: None,
                 language,
                 tracer_version,
                 endpoint: remote_config_endpoint,

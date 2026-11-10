@@ -132,7 +132,6 @@ async fn run_one_iteration(
 
     let options = ConfigOptions {
         invariants: ConfigInvariants {
-            publication_scope: None,
             language: "benchlang".to_string(),
             tracer_version: "0.0.1".to_string(),
             endpoint,

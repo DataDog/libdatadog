@@ -1449,7 +1449,8 @@ impl SidecarInterface for ConnectionSidecarHandler {
 mod flagevaluation_privacy_tests;
 
 #[cfg(all(test, unix))]
-#[path = "cdn_tests.rs"]
+// These tests exercise private connection state, so keep them in this module.
+#[path = "../../tests/unit/cdn.rs"]
 mod cdn_tests;
 
 #[cfg(test)]

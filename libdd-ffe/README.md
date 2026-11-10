@@ -72,6 +72,9 @@ Sidecar clients queue `set_cdn_configuration(Some(CdnRegistration { .. }))` with
 waiting for a reply or a returned handle. Derive `registration.invariants()`,
 construct an ordinary `RemoteConfigManager` with the `UniversalFlagConfig` parser,
 and track `registration.target` before checking for existing configuration.
+The returned `RemoteConfigInvariants` wrapper belongs to the sidecar: its local
+publication scope separates CDN identities without changing the shared RC client's
+`ConfigInvariants`. Unscoped Agent publications retain their existing directory names.
 `set_cdn_configuration(None)` unregisters the source. Reconnect replays the
 registration through the normal sender state. Invalid registrations are logged
 by the sidecar and replace the previous subscription; clients should validate

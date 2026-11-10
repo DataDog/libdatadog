@@ -602,7 +602,6 @@ pub mod tests {
             RcFileStorage::default(),
             ConfigFetcherState::with_client(
                 ConfigInvariants {
-                    publication_scope: None,
                     language: "php".into(),
                     tracer_version: "test".into(),
                     endpoint: libdd_common::Endpoint::from_slice("http://localhost:8126"),

@@ -101,7 +101,6 @@ async fn main() {
         RUNTIME_ID.to_string(),
         ConfigOptions {
             invariants: ConfigInvariants {
-                publication_scope: None,
                 language: "awesomelang".to_string(),
                 tracer_version: "99.10.5".to_string(),
                 endpoint,
