@@ -68,7 +68,8 @@ impl SharedThreadContext {
     unsafe fn from_record_ptr(ptr: NonNull<ThreadContextRecord>) -> Self {
         // `ThreadContext` is `repr(transparent)` over `ThreadContextRecord`, so the record
         // pointer is exactly the `*const ThreadContext` that `Arc::into_raw` produced.
-        Self(Arc::from_raw(ptr.as_ptr() as *const ThreadContext))
+        // SAFETY: the caller guarantees `ptr` came from `Self::attach` and was not reclaimed yet.
+        Self(unsafe { Arc::from_raw(ptr.as_ptr() as *const ThreadContext) })
     }
 
     /// Publish this shared context. Write its record pointer into the current thread's TLS slot.

@@ -21,12 +21,8 @@
 //! assert!(re.is_match("answer: 42"));
 //! ```
 
-#[cfg(not(any(feature = "full", feature = "regex-lite")))]
-compile_error!(
-    "libdd-regex: no regex engine selected. Enable the `full` (default) or \
-     `regex-lite` feature, or drop `default-features = false` from the \
-     dependency on this crate."
-);
+// With neither `full` nor `regex-lite` the crate exports nothing: a dependency on it needs one of
+// them (the default, `full`, or `regex-lite`) to get `Regex`.
 
 #[cfg(all(feature = "regex-lite", not(feature = "require-regex-full")))]
 pub use regex_lite::{Captures, Error, Regex, RegexBuilder, Replacer, escape};
@@ -39,6 +35,7 @@ pub use regex::{Captures, Error, Regex, RegexBuilder, Replacer, escape};
 
 #[cfg(test)]
 mod tests {
+    #[cfg(any(feature = "full", feature = "regex-lite"))]
     use super::Regex;
 
     #[cfg(all(feature = "regex-lite", not(feature = "require-regex-full")))]
@@ -65,6 +62,7 @@ mod tests {
         assert!(Regex::new(r"\p{Greek}+").unwrap().is_match("Δοκιμή"));
     }
 
+    #[cfg(any(feature = "full", feature = "regex-lite"))]
     #[test]
     fn escape_quotes_metacharacters() {
         assert_eq!(super::escape("a.b*c"), r"a\.b\*c");

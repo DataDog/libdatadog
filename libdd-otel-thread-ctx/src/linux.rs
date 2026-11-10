@@ -8,25 +8,20 @@
 //! handle types live in the private `owned` and `shared` submodules, exactly one of which is
 //! compiled (see the crate-level documentation).
 
-// Exactly one ownership mode must be selected, otherwise the crate exposes no context type at all.
-#[cfg(not(any(feature = "owned-context", feature = "shared-context")))]
-compile_error!(
-    "No ownership mode selected for otel-thread-ctx. Enable either `owned-context` (the default) \
-     or `shared-context`."
-);
-
-#[cfg(feature = "owned-context")]
+// `build.rs` sets `otel_ctx_shared` only when `shared-context` is enabled without `owned-context`.
+// Every other combination, including neither feature, uses the owned mode.
+#[cfg(not(otel_ctx_shared))]
 mod owned;
-#[cfg(feature = "owned-context")]
+#[cfg(not(otel_ctx_shared))]
 pub use owned::*;
 
 // `owned-context` deliberately takes precedence when both modes are requested, so that enabling
 // all features of the workspace (which the FFI crate does, and which requires the owned mode)
 // still builds. `build.rs` warns about this. The two modes can't coexist: see the documentation of
 // the context types about mixing them.
-#[cfg(all(feature = "shared-context", not(feature = "owned-context")))]
+#[cfg(otel_ctx_shared)]
 mod shared;
-#[cfg(all(feature = "shared-context", not(feature = "owned-context")))]
+#[cfg(otel_ctx_shared)]
 pub use shared::*;
 
 use std::{

@@ -11,12 +11,7 @@ use crate::{
     update_metadata,
 };
 
-pub static DEFAULT_SYMBOLS: [libc::c_int; 4] =
-    [libc::SIGBUS, libc::SIGABRT, libc::SIGSEGV, libc::SIGILL];
-
-pub fn default_signals() -> Vec<libc::c_int> {
-    Vec::from(DEFAULT_SYMBOLS)
-}
+pub use crate::shared::constants::{DEFAULT_SYMBOLS, default_signals};
 
 #[cfg(target_os = "linux")]
 pub(super) fn mark_preload_logger_collector() {

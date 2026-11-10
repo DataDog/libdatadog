@@ -193,6 +193,7 @@ impl HttpClientBuilder {
     ///
     /// Returns [`crate::HttpClientError::InvalidConfig`] if required fields
     /// (base URL, timeout) were not set.
+    #[cfg(any(feature = "hyper-backend", feature = "reqwest-backend"))]
     pub fn build(self) -> Result<crate::HttpClient, crate::HttpClientError> {
         let base_url = self.base_url.ok_or_else(|| {
             crate::HttpClientError::InvalidConfig("base_url is required".to_owned())
@@ -211,7 +212,7 @@ impl HttpClientBuilder {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, any(feature = "hyper-backend", feature = "reqwest-backend")))]
 mod tests {
     use super::*;
 

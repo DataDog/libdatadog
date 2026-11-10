@@ -15,22 +15,23 @@
 //! a single thread that can be updated in place, while `shared-context` gives
 //! `SharedThreadContext`, an `Arc`-backed immutable record that can be cloned and attached on
 //! several threads. They can't coexist because the TLS slot is untyped. If both features are
-//! enabled, `owned-context` wins and the build script emits a warning.
+//! enabled, `owned-context` wins and the build script emits a warning. If neither is enabled,
+//! `owned-context` is used.
 #![cfg_attr(
-    all(feature = "owned-context", target_os = "linux"),
+    all(not(otel_ctx_shared), target_os = "linux"),
     doc = "The active mode is `owned-context`. See [`linux::OwnedThreadContext`]."
 )]
 #![cfg_attr(
-    all(feature = "owned-context", not(target_os = "linux")),
+    all(not(otel_ctx_shared), not(target_os = "linux")),
     doc = "The active mode is `owned-context`. See `linux::OwnedThreadContext`."
 )]
 #![cfg_attr(
-    all(not(feature = "owned-context"), target_os = "linux"),
+    all(otel_ctx_shared, target_os = "linux"),
     doc = "The active mode is `shared-context`. See [`linux::SharedThreadContext`], which also \
            explains why the two modes can't be mixed."
 )]
 #![cfg_attr(
-    all(not(feature = "owned-context"), not(target_os = "linux")),
+    all(otel_ctx_shared, not(target_os = "linux")),
     doc = "The active mode is `shared-context`. See `linux::SharedThreadContext`, which also \
            explains why the two modes can't be mixed."
 )]
@@ -60,7 +61,7 @@
 //! This avoids allocation in the hot path.
 //!
 //! ```rust
-//! # #[cfg(all(feature = "owned-context", target_os = "linux",
+//! # #[cfg(all(not(otel_ctx_shared), target_os = "linux",
 //! #           any(target_arch = "x86_64", target_arch = "aarch64")))]
 //! # fn main() {
 //! use libdd_otel_thread_ctx::linux::OwnedThreadContext;
@@ -76,7 +77,7 @@
 //! // Detach and drop.
 //! let _ = OwnedThreadContext::detach();
 //! # }
-//! # #[cfg(not(all(feature = "owned-context", target_os = "linux",
+//! # #[cfg(not(all(not(otel_ctx_shared), target_os = "linux",
 //! #               any(target_arch = "x86_64", target_arch = "aarch64"))))]
 //! # fn main() {}
 //! ```
@@ -88,7 +89,7 @@
 //! might run on the same thread, or even move from one thread to another, for example.
 //!
 //! ```rust
-//! # #[cfg(all(feature = "owned-context", target_os = "linux",
+//! # #[cfg(all(not(otel_ctx_shared), target_os = "linux",
 //! #           any(target_arch = "x86_64", target_arch = "aarch64")))]
 //! # fn main() {
 //! use libdd_otel_thread_ctx::linux::OwnedThreadContext;
@@ -110,7 +111,7 @@
 //!     let _ = prev.attach();
 //! }
 //! # }
-//! # #[cfg(not(all(feature = "owned-context", target_os = "linux",
+//! # #[cfg(not(all(not(otel_ctx_shared), target_os = "linux",
 //! #               any(target_arch = "x86_64", target_arch = "aarch64"))))]
 //! # fn main() {}
 //! ```

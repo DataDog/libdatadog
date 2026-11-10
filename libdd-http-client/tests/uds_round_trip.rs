@@ -3,7 +3,7 @@
 
 //! Unix Domain Socket transport tests.
 
-#![cfg(unix)]
+#![cfg(all(unix, any(feature = "hyper-backend", feature = "reqwest-backend")))]
 
 use libdd_http_client::{HttpClient, HttpMethod, HttpRequest};
 use std::time::Duration;

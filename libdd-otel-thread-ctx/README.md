@@ -119,7 +119,8 @@ two mutually exclusive features:
 
 They are exclusive because the thread-local slot is untyped: interleaving owned
 and shared contexts would misinterpret the pointer and cause UB. If both features
-are enabled, `owned-context` wins and the build script emits a warning.
+are enabled, `owned-context` wins and the build script emits a warning. If
+neither is enabled, `owned-context` is used.
 
 ## TLS
 

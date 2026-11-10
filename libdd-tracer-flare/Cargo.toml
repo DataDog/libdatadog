@@ -29,6 +29,10 @@ libdd-capabilities-impl = { version = "8.0.0", path = "../libdd-capabilities-imp
 [lib]
 bench = false
 
+[[test]]
+name = "test_tracer_flare"
+required-features = ["listener"]
+
 [dev-dependencies]
 libdd-remote-config = { path = "../libdd-remote-config", features = ["test"] }
 httpmock.workspace = true

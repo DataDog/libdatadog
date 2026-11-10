@@ -1,6 +1,9 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
-use crate::{default_signals, shared::constants, signal_from_signum};
+use crate::{
+    shared::constants::{self, default_signals},
+    signal_from_signum,
+};
 use alloc::borrow::Cow;
 use core::time::Duration;
 use libdd_common::Endpoint;
@@ -203,7 +206,7 @@ impl CrashtrackerConfigurationBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{default_signals, shared::constants};
+    use crate::shared::constants;
     use core::time::Duration;
 
     #[test]
