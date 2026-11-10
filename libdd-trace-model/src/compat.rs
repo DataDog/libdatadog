@@ -139,8 +139,7 @@ impl<S: SpanMut> AttributesMut for CompatSpan<S> {
         }
     }
 
-    fn set_attribute(&mut self, key: impl Into<Self::Text>, value: Value<Self>) {
-        let key = key.into();
+    fn set_attribute(&mut self, key: Self::Text, value: Value<Self>) {
         if !is_promoted(key.as_str()) {
             return self.0.set_attribute(key, value);
         }
@@ -261,19 +260,19 @@ impl<S: Span> Span for CompatSpan<S> {
 }
 
 impl<S: SpanMut> SpanMut for CompatSpan<S> {
-    fn set_service(&mut self, value: impl Into<Self::Text>) {
+    fn set_service(&mut self, value: Self::Text) {
         self.0.set_service(value);
     }
 
-    fn set_resource(&mut self, value: impl Into<Self::Text>) {
+    fn set_resource(&mut self, value: Self::Text) {
         self.0.set_resource(value);
     }
 
-    fn set_name(&mut self, value: impl Into<Self::Text>) {
+    fn set_name(&mut self, value: Self::Text) {
         self.0.set_name(value);
     }
 
-    fn set_type(&mut self, value: impl Into<Self::Text>) {
+    fn set_type(&mut self, value: Self::Text) {
         self.0.set_type(value);
     }
 
@@ -297,15 +296,15 @@ impl<S: SpanMut> SpanMut for CompatSpan<S> {
         self.0.set_span_kind(value);
     }
 
-    fn set_env(&mut self, value: impl Into<Self::Text>) {
+    fn set_env(&mut self, value: Self::Text) {
         self.0.set_env(value);
     }
 
-    fn set_version(&mut self, value: impl Into<Self::Text>) {
+    fn set_version(&mut self, value: Self::Text) {
         self.0.set_version(value);
     }
 
-    fn set_component(&mut self, value: impl Into<Self::Text>) {
+    fn set_component(&mut self, value: Self::Text) {
         self.0.set_component(value);
     }
 

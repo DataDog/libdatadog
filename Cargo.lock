@@ -709,7 +709,7 @@ checksum = "dc0b364ead1874514c8c2855ab558056ebfeb775653e7ae45ff72f28f8f3166c"
 
 [[package]]
 name = "build_common"
-version = "47.0.0"
+version = "48.0.0"
 dependencies = [
  "cbindgen",
  "serde_json",
@@ -718,7 +718,7 @@ dependencies = [
 
 [[package]]
 name = "builder"
-version = "47.0.0"
+version = "48.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -1356,7 +1356,7 @@ checksum = "d7a1e2f27636f116493b8b860f5546edb47c8d8f8ea73e1d2a20be88e28d1fea"
 
 [[package]]
 name = "datadog-profiling-replayer"
-version = "47.0.0"
+version = "48.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -2712,7 +2712,7 @@ checksum = "7581282928bc99698341d1de7590964c28db747c164eaac9409432a3eaed098a"
 
 [[package]]
 name = "libdd-agent-client"
-version = "47.0.0"
+version = "48.0.0"
 dependencies = [
  "bytes",
  "flate2",
@@ -2819,7 +2819,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-common-ffi"
-version = "47.0.0"
+version = "48.0.0"
 dependencies = [
  "anyhow",
  "assert_no_alloc",
@@ -2877,7 +2877,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-crashtracker-ffi"
-version = "47.0.0"
+version = "48.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -2969,7 +2969,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-data-pipeline-ffi"
-version = "47.0.0"
+version = "48.0.0"
 dependencies = [
  "build_common",
  "httpmock",
@@ -3003,7 +3003,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-ddsketch-ffi"
-version = "47.0.0"
+version = "48.0.0"
 dependencies = [
  "build_common",
  "libdd-common-ffi",
@@ -3081,7 +3081,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-ffe-test-suite"
-version = "47.0.0"
+version = "48.0.0"
 dependencies = [
  "chrono",
  "criterion",
@@ -3258,7 +3258,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-log-ffi"
-version = "47.0.0"
+version = "48.0.0"
 dependencies = [
  "build_common",
  "libdd-common-ffi",
@@ -3389,7 +3389,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-profiling-heap-gotter-ffi"
-version = "47.0.0"
+version = "48.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -3498,7 +3498,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-shared-runtime-ffi"
-version = "47.0.0"
+version = "48.0.0"
 dependencies = [
  "build_common",
  "libdd-regex",
@@ -3541,7 +3541,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-telemetry-ffi"
-version = "47.0.0"
+version = "48.0.0"
 dependencies = [
  "build_common",
  "function_name",
@@ -3641,6 +3641,7 @@ dependencies = [
  "libdd-dogstatsd-client",
  "libdd-shared-runtime",
  "libdd-telemetry",
+ "libdd-tinybytes",
  "libdd-trace-model",
  "libdd-trace-obfuscation",
  "libdd-trace-protobuf",
@@ -4793,9 +4794,9 @@ checksum = "7dc55d7dec32ecaf61e0bd90b3d2392d721a28b95cfd23c3e176eccefbeab2f2"
 
 [[package]]
 name = "pyo3"
-version = "0.29.2"
+version = "0.30.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4688ddedf473e32662b9b067670129a8afb8c18e351482c70d62ba4a88171e8b"
+checksum = "229ca13b8a15bb0d1487b81ab975bfcd97513416499a8312011b6036e42e0de4"
 dependencies = [
  "libc",
  "once_cell",
@@ -4807,18 +4808,18 @@ dependencies = [
 
 [[package]]
 name = "pyo3-build-config"
-version = "0.29.2"
+version = "0.30.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f41027e41b4bd03f6e60f9f417fe24a6341a6bb744edd62b6f709f2a52ea30e9"
+checksum = "70130e2b6dd1ee589a8788026a429561ca5c40fa7a2fa7914c2282eddae24700"
 dependencies = [
  "target-lexicon",
 ]
 
 [[package]]
 name = "pyo3-ffi"
-version = "0.29.2"
+version = "0.30.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e591a95526fead067432c3b3a33fc74770b87b1e04e73671090d9c2055a2b327"
+checksum = "5e7ff73c555c286d212d4ce7e5fbda845a973c4f61bd5f160f5f2c3c2a04d1c4"
 dependencies = [
  "libc",
  "pyo3-build-config",
@@ -4826,26 +4827,26 @@ dependencies = [
 
 [[package]]
 name = "pyo3-macros"
-version = "0.29.2"
+version = "0.30.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "73225868fc1cd84eef2c3c230ddb91273bf1de46aeb8a4248da76d32a0924a1c"
+checksum = "c46d2e5862c7bb8207e3b639f713dda3c499933444784154c11d013c5a691b60"
 dependencies = [
  "proc-macro2",
  "pyo3-macros-backend",
  "quote",
- "syn 2.0.87",
+ "syn 3.0.6",
 ]
 
 [[package]]
 name = "pyo3-macros-backend"
-version = "0.29.2"
+version = "0.30.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "571575aa3749fa6216757dd47d2a3e7ef360f329a40f0666a9fbd14889024952"
+checksum = "38b89f066f2ae72a2aef52d1537ca2fcd104440ebfadee06e97aa90738a25b9b"
 dependencies = [
  "heck",
  "proc-macro2",
  "quote",
- "syn 2.0.87",
+ "syn 3.0.6",
 ]
 
 [[package]]
@@ -5890,7 +5891,7 @@ dependencies = [
 
 [[package]]
 name = "symbolizer-ffi"
-version = "47.0.0"
+version = "48.0.0"
 dependencies = [
  "blazesym-c",
  "build_common",
@@ -6346,7 +6347,7 @@ dependencies = [
 
 [[package]]
 name = "tools"
-version = "47.0.0"
+version = "48.0.0"
 dependencies = [
  "anyhow",
  "bytes",
