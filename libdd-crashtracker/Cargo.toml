@@ -55,7 +55,7 @@ anyhow.workspace = true
 chrono = { workspace = true, features = ["std", "clock", "serde"] }
 cxx = { workspace = true, default-features = true, optional = true }
 errno = { workspace = true, default-features = true }
-hex = { workspace = true, features = ["std"] }
+base64 = { workspace = true, features = ["alloc"] }
 libdd-capabilities = { version = "4.0.1", path = "../libdd-capabilities" }
 libdd-capabilities-impl = { version = "8.0.0", path = "../libdd-capabilities-impl" }
 libdd-common = { version = "9.0.0", path = "../libdd-common" }
@@ -65,7 +65,6 @@ libdd-process-utils = { version = "1.0.0", path = "../libdd-process-utils" }
 libdd-telemetry = { version = "11.0.0", path = "../libdd-telemetry" }
 libdd-trace-utils = { version = "15.0.0", path = "../libdd-trace-utils", default-features = false }
 http = { workspace = true, features = ["std"] }
-http-body-util = { workspace = true }
 libc.workspace = true
 nix = { workspace = true, features = ["poll", "signal", "socket"] }
 num-derive.workspace = true

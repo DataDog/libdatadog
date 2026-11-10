@@ -122,7 +122,7 @@ pub struct CrashInfoBuilder {
     pub otel_thread_contexts: Option<Vec<OtelThreadContext>>,
     pub proc_info: Option<ProcInfo>,
     pub sig_info: Option<SigInfo>,
-    pub apm_trace_payload: Option<ApmTracePayload>,
+    pub traces_to_close: Vec<TraceToClose>,
     pub span_ids: Option<Vec<Span>>,
     pub timestamp: Option<DateTime<Utc>>,
     pub trace_ids: Option<Vec<Span>>,
@@ -133,7 +133,7 @@ pub struct CrashInfoBuilder {
 impl Default for CrashInfoBuilder {
     fn default() -> Self {
         Self {
-            apm_trace_payload: None,
+            traces_to_close: vec![],
             counters: None,
             error: ErrorDataBuilder::default(),
             experimental: None,
@@ -157,7 +157,7 @@ impl Default for CrashInfoBuilder {
 
 impl CrashInfoBuilder {
     pub fn build(self) -> anyhow::Result<CrashInfo> {
-        let apm_trace_payload = self.apm_trace_payload;
+        let traces_to_close = self.traces_to_close;
         let counters = self.counters.unwrap_or_default();
         let data_schema_version = CrashInfo::current_schema_version().to_string();
         let (error, incomplete_error) = self.error.build()?;
@@ -182,7 +182,7 @@ impl CrashInfoBuilder {
         let ucontext = self.ucontext;
         let uuid = self.uuid;
         Ok(CrashInfo {
-            apm_trace_payload,
+            traces_to_close,
             counters,
             data_schema_version,
             error,
@@ -401,6 +401,12 @@ impl CrashInfoBuilder {
 
     pub fn with_threads(&mut self, threads: Vec<ThreadData>) -> anyhow::Result<()> {
         self.error.with_threads(threads)
+    }
+
+    /// Keeps a trace the crash ends, for the receiver to close and submit.
+    pub fn with_trace_to_close(&mut self, trace: TraceToClose) -> anyhow::Result<()> {
+        self.traces_to_close.push(trace);
+        Ok(())
     }
 
     pub fn with_timestamp(&mut self, timestamp: DateTime<Utc>) -> anyhow::Result<()> {

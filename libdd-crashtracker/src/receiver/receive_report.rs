@@ -8,8 +8,7 @@ use crate::ptrace_collector::{crash_site_registers, parse_hex_address};
 use crate::{
     CrashtrackerConfiguration, StackTrace,
     crash_info::{
-        ApmTracePayload, CrashInfo, CrashInfoBuilder, ErrorKind, SigInfo, Span, StackFrame,
-        Ucontext,
+        CrashInfo, CrashInfoBuilder, ErrorKind, SigInfo, Span, StackFrame, TraceToClose, Ucontext,
     },
     receiver::debug_logger::{DebugLogger, ReceiverIssue},
     runtime_callback::RuntimeStack,
@@ -84,8 +83,6 @@ impl ReceiverFileAccess {
 #[derive(Debug)]
 pub(crate) enum StdinState {
     AdditionalTags,
-    ApmTracePayload,
-    ApmTracePayloadDropped,
     Config,
     Counters,
     Done,
@@ -98,6 +95,8 @@ pub(crate) enum StdinState {
     StackTrace,
     Threads,
     TraceIds,
+    /// Inside an APM trace to close block: the lines read so far.
+    TraceToClose(Vec<String>),
     Ucontext,
     Waiting,
     WholeStackTrace,
@@ -131,35 +130,6 @@ fn process_line(
             builder.with_experimental_additional_tags(additional_tags)?;
             StdinState::AdditionalTags
         }
-
-        StdinState::ApmTracePayload if line.starts_with(DD_CRASHTRACK_END_APM_TRACE_PAYLOAD) => {
-            // A block that cannot be submitted is dropped, not the report.
-            if let Some(Err(e)) = builder.apm_trace_payload.as_ref().map(|p| p.validate()) {
-                builder.apm_trace_payload = None;
-                builder.with_log_message(format!("Dropped APM trace payload: {e}"), true)?;
-            }
-            StdinState::Waiting
-        }
-        StdinState::ApmTracePayload => {
-            let payload = builder
-                .apm_trace_payload
-                .get_or_insert_with(Default::default);
-            match payload.apply_line(line) {
-                Ok(()) => StdinState::ApmTracePayload,
-                Err(e) => {
-                    // Drop the block, not the report: skip to its end.
-                    builder.apm_trace_payload = None;
-                    builder.with_log_message(format!("Dropped APM trace payload: {e}"), true)?;
-                    StdinState::ApmTracePayloadDropped
-                }
-            }
-        }
-        StdinState::ApmTracePayloadDropped
-            if line.starts_with(DD_CRASHTRACK_END_APM_TRACE_PAYLOAD) =>
-        {
-            StdinState::Waiting
-        }
-        StdinState::ApmTracePayloadDropped => StdinState::ApmTracePayloadDropped,
 
         StdinState::Config if line.starts_with(DD_CRASHTRACK_END_CONFIG) => StdinState::Waiting,
         StdinState::Config => {
@@ -325,6 +295,26 @@ fn process_line(
             builder.with_trace_ids(trace_ids)?;
             StdinState::TraceIds
         }
+        StdinState::TraceToClose(lines)
+            if line.starts_with(DD_CRASHTRACK_END_APM_TRACE_TO_CLOSE) =>
+        {
+            let trace = match &lines[..] {
+                [header, body] => TraceToClose::parse(header, body),
+                _ => Err(anyhow::anyhow!("expected 2 lines, got {}", lines.len())),
+            };
+            match trace {
+                Ok(trace) => builder.with_trace_to_close(trace)?,
+                Err(e) => {
+                    builder.with_log_message(format!("Dropped APM trace to close: {e:#}"), true)?
+                }
+            }
+            StdinState::Waiting
+        }
+        StdinState::TraceToClose(mut lines) => {
+            lines.push(line.to_string());
+            StdinState::TraceToClose(lines)
+        }
+
         StdinState::Ucontext if line.starts_with(DD_CRASHTRACK_END_UCONTEXT) => StdinState::Waiting,
         StdinState::Ucontext => {
             let ucontext: Ucontext = serde_json::from_str(line)?;
@@ -335,9 +325,8 @@ fn process_line(
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_ADDITIONAL_TAGS) => {
             StdinState::AdditionalTags
         }
-        StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_APM_TRACE_PAYLOAD) => {
-            builder.apm_trace_payload = Some(ApmTracePayload::default());
-            StdinState::ApmTracePayload
+        StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_APM_TRACE_TO_CLOSE) => {
+            StdinState::TraceToClose(vec![])
         }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_CONFIG) => StdinState::Config,
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_COUNTERS) => {
@@ -1088,6 +1077,40 @@ mod tests {
             ..Default::default()
         });
         stack
+    }
+
+    const TRACE_HEADER: &str =
+        r#"{"version":1,"encoding":"v1","agent_url":"http://agent:8126","span_ids":[7]}"#;
+
+    #[test]
+    fn traces_to_close_are_kept_per_block() {
+        let (builder, state) = parse_test_lines(&[
+            DD_CRASHTRACK_BEGIN_APM_TRACE_TO_CLOSE,
+            TRACE_HEADER,
+            "AQ==",
+            DD_CRASHTRACK_END_APM_TRACE_TO_CLOSE,
+            // A block the receiver cannot read is noted and skipped.
+            DD_CRASHTRACK_BEGIN_APM_TRACE_TO_CLOSE,
+            r#"{"version":1,"encoding":"v0.9","agent_url":"http://agent:8126"}"#,
+            "AQ==",
+            DD_CRASHTRACK_END_APM_TRACE_TO_CLOSE,
+            DD_CRASHTRACK_BEGIN_APM_TRACE_TO_CLOSE,
+            TRACE_HEADER,
+            "Ag==",
+            DD_CRASHTRACK_END_APM_TRACE_TO_CLOSE,
+        ])
+        .unwrap();
+        assert!(matches!(state, StdinState::Waiting));
+        let bodies: Vec<_> = builder
+            .traces_to_close
+            .iter()
+            .map(|t| &t.body[..])
+            .collect();
+        assert_eq!(bodies, [&[1u8][..], &[2u8][..]]);
+        assert_eq!(builder.traces_to_close[0].span_ids, Some(vec![7]));
+        let logs = builder.log_messages.unwrap_or_default();
+        assert_eq!(logs.len(), 1, "{logs:?}");
+        assert!(logs[0].contains("v0.9"), "{logs:?}");
     }
 
     fn parse_test_lines(lines: &[&str]) -> anyhow::Result<(CrashInfoBuilder, StdinState)> {
