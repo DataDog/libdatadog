@@ -96,7 +96,7 @@ Fork PRs run CI with a restricted token. To run a fork PR with maintainer
 permissions, mirror it with:
 
 ```bash
-./scripts/mirror-community-pull-request.sh <pr-number> [<target-branch>]
+./scripts/mirror-community-pull-request.sh --sha <reviewed-head-sha> <pr-number> [<target-branch>]
 ```
 
 The script fetches the fork commits over HTTPS, cherry-picks them signed
@@ -105,10 +105,15 @@ and opens a mirror PR titled `<original title> 🪩 #<N>`. Both PRs get the
 `external` label. The mirror branch is disposable: re-running the script
 deletes and rebuilds it from scratch.
 
-* `--dry-run` prints the plan, including a warning when commits touch `.github/`.
+* `--sha` is required for a real run and must match the PR head at run time.
+  Commits pushed after your review abort the run instead of being mirrored.
+* `--dry-run` prints the plan, including the current head SHA and warnings
+  for commits that change CI files. It needs no `--sha`.
 * `--no-push` builds the branch locally and skips the push and PR creation.
-* The run aborts before pushing when the PR changes files under `.github/`:
-  the push event would run contributor-controlled workflows.
+* The run aborts before pushing when the PR changes CI files, CI-invoked
+  scripts, or benchmark/fuzz harnesses (`.github/`, `.gitlab-ci.yml`,
+  `.gitlab/`, `.sg/`, `sgconfig.yml`, `scripts/`, `benchmark/`, `fuzz/`),
+  since those would run with the repository's credentials.
 * Requires `gh`, `jq`, and git commit signing configured.
 
 ## Key Conventions
