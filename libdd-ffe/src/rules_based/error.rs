@@ -17,7 +17,7 @@ use crate::rules_based::{ExpectedFlagType, FlagType, Str};
 /// `cause`, rather than recursively nesting errors. Nondependency wire forms are unchanged.
 /// Destruction unlinks dependency errors iteratively. Because this type implements `Drop`,
 /// inspect owned fields by reference rather than moving them out of an error.
-#[derive(thiserror::Error, Clone, Serialize, Deserialize)]
+#[derive(thiserror::Error, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(from = "ErrorWire", into = "ErrorWire")]
 #[non_exhaustive]
 pub enum EvaluationError {
@@ -28,7 +28,7 @@ pub enum EvaluationError {
         /// Referenced prerequisite key.
         flag_key: Str,
         /// Original prerequisite failure.
-        source: Arc<EvaluationError>,
+        source: EvaluationErrorSource,
     },
     /// A reached prerequisite references a flag already being evaluated.
     #[error("flag dependency cycle")]
@@ -90,12 +90,80 @@ pub enum EvaluationError {
     Internal(Str),
 }
 
+/// A shared prerequisite failure with iterative equality.
+///
+/// Dereferences to the original error. Keeping equality on this wrapper allows
+/// `EvaluationError` to retain derived structural equality for constant patterns.
+#[derive(Clone, Debug)]
+pub struct EvaluationErrorSource(Arc<EvaluationError>);
+
+impl From<EvaluationError> for EvaluationErrorSource {
+    fn from(error: EvaluationError) -> Self {
+        Self(Arc::new(error))
+    }
+}
+
+impl std::ops::Deref for EvaluationErrorSource {
+    type Target = EvaluationError;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl AsRef<EvaluationError> for EvaluationErrorSource {
+    fn as_ref(&self) -> &EvaluationError {
+        &self.0
+    }
+}
+
+impl fmt::Display for EvaluationErrorSource {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self.as_ref(), formatter)
+    }
+}
+
+impl std::error::Error for EvaluationErrorSource {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        std::error::Error::source(self.as_ref())
+    }
+}
+
+impl PartialEq for EvaluationErrorSource {
+    fn eq(&self, other: &Self) -> bool {
+        let mut left = self.as_ref();
+        let mut right = other.as_ref();
+        loop {
+            match (left, right) {
+                (
+                    EvaluationError::DependencyEvaluationFailed {
+                        flag_key: a,
+                        source: next_a,
+                    },
+                    EvaluationError::DependencyEvaluationFailed {
+                        flag_key: b,
+                        source: next_b,
+                    },
+                ) => {
+                    if a != b {
+                        return false;
+                    }
+                    left = next_a;
+                    right = next_b;
+                }
+                // At least one side is terminal: derived equality cannot recurse.
+                _ => return left == right,
+            }
+        }
+    }
+}
+
 // Shared suffixes stop cleanup; uniquely owned suffixes are unlinked iteratively.
 impl Drop for EvaluationError {
     fn drop(&mut self) {
         fn unlink(error: &mut EvaluationError) -> Option<EvaluationError> {
             if let EvaluationError::DependencyEvaluationFailed { source, .. } = error {
-                Arc::get_mut(source)
+                Arc::get_mut(&mut source.0)
                     .map(|inner| std::mem::replace(inner, EvaluationError::DependencyCycle))
             } else {
                 None
@@ -255,7 +323,7 @@ impl From<ErrorWire> for EvaluationError {
                 for flag_key in prerequisites.into_iter().rev() {
                     error = Self::DependencyEvaluationFailed {
                         flag_key,
-                        source: Arc::new(error),
+                        source: error.into(),
                     };
                 }
                 error
@@ -276,12 +344,6 @@ impl From<ErrorWire> for EvaluationError {
     }
 }
 
-impl PartialEq for EvaluationError {
-    fn eq(&self, other: &Self) -> bool {
-        self.chain() == other.chain()
-    }
-}
-
 impl fmt::Debug for EvaluationError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let (prerequisites, cause) = self.chain();
@@ -296,6 +358,19 @@ impl fmt::Debug for EvaluationError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn constant_patterns_and_shared_suffixes_remain_supported() {
+        const DISABLED: EvaluationError = EvaluationError::FlagDisabled;
+        assert!(matches!(EvaluationError::FlagDisabled, DISABLED));
+        let source = EvaluationErrorSource::from(EvaluationError::FlagDisabled);
+        let cloned = source.clone();
+        assert!(Arc::ptr_eq(&source.0, &cloned.0));
+        assert_ne!(
+            source,
+            EvaluationErrorSource::from(EvaluationError::DependencyCycle)
+        );
+    }
 
     #[test]
     fn error_wire_round_trips_and_preserves_terminal_forms() {
@@ -321,7 +396,7 @@ mod tests {
             assert_eq!(decoded, error);
             let nested = EvaluationError::DependencyEvaluationFailed {
                 flag_key: "parent".into(),
-                source: Arc::new(error),
+                source: error.into(),
             };
             let encoded = serde_json::to_value(&nested).unwrap();
             assert_eq!(
@@ -359,7 +434,7 @@ mod tests {
             for _ in 0..10_000 {
                 error = EvaluationError::DependencyEvaluationFailed {
                     flag_key: Str::from_static_str("prerequisite"),
-                    source: Arc::new(error),
+                    source: error.into(),
                 };
             }
             std::thread::Builder::new()

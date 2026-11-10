@@ -2,10 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use chrono::{DateTime, Utc};
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
+use std::collections::{HashMap, HashSet};
 
 use crate::rules_based::{
     Configuration, EvaluationContext, ExpectedFlagType, Str, Timestamp,
@@ -433,7 +430,7 @@ impl<'a> EvaluationFrame<'a> {
                         let result = result.map_err(|source| {
                             EvaluationError::DependencyEvaluationFailed {
                                 flag_key: key.clone(),
-                                source: Arc::new(source),
+                                source: source.into(),
                             }
                         })?;
                         // Retain visited height even if this condition or a later one rejects

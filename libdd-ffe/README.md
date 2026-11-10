@@ -149,7 +149,7 @@ Both public evaluation APIs emit the root's trace-level diagnostic exactly once,
 early failures; returning a trace does not publish evaluation or exposure telemetry.
 
 Dependency evaluation stores selected-path edges in an arena and shares error suffixes
-through `Arc<EvaluationError>`, so retained state grows with the reached graph. Error
+through `EvaluationErrorSource` (backed by `Arc<EvaluationError>`), so retained state grows with the reached graph. Error
 cloning shares the suffix; comparison, debug formatting, display, and destruction walk
 it iteratively. Dependency errors serialize as `DEPENDENCY_EVALUATION_FAILED` with a
 flat `prerequisites` array (outermost first) and terminal `cause`. This replaces the

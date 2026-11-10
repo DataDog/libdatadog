@@ -881,7 +881,7 @@ fn deep_dependencies_use_a_bounded_thread_stack() {
                         else {
                             panic!("missing shared suffix")
                         };
-                        assert!(Arc::ptr_eq(child, suffix));
+                        assert!(std::ptr::eq(child.as_ref(), suffix.as_ref()));
                     }
                 }
                 // Exercise nested error destruction on the same small stack.
