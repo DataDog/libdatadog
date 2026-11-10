@@ -16,6 +16,9 @@ bench = false
 
 [dependencies]
 prost = { workspace = true, features = ["derive", "std"], optional = true }
+libdd-ddsketch = { version = "1.1.4", path = "../libdd-ddsketch" }
+hashbrown = { workspace = true, features = ["default-hasher", "inline-more"] }
+memchr = { workspace = true, features = ["std"] }
 serde = { workspace = true, features = ["derive", "std"] }
 serde_json = { workspace = true, features = ["std"] }
 

@@ -1,0 +1,23 @@
+{
+  "description": "usageMetadata is Gemini's shape.",
+  "format": "auto",
+  "operation_name": "chat",
+  "payload": {
+    "modelVersion": "gemini-2.5-flash",
+    "usageMetadata": {
+      "promptTokenCount": 10,
+      "candidatesTokenCount": 5,
+      "totalTokenCount": 15
+    }
+  },
+  "expected": {
+    "usage": {
+      "input_tokens": 10,
+      "input_basis": "includes_cache",
+      "output_tokens": 5,
+      "output_basis": "includes_reasoning"
+    },
+    "response_model": "gemini-2.5-flash",
+    "service_tier": null
+  }
+}

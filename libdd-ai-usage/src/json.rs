@@ -27,6 +27,30 @@ const MAX_DEPTH: usize = 128;
 /// A JSON object with its members in key order.
 pub type JsonObject = BTreeMap<String, Json>;
 
+/// Which members of a document to keep as it is read: what is not kept is
+/// checked as JSON but never built, so no string, map or list is allocated
+/// for it.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum Prune {
+    /// Keep the value whole.
+    All,
+    /// Keep only these members of an object, each pruned in turn. Applied to
+    /// an array, it prunes each element alike; a scalar is kept.
+    Members(&'static [(&'static str, Prune)]),
+}
+
+impl Prune {
+    fn member(self, key: &str) -> Option<Prune> {
+        match self {
+            Prune::All => Some(Prune::All),
+            Prune::Members(members) => members
+                .iter()
+                .find(|(name, _)| *name == key)
+                .map(|(_, prune)| *prune),
+        }
+    }
+}
+
 /// A parsed JSON value.
 ///
 /// `Number` holds a finite double, or an infinity for a token too large for
@@ -93,13 +117,20 @@ impl std::error::Error for JsonError {}
 impl Json {
     /// Read one JSON document.
     pub fn parse(text: &str) -> Result<Json, JsonError> {
+        Json::parse_pruned(text, Prune::All)
+    }
+
+    /// [`Json::parse`], keeping only what `prune` names. The document is
+    /// checked as a whole, so a text is refused exactly when
+    /// [`Json::parse`] refuses it.
+    pub(crate) fn parse_pruned(text: &str, prune: Prune) -> Result<Json, JsonError> {
         let mut reader = Reader {
             bytes: text.as_bytes(),
             text,
             at: 0,
         };
         reader.skip_whitespace();
-        let value = reader.value(0)?;
+        let value = reader.value(0, prune)?;
         reader.skip_whitespace();
         if reader.at != reader.bytes.len() {
             return Err(reader.error(JsonErrorKind::TrailingCharacters));
@@ -210,7 +241,7 @@ impl Reader<'_> {
         }
     }
 
-    fn value(&mut self, depth: usize) -> Result<Json, JsonError> {
+    fn value(&mut self, depth: usize, prune: Prune) -> Result<Json, JsonError> {
         if depth > MAX_DEPTH {
             return Err(self.error(JsonErrorKind::TooDeep));
         }
@@ -220,14 +251,80 @@ impl Reader<'_> {
             Some(b't') => self.literal("true", Json::Bool(true)),
             Some(b'f') => self.literal("false", Json::Bool(false)),
             Some(b'"') => self.string().map(Json::String),
-            Some(b'[') => self.array(depth),
-            Some(b'{') => self.object(depth),
+            Some(b'[') => self.array(depth, prune),
+            Some(b'{') => self.object(depth, prune),
             Some(b'-' | b'0'..=b'9') => self.number(),
             Some(_) => Err(self.error(JsonErrorKind::UnexpectedCharacter)),
         }
     }
 
-    fn array(&mut self, depth: usize) -> Result<Json, JsonError> {
+    /// Check a value as [`Reader::value`] does, building nothing.
+    fn skip(&mut self, depth: usize) -> Result<(), JsonError> {
+        if depth > MAX_DEPTH {
+            return Err(self.error(JsonErrorKind::TooDeep));
+        }
+        match self.peek() {
+            None => Err(self.error(JsonErrorKind::UnexpectedEnd)),
+            Some(b'n') => self.literal("null", Json::Null).map(drop),
+            Some(b't') => self.literal("true", Json::Null).map(drop),
+            Some(b'f') => self.literal("false", Json::Null).map(drop),
+            Some(b'"') => self.string_into(None),
+            Some(open @ (b'[' | b'{')) => {
+                self.at += 1;
+                let close = if open == b'[' { b']' } else { b'}' };
+                self.skip_whitespace();
+                if self.peek() == Some(close) {
+                    self.at += 1;
+                    return Ok(());
+                }
+                loop {
+                    self.skip_whitespace();
+                    if open == b'{' {
+                        self.key()?;
+                    }
+                    self.skip(depth + 1)?;
+                    self.skip_whitespace();
+                    match self.peek() {
+                        Some(b',') => self.at += 1,
+                        Some(b) if b == close => {
+                            self.at += 1;
+                            return Ok(());
+                        }
+                        None => return Err(self.error(JsonErrorKind::UnexpectedEnd)),
+                        Some(_) => return Err(self.error(JsonErrorKind::UnexpectedCharacter)),
+                    }
+                }
+            }
+            Some(b'-' | b'0'..=b'9') => self.number().map(drop),
+            Some(_) => Err(self.error(JsonErrorKind::UnexpectedCharacter)),
+        }
+    }
+
+    /// Check a member name and its colon, building nothing, and leave the
+    /// reader at the value.
+    fn key(&mut self) -> Result<(), JsonError> {
+        match self.peek() {
+            Some(b'"') => {}
+            None => return Err(self.error(JsonErrorKind::UnexpectedEnd)),
+            Some(_) => return Err(self.error(JsonErrorKind::UnexpectedCharacter)),
+        }
+        self.string_into(None)?;
+        self.colon()
+    }
+
+    /// The colon after a member name, with the whitespace around it.
+    fn colon(&mut self) -> Result<(), JsonError> {
+        self.skip_whitespace();
+        match self.peek() {
+            Some(b':') => self.at += 1,
+            None => return Err(self.error(JsonErrorKind::UnexpectedEnd)),
+            Some(_) => return Err(self.error(JsonErrorKind::UnexpectedCharacter)),
+        }
+        self.skip_whitespace();
+        Ok(())
+    }
+
+    fn array(&mut self, depth: usize, prune: Prune) -> Result<Json, JsonError> {
         self.at += 1;
         let mut items = Vec::new();
         self.skip_whitespace();
@@ -237,7 +334,7 @@ impl Reader<'_> {
         }
         loop {
             self.skip_whitespace();
-            items.push(self.value(depth + 1)?);
+            items.push(self.value(depth + 1, prune)?);
             self.skip_whitespace();
             match self.peek() {
                 Some(b',') => self.at += 1,
@@ -251,7 +348,7 @@ impl Reader<'_> {
         }
     }
 
-    fn object(&mut self, depth: usize) -> Result<Json, JsonError> {
+    fn object(&mut self, depth: usize, prune: Prune) -> Result<Json, JsonError> {
         self.at += 1;
         let mut map = JsonObject::new();
         self.skip_whitespace();
@@ -267,15 +364,14 @@ impl Reader<'_> {
                 Some(_) => return Err(self.error(JsonErrorKind::UnexpectedCharacter)),
             }
             let key = self.string()?;
-            self.skip_whitespace();
-            match self.peek() {
-                Some(b':') => self.at += 1,
-                None => return Err(self.error(JsonErrorKind::UnexpectedEnd)),
-                Some(_) => return Err(self.error(JsonErrorKind::UnexpectedCharacter)),
+            self.colon()?;
+            match prune.member(&key) {
+                Some(inner) => {
+                    let value = self.value(depth + 1, inner)?;
+                    map.insert(key, value);
+                }
+                None => self.skip(depth + 1)?,
             }
-            self.skip_whitespace();
-            let value = self.value(depth + 1)?;
-            map.insert(key, value);
             self.skip_whitespace();
             match self.peek() {
                 Some(b',') => self.at += 1,
@@ -390,8 +486,15 @@ impl Reader<'_> {
     }
 
     fn string(&mut self) -> Result<String, JsonError> {
-        self.at += 1;
         let mut out = String::new();
+        self.string_into(Some(&mut out))?;
+        Ok(out)
+    }
+
+    /// Read a string into `out`, or only check it when `out` is `None`.
+    fn string_into(&mut self, mut out: Option<&mut String>) -> Result<(), JsonError> {
+        self.at += 1;
+        let mut scratch = String::new();
         loop {
             let run = self.at;
             while !matches!(self.peek(), None | Some(b'"' | b'\\' | 0..=0x1f)) {
@@ -399,19 +502,28 @@ impl Reader<'_> {
             }
             // The run ends before an ASCII byte, so it is on character
             // boundaries of the input, which is valid UTF-8.
-            match self.text.get(run..self.at) {
-                Some(chunk) => out.push_str(chunk),
-                None => return Err(self.error(JsonErrorKind::InvalidUnicode)),
+            match (self.text.get(run..self.at), out.as_deref_mut()) {
+                (Some(chunk), Some(out)) => out.push_str(chunk),
+                (Some(_), None) => {}
+                (None, _) => return Err(self.error(JsonErrorKind::InvalidUnicode)),
             }
             match self.peek() {
                 None => return Err(self.error(JsonErrorKind::UnexpectedEnd)),
                 Some(b'"') => {
                     self.at += 1;
-                    return Ok(out);
+                    return Ok(());
                 }
                 Some(b'\\') => {
                     self.at += 1;
-                    self.escape(&mut out)?;
+                    match out.as_deref_mut() {
+                        Some(out) => self.escape(out)?,
+                        None => {
+                            // An escape decodes to one character; the
+                            // scratch never grows past it.
+                            scratch.clear();
+                            self.escape(&mut scratch)?;
+                        }
+                    }
                 }
                 Some(_) => return Err(self.error(JsonErrorKind::ControlCharacterInString)),
             }
