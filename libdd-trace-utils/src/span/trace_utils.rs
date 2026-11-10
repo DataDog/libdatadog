@@ -8,7 +8,8 @@ use tracing::debug;
 use crate::span::span_pool::PooledChunks;
 
 use super::{SpanText, TraceData, v04::Span};
-use std::collections::{HashMap, HashSet};
+use rustc_hash::FxHashSet;
+use std::collections::HashMap;
 
 /// Span metric the mini agent must set for the backend to recognize top level span
 const TOP_LEVEL_KEY: &str = "_top_level";
@@ -91,7 +92,7 @@ pub fn get_root_span_index<S: libdd_trace_model::Span>(trace: &[S]) -> anyhow::R
     // Most traces are small: for them, a linear search for the parent is cheaper than allocating
     // a set of the span ids.
     const MAX_LINEAR_SEARCH_LEN: usize = 32;
-    let span_ids: Option<HashSet<_>> = (trace.len() > MAX_LINEAR_SEARCH_LEN)
+    let span_ids: Option<FxHashSet<_>> = (trace.len() > MAX_LINEAR_SEARCH_LEN)
         .then(|| trace.iter().map(|span| span.span_id()).collect());
     let has_span = |id| match &span_ids {
         Some(span_ids) => span_ids.contains(&id),

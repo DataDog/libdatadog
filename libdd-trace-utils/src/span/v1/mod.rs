@@ -141,12 +141,8 @@ macro_rules! impl_vec_map_attributes {
                 self.attributes.get_mut(key)
             }
 
-            fn set_attribute(
-                &mut self,
-                key: impl Into<Self::Text>,
-                value: libdd_trace_model::Value<Self>,
-            ) {
-                self.attributes.insert_or_replace(key.into(), value);
+            fn set_attribute(&mut self, key: Self::Text, value: libdd_trace_model::Value<Self>) {
+                self.attributes.insert_or_replace(key, value);
             }
 
             fn remove_attribute(&mut self, key: &str) -> Option<libdd_trace_model::Value<Self>> {
@@ -231,20 +227,20 @@ impl<T: TraceData> libdd_trace_model::Span for Span<T> {
 }
 
 impl<T: TraceData> libdd_trace_model::SpanMut for Span<T> {
-    fn set_service(&mut self, value: impl Into<Self::Text>) {
-        self.service = value.into();
+    fn set_service(&mut self, value: Self::Text) {
+        self.service = value;
     }
 
-    fn set_resource(&mut self, value: impl Into<Self::Text>) {
-        self.resource = value.into();
+    fn set_resource(&mut self, value: Self::Text) {
+        self.resource = value;
     }
 
-    fn set_name(&mut self, value: impl Into<Self::Text>) {
-        self.name = value.into();
+    fn set_name(&mut self, value: Self::Text) {
+        self.name = value;
     }
 
-    fn set_type(&mut self, value: impl Into<Self::Text>) {
-        self.r#type = value.into();
+    fn set_type(&mut self, value: Self::Text) {
+        self.r#type = value;
     }
 
     fn set_parent_id(&mut self, value: u64) {
@@ -267,16 +263,16 @@ impl<T: TraceData> libdd_trace_model::SpanMut for Span<T> {
         self.span_kind = SpanKind::from_meta(value);
     }
 
-    fn set_env(&mut self, value: impl Into<Self::Text>) {
-        self.env = value.into();
+    fn set_env(&mut self, value: Self::Text) {
+        self.env = value;
     }
 
-    fn set_version(&mut self, value: impl Into<Self::Text>) {
-        self.version = value.into();
+    fn set_version(&mut self, value: Self::Text) {
+        self.version = value;
     }
 
-    fn set_component(&mut self, value: impl Into<Self::Text>) {
-        self.component = value.into();
+    fn set_component(&mut self, value: Self::Text) {
+        self.component = value;
     }
 
     fn span_events_mut(&mut self) -> impl Iterator<Item = &mut Self::SpanEvent> {
@@ -332,8 +328,8 @@ impl<T: TraceData> libdd_trace_model::TraceChunk for TraceChunk<T> {
 }
 
 impl<T: TraceData> libdd_trace_model::TraceChunkMut for TraceChunk<T> {
-    fn set_origin(&mut self, value: impl Into<Self::Text>) {
-        self.origin = value.into();
+    fn set_origin(&mut self, value: Self::Text) {
+        self.origin = value;
     }
 
     fn set_priority(&mut self, priority: i32) {

@@ -164,7 +164,7 @@ pub trait AttributesMut: Attributes {
     /// Get a mutable reference to the value for a given key, `None` if it is missing
     fn attribute_mut(&mut self, key: &str) -> Option<&mut Value<Self>>;
     /// Set the attribute for `key`, replacing any existing value for that key
-    fn set_attribute(&mut self, key: impl Into<Self::Text>, value: Value<Self>);
+    fn set_attribute(&mut self, key: Self::Text, value: Value<Self>);
     /// Remove the attribute for `key`, returning its value if it was present
     fn remove_attribute(&mut self, key: &str) -> Option<Value<Self>>;
 }
@@ -264,12 +264,12 @@ pub trait Span: Attributes {
 /// Setting `env`, `version` or `component` to the empty string, or the span kind to an
 /// unrecognized value, unsets it.
 pub trait SpanMut: Span<SpanEvent: AttributesMut, SpanLink: AttributesMut> + AttributesMut {
-    fn set_service(&mut self, value: impl Into<Self::Text>);
-    fn set_resource(&mut self, value: impl Into<Self::Text>);
+    fn set_service(&mut self, value: Self::Text);
+    fn set_resource(&mut self, value: Self::Text);
     /// Set the operation name
-    fn set_name(&mut self, value: impl Into<Self::Text>);
+    fn set_name(&mut self, value: Self::Text);
     /// Set the span type (e.g. "web", "db")
-    fn set_type(&mut self, value: impl Into<Self::Text>);
+    fn set_type(&mut self, value: Self::Text);
     /// Set the span id of this span's parent, 0 for a trace root
     fn set_parent_id(&mut self, value: u64);
     /// Set the start timestamp, in nanoseconds since the unix epoch
@@ -280,9 +280,9 @@ pub trait SpanMut: Span<SpanEvent: AttributesMut, SpanLink: AttributesMut> + Att
     /// Set the span kind (e.g. "server", "client"). Implementations storing the kind as an enum
     /// map unrecognized values to their default kind.
     fn set_span_kind(&mut self, value: &str);
-    fn set_env(&mut self, value: impl Into<Self::Text>);
-    fn set_version(&mut self, value: impl Into<Self::Text>);
-    fn set_component(&mut self, value: impl Into<Self::Text>);
+    fn set_env(&mut self, value: Self::Text);
+    fn set_version(&mut self, value: Self::Text);
+    fn set_component(&mut self, value: Self::Text);
 
     /// View this span mutably the way v0.4 `meta`/`metrics` would hold its attributes, promoted
     /// tags included. See [`CompatSpan`].
@@ -324,7 +324,7 @@ pub trait TraceChunk: Attributes {
 /// The sampling priority and mechanism can be set but not unset.
 pub trait TraceChunkMut: TraceChunk<Span: SpanMut> + AttributesMut {
     /// Set the `_dd.origin` value shared by every span in the chunk, empty to unset it
-    fn set_origin(&mut self, value: impl Into<Self::Text>);
+    fn set_origin(&mut self, value: Self::Text);
     /// Set the sampling priority of the chunk
     fn set_priority(&mut self, priority: i32);
     /// Set the sampling mechanism (decision maker) of the chunk
