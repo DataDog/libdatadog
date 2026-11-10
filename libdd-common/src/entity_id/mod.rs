@@ -93,7 +93,7 @@ pub fn get_entity_id() -> Option<&'static str> {
 }
 
 pub static DD_EXTERNAL_ENV: LazyLock<Option<&'static str>> = LazyLock::new(|| {
-    libdd_env::str_not_empty(EXTERNAL_ENV_ENVIRONMENT_VARIABLE)
+    libdd_env::env_str_not_empty(EXTERNAL_ENV_ENVIRONMENT_VARIABLE)
         .map(|s| &*Box::leak(s.into_boxed_str()))
 });
 

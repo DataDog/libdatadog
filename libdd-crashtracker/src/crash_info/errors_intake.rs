@@ -17,7 +17,7 @@ use anyhow::Context;
 use chrono::{DateTime, Utc};
 use http::{Uri, uri::PathAndQuery};
 use libdd_common::{Endpoint, parse_uri};
-use libdd_env::{bool as env_bool, from_str as env_from_str, str_not_empty as env_str_not_empty};
+use libdd_env::{env_bool, env_from_str, env_str_not_empty};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 

@@ -12,9 +12,10 @@
 //!
 //! Each function performs a one-shot read and returns [`None`] when the
 //! variable is unset, is not valid Unicode, or fails to parse. A variable that
-//! is set but holds an unexpected value is *not* [`None`]: [`bool`] parses
-//! `"yes"` as `Some(false)`, keeping "unset" distinguishable from "explicitly
-//! set". Concurrent `setenv` from host code can race with these reads.
+//! is set but holds an unexpected value is *not* [`None`]: [`env_bool`]
+//! parses `"yes"` as `Some(false)`, keeping "unset" distinguishable from
+//! "explicitly set". Concurrent `setenv` from host code can race with these
+//! reads.
 
 use core::{str::FromStr, time::Duration};
 
@@ -24,14 +25,14 @@ use core::{str::FromStr, time::Duration};
 ///
 /// Panics if the parsed value is negative or not finite, like
 /// [`Duration::from_secs_f32`].
-pub fn duration(name: &str) -> Option<Duration> {
+pub fn env_duration(name: &str) -> Option<Duration> {
     Some(Duration::from_secs_f32(
         std::env::var(name).ok()?.parse::<f32>().ok()?,
     ))
 }
 
 /// Reads the variable and parses it with [`FromStr`].
-pub fn from_str<T: FromStr>(name: &str) -> Option<T> {
+pub fn env_from_str<T: FromStr>(name: &str) -> Option<T> {
     std::env::var(name).ok()?.parse::<T>().ok()
 }
 
@@ -40,13 +41,13 @@ pub fn from_str<T: FromStr>(name: &str) -> Option<T> {
 /// The truthy values are `"true"` and `"1"`, matched case-insensitively
 /// (`"TRUE"` and `"True"` parse as true); any other set value parses as
 /// `false`.
-pub fn bool(name: &str) -> Option<bool> {
+pub fn env_bool(name: &str) -> Option<bool> {
     let var = std::env::var(name).ok()?;
     Some(var == "1" || var.eq_ignore_ascii_case("true"))
 }
 
 /// Reads the variable, [`None`] when unset or empty.
-pub fn str_not_empty(name: &str) -> Option<String> {
+pub fn env_str_not_empty(name: &str) -> Option<String> {
     std::env::var(name).ok().filter(|s| !s.is_empty())
 }
 
@@ -70,60 +71,60 @@ mod tests {
     }
 
     #[test]
-    fn bool_matches_true_case_insensitively() {
+    fn env_bool_matches_true_case_insensitively() {
         let _lock = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         remove_var();
-        assert_eq!(bool(TEST_VAR), None);
+        assert_eq!(env_bool(TEST_VAR), None);
 
         set_var("true");
-        assert_eq!(bool(TEST_VAR), Some(true));
+        assert_eq!(env_bool(TEST_VAR), Some(true));
         set_var("TRUE");
-        assert_eq!(bool(TEST_VAR), Some(true));
+        assert_eq!(env_bool(TEST_VAR), Some(true));
         set_var("True");
-        assert_eq!(bool(TEST_VAR), Some(true));
+        assert_eq!(env_bool(TEST_VAR), Some(true));
         set_var("1");
-        assert_eq!(bool(TEST_VAR), Some(true));
+        assert_eq!(env_bool(TEST_VAR), Some(true));
         set_var("yes");
-        assert_eq!(bool(TEST_VAR), Some(false));
+        assert_eq!(env_bool(TEST_VAR), Some(false));
         set_var("");
-        assert_eq!(bool(TEST_VAR), Some(false));
+        assert_eq!(env_bool(TEST_VAR), Some(false));
     }
 
     #[test]
-    fn from_str_parses_with_t() {
+    fn env_from_str_parses_with_t() {
         let _lock = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         remove_var();
-        assert_eq!(from_str::<u16>(TEST_VAR), None);
+        assert_eq!(env_from_str::<u16>(TEST_VAR), None);
 
         set_var("8126");
-        assert_eq!(from_str::<u16>(TEST_VAR), Some(8126));
+        assert_eq!(env_from_str::<u16>(TEST_VAR), Some(8126));
         set_var("-1");
-        assert_eq!(from_str::<u16>(TEST_VAR), None);
+        assert_eq!(env_from_str::<u16>(TEST_VAR), None);
         set_var("not-a-number");
-        assert_eq!(from_str::<u16>(TEST_VAR), None);
+        assert_eq!(env_from_str::<u16>(TEST_VAR), None);
     }
 
     #[test]
-    fn duration_parses_seconds() {
+    fn env_duration_parses_seconds() {
         let _lock = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         remove_var();
-        assert_eq!(duration(TEST_VAR), None);
+        assert_eq!(env_duration(TEST_VAR), None);
 
         set_var("1.5");
-        assert_eq!(duration(TEST_VAR), Some(Duration::from_secs_f32(1.5)));
+        assert_eq!(env_duration(TEST_VAR), Some(Duration::from_secs_f32(1.5)));
         set_var("not-a-number");
-        assert_eq!(duration(TEST_VAR), None);
+        assert_eq!(env_duration(TEST_VAR), None);
     }
 
     #[test]
-    fn str_not_empty_ignores_empty_values() {
+    fn env_str_not_empty_ignores_empty_values() {
         let _lock = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         remove_var();
-        assert_eq!(str_not_empty(TEST_VAR), None);
+        assert_eq!(env_str_not_empty(TEST_VAR), None);
 
         set_var("value");
-        assert_eq!(str_not_empty(TEST_VAR), Some("value".to_owned()));
+        assert_eq!(env_str_not_empty(TEST_VAR), Some("value".to_owned()));
         set_var("");
-        assert_eq!(str_not_empty(TEST_VAR), None);
+        assert_eq!(env_str_not_empty(TEST_VAR), None);
     }
 }

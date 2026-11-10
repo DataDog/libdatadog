@@ -3,10 +3,7 @@
 
 use http::{Uri, uri::PathAndQuery};
 use libdd_common::{Endpoint, parse_uri};
-use libdd_env::{
-    bool as env_bool, duration as env_duration, from_str as env_from_str,
-    str_not_empty as env_str_not_empty,
-};
+use libdd_env::{env_bool, env_duration, env_from_str, env_str_not_empty};
 use std::{borrow::Cow, time::Duration};
 use tracing::debug;
 

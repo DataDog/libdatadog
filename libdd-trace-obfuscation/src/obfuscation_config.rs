@@ -158,7 +158,7 @@ pub struct StatsObfuscationConfig {
 /// Reads a boolean flag from the environment, defaulting to `false`.
 #[cfg(not(target_arch = "wasm32"))]
 fn env_flag(name: &str) -> bool {
-    libdd_env::bool(name).unwrap_or(false)
+    libdd_env::env_bool(name).unwrap_or(false)
 }
 
 impl ObfuscationConfig {
