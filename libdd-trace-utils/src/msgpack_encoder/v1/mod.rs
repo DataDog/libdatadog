@@ -516,6 +516,32 @@ fn encode_payload_from_v1<W: RmpWrite, T: TraceData>(
     writer: &mut W,
     payload: &TracerPayload<T>,
 ) -> Result<(), ValueWriteError<W::Error>> {
+    encode_selected_from_v1(
+        writer,
+        payload,
+        payload.chunks.iter().map(|chunk| super::split::ChunkView {
+            chunk,
+            spans: &chunk.spans,
+        }),
+    )
+}
+
+pub(super) fn encode_selection<'a, T: TraceData + 'a>(
+    payload: &TracerPayload<T>,
+    chunks: impl ExactSizeIterator<Item = super::split::ChunkView<'a, T>>,
+) -> Vec<u8> {
+    let mut buf = ByteBuf::with_capacity(0);
+    encode_selected_from_v1(&mut buf, payload, chunks)
+        .map_err(super::flatten_value_write_infallible)
+        .unwrap_infallible();
+    buf.into_vec()
+}
+
+fn encode_selected_from_v1<'a, W: RmpWrite, T: TraceData + 'a>(
+    writer: &mut W,
+    payload: &TracerPayload<T>,
+    chunks: impl ExactSizeIterator<Item = super::split::ChunkView<'a, T>>,
+) -> Result<(), ValueWriteError<W::Error>> {
     let mut table = StringTable::new();
 
     let has_attributes = !payload.attributes.is_empty();
@@ -534,9 +560,9 @@ fn encode_payload_from_v1<W: RmpWrite, T: TraceData>(
     write_map_len(writer, map_len)?;
 
     write_uint8(writer, trace_key::CHUNKS)?;
-    write_array_len(writer, payload.chunks.len() as u32)?;
-    for chunk in &payload.chunks {
-        encode_chunk_from_v1(writer, chunk, &mut table)?;
+    write_array_len(writer, chunks.len() as u32)?;
+    for view in chunks {
+        encode_chunk_from_v1(writer, view.chunk, view.spans, &mut table)?;
     }
 
     if !payload.container_id.borrow().is_empty() {
@@ -591,6 +617,7 @@ fn encode_payload_from_v1<W: RmpWrite, T: TraceData>(
 fn encode_chunk_from_v1<W: RmpWrite, T: TraceData>(
     writer: &mut W,
     chunk: &crate::span::v1::TraceChunk<T>,
+    spans: &[crate::span::v1::Span<T>],
     table: &mut StringTable,
 ) -> Result<(), ValueWriteError<W::Error>> {
     let origin = <T::Text as Borrow<str>>::borrow(&chunk.origin);
@@ -610,8 +637,8 @@ fn encode_chunk_from_v1<W: RmpWrite, T: TraceData>(
     write_bin(writer, &chunk.trace_id)?;
 
     write_uint8(writer, chunk_key::SPANS)?;
-    write_array_len(writer, chunk.spans.len() as u32)?;
-    for span in &chunk.spans {
+    write_array_len(writer, spans.len() as u32)?;
+    for span in spans {
         span_v1::encode_span(writer, span, table)?;
     }
 

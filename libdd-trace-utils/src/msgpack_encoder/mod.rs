@@ -27,6 +27,7 @@
 //!   | `v1::`  | `to_vec_from_v04`, `write_to_slice_from_v04`, `to_encoded_byte_len_from_v04` | v04 → V1  (upgrade) |
 //!   | `v1::`  | `to_vec_from_v1`, `write_to_slice_from_v1`, `to_encoded_byte_len_from_v1`     | v1  → V1  (native) |
 
+pub mod split;
 pub mod v04;
 pub mod v1;
 
