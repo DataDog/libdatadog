@@ -14,7 +14,7 @@
 //! | `AttributeValue::String` / `Bool`     | `meta[k]` (`"true"` / `"false"` for bool)   |
 //! | `AttributeValue::Float` / `Int`       | `metrics[k]` (Int cast to `f64`)            |
 //! | `AttributeValue::Bytes`               | `meta_struct[k]` (raw bytes)                |
-//! | `AttributeValue::Array`               | flattened into `meta`/`metrics[k.0]`, `[k.1]`, ... (per element type) |
+//! | `AttributeValue::Array`               | flattened into `meta`/`metrics[k.0]`, `[k.1]`, ... (per element type; nested `Bytes` base64 in `meta`) |
 //! | `AttributeValue::KeyValueList`        | flattened into `meta`/`metrics[k.a]`, `[k.a.b]`, ... (per member, recursively) |
 //! | `error: bool`                         | `error: i32` (`true → 1`, `false → 0`)      |
 //! | `span_links`                          | native `span_links` (attributes stringified) |
@@ -45,9 +45,12 @@ use crate::span::trace_utils::{
 };
 use crate::span::v1::{AttributeValue, Span, SpanEvent, SpanKind, SpanLink};
 use crate::span::vec_map::{DedupedVecMap, VecMap};
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use libdd_common::ResultInfallibleExt;
 use rmp::encode::{
-    RmpWrite, ValueWriteError, write_array_len, write_bin, write_bool, write_f64, write_i64,
-    write_map_len, write_sint, write_str, write_str_len, write_u8, write_u64,
+    ByteBuf, RmpWrite, ValueWriteError, write_array_len, write_bin, write_bool, write_f64,
+    write_i64, write_map_len, write_sint, write_str, write_str_len, write_u8, write_u64,
 };
 use serde::ser::{Serialize, SerializeStruct, Serializer};
 use std::borrow::{Borrow, Cow};
@@ -60,6 +63,134 @@ const FIRST_SPAN_PAYLOAD_ATTR_KEYS: &[&str] = &[PROCESS_TAGS_KEY, SDK_OTLP_EXPOR
 
 /// Payload attributes that v0.4 carries on the root span of each trace only (git metadata).
 const ROOT_SPAN_PAYLOAD_ATTR_KEYS: &[&str] = &[GIT_COMMIT_SHA_KEY, GIT_REPOSITORY_URL_KEY];
+
+/// Attribute keys whose composite (`Array` / `KeyValueList`) values the backend reads from
+/// `meta_struct`. Keep in sync with the intake's `MetaStructAttributes`.
+const META_STRUCT_ROOTS: &[&str] = &[
+    "appsec",
+    "iast",
+    "_dd.appsec_shadow_deployed",
+    "_dd.stack",
+    "threat_intel",
+    "api.security",
+    "api.entity",
+    "api.definition",
+    "api.endpoint",
+    "http.request.body",
+    "ai_guard",
+    "_llmobs",
+];
+
+/// Subtrees of [`META_STRUCT_ROOTS`] which the backend reads from `meta` instead.
+/// I.e. we must not normalize those into meta_struct.
+const META_SUBTREES: &[&str] = &["appsec.events", "appsec.fingerprint"];
+
+/// Whether `key` equals `prefix` or is nested below it at a `.` boundary.
+fn is_in_or_below(key: &str, prefix: &str) -> bool {
+    key.strip_prefix(prefix)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with('.'))
+}
+
+/// Whether a composite attribute under `key` is written to `meta_struct` instead of being
+/// flattened. `*.json` keys carry JSON documents read as they are, so they never match.
+fn is_meta_struct_key(key: &str) -> bool {
+    !key.ends_with(".json")
+        && META_STRUCT_ROOTS
+            .iter()
+            .any(|root| is_in_or_below(key, root))
+        && !META_SUBTREES.iter().any(|sub| is_in_or_below(key, sub))
+}
+
+/// Whether member `member` of a `KeyValueList` under `meta_struct` key `key` is a meta subtree,
+/// such as `events` of an `appsec` map.
+fn is_meta_subtree_member(key: &str, member: &str) -> bool {
+    META_SUBTREES.iter().any(|sub| {
+        sub.strip_prefix(key)
+            .and_then(|rest| rest.strip_prefix('.'))
+            .is_some_and(|rest| rest == member)
+    })
+}
+
+/// Writes `v` as a plain msgpack value, the form v0.4 `meta_struct` bytes carry: nested `Bytes`
+/// stay `bin` and integers take their narrowest encoding, as the backend decodes them.
+fn write_msgpack_value<W: RmpWrite, T: TraceData>(
+    writer: &mut W,
+    v: &AttributeValue<T>,
+) -> Result<(), ValueWriteError<W::Error>> {
+    match v {
+        AttributeValue::String(s) => write_str(writer, s.borrow()),
+        AttributeValue::Bool(b) => {
+            write_bool(writer, *b).map_err(ValueWriteError::InvalidDataWrite)
+        }
+        AttributeValue::Int(i) => write_sint(writer, *i).map(|_| ()),
+        AttributeValue::Float(f) => write_f64(writer, *f),
+        AttributeValue::Bytes(b) => write_bin(writer, b.borrow()),
+        AttributeValue::Array(items) => {
+            write_array_len(writer, items.len() as u32)?;
+            items
+                .iter()
+                .try_for_each(|item| write_msgpack_value(writer, item))
+        }
+        AttributeValue::KeyValueList(map) => {
+            write_msgpack_map(writer, map.defensive_dedup().iter())
+        }
+    }
+}
+
+/// Writes `entries` as a msgpack map of plain msgpack values (see [`write_msgpack_value`]).
+fn write_msgpack_map<'a, W: RmpWrite, T: TraceData + 'a>(
+    writer: &mut W,
+    entries: impl ExactSizeIterator<Item = (&'a T::Text, &'a AttributeValue<T>)>,
+) -> Result<(), ValueWriteError<W::Error>> {
+    write_map_len(writer, entries.len() as u32)?;
+    entries.into_iter().try_for_each(|(k, v)| {
+        write_str(writer, k.borrow())?;
+        write_msgpack_value(writer, v)
+    })
+}
+
+/// Encodes the composite `value` of `meta_struct` key `key` as msgpack. Meta subtree members
+/// (see [`META_SUBTREES`]) are split off first and flattened into the `meta` / `metrics`
+/// leaves. Returns `None` when the split leaves nothing; a map that was empty to begin with is
+/// still encoded.
+fn encode_meta_struct_value<T: TraceData>(
+    key: &str,
+    value: &AttributeValue<T>,
+    key_buf: &mut String,
+    meta_out: &mut Vec<(String, String)>,
+    metrics_out: &mut Vec<(String, f64)>,
+) -> Option<Vec<u8>> {
+    let mut buf = ByteBuf::new();
+    match value {
+        // Only keys with a meta subtree below them (i.e. `appsec`) can have members to split.
+        AttributeValue::KeyValueList(map)
+            if META_SUBTREES.iter().any(|sub| is_in_or_below(sub, key)) =>
+        {
+            let map = map.defensive_dedup();
+            let mut rest = Vec::with_capacity(map.len());
+            for (member, v) in map.iter() {
+                if is_meta_subtree_member(key, member.borrow()) {
+                    key_buf.clear();
+                    key_buf.push_str(key);
+                    key_buf.push('.');
+                    key_buf.push_str(member.borrow());
+                    flatten_attr_into(key_buf, v, meta_out, metrics_out);
+                } else {
+                    rest.push((member, v));
+                }
+            }
+            let split_off = rest.len() < map.len();
+            if rest.is_empty() && split_off {
+                return None;
+            }
+            write_msgpack_map(&mut buf, rest.into_iter())
+        }
+        _ => write_msgpack_value(&mut buf, value),
+    }
+    .map_err(super::super::flatten_value_write_infallible)
+    .unwrap_infallible();
+    Some(buf.into_vec())
+}
 
 /// Chunk-level context propagated into the spans of a chunk when downgrading to v0.4. Built once
 /// per chunk by the top-level encoder and passed by reference to `encode_span`. Also carries
@@ -175,7 +306,8 @@ fn dedup_first_wins<K: AsRef<str>, V>(mut leaves: Vec<(K, V)>) -> Vec<(K, V)> {
 /// V1 attributes to be exploded: list elements become `key.0`, `key.1`, ... and `KeyValue`
 /// members become `key.<member>` (recursively, for nested `KeyValue`/`List` values). Scalars
 /// (`String`/`Bool`/`Int`/`Float`) are leaves in their own right and produce a single entry under
-/// `key`. `Bytes` has no flattened form; callers must route it to `meta_struct` separately.
+/// `key`. Nested `Bytes` leaves are base64-encoded into `meta`, as the intake flattens them;
+/// callers route top-level `Bytes` to `meta_struct` instead.
 fn flatten_attr_into<T: TraceData>(
     key: &mut String,
     v: &AttributeValue<T>,
@@ -189,8 +321,8 @@ fn flatten_attr_into<T: TraceData>(
         }
         AttributeValue::Int(i) => metrics_out.push((key.clone(), *i as f64)),
         AttributeValue::Float(f) => metrics_out.push((key.clone(), *f)),
-        AttributeValue::Bytes(_) => {
-            // Callers filter `Bytes` out before recursing; unreachable in practice.
+        AttributeValue::Bytes(b) => {
+            meta_out.push((key.clone(), BASE64_STANDARD.encode(b.borrow())));
         }
         AttributeValue::Array(items) => {
             // Reuse `key`'s buffer across siblings instead of allocating a new `String` per
@@ -323,17 +455,32 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
     // `List` and `KeyValue` have no v0.4 wire representation as a single value, so they are
     // exploded into dotted keys (`key.0`, `key.a.b`) the same way intake/the UI expect nested V1
     // attributes — see the mapping table in the module docs. `Bytes` keeps going to
-    // `meta_struct` since it has no flattened form.
+    // `meta_struct` since it has no flattened form, and so do composites under a meta_struct
+    // root (see `META_STRUCT_ROOTS`), msgpack-encoded, as the backend reads them from there.
     let mut meta_leaves: Vec<(String, String)> = Vec::new();
     let mut metrics_leaves: Vec<(String, f64)> = Vec::new();
-    let mut bytes_attrs: Vec<(&T::Text, &T::Bytes)> = Vec::new();
+    let mut meta_struct: Vec<(&str, Cow<'_, [u8]>)> = Vec::new();
     let mut key_buf = String::new();
     for (k, v) in merged_attrs {
+        let key: &str = k.borrow();
         match v {
-            AttributeValue::Bytes(b) => bytes_attrs.push((k, b)),
+            AttributeValue::Bytes(b) => meta_struct.push((key, Cow::Borrowed(b.borrow()))),
+            AttributeValue::Array(_) | AttributeValue::KeyValueList(_)
+                if is_meta_struct_key(key) =>
+            {
+                if let Some(encoded) = encode_meta_struct_value(
+                    key,
+                    v,
+                    &mut key_buf,
+                    &mut meta_leaves,
+                    &mut metrics_leaves,
+                ) {
+                    meta_struct.push((key, Cow::Owned(encoded)));
+                }
+            }
             _ => {
                 key_buf.clear();
-                key_buf.push_str(k.borrow());
+                key_buf.push_str(key);
                 flatten_attr_into(&mut key_buf, v, &mut meta_leaves, &mut metrics_leaves);
             }
         }
@@ -357,7 +504,7 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
     counts.meta += meta_leaves.len() as u32;
     counts.metrics += (is_root && chunk.priority.is_some()) as u32;
     counts.metrics += metrics_leaves.len() as u32;
-    counts.meta_struct += bytes_attrs.len() as u32;
+    counts.meta_struct += meta_struct.len() as u32;
 
     let span_len = 7 // service, name, resource, trace_id, span_id, start, duration (always)
         + (!span.r#type.borrow().is_empty()) as u32
@@ -486,9 +633,9 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
         write_const_msgpack_str!(writer, "meta_struct")?;
         write_map_len(writer, counts.meta_struct)?;
 
-        for &(k, b) in &bytes_attrs {
-            write_str(writer, k.borrow())?;
-            write_bin(writer, b.borrow())?;
+        for (k, b) in &meta_struct {
+            write_str(writer, k)?;
+            write_bin(writer, b)?;
         }
     }
 
@@ -1462,6 +1609,473 @@ mod tests {
                 f("mm.nums.0", 1.0),
                 f("mm.nums.1", 2.5)
             ]
+        );
+    }
+
+    fn kv(entries: Vec<(&str, AttributeValueBytes)>) -> AttributeValueBytes {
+        let mut map: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        for (k, v) in entries {
+            map.insert(bs(k), v);
+        }
+        AttributeValue::KeyValueList(map)
+    }
+
+    fn span_with_attrs(entries: Vec<(&str, AttributeValueBytes)>) -> TracerPayloadBytes {
+        let mut attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        for (k, v) in entries {
+            attrs.insert(bs(k), v);
+        }
+        minimal_payload(
+            [0u8; 16],
+            SpanBytes {
+                attributes: attrs,
+                ..minimal_span()
+            },
+        )
+    }
+
+    /// The raw `bin` stored under `meta_struct[key]`.
+    fn meta_struct_bin<'a>(span: &'a Value, key: &str) -> &'a [u8] {
+        let ms = map_get(span, "meta_struct").expect("meta_struct present");
+        match map_get(ms, key) {
+            Some(Value::Binary(b)) => b,
+            other => panic!("expected bin under meta_struct[{key}], got {other:?}"),
+        }
+    }
+
+    /// Decodes `meta_struct[key]`, which must hold exactly one msgpack value.
+    fn meta_struct_value(span: &Value, key: &str) -> Value {
+        let mut bin = meta_struct_bin(span, key);
+        let value = rmpv::decode::read_value(&mut bin).expect("meta_struct value is msgpack");
+        assert!(bin.is_empty(), "trailing bytes after meta_struct[{key}]");
+        value
+    }
+
+    fn meta_keys(span: &Value) -> Vec<String> {
+        map_get(span, "meta")
+            .map(|m| {
+                m.as_map()
+                    .unwrap()
+                    .iter()
+                    .map(|(k, _)| k.as_str().unwrap().to_owned())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn root_composite_attribute_is_msgpack_encoded_into_meta_struct() {
+        let frame = kv(vec![
+            ("line", AttributeValue::Int(13)),
+            ("file", AttributeValue::String(bs("a.php"))),
+            (
+                "raw",
+                AttributeValue::Bytes(Bytes::copy_from_slice(b"\xde\xad")),
+            ),
+            ("ratio", AttributeValue::Float(0.5)),
+            ("native", AttributeValue::Bool(false)),
+        ]);
+        let stack = kv(vec![(
+            "exploit",
+            AttributeValue::Array(vec![kv(vec![
+                ("language", AttributeValue::String(bs("php"))),
+                ("frames", AttributeValue::Array(vec![frame])),
+            ])]),
+        )]);
+        let traces = encode_and_decode(&span_with_attrs(vec![("_dd.stack", stack)]));
+        let span = &traces[0][0];
+
+        let expected = Value::Map(vec![(
+            Value::from("exploit"),
+            Value::Array(vec![Value::Map(vec![
+                (Value::from("language"), Value::from("php")),
+                (
+                    Value::from("frames"),
+                    Value::Array(vec![Value::Map(vec![
+                        (Value::from("line"), Value::from(13)),
+                        (Value::from("file"), Value::from("a.php")),
+                        (Value::from("raw"), Value::Binary(b"\xde\xad".to_vec())),
+                        (Value::from("ratio"), Value::F64(0.5)),
+                        (Value::from("native"), Value::Boolean(false)),
+                    ])]),
+                ),
+            ])]),
+        )]);
+        assert_eq!(
+            sort_maps(meta_struct_value(span, "_dd.stack")),
+            sort_maps(expected)
+        );
+        assert!(
+            meta_keys(span).iter().all(|k| !k.starts_with("_dd.stack")),
+            "a meta_struct composite must not also be flattened into meta"
+        );
+        assert!(map_get(span, "metrics").is_none());
+    }
+
+    #[test]
+    fn dotted_keys_below_a_root_go_to_meta_struct() {
+        let traces = encode_and_decode(&span_with_attrs(vec![
+            (
+                "appsec.triggers",
+                AttributeValue::Array(vec![kv(vec![("rule", AttributeValue::String(bs("r")))])]),
+            ),
+            (
+                "api.security.schema",
+                kv(vec![(
+                    "k",
+                    AttributeValue::Array(vec![
+                        AttributeValue::Int(1),
+                        AttributeValue::String(bs("a")),
+                    ]),
+                )]),
+            ),
+            // Below `appsec` but not below the `appsec.events` subtree.
+            (
+                "appsec.eventsfoo",
+                kv(vec![("x", AttributeValue::String(bs("y")))]),
+            ),
+        ]));
+        let span = &traces[0][0];
+        assert_eq!(
+            meta_struct_value(span, "appsec.triggers"),
+            Value::Array(vec![Value::Map(vec![(
+                Value::from("rule"),
+                Value::from("r")
+            )])])
+        );
+        assert_eq!(
+            meta_struct_value(span, "api.security.schema"),
+            Value::Map(vec![(
+                Value::from("k"),
+                Value::Array(vec![Value::from(1), Value::from("a")])
+            )])
+        );
+        assert_eq!(
+            meta_struct_value(span, "appsec.eventsfoo"),
+            Value::Map(vec![(Value::from("x"), Value::from("y"))])
+        );
+        assert!(map_get(span, "meta").is_none());
+    }
+
+    #[test]
+    fn every_meta_struct_root_is_recognized() {
+        let roots = [
+            "appsec",
+            "iast",
+            "_dd.appsec_shadow_deployed",
+            "_dd.stack",
+            "threat_intel",
+            "api.security",
+            "api.entity",
+            "api.definition",
+            "api.endpoint",
+            "http.request.body",
+            "ai_guard",
+            "_llmobs",
+        ];
+        let traces = encode_and_decode(&span_with_attrs(
+            roots
+                .iter()
+                .map(|r| (*r, AttributeValue::Array(vec![AttributeValue::Int(1)])))
+                .collect(),
+        ));
+        let span = &traces[0][0];
+        for root in roots {
+            assert_eq!(
+                meta_struct_value(span, root),
+                Value::Array(vec![Value::from(1)]),
+                "{root}"
+            );
+        }
+        assert!(map_get(span, "metrics").is_none());
+    }
+
+    #[test]
+    fn look_alike_keys_are_flattened() {
+        let traces = encode_and_decode(&span_with_attrs(vec![
+            ("appsecx", kv(vec![("x", AttributeValue::Int(1))])),
+            (
+                "api.securityx",
+                kv(vec![("x", AttributeValue::String(bs("y")))]),
+            ),
+            ("xappsec", kv(vec![("x", AttributeValue::String(bs("y")))])),
+            (
+                "_dd.stackx",
+                AttributeValue::Array(vec![AttributeValue::String(bs("y"))]),
+            ),
+            ("api", kv(vec![("x", AttributeValue::String(bs("y")))])),
+        ]));
+        let span = &traces[0][0];
+        assert!(map_get(span, "meta_struct").is_none());
+        let meta = map_get(span, "meta").expect("meta present");
+        assert_eq!(
+            map_get(meta, "api.securityx.x").unwrap().as_str(),
+            Some("y")
+        );
+        assert_eq!(map_get(meta, "xappsec.x").unwrap().as_str(), Some("y"));
+        assert_eq!(map_get(meta, "_dd.stackx.0").unwrap().as_str(), Some("y"));
+        assert_eq!(map_get(meta, "api.x").unwrap().as_str(), Some("y"));
+        let metrics = map_get(span, "metrics").expect("metrics present");
+        assert_eq!(map_get(metrics, "appsecx.x").unwrap().as_f64(), Some(1.0));
+    }
+
+    #[test]
+    fn scalars_under_roots_stay_in_meta_and_metrics() {
+        let traces = encode_and_decode(&span_with_attrs(vec![
+            ("ai_guard.action", AttributeValue::String(bs("allow"))),
+            ("appsec.score", AttributeValue::Int(3)),
+            ("_llmobs", AttributeValue::Bool(true)),
+        ]));
+        let span = &traces[0][0];
+        assert!(map_get(span, "meta_struct").is_none());
+        let meta = map_get(span, "meta").expect("meta present");
+        assert_eq!(
+            map_get(meta, "ai_guard.action").unwrap().as_str(),
+            Some("allow")
+        );
+        assert_eq!(map_get(meta, "_llmobs").unwrap().as_str(), Some("true"));
+        let metrics = map_get(span, "metrics").expect("metrics present");
+        assert_eq!(
+            map_get(metrics, "appsec.score").unwrap().as_f64(),
+            Some(3.0)
+        );
+    }
+
+    #[test]
+    fn appsec_events_and_fingerprint_children_are_split_into_meta() {
+        let appsec = kv(vec![
+            (
+                "triggers",
+                AttributeValue::Array(vec![kv(vec![("rule", AttributeValue::String(bs("r")))])]),
+            ),
+            (
+                "events",
+                kv(vec![(
+                    "users",
+                    kv(vec![("track", AttributeValue::String(bs("true")))]),
+                )]),
+            ),
+            (
+                "fingerprint",
+                kv(vec![(
+                    "header",
+                    kv(vec![("ua_hash", AttributeValue::String(bs("h")))]),
+                )]),
+            ),
+        ]);
+        let traces = encode_and_decode(&span_with_attrs(vec![("appsec", appsec)]));
+        let span = &traces[0][0];
+        assert_eq!(
+            meta_struct_value(span, "appsec"),
+            Value::Map(vec![(
+                Value::from("triggers"),
+                Value::Array(vec![Value::Map(vec![(
+                    Value::from("rule"),
+                    Value::from("r")
+                )])])
+            )])
+        );
+        let meta = map_get(span, "meta").expect("meta present");
+        assert_eq!(
+            map_get(meta, "appsec.events.users.track").unwrap().as_str(),
+            Some("true")
+        );
+        assert_eq!(
+            map_get(meta, "appsec.fingerprint.header.ua_hash")
+                .unwrap()
+                .as_str(),
+            Some("h")
+        );
+        assert_eq!(meta_keys(span).len(), 2);
+    }
+
+    #[test]
+    fn appsec_with_only_meta_subtree_children_has_no_meta_struct_entry() {
+        let traces = encode_and_decode(&span_with_attrs(vec![(
+            "appsec",
+            kv(vec![(
+                "events",
+                kv(vec![("x", AttributeValue::String(bs("y")))]),
+            )]),
+        )]));
+        let span = &traces[0][0];
+        assert!(map_get(span, "meta_struct").is_none());
+        let meta = map_get(span, "meta").expect("meta present");
+        assert_eq!(
+            map_get(meta, "appsec.events.x").unwrap().as_str(),
+            Some("y")
+        );
+    }
+
+    #[test]
+    fn empty_root_map_is_kept_in_meta_struct() {
+        let traces = encode_and_decode(&span_with_attrs(vec![("appsec", kv(vec![]))]));
+        assert_eq!(
+            meta_struct_value(&traces[0][0], "appsec"),
+            Value::Map(vec![])
+        );
+    }
+
+    #[test]
+    fn composites_below_meta_subtrees_are_flattened() {
+        let traces = encode_and_decode(&span_with_attrs(vec![
+            (
+                "appsec.events.custom",
+                kv(vec![("track", AttributeValue::String(bs("true")))]),
+            ),
+            (
+                "appsec.fingerprint",
+                kv(vec![(
+                    "http",
+                    kv(vec![("h", AttributeValue::String(bs("v")))]),
+                )]),
+            ),
+        ]));
+        let span = &traces[0][0];
+        assert!(map_get(span, "meta_struct").is_none());
+        let meta = map_get(span, "meta").expect("meta present");
+        assert_eq!(
+            map_get(meta, "appsec.events.custom.track")
+                .unwrap()
+                .as_str(),
+            Some("true")
+        );
+        assert_eq!(
+            map_get(meta, "appsec.fingerprint.http.h").unwrap().as_str(),
+            Some("v")
+        );
+    }
+
+    #[test]
+    fn json_suffixed_keys_are_never_routed_to_meta_struct() {
+        let traces = encode_and_decode(&span_with_attrs(vec![
+            (
+                "appsec.json",
+                kv(vec![("x", AttributeValue::String(bs("y")))]),
+            ),
+            (
+                "_dd.stack.json",
+                AttributeValue::Array(vec![AttributeValue::String(bs("z"))]),
+            ),
+            ("iast.json", AttributeValue::String(bs("{\"a\":1}"))),
+        ]));
+        let span = &traces[0][0];
+        assert!(map_get(span, "meta_struct").is_none());
+        let meta = map_get(span, "meta").expect("meta present");
+        assert_eq!(map_get(meta, "appsec.json.x").unwrap().as_str(), Some("y"));
+        assert_eq!(
+            map_get(meta, "_dd.stack.json.0").unwrap().as_str(),
+            Some("z")
+        );
+        assert_eq!(
+            map_get(meta, "iast.json").unwrap().as_str(),
+            Some("{\"a\":1}")
+        );
+    }
+
+    #[test]
+    fn nested_bytes_in_a_flattened_composite_are_base64_in_meta() {
+        let traces = encode_and_decode(&span_with_attrs(vec![(
+            "blob",
+            kv(vec![(
+                "raw",
+                AttributeValue::Bytes(Bytes::copy_from_slice(b"\xde\xad")),
+            )]),
+        )]));
+        let span = &traces[0][0];
+        assert!(map_get(span, "meta_struct").is_none());
+        let meta = map_get(span, "meta").expect("meta present");
+        assert_eq!(map_get(meta, "blob.raw").unwrap().as_str(), Some("3q0="));
+    }
+
+    #[test]
+    fn meta_struct_integers_use_the_narrowest_msgpack_encoding() {
+        let traces = encode_and_decode(&span_with_attrs(vec![(
+            "_dd.stack",
+            AttributeValue::Array(vec![
+                AttributeValue::Int(5),
+                AttributeValue::Int(-1),
+                AttributeValue::Int(300),
+            ]),
+        )]));
+        assert_eq!(
+            meta_struct_bin(&traces[0][0], "_dd.stack"),
+            [0x93, 0x05, 0xff, 0xcd, 0x01, 0x2c]
+        );
+    }
+
+    #[test]
+    fn root_composites_from_chunk_and_payload_attributes_keep_precedence() {
+        let mut payload_attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        payload_attrs.insert(bs("ai_guard"), kv(vec![("p", AttributeValue::Int(1))]));
+        payload_attrs.insert(bs("_llmobs"), kv(vec![("p", AttributeValue::Int(1))]));
+        let mut chunk_attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        chunk_attrs.insert(bs("_llmobs"), kv(vec![("c", AttributeValue::Int(1))]));
+        chunk_attrs.insert(bs("iast"), kv(vec![("c", AttributeValue::Int(1))]));
+        let mut span_attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        span_attrs.insert(bs("iast"), kv(vec![("s", AttributeValue::Int(1))]));
+        let payload = TracerPayloadBytes {
+            attributes: payload_attrs,
+            chunks: vec![TraceChunkBytes {
+                trace_id: [0u8; 16],
+                attributes: chunk_attrs,
+                spans: vec![SpanBytes {
+                    attributes: span_attrs,
+                    ..minimal_span()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let traces = encode_and_decode(&payload);
+        let span = &traces[0][0];
+        let one = |k: &str| Value::Map(vec![(Value::from(k), Value::from(1))]);
+        assert_eq!(meta_struct_value(span, "ai_guard"), one("p"));
+        assert_eq!(meta_struct_value(span, "_llmobs"), one("c"));
+        assert_eq!(meta_struct_value(span, "iast"), one("s"));
+        let ms = map_get(span, "meta_struct").unwrap().as_map().unwrap();
+        assert_eq!(ms.len(), 3);
+    }
+
+    #[test]
+    fn meta_struct_composites_keep_the_encoded_length_exact_and_decode_as_v04() {
+        let payload = span_with_attrs(vec![
+            (
+                "_dd.stack",
+                kv(vec![(
+                    "exploit",
+                    AttributeValue::Array(vec![kv(vec![("id", AttributeValue::Int(7))])]),
+                )]),
+            ),
+            (
+                "blob",
+                AttributeValue::Bytes(Bytes::copy_from_slice(b"\x01\x02")),
+            ),
+            (
+                "appsec",
+                kv(vec![
+                    ("events", kv(vec![("a", AttributeValue::String(bs("b")))])),
+                    ("triggers", AttributeValue::Array(vec![])),
+                ]),
+            ),
+        ]);
+        let bytes = super::super::to_vec_from_v1(&payload);
+        assert_eq!(
+            super::super::to_encoded_byte_len_from_v1(&payload) as usize,
+            bytes.len()
+        );
+        let (traces, _) =
+            crate::msgpack_decoder::v04::from_slice(&bytes).expect("valid v0.4 payload");
+        let span = &traces[0][0];
+        let mut keys: Vec<&str> = span.meta_struct.iter().map(|(k, _)| k.as_ref()).collect();
+        keys.sort_unstable();
+        assert_eq!(keys, ["_dd.stack", "appsec", "blob"]);
+        assert_eq!(
+            span.meta
+                .iter()
+                .find(|(k, _)| k == "appsec.events.a")
+                .map(|(_, v)| v.as_ref()),
+            Some("b")
         );
     }
 

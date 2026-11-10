@@ -117,10 +117,10 @@ fn dedup_first_wins<V>(mut leaves: Vec<(String, V)>) -> Vec<(String, V)> {
 }
 
 /// Recursively flattens a `List`/`KeyValue` attribute into dotted-key leaf entries for the
-/// `meta` (string-valued) and `metrics` (numeric) buckets. Mirrors
-/// `crate::msgpack_encoder::v04::span_v1::flatten_attr_into` exactly (same flattening
-/// convention on both wire formats). `Bytes` has no flattened form and is dropped by the
-/// caller before recursing.
+/// `meta` (string-valued) and `metrics` (numeric) buckets, with the same dotted-key convention
+/// as `crate::msgpack_encoder::v04::span_v1::flatten_attr_into`. Unlike the v0.4 downgrade,
+/// JSON logs carry no `meta_struct`: composites under its roots are flattened like any other,
+/// top-level `Bytes` are dropped by the caller and nested ones are dropped here.
 fn flatten_attr_into<T: TraceData>(
     key: &mut String,
     v: &AttributeValue<T>,
@@ -135,7 +135,7 @@ fn flatten_attr_into<T: TraceData>(
         AttributeValue::Int(i) => metrics_out.push((key.clone(), *i as f64)),
         AttributeValue::Float(f) => metrics_out.push((key.clone(), *f)),
         AttributeValue::Bytes(_) => {
-            // Callers filter `Bytes` out before recursing; unreachable in practice.
+            // No JSON log representation, like top-level `Bytes`.
         }
         AttributeValue::Array(items) => {
             let base_len = key.len();
