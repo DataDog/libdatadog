@@ -9,8 +9,6 @@
 //! the crash ends gets:
 //! - its end moved to the crash report's timestamp, never earlier than the end the tracer staged;
 //! - `error = true`, with the `error.type` and `error.message` errors intake reports;
-//! - `track_error = "false"`: the crash report sent to errors intake is the crash's one Error
-//!   Tracking issue, so the span must not open a second;
 //! - `error.is_crash = "true"` and `dd.crash_tracking.uuid`, which the trace view uses to find the
 //!   crash report and show its issue.
 //!
@@ -33,8 +31,6 @@ const SUBMIT_TIMEOUT: Duration = Duration::from_secs(3);
 pub(crate) const CRASH_UUID_KEY: &str = "dd.crash_tracking.uuid";
 /// With [`CRASH_UUID_KEY`], lets the trace view link the span to its crash report's issue.
 pub(crate) const IS_CRASH_KEY: &str = "error.is_crash";
-/// Error Tracking skips spans with `track_error = "false"`.
-pub(crate) const TRACK_ERROR_KEY: &str = "track_error";
 
 /// What the crash report knows about the crash, stamped into every span it ends.
 #[derive(Debug)]
@@ -69,7 +65,6 @@ impl CrashDetails {
             ("error.type", Some(self.error_type.as_str())),
             ("error.message", self.error_message.as_deref()),
             (IS_CRASH_KEY, Some("true")),
-            (TRACK_ERROR_KEY, Some("false")),
             (CRASH_UUID_KEY, Some(self.uuid.as_str())),
         ]
         .into_iter()

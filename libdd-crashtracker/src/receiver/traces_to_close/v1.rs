@@ -55,7 +55,7 @@ fn end_at_crash<'a>(span: &mut SpanSlice<'a>, crash: &'a CrashDetails) {
 
 #[cfg(test)]
 pub(super) mod tests {
-    use super::super::{CRASH_UUID_KEY, IS_CRASH_KEY, TRACK_ERROR_KEY};
+    use super::super::{CRASH_UUID_KEY, IS_CRASH_KEY};
     use super::*;
     use libdd_trace_utils::span::SliceData;
     use libdd_trace_utils::span::v1::{SpanKind, TraceChunk, TracerPayload};
@@ -138,7 +138,7 @@ pub(super) mod tests {
             Some("Crash during training (SIGSEGV)")
         );
         assert_eq!(string_attr(span, IS_CRASH_KEY), Some("true"));
-        assert_eq!(string_attr(span, TRACK_ERROR_KEY), Some("false"));
+        assert_eq!(string_attr(span, "track_error"), None);
         assert_eq!(string_attr(span, CRASH_UUID_KEY), Some("abc"));
         // The tracer's own attributes, and strings interned after the new
         // ones, keep their meaning.
