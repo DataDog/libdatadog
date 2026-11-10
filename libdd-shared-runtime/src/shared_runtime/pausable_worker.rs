@@ -124,7 +124,9 @@ impl core::error::Error for PausableWorkerError {}
 ///
 /// Commands are handled between runs. If the worker allows it
 /// ([`Worker::cancellable_run`]), a command received during `run` cancels the run at its next
-/// yield point instead, so a pause before a fork does not wait for a slow run.
+/// yield point instead, so a pause before a fork does not wait for a slow run. Such a `run` is
+/// wrapped with [`WeakWakerFuture::new`] as well, since it may be dropped with its waker still
+/// stored somewhere.
 async fn run_worker<T: Worker>(mut worker: T, mut receiver: CommandReceiver) -> TaskOutput<T> {
     let mut first = true;
     loop {
@@ -146,7 +148,7 @@ async fn run_worker<T: Worker>(mut worker: T, mut receiver: CommandReceiver) -> 
                 select! {
                     biased;
                     cmd = WeakWakerFuture::new(receiver.recv()) => cmd,
-                    _ = worker.run() => continue,
+                    _ = WeakWakerFuture::new(worker.run()) => continue,
                 }
             }
         };
