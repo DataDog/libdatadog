@@ -556,6 +556,9 @@ mod tests {
                             value(v, m);
                         }
                     }
+                    // A key-value list is a map: the encoder's on-the-fly dedup of a non-deduped
+                    // `VecMap` emits it in hash order, so compare it order-insensitively.
+                    kv.key_values.sort_by_key(|e| e.key);
                 }
                 _ => {}
             }
