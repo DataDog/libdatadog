@@ -141,7 +141,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_builder_new(
 pub unsafe extern "C" fn ddog_trace_exporter_builder_free(
     handle: Box<TraceExporterBuilder<ForkSafeRuntime>>,
 ) {
-    drop(handle);
+    catch_panic!(drop(handle), ())
 }
 
 /// Sets traces destination.
@@ -697,6 +697,8 @@ pub unsafe extern "C" fn ddog_trace_exporter_builder_set_stats_cardinality_limit
 }
 
 /// Returns a `CardinalityLimitConfig` with default values
+// allow(ffi-panic-boundary): `CardinalityLimitConfig::default()` only builds a struct of integer
+// constants and cannot panic.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_trace_exporter_builder_default_stats_cardinality_limit()
 -> CardinalityLimitConfig {
