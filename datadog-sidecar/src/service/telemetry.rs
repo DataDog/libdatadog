@@ -992,12 +992,15 @@ mod tests {
         assert!(output.contains("app-closing"));
     }
 
-    fn file_config(path: &std::path::Path) -> Config {
+    const TELEMETRY_PATH: &str = "/telemetry/proxy/api/v2/apmtelemetry";
+
+    fn mock_config(server: &httpmock::MockServer) -> Config {
         let mut config = Config::default();
         config
-            .set_endpoint_uri(
-                libdd_common::parse_uri(&format!("file://{}", path.display())).unwrap(),
-            )
+            .set_endpoint(libdd_telemetry::config::TelemetryEndpoint {
+                url: Some(server.url("/")),
+                ..Default::default()
+            })
             .unwrap();
         config
     }
@@ -1011,10 +1014,16 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)] // Uses OS shared memory and file output.
+    #[cfg_attr(miri, ignore)] // Uses OS shared memory and a local HTTP server.
     async fn retired_client_releases_runtime_slot() {
-        let dir = tempfile::tempdir().unwrap();
-        let config = file_config(&dir.path().join("telemetry.json"));
+        let server = httpmock::MockServer::start_async().await;
+        let _telemetry = server
+            .mock_async(|when, then| {
+                when.method(httpmock::Method::POST).path(TELEMETRY_PATH);
+                then.status(202);
+            })
+            .await;
+        let config = mock_config(&server);
         let clients = TelemetryCachedClientSet::default();
         let service = format!("telemetry-retire-{}", std::process::id());
         let client = clients.get_or_create(
@@ -1040,11 +1049,26 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)] // Uses OS shared memory and file output.
+    #[cfg_attr(miri, ignore)] // Uses OS shared memory and a local HTTP server.
     async fn evicted_client_flushes_pending_sends_and_releases_runtime_slot() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("telemetry.json");
-        let config = file_config(&path);
+        let server = httpmock::MockServer::start_async().await;
+        let final_flush = server
+            .mock_async(|when, then| {
+                when.method(httpmock::Method::POST)
+                    .path(TELEMETRY_PATH)
+                    .body_includes("pending-before-eviction")
+                    .body_includes("app-closing");
+                then.status(202);
+            })
+            .await;
+        // Acknowledge the other requests (app-started).
+        let _other = server
+            .mock_async(|when, then| {
+                when.method(httpmock::Method::POST).path(TELEMETRY_PATH);
+                then.status(202);
+            })
+            .await;
+        let config = mock_config(&server);
         let clients = TelemetryCachedClientSet::default();
         let service = format!("telemetry-evict-{}", std::process::id());
         let client = clients.get_or_create(
@@ -1083,9 +1107,8 @@ mod tests {
         assert!(clients.inner.lock_or_panic().is_empty());
 
         assert_unregistered(worker_handle).await;
-        let output = std::fs::read_to_string(path).unwrap();
-        assert!(output.contains("pending-before-eviction"));
-        assert!(output.contains("app-closing"));
+        // The final flush carries the pending send and app-closing in one request.
+        final_flush.assert_calls_async(1).await;
     }
 
     #[tokio::test]
