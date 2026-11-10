@@ -92,6 +92,7 @@ scripts/create-release.sh            @DataDog/apm-common-components-core
 scripts/crates-to-package.sh         @DataDog/apm-common-components-core
 scripts/exclude-from-green-ci.sh     @DataDog/apm-common-components-core
 scripts/major-bumps-level.sh         @DataDog/apm-common-components-core
+scripts/mirror-community-pull-request.sh @DataDog/apm-common-components-core
 scripts/publication-order.sh         @DataDog/apm-common-components-core
 scripts/reformat_copyright.sh        @DataDog/apm-common-components-core
 scripts/release-excluded-crates-hints.sh  @DataDog/apm-common-components-core
