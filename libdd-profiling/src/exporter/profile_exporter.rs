@@ -144,7 +144,10 @@ impl ProfileExporter {
         })
     }
 
-    /// Lazily initializes the Tokio runtime for blocking operations.
+    /// Initializes the tokio runtime for blocking operations.
+    ///
+    /// This method lazily creates a single-threaded tokio runtime. It can be called
+    /// before `send_blocking` to ensure the runtime is ready ahead of time.
     ///
     /// Initialization and subsequent calls to [`Self::send_blocking`] need not occur on
     /// the same thread.
@@ -161,9 +164,10 @@ impl ProfileExporter {
 
     /// Synchronously sends a profile to the configured endpoint.
     ///
-    /// This wraps [`Self::send`] and lazily caches a current-thread Tokio runtime.
-    /// [`Runtime::block_on`] drives that runtime on the calling thread; successive calls
-    /// may use different threads, provided access to the exporter is serialized.
+    /// This is a blocking wrapper around the async [`Self::send`] method. It lazily creates and
+    /// caches a single-threaded tokio runtime on first use.
+    ///
+    /// Successive calls may use different threads, provided access to the exporter is serialized.
     /// Use [`Self::send`] instead when calling from an async runtime.
     #[allow(clippy::too_many_arguments)]
     pub fn send_blocking(
