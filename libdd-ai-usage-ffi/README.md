@@ -35,14 +35,14 @@ The artifacts are named for the C prefix: `libdd_ai_usage_ffi.so`
 
 | Function | Does | Called by |
 | --- | --- | --- |
-| `ddog_ai_usage_project` | One observation (`{profile, observation, deployment_attributes, metrics}`) to its Datadog series and issues | AI Gateway, OpenRouter |
+| `ddog_ai_usage_project` | One observation (`{profile, observation, deployment_attributes, metrics}`) to its Datadog API series (`name`, `type`, `interval`, `value`, `tags`) and issues: Counters as `type: rate` with `interval: 10` and the total divided by 10, Histogram samples as `distribution` with no interval | AI Gateway, OpenRouter |
 | `ddog_ai_usage_known_metrics` | The metric names of a profile, or of every profile for an empty one: what a request's `metrics` list can keep | AI Gateway, OpenRouter |
 | `ddog_ai_usage_batch_new` / `_drop` / `_is_empty` / `_len` | A batch of projections over an export window. `_len` is the number of points held (one per Counter series, one per Histogram sample), for a flush threshold; not a line count | Kong, internal AI Gateway |
 | `ddog_ai_usage_batch_add_request` | One request's documents (a JSON array: its provider attempts, token breakdowns and gateway request) added together: all or none, so a full batch drops whole requests and never keeps an attempt without its breakdown. A rejected document rejects the request. `out` may be null | Kong, internal AI Gateway |
 | `ddog_ai_usage_batch_set_metrics` | The metric list kept of every document that states none. **`[]` keeps no metric**, as a document's `"metrics": []` does; `null` keeps every metric again | Kong, internal AI Gateway |
 | `ddog_ai_usage_batch_set_max_len` / `_dropped` | Bound a batch to a number of points (0 lifts it). A request that does not fit is dropped whole and counted; the count only grows (taking keeps it and the bound) | Kong, internal AI Gateway |
 | `ddog_ai_usage_batch_take_dogstatsd_text` | Take the batch as NUL-separated DogStatsD datagrams of at most a given size, with constant tags. A line longer than the size goes alone in a datagram of its own; only one longer than 8192 bytes (`MAX_LINE_BYTES`) is dropped and counted in the optional `dropped_lines` | Kong, internal AI Gateway |
-| `ddog_ai_usage_batch_take_series` / `_set_writer` | Take the batch as metrics intake takes it from a writer that submits to the API: Counters as RATE points over the interval (aggregation SUM), distributions as intake `sketchpb.Sparse` sketches (base64), every point at a second no earlier take used, tags sorted with the writer's `host.name` and `process.pid` | AI Gateway, OpenRouter |
+| `ddog_ai_usage_batch_take_series` / `_set_writer` | Take the batch as metrics intake takes it from a writer that submits to the API: Counters as RATE points (`type: rate`, `interval: 10`, the sum since the last take divided by 10; aggregation SUM), distributions as intake `sketchpb.Sparse` sketches (base64), every point at a second no earlier take used, tags sorted with the writer's `host.name` and `process.pid`. The interval is always 10 s, whatever the time between takes | AI Gateway, OpenRouter |
 | `ddog_ai_usage_parse_provider_response` / `_with` | A whole provider response body (JSON, or buffered server-sent events) to the observation's usage members, the model and service tier, how it ended, its `error.type`, and the provider's own error code and message (control characters removed, cut to 256 bytes). `issues` says why something reported was not kept (`service_tier_dropped`, `response_model_dropped`). `_with` and `INCLUSIVE_TOTALS` report usage with cache and reasoning added into the input and output totals, for a caller that prices them | AI Gateway, OpenRouter, Kong |
 | `ddog_ai_usage_stream_new` / `_new_with` / `_feed` / `_feed_event` / `_take` / `_drop` | The same for a stream read as it passes through, in chunks that may end anywhere, or as events the caller already split. Strings longer than 1 KiB are cut as they pass; only lines that can carry usage, an error, a terminal event, or the model and tier are decoded. A stream keeps the tier a usage-bearing event names over one echoed earlier. `_take` reports and releases | AI Gateway, OpenRouter, Kong |
 | `ddog_ai_usage_stream_outcome` | How a stream ended so far (`OPEN`, `COMPLETED`, `FAILED`), with no JSON: cheap enough per chunk | internal AI Gateway |
@@ -53,6 +53,13 @@ The artifacts are named for the C prefix: `libdd_ai_usage_ffi.so`
 | `ddog_ai_usage_datadog_tag_value` | A value as Datadog stores it in a tag | AI Gateway, OpenRouter |
 | `ddog_ai_usage_is_service_tier` / `_is_deployment_value` / `_is_person_identifier` | The grammars of a service tier, a deployment attribute value and `user.id` | every consumer |
 | `ddog_ai_usage_buffer_drop` | Release an output buffer | every consumer |
+
+Every Counter is a RATE over 10 s on every Datadog transport: a DogStatsD `c`, which the Agent
+stores as the count over its 10 s bucket divided by 10, and an API series of `type: rate`,
+`interval: 10`. Distributions stay distributions. Datadog keeps one type per metric, set by the
+last writer, so submit each API series exactly as returned: never override its type, interval or
+value. Do not send the same metrics to Datadog over OTLP, which stores counters as COUNT (see
+[OTLP and Datadog](../libdd-ai-usage/README.md#otlp-and-datadog)).
 
 Observations follow the profiles of the Open Trajectory metric specification. The specification
 requires `streaming` on a provider attempt (`streaming: null` or a missing flag is

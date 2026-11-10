@@ -31,8 +31,8 @@ use std::{ptr, slice};
 use libdd_ai_usage::{
     Attributes, DOGSTATSD_MAX_LINE_BYTES, DOGSTATSD_UDP_MAX_PAYLOAD, DOGSTATSD_UDS_MAX_PAYLOAD,
     ERROR_TYPE_API, ErrorCode, Json, MetricBatch, MetricError, PROVIDER_ID_HEADERS, Profile,
-    ProviderResponse, StreamOutcome, UsageFormat, UsageStream, bedrock_arn_account, classify_error,
-    classify_known_error, datadog_series, datadog_tag_value, gen_ai_provider_name,
+    ProviderResponse, SeriesType, StreamOutcome, UsageFormat, UsageStream, bedrock_arn_account,
+    classify_error, classify_known_error, datadog_series, datadog_tag_value, gen_ai_provider_name,
     is_deployment_value, is_person_identifier, is_service_tier, operation_name_for,
     pack_dogstatsd_joined, parse_provider_body, project_result, provider_id_attributes,
     retain_metrics, with_deployment_attributes_json,
@@ -334,9 +334,14 @@ fn issues(projection: &libdd_ai_usage::Projection) -> Value {
     )
 }
 
-/// Project the request document `input[..input_len]` into its Datadog
-/// series and write `{"series": [{"name", "type", "value", "tags"}],
-/// "issues": [...]}` to `out`.
+/// Project the request document `input[..input_len]` into its Datadog API
+/// series and write `{"series": [{"name", "type", "interval", "value",
+/// "tags"}], "issues": [...]}` to `out`.
+///
+/// A Counter is `"type": "rate"` with `"interval": 10`, its value the total
+/// divided by 10: what the Agent stores for the same Counter sent over
+/// DogStatsD. A Histogram sample is `"type": "distribution"`, with no
+/// `interval`. Submit each series with exactly that type, interval and value.
 ///
 /// The document is `{"profile": "{id}@{version}", "observation": {...},
 /// "deployment_attributes": {...}, "metrics": [...]}`; the last two are
@@ -364,12 +369,18 @@ pub unsafe extern "C" fn ddog_ai_usage_project(
                 Ok(json!({
                     "series": series
                         .iter()
-                        .map(|s| json!({
-                            "name": s.name,
-                            "type": s.series_type.as_str(),
-                            "value": s.value,
-                            "tags": s.tags,
-                        }))
+                        .map(|s| {
+                            let mut series = json!({
+                                "name": s.name,
+                                "type": s.series_type.as_str(),
+                                "value": s.value,
+                                "tags": s.tags,
+                            });
+                            if let Some(interval) = s.interval {
+                                series["interval"] = json!(interval);
+                            }
+                            series
+                        })
                         .collect::<Vec<_>>(),
                     "issues": issues(&projection),
                 }))
@@ -883,12 +894,16 @@ pub unsafe extern "C" fn ddog_ai_usage_batch_set_writer(
 
 /// Take every point of `batch`, leaving it empty, as Datadog metrics intake
 /// takes it from a writer that submits to the API, and write
-/// `{"timestamp", "interval", "dropped", "series": [{"metric", "tags",
-/// "value"}], "distributions": [{"metric", "tags", "sketch"}]}` to `out`:
+/// `{"timestamp", "interval", "dropped", "series": [{"metric", "type",
+/// "interval", "tags", "value"}], "distributions": [{"metric", "tags",
+/// "sketch"}]}` to `out`:
 ///
-/// - `series` are RATE points over `interval_secs` (0 is read as 1): the sum since the last take
-///   divided by the interval, to submit with type RATE, that interval and aggregation SUM. The
-///   `.count` and `.sum` companions of distributions are among them.
+/// - `series` are RATE points over 10 s (`"type": "rate"`, `"interval": 10`, API v2 type 2): the
+///   sum since the last take divided by 10, to submit with exactly that type and interval and
+///   aggregation SUM. The `.count` and `.sum` companions of distributions are among them. The
+///   interval is 10 s whatever the time between takes, the interval the Agent stores DogStatsD
+///   counts with, so a metric written both ways keeps one type; `as_count()` reads a point back as
+///   the sum since the last take. Taking every 10 s also gives the Agent's per-second values.
 /// - `distributions` hold one sketch per series, `sketch` being the base64 of intake's
 ///   `sketchpb.Sparse` protobuf (keys and counts with min, max, count and sum), as metrics intake
 ///   computes a DDSketch (relative accuracy 1/128, 4096 bins).
@@ -905,7 +920,6 @@ pub unsafe extern "C" fn ddog_ai_usage_batch_set_writer(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_ai_usage_batch_take_series(
     batch: *const Batch,
-    interval_secs: u32,
     now_unix_seconds: i64,
     out: *mut Buffer,
 ) -> Status {
@@ -930,13 +944,15 @@ pub unsafe extern "C" fn ddog_ai_usage_batch_take_series(
                     .inner
                     .lock()
                     .map_err(|_| Failure::Internal("the batch is poisoned"))?
-                    .take_intake(interval_secs, now)?;
+                    .take_intake(now)?;
                 Ok(json!({
                     "timestamp": taken.timestamp,
                     "interval": taken.interval,
                     "dropped": taken.dropped,
                     "series": taken.rates.iter().map(|s| json!({
                         "metric": s.metric,
+                        "type": SeriesType::Rate.as_str(),
+                        "interval": taken.interval,
                         "tags": s.tags,
                         "value": s.value,
                     })).collect::<Vec<_>>(),

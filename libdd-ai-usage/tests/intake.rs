@@ -69,7 +69,7 @@ fn a_take_is_rates_sketches_and_a_fresh_second() {
             .add(Profile::ProviderAttempt, &attempt(duration))
             .unwrap();
     }
-    let taken = batch.take_intake(10, 1_000).unwrap();
+    let taken = batch.take_intake(1_000).unwrap();
     assert_eq!(
         (taken.timestamp, taken.interval, taken.dropped),
         (1_000, 10, 0)
@@ -103,15 +103,15 @@ fn a_take_is_rates_sketches_and_a_fresh_second() {
 
     // The next take never reuses a second, even when the clock has not moved.
     batch.add(Profile::ProviderAttempt, &attempt(1.0)).unwrap();
-    assert_eq!(batch.take_intake(10, 1_000).unwrap().timestamp, 1_001);
-    assert_eq!(batch.take_intake(10, 900).unwrap().timestamp, 1_002);
-    assert_eq!(batch.take_intake(10, 5_000).unwrap().timestamp, 5_000);
+    assert_eq!(batch.take_intake(1_000).unwrap().timestamp, 1_001);
+    assert_eq!(batch.take_intake(900).unwrap().timestamp, 1_002);
+    assert_eq!(batch.take_intake(5_000).unwrap().timestamp, 5_000);
     // Drops since the last take.
     batch.set_max_len(Some(0));
     batch.add(Profile::ProviderAttempt, &attempt(1.0)).unwrap();
-    let taken = batch.take_intake(0, 6_000).unwrap();
+    let taken = batch.take_intake(6_000).unwrap();
     assert_eq!(
         (taken.dropped, taken.interval, taken.rates.len()),
-        (1, 1, 0)
+        (1, 10, 0)
     );
 }

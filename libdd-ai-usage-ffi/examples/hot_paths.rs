@@ -213,7 +213,7 @@ fn main() {
             }
             let start = Instant::now();
             assert_eq!(
-                ddog_ai_usage_batch_take_series(batch, 10, 1, &mut out),
+                ddog_ai_usage_batch_take_series(batch, 1, &mut out),
                 Status::Ok
             );
             best = best.min(start.elapsed().as_secs_f64() * 1e3);
@@ -245,7 +245,7 @@ fn main() {
                     );
                 }
                 let status = if intake {
-                    ddog_ai_usage_batch_take_series(batch, 10, 1, &mut out)
+                    ddog_ai_usage_batch_take_series(batch, 1, &mut out)
                 } else {
                     ddog_ai_usage_batch_take_dogstatsd_text(
                         batch,
