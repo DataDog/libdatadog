@@ -38,6 +38,7 @@ fn event() -> FfeFlagEvaluationEvent {
             message: "private-error-canary".into(),
         }),
         runtime_default_used: false,
+        features: None,
         observe_full_evaluation_data: false,
         is_degraded: false,
         field_omissions: Default::default(),
@@ -45,16 +46,26 @@ fn event() -> FfeFlagEvaluationEvent {
 }
 
 fn request(events: Vec<FfeFlagEvaluationEvent>) -> SidecarInterfaceRequest {
+    request_with_context(
+        FfeTelemetryContext {
+            service: "svc".into(),
+            env: "test".into(),
+            version: "1".into(),
+        },
+        events,
+    )
+}
+
+fn request_with_context(
+    context: FfeTelemetryContext,
+    events: Vec<FfeFlagEvaluationEvent>,
+) -> SidecarInterfaceRequest {
     let ordinary = || SidecarAction::AddTelemetryMetricPoint(("ffe.healthy".into(), 3.0, vec![]));
     SidecarInterfaceRequest::EnqueueActions {
         actions: vec![
             ordinary(),
             SidecarAction::FfeFlagEvaluationBatch(FfeFlagEvaluationBatch {
-                context: FfeTelemetryContext {
-                    service: "svc".into(),
-                    env: "test".into(),
-                    version: "1".into(),
-                },
+                context,
                 flag_evaluations: events,
             }),
             ordinary(),
@@ -130,6 +141,12 @@ async fn matching_ipc_enforces_privacy_in_http_and_keeps_connection_healthy() {
                 .body_includes("\"first_evaluation\":1760000000000")
                 .body_includes("\"last_evaluation\":1760000000001")
                 .body_includes("\"message\":\"GENERAL\"")
+                .body_includes(
+                    "\"context\":{\"env\":\"test\",\"service\":\"svc\",\"version\":\"1\"}",
+                )
+                .body_includes("\"context\":{\"dd\":{\"service\":\"svc\"}}")
+                .body_includes("\"dd\":{\"service\":\"explicit-event-service\"}")
+                .body_includes("\"flag\":{\"key\":\"degraded\"}")
                 .body_excludes("jane.doe@datadoghq.com")
                 .body_excludes("protected-context-canary")
                 .body_excludes("degraded-identity-canary")
@@ -138,7 +155,22 @@ async fn matching_ipc_enforces_privacy_in_http_and_keeps_connection_healthy() {
                 .body_excludes("runtime_default_used")
                 .body_excludes("observe_full_evaluation_data")
                 .body_excludes("is_degraded")
-                .body_excludes("field_omissions");
+                .body_excludes("field_omissions")
+                .is_true(|request| {
+                    let payload: serde_json::Value =
+                        serde_json::from_slice(request.body_ref()).unwrap();
+                    let rows = payload["flagEvaluations"].as_array().unwrap();
+                    rows.len() == 3
+                        && rows.iter().all(|row| {
+                            if row["flag"]["key"] == "degraded" {
+                                row.get("context").is_none() && row.get("targeting_key").is_none()
+                            } else {
+                                row["context"]["dd"]
+                                    .as_object()
+                                    .is_some_and(|dd| dd.len() == 1)
+                            }
+                        })
+                });
             then.status(202);
         })
         .await;
@@ -166,6 +198,19 @@ async fn matching_ipc_enforces_privacy_in_http_and_keeps_connection_healthy() {
         session.tracer_config.tracer_version = "1.25.1".into();
         session
     });
+    handler
+        .set_application(
+            Some(ApplicationConfig {
+                env_name: "test".into(),
+                app_version: "1".into(),
+                service_name: "svc".into(),
+                global_tags: vec![],
+                dynamic_instrumentation_state:
+                    crate::service::DynamicInstrumentationConfigState::NotSet,
+            }),
+            0,
+        )
+        .await;
     let submitted_payloads = handler.submitted_payloads.clone();
     let task = tokio::spawn(
         async move { serve_sidecar_interface_connection(&mut handler).await }
@@ -177,6 +222,9 @@ async fn matching_ipc_enforces_privacy_in_http_and_keeps_connection_healthy() {
     consented.targeting_key = Some("consented-identity-canary".into());
     consented.context.as_mut().unwrap().evaluation =
         Some(r#"{"email":"consented-context-canary"}"#.into());
+    consented.context.as_mut().unwrap().dd = Some(crate::service::ContextDD {
+        service: "explicit-event-service".into(),
+    });
     let mut degraded = consented.clone();
     degraded.flag.key = "degraded".into();
     degraded.is_degraded = true;
@@ -185,7 +233,12 @@ async fn matching_ipc_enforces_privacy_in_http_and_keeps_connection_healthy() {
         Some(r#"{"email":"degraded-context-canary"}"#.into());
     // Deliberately bypass producer normalization: the receiver must protect raw input.
     for rows in [vec![], vec![event()], vec![consented, degraded]] {
-        client.try_send_raw(encode(&request(rows)), &[]).unwrap();
+        client
+            .try_send_raw(
+                encode(&request_with_context(FfeTelemetryContext::default(), rows)),
+                &[],
+            )
+            .unwrap();
     }
     client
         .try_send_raw(
@@ -296,12 +349,15 @@ async fn bounded_ffe_submission_preserves_http_privacy_and_survives_rejection() 
                     let payload: serde_json::Value =
                         serde_json::from_slice(request.body_ref()).unwrap();
                     let rows = payload["flagEvaluations"].as_array().unwrap();
-                    rows.len() == 3
+                    payload["context"]
+                        == serde_json::json!({"service": "svc", "env": "test", "version": "1"})
+                        && rows.len() == 3
                         && rows.iter().any(|row| {
                             row["flag"]["key"] == "ipc-degraded"
                                 && row["evaluation_count"] == 2
                                 && row.get("targeting_key").is_none()
                                 && row.get("context").is_none()
+                                && row["features"] == serde_json::json!({"holdout.key": "h1"})
                         })
                 });
             then.status(202);
@@ -356,6 +412,7 @@ async fn bounded_ffe_submission_preserves_http_privacy_and_survives_rejection() 
     );
     let mut oversized = event();
     oversized.flag.key = "ipc-degraded".into();
+    oversized.features = Some(r#"{"holdout.key":"h1"}"#.into());
     oversized.targeting_key =
         Some("oversize-canary".repeat(libdd_ipc::max_message_size() / 14 + 1));
     for consent in [false, true] {
@@ -452,6 +509,7 @@ fn oversized_ipc_warning_does_not_log_exposure_data() {
                 allocation_key: "allocation".into(),
                 variant: "on".into(),
                 serial_id: None,
+                features_json: String::new(),
             }],
         })],
     };

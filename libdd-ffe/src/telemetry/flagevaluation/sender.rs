@@ -204,56 +204,13 @@ mod tests {
     use serde_json::json;
     use std::collections::BTreeMap;
     use std::future;
-    use std::sync::{Mutex, Once};
 
     use super::super::{
         AllocationKey, ContextDD, EvalError, FfeFlagEvaluationEvent, FlagEvalEventContext, FlagKey,
         MAX_EVENTS_PER_POST, TargetingRuleKey, VariantKey,
     };
 
-    #[derive(Clone)]
-    struct CapturedLog {
-        level: log::Level,
-        message: String,
-    }
-
-    struct CapturingLogger {
-        records: Mutex<Vec<CapturedLog>>,
-    }
-
-    impl log::Log for CapturingLogger {
-        fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
-            metadata.level() <= log::Level::Debug
-        }
-
-        fn log(&self, record: &log::Record<'_>) {
-            if self.enabled(record.metadata()) {
-                self.records.lock().unwrap().push(CapturedLog {
-                    level: record.level(),
-                    message: record.args().to_string(),
-                });
-            }
-        }
-
-        fn flush(&self) {}
-    }
-
-    static TEST_LOGGER: CapturingLogger = CapturingLogger {
-        records: Mutex::new(Vec::new()),
-    };
-    static INIT_LOGGER: Once = Once::new();
-
-    fn start_log_capture() {
-        INIT_LOGGER.call_once(|| {
-            let _ = log::set_logger(&TEST_LOGGER);
-            log::set_max_level(log::LevelFilter::Debug);
-        });
-        TEST_LOGGER.records.lock().unwrap().clear();
-    }
-
-    fn captured_logs() -> Vec<CapturedLog> {
-        TEST_LOGGER.records.lock().unwrap().clone()
-    }
+    use crate::telemetry::test_logging::{captured_logs, start_log_capture};
 
     fn context() -> FfeTelemetryContext {
         FfeTelemetryContext {
@@ -299,6 +256,7 @@ mod tests {
                 message: "boom".to_owned(),
             }),
             runtime_default_used: true,
+            features: None,
             observe_full_evaluation_data: true,
             is_degraded: false,
             field_omissions: Default::default(),

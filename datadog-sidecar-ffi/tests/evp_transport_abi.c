@@ -14,11 +14,14 @@ bool ddog_test_evp_transport_abi(void) {
   // dependency on every platform, including Unix.
   (void)sizeof(ddog_crasht_Metadata);
 
+  const ddog_FfeExposure exposure = {.features_json = DDOG_CHARSLICE_C_BARE("{}")};
+  const ddog_FfeFlagEvaluation evaluation = {.features_json = DDOG_CHARSLICE_C_BARE("{}")};
+
   // Compile a native call site against the generated declaration. The object
   // is not executed because null transport and endpoint pointers deliberately
   // violate the runtime contract.
   (void)ddog_sidecar_session_set_evp_transport(NULL, modes[0], NULL, NULL,
                                                (ddog_CharSlice){0}, &producer);
 
-  return modes[0] != modes[1];
+  return modes[0] != modes[1] && exposure.features_json.len == evaluation.features_json.len;
 }

@@ -64,8 +64,8 @@ impl ProfileExporter {
     ///
     /// # Thread Safety
     ///
-    /// The exporter can be used from any thread, but if using `send_blocking()`, the exporter
-    /// should remain on the same thread for all blocking calls. See [`send_blocking`] for details.
+    /// The exporter can be moved between threads. Successive calls to [`send_blocking`]
+    /// require exclusive access, but need not be made from the same thread.
     ///
     /// # Performance
     ///
@@ -146,32 +146,10 @@ impl ProfileExporter {
         })
     }
 
-    /// Synchronously sends a profile to the configured endpoint.
-    ///
-    /// This is a blocking wrapper around the async [`send`] method. It lazily creates and caches
-    /// a single-threaded tokio runtime on first use.
-    ///
-    /// # Thread Affinity
-    ///
-    /// **Important**: The cached runtime uses `new_current_thread()`, which has thread affinity.
-    /// For best results, all calls to `send_blocking()` on the same exporter instance should be
-    /// made from the same thread. Moving the exporter across threads between blocking calls may
-    /// cause issues.
-    ///
-    /// If you need to use the exporter from multiple threads, consider either:
-    /// - Creating a separate exporter instance per thread
-    /// - Using the async [`send`] method directly from within a tokio runtime
-    ///
-    /// [`send`]: ProfileExporter::send
     /// Initializes the tokio runtime for blocking operations.
     ///
     /// This method lazily creates a single-threaded tokio runtime. It can be called
     /// before `send_blocking` to ensure the runtime is ready ahead of time.
-    ///
-    /// # Thread Affinity
-    ///
-    /// **Important**: The runtime uses `new_current_thread()`, which has thread affinity.
-    /// This method should be called from the same thread that will later call `send_blocking`.
     pub fn init_runtime(&mut self) -> anyhow::Result<()> {
         if self.runtime.is_none() {
             self.runtime = Some(
@@ -183,6 +161,13 @@ impl ProfileExporter {
         Ok(())
     }
 
+    /// Synchronously sends a profile to the configured endpoint.
+    ///
+    /// This is a blocking wrapper around the async [`Self::send`] method. It lazily creates and
+    /// caches a single-threaded tokio runtime on first use.
+    ///
+    /// Successive calls may use different threads, provided access to the exporter is serialized.
+    /// Use [`Self::send`] instead when calling from an async runtime.
     #[allow(clippy::too_many_arguments)]
     pub fn send_blocking(
         &mut self,

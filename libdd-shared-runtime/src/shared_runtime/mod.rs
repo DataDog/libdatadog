@@ -24,6 +24,7 @@ pub use local::LocalRuntime;
 use crate::worker::Worker;
 use libdd_capabilities::MaybeSend;
 use libdd_common::MutexExt;
+pub use pausable_worker::FlushToken;
 use pausable_worker::{PausableWorker, PausableWorkerError};
 use std::sync::{Arc, Mutex};
 use std::{fmt, io};
@@ -191,6 +192,8 @@ pub struct WorkerHandle {
 pub enum WorkerHandleError {
     AlreadyStopped,
     WorkerError(PausableWorkerError),
+    /// The worker was dropped before completing the requested flush.
+    FlushAborted,
 }
 
 impl fmt::Display for WorkerHandleError {
@@ -200,6 +203,7 @@ impl fmt::Display for WorkerHandleError {
                 write!(f, "Worker has already been stopped")
             }
             Self::WorkerError(err) => write!(f, "Worker error: {}", err),
+            Self::FlushAborted => write!(f, "Worker was dropped before completing the flush"),
         }
     }
 }
@@ -231,6 +235,23 @@ impl WorkerHandle {
         };
         entry.restart_on_fork = restart_on_fork;
         Ok(())
+    }
+
+    /// Request a force flush of the worker.
+    ///
+    /// The flush runs asynchronously on the worker task; the returned [`FlushToken`] can be
+    /// waited on to know when it completed. While the runtime is paused (e.g. during the fork
+    /// window) the flush is deferred until the worker restarts. Callers should bound the wait
+    /// themselves, e.g. with [`BlockingRuntime::block_on_with_timeout`].
+    ///
+    /// # Errors
+    /// Returns an error if the worker has already been stopped or is in an invalid state.
+    pub fn flush(&self) -> Result<FlushToken, WorkerHandleError> {
+        let workers_lock = self.workers.lock_or_panic();
+        let Some(entry) = workers_lock.iter().find(|entry| entry.id == self.worker_id) else {
+            return Err(WorkerHandleError::AlreadyStopped);
+        };
+        Ok(entry.worker.request_flush()?)
     }
 
     /// Stop the worker and execute the shutdown logic.
