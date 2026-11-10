@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Compare root lockfiles structurally at the merge base and HEAD, ignoring
-//! formatting. Changed external package names are scoped by executed coverage;
+//! formatting. Changed external package names are scoped by executed coverage,
+//! except build-time packages (build dependencies, proc-macros) that runtime
+//! coverage can never attribute and that therefore widen the selection;
 //! workspace members use source diffs instead. Missing/invalid lockfiles, git
 //! failures, or changes outside package entries are unattributable (full run).
 
@@ -63,7 +65,20 @@ pub fn lockfile_changes(base_ref: &str, workspace_root: &Path) -> Result<Lockfil
         return Ok(unattributable());
     };
     log::info!("lockfile: comparing Cargo.lock against merge base {merge_base}");
-    let changes = compare_lockfiles(&base, &head, &members);
+    let mut changes = compare_lockfiles(&base, &head, &members);
+    // Executed-function coverage can never attribute build-time packages
+    // (build dependencies such as `cc`, proc-macros): they change compiled or
+    // generated code without appearing in coverage `deps`, so the package
+    // intersection would select nothing. Widen instead of scoping them away;
+    // the manifest-side proc-macro check does not run for lockfile-only
+    // updates, so this must cover them here.
+    if !changes.unattributable
+        && !changes.packages.is_empty()
+        && !runtime_scopes_changed_packages(workspace_root, &changes.packages)
+    {
+        log::info!("lockfile: changed package(s) invisible to runtime coverage -> full run");
+        changes.unattributable = true;
+    }
     if changes.unattributable {
         log::info!("lockfile: unattributable change -> full run");
     } else if changes.is_changed() {
@@ -156,6 +171,107 @@ pub(crate) fn workspace_members(workspace_root: &Path) -> BTreeSet<String> {
             .unwrap_or_default(),
         Err(_) => BTreeSet::new(),
     }
+}
+
+/// Whether runtime coverage can attribute every changed package. Build
+/// dependencies and proc-macros change compiled or generated code while never
+/// appearing in executed-function coverage, and packages absent from the
+/// resolved graph cannot be classified at all: none of them may be scoped
+/// away. Metadata failures conservatively report an unscopable change.
+fn runtime_scopes_changed_packages(workspace_root: &Path, packages: &BTreeSet<String>) -> bool {
+    let Ok(output) = Command::new("cargo")
+        .current_dir(workspace_root)
+        .args(["metadata", "--format-version", "1"])
+        .output()
+    else {
+        return false;
+    };
+    if !output.status.success() {
+        return false;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    match serde_json::from_str::<serde_json::Value>(&stdout) {
+        Ok(metadata) => scopes_changed_packages(&metadata, packages),
+        Err(_) => false,
+    }
+}
+
+/// A changed package is scopable only when it is runtime-reachable — compiled
+/// into the bench binary through normal or dev dependency edges, expanded
+/// from workspace members without ever crossing a proc-macro — and is not
+/// itself a proc-macro. Name-based, like the lockfile diff and coverage `deps`.
+fn scopes_changed_packages(metadata: &serde_json::Value, packages: &BTreeSet<String>) -> bool {
+    let Some(all) = metadata.get("packages").and_then(|p| p.as_array()) else {
+        return false;
+    };
+    let name_by_id = |id: &serde_json::Value| -> Option<&str> {
+        all.iter()
+            .find(|pkg| pkg.get("id") == Some(id))
+            .and_then(|pkg| pkg.get("name"))
+            .and_then(|name| name.as_str())
+    };
+    // Roots of the runtime graph: the workspace members.
+    let mut reachable: BTreeSet<&str> = metadata
+        .get("workspace_members")
+        .and_then(|ids| ids.as_array())
+        .map(|ids| ids.iter().filter_map(name_by_id).collect())
+        .unwrap_or_default();
+    let mut proc_macros: BTreeSet<&str> = BTreeSet::new();
+    let mut runtime_deps: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for pkg in all {
+        let Some(name) = pkg.get("name").and_then(|name| name.as_str()) else {
+            continue;
+        };
+        if is_proc_macro(pkg) {
+            proc_macros.insert(name);
+        }
+        for dep in pkg
+            .get("dependencies")
+            .and_then(|deps| deps.as_array())
+            .into_iter()
+            .flatten()
+        {
+            // Normal (`kind` null) and dev edges compile into bench binaries;
+            // build edges never do.
+            if dep.get("kind").and_then(|kind| kind.as_str()) == Some("build") {
+                continue;
+            }
+            if let Some(dep_name) = dep.get("name").and_then(|name| name.as_str()) {
+                runtime_deps.entry(name).or_default().push(dep_name);
+            }
+        }
+    }
+    // Proc-macro nodes are never expanded: their dependencies run at compile
+    // time, not inside the bench binary.
+    let mut queue: Vec<&str> = reachable.iter().copied().collect();
+    while let Some(name) = queue.pop() {
+        if proc_macros.contains(name) {
+            continue;
+        }
+        for dep in runtime_deps.get(name).into_iter().flatten() {
+            if reachable.insert(dep) {
+                queue.push(*dep);
+            }
+        }
+    }
+    packages
+        .iter()
+        .all(|name| reachable.contains(name.as_str()) && !proc_macros.contains(name.as_str()))
+}
+
+/// Missing target data conservatively reports a proc-macro: a proc-macro's
+/// effects are invisible to runtime coverage either way.
+fn is_proc_macro(pkg: &serde_json::Value) -> bool {
+    let Some(targets) = pkg.get("targets").and_then(|targets| targets.as_array()) else {
+        return true;
+    };
+    targets.iter().any(|target| {
+        target
+            .get("kind")
+            .and_then(|kinds| kinds.as_array())
+            .map(|kinds| kinds.iter().any(|kind| kind.as_str() == Some("proc-macro")))
+            .unwrap_or(true)
+    })
 }
 
 #[cfg(test)]
@@ -312,53 +428,169 @@ mod tests {
     }
 
     #[test]
+    fn build_time_packages_escape_runtime_scoping() {
+        let metadata = serde_json::json!({
+            "workspace_members": ["path+file:///ws#libdd-x@0.1.0"],
+            "packages": [
+                {"id": "path+file:///ws#libdd-x@0.1.0", "name": "libdd-x", "dependencies": [
+                    {"name": "zstd", "kind": null},
+                    {"name": "criterion", "kind": "dev"},
+                    {"name": "serde"},
+                    {"name": "cc", "kind": "build"}
+                ], "targets": [{"kind": ["lib"]}]},
+                {"id": "path+file:///ws#zstd@0.13.3", "name": "zstd", "dependencies": [
+                    {"name": "zstd-sys", "kind": null}
+                ], "targets": [{"kind": ["lib"]}]},
+                {"id": "path+file:///ws#zstd-sys@0.2.0", "name": "zstd-sys", "dependencies": [
+                    {"name": "cc", "kind": "build"},
+                    {"name": "libc"}
+                ], "targets": [{"kind": ["lib"]}]},
+                {"id": "path+file:///ws#libc@0.2.0", "name": "libc", "dependencies": [], "targets": [{"kind": ["lib"]}]},
+                {"id": "path+file:///ws#criterion@0.5.0", "name": "criterion", "dependencies": [
+                    {"name": "criterion-dep", "kind": null}
+                ], "targets": [{"kind": ["lib"]}]},
+                {"id": "path+file:///ws#criterion-dep@1.0.0", "name": "criterion-dep", "dependencies": [], "targets": [{"kind": ["lib"]}]},
+                {"id": "path+file:///ws#cc@1.0.0", "name": "cc", "dependencies": [
+                    {"name": "shlex", "kind": null}
+                ], "targets": [{"kind": ["lib"]}]},
+                {"id": "path+file:///ws#shlex@1.0.0", "name": "shlex", "dependencies": [], "targets": [{"kind": ["lib"]}]},
+                {"id": "path+file:///ws#serde@1.0.0", "name": "serde", "dependencies": [
+                    {"name": "serde_derive", "kind": null}
+                ], "targets": [{"kind": ["lib"]}]},
+                {"id": "path+file:///ws#serde_derive@1.0.0", "name": "serde_derive", "dependencies": [
+                    {"name": "syn", "kind": null}
+                ], "targets": [{"kind": ["proc-macro"]}]},
+                {"id": "path+file:///ws#syn@2.0.0", "name": "syn", "dependencies": [], "targets": [{"kind": ["lib"]}]}
+            ]
+        });
+        let scoped = |names: &[&str]| scopes_changed_packages(&metadata, &set(names));
+        // Runtime-reachable packages (normal and dev edges, and their
+        // dependencies) stay scoped.
+        assert!(scoped(&["zstd"]));
+        assert!(scoped(&["zstd-sys"]));
+        assert!(scoped(&["libc"]));
+        assert!(scoped(&["criterion"]));
+        assert!(scoped(&["criterion-dep"]));
+        assert!(scoped(&["zstd", "libc", "criterion"]));
+        // Build-only packages and their dependencies widen: they can change
+        // compiled code without ever appearing in executed-function coverage.
+        assert!(!scoped(&["cc"]));
+        assert!(!scoped(&["shlex"]));
+        // Proc-macros and their dependencies widen for the same reason.
+        assert!(!scoped(&["serde_derive"]));
+        assert!(!scoped(&["syn"]));
+        // One unscopable package widens the whole set.
+        assert!(!scoped(&["zstd", "cc"]));
+        // Packages absent from the resolved graph cannot be classified.
+        assert!(!scoped(&["absent"]));
+        // No workspace member resolves: nothing can be scoped.
+        assert!(!scopes_changed_packages(
+            &serde_json::json!({"packages": []}),
+            &set(&["zstd"])
+        ));
+    }
+
+    fn git(repo: &Path, args: &[&str]) {
+        let output = std::process::Command::new("git")
+            .current_dir(repo)
+            .args([
+                "-c",
+                "commit.gpgsign=false",
+                "-c",
+                "core.hooksPath=/dev/null",
+            ])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    /// A workspace member whose dependency edges exercise the runtime scoping.
+    /// `excluded` keeps the path dependency out of the workspace: as a member
+    /// it would be filtered out of the lockfile diff instead of being scoped.
+    fn write_member(repo: &Path, dependencies: &str, excluded: &str) {
+        std::fs::write(
+            repo.join("Cargo.toml"),
+            format!("[workspace]\nmembers = [\"libdd-x\"]\nexclude = [\"{excluded}\"]\n"),
+        )
+        .unwrap();
+        std::fs::create_dir_all(repo.join("libdd-x/src")).unwrap();
+        std::fs::write(repo.join("libdd-x/src/lib.rs"), "").unwrap();
+        std::fs::write(
+            repo.join("libdd-x/Cargo.toml"),
+            format!("[package]\nname = \"libdd-x\"\nversion = \"0.1.0\"\n\n{dependencies}"),
+        )
+        .unwrap();
+    }
+
+    fn write_path_package(repo: &Path, name: &str) {
+        std::fs::create_dir_all(repo.join(name).join("src")).unwrap();
+        std::fs::write(repo.join(name).join("src/lib.rs"), "").unwrap();
+        std::fs::write(
+            repo.join(name).join("Cargo.toml"),
+            format!("[package]\nname = \"{name}\"\nversion = \"0.0.1\"\n"),
+        )
+        .unwrap();
+    }
+
+    fn commit_base_with_lockfile(repo: &Path, lock: &str) {
+        git(repo, &["init", "-q"]);
+        git(repo, &["config", "user.name", "Review fixture"]);
+        git(repo, &["config", "user.email", "review@example.invalid"]);
+        std::fs::write(repo.join("Cargo.lock"), lock).unwrap();
+        git(repo, &["add", "."]);
+        git(repo, &["commit", "-qm", "base"]);
+        git(repo, &["branch", "base"]);
+        git(repo, &["remote", "add", "origin", repo.to_str().unwrap()]);
+    }
+
+    #[test]
     fn lockfile_changes_reads_the_target_checkout_at_the_merge_base() {
         let temp = tempfile::tempdir().unwrap();
         let repo = temp.path();
-        let git = |args: &[&str]| {
-            let output = std::process::Command::new("git")
-                .current_dir(repo)
-                .args([
-                    "-c",
-                    "commit.gpgsign=false",
-                    "-c",
-                    "core.hooksPath=/dev/null",
-                ])
-                .args(args)
-                .output()
-                .unwrap();
-            assert!(
-                output.status.success(),
-                "{}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-        };
-        git(&["init", "-q"]);
-        git(&["config", "user.name", "Review fixture"]);
-        git(&["config", "user.email", "review@example.invalid"]);
-        let base_lock = lockfile(&format!(
-            "{}{}",
-            pkg("zstd", "0.13.3"),
-            pkg("serde", "1.0.210")
-        ));
-        std::fs::write(repo.join("Cargo.lock"), base_lock).unwrap();
-        std::fs::write(repo.join("Cargo.toml"), "[workspace]\n").unwrap();
-        git(&["add", "."]);
-        git(&["commit", "-qm", "base"]);
-        git(&["branch", "base"]);
-        git(&["remote", "add", "origin", repo.to_str().unwrap()]);
-        let head_lock = lockfile(&format!(
-            "{}{}",
-            pkg("zstd", "0.14.3"),
-            pkg("serde", "1.0.210")
-        ));
-        std::fs::write(repo.join("Cargo.lock"), head_lock).unwrap();
-        git(&["add", "-A"]);
-        git(&["commit", "-qm", "bump zstd"]);
+        // A runtime path dependency keeps the changed package scopable by
+        // executed-function coverage.
+        write_member(
+            repo,
+            "[dependencies]\nzstd = { path = \"../zstd\" }\n",
+            "zstd",
+        );
+        write_path_package(repo, "zstd");
+        commit_base_with_lockfile(repo, &lockfile(&pkg("zstd", "0.13.3")));
+        std::fs::write(repo.join("Cargo.lock"), lockfile(&pkg("zstd", "0.14.3"))).unwrap();
+        git(repo, &["add", "-A"]);
+        git(repo, &["commit", "-qm", "bump zstd"]);
         crate::fetch_base("base", repo).unwrap();
         let changes = lockfile_changes("base", repo).unwrap();
         assert_eq!(changes.packages, set(&["zstd"]));
         assert!(!changes.unattributable);
+        assert!(changes.is_changed());
+    }
+
+    #[test]
+    fn lockfile_changes_to_build_time_packages_widen_the_run() {
+        let temp = tempfile::tempdir().unwrap();
+        let repo = temp.path();
+        // A build dependency such as `cc` never compiles into bench binaries,
+        // so runtime coverage cannot scope it: the change widens the run.
+        write_member(
+            repo,
+            "[build-dependencies]\ncc = { path = \"../cc\" }\n",
+            "cc",
+        );
+        write_path_package(repo, "cc");
+        commit_base_with_lockfile(repo, &lockfile(&pkg("cc", "1.0.106")));
+        std::fs::write(repo.join("Cargo.lock"), lockfile(&pkg("cc", "1.0.107"))).unwrap();
+        git(repo, &["add", "-A"]);
+        git(repo, &["commit", "-qm", "bump cc"]);
+        crate::fetch_base("base", repo).unwrap();
+        let changes = lockfile_changes("base", repo).unwrap();
+        assert_eq!(changes.packages, set(&["cc"]));
+        assert!(changes.unattributable);
         assert!(changes.is_changed());
     }
 }

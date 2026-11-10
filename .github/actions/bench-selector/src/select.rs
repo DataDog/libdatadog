@@ -121,6 +121,10 @@ pub fn select(
                     Some(entry) if cluster_touches_changes(&entry.files, changed) => {
                         Some(Reason::CoveredChange)
                     }
+                    // Build-time packages (build dependencies, proc-macros)
+                    // never appear in runtime `deps`; the lockfile analysis
+                    // widens them into `unattributable` instead of relying on
+                    // this runtime-only intersection.
                     Some(entry)
                         if lockfile.unattributable
                             || !entry.deps.is_disjoint(&changed_packages) =>

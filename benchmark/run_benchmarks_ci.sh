@@ -45,6 +45,34 @@ bench_features_for_crate() {
   esac
 }
 
+# Features needed to build one bench target in THIS checkout. BENCH_SELECTION carries the
+# candidate's feature list, but a PR can add, remove, or rename a bench target's required feature:
+# reusing the candidate's list for the baseline checkout either errors on a candidate-only feature
+# (a failure the --list guard below would silently swallow) or starves the baseline target of a
+# feature it still requires. Resolve the target's required-features from this checkout's metadata
+# instead, plus the supplemental features bench_features_for_crate lists that this checkout
+# actually declares.
+bench_features_for_target() {
+  local crate=$1 target=$2 feature name
+  local -a features
+  # Word-split on purpose: cargo feature names never contain whitespace.
+  features=($(jq -r --arg c "${crate}" --arg t "${target}" \
+    '.packages[] | select(.name == $c) | .targets[]
+     | select(.name == $t and any(.kind[]?; . == "bench"))
+     | ."required-features"[]?' <<< "${metadata}"))
+  for feature in $(bench_features_for_crate "${crate}"); do
+    name="${feature#*/}" # bench_features_for_crate yields crate-qualified names
+    if [[ " ${features[*]:-} " == *" ${name} "* ]]; then
+      continue
+    fi
+    if jq -e --arg c "${crate}" --arg f "${name}" \
+      'any(.packages[]; .name == $c and (.features | has($f)))' <<< "${metadata}" > /dev/null; then
+      features+=("${name}")
+    fi
+  done
+  (IFS=,; echo "${features[*]:-}")
+}
+
 # Run benchmarks.
 message "Running benchmarks"
 
@@ -58,8 +86,11 @@ metadata="$(cargo metadata --no-deps --format-version 1)"
 # run) default to every crate that declares a benchmark target, which is equivalent to --workspace.
 #
 # BENCH_SELECTION supplies {crate, target, features, filter} specs and takes
-# precedence over BENCH_PACKAGES. Filtered --list checks skip specs with no
-# matching benchmarks in this checkout (new benches may have no baseline).
+# precedence over BENCH_PACKAGES. The features field is informational only: required features are
+# re-resolved from each checkout's own metadata (bench_features_for_target), because a PR may add,
+# remove, or rename them and the baseline must build with its own declarations. Specs whose crate
+# or bench target is missing in this checkout, and filtered --list checks that match no benchmarks,
+# are skipped (new benches may have no baseline).
 BENCH_SELECTION="${BENCH_SELECTION:-}"
 spec_mode=false
 if [[ -n "${BENCH_SELECTION}" ]]; then
@@ -149,14 +180,19 @@ if [[ "${spec_mode}" == true ]]; then
   for ((i = 0; i < spec_count; i++)); do
     crate="$(jq -r ".[$i].crate" <<< "${BENCH_SELECTION}")"
     target="$(jq -r ".[$i].target" <<< "${BENCH_SELECTION}")"
-    crate_features="$(jq -r ".[$i].features | join(\",\")" <<< "${BENCH_SELECTION}")"
     if ! grep -qxF "${crate}" <<< "${members}"; then
       message "Skipping '${crate}/${target}': not a member of this checkout"
       continue
     fi
+    if ! jq -e --arg c "${crate}" --arg t "${target}" \
+      'any(.packages[]; .name == $c and any(.targets[]?; .name == $t and any(.kind[]?; . == "bench")))' \
+      <<< "${metadata}" > /dev/null; then
+      message "Skipping '${crate}/${target}': not a bench target in this checkout"
+      continue
+    fi
     spec_crate+=("${crate}")
     spec_target+=("${target}")
-    spec_features+=("${crate_features}")
+    spec_features+=("$(bench_features_for_target "${crate}" "${target}")")
     spec_filter+=("$(jq -r ".[$i].filter" <<< "${BENCH_SELECTION}")")
   done
 
