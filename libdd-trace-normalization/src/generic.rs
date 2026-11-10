@@ -56,14 +56,14 @@ fn normalize_span<S: SpanMut>(span: &mut S, buf: &mut String) -> Result<(), Norm
     // TODO: component2name, as in the protobuf normalizer.
 
     if let Some(service) = normalize_utils::normalized_service(span.service(), buf) {
-        span.set_service(service.to_owned());
+        span.set_service(service.to_owned().into());
     }
     if let Some(name) = normalize_utils::normalized_name(span.name(), buf) {
-        span.set_name(name.to_owned());
+        span.set_name(name.to_owned().into());
     }
     if span.resource().is_empty() {
         let name = span.name().to_owned();
-        span.set_resource(name);
+        span.set_resource(name.into());
     }
     // The span id alone, see the module documentation.
     if span.parent_id() == span.span_id() {
@@ -76,12 +76,12 @@ fn normalize_span<S: SpanMut>(span: &mut S, buf: &mut String) -> Result<(), Norm
     span.set_duration(duration);
 
     if let Some(span_type) = normalize_utils::normalized_span_type(span.typ(), buf) {
-        span.set_type(span_type.to_owned());
+        span.set_type(span_type.to_owned().into());
     }
     if let Some(env) = span.env()
         && let Some(env) = normalize_utils::normalized_tag(env, buf)
     {
-        span.set_env(env.to_owned());
+        span.set_env(env.to_owned().into());
     }
 
     if span.has_attribute(HTTP_STATUS_CODE_KEY) && !has_valid_http_status_code(span) {
@@ -139,7 +139,7 @@ pub fn normalize_chunk<C: TraceChunkMut>(
         chunk.set_priority(priority);
     }
     if let Some(origin) = origin {
-        chunk.set_origin(origin);
+        chunk.set_origin(origin.into());
     }
     Ok(())
 }
