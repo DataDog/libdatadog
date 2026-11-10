@@ -60,7 +60,9 @@ pub struct Config {
     pub root_session_id: Option<String>,
 
     /// Whether to emit the `app-started`/`app-closing` lifecycle payloads.
-    /// Forked processes may not be required to emit these.
+    /// Forked processes may not be required to emit these. A worker reset after fork
+    /// (`Worker::reset` in the child) turns this off, so a worker kept across fork
+    /// emits neither event in the child.
     #[serde(default = "default_true")]
     pub emit_app_lifecycle: bool,
 

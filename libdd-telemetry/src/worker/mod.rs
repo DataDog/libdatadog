@@ -33,7 +33,7 @@ use std::{
     ops::ControlFlow,
     sync::{
         Arc,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicU64, Ordering},
     },
 };
 // `web_time` re-exports `std::time::Instant`/`SystemTime` on native and
@@ -147,27 +147,6 @@ struct TelemetryWorkerData {
     install_signature: Option<data::InstallSignature>,
 }
 
-/// Runtime switches for the `app-started` and `app-closing` lifecycle events, shared between a
-/// worker and its handles.
-///
-/// Both switches start from [`Config::emit_app_lifecycle`] and can be changed after the worker is
-/// built through [`TelemetryWorkerHandle::set_app_started_enabled`] and
-/// [`TelemetryWorkerHandle::set_app_closing_enabled`].
-#[derive(Debug)]
-struct AppLifecycleControl {
-    app_started: AtomicBool,
-    app_closing: AtomicBool,
-}
-
-impl AppLifecycleControl {
-    fn new(enabled: bool) -> Self {
-        Self {
-            app_started: AtomicBool::new(enabled),
-            app_closing: AtomicBool::new(enabled),
-        }
-    }
-}
-
 /// `C` is the capability bundle. Leaf crates pin it to a concrete type
 /// (`NativeCapabilities` on native, `WasmCapabilities` on wasm).
 pub struct TelemetryWorker<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> {
@@ -186,8 +165,6 @@ pub struct TelemetryWorker<C: HttpClientCapability + SleepCapability + MaybeSend
     /// Shared with the handle: producers publish metric points here instead of the mailbox, and
     /// this worker batch-drains them into `data.metric_buckets` (see `metric_ring`).
     metric_ring: Arc<MetricRing>,
-    /// Shared with the handle: whether `app-started` / `app-closing` are sent.
-    lifecycle: Arc<AppLifecycleControl>,
 }
 
 impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Debug
@@ -285,6 +262,10 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Wor
                 let _ = self.deadlines.schedule_event(LifecycleAction::FlushData);
             }
         }
+
+        // Forked children must not send app-started, and app-closing only ends the lifecycle
+        // app-started opened, so a worker kept across fork emits neither in the child.
+        self.config.emit_app_lifecycle = false;
 
         // Clear all unbuffered telemetry data; the child must not send pre-fork data.
         self.data.logs = store::QueueHashMap::default();
@@ -545,7 +526,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
         match action {
             Lifecycle(Start) => {
                 if !self.data.started {
-                    if self.lifecycle.app_started.load(Ordering::Relaxed) {
+                    if self.config.emit_app_lifecycle {
                         let app_started = data::Payload::AppStarted(self.build_app_started());
                         match self.send_payload(&app_started).await {
                             Ok(()) => self.payload_sent_success(&app_started),
@@ -683,7 +664,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
 
                 let mut app_events = self.build_app_events_batch();
                 app_events.extend(self.build_observability_batch());
-                if self.lifecycle.app_closing.load(Ordering::Relaxed) {
+                if self.config.emit_app_lifecycle {
                     app_events.push(data::Payload::AppClosing(()));
                 }
 
@@ -1162,8 +1143,6 @@ pub struct TelemetryWorkerHandle<
     contexts: MetricContexts,
     /// Shared with the worker: `add_point` publishes here (see `metric_ring`).
     metric_ring: Arc<MetricRing>,
-    /// Shared with the worker: whether `app-started` / `app-closing` are sent.
-    lifecycle: Arc<AppLifecycleControl>,
     _phantom: PhantomData<fn() -> C>,
 }
 
@@ -1180,7 +1159,6 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Clo
             runtime: self.runtime.clone(),
             contexts: self.contexts.clone(),
             metric_ring: self.metric_ring.clone(),
-            lifecycle: self.lifecycle.clone(),
             _phantom: PhantomData,
         }
     }
@@ -1249,36 +1227,6 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static>
         timeout: time::Duration,
     ) -> anyhow::Result<()> {
         Ok(self.sender.send_timeout(msg, timeout).await?)
-    }
-
-    /// Enables or disables the `app-started` event sent when the worker processes its start
-    /// action.
-    ///
-    /// The initial value comes from [`Config::emit_app_lifecycle`]. The change applies to the next
-    /// start action processed and survives a worker reset. This is a lock-free store that touches
-    /// neither the mailbox nor the runtime, so a forked child can call it before restarting the
-    /// worker (for example to avoid sending `app-started`, which child processes must not send).
-    pub fn set_app_started_enabled(&self, enabled: bool) {
-        self.lifecycle.app_started.store(enabled, Ordering::Relaxed);
-    }
-
-    /// Returns whether the worker sends `app-started` when it starts.
-    pub fn app_started_enabled(&self) -> bool {
-        self.lifecycle.app_started.load(Ordering::Relaxed)
-    }
-
-    /// Enables or disables the `app-closing` event sent when the worker stops.
-    ///
-    /// Data is still flushed on stop when disabled. The initial value comes from
-    /// [`Config::emit_app_lifecycle`]. Like [`Self::set_app_started_enabled`], this is safe to
-    /// call in a forked child before the worker is restarted.
-    pub fn set_app_closing_enabled(&self, enabled: bool) {
-        self.lifecycle.app_closing.store(enabled, Ordering::Relaxed);
-    }
-
-    /// Returns whether the worker sends `app-closing` when it stops.
-    pub fn app_closing_enabled(&self) -> bool {
-        self.lifecycle.app_closing.load(Ordering::Relaxed)
     }
 
     pub fn send_start(&self) -> anyhow::Result<()> {
@@ -1518,7 +1466,6 @@ impl TelemetryWorkerBuilder {
         let metric_ring = Arc::new(MetricRing::new());
         let token = CancellationToken::new();
         let config = self.config;
-        let lifecycle = Arc::new(AppLifecycleControl::new(config.emit_app_lifecycle));
         let telemetry_heartbeat_interval = config.telemetry_heartbeat_interval;
         let telemetry_extended_heartbeat_interval = config.telemetry_extended_heartbeat_interval;
         let capabilities = C::new_periodic();
@@ -1569,7 +1516,6 @@ impl TelemetryWorkerBuilder {
             next_action: None,
             stopped: false,
             metric_ring: metric_ring.clone(),
-            lifecycle: lifecycle.clone(),
         };
 
         (
@@ -1582,7 +1528,6 @@ impl TelemetryWorkerBuilder {
                 runtime: tokio_runtime,
                 contexts,
                 metric_ring,
-                lifecycle,
                 _phantom: PhantomData,
             },
             worker,
@@ -2662,11 +2607,10 @@ mod tests {
         metric_mock.assert_calls(1);
     }
 
-    mod lifecycle_control {
+    mod fork_lifecycle {
         use super::super::*;
         use crate::config::TelemetryEndpoint;
-        use crate::data::Configuration;
-        use crate::data::ConfigurationOrigin;
+        use crate::data::{Configuration, ConfigurationOrigin};
         use httpmock::prelude::*;
         use libdd_capabilities_impl::NativeCapabilities;
         use libdd_common::mutable_metadata::InstrumentationSession;
@@ -2674,214 +2618,220 @@ mod tests {
 
         const TELEMETRY_PATH: &str = "/telemetry/proxy/api/v2/apmtelemetry";
 
-        fn builder(server: &MockServer, emit_app_lifecycle: bool) -> TelemetryWorkerBuilder {
-            let mut builder = TelemetryWorkerBuilder::new(
-                "host".into(),
-                "svc".into(),
-                "lang".into(),
-                "1".into(),
-                "tv".into(),
-            );
-            builder.config.emit_app_lifecycle = emit_app_lifecycle;
-            builder.config.telemetry_heartbeat_interval = Duration::from_secs(3600);
-            builder
-                .config
-                .set_endpoint(TelemetryEndpoint {
-                    url: Some(server.url("/")),
-                    ..Default::default()
-                })
-                .unwrap();
-            builder.runtime_id = Some("rid".into());
-            builder
-        }
-
-        struct Mocks<'a> {
-            started: httpmock::Mock<'a>,
-            closing: httpmock::Mock<'a>,
-            config: httpmock::Mock<'a>,
-            _any: httpmock::Mock<'a>,
-        }
-
-        fn mocks(server: &MockServer) -> Mocks<'_> {
-            let by_type = |request_type: &str| {
-                let needle = format!(r#""request_type":"{request_type}""#);
-                server.mock(move |when, then| {
-                    when.method(POST).path(TELEMETRY_PATH).body_includes(needle);
-                    then.status(202).body("");
-                })
-            };
-            Mocks {
-                started: by_type("app-started"),
-                closing: by_type("app-closing"),
-                config: server.mock(|when, then| {
-                    when.method(POST)
-                        .path(TELEMETRY_PATH)
-                        .body_includes(r#""name":"lifecycle.test.config""#);
-                    then.status(202).body("");
-                }),
-                _any: server.mock(|when, then| {
-                    when.method(POST).path(TELEMETRY_PATH);
-                    then.status(202).body("");
-                }),
-            }
-        }
-
-        #[cfg_attr(miri, ignore)]
-        #[tokio::test]
-        async fn defaults_follow_emit_app_lifecycle() {
-            let server = MockServer::start();
-            for enabled in [true, false] {
-                let (handle, _worker) = builder(&server, enabled)
-                    .build_worker::<NativeCapabilities>(Some(tokio::runtime::Handle::current()));
-                assert_eq!(handle.app_started_enabled(), enabled);
-                assert_eq!(handle.app_closing_enabled(), enabled);
-                let clone = handle.clone();
-                clone.set_app_started_enabled(!enabled);
-                assert_eq!(handle.app_started_enabled(), !enabled);
-                assert_eq!(handle.app_closing_enabled(), enabled);
-                clone.set_app_closing_enabled(!enabled);
-                assert_eq!(handle.app_closing_enabled(), !enabled);
-            }
-        }
-
-        #[cfg_attr(miri, ignore)]
-        #[tokio::test]
-        async fn enabled_lifecycle_sends_started_and_closing() {
-            let server = MockServer::start();
-            let mocks = mocks(&server);
-            let (_handle, mut worker) = builder(&server, true)
-                .build_worker::<NativeCapabilities>(Some(tokio::runtime::Handle::current()));
-            let _ = worker
-                .dispatch_action(TelemetryActions::Lifecycle(LifecycleAction::Start))
-                .await;
-            <TelemetryWorker<_> as libdd_shared_runtime::Worker>::shutdown(&mut worker).await;
-            mocks.started.assert_calls(1);
-            mocks.closing.assert_calls(1);
-        }
-
-        #[cfg_attr(miri, ignore)]
-        #[tokio::test]
-        async fn disabled_started_still_schedules_periodic_actions() {
-            let server = MockServer::start();
-            let mocks = mocks(&server);
-            let (handle, mut worker) = builder(&server, true)
-                .build_worker::<NativeCapabilities>(Some(tokio::runtime::Handle::current()));
-            handle.set_app_started_enabled(false);
-            let _ = worker
-                .dispatch_action(TelemetryActions::Lifecycle(LifecycleAction::Start))
-                .await;
-            mocks.started.assert_calls(0);
-            assert!(worker.data.started);
-            let scheduled: Vec<LifecycleAction> =
-                worker.deadlines.deadlines.iter().map(|(_, k)| *k).collect();
-            for action in [
-                LifecycleAction::FlushMetricAggr,
-                LifecycleAction::FlushData,
-                LifecycleAction::ExtendedHeartbeat,
-            ] {
-                assert!(scheduled.contains(&action), "{action:?} not scheduled");
-            }
-        }
-
-        #[cfg_attr(miri, ignore)]
-        #[tokio::test]
-        async fn disabled_closing_still_flushes_on_shutdown() {
-            let server = MockServer::start();
-            let mocks = mocks(&server);
-            let (handle, mut worker) = builder(&server, true)
-                .build_worker::<NativeCapabilities>(Some(tokio::runtime::Handle::current()));
-            handle.set_app_closing_enabled(false);
-            let _ = worker
-                .dispatch_action(TelemetryActions::Lifecycle(LifecycleAction::Start))
-                .await;
-            handle
-                .try_send_msg(TelemetryActions::AddConfig(Configuration {
-                    name: "lifecycle.test.config".into(),
-                    value: Some("1".into()),
-                    origin: ConfigurationOrigin::Default,
-                    config_id: None,
-                    seq_id: None,
-                }))
-                .unwrap();
-            <TelemetryWorker<_> as libdd_shared_runtime::Worker>::shutdown(&mut worker).await;
-            mocks.started.assert_calls(1);
-            mocks.closing.assert_calls(0);
-            mocks.config.assert_calls(1);
-        }
-
-        fn child_identity(metadata: &MutableMetadataHandle) {
-            metadata.set_identity(
-                "child".into(),
-                InstrumentationSession {
-                    id: "child".into(),
-                    root_id: "parent".into(),
-                    parent_id: "parent".into(),
-                },
-            );
-        }
-
-        fn fork_sequence(start_parent: bool) {
-            let server = MockServer::start();
-            // Defined before the generic mocks: httpmock attributes a request to the first match.
-            let child_heartbeat = server.mock(|when, then| {
+        fn by_type<'a>(
+            server: &'a MockServer,
+            runtime_id: &str,
+            request_type: &str,
+        ) -> httpmock::Mock<'a> {
+            let rid = format!(r#""runtime_id":"{runtime_id}""#);
+            let rt = format!(r#""request_type":"{request_type}""#);
+            server.mock(move |when, then| {
                 when.method(POST)
                     .path(TELEMETRY_PATH)
-                    .header("dd-session-id", "child")
+                    .body_includes(rid)
+                    .body_includes(rt);
+                then.status(202).body("");
+            })
+        }
+
+        fn config_change(name: &str) -> TelemetryActions {
+            TelemetryActions::AddConfig(Configuration {
+                name: name.into(),
+                value: Some("1".into()),
+                origin: ConfigurationOrigin::Default,
+                config_id: None,
+                seq_id: None,
+            })
+        }
+
+        struct Fixture {
+            server: MockServer,
+            runtime: ForkSafeRuntime,
+            metadata: MutableMetadataHandle,
+            handle: TelemetryWorkerHandle<NativeCapabilities>,
+            _worker: libdd_shared_runtime::WorkerHandle,
+        }
+
+        impl Fixture {
+            fn new(emit_app_lifecycle: bool) -> Self {
+                let server = MockServer::start();
+                let runtime = ForkSafeRuntime::new().unwrap();
+                let metadata = MutableMetadataHandle::default();
+                metadata.set_identity(
+                    "parent".into(),
+                    InstrumentationSession {
+                        id: "parent".into(),
+                        ..Default::default()
+                    },
+                );
+                let mut builder = TelemetryWorkerBuilder::new(
+                    "host".into(),
+                    "svc".into(),
+                    "lang".into(),
+                    "1".into(),
+                    "tv".into(),
+                );
+                builder.flavor = TelemetryWorkerFlavor::Full;
+                builder.mutable_metadata = Some(metadata.clone());
+                builder.config.emit_app_lifecycle = emit_app_lifecycle;
+                builder.config.telemetry_heartbeat_interval = Duration::from_secs(3600);
+                builder
+                    .config
+                    .set_endpoint(TelemetryEndpoint {
+                        url: Some(server.url("/")),
+                        ..Default::default()
+                    })
+                    .unwrap();
+                let (handle, worker) = builder.build_worker::<NativeCapabilities>(None);
+                let _worker = runtime.spawn_worker(worker, true).unwrap();
+                Fixture {
+                    server,
+                    runtime,
+                    metadata,
+                    handle,
+                    _worker,
+                }
+            }
+
+            fn sync(&self) {
+                self.runtime
+                    .block_on(self.handle.stats().unwrap())
+                    .unwrap()
+                    .unwrap();
+            }
+
+            fn fork_child(&self) {
+                self.runtime.before_fork();
+                self.metadata.set_identity(
+                    "child".into(),
+                    InstrumentationSession {
+                        id: "child".into(),
+                        root_id: "parent".into(),
+                        parent_id: "parent".into(),
+                    },
+                );
+                self.runtime.after_fork_child().unwrap();
+            }
+
+            fn flush(&self) {
+                self.handle
+                    .try_send_msg(TelemetryActions::Lifecycle(LifecycleAction::FlushData))
+                    .unwrap();
+                self.sync();
+            }
+        }
+
+        /// A started worker kept across fork sends neither lifecycle event in the child, but
+        /// still heartbeats and flushes its data on shutdown.
+        #[cfg_attr(miri, ignore)]
+        #[test]
+        fn kept_root_worker_child_skips_lifecycle_events() {
+            let f = Fixture::new(true);
+            let parent_started = by_type(&f.server, "parent", "app-started");
+            let child_started = by_type(&f.server, "child", "app-started");
+            let child_closing = by_type(&f.server, "child", "app-closing");
+            let child_heartbeat = by_type(&f.server, "child", "app-heartbeat");
+            let child_config = f.server.mock(|when, then| {
+                when.method(POST)
+                    .path(TELEMETRY_PATH)
                     .body_includes(r#""runtime_id":"child""#)
-                    .body_includes(r#""seq_id":1,"#)
-                    .body_includes(r#""request_type":"app-heartbeat""#);
+                    .body_includes(r#""name":"fork.child.config""#);
                 then.status(202).body("");
             });
-            let mocks = mocks(&server);
-            let runtime = ForkSafeRuntime::new().unwrap();
-            let metadata = MutableMetadataHandle::default();
-            metadata.set_identity(
-                "parent".into(),
-                InstrumentationSession {
-                    id: "parent".into(),
-                    ..Default::default()
-                },
-            );
-            let mut builder = builder(&server, true);
-            builder.flavor = TelemetryWorkerFlavor::Full;
-            builder.mutable_metadata = Some(metadata.clone());
-            let (handle, worker) = builder.build_worker::<NativeCapabilities>(None);
-            let _worker = runtime.spawn_worker(worker, true).unwrap();
-            if start_parent {
-                handle.send_start().unwrap();
-                runtime.block_on(handle.stats().unwrap()).unwrap().unwrap();
-                mocks.started.assert_calls(1);
-            }
+            let _any = f.server.mock(|when, then| {
+                when.method(POST).path(TELEMETRY_PATH);
+                then.status(202).body("");
+            });
 
-            runtime.before_fork();
-            child_identity(&metadata);
-            handle.set_app_started_enabled(false);
-            handle.set_app_closing_enabled(false);
-            runtime.after_fork_child().unwrap();
-            if !start_parent {
-                handle.send_start().unwrap();
-            }
-            handle
-                .try_send_msg(TelemetryActions::Lifecycle(LifecycleAction::FlushData))
-                .unwrap();
-            runtime.block_on(handle.stats().unwrap()).unwrap().unwrap();
+            f.handle.send_start().unwrap();
+            f.sync();
+            parent_started.assert_calls(1);
+
+            f.fork_child();
+            f.flush();
             child_heartbeat.assert_calls(1);
-            runtime.shutdown(None).unwrap();
+            f.handle
+                .try_send_msg(config_change("fork.child.config"))
+                .unwrap();
+            f.runtime.shutdown(None).unwrap();
 
-            mocks.started.assert_calls(if start_parent { 1 } else { 0 });
-            mocks.closing.assert_calls(0);
+            child_started.assert_calls(0);
+            child_closing.assert_calls(0);
+            child_config.assert_calls(1);
         }
 
+        /// If the parent never started its worker, the child's later start sends no
+        /// app-started but schedules heartbeats.
         #[cfg_attr(miri, ignore)]
         #[test]
-        fn started_parent_fork_child_skips_lifecycle_events() {
-            fork_sequence(true);
+        fn unstarted_parent_child_start_skips_app_started() {
+            let f = Fixture::new(true);
+            let started = f.server.mock(|when, then| {
+                when.method(POST)
+                    .path(TELEMETRY_PATH)
+                    .body_includes(r#""request_type":"app-started""#);
+                then.status(202).body("");
+            });
+            let child_closing = by_type(&f.server, "child", "app-closing");
+            let child_heartbeat = by_type(&f.server, "child", "app-heartbeat");
+            let _any = f.server.mock(|when, then| {
+                when.method(POST).path(TELEMETRY_PATH);
+                then.status(202).body("");
+            });
+
+            f.fork_child();
+            f.handle.send_start().unwrap();
+            f.flush();
+            f.runtime.shutdown(None).unwrap();
+
+            started.assert_calls(0);
+            child_closing.assert_calls(0);
+            child_heartbeat.assert_calls(1);
         }
 
+        /// Fork preparation followed by parent resume does not reset the worker, so the parent
+        /// still sends app-closing.
         #[cfg_attr(miri, ignore)]
         #[test]
-        fn unstarted_parent_fork_child_skips_app_started_but_heartbeats() {
-            fork_sequence(false);
+        fn parent_after_fork_keeps_app_closing() {
+            let f = Fixture::new(true);
+            let closing = by_type(&f.server, "parent", "app-closing");
+            let _any = f.server.mock(|when, then| {
+                when.method(POST).path(TELEMETRY_PATH);
+                then.status(202).body("");
+            });
+
+            f.handle.send_start().unwrap();
+            f.sync();
+            f.runtime.before_fork();
+            f.runtime.after_fork_parent().unwrap();
+            f.flush();
+            f.runtime.shutdown(None).unwrap();
+
+            closing.assert_calls(1);
+        }
+
+        /// A worker built with lifecycle events off (e.g. in an exec'd child) is unchanged: it
+        /// heartbeats without app-started or app-closing.
+        #[cfg_attr(miri, ignore)]
+        #[test]
+        fn lifecycle_disabled_at_build_sends_neither_event() {
+            let f = Fixture::new(false);
+            let started = by_type(&f.server, "parent", "app-started");
+            let closing = by_type(&f.server, "parent", "app-closing");
+            let heartbeat = by_type(&f.server, "parent", "app-heartbeat");
+            let _any = f.server.mock(|when, then| {
+                when.method(POST).path(TELEMETRY_PATH);
+                then.status(202).body("");
+            });
+
+            f.handle.send_start().unwrap();
+            f.flush();
+            f.runtime.shutdown(None).unwrap();
+
+            started.assert_calls(0);
+            closing.assert_calls(0);
+            heartbeat.assert_calls(1);
         }
     }
 }
