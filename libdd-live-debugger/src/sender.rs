@@ -12,6 +12,7 @@ use libdd_capabilities_impl::NativeHttpClient;
 use libdd_common::Endpoint;
 use libdd_common::tag::Tag;
 use libdd_data_pipeline::agent_info::schema::AgentInfoStruct;
+use libdd_networking::endpoint::EndpointExt;
 use percent_encoding::{CONTROLS, percent_encode};
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;

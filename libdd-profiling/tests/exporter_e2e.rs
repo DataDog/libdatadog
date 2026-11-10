@@ -444,7 +444,7 @@ async fn test_agentless_with_transport(transport: Transport) -> anyhow::Result<(
         {
             let socket_path = server.socket_path.as_ref().unwrap();
             // For Unix sockets, we need to create endpoint manually
-            let endpoint_url = libdd_common::connector::uds::socket_path_to_uri(socket_path)?;
+            let endpoint_url = libdd_networking::connector::uds::socket_path_to_uri(socket_path)?;
             let mut parts = endpoint_url.into_parts();
             parts.path_and_query = Some("/api/v2/profile".parse()?);
             let url = http::Uri::from_parts(parts)?;
@@ -457,7 +457,7 @@ async fn test_agentless_with_transport(transport: Transport) -> anyhow::Result<(
             let pipe_path = server.pipe_path.as_ref().unwrap();
             // For named pipes, we need to create endpoint manually
             let endpoint_url =
-                libdd_common::connector::named_pipe::named_pipe_path_to_uri(pipe_path)?;
+                libdd_networking::connector::named_pipe::named_pipe_path_to_uri(pipe_path)?;
             let mut parts = endpoint_url.into_parts();
             parts.path_and_query = Some("/api/v2/profile".parse()?);
             let url = http::Uri::from_parts(parts)?;

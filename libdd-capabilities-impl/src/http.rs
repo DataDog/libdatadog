@@ -25,8 +25,8 @@ mod native {
     };
     use libdd_capabilities::maybe_send::MaybeSend;
     use libdd_common::MutexExt;
-    use libdd_common::connector::Connector;
-    use libdd_common::http_common::{
+    use libdd_networking::connector::Connector;
+    use libdd_networking::http_common::{
         Body, GenericHttpClient, new_client_periodic, new_default_client,
     };
 
@@ -40,7 +40,7 @@ mod native {
         periodic: bool,
     }
 
-    pub struct NativeBodySender(libdd_common::http_common::Sender);
+    pub struct NativeBodySender(libdd_networking::http_common::Sender);
 
     impl StreamingBodySender for NativeBodySender {
         fn send_chunk(&mut self, data: bytes::Bytes) -> ChunkFuture<'_> {

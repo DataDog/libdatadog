@@ -3,6 +3,7 @@
 
 use alloc::borrow::Cow;
 use core::time::Duration;
+use libdd_networking::endpoint::EndpointExt;
 use std::time::SystemTime;
 
 use crate::parse_tags;
@@ -16,7 +17,8 @@ use super::{
 use anyhow::Context;
 use chrono::{DateTime, Utc};
 use http::{Uri, uri::PathAndQuery};
-use libdd_common::{Endpoint, config::parse_env, parse_uri};
+use libdd_common::config::parse_env;
+use libdd_common::{Endpoint, parse_uri};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -581,7 +583,7 @@ impl ErrorsIntakeUploader {
             .body(serde_json::to_string(payload)?.into())?;
 
         // Create HTTP client and send request
-        let client = libdd_common::http_common::new_client_periodic();
+        let client = libdd_networking::http_common::new_client_periodic();
 
         tokio::time::timeout(
             Duration::from_millis(endpoint.timeout_ms),

@@ -98,15 +98,13 @@ unsafe fn try_to_url(slice: CharSlice) -> anyhow::Result<hyper::Uri> {
     let str: &str = slice.try_to_utf8()?;
     #[cfg(unix)]
     if let Some(path) = str.strip_prefix("unix://") {
-        return Ok(libdd_common::connector::uds::socket_path_to_uri(
+        return Ok(libdd_networking::connector::uds::socket_path_to_uri(
             path.as_ref(),
         )?);
     }
     #[cfg(windows)]
     if let Some(path) = str.strip_prefix("windows:") {
-        return Ok(libdd_common::connector::named_pipe::named_pipe_path_to_uri(
-            path.as_ref(),
-        )?);
+        return Ok(libdd_networking::connector::named_pipe::named_pipe_path_to_uri(path.as_ref())?);
     }
     Ok(hyper::Uri::from_str(str)?)
 }
