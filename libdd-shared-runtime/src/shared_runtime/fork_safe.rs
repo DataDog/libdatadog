@@ -298,6 +298,38 @@ mod tests {
         }
     }
 
+    /// Worker whose `run` never finishes on its own, like a fetch of an agent that accepts
+    /// connections but never answers.
+    #[derive(Debug)]
+    struct HungWorker;
+
+    #[async_trait]
+    impl Worker for HungWorker {
+        async fn run(&mut self) {
+            sleep(Duration::from_secs(60)).await;
+        }
+
+        async fn trigger(&mut self) {}
+
+        fn cancellable_run(&self) -> bool {
+            true
+        }
+    }
+
+    // A fork does not wait for a cancellable `run` to finish.
+    #[test]
+    fn test_before_fork_cancels_cancellable_run() {
+        let shared_runtime = ForkSafeRuntime::new().unwrap();
+        let _ = shared_runtime.spawn_worker(HungWorker, true).unwrap();
+        // Let `run` start.
+        std::thread::sleep(Duration::from_millis(50));
+
+        let start = std::time::Instant::now();
+        shared_runtime.before_fork();
+        assert!(start.elapsed() < Duration::from_secs(1));
+        assert!(shared_runtime.after_fork_parent().is_ok());
+    }
+
     #[test]
     fn test_fork_safe_runtime_creation() {
         let shared_runtime = ForkSafeRuntime::new();

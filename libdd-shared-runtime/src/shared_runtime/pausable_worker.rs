@@ -121,18 +121,16 @@ impl core::error::Error for PausableWorkerError {}
 /// `trigger`/`initial_trigger` and `recv` are wrapped with [`WeakWakerFuture::new`] so the
 /// waker handed out (and potentially shared with code outside of this runtime, e.g. the
 /// command sender) does not keep the runtime scheduler alive after this task is dropped.
+///
+/// Commands are handled between runs. If the worker allows it
+/// ([`Worker::cancellable_run`]), a command received during `run` cancels the run at its next
+/// yield point instead, so a pause before a fork does not wait for a slow run.
 async fn run_worker<T: Worker>(mut worker: T, mut receiver: CommandReceiver) -> TaskOutput<T> {
     let mut first = true;
     loop {
-        select! {
+        let command = select! {
             biased;
-            cmd = WeakWakerFuture::new(receiver.recv()) => match cmd {
-                Some(WorkerCommand::Pause) | None => break,
-                Some(WorkerCommand::Flush(ack)) => {
-                    worker.flush().await;
-                    let _ = ack.send(());
-                }
-            },
+            cmd = WeakWakerFuture::new(receiver.recv()) => cmd,
             _ = WeakWakerFuture::new(async {
                 if first {
                     worker.initial_trigger().await
@@ -140,8 +138,23 @@ async fn run_worker<T: Worker>(mut worker: T, mut receiver: CommandReceiver) -> 
                     worker.trigger().await
                 }
             }) => {
-                worker.run().await;
                 first = false;
+                if !worker.cancellable_run() {
+                    worker.run().await;
+                    continue;
+                }
+                select! {
+                    biased;
+                    cmd = WeakWakerFuture::new(receiver.recv()) => cmd,
+                    _ = worker.run() => continue,
+                }
+            }
+        };
+        match command {
+            Some(WorkerCommand::Pause) | None => break,
+            Some(WorkerCommand::Flush(ack)) => {
+                worker.flush().await;
+                let _ = ack.send(());
             }
         }
     }
@@ -456,6 +469,90 @@ mod tests {
         pw.start(tokio_spawn_fn(&handle)).unwrap();
         assert_keeps_running(&receiver);
         runtime.block_on(pw.pause()).unwrap();
+        assert!(matches!(pw, PausableWorker::Paused { .. }));
+    }
+
+    /// Worker whose `run` takes `delay`, like a fetch of an agent that does not answer.
+    #[derive(Debug)]
+    struct SlowWorker {
+        delay: Duration,
+        cancellable: bool,
+        runs: Arc<AtomicU32>,
+    }
+
+    #[async_trait]
+    impl Worker for SlowWorker {
+        async fn run(&mut self) {
+            self.runs.fetch_add(1, Ordering::SeqCst);
+            sleep(self.delay).await;
+        }
+
+        async fn trigger(&mut self) {}
+
+        fn cancellable_run(&self) -> bool {
+            self.cancellable
+        }
+    }
+
+    fn slow_setup(
+        delay: Duration,
+        cancellable: bool,
+    ) -> (
+        PausableWorker<Box<dyn Worker>>,
+        Arc<AtomicU32>,
+        tokio::runtime::Runtime,
+    ) {
+        let runs = Arc::new(AtomicU32::new(0));
+        let worker = SlowWorker {
+            delay,
+            cancellable,
+            runs: runs.clone(),
+        };
+        let runtime = Builder::new_multi_thread().enable_time().build().unwrap();
+        (PausableWorker::new(Box::new(worker)), runs, runtime)
+    }
+
+    fn wait_for_runs(runs: &AtomicU32, count: u32) {
+        let start = std::time::Instant::now();
+        while runs.load(Ordering::SeqCst) < count {
+            assert!(
+                start.elapsed() < Duration::from_secs(2),
+                "worker did not run"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    // Pausing a worker with a cancellable `run` interrupts the run instead of waiting for it,
+    // and the worker runs again once restarted.
+    #[test]
+    fn test_pause_cancels_cancellable_run() {
+        let (mut pw, runs, runtime) = slow_setup(Duration::from_secs(10), true);
+        let handle = runtime.handle().clone();
+        pw.start(tokio_spawn_fn(&handle)).unwrap();
+        wait_for_runs(&runs, 1);
+
+        let start = std::time::Instant::now();
+        runtime.block_on(pw.pause()).unwrap();
+        assert!(start.elapsed() < Duration::from_secs(1));
+        assert!(matches!(pw, PausableWorker::Paused { .. }));
+
+        pw.start(tokio_spawn_fn(&handle)).unwrap();
+        wait_for_runs(&runs, 2);
+    }
+
+    // By default a worker pauses only once its `run` completes.
+    #[test]
+    fn test_pause_waits_for_run_by_default() {
+        let delay = Duration::from_millis(300);
+        let (mut pw, runs, runtime) = slow_setup(delay, false);
+        let handle = runtime.handle().clone();
+        let start = std::time::Instant::now();
+        pw.start(tokio_spawn_fn(&handle)).unwrap();
+        wait_for_runs(&runs, 1);
+
+        runtime.block_on(pw.pause()).unwrap();
+        assert!(start.elapsed() >= delay);
         assert!(matches!(pw, PausableWorker::Paused { .. }));
     }
 

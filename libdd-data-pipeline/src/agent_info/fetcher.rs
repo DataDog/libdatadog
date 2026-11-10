@@ -273,6 +273,14 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Wor
     async fn run(&mut self) {
         self.fetch_and_update().await;
     }
+
+    /// `run` only stores its result once the `/info` response has arrived, so an interrupted
+    /// fetch loses nothing and the next `trigger` retries it. Without this, a pause before a
+    /// fork waits for an in-flight fetch, which takes the full request timeout when the agent
+    /// accepts connections but never answers.
+    fn cancellable_run(&self) -> bool {
+        true
+    }
 }
 
 impl<C: HttpClientCapability + SleepCapability> AgentInfoFetcher<C> {
