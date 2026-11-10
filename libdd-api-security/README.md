@@ -113,7 +113,7 @@ The JSON convenience API still reads the entire input, including discarded
 subtrees, for syntax and lengths. No input-byte, total-node, execution-time or
 output-byte budgets are implemented.
 Per-container/depth limits do not provide a practical total work bound for a
-branching tree. Those budgets, bounded input adapters, output-size handling,
+branching tree. Those budgets, output-size handling,
 scanner classification/configuration and language bindings are follow-up work.
 
 The shared trace attribute model does not currently represent JSON null or
@@ -129,3 +129,15 @@ before deduplication; `array_length_limit` caps length metadata before nested
 variants are deduplicated. Defaults preserve the existing JSON API exactly.
 Neither option bounds input processing. The original length still determines
 the truncation flag, and discarded JSON tails are still syntax-checked.
+
+## Bounded source adapters
+
+The extract_schema_from_source API reads caller-owned values lazily, using the
+same selection, metadata and deduplication rules. It requests no scalar contents
+and no children beyond the selection/depth limits. Errors from visited values
+propagate unchanged; ignored tails are not validated. Bindings implement language
+conversions and cycle checks. Empty and omitted record entries consume the quota,
+and original entry counts determine truncation. This can differ from serializing
+non-JSON application objects first. Enumerating object keys, executing getters
+and branching trees can still be expensive; this interface is not a total
+allocation, node or time budget.

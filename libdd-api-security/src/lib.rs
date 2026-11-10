@@ -22,11 +22,13 @@ extern crate alloc;
 
 mod json;
 mod schema;
+mod source;
 
 use alloc::string::String;
 use serde_json::Value;
 
 pub use schema::Schema;
+pub use source::{ScalarType, SchemaSource, SourceKind, extract_schema_from_source};
 
 /// Representation choices for callers whose input has different scalar or
 /// array-length semantics. These do not bound input processing.

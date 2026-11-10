@@ -19,6 +19,10 @@ use crate::{MAX_ARRAY_NODES, MAX_CONTAINER_DEPTH, MAX_RECORD_NODES, SchemaOption
 pub struct Schema<'a>(Node<'a>);
 
 impl<'a> Schema<'a> {
+    pub(crate) const fn from_node(node: Node<'a>) -> Self {
+        Self(node)
+    }
+
     pub(crate) fn from_json(
         input: &'a str,
         options: SchemaOptions,
