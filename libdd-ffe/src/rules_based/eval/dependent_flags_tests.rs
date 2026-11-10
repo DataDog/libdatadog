@@ -814,7 +814,17 @@ fn deep_dependencies_use_a_bounded_thread_stack() {
                         // At edge 256 the depth check takes precedence over cycle detection.
                         _ => EvaluationError::DependencyDepthExceeded,
                     };
-                    let message = trace.result.as_ref().unwrap_err().to_string();
+                    let original = trace.result.as_ref().unwrap_err();
+                    let cloned = original.clone();
+                    assert_eq!(&cloned, original);
+                    assert!(!format!("{cloned:?}").is_empty());
+                    let encoded = serde_json::to_vec(&cloned).unwrap();
+                    let decoded: EvaluationError = serde_json::from_slice(&encoded).unwrap();
+                    assert_eq!(&decoded, original);
+                    let binary = bincode::serialize(&cloned).unwrap();
+                    let decoded: EvaluationError = bincode::deserialize(&binary).unwrap();
+                    assert_eq!(&decoded, original);
+                    let message = original.to_string();
                     let mut expected_message: String = (1..=edges)
                         .map(|n| format!("prerequisite f{n} failed: "))
                         .collect();
@@ -857,6 +867,21 @@ fn deep_dependencies_use_a_bounded_thread_stack() {
                         );
                         next += 1;
                         error = Some(source);
+                    }
+                }
+                // Each ancestor's trace copy shares the same suffix as the returned chain.
+                for pair in trace.evaluations.windows(2) {
+                    if let (
+                        Err(EvaluationError::DependencyEvaluationFailed { source: child, .. }),
+                        Err(EvaluationError::DependencyEvaluationFailed { source: parent, .. }),
+                    ) = (&pair[0].result, &pair[1].result)
+                    {
+                        let EvaluationError::DependencyEvaluationFailed { source: suffix, .. } =
+                            parent.as_ref()
+                        else {
+                            panic!("missing shared suffix")
+                        };
+                        assert!(Arc::ptr_eq(child, suffix));
                     }
                 }
                 // Exercise nested error destruction on the same small stack.

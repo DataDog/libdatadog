@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use chrono::{DateTime, Utc};
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use crate::rules_based::{
     Configuration, EvaluationContext, ExpectedFlagType, Str, Timestamp,
@@ -208,14 +211,25 @@ impl Configuration {
             now,
             exclusion,
             max_dependency_depth: None,
-            active: Vec::new(),
+            active: HashSet::new(),
+            provenance: Vec::new(),
             memo: HashMap::new(),
             evaluations: Vec::new(),
         };
         let evaluated = session.evaluate_flag(flag_key, expected_type, 0);
         if let Ok(root) = &evaluated {
+            let mut pending = vec![root.provenance];
+            let mut visited = HashSet::new();
+            let mut exposed = HashSet::new();
+            while let Some(index) = pending.pop() {
+                if visited.insert(index) {
+                    let (key, children) = &session.provenance[index];
+                    exposed.insert(key.clone());
+                    pending.extend(children);
+                }
+            }
             for record in &mut session.evaluations {
-                record.exposure_eligible = root.exposures.contains(&record.flag_key);
+                record.exposure_eligible = exposed.contains(&record.flag_key);
             }
         }
         EvaluationResult {
@@ -264,7 +278,7 @@ struct EvaluatedFlag {
     // Includes all reached branches, even rejected rules, to keep memoization depth-safe.
     height: u16,
     // Only dependencies on the selected rule/split path, not every successful evaluation.
-    exposures: HashSet<Str>,
+    provenance: usize,
 }
 
 struct EvaluationSession<'a> {
@@ -274,7 +288,9 @@ struct EvaluationSession<'a> {
     now: Timestamp,
     exclusion: ExperimentationExclusion,
     max_dependency_depth: Option<u16>,
-    active: Vec<Str>,
+    active: HashSet<Str>,
+    // Arena of selected-path edges; memo entries share indices, never transitive sets.
+    provenance: Vec<(Str, Vec<usize>)>,
     memo: HashMap<Str, EvaluatedFlag>,
     evaluations: Vec<EvaluationRecord>,
 }
@@ -345,7 +361,7 @@ struct EvaluationFrame<'a> {
     rule: usize,
     condition: usize,
     height: u16,
-    exposures: HashSet<Str>,
+    exposures: Vec<usize>,
 }
 
 enum FrameStep {
@@ -364,7 +380,7 @@ impl<'a> EvaluationFrame<'a> {
             rule: 0,
             condition: 0,
             height: 0,
-            exposures: HashSet::new(),
+            exposures: Vec::new(),
         }
     }
 
@@ -417,7 +433,7 @@ impl<'a> EvaluationFrame<'a> {
                         let result = result.map_err(|source| {
                             EvaluationError::DependencyEvaluationFailed {
                                 flag_key: key.clone(),
-                                source: Box::new(source),
+                                source: Arc::new(source),
                             }
                         })?;
                         // Retain visited height even if this condition or a later one rejects
@@ -427,8 +443,7 @@ impl<'a> EvaluationFrame<'a> {
                             value.as_ref() == result.assignment.variation_key.as_str()
                         }) == *expected_membership;
                         if matched {
-                            self.exposures.insert(key.clone());
-                            self.exposures.extend(result.exposures);
+                            self.exposures.push(result.provenance);
                         }
                         matched
                     } else {
@@ -446,10 +461,14 @@ impl<'a> EvaluationFrame<'a> {
                 self.next_allocation();
                 continue;
             };
+            let provenance = session.provenance.len();
+            session
+                .provenance
+                .push((self.key.clone(), std::mem::take(&mut self.exposures)));
             return Ok(FrameStep::Complete(EvaluatedFlag {
                 assignment: allocation.assignment(split),
                 height: self.height,
-                exposures: std::mem::take(&mut self.exposures),
+                provenance,
             }));
         }
         Err(EvaluationError::DefaultAllocationNull)
@@ -482,7 +501,7 @@ impl EvaluationSession<'_> {
                             });
                             match flag {
                                 Ok(flag) => {
-                                    self.active.push(key.clone());
+                                    self.active.insert(key.clone());
                                     stack.push(EvaluationFrame::new(key, flag, depth));
                                 }
                                 Err(error) => {
@@ -499,7 +518,7 @@ impl EvaluationSession<'_> {
             if frame.depth == 0 {
                 return result;
             }
-            self.active.pop();
+            self.active.remove(&frame.key);
             dependency = Some(self.complete_dependency(frame.key, result));
         }
         // The root frame always returns above, including when evaluation fails.
@@ -573,7 +592,7 @@ impl EvaluationSession<'_> {
             result: result
                 .as_ref()
                 .map(|result| result.assignment.clone())
-                .map_err(clone_dependency_error),
+                .map_err(Clone::clone),
             exposure_eligible: false,
         });
         if let Ok(result) = &result {
@@ -581,24 +600,6 @@ impl EvaluationSession<'_> {
         }
         result
     }
-}
-
-// Derived Clone recurses through Box<EvaluationError>. Trace recording clones an
-// error for every ancestor, so copy the dependency chain iteratively as well.
-fn clone_dependency_error(mut error: &EvaluationError) -> EvaluationError {
-    let mut keys = Vec::new();
-    while let EvaluationError::DependencyEvaluationFailed { flag_key, source } = error {
-        keys.push(flag_key.clone());
-        error = source;
-    }
-    let mut cloned = error.clone();
-    for flag_key in keys.into_iter().rev() {
-        cloned = EvaluationError::DependencyEvaluationFailed {
-            flag_key,
-            source: Box::new(cloned),
-        };
-    }
-    cloned
 }
 
 impl Allocation {
