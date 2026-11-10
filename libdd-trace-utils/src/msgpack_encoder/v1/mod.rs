@@ -1224,6 +1224,84 @@ mod tests {
             "sampling_mechanism 3 from span 3 should appear"
         );
     }
+
+    #[test]
+    fn test_span_event_array_attributes_round_trip() {
+        use crate::span::v1::AttributeValue;
+        use crate::span::v04::{AttributeAnyValue, AttributeArrayValue, SpanEvent};
+
+        // V1 encodes each array element as a (type, value) pair, so the array header must
+        // count 2 msgpack items per element. Cover odd and even lengths, since an odd
+        // length is rejected outright while an even one silently misparses what follows.
+        let odd = vec![
+            AttributeArrayValue::String(BytesString::from_static("a")),
+            AttributeArrayValue::Boolean(true),
+            AttributeArrayValue::Integer(-7),
+        ];
+        let even = vec![
+            AttributeArrayValue::Double(1.5),
+            AttributeArrayValue::String(BytesString::from_static("b")),
+            AttributeArrayValue::Integer(42),
+            AttributeArrayValue::Boolean(false),
+        ];
+        let mut span = make_span("svc", "op", 1, 1, 0);
+        span.span_events = vec![SpanEvent {
+            time_unix_nano: 123,
+            name: BytesString::from_static("evt"),
+            attributes: [
+                (
+                    BytesString::from_static("odd"),
+                    AttributeAnyValue::Array(odd),
+                ),
+                (
+                    BytesString::from_static("even"),
+                    AttributeAnyValue::Array(even),
+                ),
+                (
+                    BytesString::from_static("single"),
+                    AttributeAnyValue::SingleValue(AttributeArrayValue::Integer(9)),
+                ),
+            ]
+            .into_iter()
+            .collect(),
+        }];
+
+        let encoded = to_vec_from_v04(&[vec![span]], &TracerMetadata::default());
+        let (payload, _) =
+            crate::msgpack_decoder::v1::from_slice(&encoded).expect("payload must decode");
+
+        let events = &payload.chunks[0].spans[0].span_events;
+        assert_eq!(events.len(), 1);
+        let event = &events[0];
+        assert_eq!(event.name, "evt");
+        assert_eq!(event.time_unix_nano, 123);
+
+        let array = |key: &str| match event.attributes.get(key) {
+            Some(AttributeValue::Array(values)) => values.clone(),
+            other => panic!("attribute {key} should be an array, got {other:?}"),
+        };
+        assert_eq!(
+            array("odd"),
+            vec![
+                AttributeValue::String("a".into()),
+                AttributeValue::Bool(true),
+                AttributeValue::Int(-7),
+            ]
+        );
+        assert_eq!(
+            array("even"),
+            vec![
+                AttributeValue::Float(1.5),
+                AttributeValue::String("b".into()),
+                AttributeValue::Int(42),
+                AttributeValue::Bool(false),
+            ]
+        );
+        assert_eq!(
+            event.attributes.get("single"),
+            Some(&AttributeValue::Int(9))
+        );
+    }
 }
 
 #[cfg(test)]
