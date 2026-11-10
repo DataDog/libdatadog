@@ -240,9 +240,6 @@ unsafe fn parse_json(
 /// This function creates the tokio runtime used by `ddog_prof_Exporter_send_blocking`.
 /// It can be called ahead of time to ensure the runtime is ready before sending.
 ///
-/// Runtime initialization and subsequent calls to `ddog_prof_Exporter_send_blocking`
-/// need not occur on the same thread.
-///
 /// # Arguments
 /// * `exporter` - Borrows the exporter.
 ///

@@ -148,9 +148,6 @@ impl ProfileExporter {
     ///
     /// This method lazily creates a single-threaded tokio runtime. It can be called
     /// before `send_blocking` to ensure the runtime is ready ahead of time.
-    ///
-    /// Initialization and subsequent calls to [`Self::send_blocking`] need not occur on
-    /// the same thread.
     pub fn init_runtime(&mut self) -> anyhow::Result<()> {
         if self.runtime.is_none() {
             self.runtime = Some(
