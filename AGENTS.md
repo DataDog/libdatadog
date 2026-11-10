@@ -90,6 +90,27 @@ Keep tool output concise to preserve conversation context:
 - Avoid inspecting generated artifacts under `target/` unless validating generated output specifically.
 - During iteration, prefer narrow checks such as `cargo check -p <crate>`; batch slower tests, examples, and linting once the intended API/code shape has settled.
 
+### Community pull requests
+
+Fork PRs run CI with a restricted token. To run a fork PR with maintainer
+permissions, mirror it with:
+
+```bash
+./scripts/mirror-community-pull-request.sh <pr-number> [<target-branch>]
+```
+
+The script fetches the fork commits over HTTPS, cherry-picks them signed
+(`-S`) onto `external/community-pr-<N>`, pushes with a consent-pinned lease,
+and opens a mirror PR titled `<original title> 🪩 #<N>`. Both PRs get the
+`external` label. The mirror branch is disposable: re-running the script
+deletes and rebuilds it from scratch.
+
+* `--dry-run` prints the plan, including a warning when commits touch `.github/`.
+* `--no-push` builds the branch locally and skips the push and PR creation.
+* The run aborts before pushing when the PR changes files under `.github/`:
+  the push event would run contributor-controlled workflows.
+* Requires `gh`, `jq`, and git commit signing configured.
+
 ## Key Conventions
 
 ### Reliability & integrability
