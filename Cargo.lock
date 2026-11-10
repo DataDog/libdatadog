@@ -2793,6 +2793,7 @@ dependencies = [
  "hyper-util",
  "indexmap 2.12.1",
  "libc",
+ "libdd-env",
  "libdd-process-utils",
  "libdd-regex",
  "maplit",
@@ -2852,6 +2853,7 @@ dependencies = [
  "libdd-capabilities",
  "libdd-capabilities-impl",
  "libdd-common",
+ "libdd-env",
  "libdd-gotter",
  "libdd-libunwind-sys",
  "libdd-process-utils",
@@ -3026,6 +3028,10 @@ dependencies = [
  "tokio",
  "tracing",
 ]
+
+[[package]]
+name = "libdd-env"
+version = "0.1.0"
 
 [[package]]
 name = "libdd-ffe"
@@ -3522,6 +3528,7 @@ dependencies = [
  "libdd-capabilities-impl",
  "libdd-common",
  "libdd-ddsketch",
+ "libdd-env",
  "libdd-shared-runtime",
  "serde",
  "serde_json",
@@ -3593,6 +3600,7 @@ dependencies = [
  "criterion",
  "duplicate",
  "fluent-uri",
+ "libdd-env",
  "libdd-regex",
  "libdd-tinybytes",
  "libdd-trace-model",

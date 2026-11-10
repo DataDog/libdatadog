@@ -1,9 +1,12 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use core::str::FromStr;
 use http::{Uri, uri::PathAndQuery};
 use libdd_common::{Endpoint, parse_uri};
+use libdd_env::{
+    bool as env_bool, duration as env_duration, from_str as env_from_str,
+    str_not_empty as env_str_not_empty,
+};
 use std::{borrow::Cow, time::Duration};
 use tracing::debug;
 
@@ -101,26 +104,6 @@ fn endpoint_with_telemetry_path(
 
     endpoint.url = Uri::from_parts(uri_parts)?;
     Ok(endpoint)
-}
-
-// One-shot environment reads; concurrent `setenv` from host code can race with these.
-fn env_duration(name: &str) -> Option<Duration> {
-    Some(Duration::from_secs_f32(
-        std::env::var(name).ok()?.parse::<f32>().ok()?,
-    ))
-}
-
-fn env_from_str<T: FromStr>(name: &str) -> Option<T> {
-    std::env::var(name).ok()?.parse::<T>().ok()
-}
-
-fn env_bool(name: &str) -> Option<bool> {
-    let var = std::env::var(name).ok()?;
-    Some(var == "true" || var == "1")
-}
-
-fn env_str_not_empty(name: &str) -> Option<String> {
-    std::env::var(name).ok().filter(|s| !s.is_empty())
 }
 
 /// Settings gathers configuration options from the environment, plus a

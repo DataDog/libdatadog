@@ -26,6 +26,7 @@ bytes = { workspace = true, features = ["std"], optional = true }
 pin-project = { workspace = true, optional = true }
 rand = { workspace = true, default-features = true, optional = true }
 libdd-regex = { version = "0.1.0", path = "../libdd-regex", optional = true }
+libdd-env = { version = "0.1.0", path = "../libdd-env", optional = true }
 # Use hickory-dns instead of the default system DNS resolver to avoid fork safety issues.
 # The default resolver can hold locks or other global state that can cause deadlocks
 # or corruption when the process forks (e.g., in PHP-FPM or other forking environments).
@@ -103,6 +104,7 @@ std = [
     "dep:libc",
     "dep:pin-project",
     "dep:libdd-regex",
+    "dep:libdd-env",
     "dep:thiserror",
     "dep:windows-sys",
     "serde/std",

@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use alloc::borrow::Cow;
-use core::str::FromStr;
 use core::time::Duration;
 use std::time::SystemTime;
 
@@ -18,6 +17,7 @@ use anyhow::Context;
 use chrono::{DateTime, Utc};
 use http::{Uri, uri::PathAndQuery};
 use libdd_common::{Endpoint, parse_uri};
+use libdd_env::{bool as env_bool, from_str as env_from_str, str_not_empty as env_str_not_empty};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -59,20 +59,6 @@ fn endpoint_with_errors_intake_path(
 
     endpoint.url = Uri::from_parts(uri_parts)?;
     Ok(endpoint)
-}
-
-// One-shot environment reads; concurrent `setenv` from host code can race with these.
-fn env_from_str<T: FromStr>(name: &str) -> Option<T> {
-    std::env::var(name).ok()?.parse::<T>().ok()
-}
-
-fn env_bool(name: &str) -> Option<bool> {
-    let var = std::env::var(name).ok()?;
-    Some(var == "true" || var == "1")
-}
-
-fn env_str_not_empty(name: &str) -> Option<String> {
-    std::env::var(name).ok().filter(|s| !s.is_empty())
 }
 
 /// Settings gathers configuration options from the environment, plus a
