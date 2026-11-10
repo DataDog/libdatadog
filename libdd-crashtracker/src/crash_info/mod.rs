@@ -16,6 +16,7 @@ mod spans;
 mod stacktrace;
 mod telemetry;
 pub(crate) mod test_utils;
+mod trace_to_close;
 mod ucontext;
 mod unknown_value;
 
@@ -35,6 +36,7 @@ pub use sig_info::*;
 pub use spans::*;
 pub use stacktrace::*;
 pub use telemetry::*;
+pub use trace_to_close::*;
 pub use ucontext::*;
 pub use unknown_value::*;
 
@@ -67,11 +69,11 @@ macro_rules! parse_tags {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct CrashInfo {
-    /// Pre-encoded v1 trace payload from `DD_CRASHTRACK_BEGIN_APM_TRACE_PAYLOAD`.
-    /// Internal only — not serialized to the crash report JSON.
+    /// APM traces the crash ends, from `DD_CRASHTRACK_BEGIN_APM_TRACE_TO_CLOSE`
+    /// blocks. The receiver closes and submits them; never serialized.
     #[serde(skip)]
     #[schemars(skip)]
-    pub apm_trace_payload: Option<ApmTracePayload>,
+    pub traces_to_close: Vec<TraceToClose>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub counters: HashMap<String, i64>,
     pub data_schema_version: String,
@@ -337,7 +339,7 @@ mod tests {
             );
 
             Self {
-                apm_trace_payload: None,
+                traces_to_close: vec![],
                 counters,
                 data_schema_version: CrashInfo::current_schema_version(),
                 error: ErrorData::test_instance(seed),

@@ -2887,6 +2887,7 @@ name = "libdd-crashtracker"
 version = "3.0.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "blazesym",
  "cc",
  "chrono",
@@ -2895,9 +2896,7 @@ dependencies = [
  "cxx-build",
  "errno",
  "goblin",
- "hex",
  "http 1.1.0",
- "http-body-util",
  "libc",
  "libdd-capabilities",
  "libdd-capabilities-impl",

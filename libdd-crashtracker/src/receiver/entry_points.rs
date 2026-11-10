@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 
-use super::apm_trace;
 use super::receive_report::{ReceiverFileAccess, receive_report_from_stream};
+use super::traces_to_close;
 use crate::CrashtrackerConfiguration;
 #[cfg(target_os = "linux")]
 use crate::StacktraceCollection;
@@ -141,35 +141,14 @@ pub(crate) async fn receiver_entry_point(
                 .log_messages
                 .push(format!("Error demangling names: {e}"));
         }
-        // Finish the spans the crash ended. Prepared first, so a payload sent
-        // as staged says why in the crash report, then sent alongside the
+        // Close the APM traces the crash ended. Prepared first, so the report
+        // says which were dropped or sent as staged, then sent alongside the
         // report so neither waits on, or is lost with, the other.
-        let apm_trace = crash_info.apm_trace_payload.take().map(|payload| {
-            let (request, staged_because) = apm_trace::prepare_from_report(&crash_info, &payload);
-            (apm_trace::agent_url(&payload), request, staged_because)
-        });
-        let apm_trace = apm_trace.map(|(url, request, staged_because)| {
-            if let Some(why) = staged_because {
-                crash_info
-                    .log_messages
-                    .push(format!("APM trace payload sent as staged: {why}"));
-            }
-            (url, request)
-        });
-        let submit_trace = async {
-            match apm_trace {
-                Some((url, request)) => Some(apm_trace::submit(&url, request).await),
-                None => None,
-            }
-        };
-        let (upload, submitted) = tokio::join!(
+        let traces = traces_to_close::prepare_all(&mut crash_info);
+        let (upload, ()) = tokio::join!(
             crash_info.async_upload_to_endpoint(config.endpoint()),
-            submit_trace
+            traces_to_close::submit_all(traces)
         );
-        if let Some(Err(e)) = submitted {
-            // The report is already out; stderr is all that is left.
-            eprintln!("crashtracker: failed to submit crash APM trace payload: {e:#}");
-        }
         upload?;
     }
     Ok(())
