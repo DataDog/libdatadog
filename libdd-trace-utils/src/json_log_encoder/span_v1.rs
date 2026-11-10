@@ -66,18 +66,10 @@ impl<'a, T: TraceData> ChunkContextV1<'a, T> {
         payload_app_version: &'a T::Text,
         payload_attributes: &'a VecMap<T::Text, AttributeValue<T>>,
     ) -> Self {
-        // v0.4 has no wire-level equivalent of `dropped_trace`; force `USER_REJECT` (-1)
-        // unless the chunk already carries a negative (reject-like) priority — same
-        // convention as the msgpack downgrade encoder
-        // (`crate::msgpack_encoder::v04::encode_payload_from_v1`).
-        let priority = if chunk.dropped_trace {
-            Some(chunk.priority.filter(|&p| p < 0).unwrap_or(-1))
-        } else {
-            chunk.priority
-        };
+        // `dropped_trace` is agent-owned, see `TraceChunk::dropped_trace`.
         Self {
             trace_id: &chunk.trace_id,
-            priority,
+            priority: chunk.priority,
             origin: &chunk.origin,
             sampling_mechanism: chunk.sampling_mechanism,
             payload_env,
@@ -1008,25 +1000,21 @@ mod tests {
     }
 
     #[test]
-    fn dropped_trace_forces_user_reject_priority() {
-        let chunk = TraceChunkBytes {
-            dropped_trace: true,
-            priority: Some(1),
-            ..minimal_chunk([0u8; 16], minimal_span())
-        };
-        let out = encode_first_span(chunk);
-        assert_eq!(out["metrics"]["_sampling_priority_v1"], -1.0);
-    }
-
-    #[test]
-    fn dropped_trace_keeps_existing_negative_priority() {
-        let chunk = TraceChunkBytes {
-            dropped_trace: true,
-            priority: Some(-2),
-            ..minimal_chunk([0u8; 16], minimal_span())
-        };
-        let out = encode_first_span(chunk);
-        assert_eq!(out["metrics"]["_sampling_priority_v1"], -2.0);
+    fn dropped_trace_is_ignored() {
+        // `dropped_trace` is agent-owned output, not a sampling input: the span must encode
+        // exactly as if the flag were unset, with the chunk's own priority.
+        for priority in [Some(1), None] {
+            let chunk = |dropped_trace| TraceChunkBytes {
+                dropped_trace,
+                priority,
+                ..minimal_chunk([0u8; 16], minimal_span())
+            };
+            assert_eq!(
+                encode_first_span(chunk(true)),
+                encode_first_span(chunk(false)),
+                "priority={priority:?}"
+            );
+        }
     }
 
     #[test]

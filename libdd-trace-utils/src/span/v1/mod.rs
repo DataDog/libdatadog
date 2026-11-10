@@ -406,6 +406,10 @@ pub struct TraceChunk<T: TraceData> {
     pub priority: Option<i32>,
     pub origin: T::Text,
     pub sampling_mechanism: Option<u32>,
+    /// Whether the trace-agent's samplers dropped this trace. Agent-owned output: the agent
+    /// overwrites any incoming value with its own sampling decision, and tracers aren't expected
+    /// to set it. It is decoded, but sampling decisions use `priority` instead, and encoders
+    /// omit it or send `false`.
     pub dropped_trace: bool,
     pub attributes: VecMap<T::Text, AttributeValue<T>>,
     pub spans: Vec<Span<T>>,

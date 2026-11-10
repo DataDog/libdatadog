@@ -120,7 +120,8 @@ fn convert_chunk<'a, T: TraceData>(
             .iter()
             .map(|span| convert_span(span, table))
             .collect::<Result<_, _>>()?,
-        dropped_trace: chunk.dropped_trace,
+        // Agent-owned, see `TraceChunk::dropped_trace`. Same as the v0.4 agentless path.
+        dropped_trace: false,
         trace_id: chunk.trace_id.to_vec(),
         sampling_mechanism: chunk.sampling_mechanism.unwrap_or(0),
     })
@@ -383,7 +384,8 @@ mod tests {
         assert_eq!(chunk.trace_id, vec![1; 16]);
         assert_eq!(chunk.priority, 2);
         assert_eq!(chunk.sampling_mechanism, 4);
-        assert!(chunk.dropped_trace);
+        // `dropped_trace` is agent-owned and never forwarded, even when set on the input.
+        assert!(!chunk.dropped_trace);
         assert_eq!(resolve(&p, chunk.origin_ref), "rum");
         assert_eq!(str_attr(&p, &chunk.attributes, "chunk.k"), "chunk.v");
 
