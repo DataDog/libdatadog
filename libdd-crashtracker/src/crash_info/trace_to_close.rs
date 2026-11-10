@@ -1,42 +1,8 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! An APM trace the crash ends, staged by a tracer for the receiver to close
-//! and submit to the agent.
-//!
-//! # Wire format
-//!
-//! Each trace is one block of exactly two lines, and a report may carry any
-//! number of blocks, one per trace:
-//!
-//! ```text
-//! DD_CRASHTRACK_BEGIN_APM_TRACE_TO_CLOSE
-//! {"version":1,"encoding":"v1","agent_url":"http://agent:8126","headers":{...},"span_ids":[...]}
-//! <the request body, base64 (standard alphabet, padded)>
-//! DD_CRASHTRACK_END_APM_TRACE_TO_CLOSE
-//! ```
-//!
-//! The first line is a JSON header:
-//!
-//! | field       | required | meaning                                                         |
-//! |-------------|----------|-----------------------------------------------------------------|
-//! | `version`   | yes      | header schema version; [`TraceToClose::VERSION`]                |
-//! | `encoding`  | yes      | body encoding, which also picks the agent endpoint; see [`TraceEncoding`] |
-//! | `agent_url` | yes      | base agent URL, `http://` or `unix://`                          |
-//! | `headers`   | no       | HTTP headers the tracer sends with traces (identity, origin, ...) |
-//! | `span_ids`  | no       | the spans still open, which the crash ends; all spans if absent |
-//!
-//! The second line is the body exactly as the tracer would POST it.
-//!
-//! Unknown header fields are ignored, so collectors can add fields without
-//! breaking receivers.
-//!
-//! The SDK is trusted to stage a complete, correct trace: the receiver decodes
-//! it, closes its spans and forwards it. A block it cannot read (an unknown
-//! `version` or `encoding`, say) is not sent, and the report says why.
-//!
-//! The tracer owns what is sent and where; the receiver owns what ending a
-//! span at a crash means (see `receiver::traces_to_close`).
+//! APM traces a crash ends, staged by a tracer for the receiver to close and
+//! submit to the agent. See [`TraceToClose`] for the wire format.
 
 use base64::Engine;
 use serde::Deserialize;
@@ -65,7 +31,42 @@ impl TraceEncoding {
     }
 }
 
-/// An APM trace the crash ends; see the [module docs](self) for the wire format.
+/// An APM trace the crash ends, staged by a tracer for the receiver to close
+/// and submit to the agent.
+///
+/// # Wire format
+///
+/// Each trace is one block of exactly two lines, and a report may carry any
+/// number of blocks, one per trace:
+///
+/// ```text
+/// DD_CRASHTRACK_BEGIN_APM_TRACE_TO_CLOSE
+/// {"version":1,"encoding":"v1","agent_url":"http://agent:8126","headers":{...},"span_ids":[...]}
+/// <the request body, base64 (standard alphabet, padded)>
+/// DD_CRASHTRACK_END_APM_TRACE_TO_CLOSE
+/// ```
+///
+/// The first line is a JSON header:
+///
+/// | field       | required | meaning                                                         |
+/// |-------------|----------|-----------------------------------------------------------------|
+/// | `version`   | yes      | header schema version; [`TraceToClose::VERSION`]                |
+/// | `encoding`  | yes      | body encoding, which also picks the agent endpoint; see [`TraceEncoding`] |
+/// | `agent_url` | yes      | base agent URL, `http://` or `unix://`                          |
+/// | `headers`   | no       | HTTP headers the tracer sends with traces (identity, origin, ...) |
+/// | `span_ids`  | no       | the spans still open, which the crash ends; all spans if absent |
+///
+/// The second line is the body exactly as the tracer would POST it.
+///
+/// Unknown header fields are ignored, so collectors can add fields without
+/// breaking receivers.
+///
+/// The SDK is trusted to stage a complete, correct trace: the receiver decodes
+/// it, closes its spans and forwards it. A block it cannot read (an unknown
+/// `version` or `encoding`, say) is not sent, and the report says why.
+///
+/// The tracer owns what is sent and where; the receiver owns what ending a
+/// span at a crash means (see `receiver::traces_to_close`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct TraceToClose {
     pub encoding: TraceEncoding,
