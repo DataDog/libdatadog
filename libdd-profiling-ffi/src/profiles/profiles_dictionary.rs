@@ -112,6 +112,7 @@ pub unsafe extern "C" fn ddog_prof_ProfilesDictionary_try_clone(
 /// - `function_id` must be non-null and valid for writes of `FunctionId`.
 /// - `dict` must refer to a live dictionary.
 /// - `function` must be non-null and point to a valid `Function` for the duration of the call.
+/// - The `name`, `system_name`, and `file_name` string ids must be ids this dictionary returned.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_prof_ProfilesDictionary_insert_function(
     function_id: *mut FunctionId2,
