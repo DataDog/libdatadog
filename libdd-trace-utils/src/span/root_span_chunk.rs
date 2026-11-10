@@ -38,17 +38,27 @@ impl SpanWithTraceId for pb::Span {
 /// The chunk fields are read from the root span's tags, the way the agent derives them (e.g. the
 /// origin from the root's `_dd.origin` tag, or the high 64 bits of the trace id from its
 /// `_dd.p.tid` tag when the span doesn't hold them), and the chunk has no attributes. The root span
-/// is found once, on construction. A single span can be viewed as a one-span chunk with
-/// `RootSpanChunk::new(std::slice::from_ref(span))`.
+/// and its origin are read once, on construction, but [`TraceChunk::trace_id`],
+/// [`TraceChunk::priority`] and [`TraceChunk::sampling_mechanism`] parse the root's tags on every
+/// call: read them once per chunk rather than once per span. A single span can be viewed as a
+/// one-span chunk with `RootSpanChunk::new(std::slice::from_ref(span))`.
 pub struct RootSpanChunk<'a, S> {
     spans: &'a [S],
     root: Option<&'a S>,
+    origin: &'a str,
 }
 
 impl<'a, S: SpanWithTraceId> RootSpanChunk<'a, S> {
     pub fn new(spans: &'a [S]) -> Self {
         let root = get_root_span_index(spans).ok().and_then(|i| spans.get(i));
-        Self { spans, root }
+        let origin = root
+            .and_then(|root| root.attribute_str(ORIGIN_KEY))
+            .unwrap_or_default();
+        Self {
+            spans,
+            root,
+            origin,
+        }
     }
 }
 
@@ -92,9 +102,7 @@ impl<S: SpanWithTraceId> TraceChunk for RootSpanChunk<'_, S> {
     }
 
     fn origin(&self) -> &str {
-        self.root
-            .and_then(|root| root.attribute_str(ORIGIN_KEY))
-            .unwrap_or_default()
+        self.origin
     }
 
     fn spans(&self) -> impl Iterator<Item = &Self::Span> {

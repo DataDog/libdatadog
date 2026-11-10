@@ -5,8 +5,8 @@
 
 use crate::span::TraceData;
 use crate::span::trace_utils::DroppedP0Stats;
+use crate::span::v1::AttributeValue;
 use crate::span::v1::span_pool::PooledTraceChunks;
-use crate::span::v1::{AttributeValue, Span};
 use libdd_trace_model::{
     Attributes as _, AttributesIter, Span as _, SpanMut, TraceChunkMut, TraceText,
 };
@@ -50,25 +50,6 @@ pub fn compute_top_level_span<S: SpanMut>(trace: &mut [S]) {
     for i in top_level {
         set_top_level_span(&mut trace[i]);
     }
-}
-
-/// Returns true if the span has a top level key set
-pub fn has_top_level<T: TraceData>(span: &Span<T>) -> bool {
-    span.has_top_level()
-}
-
-/// Returns true if a span should be measured (i.e., it should get trace metrics calculated).
-pub fn is_measured<T: TraceData>(span: &Span<T>) -> bool {
-    span.is_measured()
-}
-
-/// Returns true if the span is a partial snapshot.
-/// This kind of spans are partial images of long-running spans.
-/// When incomplete, a partial snapshot has an attribute _dd.partial_version which is a positive
-/// integer. This value usually increases each time a new version of the same span is sent by
-/// the tracer
-pub fn is_partial_snapshot<T: TraceData>(span: &Span<T>) -> bool {
-    span.is_partial_snapshot()
 }
 
 /// Remove spans and chunks, only keeping the ones that may be sampled by the agent.
@@ -178,8 +159,8 @@ mod tests {
     fn test_has_top_level() {
         let top_level_span = create_test_span(true);
         let not_top_level_span = create_test_span(false);
-        assert!(has_top_level(&top_level_span));
-        assert!(!has_top_level(&not_top_level_span));
+        assert!(top_level_span.has_top_level());
+        assert!(!not_top_level_span.has_top_level());
     }
 
     #[test]
@@ -189,8 +170,8 @@ mod tests {
             .attributes
             .insert(MEASURED_KEY.into(), AttributeValue::Float(1.0));
         let not_measured_span = create_test_span(true);
-        assert!(is_measured(&measured_span));
-        assert!(!is_measured(&not_measured_span));
+        assert!(measured_span.is_measured());
+        assert!(!not_measured_span.is_measured());
     }
 
     #[test]
@@ -200,8 +181,8 @@ mod tests {
             .attributes
             .insert(PARTIAL_VERSION_KEY.into(), AttributeValue::Int(2));
         let not_partial_span = create_test_span(false);
-        assert!(is_partial_snapshot(&partial_span));
-        assert!(!is_partial_snapshot(&not_partial_span));
+        assert!(partial_span.is_partial_snapshot());
+        assert!(!not_partial_span.is_partial_snapshot());
     }
 
     #[test]
@@ -223,7 +204,7 @@ mod tests {
 
         let spans_marked_as_top_level: Vec<u64> = trace
             .iter()
-            .filter_map(|span| has_top_level(span).then_some(span.span_id))
+            .filter_map(|span| span.has_top_level().then_some(span.span_id))
             .collect();
         assert_eq!(spans_marked_as_top_level, [1, 4, 5]);
     }

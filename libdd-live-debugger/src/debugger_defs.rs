@@ -140,7 +140,7 @@ pub struct Value<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub not_captured_reason: Option<Cow<'a, str>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub size: Option<Cow<'a, str>>,
+    pub size: Option<u64>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]

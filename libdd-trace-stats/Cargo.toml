@@ -46,6 +46,7 @@ path = "benches/main.rs"
 
 [dev-dependencies]
 criterion.workspace = true
+libdd-tinybytes = { path = "../libdd-tinybytes" }
 httpmock.workspace = true
 libdd-trace-utils = { path = "../libdd-trace-utils", features = ["test-utils"] }
 rand = { workspace = true, default-features = true }
