@@ -3,7 +3,7 @@
 //! Trace-level filter logic for client-side stats (filter_tags, filter_tags_regex,
 //! ignore_resources as published by the agent's /info endpoint).
 use libdd_regex::Regex;
-use libdd_trace_model::{Attributes as _, ChunkSpanView, Span as ModelSpan};
+use libdd_trace_model::{Attributes as _, ChunkSpanView, Span};
 use libdd_trace_normalization::{normalize_utils, normalizer};
 use tracing::{debug, error};
 
@@ -45,28 +45,6 @@ pub struct TraceFilterer {
     ignore_resources: Vec<Regex>,
 }
 
-/// Minimal span interface required by [`TraceFilterer`].
-///
-/// Native tracers can supply borrowed resource/tag access without implementing the
-/// complete trace model. Model spans implement this interface automatically.
-pub trait Span<'a> {
-    /// Returns the normalized resource value.
-    fn resource_normalized(&'a self) -> &'a str;
-    /// Returns the value of the given meta tag, if present.
-    fn get_meta(&'a self, key: &str) -> Option<&'a str>;
-}
-
-impl<'a, T: ModelSpan> Span<'a> for T {
-    fn resource_normalized(&'a self) -> &'a str {
-        resource_normalized(self)
-    }
-
-    fn get_meta(&'a self, key: &str) -> Option<&'a str> {
-        // Filter keys are v0.4 tag names and may name a promoted model field.
-        self.compat().attribute_str(key)
-    }
-}
-
 impl TagFilter for TagLiteralFilter {
     fn matches_tag_value(&self, value: &str) -> bool {
         match &self.value {
@@ -95,7 +73,7 @@ impl TagFilter for TagRegexFilter {
 
 /// The resource used for `ignore_resources` matching: the span resource, or the operation name
 /// when the resource is empty, as trace normalization would set it.
-fn resource_normalized(span: &impl ModelSpan) -> &str {
+fn resource_normalized(span: &impl Span) -> &str {
     let span_resource = span.resource();
     if span_resource.is_empty() {
         let span_name = span.name();
@@ -275,9 +253,9 @@ impl TraceFilterer {
     // 3. Require filtering: If filter_tags.require or filter_tags_regex.require contain any
     //    filters, all of them must match tags on the root span. If any required filter doesn't
     //    match, reject the trace.
-    pub fn should_drop<'a>(&self, root_span: &'a impl Span<'a>) -> bool {
+    pub fn should_drop(&self, root_span: &impl Span) -> bool {
         if !self.ignore_resources.is_empty() {
-            let span_resource = root_span.resource_normalized();
+            let span_resource = resource_normalized(root_span);
 
             if self
                 .ignore_resources
@@ -323,11 +301,9 @@ impl TraceFilterer {
         false
     }
 
-    fn check_tag_filter_with_normalization<'a>(
-        filter: &impl TagFilter,
-        root_span: &'a impl Span<'a>,
-    ) -> bool {
-        let Some(value) = root_span.get_meta(filter.key()) else {
+    fn check_tag_filter_with_normalization(filter: &impl TagFilter, root_span: &impl Span) -> bool {
+        // Filter keys are user-configured v0.4 tag names, which may name a promoted tag.
+        let Some(value) = root_span.compat().attribute_str(filter.key()) else {
             return false;
         };
         match filter.key() {
@@ -358,45 +334,6 @@ mod tests {
     use crate::span::v1::{AttributeValue, SpanBytes as SpanBytesV1, SpanKind, TraceChunk};
     use crate::span::v04::{SpanBytes, VecMap};
     use libdd_trace_model::{COMPONENT_KEY, ENV_KEY, SPAN_KIND_KEY, VERSION_KEY};
-
-    #[test]
-    fn native_span_adapter_preserves_filtering() {
-        // PHP supplies these two borrowed lookups rather than a complete model span.
-        struct NativeSpan<'a> {
-            resource: &'a str,
-            env: &'a str,
-        }
-        impl<'a> super::Span<'a> for NativeSpan<'a> {
-            fn resource_normalized(&'a self) -> &'a str {
-                self.resource
-            }
-
-            fn get_meta(&'a self, key: &str) -> Option<&'a str> {
-                (key == "env").then_some(self.env)
-            }
-        }
-
-        let filter = TraceFilterer::new(
-            &["env:production".into()],
-            &[],
-            &[],
-            &[],
-            &["^GET /health$".into()],
-        );
-        assert!(!filter.should_drop(&NativeSpan {
-            resource: "GET /orders",
-            env: "Production",
-        }));
-        assert!(filter.should_drop(&NativeSpan {
-            resource: "GET /health",
-            env: "Production",
-        }));
-        assert!(filter.should_drop(&NativeSpan {
-            resource: "GET /orders",
-            env: "staging",
-        }));
-    }
-
     // ---- helpers ----
 
     fn span_with(resource: &'static str, meta: &[(&'static str, &'static str)]) -> SpanBytes {
