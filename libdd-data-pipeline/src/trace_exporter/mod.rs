@@ -2808,6 +2808,65 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
+    /// Tests that the exporter applies the agent's rates once the agent has computed them when
+    /// its first response came from an agent without rates, which sends an empty payload version
+    fn test_agent_response_empty_payload_version() {
+        let server = MockServer::start();
+        let response_body = r#"{
+                        "rate_by_service": {
+                            "service:foo,env:staging": 0.5
+                        }
+                    }"#;
+        // An agent without rates yet replies with an empty version and no rates
+        let mut no_rates_endpoint = server.mock(|when, then| {
+            when.method(POST).path(V04_TRACES_ENDPOINT);
+            then.status(200)
+                .header("content-type", "application/json")
+                .header("datadog-rates-payload-version", "")
+                .body(r#"{"rate_by_service":{}}"#);
+        });
+
+        let mut builder = TraceExporter::<NativeCapabilities, ForkSafeRuntime>::builder();
+        builder
+            .set_url(&server.url("/"))
+            .enable_agent_rates_payload_version();
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
+        let traces = vec![0x90];
+        let result = exporter.send(traces.as_ref()).unwrap();
+        assert_eq!(result, AgentResponse::Unchanged);
+        no_rates_endpoint.assert_calls(1);
+        no_rates_endpoint.delete();
+
+        // Once the agent has rates, it returns them with their version to a tracer that sends
+        // another version, and without a version header to one that sends an empty version
+        let rates_endpoint = server.mock(|when, then| {
+            when.method(POST)
+                .path(V04_TRACES_ENDPOINT)
+                .header("datadog-rates-payload-version", "0");
+            then.status(200)
+                .header("content-type", "application/json")
+                .header("datadog-rates-payload-version", "abc")
+                .body(response_body);
+        });
+        let empty_version_endpoint = server.mock(|when, then| {
+            when.method(POST)
+                .path(V04_TRACES_ENDPOINT)
+                .header("datadog-rates-payload-version", "");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(response_body);
+        });
+        let result = exporter.send(traces.as_ref()).unwrap();
+        let AgentResponse::Changed { body } = result else {
+            panic!("Expected Changed response");
+        };
+        assert_eq!(body, response_body);
+        rates_endpoint.assert_calls(1);
+        empty_version_endpoint.assert_calls(0);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_agent_malfunction_info_4xx() {
         test_agent_malfunction_info(404, r#"{"error":"Not Found"}"#, Duration::from_secs(0));
     }

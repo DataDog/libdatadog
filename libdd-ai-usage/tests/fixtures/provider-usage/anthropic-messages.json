@@ -1,0 +1,36 @@
+{
+  "description": "Anthropic Messages: input leaves the cache out, and cache_creation splits writes by lifetime.",
+  "format": "anthropic",
+  "operation_name": "chat",
+  "payload": {
+    "id": "msg_1",
+    "type": "message",
+    "model": "claude-sonnet-4-5-20250929",
+    "content": [],
+    "usage": {
+      "input_tokens": 20,
+      "output_tokens": 512,
+      "cache_read_input_tokens": 39000,
+      "cache_creation_input_tokens": 2000,
+      "cache_creation": {
+        "ephemeral_5m_input_tokens": 1500,
+        "ephemeral_1h_input_tokens": 500
+      },
+      "service_tier": "standard"
+    }
+  },
+  "expected": {
+    "usage": {
+      "input_tokens": 20,
+      "input_basis": "excludes_cache",
+      "output_tokens": 512,
+      "output_basis": "includes_reasoning",
+      "cache_read_input_tokens": 39000,
+      "cache_write_input_tokens": 2000,
+      "cache_write_5m_input_tokens": 1500,
+      "cache_write_1h_input_tokens": 500
+    },
+    "response_model": "claude-sonnet-4-5-20250929",
+    "service_tier": "standard"
+  }
+}

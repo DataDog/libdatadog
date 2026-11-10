@@ -1,0 +1,20 @@
+{
+  "description": "A Chat Completions stream with CRLF line endings, usage on its last chunk, ended by [DONE].",
+  "format": "openai_chat",
+  "operation_name": "chat",
+  "body": "data: {\"id\": \"c1\", \"model\": \"gpt-5-mini\", \"choices\": [{\"index\": 0, \"delta\": {\"content\": \"Hi\"}}]}\r\n\r\ndata: {\"id\": \"c1\", \"model\": \"gpt-5-mini\", \"choices\": [], \"usage\": {\"prompt_tokens\": 12, \"completion_tokens\": 2, \"prompt_tokens_details\": {\"cached_tokens\": 0}, \"completion_tokens_details\": {\"reasoning_tokens\": 0}}}\r\n\r\ndata: [DONE]\r\n\r\n",
+  "expected": {
+    "usage": {
+      "input_tokens": 12,
+      "input_basis": "includes_cache",
+      "output_tokens": 2,
+      "output_basis": "includes_reasoning",
+      "cache_read_input_tokens": 0,
+      "reasoning_output_tokens": 0
+    },
+    "response_model": "gpt-5-mini",
+    "service_tier": null,
+    "outcome": "completed",
+    "error_name": null
+  }
+}

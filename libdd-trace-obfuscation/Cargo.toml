@@ -27,8 +27,8 @@ libdd-regex = { version = "0.1.0", path = "../libdd-regex" }
 
 [features]
 default = ["https"]
-https = ["libdd-common/https", "libdd-trace-utils/https"]
-fips = ["libdd-common/fips", "libdd-trace-utils/fips"]
+https = ["libdd-trace-utils/https"]
+fips = ["libdd-trace-utils/fips"]
 regex-lite = ["libdd-regex/regex-lite"]
 
 [dev-dependencies]

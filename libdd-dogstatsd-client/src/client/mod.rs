@@ -195,7 +195,8 @@ impl DogStatsDClient {
 mod test {
     use super::*;
     use crate::action::DogStatsDAction::{Count, Distribution, Gauge, Histogram, Set};
-    use libdd_common::{Endpoint, tag};
+    use libdd_common::Endpoint;
+    use libdd_common::tag;
     use std::net;
     use std::time::Duration;
 

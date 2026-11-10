@@ -47,7 +47,8 @@ impl TlsConfig {
         // (RUSTSEC-2026-0382).
         // TODO: Remove when we can bump the minimum `rustls-webpki` to
         // 0.103.16
-        let verifier = libdd_common::connector::platform_verifier_with_distrust(provider.clone())?;
+        let verifier =
+            libdd_networking::connector::platform_verifier_with_distrust(provider.clone())?;
 
         let config = rustls::ClientConfig::builder_with_provider(provider)
             .with_safe_default_protocol_versions()?

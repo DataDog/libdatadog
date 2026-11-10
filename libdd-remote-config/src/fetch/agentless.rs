@@ -3,6 +3,7 @@
 
 use crate::RemoteConfigPath;
 use crate::fetch::FileStorage;
+use libdd_networking::endpoint::EndpointExt;
 
 use std::{fmt, ops::RangeInclusive, time::Duration};
 

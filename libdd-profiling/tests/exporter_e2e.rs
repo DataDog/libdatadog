@@ -444,7 +444,7 @@ async fn test_agentless_with_transport(transport: Transport) -> anyhow::Result<(
         {
             let socket_path = server.socket_path.as_ref().unwrap();
             // For Unix sockets, we need to create endpoint manually
-            let endpoint_url = libdd_common::connector::uds::socket_path_to_uri(socket_path)?;
+            let endpoint_url = libdd_networking::connector::uds::socket_path_to_uri(socket_path)?;
             let mut parts = endpoint_url.into_parts();
             parts.path_and_query = Some("/api/v2/profile".parse()?);
             let url = http::Uri::from_parts(parts)?;
@@ -457,7 +457,7 @@ async fn test_agentless_with_transport(transport: Transport) -> anyhow::Result<(
             let pipe_path = server.pipe_path.as_ref().unwrap();
             // For named pipes, we need to create endpoint manually
             let endpoint_url =
-                libdd_common::connector::named_pipe::named_pipe_path_to_uri(pipe_path)?;
+                libdd_networking::connector::named_pipe::named_pipe_path_to_uri(pipe_path)?;
             let mut parts = endpoint_url.into_parts();
             parts.path_and_query = Some("/api/v2/profile".parse()?);
             let url = http::Uri::from_parts(parts)?;
@@ -488,6 +488,66 @@ async fn test_agentless_with_transport(transport: Transport) -> anyhow::Result<(
         let _ = std::fs::remove_file(&path);
     }
 
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_send_blocking_across_threads() -> anyhow::Result<()> {
+    fn send_profile(exporter: &mut ProfileExporter) -> anyhow::Result<()> {
+        let status = exporter.send_blocking(
+            EncodedProfile::test_instance()?,
+            &[],
+            &[],
+            None,
+            None,
+            None,
+            None,
+        )?;
+        assert_eq!(status, http::StatusCode::OK);
+        Ok(())
+    }
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+    let endpoint = config::agent(format!("http://{}", listener.local_addr()?).parse()?)?;
+    listener.set_nonblocking(true)?;
+    let received_requests = Arc::new(Mutex::new(Vec::new()));
+    let requests = received_requests.clone();
+    let server = std::thread::spawn(move || -> anyhow::Result<()> {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?
+            .block_on(async move {
+                let listener = tokio::net::TcpListener::from_std(listener)?;
+                tokio::time::timeout(std::time::Duration::from_secs(10), async {
+                    for _ in 0..3 {
+                        let (stream, _) = listener.accept().await?;
+                        read_and_capture_request(stream, requests.clone()).await;
+                    }
+                    anyhow::Ok(())
+                })
+                .await?
+            })
+    });
+
+    let mut exporter = ProfileExporter::new("test-lib", "1.0.0", "native", vec![], endpoint)?;
+    exporter.init_runtime()?;
+    send_profile(&mut exporter)?;
+    let mut exporter = std::thread::spawn(move || -> anyhow::Result<ProfileExporter> {
+        send_profile(&mut exporter)?;
+        Ok(exporter)
+    })
+    .join()
+    .expect("export thread panicked")?;
+    send_profile(&mut exporter)?;
+
+    server.join().expect("HTTP server thread panicked")?;
+    let requests = received_requests.lock().unwrap();
+    assert_eq!(requests.len(), 3);
+    for request in requests.iter() {
+        assert_eq!(request.method, "POST");
+        assert_eq!(request.path, "/profiling/v1/input");
+    }
     Ok(())
 }
 

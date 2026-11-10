@@ -9,7 +9,7 @@ use http::header::{
 };
 use http::{Method, Request};
 use http_body_util::BodyExt;
-use libdd_common::http_common::{self, Body};
+use libdd_networking::http_common::{self, Body};
 use percent_encoding::percent_decode_str;
 use std::future::Future;
 use std::io::Read;
@@ -54,7 +54,7 @@ pub(super) struct PollResponse {
 }
 
 pub(super) struct HyperTransport {
-    client: libdd_common::HttpClient,
+    client: http_common::HttpClient,
     language: String,
     version: String,
 }
@@ -419,6 +419,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore = "tests HTTP cancellation, not unsafe memory access")]
     async fn cancellation_interrupts_an_inflight_http_request() {
         use tokio::io::AsyncReadExt;
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -436,8 +437,9 @@ mod tests {
         });
         let cancellation = CancellationToken::new();
         let stop = cancellation.clone();
+        let transport = HyperTransport::new("php".into(), "1.27".into());
         let request = tokio::spawn(async move {
-            HyperTransport::new("php".into(), "1.27".into())
+            transport
                 .get(&endpoint, Duration::from_secs(30), None, &stop)
                 .await
         });

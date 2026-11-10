@@ -15,9 +15,9 @@
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
+use crate::PROFILE_ATTRIBUTE;
 use crate::Profile;
 use crate::point::{Attributes, ErrorCode, Instrument, MetricError, MetricPoint, Sum, reject};
-use crate::registry::PROFILE_ATTRIBUTE;
 
 pub(crate) const NANO_USD: &str = "{nanoUSD}";
 pub(crate) const NANO_USD_PER_USD: f64 = 1_000_000_000.0;
@@ -150,23 +150,28 @@ fn series_tags(
     point: &MetricPoint,
     resource: &Attributes,
 ) -> Result<Vec<String>, MetricError> {
-    if let Some(stated) = point.attributes.get(PROFILE_ATTRIBUTE)
+    tags_of(profile, &point.name, &point.attributes, resource)
+}
+
+fn tags_of(
+    profile: Profile,
+    name: &str,
+    attributes: &Attributes,
+    resource: &Attributes,
+) -> Result<Vec<String>, MetricError> {
+    if let Some(stated) = attributes.get(PROFILE_ATTRIBUTE)
         && stated != profile.id()
     {
         return reject(
             ErrorCode::MetricProfileMismatch,
-            format!(
-                "{} carries the profile {stated}, not {}",
-                point.name,
-                profile.id()
-            ),
+            format!("{name} carries the profile {stated}, not {}", profile.id()),
         );
     }
     let mut tags = carrier_tags(resource);
     // A resource attribute never states the profile.
     tags.retain(|key, _| *key != PROFILE_ATTRIBUTE);
     // A point attribute wins over a resource attribute of the same key.
-    tags.extend(carrier_tags(&point.attributes));
+    tags.extend(carrier_tags(attributes));
     let profile_id = profile.id();
     tags.insert(PROFILE_ATTRIBUTE, (PROFILE_ATTRIBUTE, profile_id));
     Ok(tags
@@ -204,9 +209,95 @@ pub fn datadog_series(
 pub(crate) struct SeriesBuilder {
     counts: BTreeMap<(String, Vec<String>), (Sum, bool)>,
     series: Vec<DatadogSeries>,
+    distributions: Vec<Distribution>,
+    distribution_index: BTreeMap<(String, Vec<String>), usize>,
+    /// Keep each distribution's samples instead of one series per sample.
+    pub(crate) keep_samples: bool,
+}
+
+/// One Distribution series: its samples' sum and count in recording order,
+/// and the samples when kept.
+#[derive(Debug)]
+pub(crate) struct Distribution {
+    pub(crate) name: String,
+    pub(crate) tags: Vec<String>,
+    sum: f64,
+    count: u64,
+    pub(crate) samples: Vec<f64>,
 }
 
 impl SeriesBuilder {
+    /// The Distribution a Histogram series of `profile` is submitted as,
+    /// tagged once for all its samples. Series whose tags normalize alike
+    /// share one.
+    pub(crate) fn distribution(
+        &mut self,
+        profile: Profile,
+        series: &crate::batch::Series,
+        resource: &Attributes,
+    ) -> Result<usize, MetricError> {
+        if !profile.metric_names().contains(&series.name.as_str()) {
+            return reject(
+                ErrorCode::MetricProfileMismatch,
+                format!("{} is not a metric of {}", series.name, profile.id()),
+            );
+        }
+        let tags = tags_of(profile, &series.name, &series.attributes, resource)?;
+        let key = (series.name.clone(), tags);
+        if let Some(at) = self.distribution_index.get(&key) {
+            return Ok(*at);
+        }
+        let at = self.distributions.len();
+        self.distributions.push(Distribution {
+            name: key.0.clone(),
+            tags: key.1.clone(),
+            sum: 0.0,
+            count: 0,
+            samples: Vec::new(),
+        });
+        self.distribution_index.insert(key, at);
+        Ok(at)
+    }
+
+    /// Record one sample of a Distribution, in recording order.
+    pub(crate) fn sample(&mut self, distribution: usize, value: f64, historical: bool) {
+        let Some(held) = self.distributions.get_mut(distribution) else {
+            return;
+        };
+        held.sum += value;
+        held.count += 1;
+        if self.keep_samples {
+            held.samples.push(value);
+        } else if !historical {
+            self.series.push(DatadogSeries {
+                name: held.name.clone(),
+                series_type: SeriesType::Distribution,
+                value,
+                tags: held.tags.clone(),
+            });
+        }
+    }
+
+    /// The Counts and the kept Distributions, unsorted.
+    pub(crate) fn finish_parts(mut self) -> (Vec<DatadogSeries>, Vec<Distribution>) {
+        let distributions = std::mem::take(&mut self.distributions);
+        for held in &distributions {
+            self.count(
+                format!("{}.sum", held.name),
+                held.tags.clone(),
+                Sum::Double(held.sum),
+                false,
+            );
+            self.count(
+                format!("{}.count", held.name),
+                held.tags.clone(),
+                Sum::Integer(u128::from(held.count)),
+                false,
+            );
+        }
+        (self.sorted(), distributions)
+    }
+
     pub(crate) fn add(
         &mut self,
         profile: Profile,
@@ -272,8 +363,12 @@ impl SeriesBuilder {
         entry.0 = entry.0.add(increment);
     }
 
-    pub(crate) fn finish(mut self) -> Vec<DatadogSeries> {
-        for ((name, tags), (total, scaled)) in self.counts {
+    pub(crate) fn finish(self) -> Vec<DatadogSeries> {
+        self.finish_parts().0
+    }
+
+    fn sorted(mut self) -> Vec<DatadogSeries> {
+        for ((name, tags), (total, scaled)) in std::mem::take(&mut self.counts) {
             let value = if scaled {
                 // One division of the exact sum, converted to a double once.
                 total.value() / NANO_USD_PER_USD
