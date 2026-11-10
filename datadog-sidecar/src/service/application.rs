@@ -66,7 +66,7 @@ impl ActiveApplication {
         // (sidecar.c:ddog_remote_configs_service_env_change). PHP passes the
         // bare process_tags Vec, so we must too — otherwise SHM lookups miss.
         self.remote_config_guard = Some(remote_configs.add_runtime(
-            session.remote_config_options.clone(),
+            session.remote_config_options_with_capability_mask(),
             session.remote_config_interval,
             session.instance_id.clone(),
             remote_config_generation,

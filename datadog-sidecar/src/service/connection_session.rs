@@ -46,6 +46,7 @@ pub struct ConnectionSession {
     debugger_config: libdd_live_debugger::sender::Config,
     pub dogstatsd: Option<Arc<DogStatsDClient>>,
     pub remote_config_options: ConfigOptions,
+    pub(crate) remote_config_capability_mask: Option<libdd_remote_config::CapabilityMask>,
     pub remote_config_interval: Duration,
     pub remote_config_enabled: bool,
     pub(crate) stats_config: Option<StatsConfig>,
@@ -109,6 +110,25 @@ impl ConnectionSessionHandle {
 }
 
 impl ConnectionSession {
+    pub(crate) fn remote_config_options_with_capability_mask(
+        &self,
+    ) -> ConfigOptions<libdd_remote_config::CapabilityMask> {
+        ConfigOptions {
+            invariants: self.remote_config_options.invariants.clone(),
+            products: self.remote_config_options.products.clone(),
+            capabilities: self
+                .remote_config_capability_mask
+                .clone()
+                .unwrap_or_else(|| {
+                    self.remote_config_options
+                        .capabilities
+                        .iter()
+                        .copied()
+                        .collect()
+                }),
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn from_config(
         instance_id: InstanceId,
@@ -211,6 +231,7 @@ impl ConnectionSession {
                 products: config.remote_config_products,
                 capabilities: config.remote_config_capabilities,
             },
+            remote_config_capability_mask: None,
             remote_config_interval: config.remote_config_poll_interval,
             remote_config_enabled: config.remote_config_enabled,
             stats_config,
@@ -257,6 +278,7 @@ impl ConnectionSession {
                 products: vec![],
                 capabilities: vec![],
             },
+            remote_config_capability_mask: None,
             remote_config_interval: Duration::from_secs(5),
             remote_config_enabled: false,
             stats_config: None,

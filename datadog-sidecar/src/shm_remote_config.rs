@@ -511,6 +511,35 @@ impl<N: NotifyTarget + 'static> ShmRemoteConfigs<N> {
         dynamic_instrumentation_state: DynamicInstrumentationConfigState,
         process_tags: Vec<Tag>,
     ) -> ShmRemoteConfigsGuard<N> {
+        self.add_runtime_with_capability_mask(
+            instance_id,
+            remote_config_generation,
+            notify_target,
+            env,
+            service,
+            app_version,
+            tags,
+            product_capabilities.into(),
+            dynamic_instrumentation_state,
+            process_tags,
+        )
+    }
+
+    /// Registers a runtime with an owned, opaque capability mask.
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_runtime_with_capability_mask(
+        &self,
+        instance_id: InstanceId,
+        remote_config_generation: u64,
+        notify_target: N,
+        env: String,
+        service: String,
+        app_version: String,
+        tags: Vec<Tag>,
+        product_capabilities: ProductCapabilities<libdd_remote_config::CapabilityMask>,
+        dynamic_instrumentation_state: DynamicInstrumentationConfigState,
+        process_tags: Vec<Tag>,
+    ) -> ShmRemoteConfigsGuard<N> {
         let target = Arc::new(Target::new(
             service,
             env,
@@ -518,7 +547,7 @@ impl<N: NotifyTarget + 'static> ShmRemoteConfigs<N> {
             tags.iter().map(|t| t.to_string()).collect(),
             process_tags.iter().map(|t| t.to_string()).collect(),
         ));
-        self.0.add_runtime(
+        self.0.add_runtime_with_capability_mask(
             instance_id.session_id.clone(),
             instance_id.runtime_id.clone(),
             notify_target.clone(),

@@ -318,6 +318,16 @@ mod linux {
 
     use super::Liaison;
 
+    #[test]
+    fn capability_mask_ipc_uses_a_distinct_socket_namespace() {
+        let old_version =
+            datadog_sidecar_macros::env_or_default!("SIDECAR_VERSION", env!("CARGO_PKG_VERSION"));
+        let liaison = super::SharedDirLiaison::ipc_shared();
+        let name = liaison.socket_path.file_name().unwrap().to_str().unwrap();
+        assert!(!name.contains(&format!("{old_version}@")));
+        assert!(name.contains("-rc-mask-1@"));
+    }
+
     /// Which uid must own the listener for a client to trust what it connected to.
     ///
     /// An abstract socket has no ownership model: we have to rely on `SO_PEERCRED`.
