@@ -142,8 +142,8 @@ pub(crate) async fn receiver_entry_point(
                 .push(format!("Error demangling names: {e}"));
         }
         // Close the APM traces the crash ended. Prepared first, so the report
-        // says which were dropped or sent as staged, then sent alongside the
-        // report so neither waits on, or is lost with, the other.
+        // notes any that could not be closed, then sent alongside the report
+        // so neither waits on, or is lost with, the other.
         let traces = traces_to_close::prepare_all(&mut crash_info);
         let (upload, ()) = tokio::join!(
             crash_info.async_upload_to_endpoint(config.endpoint()),
