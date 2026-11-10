@@ -1,0 +1,22 @@
+{
+  "description": "Embeddings have no output side.",
+  "format": "openai_chat",
+  "operation_name": "embeddings",
+  "payload": {
+    "object": "list",
+    "model": "text-embedding-3-small",
+    "data": [],
+    "usage": {
+      "prompt_tokens": 8,
+      "total_tokens": 8
+    }
+  },
+  "expected": {
+    "usage": {
+      "input_tokens": 8,
+      "input_basis": "includes_cache"
+    },
+    "response_model": "text-embedding-3-small",
+    "service_tier": null
+  }
+}

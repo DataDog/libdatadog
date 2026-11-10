@@ -1,0 +1,25 @@
+{
+  "description": "A negative, fractional or non-numeric count is not a count.",
+  "format": "openai_chat",
+  "operation_name": "chat",
+  "payload": {
+    "usage": {
+      "prompt_tokens": -1,
+      "completion_tokens": 3,
+      "prompt_tokens_details": {
+        "cached_tokens": 1.5
+      },
+      "completion_tokens_details": {
+        "reasoning_tokens": "2"
+      }
+    }
+  },
+  "expected": {
+    "usage": {
+      "output_tokens": 3,
+      "output_basis": "includes_reasoning"
+    },
+    "response_model": null,
+    "service_tier": null
+  }
+}

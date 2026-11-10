@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use http::{Uri, uri::PathAndQuery};
-use libdd_common::{Endpoint, config::parse_env, parse_uri};
+use libdd_common::config::parse_env;
+use libdd_common::{Endpoint, parse_uri};
 use std::{borrow::Cow, time::Duration};
 use tracing::debug;
 
@@ -397,9 +398,9 @@ mod tests {
     use std::path::Path;
 
     #[cfg(unix)]
-    use libdd_common::connector::uds;
+    use libdd_networking::connector::uds;
 
-    use libdd_common::connector::named_pipe;
+    use libdd_networking::connector::named_pipe;
 
     use super::{Config, Settings, TelemetryEndpoint};
 

@@ -10,9 +10,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use libdd_ai_usage::{
-    Json, JsonObject, Profile, Registry, project_result, with_deployment_attributes_json,
-};
+use crate::registry::Registry;
+use libdd_ai_usage::{Json, JsonObject, Profile, project_result, with_deployment_attributes_json};
 
 fn data() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data")

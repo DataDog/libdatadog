@@ -40,6 +40,7 @@ build_common = { path = "../build-common", features = ["cbindgen"] }
 cc.workspace = true
 http = { workspace = true, features = ["std"] }
 libdd-trace-utils = { path = "../libdd-trace-utils", features = ["test-utils"] }
+httpmock.workspace = true
 tempfile.workspace = true
 tools = { path = "../tools" }
 
