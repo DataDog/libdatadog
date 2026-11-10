@@ -106,6 +106,7 @@ pub enum Outcome {
 
 /// Lazily encodes candidates. Stop iterating to cancel before the next outcome.
 /// Each `next()` may encode several candidates synchronously before returning an outcome.
+#[must_use = "payloads are only encoded when the iterator is consumed"]
 pub struct Payloads<'a, T: TraceData> {
     source: &'a TracerPayload<T>,
     format: Format,
