@@ -35,7 +35,9 @@ use datadog_sidecar::service::{
     blocking::{self, SidecarTransport},
     canonical_features_json, prune_context_json,
 };
-use datadog_sidecar::shm_remote_config::{RemoteConfigReader, path_for_remote_config};
+use datadog_sidecar::shm_remote_config::{
+    RemoteConfigInvariants, RemoteConfigReader, path_for_remote_config,
+};
 use libc::c_char;
 use libdd_common::Endpoint;
 use libdd_common::tag::Tag;
@@ -271,7 +273,8 @@ pub unsafe extern "C" fn ddog_remote_config_reader_for_endpoint<'a>(
             tracer_version: tracer_version.to_utf8_lossy().into(),
             endpoint: endpoint.clone(),
             agentless: None,
-        },
+        }
+        .into(),
         &Arc::new(Target::new(
             service_name.to_utf8_lossy().to_string(),
             env_name.to_utf8_lossy().to_string(),
@@ -293,7 +296,7 @@ pub unsafe extern "C" fn ddog_remote_config_reader_for_path(
 
 #[unsafe(no_mangle)]
 extern "C" fn ddog_remote_config_path(
-    id: *const ConfigInvariants,
+    id: *const RemoteConfigInvariants,
     target: *const Arc<Target>,
 ) -> *mut c_char {
     let id = unsafe { &*id };

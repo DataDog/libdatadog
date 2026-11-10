@@ -97,6 +97,7 @@ struct ConnectionState {
     user_service_defined: StateSlot<bool>,
     test_session_token: StateSlot<String>,
     application: StateSlot<Option<ApplicationConfig>>,
+    cdn: StateSlot<Option<crate::shm_remote_config::CdnRegistration>>,
     /// The remote config generation the application was last set with, replayed with it.
     application_generation: u64,
     /// The generation to send with the pending application message, if it differs.
@@ -161,12 +162,17 @@ impl ConnectionState {
             return false;
         }
         self.pending_application_generation = None;
-        true
+        self.cdn.send_with(&mut submit, |config| {
+            SidecarInterfaceRequest::SetCdnConfiguration {
+                config: config.clone(),
+            }
+        })
     }
 
     /// Marks the whole state as to be sent, for a new connection or a new session on it.
     fn resend_all(&mut self) {
         self.connection_config.pending = self.connection_config.value.is_some();
+        self.cdn.pending = self.cdn.value.is_some();
         self.evp_transports.pending = self.evp_transports.value.is_some();
         self.process_tags.pending = self.process_tags.value.is_some();
         self.user_service_defined.pending = self.user_service_defined.value.is_some();
@@ -321,6 +327,15 @@ impl SidecarSender {
         if self.state.test_session_token.set(token) {
             self.try_drain_outbox();
         }
+    }
+
+    /// Queue a CDN registration, or unregister with `None`. Replayed after reconnect.
+    pub fn set_cdn_configuration(
+        &mut self,
+        config: Option<crate::shm_remote_config::CdnRegistration>,
+    ) {
+        self.state.cdn.set(config);
+        self.try_drain_outbox();
     }
 
     /// Sets the application of the current request, `None` at request end.
@@ -794,5 +809,43 @@ mod tests {
             ] => {}
             other => panic!("unexpected requests after adopting the state: {other:?}"),
         }
+    }
+    #[test]
+    #[cfg_attr(miri, ignore = "requires native IPC sockets")]
+    fn cdn_registration_is_replayed_after_reconnect_without_a_reply() {
+        use crate::shm_remote_config::CdnRegistration;
+        use libdd_ffe::cdn::{CdnConfig, CdnEndpoint};
+        use libdd_remote_config::Target;
+        let registration = CdnRegistration {
+            config: CdnConfig {
+                endpoint: CdnEndpoint::custom("http://127.0.0.1:1/config").unwrap(),
+                language: "php".into(),
+                version: "test".into(),
+                poll_interval: Duration::from_secs(30),
+                request_timeout: Duration::from_secs(1),
+            },
+            agent_endpoint: libdd_common::Endpoint::default(),
+            target: std::sync::Arc::new(Target::new(
+                "service".into(),
+                "test".into(),
+                "".into(),
+                vec![],
+                vec![],
+            )),
+        };
+        let (mut previous, old_peer) = sender();
+        previous.set_cdn_configuration(Some(registration.clone()));
+        assert_eq!(received(&old_peer).len(), 1);
+        let (mut current, peer) = sender();
+        current.adopt_state(previous);
+        current.send(&SidecarInterfaceRequest::SendDogstatsdActions { actions: vec![] });
+        let messages = received(&peer);
+        assert!(
+            matches!(&messages[0], SidecarInterfaceRequest::SetCdnConfiguration { config: Some(r) } if r == &registration)
+        );
+        assert!(matches!(
+            &messages[1],
+            SidecarInterfaceRequest::SendDogstatsdActions { .. }
+        ));
     }
 }

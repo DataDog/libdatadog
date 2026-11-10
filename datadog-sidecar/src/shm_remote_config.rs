@@ -1,6 +1,10 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache
 // License Version 2.0. This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
+pub(crate) mod publication;
+pub use publication::CdnRegistration;
+use publication::{PublicationStore, publish_directory};
+
 use crate::service::{DynamicInstrumentationConfigState, InstanceId};
 use crate::shm_path::keyed_shm_path;
 use base64::Engine;
@@ -51,6 +55,23 @@ pub struct RemoteConfigWriter {
 }
 pub struct RemoteConfigReader(OneWayShmReader<NamedShmHandle, CString>);
 
+/// Identifies a sidecar RC publication independently of its server configuration.
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+pub struct RemoteConfigInvariants {
+    /// Local namespace for a selected configuration source; never sent to the RC service.
+    pub publication_scope: Option<String>,
+    pub config: ConfigInvariants,
+}
+
+impl From<ConfigInvariants> for RemoteConfigInvariants {
+    fn from(config: ConfigInvariants) -> Self {
+        Self {
+            publication_scope: None,
+            config,
+        }
+    }
+}
+
 /// Function to dump the invariants and target, and the corresponding path.
 /// This is useful for debugging purposes.
 ///
@@ -58,7 +79,7 @@ pub struct RemoteConfigReader(OneWayShmReader<NamedShmHandle, CString>);
 /// Pointers should be valid and non-null.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn debug_dump_inv_tar(
-    id: *const ConfigInvariants,
+    id: *const RemoteConfigInvariants,
     target: *const Arc<Target>,
 ) {
     unsafe {
@@ -73,7 +94,7 @@ pub unsafe extern "C" fn debug_dump_inv_tar(
     }
 }
 
-type InProcNotifyFn = extern "C" fn(*const ConfigInvariants, *const Arc<Target>);
+type InProcNotifyFn = extern "C" fn(*const RemoteConfigInvariants, *const Arc<Target>);
 static mut IN_PROC_NOTIFY_FUN: Option<InProcNotifyFn> = None;
 
 /// # Safety
@@ -86,12 +107,15 @@ pub unsafe extern "C" fn ddog_set_rc_notify_fn(notify_fn: Option<InProcNotifyFn>
     }
 }
 
-pub fn path_for_remote_config(id: &ConfigInvariants, target: &Arc<Target>) -> CString {
-    keyed_shm_path("ddrc", &(id, target))
+pub fn path_for_remote_config(id: &RemoteConfigInvariants, target: &Arc<Target>) -> CString {
+    match &id.publication_scope {
+        None => keyed_shm_path("ddrc", &(&id.config, target)),
+        Some(_) => keyed_shm_path("ddrc", &("scoped", id, target)),
+    }
 }
 
 impl RemoteConfigReader {
-    pub fn new(id: &ConfigInvariants, target: &Arc<Target>) -> RemoteConfigReader {
+    pub fn new(id: &RemoteConfigInvariants, target: &Arc<Target>) -> RemoteConfigReader {
         let path = path_for_remote_config(id, target);
         RemoteConfigReader(OneWayShmReader::new_with_opener(
             open_named_shm(&path).ok(),
@@ -131,7 +155,10 @@ impl RemoteConfigReader {
 }
 
 impl RemoteConfigWriter {
-    pub fn new(id: &ConfigInvariants, target: &Arc<Target>) -> io::Result<RemoteConfigWriter> {
+    pub fn new(
+        id: &RemoteConfigInvariants,
+        target: &Arc<Target>,
+    ) -> io::Result<RemoteConfigWriter> {
         Ok(RemoteConfigWriter {
             writer: OneWayShmWriter::<NamedShmHandle>::new(path_for_remote_config(id, target))?,
             dynamic_instrumentation: None,
@@ -157,13 +184,14 @@ struct TargetInfo {
 
 #[derive(Clone)]
 struct ConfigFileStorage<N: NotifyTarget + 'static> {
-    invariants: ConfigInvariants,
+    invariants: RemoteConfigInvariants,
     limiter: Option<Arc<Mutex<ShmLimiterMemory<()>>>>,
     /// All writers
     writers: Arc<Mutex<HashMap<Arc<Target>, RemoteConfigWriter>>>,
     targets: Arc<Mutex<HashMap<Arc<Target>, TargetInfo>>>,
     #[allow(clippy::type_complexity)]
     on_dead: Arc<Mutex<Option<Box<dyn Fn() + Sync + Send>>>>,
+    publications: PublicationStore,
     _phantom: PhantomData<N>,
 }
 
@@ -359,20 +387,18 @@ impl<N: NotifyTarget + 'static> MultiTargetHandlers<N, Self, NativeCapabilities>
             }
         }
 
-        if writer.writer.as_slice() != serialized {
-            writer.write(&serialized);
-
+        self.publications
+            .agent_changed(&self.invariants.config, target, &serialized, files);
+        if publish_directory(writer, &self.invariants, target, &serialized).unwrap_or_else(
+            |error| {
+                warn!("Could not publish remote configuration: {error}");
+                false
+            },
+        ) {
             debug!(
                 "Active configuration files are: {}",
                 String::from_utf8_lossy(&serialized)
             );
-
-            if let Some(in_proc_notify) = unsafe { IN_PROC_NOTIFY_FUN } {
-                in_proc_notify(
-                    &self.invariants as *const ConfigInvariants,
-                    target as *const Arc<Target>,
-                );
-            }
 
             true
         } else {
@@ -381,6 +407,8 @@ impl<N: NotifyTarget + 'static> MultiTargetHandlers<N, Self, NativeCapabilities>
     }
 
     fn expired(&self, target: &Arc<Target>) {
+        self.publications
+            .expire_agent(&self.invariants.config, target);
         if let Some(writer) = self.writers.lock_or_panic().remove(target) {
             // clear to signal it's no longer being fetched
             writer.write(&[]);
@@ -477,12 +505,29 @@ impl<N: NotifyTarget + 'static> ShmRemoteConfigs<N> {
         interval: Duration,
         limiter: Option<Arc<Mutex<ShmLimiterMemory<()>>>>,
     ) -> Self {
+        Self::with_publications(
+            invariants,
+            on_dead,
+            interval,
+            limiter,
+            PublicationStore::default(),
+        )
+    }
+
+    pub(crate) fn with_publications(
+        invariants: ConfigInvariants,
+        on_dead: Box<dyn Fn() + Sync + Send>,
+        interval: Duration,
+        limiter: Option<Arc<Mutex<ShmLimiterMemory<()>>>>,
+        publications: PublicationStore,
+    ) -> Self {
         let storage = ConfigFileStorage {
-            invariants: invariants.clone(),
+            invariants: invariants.clone().into(),
             limiter,
             writers: Default::default(),
             targets: Arc::new(Mutex::new(Default::default())),
             on_dead: Arc::new(Mutex::new(Some(on_dead))),
+            publications,
             _phantom: Default::default(),
         };
         let fetcher =
@@ -608,7 +653,7 @@ fn read_config(path: &str, registry: &ParserRegistry) -> anyhow::Result<(RemoteC
 /// It is guaranteed that no two configurations sharing the same RemoteConfigPath are applied at
 /// once. They will always be Remove()d first, then Add()ed again upon update.
 pub struct RemoteConfigManager {
-    invariants: ConfigInvariants,
+    invariants: RemoteConfigInvariants,
     registry: Arc<ParserRegistry>,
     active_target: Option<Arc<Target>>,
     pub active_reader: Option<RemoteConfigReader>,
@@ -634,7 +679,7 @@ pub enum RemoteConfigUpdate {
 }
 
 impl RemoteConfigManager {
-    pub fn new(invariants: ConfigInvariants) -> RemoteConfigManager {
+    pub fn new(invariants: impl Into<RemoteConfigInvariants>) -> RemoteConfigManager {
         #[allow(clippy::expect_used)]
         let registry = default_registry()
             .with::<LiveDebuggingData>()
@@ -643,11 +688,11 @@ impl RemoteConfigManager {
     }
 
     pub fn new_with_registry(
-        invariants: ConfigInvariants,
+        invariants: impl Into<RemoteConfigInvariants>,
         registry: Arc<ParserRegistry>,
     ) -> RemoteConfigManager {
         RemoteConfigManager {
-            invariants,
+            invariants: invariants.into(),
             registry,
             active_target: None,
             active_reader: None,
@@ -684,6 +729,18 @@ impl RemoteConfigManager {
         self.active_reader
             .as_ref()
             .map(RemoteConfigReader::get_path)
+    }
+
+    /// Wait at most timeout for the ordinary RC directory to change. Does not consume updates.
+    pub fn wait_for_change(&mut self, timeout: Duration) {
+        if let Some(target) = &self.active_target {
+            let reader = self
+                .active_reader
+                .get_or_insert_with(|| RemoteConfigReader::new(&self.invariants, target));
+            reader.0.wait_for_change(timeout);
+        } else {
+            std::thread::sleep(timeout);
+        }
     }
 
     /// Polls one configuration change.
@@ -893,13 +950,39 @@ mod tests {
     });
 
     #[test]
+    fn publication_scope_preserves_agent_paths_and_separates_cdn_directories() {
+        let config = ConfigInvariants {
+            language: "php".into(),
+            tracer_version: "1.0".into(),
+            endpoint: libdd_common::Endpoint::from_slice("http://agent:8126"),
+            agentless: None,
+        };
+        let mut invariants: RemoteConfigInvariants = config.clone().into();
+        let agent_path = path_for_remote_config(&invariants, &DUMMY_TARGET);
+        assert_eq!(
+            agent_path,
+            keyed_shm_path("ddrc", &(&config, &*DUMMY_TARGET))
+        );
+
+        invariants.publication_scope = Some("first-cdn-identity".into());
+        let first_cdn_path = path_for_remote_config(&invariants, &DUMMY_TARGET);
+        invariants.publication_scope = Some("second-cdn-identity".into());
+        let second_cdn_path = path_for_remote_config(&invariants, &DUMMY_TARGET);
+        assert_ne!(agent_path, first_cdn_path);
+        assert_ne!(agent_path, second_cdn_path);
+        assert_ne!(first_cdn_path, second_cdn_path);
+        assert_eq!(invariants.config, config);
+    }
+
+    #[test]
     fn shm_paths_distinguish_targets_and_endpoints() {
-        let mut invariants = ConfigInvariants {
+        let mut invariants: RemoteConfigInvariants = ConfigInvariants {
             language: "php".into(),
             tracer_version: "1.0".into(),
             endpoint: libdd_common::Endpoint::from_slice("http://agent-a:8126"),
             agentless: None,
-        };
+        }
+        .into();
         let path = path_for_remote_config(&invariants, &DUMMY_TARGET);
         let target = Arc::new(Target::new(
             "other-service".into(),
@@ -909,7 +992,7 @@ mod tests {
             vec![],
         ));
         assert_ne!(path, path_for_remote_config(&invariants, &target));
-        invariants.endpoint = libdd_common::Endpoint::from_slice("http://agent-b:8126");
+        invariants.config.endpoint = libdd_common::Endpoint::from_slice("http://agent-b:8126");
         assert_ne!(path, path_for_remote_config(&invariants, &DUMMY_TARGET));
     }
 
@@ -940,7 +1023,7 @@ mod tests {
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
     async fn new_client_opening_an_old_directory_is_notified_by_its_replacement() {
-        let invariants = ConfigInvariants {
+        let invariants: RemoteConfigInvariants = ConfigInvariants {
             language: "php".to_string(),
             tracer_version: "test".to_string(),
             // The file scheme disables background fetching for this registration test.
@@ -949,14 +1032,15 @@ mod tests {
                 std::process::id()
             )),
             agentless: None,
-        };
+        }
+        .into();
         let old = RemoteConfigWriter::new(&invariants, &DUMMY_TARGET).unwrap();
         for _ in 0..3 {
             assert!(old.write(b"old-runtime\n"));
         }
 
         let sidecar = ShmRemoteConfigs::new(
-            invariants.clone(),
+            invariants.config.clone(),
             Box::new(|| {}),
             Duration::from_secs(60),
             None,
@@ -1297,7 +1381,7 @@ mod tests {
             assert!(output.status.success(), "{output:?}");
             return;
         }
-        let invariants = ConfigInvariants {
+        let invariants: RemoteConfigInvariants = ConfigInvariants {
             language: "php".to_string(),
             tracer_version: "1.0.0".to_string(),
             endpoint: libdd_common::Endpoint::from_slice(&format!(
@@ -1305,7 +1389,8 @@ mod tests {
                 std::process::id()
             )),
             agentless: None,
-        };
+        }
+        .into();
         let publish = |writer: &RemoteConfigWriter, file: &NamedShmHandle| {
             let mut directory = b"runtime\n".to_vec();
             directory.extend_from_slice(unsafe { file.get_path() });

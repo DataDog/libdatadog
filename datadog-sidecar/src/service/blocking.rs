@@ -7,6 +7,7 @@ use super::{
 };
 use crate::service::ffe_submission::FfeSubmissionStatus;
 use crate::service::sender::SidecarSender;
+pub use crate::service::sidecar_interface::CdnSubscriptionError;
 use crate::service::sidecar_interface::{
     SidecarInterfaceChannel, SidecarInterfaceClientRequest, SidecarInterfaceRequest,
 };
@@ -600,6 +601,17 @@ pub fn ensure_appsec_started(
     transport.with_retry(|s| {
         s.ensure_appsec_started(&request)
             .map_err(decode_error_to_io)
+    })
+}
+
+/// Enqueue CDN registration without waiting for a sidecar response.
+pub fn set_cdn_configuration(
+    transport: &mut SidecarTransport,
+    config: Option<crate::shm_remote_config::CdnRegistration>,
+) -> io::Result<()> {
+    transport.with_retry(|s| {
+        s.set_cdn_configuration(config.clone());
+        Ok(())
     })
 }
 
