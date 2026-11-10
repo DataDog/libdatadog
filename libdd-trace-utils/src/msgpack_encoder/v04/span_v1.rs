@@ -38,6 +38,11 @@
 
 use super::V1DowngradeOptions;
 use crate::span::TraceData;
+use crate::span::trace_utils::{
+    COMPONENT_KEY, DECISION_MAKER_KEY, ENV_KEY, GIT_COMMIT_SHA_KEY, GIT_REPOSITORY_URL_KEY,
+    HOSTNAME_KEY, ORIGIN_KEY, PROCESS_TAGS_KEY, SAMPLING_PRIORITY_KEY, SDK_OTLP_EXPORT_KEY,
+    SPAN_EVENTS_KEY, SPAN_KIND_KEY, TRACE_ID_HIGH_KEY, VERSION_KEY,
+};
 use crate::span::v1::{AttributeValue, Span, SpanEvent, SpanKind, SpanLink};
 use crate::span::vec_map::{DedupedVecMap, VecMap};
 use rmp::encode::{
@@ -51,10 +56,10 @@ use std::fmt::Write as _;
 
 /// Payload attributes that v0.4 carries on the first span of each trace only, as tracers wrote
 /// them before V1 (process tags, the OTLP export marker), rather than on every span.
-const FIRST_SPAN_PAYLOAD_ATTR_KEYS: &[&str] = &["_dd.tags.process", "_dd.sdk.otlp_export"];
+const FIRST_SPAN_PAYLOAD_ATTR_KEYS: &[&str] = &[PROCESS_TAGS_KEY, SDK_OTLP_EXPORT_KEY];
 
 /// Payload attributes that v0.4 carries on the root span of each trace only (git metadata).
-const ROOT_SPAN_PAYLOAD_ATTR_KEYS: &[&str] = &["_dd.git.commit.sha", "_dd.git.repository_url"];
+const ROOT_SPAN_PAYLOAD_ATTR_KEYS: &[&str] = &[GIT_COMMIT_SHA_KEY, GIT_REPOSITORY_URL_KEY];
 
 /// Chunk-level context propagated into the spans of a chunk when downgrading to v0.4. Built once
 /// per chunk by the top-level encoder and passed by reference to `encode_span`. Also carries
@@ -277,16 +282,16 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
     // field wins); otherwise it is written as a regular attribute. Trace-level fields count as
     // set for every span of the chunk, as they belong on the root only.
     let is_dedicated = |k: &str| match k {
-        "env" => !env.is_empty(),
-        "version" => !version.is_empty(),
-        "component" => !span.component.borrow().is_empty(),
-        "span.kind" => kind_meta.is_some(),
-        "_dd.p.tid" => trace_id_high != 0,
-        "_dd.origin" => !chunk.origin.borrow().is_empty(),
-        "_dd.p.dm" => chunk.sampling_mechanism.is_some(),
-        "_sampling_priority_v1" => chunk.priority.is_some(),
-        "_dd.hostname" => !chunk.payload_hostname.borrow().is_empty(),
-        "events" => span_events_json.is_some(),
+        ENV_KEY => !env.is_empty(),
+        VERSION_KEY => !version.is_empty(),
+        COMPONENT_KEY => !span.component.borrow().is_empty(),
+        SPAN_KIND_KEY => kind_meta.is_some(),
+        TRACE_ID_HIGH_KEY => trace_id_high != 0,
+        ORIGIN_KEY => !chunk.origin.borrow().is_empty(),
+        DECISION_MAKER_KEY => chunk.sampling_mechanism.is_some(),
+        SAMPLING_PRIORITY_KEY => chunk.priority.is_some(),
+        HOSTNAME_KEY => !chunk.payload_hostname.borrow().is_empty(),
+        SPAN_EVENTS_KEY => span_events_json.is_some(),
         _ => false,
     };
 
@@ -402,24 +407,24 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
         write_map_len(writer, counts.meta)?;
 
         if !env.is_empty() {
-            write_const_msgpack_str!(writer, "env")?;
+            write_const_msgpack_str!(writer, ENV_KEY)?;
             write_str(writer, env)?;
         }
         if !version.is_empty() {
-            write_const_msgpack_str!(writer, "version")?;
+            write_const_msgpack_str!(writer, VERSION_KEY)?;
             write_str(writer, version)?;
         }
         if !span.component.borrow().is_empty() {
-            write_const_msgpack_str!(writer, "component")?;
+            write_const_msgpack_str!(writer, COMPONENT_KEY)?;
             write_str(writer, span.component.borrow())?;
         }
         if let Some(kind_str) = kind_meta {
-            write_const_msgpack_str!(writer, "span.kind")?;
+            write_const_msgpack_str!(writer, SPAN_KIND_KEY)?;
             write_str(writer, kind_str)?;
         }
         if is_root && trace_id_high != 0 {
             // Lower-case hex without `0x` prefix — the agent expects this format.
-            write_const_msgpack_str!(writer, "_dd.p.tid")?;
+            write_const_msgpack_str!(writer, TRACE_ID_HIGH_KEY)?;
             let mut buf = [0u8; 16];
             let hex_str = hex::encode_to_slice(trace_id_high.to_be_bytes(), &mut buf)
                 .ok()
@@ -428,11 +433,11 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
             write_str(writer, hex_str)?;
         }
         if is_root && !chunk.origin.borrow().is_empty() {
-            write_const_msgpack_str!(writer, "_dd.origin")?;
+            write_const_msgpack_str!(writer, ORIGIN_KEY)?;
             write_str(writer, chunk.origin.borrow())?;
         }
         if let Some(mechanism) = chunk.sampling_mechanism.filter(|_| is_root) {
-            write_const_msgpack_str!(writer, "_dd.p.dm")?;
+            write_const_msgpack_str!(writer, DECISION_MAKER_KEY)?;
             // The tag is `-<mechanism>` (the part before the dash once held a hash), so 0 is "-0".
             let mut buf = itoa::Buffer::new();
             let digits = buf.format(mechanism);
@@ -445,11 +450,11 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
                 .map_err(ValueWriteError::InvalidDataWrite)?;
         }
         if !hostname.is_empty() {
-            write_const_msgpack_str!(writer, "_dd.hostname")?;
+            write_const_msgpack_str!(writer, HOSTNAME_KEY)?;
             write_str(writer, hostname)?;
         }
         if let Some(events_json) = &span_events_json {
-            write_const_msgpack_str!(writer, "events")?;
+            write_const_msgpack_str!(writer, SPAN_EVENTS_KEY)?;
             write_str(writer, events_json)?;
         }
         for (k, v) in &meta_leaves {
@@ -463,7 +468,7 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
         write_map_len(writer, counts.metrics)?;
 
         if let Some(priority) = chunk.priority.filter(|_| is_root) {
-            write_const_msgpack_str!(writer, "_sampling_priority_v1")?;
+            write_const_msgpack_str!(writer, SAMPLING_PRIORITY_KEY)?;
             write_f64(writer, priority as f64)?;
         }
         for (k, v) in &metrics_leaves {
