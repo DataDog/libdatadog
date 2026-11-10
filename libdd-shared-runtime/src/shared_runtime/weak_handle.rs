@@ -11,7 +11,7 @@ use libdd_common::MutexExt;
 use std::io;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use tracing::{debug, error, warn};
+use tracing::{debug, error};
 
 /// Non-fork-safe [`SharedRuntime`] spawning workers on a tokio runtime it does **not** own,
 /// through a [`tokio::runtime::Handle`] (e.g. `Handle::current()` inside a tokio context).
@@ -62,7 +62,8 @@ impl SharedRuntime for WeakHandleRuntime {
         restart_on_fork: bool,
     ) -> Result<WorkerHandle, SharedRuntimeError> {
         if restart_on_fork {
-            warn!("restart_on_fork is ignored on WeakHandleRuntime: it is not fork-safe");
+            // Debug, not warn: callers pass the default `true` on every spawn.
+            debug!("restart_on_fork is ignored on WeakHandleRuntime: it is not fork-safe");
         }
 
         let boxed_worker: BoxedWorker = Box::new(worker);

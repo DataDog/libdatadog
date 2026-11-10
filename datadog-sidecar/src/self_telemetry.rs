@@ -285,7 +285,7 @@ impl SelfTelemetry {
             .server
             .telemetry_clients
             .runtime()
-            .spawn_worker(telemetry_worker, false)
+            .spawn_worker(telemetry_worker, true)
         {
             Ok(worker_handle) => worker_handle,
             Err(e) => {

@@ -463,7 +463,7 @@ impl TelemetryCachedClient {
 
         let (handle, worker) = builder.build_worker::<NativeCapabilities>();
         let worker_handle = runtime
-            .spawn_worker(worker, false)
+            .spawn_worker(worker, true)
             .inspect(|_| info!("spawned telemetry worker {config:?}"))
             .inspect_err(|e| warn!("Could not spawn telemetry worker: {e}. Continuing without it."))
             .ok();

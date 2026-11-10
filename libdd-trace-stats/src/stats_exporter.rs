@@ -1688,7 +1688,7 @@ mod tests {
         .build_worker();
         let runtime = WeakHandleRuntime::from_handle(tokio::runtime::Handle::current());
         let worker_handle = runtime
-            .spawn_worker(worker, false)
+            .spawn_worker(worker, true)
             .expect("failed to spawn telemetry worker");
 
         let stats_exporter = StatsExporter::<NativeCapabilities>::new(
