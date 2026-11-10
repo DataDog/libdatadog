@@ -25,6 +25,17 @@ pub trait Worker: std::fmt::Debug + MaybeSend + MaybeSync {
     /// blocking forks if an await call takes too long to complete.
     async fn run(&mut self);
 
+    /// Whether `run` may be cancelled at a yield point when the worker is paused, for example
+    /// before a fork.
+    ///
+    /// Defaults to `false`: the worker pauses only once `run` completes, so a `run` that sends
+    /// buffered data is never cut off mid-send. Return `true` only if an interrupted `run` loses
+    /// nothing and leaves the worker ready for its next `run`, such as a periodic fetch that
+    /// stores its result once the response has arrived.
+    fn cancellable_run(&self) -> bool {
+        false
+    }
+
     /// Function called between each `run` to wait for the next run.
     /// This function should be cancellation safe as it can be cancelled at any yield point.
     async fn trigger(&mut self);
@@ -58,6 +69,10 @@ pub trait Worker: std::fmt::Debug + MaybeSend + MaybeSync {
 impl Worker for Box<dyn Worker> {
     async fn run(&mut self) {
         (**self).run().await
+    }
+
+    fn cancellable_run(&self) -> bool {
+        (**self).cancellable_run()
     }
 
     async fn trigger(&mut self) {
