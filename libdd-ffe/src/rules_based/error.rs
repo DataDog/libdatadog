@@ -361,6 +361,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn equality_compares_every_prerequisite_key() {
+        let chain = |inner: &'static str| EvaluationError::DependencyEvaluationFailed {
+            flag_key: Str::from_static_str("parent"),
+            source: EvaluationError::DependencyEvaluationFailed {
+                flag_key: Str::from_static_str(inner),
+                source: EvaluationError::FlagDisabled.into(),
+            }
+            .into(),
+        };
+        assert_eq!(chain("leaf"), chain("leaf"));
+        assert_ne!(chain("leaf"), chain("other"));
+    }
+
+    #[test]
     fn constant_patterns_and_shared_suffixes_remain_supported() {
         const DISABLED: EvaluationError = EvaluationError::FlagDisabled;
         assert!(matches!(EvaluationError::FlagDisabled, DISABLED));
