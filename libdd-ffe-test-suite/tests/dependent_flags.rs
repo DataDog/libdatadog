@@ -116,7 +116,7 @@ fn canonical_dependent_flag_results_and_telemetry() {
     }
     assert_eq!(
         cases.len(),
-        14,
+        15,
         "the pinned fixtures must run all Rust cases"
     );
     let config = Configuration::from_server_response(
