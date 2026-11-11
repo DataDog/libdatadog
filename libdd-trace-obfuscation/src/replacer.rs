@@ -144,12 +144,7 @@ pub fn replace_span_tags_trait<S: SpanMut>(span: &mut S, rules: &[ReplaceRule]) 
     for rule in rules {
         match rule.name.as_ref() {
             "*" => {
-                span.retain_attributes(|key, value| {
-                    if !is_hidden_tag(key) {
-                        apply_rule_to_attr_value(rule, value);
-                    }
-                    true
-                });
+                replace_non_hidden_attributes(span, rule);
                 // The "*" wildcard intentionally applies to `span.resource` as well as
                 // meta tags, matching the Datadog Agent reference implementation in
                 // `pkg/trace/filters/replacer.go` (see the `Replace` and `ReplaceV1`
@@ -186,12 +181,7 @@ pub fn replace_span_tags_v1<T: TraceData>(span: &mut v1::Span<T>, rules: &[Repla
 pub fn replace_chunk_tags<C: TraceChunkMut>(chunk: &mut C, rules: &[ReplaceRule]) {
     for rule in rules {
         match rule.name.as_ref() {
-            "*" => chunk.retain_attributes(|key, value| {
-                if !is_hidden_tag(key) {
-                    apply_rule_to_attr_value(rule, value);
-                }
-                true
-            }),
+            "*" => replace_non_hidden_attributes(chunk, rule),
             "resource.name" => {}
             name => {
                 if let Some(value) = chunk.attribute_mut(name) {
@@ -209,14 +199,33 @@ pub fn replace_chunk_tags_v1<T: TraceData>(chunk: &mut v1::TraceChunk<T>, rules:
 }
 
 /// Whether `key` is a hidden (`_`-prefixed) tag, which `"*"` rules skip, like the Datadog Agent.
-fn is_hidden_tag(key: &str) -> bool {
+pub(crate) fn is_hidden_tag(key: &str) -> bool {
     key.starts_with('_')
 }
 
-fn replace_resource<S: SpanMut>(rule: &ReplaceRule, span: &mut S) {
-    if let Some(new) = replace_all_opt(&rule.re, &rule.repl, rule.no_expansion, span.resource()) {
+/// Applies `rule` to every non-hidden attribute, leaving hidden (`_`-prefixed) keys untouched.
+///
+/// Shared by the span and chunk `"*"` passes, which differ only in the container they walk.
+fn replace_non_hidden_attributes<A: AttributesMut>(attrs: &mut A, rule: &ReplaceRule) {
+    attrs.retain_attributes(|key, value| {
+        if !is_hidden_tag(key) {
+            apply_rule_to_attr_value(rule, value);
+        }
+        true
+    });
+}
+
+/// Runs an obfuscator over the span's resource, writing it back only on a hit.
+pub(crate) fn apply_resource<S: SpanMut>(span: &mut S, f: impl FnOnce(&str) -> Option<String>) {
+    if let Some(new) = f(span.resource()) {
         span.set_resource(S::Text::from(new));
     }
+}
+
+fn replace_resource<S: SpanMut>(rule: &ReplaceRule, span: &mut S) {
+    apply_resource(span, |resource| {
+        replace_all_opt(&rule.re, &rule.repl, rule.no_expansion, resource)
+    });
 }
 
 /// Applies `rule` to the promoted span tag `key`, read and written by name through the compat

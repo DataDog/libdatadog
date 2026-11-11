@@ -26,7 +26,8 @@ use crate::{
         quantize_redis_string, remove_all_redis_args,
     },
     replacer::{
-        replace_chunk_tags, replace_span_tags, replace_span_tags_trait, replace_span_tags_v04,
+        apply_resource, is_hidden_tag, replace_chunk_tags, replace_span_tags,
+        replace_span_tags_trait, replace_span_tags_v04,
     },
     sql::obfuscate_sql_resource,
 };
@@ -503,13 +504,6 @@ pub fn obfuscate_v1_span<T: TraceData>(span: &mut v1::Span<T>, config: &Obfuscat
     obfuscate_span(span, config);
 }
 
-/// Runs an obfuscator over the span's resource, writing it back only on a hit.
-fn apply_resource<S: SpanMut>(span: &mut S, f: impl FnOnce(&str) -> Option<String>) {
-    if let Some(new) = f(span.resource()) {
-        span.set_resource(S::Text::from(new));
-    }
-}
-
 /// Runs an obfuscator over a `String`-valued attribute, writing it back only on a hit. Other
 /// values and missing keys are left untouched.
 fn apply_string_attr<A: AttributesMut>(
@@ -628,7 +622,7 @@ fn should_obfuscate_cc_key(key: &str, config: &ObfuscationConfig) -> bool {
 		{return false;}
 		_=> {}
 	}
-    if key.starts_with('_') {
+    if is_hidden_tag(key) {
         return false;
     }
     if config.credit_cards.keep_values.contains(key) {
