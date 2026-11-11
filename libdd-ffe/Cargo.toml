@@ -38,7 +38,6 @@ semver.workspace = true
 thiserror.workspace = true
 lru = { workspace = true, default-features = true, optional = true }
 libdd-trace-protobuf = { version = "5.1.1", path = "../libdd-trace-protobuf", optional = true }
-libdd-trace-normalization = { version = "4.3.0", path = "../libdd-trace-normalization", optional = true }
 prost = { workspace = true, default-features = true, optional = true }
 pyo3 = { workspace = true, features = ["macros"], optional = true }
 
@@ -65,7 +64,7 @@ libdd-capabilities-impl = { path = "../libdd-capabilities-impl", default-feature
 [features]
 default = ["remote-config"]
 # CDN transport is provider-neutral and honors HTTP(S)_PROXY/NO_PROXY.
-cdn = ["dep:base64", "dep:flate2", "dep:futures-util", "dep:http", "dep:http-body-util", "dep:httpdate", "dep:hyper", "dep:percent-encoding", "dep:tokio", "dep:tokio-util", "dep:url", "dep:fastrand", "dep:libdd-trace-normalization", "libdd-networking/hyper-proxy", "tokio/macros", "tokio/rt"]
+cdn = ["dep:base64", "dep:flate2", "dep:futures-util", "dep:http", "dep:http-body-util", "dep:httpdate", "dep:hyper", "dep:percent-encoding", "dep:tokio", "dep:tokio-util", "dep:url", "dep:fastrand", "libdd-networking/hyper-proxy", "tokio/macros", "tokio/rt"]
 # Select one TLS provider for CDN HTTPS requests.
 https = ["libdd-networking/https"]
 fips = ["libdd-networking/fips"]

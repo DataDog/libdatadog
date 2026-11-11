@@ -10,7 +10,6 @@ use http::header::{
 use http::{Method, Request};
 use http_body_util::BodyExt;
 use libdd_networking::http_common::{self, Body};
-use libdd_trace_normalization::normalize_utils::normalize_service;
 use percent_encoding::percent_decode_str;
 use std::future::Future;
 use std::io::Read;
@@ -189,20 +188,17 @@ fn build_request(
         .map_err(|_| TransportFailure::BuildRequest)
 }
 
-/// What `normalize_service` returns when nothing is left of a service.
-const UNNAMED_SERVICE: &str = "unnamed-service";
+const MAX_SERVICE_LEN: usize = 100;
 
-/// Cleans up the service sent as `DD-Service` with the trace normalizer, so
+/// Cleans up the service sent as `DD-Service` with [`normalize_service`], so
 /// `My Service` is sent as `my_service`, the name APM shows. The CDN attributes
 /// usage only to a service matching `^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,99}$` and
 /// drops any other value, so a service with nothing like that left isn't sent.
 /// Whatever is sent is a valid header value, so a service can't fail requests.
 fn usage_service(service: Option<String>) -> Option<String> {
     let service = service.filter(|service| !service.trim().is_empty())?;
-    let mut cleaned = service.clone();
-    normalize_service(&mut cleaned);
-    let accepted = cleaned != UNNAMED_SERVICE
-        && cleaned.len() <= 100
+    let cleaned = normalize_service(&service);
+    let accepted = cleaned.len() <= MAX_SERVICE_LEN
         && cleaned
             .as_bytes()
             .split_first()
@@ -218,6 +214,28 @@ fn usage_service(service: Option<String>) -> Option<String> {
         );
     }
     accepted.then_some(cleaned)
+}
+
+/// Normalizes a service name the way the Node.js tracer's `normalizeService`
+/// does, so every SDK sends the same `DD-Service` for a service: lowercase,
+/// every character outside `[a-z0-9_:./-]` replaced with `_`, leading
+/// characters other than `[a-z0-9]` dropped, and cut to 100 characters.
+fn normalize_service(service: &str) -> String {
+    let mut replaced = String::with_capacity(service.len());
+    for c in service.to_lowercase().chars() {
+        if c.is_ascii_lowercase() || c.is_ascii_digit() || "_:./-".contains(c) {
+            replaced.push(c);
+        } else {
+            // One `_` per UTF-16 code unit, as JavaScript replaces them.
+            replaced.extend(std::iter::repeat_n('_', c.len_utf16()));
+        }
+    }
+    // Only ASCII is left, so cutting at any byte is safe.
+    let mut cleaned = replaced
+        .trim_start_matches(|c: char| !c.is_ascii_alphanumeric())
+        .to_owned();
+    cleaned.truncate(MAX_SERVICE_LEN);
+    cleaned
 }
 
 fn request_url_and_authorization(
@@ -409,6 +427,8 @@ mod tests {
             "a",
             "svc_name.v2:api/edge-1",
             &format!("a{}", "b".repeat(99)),
+            "2fa-service",
+            "unnamed-service",
         ] {
             assert_eq!(
                 usage_service(Some(service.to_owned())).as_deref(),
@@ -418,7 +438,7 @@ mod tests {
     }
 
     #[test]
-    fn a_service_is_sent_cleaned_up_by_normalize_service() {
+    fn a_service_is_sent_cleaned_up_like_the_node_sdk_does() {
         let too_long = format!("a{}", "b".repeat(100));
         let cut = format!("a{}", "b".repeat(99));
         crate::test_logging::start_log_capture();
@@ -428,8 +448,10 @@ mod tests {
             ("_svc", "svc"),
             ("bad\nvalue", "bad_value"),
             (too_long.as_str(), cut.as_str()),
-            // normalize_service also drops leading digits, which the Agent keeps.
-            ("2fa-service", "fa-service"),
+            ("café", "caf_"),
+            ("Café", "caf_"),
+            // JavaScript sees two UTF-16 code units in the emoji.
+            ("a🐶b", "a__b"),
         ] {
             assert_eq!(
                 usage_service(Some(service.to_owned())).as_deref(),
@@ -452,8 +474,8 @@ mod tests {
     #[test]
     fn a_service_with_nothing_left_once_cleaned_up_is_not_sent() {
         crate::test_logging::start_log_capture();
-        // `___` cleans up to nothing, and `支付` to non-ASCII letters the CDN
-        // drops.
+        // Both clean up to underscores only, which are dropped as leading
+        // characters.
         let services = ["支付", "___"];
         for service in services {
             assert_eq!(usage_service(Some(service.to_owned())), None, "{service:?}");

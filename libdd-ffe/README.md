@@ -59,12 +59,13 @@ fetcher.run(cancellation_token).await;
 ```
 
 Each request sends `service` as `DD-Service` so the CDN can attribute usage to
-it. The value is first cleaned up with the trace normalizer's
-`normalize_service`: `My Service` is sent as `my_service`, the name APM shows.
-When nothing is left that matches `^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,99}$`, the
-format the CDN accepts (for example `___`, or a name made only of non-ASCII
-letters), that is not a validation error: requests leave the header out and the
-fetcher logs it once at debug level.
+it. The value is first cleaned up the way the Node.js tracer does it, so every
+SDK sends the same name: lowercase, every character outside `[a-z0-9_:./-]`
+replaced with `_`, leading characters other than `[a-z0-9]` dropped, and cut to
+100 characters. `My Service` is sent as `my_service`, the name APM shows. When
+nothing is left that matches `^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,99}$`, the format
+the CDN accepts (for example `___` or `支付`), that is not a validation error:
+requests leave the header out and the fetcher logs it once at debug level.
 `service` is part of the subscription identity, so each service gets its own
 fetcher.
 

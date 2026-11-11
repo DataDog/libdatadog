@@ -28,10 +28,10 @@ pub struct CdnConfig {
     pub language: String,
     pub version: String,
     /// Sent as `DD-Service` so the CDN can attribute usage to the service,
-    /// cleaned up with the trace normalizer's `normalize_service`: `My Service`
-    /// is sent as `my_service`, the name APM shows. A value with nothing usable
-    /// left is left out of requests rather than rejected, so it never stops
-    /// flag fetching.
+    /// cleaned up the way the Node.js tracer does it: `My Service` is sent as
+    /// `my_service`, the name APM shows. A value with nothing usable left is
+    /// left out of requests rather than rejected, so it never stops flag
+    /// fetching.
     #[serde(default)]
     pub service: Option<String>,
 }
