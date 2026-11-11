@@ -1,0 +1,23 @@
+{
+  "description": "An Anthropic error event fails the stream with the provider's type.",
+  "format": "anthropic",
+  "operation_name": "chat",
+  "body": "event: message_start\ndata: {\"type\": \"message_start\", \"message\": {\"id\": \"msg_1\", \"model\": \"claude-sonnet-4-5\", \"usage\": {\"input_tokens\": 10, \"output_tokens\": 1, \"cache_read_input_tokens\": 5, \"cache_creation_input_tokens\": 0, \"service_tier\": \"priority\"}}}\n\nevent: error\ndata: {\"type\": \"error\", \"error\": {\"type\": \"overloaded_error\", \"message\": \"Overloaded\"}}\n\n",
+  "expected": {
+    "usage": {
+      "input_tokens": 10,
+      "input_basis": "excludes_cache",
+      "cache_read_input_tokens": 5,
+      "cache_write_input_tokens": 0
+    },
+    "response_model": "claude-sonnet-4-5",
+    "service_tier": "priority",
+    "outcome": "failed",
+    "error_name": "overloaded_error",
+    "error": {
+      "code": null,
+      "message": "Overloaded",
+      "name": "overloaded_error"
+    }
+  }
+}

@@ -8,7 +8,8 @@
 //! touches the pool lock. The pool refers to the clients only weakly: the sidecar is long-lived,
 //! so a client, with its worker and socket, ends with the last connection using its endpoint.
 
-use libdd_common::{Endpoint, MutexExt};
+use libdd_common::Endpoint;
+use libdd_common::MutexExt;
 use libdd_dogstatsd_client::DogStatsDClient;
 use std::sync::{Arc, Mutex, Weak};
 use zwohash::HashMap;

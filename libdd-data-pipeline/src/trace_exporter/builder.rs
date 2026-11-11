@@ -26,7 +26,8 @@ use arc_swap::ArcSwap;
 use arc_swap::ArcSwapOption;
 use libdd_capabilities::{HttpClientCapability, LogWriterCapability, MaybeSend, SleepCapability};
 use libdd_common::mutable_metadata::{MutableMetadata, MutableMetadataHandle};
-use libdd_common::{Endpoint, parse_uri, tag};
+use libdd_common::tag;
+use libdd_common::{Endpoint, parse_uri};
 use libdd_dogstatsd_client::DogStatsDClient;
 use libdd_shared_runtime::SharedRuntime;
 #[cfg(not(target_arch = "wasm32"))]
@@ -1681,7 +1682,12 @@ mod tests {
             };
             let resource = {
                 let mut concentrator = stats_concentrator.lock().unwrap();
-                concentrator.add_span(&span);
+                let chunk =
+                    libdd_trace_utils::span::RootSpanChunk::new(std::slice::from_ref(&span));
+                concentrator.add_span(&libdd_trace_stats::span_concentrator::ChunkSpanView {
+                    span: &span,
+                    chunk: &chunk,
+                });
                 let buckets = concentrator.flush_with_otlp_exact(web_time::SystemTime::now(), true);
                 buckets[0].bucket.stats[0].resource.clone()
             };

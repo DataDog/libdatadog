@@ -6,8 +6,8 @@ use crate::request::HttpMethod;
 use crate::{HttpClientError, HttpRequest, HttpResponse};
 
 use http_body_util::BodyExt;
-use libdd_common::connector::Connector;
-use libdd_common::http_common::{self, Body};
+use libdd_networking::connector::Connector;
+use libdd_networking::http_common::{self, Body};
 
 pub(crate) struct HyperBackend {
     client: http_common::GenericHttpClient<Connector>,
@@ -30,15 +30,16 @@ impl HyperBackend {
                 HttpClientError::InvalidConfig(e.to_string())
             }),
             #[cfg(unix)]
-            TransportConfig::UnixSocket(path) => {
-                build_transport_uri(url, libdd_common::connector::uds::socket_path_to_uri(path))
-            }
+            TransportConfig::UnixSocket(path) => build_transport_uri(
+                url,
+                libdd_networking::connector::uds::socket_path_to_uri(path),
+            ),
             #[cfg(windows)]
             TransportConfig::WindowsNamedPipe(pipe) => build_transport_uri(
                 url,
-                libdd_common::connector::named_pipe::named_pipe_path_to_uri(std::path::Path::new(
-                    pipe,
-                )),
+                libdd_networking::connector::named_pipe::named_pipe_path_to_uri(
+                    std::path::Path::new(pipe),
+                ),
             ),
         }
     }

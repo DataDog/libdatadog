@@ -1,0 +1,23 @@
+{
+  "description": "Vertex AI leaves promptTokenCount out when the prompt came from cache; the total still counts it.",
+  "format": "gemini",
+  "operation_name": "chat",
+  "payload": {
+    "usageMetadata": {
+      "candidatesTokenCount": 10,
+      "cachedContentTokenCount": 90,
+      "totalTokenCount": 100
+    }
+  },
+  "expected": {
+    "usage": {
+      "input_tokens": 90,
+      "input_basis": "includes_cache",
+      "output_tokens": 10,
+      "output_basis": "includes_reasoning",
+      "cache_read_input_tokens": 90
+    },
+    "response_model": null,
+    "service_tier": null
+  }
+}

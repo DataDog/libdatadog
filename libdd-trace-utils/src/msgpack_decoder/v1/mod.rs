@@ -403,6 +403,10 @@ where
                 })?);
             }
             chunk_key::ATTRIBUTES => {
+                // TODO: move promoted tags (`libdd_trace_model::PROMOTED_CHUNK_TAGS`) found in the
+                // attributes to their dedicated fields, so decoded chunks uphold the model's
+                // contract that promoted tags never live in `attributes`. A dedicated field set on
+                // the wire should win over an attribute of the same name.
                 chunk.attributes = span::read_attributes_map(buf, table)?;
             }
             chunk_key::DROPPED_TRACE => {
@@ -846,5 +850,58 @@ mod tests {
         );
         assert_eq!(span.span_links[0].span_id, 777);
         assert_eq!(span.span_events[0].time_unix_nano, 123);
+    }
+
+    /// A payload with one span whose attributes are `[key, type, value]` triplets written by
+    /// `write_value`.
+    fn payload_with_double(write_value: impl FnOnce(&mut ByteBuf)) -> Vec<u8> {
+        let mut buf = ByteBuf::new();
+        encode::write_map_len(&mut buf, 1).unwrap();
+        wkey(&mut buf, trace_key::CHUNKS);
+        encode::write_array_len(&mut buf, 1).unwrap();
+        encode::write_map_len(&mut buf, 2).unwrap();
+        wkey(&mut buf, chunk_key::TRACE_ID);
+        encode::write_bin(&mut buf, &[1u8; 16]).unwrap();
+        wkey(&mut buf, chunk_key::SPANS);
+        encode::write_array_len(&mut buf, 1).unwrap();
+        encode::write_map_len(&mut buf, 3).unwrap();
+        wkey(&mut buf, span_key::SPAN_ID);
+        encode::write_uint(&mut buf, 1).unwrap();
+        wkey(&mut buf, span_key::START);
+        encode::write_uint(&mut buf, 100).unwrap();
+        wkey(&mut buf, span_key::ATTRIBUTES);
+        encode::write_array_len(&mut buf, 3).unwrap();
+        encode::write_str(&mut buf, "ratio").unwrap();
+        encode::write_uint(&mut buf, u64::from(ANY_VALUE_KEY_DOUBLE)).unwrap();
+        write_value(&mut buf);
+        buf.into_vec()
+    }
+
+    fn decoded_ratio(bytes: Vec<u8>) -> Result<f64, DecodeError> {
+        let (payload, _) = from_bytes(Bytes::from(bytes))?;
+        match payload.chunks[0].spans[0].attributes.get("ratio") {
+            Some(AttributeValue::Float(f)) => Ok(*f),
+            other => panic!("unexpected attribute {other:?}"),
+        }
+    }
+
+    #[test]
+    fn double_attribute_accepts_float32_and_float64() {
+        // Tracers may write a double as float32 when that holds it exactly, as the agent reads.
+        let f32_bytes = payload_with_double(|b| encode::write_f32(b, 1.5).unwrap());
+        assert_eq!(decoded_ratio(f32_bytes).unwrap(), 1.5);
+        let f64_bytes = payload_with_double(|b| encode::write_f64(b, 0.1).unwrap());
+        assert_eq!(decoded_ratio(f64_bytes).unwrap(), 0.1);
+    }
+
+    #[test]
+    fn double_attribute_rejects_integers() {
+        let int_bytes = payload_with_double(|b| {
+            encode::write_uint(b, 1).unwrap();
+        });
+        assert!(matches!(
+            decoded_ratio(int_bytes),
+            Err(DecodeError::InvalidFormat(m)) if m.contains("Double")
+        ));
     }
 }

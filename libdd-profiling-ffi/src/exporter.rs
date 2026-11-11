@@ -98,15 +98,13 @@ unsafe fn try_to_url(slice: CharSlice) -> anyhow::Result<hyper::Uri> {
     let str: &str = slice.try_to_utf8()?;
     #[cfg(unix)]
     if let Some(path) = str.strip_prefix("unix://") {
-        return Ok(libdd_common::connector::uds::socket_path_to_uri(
+        return Ok(libdd_networking::connector::uds::socket_path_to_uri(
             path.as_ref(),
         )?);
     }
     #[cfg(windows)]
     if let Some(path) = str.strip_prefix("windows:") {
-        return Ok(libdd_common::connector::named_pipe::named_pipe_path_to_uri(
-            path.as_ref(),
-        )?);
+        return Ok(libdd_networking::connector::named_pipe::named_pipe_path_to_uri(path.as_ref())?);
     }
     Ok(hyper::Uri::from_str(str)?)
 }
@@ -240,16 +238,12 @@ unsafe fn parse_json(
 /// This function creates the tokio runtime used by `ddog_prof_Exporter_send_blocking`.
 /// It can be called ahead of time to ensure the runtime is ready before sending.
 ///
-/// # Thread Affinity
-///
-/// **Important**: The runtime has thread affinity. This function should be called from
-/// the same thread that will later call `ddog_prof_Exporter_send_blocking`.
-///
 /// # Arguments
 /// * `exporter` - Borrows the exporter.
 ///
 /// # Safety
 /// The `exporter` must point to a valid ProfileExporter that has not been dropped.
+/// The caller must ensure exclusive access to the exporter for the duration of this call.
 #[unsafe(no_mangle)]
 #[must_use]
 #[named]
@@ -268,6 +262,9 @@ pub unsafe extern "C" fn ddog_prof_Exporter_init_runtime(
 ///
 /// Note: If the runtime has not been initialized via `ddog_prof_Exporter_init_runtime`,
 /// it will be lazily initialized on first call.
+///
+/// Successive calls may use different threads, but calls accessing the same exporter
+/// must not overlap.
 ///
 /// # Arguments
 /// * `exporter` - Borrows the exporter.

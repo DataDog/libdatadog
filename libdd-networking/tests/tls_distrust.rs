@@ -41,7 +41,8 @@ use std::{env, fs, path::Path};
 
 use hyper::Request;
 use libdd_common::Endpoint;
-use libdd_common::http_common::{self, Body};
+use libdd_networking::endpoint::EndpointExt;
+use libdd_networking::http_common::{self, Body};
 use rustls::{
     ServerConfig,
     pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, pem::PemObject as _},
@@ -186,7 +187,7 @@ fn all_http_clients_enforce_distrust() {
             for blocked_extra in [false, true] {
                 let config = server_config(&cert, blocked_extra);
 
-                // Hyper client through libdd-common's default connector.
+                // Hyper client through libdd-networking's default connector.
                 let (origin, origin_task) = serve_origin(config.clone()).await;
                 let client = http_common::new_default_client();
                 let request = Request::get(origin.clone())

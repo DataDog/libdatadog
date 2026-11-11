@@ -1,0 +1,22 @@
+{
+  "description": "Without thinking the total is the sum, and nothing is added.",
+  "format": "gemini_openai_compat",
+  "operation_name": "chat",
+  "payload": {
+    "usage": {
+      "prompt_tokens": 10,
+      "completion_tokens": 5,
+      "total_tokens": 15
+    }
+  },
+  "expected": {
+    "usage": {
+      "input_tokens": 10,
+      "input_basis": "includes_cache",
+      "output_tokens": 5,
+      "output_basis": "includes_reasoning"
+    },
+    "response_model": null,
+    "service_tier": null
+  }
+}

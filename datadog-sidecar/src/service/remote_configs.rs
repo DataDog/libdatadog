@@ -93,6 +93,7 @@ impl NotifyTarget for RemoteConfigNotifyTarget {
 pub struct RemoteConfigs {
     fetchers: Arc<Mutex<HashMap<ConfigInvariants, ShmRemoteConfigs<RemoteConfigNotifyTarget>>>>,
     limiters: Arc<OnceLock<Arc<ShmLimiters>>>,
+    pub(crate) publications: crate::shm_remote_config::publication::PublicationStore,
 }
 pub type RemoteConfigsGuard = ShmRemoteConfigsGuard<RemoteConfigNotifyTarget>;
 
@@ -121,7 +122,7 @@ impl RemoteConfigs {
             Entry::Vacant(e) => {
                 let this = self.fetchers.clone();
                 let invariants = e.key().clone();
-                e.insert(ShmRemoteConfigs::new(
+                e.insert(ShmRemoteConfigs::with_publications(
                     invariants.clone(),
                     Box::new(move || {
                         // try_lock: if the lock is held _right now_, it means that an insertion is
@@ -138,6 +139,7 @@ impl RemoteConfigs {
                     }),
                     poll_interval,
                     self.shm_limiters().probes.clone(),
+                    self.publications.clone(),
                 ))
             }
         }
