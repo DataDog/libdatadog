@@ -95,7 +95,7 @@ impl CrashDetails {
 /// A request ready for the agent.
 #[derive(Debug)]
 pub(crate) struct Submission {
-    uri: http::Uri,
+    endpoint: Endpoint,
     headers: Vec<(HeaderName, HeaderValue)>,
     body: Vec<u8>,
     /// Chunks in the body.
@@ -104,8 +104,12 @@ pub(crate) struct Submission {
 
 /// Takes the report's spans to close and prepares their requests. A block
 /// that cannot be finished is noted in the report's log messages, so this runs
-/// before the report is uploaded.
-pub(crate) fn prepare_all(crash_info: &mut CrashInfo) -> Vec<Submission> {
+/// before the report is uploaded. A block without its own agent URL goes to
+/// `crash_endpoint`, where the crash tracker sends the report.
+pub(crate) fn prepare_all(
+    crash_info: &mut CrashInfo,
+    crash_endpoint: Option<&Endpoint>,
+) -> Vec<Submission> {
     let blocks = std::mem::take(&mut crash_info.spans_to_close);
     if blocks.is_empty() {
         return vec![];
@@ -119,7 +123,7 @@ pub(crate) fn prepare_all(crash_info: &mut CrashInfo) -> Vec<Submission> {
     }
     let mut submissions = Vec::with_capacity(blocks.len());
     for (i, block) in blocks.iter().enumerate() {
-        match prepare(block, &crash) {
+        match prepare(block, &crash, crash_endpoint) {
             Ok(submission) => submissions.push(submission),
             Err(e) => crash_info
                 .log_messages
@@ -130,15 +134,19 @@ pub(crate) fn prepare_all(crash_info: &mut CrashInfo) -> Vec<Submission> {
 }
 
 /// The block's request, with its spans finished.
-fn prepare(block: &SpansToClose, crash: &CrashDetails) -> anyhow::Result<Submission> {
-    let uri = traces_uri(&block.agent_url, V1_TRACES_PATH)?;
+fn prepare(
+    block: &SpansToClose,
+    crash: &CrashDetails,
+    crash_endpoint: Option<&Endpoint>,
+) -> anyhow::Result<Submission> {
+    let endpoint = traces_endpoint(block.agent_url.as_deref(), crash_endpoint)?;
     let headers = request_headers(block)?;
     let mut payload = build_payload(block);
     for chunk in &mut payload.chunks {
         finish_chunk(chunk, crash);
     }
     Ok(Submission {
-        uri,
+        endpoint,
         headers,
         body: encode_v1::to_vec_from_v1(&payload),
         trace_count: payload.chunks.len(),
@@ -263,10 +271,39 @@ fn request_headers(block: &SpansToClose) -> anyhow::Result<Vec<(HeaderName, Head
     Ok(headers)
 }
 
-/// `{agent_url}{path}`, for `http://` and `unix://` agent URLs alike.
-fn traces_uri(agent_url: &str, path: &'static str) -> anyhow::Result<http::Uri> {
-    let mut parts = parse_uri(agent_url)?.into_parts();
-    parts.path_and_query = Some(PathAndQuery::from_static(path));
+/// Where the block's spans go: its own agent URL, else the agent the crash
+/// tracker reports to, keeping that endpoint's settings (timeout, test token,
+/// resolver). An endpoint with an API key is the errors intake, and a file
+/// endpoint writes the report locally; neither takes traces.
+fn traces_endpoint(
+    agent_url: Option<&str>,
+    crash_endpoint: Option<&Endpoint>,
+) -> anyhow::Result<Endpoint> {
+    if let Some(agent_url) = agent_url {
+        return Ok(Endpoint::from_url(traces_uri(parse_uri(agent_url)?)?));
+    }
+    let Some(crash_endpoint) = crash_endpoint else {
+        anyhow::bail!("no agent URL, and the crash tracker has no endpoint");
+    };
+    anyhow::ensure!(
+        crash_endpoint.api_key.is_none(),
+        "no agent URL, and the crash tracker sends to the intake, not an agent"
+    );
+    anyhow::ensure!(
+        crash_endpoint.url.scheme_str() != Some("file"),
+        "no agent URL, and the crash tracker writes to a file, not an agent"
+    );
+    Ok(Endpoint {
+        url: traces_uri(crash_endpoint.url.clone())?,
+        ..crash_endpoint.clone()
+    })
+}
+
+/// The agent's v1 traces URL at `agent`'s scheme and authority, for `http://`
+/// and `unix://` agents alike.
+fn traces_uri(agent: http::Uri) -> anyhow::Result<http::Uri> {
+    let mut parts = agent.into_parts();
+    parts.path_and_query = Some(PathAndQuery::from_static(V1_TRACES_PATH));
     Ok(http::Uri::from_parts(parts)?)
 }
 
@@ -289,7 +326,7 @@ pub(crate) async fn submit_all(submissions: Vec<Submission>) {
 /// POSTs one submission and returns the agent's status. Fails on a connection
 /// error, timeout, or non-2xx status.
 async fn submit(submission: Submission) -> anyhow::Result<u16> {
-    let endpoint = Endpoint::from_url(submission.uri);
+    let endpoint = submission.endpoint;
     let user_agent = format!("libdatadog-crashtracker/{}", env!("CARGO_PKG_VERSION"));
     let mut builder = endpoint
         .to_request_builder(&user_agent)?
@@ -373,9 +410,12 @@ mod tests {
             START + 42_000_000_000,
             Some("Crash during training (SIGSEGV)"),
         );
-        let submission = prepare(&block(), &crash).unwrap();
+        let submission = prepare(&block(), &crash, None).unwrap();
         assert_eq!(submission.trace_count, 1);
-        assert_eq!(submission.uri.to_string(), "http://agent:8126/v1.0/traces");
+        assert_eq!(
+            submission.endpoint.url.to_string(),
+            "http://agent:8126/v1.0/traces"
+        );
 
         let (payload, used) = decode_v1::from_slice(&submission.body).unwrap();
         assert_eq!(used, submission.body.len());
@@ -447,7 +487,7 @@ mod tests {
     fn keeps_the_staged_message_and_priority_and_never_ends_before_the_start() {
         let mut block = block();
         block.traces[0].priority = Some(0);
-        let submission = prepare(&block, &crash(START - 1, None)).unwrap();
+        let submission = prepare(&block, &crash(START - 1, None), None).unwrap();
         let (payload, _) = decode_v1::from_slice(&submission.body).unwrap();
         let chunk = &payload.chunks[0];
         assert_eq!(chunk.priority, Some(0));
@@ -476,7 +516,7 @@ mod tests {
 
         let mut bad = block();
         bad.process.language = "py\nthon".to_string();
-        assert!(prepare(&bad, &crash(START, None)).is_err());
+        assert!(prepare(&bad, &crash(START, None), None).is_err());
     }
 
     #[cfg_attr(miri, ignore)] // CrashInfo::test_instance spawns a process
@@ -504,7 +544,7 @@ mod tests {
         crash_info.timestamp = "yesterday".to_string();
         crash_info.spans_to_close = vec![block()];
         let before = Utc::now().timestamp_nanos_opt().unwrap();
-        let submissions = prepare_all(&mut crash_info);
+        let submissions = prepare_all(&mut crash_info, None);
         assert_eq!(submissions.len(), 1);
         assert!(crash_info.spans_to_close.is_empty());
         assert!(
@@ -522,9 +562,9 @@ mod tests {
     fn blocks_that_cannot_be_finished_are_noted_not_sent() {
         let mut crash_info = CrashInfo::test_instance(1);
         let mut bad = block();
-        bad.agent_url = "not a url".to_string();
+        bad.agent_url = Some("not a url".to_string());
         crash_info.spans_to_close = vec![bad, block()];
-        assert_eq!(prepare_all(&mut crash_info).len(), 1);
+        assert_eq!(prepare_all(&mut crash_info, None).len(), 1);
         assert!(
             crash_info
                 .log_messages
@@ -535,15 +575,59 @@ mod tests {
         );
     }
 
+    fn url_of(agent_url: Option<&str>, crash_endpoint: Option<&Endpoint>) -> String {
+        traces_endpoint(agent_url, crash_endpoint)
+            .unwrap()
+            .url
+            .to_string()
+    }
+
     #[test]
-    fn traces_uri_handles_http_and_unix_agents() {
-        let http = traces_uri("http://agent:8126", V1_TRACES_PATH).unwrap();
-        assert_eq!(http.to_string(), "http://agent:8126/v1.0/traces");
-        let http = traces_uri("http://agent:8126/some/base", V1_TRACES_PATH).unwrap();
-        assert_eq!(http.path(), V1_TRACES_PATH);
-        let unix = traces_uri("unix:///var/run/datadog/apm.socket", V1_TRACES_PATH).unwrap();
-        assert_eq!(unix.scheme_str(), Some("unix"));
-        assert_eq!(unix.path(), V1_TRACES_PATH);
+    fn traces_go_to_the_blocks_agent_for_http_and_unix_agents() {
+        let crash = Endpoint::from_slice("http://other:8126");
+        assert_eq!(
+            url_of(Some("http://agent:8126"), Some(&crash)),
+            "http://agent:8126/v1.0/traces"
+        );
+        let based = traces_endpoint(Some("http://agent:8126/some/base"), None).unwrap();
+        assert_eq!(based.url.path(), V1_TRACES_PATH);
+        let unix = traces_endpoint(Some("unix:///var/run/datadog/apm.socket"), None).unwrap();
+        assert_eq!(unix.url.scheme_str(), Some("unix"));
+        assert_eq!(unix.url.path(), V1_TRACES_PATH);
+    }
+
+    #[test]
+    fn traces_without_an_agent_url_go_to_the_crash_trackers_agent() {
+        let mut crash =
+            Endpoint::from_slice("http://agent:8126/telemetry/proxy/api/v2/apmtelemetry");
+        crash.timeout_ms = 1234;
+        crash.test_token = Some("token".into());
+        let endpoint = traces_endpoint(None, Some(&crash)).unwrap();
+        assert_eq!(endpoint.url.to_string(), "http://agent:8126/v1.0/traces");
+        assert_eq!(endpoint.timeout_ms, 1234);
+        assert_eq!(endpoint.test_token.as_deref(), Some("token"));
+        let unix = Endpoint::from_slice("unix:///var/run/datadog/apm.socket");
+        assert_eq!(
+            url_of(None, Some(&unix)),
+            traces_uri(unix.url.clone()).unwrap().to_string()
+        );
+    }
+
+    #[test]
+    fn traces_without_an_agent_url_need_an_agent_endpoint() {
+        let mut intake = Endpoint::from_slice("https://intake.datadoghq.com");
+        intake.api_key = Some("key".into());
+        let file = Endpoint::from_slice("file:///tmp/crash.json");
+        for (crash_endpoint, why) in [
+            (None, "no endpoint"),
+            (Some(&intake), "intake"),
+            (Some(&file), "file"),
+        ] {
+            let err = traces_endpoint(None, crash_endpoint)
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains(why), "{err}");
+        }
     }
 
     /// One HTTP exchange on a local listener: returns the request it read.
@@ -581,8 +665,8 @@ mod tests {
 
     fn submission_to(url: &str) -> Submission {
         let mut block = block();
-        block.agent_url = url.to_string();
-        prepare(&block, &crash(START + 1, None)).unwrap()
+        block.agent_url = Some(url.to_string());
+        prepare(&block, &crash(START + 1, None), None).unwrap()
     }
 
     #[cfg_attr(miri, ignore)] // binds a socket

@@ -143,8 +143,9 @@ pub(crate) async fn receiver_entry_point(
         }
         // Finish the spans the crash ended. Prepared first, so the report
         // notes any that could not be finished, then sent alongside the report
-        // so neither waits on, or is lost with, the other.
-        let traces = spans_to_close::prepare_all(&mut crash_info);
+        // so neither waits on, or is lost with, the other. Blocks without an
+        // agent URL go to the agent the report is sent to.
+        let traces = spans_to_close::prepare_all(&mut crash_info, config.endpoint().as_ref());
         let (upload, ()) = tokio::join!(
             crash_info.async_upload_to_endpoint(config.endpoint()),
             spans_to_close::submit_all(traces)
