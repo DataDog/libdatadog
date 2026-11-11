@@ -76,21 +76,17 @@ summed exactly as they are added, and Histogram samples are kept. At a flush the
 caller encodes the batch and starts a new one; the batch is a plain value the
 caller owns.
 
-- **OTLP** (feature `otlp`, on by default): `MetricBatch::encode_otlp` returns an
-  `ExportMetricsServiceRequest` in protobuf for an OTLP/HTTP metrics endpoint.
-  There is one scope per profile, carrying the attribute `trajectory.profile`. Counters are monotonic
-  delta sums, and Histograms are delta explicit-bucket histograms using the
-  OpenTelemetry GenAI advisory bucket bounds where the conventions give them.
-  `MetricBatch::encode_otlp_with(.., OtlpBinding::Datadog)` is for an export that
-  Datadog stores as it arrives (the Agent's OTLP receiver or Datadog's OTLP
-  intake): `{nanoUSD}` Counters are sent in USD and `{id}@{version}` values use
-  `/`, so metrics store the same values over OTLP as over DogStatsD.
+- **Datadog API**: `MetricBatch::take_intake` (or `datadog_series` for the
+  points of one call) returns the series to submit to the metrics API.
+  Counters are Rates over 10 s, and Histograms are Distributions (as
+  sketches from `take_intake`), each with `{name}.sum` and `{name}.count`
+  Rates. See [Datadog metric types](#datadog-metric-types).
 - **DogStatsD**: `MetricBatch::dogstatsd_lines` returns one line per series
-  point under the Datadog binding. Names are unchanged. Counters are Counts. Histograms are
-  Distributions, each with `{name}.sum` and `{name}.count` Counts. `{nanoUSD}`
-  Counters are summed exactly and sent in USD. Every series carries
-  `trajectory.profile:{id}/{version}`. Tag values are normalized
-  the way Datadog stores them.
+  point under the Datadog binding. Names are unchanged. Counters are `c` of
+  their total. Histograms are `d` samples, each with `{name}.sum` and
+  `{name}.count` counts. `{nanoUSD}` Counters are summed exactly and sent in
+  USD. Every series carries `trajectory.profile:{id}/{version}`. Tag values
+  are normalized the way Datadog stores them.
 
   `MetricBatch::dogstatsd_datagrams` (or `pack_dogstatsd` for lines of your
   own) packs them, with the client's constant tags, into datagrams of at most
@@ -98,8 +94,65 @@ caller owns.
   bytes; a longer line is a datagram of its own, up to
   `DOGSTATSD_MAX_LINE_BYTES` (8192),
   and only a line past that is dropped and counted.
+- **OTLP** (feature `otlp`, on by default): `MetricBatch::encode_otlp` returns an
+  `ExportMetricsServiceRequest` in protobuf for an OTLP/HTTP metrics endpoint.
+  There is one scope per profile, carrying the attribute `trajectory.profile`. Counters are monotonic
+  delta sums, and Histograms are delta explicit-bucket histograms using the
+  OpenTelemetry GenAI advisory bucket bounds where the conventions give them.
+  OTLP is for backends other than Datadog; see
+  [OTLP and Datadog](#otlp-and-datadog) before sending it to Datadog.
 
 Sending the bytes or datagrams is the caller's job.
+
+### Datadog metric types
+
+Datadog keeps one type and one interval per metric and organization, set by
+whichever writer submitted it last, and reads every point of the metric with
+them: `as_count()` on a RATE multiplies each value by its interval. So every
+writer of a metric must state the same type, or the type flips and totals read
+up to 10 times too high or too low.
+
+The Datadog Agent stores every DogStatsD count (`c`) as a RATE: the count over
+its 10 s flush bucket divided by 10, with an interval of 10. It has no way to
+keep one a COUNT. This crate therefore gives every Counter the same type on
+every transport:
+
+| Instrument | DogStatsD (through the Agent) | Datadog API | Stored as |
+| --- | --- | --- | --- |
+| Counter, and the `.sum` and `.count` of a Histogram | `c` of the total | `type: rate` (API v2 type 2), `interval: 10`, value = total / 10 | RATE, interval 10 |
+| Histogram sample (durations, per-call tokens and costs) | `d` | `distribution` (a sketch from `take_intake`) | DISTRIBUTION |
+
+`DATADOG_RATE_INTERVAL_SECS` is the 10. An API Rate is the exact sum divided
+once, by 10 (and by 10^9 for `{nanoUSD}`), so its value times 10 is the
+DogStatsD total to within the last bit. The interval is 10 whatever the time
+between takes: `as_count()` still reads each point as the sum since the last
+take, and a writer that takes every 10 s also gives the Agent's per-second
+values.
+
+For example, 100 tokens sent over DogStatsD and 100 over the API in one 10 s
+window are both stored as a Rate of 10 over 10 s, and `as_count()` reads 200.
+Were the API series a COUNT of 100, whichever type was written last would be
+applied to both points: read as Rates over 10 s, 10 * 10 + 100 * 10 = 1,100; read
+as Counts, 10 + 100 = 110.
+
+Consumers submit each series exactly as returned: they must not override its
+type, interval or value, set a metric's type in its metadata, or divide again.
+
+### OTLP and Datadog
+
+Datadog stores an OTLP delta monotonic sum as a COUNT, and Datadog's OTLP
+intake can make nothing else. The Agent's OTLP receiver (7.80 and later) can
+store one as a RATE only when the data point carries the attribute
+`datadog.metric.as_type=rate`, its interval-inference feature gate is on and
+the export runs every 10 s. This crate does not set that attribute. So a
+Counter sent to Datadog over OTLP is stored as a COUNT, which clashes with the
+RATE the same metric gets over DogStatsD and the API.
+
+For a Datadog destination, use DogStatsD or the API path above. OTLP is for
+other backends. `OtlpBinding::Datadog` (`{nanoUSD}` Counters in USD,
+`{id}@{version}` values with `/`) makes the values match the Datadog binding,
+but not the type. Use it only for metrics that Datadog receives over OTLP
+alone.
 
 ## Provider responses
 
