@@ -12,7 +12,6 @@
   },
   "expected_metrics": [],
   "expected_issues": [
-    "cache_read_missing",
-    "cache_write_missing"
+    "cache_read_missing"
   ]
 }

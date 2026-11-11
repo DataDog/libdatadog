@@ -2,10 +2,11 @@
   "$schema": "../../../../schema/provider-token-breakdown-metric-fixture.schema.json",
   "profile": "trajectory.gen_ai.client.token_breakdown@0.1.0",
   "case": "cache-write-unknown",
+  "description": "Input includes cached tokens, and cache reads are reported without a cache-write count. anthropic has cache writes, so the cache write is not known: no uncached input and no cache-write point, and cache_write_missing is raised.",
   "observation": {
     "operation_name": "chat",
-    "provider_name": "openai",
-    "request_model": "gpt-4o-mini",
+    "provider_name": "anthropic",
+    "request_model": "claude-sonnet-4-5",
     "input_tokens": 3000,
     "input_basis": "includes_cache",
     "output_tokens": 20,
@@ -20,8 +21,8 @@
       "value": 1024,
       "attributes": {
         "gen_ai.operation.name": "chat",
-        "gen_ai.provider.name": "openai",
-        "gen_ai.request.model": "gpt-4o-mini",
+        "gen_ai.provider.name": "anthropic",
+        "gen_ai.request.model": "claude-sonnet-4-5",
         "gen_ai.token.modality": "unknown",
         "trajectory.observation.point": "gateway"
       }

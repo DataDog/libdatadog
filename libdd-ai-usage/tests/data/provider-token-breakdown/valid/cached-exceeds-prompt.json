@@ -15,7 +15,6 @@
   },
   "expected_metrics": [],
   "expected_issues": [
-    "cache_write_missing",
     "usage_inconsistent"
   ]
 }
