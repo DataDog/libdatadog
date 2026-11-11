@@ -10,6 +10,7 @@ use http::header::{
 use http::{Method, Request};
 use http_body_util::BodyExt;
 use libdd_networking::http_common::{self, Body};
+use libdd_trace_normalization::normalize_utils::normalize_service;
 use percent_encoding::percent_decode_str;
 use std::future::Future;
 use std::io::Read;
@@ -188,24 +189,35 @@ fn build_request(
         .map_err(|_| TransportFailure::BuildRequest)
 }
 
-/// Selects the service sent as `DD-Service`. The CDN attributes usage only to a
-/// service matching `^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,99}$` and drops any other
-/// value. Skipping one here also keeps a value that can't be a header value,
-/// such as one with CR/LF, from failing every request.
+/// What `normalize_service` returns when nothing is left of a service.
+const UNNAMED_SERVICE: &str = "unnamed-service";
+
+/// Cleans up the service sent as `DD-Service` with the trace normalizer, so
+/// `My Service` is sent as `my_service`, the name APM shows. The CDN attributes
+/// usage only to a service matching `^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,99}$` and
+/// drops any other value, so a service with nothing like that left isn't sent.
+/// Whatever is sent is a valid header value, so a service can't fail requests.
 fn usage_service(service: Option<String>) -> Option<String> {
     let service = service.filter(|service| !service.trim().is_empty())?;
-    let (first, rest) = service.as_bytes().split_first()?;
-    let accepted = service.len() <= 100
-        && first.is_ascii_alphanumeric()
-        && rest
-            .iter()
-            .all(|byte| byte.is_ascii_alphanumeric() || b"_.:/-".contains(byte));
+    let mut cleaned = service.clone();
+    normalize_service(&mut cleaned);
+    let accepted = cleaned != UNNAMED_SERVICE
+        && cleaned.len() <= 100
+        && cleaned
+            .as_bytes()
+            .split_first()
+            .is_some_and(|(first, rest)| {
+                first.is_ascii_alphanumeric()
+                    && rest
+                        .iter()
+                        .all(|byte| byte.is_ascii_alphanumeric() || b"_.:/-".contains(byte))
+            });
     if !accepted {
         log::debug!(
-            "Feature Flags: service {service:?} does not match the format the CDN attributes usage to; DD-Service header not sent"
+            "Feature Flags: service {service:?} has nothing left the CDN can attribute usage to once cleaned up; DD-Service header not sent"
         );
     }
-    accepted.then_some(service)
+    accepted.then_some(cleaned)
 }
 
 fn request_url_and_authorization(
@@ -392,7 +404,7 @@ mod tests {
     }
 
     #[test]
-    fn only_a_service_the_cdn_attributes_usage_to_is_sent() {
+    fn a_valid_service_is_sent_unchanged() {
         for service in [
             "a",
             "svc_name.v2:api/edge-1",
@@ -403,36 +415,60 @@ mod tests {
                 Some(service)
             );
         }
+    }
 
+    #[test]
+    fn a_service_is_sent_cleaned_up_by_normalize_service() {
+        let too_long = format!("a{}", "b".repeat(100));
+        let cut = format!("a{}", "b".repeat(99));
         crate::test_logging::start_log_capture();
-        let rejected = [
-            format!("a{}", "b".repeat(100)),
-            "_svc".to_owned(),
-            "my service".to_owned(),
-            "支付".to_owned(),
-            "bad\nvalue".to_owned(),
-        ];
-        for service in &rejected {
-            assert_eq!(usage_service(Some(service.clone())), None, "{service:?}");
-        }
-        let logs = crate::test_logging::captured_logs();
-        assert_eq!(logs.len(), rejected.len());
-        for (log, service) in logs.iter().zip(&rejected) {
-            assert_eq!(log.level, log::Level::Debug);
+        for (service, cleaned) in [
+            ("My Service", "my_service"),
+            ("My-API", "my-api"),
+            ("_svc", "svc"),
+            ("bad\nvalue", "bad_value"),
+            (too_long.as_str(), cut.as_str()),
+            // normalize_service also drops leading digits, which the Agent keeps.
+            ("2fa-service", "fa-service"),
+        ] {
             assert_eq!(
-                log.message,
-                format!(
-                    "Feature Flags: service {service:?} does not match the format the CDN attributes usage to; DD-Service header not sent"
-                )
+                usage_service(Some(service.to_owned())).as_deref(),
+                Some(cleaned),
+                "{service:?}"
             );
         }
+        // A cleaned-up service is still sent, so there's nothing to report.
+        assert!(crate::test_logging::captured_logs().is_empty());
 
-        // Without the check, this would fail every request instead of only losing the header.
+        // Sent as configured, this one can't be a header value and would fail
+        // every request instead of only losing the header.
         let endpoint = CdnEndpoint::custom("http://localhost/config").unwrap();
         assert!(matches!(
             build_request(&endpoint, None, "php", "1.27", Some("bad\nvalue")),
             Err(TransportFailure::BuildRequest)
         ));
+    }
+
+    #[test]
+    fn a_service_with_nothing_left_once_cleaned_up_is_not_sent() {
+        crate::test_logging::start_log_capture();
+        // `___` cleans up to nothing, and `支付` to non-ASCII letters the CDN
+        // drops.
+        let services = ["支付", "___"];
+        for service in services {
+            assert_eq!(usage_service(Some(service.to_owned())), None, "{service:?}");
+        }
+        let logs = crate::test_logging::captured_logs();
+        assert_eq!(logs.len(), services.len());
+        for (log, service) in logs.iter().zip(services) {
+            assert_eq!(log.level, log::Level::Debug);
+            assert_eq!(
+                log.message,
+                format!(
+                    "Feature Flags: service {service:?} has nothing left the CDN can attribute usage to once cleaned up; DD-Service header not sent"
+                )
+            );
+        }
     }
 
     #[test]

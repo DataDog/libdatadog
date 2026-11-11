@@ -27,9 +27,11 @@ pub struct CdnConfig {
     pub request_timeout: Duration,
     pub language: String,
     pub version: String,
-    /// Sent as `DD-Service` so the CDN can attribute usage to the service. A
-    /// value the CDN would drop is left out of requests rather than rejected,
-    /// so it never stops flag fetching.
+    /// Sent as `DD-Service` so the CDN can attribute usage to the service,
+    /// cleaned up with the trace normalizer's `normalize_service`: `My Service`
+    /// is sent as `my_service`, the name APM shows. A value with nothing usable
+    /// left is left out of requests rather than rejected, so it never stops
+    /// flag fetching.
     #[serde(default)]
     pub service: Option<String>,
 }
@@ -171,7 +173,7 @@ mod tests {
         config.language = "php\r\ninjected: value".into();
         assert!(config.validate().is_err());
         config.language = "php".into();
-        // An unusable service only drops the DD-Service header.
+        // A service is cleaned up or left out of requests, never rejected.
         config.service = Some("php\r\ninjected: value".into());
         assert!(config.validate().is_ok());
     }
@@ -309,8 +311,26 @@ mod tests {
 
     #[tokio::test]
     #[cfg_attr(miri, ignore = "requires native HTTP")]
-    async fn a_missing_or_unusable_service_omits_dd_service_and_keeps_fetching() {
-        for service in [None, Some(""), Some("my service"), Some("bad\r\nvalue")] {
+    async fn a_service_the_cdn_would_drop_is_sent_cleaned_up_in_dd_service() {
+        let server = httpmock::MockServer::start_async().await;
+        let cleaned = server
+            .mock_async(|when, then| {
+                when.method("GET")
+                    .path(SERVER_PATH)
+                    .header("DD-Service", "my_service");
+                then.status(200).body(EMPTY_CONFIG);
+            })
+            .await;
+
+        fetch(&server, Some("My Service"), 2).await;
+
+        assert!(cleaned.calls_async().await >= 2);
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore = "requires native HTTP")]
+    async fn a_missing_service_omits_dd_service_and_keeps_fetching() {
+        for service in [None, Some("")] {
             let server = httpmock::MockServer::start_async().await;
             let without_service = server
                 .mock_async(|when, then| {
@@ -324,6 +344,33 @@ mod tests {
             fetch(&server, service, 1).await;
 
             assert!(without_service.calls_async().await >= 1, "{service:?}");
+        }
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore = "requires native HTTP")]
+    async fn a_service_with_nothing_left_once_cleaned_up_omits_dd_service_and_keeps_fetching() {
+        for service in ["支付", "___"] {
+            let server = httpmock::MockServer::start_async().await;
+            let without_service = server
+                .mock_async(|when, then| {
+                    when.method("GET")
+                        .path(SERVER_PATH)
+                        .header_missing("DD-Service");
+                    then.status(200).body(EMPTY_CONFIG);
+                })
+                .await;
+            crate::test_logging::start_log_capture();
+
+            fetch(&server, Some(service), 2).await;
+
+            assert!(without_service.calls_async().await >= 2, "{service:?}");
+            // Logged once per fetcher, not on every poll.
+            let skipped = crate::test_logging::captured_logs()
+                .into_iter()
+                .filter(|log| log.message.contains("DD-Service header not sent"))
+                .count();
+            assert_eq!(skipped, 1, "{service:?}");
         }
     }
 }
