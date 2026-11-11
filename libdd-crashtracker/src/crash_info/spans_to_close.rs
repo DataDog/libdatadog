@@ -22,7 +22,8 @@ use serde::de::{self, Deserializer, MapAccess, Visitor};
 ///
 /// The SDK describes spans, not an agent request: the receiver picks the
 /// trace format, writes every HTTP header, and decides what ending a span at
-/// a crash means (see `receiver::spans_to_close`).
+/// a crash means (see `receiver::spans_to_close`). `agent_url` is optional:
+/// without it the spans go to the agent the crash report itself is sent to.
 ///
 /// - IDs are lowercase hex strings: 32 digits for a trace ID, 16 for a span ID.
 /// - Attributes are flat (`"ml.batch_size"`, not nested objects). A value is a string, a boolean,
@@ -32,8 +33,9 @@ use serde::de::{self, Deserializer, MapAccess, Visitor};
 ///   bumps `version`, which receivers reject when they do not know it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SpansToClose {
-    /// Base agent URL, `http://` or `unix://`.
-    pub agent_url: String,
+    /// Base agent URL, `http://` or `unix://`. `None` sends the spans to the
+    /// crash tracker's own agent endpoint.
+    pub agent_url: Option<String>,
     pub process: ProcessToClose,
     pub traces: Vec<TraceToClose>,
 }
@@ -119,7 +121,8 @@ struct Version {
 
 #[derive(Deserialize)]
 struct BlockV1 {
-    agent_url: String,
+    #[serde(default)]
+    agent_url: Option<String>,
     #[serde(default)]
     process: ProcessToClose,
     traces: Vec<TraceToClose>,
@@ -144,7 +147,8 @@ impl SpansToClose {
         let block: BlockV1 = serde_json::from_str(line)?;
         anyhow::ensure!(block.traces.iter().any(|t| !t.spans.is_empty()), "no spans");
         Ok(Self {
-            agent_url: block.agent_url,
+            // An empty URL says no more than an absent one.
+            agent_url: block.agent_url.filter(|url| !url.is_empty()),
             process: block.process,
             traces: block.traces,
         })
@@ -240,7 +244,10 @@ mod tests {
     #[test]
     fn parses_every_field() {
         let block = SpansToClose::parse(BLOCK).unwrap();
-        assert_eq!(block.agent_url, "unix:///var/run/datadog/apm.socket");
+        assert_eq!(
+            block.agent_url.as_deref(),
+            Some("unix:///var/run/datadog/apm.socket")
+        );
         assert_eq!(block.process.language, "python");
         assert_eq!(block.process.runtime_id, "r-1");
         assert_eq!(
@@ -298,6 +305,24 @@ mod tests {
     }
 
     #[test]
+    fn agent_url_is_optional() {
+        let span = r#""span_id":"0000000000000002","service":"s","name":"n","start_unix_ns":5"#;
+        let trace = format!(
+            r#""traces":[{{"trace_id":"00000000000000000000000000000001","spans":[{{{span}}}]}}]"#
+        );
+        for block in [
+            format!(r#"{{"version":1,{trace}}}"#),
+            format!(r#"{{"version":1,"agent_url":"",{trace}}}"#),
+        ] {
+            assert_eq!(
+                SpansToClose::parse(&block).unwrap().agent_url,
+                None,
+                "{block}"
+            );
+        }
+    }
+
+    #[test]
     fn rejects_what_it_cannot_read_faithfully() {
         let span = r#""span_id":"0000000000000002","service":"s","name":"n","start_unix_ns":5"#;
         let trace_id = r#""trace_id":"00000000000000000000000000000001""#;
@@ -333,10 +358,6 @@ mod tests {
                     r#"{{"version":1,"agent_url":"a","traces":[{{{trace_id},"spans":[{{{span},"attributes":{{"a":null}}}}]}}]}}"#
                 ),
                 "string, boolean or number",
-            ),
-            (
-                format!(r#"{{"version":1,"traces":[{{{trace_id},"spans":[{{{span}}}]}}]}}"#),
-                "agent_url",
             ),
         ] {
             let err = SpansToClose::parse(&block).unwrap_err().to_string();
