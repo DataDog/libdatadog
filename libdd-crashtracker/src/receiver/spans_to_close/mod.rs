@@ -29,6 +29,7 @@ use libdd_networking::endpoint::EndpointExt;
 use libdd_networking::http_common;
 use libdd_trace_model::{AttributesMut, SpanMut, TraceChunkMut};
 use libdd_trace_utils::msgpack_encoder::v1 as encode_v1;
+use libdd_trace_utils::msgpack_encoder::v04 as encode_v04;
 use libdd_trace_utils::span::SliceData;
 use libdd_trace_utils::span::trace_utils_v1::compute_top_level_span;
 use libdd_trace_utils::span::v1::{
@@ -41,6 +42,10 @@ use std::time::Duration;
 const SUBMIT_TIMEOUT: Duration = Duration::from_secs(3);
 /// Where v1 payloads go.
 const V1_TRACES_PATH: &str = "/v1.0/traces";
+/// Where the same spans go, as v0.4, for an agent without v1.
+const V04_TRACES_PATH: &str = "/v0.4/traces";
+/// The `_top_level` attribute, which the receiver owns.
+const TOP_LEVEL_KEY: &str = "_top_level";
 /// Kept by the agent's samplers: crashed spans are rare and worth keeping.
 const USER_KEEP: i32 = 2;
 
@@ -97,10 +102,14 @@ impl CrashDetails {
 /// A request ready for the agent.
 #[derive(Debug)]
 pub(crate) struct Submission {
+    /// The agent's v1 traces endpoint.
     endpoint: Endpoint,
     headers: Vec<(HeaderName, HeaderValue)>,
-    body: Vec<u8>,
-    /// Chunks in the body.
+    /// The payload as v1, sent first.
+    v1_body: Vec<u8>,
+    /// The same payload as v0.4, for an agent that does not serve v1.
+    v04_body: Vec<u8>,
+    /// Chunks in the payload.
     trace_count: usize,
 }
 
@@ -144,26 +153,55 @@ fn prepare(
     let endpoint = traces_endpoint(block.agent_url.as_deref(), crash_endpoint)?;
     let headers = request_headers(block)?;
     let mut payload = TracerPayloadSlice::from(block);
-    for chunk in &mut payload.chunks {
-        finish_chunk(chunk, crash);
+    for (chunk, trace) in payload.chunks.iter_mut().zip(&block.traces) {
+        finish_chunk(chunk, trace, crash);
     }
     Ok(Submission {
         endpoint,
         headers,
-        body: encode_v1::to_vec_from_v1(&payload),
+        v1_body: encode_v1::to_vec_from_v1(&payload),
+        v04_body: encode_v04::to_vec_from_v1(&payload),
         trace_count: payload.chunks.len(),
     })
 }
 
-/// Ends every span of the chunk at the crash and keeps the chunk.
-fn finish_chunk<'a>(chunk: &mut TraceChunk<SliceData<'a>>, crash: &'a CrashDetails) {
+/// Ends every span of the chunk at the crash and keeps the chunk. `trace` is
+/// the trace the chunk was built from, span for span.
+fn finish_chunk<'a>(
+    chunk: &mut TraceChunk<SliceData<'a>>,
+    trace: &TraceToClose,
+    crash: &'a CrashDetails,
+) {
     if chunk.priority.is_none() {
         chunk.set_priority(USER_KEEP);
     }
     for span in chunk.spans_mut() {
         end_at_crash(span, crash);
     }
-    compute_top_level_span(&mut chunk.spans);
+    set_top_level(&mut chunk.spans, &trace.spans);
+}
+
+/// Marks the chunk's top-level spans. The SDK's `top_level` wins: a span's
+/// parent may be missing from the block because it was already sent or is
+/// described in another block, and then only the SDK knows the answer. The
+/// other spans are decided from the block, where a parent missing from it
+/// counts as remote, as the agent itself would decide.
+fn set_top_level(spans: &mut [Span<SliceData<'_>>], described: &[SpanToClose]) {
+    for span in spans.iter_mut() {
+        span.remove_attribute(TOP_LEVEL_KEY);
+    }
+    compute_top_level_span(spans);
+    for (span, described) in spans.iter_mut().zip(described) {
+        match described.top_level {
+            Some(true) => {
+                span.set_attribute(Cow::Borrowed(TOP_LEVEL_KEY), AttributeValue::Float(1.0))
+            }
+            Some(false) => {
+                span.remove_attribute(TOP_LEVEL_KEY);
+            }
+            None => {}
+        }
+    }
 }
 
 fn end_at_crash<'a>(span: &mut Span<SliceData<'a>>, crash: &'a CrashDetails) {
@@ -286,7 +324,10 @@ fn traces_endpoint(
     crash_endpoint: Option<&Endpoint>,
 ) -> anyhow::Result<Endpoint> {
     if let Some(agent_url) = agent_url {
-        return Ok(Endpoint::from_url(traces_uri(parse_uri(agent_url)?)?));
+        return Ok(Endpoint::from_url(traces_uri(
+            agent_uri(agent_url)?,
+            V1_TRACES_PATH,
+        )?));
     }
     let Some(crash_endpoint) = crash_endpoint else {
         anyhow::bail!("no agent URL, and the crash tracker has no endpoint");
@@ -299,17 +340,37 @@ fn traces_endpoint(
         crash_endpoint.url.scheme_str() != Some("file"),
         "no agent URL, and the crash tracker writes to a file, not an agent"
     );
+    ensure_agent_scheme(&crash_endpoint.url)?;
     Ok(Endpoint {
-        url: traces_uri(crash_endpoint.url.clone())?,
+        url: traces_uri(crash_endpoint.url.clone(), V1_TRACES_PATH)?,
         ..crash_endpoint.clone()
     })
 }
 
-/// The agent's v1 traces URL at `agent`'s scheme and authority, for `http://`
+/// The block's agent URL, refused here, while the report can still say why,
+/// unless it is a scheme agents serve traces on.
+fn agent_uri(agent_url: &str) -> anyhow::Result<http::Uri> {
+    let uri = parse_uri(agent_url)?;
+    ensure_agent_scheme(&uri)?;
+    Ok(uri)
+}
+
+/// Agents take traces over HTTP or a Unix socket.
+fn ensure_agent_scheme(uri: &http::Uri) -> anyhow::Result<()> {
+    match uri.scheme_str() {
+        Some("http" | "unix") => Ok(()),
+        scheme => anyhow::bail!(
+            "unsupported agent scheme {:?} in {uri}, expected http or unix",
+            scheme.unwrap_or("")
+        ),
+    }
+}
+
+/// The traces URL at `path` on `agent`'s scheme and authority, for `http://`
 /// and `unix://` agents alike.
-fn traces_uri(agent: http::Uri) -> anyhow::Result<http::Uri> {
+fn traces_uri(agent: http::Uri, path: &'static str) -> anyhow::Result<http::Uri> {
     let mut parts = agent.into_parts();
-    parts.path_and_query = Some(PathAndQuery::from_static(V1_TRACES_PATH));
+    parts.path_and_query = Some(PathAndQuery::from_static(path));
     Ok(http::Uri::from_parts(parts)?)
 }
 
@@ -331,33 +392,57 @@ pub(crate) async fn submit_all(submissions: Vec<Submission>) {
 
 /// POSTs one submission and returns the agent's status. Fails on a connection
 /// error, timeout, or non-2xx status.
+/// POSTs the payload as v1. An agent without v1 replies 404; the same spans
+/// then go to it as v0.4, within the same time budget.
 async fn submit(submission: Submission) -> anyhow::Result<u16> {
-    let endpoint = submission.endpoint;
+    let Submission {
+        endpoint,
+        headers,
+        v1_body,
+        v04_body,
+        trace_count,
+    } = submission;
+    let client = http_common::new_client_periodic();
+    let attempts = async {
+        let status = post(&client, &endpoint, &headers, trace_count, v1_body).await?;
+        if status != http::StatusCode::NOT_FOUND {
+            return Ok(status);
+        }
+        let v04 = Endpoint {
+            url: traces_uri(endpoint.url.clone(), V04_TRACES_PATH)?,
+            ..endpoint.clone()
+        };
+        post(&client, &v04, &headers, trace_count, v04_body).await
+    };
+    let status = tokio::time::timeout(SUBMIT_TIMEOUT, attempts)
+        .await
+        .map_err(|_| anyhow::anyhow!("timed out after {SUBMIT_TIMEOUT:?}"))??;
+    anyhow::ensure!(status.is_success(), "agent replied {status}");
+    Ok(status.as_u16())
+}
+
+async fn post(
+    client: &http_common::HttpClient,
+    endpoint: &Endpoint,
+    headers: &[(HeaderName, HeaderValue)],
+    trace_count: usize,
+    body: Vec<u8>,
+) -> anyhow::Result<http::StatusCode> {
     let user_agent = format!("libdatadog-crashtracker/{}", env!("CARGO_PKG_VERSION"));
     let mut builder = endpoint
         .to_request_builder(&user_agent)?
         .method(http::Method::POST);
-    let headers = builder
+    let request_headers = builder
         .headers_mut()
         .ok_or_else(|| anyhow::anyhow!("invalid request to {}", endpoint.url))?;
-    headers.extend(submission.headers);
-    headers.insert(
+    request_headers.extend(headers.iter().cloned());
+    request_headers.insert(
         http::header::CONTENT_TYPE,
         HeaderValue::from_static("application/msgpack"),
     );
-    headers.insert(
-        "x-datadog-trace-count",
-        HeaderValue::from(submission.trace_count),
-    );
-    let req = builder.body(http_common::Body::from(submission.body))?;
-
-    let client = http_common::new_client_periodic();
-    let response = tokio::time::timeout(SUBMIT_TIMEOUT, client.request(req))
-        .await
-        .map_err(|_| anyhow::anyhow!("timed out after {SUBMIT_TIMEOUT:?}"))??;
-    let status = response.status();
-    anyhow::ensure!(status.is_success(), "agent replied {status}");
-    Ok(status.as_u16())
+    request_headers.insert("x-datadog-trace-count", HeaderValue::from(trace_count));
+    let request = builder.body(http_common::Body::from(body))?;
+    Ok(client.request(request).await?.status())
 }
 
 #[cfg(test)]
@@ -423,8 +508,8 @@ mod tests {
             "http://agent:8126/v1.0/traces"
         );
 
-        let (payload, used) = decode_v1::from_slice(&submission.body).unwrap();
-        assert_eq!(used, submission.body.len());
+        let (payload, used) = decode_v1::from_slice(&submission.v1_body).unwrap();
+        assert_eq!(used, submission.v1_body.len());
         assert_eq!(payload.language_name, "python");
         assert_eq!(payload.language_version, "3.12");
         assert_eq!(payload.tracer_version, "v0.33.0");
@@ -494,7 +579,7 @@ mod tests {
         let mut block = block();
         block.traces[0].priority = Some(0);
         let submission = prepare(&block, &crash(START - 1, None), None).unwrap();
-        let (payload, _) = decode_v1::from_slice(&submission.body).unwrap();
+        let (payload, _) = decode_v1::from_slice(&submission.v1_body).unwrap();
         let chunk = &payload.chunks[0];
         assert_eq!(chunk.priority, Some(0));
         let rank = &chunk.spans[0];
@@ -559,7 +644,7 @@ mod tests {
                 .iter()
                 .any(|m| m.contains("receive time"))
         );
-        let (payload, _) = decode_v1::from_slice(&submissions[0].body).unwrap();
+        let (payload, _) = decode_v1::from_slice(&submissions[0].v1_body).unwrap();
         assert!(payload.chunks[0].spans[0].duration >= before - START);
     }
 
@@ -615,7 +700,9 @@ mod tests {
         let unix = Endpoint::from_slice("unix:///var/run/datadog/apm.socket");
         assert_eq!(
             url_of(None, Some(&unix)),
-            traces_uri(unix.url.clone()).unwrap().to_string()
+            traces_uri(unix.url.clone(), V1_TRACES_PATH)
+                .unwrap()
+                .to_string()
         );
     }
 
@@ -637,7 +724,10 @@ mod tests {
     }
 
     /// One HTTP exchange on a local listener: returns the request it read.
-    async fn serve_once(listener: tokio::net::TcpListener, status: &'static str) -> String {
+    async fn serve_once(
+        listener: &tokio::net::TcpListener,
+        status: &'static str,
+    ) -> (String, Vec<u8>) {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let (mut sock, _) = listener.accept().await.unwrap();
         let mut req = Vec::new();
@@ -666,7 +756,12 @@ mod tests {
         let reply =
             format!("HTTP/1.1 {status}\r\ncontent-length: 2\r\nconnection: close\r\n\r\n{{}}");
         sock.write_all(reply.as_bytes()).await.unwrap();
-        String::from_utf8_lossy(&req).into_owned()
+        let head_end = req
+            .windows(4)
+            .position(|w| w == b"\r\n\r\n")
+            .map_or(req.len(), |i| i + 4);
+        let body = req.split_off(head_end);
+        (String::from_utf8_lossy(&req).into_owned(), body)
     }
 
     fn submission_to(url: &str) -> Submission {
@@ -680,10 +775,10 @@ mod tests {
     async fn submit_posts_v1_with_the_receivers_headers() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
-        let server = tokio::spawn(serve_once(listener, "200 OK"));
+        let server = tokio::spawn(async move { serve_once(&listener, "200 OK").await });
         assert_eq!(submit(submission_to(&url)).await.unwrap(), 200);
 
-        let seen = server.await.unwrap().to_ascii_lowercase();
+        let seen = server.await.unwrap().0.to_ascii_lowercase();
         assert!(seen.starts_with("post /v1.0/traces http/1.1"), "{seen}");
         assert!(seen.contains("datadog-meta-lang: python\r\n"));
         assert!(seen.contains("datadog-meta-tracer-version: v0.33.0\r\n"));
@@ -697,9 +792,138 @@ mod tests {
     async fn submit_fails_on_rejection() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
-        let server = tokio::spawn(serve_once(listener, "415 Unsupported Media Type"));
+        let server =
+            tokio::spawn(async move { serve_once(&listener, "415 Unsupported Media Type").await });
         let err = submit(submission_to(&url)).await.unwrap_err();
         assert!(err.to_string().contains("415"), "{err}");
         server.await.unwrap();
+    }
+
+    #[cfg_attr(miri, ignore)] // binds a socket
+    #[tokio::test]
+    async fn submit_falls_back_to_v04_when_the_agent_has_no_v1() {
+        use libdd_trace_utils::msgpack_decoder::v04 as decode_v04;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let v1 = serve_once(&listener, "404 Not Found").await;
+            let v04 = serve_once(&listener, "200 OK").await;
+            (v1, v04)
+        });
+        assert_eq!(submit(submission_to(&url)).await.unwrap(), 200);
+
+        let ((v1_head, _), (v04_head, v04_body)) = server.await.unwrap();
+        assert!(
+            v1_head
+                .to_ascii_lowercase()
+                .starts_with("post /v1.0/traces "),
+            "{v1_head}"
+        );
+        let v04_head = v04_head.to_ascii_lowercase();
+        assert!(v04_head.starts_with("post /v0.4/traces "), "{v04_head}");
+        assert!(v04_head.contains("datadog-client-computed-top-level: yes\r\n"));
+        assert!(v04_head.contains("x-datadog-trace-count: 1\r\n"));
+
+        let (traces, _) = decode_v04::from_slice(&v04_body).unwrap();
+        let rank = &traces[0][0];
+        assert_eq!(rank.name, "training.rank");
+        assert_eq!(rank.error, 1);
+        assert_eq!(rank.meta.get("error.type").map(|v| &**v), Some("SIGSEGV"));
+        assert_eq!(rank.meta.get(IS_CRASH_KEY).map(|v| &**v), Some("true"));
+    }
+
+    #[test]
+    fn agent_urls_must_be_http_or_unix() {
+        for url in [
+            "file:///tmp/traces",
+            "windows:\\\\.\\pipe\\agent",
+            "ftp://agent:21",
+            "https://agent:8126",
+        ] {
+            let err = traces_endpoint(Some(url), None).unwrap_err();
+            assert!(
+                err.to_string().contains("unsupported agent scheme"),
+                "{url}: {err}"
+            );
+        }
+        let https_agent = Endpoint::from_slice("https://agent:8126");
+        let err = traces_endpoint(None, Some(&https_agent)).unwrap_err();
+        assert!(
+            err.to_string().contains("unsupported agent scheme"),
+            "{err}"
+        );
+
+        // Refused while preparing, so the report says why.
+        let mut info = CrashInfo::test_instance(1);
+        let mut unsupported = block();
+        unsupported.agent_url = Some("ftp://agent:21".to_string());
+        info.spans_to_close = vec![unsupported];
+        assert!(prepare_all(&mut info, None).is_empty());
+        assert!(
+            info.log_messages
+                .iter()
+                .any(|m| m.contains("not sent") && m.contains("unsupported agent scheme")),
+            "{:?}",
+            info.log_messages
+        );
+    }
+
+    fn top_levels(block: &str) -> Vec<bool> {
+        let block = SpansToClose::parse(block).unwrap();
+        let submission = prepare(&block, &crash(START + 1, None), None).unwrap();
+        let (payload, _) = decode_v1::from_slice(&submission.v1_body).unwrap();
+        payload.chunks[0]
+            .spans
+            .iter()
+            .map(|span| span.attributes.get(TOP_LEVEL_KEY).is_some())
+            .collect()
+    }
+
+    #[test]
+    fn top_level_comes_from_the_sdk_when_the_parent_is_not_in_the_block() {
+        let spans = |children: &str| {
+            format!(
+                r#"{{"version":1,"agent_url":"http://agent:8126","traces":[{{
+                    "trace_id":"000000000000000000000000000000ff","spans":[{children}]}}]}}"#
+            )
+        };
+        // Parent missing from the block, nothing said: treated as remote.
+        assert_eq!(
+            top_levels(&spans(
+                r#"{"span_id":"0000000000000002","parent_id":"0000000000000001",
+                    "service":"web","name":"child","start_unix_ns":5}"#
+            )),
+            [true]
+        );
+        // Parent already sent, same service: the SDK says not top-level, and a
+        // `_top_level` it staged as an attribute does not override that.
+        assert_eq!(
+            top_levels(&spans(
+                r#"{"span_id":"0000000000000002","parent_id":"0000000000000001",
+                    "service":"web","name":"child","start_unix_ns":5,"top_level":false,
+                    "attributes":{"_top_level":1.0}}"#
+            )),
+            [false]
+        );
+        // The SDK can also mark a span top-level that the block alone would not.
+        assert_eq!(
+            top_levels(&spans(
+                r#"{"span_id":"0000000000000001","service":"web","name":"root","start_unix_ns":5},
+                   {"span_id":"0000000000000002","parent_id":"0000000000000001",
+                    "service":"web","name":"child","start_unix_ns":6,"top_level":true}"#
+            )),
+            [true, true]
+        );
+        // Parent in the block: decided from it, as before.
+        assert_eq!(
+            top_levels(&spans(
+                r#"{"span_id":"0000000000000001","service":"web","name":"root","start_unix_ns":5},
+                   {"span_id":"0000000000000002","parent_id":"0000000000000001",
+                    "service":"web","name":"same","start_unix_ns":6},
+                   {"span_id":"0000000000000003","parent_id":"0000000000000001",
+                    "service":"db","name":"other","start_unix_ns":6}"#
+            )),
+            [true, false, true]
+        );
     }
 }
