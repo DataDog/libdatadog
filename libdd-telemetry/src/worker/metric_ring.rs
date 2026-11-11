@@ -52,7 +52,7 @@ use crate::data::metrics::MetricType;
 use crate::metrics::ContextKey;
 
 /// Number of slots. Must be a power of two.
-const RING_SIZE: usize = 2048;
+pub(super) const RING_SIZE: usize = 2048;
 const RING_MASK: u64 = RING_SIZE as u64 - 1;
 /// Notify the consumer once every this many published points. Power of two, `<= RING_SIZE`.
 const NOTIFY_INTERVAL: u64 = 1024;
@@ -143,7 +143,8 @@ impl MetricRing {
         }
     }
 
-    /// A future the consumer awaits to be woken when points are available.
+    /// Wait for a batch notification or a producer that found the ring full. A partial batch
+    /// does not necessarily wake the consumer. The telemetry worker also drains on a timer.
     pub fn notified(&self) -> impl std::future::Future<Output = ()> + '_ {
         self.notify.notified()
     }

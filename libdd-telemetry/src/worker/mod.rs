@@ -237,6 +237,9 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Wor
     /// workers preserve the final requested lifecycle state from staged and queued control actions.
     /// The child's sequence starts at one; the host must install its new identity before restarting
     /// the worker.
+    ///
+    /// If a producer thread did not survive the fork, the child cannot drain past a metric slot
+    /// that thread reserved but did not publish. Pausing the worker alone does not pause producers.
     fn reset(&mut self) {
         self.seq_id.store(1, Ordering::Relaxed);
         let mut started = self.data.started;
@@ -360,7 +363,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
         telemetry_worker_log!(self, ERROR, "{}", err);
     }
 
-    /// Drain all metric points published to the ring buffer into the aggregation buckets.
+    /// Fold one batch of published metric points into the aggregation buckets.
     fn drain_metric_ring(&mut self) {
         // Clone the Arc so the drain closure can mutably borrow `data.metric_buckets` without also
         // borrowing `self.metric_ring`.
@@ -2611,28 +2614,33 @@ mod tests {
         metric_mock.assert_calls(1);
     }
 
-    /// The worker does not drain the metric buffer while it waits for the response to a telemetry
-    /// request, and a slow agent can keep it there for the whole request timeout. `add_point` is
-    /// called from application threads, so it must return at once and drop the point when the
-    /// buffer is full. The worker of this test never runs, which is that state.
-    #[cfg_attr(miri, ignore)] // too slow for the deadline; the metric_ring tests cover the buffer
-    #[test]
-    fn add_point_does_not_wait_for_a_worker_that_does_not_drain() {
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn add_point_finishes_before_the_agent_replies() {
         use crate::data::metrics::{MetricNamespace, MetricType};
+        use crate::worker::metric_ring::RING_SIZE;
+        use std::time::Duration;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::time::timeout;
 
-        let runtime = Runtime::new().unwrap();
-        let _guard = runtime.enter();
-        let (handle, mut worker) = {
-            let mut builder = TelemetryWorkerBuilder::new(
-                "host".into(),
-                "svc".into(),
-                "lang".into(),
-                "1".into(),
-                "tv".into(),
-            );
-            builder.runtime_id = Some("rid".into());
-            builder.build_worker::<NativeCapabilities>(Some(runtime.handle().clone()))
-        };
+        const DEADLINE: Duration = Duration::from_secs(10);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut builder = TelemetryWorkerBuilder::new(
+            "host".into(),
+            "svc".into(),
+            "lang".into(),
+            "1".into(),
+            "tv".into(),
+        );
+        builder
+            .config
+            .set_endpoint(TelemetryEndpoint {
+                url: Some(format!("http://{}", listener.local_addr().unwrap())),
+                timeout_ms: 60_000,
+                ..Default::default()
+            })
+            .unwrap();
+        let (handle, mut worker) = builder.build_worker::<NativeCapabilities>(None);
         let context = handle.register_metric_context(
             "regression.full_metric_buffer".into(),
             Vec::new(),
@@ -2641,40 +2649,57 @@ mod tests {
             MetricNamespace::Tracers,
         );
 
-        // The worker does not run, so the buffer eventually fills.
-        let producer = {
-            let handle = handle.clone();
-            std::thread::spawn(move || {
-                let mut accepted = 0usize;
-                while handle.try_add_point(1.0, &context, Vec::new()) {
-                    accepted += 1;
-                }
-                let legacy_result = handle.add_point(1.0, &context, Vec::new());
-                (accepted, legacy_result)
-            })
-        };
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-        while !producer.is_finished() {
-            assert!(
-                std::time::Instant::now() < deadline,
-                "add_point waited for a worker that does not drain the metric buffer"
-            );
-            std::thread::sleep(std::time::Duration::from_millis(5));
-        }
-        let (accepted, legacy_result) = producer.join().unwrap();
-        assert!(accepted > 0);
-        assert!(
-            legacy_result.is_ok(),
-            "a full metric buffer must not turn a best-effort point into an error"
-        );
+        let start = tokio::spawn(async move {
+            let _ = worker
+                .dispatch_action(TelemetryActions::Lifecycle(LifecycleAction::Start))
+                .await;
+            worker
+        });
+        let mut agent = timeout(DEADLINE, async {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut method = [0; 5];
+            socket.read_exact(&mut method).await.unwrap();
+            assert_eq!(&method, b"POST ");
+            socket
+        })
+        .await
+        .expect("the worker did not send its startup request");
 
-        // The worker reads every accepted point when it drains again.
-        worker.drain_metric_ring();
-        worker.data.metric_buckets.flush_aggregates();
+        let (finished, burst) = tokio::sync::oneshot::channel();
+        let producer = std::thread::spawn({
+            let handle = handle.clone();
+            move || {
+                let result =
+                    (0..=RING_SIZE).try_for_each(|_| handle.add_point(1.0, &context, Vec::new()));
+                let _ = finished.send(result);
+            }
+        });
+        let before_reply = timeout(DEADLINE, burst).await;
+        assert!(
+            !start.is_finished(),
+            "the HTTP request ended before the agent replied"
+        );
+        agent
+            .write_all(b"HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\n\r\n")
+            .await
+            .unwrap();
+        let mut worker = timeout(DEADLINE, start).await.unwrap().unwrap();
+
+        worker.flush_metric_aggregates();
+        before_reply
+            .expect("add_point waited for the agent")
+            .unwrap()
+            .unwrap();
+        producer.join().unwrap();
         let series: Vec<_> = worker.data.metric_buckets.flush_series().collect();
         assert_eq!(series.len(), 1);
         assert_eq!(series[0].0, context);
-        assert_eq!(series[0].2[0].1, accepted as f64);
-        assert!(handle.try_add_point(1.0, &context, Vec::new()));
+        assert_eq!(series[0].2[0].1, RING_SIZE as f64);
+        let tag = crate::Tag::new("phase", "after_burst").unwrap();
+        handle.add_point(2.0, &context, vec![tag.clone()]).unwrap();
+        worker.flush_metric_aggregates();
+        let (_, tags, points) = worker.data.metric_buckets.flush_series().next().unwrap();
+        assert_eq!(tags, vec![tag]);
+        assert_eq!(points[0].1, 2.0);
     }
 }
