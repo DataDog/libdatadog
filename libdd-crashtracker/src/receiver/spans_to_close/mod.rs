@@ -29,7 +29,6 @@ use libdd_networking::endpoint::EndpointExt;
 use libdd_networking::http_common;
 use libdd_trace_model::{AttributesMut, SpanMut, TraceChunkMut};
 use libdd_trace_utils::msgpack_encoder::v1 as encode_v1;
-use libdd_trace_utils::msgpack_encoder::v04 as encode_v04;
 use libdd_trace_utils::span::SliceData;
 use libdd_trace_utils::span::v1::{
     AttributeValue, Span, SpanKind, TraceChunk, TracerPayload, TracerPayloadSlice,
@@ -42,8 +41,6 @@ use std::time::Duration;
 const SUBMIT_TIMEOUT: Duration = Duration::from_secs(3);
 /// Where v1 payloads go.
 const V1_TRACES_PATH: &str = "/v1.0/traces";
-/// Where the same spans go, as v0.4, for an agent without v1.
-const V04_TRACES_PATH: &str = "/v0.4/traces";
 /// Marks a top-level span when `1`: the key the agent (and the receiver) writes.
 const TOP_LEVEL_KEY: &str = "_top_level";
 /// Marks a top-level span when `1`: the key a tracer writes.
@@ -107,10 +104,8 @@ pub(crate) struct Submission {
     /// The agent's v1 traces endpoint.
     endpoint: Endpoint,
     headers: Vec<(HeaderName, HeaderValue)>,
-    /// The payload as v1, sent first.
-    v1_body: Vec<u8>,
-    /// The same payload as v0.4, for an agent that does not serve v1.
-    v04_body: Vec<u8>,
+    /// The payload as v1 msgpack.
+    body: Vec<u8>,
     /// Chunks in the payload.
     trace_count: usize,
 }
@@ -161,8 +156,7 @@ fn prepare(
     Ok(Submission {
         endpoint,
         headers,
-        v1_body: encode_v1::to_vec_from_v1(&payload),
-        v04_body: encode_v04::to_vec_from_v1(&payload),
+        body: encode_v1::to_vec_from_v1(&payload),
         trace_count: payload.chunks.len(),
     })
 }
@@ -403,33 +397,23 @@ pub(crate) async fn submit_all(submissions: Vec<Submission>) {
     }
 }
 
-/// POSTs one submission and returns the agent's status. Fails on a connection
-/// error, timeout, or non-2xx status.
-/// POSTs the payload as v1. An agent without v1 replies 404; the same spans
-/// then go to it as v0.4, within the same time budget.
+/// POSTs one v1 submission and returns the agent's status. Fails on a
+/// connection error, timeout, or non-2xx status. An agent without v1 is not
+/// retried as v0.4.
 async fn submit(submission: Submission) -> anyhow::Result<u16> {
     let Submission {
         endpoint,
         headers,
-        v1_body,
-        v04_body,
+        body,
         trace_count,
     } = submission;
     let client = http_common::new_client_periodic();
-    let attempts = async {
-        let status = post(&client, &endpoint, &headers, trace_count, v1_body).await?;
-        if status != http::StatusCode::NOT_FOUND {
-            return Ok(status);
-        }
-        let v04 = Endpoint {
-            url: traces_uri(endpoint.url.clone(), V04_TRACES_PATH)?,
-            ..endpoint.clone()
-        };
-        post(&client, &v04, &headers, trace_count, v04_body).await
-    };
-    let status = tokio::time::timeout(SUBMIT_TIMEOUT, attempts)
-        .await
-        .map_err(|_| anyhow::anyhow!("timed out after {SUBMIT_TIMEOUT:?}"))??;
+    let status = tokio::time::timeout(
+        SUBMIT_TIMEOUT,
+        post(&client, &endpoint, &headers, trace_count, body),
+    )
+    .await
+    .map_err(|_| anyhow::anyhow!("timed out after {SUBMIT_TIMEOUT:?}"))??;
     anyhow::ensure!(status.is_success(), "agent replied {status}");
     Ok(status.as_u16())
 }
@@ -521,8 +505,8 @@ mod tests {
             "http://agent:8126/v1.0/traces"
         );
 
-        let (payload, used) = decode_v1::from_slice(&submission.v1_body).unwrap();
-        assert_eq!(used, submission.v1_body.len());
+        let (payload, used) = decode_v1::from_slice(&submission.body).unwrap();
+        assert_eq!(used, submission.body.len());
         assert_eq!(payload.language_name, "python");
         assert_eq!(payload.language_version, "3.12");
         assert_eq!(payload.tracer_version, "v0.33.0");
@@ -592,7 +576,7 @@ mod tests {
         let mut block = block();
         block.traces[0].priority = Some(0);
         let submission = prepare(&block, &crash(START - 1, None), None).unwrap();
-        let (payload, _) = decode_v1::from_slice(&submission.v1_body).unwrap();
+        let (payload, _) = decode_v1::from_slice(&submission.body).unwrap();
         let chunk = &payload.chunks[0];
         assert_eq!(chunk.priority, Some(0));
         let rank = &chunk.spans[0];
@@ -657,7 +641,7 @@ mod tests {
                 .iter()
                 .any(|m| m.contains("receive time"))
         );
-        let (payload, _) = decode_v1::from_slice(&submissions[0].v1_body).unwrap();
+        let (payload, _) = decode_v1::from_slice(&submissions[0].body).unwrap();
         assert!(payload.chunks[0].spans[0].duration >= before - START);
     }
 
@@ -816,35 +800,18 @@ mod tests {
 
     #[cfg_attr(miri, ignore)] // binds a socket
     #[tokio::test]
-    async fn submit_falls_back_to_v04_when_the_agent_has_no_v1() {
-        use libdd_trace_utils::msgpack_decoder::v04 as decode_v04;
+    async fn submit_fails_when_the_agent_has_no_v1() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
-        let server = tokio::spawn(async move {
-            let v1 = serve_once(&listener, "404 Not Found").await;
-            let v04 = serve_once(&listener, "200 OK").await;
-            (v1, v04)
-        });
-        assert_eq!(submit(submission_to(&url)).await.unwrap(), 200);
+        let server = tokio::spawn(async move { serve_once(&listener, "404 Not Found").await });
+        let err = submit(submission_to(&url)).await.unwrap_err();
+        assert!(err.to_string().contains("404"), "{err}");
 
-        let ((v1_head, _), (v04_head, v04_body)) = server.await.unwrap();
+        let (head, _) = server.await.unwrap();
         assert!(
-            v1_head
-                .to_ascii_lowercase()
-                .starts_with("post /v1.0/traces "),
-            "{v1_head}"
+            head.to_ascii_lowercase().starts_with("post /v1.0/traces "),
+            "{head}"
         );
-        let v04_head = v04_head.to_ascii_lowercase();
-        assert!(v04_head.starts_with("post /v0.4/traces "), "{v04_head}");
-        assert!(v04_head.contains("datadog-client-computed-top-level: yes\r\n"));
-        assert!(v04_head.contains("x-datadog-trace-count: 1\r\n"));
-
-        let (traces, _) = decode_v04::from_slice(&v04_body).unwrap();
-        let rank = &traces[0][0];
-        assert_eq!(rank.name, "training.rank");
-        assert_eq!(rank.error, 1);
-        assert_eq!(rank.meta.get("error.type").map(|v| &**v), Some("SIGSEGV"));
-        assert_eq!(rank.meta.get(IS_CRASH_KEY).map(|v| &**v), Some("true"));
     }
 
     #[test]
@@ -872,7 +839,7 @@ mod tests {
     fn top_levels(block: &str) -> Vec<bool> {
         let block = SpansToClose::parse(block).unwrap();
         let submission = prepare(&block, &crash(START + 1, None), None).unwrap();
-        let (payload, _) = decode_v1::from_slice(&submission.v1_body).unwrap();
+        let (payload, _) = decode_v1::from_slice(&submission.body).unwrap();
         payload.chunks[0]
             .spans
             .iter()
@@ -948,7 +915,7 @@ mod tests {
         let sent = |attributes: &str| {
             let block = SpansToClose::parse(&child(attributes)).unwrap();
             let submission = prepare(&block, &crash(START + 1, None), None).unwrap();
-            let (payload, _) = decode_v1::from_slice(&submission.v1_body).unwrap();
+            let (payload, _) = decode_v1::from_slice(&submission.body).unwrap();
             let span = &payload.chunks[0].spans[0];
             [TOP_LEVEL_KEY, TRACER_TOP_LEVEL_KEY].map(|key| match attr(span, key) {
                 None => None,
