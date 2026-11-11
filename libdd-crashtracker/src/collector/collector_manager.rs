@@ -41,11 +41,15 @@ impl Collector {
         // Get the current tid to identify thread info
         let tid = current_tid();
 
-        // Thread collection needs the collector to ptrace us, and Yama permits that only once
-        // we name it as our tracer - which we cannot do before the fork tells us its pid. The
-        // child therefore blocks on this pipe until we have granted it.
+        // Thread collection and OTel TLS reading both need the collector to
+        // ptrace us. Yama permits that only once we name it as our tracer —
+        // which we cannot do before the fork tells us its pid. The child
+        // therefore blocks on this pipe until we have granted it.
         #[cfg(target_os = "linux")]
-        let ptrace_gate = if config.collect_all_threads() {
+        let needs_ptrace = config.collect_all_threads()
+            || (cfg!(feature = "otel-thread-ctx") && config.collect_otel_thread_contexts());
+        #[cfg(target_os = "linux")]
+        let ptrace_gate = if needs_ptrace {
             make_ptrace_gate()
         } else {
             None

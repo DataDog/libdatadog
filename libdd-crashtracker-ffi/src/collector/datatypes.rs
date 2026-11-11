@@ -68,6 +68,9 @@ pub struct Config<'a> {
     /// If true, the receiver will collect stack traces for all threads in the crashing process
     /// (not just the crashing thread) using ptrace-based remote unwinding.
     pub collect_all_threads: bool,
+    /// If true, the collector will read OTel thread-level context (trace_id, span_id, etc.) from
+    /// each thread's TLS and include them in the crash report under `experimental`.
+    pub collect_otel_thread_contexts: bool,
     pub create_alt_stack: bool,
     pub demangle_names: bool,
     /// The endpoint to send the crash report to (can be a file://).
@@ -105,6 +108,7 @@ impl<'a> TryFrom<Config<'a>> for libdd_crashtracker::CrashtrackerConfiguration {
         let mut builder = Self::builder()
             .additional_files(additional_files)
             .collect_all_threads(value.collect_all_threads)
+            .collect_otel_thread_contexts(value.collect_otel_thread_contexts)
             .create_alt_stack(value.create_alt_stack)
             .demangle_names(value.demangle_names)
             .resolve_frames(value.resolve_frames)
@@ -161,6 +165,7 @@ mod tests {
         Config {
             additional_files: Slice::empty(),
             collect_all_threads: false,
+            collect_otel_thread_contexts: false,
             create_alt_stack: false,
             demangle_names: false,
             endpoint: EndpointConfig {
