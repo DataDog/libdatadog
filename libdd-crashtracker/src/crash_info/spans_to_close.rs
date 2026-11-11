@@ -4,9 +4,9 @@
 //! Spans a crash ends, described by an SDK for the receiver to finish and send
 //! to the agent. See [`SpansToClose`] for the wire format, and RFC 0016.
 
-use core::fmt;
+use alloc::collections::BTreeMap;
 use serde::Deserialize;
-use serde::de::{self, Deserializer, MapAccess, Visitor};
+use serde::de::{self, Deserializer};
 
 /// The open spans of one process, which the crash ends.
 ///
@@ -101,18 +101,19 @@ pub struct SpanToClose {
     pub attributes: Attributes,
 }
 
-/// An attribute value an SDK can stage.
-#[derive(Debug, Clone, PartialEq)]
+/// An attribute value an SDK can stage. Variants are tried in order, so a
+/// JSON integer that fits in `i64` is an `Int` and any other number a `Float`.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(untagged, expecting = "a string, boolean or number")]
 pub enum ScalarValue {
-    String(String),
     Bool(bool),
     Int(i64),
     Float(f64),
+    String(String),
 }
 
-/// Attributes in the order the SDK wrote them; a repeated key's last value wins.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct Attributes(pub Vec<(String, ScalarValue)>);
+/// Flat attributes; a repeated key's last value wins.
+pub type Attributes = BTreeMap<String, ScalarValue>;
 
 #[derive(Deserialize)]
 struct Version {
@@ -175,59 +176,6 @@ fn hex_u128<'de, D: Deserializer<'de>>(d: D) -> Result<u128, D::Error> {
     u128::from_str_radix(&s, 16).map_err(de::Error::custom)
 }
 
-impl<'de> Deserialize<'de> for ScalarValue {
-    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        struct ScalarVisitor;
-        impl Visitor<'_> for ScalarVisitor {
-            type Value = ScalarValue;
-            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
-                f.write_str("a string, boolean or number")
-            }
-            fn visit_bool<E: de::Error>(self, v: bool) -> Result<ScalarValue, E> {
-                Ok(ScalarValue::Bool(v))
-            }
-            fn visit_i64<E: de::Error>(self, v: i64) -> Result<ScalarValue, E> {
-                Ok(ScalarValue::Int(v))
-            }
-            fn visit_u64<E: de::Error>(self, v: u64) -> Result<ScalarValue, E> {
-                // An integer past i64 keeps its magnitude as a float.
-                #[allow(clippy::cast_precision_loss)]
-                Ok(i64::try_from(v).map_or(ScalarValue::Float(v as f64), ScalarValue::Int))
-            }
-            fn visit_f64<E: de::Error>(self, v: f64) -> Result<ScalarValue, E> {
-                Ok(ScalarValue::Float(v))
-            }
-            fn visit_str<E: de::Error>(self, v: &str) -> Result<ScalarValue, E> {
-                Ok(ScalarValue::String(v.to_string()))
-            }
-            fn visit_string<E: de::Error>(self, v: String) -> Result<ScalarValue, E> {
-                Ok(ScalarValue::String(v))
-            }
-        }
-        d.deserialize_any(ScalarVisitor)
-    }
-}
-
-impl<'de> Deserialize<'de> for Attributes {
-    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        struct AttributesVisitor;
-        impl<'de> Visitor<'de> for AttributesVisitor {
-            type Value = Attributes;
-            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
-                f.write_str("an object of attributes")
-            }
-            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Attributes, A::Error> {
-                let mut attributes = Vec::with_capacity(map.size_hint().unwrap_or(0));
-                while let Some(entry) = map.next_entry::<String, ScalarValue>()? {
-                    attributes.push(entry);
-                }
-                Ok(Attributes(attributes))
-            }
-        }
-        d.deserialize_map(AttributesVisitor)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -251,11 +199,11 @@ mod tests {
         assert_eq!(block.process.language, "python");
         assert_eq!(block.process.runtime_id, "r-1");
         assert_eq!(
-            block.process.attributes.0,
-            vec![(
+            block.process.attributes,
+            Attributes::from([(
                 "_dd.tags.process".to_string(),
                 ScalarValue::String("a:b".to_string())
-            )]
+            )])
         );
         let trace = &block.traces[0];
         assert_eq!(trace.trace_id, 0xa3ce929d0e0e4736);
@@ -270,8 +218,8 @@ mod tests {
         assert_eq!(span.kind.as_deref(), Some("internal"));
         assert_eq!(span.env, "dev");
         assert_eq!(
-            span.attributes.0,
-            vec![
+            span.attributes,
+            Attributes::from([
                 ("rank".to_string(), ScalarValue::Int(1)),
                 ("ml.batch_size".to_string(), ScalarValue::Int(16)),
                 ("loss".to_string(), ScalarValue::Float(0.5)),
@@ -285,7 +233,7 @@ mod tests {
                     ScalarValue::String("synthetic".to_string())
                 ),
                 ("whole".to_string(), ScalarValue::Float(16.0)),
-            ]
+            ])
         );
     }
 
@@ -301,7 +249,7 @@ mod tests {
         assert_eq!(block.process, ProcessToClose::default());
         let span = &block.traces[0].spans[0];
         assert_eq!(span.parent_id, 0);
-        assert!(span.attributes.0.is_empty());
+        assert!(span.attributes.is_empty());
     }
 
     #[test]

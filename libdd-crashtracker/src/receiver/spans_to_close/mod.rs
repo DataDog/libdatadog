@@ -18,7 +18,9 @@
 //! The SDK is trusted to describe complete, correct spans. A block the
 //! receiver cannot finish is not sent, and the report says why.
 
-use crate::crash_info::{CrashInfo, ScalarValue, SpanToClose, SpansToClose, TraceToClose};
+use crate::crash_info::{
+    Attributes, CrashInfo, ScalarValue, SpanToClose, SpansToClose, TraceToClose,
+};
 use chrono::{DateTime, Utc};
 use http::uri::PathAndQuery;
 use http::{HeaderName, HeaderValue};
@@ -141,7 +143,7 @@ fn prepare(
 ) -> anyhow::Result<Submission> {
     let endpoint = traces_endpoint(block.agent_url.as_deref(), crash_endpoint)?;
     let headers = request_headers(block)?;
-    let mut payload = build_payload(block);
+    let mut payload = TracerPayloadSlice::from(block);
     for chunk in &mut payload.chunks {
         finish_chunk(chunk, crash);
     }
@@ -176,52 +178,58 @@ fn end_at_crash<'a>(span: &mut Span<SliceData<'a>>, crash: &'a CrashDetails) {
 }
 
 /// The block as a v1 payload, borrowing its strings.
-fn build_payload(block: &SpansToClose) -> TracerPayloadSlice<'_> {
-    let p = &block.process;
-    TracerPayload {
-        container_id: text(&p.container_id),
-        language_name: text(&p.language),
-        language_version: text(&p.language_version),
-        tracer_version: text(&p.tracer_version),
-        runtime_id: text(&p.runtime_id),
-        env: text(&p.env),
-        hostname: text(&p.hostname),
-        app_version: text(&p.app_version),
-        attributes: attributes(&p.attributes.0),
-        chunks: block.traces.iter().map(build_chunk).collect(),
+impl<'a> From<&'a SpansToClose> for TracerPayloadSlice<'a> {
+    fn from(block: &'a SpansToClose) -> Self {
+        let p = &block.process;
+        TracerPayload {
+            container_id: text(&p.container_id),
+            language_name: text(&p.language),
+            language_version: text(&p.language_version),
+            tracer_version: text(&p.tracer_version),
+            runtime_id: text(&p.runtime_id),
+            env: text(&p.env),
+            hostname: text(&p.hostname),
+            app_version: text(&p.app_version),
+            attributes: attributes(&p.attributes),
+            chunks: block.traces.iter().map(Into::into).collect(),
+        }
     }
 }
 
-fn build_chunk(trace: &TraceToClose) -> TraceChunk<SliceData<'_>> {
-    TraceChunk {
-        trace_id: trace.trace_id.to_be_bytes(),
-        priority: trace.priority,
-        origin: text(&trace.origin),
-        sampling_mechanism: trace.sampling_mechanism,
-        dropped_trace: false,
-        attributes: attributes(&trace.attributes.0),
-        spans: trace.spans.iter().map(build_span).collect(),
+impl<'a> From<&'a TraceToClose> for TraceChunk<SliceData<'a>> {
+    fn from(trace: &'a TraceToClose) -> Self {
+        TraceChunk {
+            trace_id: trace.trace_id.to_be_bytes(),
+            priority: trace.priority,
+            origin: text(&trace.origin),
+            sampling_mechanism: trace.sampling_mechanism,
+            dropped_trace: false,
+            attributes: attributes(&trace.attributes),
+            spans: trace.spans.iter().map(Into::into).collect(),
+        }
     }
 }
 
-fn build_span(span: &SpanToClose) -> Span<SliceData<'_>> {
-    Span {
-        service: text(&span.service),
-        name: text(&span.name),
-        resource: text(span.resource.as_deref().unwrap_or(&span.name)),
-        r#type: text(&span.r#type),
-        span_id: span.span_id,
-        parent_id: span.parent_id,
-        start: span.start_unix_ns,
-        span_kind: span
-            .kind
-            .as_deref()
-            .map_or(SpanKind::Internal, SpanKind::from_meta),
-        env: text(&span.env),
-        version: text(&span.version),
-        component: text(&span.component),
-        attributes: attributes(&span.attributes.0),
-        ..Default::default()
+impl<'a> From<&'a SpanToClose> for Span<SliceData<'a>> {
+    fn from(span: &'a SpanToClose) -> Self {
+        Span {
+            service: text(&span.service),
+            name: text(&span.name),
+            resource: text(span.resource.as_deref().unwrap_or(&span.name)),
+            r#type: text(&span.r#type),
+            span_id: span.span_id,
+            parent_id: span.parent_id,
+            start: span.start_unix_ns,
+            span_kind: span
+                .kind
+                .as_deref()
+                .map_or(SpanKind::Internal, SpanKind::from_meta),
+            env: text(&span.env),
+            version: text(&span.version),
+            component: text(&span.component),
+            attributes: attributes(&span.attributes),
+            ..Default::default()
+        }
     }
 }
 
@@ -229,10 +237,8 @@ fn text(s: &str) -> Cow<'_, str> {
     Cow::Borrowed(s)
 }
 
-/// Attributes as v1 holds them; a repeated key keeps its last value.
-fn attributes(
-    attributes: &[(String, ScalarValue)],
-) -> VecMap<Cow<'_, str>, AttributeValue<SliceData<'_>>> {
+/// Attributes as v1 holds them.
+fn attributes(attributes: &Attributes) -> VecMap<Cow<'_, str>, AttributeValue<SliceData<'_>>> {
     let mut map = VecMap::with_capacity(attributes.len());
     for (key, value) in attributes {
         let value = match value {
@@ -241,7 +247,7 @@ fn attributes(
             ScalarValue::Int(i) => AttributeValue::Int(*i),
             ScalarValue::Float(f) => AttributeValue::Float(*f),
         };
-        map.insert_or_replace(text(key), value);
+        map.insert(text(key), value);
     }
     map
 }
