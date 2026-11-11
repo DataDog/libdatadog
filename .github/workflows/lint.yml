@@ -363,8 +363,30 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+      - name: Cache licensecheck install
+        uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # 4.2.2
+        with:
+          path: |
+            ~/perl5
+            ~/bin
+          key: licensecheck-cpan-${{ runner.os }}-v2
+          restore-keys: licensecheck-cpan-${{ runner.os }}-
       - name: Install licensecheck
-        run: sudo apt-get install -y licensecheck
+        # Install from CPAN (the origin of the Debian package) because the apt
+        # mirror hosts are intermittently unresolvable from GitHub runners.
+        # Uses cpanm (a single self-contained script, fetched directly) instead
+        # of CPAN.pm, which fails on Module::Build-based dists on the runner's
+        # perl. Installs into a local ~/perl5 prefix so no sudo is needed.
+        run: |
+          mkdir -p "$HOME/bin"
+          curl -fsSL https://cpanmin.us -o "$HOME/bin/cpanm"
+          chmod +x "$HOME/bin/cpanm"
+          PERL_MM_USE_DEFAULT=1 \
+          PERL_MM_OPT="INSTALL_BASE=$HOME/perl5" \
+          PERL_MB_OPT="--install_base $HOME/perl5" \
+          "$HOME/bin/cpanm" -n Feature::Compat::Class App::Licensecheck
+          PERL5LIB=$HOME/perl5/lib/perl5 $HOME/perl5/bin/licensecheck --version
+          echo "$HOME/perl5/bin" >> $GITHUB_PATH
       - name: Check licenses
         # Exclude symbolizer-ffi from the checks (mostly imported code)
         run: '! find . \( -name "*.rs" -o -name "*.c" -o -name "*.sh" \)  -not -path "./symbolizer-ffi/*" -not -path "./datadog-ipc/plugins/*" -not -path "./datadog-ipc/tarpc/*" -not -path "./vendor/*" -print0 | xargs -0 licensecheck -c ".*" | grep -v "Apache License 2.0"'
