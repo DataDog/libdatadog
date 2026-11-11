@@ -96,6 +96,13 @@ pub struct SpanToClose {
     pub version: String,
     #[serde(default)]
     pub component: String,
+    /// Whether the span is top-level (a root, or the first span of its
+    /// service under a parent from another service). Only the SDK knows this
+    /// for a span whose parent is not in the same block, such as a parent
+    /// already sent or described in another block. When absent, the receiver
+    /// decides from the spans in the block.
+    #[serde(default)]
+    pub top_level: Option<bool>,
     #[serde(default)]
     pub attributes: Attributes,
 }

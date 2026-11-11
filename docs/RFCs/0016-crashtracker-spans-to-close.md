@@ -161,6 +161,7 @@ DD_CRASHTRACK_END_SPANS_TO_CLOSE
           "env": "prod",                 // OPTIONAL
           "version": "",                 // OPTIONAL
           "component": "",               // OPTIONAL
+          "top_level": false,            // OPTIONAL; see "Top-level spans"
           "attributes": {                // OPTIONAL; flat key/value scalars
             "job.id": "8812",
             "job.attempt": 2,
@@ -264,10 +265,30 @@ ended by the crash:
 | `error.is_crash` | `"true"` |
 | `dd.crash_tracking.uuid` | the crash report's UUID |
 | chunk `priority` | `2` (user keep) when the producer gave none; an explicit priority is respected |
-| `_top_level` | computed per chunk |
+| `_top_level` | see [Top-level spans](#top-level-spans); any `_top_level` the producer staged is replaced |
 
 `error.is_crash` and `dd.crash_tracking.uuid` are what lets the trace
 view link a span to its crash report.
+
+##### Top-level spans
+
+A span is top-level when it is a root, or when its parent belongs to
+another service. The agent's trace metrics count top-level spans, and the
+request says the receiver computed them (`Datadog-Client-Computed-Top-Level`),
+so getting this wrong inflates or loses those metrics.
+
+- **Producer's `top_level` given:** it is used as is.
+- **Otherwise:** the receiver decides from the spans in the same block:
+  - a root is top-level;
+  - a span whose parent is in the block is top-level if the parent's
+    service differs;
+  - a span whose parent is not in the block is top-level, as for a
+    remote (distributed) parent. This is the agent's own rule.
+
+A parent can be missing from a block without being remote, for example
+when it was already sent before the crash or is described in another
+block. Only the producer knows this, so producers SHOULD set `top_level`
+on every span whose parent is not in the same block.
 
 The receiver never sets producer-specific attributes. A producer that
 wants a domain attribute to reflect the failure (for example
@@ -277,15 +298,17 @@ used if the process crashed.
 #### 4. Choosing the destination
 
 - **`agent_url` given:** spans go to that agent at `/v1.0/traces`.
-  `http://` and `unix://` agents are both supported.
+  The URL MUST be `http://` or `unix://`. Any other scheme (`https://`,
+  `file://`, `windows:`, …) is refused while preparing, with a note in
+  `log_messages`.
 - **`agent_url` absent or empty:** spans go to the agent the crashtracker
   itself reports to (the receiver configuration's endpoint), at
   `/v1.0/traces`. That endpoint's timeout, test token and resolver
   settings carry over.
 
-The fallback only applies when that endpoint is an agent. If it sends
-directly to the intake (it has an API key), writes to a `file://` path,
-or is not configured, a block without `agent_url` is not sent, and a
+The fallback only applies when that endpoint is an `http://` or `unix://`
+agent. If it sends directly to the intake (it has an API key), writes to
+a `file://` path, uses another scheme, or is not configured, a block without `agent_url` is not sent, and a
 note is added to `log_messages` (`Spans to close #N not sent: …`).
 
 Producers that send traces to a different agent from the one their crash
@@ -299,8 +322,14 @@ reports go to SHOULD set `agent_url`.
 - **The spans and the report are sent concurrently.** Neither waits on
   the other, and neither is lost if the other fails.
 - **One request per block:** `POST /v1.0/traces` with a v1 msgpack
-  body, a 3-second timeout and no retry. A failure is written to the
-  receiver's stderr, since the report is already on its way.
+  body. No retry.
+- **Agents without v1:** an agent that does not serve `/v1.0/traces`
+  replies 404. The receiver then sends the same finished spans, encoded
+  as v0.4, to `/v0.4/traces`, with the same headers. Both bodies are
+  encoded while preparing, and both attempts share one 3-second budget.
+- **Failures** (connection error, timeout or any other non-2xx reply) are
+  written to the receiver's stderr, since the report is already on its
+  way.
 - **The receiver writes every header:**
 
   | Header | Value |
@@ -349,11 +378,14 @@ The receiver's guarantees depend on what producers write. Producers:
   and could replace the real version. A producer MUST withdraw a span's
   description before, or as part of, finishing that span.
 - **MUST NOT** rely on sending an end time, duration, error flag,
-  `_top_level` or HTTP headers. The receiver sets or overwrites them.
+  `_top_level` attribute or HTTP headers. The receiver sets or overwrites
+  them. Top-level status is given with the `top_level` field instead.
 - **SHOULD** give the real sampling priority. If it is left out, the
   receiver keeps the trace (priority 2), which would keep traces the
   sampler had dropped. A producer SHOULD NOT stage spans of traces it has
   already decided to drop.
+- **SHOULD** set `top_level` on every span whose parent is not in the same
+  block (see [Top-level spans](#top-level-spans)).
 - **SHOULD** stage spans in their failed state, with any domain attributes
   that only make sense on failure.
 
