@@ -108,6 +108,7 @@ jobs:
               - '**/*.rs'
               - '**/*.c'
               - '**/*.sh'
+              - '.github/workflows/lint.yml'
             license_3rdparty:
               - 'Cargo.lock'
               - '**/Cargo.toml'
