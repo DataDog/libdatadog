@@ -229,7 +229,7 @@ fn convert_value<'a, T: TraceData>(
         }),
         AttributeValue::KeyValueList(map) => {
             // Last write wins, in insertion order. Doesn't allocate; quadratic only when the
-            // map has duplicates, and these maps are small.
+            // map isn't marked deduped, but these maps are small.
             let mut key_values = Vec::with_capacity(map.len());
             for (k, v) in map.iter_unique() {
                 key_values.push(idx::KeyValue {
