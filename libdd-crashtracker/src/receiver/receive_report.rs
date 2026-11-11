@@ -8,7 +8,7 @@ use crate::ptrace_collector::{crash_site_registers, parse_hex_address};
 use crate::{
     CrashtrackerConfiguration, StackTrace,
     crash_info::{
-        CrashInfo, CrashInfoBuilder, ErrorKind, SigInfo, Span, StackFrame, TraceToClose, Ucontext,
+        CrashInfo, CrashInfoBuilder, ErrorKind, SigInfo, Span, SpansToClose, StackFrame, Ucontext,
     },
     receiver::debug_logger::{DebugLogger, ReceiverIssue},
     runtime_callback::RuntimeStack,
@@ -95,8 +95,10 @@ pub(crate) enum StdinState {
     StackTrace,
     Threads,
     TraceIds,
-    /// Inside an APM trace to close block: the lines read so far.
-    TraceToClose(Vec<String>),
+    /// Inside a spans to close block: its line, once read.
+    SpansToClose(Option<String>),
+    /// Inside a spans to close block already dropped, up to its end.
+    SpansToCloseSkipped,
     Ucontext,
     Waiting,
     WholeStackTrace,
@@ -295,25 +297,32 @@ fn process_line(
             builder.with_trace_ids(trace_ids)?;
             StdinState::TraceIds
         }
-        StdinState::TraceToClose(lines)
-            if line.starts_with(DD_CRASHTRACK_END_APM_TRACE_TO_CLOSE) =>
-        {
-            let trace = match &lines[..] {
-                [header, body] => TraceToClose::parse(header, body),
-                _ => Err(anyhow::anyhow!("expected 2 lines, got {}", lines.len())),
+        StdinState::SpansToClose(block) if line.starts_with(DD_CRASHTRACK_END_SPANS_TO_CLOSE) => {
+            let spans = match block {
+                Some(block) => SpansToClose::parse(&block),
+                None => Err(anyhow::anyhow!("empty block")),
             };
-            match trace {
-                Ok(trace) => builder.with_trace_to_close(trace)?,
+            match spans {
+                Ok(spans) => builder.with_spans_to_close(spans)?,
                 Err(e) => {
-                    builder.with_log_message(format!("Dropped APM trace to close: {e:#}"), true)?
+                    builder.with_log_message(format!("Dropped spans to close: {e:#}"), true)?
                 }
             }
             StdinState::Waiting
         }
-        StdinState::TraceToClose(mut lines) => {
-            lines.push(line.to_string());
-            StdinState::TraceToClose(lines)
+        // The block is one line; a second one makes it unreadable, not the report.
+        StdinState::SpansToClose(None) => StdinState::SpansToClose(Some(line.to_string())),
+        StdinState::SpansToClose(Some(_)) => {
+            builder.with_log_message(
+                "Dropped spans to close: more than one line".to_string(),
+                true,
+            )?;
+            StdinState::SpansToCloseSkipped
         }
+        StdinState::SpansToCloseSkipped if line.starts_with(DD_CRASHTRACK_END_SPANS_TO_CLOSE) => {
+            StdinState::Waiting
+        }
+        StdinState::SpansToCloseSkipped => StdinState::SpansToCloseSkipped,
 
         StdinState::Ucontext if line.starts_with(DD_CRASHTRACK_END_UCONTEXT) => StdinState::Waiting,
         StdinState::Ucontext => {
@@ -325,8 +334,8 @@ fn process_line(
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_ADDITIONAL_TAGS) => {
             StdinState::AdditionalTags
         }
-        StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_APM_TRACE_TO_CLOSE) => {
-            StdinState::TraceToClose(vec![])
+        StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_SPANS_TO_CLOSE) => {
+            StdinState::SpansToClose(None)
         }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_CONFIG) => StdinState::Config,
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_COUNTERS) => {
@@ -1079,38 +1088,38 @@ mod tests {
         stack
     }
 
-    const TRACE_HEADER: &str =
-        r#"{"version":1,"encoding":"v1","agent_url":"http://agent:8126","span_ids":[7]}"#;
+    const SPANS_BLOCK: &str = r#"{"version":1,"agent_url":"http://agent:8126","traces":[{"trace_id":"00000000000000000000000000000003","spans":[{"span_id":"0000000000000007","service":"s","name":"n","start_unix_ns":5}]}]}"#;
 
     #[test]
-    fn traces_to_close_are_kept_per_block() {
+    fn spans_to_close_are_kept_per_block() {
         let (builder, state) = parse_test_lines(&[
-            DD_CRASHTRACK_BEGIN_APM_TRACE_TO_CLOSE,
-            TRACE_HEADER,
-            "AQ==",
-            DD_CRASHTRACK_END_APM_TRACE_TO_CLOSE,
-            // A block the receiver cannot read is noted and skipped.
-            DD_CRASHTRACK_BEGIN_APM_TRACE_TO_CLOSE,
-            r#"{"version":1,"encoding":"v0.9","agent_url":"http://agent:8126"}"#,
-            "AQ==",
-            DD_CRASHTRACK_END_APM_TRACE_TO_CLOSE,
-            DD_CRASHTRACK_BEGIN_APM_TRACE_TO_CLOSE,
-            TRACE_HEADER,
-            "Ag==",
-            DD_CRASHTRACK_END_APM_TRACE_TO_CLOSE,
+            DD_CRASHTRACK_BEGIN_SPANS_TO_CLOSE,
+            SPANS_BLOCK,
+            DD_CRASHTRACK_END_SPANS_TO_CLOSE,
+            // Blocks the receiver cannot read are noted and skipped.
+            DD_CRASHTRACK_BEGIN_SPANS_TO_CLOSE,
+            r#"{"version":9,"agent_url":"http://agent:8126","traces":[]}"#,
+            DD_CRASHTRACK_END_SPANS_TO_CLOSE,
+            DD_CRASHTRACK_BEGIN_SPANS_TO_CLOSE,
+            SPANS_BLOCK,
+            SPANS_BLOCK,
+            SPANS_BLOCK,
+            DD_CRASHTRACK_END_SPANS_TO_CLOSE,
+            DD_CRASHTRACK_BEGIN_SPANS_TO_CLOSE,
+            DD_CRASHTRACK_END_SPANS_TO_CLOSE,
+            DD_CRASHTRACK_BEGIN_SPANS_TO_CLOSE,
+            SPANS_BLOCK,
+            DD_CRASHTRACK_END_SPANS_TO_CLOSE,
         ])
         .unwrap();
         assert!(matches!(state, StdinState::Waiting));
-        let bodies: Vec<_> = builder
-            .traces_to_close
-            .iter()
-            .map(|t| &t.body[..])
-            .collect();
-        assert_eq!(bodies, [&[1u8][..], &[2u8][..]]);
-        assert_eq!(builder.traces_to_close[0].span_ids, Some(vec![7]));
+        assert_eq!(builder.spans_to_close.len(), 2);
+        assert_eq!(builder.spans_to_close[0].traces[0].spans[0].span_id, 7);
         let logs = builder.log_messages.unwrap_or_default();
-        assert_eq!(logs.len(), 1, "{logs:?}");
-        assert!(logs[0].contains("v0.9"), "{logs:?}");
+        assert_eq!(logs.len(), 3, "{logs:?}");
+        assert!(logs[0].contains("version 9"), "{logs:?}");
+        assert!(logs[1].contains("more than one line"), "{logs:?}");
+        assert!(logs[2].contains("empty block"), "{logs:?}");
     }
 
     fn parse_test_lines(lines: &[&str]) -> anyhow::Result<(CrashInfoBuilder, StdinState)> {

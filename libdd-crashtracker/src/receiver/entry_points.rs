@@ -2,7 +2,7 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 
 use super::receive_report::{ReceiverFileAccess, receive_report_from_stream};
-use super::traces_to_close;
+use super::spans_to_close;
 use crate::CrashtrackerConfiguration;
 #[cfg(target_os = "linux")]
 use crate::StacktraceCollection;
@@ -141,13 +141,13 @@ pub(crate) async fn receiver_entry_point(
                 .log_messages
                 .push(format!("Error demangling names: {e}"));
         }
-        // Close the APM traces the crash ended. Prepared first, so the report
-        // notes any that could not be closed, then sent alongside the report
+        // Finish the spans the crash ended. Prepared first, so the report
+        // notes any that could not be finished, then sent alongside the report
         // so neither waits on, or is lost with, the other.
-        let traces = traces_to_close::prepare_all(&mut crash_info);
+        let traces = spans_to_close::prepare_all(&mut crash_info);
         let (upload, ()) = tokio::join!(
             crash_info.async_upload_to_endpoint(config.endpoint()),
-            traces_to_close::submit_all(traces)
+            spans_to_close::submit_all(traces)
         );
         upload?;
     }
