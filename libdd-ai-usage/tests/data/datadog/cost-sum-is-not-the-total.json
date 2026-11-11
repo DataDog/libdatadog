@@ -1,7 +1,7 @@
 {
   "binding": "0.1.0",
   "case": "cost-sum-is-not-the-total",
-  "description": "The spend Count and the sum companion of the cost Distribution differ, which is why the sum is not a spend total. Reported costs of 0.1 and 0.2 USD: the spend Count is 0.3 and the sum of the samples is 0.30000000000000004. A calculated cost of 4e-10 USD: the spend Count is 0, because the amount rounds to 0 nano-USD, and the sum of the samples is 4e-10.",
+  "description": "The spend Rate and the sum companion of the cost Distribution differ, which is why the sum is not a spend total. Reported costs of 0.1 and 0.2 USD: the spend total is 0.3, submitted as 0.03 over 10 s, and the sum of the samples is 0.30000000000000004, submitted as 0.030000000000000006. A calculated cost of 4e-10 USD: the spend total is 0, because the amount rounds to 0 nano-USD, and the sum of the samples is 4e-10, submitted as 4.0000000000000004e-11.",
   "profile": "gen_ai.client.provider_attempt@0.1.0",
   "historical": false,
   "points": [
@@ -81,7 +81,8 @@
   "expected_series": [
     {
       "name": "trajectory.gen_ai.client.inference.usage.cost",
-      "type": "count",
+      "type": "rate",
+      "interval": 10,
       "value": 0,
       "tags": [
         "gen_ai.operation.name:chat",
@@ -93,8 +94,9 @@
     },
     {
       "name": "trajectory.gen_ai.client.inference.usage.cost",
-      "type": "count",
-      "value": 0.3,
+      "type": "rate",
+      "interval": 10,
+      "value": 0.03,
       "tags": [
         "gen_ai.operation.name:chat",
         "gen_ai.provider.name:exampleai",
@@ -141,8 +143,9 @@
     },
     {
       "name": "trajectory.gen_ai.client.operation.cost.count",
-      "type": "count",
-      "value": 1,
+      "type": "rate",
+      "interval": 10,
+      "value": 0.1,
       "tags": [
         "gen_ai.operation.name:chat",
         "gen_ai.provider.name:exampleai",
@@ -153,8 +156,9 @@
     },
     {
       "name": "trajectory.gen_ai.client.operation.cost.count",
-      "type": "count",
-      "value": 2,
+      "type": "rate",
+      "interval": 10,
+      "value": 0.2,
       "tags": [
         "gen_ai.operation.name:chat",
         "gen_ai.provider.name:exampleai",
@@ -165,8 +169,9 @@
     },
     {
       "name": "trajectory.gen_ai.client.operation.cost.sum",
-      "type": "count",
-      "value": 4e-10,
+      "type": "rate",
+      "interval": 10,
+      "value": 4.0000000000000004e-11,
       "tags": [
         "gen_ai.operation.name:chat",
         "gen_ai.provider.name:exampleai",
@@ -177,8 +182,9 @@
     },
     {
       "name": "trajectory.gen_ai.client.operation.cost.sum",
-      "type": "count",
-      "value": 0.30000000000000004,
+      "type": "rate",
+      "interval": 10,
+      "value": 0.030000000000000006,
       "tags": [
         "gen_ai.operation.name:chat",
         "gen_ai.provider.name:exampleai",

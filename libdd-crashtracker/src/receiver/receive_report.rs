@@ -354,14 +354,14 @@ fn process_line(
             StdinState::Waiting
         }
         StdinState::OtelThreadCtx(tid) => {
-            #[cfg(target_os = "linux")]
+            #[cfg(all(target_os = "linux", feature = "otel-thread-ctx"))]
             if let Some(ctx) = decode_hex_otel_record(tid, line.trim()) {
                 builder
                     .otel_thread_contexts
                     .get_or_insert_with(Vec::new)
                     .push(ctx);
             }
-            #[cfg(not(target_os = "linux"))]
+            #[cfg(not(all(target_os = "linux", feature = "otel-thread-ctx")))]
             let _ = tid;
             StdinState::OtelThreadCtx(tid)
         }
@@ -545,7 +545,7 @@ pub(crate) async fn receive_report_from_stream(
 
     enrich_thread_name(&mut builder)?;
 
-    #[cfg(target_os = "linux")]
+    #[cfg(all(target_os = "linux", feature = "otel-thread-ctx"))]
     if let Some(ref mut contexts) = builder.otel_thread_contexts
         && let Some(proc_info) = builder.proc_info.as_ref()
     {
@@ -713,7 +713,7 @@ fn collect_and_add_thread_contexts(
 }
 
 /// Decode a hex-encoded 640-byte OTel record into an `OtelThreadContext`.
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", feature = "otel-thread-ctx"))]
 fn decode_hex_otel_record(tid: i32, hex: &str) -> Option<crate::crash_info::OtelThreadContext> {
     use crate::otel_tls_reader::RECORD_HEADER_SIZE;
 
