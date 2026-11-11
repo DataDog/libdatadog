@@ -2887,7 +2887,6 @@ name = "libdd-crashtracker"
 version = "3.0.0"
 dependencies = [
  "anyhow",
- "base64 0.22.1",
  "blazesym",
  "cc",
  "chrono",
@@ -2907,6 +2906,7 @@ dependencies = [
  "libdd-networking",
  "libdd-process-utils",
  "libdd-telemetry",
+ "libdd-trace-model",
  "libdd-trace-utils",
  "nix 0.29.0",
  "num-derive",

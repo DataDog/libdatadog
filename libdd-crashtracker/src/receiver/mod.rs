@@ -5,7 +5,7 @@
 
 mod debug_logger;
 mod entry_points;
-mod traces_to_close;
+mod spans_to_close;
 pub use entry_points::{
     async_receiver_entry_point_stream, async_receiver_entry_point_unix_listener,
     async_receiver_entry_point_unix_socket, get_receiver_unix_socket, receiver_entry_point_stdin,

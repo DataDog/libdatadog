@@ -13,10 +13,10 @@ mod otel_thread_ctx;
 mod proc_info;
 mod sig_info;
 mod spans;
+mod spans_to_close;
 mod stacktrace;
 mod telemetry;
 pub(crate) mod test_utils;
-mod trace_to_close;
 mod ucontext;
 mod unknown_value;
 
@@ -34,9 +34,9 @@ pub use otel_thread_ctx::*;
 pub use proc_info::*;
 pub use sig_info::*;
 pub use spans::*;
+pub use spans_to_close::*;
 pub use stacktrace::*;
 pub use telemetry::*;
-pub use trace_to_close::*;
 pub use ucontext::*;
 pub use unknown_value::*;
 
@@ -69,11 +69,11 @@ macro_rules! parse_tags {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct CrashInfo {
-    /// APM traces the crash ends, from `DD_CRASHTRACK_BEGIN_APM_TRACE_TO_CLOSE`
-    /// blocks. The receiver closes and submits them; never serialized.
+    /// Spans the crash ends, from `DD_CRASHTRACK_BEGIN_SPANS_TO_CLOSE` blocks.
+    /// The receiver finishes and submits them; never serialized.
     #[serde(skip)]
     #[schemars(skip)]
-    pub traces_to_close: Vec<TraceToClose>,
+    pub spans_to_close: Vec<SpansToClose>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub counters: HashMap<String, i64>,
     pub data_schema_version: String,
@@ -339,7 +339,7 @@ mod tests {
             );
 
             Self {
-                traces_to_close: vec![],
+                spans_to_close: vec![],
                 counters,
                 data_schema_version: CrashInfo::current_schema_version(),
                 error: ErrorData::test_instance(seed),
