@@ -667,15 +667,17 @@ mod tests {
         let mut crash_info = CrashInfo::test_instance(1);
         let mut bad = block();
         bad.agent_url = Some("not a url".to_string());
-        crash_info.spans_to_close = vec![bad, block()];
+        // An unsupported scheme is refused here too, not when sending.
+        let mut unsupported = block();
+        unsupported.agent_url = Some("ftp://agent:21".to_string());
+        crash_info.spans_to_close = vec![bad, block(), unsupported];
         assert_eq!(prepare_all(&mut crash_info, None).len(), 1);
+        let logs = &crash_info.log_messages;
+        assert!(logs.iter().any(|m| m.contains("#0 not sent")), "{logs:?}");
         assert!(
-            crash_info
-                .log_messages
-                .iter()
-                .any(|m| m.contains("#0 not sent")),
-            "{:?}",
-            crash_info.log_messages
+            logs.iter()
+                .any(|m| m.contains("#2 not sent") && m.contains("unsupported agent scheme")),
+            "{logs:?}"
         );
     }
 
@@ -864,20 +866,6 @@ mod tests {
         assert!(
             err.to_string().contains("unsupported agent scheme"),
             "{err}"
-        );
-
-        // Refused while preparing, so the report says why.
-        let mut info = CrashInfo::test_instance(1);
-        let mut unsupported = block();
-        unsupported.agent_url = Some("ftp://agent:21".to_string());
-        info.spans_to_close = vec![unsupported];
-        assert!(prepare_all(&mut info, None).is_empty());
-        assert!(
-            info.log_messages
-                .iter()
-                .any(|m| m.contains("not sent") && m.contains("unsupported agent scheme")),
-            "{:?}",
-            info.log_messages
         );
     }
 
