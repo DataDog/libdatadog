@@ -31,12 +31,12 @@ use libdd_trace_model::{AttributesMut, SpanMut, TraceChunkMut};
 use libdd_trace_utils::msgpack_encoder::v1 as encode_v1;
 use libdd_trace_utils::msgpack_encoder::v04 as encode_v04;
 use libdd_trace_utils::span::SliceData;
-use libdd_trace_utils::span::trace_utils_v1::compute_top_level_span;
 use libdd_trace_utils::span::v1::{
     AttributeValue, Span, SpanKind, TraceChunk, TracerPayload, TracerPayloadSlice,
 };
 use libdd_trace_utils::span::vec_map::VecMap;
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::time::Duration;
 
 const SUBMIT_TIMEOUT: Duration = Duration::from_secs(3);
@@ -44,8 +44,10 @@ const SUBMIT_TIMEOUT: Duration = Duration::from_secs(3);
 const V1_TRACES_PATH: &str = "/v1.0/traces";
 /// Where the same spans go, as v0.4, for an agent without v1.
 const V04_TRACES_PATH: &str = "/v0.4/traces";
-/// The `_top_level` attribute, which the receiver owns.
+/// Marks a top-level span when `1`: the key the agent (and the receiver) writes.
 const TOP_LEVEL_KEY: &str = "_top_level";
+/// Marks a top-level span when `1`: the key a tracer writes.
+const TRACER_TOP_LEVEL_KEY: &str = "_dd.top_level";
 /// Kept by the agent's samplers: crashed spans are rare and worth keeping.
 const USER_KEEP: i32 = 2;
 
@@ -153,8 +155,8 @@ fn prepare(
     let endpoint = traces_endpoint(block.agent_url.as_deref(), crash_endpoint)?;
     let headers = request_headers(block)?;
     let mut payload = TracerPayloadSlice::from(block);
-    for (chunk, trace) in payload.chunks.iter_mut().zip(&block.traces) {
-        finish_chunk(chunk, trace, crash);
+    for chunk in &mut payload.chunks {
+        finish_chunk(chunk, crash);
     }
     Ok(Submission {
         endpoint,
@@ -165,42 +167,13 @@ fn prepare(
     })
 }
 
-/// Ends every span of the chunk at the crash and keeps the chunk. `trace` is
-/// the trace the chunk was built from, span for span.
-fn finish_chunk<'a>(
-    chunk: &mut TraceChunk<SliceData<'a>>,
-    trace: &TraceToClose,
-    crash: &'a CrashDetails,
-) {
+/// Ends every span of the chunk at the crash and keeps the chunk.
+fn finish_chunk<'a>(chunk: &mut TraceChunk<SliceData<'a>>, crash: &'a CrashDetails) {
     if chunk.priority.is_none() {
         chunk.set_priority(USER_KEEP);
     }
     for span in chunk.spans_mut() {
         end_at_crash(span, crash);
-    }
-    set_top_level(&mut chunk.spans, &trace.spans);
-}
-
-/// Marks the chunk's top-level spans. The SDK's `top_level` wins: a span's
-/// parent may be missing from the block because it was already sent or is
-/// described in another block, and then only the SDK knows the answer. The
-/// other spans are decided from the block, where a parent missing from it
-/// counts as remote, as the agent itself would decide.
-fn set_top_level(spans: &mut [Span<SliceData<'_>>], described: &[SpanToClose]) {
-    for span in spans.iter_mut() {
-        span.remove_attribute(TOP_LEVEL_KEY);
-    }
-    compute_top_level_span(spans);
-    for (span, described) in spans.iter_mut().zip(described) {
-        match described.top_level {
-            Some(true) => {
-                span.set_attribute(Cow::Borrowed(TOP_LEVEL_KEY), AttributeValue::Float(1.0))
-            }
-            Some(false) => {
-                span.remove_attribute(TOP_LEVEL_KEY);
-            }
-            None => {}
-        }
     }
 }
 
@@ -234,8 +207,27 @@ impl<'a> From<&'a SpansToClose> for TracerPayloadSlice<'a> {
     }
 }
 
+/// The trace as a v1 chunk. Spans the SDK did not mark top-level or not are
+/// marked from the block.
 impl<'a> From<&'a TraceToClose> for TraceChunk<SliceData<'a>> {
     fn from(trace: &'a TraceToClose) -> Self {
+        let services: HashMap<u64, &str> = trace
+            .spans
+            .iter()
+            .map(|span| (span.span_id, span.service.as_str()))
+            .collect();
+        let spans = trace
+            .spans
+            .iter()
+            .map(|described| {
+                let mut span = Span::from(described);
+                if !has_top_level_marker(described) && is_top_level(described, &services) {
+                    span.attributes
+                        .insert(Cow::Borrowed(TOP_LEVEL_KEY), AttributeValue::Float(1.0));
+                }
+                span
+            })
+            .collect();
         TraceChunk {
             trace_id: trace.trace_id.to_be_bytes(),
             priority: trace.priority,
@@ -243,9 +235,30 @@ impl<'a> From<&'a TraceToClose> for TraceChunk<SliceData<'a>> {
             sampling_mechanism: trace.sampling_mechanism,
             dropped_trace: false,
             attributes: attributes(&trace.attributes),
-            spans: trace.spans.iter().map(Into::into).collect(),
+            spans,
         }
     }
+}
+
+/// Whether the SDK staged a top-level marker. It is sent as is, like any
+/// attribute, and the agent reads it as usual: `1` in either key is top-level.
+/// Only the SDK knows for a span whose parent is missing from the block
+/// because it was already sent or is described in another block.
+fn has_top_level_marker(span: &SpanToClose) -> bool {
+    span.attributes.contains_key(TOP_LEVEL_KEY)
+        || span.attributes.contains_key(TRACER_TOP_LEVEL_KEY)
+}
+
+/// Whether the block shows `span` as top-level: a root, or a span whose parent
+/// is from another service or not in the block (remote, as the agent decides).
+/// `services` maps the trace's span IDs to their services.
+fn is_top_level(span: &SpanToClose, services: &HashMap<u64, &str>) -> bool {
+    if span.parent_id == 0 {
+        return true;
+    }
+    services
+        .get(&span.parent_id)
+        .is_none_or(|&parent| parent != span.service)
 }
 
 impl<'a> From<&'a SpanToClose> for Span<SliceData<'a>> {
@@ -875,7 +888,14 @@ mod tests {
         payload.chunks[0]
             .spans
             .iter()
-            .map(|span| span.attributes.get(TOP_LEVEL_KEY).is_some())
+            .map(|span| {
+                [TOP_LEVEL_KEY, TRACER_TOP_LEVEL_KEY].iter().any(|key| {
+                    matches!(
+                        span.attributes.get(*key),
+                        Some(AttributeValue::Int(1)) | Some(AttributeValue::Float(1.0))
+                    )
+                })
+            })
             .collect()
     }
 
@@ -895,13 +915,11 @@ mod tests {
             )),
             [true]
         );
-        // Parent already sent, same service: the SDK says not top-level, and a
-        // `_top_level` it staged as an attribute does not override that.
+        // Parent already sent, same service: the SDK says not top-level.
         assert_eq!(
             top_levels(&spans(
                 r#"{"span_id":"0000000000000002","parent_id":"0000000000000001",
-                    "service":"web","name":"child","start_unix_ns":5,"top_level":false,
-                    "attributes":{"_top_level":1.0}}"#
+                    "service":"web","name":"child","start_unix_ns":5,"attributes":{"_top_level":0}}"#
             )),
             [false]
         );
@@ -910,7 +928,8 @@ mod tests {
             top_levels(&spans(
                 r#"{"span_id":"0000000000000001","service":"web","name":"root","start_unix_ns":5},
                    {"span_id":"0000000000000002","parent_id":"0000000000000001",
-                    "service":"web","name":"child","start_unix_ns":6,"top_level":true}"#
+                    "service":"web","name":"child","start_unix_ns":6,
+                    "attributes":{"_top_level":1}}"#
             )),
             [true, true]
         );
@@ -925,5 +944,36 @@ mod tests {
             )),
             [true, false, true]
         );
+    }
+
+    #[test]
+    fn staged_top_level_markers_are_sent_as_is() {
+        let child = |attributes: &str| {
+            format!(
+                r#"{{"version":1,"agent_url":"http://agent:8126","traces":[{{
+                    "trace_id":"000000000000000000000000000000ff","spans":[
+                    {{"span_id":"0000000000000002","parent_id":"0000000000000001",
+                      "service":"web","name":"child","start_unix_ns":5,
+                      "attributes":{attributes}}}]}}]}}"#
+            )
+        };
+        let sent = |attributes: &str| {
+            let block = SpansToClose::parse(&child(attributes)).unwrap();
+            let submission = prepare(&block, &crash(START + 1, None), None).unwrap();
+            let (payload, _) = decode_v1::from_slice(&submission.v1_body).unwrap();
+            let span = &payload.chunks[0].spans[0];
+            [TOP_LEVEL_KEY, TRACER_TOP_LEVEL_KEY].map(|key| match attr(span, key) {
+                None => None,
+                Some(AttributeValue::Int(i)) => Some(*i as f64),
+                Some(AttributeValue::Float(f)) => Some(*f),
+                Some(other) => panic!("unexpected {other:?}"),
+            })
+        };
+        // Either key, any value: sent untouched, and nothing added.
+        assert_eq!(sent(r#"{"_dd.top_level":1}"#), [None, Some(1.0)]);
+        assert_eq!(sent(r#"{"_dd.top_level":0}"#), [None, Some(0.0)]);
+        assert_eq!(sent(r#"{"_top_level":0}"#), [Some(0.0), None]);
+        // No marker: the block decides (a parent missing from it is remote).
+        assert_eq!(sent("{}"), [Some(1.0), None]);
     }
 }
