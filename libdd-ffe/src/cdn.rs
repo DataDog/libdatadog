@@ -27,11 +27,12 @@ pub struct CdnConfig {
     pub request_timeout: Duration,
     pub language: String,
     pub version: String,
-    /// Sent as `DD-Service` so the CDN can attribute usage to the service,
-    /// cleaned up the way the Node.js tracer does it: `My Service` is sent as
-    /// `my_service`, the name APM shows. A value with nothing usable left is
-    /// left out of requests rather than rejected, so it never stops flag
-    /// fetching.
+    /// The service name. Requests send it in the `DD-Service` header, so the
+    /// CDN can attribute usage to the service. The header has the name that
+    /// APM shows, from the Datadog Agent rules: `My Service` becomes
+    /// `my_service`. If the CDN does not accept that name (`_svc`,
+    /// `café-api`), requests have no header. This is not a validation error,
+    /// so flag fetching continues.
     #[serde(default)]
     pub service: Option<String>,
 }
@@ -141,7 +142,7 @@ mod tests {
         other = config.clone();
         other.endpoint = CdnEndpoint::managed("datadoghq.com", "staging", "secret-key").unwrap();
         assert_ne!(other, config);
-        // Each service gets its own fetcher.
+        // Each service has its own fetcher.
         other = config.clone();
         other.service = Some("billing".into());
         assert_ne!(other, config);
@@ -173,7 +174,8 @@ mod tests {
         config.language = "php\r\ninjected: value".into();
         assert!(config.validate().is_err());
         config.language = "php".into();
-        // A service is cleaned up or left out of requests, never rejected.
+        // validate() does not reject a service. A bad service only removes
+        // the header.
         config.service = Some("php\r\ninjected: value".into());
         assert!(config.validate().is_ok());
     }
@@ -252,7 +254,8 @@ mod tests {
         }
     }
 
-    /// Polls `server`'s root as a custom CDN endpoint until `polls` succeed.
+    /// Polls the root of `server` as a custom CDN endpoint. Stops after
+    /// `polls` successful polls.
     async fn fetch(server: &httpmock::MockServer, service: Option<&str>, polls: usize) {
         let config = CdnConfig {
             endpoint: CdnEndpoint::custom(&server.base_url()).unwrap(),
@@ -311,9 +314,9 @@ mod tests {
 
     #[tokio::test]
     #[cfg_attr(miri, ignore = "requires native HTTP")]
-    async fn a_service_the_cdn_would_drop_is_sent_cleaned_up_in_dd_service() {
+    async fn a_service_is_sent_in_dd_service_as_the_name_apm_shows() {
         let server = httpmock::MockServer::start_async().await;
-        let cleaned = server
+        let normalized = server
             .mock_async(|when, then| {
                 when.method("GET")
                     .path(SERVER_PATH)
@@ -324,7 +327,7 @@ mod tests {
 
         fetch(&server, Some("My Service"), 2).await;
 
-        assert!(cleaned.calls_async().await >= 2);
+        assert!(normalized.calls_async().await >= 2);
     }
 
     #[tokio::test]
@@ -349,8 +352,10 @@ mod tests {
 
     #[tokio::test]
     #[cfg_attr(miri, ignore = "requires native HTTP")]
-    async fn a_service_with_nothing_left_once_cleaned_up_omits_dd_service_and_keeps_fetching() {
-        for service in ["支付", "___"] {
+    async fn a_service_the_cdn_does_not_accept_omits_dd_service_and_keeps_fetching() {
+        // APM shows `_svc` and `café-api` as they are, but the CDN does not
+        // accept them. `支付` keeps non-ASCII letters, and `___` becomes empty.
+        for service in ["_svc", "café-api", "支付", "___"] {
             let server = httpmock::MockServer::start_async().await;
             let without_service = server
                 .mock_async(|when, then| {
@@ -365,7 +370,7 @@ mod tests {
             fetch(&server, Some(service), 2).await;
 
             assert!(without_service.calls_async().await >= 2, "{service:?}");
-            // Logged once per fetcher, not on every poll.
+            // The fetcher logs once, not on each poll.
             let skipped = crate::test_logging::captured_logs()
                 .into_iter()
                 .filter(|log| log.message.contains("DD-Service header not sent"))

@@ -169,7 +169,7 @@ fn build_request(
         .header("DD-Client-Library-Version", version)
         .header(INTERNAL_UNTRACED_HEADER, "1");
 
-    // Lets the CDN attribute this request's usage to the service.
+    // The CDN uses this header to attribute usage to the service.
     if let Some(service) = service {
         builder = builder.header(SERVICE_HEADER, service);
     }
@@ -190,16 +190,21 @@ fn build_request(
 
 const MAX_SERVICE_LEN: usize = 100;
 
-/// Cleans up the service sent as `DD-Service` with [`normalize_service`], so
-/// `My Service` is sent as `my_service`, the name APM shows. The CDN attributes
-/// usage only to a service matching `^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,99}$` and
-/// drops any other value, so a service with nothing like that left isn't sent.
-/// Whatever is sent is a valid header value, so a service can't fail requests.
+/// Returns the `DD-Service` value: the name APM shows for the service, or
+/// `None`.
+///
+/// APM shows the normalized name ([`normalize_service`]), so `My Service`
+/// becomes `my_service`. The CDN accepts only names that match
+/// `^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,99}$` and drops other values. If the APM
+/// name does not match (`_svc`, `café-api`), the request has no header. A
+/// different name would attribute usage to a service that APM does not show.
+/// The returned value is always a valid header value, so a service cannot
+/// make requests fail.
 fn usage_service(service: Option<String>) -> Option<String> {
-    let service = service.filter(|service| !service.trim().is_empty())?;
-    let cleaned = normalize_service(&service);
-    let accepted = cleaned.len() <= MAX_SERVICE_LEN
-        && cleaned
+    let service = service.filter(|service| !service.is_empty())?;
+    let normalized = normalize_service(&service);
+    let accepted = normalized.len() <= MAX_SERVICE_LEN
+        && normalized
             .as_bytes()
             .split_first()
             .is_some_and(|(first, rest)| {
@@ -210,32 +215,53 @@ fn usage_service(service: Option<String>) -> Option<String> {
             });
     if !accepted {
         log::debug!(
-            "Feature Flags: service {service:?} has nothing left the CDN can attribute usage to once cleaned up; DD-Service header not sent"
+            "Feature Flags: service {service:?} does not normalize to a name the CDN accepts; DD-Service header not sent"
         );
     }
-    accepted.then_some(cleaned)
+    accepted.then_some(normalized)
 }
 
-/// Normalizes a service name the way the Node.js tracer's `normalizeService`
-/// does, so every SDK sends the same `DD-Service` for a service: lowercase,
-/// every character outside `[a-z0-9_:./-]` replaced with `_`, leading
-/// characters other than `[a-z0-9]` dropped, and cut to 100 characters.
+/// Normalizes a service name with the Datadog Agent rules for spans, so the
+/// result is the name that APM shows. The rules come from `NormalizeService`
+/// in pkg/trace/traceutil/normalize, v0.82.3. Where the Agent uses its
+/// `unnamed-service` fallback, this function returns an empty string.
+///
+/// - Cut the name to 100 bytes or less. Do not split a character.
+/// - Lowercase ASCII letters.
+/// - Keep ASCII letters and digits, `:`, `.`, `/`, `-`, and non-ASCII letters and digits.
+/// - Replace each run of other characters, `_` included, with one `_`.
+/// - Remove a run at the end. Keep a run at the start: ` svc` becomes `_svc`.
+///
+/// This function differs from the Agent in two ways:
+/// - It does not lowercase non-ASCII letters.
+/// - std `is_alphanumeric` also keeps some non-ASCII characters that are not letters or decimal
+///   digits (`²`, `Ⅻ`). The Agent replaces them.
+///
+/// In both cases the result keeps a non-ASCII character. The CDN rejects that
+/// result, so the request has no header. Usage never goes to a different name.
 fn normalize_service(service: &str) -> String {
-    let mut replaced = String::with_capacity(service.len());
-    for c in service.to_lowercase().chars() {
-        if c.is_ascii_lowercase() || c.is_ascii_digit() || "_:./-".contains(c) {
-            replaced.push(c);
+    let mut end = service.len().min(MAX_SERVICE_LEN);
+    while !service.is_char_boundary(end) {
+        end -= 1;
+    }
+    let mut normalized = String::with_capacity(end);
+    let mut pending_underscore = false;
+    for c in service[..end].chars() {
+        let c = c.to_ascii_lowercase();
+        if c.is_ascii_lowercase()
+            || c.is_ascii_digit()
+            || ":./-".contains(c)
+            || (!c.is_ascii() && c.is_alphanumeric())
+        {
+            if std::mem::take(&mut pending_underscore) {
+                normalized.push('_');
+            }
+            normalized.push(c);
         } else {
-            // One `_` per UTF-16 code unit, as JavaScript replaces them.
-            replaced.extend(std::iter::repeat_n('_', c.len_utf16()));
+            pending_underscore = true;
         }
     }
-    // Only ASCII is left, so cutting at any byte is safe.
-    let mut cleaned = replaced
-        .trim_start_matches(|c: char| !c.is_ascii_alphanumeric())
-        .to_owned();
-    cleaned.truncate(MAX_SERVICE_LEN);
-    cleaned
+    normalized
 }
 
 fn request_url_and_authorization(
@@ -394,7 +420,7 @@ mod tests {
         let custom_request =
             build_request(&custom, None, "php", "1.27", Some("checkout")).expect("custom request");
         assert!(!custom_request.headers().contains_key(API_KEY_HEADER));
-        // Unlike the API key, a service name isn't a secret.
+        // A service name is not a secret, so custom endpoints also get it.
         assert_eq!(custom_request.headers()[SERVICE_HEADER], "checkout");
         assert_eq!(
             custom_request.headers()[AUTHORIZATION_HEADER],
@@ -408,7 +434,7 @@ mod tests {
         let endpoint =
             CdnEndpoint::build("", "datadoghq.com", "", "secret").expect("managed endpoint");
         crate::test_logging::start_log_capture();
-        for service in [None, Some(""), Some("   ")] {
+        for service in [None, Some("")] {
             let service = usage_service(service.map(Into::into));
             let request =
                 build_request(&endpoint, Some("etag"), "php", "1.27", service.as_deref()).unwrap();
@@ -417,80 +443,112 @@ mod tests {
                 "{service:?}"
             );
         }
-        // No service configured is not a rejected one.
+        // No service is not a rejected service, so there is no log.
         assert!(crate::test_logging::captured_logs().is_empty());
     }
 
     #[test]
-    fn a_valid_service_is_sent_unchanged() {
-        for service in [
-            "a",
-            "svc_name.v2:api/edge-1",
-            &format!("a{}", "b".repeat(99)),
-            "2fa-service",
-            "unnamed-service",
-        ] {
+    fn the_service_is_sent_as_the_name_apm_shows_or_not_at_all() {
+        // The expected values come from the Datadog Agent: `NormalizeService`
+        // in pkg/trace/traceutil/normalize v0.82.3, then the CDN pattern
+        // `^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,99}$`. `None` means no header.
+        let a99 = "a".repeat(99);
+        let a100 = "a".repeat(100);
+        let ab99 = format!("a{}", "b".repeat(99));
+        let ab100 = format!("a{}", "b".repeat(100));
+        let a100_b = format!("{a100} b");
+        let a99_e = format!("{a99}é");
+        let e50 = "é".repeat(50);
+        let e60 = "é".repeat(60);
+        // (configured service, name APM shows, DD-Service header)
+        let rows: [(&str, &str, Option<&str>); 36] = [
+            ("checkout", "checkout", Some("checkout")),
+            ("My Service", "my_service", Some("my_service")),
+            ("My-API", "my-api", Some("my-api")),
+            ("UPPER", "upper", Some("upper")),
+            ("bad\nvalue", "bad_value", Some("bad_value")),
+            ("a\tb", "a_b", Some("a_b")),
+            ("a  b!", "a_b", Some("a_b")),
+            ("svc ", "svc", Some("svc")),
+            (" svc", "_svc", None),
+            ("a_", "a", Some("a")),
+            ("svc-", "svc-", Some("svc-")),
+            ("a..b", "a..b", Some("a..b")),
+            ("2fa-service", "2fa-service", Some("2fa-service")),
+            ("9lives", "9lives", Some("9lives")),
+            (
+                "unnamed-service",
+                "unnamed-service",
+                Some("unnamed-service"),
+            ),
+            (
+                "svc_name.v2:api/edge-1",
+                "svc_name.v2:api/edge-1",
+                Some("svc_name.v2:api/edge-1"),
+            ),
+            ("my__service", "my_service", Some("my_service")),
+            (
+                "Default Web Site/Shop",
+                "default_web_site/shop",
+                Some("default_web_site/shop"),
+            ),
+            (&ab99, &ab99, Some(&ab99)),
+            (&ab100, &ab99, Some(&ab99)),
+            (&a100_b, &a100, Some(&a100)),
+            (&a99_e, &a99, Some(&a99)),
+            ("_svc", "_svc", None),
+            ("-svc", "-svc", None),
+            (".svc", ".svc", None),
+            (":svc", ":svc", None),
+            ("café-api", "café-api", None),
+            ("Café", "café", None),
+            ("支付", "支付", None),
+            ("a🐶b", "a_b", Some("a_b")),
+            ("İstanbul", "İstanbul", None),
+            (&e60, &e50, None),
+            ("___", "", None),
+            ("-", "-", None),
+            ("", "", None),
+            ("   ", "", None),
+        ];
+        let endpoint = CdnEndpoint::custom("http://localhost/config").unwrap();
+        for (service, apm, header) in rows {
+            assert_eq!(normalize_service(service), apm, "{service:?}");
+            crate::test_logging::start_log_capture();
+            let sent = usage_service(Some(service.to_owned()));
+            assert_eq!(sent.as_deref(), header, "{service:?}");
+            let request = build_request(&endpoint, None, "php", "1.27", sent.as_deref())
+                .expect("the header is a valid header value");
             assert_eq!(
-                usage_service(Some(service.to_owned())).as_deref(),
-                Some(service)
-            );
-        }
-    }
-
-    #[test]
-    fn a_service_is_sent_cleaned_up_like_the_node_sdk_does() {
-        let too_long = format!("a{}", "b".repeat(100));
-        let cut = format!("a{}", "b".repeat(99));
-        crate::test_logging::start_log_capture();
-        for (service, cleaned) in [
-            ("My Service", "my_service"),
-            ("My-API", "my-api"),
-            ("_svc", "svc"),
-            ("bad\nvalue", "bad_value"),
-            (too_long.as_str(), cut.as_str()),
-            ("café", "caf_"),
-            ("Café", "caf_"),
-            // JavaScript sees two UTF-16 code units in the emoji.
-            ("a🐶b", "a__b"),
-        ] {
-            assert_eq!(
-                usage_service(Some(service.to_owned())).as_deref(),
-                Some(cleaned),
+                request
+                    .headers()
+                    .get(SERVICE_HEADER)
+                    .map(|value| value.to_str().unwrap()),
+                header,
                 "{service:?}"
             );
+            // A service that is set but not sent has one debug log.
+            let logs = crate::test_logging::captured_logs();
+            if header.is_none() && !service.is_empty() {
+                assert_eq!(logs.len(), 1, "{service:?}");
+                assert_eq!(logs[0].level, log::Level::Debug);
+                assert_eq!(
+                    logs[0].message,
+                    format!(
+                        "Feature Flags: service {service:?} does not normalize to a name the CDN accepts; DD-Service header not sent"
+                    )
+                );
+            } else {
+                assert!(logs.is_empty(), "{service:?}");
+            }
         }
-        // A cleaned-up service is still sent, so there's nothing to report.
-        assert!(crate::test_logging::captured_logs().is_empty());
 
-        // Sent as configured, this one can't be a header value and would fail
-        // every request instead of only losing the header.
-        let endpoint = CdnEndpoint::custom("http://localhost/config").unwrap();
+        // The raw value is not a valid header value. If it went out as is,
+        // every request would fail.
         assert!(matches!(
             build_request(&endpoint, None, "php", "1.27", Some("bad\nvalue")),
             Err(TransportFailure::BuildRequest)
         ));
-    }
-
-    #[test]
-    fn a_service_with_nothing_left_once_cleaned_up_is_not_sent() {
-        crate::test_logging::start_log_capture();
-        // Both clean up to underscores only, which are dropped as leading
-        // characters.
-        let services = ["支付", "___"];
-        for service in services {
-            assert_eq!(usage_service(Some(service.to_owned())), None, "{service:?}");
-        }
-        let logs = crate::test_logging::captured_logs();
-        assert_eq!(logs.len(), services.len());
-        for (log, service) in logs.iter().zip(services) {
-            assert_eq!(log.level, log::Level::Debug);
-            assert_eq!(
-                log.message,
-                format!(
-                    "Feature Flags: service {service:?} has nothing left the CDN can attribute usage to once cleaned up; DD-Service header not sent"
-                )
-            );
-        }
     }
 
     #[test]

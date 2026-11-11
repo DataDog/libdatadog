@@ -58,16 +58,21 @@ let mut fetcher = CdnFetcher::new(config, configuration_sink)?;
 fetcher.run(cancellation_token).await;
 ```
 
-Each request sends `service` as `DD-Service` so the CDN can attribute usage to
-it. The value is first cleaned up the way the Node.js tracer does it, so every
-SDK sends the same name: lowercase, every character outside `[a-z0-9_:./-]`
-replaced with `_`, leading characters other than `[a-z0-9]` dropped, and cut to
-100 characters. `My Service` is sent as `my_service`, the name APM shows. When
-nothing is left that matches `^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,99}$`, the format
-the CDN accepts (for example `___` or `支付`), that is not a validation error:
-requests leave the header out and the fetcher logs it once at debug level.
-`service` is part of the subscription identity, so each service gets its own
-fetcher.
+Each request sends `service` in the `DD-Service` header. The CDN uses it to
+attribute usage to the service. The value is the name that APM shows, or there
+is no header.
+
+The name comes from the Datadog Agent rules for service names. `My Service`
+becomes `my_service`. The rules cut the name to 100 bytes and lowercase ASCII
+letters. They keep ASCII letters and digits, `:`, `.`, `/`, `-`, and non-ASCII
+letters and digits. Each run of other characters becomes one `_`. A run at the
+end is removed.
+
+The CDN accepts only names that match `^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,99}$`.
+If the name does not match, requests have no header. Examples are `_svc`,
+`café-api` and `___`. This is not a validation error. The fetcher logs it once
+at debug level. `service` is part of the subscription identity, so each service
+has its own fetcher.
 
 `CdnEndpoint::custom(url)` carries no Datadog API key. Redirects are not
 followed; invalid API-key header values fail endpoint construction. Custom URL
