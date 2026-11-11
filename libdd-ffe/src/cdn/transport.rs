@@ -21,6 +21,7 @@ pub(super) const MAX_RESPONSE_BODY_BYTES: usize = 10 << 20;
 const INTERNAL_UNTRACED_HEADER: &str = "DD-Internal-Untraced-Request";
 const API_KEY_HEADER: &str = "DD-API-KEY";
 const AUTHORIZATION_HEADER: &str = "Authorization";
+const SERVICE_HEADER: &str = "DD-Service";
 
 pub(super) type FetchFuture<'a> =
     Pin<Box<dyn Future<Output = Result<PollResponse, TransportFailure>> + Send + 'a>>;
@@ -57,16 +58,18 @@ pub(super) struct HyperTransport {
     client: http_common::HttpClient,
     language: String,
     version: String,
+    service: Option<String>,
 }
 
 impl HyperTransport {
-    pub(super) fn new(language: String, version: String) -> Self {
+    pub(super) fn new(language: String, version: String, service: Option<String>) -> Self {
         Self {
             // Leave redirects visible: credentials must never be forwarded
             // to a location supplied by the server.
             client: http_common::new_client_periodic(),
             language,
             version,
+            service: usage_service(service),
         }
     }
 
@@ -77,7 +80,13 @@ impl HyperTransport {
         etag: Option<&str>,
         cancellation: &CancellationToken,
     ) -> Result<PollResponse, TransportFailure> {
-        let request = build_request(endpoint, etag, &self.language, &self.version)?;
+        let request = build_request(
+            endpoint,
+            etag,
+            &self.language,
+            &self.version,
+            self.service.as_deref(),
+        )?;
         let operation = async {
             let response = self
                 .client
@@ -147,6 +156,7 @@ fn build_request(
     etag: Option<&str>,
     language: &str,
     version: &str,
+    service: Option<&str>,
 ) -> Result<Request<Body>, TransportFailure> {
     let (request_url, authorization) = request_url_and_authorization(endpoint.uri())?;
     // Keep CDN headers explicit. Endpoint's generic request builder also adds
@@ -159,6 +169,10 @@ fn build_request(
         .header("DD-Client-Library-Version", version)
         .header(INTERNAL_UNTRACED_HEADER, "1");
 
+    // Lets the CDN attribute this request's usage to the service.
+    if let Some(service) = service {
+        builder = builder.header(SERVICE_HEADER, service);
+    }
     if let Some(etag) = etag {
         builder = builder.header(IF_NONE_MATCH, etag);
     }
@@ -172,6 +186,26 @@ fn build_request(
     builder
         .body(Body::empty())
         .map_err(|_| TransportFailure::BuildRequest)
+}
+
+/// Selects the service sent as `DD-Service`. The CDN attributes usage only to a
+/// service matching `^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,99}$` and drops any other
+/// value. Skipping one here also keeps a value that can't be a header value,
+/// such as one with CR/LF, from failing every request.
+fn usage_service(service: Option<String>) -> Option<String> {
+    let service = service.filter(|service| !service.trim().is_empty())?;
+    let (first, rest) = service.as_bytes().split_first()?;
+    let accepted = service.len() <= 100
+        && first.is_ascii_alphanumeric()
+        && rest
+            .iter()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"_.:/-".contains(byte));
+    if !accepted {
+        log::debug!(
+            "Feature Flags: service {service:?} does not match the format the CDN attributes usage to; DD-Service header not sent"
+        );
+    }
+    accepted.then_some(service)
 }
 
 fn request_url_and_authorization(
@@ -312,8 +346,10 @@ mod tests {
             .expect("custom endpoint");
 
         let managed_request =
-            build_request(&managed, Some("etag"), "python", "1.0").expect("managed request");
+            build_request(&managed, Some("etag"), "python", "1.0", Some("checkout"))
+                .expect("managed request");
         assert_eq!(managed_request.headers()[API_KEY_HEADER], "secret");
+        assert_eq!(managed_request.headers()[SERVICE_HEADER], "checkout");
         assert_eq!(
             managed_request.headers()["DD-Client-Library-Language"],
             "python"
@@ -325,13 +361,78 @@ mod tests {
         assert_eq!(managed_request.headers()[IF_NONE_MATCH], "etag");
         assert_eq!(managed_request.headers()[INTERNAL_UNTRACED_HEADER], "1");
 
-        let custom_request = build_request(&custom, None, "php", "1.27").expect("custom request");
+        let custom_request =
+            build_request(&custom, None, "php", "1.27", Some("checkout")).expect("custom request");
         assert!(!custom_request.headers().contains_key(API_KEY_HEADER));
+        // Unlike the API key, a service name isn't a secret.
+        assert_eq!(custom_request.headers()[SERVICE_HEADER], "checkout");
         assert_eq!(
             custom_request.headers()[AUTHORIZATION_HEADER],
             "Basic dXNlcjpwYXNzd29yZA=="
         );
         assert_eq!(custom_request.uri(), "https://localhost/custom");
+    }
+
+    #[test]
+    fn service_header_is_omitted_without_a_service() {
+        let endpoint =
+            CdnEndpoint::build("", "datadoghq.com", "", "secret").expect("managed endpoint");
+        crate::test_logging::start_log_capture();
+        for service in [None, Some(""), Some("   ")] {
+            let service = usage_service(service.map(Into::into));
+            let request =
+                build_request(&endpoint, Some("etag"), "php", "1.27", service.as_deref()).unwrap();
+            assert!(
+                !request.headers().contains_key(SERVICE_HEADER),
+                "{service:?}"
+            );
+        }
+        // No service configured is not a rejected one.
+        assert!(crate::test_logging::captured_logs().is_empty());
+    }
+
+    #[test]
+    fn only_a_service_the_cdn_attributes_usage_to_is_sent() {
+        for service in [
+            "a",
+            "svc_name.v2:api/edge-1",
+            &format!("a{}", "b".repeat(99)),
+        ] {
+            assert_eq!(
+                usage_service(Some(service.to_owned())).as_deref(),
+                Some(service)
+            );
+        }
+
+        crate::test_logging::start_log_capture();
+        let rejected = [
+            format!("a{}", "b".repeat(100)),
+            "_svc".to_owned(),
+            "my service".to_owned(),
+            "支付".to_owned(),
+            "bad\nvalue".to_owned(),
+        ];
+        for service in &rejected {
+            assert_eq!(usage_service(Some(service.clone())), None, "{service:?}");
+        }
+        let logs = crate::test_logging::captured_logs();
+        assert_eq!(logs.len(), rejected.len());
+        for (log, service) in logs.iter().zip(&rejected) {
+            assert_eq!(log.level, log::Level::Debug);
+            assert_eq!(
+                log.message,
+                format!(
+                    "Feature Flags: service {service:?} does not match the format the CDN attributes usage to; DD-Service header not sent"
+                )
+            );
+        }
+
+        // Without the check, this would fail every request instead of only losing the header.
+        let endpoint = CdnEndpoint::custom("http://localhost/config").unwrap();
+        assert!(matches!(
+            build_request(&endpoint, None, "php", "1.27", Some("bad\nvalue")),
+            Err(TransportFailure::BuildRequest)
+        ));
     }
 
     #[test]
@@ -343,7 +444,7 @@ mod tests {
             "must-not-be-sent",
         )
         .unwrap();
-        let request = build_request(&endpoint, None, "php", "1.27").unwrap();
+        let request = build_request(&endpoint, None, "php", "1.27", Some("checkout")).unwrap();
         assert_eq!(
             request.uri(),
             "https://[::1]:8443/a/../Config%2fraw?tenant=a%2Fb&tenant=x+y&empty="
@@ -359,6 +460,7 @@ mod tests {
                 | "dd-client-library-language"
                 | "dd-client-library-version"
                 | "dd-internal-untraced-request"
+                | "dd-service"
                 | "authorization"
         )));
     }
@@ -377,7 +479,7 @@ mod tests {
                 "https://{userinfo}@[::1]:8443/a/../Config%2fraw?tenant=a%2Fb"
             ))
             .unwrap();
-            let request = build_request(&endpoint, None, "php", "1.27").unwrap();
+            let request = build_request(&endpoint, None, "php", "1.27", None).unwrap();
             assert_eq!(request.headers()[AUTHORIZATION_HEADER], expected);
             assert_eq!(
                 request.uri(),
@@ -397,7 +499,7 @@ mod tests {
                 "https://user:{password}@[::1]:8443/a/../Config%2fraw?tenant=a%2Fb"
             ))
             .unwrap();
-            let request = build_request(&endpoint, None, "php", "1.27").unwrap();
+            let request = build_request(&endpoint, None, "php", "1.27", None).unwrap();
             assert_eq!(
                 request.headers()[AUTHORIZATION_HEADER],
                 expected_authorization
@@ -410,7 +512,7 @@ mod tests {
         }
 
         let endpoint = CdnEndpoint::custom("https://user:päss@localhost/café?query=olé").unwrap();
-        let request = build_request(&endpoint, None, "php", "1.27").unwrap();
+        let request = build_request(&endpoint, None, "php", "1.27", None).unwrap();
         assert_eq!(request.uri(), "https://localhost/caf%C3%A9?query=ol%C3%A9");
         assert_eq!(
             request.headers()[AUTHORIZATION_HEADER],
@@ -437,7 +539,7 @@ mod tests {
         });
         let cancellation = CancellationToken::new();
         let stop = cancellation.clone();
-        let transport = HyperTransport::new("php".into(), "1.27".into());
+        let transport = HyperTransport::new("php".into(), "1.27".into(), None);
         let request = tokio::spawn(async move {
             transport
                 .get(&endpoint, Duration::from_secs(30), None, &stop)
@@ -471,7 +573,7 @@ mod tests {
             assert!(socket.read(&mut request).await.unwrap() > 0);
             socket.write_all(b"HTTP/1.1 429 Too Many Requests\r\nRetry-After: 10\r\nContent-Length: 100000000\r\n\r\n").await.unwrap();
         });
-        let response = HyperTransport::new("php".into(), "1.27".into())
+        let response = HyperTransport::new("php".into(), "1.27".into(), None)
             .get(
                 &endpoint,
                 Duration::from_secs(5),
@@ -511,7 +613,7 @@ mod tests {
                 .await
                 .unwrap();
         });
-        let transport = HyperTransport::new("python".into(), "1.0".into());
+        let transport = HyperTransport::new("python".into(), "1.0".into(), None);
         let response = transport
             .get(
                 &endpoint,

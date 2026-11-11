@@ -52,10 +52,17 @@ let config = CdnConfig {
     request_timeout: Duration::from_secs(5),
     language: "php".into(),
     version: tracer_version,
+    service: Some(tracer_service),
 };
 let mut fetcher = CdnFetcher::new(config, configuration_sink)?;
 fetcher.run(cancellation_token).await;
 ```
+
+Each request sends `service` as `DD-Service` so the CDN can attribute usage to
+it. A service that doesn't match `^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,99}$`, the
+format the CDN accepts, is not a validation error: requests leave the header out
+and the fetcher logs it once at debug level. `service` is part of the
+subscription identity, so each service gets its own fetcher.
 
 `CdnEndpoint::custom(url)` carries no Datadog API key. Redirects are not
 followed; invalid API-key header values fail endpoint construction. Custom URL

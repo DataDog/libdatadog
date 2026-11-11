@@ -135,7 +135,7 @@ mod tests {
 
     #[test]
     fn rejected_input_is_not_logged() {
-        crate::telemetry::test_logging::start_log_capture();
+        crate::test_logging::start_log_capture();
         for raw in [
             r#""FEATURE_CANARY""#,
             r#"{"FEATURE_CANARY":"#,
@@ -143,7 +143,7 @@ mod tests {
         ] {
             assert!(features_map(raw).is_empty());
         }
-        let logs = crate::telemetry::test_logging::captured_logs();
+        let logs = crate::test_logging::captured_logs();
         assert_eq!(logs.len(), 3);
         assert!(logs.iter().all(|log| log.level == log::Level::Debug
             && log.message == "ffe features must be a JSON object; omitting features"));

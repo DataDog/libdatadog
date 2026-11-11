@@ -210,7 +210,7 @@ mod tests {
         MAX_EVENTS_PER_POST, TargetingRuleKey, VariantKey,
     };
 
-    use crate::telemetry::test_logging::{captured_logs, start_log_capture};
+    use crate::test_logging::{captured_logs, start_log_capture};
 
     fn context() -> FfeTelemetryContext {
         FfeTelemetryContext {

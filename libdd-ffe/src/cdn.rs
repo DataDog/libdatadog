@@ -27,6 +27,11 @@ pub struct CdnConfig {
     pub request_timeout: Duration,
     pub language: String,
     pub version: String,
+    /// Sent as `DD-Service` so the CDN can attribute usage to the service. A
+    /// value the CDN would drop is left out of requests rather than rejected,
+    /// so it never stops flag fetching.
+    #[serde(default)]
+    pub service: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
@@ -95,7 +100,7 @@ impl<S: ConfigurationSink> CdnFetcher<S> {
                 config.endpoint,
                 config.poll_interval,
                 config.request_timeout,
-                HyperTransport::new(config.language, config.version),
+                HyperTransport::new(config.language, config.version, config.service),
                 sink,
                 Arc::new(PollState::default()),
             ),
@@ -121,6 +126,7 @@ mod tests {
             request_timeout: Duration::from_secs(5),
             language: "php".into(),
             version: "1.27.0".into(),
+            service: Some("checkout".into()),
         };
         let decoded: CdnConfig =
             bincode::deserialize(&bincode::serialize(&config).unwrap()).unwrap();
@@ -133,6 +139,10 @@ mod tests {
         other = config.clone();
         other.endpoint = CdnEndpoint::managed("datadoghq.com", "staging", "secret-key").unwrap();
         assert_ne!(other, config);
+        // Each service gets its own fetcher.
+        other = config.clone();
+        other.service = Some("billing".into());
+        assert_ne!(other, config);
     }
 
     #[test]
@@ -143,6 +153,7 @@ mod tests {
             request_timeout: Duration::from_secs(5),
             language: "php".into(),
             version: "1.27.0".into(),
+            service: None,
         };
         let mut wire = serde_json::to_value(&config).unwrap();
         wire["endpoint"]["api_key"] = "secret".into();
@@ -159,6 +170,26 @@ mod tests {
         config.request_timeout = Duration::from_secs(5);
         config.language = "php\r\ninjected: value".into();
         assert!(config.validate().is_err());
+        config.language = "php".into();
+        // An unusable service only drops the DD-Service header.
+        config.service = Some("php\r\ninjected: value".into());
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn a_subscription_without_a_service_still_deserializes() {
+        let config = CdnConfig {
+            endpoint: CdnEndpoint::custom("http://localhost/config").unwrap(),
+            poll_interval: Duration::from_secs(30),
+            request_timeout: Duration::from_secs(5),
+            language: "php".into(),
+            version: "1.27.0".into(),
+            service: Some("checkout".into()),
+        };
+        let mut wire = serde_json::to_value(&config).unwrap();
+        wire.as_object_mut().unwrap().remove("service");
+        let decoded: CdnConfig = serde_json::from_value(wire).unwrap();
+        assert_eq!(decoded.service, None);
     }
 
     #[test]
@@ -170,6 +201,7 @@ mod tests {
             request_timeout: Duration::from_secs(5),
             language: "php".into(),
             version: "1.27.0".into(),
+            service: None,
         };
         for (field, expected) in [
             ("endpoint", "invalid CDN endpoint"),
@@ -194,6 +226,104 @@ mod tests {
             let error = invalid.validate().unwrap_err();
             assert_eq!(error.to_string(), expected);
             assert!(!format!("{error:?}").contains("secret"));
+        }
+    }
+
+    const SERVER_PATH: &str = "/api/v2/feature-flagging/config/rules-based/server";
+    const EMPTY_CONFIG: &str = r#"{"data": {"type": "universal-flag-configuration", "attributes": {
+        "createdAt": "2026-05-22T00:00:00.000Z", "format": "SERVER",
+        "environment": {"name": "test"}, "flags": {}
+    }}}"#;
+
+    #[derive(Clone, Default)]
+    struct CountingSink(Arc<std::sync::atomic::AtomicUsize>);
+
+    impl ConfigurationSink for CountingSink {
+        fn apply(
+            &self,
+            _configuration: crate::rules_based::Configuration,
+        ) -> Result<(), ApplyError> {
+            Ok(())
+        }
+        fn confirmed(&self) {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
+    /// Polls `server`'s root as a custom CDN endpoint until `polls` succeed.
+    async fn fetch(server: &httpmock::MockServer, service: Option<&str>, polls: usize) {
+        let config = CdnConfig {
+            endpoint: CdnEndpoint::custom(&server.base_url()).unwrap(),
+            poll_interval: Duration::from_millis(10),
+            request_timeout: Duration::from_secs(1),
+            language: "php".into(),
+            version: "1.27.0".into(),
+            service: service.map(Into::into),
+        };
+        let sink = CountingSink::default();
+        let mut fetcher = CdnFetcher::new(config, sink.clone()).expect("valid configuration");
+        let cancellation = CancellationToken::new();
+        let task = tokio::spawn({
+            let cancellation = cancellation.clone();
+            async move { fetcher.run(cancellation).await }
+        });
+        let confirmed = tokio::time::timeout(Duration::from_secs(5), async {
+            while sink.0.load(std::sync::atomic::Ordering::Relaxed) < polls {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await;
+        cancellation.cancel();
+        task.await.unwrap();
+        assert!(confirmed.is_ok(), "{polls} polls did not succeed");
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore = "requires native HTTP")]
+    async fn every_poll_sends_the_service_in_dd_service() {
+        let server = httpmock::MockServer::start_async().await;
+        let first = server
+            .mock_async(|when, then| {
+                when.method("GET")
+                    .path(SERVER_PATH)
+                    .header("DD-Service", "checkout")
+                    .header_missing("If-None-Match");
+                then.status(200).header("ETag", "\"v1\"").body(EMPTY_CONFIG);
+            })
+            .await;
+        let revalidated = server
+            .mock_async(|when, then| {
+                when.method("GET")
+                    .path(SERVER_PATH)
+                    .header("DD-Service", "checkout")
+                    .header("If-None-Match", "\"v1\"");
+                then.status(304);
+            })
+            .await;
+
+        fetch(&server, Some("checkout"), 2).await;
+
+        assert_eq!(first.calls_async().await, 1);
+        assert!(revalidated.calls_async().await >= 1);
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore = "requires native HTTP")]
+    async fn a_missing_or_unusable_service_omits_dd_service_and_keeps_fetching() {
+        for service in [None, Some(""), Some("my service"), Some("bad\r\nvalue")] {
+            let server = httpmock::MockServer::start_async().await;
+            let without_service = server
+                .mock_async(|when, then| {
+                    when.method("GET")
+                        .path(SERVER_PATH)
+                        .header_missing("DD-Service");
+                    then.status(200).body(EMPTY_CONFIG);
+                })
+                .await;
+
+            fetch(&server, service, 1).await;
+
+            assert!(without_service.calls_async().await >= 1, "{service:?}");
         }
     }
 }
