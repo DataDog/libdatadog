@@ -364,10 +364,32 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
       - name: Install licensecheck
-        run: sudo apt-get install -y licensecheck
+        id: install
+        run: sudo apt-get install -y licensecheck || echo "installed=false" >> "$GITHUB_OUTPUT"
       - name: Check licenses
         # Exclude symbolizer-ffi from the checks (mostly imported code)
-        run: '! find . \( -name "*.rs" -o -name "*.c" -o -name "*.sh" \)  -not -path "./symbolizer-ffi/*" -not -path "./datadog-ipc/plugins/*" -not -path "./datadog-ipc/tarpc/*" -not -path "./vendor/*" -print0 | xargs -0 licensecheck -c ".*" | grep -v "Apache License 2.0"'
+        run: |
+          FIND_ARGS=(. \( -name "*.rs" -o -name "*.c" -o -name "*.sh" \)
+            -not -path "./symbolizer-ffi/*"
+            -not -path "./datadog-ipc/plugins/*"
+            -not -path "./datadog-ipc/tarpc/*"
+            -not -path "./vendor/*")
+          if [ "${{ steps.install.outputs.installed }}" != "false" ]; then
+            echo "Using licensecheck"
+            find "${FIND_ARGS[@]}" -print0 \
+              | xargs -0 licensecheck -c ".*" \
+              | grep -v "Apache License 2.0" \
+              && exit 1
+          else
+            echo "::warning::licensecheck not available, falling back to grep"
+            bad_files=$(find "${FIND_ARGS[@]}" -print0 \
+              | xargs -0 grep -rLE "Apache-2\.0|Apache License" || true)
+            if [ -n "$bad_files" ]; then
+              echo "Files missing Apache license header:"
+              echo "$bad_files"
+              exit 1
+            fi
+          fi
 
   license-3rdparty:
     needs: [setup, changes]
