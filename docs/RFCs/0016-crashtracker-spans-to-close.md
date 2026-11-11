@@ -161,12 +161,12 @@ DD_CRASHTRACK_END_SPANS_TO_CLOSE
           "env": "prod",                 // OPTIONAL
           "version": "",                 // OPTIONAL
           "component": "",               // OPTIONAL
-          "top_level": false,            // OPTIONAL; see "Top-level spans"
           "attributes": {                // OPTIONAL; flat key/value scalars
             "job.id": "8812",
             "job.attempt": 2,
             "job.progress": 0.73,
-            "job.retryable": true
+            "job.retryable": true,
+            "_top_level": 1              // OPTIONAL; see "Top-level spans"
           }
         }
       ]
@@ -265,7 +265,7 @@ ended by the crash:
 | `error.is_crash` | `"true"` |
 | `dd.crash_tracking.uuid` | the crash report's UUID |
 | chunk `priority` | `2` (user keep) when the producer gave none; an explicit priority is respected |
-| `_top_level` | see [Top-level spans](#top-level-spans); any `_top_level` the producer staged is replaced |
+| `_top_level` | `1` on spans the block shows as top-level, unless the producer staged a marker; see [Top-level spans](#top-level-spans) |
 
 `error.is_crash` and `dd.crash_tracking.uuid` are what lets the trace
 view link a span to its crash report.
@@ -277,8 +277,12 @@ another service. The agent's trace metrics count top-level spans, and the
 request says the receiver computed them (`Datadog-Client-Computed-Top-Level`),
 so getting this wrong inflates or loses those metrics.
 
-- **Producer's `top_level` given:** it is used as is.
-- **Otherwise:** the receiver decides from the spans in the same block:
+- **Producer staged a marker** (`_top_level` or `_dd.top_level`): it is
+  sent as is, like any other attribute, and the receiver adds nothing.
+  The agent reads it with its usual meaning: `1` in either key marks the
+  span top-level.
+- **Otherwise:** the receiver decides from the spans in the same block,
+  and writes `_top_level: 1` on the top-level ones:
   - a root is top-level;
   - a span whose parent is in the block is top-level if the parent's
     service differs;
@@ -287,8 +291,8 @@ so getting this wrong inflates or loses those metrics.
 
 A parent can be missing from a block without being remote, for example
 when it was already sent before the crash or is described in another
-block. Only the producer knows this, so producers SHOULD set `top_level`
-on every span whose parent is not in the same block.
+block. Only the producer knows this, so producers SHOULD stage a
+marker on every span whose parent is not in the same block.
 
 The receiver never sets producer-specific attributes. A producer that
 wants a domain attribute to reflect the failure (for example
@@ -377,15 +381,14 @@ The receiver's guarantees depend on what producers write. Producers:
   would be sent a second time under the same span ID, marked as crashed,
   and could replace the real version. A producer MUST withdraw a span's
   description before, or as part of, finishing that span.
-- **MUST NOT** rely on sending an end time, duration, error flag,
-  `_top_level` attribute or HTTP headers. The receiver sets or overwrites
-  them. Top-level status is given with the `top_level` field instead.
+- **MUST NOT** rely on sending an end time, duration, error flag or HTTP
+  headers. The receiver sets or overwrites them.
 - **SHOULD** give the real sampling priority. If it is left out, the
   receiver keeps the trace (priority 2), which would keep traces the
   sampler had dropped. A producer SHOULD NOT stage spans of traces it has
   already decided to drop.
-- **SHOULD** set `top_level` on every span whose parent is not in the same
-  block (see [Top-level spans](#top-level-spans)).
+- **SHOULD** stage `_top_level` or `_dd.top_level` on every span whose
+  parent is not in the same block (see [Top-level spans](#top-level-spans)).
 - **SHOULD** stage spans in their failed state, with any domain attributes
   that only make sense on failure.
 
