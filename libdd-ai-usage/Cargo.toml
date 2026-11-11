@@ -15,6 +15,8 @@ description = "Usage and cost metric points for LLM provider calls and gateway r
 bench = false
 
 [dependencies]
+# The model events a Bedrock InvokeModelWithResponseStream chunk carries.
+base64 = { workspace = true, features = ["std"] }
 prost = { workspace = true, features = ["derive", "std"], optional = true }
 libdd-ddsketch = { version = "1.1.4", path = "../libdd-ddsketch" }
 hashbrown = { workspace = true, features = ["default-hasher", "inline-more"] }

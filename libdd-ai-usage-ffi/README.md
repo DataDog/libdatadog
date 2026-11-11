@@ -60,7 +60,9 @@ requires `streaming` on a provider attempt (`streaming: null` or a missing flag 
 `false` for a non-streaming call. The library does not default it.
 
 Usage formats are `auto`, `openai_chat`, `openai_responses`, `anthropic`,
-`gemini` and `gemini_openai_compat`.
+`gemini`, `gemini_openai_compat` and `bedrock_converse`. A stream or body that starts with a NUL
+byte is read as an AWS event stream (Bedrock ConverseStream and InvokeModelWithResponseStream), any
+other as JSON or server-sent events.
 
 ## Example
 

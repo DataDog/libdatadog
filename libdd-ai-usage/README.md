@@ -109,13 +109,17 @@ here too, so that one response gives one observation wherever it was read:
 - `parse_provider_response`, `parse_provider_body` and `UsageStream` read the
   usage of a response, a stream event or a whole stream (OpenAI Chat
   Completions and Responses, Anthropic Messages, Gemini `usageMetadata`,
-  Google's OpenAI-compatible Gemini endpoint, or `Auto` for an SDK's normalized
-  usage object) into the observation's usage members, with the model and
-  service tier the provider named. Counts not reported are `None`; a usage
-  object of zeros (cache counts included) is a placeholder, not usage. A stream
-  reports whether its terminal event arrived (`message_stop`,
-  `response.completed`, `response.incomplete`, `[DONE]`, a Gemini
-  `finishReason`) or it failed in-band, and splits lines only at CR and LF.
+  Google's OpenAI-compatible Gemini endpoint, Bedrock Converse `TokenUsage`,
+  or `Auto` for an SDK's normalized usage object) into the observation's usage
+  members, with the model and service tier the provider named. Counts not
+  reported are `None`; a usage object of zeros (cache counts included) is a
+  placeholder, not usage. A stream reports whether its terminal event arrived
+  (`message_stop`, `response.completed`, `response.incomplete`, `[DONE]`, a
+  Gemini `finishReason`, Bedrock `messageStop`) or it failed in-band, and
+  splits lines only at CR and LF. A stream that starts with a NUL byte is an
+  AWS event stream: Bedrock ConverseStream's `metadata` event, and the model
+  events InvokeModelWithResponseStream wraps in `chunk.bytes`, are read from
+  its messages.
 - `gen_ai_provider_name` maps a gateway's or SDK's provider name to
   `gen_ai.provider.name` (`bedrock` is `aws.bedrock`, `vertex_ai` is
   `gcp.vertex_ai`, ...).

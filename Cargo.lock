@@ -2796,6 +2796,7 @@ dependencies = [
 name = "libdd-ai-usage"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "hashbrown 0.17.1",
  "libdd-ddsketch",
  "memchr",
@@ -2809,6 +2810,7 @@ dependencies = [
 name = "libdd-ai-usage-ffi"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "cbindgen",
  "libdd-ai-usage",
  "serde_json",

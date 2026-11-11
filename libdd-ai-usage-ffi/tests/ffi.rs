@@ -986,3 +986,69 @@ fn inclusive_totals_across_the_boundary() {
         assert_eq!(json_of(out)["usage"]["input_tokens"], 110);
     }
 }
+
+#[test]
+fn bedrock_usage_across_the_boundary() {
+    use base64::Engine as _;
+    // SAFETY: valid inputs and outputs throughout; the stream is used until
+    // taken.
+    unsafe {
+        let format = "auto";
+        // Converse's inputTokens leaves cache reads and writes out.
+        let body = r#"{"stopReason": "end_turn", "usage": {"inputTokens": 10, "outputTokens": 5,
+            "totalTokens": 38, "cacheReadInputTokens": 20, "cacheWriteInputTokens": 3}}"#;
+        let mut out = empty();
+        assert_eq!(
+            ddog_ai_usage_parse_provider_response_with(
+                format.as_ptr(),
+                format.len(),
+                false,
+                INCLUSIVE_TOTALS,
+                body.as_ptr(),
+                body.len(),
+                &mut out
+            ),
+            Status::Ok
+        );
+        let value = json_of(out);
+        assert_eq!(value["usage"]["input_tokens"], 33);
+        assert_eq!(value["usage"]["input_basis"], "includes_cache");
+        assert_eq!(value["usage"]["cache_read_input_tokens"], 20);
+        assert_eq!(value["usage"]["cache_write_input_tokens"], 3);
+
+        // A ConverseStream response, its raw event stream bytes fed in
+        // pieces as a gateway passes them through.
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../../libdd-ai-usage/tests/fixtures/provider-usage/stream-bedrock-converse.json"
+        ))
+        .unwrap();
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(fixture["body_base64"].as_str().unwrap())
+            .unwrap();
+        let mut stream = ptr::null_mut();
+        assert_eq!(
+            ddog_ai_usage_stream_new_with(
+                format.as_ptr(),
+                format.len(),
+                false,
+                INCLUSIVE_TOTALS,
+                &mut stream
+            ),
+            Status::Ok
+        );
+        for piece in bytes.chunks(7) {
+            assert_eq!(
+                ddog_ai_usage_stream_feed(stream, piece.as_ptr(), piece.len()),
+                Status::Ok
+            );
+        }
+        assert_eq!(ddog_ai_usage_stream_outcome(stream), Outcome::Completed);
+        let mut out = empty();
+        assert_eq!(ddog_ai_usage_stream_take(stream, &mut out), Status::Ok);
+        let value = json_of(out);
+        assert_eq!(value["usage"]["input_tokens"], 33);
+        assert_eq!(value["usage"]["input_basis"], "includes_cache");
+        assert_eq!(value["service_tier"], "default");
+        assert_eq!(value["outcome"], "completed");
+    }
+}

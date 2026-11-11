@@ -17,8 +17,11 @@
 
 use std::collections::BTreeMap;
 
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as BASE64;
 use serde::Serialize;
 
+use crate::event_stream::{Frames, Message};
 use crate::json::{Json, Prune};
 use crate::number::MAX_SAFE_INTEGER;
 use crate::observation::{
@@ -140,16 +143,21 @@ pub enum UsageFormat {
     /// Google's OpenAI-compatible Gemini endpoint, whose `completion_tokens`
     /// leaves thinking out while `total_tokens` counts it.
     GeminiOpenAiCompat,
+    /// Amazon Bedrock Converse and ConverseStream `TokenUsage`
+    /// (`inputTokens`, `outputTokens`): `inputTokens` leaves cache reads and
+    /// writes out, as AWS documents.
+    BedrockConverse,
 }
 
 impl UsageFormat {
-    pub const ALL: [UsageFormat; 6] = [
+    pub const ALL: [UsageFormat; 7] = [
         UsageFormat::Auto,
         UsageFormat::OpenAiChat,
         UsageFormat::OpenAiResponses,
         UsageFormat::Anthropic,
         UsageFormat::Gemini,
         UsageFormat::GeminiOpenAiCompat,
+        UsageFormat::BedrockConverse,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -160,6 +168,7 @@ impl UsageFormat {
             UsageFormat::Anthropic => "anthropic",
             UsageFormat::Gemini => "gemini",
             UsageFormat::GeminiOpenAiCompat => "gemini_openai_compat",
+            UsageFormat::BedrockConverse => "bedrock_converse",
         }
     }
 
@@ -492,6 +501,15 @@ fn code_text(value: Option<&Json>) -> Option<String> {
 /// the Responses one holds `code` and `message` beside its type), or an
 /// `{"error": ...}` payload that carries no content. `None` otherwise.
 fn provider_error(payload: &Json) -> Option<ProviderError> {
+    if let Some((name, error)) = bedrock_exception(payload) {
+        return Some(ProviderError {
+            name: Some(name.to_string()),
+            code: None,
+            message: member(Some(error), "message")
+                .and_then(Json::as_str)
+                .and_then(|message| safe_text(message, MAX_ERROR_MESSAGE_BYTES)),
+        });
+    }
     let kind = member(Some(payload), "type").and_then(Json::as_str);
     let content = ["choices", "candidates"]
         .iter()
@@ -528,6 +546,24 @@ fn provider_error(payload: &Json) -> Option<ProviderError> {
     (error != ProviderError::default()).then_some(error)
 }
 
+/// The exceptions a ConverseStream or InvokeModelWithResponseStream stream
+/// reports in place of an event, by their event stream names.
+const BEDROCK_EXCEPTIONS: [&str; 5] = [
+    "internalServerException",
+    "modelStreamErrorException",
+    "serviceUnavailableException",
+    "throttlingException",
+    "validationException",
+];
+
+/// The Bedrock stream exception a decoded event is, as an AWS SDK hands it
+/// over (`{"throttlingException": {"message": ...}}`): its name and value.
+fn bedrock_exception(event: &Json) -> Option<(&'static str, &Json)> {
+    BEDROCK_EXCEPTIONS
+        .iter()
+        .find_map(|name| member(Some(event), name).map(|error| (*name, error)))
+}
+
 /// A token count: a whole, non-negative JSON number no larger than
 /// `MAX_SAFE_INTEGER`. Anything else is not a count.
 fn count(value: Option<&Json>) -> Option<u64> {
@@ -560,8 +596,10 @@ fn sum(a: Option<u64>, b: Option<u64>) -> Option<u64> {
 }
 
 /// The usage object of a payload: a response body, or a stream event that
-/// nests it under `response` (Responses) or `message` (Anthropic
-/// `message_start`). A payload that is itself a usage object is read as one.
+/// nests it under `response` (Responses), `message` (Anthropic
+/// `message_start`) or `metadata` (a ConverseStream `metadata` event as an
+/// AWS SDK hands it over). A payload that is itself a usage object is read as
+/// one.
 fn usage_object(payload: &Json) -> Option<&Json> {
     if let Some(usage) = member(Some(payload), "usage") {
         return usage.as_object().map(|_| usage);
@@ -571,16 +609,42 @@ fn usage_object(payload: &Json) -> Option<&Json> {
             return usage.as_object().map(|_| usage);
         }
     }
+    // `metadata` is a common member name: only a Bedrock usage object under
+    // it is read.
+    if let Some(usage) = member(member(Some(payload), "metadata"), "usage")
+        && is_bedrock_usage(Some(usage))
+    {
+        return Some(usage);
+    }
     let object = payload.as_object()?;
     [
         "prompt_tokens",
         "completion_tokens",
         "input_tokens",
         "output_tokens",
+        "inputTokens",
+        "outputTokens",
     ]
     .iter()
     .any(|key| object.contains_key(*key))
     .then_some(payload)
+}
+
+/// The counts of a Bedrock `TokenUsage`, which no other provider spells.
+const BEDROCK_USAGE_KEYS: [&str; 5] = [
+    "inputTokens",
+    "outputTokens",
+    "totalTokens",
+    "cacheReadInputTokens",
+    "cacheWriteInputTokens",
+];
+
+/// Whether `usage` is a Bedrock Converse `TokenUsage` object.
+fn is_bedrock_usage(usage: Option<&Json>) -> bool {
+    usage.and_then(Json::as_object).is_some()
+        && BEDROCK_USAGE_KEYS
+            .iter()
+            .any(|key| member(usage, key).is_some())
 }
 
 fn gemini_usage_object(payload: &Json) -> Option<&Json> {
@@ -602,6 +666,9 @@ fn gemini_usage_object(payload: &Json) -> Option<&Json> {
 fn detect(payload: &Json, usage: Option<&Json>) -> UsageFormat {
     if gemini_usage_object(payload).is_some() {
         return UsageFormat::Gemini;
+    }
+    if is_bedrock_usage(usage) {
+        return UsageFormat::BedrockConverse;
     }
     let has = |key: &str| member(usage, key).is_some();
     if has("prompt_tokens") || has("completion_tokens") {
@@ -771,6 +838,44 @@ fn anthropic_usage(usage: Option<&Json>, embeddings: bool) -> ProviderUsage {
     }
 }
 
+/// Bedrock Converse `TokenUsage`: `inputTokens` is only the input neither
+/// read from nor written to the cache (AWS: the total input is `inputTokens +
+/// cacheReadInputTokens + cacheWriteInputTokens`), and `outputTokens` counts
+/// a model's reasoning, as Anthropic's does. `cacheDetails` splits the writes
+/// by lifetime (`5m`, `1h`).
+fn bedrock_usage(usage: Option<&Json>, embeddings: bool) -> ProviderUsage {
+    let input_tokens = count(member(usage, "inputTokens"));
+    let output_tokens = if embeddings {
+        None
+    } else {
+        count(member(usage, "outputTokens"))
+    };
+    let (mut five_minutes, mut one_hour) = (None, None);
+    for detail in member(usage, "cacheDetails")
+        .and_then(Json::as_array)
+        .unwrap_or_default()
+    {
+        let tokens = count(member(Some(detail), "inputTokens"));
+        match member(Some(detail), "ttl").and_then(Json::as_str) {
+            Some("5m") => five_minutes = sum(five_minutes, tokens),
+            Some("1h") => one_hour = sum(one_hour, tokens),
+            _ => {}
+        }
+    }
+    ProviderUsage {
+        input_basis: input_tokens.map(|_| EXCLUDES_CACHE),
+        input_tokens,
+        output_basis: output_tokens.map(|_| INCLUDES_REASONING),
+        output_tokens,
+        cache_read_input_tokens: count(member(usage, "cacheReadInputTokens")),
+        cache_write_input_tokens: count(member(usage, "cacheWriteInputTokens"))
+            .or_else(|| sum(five_minutes, one_hour)),
+        cache_write_5m_input_tokens: five_minutes,
+        cache_write_1h_input_tokens: one_hour,
+        ..ProviderUsage::default()
+    }
+}
+
 /// Gemini `usageMetadata`. Billed input is the prompt and the tool-use
 /// prompt, which include the cached content. Billed output is the candidates
 /// and the thoughts, except when the candidates already count the thoughts:
@@ -831,6 +936,13 @@ fn service_tier(payload: &Json, usage: Option<&Json>) -> (Option<String>, bool) 
         member(usage, "service_tier"),
         // Vertex AI's `ON_DEMAND` or `PROVISIONED_THROUGHPUT`.
         member(gemini_usage_object(payload), "trafficType"),
+        // Bedrock's `{"type": "priority"}`: the tier that served a Converse
+        // call, in its response or its stream's `metadata` event.
+        member(member(Some(payload), "serviceTier"), "type"),
+        member(
+            member(member(Some(payload), "metadata"), "serviceTier"),
+            "type",
+        ),
     ]
     .into_iter()
     .find_map(text);
@@ -880,6 +992,7 @@ pub fn parse_provider_response(
         UsageFormat::GeminiOpenAiCompat => {
             usage.map(|usage| gemini_compat_usage(Some(usage), embeddings))
         }
+        UsageFormat::BedrockConverse => usage.map(|usage| bedrock_usage(Some(usage), embeddings)),
         UsageFormat::OpenAiResponses => {
             usage.map(|usage| openai_usage(Some(usage), true, embeddings))
         }
@@ -1198,7 +1311,14 @@ enum Candidate {
 /// string is escaped, so generated text cannot contain them. OpenAI's
 /// chunks name the model and tier and carry `"usage": null` in every chunk,
 /// so once both are known a content chunk matches none of them.
-const CANDIDATES: [(&str, Candidate); 12] = [
+const CANDIDATES: [(&str, Candidate); 18] = [
+    // Bedrock events as an AWS SDK hands them over.
+    ("\"messageStop\"", Candidate::Marker),
+    ("\"internalServerException\"", Candidate::Marker),
+    ("\"modelStreamErrorException\"", Candidate::Marker),
+    ("\"serviceUnavailableException\"", Candidate::Marker),
+    ("\"throttlingException\"", Candidate::Marker),
+    ("\"validationException\"", Candidate::Marker),
     ("\"usage\"", Candidate::Member),
     ("\"usageMetadata\"", Candidate::Member),
     ("\"error\"", Candidate::Member),
@@ -1244,6 +1364,20 @@ const EVENT: Prune = Prune::Members(&[
         Prune::Members(&[("finishReason", Prune::All)]),
     ),
     ("choices", Prune::Members(&[])),
+    // Bedrock: a Converse response's tier, and ConverseStream events as an
+    // AWS SDK hands them over (`{"metadata": {...}}`, `{"messageStop":
+    // {...}}`, `{"throttlingException": {...}}`).
+    ("serviceTier", Prune::All),
+    (
+        "metadata",
+        Prune::Members(&[("usage", Prune::All), ("serviceTier", Prune::All)]),
+    ),
+    ("messageStop", Prune::Members(&[])),
+    ("internalServerException", Prune::All),
+    ("modelStreamErrorException", Prune::All),
+    ("serviceUnavailableException", Prune::All),
+    ("throttlingException", Prune::All),
+    ("validationException", Prune::All),
     // A payload that is itself a usage object.
     ("prompt_tokens", Prune::All),
     ("completion_tokens", Prune::All),
@@ -1265,6 +1399,12 @@ const EVENT: Prune = Prune::Members(&[
     ("cachedContentTokenCount", Prune::All),
     ("promptTokensDetails", Prune::All),
     ("candidatesTokensDetails", Prune::All),
+    ("inputTokens", Prune::All),
+    ("outputTokens", Prune::All),
+    ("totalTokens", Prune::All),
+    ("cacheReadInputTokens", Prune::All),
+    ("cacheWriteInputTokens", Prune::All),
+    ("cacheDetails", Prune::All),
 ]);
 
 /// Whether the quoted name ending at `rest` is other than a member whose
@@ -1286,6 +1426,15 @@ fn not_null_member(rest: &str) -> bool {
 /// cut to [`MAX_KEPT_STRING_BYTES`] as they arrive, so a line holding a whole
 /// response is read without holding its text. Only lines that can carry
 /// usage, the model, the tier or a terminal event are decoded.
+///
+/// A stream whose first byte is NUL is an AWS event stream
+/// (`application/vnd.amazon.eventstream`), which no text stream can be: its
+/// messages are read as Bedrock sends them. ConverseStream's `metadata` event
+/// carries the usage and tier, `messageStop` ends the stream, and an
+/// exception message (`throttlingException`, ...) fails it.
+/// InvokeModelWithResponseStream's `chunk` events carry the model's own
+/// events (Anthropic's, for Claude), base64-encoded, which are read as their
+/// format's. A message longer than [`MAX_STREAM_LINE_BYTES`] is skipped.
 #[derive(Debug, Clone)]
 pub struct UsageStream {
     format: UsageFormat,
@@ -1298,7 +1447,14 @@ pub struct UsageStream {
     /// The previous chunk ended in CR: a LF that starts the next one ends no
     /// line of its own.
     after_cr: bool,
+    /// Some byte was fed, so the stream's framing is known.
+    started: bool,
+    /// The messages of an AWS event stream; `None` for server-sent events.
+    frames: Option<Frames>,
 }
+
+/// The `bytes` of an InvokeModelWithResponseStream `chunk` event.
+const CHUNK: Prune = Prune::Members(&[("bytes", Prune::All)]);
 
 impl UsageStream {
     pub fn new(format: UsageFormat, embeddings: bool) -> Self {
@@ -1311,11 +1467,28 @@ impl UsageStream {
             pending: CutStrings::default(),
             skipping: false,
             after_cr: false,
+            started: false,
+            frames: None,
         }
     }
 
     /// Read the next bytes of the stream.
     pub fn feed(&mut self, chunk: &[u8]) {
+        if !self.started {
+            match chunk.first() {
+                None => return,
+                Some(0) => self.frames = Some(Frames::default()),
+                Some(_) => {}
+            }
+            self.started = true;
+        }
+        if let Some(mut frames) = self.frames.take() {
+            frames.feed(chunk, MAX_STREAM_LINE_BYTES, &mut |message| {
+                self.aws_message(message);
+            });
+            self.frames = Some(frames);
+            return;
+        }
         let mut start = 0;
         let mut at = 0;
         if self.after_cr && chunk.first() == Some(&b'\n') {
@@ -1406,6 +1579,89 @@ impl UsageStream {
             && let Ok(data) = std::str::from_utf8(&cut)
         {
             self.data(data.trim());
+        }
+    }
+
+    /// Read one message of an AWS event stream. Only the messages that can
+    /// carry usage, the tier, the end of the stream or a failure are decoded
+    /// and checked; content deltas are passed over.
+    fn aws_message(&mut self, message: &Message<'_>) {
+        let wanted = match message.message_type.unwrap_or("event") {
+            "event" => matches!(
+                message.event_type,
+                Some("chunk" | "metadata" | "messageStop")
+            ),
+            "exception" | "error" => true,
+            _ => false,
+        };
+        if !wanted || !message.is_intact() {
+            return;
+        }
+        let payload = std::str::from_utf8(message.payload).unwrap_or("").trim();
+        match message.message_type.unwrap_or("event") {
+            "exception" => {
+                let name = message
+                    .exception_type
+                    .and_then(|name| safe_text(name, MAX_ERROR_CODE_BYTES));
+                let error = ProviderError {
+                    name: name.clone(),
+                    code: None,
+                    message: Json::parse(payload).ok().and_then(|payload| {
+                        member(Some(&payload), "message")
+                            .and_then(Json::as_str)
+                            .and_then(|message| safe_text(message, MAX_ERROR_MESSAGE_BYTES))
+                    }),
+                };
+                self.fail_with(name, error);
+            }
+            "error" => {
+                let name = message
+                    .error_code
+                    .and_then(|code| safe_text(code, MAX_ERROR_CODE_BYTES));
+                let error = ProviderError {
+                    name: name.clone(),
+                    code: name.clone(),
+                    message: message
+                        .error_message
+                        .and_then(|message| safe_text(message, MAX_ERROR_MESSAGE_BYTES)),
+                };
+                self.fail_with(name, error);
+            }
+            _ => match message.event_type {
+                Some("messageStop") => self.complete(),
+                Some("metadata") => {
+                    if let Ok(metadata) = Json::parse_pruned(payload, EVENT) {
+                        self.response.merge(parse_provider_response(
+                            self.format,
+                            &metadata,
+                            self.embeddings,
+                        ));
+                    }
+                }
+                Some("chunk") => {
+                    // The model's own event, base64-encoded in `bytes`.
+                    let event = Json::parse_pruned(payload, CHUNK).ok().and_then(|chunk| {
+                        let bytes = member(Some(&chunk), "bytes")?.as_str()?;
+                        BASE64.decode(bytes).ok()
+                    });
+                    if let Some(event) = event
+                        && let Ok(event) = std::str::from_utf8(&event)
+                    {
+                        self.data(event.trim());
+                    }
+                }
+                _ => {}
+            },
+        }
+    }
+
+    fn fail_with(&mut self, name: Option<String>, error: ProviderError) {
+        self.fail(name);
+        if error != ProviderError::default() {
+            self.response.merge(ProviderResponse {
+                error: Some(error),
+                ..ProviderResponse::default()
+            });
         }
     }
 
@@ -1507,6 +1763,13 @@ impl UsageStream {
                 self.fail(error_name(Some(error)));
             }
         }
+        // ConverseStream events as an AWS SDK hands them over.
+        if member(Some(event), "messageStop").is_some() {
+            self.complete();
+        }
+        if let Some((name, _)) = bedrock_exception(event) {
+            self.fail(Some(name.to_string()));
+        }
         if let Some(candidates) = member(Some(event), "candidates").and_then(Json::as_array)
             && candidates
                 .iter()
@@ -1555,6 +1818,8 @@ impl UsageStream {
                 pending: CutStrings::default(),
                 skipping: false,
                 after_cr: false,
+                started: true,
+                frames: None,
             };
             last.line(&self.pending.out);
             return (last.response, last.outcome, last.error_name);
@@ -1599,7 +1864,7 @@ fn error_name(error: Option<&Json>) -> Option<String> {
 }
 
 /// Read a whole provider response body: a JSON document, or a stream of
-/// server-sent events that was buffered.
+/// server-sent events or an AWS event stream that was buffered.
 pub fn parse_provider_body(
     format: UsageFormat,
     body: &[u8],
@@ -1885,6 +2150,10 @@ mod tests {
             r#"{"choices":[{"delta":{"content":"x"}}],"error":{"code":500,"message":"boom"}}"#,
             r#"{"prompt_tokens":4,"completion_tokens":2,"total_tokens":6}"#,
             r#"[{"usageMetadata":{"promptTokenCount":1}},{"candidates":[{"finishReason":"STOP"}]}]"#,
+            r#"{"output":{"message":{"content":[{"text":"x"}]}},"stopReason":"end_turn","serviceTier":{"type":"flex"},"usage":{"inputTokens":3,"outputTokens":2,"totalTokens":9,"cacheReadInputTokens":4,"cacheDetails":[{"ttl":"5m","inputTokens":0}]},"metrics":{"latencyMs":5}}"#,
+            r#"{"metadata":{"usage":{"inputTokens":3,"outputTokens":2},"metrics":{"latencyMs":5},"serviceTier":{"type":"default"}}}"#,
+            r#"{"messageStop":{"stopReason":"end_turn"}}"#,
+            r#"{"throttlingException":{"message":"slow down"}}"#,
         ];
         for text in events {
             let whole = Json::parse(text).unwrap();

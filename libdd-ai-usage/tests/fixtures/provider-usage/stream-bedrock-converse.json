@@ -1,0 +1,20 @@
+{
+  "description": "A ConverseStream response, as AWS event stream messages (body_base64): the metadata event carries the usage and tier, after messageStop ended the stream. The numbers are the spec interop case 'Converse stream metadata'.",
+  "format": "auto",
+  "operation_name": "chat",
+  "body_base64": "AAAAhwAAAFLjgYMzCzpldmVudC10eXBlBwAMbWVzc2FnZVN0YXJ0DTpjb250ZW50LXR5cGUHABBhcHBsaWNhdGlvbi9qc29uDTptZXNzYWdlLXR5cGUHAAVldmVudHsicCI6ImFiY2RlZmdoaWoiLCJyb2xlIjoiYXNzaXN0YW50In10WSZKAAAA7QAAAFdAaRhQCzpldmVudC10eXBlBwARY29udGVudEJsb2NrRGVsdGENOmNvbnRlbnQtdHlwZQcAEGFwcGxpY2F0aW9uL2pzb24NOm1lc3NhZ2UtdHlwZQcABWV2ZW50eyJjb250ZW50QmxvY2tJbmRleCI6MCwiZGVsdGEiOnsidGV4dCI6ImdlbmVyYXRlZCB0ZXh0IG5hbWluZyBcInVzYWdlXCIsIFwibWV0YWRhdGFcIiBhbmQgXCJtZXNzYWdlU3RvcFwiIGlzIG5vdCBhbiBldmVudCJ9LCJwIjoiYWJjIn15l85xAAAAjAAAAFaTPHY7CzpldmVudC10eXBlBwAQY29udGVudEJsb2NrU3RvcA06Y29udGVudC10eXBlBwAQYXBwbGljYXRpb24vanNvbg06bWVzc2FnZS10eXBlBwAFZXZlbnR7ImNvbnRlbnRCbG9ja0luZGV4IjowLCJwIjoiYWJjZGVmZ2gifXGvZBoAAACFAAAAUQBIgekLOmV2ZW50LXR5cGUHAAttZXNzYWdlU3RvcA06Y29udGVudC10eXBlBwAQYXBwbGljYXRpb24vanNvbg06bWVzc2FnZS10eXBlBwAFZXZlbnR7InAiOiJhYmNkIiwic3RvcFJlYXNvbiI6InRvb2xfdXNlIn3ejv14AAABFgAAAE7QugJ5CzpldmVudC10eXBlBwAIbWV0YWRhdGENOmNvbnRlbnQtdHlwZQcAEGFwcGxpY2F0aW9uL2pzb24NOm1lc3NhZ2UtdHlwZQcABWV2ZW50eyJtZXRyaWNzIjp7ImxhdGVuY3lNcyI6MzEyfSwicCI6ImFiIiwic2VydmljZVRpZXIiOnsidHlwZSI6ImRlZmF1bHQifSwidXNhZ2UiOnsiaW5wdXRUb2tlbnMiOjEwLCJvdXRwdXRUb2tlbnMiOjUsInRvdGFsVG9rZW5zIjozOCwiY2FjaGVSZWFkSW5wdXRUb2tlbnMiOjIwLCJjYWNoZVdyaXRlSW5wdXRUb2tlbnMiOjN9ffnwsZE=",
+  "expected": {
+    "usage": {
+      "input_tokens": 10,
+      "input_basis": "excludes_cache",
+      "output_tokens": 5,
+      "output_basis": "includes_reasoning",
+      "cache_read_input_tokens": 20,
+      "cache_write_input_tokens": 3
+    },
+    "response_model": null,
+    "service_tier": "default",
+    "outcome": "completed",
+    "error_name": null
+  }
+}
