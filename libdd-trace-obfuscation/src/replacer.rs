@@ -100,7 +100,7 @@ pub fn replace_trace_tags(trace: &mut [pb::Span], rules: &[ReplaceRule]) {
 /// [`SpanText::from_owned`]. `replace_all_opt` returns `None` on no match, so untouched fields
 /// don't allocate. Like the Datadog Agent, `"*"` rules skip hidden (`_`-prefixed) tags and `env`;
 /// named rules still apply to hidden tags, and rules named `env` are ignored. Rules also apply to
-/// `metrics`, see [`apply_rule_to_metric`].
+/// `metrics` in their decimal form: a result that no longer parses as a float moves to `meta`.
 pub fn replace_span_tags_v04<T: TraceData>(span: &mut v04::Span<T>, rules: &[ReplaceRule]) {
     fn apply_rule<S: SpanText>(rule: &ReplaceRule, field: &mut S) {
         if let Some(new) = replace_all_opt(&rule.re, &rule.repl, rule.no_expansion, field.borrow())
@@ -164,9 +164,8 @@ pub fn replace_span_tags_v04<T: TraceData>(span: &mut v04::Span<T>, rules: &[Rep
 /// Replaces the tag values of a span using the given rules, through the trace model traits.
 ///
 /// Rules apply to the string leaves of attributes, including nested arrays and maps, to booleans
-/// in their `"true"`/`"false"` form and to numbers in their decimal form, see
-/// [`apply_rule_to_attr_value`]. The promoted span tags (`version`, `component`, `span.kind`),
-/// which v0.4 holds in `meta`, are reached through the
+/// in their `"true"`/`"false"` form and to numbers in their decimal form. The promoted span tags
+/// (`version`, `component`, `span.kind`), which v0.4 holds in `meta`, are reached through the
 /// [`CompatSpan`](libdd_trace_model::CompatSpan) view, both by name and by `"*"` rules, matching
 /// [`replace_span_tags_v04`]. Like a tag missing from v0.4 `meta`, an unset promoted tag is never
 /// matched, even by a pattern matching the empty string. A replaced `span.kind` that isn't a known
@@ -411,8 +410,8 @@ fn with_decimal<R>(value: impl Display, f: impl FnOnce(&str) -> R) -> R {
 /// `replace_span_tags` replaces the tag values of a span with a given set of rules.
 ///
 /// Like the Datadog Agent, `"*"` rules skip hidden (`_`-prefixed) tags and `env`; named rules still
-/// apply to hidden tags, and rules named `env` are ignored. Rules also apply to `metrics`, see
-/// [`apply_rule_to_metric`].
+/// apply to hidden tags, and rules named `env` are ignored. Rules also apply to `metrics` in their
+/// decimal form: a result that no longer parses as a float moves to `meta`.
 pub fn replace_span_tags(span: &mut pb::Span, rules: &[ReplaceRule], scratch_space: &mut String) {
     for rule in rules {
         match rule.name.as_ref() {
