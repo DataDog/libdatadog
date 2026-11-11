@@ -846,7 +846,7 @@ fn a_batch_taken_as_intake_series() {
         }
         let mut out = empty();
         assert_eq!(
-            ddog_ai_usage_batch_take_series(batch, 1_700_000_000, &mut out),
+            ddog_ai_usage_batch_take_intake(batch, 1_700_000_000, &mut out),
             Status::Ok
         );
         let value = json_of(out);
@@ -885,7 +885,7 @@ fn a_batch_taken_as_intake_series() {
         );
         // The next take never reuses the second.
         let mut out = empty();
-        ddog_ai_usage_batch_take_series(batch, 1_700_000_000, &mut out);
+        ddog_ai_usage_batch_take_intake(batch, 1_700_000_000, &mut out);
         let value = json_of(out);
         assert_eq!(value["timestamp"], 1_700_000_001);
         assert_eq!(value["series"], json!([]));
@@ -999,4 +999,10 @@ fn inclusive_totals_across_the_boundary() {
         assert_eq!(ddog_ai_usage_stream_take(stream, &mut out), Status::Ok);
         assert_eq!(json_of(out)["usage"]["input_tokens"], 110);
     }
+}
+
+#[test]
+fn the_abi_version_is_stated() {
+    assert_eq!(ddog_ai_usage_abi_version(), 1);
+    assert_eq!(ddog_ai_usage_abi_version(), ABI_VERSION);
 }

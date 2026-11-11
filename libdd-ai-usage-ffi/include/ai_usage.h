@@ -15,6 +15,19 @@
 #include <stdint.h>
 
 /**
+ * The version of this C ABI, which [`ddog_ai_usage_abi_version`] returns.
+ *
+ * Bumped on any breaking change to the C ABI: a function removed, renamed or
+ * given other parameters, a structure or enumeration changed, or a JSON
+ * output changed in a way a binding reads. A binding checks it when it loads
+ * the library and refuses a version other than the one it was written for.
+ * A changed signature also gets a new function name, so a stale binding
+ * fails to resolve the symbol instead of calling it with the wrong
+ * arguments.
+ */
+#define ddog_ai_usage_ABI_VERSION 1
+
+/**
  * The largest DogStatsD datagram over UDP.
  */
 #define ddog_ai_usage_UDP_MAX_PAYLOAD 1432
@@ -261,7 +274,7 @@ void ddog_ai_usage_batch_set_max_len(const struct ddog_ai_usage_Batch *batch, ui
 uint64_t ddog_ai_usage_batch_dropped(const struct ddog_ai_usage_Batch *batch);
 
 /**
- * Tag every series [`ddog_ai_usage_batch_take_series`] takes from `batch`
+ * Tag every series [`ddog_ai_usage_batch_take_intake`] takes from `batch`
  * with this writer's `host.name` (`host[..host_len]`, normalized as Datadog
  * stores a tag value; empty leaves it out) and `process.pid` (`pid`), so
  * replicas and processes never share a series. A null batch is a no-op.
@@ -304,7 +317,7 @@ void ddog_ai_usage_batch_set_writer(const struct ddog_ai_usage_Batch *batch,
  * `batch` must be a live batch from [`ddog_ai_usage_batch_new`], and `out`
  * must be null or writable.
  */
-enum ddog_ai_usage_Status ddog_ai_usage_batch_take_series(const struct ddog_ai_usage_Batch *batch,
+enum ddog_ai_usage_Status ddog_ai_usage_batch_take_intake(const struct ddog_ai_usage_Batch *batch,
                                                           int64_t now_unix_seconds,
                                                           struct ddog_ai_usage_Buffer *out);
 
@@ -632,6 +645,13 @@ bool ddog_ai_usage_is_deployment_value(const uint8_t *value, uintptr_t value_len
  * 0.
  */
 bool ddog_ai_usage_is_person_identifier(const uint8_t *value, uintptr_t value_len);
+
+/**
+ * The version of the C ABI this library implements, [`ABI_VERSION`]. A
+ * binding calls it once when it loads the library and refuses to use a
+ * library whose version differs from the one it was written for.
+ */
+uint32_t ddog_ai_usage_abi_version(void);
 
 /**
  * Release the bytes of a buffer this library wrote, and leave it empty. A

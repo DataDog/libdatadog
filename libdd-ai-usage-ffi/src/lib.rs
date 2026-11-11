@@ -43,6 +43,17 @@ use libdd_ai_usage::{
 };
 use serde_json::{Value, json};
 
+/// The version of this C ABI, which [`ddog_ai_usage_abi_version`] returns.
+///
+/// Bumped on any breaking change to the C ABI: a function removed, renamed or
+/// given other parameters, a structure or enumeration changed, or a JSON
+/// output changed in a way a binding reads. A binding checks it when it loads
+/// the library and refuses a version other than the one it was written for.
+/// A changed signature also gets a new function name, so a stale binding
+/// fails to resolve the symbol instead of calling it with the wrong
+/// arguments.
+pub const ABI_VERSION: u32 = 1;
+
 /// The largest DogStatsD datagram over UDP.
 pub const UDP_MAX_PAYLOAD: usize = 1432;
 /// The largest DogStatsD datagram over a Unix domain socket.
@@ -864,7 +875,7 @@ fn base64(bytes: &[u8]) -> String {
     out
 }
 
-/// Tag every series [`ddog_ai_usage_batch_take_series`] takes from `batch`
+/// Tag every series [`ddog_ai_usage_batch_take_intake`] takes from `batch`
 /// with this writer's `host.name` (`host[..host_len]`, normalized as Datadog
 /// stores a tag value; empty leaves it out) and `process.pid` (`pid`), so
 /// replicas and processes never share a series. A null batch is a no-op.
@@ -918,7 +929,7 @@ pub unsafe extern "C" fn ddog_ai_usage_batch_set_writer(
 /// `batch` must be a live batch from [`ddog_ai_usage_batch_new`], and `out`
 /// must be null or writable.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_ai_usage_batch_take_series(
+pub unsafe extern "C" fn ddog_ai_usage_batch_take_intake(
     batch: *const Batch,
     now_unix_seconds: i64,
     out: *mut Buffer,
@@ -1718,6 +1729,14 @@ pub unsafe extern "C" fn ddog_ai_usage_is_person_identifier(
 ) -> bool {
     // SAFETY: forwarded from the caller.
     catch_unwind(|| unsafe { predicate(value, value_len, is_person_identifier) }).unwrap_or(false)
+}
+
+/// The version of the C ABI this library implements, [`ABI_VERSION`]. A
+/// binding calls it once when it loads the library and refuses to use a
+/// library whose version differs from the one it was written for.
+#[unsafe(no_mangle)]
+pub extern "C" fn ddog_ai_usage_abi_version() -> u32 {
+    ABI_VERSION
 }
 
 /// Release the bytes of a buffer this library wrote, and leave it empty. A

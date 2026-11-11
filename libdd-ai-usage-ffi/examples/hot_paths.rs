@@ -213,7 +213,7 @@ fn main() {
             }
             let start = Instant::now();
             assert_eq!(
-                ddog_ai_usage_batch_take_series(batch, 1, &mut out),
+                ddog_ai_usage_batch_take_intake(batch, 1, &mut out),
                 Status::Ok
             );
             best = best.min(start.elapsed().as_secs_f64() * 1e3);
@@ -221,12 +221,12 @@ fn main() {
         }
         drop_out(&mut out);
     }
-    println!("{:<44} {best:>8.2} ms", "take_series alone, 1k requests");
+    println!("{:<44} {best:>8.2} ms", "take_intake alone, 1k requests");
 
     // A flush: 1,000 requests added, then taken as intake series or as
     // DogStatsD datagrams.
     for (label, intake) in [
-        ("flush: 1k requests, take_series", true),
+        ("flush: 1k requests, take_intake", true),
         ("flush: 1k requests, take_dogstatsd_text", false),
     ] {
         measure_burst(label, || {
@@ -245,7 +245,7 @@ fn main() {
                     );
                 }
                 let status = if intake {
-                    ddog_ai_usage_batch_take_series(batch, 1, &mut out)
+                    ddog_ai_usage_batch_take_intake(batch, 1, &mut out)
                 } else {
                     ddog_ai_usage_batch_take_dogstatsd_text(
                         batch,
