@@ -56,9 +56,17 @@ fn project_round_trip() {
     let series = value["series"].as_array().unwrap();
     assert!(series.iter().any(
         |s| s["name"] == "gen_ai.client.inference.usage.input_tokens"
-            && s["type"] == "count"
-            && s["value"] == 10.0
+            && s["type"] == "rate"
+            && s["interval"] == 10
+            && s["value"] == 1.0
     ));
+    // Every Counter is a Rate over 10 s, and only a Distribution has no
+    // interval.
+    assert!(series.iter().all(|s| match s["type"].as_str() {
+        Some("rate") => s["interval"] == 10,
+        Some("distribution") => s.get("interval").is_none(),
+        _ => false,
+    }));
     let tags = series[0]["tags"].as_array().unwrap();
     assert!(
         tags.iter()
@@ -838,7 +846,7 @@ fn a_batch_taken_as_intake_series() {
         }
         let mut out = empty();
         assert_eq!(
-            ddog_ai_usage_batch_take_series(batch, 10, 1_700_000_000, &mut out),
+            ddog_ai_usage_batch_take_intake(batch, 1_700_000_000, &mut out),
             Status::Ok
         );
         let value = json_of(out);
@@ -850,8 +858,14 @@ fn a_batch_taken_as_intake_series() {
             .iter()
             .find(|s| s["metric"] == "gen_ai.client.inference.usage.input_tokens")
             .unwrap();
-        // Three attempts of 10 input tokens over 10 s.
+        // Three attempts of 10 input tokens over 10 s, as a Rate.
         assert_eq!(input["value"], 3.0);
+        assert!(
+            series
+                .iter()
+                .all(|s| s["type"] == "rate" && s["interval"] == 10),
+            "{series:?}"
+        );
         let tags: Vec<&str> = input["tags"]
             .as_array()
             .unwrap()
@@ -871,7 +885,7 @@ fn a_batch_taken_as_intake_series() {
         );
         // The next take never reuses the second.
         let mut out = empty();
-        ddog_ai_usage_batch_take_series(batch, 10, 1_700_000_000, &mut out);
+        ddog_ai_usage_batch_take_intake(batch, 1_700_000_000, &mut out);
         let value = json_of(out);
         assert_eq!(value["timestamp"], 1_700_000_001);
         assert_eq!(value["series"], json!([]));
@@ -985,4 +999,10 @@ fn inclusive_totals_across_the_boundary() {
         assert_eq!(ddog_ai_usage_stream_take(stream, &mut out), Status::Ok);
         assert_eq!(json_of(out)["usage"]["input_tokens"], 110);
     }
+}
+
+#[test]
+fn the_abi_version_is_stated() {
+    assert_eq!(ddog_ai_usage_abi_version(), 1);
+    assert_eq!(ddog_ai_usage_abi_version(), ABI_VERSION);
 }

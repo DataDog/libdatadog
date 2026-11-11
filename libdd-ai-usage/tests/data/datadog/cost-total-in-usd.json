@@ -1,7 +1,7 @@
 {
   "binding": "0.1.0",
   "case": "cost-total-in-usd",
-  "description": "Two reported costs of 0.1 and 0.2 USD in one second are added as integers, 300000000 nano-USD, and divided once: 0.3. A calculated cost keeps its rate card as a tag, written with / in place of @.",
+  "description": "Two reported costs of 0.1 and 0.2 USD in one second are added as integers, 300000000 nano-USD, and divided once, by 10^9 and the 10 s interval together: 0.03. A calculated cost keeps its rate card as a tag, written with / in place of @.",
   "profile": "gen_ai.client.provider_attempt@0.1.0",
   "historical": false,
   "points": [
@@ -46,8 +46,9 @@
   "expected_series": [
     {
       "name": "trajectory.gen_ai.client.inference.usage.cost",
-      "type": "count",
-      "value": 0.0105,
+      "type": "rate",
+      "interval": 10,
+      "value": 0.00105,
       "tags": [
         "gen_ai.operation.name:chat",
         "gen_ai.provider.name:exampleai",
@@ -59,8 +60,9 @@
     },
     {
       "name": "trajectory.gen_ai.client.inference.usage.cost",
-      "type": "count",
-      "value": 0.3,
+      "type": "rate",
+      "interval": 10,
+      "value": 0.03,
       "tags": [
         "gen_ai.operation.name:chat",
         "gen_ai.provider.name:exampleai",
