@@ -216,12 +216,7 @@ enum ErrorCause {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 enum ErrorWire {
-    DependencyEvaluationFailed {
-        prerequisites: Vec<Str>,
-        cause: ErrorCause,
-    },
-    DependencyCycle,
-    DependencyDepthExceeded,
+    // Preserve the original variant order for nondependency bincode payloads.
     TypeMismatch {
         expected: ExpectedFlagType,
         found: FlagType,
@@ -235,6 +230,12 @@ enum ErrorWire {
     FlagDisabled,
     DefaultAllocationNull,
     Internal(Str),
+    DependencyEvaluationFailed {
+        prerequisites: Vec<Str>,
+        cause: ErrorCause,
+    },
+    DependencyCycle,
+    DependencyDepthExceeded,
 }
 
 impl EvaluationError {
@@ -417,10 +418,42 @@ mod tests {
             serde_json::to_string(&EvaluationError::FlagDisabled).unwrap(),
             "\"FLAG_DISABLED\""
         );
-        assert_eq!(
-            bincode::serialize(&EvaluationError::FlagDisabled).unwrap(),
-            10_u32.to_le_bytes()
-        );
+    }
+
+    #[test]
+    fn nondependency_bincode_encodings_remain_compatible() {
+        // Golden bytes from the original derived EvaluationError representation.
+        // Check both directions: round trips alone cannot detect discriminant changes.
+        let cases: &[(EvaluationError, &[u8])] = &[
+            (
+                EvaluationError::TypeMismatch {
+                    expected: ExpectedFlagType::Boolean,
+                    found: FlagType::String,
+                },
+                &[0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0],
+            ),
+            (EvaluationError::TargetingKeyMissing, &[1, 0, 0, 0]),
+            (EvaluationError::InvalidContext, &[2, 0, 0, 0]),
+            (EvaluationError::ConfigurationParseError, &[3, 0, 0, 0]),
+            (EvaluationError::FlagConfigurationInvalid, &[4, 0, 0, 0]),
+            (EvaluationError::ConfigurationMissing, &[5, 0, 0, 0]),
+            (EvaluationError::FlagUnrecognizedOrDisabled, &[6, 0, 0, 0]),
+            (EvaluationError::FlagDisabled, &[7, 0, 0, 0]),
+            (EvaluationError::DefaultAllocationNull, &[8, 0, 0, 0]),
+            (
+                EvaluationError::Internal("owned".to_owned().into()),
+                &[
+                    9, 0, 0, 0, 5, 0, 0, 0, 0, 0, 0, 0, b'o', b'w', b'n', b'e', b'd',
+                ],
+            ),
+        ];
+        for (error, bytes) in cases {
+            assert_eq!(bincode::serialize(error).unwrap(), *bytes);
+            assert_eq!(
+                bincode::deserialize::<EvaluationError>(bytes).unwrap(),
+                *error
+            );
+        }
     }
 
     #[test]
