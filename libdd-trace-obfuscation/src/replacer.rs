@@ -1,9 +1,10 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use core::fmt::{self, Display, Write as _};
 use libdd_regex::{Regex, Replacer};
 use libdd_trace_model::{
-    AttributeValue, Attributes, AttributesMut, PROMOTED_SPAN_TAGS, SpanMut, TraceChunkMut,
+    AttributeValue, Attributes, AttributesMut, ENV_KEY, PROMOTED_SPAN_TAGS, SpanMut, TraceChunkMut,
     TraceText, ValueArrayMut, ValueMapMut, ValueTypes,
 };
 use libdd_trace_protobuf::pb;
@@ -28,8 +29,10 @@ impl PartialEq for ReplaceRule {
 pub struct ReplaceRule {
     // name specifies the name of the tag that the replace rule addresses. However,
     // some exceptions apply such as:
-    // * "resource.name" will target the resource
-    // * "*" will target all tags and the resource
+    // * "resource.name" will target the resource
+    // * "*" will target all tags and the resource, except hidden (`_`-prefixed) tags and `env`
+    // * "env" rules are ignored: like the Datadog Agent, which drops them when loading its
+    //   configuration, the env is never rewritten since it can be used for sampling and stats
     pub name: String,
 
     // re holds the regex pattern for matching.
@@ -95,8 +98,9 @@ pub fn replace_trace_tags(trace: &mut [pb::Span], rules: &[ReplaceRule]) {
 ///
 /// Fields are the immutable [`SpanText`] type, so matches are written back through
 /// [`SpanText::from_owned`]. `replace_all_opt` returns `None` on no match, so untouched fields
-/// don't allocate. Like the Datadog Agent, `"*"` rules skip hidden (`_`-prefixed) tags; named rules
-/// still apply to them.
+/// don't allocate. Like the Datadog Agent, `"*"` rules skip hidden (`_`-prefixed) tags and `env`;
+/// named rules still apply to hidden tags, and rules named `env` are ignored. Rules also apply to
+/// `metrics`, see [`apply_rule_to_metric`].
 pub fn replace_span_tags_v04<T: TraceData>(span: &mut v04::Span<T>, rules: &[ReplaceRule]) {
     fn apply_rule<S: SpanText>(rule: &ReplaceRule, field: &mut S) {
         if let Some(new) = replace_all_opt(&rule.re, &rule.repl, rule.no_expansion, field.borrow())
@@ -109,10 +113,24 @@ pub fn replace_span_tags_v04<T: TraceData>(span: &mut v04::Span<T>, rules: &[Rep
         match rule.name.as_ref() {
             "*" => {
                 for (key, tag_value) in &mut span.meta {
-                    if !is_hidden_tag(key.as_str()) {
+                    if is_wildcard_replaceable_tag(key.as_str()) {
                         apply_rule(rule, tag_value);
                     }
                 }
+                let meta = &mut span.meta;
+                span.metrics.retain_mut(|key, value| {
+                    if !is_wildcard_replaceable_tag(key.as_str()) {
+                        return true;
+                    }
+                    let Some(text) = apply_rule_to_metric(rule, value) else {
+                        return true;
+                    };
+                    meta.insert_or_replace(
+                        T::Text::from_owned(key.as_str().to_owned()),
+                        T::Text::from_owned(text),
+                    );
+                    false
+                });
                 // The "*" wildcard intentionally applies to `span.resource` as well as
                 // meta tags, matching the Datadog Agent reference implementation in
                 // `pkg/trace/filters/replacer.go` (see the `Replace` and `ReplaceV1`
@@ -122,9 +140,21 @@ pub fn replace_span_tags_v04<T: TraceData>(span: &mut v04::Span<T>, rules: &[Rep
             "resource.name" => {
                 apply_rule(rule, &mut span.resource);
             }
-            _ => {
-                if let Some(tag_value) = span.meta.get_mut(rule.name.as_str()) {
+            ENV_KEY => {}
+            name => {
+                if let Some(tag_value) = span.meta.get_mut(name) {
                     apply_rule(rule, tag_value);
+                }
+                if let Some(text) = span
+                    .metrics
+                    .get_mut(name)
+                    .and_then(|value| apply_rule_to_metric(rule, value))
+                {
+                    span.metrics.remove(name);
+                    span.meta.insert_or_replace(
+                        T::Text::from_owned(name.to_owned()),
+                        T::Text::from_owned(text),
+                    );
                 }
             }
         }
@@ -133,28 +163,33 @@ pub fn replace_span_tags_v04<T: TraceData>(span: &mut v04::Span<T>, rules: &[Rep
 
 /// Replaces the tag values of a span using the given rules, through the trace model traits.
 ///
-/// Rules apply to the string leaves of attributes, including nested arrays and maps, and to
-/// booleans in their `"true"`/`"false"` form. The promoted span tags (`env`, `version`,
-/// `component`, `span.kind`), which v0.4 holds in `meta`, are reached through the
+/// Rules apply to the string leaves of attributes, including nested arrays and maps, to booleans
+/// in their `"true"`/`"false"` form and to numbers in their decimal form, see
+/// [`apply_rule_to_attr_value`]. The promoted span tags (`version`, `component`, `span.kind`),
+/// which v0.4 holds in `meta`, are reached through the
 /// [`CompatSpan`](libdd_trace_model::CompatSpan) view, both by name and by `"*"` rules, matching
 /// [`replace_span_tags_v04`]. Like a tag missing from v0.4 `meta`, an unset promoted tag is never
 /// matched, even by a pattern matching the empty string. A replaced `span.kind` that isn't a known
-/// kind unsets it. Like the Datadog Agent, `"*"` rules skip hidden (`_`-prefixed) attributes.
+/// kind unsets it. Like the Datadog Agent, `"*"` rules skip hidden (`_`-prefixed) attributes and
+/// the env, and rules named `env` are ignored.
 pub fn replace_span_tags_trait<S: SpanMut>(span: &mut S, rules: &[ReplaceRule]) {
     for rule in rules {
         match rule.name.as_ref() {
             "*" => {
-                replace_non_hidden_attributes(span, rule);
+                replace_wildcard_attributes(span, rule);
                 // The "*" wildcard intentionally applies to `span.resource` as well as
                 // meta tags, matching the Datadog Agent reference implementation in
                 // `pkg/trace/filters/replacer.go` (see the `Replace` and `ReplaceV1`
                 // functions, which apply "*" rules to both span meta and `s.Resource`).
                 replace_resource(rule, span);
                 for key in PROMOTED_SPAN_TAGS {
-                    replace_promoted_tag(rule, span, key);
+                    if is_wildcard_replaceable_tag(key) {
+                        replace_promoted_tag(rule, span, key);
+                    }
                 }
             }
             "resource.name" => replace_resource(rule, span),
+            ENV_KEY => {}
             name => match PROMOTED_SPAN_TAGS.into_iter().find(|key| *key == name) {
                 Some(key) => replace_promoted_tag(rule, span, key),
                 None => {
@@ -177,12 +212,13 @@ pub fn replace_span_tags_v1<T: TraceData>(span: &mut v1::Span<T>, rules: &[Repla
 ///
 /// Chunk-level attributes are merged into every emitted span at encode time (see
 /// `collect_attrs_v1` in the agentless encoder), so they need the same scrubbing as span-level
-/// attributes. Like the Datadog Agent, the chunk fields (e.g. the origin) are left untouched.
+/// attributes. Like the Datadog Agent, the chunk fields (e.g. the origin) are left untouched. As
+/// for spans, `"*"` rules skip hidden attributes and `env`, and rules named `env` are ignored.
 pub fn replace_chunk_tags<C: TraceChunkMut>(chunk: &mut C, rules: &[ReplaceRule]) {
     for rule in rules {
         match rule.name.as_ref() {
-            "*" => replace_non_hidden_attributes(chunk, rule),
-            "resource.name" => {}
+            "*" => replace_wildcard_attributes(chunk, rule),
+            "resource.name" | ENV_KEY => {}
             name => {
                 if let Some(value) = chunk.attribute_mut(name) {
                     apply_rule_to_attr_value(rule, value);
@@ -203,12 +239,18 @@ pub(crate) fn is_hidden_tag(key: &str) -> bool {
     key.starts_with('_')
 }
 
-/// Applies `rule` to every non-hidden attribute, leaving hidden (`_`-prefixed) keys untouched.
+/// Whether `"*"` rules may rewrite the tag `key`: like the Datadog Agent, they skip hidden tags
+/// and `env`, since the env can be used for sampling and stats.
+fn is_wildcard_replaceable_tag(key: &str) -> bool {
+    key != ENV_KEY && !is_hidden_tag(key)
+}
+
+/// Applies `rule` to every attribute `"*"` rules may rewrite, see [`is_wildcard_replaceable_tag`].
 ///
 /// Shared by the span and chunk `"*"` passes, which differ only in the container they walk.
-fn replace_non_hidden_attributes<A: AttributesMut>(attrs: &mut A, rule: &ReplaceRule) {
+fn replace_wildcard_attributes<A: AttributesMut>(attrs: &mut A, rule: &ReplaceRule) {
     attrs.retain_attributes(|key, value| {
-        if !is_hidden_tag(key) {
+        if is_wildcard_replaceable_tag(key) {
             apply_rule_to_attr_value(rule, value);
         }
         true
@@ -244,10 +286,16 @@ fn replace_promoted_tag<S: SpanMut>(rule: &ReplaceRule, span: &mut S, key: &'sta
     );
 }
 
-/// Applies `rule` to `value`, recursing into `Array`/`KeyValueList` so nested string leaves are
-/// scrubbed too: the agentless encoder flattens those into plain dotted tags before sending, so
-/// leaving them out here would let matching data (e.g. a `payment: {number: "..."}` attribute)
-/// reach the intake unredacted.
+/// Applies `rule` to `value`, recursing into `Array`/`KeyValueList` so nested leaves are scrubbed
+/// too: the agentless encoder flattens those into plain dotted tags before sending, so leaving
+/// them out here would let matching data (e.g. a `payment: {number: "..."}` attribute) reach the
+/// intake unredacted.
+///
+/// Numbers are matched in their decimal form, see [`with_decimal`]. Like the Datadog Agent, a
+/// replaced number stays a number when the result parses as one (an integer first, then a float)
+/// and becomes a string otherwise, so it moves from `metrics` to `meta` on the wire. `Bytes` are
+/// left untouched: they hold msgpack-encoded `meta_struct` payloads, which a textual replacement
+/// would corrupt.
 fn apply_rule_to_attr_value<V: ValueTypes>(rule: &ReplaceRule, value: &mut AttributeValue<V>) {
     match value {
         AttributeValue::String(s) => {
@@ -276,23 +324,115 @@ fn apply_rule_to_attr_value<V: ValueTypes>(rule: &ReplaceRule, value: &mut Attri
                 *value = AttributeValue::String(V::Text::from(new));
             }
         }
-        AttributeValue::Int(_) | AttributeValue::Float(_) | AttributeValue::Bytes(_) => {}
+        AttributeValue::Int(i) => {
+            if let Some(new) = with_decimal(*i, |s| {
+                replace_all_opt(&rule.re, &rule.repl, rule.no_expansion, s)
+            }) {
+                *value = numeric_attr_from_string(new);
+            }
+        }
+        AttributeValue::Float(f) => {
+            if let Some(new) = with_decimal(*f, |s| {
+                replace_all_opt(&rule.re, &rule.repl, rule.no_expansion, s)
+            }) {
+                *value = numeric_attr_from_string(new);
+            }
+        }
+        AttributeValue::Bytes(_) => {}
     }
+}
+
+/// The value a replaced number is written back as: like the Agent's `SetAttributeFromString`, an
+/// integer if `s` parses as one, else a float if it parses as one, else a string.
+fn numeric_attr_from_string<V: ValueTypes>(s: String) -> AttributeValue<V> {
+    if let Ok(i) = s.parse::<i64>() {
+        AttributeValue::Int(i)
+    } else if let Ok(f) = s.parse::<f64>() {
+        AttributeValue::Float(f)
+    } else {
+        AttributeValue::String(V::Text::from(s))
+    }
+}
+
+/// Applies `rule` to a v0.4/protobuf metric, like the Agent's `replaceNumericTag`: the value is
+/// matched in its decimal form (see [`with_decimal`]) and stays a metric if the result parses as
+/// a float. Otherwise the result is returned: the caller must move it to `meta` under the same
+/// key and remove the metric.
+fn apply_rule_to_metric(rule: &ReplaceRule, value: &mut f64) -> Option<String> {
+    let new = with_decimal(*value, |s| {
+        replace_all_opt(&rule.re, &rule.repl, rule.no_expansion, s)
+    })?;
+    match new.parse::<f64>() {
+        Ok(f) => {
+            *value = f;
+            None
+        }
+        Err(_) => Some(new),
+    }
+}
+
+/// Runs `f` on the decimal form of `value`, formatted without allocating in the common case.
+///
+/// For finite numbers, `Display` produces the same text as the Agent's `strconv.FormatInt(v, 10)`
+/// and `strconv.FormatFloat(v, 'f', -1, 64)`: the shortest round-tripping digits, never in
+/// exponent form. Infinities differ (`inf` instead of `+Inf`). Floats too long for the stack
+/// buffer (e.g. `1e300`) fall back to a heap allocation.
+fn with_decimal<R>(value: impl Display, f: impl FnOnce(&str) -> R) -> R {
+    struct StackBuf {
+        buf: [u8; 64],
+        len: usize,
+    }
+    impl fmt::Write for StackBuf {
+        fn write_str(&mut self, s: &str) -> fmt::Result {
+            let end = self.len.checked_add(s.len()).ok_or(fmt::Error)?;
+            let dst = self.buf.get_mut(self.len..end).ok_or(fmt::Error)?;
+            dst.copy_from_slice(s.as_bytes());
+            self.len = end;
+            Ok(())
+        }
+    }
+
+    let mut stack = StackBuf {
+        buf: [0; 64],
+        len: 0,
+    };
+    if write!(stack, "{value}").is_ok()
+        // Only whole `&str`s are copied in, so this can't fail.
+        && let Some(s) = stack
+            .buf
+            .get(..stack.len)
+            .and_then(|bytes| core::str::from_utf8(bytes).ok())
+    {
+        return f(s);
+    }
+    f(&value.to_string())
 }
 
 /// `replace_span_tags` replaces the tag values of a span with a given set of rules.
 ///
-/// Like the Datadog Agent, `"*"` rules skip hidden (`_`-prefixed) tags; named rules still apply to
-/// them.
+/// Like the Datadog Agent, `"*"` rules skip hidden (`_`-prefixed) tags and `env`; named rules still
+/// apply to hidden tags, and rules named `env` are ignored. Rules also apply to `metrics`, see
+/// [`apply_rule_to_metric`].
 pub fn replace_span_tags(span: &mut pb::Span, rules: &[ReplaceRule], scratch_space: &mut String) {
     for rule in rules {
         match rule.name.as_ref() {
             "*" => {
                 for (key, tag_value) in &mut span.meta {
-                    if !is_hidden_tag(key) {
+                    if is_wildcard_replaceable_tag(key) {
                         rule.apply(tag_value, scratch_space);
                     }
                 }
+                let meta = &mut span.meta;
+                span.metrics.retain(|key, value| {
+                    if !is_wildcard_replaceable_tag(key) {
+                        return true;
+                    }
+                    let Some(text) = apply_rule_to_metric(rule, value) else {
+                        return true;
+                    };
+                    meta.insert(key.clone(), text);
+                    false
+                });
                 // The "*" wildcard intentionally applies to `span.resource` as well as
                 // meta tags, matching the Datadog Agent reference implementation in
                 // `pkg/trace/filters/replacer.go` (see the `Replace` and `ReplaceV1`
@@ -302,9 +442,18 @@ pub fn replace_span_tags(span: &mut pb::Span, rules: &[ReplaceRule], scratch_spa
             "resource.name" => {
                 rule.apply(&mut span.resource, scratch_space);
             }
-            _ => {
-                if let Some(tag_value) = span.meta.get_mut(&rule.name) {
+            ENV_KEY => {}
+            name => {
+                if let Some(tag_value) = span.meta.get_mut(name) {
                     rule.apply(tag_value, scratch_space);
+                }
+                if let Some(text) = span
+                    .metrics
+                    .get_mut(name)
+                    .and_then(|value| apply_rule_to_metric(rule, value))
+                {
+                    span.metrics.remove(name);
+                    span.meta.insert(rule.name.clone(), text);
                 }
             }
         }
@@ -448,7 +597,7 @@ mod tests {
     use libdd_tinybytes::BytesString;
     use libdd_trace_model::{Attributes as _, Span as _, TraceChunk as _};
     use libdd_trace_protobuf::pb;
-    use libdd_trace_utils::span::{BytesData, v1, v04};
+    use libdd_trace_utils::span::{BytesData, v1, v04, vec_map::VecMap};
     use std::collections::HashMap;
 
     fn new_test_span_with_tags(tags: HashMap<&str, &str>) -> pb::Span {
@@ -683,7 +832,8 @@ mod tests {
             ..Default::default()
         };
         // A stale attribute named like a promoted tag, e.g. one the decoder didn't promote.
-        span.attributes.insert(bs("env"), str_attr("stale-secret"));
+        span.attributes
+            .insert(bs("version"), str_attr("stale-secret"));
         replacer::replace_span_tags_v1(&mut span, &rules);
         assert_eq!(
             (
@@ -693,14 +843,15 @@ mod tests {
                 span.span_kind()
             ),
             (
-                Some("env-redacted"),
+                // Like the Datadog Agent, "*" rules never rewrite the env.
+                Some("env-secret"),
                 Some("1.0-redacted"),
                 Some("comp-redacted"),
                 Some("client")
             )
         );
         // The replaced field is left as the only value.
-        assert!(!span.has_attribute("env"));
+        assert!(!span.has_attribute("version"));
     }
 
     #[test]
@@ -708,17 +859,17 @@ mod tests {
     fn named_rules_replace_promoted_span_tag_fields_v1() {
         let rules = rules(
             r#"[
-                {"name": "env", "pattern": "prod", "repl": "staging"},
+                {"name": "version", "pattern": "beta", "repl": "rc"},
                 {"name": "span.kind", "pattern": "server", "repl": "custom"}
             ]"#,
         );
         let mut span = v1::SpanBytes {
-            env: bs("prod"),
+            version: bs("1.0-beta"),
             span_kind: v1::SpanKind::Server,
             ..Default::default()
         };
         replacer::replace_span_tags_v1(&mut span, &rules);
-        assert_eq!(span.env(), Some("staging"));
+        assert_eq!(span.version(), Some("1.0-rc"));
         // A span kind outside the OTel ones can't be stored: it reads as unset.
         assert_eq!(span.span_kind(), None);
         assert!(span.attributes.is_empty());
@@ -742,7 +893,7 @@ mod tests {
         // Like a tag missing from v0.4 `meta`, even a pattern matching the empty string.
         let rules = rules(
             r#"[
-                {"name": "env", "pattern": "^$", "repl": "none"},
+                {"name": "version", "pattern": "^$", "repl": "none"},
                 {"name": "*", "pattern": "^$", "repl": "empty"}
             ]"#,
         );
@@ -765,11 +916,184 @@ mod tests {
     fn star_rule_scrubs_stale_promoted_attribute_when_field_is_unset_v1() {
         let rules = rules(r#"[{"name": "*", "pattern": "secret", "repl": "?"}]"#);
         let mut span = v1::SpanBytes::default();
-        span.attributes.insert(bs("env"), str_attr("secret"));
+        span.attributes.insert(bs("component"), str_attr("secret"));
         replacer::replace_span_tags_v1(&mut span, &rules);
         // The field stays unset, and the plain attribute is scrubbed like any other.
-        assert_eq!(span.env(), None);
-        assert_eq!(span.attribute_str("env"), Some("?"));
+        assert_eq!(span.component(), None);
+        assert_eq!(span.attribute_str("component"), Some("?"));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn env_is_never_rewritten_in_any_format() {
+        // Like the Datadog Agent: "*" rules skip the env and rules named "env" are ignored, so
+        // the env used for sampling and stats can't change. Other tags are still rewritten.
+        let rules = rules(
+            r#"[
+                {"name": "*", "pattern": "secret", "repl": "?"},
+                {"name": "*", "pattern": "^42$", "repl": "secret"},
+                {"name": "env", "pattern": "secret", "repl": "?"}
+            ]"#,
+        );
+
+        let mut pb_span =
+            new_test_span_with_tags(HashMap::from([("env", "secret"), ("visible", "secret")]));
+        pb_span.metrics.insert("env".to_owned(), 42.0);
+        replacer::replace_trace_tags(core::slice::from_mut(&mut pb_span), &rules);
+        assert_eq!(pb_span.meta["env"], "secret");
+        assert_eq!(pb_span.meta["visible"], "?");
+        assert_eq!(pb_span.metrics.get("env"), Some(&42.0));
+
+        let mut v04_span = v04::SpanBytes::default();
+        v04_span.meta.insert(bs("env"), bs("secret"));
+        v04_span.meta.insert(bs("visible"), bs("secret"));
+        v04_span.metrics.insert(bs("env"), 42.0);
+        replacer::replace_span_tags_v04(&mut v04_span, &rules);
+        assert_eq!(v04_span.meta.get("env").unwrap().as_str(), "secret");
+        assert_eq!(v04_span.meta.get("visible").unwrap().as_str(), "?");
+        assert_eq!(v04_span.metrics.get("env"), Some(&42.0));
+
+        let mut v1_span = v1::SpanBytes {
+            env: bs("secret"),
+            ..Default::default()
+        };
+        // A stale attribute named like the env, e.g. one the decoder didn't promote.
+        v1_span.attributes.insert(bs("env"), str_attr("secret"));
+        v1_span.attributes.insert(bs("visible"), str_attr("secret"));
+        replacer::replace_span_tags_v1(&mut v1_span, &rules);
+        assert_eq!(v1_span.env(), Some("secret"));
+        assert_eq!(v1_span.attributes.get("env"), Some(&str_attr("secret")));
+        assert_eq!(v1_span.attribute_str("visible"), Some("?"));
+
+        let mut chunk = v1::TraceChunkBytes::default();
+        chunk.attributes.insert(bs("env"), str_attr("secret"));
+        chunk.attributes.insert(bs("visible"), str_attr("secret"));
+        replacer::replace_chunk_tags_v1(&mut chunk, &rules);
+        assert_eq!(chunk.attribute_str("env"), Some("secret"));
+        assert_eq!(chunk.attribute_str("visible"), Some("?"));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn rules_match_numeric_attributes_in_decimal_form_v1() {
+        let rules = rules(
+            r#"[
+                {"name": "*", "pattern": "^4111111111111111$", "repl": "?"},
+                {"name": "*", "pattern": "^42$", "repl": "43"},
+                {"name": "*", "pattern": "5$", "repl": "25"},
+                {"name": "ratio", "pattern": "^0\\.", "repl": "1."}
+            ]"#,
+        );
+        let mut span = v1::SpanBytes::default();
+        let attrs = [
+            // A non-number result becomes a string.
+            ("card", v1::AttributeValue::Int(4_111_111_111_111_111)),
+            // A number result stays a number, re-typed from its text like the Agent does.
+            ("count", v1::AttributeValue::Int(42)),
+            ("latency", v1::AttributeValue::Float(1.5)),
+            ("ratio", v1::AttributeValue::Float(0.75)),
+            ("whole", v1::AttributeValue::Float(42.0)),
+            // Nested numbers are rewritten too.
+            (
+                "list",
+                v1::AttributeValue::Array(vec![v1::AttributeValue::Int(42)]),
+            ),
+            // Not a match.
+            ("other", v1::AttributeValue::Int(7)),
+        ];
+        for (key, value) in attrs {
+            span.attributes.insert(bs(key), value);
+        }
+        replacer::replace_span_tags_v1(&mut span, &rules);
+        let get = |key: &str| span.attributes.get(key).cloned();
+        assert_eq!(get("card"), Some(str_attr("?")));
+        assert_eq!(get("count"), Some(v1::AttributeValue::Int(43)));
+        assert_eq!(get("latency"), Some(v1::AttributeValue::Float(1.25)));
+        // Rules apply in order: `0.75` -> `0.725` by the "5$" rule, then `1.725` by name.
+        assert_eq!(get("ratio"), Some(v1::AttributeValue::Float(1.725)));
+        // `42.0` is formatted as `42`, like Go's `FormatFloat(v, 'f', -1, 64)`.
+        assert_eq!(get("whole"), Some(v1::AttributeValue::Int(43)));
+        assert_eq!(
+            get("list"),
+            Some(v1::AttributeValue::Array(vec![v1::AttributeValue::Int(43)]))
+        );
+        assert_eq!(get("other"), Some(v1::AttributeValue::Int(7)));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn rules_leave_bytes_attributes_untouched_v1() {
+        let rules = rules(r#"[{"name": "*", "pattern": "secret", "repl": "?"}]"#);
+        let bytes = v1::AttributeValue::Bytes(libdd_tinybytes::Bytes::from_static(b"\xa6secret"));
+        let mut span = v1::SpanBytes::default();
+        span.attributes.insert(bs("blob"), bytes.clone());
+        replacer::replace_span_tags_v1(&mut span, &rules);
+        assert_eq!(span.attributes.get("blob"), Some(&bytes));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn rules_apply_to_metrics_like_the_agent() {
+        let rules = rules(
+            r#"[
+                {"name": "*", "pattern": "^4111111111111111$", "repl": "?"},
+                {"name": "*", "pattern": "^42$", "repl": "43"},
+                {"name": "named", "pattern": "^7$", "repl": "seven"}
+            ]"#,
+        );
+        let metrics = [
+            // A non-number result moves to meta.
+            ("card", 4_111_111_111_111_111.0),
+            ("named", 7.0),
+            // A number result stays a metric.
+            ("count", 42.0),
+            // Hidden metrics are skipped by "*".
+            ("_dd.hidden", 42.0),
+            ("other", 1.5),
+        ];
+
+        let mut pb_span = new_test_span_with_tags(HashMap::new());
+        pb_span.metrics = metrics
+            .iter()
+            .map(|(key, value)| ((*key).to_owned(), *value))
+            .collect();
+        replacer::replace_trace_tags(core::slice::from_mut(&mut pb_span), &rules);
+        assert_eq!(pb_span.meta.get("card").map(String::as_str), Some("?"));
+        assert_eq!(pb_span.meta.get("named").map(String::as_str), Some("seven"));
+        assert!(!pb_span.metrics.contains_key("card"));
+        assert!(!pb_span.metrics.contains_key("named"));
+        assert_eq!(pb_span.metrics.get("count"), Some(&43.0));
+        assert_eq!(pb_span.metrics.get("_dd.hidden"), Some(&42.0));
+        assert_eq!(pb_span.metrics.get("other"), Some(&1.5));
+
+        let mut v04_span = v04::SpanBytes::default();
+        for (key, value) in metrics {
+            v04_span.metrics.insert(bs(key), value);
+        }
+        replacer::replace_span_tags_v04(&mut v04_span, &rules);
+        let meta = |key: &str| v04_span.meta.get(key).map(BytesString::as_str);
+        assert_eq!(meta("card"), Some("?"));
+        assert_eq!(meta("named"), Some("seven"));
+        assert_eq!(v04_span.metrics.get("card"), None);
+        assert_eq!(v04_span.metrics.get("named"), None);
+        assert_eq!(v04_span.metrics.get("count"), Some(&43.0));
+        assert_eq!(v04_span.metrics.get("_dd.hidden"), Some(&42.0));
+        assert_eq!(v04_span.metrics.get("other"), Some(&1.5));
+    }
+
+    #[test]
+    fn decimal_form_matches_go_formatting() {
+        let fmt = |v: f64| super::with_decimal(v, str::to_owned);
+        assert_eq!(fmt(42.0), "42");
+        assert_eq!(fmt(1.5), "1.5");
+        assert_eq!(fmt(1e-7), "0.0000001");
+        assert_eq!(fmt(4_111_111_111_111_111.0), "4111111111111111");
+        // Too long for the stack buffer: falls back to the heap.
+        assert_eq!(fmt(1e100), format!("1{}", "0".repeat(100)));
+        assert_eq!(
+            super::with_decimal(i64::MIN, str::to_owned),
+            i64::MIN.to_string()
+        );
     }
 
     #[test]
@@ -789,5 +1113,144 @@ mod tests {
         replacer::replace_chunk_tags_v1(&mut chunk, &rules);
         assert_eq!(chunk.origin(), "synthetics");
         assert_eq!(chunk.attribute_str("team"), Some("?"));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn chunk_rules_treat_attributes_named_like_promoted_chunk_tags_as_plain_attributes() {
+        let star = rules(r#"[{"name": "*", "pattern": "secret", "repl": "?"}]"#);
+        let named = rules(
+            r#"[
+                {"name": "_dd.origin", "pattern": "secret", "repl": "?"},
+                {"name": "_sampling_priority_v1", "pattern": "secret", "repl": "?"},
+                {"name": "_dd.p.dm", "pattern": "secret", "repl": "?"}
+            ]"#,
+        );
+        let new_chunk = || {
+            let mut chunk = v1::TraceChunkBytes {
+                origin: bs("secret"),
+                priority: Some(1),
+                sampling_mechanism: Some(4),
+                ..Default::default()
+            };
+            // `origin` isn't a promoted name: it is an ordinary attribute.
+            chunk.attributes.insert(bs("origin"), str_attr("secret"));
+            // Attributes named like the promoted chunk tags, e.g. ones a decoder didn't promote.
+            for key in libdd_trace_model::PROMOTED_CHUNK_TAGS {
+                chunk.attributes.insert(bs(key), str_attr("secret"));
+            }
+            chunk
+        };
+        let assert_fields_untouched = |chunk: &v1::TraceChunkBytes| {
+            assert_eq!(chunk.origin(), "secret");
+            assert_eq!(chunk.priority, Some(1));
+            assert_eq!(chunk.sampling_mechanism, Some(4));
+        };
+
+        // "*" scrubs the ordinary `origin` attribute but skips the hidden promoted names.
+        let mut chunk = new_chunk();
+        replacer::replace_chunk_tags_v1(&mut chunk, &star);
+        assert_fields_untouched(&chunk);
+        assert_eq!(chunk.attributes.get("origin"), Some(&str_attr("?")));
+        for key in libdd_trace_model::PROMOTED_CHUNK_TAGS {
+            assert_eq!(
+                chunk.attributes.get(key),
+                Some(&str_attr("secret")),
+                "{key}"
+            );
+        }
+
+        // Named rules reach the plain attributes, never the fields.
+        let mut chunk = new_chunk();
+        replacer::replace_chunk_tags_v1(&mut chunk, &named);
+        assert_fields_untouched(&chunk);
+        assert_eq!(chunk.attributes.get("origin"), Some(&str_attr("secret")));
+        for key in libdd_trace_model::PROMOTED_CHUNK_TAGS {
+            assert_eq!(chunk.attributes.get(key), Some(&str_attr("?")), "{key}");
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn named_rules_can_target_hidden_tags_in_every_format() {
+        let rules = rules(r#"[{"name": "_dd.hidden", "pattern": "secret", "repl": "?"}]"#);
+
+        let mut pb_span = new_test_span_with_tags(HashMap::from([("_dd.hidden", "secret")]));
+        replacer::replace_trace_tags(core::slice::from_mut(&mut pb_span), &rules);
+        assert_eq!(pb_span.meta["_dd.hidden"], "?");
+
+        let mut v04_span = v04::SpanBytes::default();
+        v04_span.meta.insert(bs("_dd.hidden"), bs("secret"));
+        replacer::replace_span_tags_v04(&mut v04_span, &rules);
+        assert_eq!(v04_span.meta.get("_dd.hidden").unwrap().as_str(), "?");
+
+        let mut chunk = v1::TraceChunkBytes::default();
+        chunk
+            .attributes
+            .insert(bs("_dd.hidden"), str_attr("secret"));
+        replacer::replace_chunk_tags_v1(&mut chunk, &rules);
+        assert_eq!(chunk.attribute_str("_dd.hidden"), Some("?"));
+    }
+
+    /// `[String, [String], Int]`: a leaf, a nested leaf and a non-string leaf.
+    fn nested_array(s: &str) -> v1::AttributeValue<BytesData> {
+        v1::AttributeValue::Array(vec![
+            str_attr(s),
+            v1::AttributeValue::Array(vec![str_attr(s)]),
+            v1::AttributeValue::Bool(true),
+        ])
+    }
+
+    /// `{inner: String, nested: {deep: String}}`.
+    fn nested_map(s: &str) -> v1::AttributeValue<BytesData> {
+        let mut deep = VecMap::new();
+        deep.insert(bs("deep"), str_attr(s));
+        v1::AttributeValue::KeyValueList(
+            [
+                (bs("inner"), str_attr(s)),
+                (bs("nested"), v1::AttributeValue::KeyValueList(deep)),
+            ]
+            .into_iter()
+            .collect(),
+        )
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn rules_recurse_into_arrays_and_maps_v1() {
+        for json in [
+            r#"[{"name": "*", "pattern": "secret", "repl": "?"}]"#,
+            r#"[
+                {"name": "arr", "pattern": "secret", "repl": "?"},
+                {"name": "map", "pattern": "secret", "repl": "?"}
+            ]"#,
+        ] {
+            let rules = rules(json);
+            let mut span = v1::SpanBytes::default();
+            span.attributes.insert(bs("arr"), nested_array("secret"));
+            span.attributes.insert(bs("map"), nested_map("secret"));
+            replacer::replace_span_tags_v1(&mut span, &rules);
+            assert_eq!(
+                span.attributes.get("arr"),
+                Some(&nested_array("?")),
+                "{json}"
+            );
+            assert_eq!(span.attributes.get("map"), Some(&nested_map("?")), "{json}");
+
+            let mut chunk = v1::TraceChunkBytes::default();
+            chunk.attributes.insert(bs("arr"), nested_array("secret"));
+            chunk.attributes.insert(bs("map"), nested_map("secret"));
+            replacer::replace_chunk_tags_v1(&mut chunk, &rules);
+            assert_eq!(
+                chunk.attributes.get("arr"),
+                Some(&nested_array("?")),
+                "{json}"
+            );
+            assert_eq!(
+                chunk.attributes.get("map"),
+                Some(&nested_map("?")),
+                "{json}"
+            );
+        }
     }
 }
