@@ -286,7 +286,8 @@ impl SendData {
                     }
                 }
             }
-            // TODO: v0.4/v0.5 payloads are not converted to protobuf and are silently dropped.
+            // TODO(APMSP-4270): v0.4/v0.5 payloads are not converted to protobuf and are silently
+            // dropped.
             _ => return result,
         };
 
@@ -673,6 +674,8 @@ mod tests {
                             && idx_payload.strings.first().is_some_and(String::is_empty)
                             && resolve(idx_payload.language_name_ref) == Some("test-lang")
                             && idx_payload.chunks[0].trace_id == [1; 16]
+                            // The chunk leaves priority unset; it must go out as PriorityNone.
+                            && idx_payload.chunks[0].priority == -128
                             && span.span_id == 222
                             && resolve(span.service_ref) == Some("test-service")
                     });
