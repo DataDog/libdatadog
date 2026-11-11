@@ -88,7 +88,6 @@ pub struct SpanToClose {
     #[serde(default)]
     pub r#type: String,
     pub start_unix_ns: i64,
-    /// `internal`, `server`, `client`, `producer` or `consumer`.
     #[serde(default)]
     pub kind: Option<String>,
     #[serde(default)]
