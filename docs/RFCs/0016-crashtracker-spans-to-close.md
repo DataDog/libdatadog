@@ -326,11 +326,10 @@ reports go to SHOULD set `agent_url`.
 - **The spans and the report are sent concurrently.** Neither waits on
   the other, and neither is lost if the other fails.
 - **One request per block:** `POST /v1.0/traces` with a v1 msgpack
-  body. No retry.
-- **Agents without v1:** an agent that does not serve `/v1.0/traces`
-  replies 404. The receiver then sends the same finished spans, encoded
-  as v0.4, to `/v0.4/traces`, with the same headers. Both bodies are
-  encoded while preparing, and both attempts share one 3-second budget.
+  body. No retry, and no v0.4 fallback. The first consumer (dd-trace-c)
+  already speaks v1, and a paired agent is expected to serve
+  `/v1.0/traces`. A 404 fails like any other non-2xx reply. The request
+  has a 3-second budget.
 - **Failures** (connection error, timeout or any other non-2xx reply) are
   written to the receiver's stderr, since the report is already on its
   way.
