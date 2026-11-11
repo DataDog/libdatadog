@@ -35,16 +35,11 @@ use libdd_trace_utils::span::v1::{
 };
 use libdd_trace_utils::span::vec_map::VecMap;
 use std::borrow::Cow;
-use std::collections::HashMap;
 use std::time::Duration;
 
 const SUBMIT_TIMEOUT: Duration = Duration::from_secs(3);
 /// Where v1 payloads go.
 const V1_TRACES_PATH: &str = "/v1.0/traces";
-/// Marks a top-level span when `1`: the key the agent (and the receiver) writes.
-const TOP_LEVEL_KEY: &str = "_top_level";
-/// Marks a top-level span when `1`: the key a tracer writes.
-const TRACER_TOP_LEVEL_KEY: &str = "_dd.top_level";
 /// Kept by the agent's samplers: crashed spans are rare and worth keeping.
 const USER_KEEP: i32 = 2;
 
@@ -201,27 +196,10 @@ impl<'a> From<&'a SpansToClose> for TracerPayloadSlice<'a> {
     }
 }
 
-/// The trace as a v1 chunk. Spans the SDK did not mark top-level or not are
-/// marked from the block.
+/// The trace as a v1 chunk. Top-level markers are attributes like any other:
+/// a value the SDK staged is sent, and the receiver writes none.
 impl<'a> From<&'a TraceToClose> for TraceChunk<SliceData<'a>> {
     fn from(trace: &'a TraceToClose) -> Self {
-        let services: HashMap<u64, &str> = trace
-            .spans
-            .iter()
-            .map(|span| (span.span_id, span.service.as_str()))
-            .collect();
-        let spans = trace
-            .spans
-            .iter()
-            .map(|described| {
-                let mut span = Span::from(described);
-                if !has_top_level_marker(described) && is_top_level(described, &services) {
-                    span.attributes
-                        .insert(Cow::Borrowed(TOP_LEVEL_KEY), AttributeValue::Float(1.0));
-                }
-                span
-            })
-            .collect();
         TraceChunk {
             trace_id: trace.trace_id.to_be_bytes(),
             priority: trace.priority,
@@ -229,30 +207,9 @@ impl<'a> From<&'a TraceToClose> for TraceChunk<SliceData<'a>> {
             sampling_mechanism: trace.sampling_mechanism,
             dropped_trace: false,
             attributes: attributes(&trace.attributes),
-            spans,
+            spans: trace.spans.iter().map(Span::from).collect(),
         }
     }
-}
-
-/// Whether the SDK staged a top-level marker. It is sent as is, like any
-/// attribute, and the agent reads it as usual: `1` in either key is top-level.
-/// Only the SDK knows for a span whose parent is missing from the block
-/// because it was already sent or is described in another block.
-fn has_top_level_marker(span: &SpanToClose) -> bool {
-    span.attributes.contains_key(TOP_LEVEL_KEY)
-        || span.attributes.contains_key(TRACER_TOP_LEVEL_KEY)
-}
-
-/// Whether the block shows `span` as top-level: a root, or a span whose parent
-/// is from another service or not in the block (remote, as the agent decides).
-/// `services` maps the trace's span IDs to their services.
-fn is_top_level(span: &SpanToClose, services: &HashMap<u64, &str>) -> bool {
-    if span.parent_id == 0 {
-        return true;
-    }
-    services
-        .get(&span.parent_id)
-        .is_none_or(|&parent| parent != span.service)
 }
 
 impl<'a> From<&'a SpanToClose> for Span<SliceData<'a>> {
@@ -301,6 +258,9 @@ fn attributes(attributes: &Attributes) -> VecMap<Cow<'_, str>, AttributeValue<Sl
 /// about its process. The body's own headers are added when it is sent.
 fn request_headers(block: &SpansToClose) -> anyhow::Result<Vec<(HeaderName, HeaderValue)>> {
     let p = &block.process;
+    // The SDK decides which spans are top-level. This keeps the agent from
+    // recomputing that on a chunk of only the spans the crash ended, which
+    // would mark a span top-level whenever its parent is absent from the chunk.
     let mut headers = vec![(
         HeaderName::from_static("datadog-client-computed-top-level"),
         HeaderValue::from_static("yes"),
@@ -560,9 +520,6 @@ mod tests {
             attr(rank, "done"),
             Some(AttributeValue::Bool(false))
         ));
-        // A root span is top-level; a child of the same service is not.
-        assert!(matches!(attr(rank, "_top_level"), Some(AttributeValue::Float(f)) if *f == 1.0));
-
         assert_eq!(step.parent_id, 7);
         assert_eq!(step.resource, "step 12");
         assert_eq!(step.span_kind, SpanKind::Client);
@@ -836,71 +793,6 @@ mod tests {
         );
     }
 
-    fn top_levels(block: &str) -> Vec<bool> {
-        let block = SpansToClose::parse(block).unwrap();
-        let submission = prepare(&block, &crash(START + 1, None), None).unwrap();
-        let (payload, _) = decode_v1::from_slice(&submission.body).unwrap();
-        payload.chunks[0]
-            .spans
-            .iter()
-            .map(|span| {
-                [TOP_LEVEL_KEY, TRACER_TOP_LEVEL_KEY].iter().any(|key| {
-                    matches!(
-                        span.attributes.get(*key),
-                        Some(AttributeValue::Int(1)) | Some(AttributeValue::Float(1.0))
-                    )
-                })
-            })
-            .collect()
-    }
-
-    #[test]
-    fn top_level_comes_from_the_sdk_when_the_parent_is_not_in_the_block() {
-        let spans = |children: &str| {
-            format!(
-                r#"{{"version":1,"agent_url":"http://agent:8126","traces":[{{
-                    "trace_id":"000000000000000000000000000000ff","spans":[{children}]}}]}}"#
-            )
-        };
-        // Parent missing from the block, nothing said: treated as remote.
-        assert_eq!(
-            top_levels(&spans(
-                r#"{"span_id":"0000000000000002","parent_id":"0000000000000001",
-                    "service":"web","name":"child","start_unix_ns":5}"#
-            )),
-            [true]
-        );
-        // Parent already sent, same service: the SDK says not top-level.
-        assert_eq!(
-            top_levels(&spans(
-                r#"{"span_id":"0000000000000002","parent_id":"0000000000000001",
-                    "service":"web","name":"child","start_unix_ns":5,"attributes":{"_top_level":0}}"#
-            )),
-            [false]
-        );
-        // The SDK can also mark a span top-level that the block alone would not.
-        assert_eq!(
-            top_levels(&spans(
-                r#"{"span_id":"0000000000000001","service":"web","name":"root","start_unix_ns":5},
-                   {"span_id":"0000000000000002","parent_id":"0000000000000001",
-                    "service":"web","name":"child","start_unix_ns":6,
-                    "attributes":{"_top_level":1}}"#
-            )),
-            [true, true]
-        );
-        // Parent in the block: decided from it, as before.
-        assert_eq!(
-            top_levels(&spans(
-                r#"{"span_id":"0000000000000001","service":"web","name":"root","start_unix_ns":5},
-                   {"span_id":"0000000000000002","parent_id":"0000000000000001",
-                    "service":"web","name":"same","start_unix_ns":6},
-                   {"span_id":"0000000000000003","parent_id":"0000000000000001",
-                    "service":"db","name":"other","start_unix_ns":6}"#
-            )),
-            [true, false, true]
-        );
-    }
-
     #[test]
     fn staged_top_level_markers_are_sent_as_is() {
         let child = |attributes: &str| {
@@ -917,7 +809,7 @@ mod tests {
             let submission = prepare(&block, &crash(START + 1, None), None).unwrap();
             let (payload, _) = decode_v1::from_slice(&submission.body).unwrap();
             let span = &payload.chunks[0].spans[0];
-            [TOP_LEVEL_KEY, TRACER_TOP_LEVEL_KEY].map(|key| match attr(span, key) {
+            ["_top_level", "_dd.top_level"].map(|key| match attr(span, key) {
                 None => None,
                 Some(AttributeValue::Int(i)) => Some(*i as f64),
                 Some(AttributeValue::Float(f)) => Some(*f),
@@ -928,7 +820,7 @@ mod tests {
         assert_eq!(sent(r#"{"_dd.top_level":1}"#), [None, Some(1.0)]);
         assert_eq!(sent(r#"{"_dd.top_level":0}"#), [None, Some(0.0)]);
         assert_eq!(sent(r#"{"_top_level":0}"#), [Some(0.0), None]);
-        // No marker: the block decides (a parent missing from it is remote).
-        assert_eq!(sent("{}"), [Some(1.0), None]);
+        // No marker stays absent, including when the parent is not in the block.
+        assert_eq!(sent("{}"), [None, None]);
     }
 }

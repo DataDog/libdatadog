@@ -265,34 +265,23 @@ ended by the crash:
 | `error.is_crash` | `"true"` |
 | `dd.crash_tracking.uuid` | the crash report's UUID |
 | chunk `priority` | `2` (user keep) when the producer gave none; an explicit priority is respected |
-| `_top_level` | `1` on spans the block shows as top-level, unless the producer staged a marker; see [Top-level spans](#top-level-spans) |
 
 `error.is_crash` and `dd.crash_tracking.uuid` are what lets the trace
 view link a span to its crash report.
 
 ##### Top-level spans
 
-A span is top-level when it is a root, or when its parent belongs to
-another service. The agent's trace metrics count top-level spans, and the
-request says the receiver computed them (`Datadog-Client-Computed-Top-Level`),
-so getting this wrong inflates or loses those metrics.
+The receiver does not decide which spans are top-level, and it never
+writes `_top_level` or `_dd.top_level`. A marker the producer staged is
+sent unchanged, like any other attribute. The agent reads it with its
+usual meaning: `1` in either key marks the span top-level.
 
-- **Producer staged a marker** (`_top_level` or `_dd.top_level`): it is
-  sent as is, like any other attribute, and the receiver adds nothing.
-  The agent reads it with its usual meaning: `1` in either key marks the
-  span top-level.
-- **Otherwise:** the receiver decides from the spans in the same block,
-  and writes `_top_level: 1` on the top-level ones:
-  - a root is top-level;
-  - a span whose parent is in the block is top-level if the parent's
-    service differs;
-  - a span whose parent is not in the block is top-level, as for a
-    remote (distributed) parent. This is the agent's own rule.
-
-A parent can be missing from a block without being remote, for example
-when it was already sent before the crash or is described in another
-block. Only the producer knows this, so producers SHOULD stage a
-marker on every span whose parent is not in the same block.
+The request still carries `Datadog-Client-Computed-Top-Level: yes`, so
+the agent does not recompute top-level from the chunk. A chunk holds only
+the spans the crash ended. The agent's own rule treats a missing parent
+as remote, which would mark a span top-level when its parent was already
+sent or is described in another block. Producers that want a span counted
+in trace metrics stage the marker themselves.
 
 The receiver never sets producer-specific attributes. A producer that
 wants a domain attribute to reflect the failure (for example
@@ -386,8 +375,9 @@ The receiver's guarantees depend on what producers write. Producers:
   receiver keeps the trace (priority 2), which would keep traces the
   sampler had dropped. A producer SHOULD NOT stage spans of traces it has
   already decided to drop.
-- **SHOULD** stage `_top_level` or `_dd.top_level` on every span whose
-  parent is not in the same block (see [Top-level spans](#top-level-spans)).
+- **SHOULD** stage `_top_level` or `_dd.top_level` on every span that
+  should count as top-level. The receiver sends those attributes
+  unchanged and never adds them (see [Top-level spans](#top-level-spans)).
 - **SHOULD** stage spans in their failed state, with any domain attributes
   that only make sense on failure.
 
