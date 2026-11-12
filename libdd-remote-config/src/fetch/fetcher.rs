@@ -5,6 +5,7 @@
 use super::agentless;
 #[cfg(not(target_arch = "wasm32"))]
 use super::shared::RefcountedFile;
+use libdd_host_identity::entity_id::EntityHeadersExt;
 use libdd_networking::endpoint::EndpointExt;
 
 use crate::targets::{Root, TargetsList};
@@ -468,6 +469,7 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
             .state
             .endpoint
             .to_request_builder(concat!("Libdatadog/", env!("CARGO_PKG_VERSION")))?
+            .with_entity_headers()
             .method(http::Method::POST)
             .header(
                 http::header::CONTENT_TYPE,

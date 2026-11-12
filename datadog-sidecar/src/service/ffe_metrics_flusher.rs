@@ -9,6 +9,7 @@ use http::Method;
 use libdd_capabilities::{Bytes, HttpClientCapability, SleepCapability};
 use libdd_common::Endpoint;
 use libdd_ffe::telemetry::evaluation_metrics::encode_metrics_payload;
+use libdd_host_identity::entity_id::EntityHeadersExt;
 use libdd_networking::endpoint::EndpointExt;
 use std::time::Duration;
 use tracing::{debug, warn};
@@ -36,7 +37,7 @@ async fn send_payload<C: HttpClientCapability + SleepCapability>(
     payload: Vec<u8>,
 ) {
     let builder = match endpoint.to_request_builder(USER_AGENT) {
-        Ok(b) => b,
+        Ok(b) => b.with_entity_headers(),
         Err(e) => {
             debug!("ffe_metrics_flusher: failed to build request: {e:?}");
             return;

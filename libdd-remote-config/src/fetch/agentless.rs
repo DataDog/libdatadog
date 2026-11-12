@@ -3,6 +3,7 @@
 
 use crate::RemoteConfigPath;
 use crate::fetch::FileStorage;
+use libdd_host_identity::entity_id::EntityHeadersExt;
 use libdd_networking::endpoint::EndpointExt;
 
 use std::{fmt, ops::RangeInclusive, time::Duration};
@@ -679,6 +680,7 @@ impl<C: HttpClientCapability + SleepCapability> AgentlessFetcher<C> {
                 Request::builder(),
                 concat!("Libdatadog/", env!("CARGO_PKG_VERSION")),
             )
+            .with_entity_headers()
             .header(header::CONTENT_TYPE, "application/x-protobuf")
             .uri(url_with_path(self.endpoint.url.clone(), path)?)
             .method(method)
