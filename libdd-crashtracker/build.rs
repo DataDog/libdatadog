@@ -104,6 +104,8 @@ fn build_c_file() {
     let dst = base_path.join("libtest.so");
     let staged = staged_fixture(&dst);
 
+    println!("cargo:rerun-if-changed={}", dst.display());
+
     // this is needed for the cross compile (cargo cross)
     // Fix build id to ease in testing.
     compile_shared_lib(
@@ -145,6 +147,8 @@ fn build_cpp_file() {
     let src = base_path.join("libtest_cpp.cpp");
     let dst = base_path.join("libtest_cpp.so");
     let staged = staged_fixture(&dst);
+
+    println!("cargo:rerun-if-changed={}", dst.display());
 
     // Fix build id to ease in testing.
     compile_shared_lib(
