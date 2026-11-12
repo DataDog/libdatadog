@@ -149,8 +149,8 @@ fn build_request(
     version: &str,
 ) -> Result<Request<Body>, TransportFailure> {
     let (request_url, authorization) = request_url_and_authorization(endpoint.uri())?;
-    // Keep CDN headers explicit. Endpoint's generic request builder also adds
-    // entity/container headers, which are not part of this configuration API.
+    // Keep CDN headers explicit: entity/container headers are not part of this
+    // configuration API, so the common request builder is not used here.
     let mut builder = Request::builder()
         .method(Method::GET)
         .uri(request_url)

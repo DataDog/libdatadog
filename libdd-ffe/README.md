@@ -119,7 +119,8 @@ readers retain their parsed last-good configuration under the normal RC rules.
 credential isolation and redacted diagnostics. URL credentials remain
 case-sensitive in subscription identity. The endpoint IPC representation is
 unchanged; `CdnConfig::request_timeout` remains the request deadline. Request
-headers are set explicitly, without the common builder's entity headers.
+headers are set explicitly; entity/container headers are not part of this
+configuration API.
 
 ## `flagevaluation` EVP privacy
 

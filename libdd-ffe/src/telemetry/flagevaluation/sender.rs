@@ -7,6 +7,7 @@ use http::header::HeaderValue;
 use http::uri::PathAndQuery;
 use libdd_capabilities::{Bytes, HttpClientCapability, SleepCapability};
 use libdd_common::Endpoint;
+use libdd_host_identity::entity_id::EntityHeadersExt;
 use libdd_networking::endpoint::EndpointExt;
 use std::time::Duration;
 
@@ -135,7 +136,7 @@ async fn send_payload<C: HttpClientCapability + SleepCapability>(
     config: &FlagEvaluationEvpSendConfig,
 ) {
     let builder = match endpoint.to_request_builder(&config.user_agent) {
-        Ok(b) => b,
+        Ok(b) => b.with_entity_headers(),
         Err(e) => {
             log::debug!("ffe flagevaluation sender failed to build request: {e:?}");
             return;

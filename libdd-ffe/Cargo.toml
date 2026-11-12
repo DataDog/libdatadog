@@ -29,6 +29,7 @@ strum = { workspace = true, optional = true }
 strum_macros = { workspace = true, optional = true }
 libdd-regex = { version = "0.1.0", path = "../libdd-regex", default-features = false, features = ["require-regex-full"] }
 libdd-common = { path = "../libdd-common", version = "9.0.0", default-features = false, features = ["std"] }
+libdd-host-identity = { version = "1.0.0", path = "../libdd-host-identity", optional = true }
 libdd-networking = { path = "../libdd-networking", version = "1.0.0", default-features = false }
 libdd-capabilities = { path = "../libdd-capabilities", version = "4.0.1", optional = true }
 http = { workspace = true, features = ["std"], optional = true }
@@ -70,6 +71,6 @@ https = ["libdd-networking/https"]
 fips = ["libdd-networking/fips"]
 exposure-events = ["dep:lru"]
 evaluation-metrics = ["dep:libdd-trace-protobuf", "dep:prost"]
-flagevaluation-evp = ["dep:http", "dep:libdd-capabilities", "dep:sha2", "dep:strum", "dep:strum_macros", "dep:tokio"]
+flagevaluation-evp = ["dep:http", "dep:libdd-capabilities", "dep:libdd-host-identity", "dep:sha2", "dep:strum", "dep:strum_macros", "dep:tokio"]
 pyo3 = ["dep:pyo3"]
 remote-config = ["dep:libdd-remote-config"]
