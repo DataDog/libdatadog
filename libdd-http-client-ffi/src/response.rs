@@ -2,20 +2,26 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::catch_panic;
-use crate::request::str_arg;
-use libdd_common_ffi::CharSlice;
+use crate::request::{HttpHeader, str_arg};
 use libdd_common_ffi::slice::ByteSlice;
+use libdd_common_ffi::{CharSlice, Slice};
 use libdd_http_client::HttpResponse as InnerResponse;
+use std::sync::OnceLock;
 
 /// Owns its data and does not depend on the client it came from.
 #[derive(Debug)]
 pub struct HttpResponse {
     inner: InnerResponse,
+    // Built on the first call to `ddog_http_response_headers`.
+    headers: OnceLock<Vec<HttpHeader<'static>>>,
 }
 
 impl HttpResponse {
     pub(crate) fn new(inner: InnerResponse) -> Self {
-        Self { inner }
+        Self {
+            inner,
+            headers: OnceLock::new(),
+        }
     }
 }
 
@@ -53,51 +59,32 @@ pub unsafe extern "C" fn ddog_http_response_body(
     )
 }
 
-/// Returns the number of headers, counting repeated names separately.
+/// Returns all the headers, valid until the response is dropped. A repeated name is returned as
+/// several entries. Headers of different names may not come back in the order received.
 ///
 /// # Safety
 ///
 /// `response` must be a live response pointer.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_http_response_header_count(response: *const HttpResponse) -> usize {
-    catch_panic!(
-        unsafe { response.as_ref() }.map_or(0, |response| response.inner.headers().len()),
-        0
-    )
-}
-
-/// Writes the name and value of the header at `index` to `*name` and `*value`, valid until the
-/// response is dropped. Returns `false`, writing nothing, if `index` is out of range.
-///
-/// A repeated name is returned as several entries. Headers of different names may not come back in
-/// the order received.
-///
-/// # Safety
-///
-/// `response` must be a live response pointer; `name` and `value` must be valid for writes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_http_response_header_at(
+pub unsafe extern "C" fn ddog_http_response_headers(
     response: *const HttpResponse,
-    index: usize,
-    name: *mut CharSlice<'static>,
-    value: *mut CharSlice<'static>,
-) -> bool {
+) -> Slice<'static, HttpHeader<'static>> {
     catch_panic!(
-        {
-            let header = unsafe { response.as_ref() }
-                .and_then(|response| response.inner.headers().get(index));
-            match header {
-                Some((header_name, header_value)) if !name.is_null() && !value.is_null() => {
-                    unsafe {
-                        name.write(str_slice(header_name));
-                        value.write(str_slice(header_value));
-                    }
-                    true
-                }
-                _ => false,
-            }
-        },
-        false
+        unsafe { response.as_ref() }.map_or(Slice::default(), |response| {
+            let headers = response.headers.get_or_init(|| {
+                response
+                    .inner
+                    .headers()
+                    .iter()
+                    .map(|(name, value)| HttpHeader {
+                        name: str_slice(name),
+                        value: str_slice(value),
+                    })
+                    .collect()
+            });
+            unsafe { Slice::from_raw_parts(headers.as_ptr(), headers.len()) }
+        }),
+        Slice::default()
     )
 }
 

@@ -4,7 +4,6 @@
 mod common;
 
 use common::*;
-use libdd_common_ffi::CharSlice;
 use libdd_http_client_ffi::*;
 
 #[test]
@@ -89,7 +88,7 @@ fn header_get_returns_an_empty_slice_for_a_missing_header() {
 }
 
 #[test]
-fn header_at_returns_every_header_and_keeps_repeated_names() {
+fn headers_returns_every_header_and_keeps_repeated_names() {
     let server = spawn_tcp(|_| {
         Behavior::Respond(http_response(
             200,
@@ -106,7 +105,6 @@ fn header_at_returns_every_header_and_keeps_repeated_names() {
     let response = client.send(&Req::get("/cookies")).expect("send");
 
     let headers = response.headers();
-    assert_eq!(response.header_count(), headers.len());
     let cookies: Vec<&str> = headers
         .iter()
         .filter(|(name, _)| name.eq_ignore_ascii_case("set-cookie"))
@@ -123,20 +121,16 @@ fn header_at_returns_every_header_and_keeps_repeated_names() {
 }
 
 #[test]
-fn header_at_out_of_range_returns_false_and_writes_nothing() {
-    let server = spawn_tcp(respond_ok);
+fn headers_returns_the_same_slice_on_every_call() {
+    let server = spawn_tcp(|_| Behavior::Respond(http_response(200, &[("X-First", "1")], b"")));
     let client = server.cfg().build().expect("client");
-    let response = client.send(&Req::get("/info")).expect("send");
+    let response = client.send(&Req::get("/h")).expect("send");
 
-    let mut name = CharSlice::from("untouched");
-    let mut value = CharSlice::from("untouched");
-    let found = unsafe {
-        ddog_http_response_header_at(response.0, response.header_count(), &mut name, &mut value)
-    };
+    let first = unsafe { ddog_http_response_headers(response.0) };
+    let second = unsafe { ddog_http_response_headers(response.0) };
 
-    assert!(!found);
-    assert_eq!(name, CharSlice::from("untouched"));
-    assert_eq!(value, CharSlice::from("untouched"));
+    assert!(!first.is_empty());
+    assert_eq!(first.as_raw_parts(), second.as_raw_parts());
 }
 
 #[test]
