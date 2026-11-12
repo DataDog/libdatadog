@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::catch_panic;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio_util::sync::CancellationToken;
 
 /// Lets another thread abort a blocked [`crate::ddog_http_client_send`].
@@ -10,6 +11,8 @@ use tokio_util::sync::CancellationToken;
 #[derive(Debug)]
 pub struct HttpCancellationToken {
     token: CancellationToken,
+    /// Set by the first call to cancel; the swap makes the claim atomic.
+    claimed: AtomicBool,
 }
 
 impl HttpCancellationToken {
@@ -25,6 +28,7 @@ pub extern "C" fn ddog_http_cancel_token_new() -> Option<Box<HttpCancellationTok
     catch_panic!(
         Some(Box::new(HttpCancellationToken {
             token: CancellationToken::new(),
+            claimed: AtomicBool::new(false),
         })),
         None
     )
@@ -43,9 +47,9 @@ pub unsafe extern "C" fn ddog_http_cancel_token_cancel(
     catch_panic!(
         match unsafe { token.as_ref() } {
             Some(token) => {
-                let will_cancel = !token.token.is_cancelled();
+                let first = !token.claimed.swap(true, Ordering::AcqRel);
                 token.token.cancel();
-                will_cancel
+                first
             }
             None => false,
         },
@@ -74,6 +78,31 @@ mod tests {
         assert!(unsafe { ddog_http_cancel_token_cancel(&*token) });
         assert!(!unsafe { ddog_http_cancel_token_cancel(&*token) });
         assert!(!unsafe { ddog_http_cancel_token_cancel(&*token) });
+    }
+
+    #[test]
+    fn exactly_one_concurrent_caller_cancels_the_token() {
+        const CALLERS: usize = 16;
+        for _ in 0..50 {
+            let token = ddog_http_cancel_token_new().expect("a token");
+            let barrier = std::sync::Barrier::new(CALLERS);
+            let wins: usize = std::thread::scope(|scope| {
+                let handles: Vec<_> = (0..CALLERS)
+                    .map(|_| {
+                        scope.spawn(|| {
+                            barrier.wait();
+                            unsafe { ddog_http_cancel_token_cancel(&*token) }
+                        })
+                    })
+                    .collect();
+                handles
+                    .into_iter()
+                    .map(|h| usize::from(h.join().expect("thread")))
+                    .sum()
+            });
+            assert_eq!(wins, 1);
+            assert!(token.cancellation_token().is_cancelled());
+        }
     }
 
     #[test]
