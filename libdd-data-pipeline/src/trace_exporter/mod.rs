@@ -352,6 +352,17 @@ impl<
     pub fn set_otlp_resource_attributes(&self, attributes: BTreeMap<String, String>) {
         let mut resource_info = (**self.otlp_resource_info.load()).clone();
         resource_info.resource_attributes = attributes;
+        resource_info.resource_attributes_from_spans = false;
+        self.otlp_resource_info.store(Arc::new(resource_info));
+    }
+
+    /// Replace tracer tags eligible for promotion to OTLP resource attributes.
+    /// Only strings shared by every exported span are promoted; removals and overrides stay intact.
+    /// Use `set_otlp_resource_attributes` for attributes configured only on the resource.
+    pub fn set_otlp_tracer_tags(&self, tags: BTreeMap<String, String>) {
+        let mut resource_info = (**self.otlp_resource_info.load()).clone();
+        resource_info.resource_attributes = tags;
+        resource_info.resource_attributes_from_spans = true;
         self.otlp_resource_info.store(Arc::new(resource_info));
     }
 
@@ -3022,7 +3033,7 @@ mod tests {
         let snapshot = exporter.otlp_resource_info.load_full();
         let shared = exporter.clone();
         std::thread::spawn(move || {
-            shared.set_otlp_resource_attributes(BTreeMap::from([("region".into(), "new".into())]));
+            shared.set_otlp_tracer_tags(BTreeMap::from([("region".into(), "new".into())]));
         })
         .join()
         .unwrap();
@@ -3034,7 +3045,20 @@ mod tests {
             exporter.otlp_resource_info.load().resource_attributes,
             BTreeMap::from([("region".into(), "new".into())])
         );
+        assert!(!snapshot.resource_attributes_from_spans);
+        assert!(
+            exporter
+                .otlp_resource_info
+                .load()
+                .resource_attributes_from_spans
+        );
         exporter.set_otlp_resource_attributes(BTreeMap::new());
+        assert!(
+            !exporter
+                .otlp_resource_info
+                .load()
+                .resource_attributes_from_spans
+        );
         assert!(
             exporter
                 .otlp_resource_info

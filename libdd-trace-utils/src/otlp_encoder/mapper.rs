@@ -417,7 +417,24 @@ pub fn map_traces_to_otlp<T: TraceData>(
     otel_trace_semantics_enabled: bool,
 ) -> ProtoReq {
     let (resource, resource_attributes) =
-        build_resource(resource_info, otel_trace_semantics_enabled);
+        build_resource(resource_info, otel_trace_semantics_enabled, |key, value| {
+            trace_chunks.iter().flatten().all(|span| {
+                let field: Option<&str> = match key {
+                    "service.name" => Some(span.service.borrow()),
+                    "operation.name" => Some(span.name.borrow()),
+                    "resource.name" => Some(span.resource.borrow()),
+                    "span.type" => Some(span.r#type.borrow()),
+                    _ => None,
+                };
+                !span.metrics.contains_key(key)
+                    && !span.meta_struct.contains_key(key)
+                    && (!otel_trace_semantics_enabled
+                        || !matches!(key, "error.msg" | "error.message" | "span.kind"))
+                    && (otel_trace_semantics_enabled
+                        || field.is_none_or(|field| field.is_empty() || field == value))
+                    && span.meta.get(key).is_some_and(|tag| tag.borrow() == value)
+            })
+        });
     let resource_attributes = SpanResourceAttributes::new(&resource_attributes);
     // Pre-size to the total span count so the per-span push loop never reallocates.
     let total_spans: usize = trace_chunks.iter().map(|chunk| chunk.len()).sum();
@@ -468,6 +485,7 @@ pub fn map_traces_to_otlp<T: TraceData>(
 pub(super) fn build_resource(
     resource_info: &OtlpResourceInfo,
     otel_trace_semantics_enabled: bool,
+    mut is_shared_span_tag: impl FnMut(&str, &str) -> bool,
 ) -> (ProtoResource, HashMap<String, String>) {
     fn push_str_attr(attrs: &mut Vec<ProtoKeyValue>, k: &str, v: &str) {
         if !v.is_empty() {
@@ -528,6 +546,7 @@ pub(super) fn build_resource(
             && !attributes[..sdk_attribute_count]
                 .iter()
                 .any(|attribute| attribute.key == *key)
+            && (!resource_info.resource_attributes_from_spans || is_shared_span_tag(key, value))
         {
             attributes.push(proto_kv(
                 key.clone(),
@@ -710,6 +729,104 @@ mod tests {
     use super::*;
     use crate::otlp_encoder::OtlpResourceInfo;
     use crate::span::BytesData;
+
+    #[test]
+    fn tracer_tag_promotion_preserves_removals_and_overrides() {
+        use crate::otlp_encoder::map_traces_to_otlp_v1;
+        use crate::span::v1::{AttributeValue, Span as SpanV1, TraceChunk};
+
+        for from_spans in [false, true] {
+            for root_has_tag in [false, true] {
+                for child_value in [None, Some("core"), Some("other"), Some(""), Some("numeric")] {
+                    let info = OtlpResourceInfo {
+                        service: "svc".into(),
+                        resource_attributes: [
+                            ("team".into(), "core".into()),
+                            ("shared".into(), "yes".into()),
+                        ]
+                        .into(),
+                        resource_attributes_from_spans: from_spans,
+                        ..Default::default()
+                    };
+                    let mut root = Span::<BytesData>::default();
+                    let mut root_v1 = SpanV1::<BytesData>::default();
+                    root.meta.insert("shared".into(), "yes".into());
+                    if root_has_tag {
+                        root.meta.insert("team".into(), "core".into());
+                        root_v1
+                            .attributes
+                            .insert("team".into(), AttributeValue::String("core".into()));
+                    }
+                    let mut child = Span::<BytesData>::default();
+                    let mut child_v1 = SpanV1::<BytesData>::default();
+                    child.meta.insert("shared".into(), "yes".into());
+                    if let Some(value) = child_value {
+                        if value == "numeric" {
+                            child.metrics.insert("team".into(), 7.0);
+                            child_v1
+                                .attributes
+                                .insert("team".into(), AttributeValue::Int(7));
+                        } else {
+                            child.meta.insert("team".into(), value.into());
+                            child_v1
+                                .attributes
+                                .insert("team".into(), AttributeValue::String(value.into()));
+                        }
+                    }
+                    let chunks = [vec![], vec![root], vec![child]];
+                    let mut chunks_v1 = [root_v1, child_v1].map(|span| TraceChunk {
+                        attributes: vec![("shared".into(), AttributeValue::String("yes".into()))]
+                            .into(),
+                        spans: vec![span],
+                        ..Default::default()
+                    });
+                    if child_value.is_some() {
+                        chunks_v1[1]
+                            .attributes
+                            .insert("team".into(), AttributeValue::String("core".into()));
+                    }
+                    let promoted = !from_spans || (root_has_tag && child_value == Some("core"));
+                    for semantics in [false, true] {
+                        for request in [
+                            map_traces_to_otlp(&chunks, &info, semantics),
+                            map_traces_to_otlp_v1(&chunks_v1, &info, semantics),
+                        ] {
+                            assert_eq!(resource_str_attr(&request, "service.name"), Some("svc"));
+                            assert_eq!(resource_str_attr(&request, "shared"), Some("yes"));
+                            assert_eq!(
+                                resource_str_attr(&request, "team"),
+                                promoted.then_some("core")
+                            );
+                            let spans = &request.resource_spans[0].scope_spans[0].spans;
+                            let team = |span: &ProtoSpan| {
+                                span.attributes.iter().find(|a| a.key == "team").map(|a| {
+                                    a.value.as_ref().unwrap().value.as_ref().unwrap().clone()
+                                })
+                            };
+                            assert_eq!(
+                                team(&spans[0]),
+                                (root_has_tag && !promoted)
+                                    .then(|| ProtoValue::StringValue("core".into()))
+                            );
+                            let expected_child = match child_value {
+                                Some("numeric") => Some(ProtoValue::IntValue(7)),
+                                Some(value) if !promoted || value != "core" => {
+                                    Some(ProtoValue::StringValue(value.into()))
+                                }
+                                _ => None,
+                            };
+                            assert_eq!(team(&spans[1]), expected_child);
+                            assert!(
+                                spans
+                                    .iter()
+                                    .all(|span| !span.attributes.iter().any(|a| a.key == "shared"))
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn resource_deduplication_uses_emitted_sdk_identity() {

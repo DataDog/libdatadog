@@ -410,7 +410,42 @@ pub fn map_traces_to_otlp_v1<T: TraceData>(
     otel_trace_semantics_enabled: bool,
 ) -> ProtoReq {
     let (resource, resource_attributes) =
-        build_resource(resource_info, otel_trace_semantics_enabled);
+        build_resource(resource_info, otel_trace_semantics_enabled, |key, value| {
+            trace_chunks.iter().all(|chunk| {
+                chunk.spans.iter().all(|span| {
+                    let field: Option<&str> = match key {
+                        "env" => Some(span.env.borrow()),
+                        "version" => Some(span.version.borrow()),
+                        "component" => Some(span.component.borrow()),
+                        "_dd.origin" => Some(chunk.origin.borrow()),
+                        "service.name" if !otel_trace_semantics_enabled => {
+                            Some(span.service.borrow())
+                        }
+                        "operation.name" if !otel_trace_semantics_enabled => {
+                            Some(span.name.borrow())
+                        }
+                        "resource.name" if !otel_trace_semantics_enabled => {
+                            Some(span.resource.borrow())
+                        }
+                        "span.type" if !otel_trace_semantics_enabled => Some(span.r#type.borrow()),
+                        _ => None,
+                    };
+                    if let Some(field) = field.filter(|field| !field.is_empty()) {
+                        return field == value;
+                    }
+                    if (key == "_sampling_priority_v1" && chunk.priority.is_some())
+                        || (key == "_dd.p.dm" && chunk.sampling_mechanism.is_some())
+                        || (otel_trace_semantics_enabled && ERROR_MESSAGE_KEYS.contains(&key))
+                    {
+                        return false;
+                    }
+                    matches!(
+                        span.attributes.get(key).or_else(|| chunk.attributes.get(key)),
+                        Some(AttributeValue::String(tag)) if tag.borrow() == value
+                    )
+                })
+            })
+        });
     let resource_attributes = SpanResourceAttributes::new(&resource_attributes);
     // Pre-size to the total span count so the per-span push loop never reallocates.
     let total_spans: usize = trace_chunks.iter().map(|chunk| chunk.spans.len()).sum();

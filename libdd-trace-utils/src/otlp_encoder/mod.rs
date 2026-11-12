@@ -44,6 +44,8 @@ pub struct OtlpResourceInfo {
     pub tracer_tags: Vec<String>,
     /// String resource attributes for OTLP trace exports.
     pub resource_attributes: BTreeMap<String, String>,
+    /// Promote these attributes only when every span still carries the same string tag.
+    pub resource_attributes_from_spans: bool,
     pub instrumentation_scope_name: String,
     pub instrumentation_scope_version: String,
     /// When true, emits `_dd.stats_computed: "true"` on the OTLP resource to prevent
