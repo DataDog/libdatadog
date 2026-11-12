@@ -244,6 +244,14 @@ pub struct AgentlessFetcher<C: HttpClientCapability + SleepCapability> {
     /// response is verified in scratch TUF clients anchored at the embedded
     /// roots; see `recover_from_dc_switch`.
     dc_switch_recovery: bool,
+    /// Version floors of the chains the fetcher has ever latched on, keyed by
+    /// the chain identity (the root key IDs of both repositories), at the
+    /// highest versions it trusted them at. Within one chain versions never
+    /// go backwards, so these floors survive resets, root rotations within a
+    /// DC, and DC switches, keeping TUF rollback protection across all of
+    /// them: a fresh-join payload signed by a previously trusted chain is
+    /// rejected unless it is at or above the versions it was last trusted at.
+    chain_floors: std::collections::HashMap<ChainId, ChainFloor>,
     /// Last non-empty config top-targets metadata received from the backend. The
     /// backend only re-sends config top-targets when their version changes; on a
     /// config root rotation rust-tuf purges its trusted top-targets and must
@@ -396,6 +404,7 @@ impl<C: HttpClientCapability + SleepCapability> AgentlessFetcher<C> {
             config_root_bytes: config_root,
             director_root_bytes: director_root,
             dc_switch_recovery: false,
+            chain_floors: std::collections::HashMap::new(),
             last_config_top_targets: None,
             org_uuid: None,
             org_data_prefetched: false,
@@ -433,10 +442,21 @@ impl<C: HttpClientCapability + SleepCapability> AgentlessFetcher<C> {
     /// The local and remote TUF repositories are also swapped for fresh empty ones so no stale
     /// pre-failure metadata can be picked up by the next `update()`.
     ///
+    /// The version floor of the chain being left behind is also recorded
+    /// (`record_chain_floor`) so its rollback protection survives the DC
+    /// switch that may follow.
+    ///
     /// The caller also arms the DC-switch recovery, so the next poll is sent as
     /// a fresh join and verified from the embedded roots in scratch clients
     /// (`recover_from_dc_switch`) before any trusted state is replaced.
     fn reset(&mut self) {
+        // Before the purge, record the version floor of the chain being left
+        // behind. The purge drops the non-root metadata and a DC switch would
+        // replace the whole chain, so this floor is the only rollback
+        // protection that survives for the chain once it is no longer the
+        // live one: a replay of it during a later recovery must not go below
+        // the versions it was trusted at.
+        self.record_chain_floor();
         self.director_client.purge_metadata();
         *self.director_client.local_repo_mut() = TUFRepo::new();
         *self.director_client.remote_repo_mut() = TUFRepo::new();
@@ -450,7 +470,62 @@ impl<C: HttpClientCapability + SleepCapability> AgentlessFetcher<C> {
         self.org_data_prefetched = false;
     }
 
-    /// Verify a fresh-join payload in scratch TUF clients anchored at the
+    /// Record the version floor of the chain currently latched on, keyed by
+    /// its identity. Called from `reset()` before the purge (so a mid-`apply`
+    /// advance that later fails is still captured) and after every successful
+    /// `apply()` (so the entry is always at the highest versions the chain was
+    /// trusted at, including right before a root rotation within the DC
+    /// replaces the key set and the old chain becomes replayable).
+    ///
+    /// The floors of the LIVE chain are redundant while it stays live (the
+    /// trusted roots keep their own rollback protection through a reset); they
+    /// become load-bearing when the chain is abandoned — by a DC switch or by
+    /// a root rotation within the DC — and its metadata is gone: a later
+    /// fresh-join payload for that chain is then checked against them in
+    /// `recover_from_dc_switch`.
+    fn record_chain_floor(&mut self) {
+        let floor = ChainFloor {
+            config_root_version: self.config_client.database().trusted_root().version(),
+            director_root_version: self.director_client.database().trusted_root().version(),
+            config_snapshot_version: self
+                .config_client
+                .database()
+                .trusted_snapshot()
+                .map_or(0, |s| s.version()),
+            director_snapshot_version: self
+                .director_client
+                .database()
+                .trusted_snapshot()
+                .map_or(0, |s| s.version()),
+        };
+        // Merge element-wise: the same chain can be reset repeatedly while it
+        // is the live one, and versions only go up within a chain.
+        let entry = self
+            .chain_floors
+            .entry(ChainId::of(&self.config_client, &self.director_client))
+            .or_default();
+        entry.config_root_version = entry.config_root_version.max(floor.config_root_version);
+        entry.director_root_version = entry.director_root_version.max(floor.director_root_version);
+        entry.config_snapshot_version = entry
+            .config_snapshot_version
+            .max(floor.config_snapshot_version);
+        entry.director_snapshot_version = entry
+            .director_snapshot_version
+            .max(floor.director_snapshot_version);
+        // A bound against unbounded growth: each genuine DC switch adds at
+        // most one new chain, and evicting an arbitrary entry only re-opens
+        // the rollback window of a chain abandoned many switches ago.
+        while self.chain_floors.len() > 16 {
+            match self.chain_floors.keys().next().cloned() {
+                Some(victim) => {
+                    self.chain_floors.remove(&victim);
+                }
+                None => break,
+            }
+        }
+    }
+
+    ////// Verify a fresh-join payload in scratch TUF clients anchored at the
     /// embedded (or override) roots, without touching the live clients, and
     /// decide whether it is a genuine DC switch.
     ///
@@ -476,11 +551,15 @@ impl<C: HttpClientCapability + SleepCapability> AgentlessFetcher<C> {
     /// - the org UUID in its snapshot matches the org UUID the backend reports for the API key (it
     ///   is the same org, on a new DC).
     ///
-    /// No root version comparison: each DC keeps its own, independent version
-    /// counters, so the new DC's chain can legitimately sit at lower root
-    /// versions than the latched ones. A rollback of the same chain cannot
-    /// reach this path: it would be signed by the same keys and is caught by
-    /// the key check above.
+    /// No comparison against the LIVE chain's versions: each DC keeps its own,
+    /// independent version counters, so the new DC's chain can legitimately
+    /// sit at lower versions than the latched ones. A rollback of the live
+    /// chain cannot reach this path: it would be signed by the same keys and
+    /// is caught by the key check above. A rollback of a chain trusted BEFORE
+    /// (for example the old DC after a move back, or the pre-rotation keys of
+    /// a DC that rotated its root) is caught by the per-chain
+    /// version floors (`chain_floors`): within one chain versions never go
+    /// backwards, so those floors survive resets and DC switches.
     ///
     /// On failure the live clients and their rollback protection stay
     /// untouched and the recovery is retried on the next poll.
@@ -593,6 +672,43 @@ impl<C: HttpClientCapability + SleepCapability> AgentlessFetcher<C> {
             snapshot_org_uuid == api_key_org_uuid,
             "the fresh-join payload belongs to another org: snapshot org UUID {snapshot_org_uuid}, API key org UUID {api_key_org_uuid}"
         );
+
+        // The payload's chain may be one we trusted before: either a genuine
+        // move back to a previous DC (which advanced while we were away, so
+        // its versions are at or above its floor), or a replay of its older
+        // metadata. The scratch verification above walks from the embedded
+        // roots and has no other rollback floor, so enforce the one recorded
+        // when that chain was abandoned.
+        let chain = ChainId::of(&config_client, &director_client);
+        if let Some(floor) = self.chain_floors.get(&chain) {
+            let versions = ChainFloor {
+                config_root_version: config_client.database().trusted_root().version(),
+                director_root_version: director_client.database().trusted_root().version(),
+                config_snapshot_version: config_client
+                    .database()
+                    .trusted_snapshot()
+                    .map_or(0, |s| s.version()),
+                director_snapshot_version: director_client
+                    .database()
+                    .trusted_snapshot()
+                    .map_or(0, |s| s.version()),
+            };
+            anyhow::ensure!(
+                versions.config_root_version >= floor.config_root_version
+                    && versions.director_root_version >= floor.director_root_version
+                    && versions.config_snapshot_version >= floor.config_snapshot_version
+                    && versions.director_snapshot_version >= floor.director_snapshot_version,
+                "replay of a previously trusted chain rejected: its versions went below the versions it was last trusted at (config root {} < {}, director root {} < {}, config snapshot {} < {}, director snapshot {} < {})",
+                versions.config_root_version,
+                floor.config_root_version,
+                versions.director_root_version,
+                floor.director_root_version,
+                versions.config_snapshot_version,
+                floor.config_snapshot_version,
+                versions.director_snapshot_version,
+                floor.director_snapshot_version
+            );
+        }
 
         // Proven valid from the embedded root, same org, and a different
         // trusted chain: a genuine DC switch. Replace the live clients with
@@ -846,6 +962,12 @@ impl<C: HttpClientCapability + SleepCapability> AgentlessFetcher<C> {
             }
         };
         self.consecutive_failures = 0;
+        // Record the version floor of the current chain at its highest point:
+        // every trusted advance goes through a successful `apply()`, so the
+        // entry is always up to date when the chain is later abandoned (by a
+        // root rotation within the DC or a DC switch), and a replay of any
+        // previously trusted chain can be checked against it.
+        self.record_chain_floor();
 
         self.products = all_products;
 
@@ -1153,6 +1275,43 @@ fn root_key_ids(client: &TUFClient) -> std::collections::HashSet<&tuf::crypto::K
         .root_keys()
         .map(|k| k.key_id())
         .collect()
+}
+
+/// The identity of a TUF chain: the root key IDs of both repositories. Every
+/// DC signs with its own keys, so the pair identifies the chain the fetcher is
+/// latched on, and it survives root rotations within the DC (the new root
+/// cross-signs with, and delegates to, the same DC keys).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct ChainId {
+    config_root_keys: std::collections::BTreeSet<String>,
+    director_root_keys: std::collections::BTreeSet<String>,
+}
+
+impl ChainId {
+    fn of(config: &TUFClient, director: &TUFClient) -> Self {
+        Self {
+            config_root_keys: root_key_ids(config)
+                .into_iter()
+                .map(|k| serde_json::to_string(k).unwrap_or_default())
+                .collect(),
+            director_root_keys: root_key_ids(director)
+                .into_iter()
+                .map(|k| serde_json::to_string(k).unwrap_or_default())
+                .collect(),
+        }
+    }
+}
+
+/// The highest versions of a chain the fetcher trusted before abandoning it.
+/// Within one chain versions never go backwards, so a fresh-join payload for
+/// that chain must be at or above them to be accepted again (a genuine move
+/// back to a previous DC has kept advancing, so it passes).
+#[derive(Debug, Clone, Copy, Default)]
+struct ChainFloor {
+    config_root_version: u64,
+    director_root_version: u64,
+    config_snapshot_version: u64,
+    director_snapshot_version: u64,
 }
 
 /// The version of an embedded (or override) raw root.

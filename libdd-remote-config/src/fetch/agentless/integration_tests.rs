@@ -324,6 +324,7 @@ async fn fetcher(
         refresh_interval: Duration::from_secs(60),
         consecutive_failures: 0,
         dc_switch_recovery: false,
+        chain_floors: std::collections::HashMap::new(),
     }
 }
 
@@ -878,6 +879,259 @@ async fn test_dc_switch_to_lower_root_version_accepted() {
     f.fetch_config(dummy_client(), &cache).await.unwrap();
     assert_eq!(config_root_version(&f), 2);
     assert_eq!(config_snapshot_version(&f), Some(2));
+    assert_eq!(f.consecutive_failures(), 0);
+}
+
+/// The P1 rollback attack on the DC switch recovery: after the org moved
+/// from DC A (trusted up to root v3) to DC B, a repository attacker offers a
+/// fresh-join replay of DC A's OLDER v2 chain — still validly signed, keys
+/// revoked by A's v3 rotation, and different from the live B keys, so without
+/// a floor it would pass the recovery and re-latch the org on stale metadata
+/// below what it already trusted. The per-chain version floors recorded when
+/// chains are abandoned must reject it, and the fetcher must keep working on
+/// DC B.
+#[tokio::test]
+#[cfg_attr(miri, ignore)]
+async fn test_dc_switch_replay_of_abandoned_chain_rejected() {
+    let shared_config_key = new_key();
+    let shared_director_key = new_key();
+    let embedded_cfg = build_v1(&shared_config_key).await;
+    let embedded_dir = build_v1(&shared_director_key).await;
+
+    // DC A rotated twice (root v3), with stable keys across the rotations
+    // (like a real DC: the new root is cross-signed by the previous one).
+    let dc_a_config = new_dc_keys();
+    let dc_a_director = new_dc_keys();
+    let cfg_a2 = dc_rotate(&shared_config_key, &dc_a_config, &embedded_cfg).await;
+    let cfg_a3 = dc_rotate(&shared_config_key, &dc_a_config, &cfg_a2).await;
+    let dir_a = dc_rotate(&shared_director_key, &dc_a_director, &embedded_dir).await;
+
+    // DC B, at root v2 with its own keys.
+    let dc_b_config = new_dc_keys();
+    let cfg_b = dc_rotate(&shared_config_key, &dc_b_config, &embedded_cfg).await;
+    let dir_b = dc_rotate(&shared_director_key, &new_dc_keys(), &embedded_dir).await;
+
+    // DC B's snapshot pins the org UUID, like the real DC snapshots do.
+    let (b_snap_bytes, b_ts_bytes) = config_snapshot_with_org_uuid_keys(
+        &cfg_b,
+        &dc_b_config.snapshot,
+        &dc_b_config.timestamp,
+        "ORG-A",
+    );
+    let b_fresh_join = {
+        let mut r = fresh_join(&cfg_b, &dir_b);
+        let metas = r.config_metas.as_mut().unwrap();
+        metas.snapshot = Some(top(&b_snap_bytes));
+        metas.timestamp = Some(top(&b_ts_bytes));
+        r
+    };
+
+    // The attacker's payload: DC A's v2 chain as a fresh join, with a
+    // correctly org-pinned snapshot (the attacker replays legitimately
+    // signed material, they cannot forge new signatures).
+    let (a2_snap_bytes, a2_ts_bytes) = config_snapshot_with_org_uuid_keys(
+        &cfg_a2,
+        &dc_a_config.snapshot,
+        &dc_a_config.timestamp,
+        "ORG-A",
+    );
+    let a_replay = {
+        let mut r = fresh_join(&cfg_a2, &dir_a);
+        let metas = r.config_metas.as_mut().unwrap();
+        metas.snapshot = Some(top(&a2_snap_bytes));
+        metas.timestamp = Some(top(&a2_ts_bytes));
+        r
+    };
+
+    // DC C: only used to trigger an `apply()` failure (and re-arm the
+    // recovery) once the org is settled on DC B.
+    let cfg_c = dc_rotate(&shared_config_key, &new_dc_keys(), &embedded_cfg).await;
+    let dir_c = dc_rotate(&shared_director_key, &new_dc_keys(), &embedded_dir).await;
+
+    let http = MockHttp::new();
+    http.set_org_uuid("ORG-A");
+    // Poll 1: fresh join into DC A at root v3 (the full rotation chain).
+    http.push(&{
+        let mut r = fresh_join(&cfg_a3, &dir_a);
+        let metas = r.config_metas.as_mut().unwrap();
+        metas.roots = vec![
+            top(cfg_a2.root().unwrap().as_bytes()),
+            top(cfg_a3.root().unwrap().as_bytes()),
+        ];
+        r
+    });
+    // Poll 2: the org moved to DC B; its metadata cannot verify against
+    // DC A's keys.
+    http.push(&dc_update(&cfg_b, &dir_b));
+    // Poll 3: the recovery poll latches DC B.
+    http.push(&b_fresh_join);
+    // Poll 4: DC C's metadata fails verification against DC B's keys: a
+    // transient error that re-arms the recovery.
+    http.push(&dc_update(&cfg_c, &dir_c));
+    // Poll 5: the attacker's replay of DC A's old v2 chain during the armed
+    // recovery poll.
+    http.push(&a_replay);
+    // Poll 6: a healthy fresh join for DC B again (the recovery is still
+    // armed, so the poll is a fresh join and DC B's chain is SameChain).
+    http.push(&b_fresh_join);
+
+    let mut f = fetcher(
+        http.clone(),
+        embedded_cfg.root().unwrap().as_bytes().to_vec(),
+        embedded_dir.root().unwrap().as_bytes().to_vec(),
+    )
+    .await;
+    let state = test_state();
+    let storage = NoopStorage;
+    let cache = TargetCache::new(&state, &storage);
+
+    // Poll 1: latches DC A at root v3.
+    f.fetch_config(dummy_client(), &cache).await.unwrap();
+    assert_eq!(config_root_version(&f), 3);
+
+    // Poll 2: DC B's metadata fails verification against DC A's keys.
+    assert!(f.fetch_config(dummy_client(), &cache).await.is_err());
+
+    // Poll 3: recovers into DC B.
+    f.fetch_config(dummy_client(), &cache).await.unwrap();
+    assert_eq!(config_root_version(&f), 2);
+    assert_eq!(f.consecutive_failures(), 0);
+
+    // Poll 4: DC C's metadata fails, the recovery is re-armed.
+    assert!(f.fetch_config(dummy_client(), &cache).await.is_err());
+    assert_eq!(f.consecutive_failures(), 1);
+
+    // Poll 5: the replay of DC A's old v2 chain is REJECTED — its versions
+    // sit below the ones the org already trusted on that chain (root 2 < 3).
+    // The live state stays on DC B's trusted root.
+    assert!(f.fetch_config(dummy_client(), &cache).await.is_err());
+    assert_eq!(config_root_version(&f), 2);
+    assert_eq!(config_snapshot_version(&f), None);
+    assert_eq!(f.consecutive_failures(), 2);
+
+    // Poll 6: the fetcher still works on DC B after the rejected replay.
+    f.fetch_config(dummy_client(), &cache).await.unwrap();
+    assert_eq!(config_root_version(&f), 2);
+    assert_eq!(config_snapshot_version(&f), Some(2));
+    assert_eq!(f.consecutive_failures(), 0);
+}
+
+/// A genuine move BACK to a previous DC must still be accepted: the old DC
+/// kept rotating while we were away, so its chain sits ABOVE the floor
+/// recorded when it was abandoned. Only replays below the floor are rejected.
+#[tokio::test]
+#[cfg_attr(miri, ignore)]
+async fn test_dc_switch_back_to_advanced_previous_dc_accepted() {
+    let shared_config_key = new_key();
+    let shared_director_key = new_key();
+    let embedded_cfg = build_v1(&shared_config_key).await;
+    let embedded_dir = build_v1(&shared_director_key).await;
+
+    let dc_a_config = new_dc_keys();
+    let dc_a_director = new_dc_keys();
+    let cfg_a2 = dc_rotate(&shared_config_key, &dc_a_config, &embedded_cfg).await;
+    let cfg_a3 = dc_rotate(&shared_config_key, &dc_a_config, &cfg_a2).await;
+    let dir_a = dc_rotate(&shared_director_key, &dc_a_director, &embedded_dir).await;
+
+    let dc_b_config = new_dc_keys();
+    let cfg_b = dc_rotate(&shared_config_key, &dc_b_config, &embedded_cfg).await;
+    let dir_b = dc_rotate(&shared_director_key, &new_dc_keys(), &embedded_dir).await;
+
+    let (b_snap_bytes, b_ts_bytes) = config_snapshot_with_org_uuid_keys(
+        &cfg_b,
+        &dc_b_config.snapshot,
+        &dc_b_config.timestamp,
+        "ORG-A",
+    );
+    let b_fresh_join = {
+        let mut r = fresh_join(&cfg_b, &dir_b);
+        let metas = r.config_metas.as_mut().unwrap();
+        metas.snapshot = Some(top(&b_snap_bytes));
+        metas.timestamp = Some(top(&b_ts_bytes));
+        r
+    };
+
+    // While the org was on DC B, DC A rotated further (v3 -> v4).
+    let cfg_a4 = dc_rotate(&shared_config_key, &dc_a_config, &cfg_a3).await;
+    let dir_a2 = dc_rotate(&shared_director_key, &dc_a_director, &dir_a).await;
+    let (a4_snap_bytes, a4_ts_bytes) = config_snapshot_with_org_uuid_keys(
+        &cfg_a4,
+        &dc_a_config.snapshot,
+        &dc_a_config.timestamp,
+        "ORG-A",
+    );
+    let a4_fresh_join = {
+        let mut r = response(
+            &[
+                cfg_a2.root().unwrap().as_bytes(),
+                cfg_a3.root().unwrap().as_bytes(),
+                cfg_a4.root().unwrap().as_bytes(),
+            ],
+            &a4_ts_bytes,
+            &a4_snap_bytes,
+            Some(cfg_a4.targets().unwrap().as_bytes()),
+            vec![],
+            &dir_a2,
+        );
+        let metas = r.director_metas.as_mut().unwrap();
+        metas.roots = vec![
+            top(dir_a.root().unwrap().as_bytes()),
+            top(dir_a2.root().unwrap().as_bytes()),
+        ];
+        r
+    };
+
+    let http = MockHttp::new();
+    http.set_org_uuid("ORG-A");
+    // Poll 1: fresh join into DC A at root v3.
+    http.push(&{
+        let mut r = fresh_join(&cfg_a3, &dir_a);
+        let metas = r.config_metas.as_mut().unwrap();
+        metas.roots = vec![
+            top(cfg_a2.root().unwrap().as_bytes()),
+            top(cfg_a3.root().unwrap().as_bytes()),
+        ];
+        r
+    });
+    // Poll 2: the org moved to DC B.
+    http.push(&dc_update(&cfg_b, &dir_b));
+    // Poll 3: the recovery poll latches DC B.
+    http.push(&b_fresh_join);
+    // Poll 4: the org moved BACK to DC A, now at root v4.
+    http.push(&dc_update(&cfg_a4, &dir_a2));
+    // Poll 5: the recovery poll latches DC A at v4 — above the v3 floor.
+    http.push(&a4_fresh_join);
+
+    let mut f = fetcher(
+        http.clone(),
+        embedded_cfg.root().unwrap().as_bytes().to_vec(),
+        embedded_dir.root().unwrap().as_bytes().to_vec(),
+    )
+    .await;
+    let state = test_state();
+    let storage = NoopStorage;
+    let cache = TargetCache::new(&state, &storage);
+
+    // Poll 1: latches DC A at root v3.
+    f.fetch_config(dummy_client(), &cache).await.unwrap();
+    assert_eq!(config_root_version(&f), 3);
+
+    // Poll 2: DC B's metadata fails verification against DC A's keys.
+    assert!(f.fetch_config(dummy_client(), &cache).await.is_err());
+
+    // Poll 3: recovers into DC B at root v2.
+    f.fetch_config(dummy_client(), &cache).await.unwrap();
+    assert_eq!(config_root_version(&f), 2);
+
+    // Poll 4: DC A's v4 metadata fails against DC B's keys.
+    assert!(f.fetch_config(dummy_client(), &cache).await.is_err());
+
+    // Poll 5: recovers back into DC A at root v4: the chain advanced past
+    // the v3 floor while we were away, so it is a genuine move back, not a
+    // replay.
+    f.fetch_config(dummy_client(), &cache).await.unwrap();
+    assert_eq!(config_root_version(&f), 4);
+    assert_eq!(config_snapshot_version(&f), Some(4));
     assert_eq!(f.consecutive_failures(), 0);
 }
 
