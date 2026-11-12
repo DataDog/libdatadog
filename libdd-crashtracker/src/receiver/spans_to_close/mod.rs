@@ -13,7 +13,8 @@
 //!   crash report and show its issue.
 //!
 //! The spans are built as a v1 payload and finished through the shared
-//! `libdd_trace_model` mutation traits, so no SDK format is decoded here.
+//! `libdd_trace_model` mutation traits, so no SDK format is decoded here. They
+//! are sent like any tracer's traces, through `libdd_trace_utils`' `SendData`.
 //!
 //! The SDK is trusted to describe complete, correct spans. A block the
 //! receiver cannot finish is not sent, and the report says why.
@@ -23,22 +24,26 @@ use crate::crash_info::{
 };
 use chrono::{DateTime, Utc};
 use http::uri::PathAndQuery;
-use http::{HeaderName, HeaderValue};
+use libdd_capabilities::HttpClientCapability;
+use libdd_capabilities_impl::NativeCapabilities;
 use libdd_common::{Endpoint, parse_uri};
-use libdd_networking::endpoint::EndpointExt;
-use libdd_networking::http_common;
-use libdd_trace_model::{AttributesMut, SpanMut, TraceChunkMut};
+use libdd_trace_model::{AttributesMut, SpanMut, TraceChunkMut, ValueTypes};
 use libdd_trace_utils::msgpack_encoder::v1 as encode_v1;
-use libdd_trace_utils::span::SliceData;
+use libdd_trace_utils::send_data::{SendData, SendDataBuilder};
+use libdd_trace_utils::send_with_retry::{RetryBackoffType, RetryStrategy};
+use libdd_trace_utils::span::BytesData;
 use libdd_trace_utils::span::v1::{
-    AttributeValue, Span, SpanKind, TraceChunk, TracerPayload, TracerPayloadSlice,
+    AttributeValue, Span, SpanKind, TraceChunk, TracerPayload, TracerPayloadBytes,
 };
-use libdd_trace_utils::span::vec_map::VecMap;
-use std::borrow::Cow;
+use libdd_trace_utils::tracer_header_tags::{TracerGenericTags, TracerHeaderTags};
+use libdd_trace_utils::tracer_payload::TracerPayloadCollection;
 use std::sync::Arc;
 use std::time::Duration;
 
 const SUBMIT_TIMEOUT: Duration = Duration::from_secs(3);
+/// One attempt: a refusal (an agent without v1 included) will not change on a
+/// retry, and the submission has [`SUBMIT_TIMEOUT`] in all.
+const NO_RETRIES: u32 = 0;
 /// Bounds the resources used when a report contains many 64 KiB blocks.
 const MAX_CONCURRENT_SUBMISSIONS: usize = 4;
 /// Where v1 payloads go.
@@ -96,17 +101,13 @@ impl CrashDetails {
     }
 }
 
-/// A request ready for the agent.
-#[derive(Debug)]
+/// A block's finished spans, ready for the agent's v1 traces endpoint.
 pub(crate) struct Submission {
-    /// The agent's v1 traces endpoint.
-    endpoint: Endpoint,
-    headers: Vec<(HeaderName, HeaderValue)>,
-    /// The payload as v1 msgpack.
-    body: Vec<u8>,
-    /// Chunks in the payload.
-    trace_count: usize,
+    send: SendData,
 }
+
+type Text = <BytesData as ValueTypes>::Text;
+type AttributeMap = <BytesData as ValueTypes>::Map;
 
 /// Takes the report's spans to close and prepares their requests. A block
 /// that cannot be finished is noted in the report's log messages, so this runs
@@ -146,21 +147,50 @@ fn prepare(
     crash_endpoint: Option<&Endpoint>,
 ) -> anyhow::Result<Submission> {
     let endpoint = traces_endpoint(block.agent_url.as_deref(), crash_endpoint)?;
-    let headers = request_headers(block)?;
-    let mut payload = TracerPayloadSlice::from(block);
+    let mut payload = TracerPayloadBytes::from(block);
     for chunk in &mut payload.chunks {
         finish_chunk(chunk, crash);
     }
-    Ok(Submission {
-        endpoint,
-        headers,
-        body: encode_v1::to_vec_from_v1(&payload),
-        trace_count: payload.chunks.len(),
-    })
+    let size = encode_v1::to_encoded_byte_len_from_v1(&payload) as usize;
+    let send = SendDataBuilder::new(
+        size,
+        TracerPayloadCollection::V1(Box::new(payload)),
+        header_tags(block),
+        &endpoint,
+    )
+    .with_retry_strategy(RetryStrategy::new(
+        NO_RETRIES,
+        0,
+        RetryBackoffType::Constant,
+        None,
+    ))
+    .build();
+    Ok(Submission { send })
+}
+
+/// What the agent reads off a trace request's headers, from what the block
+/// says about its process.
+fn header_tags(block: &SpansToClose) -> TracerHeaderTags<'_> {
+    let p = &block.process;
+    TracerHeaderTags {
+        lang: &p.language,
+        lang_version: &p.language_version,
+        tracer_version: &p.tracer_version,
+        container_id: &p.container_id,
+        generic: TracerGenericTags {
+            // The SDK decides which spans are top-level. This keeps the agent
+            // from recomputing that on a chunk of only the spans the crash
+            // ended, which would mark a span top-level whenever its parent is
+            // absent from the chunk.
+            client_computed_top_level: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    }
 }
 
 /// Ends every span of the chunk at the crash and keeps the chunk.
-fn finish_chunk<'a>(chunk: &mut TraceChunk<SliceData<'a>>, crash: &'a CrashDetails) {
+fn finish_chunk(chunk: &mut TraceChunk<BytesData>, crash: &CrashDetails) {
     if chunk.priority.is_none() {
         chunk.set_priority(USER_KEEP);
     }
@@ -169,20 +199,17 @@ fn finish_chunk<'a>(chunk: &mut TraceChunk<SliceData<'a>>, crash: &'a CrashDetai
     }
 }
 
-fn end_at_crash<'a>(span: &mut Span<SliceData<'a>>, crash: &'a CrashDetails) {
+fn end_at_crash(span: &mut Span<BytesData>, crash: &CrashDetails) {
     span.set_duration(crash.crash_unix_ns.saturating_sub(span.start).max(0));
     span.set_error(true);
     for (key, value) in crash.attributes() {
-        span.set_attribute(
-            Cow::Borrowed(key),
-            AttributeValue::String(Cow::Borrowed(value)),
-        );
+        span.set_attribute(key.into(), AttributeValue::String(text(value)));
     }
 }
 
-/// The block as a v1 payload, borrowing its strings.
-impl<'a> From<&'a SpansToClose> for TracerPayloadSlice<'a> {
-    fn from(block: &'a SpansToClose) -> Self {
+/// The block as a v1 payload.
+impl From<&SpansToClose> for TracerPayloadBytes {
+    fn from(block: &SpansToClose) -> Self {
         let p = &block.process;
         TracerPayload {
             container_id: text(&p.container_id),
@@ -201,8 +228,8 @@ impl<'a> From<&'a SpansToClose> for TracerPayloadSlice<'a> {
 
 /// The trace as a v1 chunk. Top-level markers are attributes like any other:
 /// a value the SDK staged is sent, and the receiver writes none.
-impl<'a> From<&'a TraceToClose> for TraceChunk<SliceData<'a>> {
-    fn from(trace: &'a TraceToClose) -> Self {
+impl From<&TraceToClose> for TraceChunk<BytesData> {
+    fn from(trace: &TraceToClose) -> Self {
         TraceChunk {
             trace_id: trace.trace_id.to_be_bytes(),
             priority: trace.priority,
@@ -215,8 +242,8 @@ impl<'a> From<&'a TraceToClose> for TraceChunk<SliceData<'a>> {
     }
 }
 
-impl<'a> From<&'a SpanToClose> for Span<SliceData<'a>> {
-    fn from(span: &'a SpanToClose) -> Self {
+impl From<&SpanToClose> for Span<BytesData> {
+    fn from(span: &SpanToClose) -> Self {
         Span {
             service: text(&span.service),
             name: text(&span.name),
@@ -238,13 +265,13 @@ impl<'a> From<&'a SpanToClose> for Span<SliceData<'a>> {
     }
 }
 
-fn text(s: &str) -> Cow<'_, str> {
-    Cow::Borrowed(s)
+fn text(s: &str) -> Text {
+    s.to_owned().into()
 }
 
 /// Attributes as v1 holds them.
-fn attributes(attributes: &Attributes) -> VecMap<Cow<'_, str>, AttributeValue<SliceData<'_>>> {
-    let mut map = VecMap::with_capacity(attributes.len());
+fn attributes(attributes: &Attributes) -> AttributeMap {
+    let mut map = AttributeMap::with_capacity(attributes.len());
     for (key, value) in attributes {
         let value = match value {
             ScalarValue::String(s) => AttributeValue::String(text(s)),
@@ -255,34 +282,6 @@ fn attributes(attributes: &Attributes) -> VecMap<Cow<'_, str>, AttributeValue<Sl
         map.insert(text(key), value);
     }
     map
-}
-
-/// The headers the agent reads off a trace request, from what the block says
-/// about its process. The body's own headers are added when it is sent.
-fn request_headers(block: &SpansToClose) -> anyhow::Result<Vec<(HeaderName, HeaderValue)>> {
-    let p = &block.process;
-    // The SDK decides which spans are top-level. This keeps the agent from
-    // recomputing that on a chunk of only the spans the crash ended, which
-    // would mark a span top-level whenever its parent is absent from the chunk.
-    let mut headers = vec![(
-        HeaderName::from_static("datadog-client-computed-top-level"),
-        HeaderValue::from_static("yes"),
-    )];
-    for (name, value) in [
-        ("datadog-meta-lang", &p.language),
-        ("datadog-meta-lang-version", &p.language_version),
-        ("datadog-meta-tracer-version", &p.tracer_version),
-        ("datadog-container-id", &p.container_id),
-    ] {
-        if !value.is_empty() {
-            headers.push((
-                HeaderName::from_static(name),
-                HeaderValue::try_from(value.as_str())
-                    .map_err(|e| anyhow::anyhow!("{name}: {e}"))?,
-            ));
-        }
-    }
-    Ok(headers)
 }
 
 /// Where the block's spans go: its own agent URL, else the agent the crash
@@ -344,17 +343,17 @@ fn traces_uri(agent: http::Uri, path: &'static str) -> anyhow::Result<http::Uri>
     Ok(http::Uri::from_parts(parts)?)
 }
 
-/// POSTs submissions with bounded concurrency and waits for them all. The
+/// Sends submissions with bounded concurrency and waits for them all. The
 /// report is already out, so failures only go to stderr.
 pub(crate) async fn submit_all(submissions: Vec<Submission>) {
     if submissions.is_empty() {
         return;
     }
-    let client = Arc::new(http_common::new_client_periodic());
+    let capabilities = Arc::new(NativeCapabilities::new_client());
     let mut submissions = submissions.into_iter();
     let mut set = tokio::task::JoinSet::new();
     for submission in submissions.by_ref().take(MAX_CONCURRENT_SUBMISSIONS) {
-        spawn_submission(&mut set, Arc::clone(&client), submission);
+        spawn_submission(&mut set, Arc::clone(&capabilities), submission);
     }
     while let Some(joined) = set.join_next().await {
         match joined {
@@ -363,61 +362,37 @@ pub(crate) async fn submit_all(submissions: Vec<Submission>) {
             Err(e) => eprintln!("crashtracker: spans to close submission panicked: {e}"),
         }
         if let Some(submission) = submissions.next() {
-            spawn_submission(&mut set, Arc::clone(&client), submission);
+            spawn_submission(&mut set, Arc::clone(&capabilities), submission);
         }
     }
 }
 
 fn spawn_submission(
     set: &mut tokio::task::JoinSet<anyhow::Result<u16>>,
-    client: Arc<http_common::HttpClient>,
+    capabilities: Arc<NativeCapabilities>,
     submission: Submission,
 ) {
-    set.spawn(async move { submit(&client, submission).await });
+    set.spawn(async move { submit(&capabilities, submission).await });
 }
 
-/// POSTs one v1 submission and returns the agent's status. Fails on a
+/// Sends one submission and returns the agent's status. Fails on a
 /// connection error, timeout, or non-2xx status. An agent without v1 is not
 /// retried as v0.4.
-async fn submit(client: &http_common::HttpClient, submission: Submission) -> anyhow::Result<u16> {
-    let Submission {
-        endpoint,
-        headers,
-        body,
-        trace_count,
-    } = submission;
-    let status = tokio::time::timeout(
-        SUBMIT_TIMEOUT,
-        post(client, &endpoint, &headers, trace_count, body),
-    )
-    .await
-    .map_err(|_| anyhow::anyhow!("timed out after {SUBMIT_TIMEOUT:?}"))??;
+async fn submit(capabilities: &NativeCapabilities, submission: Submission) -> anyhow::Result<u16> {
+    let result = tokio::time::timeout(SUBMIT_TIMEOUT, submission.send.send(capabilities))
+        .await
+        .map_err(|_| anyhow::anyhow!("timed out after {SUBMIT_TIMEOUT:?}"))?;
+    // An error status still leaves its response here; a request that got
+    // none leaves only the error counters.
+    let response = match result.last_result {
+        Ok(response) => response,
+        Err(e) if result.errors_timeout > 0 => return Err(e.context("request timed out")),
+        Err(e) if result.errors_network > 0 => return Err(e.context("network error")),
+        Err(e) => return Err(e),
+    };
+    let status = response.status();
     anyhow::ensure!(status.is_success(), "agent replied {status}");
     Ok(status.as_u16())
-}
-
-async fn post(
-    client: &http_common::HttpClient,
-    endpoint: &Endpoint,
-    headers: &[(HeaderName, HeaderValue)],
-    trace_count: usize,
-    body: Vec<u8>,
-) -> anyhow::Result<http::StatusCode> {
-    let user_agent = format!("libdatadog-crashtracker/{}", env!("CARGO_PKG_VERSION"));
-    let mut builder = endpoint
-        .to_request_builder(&user_agent)?
-        .method(http::Method::POST);
-    let request_headers = builder
-        .headers_mut()
-        .ok_or_else(|| anyhow::anyhow!("invalid request to {}", endpoint.url))?;
-    request_headers.extend(headers.iter().cloned());
-    request_headers.insert(
-        http::header::CONTENT_TYPE,
-        HeaderValue::from_static("application/msgpack"),
-    );
-    request_headers.insert("x-datadog-trace-count", HeaderValue::from(trace_count));
-    let request = builder.body(http_common::Body::from(body))?;
-    Ok(client.request(request).await?.status())
 }
 
 #[cfg(test)]
@@ -426,6 +401,7 @@ mod tests {
     use crate::crash_info::ErrorsIntakePayload;
     use crate::crash_info::test_utils::TestInstance;
     use libdd_trace_utils::msgpack_decoder::v1 as decode_v1;
+    use libdd_trace_utils::span::SliceData;
 
     const START: i64 = 1_700_000_000_000_000_000;
 
@@ -470,6 +446,14 @@ mod tests {
         attr(span, key).and_then(|v| v.as_str())
     }
 
+    /// The submission's payload as the agent receives it: v1 msgpack.
+    fn body(submission: &Submission) -> Vec<u8> {
+        let TracerPayloadCollection::V1(payload) = submission.send.get_payloads() else {
+            panic!("expected a v1 payload");
+        };
+        encode_v1::to_vec_from_v1(payload)
+    }
+
     #[test]
     fn builds_finishes_and_encodes_the_described_spans() {
         let crash = crash(
@@ -477,14 +461,15 @@ mod tests {
             Some("Crash during training (SIGSEGV)"),
         );
         let submission = prepare(&block(), &crash, None).unwrap();
-        assert_eq!(submission.trace_count, 1);
+        assert_eq!(submission.send.get_payloads().size(), 1);
         assert_eq!(
-            submission.endpoint.url.to_string(),
+            submission.send.get_target().url.to_string(),
             "http://agent:8126/v1.0/traces"
         );
 
-        let (payload, used) = decode_v1::from_slice(&submission.body).unwrap();
-        assert_eq!(used, submission.body.len());
+        let body = body(&submission);
+        let (payload, used) = decode_v1::from_slice(&body).unwrap();
+        assert_eq!(used, body.len());
         assert_eq!(payload.language_name, "python");
         assert_eq!(payload.language_version, "3.12");
         assert_eq!(payload.tracer_version, "v0.33.0");
@@ -551,7 +536,8 @@ mod tests {
         let mut block = block();
         block.traces[0].priority = Some(0);
         let submission = prepare(&block, &crash(START - 1, None), None).unwrap();
-        let (payload, _) = decode_v1::from_slice(&submission.body).unwrap();
+        let body = body(&submission);
+        let (payload, _) = decode_v1::from_slice(&body).unwrap();
         let chunk = &payload.chunks[0];
         assert_eq!(chunk.priority, Some(0));
         let rank = &chunk.spans[0];
@@ -560,26 +546,6 @@ mod tests {
             string_attr(rank, "error.message"),
             Some("Process crashed during training")
         );
-    }
-
-    #[test]
-    fn request_headers_come_from_the_process() {
-        let headers = request_headers(&block()).unwrap();
-        let get = |name: &str| {
-            headers
-                .iter()
-                .find(|(n, _)| n == name)
-                .map(|(_, v)| v.to_str().unwrap())
-        };
-        assert_eq!(get("datadog-meta-lang"), Some("python"));
-        assert_eq!(get("datadog-meta-lang-version"), Some("3.12"));
-        assert_eq!(get("datadog-meta-tracer-version"), Some("v0.33.0"));
-        assert_eq!(get("datadog-client-computed-top-level"), Some("yes"));
-        assert_eq!(get("datadog-container-id"), None);
-
-        let mut bad = block();
-        bad.process.language = "py\nthon".to_string();
-        assert!(prepare(&bad, &crash(START, None), None).is_err());
     }
 
     #[cfg_attr(miri, ignore)] // CrashInfo::test_instance spawns a process
@@ -616,7 +582,8 @@ mod tests {
                 .iter()
                 .any(|m| m.contains("receive time"))
         );
-        let (payload, _) = decode_v1::from_slice(&submissions[0].body).unwrap();
+        let body = body(&submissions[0]);
+        let (payload, _) = decode_v1::from_slice(&body).unwrap();
         assert!(payload.chunks[0].spans[0].duration >= before - START);
     }
 
@@ -745,25 +712,60 @@ mod tests {
     }
 
     async fn submit_once(submission: Submission) -> anyhow::Result<u16> {
-        let client = http_common::new_client_periodic();
-        submit(&client, submission).await
+        submit(&NativeCapabilities::new_client(), submission).await
+    }
+
+    /// The request head a submission of `block` sends to a local agent.
+    async fn head_sent(mut block: SpansToClose) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        block.agent_url = Some(format!("http://{}", listener.local_addr().unwrap()));
+        let server = tokio::spawn(async move { serve_once(&listener, "200 OK").await });
+        let submission = prepare(&block, &crash(START + 1, None), None).unwrap();
+        assert_eq!(submit_once(submission).await.unwrap(), 200);
+        server.await.unwrap().0.to_ascii_lowercase()
     }
 
     #[cfg_attr(miri, ignore)] // binds a socket
     #[tokio::test]
-    async fn submit_posts_v1_with_the_receivers_headers() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = format!("http://{}", listener.local_addr().unwrap());
-        let server = tokio::spawn(async move { serve_once(&listener, "200 OK").await });
-        assert_eq!(submit_once(submission_to(&url)).await.unwrap(), 200);
-
-        let seen = server.await.unwrap().0.to_ascii_lowercase();
+    async fn submit_posts_v1_with_the_processs_headers() {
+        let seen = head_sent(block()).await;
         assert!(seen.starts_with("post /v1.0/traces http/1.1"), "{seen}");
-        assert!(seen.contains("datadog-meta-lang: python\r\n"));
-        assert!(seen.contains("datadog-meta-tracer-version: v0.33.0\r\n"));
-        assert!(seen.contains("datadog-client-computed-top-level: yes\r\n"));
-        assert!(seen.contains("content-type: application/msgpack\r\n"));
-        assert!(seen.contains("x-datadog-trace-count: 1\r\n"));
+        assert!(seen.contains("datadog-meta-lang: python\r\n"), "{seen}");
+        assert!(
+            seen.contains("datadog-meta-lang-version: 3.12\r\n"),
+            "{seen}"
+        );
+        assert!(
+            seen.contains("datadog-meta-tracer-version: v0.33.0\r\n"),
+            "{seen}"
+        );
+        assert!(
+            seen.contains("datadog-client-computed-top-level: true\r\n"),
+            "{seen}"
+        );
+        assert!(
+            seen.contains("datadog-send-real-http-status: 1\r\n"),
+            "{seen}"
+        );
+        assert!(
+            seen.contains("content-type: application/msgpack\r\n"),
+            "{seen}"
+        );
+        assert!(seen.contains("x-datadog-trace-count: 1\r\n"), "{seen}");
+        assert!(!seen.contains("datadog-container-id"), "{seen}");
+    }
+
+    #[cfg_attr(miri, ignore)] // binds a socket
+    #[tokio::test]
+    async fn a_value_no_header_can_hold_is_left_out_not_fatal() {
+        let mut block = block();
+        block.process.language = "py\nthon".to_string();
+        let seen = head_sent(block).await;
+        assert!(!seen.contains("datadog-meta-lang:"), "{seen}");
+        assert!(
+            seen.contains("datadog-meta-tracer-version: v0.33.0\r\n"),
+            "{seen}"
+        );
     }
 
     #[cfg_attr(miri, ignore)] // binds a socket
@@ -864,7 +866,8 @@ mod tests {
         let sent = |attributes: &str| {
             let block = SpansToClose::parse(&child(attributes)).unwrap();
             let submission = prepare(&block, &crash(START + 1, None), None).unwrap();
-            let (payload, _) = decode_v1::from_slice(&submission.body).unwrap();
+            let body = body(&submission);
+            let (payload, _) = decode_v1::from_slice(&body).unwrap();
             let span = &payload.chunks[0].spans[0];
             ["_top_level", "_dd.top_level"].map(|key| match attr(span, key) {
                 None => None,
