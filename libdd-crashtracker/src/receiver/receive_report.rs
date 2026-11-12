@@ -423,6 +423,9 @@ pub(crate) async fn receive_report_from_stream(
         // We need to wait until at least we receive config, metadata, and kind (on non-Windows
         // platforms) before sending the crash ping
         if !crash_ping_sent && builder.is_ping_ready() {
+            if builder.timestamp.is_none() {
+                builder.with_timestamp_now()?;
+            }
             if let Some(ref config_ref) = config {
                 let config_clone = config_ref.clone();
                 crash_ping_sent = true;
