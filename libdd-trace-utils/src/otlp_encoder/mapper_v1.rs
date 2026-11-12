@@ -11,7 +11,7 @@
 use super::OtlpResourceInfo;
 use super::mapper::{MAX_ATTRIBUTES_PER_SPAN, SpanResourceAttributes, build_resource, proto_kv};
 use crate::span::trace_utils::SDK_OTLP_EXPORT_KEY;
-use crate::span::v1::{AttributeValue, Span, SpanEvent, SpanLink, TraceChunk};
+use crate::span::v1::{AttributeValue, Span, SpanEvent, SpanKind, SpanLink, TraceChunk};
 use crate::span::{SPAN_LINK_FLAGS_SET_SENTINEL, TraceData};
 use std::borrow::Borrow;
 use std::collections::hash_map::Entry;
@@ -388,7 +388,11 @@ fn map_span_v1<T: TraceData>(
         // v1's `span_kind` discriminants (Internal=1, Server=2, Client=3, Producer=4,
         // Consumer=5) already match the OTLP SpanKind enum, so no meta lookup/fallback is
         // needed like the v0.4 mapper's `span_kind()`/`tag_to_otlp_kind`/`dd_type_to_otlp_kind`.
-        kind: span.span_kind as i32,
+        // An unset kind goes out as INTERNAL, which is what OTel lets receivers assume for it.
+        kind: match span.span_kind {
+            SpanKind::Unspecified => SpanKind::Internal as i32,
+            kind => kind as i32,
+        },
         // OTLP timestamps are unsigned; a negative value has no valid representation, so fall
         // back to 0 rather than wrapping.
         start_time_unix_nano: u64::try_from(span.start).unwrap_or(0),
@@ -466,7 +470,6 @@ pub fn map_traces_to_otlp_v1<T: TraceData>(
 mod tests_v1 {
     use super::*;
     use crate::span::BytesData;
-    use crate::span::v1::SpanKind;
     use libdd_tinybytes::BytesString;
     use libdd_trace_protobuf::opentelemetry::proto::common::v1::any_value::Value as PV;
 
@@ -599,6 +602,16 @@ mod tests_v1 {
         let req = map_traces_to_otlp_v1(&[chunk], &OtlpResourceInfo::default(), false);
         let s = &req.resource_spans[0].scope_spans[0].spans[0];
         assert_eq!(s.kind, 5); // OTLP SpanKind CONSUMER
+    }
+
+    #[test]
+    fn unspecified_span_kind_maps_to_internal() {
+        let mut span = minimal_span();
+        span.span_kind = SpanKind::Unspecified;
+        let chunk = minimal_chunk([1; 16], span);
+        let req = map_traces_to_otlp_v1(&[chunk], &OtlpResourceInfo::default(), false);
+        let s = &req.resource_spans[0].scope_spans[0].spans[0];
+        assert_eq!(s.kind, 1); // OTLP SpanKind INTERNAL
     }
 
     #[test]

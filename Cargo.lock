@@ -1411,6 +1411,7 @@ dependencies = [
  "libdd-remote-config",
  "libdd-telemetry",
  "libdd-tinybytes",
+ "libdd-trace-model",
  "libdd-trace-stats",
  "libdd-trace-utils",
  "manual_future",

@@ -29,9 +29,9 @@ use std::fmt::Write as _;
 use super::span::{HexTraceId, HexU64};
 
 /// Reserved v0.4 `meta`/`metrics` key names written from dedicated typed fields (`env`,
-/// chunk `origin`, ...) rather than from the attribute map. See
-/// [`crate::msgpack_encoder::v04::span_v1::PROMOTED_ATTR_KEYS`] for the msgpack-side sibling
-/// of this list (this one omits `_dd.p.tid`: the JSON log's `trace_id` field carries the full
+/// chunk `origin`, ...) rather than from the attribute map. The msgpack-side v0.4 downgrade
+/// ([`crate::msgpack_encoder::v04::to_vec_from_v1`]) drops a colliding attribute only when the
+/// field is set (this list omits `_dd.p.tid`: the JSON log's `trace_id` field carries the full
 /// 128 bits directly, so there is no separate high-bits meta key here).
 const PROMOTED_ATTR_KEYS: &[&str] = &[
     "env",
@@ -92,7 +92,7 @@ impl<'a, T: TraceData> ChunkContextV1<'a, T> {
 /// callers can skip emitting the default value.
 fn span_kind_to_meta(kind: SpanKind) -> Option<&'static str> {
     match kind {
-        SpanKind::Internal => None,
+        SpanKind::Unspecified | SpanKind::Internal => None,
         SpanKind::Server => Some("server"),
         SpanKind::Client => Some("client"),
         SpanKind::Producer => Some("producer"),
@@ -117,10 +117,10 @@ fn dedup_first_wins<V>(mut leaves: Vec<(String, V)>) -> Vec<(String, V)> {
 }
 
 /// Recursively flattens a `List`/`KeyValue` attribute into dotted-key leaf entries for the
-/// `meta` (string-valued) and `metrics` (numeric) buckets. Mirrors
-/// `crate::msgpack_encoder::v04::span_v1::flatten_attr_into` exactly (same flattening
-/// convention on both wire formats). `Bytes` has no flattened form and is dropped by the
-/// caller before recursing.
+/// `meta` (string-valued) and `metrics` (numeric) buckets, with the same dotted-key convention
+/// as `crate::msgpack_encoder::v04::span_v1::flatten_attr_into`. Unlike the v0.4 downgrade,
+/// JSON logs carry no `meta_struct`: composites under its roots are flattened like any other,
+/// top-level `Bytes` are dropped by the caller and nested ones are dropped here.
 fn flatten_attr_into<T: TraceData>(
     key: &mut String,
     v: &AttributeValue<T>,
@@ -135,7 +135,7 @@ fn flatten_attr_into<T: TraceData>(
         AttributeValue::Int(i) => metrics_out.push((key.clone(), *i as f64)),
         AttributeValue::Float(f) => metrics_out.push((key.clone(), *f)),
         AttributeValue::Bytes(_) => {
-            // Callers filter `Bytes` out before recursing; unreachable in practice.
+            // No JSON log representation, like top-level `Bytes`.
         }
         AttributeValue::Array(items) => {
             let base_len = key.len();

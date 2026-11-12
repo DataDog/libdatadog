@@ -10,66 +10,200 @@
 //! | v1::Span field / attribute            | v0.4 field                                  |
 //! |---------------------------------------|---------------------------------------------|
 //! | `env` / `version` / `component`       | `meta["env"]` / `meta["version"]` / ...  (`env`/`version` fall back to the payload-level `env`/`app_version` when unset on the span) |
-//! | `span_kind`                           | `meta["span.kind"]` (lowercase string)      |
+//! | `span_kind`                           | `meta["span.kind"]` (lowercase; omitted when `Unspecified`) |
 //! | `AttributeValue::String` / `Bool`     | `meta[k]` (`"true"` / `"false"` for bool)   |
 //! | `AttributeValue::Float` / `Int`       | `metrics[k]` (Int cast to `f64`)            |
 //! | `AttributeValue::Bytes`               | `meta_struct[k]` (raw bytes)                |
-//! | `AttributeValue::Array`               | flattened into `meta`/`metrics[k.0]`, `[k.1]`, ... (per element type) |
+//! | `AttributeValue::Array`               | flattened into `meta`/`metrics[k.0]`, `[k.1]`, ... (per element type; nested `Bytes` base64 in `meta`) |
 //! | `AttributeValue::KeyValueList`        | flattened into `meta`/`metrics[k.a]`, `[k.a.b]`, ... (per member, recursively) |
 //! | `error: bool`                         | `error: i32` (`true → 1`, `false → 0`)      |
+//! | `span_links`                          | native `span_links` (attributes stringified) |
+//! | `span_events`                         | native `span_events` (nested members under dotted keys, `Bytes` as text); `meta["events"]` JSON when [`V1DowngradeOptions::native_span_events`] is off |
 //! | Chunk `trace_id: [u8; 16]`            | `trace_id: u64` (low 64) + `meta["_dd.p.tid"]` (hex of high 64, when non-zero) |
 //! | Chunk `origin`                        | `meta["_dd.origin"]`                        |
 //! | Chunk `priority`                      | `metrics["_sampling_priority_v1"]`          |
 //! | Chunk `sampling_mechanism`            | `meta["_dd.p.dm"]` (`"-{mechanism}"`)       |
 //! | Chunk `attributes`                    | Applied to every span in the chunk          |
 //! | Payload `env` / `app_version`         | Fallback for `meta["env"]` / `meta["version"]` when the span leaves them unset |
-//! | Payload `attributes`                  | Applied to every span, lowest precedence (span > chunk > payload) |
-//! | Chunk `dropped_trace: true`           | Forces `metrics["_sampling_priority_v1"] = -1` (USER_REJECT) unless the chunk's own priority is already negative |
+//! | Payload `hostname`                    | `meta["_dd.hostname"]` on the root span     |
+//! | Payload `attributes`                  | Applied to every span, lowest precedence (span > chunk > payload); `_dd.tags.process` / `_dd.sdk.otlp_export` only to the first span of each chunk, `_dd.git.*` only to its root span |
+//! | Chunk `dropped_trace: true`           | Preserves the chunk's `metrics["_sampling_priority_v1"]`, defaulting to `-1` (USER_REJECT) only when no priority is set |
+//!
+//! The root span is the one `trace_utils::get_root_span_index` picks (the agent's `GetRoot`).
 //!
 //! An attribute sharing a name with one of the dedicated fields above (`env`, `version`,
-//! `component`, `span.kind`, `_dd.p.tid`, `_dd.origin`, `_dd.p.dm`, `_sampling_priority_v1`) is
-//! dropped: the dedicated field always wins, so each key is written at most once.
+//! `component`, `span.kind`, `_dd.p.tid`, `_dd.origin`, `_dd.p.dm`, `_sampling_priority_v1`,
+//! `_dd.hostname`, and `events` for the JSON fallback) is dropped when that field is set, so each
+//! key is written at most once. When the field is unset, the attribute is written as is.
 
+use super::V1DowngradeOptions;
 use crate::span::TraceData;
+use crate::span::trace_utils::{
+    COMPONENT_KEY, DECISION_MAKER_KEY, ENV_KEY, GIT_COMMIT_SHA_KEY, GIT_REPOSITORY_URL_KEY,
+    HOSTNAME_KEY, ORIGIN_KEY, PROCESS_TAGS_KEY, SAMPLING_PRIORITY_KEY, SDK_OTLP_EXPORT_KEY,
+    SPAN_EVENTS_KEY, SPAN_KIND_KEY, TRACE_ID_HIGH_KEY, VERSION_KEY,
+};
 use crate::span::v1::{AttributeValue, Span, SpanEvent, SpanKind, SpanLink};
 use crate::span::vec_map::{DedupedVecMap, VecMap};
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use libdd_common::ResultInfallibleExt;
 use rmp::encode::{
-    RmpWrite, ValueWriteError, write_array_len, write_bin, write_bool, write_f64, write_i64,
-    write_map_len, write_sint, write_str, write_u8, write_u32, write_u64,
+    ByteBuf, RmpWrite, ValueWriteError, write_array_len, write_bin, write_bool, write_f64,
+    write_i64, write_map_len, write_sint, write_str, write_str_len, write_u8, write_u64,
 };
-use std::borrow::Borrow;
+use serde::ser::{Serialize, SerializeStruct, Serializer};
+use std::borrow::{Borrow, Cow};
 use std::collections::HashSet;
 use std::fmt::Write as _;
 
-/// Writes a `bool` as the v0.4 string representation (`"true"` / `"false"`). Used wherever a
-/// typed V1 `Bool` attribute is downgraded into v0.4 `meta` (which is `String → String` only).
-fn write_bool_as_str<W: RmpWrite>(
-    writer: &mut W,
-    b: bool,
-) -> Result<(), ValueWriteError<W::Error>> {
-    write_str(writer, if b { "true" } else { "false" })
-}
+/// Payload attributes that v0.4 carries on the first span of each trace only, as tracers wrote
+/// them before V1 (process tags, the OTLP export marker), rather than on every span.
+const FIRST_SPAN_PAYLOAD_ATTR_KEYS: &[&str] = &[PROCESS_TAGS_KEY, SDK_OTLP_EXPORT_KEY];
 
-/// Reserved v0.4 `meta`/`metrics` key names written from dedicated typed fields (`span.env`,
-/// chunk `origin`, ...) rather than from the attribute maps. An attribute sharing one of these
-/// names would otherwise collide with the dedicated field's entry on the wire; the dedicated
-/// field always wins and the same-named attribute is dropped — see `encode_span`.
-const PROMOTED_ATTR_KEYS: &[&str] = &[
-    "env",
-    "version",
-    "component",
-    "span.kind",
-    "_dd.p.tid",
-    "_dd.origin",
-    "_dd.p.dm",
-    "_sampling_priority_v1",
+/// Payload attributes that v0.4 carries on the root span of each trace only (git metadata).
+const ROOT_SPAN_PAYLOAD_ATTR_KEYS: &[&str] = &[GIT_COMMIT_SHA_KEY, GIT_REPOSITORY_URL_KEY];
+
+/// Attribute keys whose composite (`Array` / `KeyValueList`) values the backend reads from
+/// `meta_struct`. Keep in sync with the intake's `MetaStructAttributes`.
+const META_STRUCT_ROOTS: &[&str] = &[
+    "appsec",
+    "iast",
+    "_dd.appsec_shadow_deployed",
+    "_dd.stack",
+    "threat_intel",
+    "api.security",
+    "api.entity",
+    "api.definition",
+    "api.endpoint",
+    "http.request.body",
+    "ai_guard",
+    "_llmobs",
 ];
 
-/// Chunk-level context propagated into every span when downgrading to v0.4. Built once per
-/// chunk by the top-level encoder and passed by reference to `encode_span_v1_to_v04`. Also
-/// carries payload-level fields (`payload_env`, `payload_app_version`, `payload_attributes`),
-/// which apply as a fallback when the span itself doesn't set the equivalent field — v0.4 has
-/// neither a chunk nor a payload concept, so both levels collapse onto every span.
+/// Subtrees of [`META_STRUCT_ROOTS`] which the backend reads from `meta` instead.
+/// I.e. we must not normalize those into meta_struct.
+const META_SUBTREES: &[&str] = &["appsec.events", "appsec.fingerprint"];
+
+/// Whether `key` equals `prefix` or is nested below it at a `.` boundary.
+fn is_in_or_below(key: &str, prefix: &str) -> bool {
+    key.strip_prefix(prefix)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with('.'))
+}
+
+/// Whether a composite attribute under `key` is written to `meta_struct` instead of being
+/// flattened. `*.json` keys carry JSON documents read as they are, so they never match.
+fn is_meta_struct_key(key: &str) -> bool {
+    !key.ends_with(".json")
+        && META_STRUCT_ROOTS
+            .iter()
+            .any(|root| is_in_or_below(key, root))
+        && !META_SUBTREES.iter().any(|sub| is_in_or_below(key, sub))
+}
+
+/// Whether member `member` of a `KeyValueList` under `meta_struct` key `key` is a meta subtree,
+/// such as `events` of an `appsec` map.
+fn is_meta_subtree_member(key: &str, member: &str) -> bool {
+    META_SUBTREES.iter().any(|sub| {
+        sub.strip_prefix(key)
+            .and_then(|rest| rest.strip_prefix('.'))
+            .is_some_and(|rest| rest == member)
+    })
+}
+
+/// Writes `v` as a plain msgpack value, the form v0.4 `meta_struct` bytes carry: nested `Bytes`
+/// stay `bin` and integers take their narrowest encoding, as the backend decodes them.
+fn write_msgpack_value<W: RmpWrite, T: TraceData>(
+    writer: &mut W,
+    v: &AttributeValue<T>,
+) -> Result<(), ValueWriteError<W::Error>> {
+    match v {
+        AttributeValue::String(s) => write_str(writer, s.borrow()),
+        AttributeValue::Bool(b) => {
+            write_bool(writer, *b).map_err(ValueWriteError::InvalidDataWrite)
+        }
+        AttributeValue::Int(i) => write_sint(writer, *i).map(|_| ()),
+        AttributeValue::Float(f) => write_f64(writer, *f),
+        AttributeValue::Bytes(b) => write_bin(writer, b.borrow()),
+        AttributeValue::Array(items) => {
+            write_array_len(writer, items.len() as u32)?;
+            items
+                .iter()
+                .try_for_each(|item| write_msgpack_value(writer, item))
+        }
+        AttributeValue::KeyValueList(map) => {
+            write_msgpack_map(writer, map.defensive_dedup().iter())
+        }
+    }
+}
+
+/// Writes `entries` as a msgpack map of plain msgpack values (see [`write_msgpack_value`]).
+fn write_msgpack_map<'a, W: RmpWrite, T: TraceData + 'a>(
+    writer: &mut W,
+    entries: impl ExactSizeIterator<Item = (&'a T::Text, &'a AttributeValue<T>)>,
+) -> Result<(), ValueWriteError<W::Error>> {
+    write_map_len(writer, entries.len() as u32)?;
+    entries.into_iter().try_for_each(|(k, v)| {
+        write_str(writer, k.borrow())?;
+        write_msgpack_value(writer, v)
+    })
+}
+
+/// Encodes the composite `value` of `meta_struct` key `key` as msgpack. Meta subtree members
+/// (see [`META_SUBTREES`]) are split off first and flattened into the `meta` / `metrics`
+/// leaves. Returns `None` when the split leaves nothing; a map that was empty to begin with is
+/// still encoded.
+fn encode_meta_struct_value<T: TraceData>(
+    key: &str,
+    value: &AttributeValue<T>,
+    key_buf: &mut String,
+    meta_out: &mut Vec<(String, String)>,
+    metrics_out: &mut Vec<(String, f64)>,
+) -> Option<Vec<u8>> {
+    let mut buf = ByteBuf::new();
+    match value {
+        // Only keys with a meta subtree below them (i.e. `appsec`) can have members to split.
+        AttributeValue::KeyValueList(map)
+            if META_SUBTREES.iter().any(|sub| is_in_or_below(sub, key)) =>
+        {
+            let map = map.defensive_dedup();
+            let mut rest = Vec::with_capacity(map.len());
+            for (member, v) in map.iter() {
+                if is_meta_subtree_member(key, member.borrow()) {
+                    key_buf.clear();
+                    key_buf.push_str(key);
+                    key_buf.push('.');
+                    key_buf.push_str(member.borrow());
+                    flatten_attr_into(key_buf, v, meta_out, metrics_out);
+                } else {
+                    rest.push((member, v));
+                }
+            }
+            let split_off = rest.len() < map.len();
+            if rest.is_empty() && split_off {
+                return None;
+            }
+            write_msgpack_map(&mut buf, rest.into_iter())
+        }
+        _ => write_msgpack_value(&mut buf, value),
+    }
+    .map_err(super::super::flatten_value_write_infallible)
+    .unwrap_infallible();
+    Some(buf.into_vec())
+}
+
+/// Chunk-level context propagated into the spans of a chunk when downgrading to v0.4. Built once
+/// per chunk by the top-level encoder and passed by reference to `encode_span`. Also carries
+/// payload-level fields (`payload_env`, `payload_app_version`, `payload_hostname`,
+/// `payload_attributes`), which apply as a fallback when the span itself doesn't set the
+/// equivalent field. v0.4 has neither a chunk nor a payload concept, so both levels collapse
+/// onto the spans.
+///
+/// Generic chunk/payload attributes (and env/version fallbacks) collapse onto every span, but the
+/// trace-level tags `trace_id` high half (`_dd.p.tid`), `origin` (`_dd.origin`),
+/// `sampling_mechanism` (`_dd.p.dm`), `priority` (`_sampling_priority_v1`) and the payload
+/// `hostname` (`_dd.hostname`, where pre-V1 agents read it) are emitted only on the root span —
+/// see `encode_span`'s `is_root` argument.
 ///
 /// `chunk_attrs_dd` / `payload_attrs_dd` are deduped once here rather than per span: unlike the
 /// span's own attributes, they're identical for every span in the chunk.
@@ -80,6 +214,7 @@ pub(super) struct ChunkContext<'a, T: TraceData> {
     pub sampling_mechanism: Option<u32>,
     pub payload_env: &'a T::Text,
     pub payload_app_version: &'a T::Text,
+    pub payload_hostname: &'a T::Text,
     pub chunk_attrs_dd: DedupedVecMap<'a, T::Text, AttributeValue<T>>,
     pub payload_attrs_dd: DedupedVecMap<'a, T::Text, AttributeValue<T>>,
 }
@@ -94,6 +229,7 @@ impl<'a, T: TraceData> ChunkContext<'a, T> {
         attributes: &'a VecMap<T::Text, AttributeValue<T>>,
         payload_env: &'a T::Text,
         payload_app_version: &'a T::Text,
+        payload_hostname: &'a T::Text,
         payload_attributes: &'a VecMap<T::Text, AttributeValue<T>>,
     ) -> Self {
         Self {
@@ -103,17 +239,19 @@ impl<'a, T: TraceData> ChunkContext<'a, T> {
             sampling_mechanism,
             payload_env,
             payload_app_version,
+            payload_hostname,
             chunk_attrs_dd: attributes.defensive_dedup(),
             payload_attrs_dd: payload_attributes.defensive_dedup(),
         }
     }
 }
 
-/// Maps a `SpanKind` to its v0.4 `span.kind` meta string. Returns `None` for `Internal` so
-/// callers can skip emitting the default value.
+/// Maps a `SpanKind` to its v0.4 `span.kind` meta string. Returns `None` for `Unspecified` so
+/// callers can skip emitting an unset kind.
 fn span_kind_to_meta(kind: SpanKind) -> Option<&'static str> {
     match kind {
-        SpanKind::Internal => None,
+        SpanKind::Unspecified => None,
+        SpanKind::Internal => Some("internal"),
         SpanKind::Server => Some("server"),
         SpanKind::Client => Some("client"),
         SpanKind::Producer => Some("producer"),
@@ -148,14 +286,14 @@ struct BucketCounts {
 /// `List` attribute named `"a"`, whose first element also flattens to `"a.0"`); msgpack doesn't
 /// forbid duplicate map keys, but doesn't define decoder precedence for them either, so we
 /// enforce "each key written at most once" ourselves rather than leaving it to chance.
-fn dedup_first_wins<V>(mut leaves: Vec<(String, V)>) -> Vec<(String, V)> {
+fn dedup_first_wins<K: AsRef<str>, V>(mut leaves: Vec<(K, V)>) -> Vec<(K, V)> {
     // Same two-pass technique as `VecMap::dedup`: collect a keep/drop bitmap using borrowed
     // `&str`s (no per-key clone), then `retain` in place (no full re-collect into a new `Vec`).
     let keep: Vec<bool> = {
         let mut seen: HashSet<&str> = HashSet::with_capacity(leaves.len());
         leaves
             .iter()
-            .map(|(k, _)| seen.insert(k.as_str()))
+            .map(|(k, _)| seen.insert(k.as_ref()))
             .collect()
     };
     let mut keep = keep.into_iter();
@@ -168,7 +306,8 @@ fn dedup_first_wins<V>(mut leaves: Vec<(String, V)>) -> Vec<(String, V)> {
 /// V1 attributes to be exploded: list elements become `key.0`, `key.1`, ... and `KeyValue`
 /// members become `key.<member>` (recursively, for nested `KeyValue`/`List` values). Scalars
 /// (`String`/`Bool`/`Int`/`Float`) are leaves in their own right and produce a single entry under
-/// `key`. `Bytes` has no flattened form; callers must route it to `meta_struct` separately.
+/// `key`. Nested `Bytes` leaves are base64-encoded into `meta`, as the intake flattens them;
+/// callers route top-level `Bytes` to `meta_struct` instead.
 fn flatten_attr_into<T: TraceData>(
     key: &mut String,
     v: &AttributeValue<T>,
@@ -182,8 +321,8 @@ fn flatten_attr_into<T: TraceData>(
         }
         AttributeValue::Int(i) => metrics_out.push((key.clone(), *i as f64)),
         AttributeValue::Float(f) => metrics_out.push((key.clone(), *f)),
-        AttributeValue::Bytes(_) => {
-            // Callers filter `Bytes` out before recursing; unreachable in practice.
+        AttributeValue::Bytes(b) => {
+            meta_out.push((key.clone(), BASE64_STANDARD.encode(b.borrow())));
         }
         AttributeValue::Array(items) => {
             // Reuse `key`'s buffer across siblings instead of allocating a new `String` per
@@ -229,41 +368,33 @@ fn flatten_attr_into<T: TraceData>(
 /// # Errors
 ///
 /// This function will return any error emitted by the writer.
+///
+/// `is_root` marks the chunk's root span. Trace-level context (`_dd.p.tid`, `_dd.origin`,
+/// `_dd.p.dm`, `_sampling_priority_v1`, `_dd.hostname`) is emitted only for it — in v0.4 those tags
+/// live on the root, never on child spans. Generic chunk/payload attributes still propagate
+/// to every span (v0.4 has no chunk concept, so they collapse onto each span), except
+/// `FIRST_SPAN_PAYLOAD_ATTR_KEYS`, which only `is_first` (the chunk's first span) gets, and
+/// `ROOT_SPAN_PAYLOAD_ATTR_KEYS`, which only `is_root` gets.
 pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
     writer: &mut W,
     span: &Span<T>,
     chunk: &ChunkContext<'_, T>,
+    is_root: bool,
+    is_first: bool,
+    opts: V1DowngradeOptions,
 ) -> Result<(), ValueWriteError<W::Error>> {
     let span_attrs_dd = span.attributes.defensive_dedup();
-
-    // Merge span + chunk + payload attributes upfront with explicit "span overrides chunk
-    // overrides payload" precedence. We don't rely on msgpack map last-write-wins decoding
-    // here: the v0.4 / msgpack specs do not formalize behavior for duplicate map keys, so we
-    // emit each key exactly once.
-    //
-    // Attributes sharing a name with a "promoted" dedicated field (`env`, `_dd.origin`, ...)
-    // are dropped here: the dedicated field always wins so we never emit that key twice.
-    //
-    // This is a hot path (once per span), so precedence is resolved by chaining filtered
-    // iterators over the already-deduped maps rather than materializing intermediate
-    // `Vec`/`HashSet`s of keys — `chunk_attrs_dd`/`payload_attrs_dd` are small enough in
-    // practice that the linear "is this key already present" scans below are cheaper than an
-    // allocation.
-    let merged_attrs = span_attrs_dd
-        .iter()
-        .filter(|(k, _)| !PROMOTED_ATTR_KEYS.contains(&(*k).borrow()))
-        .chain(chunk.chunk_attrs_dd.iter().filter(|(k, _)| {
-            !PROMOTED_ATTR_KEYS.contains(&(*k).borrow())
-                && !span_attrs_dd.iter().any(|(k2, _)| k2 == *k)
-        }))
-        .chain(chunk.payload_attrs_dd.iter().filter(|(k, _)| {
-            !PROMOTED_ATTR_KEYS.contains(&(*k).borrow())
-                && !span_attrs_dd.iter().any(|(k2, _)| k2 == *k)
-                && !chunk.chunk_attrs_dd.iter().any(|(k2, _)| k2 == *k)
-        }));
-
+    let hostname: &str = if is_root {
+        chunk.payload_hostname.borrow()
+    } else {
+        ""
+    };
     let (trace_id_low, trace_id_high) = split_trace_id(chunk.trace_id);
     let kind_meta = span_kind_to_meta(span.span_kind);
+    let native_events = opts.native_span_events && !span.span_events.is_empty();
+    // Legacy `events` meta JSON, for agents without native v0.4 `span_events`.
+    let span_events_json = (!opts.native_span_events && !span.span_events.is_empty())
+        .then(|| span_events_to_legacy_json(&span.span_events));
 
     // `env`/`version` fall back to the payload-level value when the span doesn't set its own —
     // mirrors how a v1 tracer can set these once at the payload level instead of duplicating
@@ -279,21 +410,77 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
         chunk.payload_app_version.borrow()
     };
 
+    // An attribute named like a dedicated field is dropped only when that field is set (the
+    // field wins); otherwise it is written as a regular attribute. Trace-level fields count as
+    // set for every span of the chunk, as they belong on the root only.
+    let is_dedicated = |k: &str| match k {
+        ENV_KEY => !env.is_empty(),
+        VERSION_KEY => !version.is_empty(),
+        COMPONENT_KEY => !span.component.borrow().is_empty(),
+        SPAN_KIND_KEY => kind_meta.is_some(),
+        TRACE_ID_HIGH_KEY => trace_id_high != 0,
+        ORIGIN_KEY => !chunk.origin.borrow().is_empty(),
+        DECISION_MAKER_KEY => chunk.sampling_mechanism.is_some(),
+        SAMPLING_PRIORITY_KEY => chunk.priority.is_some(),
+        HOSTNAME_KEY => !chunk.payload_hostname.borrow().is_empty(),
+        SPAN_EVENTS_KEY => span_events_json.is_some(),
+        _ => false,
+    };
+
+    // Merge span + chunk + payload attributes upfront with explicit "span overrides chunk
+    // overrides payload" precedence. We don't rely on msgpack map last-write-wins decoding
+    // here: the v0.4 / msgpack specs do not formalize behavior for duplicate map keys, so we
+    // emit each key exactly once.
+    //
+    // This is a hot path (once per span), so precedence is resolved by chaining filtered
+    // iterators over the already-deduped maps rather than materializing intermediate
+    // `Vec`/`HashSet`s of keys — `chunk_attrs_dd`/`payload_attrs_dd` are small enough in
+    // practice that the linear "is this key already present" scans below are cheaper than an
+    // allocation.
+    let merged_attrs = span_attrs_dd
+        .iter()
+        .filter(|(k, _)| !is_dedicated((*k).borrow()))
+        .chain(chunk.chunk_attrs_dd.iter().filter(|(k, _)| {
+            !is_dedicated((*k).borrow()) && !span_attrs_dd.iter().any(|(k2, _)| k2 == *k)
+        }))
+        .chain(chunk.payload_attrs_dd.iter().filter(|(k, _)| {
+            !is_dedicated((*k).borrow())
+                && (is_first || !FIRST_SPAN_PAYLOAD_ATTR_KEYS.contains(&(*k).borrow()))
+                && (is_root || !ROOT_SPAN_PAYLOAD_ATTR_KEYS.contains(&(*k).borrow()))
+                && !span_attrs_dd.iter().any(|(k2, _)| k2 == *k)
+                && !chunk.chunk_attrs_dd.iter().any(|(k2, _)| k2 == *k)
+        }));
+
     // Flatten every attribute into `meta` (string-valued) / `metrics` (numeric) leaf entries.
     // `List` and `KeyValue` have no v0.4 wire representation as a single value, so they are
     // exploded into dotted keys (`key.0`, `key.a.b`) the same way intake/the UI expect nested V1
     // attributes — see the mapping table in the module docs. `Bytes` keeps going to
-    // `meta_struct` since it has no flattened form.
+    // `meta_struct` since it has no flattened form, and so do composites under a meta_struct
+    // root (see `META_STRUCT_ROOTS`), msgpack-encoded, as the backend reads them from there.
     let mut meta_leaves: Vec<(String, String)> = Vec::new();
     let mut metrics_leaves: Vec<(String, f64)> = Vec::new();
-    let mut bytes_attrs: Vec<(&T::Text, &T::Bytes)> = Vec::new();
+    let mut meta_struct: Vec<(&str, Cow<'_, [u8]>)> = Vec::new();
     let mut key_buf = String::new();
     for (k, v) in merged_attrs {
+        let key: &str = k.borrow();
         match v {
-            AttributeValue::Bytes(b) => bytes_attrs.push((k, b)),
+            AttributeValue::Bytes(b) => meta_struct.push((key, Cow::Borrowed(b.borrow()))),
+            AttributeValue::Array(_) | AttributeValue::KeyValueList(_)
+                if is_meta_struct_key(key) =>
+            {
+                if let Some(encoded) = encode_meta_struct_value(
+                    key,
+                    v,
+                    &mut key_buf,
+                    &mut meta_leaves,
+                    &mut metrics_leaves,
+                ) {
+                    meta_struct.push((key, Cow::Owned(encoded)));
+                }
+            }
             _ => {
                 key_buf.clear();
-                key_buf.push_str(k.borrow());
+                key_buf.push_str(key);
                 flatten_attr_into(&mut key_buf, v, &mut meta_leaves, &mut metrics_leaves);
             }
         }
@@ -309,13 +496,15 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
     counts.meta += !version.is_empty() as u32;
     counts.meta += !span.component.borrow().is_empty() as u32;
     counts.meta += kind_meta.is_some() as u32;
-    counts.meta += (trace_id_high != 0) as u32;
-    counts.meta += !chunk.origin.borrow().is_empty() as u32;
-    counts.meta += chunk.sampling_mechanism.is_some() as u32;
+    counts.meta += (is_root && trace_id_high != 0) as u32;
+    counts.meta += (is_root && !chunk.origin.borrow().is_empty()) as u32;
+    counts.meta += (is_root && chunk.sampling_mechanism.is_some()) as u32;
+    counts.meta += !hostname.is_empty() as u32;
+    counts.meta += span_events_json.is_some() as u32;
     counts.meta += meta_leaves.len() as u32;
-    counts.metrics += chunk.priority.is_some() as u32;
+    counts.metrics += (is_root && chunk.priority.is_some()) as u32;
     counts.metrics += metrics_leaves.len() as u32;
-    counts.meta_struct += bytes_attrs.len() as u32;
+    counts.meta_struct += meta_struct.len() as u32;
 
     let span_len = 7 // service, name, resource, trace_id, span_id, start, duration (always)
         + (!span.r#type.borrow().is_empty()) as u32
@@ -325,7 +514,7 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
         + (counts.metrics > 0) as u32
         + (counts.meta_struct > 0) as u32
         + (!span.span_links.is_empty()) as u32
-        + (!span.span_events.is_empty()) as u32;
+        + native_events as u32;
 
     write_map_len(writer, span_len)?;
 
@@ -365,24 +554,24 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
         write_map_len(writer, counts.meta)?;
 
         if !env.is_empty() {
-            write_const_msgpack_str!(writer, "env")?;
+            write_const_msgpack_str!(writer, ENV_KEY)?;
             write_str(writer, env)?;
         }
         if !version.is_empty() {
-            write_const_msgpack_str!(writer, "version")?;
+            write_const_msgpack_str!(writer, VERSION_KEY)?;
             write_str(writer, version)?;
         }
         if !span.component.borrow().is_empty() {
-            write_const_msgpack_str!(writer, "component")?;
+            write_const_msgpack_str!(writer, COMPONENT_KEY)?;
             write_str(writer, span.component.borrow())?;
         }
         if let Some(kind_str) = kind_meta {
-            write_const_msgpack_str!(writer, "span.kind")?;
+            write_const_msgpack_str!(writer, SPAN_KIND_KEY)?;
             write_str(writer, kind_str)?;
         }
-        if trace_id_high != 0 {
+        if is_root && trace_id_high != 0 {
             // Lower-case hex without `0x` prefix — the agent expects this format.
-            write_const_msgpack_str!(writer, "_dd.p.tid")?;
+            write_const_msgpack_str!(writer, TRACE_ID_HIGH_KEY)?;
             let mut buf = [0u8; 16];
             let hex_str = hex::encode_to_slice(trace_id_high.to_be_bytes(), &mut buf)
                 .ok()
@@ -390,14 +579,30 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
                 .unwrap_or_default();
             write_str(writer, hex_str)?;
         }
-        if !chunk.origin.borrow().is_empty() {
-            write_const_msgpack_str!(writer, "_dd.origin")?;
+        if is_root && !chunk.origin.borrow().is_empty() {
+            write_const_msgpack_str!(writer, ORIGIN_KEY)?;
             write_str(writer, chunk.origin.borrow())?;
         }
-        if let Some(mechanism) = chunk.sampling_mechanism {
-            write_const_msgpack_str!(writer, "_dd.p.dm")?;
+        if let Some(mechanism) = chunk.sampling_mechanism.filter(|_| is_root) {
+            write_const_msgpack_str!(writer, DECISION_MAKER_KEY)?;
+            // The tag is `-<mechanism>` (the part before the dash once held a hash), so 0 is "-0".
             let mut buf = itoa::Buffer::new();
-            write_str(writer, buf.format(-(mechanism as i64)))?;
+            let digits = buf.format(mechanism);
+            write_str_len(writer, 1 + digits.len() as u32)?;
+            writer
+                .write_bytes(b"-")
+                .map_err(ValueWriteError::InvalidDataWrite)?;
+            writer
+                .write_bytes(digits.as_bytes())
+                .map_err(ValueWriteError::InvalidDataWrite)?;
+        }
+        if !hostname.is_empty() {
+            write_const_msgpack_str!(writer, HOSTNAME_KEY)?;
+            write_str(writer, hostname)?;
+        }
+        if let Some(events_json) = &span_events_json {
+            write_const_msgpack_str!(writer, SPAN_EVENTS_KEY)?;
+            write_str(writer, events_json)?;
         }
         for (k, v) in &meta_leaves {
             write_str(writer, k)?;
@@ -409,8 +614,8 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
         write_const_msgpack_str!(writer, "metrics")?;
         write_map_len(writer, counts.metrics)?;
 
-        if let Some(priority) = chunk.priority {
-            write_const_msgpack_str!(writer, "_sampling_priority_v1")?;
+        if let Some(priority) = chunk.priority.filter(|_| is_root) {
+            write_const_msgpack_str!(writer, SAMPLING_PRIORITY_KEY)?;
             write_f64(writer, priority as f64)?;
         }
         for (k, v) in &metrics_leaves {
@@ -428,94 +633,78 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
         write_const_msgpack_str!(writer, "meta_struct")?;
         write_map_len(writer, counts.meta_struct)?;
 
-        for &(k, b) in &bytes_attrs {
-            write_str(writer, k.borrow())?;
-            write_bin(writer, b.borrow())?;
+        for (k, b) in &meta_struct {
+            write_str(writer, k)?;
+            write_bin(writer, b)?;
         }
     }
 
     if !span.span_links.is_empty() {
         encode_span_links(writer, &span.span_links)?;
     }
-    if !span.span_events.is_empty() {
+    if native_events {
         encode_span_events(writer, &span.span_events)?;
     }
 
     Ok(())
 }
 
-/// Encodes [`v1::SpanLink`](crate::span::v1::SpanLink)s into the v0.4 msgpack wire format
-/// (downgrade: v1 input → v0.4 output). The 128-bit `trace_id` is split into
-/// `(trace_id, trace_id_high)` u64s. Typed link attributes are downgraded to strings;
-/// non-string-coercible variants are dropped because v0.4 link attributes are `String → String`
-/// only.
+/// Writes the native v0.4 `span_links` field. v0.4 link attributes are `String → String`, so
+/// scalars stringify and nested values carry their JSON string.
 fn encode_span_links<W: RmpWrite, T: TraceData>(
     writer: &mut W,
     span_links: &[SpanLink<T>],
 ) -> Result<(), ValueWriteError<W::Error>> {
     write_const_msgpack_str!(writer, "span_links")?;
-    write_array_len(writer, span_links.len() as u32)?;
-
+    rmp::encode::write_array_len(writer, span_links.len() as u32)?;
     for link in span_links {
         let (trace_id_low, trace_id_high) = split_trace_id(&link.trace_id);
         let attrs_dd = link.attributes.defensive_dedup();
-        let attr_count = attrs_dd
-            .iter()
-            .filter(|(_, v)| matches!(v, AttributeValue::String(_) | AttributeValue::Bool(_)))
-            .count() as u32;
-
-        let link_len = 3 // trace_id, trace_id_high, span_id (always)
-            + (attr_count > 0) as u32
+        let link_len = 2 // trace_id, span_id
+            + (trace_id_high != 0) as u32
+            + (!attrs_dd.is_empty()) as u32
             + (!link.tracestate.borrow().is_empty()) as u32
             + (link.flags != 0) as u32;
-
         write_map_len(writer, link_len)?;
 
         write_const_msgpack_str!(writer, "trace_id")?;
         write_u64(writer, trace_id_low)?;
-
-        write_const_msgpack_str!(writer, "trace_id_high")?;
-        write_u64(writer, trace_id_high)?;
-
+        if trace_id_high != 0 {
+            write_const_msgpack_str!(writer, "trace_id_high")?;
+            write_u64(writer, trace_id_high)?;
+        }
         write_const_msgpack_str!(writer, "span_id")?;
         write_u64(writer, link.span_id)?;
 
-        if attr_count > 0 {
+        if !attrs_dd.is_empty() {
             write_const_msgpack_str!(writer, "attributes")?;
-            write_map_len(writer, attr_count)?;
+            write_map_len(writer, attrs_dd.len() as u32)?;
             for (k, v) in attrs_dd.iter() {
+                write_str(writer, k.borrow())?;
                 match v {
-                    AttributeValue::String(s) => {
-                        write_str(writer, k.borrow())?;
-                        write_str(writer, s.borrow())?;
-                    }
+                    AttributeValue::String(s) => write_str(writer, s.borrow())?,
                     AttributeValue::Bool(b) => {
-                        write_str(writer, k.borrow())?;
-                        write_bool_as_str(writer, *b)?;
+                        write_str(writer, if *b { "true" } else { "false" })?
                     }
-                    _ => {}
+                    _ => write_str(writer, &to_json(&JsonAttr(v)))?,
                 }
             }
         }
-
         if !link.tracestate.borrow().is_empty() {
             write_const_msgpack_str!(writer, "tracestate")?;
             write_str(writer, link.tracestate.borrow())?;
         }
-
         if link.flags != 0 {
             write_const_msgpack_str!(writer, "flags")?;
-            write_u32(writer, link.flags)?;
+            rmp::encode::write_u32(writer, link.flags)?;
         }
     }
-
     Ok(())
 }
 
-/// Encodes [`v1::SpanEvent`](crate::span::v1::SpanEvent)s into the v0.4 msgpack wire format
-/// (downgrade: v1 input → v0.4 output). Typed attributes are downgraded to the v0.4
-/// `{"type": <u8>, "<kind>_value": ...}` shape — see `write_event_attr_value`. `Bytes` and
-/// `KeyValue` have no v0.4 event-attribute equivalent and are dropped.
+/// Writes the native v0.4 `span_events` field. Attributes take the v0.4
+/// `{"type": <u8>, "<kind>_value": ...}` shape (see `write_event_attr_value`); `Bytes` become
+/// (lossy UTF-8) text.
 fn encode_span_events<W: RmpWrite, T: TraceData>(
     writer: &mut W,
     span_events: &[SpanEvent<T>],
@@ -524,16 +713,8 @@ fn encode_span_events<W: RmpWrite, T: TraceData>(
     write_array_len(writer, span_events.len() as u32)?;
 
     for event in span_events {
-        let attrs_dd = event.attributes.defensive_dedup();
-        let attr_count = attrs_dd
-            .iter()
-            .filter(|(_, v)| is_supported_event_attr(v))
-            .count() as u32;
-
-        let event_len = 2 // time_unix_nano, name (always)
-            + (attr_count > 0) as u32;
-
-        write_map_len(writer, event_len)?;
+        let attrs = event_attrs(event);
+        write_map_len(writer, 2 + (!attrs.is_empty()) as u32)?;
 
         write_const_msgpack_str!(writer, "time_unix_nano")?;
         write_u64(writer, event.time_unix_nano)?;
@@ -541,14 +722,11 @@ fn encode_span_events<W: RmpWrite, T: TraceData>(
         write_const_msgpack_str!(writer, "name")?;
         write_str(writer, event.name.borrow())?;
 
-        if attr_count > 0 {
+        if !attrs.is_empty() {
             write_const_msgpack_str!(writer, "attributes")?;
-            write_map_len(writer, attr_count)?;
-            for (k, v) in attrs_dd.iter() {
-                if !is_supported_event_attr(v) {
-                    continue;
-                }
-                write_str(writer, k.borrow())?;
+            write_map_len(writer, attrs.len() as u32)?;
+            for (k, v) in &attrs {
+                write_str(writer, k)?;
                 write_event_attr_value(writer, v)?;
             }
         }
@@ -557,16 +735,64 @@ fn encode_span_events<W: RmpWrite, T: TraceData>(
     Ok(())
 }
 
-/// Returns `true` when `v` can be downgraded to a v0.4 event-attribute (scalar or scalar list).
-fn is_supported_event_attr<T: TraceData>(v: &AttributeValue<T>) -> bool {
-    matches!(
-        v,
-        AttributeValue::String(_)
-            | AttributeValue::Bool(_)
-            | AttributeValue::Int(_)
-            | AttributeValue::Float(_)
-            | AttributeValue::Array(_)
-    )
+/// The event's attributes as native v0.4 event attributes: scalars and arrays of scalars as they
+/// are; v0.4 has no nested values, so `KeyValueList` members and the elements of other arrays go
+/// under dotted keys (`k.a`, `k.0`), first key wins on a collision.
+fn event_attrs<T: TraceData>(event: &SpanEvent<T>) -> Vec<(Cow<'_, str>, &AttributeValue<T>)> {
+    let mut attrs = Vec::new();
+    let mut key = String::new();
+    let mut flattened = false;
+    for (k, v) in event.attributes.defensive_dedup().iter() {
+        if is_native_event_attr(v) {
+            attrs.push((Cow::Borrowed(k.borrow()), v));
+        } else {
+            key.clear();
+            key.push_str(k.borrow());
+            flatten_event_attr(&mut key, v, &mut attrs);
+            flattened = true;
+        }
+    }
+    if flattened {
+        attrs = dedup_first_wins(attrs);
+    }
+    attrs
+}
+
+/// Pushes `v` under `key`, or its members / elements under dotted keys if it is nested.
+fn flatten_event_attr<'a, T: TraceData>(
+    key: &mut String,
+    v: &'a AttributeValue<T>,
+    out: &mut Vec<(Cow<'a, str>, &'a AttributeValue<T>)>,
+) {
+    let base_len = key.len();
+    match v {
+        AttributeValue::KeyValueList(map) => {
+            for (k, v) in map.defensive_dedup().iter() {
+                key.push('.');
+                key.push_str(k.borrow());
+                flatten_event_attr(key, v, out);
+                key.truncate(base_len);
+            }
+        }
+        AttributeValue::Array(items) if !is_native_event_attr(v) => {
+            for (i, item) in items.iter().enumerate() {
+                key.push('.');
+                let _ = write!(key, "{i}");
+                flatten_event_attr(key, item, out);
+                key.truncate(base_len);
+            }
+        }
+        _ => out.push((Cow::Owned(key.clone()), v)),
+    }
+}
+
+/// Whether `v` has a native v0.4 event-attribute form: a scalar or an array of scalars.
+fn is_native_event_attr<T: TraceData>(v: &AttributeValue<T>) -> bool {
+    match v {
+        AttributeValue::KeyValueList(_) => false,
+        AttributeValue::Array(items) => items.iter().all(is_scalar_array_elem),
+        _ => true,
+    }
 }
 
 macro_rules! write_type {
@@ -579,9 +805,38 @@ macro_rules! write_type {
 }
 
 /// Writes a v0.4 event-attribute value as `{"type": <u8>, "..._value": ...}`. Scalars produce a
-/// 2-entry map; `List` produces `{"type": 4, "array_value": {"values": [...]}}` with each
+/// 2-entry map; `Array` produces `{"type": 4, "array_value": {"values": [...]}}` with each
 /// element written via `write_event_array_element`.
 fn write_event_attr_value<W: RmpWrite, T: TraceData>(
+    writer: &mut W,
+    v: &AttributeValue<T>,
+) -> Result<(), ValueWriteError<W::Error>> {
+    match v {
+        AttributeValue::Array(items) => {
+            write_type!(writer, 4, "array_value");
+            write_map_len(writer, 1)?;
+            write_const_msgpack_str!(writer, "values")?;
+            write_array_len(writer, items.len() as u32)?;
+            for item in items {
+                write_event_array_element(writer, item)?;
+            }
+        }
+        _ => write_event_array_element(writer, v)?,
+    }
+    Ok(())
+}
+
+/// Returns `true` when `v` is a scalar that fits in a v0.4 `AttributeArrayValue` (no nesting).
+fn is_scalar_array_elem<T: TraceData>(v: &AttributeValue<T>) -> bool {
+    !matches!(
+        v,
+        AttributeValue::Array(_) | AttributeValue::KeyValueList(_)
+    )
+}
+
+/// Writes a scalar as a v0.4 `AttributeArrayValue`, the `{"type", "..._value"}` shape that
+/// scalar event attributes use too.
+fn write_event_array_element<W: RmpWrite, T: TraceData>(
     writer: &mut W,
     v: &AttributeValue<T>,
 ) -> Result<(), ValueWriteError<W::Error>> {
@@ -589,6 +844,10 @@ fn write_event_attr_value<W: RmpWrite, T: TraceData>(
         AttributeValue::String(s) => {
             write_type!(writer, 0, "string_value");
             write_str(writer, s.borrow())?;
+        }
+        AttributeValue::Bytes(b) => {
+            write_type!(writer, 0, "string_value");
+            write_str(writer, &String::from_utf8_lossy(b.borrow()))?;
         }
         AttributeValue::Bool(b) => {
             write_type!(writer, 1, "bool_value");
@@ -602,79 +861,71 @@ fn write_event_attr_value<W: RmpWrite, T: TraceData>(
             write_type!(writer, 3, "double_value");
             write_f64(writer, *f)?;
         }
-        AttributeValue::Array(arr) => {
-            write_type!(writer, 4, "array_value");
-            // Only scalar elements survive the downgrade; nested structural entries are
-            // skipped because v0.4 array elements must themselves be scalar.
-            let scalar_elems = arr.iter().filter(|e| is_scalar_array_elem(e));
-            let elem_count = scalar_elems.clone().count() as u32;
-            write_map_len(writer, 1)?;
-            write_const_msgpack_str!(writer, "values")?;
-            write_array_len(writer, elem_count)?;
-            for elem in scalar_elems {
-                write_event_array_element(writer, elem)?;
+        AttributeValue::Array(_) | AttributeValue::KeyValueList(_) => {
+            // `event_attrs` flattens nested values; reachable only on a bug. Keep the map valid.
+            debug_assert!(false, "nested value reached the event attribute writer");
+            write_type!(writer, 0, "string_value");
+            write_str(writer, "")?;
+        }
+    }
+    Ok(())
+}
+
+/// Serializes native v1 span events to the legacy v0.4 `events` meta value: a JSON array of
+/// `{name, time_unix_nano, attributes?}` objects, attribute values keeping their JSON types. Old
+/// agents understand this meta tag; the native top-level `span_events` field is not emitted.
+fn span_events_to_legacy_json<T: TraceData>(span_events: &[SpanEvent<T>]) -> String {
+    to_json(&span_events.iter().map(JsonEvent).collect::<Vec<_>>())
+}
+
+fn to_json<V: Serialize>(value: &V) -> String {
+    // Serializing these types to a String can't fail: map keys are strings.
+    serde_json::to_string(value).unwrap_or_default()
+}
+
+/// Serializes a span event for the legacy `events` meta.
+struct JsonEvent<'a, T: TraceData>(&'a SpanEvent<T>);
+
+impl<T: TraceData> Serialize for JsonEvent<'_, T> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let event = self.0;
+        let has_attrs = !event.attributes.is_empty();
+        let mut st = serializer.serialize_struct("SpanEvent", 2 + has_attrs as usize)?;
+        st.serialize_field("name", event.name.borrow())?;
+        st.serialize_field("time_unix_nano", &event.time_unix_nano)?;
+        if has_attrs {
+            st.serialize_field("attributes", &JsonAttrs(&event.attributes))?;
+        }
+        st.end()
+    }
+}
+
+/// Serializes an attribute map as a JSON object, in insertion order.
+struct JsonAttrs<'a, T: TraceData>(&'a VecMap<T::Text, AttributeValue<T>>);
+
+impl<T: TraceData> Serialize for JsonAttrs<'_, T> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_map(self.0.iter().map(|(k, v)| (k.borrow(), JsonAttr(v))))
+    }
+}
+
+/// Serializes an attribute value with its JSON type; `Bytes` become a (lossy UTF-8) string.
+struct JsonAttr<'a, T: TraceData>(&'a AttributeValue<T>);
+
+impl<T: TraceData> Serialize for JsonAttr<'_, T> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self.0 {
+            AttributeValue::String(s) => serializer.serialize_str(s.borrow()),
+            AttributeValue::Bool(b) => serializer.serialize_bool(*b),
+            AttributeValue::Int(i) => serializer.serialize_i64(*i),
+            AttributeValue::Float(f) => serializer.serialize_f64(*f),
+            AttributeValue::Bytes(b) => {
+                serializer.serialize_str(&String::from_utf8_lossy(b.borrow()))
             }
-        }
-        AttributeValue::Bytes(_) | AttributeValue::KeyValueList(_) => {
-            // Filtered upstream by `is_supported_event_attr`; reachable only on a bug.
-            debug_assert!(false, "unsupported event attribute variant reached writer");
+            AttributeValue::Array(items) => serializer.collect_seq(items.iter().map(JsonAttr)),
+            AttributeValue::KeyValueList(map) => JsonAttrs(map).serialize(serializer),
         }
     }
-    Ok(())
-}
-
-/// Returns `true` when `v` is a scalar that fits in a v0.4 `AttributeArrayValue` (no nesting).
-fn is_scalar_array_elem<T: TraceData>(v: &AttributeValue<T>) -> bool {
-    matches!(
-        v,
-        AttributeValue::String(_)
-            | AttributeValue::Bool(_)
-            | AttributeValue::Int(_)
-            | AttributeValue::Float(_)
-    )
-}
-
-/// Writes a v0.4 `AttributeArrayValue` (scalar). Same `{"type", "..._value"}` shape as
-/// `write_event_attr_value`, minus the `Array` variant — v0.4 array elements are scalar only.
-fn write_event_array_element<W: RmpWrite, T: TraceData>(
-    writer: &mut W,
-    v: &AttributeValue<T>,
-) -> Result<(), ValueWriteError<W::Error>> {
-    match v {
-        AttributeValue::String(s) => {
-            write_map_len(writer, 2)?;
-            write_const_msgpack_str!(writer, "type")?;
-            write_u8(writer, 0)?;
-            write_const_msgpack_str!(writer, "string_value")?;
-            write_str(writer, s.borrow())?;
-        }
-        AttributeValue::Bool(b) => {
-            write_map_len(writer, 2)?;
-            write_const_msgpack_str!(writer, "type")?;
-            write_u8(writer, 1)?;
-            write_const_msgpack_str!(writer, "bool_value")?;
-            write_bool(writer, *b).map_err(ValueWriteError::InvalidDataWrite)?;
-        }
-        AttributeValue::Int(i) => {
-            write_map_len(writer, 2)?;
-            write_const_msgpack_str!(writer, "type")?;
-            write_u8(writer, 2)?;
-            write_const_msgpack_str!(writer, "int_value")?;
-            write_sint(writer, *i)?;
-        }
-        AttributeValue::Float(f) => {
-            write_map_len(writer, 2)?;
-            write_const_msgpack_str!(writer, "type")?;
-            write_u8(writer, 3)?;
-            write_const_msgpack_str!(writer, "double_value")?;
-            write_f64(writer, *f)?;
-        }
-        _ => {
-            // Filtered upstream by `is_scalar_array_elem`; reachable only on a bug.
-            debug_assert!(false, "non-scalar array element reached writer");
-        }
-    }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -683,6 +934,7 @@ mod tests {
     //! `TracerPayload` via [`super::super::to_vec_from_v1`] and decodes the bytes with
     //! `rmpv` to assert on the resulting v0.4 shape — this implicitly checks that the output
     //! is also valid msgpack consumable by any standard v0.4 decoder (test-agent, agent, etc.).
+    use super::super::V1DowngradeOptions;
     use crate::span::v1::{
         AttributeValue, AttributeValueBytes, SpanBytes, SpanEventBytes, SpanKind, SpanLinkBytes,
         TraceChunkBytes, TracerPayloadBytes,
@@ -699,7 +951,18 @@ mod tests {
     /// Encodes `payload` and decodes back into `rmpv::Value`. The top level of v0.4 is an
     /// array of traces; this helper returns it as a `Vec<Value>` so tests can index in.
     fn encode_and_decode(payload: &TracerPayloadBytes) -> Vec<Value> {
-        let bytes = super::super::to_vec_from_v1(payload);
+        decode(&super::super::to_vec_from_v1(payload))
+    }
+
+    /// [`encode_and_decode`] with span events in the legacy `events` meta JSON.
+    fn encode_and_decode_legacy_events(payload: &TracerPayloadBytes) -> Vec<Value> {
+        let opts = V1DowngradeOptions {
+            native_span_events: false,
+        };
+        decode(&super::super::to_vec_from_v1_with(payload, opts))
+    }
+
+    fn decode(bytes: &[u8]) -> Vec<Value> {
         let value = rmpv::decode::read_value(&mut &bytes[..]).expect("decode failed");
         match value {
             Value::Array(traces) => traces,
@@ -707,8 +970,29 @@ mod tests {
         }
     }
 
+    /// Recursively sorts map entries by key, as map order on the wire is unspecified.
+    fn sort_maps(v: Value) -> Value {
+        match v {
+            Value::Map(entries) => {
+                let mut entries: Vec<_> = entries
+                    .into_iter()
+                    .map(|(k, v)| (k, sort_maps(v)))
+                    .collect();
+                entries.sort_by_key(|(a, _)| a.to_string());
+                Value::Map(entries)
+            }
+            Value::Array(items) => Value::Array(items.into_iter().map(sort_maps).collect()),
+            other => other,
+        }
+    }
+
     /// Looks up `key` in a msgpack `Value::Map`. Returns `None` when absent so callers can
     /// distinguish "field missing" from "field empty".
+    /// Parses the JSON string stored under `key` (key order is not compared).
+    fn json_meta(map: &Value, key: &str) -> serde_json::Value {
+        serde_json::from_str(map_get(map, key).unwrap().as_str().unwrap()).unwrap()
+    }
+
     fn map_get<'a>(map: &'a Value, key: &str) -> Option<&'a Value> {
         let entries = match map {
             Value::Map(m) => m,
@@ -741,6 +1025,8 @@ mod tests {
             span_id: 1,
             start: 1_000,
             duration: 500,
+            // As the sidecar builder starts spans: no `span.kind` set.
+            span_kind: SpanKind::Unspecified,
             ..Default::default()
         }
     }
@@ -811,6 +1097,64 @@ mod tests {
     }
 
     #[test]
+    fn attribute_sharing_a_promoted_key_name_is_kept_when_the_dedicated_field_is_unset() {
+        let mut attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        attrs.insert(bs("component"), AttributeValue::String(bs("curl")));
+        attrs.insert(bs("env"), AttributeValue::String(bs("staging")));
+        attrs.insert(bs("version"), AttributeValue::String(bs("2.0")));
+        attrs.insert(bs("_dd.origin"), AttributeValue::String(bs("synthetics")));
+        let span = SpanBytes {
+            attributes: attrs,
+            ..minimal_span()
+        };
+        let payload = minimal_payload([0u8; 16], span);
+        let traces = encode_and_decode(&payload);
+        let meta = map_get(&traces[0][0], "meta").expect("meta present");
+
+        assert_eq!(map_get(meta, "component").unwrap().as_str(), Some("curl"));
+        assert_eq!(map_get(meta, "env").unwrap().as_str(), Some("staging"));
+        assert_eq!(map_get(meta, "version").unwrap().as_str(), Some("2.0"));
+        assert_eq!(
+            map_get(meta, "_dd.origin").unwrap().as_str(),
+            Some("synthetics")
+        );
+        assert_eq!(meta.as_map().expect("meta must be a map").len(), 4);
+    }
+
+    #[test]
+    fn tid_attribute_is_never_emitted_from_the_attribute_map() {
+        // A user-set `_dd.p.tid` attribute is dropped on every span: the local root carries the
+        // chunk trace-id high half instead, other spans carry nothing.
+        let tid_attr = || {
+            let mut attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+            attrs.insert(bs("_dd.p.tid"), AttributeValue::String(bs("user-set")));
+            attrs
+        };
+        let root = SpanBytes {
+            attributes: tid_attr(),
+            ..minimal_span()
+        };
+        let child = SpanBytes {
+            span_id: 2,
+            parent_id: 1,
+            attributes: tid_attr(),
+            ..minimal_span()
+        };
+        let mut trace_id = [0u8; 16];
+        trace_id[..8].copy_from_slice(&0xdead_beef_u64.to_be_bytes());
+        let mut payload = minimal_payload(trace_id, root);
+        payload.chunks[0].spans.push(child);
+        let traces = encode_and_decode(&payload);
+
+        let root_meta = map_get(&traces[0][0], "meta").expect("root meta present");
+        assert_eq!(
+            map_get(root_meta, "_dd.p.tid").unwrap().as_str(),
+            Some("00000000deadbeef")
+        );
+        assert!(map_get(&traces[0][1], "meta").is_none_or(|m| map_get(m, "_dd.p.tid").is_none()));
+    }
+
+    #[test]
     fn flattened_attribute_colliding_with_another_attribute_keeps_first_wins() {
         // "a" is a List whose first element flattens to "a.0"; "a.0" is also a literal
         // attribute key. Both flatten to the same dotted key "a.0" — only one must survive
@@ -843,12 +1187,75 @@ mod tests {
     }
 
     #[test]
-    fn span_kind_internal_is_not_emitted() {
-        // Internal is the default and is implied by the absence of `meta["span.kind"]`.
+    fn span_kind_unspecified_is_not_emitted() {
+        // Unspecified (no `span.kind` set) is implied by the absence of `meta["span.kind"]`.
         let payload = minimal_payload([0u8; 16], minimal_span());
         let traces = encode_and_decode(&payload);
         // meta is None overall since no other field forces it.
         assert!(map_get(&traces[0][0], "meta").is_none());
+    }
+
+    #[test]
+    fn span_kind_explicit_internal_is_emitted() {
+        let span = SpanBytes {
+            span_kind: SpanKind::Internal,
+            ..minimal_span()
+        };
+        let traces = encode_and_decode(&minimal_payload([0u8; 16], span));
+        let meta = map_get(&traces[0][0], "meta").expect("meta must be present");
+        assert_eq!(
+            map_get(meta, "span.kind").unwrap().as_str(),
+            Some("internal")
+        );
+    }
+
+    #[test]
+    fn span_kind_unspecified_with_preserved_string_attribute_round_trips() {
+        // A non-standard kind (e.g. "process") collapses to Unspecified at ingestion but survives
+        // as a companion `span.kind` attribute; the downgrade must prefer it over omitting the key.
+        let mut attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        attrs.insert(bs("span.kind"), AttributeValue::String(bs("process")));
+        let span = SpanBytes {
+            span_kind: SpanKind::Unspecified,
+            attributes: attrs,
+            ..minimal_span()
+        };
+        let payload = minimal_payload([0u8; 16], span);
+        let traces = encode_and_decode(&payload);
+        let meta = map_get(&traces[0][0], "meta").expect("meta must be present");
+
+        assert_eq!(
+            map_get(meta, "span.kind").unwrap().as_str(),
+            Some("process")
+        );
+        // Must be written exactly once (promoted, not duplicated as a generic attribute too).
+        let meta_entries = meta.as_map().expect("meta must be a map");
+        let kind_count = meta_entries
+            .iter()
+            .filter(|(k, _)| k.as_str() == Some("span.kind"))
+            .count();
+        assert_eq!(
+            kind_count, 1,
+            "duplicate \"span.kind\" key written to the wire"
+        );
+    }
+
+    #[test]
+    fn span_kind_known_value_ignores_stray_span_kind_attribute() {
+        // A recognized kind always wins over any (unexpected) `span.kind` attribute — the
+        // attribute fallback only kicks in for `Unspecified`.
+        let mut attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        attrs.insert(bs("span.kind"), AttributeValue::String(bs("stale")));
+        let span = SpanBytes {
+            span_kind: SpanKind::Server,
+            attributes: attrs,
+            ..minimal_span()
+        };
+        let payload = minimal_payload([0u8; 16], span);
+        let traces = encode_and_decode(&payload);
+        let meta = map_get(&traces[0][0], "meta").expect("meta must be present");
+
+        assert_eq!(map_get(meta, "span.kind").unwrap().as_str(), Some("server"));
     }
 
     #[test]
@@ -1086,6 +1493,592 @@ mod tests {
         );
     }
 
+    /// A span whose only attribute is `key: value`, downgraded to v0.4; returns the span map.
+    fn encode_single_attr(key: &str, value: AttributeValueBytes) -> Value {
+        let mut attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        attrs.insert(bs(key), value);
+        let payload = minimal_payload(
+            [0u8; 16],
+            SpanBytes {
+                attributes: attrs,
+                ..minimal_span()
+            },
+        );
+        encode_and_decode(&payload)[0][0].clone()
+    }
+
+    #[test]
+    fn nested_empty_string_list_leaf_is_kept_in_meta() {
+        let span = encode_single_attr(
+            "l",
+            AttributeValue::Array(vec![
+                AttributeValue::String(bs("1")),
+                AttributeValue::String(bs("")),
+            ]),
+        );
+        let meta = map_get(&span, "meta").expect("meta present");
+        assert_eq!(map_get(meta, "l.0").unwrap().as_str(), Some("1"));
+        assert_eq!(map_get(meta, "l.1").unwrap().as_str(), Some(""));
+    }
+
+    #[test]
+    fn nested_numeric_string_member_key_flattens_into_dotted_meta_key() {
+        let mut m: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        m.insert(bs("5"), AttributeValue::String(bs("v")));
+        let span = encode_single_attr("m", AttributeValue::KeyValueList(m));
+        let meta = map_get(&span, "meta").expect("meta present");
+        assert_eq!(map_get(meta, "m.5").unwrap().as_str(), Some("v"));
+        assert!(map_get(&span, "metrics").is_none_or(|m| map_get(m, "m.5").is_none()));
+    }
+
+    #[test]
+    fn nested_zero_float_leaf_stays_in_metrics() {
+        let mut deep: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        deep.insert(bs("x"), AttributeValue::Float(0.0));
+        let mut mm: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        mm.insert(bs("deep"), AttributeValue::KeyValueList(deep));
+        let span = encode_single_attr("mm", AttributeValue::KeyValueList(mm));
+        let metrics = map_get(&span, "metrics").expect("metrics present");
+        assert_eq!(map_get(metrics, "mm.deep.x").unwrap().as_f64(), Some(0.0));
+        assert!(map_get(&span, "meta").is_none_or(|m| map_get(m, "mm.deep.x").is_none()));
+    }
+
+    #[test]
+    fn nested_attributes_downgrade_to_the_same_dotted_keys_after_dedup() {
+        // m = { bar: ["1", { key: "2" }, ""], "5": "v" }
+        // mm = { nums: [1.0, 2.5], deep: { x: 0.0 } }
+        // plus a stale duplicate member that `dedup()` must drop.
+        let mut key: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        key.insert(bs("key"), AttributeValue::String(bs("stale")));
+        key.insert(bs("key"), AttributeValue::String(bs("2")));
+        let mut m: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        m.insert(
+            bs("bar"),
+            AttributeValue::Array(vec![
+                AttributeValue::String(bs("1")),
+                AttributeValue::KeyValueList(key),
+                AttributeValue::String(bs("")),
+            ]),
+        );
+        m.insert(bs("5"), AttributeValue::String(bs("v")));
+        let mut deep: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        deep.insert(bs("x"), AttributeValue::Float(0.0));
+        let mut mm: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        mm.insert(
+            bs("nums"),
+            AttributeValue::Array(vec![AttributeValue::Float(1.0), AttributeValue::Float(2.5)]),
+        );
+        mm.insert(bs("deep"), AttributeValue::KeyValueList(deep));
+        let mut attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        attrs.insert(bs("m"), AttributeValue::KeyValueList(m));
+        attrs.insert(bs("mm"), AttributeValue::KeyValueList(mm));
+        let mut payload = minimal_payload(
+            [0u8; 16],
+            SpanBytes {
+                attributes: attrs,
+                ..minimal_span()
+            },
+        );
+        payload.dedup();
+
+        let span = sort_maps(encode_and_decode(&payload)[0][0].clone());
+        let bucket = |name: &str| -> Vec<(String, Value)> {
+            map_get(&span, name)
+                .expect("bucket present")
+                .as_map()
+                .unwrap()
+                .iter()
+                .map(|(k, v)| (k.as_str().unwrap().to_owned(), v.clone()))
+                .collect()
+        };
+        let s = |k: &str, v: &str| (k.to_owned(), Value::from(v));
+        let f = |k: &str, v: f64| (k.to_owned(), Value::from(v));
+        assert_eq!(
+            bucket("meta"),
+            vec![
+                s("m.5", "v"),
+                s("m.bar.0", "1"),
+                s("m.bar.1.key", "2"),
+                s("m.bar.2", ""),
+            ]
+        );
+        assert_eq!(
+            bucket("metrics"),
+            vec![
+                f("mm.deep.x", 0.0),
+                f("mm.nums.0", 1.0),
+                f("mm.nums.1", 2.5)
+            ]
+        );
+    }
+
+    fn kv(entries: Vec<(&str, AttributeValueBytes)>) -> AttributeValueBytes {
+        let mut map: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        for (k, v) in entries {
+            map.insert(bs(k), v);
+        }
+        AttributeValue::KeyValueList(map)
+    }
+
+    fn span_with_attrs(entries: Vec<(&str, AttributeValueBytes)>) -> TracerPayloadBytes {
+        let mut attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        for (k, v) in entries {
+            attrs.insert(bs(k), v);
+        }
+        minimal_payload(
+            [0u8; 16],
+            SpanBytes {
+                attributes: attrs,
+                ..minimal_span()
+            },
+        )
+    }
+
+    /// The raw `bin` stored under `meta_struct[key]`.
+    fn meta_struct_bin<'a>(span: &'a Value, key: &str) -> &'a [u8] {
+        let ms = map_get(span, "meta_struct").expect("meta_struct present");
+        match map_get(ms, key) {
+            Some(Value::Binary(b)) => b,
+            other => panic!("expected bin under meta_struct[{key}], got {other:?}"),
+        }
+    }
+
+    /// Decodes `meta_struct[key]`, which must hold exactly one msgpack value.
+    fn meta_struct_value(span: &Value, key: &str) -> Value {
+        let mut bin = meta_struct_bin(span, key);
+        let value = rmpv::decode::read_value(&mut bin).expect("meta_struct value is msgpack");
+        assert!(bin.is_empty(), "trailing bytes after meta_struct[{key}]");
+        value
+    }
+
+    fn meta_keys(span: &Value) -> Vec<String> {
+        map_get(span, "meta")
+            .map(|m| {
+                m.as_map()
+                    .unwrap()
+                    .iter()
+                    .map(|(k, _)| k.as_str().unwrap().to_owned())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn root_composite_attribute_is_msgpack_encoded_into_meta_struct() {
+        let frame = kv(vec![
+            ("line", AttributeValue::Int(13)),
+            ("file", AttributeValue::String(bs("a.php"))),
+            (
+                "raw",
+                AttributeValue::Bytes(Bytes::copy_from_slice(b"\xde\xad")),
+            ),
+            ("ratio", AttributeValue::Float(0.5)),
+            ("native", AttributeValue::Bool(false)),
+        ]);
+        let stack = kv(vec![(
+            "exploit",
+            AttributeValue::Array(vec![kv(vec![
+                ("language", AttributeValue::String(bs("php"))),
+                ("frames", AttributeValue::Array(vec![frame])),
+            ])]),
+        )]);
+        let traces = encode_and_decode(&span_with_attrs(vec![("_dd.stack", stack)]));
+        let span = &traces[0][0];
+
+        let expected = Value::Map(vec![(
+            Value::from("exploit"),
+            Value::Array(vec![Value::Map(vec![
+                (Value::from("language"), Value::from("php")),
+                (
+                    Value::from("frames"),
+                    Value::Array(vec![Value::Map(vec![
+                        (Value::from("line"), Value::from(13)),
+                        (Value::from("file"), Value::from("a.php")),
+                        (Value::from("raw"), Value::Binary(b"\xde\xad".to_vec())),
+                        (Value::from("ratio"), Value::F64(0.5)),
+                        (Value::from("native"), Value::Boolean(false)),
+                    ])]),
+                ),
+            ])]),
+        )]);
+        assert_eq!(
+            sort_maps(meta_struct_value(span, "_dd.stack")),
+            sort_maps(expected)
+        );
+        assert!(
+            meta_keys(span).iter().all(|k| !k.starts_with("_dd.stack")),
+            "a meta_struct composite must not also be flattened into meta"
+        );
+        assert!(map_get(span, "metrics").is_none());
+    }
+
+    #[test]
+    fn dotted_keys_below_a_root_go_to_meta_struct() {
+        let traces = encode_and_decode(&span_with_attrs(vec![
+            (
+                "appsec.triggers",
+                AttributeValue::Array(vec![kv(vec![("rule", AttributeValue::String(bs("r")))])]),
+            ),
+            (
+                "api.security.schema",
+                kv(vec![(
+                    "k",
+                    AttributeValue::Array(vec![
+                        AttributeValue::Int(1),
+                        AttributeValue::String(bs("a")),
+                    ]),
+                )]),
+            ),
+            // Below `appsec` but not below the `appsec.events` subtree.
+            (
+                "appsec.eventsfoo",
+                kv(vec![("x", AttributeValue::String(bs("y")))]),
+            ),
+        ]));
+        let span = &traces[0][0];
+        assert_eq!(
+            meta_struct_value(span, "appsec.triggers"),
+            Value::Array(vec![Value::Map(vec![(
+                Value::from("rule"),
+                Value::from("r")
+            )])])
+        );
+        assert_eq!(
+            meta_struct_value(span, "api.security.schema"),
+            Value::Map(vec![(
+                Value::from("k"),
+                Value::Array(vec![Value::from(1), Value::from("a")])
+            )])
+        );
+        assert_eq!(
+            meta_struct_value(span, "appsec.eventsfoo"),
+            Value::Map(vec![(Value::from("x"), Value::from("y"))])
+        );
+        assert!(map_get(span, "meta").is_none());
+    }
+
+    #[test]
+    fn every_meta_struct_root_is_recognized() {
+        let roots = [
+            "appsec",
+            "iast",
+            "_dd.appsec_shadow_deployed",
+            "_dd.stack",
+            "threat_intel",
+            "api.security",
+            "api.entity",
+            "api.definition",
+            "api.endpoint",
+            "http.request.body",
+            "ai_guard",
+            "_llmobs",
+        ];
+        let traces = encode_and_decode(&span_with_attrs(
+            roots
+                .iter()
+                .map(|r| (*r, AttributeValue::Array(vec![AttributeValue::Int(1)])))
+                .collect(),
+        ));
+        let span = &traces[0][0];
+        for root in roots {
+            assert_eq!(
+                meta_struct_value(span, root),
+                Value::Array(vec![Value::from(1)]),
+                "{root}"
+            );
+        }
+        assert!(map_get(span, "metrics").is_none());
+    }
+
+    #[test]
+    fn look_alike_keys_are_flattened() {
+        let traces = encode_and_decode(&span_with_attrs(vec![
+            ("appsecx", kv(vec![("x", AttributeValue::Int(1))])),
+            (
+                "api.securityx",
+                kv(vec![("x", AttributeValue::String(bs("y")))]),
+            ),
+            ("xappsec", kv(vec![("x", AttributeValue::String(bs("y")))])),
+            (
+                "_dd.stackx",
+                AttributeValue::Array(vec![AttributeValue::String(bs("y"))]),
+            ),
+            ("api", kv(vec![("x", AttributeValue::String(bs("y")))])),
+        ]));
+        let span = &traces[0][0];
+        assert!(map_get(span, "meta_struct").is_none());
+        let meta = map_get(span, "meta").expect("meta present");
+        assert_eq!(
+            map_get(meta, "api.securityx.x").unwrap().as_str(),
+            Some("y")
+        );
+        assert_eq!(map_get(meta, "xappsec.x").unwrap().as_str(), Some("y"));
+        assert_eq!(map_get(meta, "_dd.stackx.0").unwrap().as_str(), Some("y"));
+        assert_eq!(map_get(meta, "api.x").unwrap().as_str(), Some("y"));
+        let metrics = map_get(span, "metrics").expect("metrics present");
+        assert_eq!(map_get(metrics, "appsecx.x").unwrap().as_f64(), Some(1.0));
+    }
+
+    #[test]
+    fn scalars_under_roots_stay_in_meta_and_metrics() {
+        let traces = encode_and_decode(&span_with_attrs(vec![
+            ("ai_guard.action", AttributeValue::String(bs("allow"))),
+            ("appsec.score", AttributeValue::Int(3)),
+            ("_llmobs", AttributeValue::Bool(true)),
+        ]));
+        let span = &traces[0][0];
+        assert!(map_get(span, "meta_struct").is_none());
+        let meta = map_get(span, "meta").expect("meta present");
+        assert_eq!(
+            map_get(meta, "ai_guard.action").unwrap().as_str(),
+            Some("allow")
+        );
+        assert_eq!(map_get(meta, "_llmobs").unwrap().as_str(), Some("true"));
+        let metrics = map_get(span, "metrics").expect("metrics present");
+        assert_eq!(
+            map_get(metrics, "appsec.score").unwrap().as_f64(),
+            Some(3.0)
+        );
+    }
+
+    #[test]
+    fn appsec_events_and_fingerprint_children_are_split_into_meta() {
+        let appsec = kv(vec![
+            (
+                "triggers",
+                AttributeValue::Array(vec![kv(vec![("rule", AttributeValue::String(bs("r")))])]),
+            ),
+            (
+                "events",
+                kv(vec![(
+                    "users",
+                    kv(vec![("track", AttributeValue::String(bs("true")))]),
+                )]),
+            ),
+            (
+                "fingerprint",
+                kv(vec![(
+                    "header",
+                    kv(vec![("ua_hash", AttributeValue::String(bs("h")))]),
+                )]),
+            ),
+        ]);
+        let traces = encode_and_decode(&span_with_attrs(vec![("appsec", appsec)]));
+        let span = &traces[0][0];
+        assert_eq!(
+            meta_struct_value(span, "appsec"),
+            Value::Map(vec![(
+                Value::from("triggers"),
+                Value::Array(vec![Value::Map(vec![(
+                    Value::from("rule"),
+                    Value::from("r")
+                )])])
+            )])
+        );
+        let meta = map_get(span, "meta").expect("meta present");
+        assert_eq!(
+            map_get(meta, "appsec.events.users.track").unwrap().as_str(),
+            Some("true")
+        );
+        assert_eq!(
+            map_get(meta, "appsec.fingerprint.header.ua_hash")
+                .unwrap()
+                .as_str(),
+            Some("h")
+        );
+        assert_eq!(meta_keys(span).len(), 2);
+    }
+
+    #[test]
+    fn appsec_with_only_meta_subtree_children_has_no_meta_struct_entry() {
+        let traces = encode_and_decode(&span_with_attrs(vec![(
+            "appsec",
+            kv(vec![(
+                "events",
+                kv(vec![("x", AttributeValue::String(bs("y")))]),
+            )]),
+        )]));
+        let span = &traces[0][0];
+        assert!(map_get(span, "meta_struct").is_none());
+        let meta = map_get(span, "meta").expect("meta present");
+        assert_eq!(
+            map_get(meta, "appsec.events.x").unwrap().as_str(),
+            Some("y")
+        );
+    }
+
+    #[test]
+    fn empty_root_map_is_kept_in_meta_struct() {
+        let traces = encode_and_decode(&span_with_attrs(vec![("appsec", kv(vec![]))]));
+        assert_eq!(
+            meta_struct_value(&traces[0][0], "appsec"),
+            Value::Map(vec![])
+        );
+    }
+
+    #[test]
+    fn composites_below_meta_subtrees_are_flattened() {
+        let traces = encode_and_decode(&span_with_attrs(vec![
+            (
+                "appsec.events.custom",
+                kv(vec![("track", AttributeValue::String(bs("true")))]),
+            ),
+            (
+                "appsec.fingerprint",
+                kv(vec![(
+                    "http",
+                    kv(vec![("h", AttributeValue::String(bs("v")))]),
+                )]),
+            ),
+        ]));
+        let span = &traces[0][0];
+        assert!(map_get(span, "meta_struct").is_none());
+        let meta = map_get(span, "meta").expect("meta present");
+        assert_eq!(
+            map_get(meta, "appsec.events.custom.track")
+                .unwrap()
+                .as_str(),
+            Some("true")
+        );
+        assert_eq!(
+            map_get(meta, "appsec.fingerprint.http.h").unwrap().as_str(),
+            Some("v")
+        );
+    }
+
+    #[test]
+    fn json_suffixed_keys_are_never_routed_to_meta_struct() {
+        let traces = encode_and_decode(&span_with_attrs(vec![
+            (
+                "appsec.json",
+                kv(vec![("x", AttributeValue::String(bs("y")))]),
+            ),
+            (
+                "_dd.stack.json",
+                AttributeValue::Array(vec![AttributeValue::String(bs("z"))]),
+            ),
+            ("iast.json", AttributeValue::String(bs("{\"a\":1}"))),
+        ]));
+        let span = &traces[0][0];
+        assert!(map_get(span, "meta_struct").is_none());
+        let meta = map_get(span, "meta").expect("meta present");
+        assert_eq!(map_get(meta, "appsec.json.x").unwrap().as_str(), Some("y"));
+        assert_eq!(
+            map_get(meta, "_dd.stack.json.0").unwrap().as_str(),
+            Some("z")
+        );
+        assert_eq!(
+            map_get(meta, "iast.json").unwrap().as_str(),
+            Some("{\"a\":1}")
+        );
+    }
+
+    #[test]
+    fn nested_bytes_in_a_flattened_composite_are_base64_in_meta() {
+        let traces = encode_and_decode(&span_with_attrs(vec![(
+            "blob",
+            kv(vec![(
+                "raw",
+                AttributeValue::Bytes(Bytes::copy_from_slice(b"\xde\xad")),
+            )]),
+        )]));
+        let span = &traces[0][0];
+        assert!(map_get(span, "meta_struct").is_none());
+        let meta = map_get(span, "meta").expect("meta present");
+        assert_eq!(map_get(meta, "blob.raw").unwrap().as_str(), Some("3q0="));
+    }
+
+    #[test]
+    fn meta_struct_integers_use_the_narrowest_msgpack_encoding() {
+        let traces = encode_and_decode(&span_with_attrs(vec![(
+            "_dd.stack",
+            AttributeValue::Array(vec![
+                AttributeValue::Int(5),
+                AttributeValue::Int(-1),
+                AttributeValue::Int(300),
+            ]),
+        )]));
+        assert_eq!(
+            meta_struct_bin(&traces[0][0], "_dd.stack"),
+            [0x93, 0x05, 0xff, 0xcd, 0x01, 0x2c]
+        );
+    }
+
+    #[test]
+    fn root_composites_from_chunk_and_payload_attributes_keep_precedence() {
+        let mut payload_attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        payload_attrs.insert(bs("ai_guard"), kv(vec![("p", AttributeValue::Int(1))]));
+        payload_attrs.insert(bs("_llmobs"), kv(vec![("p", AttributeValue::Int(1))]));
+        let mut chunk_attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        chunk_attrs.insert(bs("_llmobs"), kv(vec![("c", AttributeValue::Int(1))]));
+        chunk_attrs.insert(bs("iast"), kv(vec![("c", AttributeValue::Int(1))]));
+        let mut span_attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        span_attrs.insert(bs("iast"), kv(vec![("s", AttributeValue::Int(1))]));
+        let payload = TracerPayloadBytes {
+            attributes: payload_attrs,
+            chunks: vec![TraceChunkBytes {
+                trace_id: [0u8; 16],
+                attributes: chunk_attrs,
+                spans: vec![SpanBytes {
+                    attributes: span_attrs,
+                    ..minimal_span()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let traces = encode_and_decode(&payload);
+        let span = &traces[0][0];
+        let one = |k: &str| Value::Map(vec![(Value::from(k), Value::from(1))]);
+        assert_eq!(meta_struct_value(span, "ai_guard"), one("p"));
+        assert_eq!(meta_struct_value(span, "_llmobs"), one("c"));
+        assert_eq!(meta_struct_value(span, "iast"), one("s"));
+        let ms = map_get(span, "meta_struct").unwrap().as_map().unwrap();
+        assert_eq!(ms.len(), 3);
+    }
+
+    #[test]
+    fn meta_struct_composites_keep_the_encoded_length_exact_and_decode_as_v04() {
+        let payload = span_with_attrs(vec![
+            (
+                "_dd.stack",
+                kv(vec![(
+                    "exploit",
+                    AttributeValue::Array(vec![kv(vec![("id", AttributeValue::Int(7))])]),
+                )]),
+            ),
+            (
+                "blob",
+                AttributeValue::Bytes(Bytes::copy_from_slice(b"\x01\x02")),
+            ),
+            (
+                "appsec",
+                kv(vec![
+                    ("events", kv(vec![("a", AttributeValue::String(bs("b")))])),
+                    ("triggers", AttributeValue::Array(vec![])),
+                ]),
+            ),
+        ]);
+        let bytes = super::super::to_vec_from_v1(&payload);
+        assert_eq!(
+            super::super::to_encoded_byte_len_from_v1(&payload) as usize,
+            bytes.len()
+        );
+        let (traces, _) =
+            crate::msgpack_decoder::v04::from_slice(&bytes).expect("valid v0.4 payload");
+        let span = &traces[0][0];
+        let mut keys: Vec<&str> = span.meta_struct.iter().map(|(k, _)| k.as_ref()).collect();
+        keys.sort_unstable();
+        assert_eq!(keys, ["_dd.stack", "appsec", "blob"]);
+        assert_eq!(
+            span.meta
+                .iter()
+                .find(|(k, _)| k == "appsec.events.a")
+                .map(|(_, v)| v.as_ref()),
+            Some("b")
+        );
+    }
+
     #[test]
     fn chunk_origin_priority_and_sampling_mechanism_propagate_to_span() {
         let chunk_attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
@@ -1112,13 +2105,242 @@ mod tests {
         assert_eq!(
             map_get(meta, "_dd.p.dm").unwrap().as_str(),
             Some("-4"),
-            "sampling_mechanism is encoded as `-{{n}}` per the agent's convention"
+            "sampling_mechanism is encoded as the `-<mechanism>` tag format"
         );
 
         let metrics = map_get(span, "metrics").expect("metrics carries sampling_priority_v1");
         assert_eq!(
             map_get(metrics, "_sampling_priority_v1").unwrap().as_f64(),
             Some(1.0)
+        );
+    }
+
+    #[test]
+    fn trace_level_tags_only_on_local_root_not_children() {
+        // _dd.p.tid / _dd.origin / _dd.p.dm / _sampling_priority_v1 are trace-level in v0.4 and
+        // belong ONLY on the local-root span (parent_id == 0 here). A multi-span chunk must not
+        // stamp them onto child spans.
+        let mut trace_id = [0u8; 16];
+        trace_id[7] = 0xAB; // non-zero high half -> _dd.p.tid
+        let root = SpanBytes {
+            span_id: 1,
+            parent_id: 0,
+            ..minimal_span()
+        };
+        let child = SpanBytes {
+            span_id: 2,
+            parent_id: 1,
+            ..minimal_span()
+        };
+        let payload = TracerPayloadBytes {
+            chunks: vec![TraceChunkBytes {
+                trace_id,
+                priority: Some(1),
+                origin: bs("synthetics"),
+                sampling_mechanism: Some(4),
+                spans: vec![root, child],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let traces = encode_and_decode(&payload);
+        let trace = traces[0].as_array().expect("trace is array");
+        assert_eq!(trace.len(), 2);
+
+        // Root (index 0) carries every trace-level tag.
+        let root_meta = map_get(&trace[0], "meta").expect("root has meta");
+        assert!(
+            map_get(root_meta, "_dd.p.tid").is_some(),
+            "root must carry _dd.p.tid"
+        );
+        assert_eq!(
+            map_get(root_meta, "_dd.origin").unwrap().as_str(),
+            Some("synthetics")
+        );
+        assert_eq!(map_get(root_meta, "_dd.p.dm").unwrap().as_str(), Some("-4"));
+        let root_metrics = map_get(&trace[0], "metrics").expect("root has metrics");
+        assert_eq!(
+            map_get(root_metrics, "_sampling_priority_v1")
+                .unwrap()
+                .as_f64(),
+            Some(1.0)
+        );
+
+        // Child (index 1) must NOT carry any trace-level tag.
+        if let Some(child_meta) = map_get(&trace[1], "meta") {
+            assert!(
+                map_get(child_meta, "_dd.p.tid").is_none(),
+                "_dd.p.tid leaked onto child"
+            );
+            assert!(
+                map_get(child_meta, "_dd.origin").is_none(),
+                "_dd.origin leaked onto child"
+            );
+            assert!(
+                map_get(child_meta, "_dd.p.dm").is_none(),
+                "_dd.p.dm leaked onto child"
+            );
+        }
+        if let Some(child_metrics) = map_get(&trace[1], "metrics") {
+            assert!(
+                map_get(child_metrics, "_sampling_priority_v1").is_none(),
+                "_sampling_priority_v1 leaked onto child"
+            );
+        }
+    }
+
+    #[test]
+    fn trace_level_tags_land_on_top_level_span_with_remote_parent() {
+        // Distributed trace: the local root has a non-zero parent_id (remote parent) but is
+        // marked _dd.top_level=1. The trace-level tags must land on it, not the first-listed span.
+        let mut top_level_attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        top_level_attrs.insert(bs("_dd.top_level"), AttributeValue::Float(1.0));
+        let leaf = SpanBytes {
+            span_id: 5,
+            parent_id: 9, // remote parent, not top level
+            ..minimal_span()
+        };
+        let local_root = SpanBytes {
+            span_id: 9,
+            parent_id: 100, // remote parent
+            attributes: top_level_attrs,
+            ..minimal_span()
+        };
+        let payload = TracerPayloadBytes {
+            chunks: vec![TraceChunkBytes {
+                trace_id: [0u8; 16],
+                origin: bs("rum"),
+                sampling_mechanism: Some(3),
+                spans: vec![leaf, local_root],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let traces = encode_and_decode(&payload);
+        let trace = traces[0].as_array().expect("trace is array");
+
+        // trace[0] is the leaf (non-root) — no trace-level tags.
+        if let Some(leaf_meta) = map_get(&trace[0], "meta") {
+            assert!(
+                map_get(leaf_meta, "_dd.origin").is_none(),
+                "_dd.origin leaked onto non-root"
+            );
+            assert!(
+                map_get(leaf_meta, "_dd.p.dm").is_none(),
+                "_dd.p.dm leaked onto non-root"
+            );
+        }
+        // trace[1] is the _dd.top_level local root — it carries them.
+        let root_meta = map_get(&trace[1], "meta").expect("local root has meta");
+        assert_eq!(
+            map_get(root_meta, "_dd.origin").unwrap().as_str(),
+            Some("rum")
+        );
+        assert_eq!(map_get(root_meta, "_dd.p.dm").unwrap().as_str(), Some("-3"));
+    }
+
+    #[test]
+    fn trace_level_tags_land_on_remote_parent_root_not_first_span() {
+        // Inferred proxy: the web span is listed first but its parent (the inferred span, whose
+        // own parent is remote) is in the chunk, so the inferred span is the local root.
+        let web = SpanBytes {
+            span_id: 7,
+            parent_id: 9,
+            ..minimal_span()
+        };
+        let inferred = SpanBytes {
+            span_id: 9,
+            parent_id: 2,
+            ..minimal_span()
+        };
+        let payload = TracerPayloadBytes {
+            chunks: vec![TraceChunkBytes {
+                trace_id: [0u8; 16],
+                origin: bs("rum"),
+                spans: vec![web, inferred],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let traces = encode_and_decode(&payload);
+        let trace = traces[0].as_array().expect("trace is array");
+
+        if let Some(web_meta) = map_get(&trace[0], "meta") {
+            assert!(
+                map_get(web_meta, "_dd.origin").is_none(),
+                "_dd.origin leaked onto non-root"
+            );
+        }
+        let root_meta = map_get(&trace[1], "meta").expect("local root has meta");
+        assert_eq!(
+            map_get(root_meta, "_dd.origin").unwrap().as_str(),
+            Some("rum")
+        );
+    }
+
+    #[test]
+    fn trace_level_tags_land_on_the_parentless_root_not_an_earlier_orphan() {
+        // Like the agent's GetRoot, a span with parent_id 0 is the root even when an orphan (its
+        // parent missing from the chunk) comes first.
+        let orphan = SpanBytes {
+            span_id: 5,
+            parent_id: 99,
+            ..minimal_span()
+        };
+        let root = SpanBytes {
+            span_id: 1,
+            parent_id: 0,
+            ..minimal_span()
+        };
+        let payload = TracerPayloadBytes {
+            chunks: vec![TraceChunkBytes {
+                trace_id: [0u8; 16],
+                origin: bs("synthetics"),
+                priority: Some(2),
+                spans: vec![orphan, root],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let traces = encode_and_decode(&payload);
+        let trace = traces[0].as_array().expect("trace is array");
+
+        assert!(
+            map_get(&trace[0], "meta").is_none(),
+            "the orphan is not the root"
+        );
+        assert!(map_get(&trace[0], "metrics").is_none());
+        let root_meta = map_get(&trace[1], "meta").expect("root has meta");
+        assert_eq!(
+            map_get(root_meta, "_dd.origin").unwrap().as_str(),
+            Some("synthetics")
+        );
+        let root_metrics = map_get(&trace[1], "metrics").expect("root has metrics");
+        assert_eq!(
+            map_get(root_metrics, "_sampling_priority_v1")
+                .unwrap()
+                .as_f64(),
+            Some(2.0)
+        );
+    }
+
+    #[test]
+    fn sampling_mechanism_zero_encodes_as_negative_zero() {
+        let payload = TracerPayloadBytes {
+            chunks: vec![TraceChunkBytes {
+                trace_id: [0u8; 16],
+                sampling_mechanism: Some(0),
+                spans: vec![minimal_span()],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let traces = encode_and_decode(&payload);
+        let meta = map_get(&traces[0][0], "meta").expect("meta carries sampling_mechanism");
+        assert_eq!(
+            map_get(meta, "_dd.p.dm").unwrap().as_str(),
+            Some("-0"),
+            "the `-<mechanism>` tag format writes mechanism 0 as `-0`, not `0`"
         );
     }
 
@@ -1214,8 +2436,182 @@ mod tests {
         assert_eq!(map_get(meta, "shared").unwrap().as_str(), Some("chunk"));
     }
 
+    /// Two chunks of two spans; `process_tags_on_span` puts `_dd.tags.process` on each chunk's
+    /// first span (the pre-V1 shape) instead of on the payload.
+    fn process_tags_payload(process_tags_on_span: bool) -> TracerPayloadBytes {
+        let mut payload_attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        if !process_tags_on_span {
+            payload_attrs.insert(
+                bs("_dd.tags.process"),
+                AttributeValue::String(bs("entrypoint.name:app")),
+            );
+        }
+        payload_attrs.insert(bs("region"), AttributeValue::String(bs("eu")));
+        if !process_tags_on_span {
+            payload_attrs.insert(
+                bs("_dd.sdk.otlp_export"),
+                AttributeValue::String(bs("false")),
+            );
+        }
+        let chunk = |first_id: u64| {
+            let mut first = SpanBytes {
+                span_id: first_id,
+                ..minimal_span()
+            };
+            first
+                .attributes
+                .insert(bs("own"), AttributeValue::String(bs("x")));
+            if process_tags_on_span {
+                first.attributes.insert(
+                    bs("_dd.tags.process"),
+                    AttributeValue::String(bs("entrypoint.name:app")),
+                );
+                first.attributes.insert(
+                    bs("_dd.sdk.otlp_export"),
+                    AttributeValue::String(bs("false")),
+                );
+            }
+            TraceChunkBytes {
+                trace_id: [0u8; 16],
+                spans: vec![
+                    first,
+                    SpanBytes {
+                        span_id: first_id + 1,
+                        parent_id: first_id,
+                        ..minimal_span()
+                    },
+                ],
+                ..Default::default()
+            }
+        };
+        // Deduped like the send path's payload: an undeduped map iterates in HashMap order.
+        let mut payload = TracerPayloadBytes {
+            attributes: payload_attrs,
+            chunks: vec![chunk(1), chunk(10)],
+            ..Default::default()
+        };
+        payload.dedup();
+        payload
+    }
+
     #[test]
-    fn dropped_trace_forces_user_reject_priority() {
+    fn payload_process_tags_land_on_the_first_span_of_each_chunk_only() {
+        let traces = encode_and_decode(&process_tags_payload(false));
+        for trace in &traces {
+            let first = map_get(&trace[0], "meta").expect("meta present");
+            assert_eq!(
+                map_get(first, "_dd.tags.process").unwrap().as_str(),
+                Some("entrypoint.name:app")
+            );
+            let child = map_get(&trace[1], "meta").expect("meta present");
+            assert!(map_get(child, "_dd.tags.process").is_none());
+            assert_eq!(
+                map_get(first, "_dd.sdk.otlp_export").unwrap().as_str(),
+                Some("false")
+            );
+            assert!(map_get(child, "_dd.sdk.otlp_export").is_none());
+            // Other payload attributes still reach every span.
+            assert_eq!(map_get(child, "region").unwrap().as_str(), Some("eu"));
+        }
+        // Same wire as the pre-V1 shape (process tags as a first-span attribute), up to map order.
+        let sorted = |traces: Vec<Value>| traces.into_iter().map(sort_maps).collect::<Vec<_>>();
+        assert_eq!(
+            sorted(encode_and_decode(&process_tags_payload(false))),
+            sorted(encode_and_decode(&process_tags_payload(true)))
+        );
+    }
+
+    #[test]
+    fn payload_git_metadata_lands_on_the_local_root_only() {
+        let mut payload_attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        payload_attrs.insert(bs("_dd.git.commit.sha"), AttributeValue::String(bs("abc")));
+        let payload = TracerPayloadBytes {
+            attributes: payload_attrs,
+            chunks: vec![TraceChunkBytes {
+                trace_id: [0u8; 16],
+                // The child comes first, so the first span and the local root differ.
+                spans: vec![
+                    SpanBytes {
+                        span_id: 2,
+                        parent_id: 1,
+                        ..minimal_span()
+                    },
+                    SpanBytes {
+                        span_id: 1,
+                        ..minimal_span()
+                    },
+                ],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let traces = encode_and_decode(&payload);
+        assert!(map_get(&traces[0][0], "meta").is_none());
+        let root = map_get(&traces[0][1], "meta").expect("meta present");
+        assert_eq!(
+            map_get(root, "_dd.git.commit.sha").unwrap().as_str(),
+            Some("abc")
+        );
+    }
+
+    #[test]
+    fn payload_hostname_lands_on_the_local_root_only() {
+        let mut root = SpanBytes {
+            span_id: 1,
+            ..minimal_span()
+        };
+        root.attributes
+            .insert(bs("_dd.hostname"), AttributeValue::String(bs("stale")));
+        let payload = TracerPayloadBytes {
+            hostname: bs("host-a"),
+            chunks: vec![TraceChunkBytes {
+                trace_id: [0u8; 16],
+                spans: vec![
+                    SpanBytes {
+                        span_id: 2,
+                        parent_id: 1,
+                        ..minimal_span()
+                    },
+                    root,
+                ],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let traces = encode_and_decode(&payload);
+        assert!(map_get(&traces[0][0], "meta").is_none());
+        let root = map_get(&traces[0][1], "meta").expect("meta present");
+        // The payload hostname wins over a same-named span attribute.
+        assert_eq!(
+            map_get(root, "_dd.hostname").unwrap().as_str(),
+            Some("host-a")
+        );
+    }
+
+    #[test]
+    fn dropped_trace_preserves_priority() {
+        // A dropped_trace chunk keeps its own priority: AUTO_REJECT `0` stays `0`.
+        let payload = TracerPayloadBytes {
+            chunks: vec![TraceChunkBytes {
+                trace_id: [0u8; 16],
+                dropped_trace: true,
+                priority: Some(0),
+                spans: vec![minimal_span()],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let traces = encode_and_decode(&payload);
+        let metrics = map_get(&traces[0][0], "metrics").expect("metrics present");
+        assert_eq!(
+            map_get(metrics, "_sampling_priority_v1").unwrap().as_f64(),
+            Some(0.0)
+        );
+    }
+
+    #[test]
+    fn dropped_trace_without_priority_defaults_to_user_reject() {
+        // With no priority set, a dropped_trace chunk defaults to `-1` (USER_REJECT).
         let payload = TracerPayloadBytes {
             chunks: vec![TraceChunkBytes {
                 trace_id: [0u8; 16],
@@ -1289,8 +2685,18 @@ mod tests {
         );
     }
 
+    /// The span's native `span_links` entry at `idx`, with no legacy `_dd.span_links` meta.
+    fn native_link(span: &Value, idx: usize) -> &Value {
+        let meta = map_get(span, "meta");
+        assert!(meta.is_none_or(|m| map_get(m, "_dd.span_links").is_none()));
+        &map_get(span, "span_links")
+            .expect("span_links present")
+            .as_array()
+            .unwrap()[idx]
+    }
+
     #[test]
-    fn span_link_splits_trace_id_into_low_and_high_fields() {
+    fn span_link_is_encoded_as_native_v04_span_links() {
         let mut link_tid = [0u8; 16];
         link_tid[..8].copy_from_slice(&0xAAAA_BBBB_CCCC_DDDD_u64.to_be_bytes());
         link_tid[8..].copy_from_slice(&0x1111_2222_3333_4444_u64.to_be_bytes());
@@ -1298,7 +2704,6 @@ mod tests {
         let mut link_attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
         link_attrs.insert(bs("link.name"), AttributeValue::String(bs("job-42")));
         link_attrs.insert(bs("link.retry"), AttributeValue::Bool(true));
-        // Non-string/bool typed attrs must be dropped (v0.4 SpanLink is String→String only).
         link_attrs.insert(bs("link.count"), AttributeValue::Int(5));
 
         let payload = minimal_payload(
@@ -1316,11 +2721,7 @@ mod tests {
         );
 
         let traces = encode_and_decode(&payload);
-        let links = map_get(&traces[0][0], "span_links").expect("span_links present");
-        let links_arr = links.as_array().expect("span_links is array");
-        assert_eq!(links_arr.len(), 1);
-        let link = &links_arr[0];
-
+        let link = native_link(&traces[0][0], 0);
         assert_eq!(
             map_get(link, "trace_id").unwrap().as_u64(),
             Some(0x1111_2222_3333_4444)
@@ -1335,15 +2736,201 @@ mod tests {
             Some("dd=t.dm:-1")
         );
         assert_eq!(map_get(link, "flags").unwrap().as_u64(), Some(3));
-
-        let attrs = map_get(link, "attributes").expect("string attrs preserved");
+        // v0.4 link attributes are String -> String: scalars stringify.
+        let attrs = map_get(link, "attributes").unwrap();
         assert_eq!(
             map_get(attrs, "link.name").unwrap().as_str(),
             Some("job-42")
         );
         assert_eq!(map_get(attrs, "link.retry").unwrap().as_str(), Some("true"));
-        // Int attr was dropped — v0.4 SpanLink schema cannot carry it.
-        assert!(map_get(attrs, "link.count").is_none());
+        assert_eq!(map_get(attrs, "link.count").unwrap().as_str(), Some("5"));
+    }
+
+    #[test]
+    fn span_link_omits_unset_optional_fields() {
+        let mut link_tid = [0u8; 16];
+        link_tid[8..].copy_from_slice(&0x1111_2222_3333_4444_u64.to_be_bytes());
+        let payload = minimal_payload(
+            [0u8; 16],
+            SpanBytes {
+                span_links: ThinVec::from_iter([SpanLinkBytes {
+                    trace_id: link_tid,
+                    span_id: 7,
+                    attributes: VecMap::new(),
+                    tracestate: bs(""),
+                    flags: 0,
+                }]),
+                ..minimal_span()
+            },
+        );
+        let traces = encode_and_decode(&payload);
+        let link = native_link(&traces[0][0], 0);
+        let mut keys: Vec<&str> = link
+            .as_map()
+            .unwrap()
+            .iter()
+            .map(|(k, _)| k.as_str().unwrap())
+            .collect();
+        keys.sort_unstable();
+        assert_eq!(keys, ["span_id", "trace_id"]);
+    }
+
+    #[test]
+    fn span_event_attributes_fall_back_to_legacy_events_meta_json() {
+        let mut event_attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        event_attrs.insert(bs("kind"), AttributeValue::String(bs("exception")));
+        event_attrs.insert(bs("escaped"), AttributeValue::Bool(true));
+        event_attrs.insert(bs("count"), AttributeValue::Int(3));
+        event_attrs.insert(bs("ratio"), AttributeValue::Float(0.75));
+
+        let payload = minimal_payload(
+            [0u8; 16],
+            SpanBytes {
+                span_events: ThinVec::from_iter([SpanEventBytes {
+                    time_unix_nano: 1_700_000_000_000_000_000,
+                    name: bs("oops"),
+                    attributes: event_attrs,
+                }]),
+                ..minimal_span()
+            },
+        );
+
+        let traces = encode_and_decode_legacy_events(&payload);
+        let span = &traces[0][0];
+        // Without native span_events, events go to the legacy `events` meta as JSON (native
+        // attribute types preserved: bool/int/float stay JSON bool/number, NOT the native
+        // `{"type":..}` shape).
+        assert!(map_get(span, "span_events").is_none());
+        let meta = map_get(span, "meta").expect("meta present");
+        assert_eq!(
+            json_meta(meta, "events"),
+            serde_json::json!([{
+                "name": "oops",
+                "time_unix_nano": 1_700_000_000_000_000_000u64,
+                "attributes": {"kind": "exception", "escaped": true, "count": 3, "ratio": 0.75},
+            }])
+        );
+    }
+
+    #[test]
+    fn span_link_nested_attr_downgrades_to_json_string() {
+        // v0.4 link attributes are strings: a native nested value carries its JSON string.
+        let mut link_attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        link_attrs.insert(bs("plain"), AttributeValue::String(bs("v")));
+        link_attrs.insert(
+            bs("nums"),
+            AttributeValue::Array(vec![AttributeValue::Int(3), AttributeValue::Int(4)]),
+        );
+        let mut kv: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        kv.insert(bs("a"), AttributeValue::Int(1));
+        link_attrs.insert(bs("obj"), AttributeValue::KeyValueList(kv));
+
+        let payload = minimal_payload(
+            [0u8; 16],
+            SpanBytes {
+                span_links: ThinVec::from_iter([SpanLinkBytes {
+                    trace_id: [0u8; 16],
+                    span_id: 7,
+                    attributes: link_attrs,
+                    tracestate: bs(""),
+                    flags: 0,
+                }]),
+                ..minimal_span()
+            },
+        );
+
+        let traces = encode_and_decode(&payload);
+        let attrs = map_get(native_link(&traces[0][0], 0), "attributes").unwrap();
+        assert_eq!(map_get(attrs, "plain").unwrap().as_str(), Some("v"));
+        assert_eq!(json_meta(attrs, "nums"), serde_json::json!([3, 4]));
+        assert_eq!(json_meta(attrs, "obj"), serde_json::json!({"a": 1}));
+    }
+
+    #[test]
+    fn span_event_nested_attr_in_legacy_events_meta_keeps_native_json_arrays() {
+        // Unlike links (String → String), event attributes keep native JSON types in the legacy
+        // `events` meta: a nested list is a real JSON array, not a stringified `string_value`.
+        let mut event_attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        event_attrs.insert(bs("arg1"), AttributeValue::String(bs("value1")));
+        event_attrs.insert(
+            bs("int_array"),
+            AttributeValue::Array(vec![AttributeValue::Int(3), AttributeValue::Int(4)]),
+        );
+        event_attrs.insert(
+            bs("string_array"),
+            AttributeValue::Array(vec![
+                AttributeValue::String(bs("5")),
+                AttributeValue::String(bs("6")),
+            ]),
+        );
+
+        let payload = minimal_payload(
+            [0u8; 16],
+            SpanBytes {
+                span_events: ThinVec::from_iter([SpanEventBytes {
+                    time_unix_nano: 1720037568765201300,
+                    name: bs("event-name"),
+                    attributes: event_attrs,
+                }]),
+                ..minimal_span()
+            },
+        );
+
+        let traces = encode_and_decode_legacy_events(&payload);
+        let span = &traces[0][0];
+        assert!(map_get(span, "span_events").is_none());
+        let meta = map_get(span, "meta").expect("meta present");
+        assert_eq!(
+            json_meta(meta, "events"),
+            serde_json::json!([{
+                "name": "event-name",
+                "time_unix_nano": 1720037568765201300u64,
+                "attributes": {"arg1": "value1", "int_array": [3, 4], "string_array": ["5", "6"]},
+            }])
+        );
+    }
+
+    #[test]
+    fn legacy_events_meta_wins_over_an_events_attribute() {
+        let mut attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        attrs.insert(bs("events"), AttributeValue::String(bs("user value")));
+        let payload = minimal_payload(
+            [0u8; 16],
+            SpanBytes {
+                attributes: attrs,
+                span_events: ThinVec::from_iter([SpanEventBytes {
+                    time_unix_nano: 1,
+                    name: bs("e"),
+                    attributes: VecMap::new(),
+                }]),
+                ..minimal_span()
+            },
+        );
+
+        let traces = encode_and_decode_legacy_events(&payload);
+        let meta = map_get(&traces[0][0], "meta").expect("meta present");
+        let events_keys = meta
+            .as_map()
+            .expect("meta is a map")
+            .iter()
+            .filter(|(k, _)| k.as_str() == Some("events"))
+            .count();
+        assert_eq!(
+            events_keys, 1,
+            "duplicate \"events\" key written to the wire"
+        );
+        assert_eq!(
+            json_meta(meta, "events"),
+            serde_json::json!([{"name": "e", "time_unix_nano": 1}])
+        );
+
+        // With native span_events, the attribute is a plain meta entry.
+        let traces = encode_and_decode(&payload);
+        let meta = map_get(&traces[0][0], "meta").expect("meta present");
+        assert_eq!(
+            map_get(meta, "events").unwrap().as_str(),
+            Some("user value")
+        );
     }
 
     #[test]
@@ -1367,6 +2954,8 @@ mod tests {
         );
 
         let traces = encode_and_decode(&payload);
+        // Native span_events replace the legacy `events` meta.
+        assert!(map_get(&traces[0][0], "meta").is_none());
         let events = map_get(&traces[0][0], "span_events").expect("span_events present");
         let events_arr = events.as_array().expect("span_events is array");
         assert_eq!(events_arr.len(), 1);
@@ -1401,5 +2990,97 @@ mod tests {
         let ratio = map_get(attrs, "ratio").unwrap();
         assert_eq!(map_get(ratio, "type").unwrap().as_u64(), Some(3));
         assert_eq!(map_get(ratio, "double_value").unwrap().as_f64(), Some(0.75));
+    }
+
+    #[test]
+    fn span_event_nested_attributes_flatten_to_dotted_keys() {
+        // v0.4 event attributes can't nest: map members and the elements of arrays holding
+        // nested values go under dotted keys, arrays of scalars stay native, bytes become text.
+        let mut inner: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        inner.insert(bs("c"), AttributeValue::String(bs("x")));
+        let mut obj: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        obj.insert(bs("a"), AttributeValue::Int(1));
+        obj.insert(bs("b"), AttributeValue::KeyValueList(inner));
+        obj.insert(
+            bs("list"),
+            AttributeValue::Array(vec![AttributeValue::Float(1e-5)]),
+        );
+        let mut pair: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        pair.insert(bs("k"), AttributeValue::Bool(true));
+        let mut attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        // Written first, so it wins over `obj.a` flattened from the map below.
+        attrs.insert(bs("obj.a"), AttributeValue::Int(7));
+        attrs.insert(bs("obj"), AttributeValue::KeyValueList(obj));
+        attrs.insert(
+            bs("mixed"),
+            AttributeValue::Array(vec![
+                AttributeValue::String(bs("s")),
+                AttributeValue::KeyValueList(pair),
+            ]),
+        );
+        attrs.insert(
+            bs("raw"),
+            AttributeValue::Bytes(Bytes::from_static(b"bytes")),
+        );
+        // Deduped maps iterate in insertion order, which first-wins relies on.
+        attrs.dedup();
+
+        let payload = minimal_payload(
+            [0u8; 16],
+            SpanBytes {
+                span_events: ThinVec::from_iter([SpanEventBytes {
+                    time_unix_nano: 1,
+                    name: bs("e"),
+                    attributes: attrs,
+                }]),
+                ..minimal_span()
+            },
+        );
+
+        let traces = encode_and_decode(&payload);
+        let event = &map_get(&traces[0][0], "span_events").unwrap()[0];
+        let attrs = sort_maps(map_get(event, "attributes").unwrap().clone());
+        let typed = |ty: u64, field: &str, v: Value| {
+            Value::Map(vec![
+                (Value::from(field), v),
+                (Value::from("type"), Value::from(ty)),
+            ])
+        };
+        let entry = |k: &str, v: Value| (Value::from(k), v);
+        assert_eq!(
+            attrs,
+            Value::Map(vec![
+                entry("mixed.0", typed(0, "string_value", Value::from("s"))),
+                entry("mixed.1.k", typed(1, "bool_value", Value::from(true))),
+                entry("obj.a", typed(2, "int_value", Value::from(7))),
+                entry("obj.b.c", typed(0, "string_value", Value::from("x"))),
+                entry(
+                    "obj.list",
+                    Value::Map(vec![
+                        (
+                            Value::from("array_value"),
+                            Value::Map(vec![(
+                                Value::from("values"),
+                                Value::Array(vec![typed(3, "double_value", Value::from(1e-5))]),
+                            )]),
+                        ),
+                        (Value::from("type"), Value::from(4)),
+                    ]),
+                ),
+                entry("raw", typed(0, "string_value", Value::from("bytes"))),
+            ])
+        );
+
+        // The sidecar re-decodes the downgraded payload: the v0.4 decoder must accept it.
+        let bytes = super::super::to_vec_from_v1(&payload);
+        let (decoded, _) = crate::tracer_payload::decode_to_trace_chunks(
+            Bytes::from(bytes),
+            crate::tracer_payload::TraceEncoding::V04,
+        )
+        .expect("the v0.4 decoder accepts native span_events");
+        let crate::tracer_payload::TraceChunks::V04(traces) = decoded else {
+            panic!("expected v0.4 traces");
+        };
+        assert_eq!(traces[0][0].span_events[0].attributes.len(), 6);
     }
 }

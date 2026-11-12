@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::span::TraceData;
+use crate::span::trace_utils::get_root_span_index;
 use crate::span::v1::TracerPayload;
 use crate::span::v04::Span;
 use libdd_common::ResultInfallibleExt;
@@ -238,27 +239,42 @@ pub fn to_encoded_byte_len_from_v04<T: TraceData, S: AsRef<[Span<T>]>>(traces: &
     counter.0
 }
 
+/// Options of the V1 → v0.4 downgrade ([`to_vec_from_v1_with`]).
+#[derive(Clone, Copy, Debug)]
+pub struct V1DowngradeOptions {
+    /// Write span events as the native v0.4 `span_events` field, which the agent advertises as
+    /// `span_events` in `/info`. Otherwise they go to the legacy `events` meta as JSON.
+    pub native_span_events: bool,
+}
+
+impl Default for V1DowngradeOptions {
+    fn default() -> Self {
+        Self {
+            native_span_events: true,
+        }
+    }
+}
+
 /// Encodes a [`TracerPayload`] in the v0.4 wire format (downgrade path used when the agent
 /// does not advertise `/v1.0/traces`). The output is a msgpack array of traces, where each
 /// trace is itself a msgpack array of v0.4-shaped spans — matching the existing v0.4 wire
-/// format produced by [`to_vec_from_v04`]. Payload-level `env`/`app_version`/`attributes` are
-/// propagated into every span (see [`span_v1`]'s mapping table); `payload.hostname` has no v0.4
-/// body equivalent (the agent gets hostname from the `Datadog-Meta-Hostname` header instead) and is
-/// intentionally dropped here.
+/// format produced by [`to_vec_from_v04`]. Payload-level
+/// `env`/`app_version`/`hostname`/`attributes` are propagated into the spans (see [`span_v1`]'s
+/// mapping table).
 fn encode_payload_from_v1<W: RmpWrite, T: TraceData>(
     writer: &mut W,
     payload: &TracerPayload<T>,
+    opts: V1DowngradeOptions,
 ) -> Result<(), ValueWriteError<W::Error>> {
     use span_v1::{ChunkContext, encode_span};
 
     write_array_len(writer, payload.chunks.len() as u32)?;
     for chunk in &payload.chunks {
-        // v0.4 has no wire-level equivalent of `dropped_trace`; the closest historical signal
-        // is `USER_REJECT` (priority -1), which tells the agent the sampler rejected this trace
-        // without dropping the spans themselves. Only force it when the chunk doesn't already
-        // carry a negative (reject-like) priority.
+        // v0.4 has no wire-level equivalent of `dropped_trace`; preserve the chunk's own
+        // sampling priority (so AUTO_REJECT `0` stays `0`) and default to `-1` only when the
+        // chunk carries no priority at all.
         let priority = if chunk.dropped_trace {
-            Some(chunk.priority.filter(|&p| p < 0).unwrap_or(-1))
+            chunk.priority.or(Some(-1))
         } else {
             chunk.priority
         };
@@ -270,11 +286,13 @@ fn encode_payload_from_v1<W: RmpWrite, T: TraceData>(
             &chunk.attributes,
             &payload.env,
             &payload.app_version,
+            &payload.hostname,
             &payload.attributes,
         );
+        let root_idx = get_root_span_index(&chunk.spans).unwrap_or(0);
         write_array_len(writer, chunk.spans.len() as u32)?;
-        for span in &chunk.spans {
-            encode_span(writer, span, &ctx)?;
+        for (i, span) in chunk.spans.iter().enumerate() {
+            encode_span(writer, span, &ctx, i == root_idx, i == 0, opts)?;
         }
     }
     Ok(())
@@ -290,6 +308,18 @@ pub fn to_vec_from_v1<T: TraceData>(payload: &TracerPayload<T>) -> Vec<u8> {
     to_vec_with_capacity_from_v1(payload, 0)
 }
 
+/// [`to_vec_from_v1`] with explicit [`V1DowngradeOptions`], e.g. to match the agent's `/info`.
+pub fn to_vec_from_v1_with<T: TraceData>(
+    payload: &TracerPayload<T>,
+    opts: V1DowngradeOptions,
+) -> Vec<u8> {
+    let mut buf = ByteBuf::new();
+    encode_payload_from_v1(&mut buf, payload, opts)
+        .map_err(super::flatten_value_write_infallible)
+        .unwrap_infallible();
+    buf.into_vec()
+}
+
 /// Serializes a [`TracerPayload`] as a v0.4 msgpack payload with a caller-supplied initial
 /// capacity. Use this when you can size the buffer up front (e.g. from
 /// [`to_encoded_byte_len_from_v1`]) to avoid reallocations.
@@ -298,7 +328,7 @@ pub fn to_vec_with_capacity_from_v1<T: TraceData>(
     capacity: u32,
 ) -> Vec<u8> {
     let mut buf = ByteBuf::with_capacity(capacity as usize);
-    encode_payload_from_v1(&mut buf, payload)
+    encode_payload_from_v1(&mut buf, payload, V1DowngradeOptions::default())
         .map_err(super::flatten_value_write_infallible)
         .unwrap_infallible();
     buf.into_vec()
@@ -314,14 +344,14 @@ pub fn write_to_slice_from_v1<T: TraceData>(
     slice: &mut &mut [u8],
     payload: &TracerPayload<T>,
 ) -> Result<(), ValueWriteError> {
-    encode_payload_from_v1(slice, payload)
+    encode_payload_from_v1(slice, payload, V1DowngradeOptions::default())
 }
 
 /// Returns the exact number of bytes [`to_vec_from_v1`] would write for `payload`. Walks
 /// the payload through a counting writer without allocating an output buffer.
 pub fn to_encoded_byte_len_from_v1<T: TraceData>(payload: &TracerPayload<T>) -> u32 {
     let mut counter = super::CountLength(0);
-    let _ = encode_payload_from_v1(&mut counter, payload);
+    let _ = encode_payload_from_v1(&mut counter, payload, V1DowngradeOptions::default());
     counter.0
 }
 
