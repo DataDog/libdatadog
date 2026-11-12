@@ -7,6 +7,7 @@
 #![cfg_attr(not(test), deny(clippy::todo))]
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
+pub mod generic;
 pub mod normalize_utils;
 pub mod normalizer;
 pub(crate) mod utf8_helpers;
