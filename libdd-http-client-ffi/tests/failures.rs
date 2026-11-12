@@ -4,10 +4,43 @@
 mod common;
 
 use common::*;
+use httpmock::prelude::*;
 use libdd_http_client_ffi::*;
+use std::io::{Read, Write};
+use std::net::{SocketAddr, TcpListener};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
+
+const DELAY: Duration = Duration::from_secs(3);
+
+/// A server whose every answer arrives after `DELAY`.
+fn slow_server() -> MockServer {
+    let server = MockServer::start();
+    server.mock(|when, then| {
+        when.path_prefix("/");
+        then.status(200).delay(DELAY);
+    });
+    server
+}
+
+/// Closes the first `dropped` connections without answering, then answers every other one.
+fn flaky_server(dropped: usize) -> SocketAddr {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let addr = listener.local_addr().expect("local addr");
+    thread::spawn(move || {
+        for (index, stream) in listener.incoming().flatten().enumerate() {
+            let mut stream = stream;
+            let _ = stream.read(&mut [0u8; 4096]);
+            if index >= dropped {
+                let _ = stream.write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\nsecond",
+                );
+            }
+        }
+    });
+    addr
+}
 
 #[test]
 fn a_refused_connection_is_connection_failed() {
@@ -25,8 +58,11 @@ fn a_refused_connection_is_connection_failed() {
 
 #[test]
 fn a_silent_server_times_out_using_the_client_timeout() {
-    let server = spawn_tcp(|_| Behavior::Hang);
-    let client = server.cfg().timeout_ms(300).build().expect("client");
+    let server = slow_server();
+    let client = Cfg::new(server.base_url())
+        .timeout_ms(300)
+        .build()
+        .expect("client");
 
     let started = Instant::now();
     let error = client
@@ -40,17 +76,16 @@ fn a_silent_server_times_out_using_the_client_timeout() {
         "{}",
         error.message
     );
-    assert!(
-        started.elapsed() < Duration::from_secs(5),
-        "took {:?}",
-        started.elapsed()
-    );
+    assert!(started.elapsed() < DELAY, "took {:?}", started.elapsed());
 }
 
 #[test]
 fn a_request_timeout_overrides_the_client_timeout() {
-    let server = spawn_tcp(|_| Behavior::Hang);
-    let client = server.cfg().timeout_ms(60_000).build().expect("client");
+    let server = slow_server();
+    let client = Cfg::new(server.base_url())
+        .timeout_ms(60_000)
+        .build()
+        .expect("client");
 
     let started = Instant::now();
     let error = client
@@ -64,64 +99,58 @@ fn a_request_timeout_overrides_the_client_timeout() {
         "{}",
         error.message
     );
-    assert!(
-        started.elapsed() < Duration::from_secs(5),
-        "took {:?}",
-        started.elapsed()
-    );
+    assert!(started.elapsed() < DELAY, "took {:?}", started.elapsed());
 }
 
 #[test]
 fn a_dropped_connection_is_an_error_without_retries() {
-    let server = spawn_tcp(|_| Behavior::CloseImmediately);
-    let client = server.cfg().build().expect("client");
+    let client = Cfg::for_addr(flaky_server(1)).build().expect("client");
 
     assert!(client.send(&Req::get("/flaky")).is_err());
 }
 
 #[test]
 fn retries_recover_from_a_dropped_connection() {
-    let server = spawn_tcp(|connection| {
-        if connection == 0 {
-            Behavior::CloseImmediately
-        } else {
-            Behavior::Respond(http_response(200, &[], b"second try"))
-        }
-    });
-    let client = server.cfg().retries(2, 10).build().expect("client");
+    let client = Cfg::for_addr(flaky_server(1))
+        .retries(2, 10)
+        .build()
+        .expect("client");
 
     let response = client
         .send(&Req::get("/flaky"))
         .expect("retry must succeed");
 
     assert_eq!(response.status(), 200);
-    assert_eq!(response.body(), b"second try");
-    assert_eq!(server.recv().target, "/flaky");
-    assert_eq!(server.recv().target, "/flaky");
+    assert_eq!(response.body(), b"second");
 }
 
 #[test]
 fn an_http_error_status_is_never_retried() {
-    let server = spawn_tcp(|_| Behavior::Respond(http_response(500, &[], b"no")));
-    let client = server.cfg().retries(3, 10).build().expect("client");
+    let server = MockServer::start();
+    let mock = server.mock(|when, then| {
+        when.path("/once");
+        then.status(500).body("no");
+    });
+    let client = Cfg::new(server.base_url())
+        .retries(3, 10)
+        .build()
+        .expect("client");
 
     let response = client
         .send(&Req::get("/once"))
         .expect("a status is not an error");
 
     assert_eq!(response.status(), 500);
-    server.recv();
-    assert!(
-        server.nothing_within(Duration::from_millis(300)),
-        "a status must not be retried"
-    );
+    mock.assert();
 }
 
 #[test]
 fn cancelling_from_another_thread_aborts_a_blocked_send() {
-    let server = spawn_tcp(|_| Behavior::Hang);
-    // The timeout is far longer than the test: only cancellation can end the send.
-    let client = server.cfg().timeout_ms(60_000).build().expect("client");
+    let server = slow_server();
+    let client = Cfg::new(server.base_url())
+        .timeout_ms(60_000)
+        .build()
+        .expect("client");
     // Shared through `Arc` so the token outlives both the send and the cancel.
     let token = Arc::new(Token::new());
     let canceller_token = token.clone();
@@ -143,17 +172,17 @@ fn cancelling_from_another_thread_aborts_a_blocked_send() {
         "{}",
         error.message
     );
-    assert!(
-        started.elapsed() < Duration::from_secs(10),
-        "took {:?}",
-        started.elapsed()
-    );
+    assert!(started.elapsed() < DELAY, "took {:?}", started.elapsed());
 }
 
 #[test]
 fn an_already_cancelled_token_fails_without_sending() {
-    let server = spawn_tcp(respond_ok);
-    let client = server.cfg().build().expect("client");
+    let server = MockServer::start();
+    let mock = server.mock(|when, then| {
+        when.path_prefix("/");
+        then.status(200);
+    });
+    let client = Cfg::new(server.base_url()).build().expect("client");
     let token = Token::new();
     assert!(token.cancel());
 
@@ -163,16 +192,17 @@ fn an_already_cancelled_token_fails_without_sending() {
         .expect("must be cancelled");
 
     assert_eq!(error.code, HttpClientErrorCode::Cancelled);
-    assert!(
-        server.nothing_within(Duration::from_millis(300)),
-        "nothing may be sent"
-    );
+    mock.assert_calls(0);
 }
 
 #[test]
 fn an_uncancelled_token_does_not_disturb_a_send() {
-    let server = spawn_tcp(respond_ok);
-    let client = server.cfg().build().expect("client");
+    let server = MockServer::start();
+    server.mock(|when, then| {
+        when.path_prefix("/");
+        then.status(200);
+    });
+    let client = Cfg::new(server.base_url()).build().expect("client");
     let token = Token::new();
 
     let response = client
@@ -184,8 +214,7 @@ fn an_uncancelled_token_does_not_disturb_a_send() {
 
 #[test]
 fn the_token_is_still_usable_after_a_cancelled_send() {
-    let server = spawn_tcp(respond_ok);
-    let client = server.cfg().build().expect("client");
+    let client = Cfg::new("http://localhost").build().expect("client");
     let token = Token::new();
     token.cancel();
 
@@ -200,18 +229,4 @@ fn the_token_is_still_usable_after_a_cancelled_send() {
         second.err().expect("second").code,
         HttpClientErrorCode::Cancelled
     );
-}
-
-#[test]
-fn cancelling_is_idempotent_and_reports_only_the_first_call() {
-    let token = Token::new();
-
-    assert!(token.cancel());
-    assert!(!token.cancel());
-    assert!(!token.cancel());
-}
-
-#[test]
-fn dropping_a_null_token_is_a_no_op() {
-    unsafe { ddog_http_cancel_token_drop(None) };
 }

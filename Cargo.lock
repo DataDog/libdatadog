@@ -3187,6 +3187,7 @@ name = "libdd-http-client-ffi"
 version = "46.0.0"
 dependencies = [
  "build_common",
+ "httpmock",
  "libdd-common-ffi",
  "libdd-http-client",
  "libdd-shared-runtime",

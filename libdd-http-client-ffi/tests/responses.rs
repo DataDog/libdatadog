@@ -4,22 +4,33 @@
 mod common;
 
 use common::*;
+use httpmock::prelude::*;
 use libdd_http_client_ffi::*;
+
+/// A server that answers every request as `configure` says, and a client for it.
+fn serve(configure: impl FnOnce(httpmock::Then)) -> (MockServer, Client) {
+    let server = MockServer::start();
+    server.mock(|when, then| {
+        when.path_prefix("/");
+        configure(then);
+    });
+    let client = Cfg::new(server.base_url()).build().expect("client");
+    (server, client)
+}
 
 #[test]
 fn error_statuses_are_returned_as_data_with_their_body_and_headers() {
-    for (status, body) in [(404, "not here"), (415, "unsupported"), (500, "boom")] {
-        let server = spawn_tcp(move |_| {
-            Behavior::Respond(http_response(
-                status,
-                &[("X-Reason", "test")],
-                body.as_bytes(),
-            ))
+    let server = MockServer::start();
+    let client = Cfg::new(server.base_url()).build().expect("client");
+
+    for (status, body) in [(404u16, "not here"), (415, "unsupported"), (500, "boom")] {
+        server.mock(|when, then| {
+            when.path(format!("/{status}"));
+            then.status(status).header("X-Reason", "test").body(body);
         });
-        let client = server.cfg().build().expect("client");
 
         let response = client
-            .send(&Req::post("/v0.4/traces").body(b"x".to_vec()))
+            .send(&Req::post(format!("/{status}")).body(b"x".to_vec()))
             .unwrap_or_else(|e| panic!("status {status} must not be an error: {e:?}"));
 
         assert_eq!(response.status(), status);
@@ -30,8 +41,9 @@ fn error_statuses_are_returned_as_data_with_their_body_and_headers() {
 
 #[test]
 fn an_empty_response_has_an_empty_body() {
-    let server = spawn_tcp(|_| Behavior::Respond(http_response(204, &[], b"")));
-    let client = server.cfg().build().expect("client");
+    let (_server, client) = serve(|then| {
+        then.status(204);
+    });
 
     let response = client.send(&Req::get("/none")).expect("send");
 
@@ -41,29 +53,23 @@ fn an_empty_response_has_an_empty_body() {
 
 #[test]
 fn a_binary_body_is_returned_unchanged() {
-    let payload = vec![0x00, 0xff, 0x01, 0xfe, 0x00];
-    let expected = payload.clone();
-    let server = spawn_tcp(move |_| Behavior::Respond(http_response(200, &[], &payload)));
-    let client = server.cfg().build().expect("client");
+    let payload = [0x00, 0xff, 0x01, 0xfe, 0x00];
+    let (_server, client) = serve(|then| {
+        then.status(200).body(payload);
+    });
 
     let response = client.send(&Req::get("/bin")).expect("send");
 
-    assert_eq!(response.body(), expected);
+    assert_eq!(response.body(), payload);
 }
 
 #[test]
-fn header_get_is_case_insensitive() {
-    let server = spawn_tcp(|_| {
-        Behavior::Respond(http_response(
-            200,
-            &[
-                ("Datadog-Container-Tags-Hash", "abc123"),
-                ("ETag", "\"v1\""),
-            ],
-            b"",
-        ))
+fn header_get_is_case_insensitive_and_empty_when_absent() {
+    let (_server, client) = serve(|then| {
+        then.status(200)
+            .header("Datadog-Container-Tags-Hash", "abc123")
+            .header("ETag", "\"v1\"");
     });
-    let client = server.cfg().build().expect("client");
 
     let response = client.send(&Req::get("/info")).expect("send");
 
@@ -75,32 +81,17 @@ fn header_get_is_case_insensitive() {
         assert_eq!(response.header(name).as_deref(), Some("abc123"), "{name}");
     }
     assert_eq!(response.header("etag").as_deref(), Some("\"v1\""));
-}
-
-#[test]
-fn header_get_returns_an_empty_slice_for_a_missing_header() {
-    let server = spawn_tcp(respond_ok);
-    let client = server.cfg().build().expect("client");
-
-    let response = client.send(&Req::get("/info")).expect("send");
-
     assert_eq!(response.header("x-not-there"), None);
 }
 
 #[test]
 fn headers_returns_every_header_and_keeps_repeated_names() {
-    let server = spawn_tcp(|_| {
-        Behavior::Respond(http_response(
-            200,
-            &[
-                ("Set-Cookie", "a=1"),
-                ("X-Between", "b"),
-                ("Set-Cookie", "c=3"),
-            ],
-            b"",
-        ))
+    let (_server, client) = serve(|then| {
+        then.status(200)
+            .header("Set-Cookie", "a=1")
+            .header("X-Between", "b")
+            .header("Set-Cookie", "c=3");
     });
-    let client = server.cfg().build().expect("client");
 
     let response = client.send(&Req::get("/cookies")).expect("send");
 
@@ -122,8 +113,9 @@ fn headers_returns_every_header_and_keeps_repeated_names() {
 
 #[test]
 fn headers_returns_the_same_slice_on_every_call() {
-    let server = spawn_tcp(|_| Behavior::Respond(http_response(200, &[("X-First", "1")], b"")));
-    let client = server.cfg().build().expect("client");
+    let (_server, client) = serve(|then| {
+        then.status(200).header("X-First", "1");
+    });
     let response = client.send(&Req::get("/h")).expect("send");
 
     let first = unsafe { ddog_http_response_headers(response.0) };
@@ -135,9 +127,9 @@ fn headers_returns_the_same_slice_on_every_call() {
 
 #[test]
 fn a_response_stays_valid_after_its_client_is_dropped() {
-    let server =
-        spawn_tcp(|_| Behavior::Respond(http_response(200, &[("X-Kept", "yes")], b"still here")));
-    let client = server.cfg().build().expect("client");
+    let (_server, client) = serve(|then| {
+        then.status(200).header("X-Kept", "yes").body("still here");
+    });
     let response = client.send(&Req::get("/keep")).expect("send");
 
     drop(client);
@@ -145,9 +137,4 @@ fn a_response_stays_valid_after_its_client_is_dropped() {
     assert_eq!(response.status(), 200);
     assert_eq!(response.body(), b"still here");
     assert_eq!(response.header("x-kept").as_deref(), Some("yes"));
-}
-
-#[test]
-fn dropping_a_null_response_is_a_no_op() {
-    unsafe { ddog_http_response_drop(None) };
 }

@@ -22,10 +22,8 @@ use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 use url::Url;
 
-/// Can be used from several threads at once.
 #[derive(Debug)]
 pub struct HttpClient {
-    // Declared first so it is dropped before the runtime it runs on.
     inner: InnerClient,
     runtime: Arc<ForkSafeRuntime>,
     base: String,
@@ -99,21 +97,11 @@ impl HttpClient {
         })
     }
 
-    fn full_url(&self, url: &str) -> Result<String, Option<Box<HttpClientError>>> {
-        if has_prefix_ignore_case(url, "http://") || has_prefix_ignore_case(url, "https://") {
-            Ok(url.to_owned())
-        } else if url.starts_with('/') && !url.starts_with("//") {
-            Ok(format!("{}{url}", self.base))
-        } else {
-            Err(gen_error!(HttpClientErrorCode::InvalidArgument))
-        }
-    }
-
     fn build_request(
         &self,
         request: &HttpRequest<'_>,
     ) -> Result<InnerRequest, Option<Box<HttpClientError>>> {
-        let url = self.full_url(str_arg(request.url)?)?;
+        let url = full_url(&self.base, str_arg(request.url)?)?;
         let headers = merge_headers(&self.default_headers, headers_arg(request.headers)?);
         let body = bytes_arg(request.body)?;
         let parts = parts_arg(request.multipart)?;
@@ -177,6 +165,16 @@ fn inner_method(method: HttpMethod) -> InnerMethod {
         HttpMethod::Head => InnerMethod::Head,
         HttpMethod::Patch => InnerMethod::Patch,
         HttpMethod::Options => InnerMethod::Options,
+    }
+}
+
+fn full_url(base: &str, url: &str) -> Result<String, Option<Box<HttpClientError>>> {
+    if has_prefix_ignore_case(url, "http://") || has_prefix_ignore_case(url, "https://") {
+        Ok(url.to_owned())
+    } else if url.starts_with('/') && !url.starts_with("//") {
+        Ok(format!("{base}{url}"))
+    } else {
+        Err(gen_error!(HttpClientErrorCode::InvalidArgument))
     }
 }
 
@@ -307,4 +305,183 @@ pub unsafe extern "C" fn ddog_http_client_send(
         },
         gen_error!(HttpClientErrorCode::Panic)
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use libdd_common_ffi::{CharSlice, Slice};
+    use std::ptr::{NonNull, null, null_mut};
+
+    fn config(base_url: CharSlice<'_>, timeout_ms: u64) -> HttpClientConfig<'_> {
+        HttpClientConfig {
+            base_url,
+            timeout_ms,
+            unix_socket_path: CharSlice::default(),
+            default_headers: Slice::default(),
+            periodic: false,
+            max_retries: 0,
+            retry_initial_delay_ms: 0,
+        }
+    }
+
+    fn code<T: std::fmt::Debug>(
+        result: Result<T, Option<Box<HttpClientError>>>,
+    ) -> HttpClientErrorCode {
+        result.expect_err("an error").expect("a boxed error").code
+    }
+
+    fn rejected(base_url: &str, timeout_ms: u64) -> HttpClientErrorCode {
+        let config = config(CharSlice::from(base_url), timeout_ms);
+        code(unsafe { HttpClient::from_config(&config, null()) })
+    }
+
+    // Exhaustive on purpose: a new upstream method stops this compiling until someone
+    // decides whether to expose it.
+    fn outer_method(method: InnerMethod) -> HttpMethod {
+        match method {
+            InnerMethod::Get => HttpMethod::Get,
+            InnerMethod::Post => HttpMethod::Post,
+            InnerMethod::Put => HttpMethod::Put,
+            InnerMethod::Delete => HttpMethod::Delete,
+            InnerMethod::Head => HttpMethod::Head,
+            InnerMethod::Patch => HttpMethod::Patch,
+            InnerMethod::Options => HttpMethod::Options,
+        }
+    }
+
+    #[test]
+    fn every_method_maps_to_the_same_upstream_method_and_back() {
+        for method in [
+            HttpMethod::Get,
+            HttpMethod::Post,
+            HttpMethod::Put,
+            HttpMethod::Delete,
+            HttpMethod::Head,
+            HttpMethod::Patch,
+            HttpMethod::Options,
+        ] {
+            assert_eq!(outer_method(inner_method(method)), method);
+        }
+    }
+
+    #[test]
+    fn a_config_without_a_base_url_is_rejected() {
+        assert_eq!(rejected("", 1_000), HttpClientErrorCode::InvalidConfig);
+    }
+
+    #[test]
+    fn a_config_with_a_zero_timeout_is_rejected() {
+        assert_eq!(
+            rejected("http://localhost", 0),
+            HttpClientErrorCode::InvalidConfig
+        );
+    }
+
+    #[test]
+    fn a_base_url_that_is_not_a_url_is_rejected() {
+        assert_eq!(
+            rejected("not a url", 1_000),
+            HttpClientErrorCode::InvalidConfig
+        );
+    }
+
+    #[test]
+    fn a_base_url_with_an_unsupported_scheme_is_rejected() {
+        assert_eq!(
+            rejected("ftp://localhost", 1_000),
+            HttpClientErrorCode::InvalidConfig
+        );
+    }
+
+    #[test]
+    fn a_base_url_that_is_not_utf8_is_an_invalid_argument() {
+        let invalid = [b'h', b't', b't', b'p', b':', b'/', b'/', 0xff, 0xfe];
+        let config = config(CharSlice::from_bytes(&invalid), 1_000);
+
+        let result = unsafe { HttpClient::from_config(&config, null()) };
+
+        assert_eq!(code(result), HttpClientErrorCode::InvalidArgument);
+    }
+
+    #[test]
+    fn new_rejects_a_null_config_and_a_null_out_pointer() {
+        let mut out = null_mut();
+        let config = config(CharSlice::from("http://localhost"), 1_000);
+
+        let no_config = unsafe { ddog_http_client_new(null(), null(), &mut out) };
+        let no_out = unsafe { ddog_http_client_new(&config, null(), null_mut()) };
+
+        assert_eq!(
+            no_config.expect("an error").code,
+            HttpClientErrorCode::InvalidArgument
+        );
+        assert_eq!(
+            no_out.expect("an error").code,
+            HttpClientErrorCode::InvalidArgument
+        );
+    }
+
+    #[test]
+    fn new_leaves_the_out_pointer_untouched_on_error() {
+        let config = config(CharSlice::from(""), 1_000);
+        let sentinel: *mut HttpClient = NonNull::dangling().as_ptr();
+        let mut out = sentinel;
+
+        let error = unsafe { ddog_http_client_new(&config, null(), &mut out) };
+
+        assert!(error.is_some());
+        assert_eq!(out, sentinel);
+    }
+
+    #[test]
+    fn dropping_a_null_client_is_a_no_op() {
+        unsafe { ddog_http_client_drop(None) };
+    }
+
+    #[test]
+    fn base_urls_are_reduced_to_scheme_authority_and_path() {
+        for (input, expected) in [
+            ("http://localhost:8126", "http://localhost:8126"),
+            ("http://localhost:8126/", "http://localhost:8126"),
+            ("https://example.com/prefix/", "https://example.com/prefix"),
+            ("http://localhost?a=1#frag", "http://localhost"),
+        ] {
+            assert_eq!(
+                normalize_base_url(input).expect("a valid base url"),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn absolute_urls_are_used_as_they_are() {
+        for url in ["http://other:1/x?a=1", "HTTPS://Other/x"] {
+            assert_eq!(full_url("http://base", url).expect("an absolute url"), url);
+        }
+    }
+
+    #[test]
+    fn paths_are_appended_to_the_base_url() {
+        assert_eq!(
+            full_url("http://base:1", "/v0.4/traces?a=1").expect("a path"),
+            "http://base:1/v0.4/traces?a=1"
+        );
+        let base = normalize_base_url("http://base/prefix/").expect("a valid base url");
+        assert_eq!(
+            full_url(&base, "/p").expect("a path"),
+            "http://base/prefix/p"
+        );
+    }
+
+    #[test]
+    fn a_url_that_is_neither_absolute_nor_a_path_is_an_invalid_argument() {
+        for url in ["v0.4/traces", "", "ftp://base/x", "//base/x"] {
+            assert_eq!(
+                code(full_url("http://base", url)),
+                HttpClientErrorCode::InvalidArgument,
+                "{url:?}"
+            );
+        }
+    }
 }

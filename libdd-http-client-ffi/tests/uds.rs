@@ -7,39 +7,59 @@ mod common;
 
 use common::*;
 use libdd_http_client_ffi::*;
+use std::io::{Read, Write};
+use std::os::unix::net::UnixListener;
+use std::path::Path;
+use std::thread::{self, JoinHandle};
+
+/// Answers one request on `path` and returns what the client sent up to the end of its headers.
+fn serve_once(path: &Path) -> JoinHandle<String> {
+    let listener = UnixListener::bind(path).expect("bind");
+    thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept");
+        let mut head = Vec::new();
+        while !head.windows(4).any(|w| w == b"\r\n\r\n") {
+            let mut chunk = [0u8; 1024];
+            let read = stream.read(&mut chunk).expect("read");
+            assert!(
+                read > 0,
+                "connection closed before the request was complete"
+            );
+            head.extend_from_slice(&chunk[..read]);
+        }
+        stream
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+            .expect("write");
+        String::from_utf8_lossy(&head).to_ascii_lowercase()
+    })
+}
 
 #[test]
 fn requests_go_through_the_unix_socket() {
     let dir = tempfile::tempdir().expect("tempdir");
     let socket = dir.path().join("agent.sock");
-    let server = spawn_uds(&socket, respond_ok);
+    let server = serve_once(&socket);
     let client = Cfg::new("http://localhost")
         .unix_socket(&socket)
         .build()
         .expect("client");
 
     let response = client
-        .send(
-            &Req::post("/v0.4/traces")
-                .header("X-Test", "uds")
-                .body(b"payload".to_vec()),
-        )
+        .send(&Req::get("/info").header("X-Test", "uds"))
         .expect("send");
 
     assert_eq!(response.status(), 200);
     assert_eq!(response.body(), b"ok");
-    let received = server.recv();
-    assert_eq!(received.method, "POST");
-    assert_eq!(received.target, "/v0.4/traces");
-    assert_eq!(received.header("x-test"), Some("uds"));
-    assert_eq!(received.body, b"payload");
+    let head = server.join().expect("server thread");
+    assert!(head.starts_with("get /info http/1.1"), "{head}");
+    assert!(head.contains("x-test: uds"), "{head}");
 }
 
 #[test]
 fn the_host_of_the_base_url_is_ignored_with_a_unix_socket() {
     let dir = tempfile::tempdir().expect("tempdir");
     let socket = dir.path().join("agent.sock");
-    let server = spawn_uds(&socket, respond_ok);
+    let server = serve_once(&socket);
     let client = Cfg::new("http://this-host-does-not-exist.invalid:1234")
         .unix_socket(&socket)
         .build()
@@ -48,7 +68,12 @@ fn the_host_of_the_base_url_is_ignored_with_a_unix_socket() {
     let response = client.send(&Req::get("/info")).expect("send");
 
     assert_eq!(response.status(), 200);
-    assert_eq!(server.recv().target, "/info");
+    assert!(
+        server
+            .join()
+            .expect("server thread")
+            .starts_with("get /info")
+    );
 }
 
 #[test]

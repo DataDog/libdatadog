@@ -90,7 +90,6 @@ pub(crate) fn bytes_arg(slice: ByteSlice<'_>) -> Result<&[u8], Option<Box<HttpCl
         .map_err(|_| gen_error!(HttpClientErrorCode::InvalidArgument))
 }
 
-/// Header names must be HTTP tokens and values free of control characters.
 pub(crate) fn headers_arg(
     headers: Slice<'_, HttpHeader<'_>>,
 ) -> Result<Vec<(String, String)>, Option<Box<HttpClientError>>> {
@@ -100,12 +99,10 @@ pub(crate) fn headers_arg(
     headers
         .iter()
         .map(|header| {
-            let name = str_arg(header.name)?;
-            let value = str_arg(header.value)?;
-            if !is_valid_header_name(name) || !is_valid_header_value(value) {
-                return Err(gen_error!(HttpClientErrorCode::InvalidArgument));
-            }
-            Ok((name.to_owned(), value.to_owned()))
+            Ok((
+                str_arg(header.name)?.to_owned(),
+                str_arg(header.value)?.to_owned(),
+            ))
         })
         .collect()
 }
@@ -156,34 +153,78 @@ pub(crate) fn merge_headers(
     merged
 }
 
-/// RFC 9110 `token`: the characters allowed in a header name.
-fn is_valid_header_name(name: &str) -> bool {
-    !name.is_empty()
-        && name.bytes().all(|b| {
-            b.is_ascii_alphanumeric()
-                || matches!(
-                    b,
-                    b'!' | b'#'
-                        | b'$'
-                        | b'%'
-                        | b'&'
-                        | b'\''
-                        | b'*'
-                        | b'+'
-                        | b'-'
-                        | b'.'
-                        | b'^'
-                        | b'_'
-                        | b'`'
-                        | b'|'
-                        | b'~'
-                )
-        })
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ptr::null;
 
-/// No control characters other than tab.
-fn is_valid_header_value(value: &str) -> bool {
-    value
-        .bytes()
-        .all(|b| b == b'\t' || (b >= 0x20 && b != 0x7f))
+    fn pairs(items: &[(&str, &str)]) -> Vec<(String, String)> {
+        items
+            .iter()
+            .map(|(name, value)| (name.to_string(), value.to_string()))
+            .collect()
+    }
+
+    fn code<T: std::fmt::Debug>(
+        result: Result<T, Option<Box<HttpClientError>>>,
+    ) -> HttpClientErrorCode {
+        result.expect_err("an error").expect("a boxed error").code
+    }
+
+    #[test]
+    fn request_headers_replace_the_defaults_of_the_same_name_case_insensitively() {
+        let defaults = pairs(&[("X-Override", "default"), ("X-Keep", "default")]);
+        let request = pairs(&[("x-override", "request"), ("X-Extra", "1")]);
+
+        assert_eq!(
+            merge_headers(&defaults, request),
+            pairs(&[
+                ("X-Keep", "default"),
+                ("x-override", "request"),
+                ("X-Extra", "1")
+            ])
+        );
+    }
+
+    #[test]
+    fn a_repeated_request_header_is_kept_as_many_times_as_given() {
+        let defaults = pairs(&[("X-A", "default")]);
+        let request = pairs(&[("x-a", "1"), ("X-A", "2")]);
+
+        assert_eq!(
+            merge_headers(&defaults, request),
+            pairs(&[("x-a", "1"), ("X-A", "2")])
+        );
+    }
+
+    #[test]
+    fn a_string_that_is_not_utf8_is_an_invalid_argument() {
+        let invalid = [0xff, 0xfe];
+
+        let result = str_arg(CharSlice::from_bytes(&invalid));
+
+        assert_eq!(code(result), HttpClientErrorCode::InvalidArgument);
+    }
+
+    #[test]
+    fn a_null_slice_with_a_length_is_an_invalid_argument() {
+        let slice = unsafe { CharSlice::from_raw_parts(null(), 3) };
+
+        assert_eq!(code(str_arg(slice)), HttpClientErrorCode::InvalidArgument);
+    }
+
+    #[test]
+    fn a_multipart_part_needs_a_name() {
+        let parts = [HttpMultipartPart {
+            name: CharSlice::from(""),
+            data: ByteSlice::from(b"v".as_slice()),
+            filename: CharSlice::default(),
+            content_type: CharSlice::default(),
+        }];
+
+        assert_eq!(
+            code(parts_arg(Slice::from(&parts[..]))),
+            HttpClientErrorCode::InvalidArgument
+        );
+    }
 }

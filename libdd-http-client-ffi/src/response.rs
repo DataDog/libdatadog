@@ -126,3 +126,13 @@ pub unsafe extern "C" fn ddog_http_response_header_get(
 pub unsafe extern "C" fn ddog_http_response_drop(response: Option<Box<HttpResponse>>) {
     catch_panic!(drop(response), ())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dropping_a_null_response_is_a_no_op() {
+        unsafe { ddog_http_response_drop(None) };
+    }
+}
