@@ -488,7 +488,7 @@ pub fn obfuscate_span<S: SpanMut>(span: &mut S, config: &ObfuscationConfig) {
             let query = obfuscate_sql_resource(span.resource(), &config.sql, dbms);
             // The resource and the `sql.query` attribute share one allocation: `TraceText`
             // clones share the buffer for reference-counted text types (`BytesString`),
-            // while `String` copies, exactly like the `query.clone()` this replaces.
+            // while `String` copies.
             let obfuscated = S::Text::from(query);
             span.set_resource(obfuscated.clone());
             span.set_attribute(
