@@ -35,9 +35,12 @@ use libdd_trace_utils::span::v1::{
 };
 use libdd_trace_utils::span::vec_map::VecMap;
 use std::borrow::Cow;
+use std::sync::Arc;
 use std::time::Duration;
 
 const SUBMIT_TIMEOUT: Duration = Duration::from_secs(3);
+/// Bounds the resources used when a report contains many 64 KiB blocks.
+const MAX_CONCURRENT_SUBMISSIONS: usize = 4;
 /// Where v1 payloads go.
 const V1_TRACES_PATH: &str = "/v1.0/traces";
 /// Kept by the agent's samplers: crashed spans are rare and worth keeping.
@@ -341,12 +344,17 @@ fn traces_uri(agent: http::Uri, path: &'static str) -> anyhow::Result<http::Uri>
     Ok(http::Uri::from_parts(parts)?)
 }
 
-/// POSTs every submission at once and waits for them all. The report is
-/// already out, so failures only go to stderr.
+/// POSTs submissions with bounded concurrency and waits for them all. The
+/// report is already out, so failures only go to stderr.
 pub(crate) async fn submit_all(submissions: Vec<Submission>) {
+    if submissions.is_empty() {
+        return;
+    }
+    let client = Arc::new(http_common::new_client_periodic());
+    let mut submissions = submissions.into_iter();
     let mut set = tokio::task::JoinSet::new();
-    for submission in submissions {
-        set.spawn(submit(submission));
+    for submission in submissions.by_ref().take(MAX_CONCURRENT_SUBMISSIONS) {
+        spawn_submission(&mut set, Arc::clone(&client), submission);
     }
     while let Some(joined) = set.join_next().await {
         match joined {
@@ -354,23 +362,33 @@ pub(crate) async fn submit_all(submissions: Vec<Submission>) {
             Ok(Err(e)) => eprintln!("crashtracker: failed to submit spans to close: {e:#}"),
             Err(e) => eprintln!("crashtracker: spans to close submission panicked: {e}"),
         }
+        if let Some(submission) = submissions.next() {
+            spawn_submission(&mut set, Arc::clone(&client), submission);
+        }
     }
+}
+
+fn spawn_submission(
+    set: &mut tokio::task::JoinSet<anyhow::Result<u16>>,
+    client: Arc<http_common::HttpClient>,
+    submission: Submission,
+) {
+    set.spawn(async move { submit(&client, submission).await });
 }
 
 /// POSTs one v1 submission and returns the agent's status. Fails on a
 /// connection error, timeout, or non-2xx status. An agent without v1 is not
 /// retried as v0.4.
-async fn submit(submission: Submission) -> anyhow::Result<u16> {
+async fn submit(client: &http_common::HttpClient, submission: Submission) -> anyhow::Result<u16> {
     let Submission {
         endpoint,
         headers,
         body,
         trace_count,
     } = submission;
-    let client = http_common::new_client_periodic();
     let status = tokio::time::timeout(
         SUBMIT_TIMEOUT,
-        post(&client, &endpoint, &headers, trace_count, body),
+        post(client, &endpoint, &headers, trace_count, body),
     )
     .await
     .map_err(|_| anyhow::anyhow!("timed out after {SUBMIT_TIMEOUT:?}"))??;
@@ -726,13 +744,18 @@ mod tests {
         prepare(&block, &crash(START + 1, None), None).unwrap()
     }
 
+    async fn submit_once(submission: Submission) -> anyhow::Result<u16> {
+        let client = http_common::new_client_periodic();
+        submit(&client, submission).await
+    }
+
     #[cfg_attr(miri, ignore)] // binds a socket
     #[tokio::test]
     async fn submit_posts_v1_with_the_receivers_headers() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
         let server = tokio::spawn(async move { serve_once(&listener, "200 OK").await });
-        assert_eq!(submit(submission_to(&url)).await.unwrap(), 200);
+        assert_eq!(submit_once(submission_to(&url)).await.unwrap(), 200);
 
         let seen = server.await.unwrap().0.to_ascii_lowercase();
         assert!(seen.starts_with("post /v1.0/traces http/1.1"), "{seen}");
@@ -745,12 +768,46 @@ mod tests {
 
     #[cfg_attr(miri, ignore)] // binds a socket
     #[tokio::test]
+    async fn submit_all_limits_concurrency() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let submissions = (0..=MAX_CONCURRENT_SUBMISSIONS)
+            .map(|_| submission_to(&url))
+            .collect();
+        let submitter = tokio::spawn(submit_all(submissions));
+
+        let mut sockets = Vec::new();
+        for _ in 0..MAX_CONCURRENT_SUBMISSIONS {
+            let accepted = tokio::time::timeout(Duration::from_secs(1), listener.accept())
+                .await
+                .expect("submission did not connect")
+                .unwrap();
+            sockets.push(accepted.0);
+        }
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), listener.accept())
+                .await
+                .is_err(),
+            "more than {MAX_CONCURRENT_SUBMISSIONS} submissions ran concurrently"
+        );
+
+        drop(sockets);
+        let last = tokio::time::timeout(Duration::from_secs(1), listener.accept())
+            .await
+            .expect("queued submission did not connect")
+            .unwrap();
+        drop(last);
+        submitter.await.unwrap();
+    }
+
+    #[cfg_attr(miri, ignore)] // binds a socket
+    #[tokio::test]
     async fn submit_fails_on_rejection() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
         let server =
             tokio::spawn(async move { serve_once(&listener, "415 Unsupported Media Type").await });
-        let err = submit(submission_to(&url)).await.unwrap_err();
+        let err = submit_once(submission_to(&url)).await.unwrap_err();
         assert!(err.to_string().contains("415"), "{err}");
         server.await.unwrap();
     }
@@ -761,7 +818,7 @@ mod tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
         let server = tokio::spawn(async move { serve_once(&listener, "404 Not Found").await });
-        let err = submit(submission_to(&url)).await.unwrap_err();
+        let err = submit_once(submission_to(&url)).await.unwrap_err();
         assert!(err.to_string().contains("404"), "{err}");
 
         let (head, _) = server.await.unwrap();
