@@ -8,6 +8,7 @@ use crate::config::{HttpClientBuilder, HttpClientConfig, TransportConfig};
 use crate::{HttpClientError, HttpRequest, HttpResponse};
 use std::time::Duration;
 
+// reqwest wins when both backends are enabled, so `reqwest-backend` can be added to the defaults.
 #[cfg(all(feature = "hyper-backend", not(feature = "reqwest-backend")))]
 type BackendImpl = crate::backend::hyper_backend::HyperBackend;
 

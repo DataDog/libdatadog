@@ -24,6 +24,9 @@ impl super::Backend for ReqwestBackend {
         transport: TransportConfig,
     ) -> Result<Self, HttpClientError> {
         let mut builder = reqwest::Client::builder().timeout(client_config.timeout());
+        if !client_config.follow_redirects() {
+            builder = builder.redirect(reqwest::redirect::Policy::none());
+        }
         let base_url_is_https = is_https_url(client_config.base_url());
 
         // Route reqwest HTTPS through the shared TLS configuration so the
@@ -38,7 +41,7 @@ impl super::Backend for ReqwestBackend {
         #[cfg(any(feature = "https", feature = "fips"))]
         if base_url_is_https {
             builder = builder.tls_backend_preconfigured(crate::tls::build_tls_config()?);
-        } else {
+        } else if client_config.follow_redirects() {
             // Plain-HTTP clients have no preconfigured TLS backend (see above),
             // so a redirect to an `https` URL would negotiate TLS on reqwest's
             // default verifier, bypassing the compromised-key distrust check.

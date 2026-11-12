@@ -131,6 +131,35 @@ fn an_absolute_url_ignores_the_base_url() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
+fn a_cross_origin_redirect_is_returned_and_not_followed() {
+    let origin = MockServer::start();
+    let target = MockServer::start();
+    let redirect = origin.mock(|when, then| {
+        when.method(POST).path("/redirect");
+        then.status(307).header("Location", target.url("/target"));
+    });
+    let reached = target.mock(|when, then| {
+        when.path_prefix("/");
+        then.status(200);
+    });
+    let client = Cfg::new(origin.base_url())
+        .default_header("DD-API-KEY", "secret")
+        .build()
+        .expect("client");
+
+    let response = client
+        .send(&Req::post("/redirect").body(b"payload".to_vec()))
+        .expect("send");
+
+    assert_eq!(response.status(), 307);
+    assert_eq!(response.header("location"), Some(target.url("/target")));
+    redirect.assert();
+    // Nothing reaches the other origin, so neither the API key nor the body does.
+    reached.assert_calls(0);
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
 fn default_headers_are_sent_with_every_request() {
     let server = MockServer::start();
     let mock = server.mock(|when, then| {

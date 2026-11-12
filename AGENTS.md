@@ -53,12 +53,12 @@ Iterate fastest with `cargo check -p <crate>` while editing; validate each affec
 ### Per-crate test notes
 
 - **crashtracker**: needs `--features libdd-crashtracker/generate-unit-test-files` for unit tests.
-- **http-client**: ships two alternative backend features (`reqwest-backend` is the default, `hyper-backend` is the alternative). Cargo does not enforce exclusivity, but each backend must be exercised independently when this crate is touched:
+- **http-client**: ships two alternative backend features (`hyper-backend` is the default, `reqwest-backend` is the alternative). Cargo does not enforce exclusivity, and reqwest wins when both are enabled, so each backend must be exercised independently when this crate is touched:
   ```bash
-  # Default (reqwest) backend — covered by the workspace test run
+  # Default (hyper) backend
   cargo nextest run -p libdd-http-client
-  # Hyper backend
-  cargo nextest run -p libdd-http-client --no-default-features --features hyper-backend,https
+  # reqwest backend
+  cargo nextest run -p libdd-http-client --no-default-features --features reqwest-backend,https
   ```
 - **otel-thread-ctx**: ships two mutually exclusive ownership modes (`owned-context` is the
   default, `shared-context` is the alternative). Only one of them is compiled at a time, so the
