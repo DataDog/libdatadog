@@ -62,7 +62,7 @@ impl EndpointExt for Endpoint {
         for (name, value) in self.get_optional_headers() {
             builder = builder.header(name, value);
         }
-        for (name, value) in libdd_common::entity_id::get_entity_headers() {
+        for (name, value) in libdd_host_identity::entity_id::get_entity_headers() {
             builder = builder.header(name, value);
         }
         builder
@@ -79,7 +79,7 @@ impl EndpointExt for Endpoint {
         }
 
         // Add entity-related headers (container-id, entity-id, external-env)
-        for (name, value) in libdd_common::entity_id::get_entity_headers() {
+        for (name, value) in libdd_host_identity::entity_id::get_entity_headers() {
             builder = builder.header(name, value);
         }
 

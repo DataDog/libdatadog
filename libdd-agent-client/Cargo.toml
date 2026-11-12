@@ -31,6 +31,7 @@ thiserror = { workspace = true, default-features = true }
 tokio = { workspace = true, features = ["rt"] }
 libdd-http-client = { path = "../libdd-http-client", default-features = false }
 libdd-common = { version = "9.0", path = "../libdd-common", default-features = false, features = ["std"] }
+libdd-host-identity = { version = "0.1.0", path = "../libdd-host-identity" }
 tracing.workspace = true
 
 [dev-dependencies]

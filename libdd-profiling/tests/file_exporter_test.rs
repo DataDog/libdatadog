@@ -340,7 +340,8 @@ mod tests {
             profiling_library_version
         );
 
-        // Check for entity headers and validate their values match what libdd_common provides
+        // Check for entity headers and validate their values match what libdd_host_identity
+        // provides
         common::assert_entity_headers_match(&request.headers);
     }
 }
