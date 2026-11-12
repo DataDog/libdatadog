@@ -25,6 +25,7 @@ features = [
 ]
 
 [dependencies]
+http = { workspace = true, features = ["std"] }
 libdd-regex = { version = "0.1.0", path = "../libdd-regex" }
 libdd-env = { version = "0.1.0", path = "../libdd-env" }
 
