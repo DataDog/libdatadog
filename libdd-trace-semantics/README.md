@@ -2,7 +2,7 @@
 
 The trace semantics registry: which span attributes hold the same concept across Datadog and
 OpenTelemetry conventions, and in which order to read them. It is the registry the Trace Agent
-uses (`pkg/trace/semantics`), so spans resolve the same way in libdatadog and in the Agent.
+uses (`pkg/trace/semantics`), so libdatadog and the Agent read a concept from the same attributes.
 
 ```rust,ignore
 use libdd_trace_semantics::{lookup_str, Concept};

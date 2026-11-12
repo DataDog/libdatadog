@@ -137,6 +137,14 @@ fn string_lookup_formats_numbers() {
         lookup_str(&float, Concept::DdTopLevel).as_deref(),
         Some("1")
     );
+    for (v, want) in [(1.5, "1.5"), (1e6, "1000000"), (-0.0, "-0")] {
+        let float = Typed::new([("_dd.top_level", V::Float(v))]);
+        assert_eq!(
+            lookup_str(&float, Concept::DdTopLevel).as_deref(),
+            Some(want),
+            "{v:?}"
+        );
+    }
 }
 
 #[test]
@@ -185,6 +193,13 @@ fn int_lookup_falls_through_invalid_values() {
         (Some("abc"), None),
         (Some("1.5"), None),
         (Some(""), None),
+        (Some("1e400"), None),
+        (Some("2_00"), None),
+        (Some("0x1p3"), None),
+        (Some("++1"), None),
+        (Some("inf"), None),
+        (Some("+Inf"), None),
+        (Some("-infinity"), None),
     ] {
         let mut attrs = V04::new([("http.response.status_code", "418")], []);
         if let Some(meta) = meta {
@@ -197,6 +212,30 @@ fn int_lookup_falls_through_invalid_values() {
             lookup_i64(&attrs, Concept::HttpStatusCode),
             Some(418),
             "meta {meta:?}, metric {metric:?}"
+        );
+    }
+}
+
+#[test]
+fn int_lookup_parses_decimal_strings() {
+    // Each string wins over the http.response.status_code fallback.
+    for (valid, want) in [
+        ("+5", 5),
+        // Parsed as an integer first, so it stays exact above 2^53.
+        ("9007199254740993", 9_007_199_254_740_993),
+        ("-9223372036854775808", i64::MIN),
+    ] {
+        let attrs = V04::new(
+            [
+                ("http.status_code", valid),
+                ("http.response.status_code", "418"),
+            ],
+            [],
+        );
+        assert_eq!(
+            lookup_i64(&attrs, Concept::HttpStatusCode),
+            Some(want),
+            "{valid:?}"
         );
     }
 }
@@ -215,48 +254,70 @@ fn float_lookup() {
     let unparseable = V04::new([("http.status_code", "abc")], []);
     assert_eq!(lookup_f64(&unparseable, Concept::HttpStatusCode), None);
 
-    // Like Go's ParseFloat: infinity literals are values, out of range strings are skipped.
-    let inf = V04::new([("http.status_code", "Inf")], []);
-    assert_eq!(
-        lookup_f64(&inf, Concept::HttpStatusCode),
-        Some(f64::INFINITY)
-    );
-    let nan = V04::new([("http.status_code", "NaN")], []);
-    assert!(lookup_f64(&nan, Concept::HttpStatusCode).is_some_and(f64::is_nan));
-    let out_of_range = V04::new(
-        [
-            ("http.status_code", "1e400"),
-            ("http.response.status_code", "418"),
-        ],
-        [],
-    );
-    assert_eq!(
-        lookup_f64(&out_of_range, Concept::HttpStatusCode),
-        Some(418.0)
-    );
-    let signed_nan = V04::new(
-        [
-            ("http.status_code", "-nan"),
-            ("http.response.status_code", "418"),
-        ],
-        [],
-    );
-    assert_eq!(
-        lookup_f64(&signed_nan, Concept::HttpStatusCode),
-        Some(418.0)
-    );
-    let double_sign = V04::new(
-        [
-            ("http.status_code", "++1"),
-            ("http.response.status_code", "418"),
-        ],
-        [],
-    );
-    assert_eq!(
-        lookup_f64(&double_sign, Concept::HttpStatusCode),
-        Some(418.0)
-    );
-    assert_eq!(lookup_i64(&double_sign, Concept::HttpStatusCode), Some(418));
+    let fractional = V04::new([("http.status_code", "1.5")], []);
+    assert_eq!(lookup_f64(&fractional, Concept::HttpStatusCode), Some(1.5));
+}
+
+#[test]
+fn float_lookup_falls_through_invalid_strings() {
+    // Each invalid http.status_code string is skipped in favor of http.response.status_code.
+    for invalid in [
+        "Inf",
+        "inf",
+        "+Inf",
+        "-infinity",
+        "NaN",
+        "-nan",
+        "1e400",
+        "2_00",
+        "0x1p3",
+        "++1",
+    ] {
+        let attrs = V04::new(
+            [
+                ("http.status_code", invalid),
+                ("http.response.status_code", "418"),
+            ],
+            [],
+        );
+        assert_eq!(
+            lookup_f64(&attrs, Concept::HttpStatusCode),
+            Some(418.0),
+            "{invalid:?}"
+        );
+    }
+}
+
+#[test]
+fn float_lookup_parses_decimal_strings() {
+    // Each string wins over the http.response.status_code fallback.
+    for (valid, want) in [
+        ("+5", 5.0_f64),
+        ("-1.5", -1.5),
+        ("1E3", 1000.0),
+        ("1e+3", 1000.0),
+        // Rounds to zero, which is finite.
+        ("1e-400", 0.0),
+        ("-0", -0.0),
+    ] {
+        let attrs = V04::new(
+            [
+                ("http.status_code", valid),
+                ("http.response.status_code", "418"),
+            ],
+            [],
+        );
+        let got = lookup_f64(&attrs, Concept::HttpStatusCode);
+        // Compare bits so that the sign of zero counts.
+        assert_eq!(got.map(f64::to_bits), Some(want.to_bits()), "{valid:?}");
+    }
+}
+
+#[test]
+fn float_entries_return_stored_values() {
+    // Only strings are checked for finiteness: a stored NaN is returned as is, like the Agent.
+    let attrs = V04::new([], [("_dd.top_level", f64::NAN), ("_top_level", 1.0)]);
+    assert!(lookup_f64(&attrs, Concept::DdTopLevel).is_some_and(f64::is_nan));
 }
 
 #[test]
