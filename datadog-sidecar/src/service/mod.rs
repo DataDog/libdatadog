@@ -105,6 +105,9 @@ pub struct SessionConfig {
     pub otlp_metrics_endpoint: Option<Endpoint>,
     /// `DD_TRACE_AGENT_PROTOCOL_VERSION=0.4`: send v0.4 even when the agent advertises V1.
     pub force_v04_traces: bool,
+    /// Checkpoints per 10 s bucket of the Data Streams checkpoint tables this session creates; 0
+    /// for the default. Capped at `MAX_DSM_CHECKPOINT_SLOT_COUNT`.
+    pub dsm_checkpoint_slot_count: usize,
 }
 
 #[cfg(test)]
@@ -144,6 +147,7 @@ impl SessionConfig {
             parent_session_id: None,
             otlp_metrics_endpoint: None,
             force_v04_traces: false,
+            dsm_checkpoint_slot_count: 0,
         }
     }
 }

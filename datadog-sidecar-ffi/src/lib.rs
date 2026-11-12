@@ -672,6 +672,7 @@ pub unsafe extern "C" fn ddog_sidecar_set_connection_config(
     root_session_id: ffi::CharSlice,
     parent_session_id: ffi::CharSlice,
     force_v04_traces: bool,
+    dsm_checkpoint_slot_count: usize,
 ) -> MaybeError {
     unsafe {
         let otlp_metrics_endpoint: Option<Endpoint> = otlp_metrics_endpoint.as_ref().cloned();
@@ -737,6 +738,7 @@ pub unsafe extern "C" fn ddog_sidecar_set_connection_config(
             },
             retry_interval: Duration::from_millis(retry_interval_milliseconds as u64),
             force_v04_traces,
+            dsm_checkpoint_slot_count,
         };
         #[cfg(unix)]
         let _ = win_remote_config_notification;
