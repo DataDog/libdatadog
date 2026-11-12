@@ -270,17 +270,10 @@ fn encode_payload_from_v1<W: RmpWrite, T: TraceData>(
 
     write_array_len(writer, payload.chunks.len() as u32)?;
     for chunk in &payload.chunks {
-        // v0.4 has no wire-level equivalent of `dropped_trace`; preserve the chunk's own
-        // sampling priority (so AUTO_REJECT `0` stays `0`) and default to `-1` only when the
-        // chunk carries no priority at all.
-        let priority = if chunk.dropped_trace {
-            chunk.priority.or(Some(-1))
-        } else {
-            chunk.priority
-        };
+        // `dropped_trace` is agent-owned and not mapped, see `TraceChunk::dropped_trace`.
         let ctx = ChunkContext::new(
             &chunk.trace_id,
-            priority,
+            chunk.priority,
             &chunk.origin,
             chunk.sampling_mechanism,
             &chunk.attributes,

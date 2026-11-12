@@ -37,7 +37,7 @@ mod chunk_key {
     pub const ORIGIN: u8 = 2;
     pub const ATTRIBUTES: u8 = 3;
     pub const SPANS: u8 = 4;
-    pub const DROPPED_TRACE: u8 = 5;
+    // 5 is `dropped_trace`: agent-owned and never encoded, see `TraceChunk::dropped_trace`.
     pub const TRACE_ID: u8 = 6;
     /// Sampling mechanism (previously the `_dd.p.dm` span tag).
     pub const SAMPLING_MECHANISM: u8 = 7;
@@ -156,7 +156,7 @@ impl<'a> StringTable<'a> {
 /// the input is negative. Matches the agent's `validateAndFixStartTime`, which substitutes
 /// `time.Now().UnixNano()` for invalid start values; without this, a negative `i64` would wrap
 /// to a near-`u64::MAX` timestamp on cast.
-pub(super) fn normalize_span_start(start: i64) -> u64 {
+pub(crate) fn normalize_span_start(start: i64) -> u64 {
     if start < 0 {
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -603,14 +603,12 @@ fn encode_chunk_from_v1<'a, W: RmpWrite, T: TraceData>(
 ) -> Result<(), ValueWriteError<W::Error>> {
     let origin = <T::Text as Borrow<str>>::borrow(&chunk.origin);
     let has_attributes = !chunk.attributes.is_empty();
-    let has_dropped = chunk.dropped_trace;
 
     let fields = 2u32 // trace_id + spans
         + !origin.is_empty() as u32
         + chunk.priority.is_some() as u32
         + chunk.sampling_mechanism.is_some() as u32
-        + has_attributes as u32
-        + has_dropped as u32;
+        + has_attributes as u32;
 
     write_map_len(writer, fields)?;
 
@@ -641,11 +639,6 @@ fn encode_chunk_from_v1<'a, W: RmpWrite, T: TraceData>(
     if has_attributes {
         write_uint8(writer, chunk_key::ATTRIBUTES)?;
         span_v1::encode_attributes_map(writer, &chunk.attributes, table)?;
-    }
-
-    if has_dropped {
-        write_uint8(writer, chunk_key::DROPPED_TRACE)?;
-        rmp::encode::write_bool(writer, true).map_err(ValueWriteError::InvalidDataWrite)?;
     }
 
     Ok(())
@@ -1557,43 +1550,21 @@ mod v1_payload_tests {
     }
 
     #[test]
-    fn chunk_dropped_trace_emitted_when_true() {
-        let chunk = TraceChunkBytes {
-            trace_id: [0u8; 16],
-            dropped_trace: true,
-            spans: vec![make_span("svc", "op", 1)],
-            ..Default::default()
+    fn chunk_dropped_trace_never_emitted() {
+        // `dropped_trace` is agent-owned (the agent sets it from its own sampling decision), so
+        // tracer payloads never carry it: the encoding is identical whatever the flag's value.
+        let encode = |dropped_trace| {
+            to_vec_from_v1(&TracerPayloadBytes {
+                chunks: vec![TraceChunkBytes {
+                    trace_id: [0u8; 16],
+                    dropped_trace,
+                    spans: vec![make_span("svc", "op", 1)],
+                    ..Default::default()
+                }],
+                ..Default::default()
+            })
         };
-        let payload = TracerPayloadBytes {
-            chunks: vec![chunk],
-            ..Default::default()
-        };
-        let encoded = to_vec_from_v1(&payload);
-        // DROPPED_TRACE (0x05) + msgpack true marker (0xc3)
-        let want = [chunk_key::DROPPED_TRACE, 0xc3];
-        assert!(
-            encoded.windows(2).any(|w| w == want),
-            "DROPPED_TRACE marker + true should appear in payload"
-        );
-    }
-
-    #[test]
-    fn chunk_dropped_trace_skipped_when_false() {
-        let chunk = TraceChunkBytes {
-            trace_id: [0u8; 16],
-            dropped_trace: false,
-            spans: vec![make_span("svc", "op", 1)],
-            ..Default::default()
-        };
-        let payload = TracerPayloadBytes {
-            chunks: vec![chunk],
-            ..Default::default()
-        };
-        let encoded = to_vec_from_v1(&payload);
-        assert!(
-            !encoded.contains(&chunk_key::DROPPED_TRACE),
-            "DROPPED_TRACE key should not be emitted when false"
-        );
+        assert_eq!(encode(true), encode(false));
     }
 
     #[test]

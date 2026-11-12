@@ -661,8 +661,8 @@ fn collect_attrs_v1<'a, T: TraceData>(
 /// V1-native analog of [`encode_payload`]. Downgrades v1's unified attribute model back to the
 /// same `meta`/`metrics`/`meta_struct`-shaped wire fields, so the emitted JSON body is
 /// equivalent to what a v0.4 tracer would produce for the same trace. Chunk-level
-/// context (`trace_id`, `origin`, `priority`, `sampling_mechanism`, `dropped_trace`, chunk
-/// attributes) is propagated into every span, matching the [`v1::TraceChunk`]-level granularity v1
+/// context (`trace_id`, `origin`, `priority`, `sampling_mechanism`, chunk attributes) is
+/// propagated into every span, matching the [`v1::TraceChunk`]-level granularity v1
 /// operates at.
 ///
 /// `client_side_stats` has the same meaning as in [`encode_payload`]: when `true`, the encoder
@@ -794,14 +794,8 @@ fn encode_span_v1<'a, T: TraceData, S: Serializer>(
     let meta_leaves = &collected.meta;
     let metrics_leaves = &collected.metrics;
     let bytes_attrs = &collected.meta_struct;
-    let priority = if chunk.dropped_trace {
-        // v0.4 has no wire-level equivalent of `dropped_trace`; force `USER_REJECT` (-1)
-        // unless the chunk already carries a negative (reject-like) priority — same
-        // convention as the msgpack downgrade encoder.
-        Some(chunk.priority.filter(|&p| p < 0).unwrap_or(-1))
-    } else {
-        chunk.priority
-    };
+    // `dropped_trace` is agent-owned, see `TraceChunk::dropped_trace`.
+    let priority = chunk.priority;
 
     map.serialize_entry(
         "meta",
