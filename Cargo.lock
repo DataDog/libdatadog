@@ -3165,6 +3165,7 @@ dependencies = [
 name = "libdd-host-identity"
 version = "1.0.0"
 dependencies = [
+ "http 1.1.0",
  "indexmap 2.12.1",
  "libc",
  "libdd-env",
