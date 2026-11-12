@@ -3184,7 +3184,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-http-client-ffi"
-version = "46.0.0"
+version = "48.0.0"
 dependencies = [
  "build_common",
  "httpmock",

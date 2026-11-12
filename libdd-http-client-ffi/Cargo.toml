@@ -30,7 +30,7 @@ build_common = { path = "../build-common" }
 [dependencies]
 libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false, features = ["std"] }
 libdd-http-client = { path = "../libdd-http-client", default-features = false }
-libdd-shared-runtime = { version = "6.0.0", path = "../libdd-shared-runtime" }
+libdd-shared-runtime = { version = "7.0.0", path = "../libdd-shared-runtime" }
 rustls = { workspace = true, features = ["ring"], optional = true }
 tokio-util.workspace = true
 tracing.workspace = true
