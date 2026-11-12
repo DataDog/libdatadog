@@ -105,12 +105,21 @@ benchmarks:
       # accept it only once its second parent is our commit, retrying after 10s and then 20s.
       find_pr_merge_commit() {
         local repo=$1 head_sha=$2 target_tip=$3 prs pr merge_sha delay
-        # Matching the head SHA against refs/pull/*/head finds the PR without a GitHub API call
-        # (rate limits, tokens). GitHub keeps those refs after a PR is closed, so several PRs can
-        # match (e.g. a PR reopened as a new one from the same branch). Only open PRs have a merge
-        # ref, and the checks below keep one that merges our head into the target branch.
-        prs="$(git -C "${repo}" ls-remote origin 'refs/pull/*/head' \
-               | awk -v sha="${head_sha}" '$1 == sha { sub(/\/head$/, "", $2); print $2 }')"
+        # On external-PR pipelines, GitLab tells us which PR this run is about; pin the merge ref
+        # to it. Scanning by head SHA alone would be ambiguous: several open PRs can point at the
+        # same commit, and one whose base merely is an ancestor of the target branch would pass
+        # the checks below, silently benchmarking against the wrong branch.
+        if [[ -n "${CI_EXTERNAL_PULL_REQUEST_IID:-}" ]]; then
+          prs="refs/pull/${CI_EXTERNAL_PULL_REQUEST_IID}"
+        else
+          # No PR context (e.g. a branch pipeline): find candidate PRs by matching the head SHA
+          # against refs/pull/*/head, which needs no GitHub API call (rate limits, tokens). GitHub
+          # keeps those refs after a PR is closed, so several PRs can match (e.g. a PR reopened as
+          # a new one from the same branch). Only open PRs have a merge ref, and the checks below
+          # keep one that merges our head into the target branch.
+          prs="$(git -C "${repo}" ls-remote origin 'refs/pull/*/head' \
+                 | awk -v sha="${head_sha}" '$1 == sha { sub(/\/head$/, "", $2); print $2 }')"
+        fi
         [[ -n "${prs}" ]] || return 1
 
         # Try every candidate before waiting, so that closed PRs cost nothing.
