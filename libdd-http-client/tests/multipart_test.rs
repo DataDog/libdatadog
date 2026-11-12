@@ -66,3 +66,29 @@ async fn test_multipart_sets_content_type() {
 
     mock.assert_async().await;
 }
+
+#[cfg_attr(miri, ignore)]
+#[tokio::test]
+async fn test_multipart_replaces_an_existing_content_type() {
+    ensure_crypto_provider();
+    let server = MockServer::start_async().await;
+    let mock = server
+        .mock_async(|when, then| {
+            when.method(POST)
+                .path("/upload")
+                .header_prefix("content-type", "multipart/form-data; boundary=")
+                .header_count("^content-type$", ".*", 1);
+            then.status(200);
+        })
+        .await;
+    let client = HttpClient::new(server.url("/"), Duration::from_secs(5)).unwrap();
+
+    for name in ["Content-Type", "content-type"] {
+        let req = HttpRequest::new(HttpMethod::Post, server.url("/upload"))
+            .with_header(name, "application/json")
+            .with_multipart_part(MultipartPart::new("p", b"v".as_slice()));
+        client.send(req).await.unwrap();
+    }
+
+    mock.assert_calls_async(2).await;
+}

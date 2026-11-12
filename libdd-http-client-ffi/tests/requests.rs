@@ -240,6 +240,70 @@ fn a_multipart_body_is_encoded_with_its_parts() {
     mock.assert();
 }
 
+/// Expects a multipart request that carries exactly one `Content-Type`.
+fn multipart_mock(server: &MockServer) -> httpmock::Mock<'_> {
+    server.mock(|when, then| {
+        when.method(POST)
+            .header_prefix("content-type", "multipart/form-data; boundary=")
+            .header_count("^content-type$", ".*", 1);
+        then.status(200);
+    })
+}
+
+#[test]
+fn multipart_replaces_a_default_content_type() {
+    let server = MockServer::start();
+    let mock = multipart_mock(&server);
+    let client = Cfg::new(server.base_url())
+        .default_header("Content-Type", "application/json")
+        .build()
+        .expect("client");
+
+    client
+        .send(&Req::post("/upload").part(Part::new("p", b"v")))
+        .expect("send");
+
+    mock.assert();
+}
+
+#[test]
+fn multipart_replaces_a_request_content_type() {
+    let server = MockServer::start();
+    let mock = multipart_mock(&server);
+    let client = Cfg::new(server.base_url()).build().expect("client");
+
+    client
+        .send(
+            &Req::post("/upload")
+                .header("content-type", "text/plain")
+                .part(Part::new("p", b"v")),
+        )
+        .expect("send");
+
+    mock.assert();
+}
+
+#[test]
+fn a_default_content_type_still_applies_without_multipart() {
+    let server = MockServer::start();
+    let mock = server.mock(|when, then| {
+        when.method(POST)
+            .header("content-type", "application/json")
+            .header_count("^content-type$", ".*", 1);
+        then.status(200);
+    });
+    let client = Cfg::new(server.base_url())
+        .default_header("Content-Type", "application/json")
+        .build()
+        .expect("client");
+
+    client
+        .send(&Req::post("/json").body(b"{}".to_vec()))
+        .expect("send");
+
+    mock.assert();
+}
+
 #[test]
 fn a_body_and_multipart_parts_are_mutually_exclusive() {
     let error = offline_client()

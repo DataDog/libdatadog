@@ -67,7 +67,6 @@ shared-runtime = ["dep:libdd-shared-runtime-ffi"]
 otel-thread-ctx-ffi = ["dep:libdd-otel-thread-ctx-ffi"]
 regex-lite = ["libdd-regex/regex-lite"]
 http-client-ffi = ["dep:libdd-http-client-ffi"]
-regex-lite = ["libdd-common/regex-lite"]
 
 [build-dependencies]
 build_common = { path = "../build-common", features = ["winresource"] }
