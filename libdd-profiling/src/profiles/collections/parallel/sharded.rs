@@ -1,9 +1,7 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::profiles::collections::{
-    Set, SetError, SetHasher as Hasher, SetId, SliceSet, ThinSlice,
-};
+use crate::profiles::collections::{Set, SetError, SetId, SliceSet, ThinSlice};
 use core::hash::Hash;
 use core::mem::MaybeUninit;
 use crossbeam_utils::CachePadded;
@@ -97,37 +95,6 @@ impl<S: SetOps, const N: usize> Sharded<S, N> {
         // If N=0, then we error at the very top of the function, so we know
         // there's at least one.
         Ok(Self { shards })
-    }
-
-    pub fn try_insert_common<'a>(
-        &self,
-        lookup: S::Lookup<'a>,
-        owned: S::Owned<'a>,
-    ) -> Result<S::Id, SetError>
-    where
-        S::Lookup<'a>: Hash + PartialEq,
-    {
-        use std::hash::BuildHasher;
-        let hash = Hasher::default().hash_one(lookup);
-        let idx = Self::select_shard(hash);
-        let lock = &self.shards[idx];
-
-        let read_len = {
-            let guard = lock.read();
-            if let Some(id) = unsafe { guard.find_with_hash(hash, lookup) } {
-                return Ok(id);
-            }
-            guard.len()
-        };
-
-        let mut guard = lock.write();
-        if guard.len() != read_len
-            && let Some(id) = unsafe { guard.find_with_hash(hash, lookup) }
-        {
-            return Ok(id);
-        }
-
-        unsafe { guard.insert_unique_uncontended_with_hash(hash, owned) }
     }
 }
 
