@@ -274,25 +274,16 @@ impl Response {
             .to_vec()
     }
 
-    pub fn header_count(&self) -> usize {
-        unsafe { ddog_http_response_header_count(self.0) }
-    }
-
-    pub fn header_at(&self, index: usize) -> Option<(String, String)> {
-        let mut name = CharSlice::default();
-        let mut value = CharSlice::default();
-        let found = unsafe { ddog_http_response_header_at(self.0, index, &mut name, &mut value) };
-        found.then(|| {
-            (
-                String::from_utf8_lossy(name.as_bytes()).into_owned(),
-                String::from_utf8_lossy(value.as_bytes()).into_owned(),
-            )
-        })
-    }
-
     pub fn headers(&self) -> Vec<(String, String)> {
-        (0..self.header_count())
-            .filter_map(|i| self.header_at(i))
+        unsafe { ddog_http_response_headers(self.0) }
+            .as_slice()
+            .iter()
+            .map(|header| {
+                (
+                    String::from_utf8_lossy(header.name.as_bytes()).into_owned(),
+                    String::from_utf8_lossy(header.value.as_bytes()).into_owned(),
+                )
+            })
             .collect()
     }
 
