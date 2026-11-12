@@ -1,0 +1,67 @@
+{
+  "version": "2.2",
+  "metadata": {
+    "rules_version": "1.8.0"
+  },
+  "rules": [
+    {
+      "id": "rule1",
+      "name": "rule1",
+      "tags": {
+        "type": "flow1",
+        "category": "category1"
+      },
+      "conditions": [
+        {
+          "parameters": {
+            "inputs": [
+              {
+                "address": "server.request.body.schema"
+              }
+            ],
+            "value": 8,
+            "type": "unsigned"
+          },
+          "operator": "equals"
+        }
+      ]
+    }
+  ],
+  "processors": [
+    {
+      "id": "processor-001",
+      "generator": "extract_schema",
+      "conditions": [
+        {
+          "operator": "equals",
+          "parameters": {
+            "inputs": [
+              {
+                "address": "waf.context.processor",
+                "key_path": [
+                  "extract-schema"
+                ]
+              }
+            ],
+            "value": true,
+            "type": "boolean"
+          }
+        }
+      ],
+      "parameters": {
+        "mappings": [
+          {
+            "inputs": [
+              {
+                "address": "server.request.body"
+              }
+            ],
+            "output": "server.request.body.schema"
+          }
+        ]
+      },
+      "evaluate": true,
+      "output": true
+    }
+  ]
+}

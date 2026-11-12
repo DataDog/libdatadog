@@ -2815,7 +2815,11 @@ name = "libdd-api-security"
 version = "0.1.0"
 dependencies = [
  "criterion",
+ "ipnet",
+ "libdd-regex",
  "proptest",
+ "regex-syntax",
+ "semver",
  "serde",
  "serde_json",
  "thiserror 2.0.17",

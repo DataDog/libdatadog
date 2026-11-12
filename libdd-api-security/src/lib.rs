@@ -3,16 +3,17 @@
 
 //! Structural API Security schemas, independent of `AppSec` and tracer bindings.
 //!
-//! This proof of concept extracts types and property names from JSON, without
-//! PII classification. Sampling, compression, transport and configuration are
-//! the caller's responsibility.
+//! This proof of concept extracts types and property names, with optional
+//! caller-configured string classification. Sampling, compression, transport
+//! and configuration transport are the caller's responsibility. Configuration
+//! snapshots are optional and remain caller-owned.
 //!
 //! [`extract_schema`] borrows an already parsed JSON value; [`extract_schema_json`]
 //! parses directly into a schema and serializes the result. It still scans the
 //! entire JSON input for validity and lengths, so cost grows with input size.
 //! There are no total input-byte, node, output-byte or execution-time budgets.
 //!
-//! Schemas follow libddwaf's scanner-free encoding, with deterministic ordering.
+//! Schemas follow libddwaf's encoding, with deterministic ordering.
 //! JSON cannot represent libddwaf's invalid/unknown values. The JSON entry point
 //! selects fields in source order and keeps the first selected duplicate key.
 //! The parsed-value entry point uses the supplied map's iteration order; it
@@ -20,15 +21,36 @@
 
 extern crate alloc;
 
+mod classification;
+mod collector;
+mod configuration;
 mod json;
+mod processor;
+mod scanner;
+mod scanner_regex;
 mod schema;
 mod source;
 
 use alloc::string::String;
 use serde_json::Value;
 
+pub use collector::{
+    CollectedSchema, CollectionBuilder, CollectionDiagnostics, Collector, SectionDiagnostics,
+};
+pub use configuration::{
+    ConfigurationDiagnostics, ConfigurationError, ScannerConfiguration, load_scanners,
+};
+pub use processor::{
+    InputAddress, KeyPath, OverrideConfiguration, ProcessorCondition, ProcessorConfiguration,
+    ProcessorDefinition, ProcessorMapping, ProcessorOverride, ScannerReference, ScannerSelection,
+    load_processor_overrides, load_processors,
+};
+pub use scanner::{Matcher, Scanner, ScannerError, ScannerTags};
 pub use schema::Schema;
-pub use source::{ScalarType, SchemaSource, SourceKind, extract_schema_from_source};
+pub use source::{
+    ScalarType, ScannerSource, SchemaSource, SourceKind, extract_schema_from_source,
+    extract_schema_from_source_with_scanners,
+};
 
 /// Representation choices for callers whose input has different scalar or
 /// array-length semantics. These do not bound input processing.
@@ -150,4 +172,39 @@ pub fn extract_schema_json_with_options(
 ) -> Result<String, SchemaError> {
     let schema = Schema::from_json(input, options).map_err(SchemaError::InvalidJson)?;
     serde_json::to_string(&schema).map_err(SchemaError::Serialization)
+}
+
+/// Extract a parsed value with caller-selected classifiers.
+///
+/// The first matching scanner supplies metadata. Arrays inherit their parent
+/// record key; root strings and root arrays have no key. Scanner tags
+/// participate in structural deduplication and are borrowed by the result.
+#[must_use]
+pub fn extract_schema_with_scanners<'a>(input: &'a Value, scanners: &'a [Scanner]) -> Schema<'a> {
+    Schema::from_node(schema::Node::extract(
+        input,
+        MAX_CONTAINER_DEPTH,
+        classification::Classifiers { scanners, key: "" },
+    ))
+}
+
+/// Parse JSON and extract a schema with caller-selected classifiers.
+///
+/// Scalar contents are inspected only for selected string values and are
+/// never retained. Ignored tails still undergo full JSON syntax validation.
+///
+/// # Errors
+/// Returns the same input and serialization errors as [`extract_schema_json`].
+pub fn extract_schema_json_with_scanners(
+    input: &str,
+    options: SchemaOptions,
+    scanners: &[Scanner],
+) -> Result<String, SchemaError> {
+    let node = json::parse(
+        input,
+        options,
+        classification::Classifiers { scanners, key: "" },
+    )
+    .map_err(SchemaError::InvalidJson)?;
+    serde_json::to_string(&Schema::from_node(node)).map_err(SchemaError::Serialization)
 }

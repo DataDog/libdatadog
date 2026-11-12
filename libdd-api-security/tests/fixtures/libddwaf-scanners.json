@@ -1,0 +1,28 @@
+{
+  "scanners": [
+    {
+      "id": "scanner-001",
+      "key": {
+          "operator": "match_regex",
+          "parameters": {
+            "regex": "(?:email|mail)",
+            "options": {
+              "case_sensitive": false,
+              "min_length": 5
+            }
+          }
+      },
+      "value": {
+          "operator": "match_regex",
+          "parameters": {
+            "regex": "\\b[\\w!#$%&'*+\\/=?`{|}~^-]+(?:\\.[\\w!#$%&'*+\\/=?`{|}~^-]+)*(%40|@)(?:[a-zA-Z0-9-]+\\.)+[a-zA-Z]{2,6}\\b",
+            "options": {
+              "case_sensitive": false,
+              "min_length": 5
+            }
+          }
+      },
+      "tags": { "type": "email", "category": "pii" }
+    }
+  ]
+}

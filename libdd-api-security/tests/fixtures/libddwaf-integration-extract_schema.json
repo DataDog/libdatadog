@@ -1,0 +1,1188 @@
+{
+  "configurations": {
+    "rules-1": {
+      "version": "2.2",
+      "metadata": {
+        "rules_version": "1.8.0"
+      },
+      "rules": [
+        {
+          "id": "rule1",
+          "name": "rule1",
+          "tags": {
+            "type": "flow1",
+            "category": "category1"
+          },
+          "conditions": [
+            {
+              "parameters": {
+                "inputs": [
+                  {
+                    "address": "server.request.body"
+                  }
+                ],
+                "value": 8,
+                "type": "unsigned"
+              },
+              "operator": "equals"
+            }
+          ]
+        }
+      ],
+      "processors": [
+        {
+          "id": "processor-001",
+          "generator": "extract_schema",
+          "conditions": [
+            {
+              "operator": "equals",
+              "parameters": {
+                "inputs": [
+                  {
+                    "address": "waf.context.processor",
+                    "key_path": [
+                      "extract-schema"
+                    ]
+                  }
+                ],
+                "value": true,
+                "type": "boolean"
+              }
+            }
+          ],
+          "parameters": {
+            "mappings": [
+              {
+                "inputs": [
+                  {
+                    "address": "server.request.body"
+                  }
+                ],
+                "output": "server.request.body.schema"
+              }
+            ]
+          },
+          "evaluate": false,
+          "output": true
+        }
+      ]
+    },
+    "rules-2": {
+      "version": "2.2",
+      "metadata": {
+        "rules_version": "1.8.0"
+      },
+      "rules": [
+        {
+          "id": "rule1",
+          "name": "rule1",
+          "tags": {
+            "type": "flow1",
+            "category": "category1"
+          },
+          "conditions": [
+            {
+              "parameters": {
+                "inputs": [
+                  {
+                    "address": "server.request.body.schema"
+                  }
+                ],
+                "value": 8,
+                "type": "unsigned"
+              },
+              "operator": "equals"
+            }
+          ]
+        }
+      ],
+      "processors": [
+        {
+          "id": "processor-001",
+          "generator": "extract_schema",
+          "conditions": [
+            {
+              "operator": "equals",
+              "parameters": {
+                "inputs": [
+                  {
+                    "address": "waf.context.processor",
+                    "key_path": [
+                      "extract-schema"
+                    ]
+                  }
+                ],
+                "value": true,
+                "type": "boolean"
+              }
+            }
+          ],
+          "parameters": {
+            "mappings": [
+              {
+                "inputs": [
+                  {
+                    "address": "server.request.body"
+                  }
+                ],
+                "output": "server.request.body.schema"
+              }
+            ]
+          },
+          "evaluate": true,
+          "output": false
+        }
+      ]
+    },
+    "rules-3": {
+      "version": "2.2",
+      "metadata": {
+        "rules_version": "1.8.0"
+      },
+      "rules": [
+        {
+          "id": "rule1",
+          "name": "rule1",
+          "tags": {
+            "type": "flow1",
+            "category": "category1"
+          },
+          "conditions": [
+            {
+              "parameters": {
+                "inputs": [
+                  {
+                    "address": "server.request.body.schema"
+                  }
+                ],
+                "value": 8,
+                "type": "unsigned"
+              },
+              "operator": "equals"
+            }
+          ]
+        }
+      ],
+      "processors": [
+        {
+          "id": "processor-001",
+          "generator": "extract_schema",
+          "conditions": [
+            {
+              "operator": "equals",
+              "parameters": {
+                "inputs": [
+                  {
+                    "address": "waf.context.processor",
+                    "key_path": [
+                      "extract-schema"
+                    ]
+                  }
+                ],
+                "value": true,
+                "type": "boolean"
+              }
+            }
+          ],
+          "parameters": {
+            "mappings": [
+              {
+                "inputs": [
+                  {
+                    "address": "server.request.body"
+                  }
+                ],
+                "output": "server.request.body.schema"
+              },
+              {
+                "inputs": [
+                  {
+                    "address": "server.request.query"
+                  }
+                ],
+                "output": "server.request.query.schema"
+              }
+            ]
+          },
+          "evaluate": true,
+          "output": true
+        }
+      ]
+    },
+    "rules-4": {
+      "version": "2.2",
+      "metadata": {
+        "rules_version": "1.8.0"
+      },
+      "rules": [
+        {
+          "id": "rule1",
+          "name": "rule1",
+          "tags": {
+            "type": "flow1",
+            "category": "category1"
+          },
+          "conditions": [
+            {
+              "parameters": {
+                "inputs": [
+                  {
+                    "address": "server.request.body.schema"
+                  }
+                ],
+                "value": 8,
+                "type": "unsigned"
+              },
+              "operator": "equals"
+            }
+          ]
+        }
+      ],
+      "processors": [
+        {
+          "id": "processor-001",
+          "generator": "extract_schema",
+          "conditions": [
+            {
+              "operator": "equals",
+              "parameters": {
+                "inputs": [
+                  {
+                    "address": "waf.context.processor",
+                    "key_path": [
+                      "extract-schema"
+                    ]
+                  }
+                ],
+                "value": true,
+                "type": "boolean"
+              }
+            }
+          ],
+          "parameters": {
+            "mappings": [
+              {
+                "inputs": [
+                  {
+                    "address": "server.request.body"
+                  }
+                ],
+                "output": "server.request.body.schema"
+              }
+            ],
+            "scanners": [
+              {
+                "tags": {
+                  "category": "pii",
+                  "type": "email"
+                }
+              }
+            ]
+          },
+          "evaluate": false,
+          "output": true
+        }
+      ]
+    },
+    "scanners-1": {
+      "scanners": [
+        {
+          "id": "scanner-001",
+          "key": {
+            "operator": "match_regex",
+            "parameters": {
+              "regex": "(?:email|mail)",
+              "options": {
+                "case_sensitive": false,
+                "min_length": 5
+              }
+            }
+          },
+          "value": {
+            "operator": "match_regex",
+            "parameters": {
+              "regex": "\\b[\\w!#$%&'*+\\/=?`{|}~^-]+(?:\\.[\\w!#$%&'*+\\/=?`{|}~^-]+)*(%40|@)(?:[a-zA-Z0-9-]+\\.)+[a-zA-Z]{2,6}\\b",
+              "options": {
+                "case_sensitive": false,
+                "min_length": 5
+              }
+            }
+          },
+          "tags": {
+            "type": "email",
+            "category": "pii"
+          }
+        }
+      ]
+    },
+    "rules-5": {
+      "version": "2.2",
+      "metadata": {
+        "rules_version": "1.8.0"
+      },
+      "rules": [
+        {
+          "id": "rule1",
+          "name": "rule1",
+          "tags": {
+            "type": "flow1",
+            "category": "category1"
+          },
+          "conditions": [
+            {
+              "parameters": {
+                "inputs": [
+                  {
+                    "address": "server.request.body.schema"
+                  }
+                ],
+                "value": 8,
+                "type": "unsigned"
+              },
+              "operator": "equals"
+            }
+          ]
+        }
+      ],
+      "processors": [
+        {
+          "id": "processor-001",
+          "generator": "extract_schema",
+          "conditions": [
+            {
+              "operator": "equals",
+              "parameters": {
+                "inputs": [
+                  {
+                    "address": "waf.context.processor",
+                    "key_path": [
+                      "extract-schema"
+                    ]
+                  }
+                ],
+                "value": true,
+                "type": "boolean"
+              }
+            }
+          ],
+          "parameters": {
+            "mappings": [
+              {
+                "inputs": [
+                  {
+                    "address": "server.request.body"
+                  }
+                ],
+                "output": "server.request.body.schema"
+              }
+            ],
+            "scanners": [
+              {
+                "id": "scanner-001"
+              }
+            ]
+          },
+          "evaluate": false,
+          "output": true
+        }
+      ]
+    },
+    "scanners-2": {
+      "scanners": [
+        {
+          "id": "scanner-002",
+          "value": {
+            "operator": "match_regex",
+            "parameters": {
+              "regex": "notanemail",
+              "options": {
+                "case_sensitive": false,
+                "min_length": 1
+              }
+            }
+          },
+          "tags": {
+            "type": "email",
+            "category": "pii"
+          }
+        }
+      ]
+    },
+    "rules-6": {
+      "version": "2.2",
+      "metadata": {
+        "rules_version": "1.8.0"
+      },
+      "rules": [
+        {
+          "id": "rule1",
+          "name": "rule1",
+          "tags": {
+            "type": "flow1",
+            "category": "category1"
+          },
+          "conditions": [
+            {
+              "parameters": {
+                "inputs": [
+                  {
+                    "address": "server.request.body.schema"
+                  }
+                ],
+                "value": 8,
+                "type": "unsigned"
+              },
+              "operator": "equals"
+            }
+          ]
+        }
+      ],
+      "processors": []
+    }
+  },
+  "cases": [
+    {
+      "name": "Postprocessor",
+      "steps": [
+        {
+          "op": "update",
+          "source": "rules",
+          "configuration": "rules-1"
+        },
+        {
+          "op": "build"
+        },
+        {
+          "op": "collect",
+          "context": "map",
+          "input": {
+            "server.request.body": "value",
+            "waf.context.processor": {
+              "extract-schema": true
+            }
+          },
+          "attributes": {
+            "server.request.body.schema": [
+              8
+            ]
+          },
+          "evaluation": {}
+        }
+      ]
+    },
+    {
+      "name": "Preprocessor",
+      "steps": [
+        {
+          "op": "update",
+          "source": "rules",
+          "configuration": "rules-2"
+        },
+        {
+          "op": "build"
+        },
+        {
+          "op": "collect",
+          "context": "map",
+          "input": {
+            "server.request.body": "value",
+            "waf.context.processor": {
+              "extract-schema": true
+            }
+          },
+          "attributes": {},
+          "evaluation": {
+            "server.request.body.schema": [
+              8
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Processor",
+      "steps": [
+        {
+          "op": "update",
+          "source": "rules",
+          "configuration": "rules-3"
+        },
+        {
+          "op": "build"
+        },
+        {
+          "op": "collect",
+          "context": "map",
+          "input": {
+            "server.request.body": "value",
+            "waf.context.processor": {
+              "extract-schema": true
+            }
+          },
+          "attributes": {
+            "server.request.body.schema": [
+              8
+            ]
+          },
+          "evaluation": {
+            "server.request.body.schema": [
+              8
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "ProcessorWithScannerByTags",
+      "steps": [
+        {
+          "op": "reset"
+        },
+        {
+          "op": "update",
+          "source": "rules",
+          "configuration": "rules-4"
+        },
+        {
+          "op": "update",
+          "source": "scanners",
+          "configuration": "scanners-1"
+        },
+        {
+          "op": "build"
+        },
+        {
+          "op": "collect",
+          "context": "map",
+          "input": {
+            "server.request.body": {
+              "email": "data@datadoghq.com"
+            },
+            "waf.context.processor": {
+              "extract-schema": true
+            }
+          },
+          "attributes": {
+            "server.request.body.schema": [
+              {
+                "email": [
+                  8,
+                  {
+                    "category": "pii",
+                    "type": "email"
+                  }
+                ]
+              }
+            ]
+          },
+          "evaluation": {}
+        }
+      ]
+    },
+    {
+      "name": "ProcessorWithScannerByID",
+      "steps": [
+        {
+          "op": "reset"
+        },
+        {
+          "op": "update",
+          "source": "rules",
+          "configuration": "rules-5"
+        },
+        {
+          "op": "update",
+          "source": "scanners",
+          "configuration": "scanners-1"
+        },
+        {
+          "op": "build"
+        },
+        {
+          "op": "collect",
+          "context": "map",
+          "input": {
+            "server.request.body": {
+              "email": "data@datadoghq.com"
+            },
+            "waf.context.processor": {
+              "extract-schema": true
+            }
+          },
+          "attributes": {
+            "server.request.body.schema": [
+              {
+                "email": [
+                  8,
+                  {
+                    "category": "pii",
+                    "type": "email"
+                  }
+                ]
+              }
+            ]
+          },
+          "evaluation": {}
+        }
+      ]
+    },
+    {
+      "name": "ProcessorUpdate",
+      "steps": [
+        {
+          "op": "reset"
+        },
+        {
+          "op": "update",
+          "source": "rules",
+          "configuration": "rules-4"
+        },
+        {
+          "op": "update",
+          "source": "scanners",
+          "configuration": "scanners-1"
+        },
+        {
+          "op": "build"
+        },
+        {
+          "op": "collect",
+          "context": "map",
+          "input": {
+            "server.request.body": {
+              "email": "data@datadoghq.com"
+            },
+            "waf.context.processor": {
+              "extract-schema": true
+            }
+          },
+          "attributes": {
+            "server.request.body.schema": [
+              {
+                "email": [
+                  8,
+                  {
+                    "category": "pii",
+                    "type": "email"
+                  }
+                ]
+              }
+            ]
+          },
+          "evaluation": {}
+        },
+        {
+          "op": "update",
+          "source": "rules",
+          "configuration": "rules-1"
+        },
+        {
+          "op": "build"
+        },
+        {
+          "op": "collect",
+          "context": "map",
+          "input": {
+            "server.request.body": {
+              "email": "data@datadoghq.com"
+            },
+            "waf.context.processor": {
+              "extract-schema": true
+            }
+          },
+          "attributes": {
+            "server.request.body.schema": [
+              {
+                "email": [
+                  8
+                ]
+              }
+            ]
+          },
+          "evaluation": {}
+        }
+      ]
+    },
+    {
+      "name": "ScannerUpdate",
+      "steps": [
+        {
+          "op": "reset"
+        },
+        {
+          "op": "update",
+          "source": "rules",
+          "configuration": "rules-4"
+        },
+        {
+          "op": "update",
+          "source": "scanners",
+          "configuration": "scanners-1"
+        },
+        {
+          "op": "build"
+        },
+        {
+          "op": "collect",
+          "context": "map",
+          "input": {
+            "server.request.body": {
+              "email": "data@datadoghq.com"
+            },
+            "waf.context.processor": {
+              "extract-schema": true
+            }
+          },
+          "attributes": {
+            "server.request.body.schema": [
+              {
+                "email": [
+                  8,
+                  {
+                    "category": "pii",
+                    "type": "email"
+                  }
+                ]
+              }
+            ]
+          },
+          "evaluation": {}
+        },
+        {
+          "op": "update",
+          "source": "scanners",
+          "configuration": "scanners-2"
+        },
+        {
+          "op": "build"
+        },
+        {
+          "op": "collect",
+          "context": "map",
+          "input": {
+            "server.request.body": {
+              "email": "notanemail"
+            },
+            "waf.context.processor": {
+              "extract-schema": true
+            }
+          },
+          "attributes": {
+            "server.request.body.schema": [
+              {
+                "email": [
+                  8,
+                  {
+                    "category": "pii",
+                    "type": "email"
+                  }
+                ]
+              }
+            ]
+          },
+          "evaluation": {}
+        }
+      ]
+    },
+    {
+      "name": "ProcessorAndScannerUpdate",
+      "steps": [
+        {
+          "op": "reset"
+        },
+        {
+          "op": "update",
+          "source": "rules",
+          "configuration": "rules-4"
+        },
+        {
+          "op": "update",
+          "source": "scanners",
+          "configuration": "scanners-1"
+        },
+        {
+          "op": "build"
+        },
+        {
+          "op": "collect",
+          "context": "map",
+          "input": {
+            "server.request.body": {
+              "email": "data@datadoghq.com"
+            },
+            "waf.context.processor": {
+              "extract-schema": true
+            }
+          },
+          "attributes": {
+            "server.request.body.schema": [
+              {
+                "email": [
+                  8,
+                  {
+                    "category": "pii",
+                    "type": "email"
+                  }
+                ]
+              }
+            ]
+          },
+          "evaluation": {}
+        },
+        {
+          "op": "update",
+          "source": "rules",
+          "configuration": "rules-5"
+        },
+        {
+          "op": "build"
+        },
+        {
+          "op": "collect",
+          "context": "map",
+          "input": {
+            "server.request.body": {
+              "email": "data@datadoghq.com"
+            },
+            "waf.context.processor": {
+              "extract-schema": true
+            }
+          },
+          "attributes": {
+            "server.request.body.schema": [
+              {
+                "email": [
+                  8,
+                  {
+                    "category": "pii",
+                    "type": "email"
+                  }
+                ]
+              }
+            ]
+          },
+          "evaluation": {}
+        }
+      ]
+    },
+    {
+      "name": "EmptyScannerUpdate",
+      "steps": [
+        {
+          "op": "reset"
+        },
+        {
+          "op": "update",
+          "source": "rules",
+          "configuration": "rules-4"
+        },
+        {
+          "op": "update",
+          "source": "scanners",
+          "configuration": "scanners-1"
+        },
+        {
+          "op": "build"
+        },
+        {
+          "op": "collect",
+          "context": "map",
+          "input": {
+            "server.request.body": {
+              "email": "data@datadoghq.com"
+            },
+            "waf.context.processor": {
+              "extract-schema": true
+            }
+          },
+          "attributes": {
+            "server.request.body.schema": [
+              {
+                "email": [
+                  8,
+                  {
+                    "category": "pii",
+                    "type": "email"
+                  }
+                ]
+              }
+            ]
+          },
+          "evaluation": {}
+        },
+        {
+          "op": "remove",
+          "source": "scanners"
+        },
+        {
+          "op": "build"
+        },
+        {
+          "op": "collect",
+          "context": "map",
+          "input": {
+            "server.request.body": {
+              "email": "data@datadoghq.com"
+            },
+            "waf.context.processor": {
+              "extract-schema": true
+            }
+          },
+          "attributes": {
+            "server.request.body.schema": [
+              {
+                "email": [
+                  8
+                ]
+              }
+            ]
+          },
+          "evaluation": {}
+        }
+      ]
+    },
+    {
+      "name": "EmptyProcessorUpdate",
+      "steps": [
+        {
+          "op": "reset"
+        },
+        {
+          "op": "update",
+          "source": "rules",
+          "configuration": "rules-4"
+        },
+        {
+          "op": "update",
+          "source": "scanners",
+          "configuration": "scanners-1"
+        },
+        {
+          "op": "build"
+        },
+        {
+          "op": "collect",
+          "context": "map",
+          "input": {
+            "server.request.body": {
+              "email": "data@datadoghq.com"
+            },
+            "waf.context.processor": {
+              "extract-schema": true
+            }
+          },
+          "attributes": {
+            "server.request.body.schema": [
+              {
+                "email": [
+                  8,
+                  {
+                    "category": "pii",
+                    "type": "email"
+                  }
+                ]
+              }
+            ]
+          },
+          "evaluation": {}
+        },
+        {
+          "op": "update",
+          "source": "rules",
+          "configuration": "rules-6"
+        },
+        {
+          "op": "build"
+        },
+        {
+          "op": "collect",
+          "context": "map",
+          "input": {
+            "server.request.body": {
+              "email": "data@datadoghq.com"
+            },
+            "waf.context.processor": {
+              "extract-schema": true
+            }
+          },
+          "attributes": {},
+          "evaluation": {}
+        }
+      ]
+    },
+    {
+      "name": "PostprocessorWithSubcontextMapping",
+      "steps": [
+        {
+          "op": "update",
+          "source": "rules",
+          "configuration": "rules-1"
+        },
+        {
+          "op": "build"
+        },
+        {
+          "op": "collect",
+          "context": "persistent",
+          "input": {
+            "waf.context.processor": {
+              "extract-schema": true
+            }
+          },
+          "attributes": {},
+          "evaluation": {}
+        },
+        {
+          "op": "collect",
+          "context": "ephemeral",
+          "input": {
+            "server.request.body": "value"
+          },
+          "attributes": {
+            "server.request.body.schema": [
+              8
+            ]
+          },
+          "evaluation": {}
+        },
+        {
+          "op": "collect",
+          "context": "ephemeral",
+          "input": {
+            "server.request.body": {
+              "key": "value"
+            }
+          },
+          "attributes": {
+            "server.request.body.schema": [
+              {
+                "key": [
+                  8
+                ]
+              }
+            ]
+          },
+          "evaluation": {}
+        }
+      ]
+    },
+    {
+      "name": "PreprocessorWithSubcontextMapping",
+      "steps": [
+        {
+          "op": "update",
+          "source": "rules",
+          "configuration": "rules-2"
+        },
+        {
+          "op": "build"
+        },
+        {
+          "op": "collect",
+          "context": "persistent",
+          "input": {
+            "waf.context.processor": {
+              "extract-schema": true
+            }
+          },
+          "attributes": {},
+          "evaluation": {}
+        },
+        {
+          "op": "collect",
+          "context": "ephemeral",
+          "input": {
+            "server.request.body": "value"
+          },
+          "attributes": {},
+          "evaluation": {
+            "server.request.body.schema": [
+              8
+            ]
+          }
+        },
+        {
+          "op": "collect",
+          "context": "ephemeral",
+          "input": {
+            "server.request.body": "value"
+          },
+          "attributes": {},
+          "evaluation": {
+            "server.request.body.schema": [
+              8
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "ProcessorSubcontextExpression",
+      "steps": [
+        {
+          "op": "update",
+          "source": "rules",
+          "configuration": "rules-3"
+        },
+        {
+          "op": "build"
+        },
+        {
+          "op": "collect",
+          "context": "persistent",
+          "input": {
+            "server.request.query": "value"
+          },
+          "attributes": {},
+          "evaluation": {}
+        },
+        {
+          "op": "collect",
+          "context": "ephemeral",
+          "input": {
+            "waf.context.processor": {
+              "extract-schema": true
+            }
+          },
+          "attributes": {
+            "server.request.query.schema": [
+              8
+            ]
+          },
+          "evaluation": {}
+        },
+        {
+          "op": "collect",
+          "context": "persistent",
+          "input": {
+            "server.request.body": "value"
+          },
+          "attributes": {},
+          "evaluation": {}
+        },
+        {
+          "op": "collect",
+          "context": "ephemeral",
+          "input": {
+            "waf.context.processor": {
+              "extract-schema": true
+            }
+          },
+          "attributes": {
+            "server.request.body.schema": [
+              8
+            ],
+            "server.request.query.schema": [
+              8
+            ]
+          },
+          "evaluation": {
+            "server.request.body.schema": [
+              8
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -7,7 +7,10 @@ use serde::ser::{SerializeMap, SerializeSeq};
 use serde::{Serialize, Serializer};
 use serde_json::Value;
 
-use crate::{MAX_ARRAY_NODES, MAX_CONTAINER_DEPTH, MAX_RECORD_NODES, SchemaOptions};
+use crate::classification::{Classification, Structural};
+use crate::{
+    MAX_ARRAY_NODES, MAX_CONTAINER_DEPTH, MAX_RECORD_NODES, Scanner, ScannerTags, SchemaOptions,
+};
 
 /// An extracted schema with property names borrowed from its input.
 ///
@@ -27,17 +30,18 @@ impl<'a> Schema<'a> {
         input: &'a str,
         options: SchemaOptions,
     ) -> Result<Self, serde_json::Error> {
-        crate::json::parse(input, options).map(Self)
+        crate::json::parse(input, options, Structural).map(Self)
     }
 
     pub(crate) fn extract(input: &'a Value) -> Self {
-        Self(Node::extract(input, MAX_CONTAINER_DEPTH))
+        Self(Node::extract(input, MAX_CONTAINER_DEPTH, Structural))
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Node<'a> {
     Scalar(u8),
+    TaggedString(&'a ScannerTags),
     Array {
         variants: Vec<Self>,
         len: usize,
@@ -50,14 +54,14 @@ pub enum Node<'a> {
 }
 
 impl<'a> Node<'a> {
-    pub(crate) fn array(mut variants: Vec<Self>, len: usize) -> Self {
+    pub(crate) fn array(mut variants: Vec<Self>, len: usize, length_limit: Option<usize>) -> Self {
         // At most ten variants: canonical sorting also makes nested arrays
         // order-independent without a hash table per array.
         variants.sort_unstable();
         variants.dedup();
         Self::Array {
             variants,
-            len,
+            len: length_limit.map_or(len, |limit| len.min(limit)),
             truncated: len > MAX_ARRAY_NODES,
         }
     }
@@ -73,7 +77,26 @@ impl<'a> Node<'a> {
         }
     }
 
-    fn extract(input: &'a Value, depth: usize) -> Self {
+    pub(crate) fn string(value: &str, key: &str, scanners: &'a [Scanner]) -> Self {
+        scanners
+            .iter()
+            .find(|scanner| scanner.matches(key, Some(value)))
+            .map_or(Self::Scalar(8), |scanner| Self::classified(scanner.tags()))
+    }
+
+    pub(crate) fn classified(tags: &'a ScannerTags) -> Self {
+        if tags.is_empty() {
+            Self::Scalar(8)
+        } else {
+            Self::TaggedString(tags)
+        }
+    }
+
+    pub(crate) fn extract(
+        input: &'a Value,
+        depth: usize,
+        classify: impl Classification<'a>,
+    ) -> Self {
         match input {
             Value::Null => Self::Scalar(1),
             Value::Bool(_) => Self::Scalar(2),
@@ -82,18 +105,18 @@ impl<'a> Node<'a> {
             } else {
                 16
             }),
-            Value::String(_) => Self::Scalar(8),
+            Value::String(value) => classify.string(value),
             Value::Array(input) => {
                 let variants: Vec<_> = if depth > 1 {
                     input
                         .iter()
                         .take(MAX_ARRAY_NODES)
-                        .map(|value| Self::extract(value, depth - 1))
+                        .map(|value| Self::extract(value, depth - 1, classify))
                         .collect()
                 } else {
                     Vec::new()
                 };
-                Self::array(variants, input.len())
+                Self::array(variants, input.len(), None)
             }
             Value::Object(input) => {
                 let fields: Vec<_> = if depth > 1 {
@@ -102,7 +125,10 @@ impl<'a> Node<'a> {
                         .take(MAX_RECORD_NODES)
                         .filter(|(key, _)| !key.is_empty())
                         .map(|(key, value)| {
-                            (Cow::Borrowed(key.as_str()), Self::extract(value, depth - 1))
+                            (
+                                Cow::Borrowed(key.as_str()),
+                                Self::extract(value, depth - 1, classify.with_key(key)),
+                            )
                         })
                         .collect()
                 } else {
@@ -144,6 +170,12 @@ impl Serialize for Node<'_> {
             Self::Scalar(code) => {
                 let mut seq = serializer.serialize_seq(Some(1))?;
                 seq.serialize_element(code)?;
+                seq.end()
+            }
+            Self::TaggedString(tags) => {
+                let mut seq = serializer.serialize_seq(Some(2))?;
+                seq.serialize_element(&8_u8)?;
+                seq.serialize_element(tags)?;
                 seq.end()
             }
             Self::Array {

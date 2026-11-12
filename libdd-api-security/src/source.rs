@@ -5,11 +5,15 @@ use alloc::borrow::Cow;
 use alloc::vec::Vec;
 
 use crate::schema::Node;
-use crate::{MAX_ARRAY_NODES, MAX_CONTAINER_DEPTH, MAX_RECORD_NODES, Schema, SchemaOptions};
+use crate::{
+    MAX_ARRAY_NODES, MAX_CONTAINER_DEPTH, MAX_RECORD_NODES, Scanner, Schema, SchemaOptions,
+};
 
 /// A scalar's structural type. Its contents are never requested.
 #[derive(Clone, Copy, Debug)]
 pub enum ScalarType {
+    /// An invalid or unknown foreign value (not representable in JSON).
+    Unknown,
     /// JSON null.
     Null,
     /// Boolean.
@@ -80,16 +84,23 @@ pub fn extract_schema_from_source<'a, S: SchemaSource<'a>>(
     input: &S,
     options: SchemaOptions,
 ) -> Result<Schema<'a>, S::Error> {
-    extract(input, MAX_CONTAINER_DEPTH, options).map(Schema::from_node)
+    extract(input, MAX_CONTAINER_DEPTH, options, "", &|_, _| {
+        Ok(Node::Scalar(8))
+    })
+    .map(Schema::from_node)
 }
 
 fn extract<'a, S: SchemaSource<'a>>(
     input: &S,
     depth: usize,
     options: SchemaOptions,
+    key: &str,
+    classify: &impl Fn(&S, &str) -> Result<Node<'a>, S::Error>,
 ) -> Result<Node<'a>, S::Error> {
     Ok(match input.kind() {
+        SourceKind::Scalar(ScalarType::String) => return classify(input, key),
         SourceKind::Scalar(kind) => Node::Scalar(match kind {
+            ScalarType::Unknown => 0,
             ScalarType::Null => 1,
             ScalarType::Boolean => 2,
             ScalarType::Integer if !options.numbers_as_float => 4,
@@ -101,16 +112,16 @@ fn extract<'a, S: SchemaSource<'a>>(
             if depth > 1 {
                 values.reserve(len.min(MAX_ARRAY_NODES));
                 for index in 0..len.min(MAX_ARRAY_NODES) {
-                    values.push(extract(&input.element(index)?, depth - 1, options)?);
+                    values.push(extract(
+                        &input.element(index)?,
+                        depth - 1,
+                        options,
+                        key,
+                        classify,
+                    )?);
                 }
             }
-            let mut node = Node::array(values, len);
-            if let Node::Array { len, .. } = &mut node
-                && let Some(limit) = options.array_length_limit
-            {
-                *len = (*len).min(limit);
-            }
-            node
+            Node::array(values, len, options.array_length_limit)
         }
         SourceKind::Record(len) => {
             let mut fields = Vec::new();
@@ -121,11 +132,61 @@ fn extract<'a, S: SchemaSource<'a>>(
                     if !key.is_empty()
                         && let Some(value) = value
                     {
-                        fields.push((key, extract(&value, depth - 1, options)?));
+                        let node = extract(&value, depth - 1, options, &key, classify)?;
+                        fields.push((key, node));
                     }
                 }
             }
             Node::record(fields, len)
         }
     })
+}
+
+/// A bounded source that can additionally expose strings for classification.
+///
+/// Structural extraction never invokes this method.
+pub trait ScannerSource<'a>: SchemaSource<'a> {
+    /// Read the string contents of a value whose kind is String.
+    ///
+    /// # Errors
+    /// Returns the adapter's error if the selected string cannot be read.
+    fn string(&self) -> Result<Cow<'a, str>, Self::Error>;
+}
+
+/// Extract schemas with classification from a caller-owned value tree.
+///
+/// Only selected strings needed by a value matcher are read. Arrays inherit their\n/// containing
+/// record key. Scanner metadata is borrowed, so scanners must outlive the returned schema.
+///
+/// # Errors
+/// Propagates errors from visited values, including string access.
+pub fn extract_schema_from_source_with_scanners<'a, S: ScannerSource<'a>>(
+    input: &S,
+    options: SchemaOptions,
+    scanners: &'a [Scanner],
+) -> Result<Schema<'a>, S::Error> {
+    if scanners.is_empty() {
+        return extract_schema_from_source(input, options);
+    }
+    extract(input, MAX_CONTAINER_DEPTH, options, "", &|value, key| {
+        // Test keys before crossing the foreign string boundary. Key-only
+        // matches need no value, and multiple value matchers share one read.
+        let mut text = None;
+        for scanner in scanners {
+            if !scanner.matches_key(key) {
+                continue;
+            }
+            if scanner.needs_value() {
+                if text.is_none() {
+                    text = Some(value.string()?);
+                }
+                if !scanner.matches_value(text.as_deref()) {
+                    continue;
+                }
+            }
+            return Ok(Node::classified(scanner.tags()));
+        }
+        Ok(Node::Scalar(8))
+    })
+    .map(Schema::from_node)
 }

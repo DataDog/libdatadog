@@ -17,6 +17,10 @@ autobenches = false
 bench = false
 
 [dependencies]
+libdd-regex = { version = "0.1.0", path = "../libdd-regex", default-features = false, features = ["require-regex-full"] }
+ipnet = { workspace = true, features = ["std"] }
+regex-syntax = { workspace = true, features = ["std", "unicode"] }
+semver = { workspace = true, features = ["std"] }
 serde = { workspace = true, features = ["alloc", "derive"] }
 serde_json.workspace = true
 thiserror.workspace = true

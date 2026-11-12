@@ -1,0 +1,972 @@
+{
+  "metadata": {
+    "before_revision": "181758dff60a7eb8b36caf9f8933d71f9af7c374",
+    "after_source_sha256": "2997c368c64de4fa5f135ca877025ec1f2c6c9350020f04f1219c53a39b03f7d",
+    "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+    "platform": "ProductName:\t\tmacOS\nProductVersion:\t\t26.7.2\nBuildVersion:\t\t25G332",
+    "command": [
+      "--bench",
+      "--sample-size",
+      "30",
+      "--warm-up-time",
+      "0.2",
+      "--measurement-time",
+      "0.5",
+      "--noplot"
+    ],
+    "order": [
+      [
+        "before",
+        "after"
+      ],
+      [
+        "after",
+        "before"
+      ],
+      [
+        "before",
+        "after"
+      ]
+    ]
+  },
+  "results": [
+    {
+      "group": "dom_json_api",
+      "case": "array-10",
+      "before_ns": 2809.115039987545,
+      "after_ns": 2832.328402366864,
+      "change_pct": 0.8263585523867301,
+      "round_changes_pct": [
+        2.0962646109565553,
+        0.45193847503886,
+        -1.6331741745206019
+      ]
+    },
+    {
+      "group": "dom_json_api",
+      "case": "array-1000",
+      "before_ns": 179371.6287593985,
+      "after_ns": 182022.87202380953,
+      "change_pct": 1.4780728049067937,
+      "round_changes_pct": [
+        1.4780728049067937,
+        6.045662590609546,
+        -4.765634689843301
+      ]
+    },
+    {
+      "group": "dom_json_api",
+      "case": "depth-100",
+      "before_ns": 7804.769258971704,
+      "after_ns": 7739.7407431722695,
+      "change_pct": -0.8331894722535704,
+      "round_changes_pct": [
+        -2.6358510213400854,
+        1.1857080730425018,
+        -0.8655588681480753
+      ]
+    },
+    {
+      "group": "dom_json_api",
+      "case": "depth-18",
+      "before_ns": 1702.2691387559807,
+      "after_ns": 1694.7547021943574,
+      "change_pct": -0.4414364562301154,
+      "round_changes_pct": [
+        -2.609169678097878,
+        3.1173773415930084,
+        -0.48561704897238656
+      ]
+    },
+    {
+      "group": "dom_json_api",
+      "case": "heterogeneous-10",
+      "before_ns": 3000.3537470318515,
+      "after_ns": 3042.041906820365,
+      "change_pct": 1.3894414893495188,
+      "round_changes_pct": [
+        1.6557617099999922,
+        1.3894414893495188,
+        1.811342716461839
+      ]
+    },
+    {
+      "group": "dom_json_api",
+      "case": "realistic-20",
+      "before_ns": 5468.509817563388,
+      "after_ns": 5435.363118738754,
+      "change_pct": -0.6061376852278144,
+      "round_changes_pct": [
+        1.2154208920527987,
+        -1.018381929727663,
+        -0.6061376852278144
+      ]
+    },
+    {
+      "group": "dom_json_api",
+      "case": "realistic-500",
+      "before_ns": 97177.95052083334,
+      "after_ns": 92154.49191919192,
+      "change_pct": -5.169339932276595,
+      "round_changes_pct": [
+        -5.169339932276595,
+        2.271558289737352,
+        -5.94203869090687
+      ]
+    },
+    {
+      "group": "dom_json_api",
+      "case": "record-10",
+      "before_ns": 1323.8636877828053,
+      "after_ns": 1235.2213167053364,
+      "change_pct": -6.695732490852313,
+      "round_changes_pct": [
+        -0.6517434901035735,
+        -1.1728599803624284,
+        -17.42812777513959
+      ]
+    },
+    {
+      "group": "dom_json_api",
+      "case": "record-1000",
+      "before_ns": 136303.98798076925,
+      "after_ns": 137917.60021551725,
+      "change_pct": 1.1838334729983524,
+      "round_changes_pct": [
+        1.5842827657867264,
+        -3.831592476038803,
+        4.7355768179702995
+      ]
+    },
+    {
+      "group": "dom_json_api",
+      "case": "record-255",
+      "before_ns": 35959.16461988304,
+      "after_ns": 34781.63489736071,
+      "change_pct": -3.274630361883424,
+      "round_changes_pct": [
+        -0.44657562612424595,
+        -4.684039493646308,
+        -3.274630361883424
+      ]
+    },
+    {
+      "group": "extract",
+      "case": "array-10",
+      "before_ns": 788.7288475836431,
+      "after_ns": 782.2508096331626,
+      "change_pct": -0.8213263620731825,
+      "round_changes_pct": [
+        -0.9080016670410029,
+        -3.5711513007564033,
+        -0.406675943158219
+      ]
+    },
+    {
+      "group": "extract",
+      "case": "array-1000",
+      "before_ns": 794.1923456790123,
+      "after_ns": 787.5840902648938,
+      "change_pct": -0.8320724129453283,
+      "round_changes_pct": [
+        5.12605022808843,
+        -1.5632250761096977,
+        -2.9222442289046247
+      ]
+    },
+    {
+      "group": "extract",
+      "case": "depth-100",
+      "before_ns": 395.761747621381,
+      "after_ns": 396.4629251626932,
+      "change_pct": 0.17717163053942997,
+      "round_changes_pct": [
+        0.17717163053942997,
+        -2.083514975422751,
+        2.170175703172794
+      ]
+    },
+    {
+      "group": "extract",
+      "case": "depth-18",
+      "before_ns": 397.5431790123457,
+      "after_ns": 389.6760713422425,
+      "change_pct": -1.9789316193647766,
+      "round_changes_pct": [
+        -1.321100655278984,
+        -3.0166617273924112,
+        -1.9789316193647766
+      ]
+    },
+    {
+      "group": "extract",
+      "case": "heterogeneous-10",
+      "before_ns": 822.2831600977329,
+      "after_ns": 825.7953725186903,
+      "change_pct": 0.42712931401149845,
+      "round_changes_pct": [
+        -0.11671243311172086,
+        -1.0738229016237777,
+        0.5212174021435034
+      ]
+    },
+    {
+      "group": "extract",
+      "case": "realistic-20",
+      "before_ns": 919.4121447028424,
+      "after_ns": 903.611663286004,
+      "change_pct": -1.7185417342888254,
+      "round_changes_pct": [
+        0.7693780227270075,
+        -1.7185417342888254,
+        -2.764010581407439
+      ]
+    },
+    {
+      "group": "extract",
+      "case": "realistic-500",
+      "before_ns": 919.4449046184739,
+      "after_ns": 898.3147012395518,
+      "change_pct": -2.2981478577762116,
+      "round_changes_pct": [
+        0.20905577939420716,
+        -2.4443946703819552,
+        -2.858428048286854
+      ]
+    },
+    {
+      "group": "extract",
+      "case": "record-10",
+      "before_ns": 215.75182572614108,
+      "after_ns": 213.96529273619336,
+      "change_pct": -0.8280499986198953,
+      "round_changes_pct": [
+        1.9572707894555341,
+        -2.2281241002803265,
+        -1.7165372835749482
+      ]
+    },
+    {
+      "group": "extract",
+      "case": "record-1000",
+      "before_ns": 2882.8749911810355,
+      "after_ns": 2879.680947580645,
+      "change_pct": -0.1107936906789786,
+      "round_changes_pct": [
+        -0.1107936906789786,
+        -2.825386227744897,
+        1.899508561708907
+      ]
+    },
+    {
+      "group": "extract",
+      "case": "record-255",
+      "before_ns": 2875.367159498208,
+      "after_ns": 2855.716407407407,
+      "change_pct": -0.683417142951237,
+      "round_changes_pct": [
+        -4.724320292764139,
+        0.5370728768452793,
+        -0.9745859040346416
+      ]
+    },
+    {
+      "group": "json_api",
+      "case": "array-10",
+      "before_ns": 1368.7987173579108,
+      "after_ns": 1362.8350493350495,
+      "change_pct": -0.43568626615698713,
+      "round_changes_pct": [
+        -1.8176896032941037,
+        0.7585383505878562,
+        -0.9073005383539612
+      ]
+    },
+    {
+      "group": "json_api",
+      "case": "array-1000",
+      "before_ns": 51681.260785191815,
+      "after_ns": 52055.637400793654,
+      "change_pct": 0.7243952835398026,
+      "round_changes_pct": [
+        0.07827079952331673,
+        1.3293756938305812,
+        0.8604299723250497
+      ]
+    },
+    {
+      "group": "json_api",
+      "case": "depth-100",
+      "before_ns": 2150.9324428066943,
+      "after_ns": 2130.880518889395,
+      "change_pct": -0.932243315421577,
+      "round_changes_pct": [
+        0.9728893150147133,
+        -3.143317827705705,
+        7.422067203149751
+      ]
+    },
+    {
+      "group": "json_api",
+      "case": "depth-18",
+      "before_ns": 925.406011489318,
+      "after_ns": 912.5227208416936,
+      "change_pct": -1.3921771079583145,
+      "round_changes_pct": [
+        1.7510810291601953,
+        -1.8832473181335407,
+        -2.9339652599777
+      ]
+    },
+    {
+      "group": "json_api",
+      "case": "heterogeneous-10",
+      "before_ns": 1947.6519324349615,
+      "after_ns": 1901.811584371293,
+      "change_pct": -2.35362116301544,
+      "round_changes_pct": [
+        -2.35362116301544,
+        -2.0018156756615224,
+        -2.549022697137837
+      ]
+    },
+    {
+      "group": "json_api",
+      "case": "realistic-20",
+      "before_ns": 2276.311768563358,
+      "after_ns": 2309.126958525346,
+      "change_pct": 1.4415947066292345,
+      "round_changes_pct": [
+        4.062987883278413,
+        -0.6089214058132675,
+        -2.4039138070049204
+      ]
+    },
+    {
+      "group": "json_api",
+      "case": "realistic-500",
+      "before_ns": 26649.95271944698,
+      "after_ns": 27410.17305860806,
+      "change_pct": 2.852614213481619,
+      "round_changes_pct": [
+        0.3632362459065508,
+        0.2712833549735061,
+        3.031130311042163
+      ]
+    },
+    {
+      "group": "json_api",
+      "case": "record-10",
+      "before_ns": 596.7607447413302,
+      "after_ns": 579.4550548210254,
+      "change_pct": -2.899937717553125,
+      "round_changes_pct": [
+        -0.33283035987343723,
+        -5.447421680615716,
+        -2.9725634229449294
+      ]
+    },
+    {
+      "group": "json_api",
+      "case": "record-1000",
+      "before_ns": 30318.95643274854,
+      "after_ns": 30632.705555555556,
+      "change_pct": 1.0348282385739482,
+      "round_changes_pct": [
+        3.8650892704308326,
+        -7.215142739281211,
+        1.3083325196346918
+      ]
+    },
+    {
+      "group": "json_api",
+      "case": "record-255",
+      "before_ns": 12056.669343434343,
+      "after_ns": 12149.227035984848,
+      "change_pct": 0.7676887365324347,
+      "round_changes_pct": [
+        9.385803912003254,
+        -6.484654001742984,
+        0.7676887365324347
+      ]
+    },
+    {
+      "group": "parse",
+      "case": "array-10",
+      "before_ns": 1887.284214601266,
+      "after_ns": 1883.5615700058584,
+      "change_pct": -0.19724875387643337,
+      "round_changes_pct": [
+        0.7087016833199788,
+        -4.768366701918259,
+        -0.8594780931892254
+      ]
+    },
+    {
+      "group": "parse",
+      "case": "array-1000",
+      "before_ns": 178907.62326388888,
+      "after_ns": 181672.85833333334,
+      "change_pct": 1.5456217119187432,
+      "round_changes_pct": [
+        1.6393072258692465,
+        2.355866147795105,
+        0.9619352547122872
+      ]
+    },
+    {
+      "group": "parse",
+      "case": "depth-100",
+      "before_ns": 7057.0098684210525,
+      "after_ns": 7033.109715564078,
+      "change_pct": -0.33867251573393986,
+      "round_changes_pct": [
+        -1.9438490701600863,
+        0.7863353895533498,
+        1.9299741314199759
+      ]
+    },
+    {
+      "group": "parse",
+      "case": "depth-18",
+      "before_ns": 1053.0225095417404,
+      "after_ns": 1063.0544563279857,
+      "change_pct": 0.9526811341014074,
+      "round_changes_pct": [
+        0.00786637478784602,
+        1.7651015268836945,
+        -0.23031314580571616
+      ]
+    },
+    {
+      "group": "parse",
+      "case": "heterogeneous-10",
+      "before_ns": 1582.65698742405,
+      "after_ns": 1628.236274163509,
+      "change_pct": 2.8799219983633106,
+      "round_changes_pct": [
+        1.7430812893029612,
+        4.259474325597501,
+        1.4972834417487535
+      ]
+    },
+    {
+      "group": "parse",
+      "case": "realistic-20",
+      "before_ns": 4264.293328718526,
+      "after_ns": 4230.695225622645,
+      "change_pct": -0.7878938080926434,
+      "round_changes_pct": [
+        -0.6728066995453474,
+        -0.2536830475430074,
+        -1.875969742345318
+      ]
+    },
+    {
+      "group": "parse",
+      "case": "realistic-500",
+      "before_ns": 93042.18819444445,
+      "after_ns": 90068.2875,
+      "change_pct": -3.196292727154515,
+      "round_changes_pct": [
+        -3.5760199497727796,
+        -2.1391987679312274,
+        -3.720585440625801
+      ]
+    },
+    {
+      "group": "parse",
+      "case": "record-10",
+      "before_ns": 809.8070747428624,
+      "after_ns": 800.5185407296351,
+      "change_pct": -1.1470057872952855,
+      "round_changes_pct": [
+        -0.8589796849255538,
+        -1.2532255054744312,
+        0.034178000986351265
+      ]
+    },
+    {
+      "group": "parse",
+      "case": "record-1000",
+      "before_ns": 130800.11111111111,
+      "after_ns": 129674.12005108557,
+      "change_pct": -0.8608487030022816,
+      "round_changes_pct": [
+        -0.8608487030022816,
+        -3.246208438411402,
+        -4.384691401559381
+      ]
+    },
+    {
+      "group": "parse",
+      "case": "record-255",
+      "before_ns": 28668.868605336873,
+      "after_ns": 27778.08532763533,
+      "change_pct": -3.1071448614324426,
+      "round_changes_pct": [
+        -5.702047562827484,
+        -1.1409378598450703,
+        -2.8081044409562272
+      ]
+    },
+    {
+      "group": "serialize",
+      "case": "array-10",
+      "before_ns": 66.12151241826659,
+      "after_ns": 72.79619735787969,
+      "change_pct": 10.09457390718904,
+      "round_changes_pct": [
+        11.548004937938906,
+        10.09457390718904,
+        3.816481277011863
+      ]
+    },
+    {
+      "group": "serialize",
+      "case": "array-1000",
+      "before_ns": 74.45595764447964,
+      "after_ns": 76.32412775410587,
+      "change_pct": 2.5090941930349997,
+      "round_changes_pct": [
+        2.5245873221008797,
+        7.851642331872299,
+        -2.577838305279523
+      ]
+    },
+    {
+      "group": "serialize",
+      "case": "depth-100",
+      "before_ns": 219.69352552426324,
+      "after_ns": 225.56869725333743,
+      "change_pct": 2.6742580215115774,
+      "round_changes_pct": [
+        -0.664908022873556,
+        4.762107055728948,
+        3.824066797091863
+      ]
+    },
+    {
+      "group": "serialize",
+      "case": "depth-18",
+      "before_ns": 216.2354600826875,
+      "after_ns": 219.56369036056537,
+      "change_pct": 1.5391695129953087,
+      "round_changes_pct": [
+        1.4191244424847538,
+        6.813974523372268,
+        1.831780359536861
+      ]
+    },
+    {
+      "group": "serialize",
+      "case": "heterogeneous-10",
+      "before_ns": 483.5090703264758,
+      "after_ns": 475.19688140212673,
+      "change_pct": -1.7191381577881248,
+      "round_changes_pct": [
+        2.096602966654748,
+        -2.645912637640846,
+        -3.5793406307586872
+      ]
+    },
+    {
+      "group": "serialize",
+      "case": "realistic-20",
+      "before_ns": 213.15262932479237,
+      "after_ns": 212.0927472167649,
+      "change_pct": -0.4972409260842192,
+      "round_changes_pct": [
+        -5.19487324178175,
+        -1.1180662754036952,
+        -0.4972409260842192
+      ]
+    },
+    {
+      "group": "serialize",
+      "case": "realistic-500",
+      "before_ns": 220.23849549425918,
+      "after_ns": 202.73430021060693,
+      "change_pct": -7.9478363872625195,
+      "round_changes_pct": [
+        -6.990246380121068,
+        0.40949806874710504,
+        -16.840573629839717
+      ]
+    },
+    {
+      "group": "serialize",
+      "case": "record-10",
+      "before_ns": 214.26227691006153,
+      "after_ns": 196.9032112229679,
+      "change_pct": -8.101783448507005,
+      "round_changes_pct": [
+        -8.03987391169112,
+        -10.645619572292397,
+        -11.67989914470976
+      ]
+    },
+    {
+      "group": "serialize",
+      "case": "record-1000",
+      "before_ns": 3749.4966773306996,
+      "after_ns": 3427.6559638278386,
+      "change_pct": -8.583571108322264,
+      "round_changes_pct": [
+        -2.8769887231169355,
+        -13.704075664572935,
+        -8.583571108322264
+      ]
+    },
+    {
+      "group": "serialize",
+      "case": "record-255",
+      "before_ns": 3812.2319879486777,
+      "after_ns": 3523.6938795045044,
+      "change_pct": -7.5687447499603095,
+      "round_changes_pct": [
+        -7.5687447499603095,
+        -11.11552783313613,
+        -2.152002995156266
+      ]
+    }
+  ],
+  "rounds": [
+    {
+      "round": 1,
+      "variant": "before",
+      "median_ns": {
+        "dom_json_api/array-10": 2782.9334625323,
+        "dom_json_api/array-1000": 179371.6287593985,
+        "dom_json_api/depth-100": 7949.271702532573,
+        "dom_json_api/depth-18": 1740.1583871836297,
+        "dom_json_api/heterogeneous-10": 2959.410066417601,
+        "dom_json_api/realistic-20": 5498.29203989288,
+        "dom_json_api/realistic-500": 97177.95052083334,
+        "dom_json_api/record-10": 1323.8636877828053,
+        "dom_json_api/record-1000": 136303.98798076925,
+        "dom_json_api/record-255": 35515.82898105479,
+        "extract/array-10": 788.7288475836431,
+        "extract/array-1000": 773.93009001318,
+        "extract/depth-100": 395.761747621381,
+        "extract/depth-18": 394.2139402845502,
+        "extract/heterogeneous-10": 822.2831600977329,
+        "extract/realistic-20": 909.6964751958225,
+        "extract/realistic-500": 896.4406402722243,
+        "extract/record-10": 209.9065158016963,
+        "extract/record-1000": 2882.8749911810355,
+        "extract/record-255": 2997.3193748735075,
+        "json_api/array-10": 1388.0657766439908,
+        "json_api/array-1000": 51681.260785191815,
+        "json_api/depth-100": 2165.885162601626,
+        "json_api/depth-18": 906.1329723632261,
+        "json_api/heterogeneous-10": 1947.6519324349615,
+        "json_api/realistic-20": 2276.311768563358,
+        "json_api/realistic-500": 26619.225522147462,
+        "json_api/record-10": 596.7607447413302,
+        "json_api/record-1000": 29492.783158158156,
+        "json_api/record-255": 11140.599195075758,
+        "parse/array-10": 1887.284214601266,
+        "parse/array-1000": 179455.27146464647,
+        "parse/depth-100": 7159.275578544061,
+        "parse/depth-18": 1062.9708390578999,
+        "parse/heterogeneous-10": 1651.0877930682977,
+        "parse/realistic-20": 4264.293328718526,
+        "parse/realistic-500": 93042.18819444445,
+        "parse/record-10": 811.3843006386633,
+        "parse/record-1000": 130800.11111111111,
+        "parse/record-255": 29414.529500088327,
+        "serialize/array-10": 69.34877191293164,
+        "serialize/array-1000": 74.44470614089752,
+        "serialize/depth-100": 220.90399259106812,
+        "serialize/depth-18": 216.49140787552443,
+        "serialize/heterogeneous-10": 480.34153530166884,
+        "serialize/realistic-20": 226.44601448871862,
+        "serialize/realistic-500": 220.23849549425918,
+        "serialize/record-10": 214.11803093210494,
+        "serialize/record-1000": 3588.7321631724362,
+        "serialize/record-255": 3812.2319879486777
+      }
+    },
+    {
+      "round": 1,
+      "variant": "after",
+      "median_ns": {
+        "dom_json_api/array-10": 2841.2711118538327,
+        "dom_json_api/array-1000": 182022.87202380953,
+        "dom_json_api/depth-100": 7739.7407431722695,
+        "dom_json_api/depth-18": 1694.7547021943574,
+        "dom_json_api/heterogeneous-10": 3008.4108451392285,
+        "dom_json_api/realistic-20": 5565.119430051814,
+        "dom_json_api/realistic-500": 92154.49191919192,
+        "dom_json_api/record-10": 1315.2354923798357,
+        "dom_json_api/record-1000": 138463.42857142858,
+        "dom_json_api/record-255": 35357.22394540942,
+        "extract/array-10": 781.5671764991503,
+        "extract/array-1000": 813.6021351575456,
+        "extract/depth-100": 396.4629251626932,
+        "extract/depth-18": 389.0059773362499,
+        "extract/heterogeneous-10": 821.3234534145149,
+        "extract/realistic-20": 916.6954799495014,
+        "extract/realistic-500": 898.3147012395518,
+        "extract/record-10": 214.01495472064676,
+        "extract/record-1000": 2879.680947580645,
+        "extract/record-255": 2855.716407407407,
+        "json_api/array-10": 1362.8350493350495,
+        "json_api/array-1000": 51721.71212121212,
+        "json_api/depth-100": 2186.956827924066,
+        "json_api/depth-18": 922.0000949412439,
+        "json_api/heterogeneous-10": 1901.811584371293,
+        "json_api/realistic-20": 2368.798039905728,
+        "json_api/realistic-500": 26715.916197623512,
+        "json_api/record-10": 594.7745438070242,
+        "json_api/record-1000": 30632.705555555556,
+        "json_api/record-255": 12186.233990147783,
+        "parse/array-10": 1900.6594295991777,
+        "parse/array-1000": 182397.0946969697,
+        "parse/depth-100": 7020.110066780335,
+        "parse/depth-18": 1063.0544563279857,
+        "parse/heterogeneous-10": 1679.8675954592363,
+        "parse/realistic-20": 4235.602877514642,
+        "parse/realistic-500": 89714.98098290598,
+        "parse/record-10": 804.4146743295018,
+        "parse/record-1000": 129674.12005108557,
+        "parse/record-255": 27737.29903761137,
+        "serialize/array-10": 77.35717151783697,
+        "serialize/array-1000": 76.32412775410587,
+        "serialize/depth-100": 219.4351842214821,
+        "serialize/depth-18": 219.56369036056537,
+        "serialize/heterogeneous-10": 490.41239018087856,
+        "serialize/realistic-20": 214.68243107496295,
+        "serialize/realistic-500": 204.84328203533863,
+        "serialize/record-10": 196.9032112229679,
+        "serialize/record-1000": 3485.484743535095,
+        "serialize/record-255": 3523.6938795045044
+      }
+    },
+    {
+      "round": 2,
+      "variant": "before",
+      "median_ns": {
+        "dom_json_api/array-10": 2819.585610157901,
+        "dom_json_api/array-1000": 178562.17857142858,
+        "dom_json_api/depth-100": 7649.193948412699,
+        "dom_json_api/depth-18": 1702.2691387559807,
+        "dom_json_api/heterogeneous-10": 3000.3537470318515,
+        "dom_json_api/realistic-20": 5422.174792506237,
+        "dom_json_api/realistic-500": 90754.82154320988,
+        "dom_json_api/record-10": 1235.5649066511087,
+        "dom_json_api/record-1000": 141897.50892857142,
+        "dom_json_api/record-255": 36393.42742528736,
+        "extract/array-10": 811.2207292580676,
+        "extract/array-1000": 794.1923456790123,
+        "extract/depth-100": 398.36056426814264,
+        "extract/depth-18": 402.5824570575056,
+        "extract/heterogeneous-10": 839.7267591165896,
+        "extract/realistic-20": 919.4121447028424,
+        "extract/realistic-500": 919.4449046184739,
+        "extract/record-10": 218.84134958773643,
+        "extract/record-1000": 2961.454198208209,
+        "extract/record-255": 2870.8572142857142,
+        "json_api/array-10": 1353.5411937788986,
+        "json_api/array-1000": 53146.6829648526,
+        "json_api/depth-100": 2150.9324428066943,
+        "json_api/depth-18": 925.406011489318,
+        "json_api/heterogeneous-10": 1929.2239208633093,
+        "json_api/realistic-20": 2261.3530798287584,
+        "json_api/realistic-500": 27336.015,
+        "json_api/record-10": 612.838978185993,
+        "json_api/record-1000": 32148.098529411764,
+        "json_api/record-255": 12670.665482954546,
+        "parse/array-10": 1977.8738479788303,
+        "parse/array-1000": 177491.39855942377,
+        "parse/depth-100": 6978.237365591398,
+        "parse/depth-18": 1044.8405132613748,
+        "parse/heterogeneous-10": 1561.7154073485951,
+        "parse/realistic-20": 4241.455078125,
+        "parse/realistic-500": 92037.14497126437,
+        "parse/record-10": 809.8070747428624,
+        "parse/record-1000": 135053.765625,
+        "parse/record-255": 28098.673734385273,
+        "serialize/array-10": 66.12151241826659,
+        "serialize/array-1000": 74.45595764447964,
+        "serialize/depth-100": 215.31515888024717,
+        "serialize/depth-18": 216.2354600826875,
+        "serialize/heterogeneous-10": 483.5090703264758,
+        "serialize/realistic-20": 204.82558755939039,
+        "serialize/realistic-500": 201.90749292641755,
+        "serialize/record-10": 214.26227691006153,
+        "serialize/record-1000": 3937.56182845931,
+        "serialize/record-255": 3882.0383516483516
+      }
+    },
+    {
+      "round": 2,
+      "variant": "after",
+      "median_ns": {
+        "dom_json_api/array-10": 2832.328402366864,
+        "dom_json_api/array-1000": 189357.44540229885,
+        "dom_json_api/depth-100": 7739.891058581707,
+        "dom_json_api/depth-18": 1755.33529118049,
+        "dom_json_api/heterogeneous-10": 3042.041906820365,
+        "dom_json_api/realistic-20": 5366.956344221106,
+        "dom_json_api/realistic-500": 92816.370215311,
+        "dom_json_api/record-10": 1221.0734603295955,
+        "dom_json_api/record-1000": 136460.57465277778,
+        "dom_json_api/record-255": 34688.74491159539,
+        "extract/array-10": 782.2508096331626,
+        "extract/array-1000": 781.7773317788142,
+        "extract/depth-100": 390.0606622554373,
+        "extract/depth-18": 390.43790615425587,
+        "extract/heterogeneous-10": 830.7095808661326,
+        "extract/realistic-20": 903.611663286004,
+        "extract/realistic-500": 896.9700423728814,
+        "extract/record-10": 213.96529273619336,
+        "extract/record-1000": 2877.7816791510613,
+        "extract/record-255": 2886.275809716599,
+        "json_api/array-10": 1363.8083228247162,
+        "json_api/array-1000": 53853.20205026455,
+        "json_api/depth-100": 2083.3217998700457,
+        "json_api/depth-18": 907.9783275960988,
+        "json_api/heterogeneous-10": 1890.6044139968558,
+        "json_api/realistic-20": 2247.5832168646634,
+        "json_api/realistic-500": 27410.17305860806,
+        "json_api/record-10": 579.4550548210254,
+        "json_api/record-1000": 29828.56733254994,
+        "json_api/record-255": 11849.016666666666,
+        "parse/array-10": 1883.5615700058584,
+        "parse/array-1000": 181672.85833333334,
+        "parse/depth-100": 7033.109715564078,
+        "parse/depth-18": 1063.2830091144508,
+        "parse/heterogeneous-10": 1628.236274163509,
+        "parse/realistic-20": 4230.695225622645,
+        "parse/realistic-500": 90068.2875,
+        "parse/record-10": 799.6583659370484,
+        "parse/record-1000": 130669.63888888889,
+        "parse/record-255": 27778.08532763533,
+        "serialize/array-10": 72.79619735787969,
+        "serialize/array-1000": 80.30197313349451,
+        "serialize/depth-100": 225.56869725333743,
+        "serialize/depth-18": 230.96968924321865,
+        "serialize/heterogeneous-10": 470.71584273056783,
+        "serialize/realistic-20": 202.53550174149137,
+        "serialize/realistic-500": 202.73430021060693,
+        "serialize/record-10": 191.4527300232847,
+        "serialize/record-1000": 3397.9553761479046,
+        "serialize/record-255": 3450.5292981778603
+      }
+    },
+    {
+      "round": 3,
+      "variant": "before",
+      "median_ns": {
+        "dom_json_api/array-10": 2809.115039987545,
+        "dom_json_api/array-1000": 188304.6875,
+        "dom_json_api/depth-100": 7804.769258971704,
+        "dom_json_api/depth-18": 1691.8422712933752,
+        "dom_json_api/heterogeneous-10": 3011.980176686059,
+        "dom_json_api/realistic-20": 5468.509817563388,
+        "dom_json_api/realistic-500": 97489.00714285715,
+        "dom_json_api/record-10": 1495.9347334908084,
+        "dom_json_api/record-1000": 131681.71160714288,
+        "dom_json_api/record-255": 35959.16461988304,
+        "extract/array-10": 788.4696808510638,
+        "extract/array-1000": 811.2920246343341,
+        "extract/depth-100": 394.80674226315335,
+        "extract/depth-18": 397.5431790123457,
+        "extract/heterogeneous-10": 821.5135011895321,
+        "extract/realistic-20": 922.5886968880909,
+        "extract/realistic-500": 925.6663736979167,
+        "extract/record-10": 215.75182572614108,
+        "extract/record-1000": 2870.278218487395,
+        "extract/record-255": 2875.367159498208,
+        "json_api/array-10": 1368.7987173579108,
+        "json_api/array-1000": 51611.55610290093,
+        "json_api/depth-100": 1983.65249745158,
+        "json_api/depth-18": 940.1050772144522,
+        "json_api/heterogeneous-10": 1974.9912401195295,
+        "json_api/realistic-20": 2366.003646866612,
+        "json_api/realistic-500": 26649.95271944698,
+        "json_api/record-10": 591.2400784703433,
+        "json_api/record-1000": 30318.95643274854,
+        "json_api/record-255": 12056.669343434343,
+        "parse/array-10": 1874.5213422353509,
+        "parse/array-1000": 178907.62326388888,
+        "parse/depth-100": 7057.0098684210525,
+        "parse/depth-18": 1053.0225095417404,
+        "parse/heterogeneous-10": 1582.65698742405,
+        "parse/realistic-20": 4304.080963960594,
+        "parse/realistic-500": 95221.43368700266,
+        "parse/record-10": 800.2450329743718,
+        "parse/record-1000": 129567.71869488536,
+        "parse/record-255": 28668.868605336873,
+        "serialize/array-10": 65.06211193943003,
+        "serialize/array-1000": 77.52404034462677,
+        "serialize/depth-100": 219.69352552426324,
+        "serialize/depth-18": 215.53161983931903,
+        "serialize/heterogeneous-10": 492.83720367682633,
+        "serialize/realistic-20": 213.15262932479237,
+        "serialize/realistic-500": 236.7933747619525,
+        "serialize/record-10": 227.91654222101548,
+        "serialize/record-1000": 3749.4966773306996,
+        "serialize/record-255": 3713.0780328798182
+      }
+    },
+    {
+      "round": 3,
+      "variant": "after",
+      "median_ns": {
+        "dom_json_api/array-10": 2763.2372986218943,
+        "dom_json_api/array-1000": 179330.77398989897,
+        "dom_json_api/depth-100": 7737.21438651218,
+        "dom_json_api/depth-18": 1683.6263967822529,
+        "dom_json_api/heterogeneous-10": 3066.5374602377365,
+        "dom_json_api/realistic-20": 5435.363118738754,
+        "dom_json_api/realistic-500": 91696.17261904762,
+        "dom_json_api/record-10": 1235.2213167053364,
+        "dom_json_api/record-1000": 137917.60021551725,
+        "dom_json_api/record-255": 34781.63489736071,
+        "extract/array-10": 785.2631643399461,
+        "extract/array-1000": 787.5840902648938,
+        "extract/depth-100": 403.3747422582363,
+        "extract/depth-18": 389.6760713422425,
+        "extract/heterogeneous-10": 825.7953725186903,
+        "extract/realistic-20": 897.0882476832351,
+        "extract/realistic-500": 899.2068664385756,
+        "extract/record-10": 212.0483651975582,
+        "extract/record-1000": 2924.799398992429,
+        "extract/record-255": 2847.344236472497,
+        "json_api/array-10": 1356.3795992263404,
+        "json_api/array-1000": 52055.637400793654,
+        "json_api/depth-100": 2130.880518889395,
+        "json_api/depth-18": 912.5227208416936,
+        "json_api/heterogeneous-10": 1924.6482651423987,
+        "json_api/realistic-20": 2309.126958525346,
+        "json_api/realistic-500": 27457.747514204544,
+        "json_api/record-10": 573.665092155943,
+        "json_api/record-1000": 30715.62919937206,
+        "json_api/record-255": 12149.227035984848,
+        "parse/array-10": 1858.4102419466815,
+        "parse/array-1000": 180628.59876543208,
+        "parse/depth-100": 7193.208333333334,
+        "parse/depth-18": 1050.5972602739726,
+        "parse/heterogeneous-10": 1606.3538484364299,
+        "parse/realistic-20": 4223.337707390649,
+        "parse/realistic-500": 91678.63888888889,
+        "parse/record-10": 800.5185407296351,
+        "parse/record-1000": 123886.57407407407,
+        "parse/record-255": 27863.8168328585,
+        "serialize/array-10": 67.54519526002687,
+        "serialize/array-1000": 75.52559593682263,
+        "serialize/depth-100": 228.09475268919712,
+        "serialize/depth-18": 219.47968572012735,
+        "serialize/heterogeneous-10": 475.19688140212673,
+        "serialize/realistic-20": 212.0927472167649,
+        "serialize/realistic-500": 196.91601213458358,
+        "serialize/record-10": 201.29611995549104,
+        "serialize/record-1000": 3427.6559638278386,
+        "serialize/record-255": 3633.172482399755
+      }
+    }
+  ]
+}

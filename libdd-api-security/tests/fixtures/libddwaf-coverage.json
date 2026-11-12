@@ -1,0 +1,691 @@
+{
+  "reference_commit": "4b46c924647637b00f65ec7c8d3962728c940761",
+  "tests": [
+    {
+      "reference": "TestExtractSchema.UnknownScalarSchema",
+      "source": "tests/unit/processor/extract_schema_test.cpp",
+      "source_sha256": "32f8653e829492892442b6992816662cebe70c40bdeafcb0c64b74c4cfc3077d",
+      "rust_test": "libddwaf::extract_schema::unknown_scalar_schema"
+    },
+    {
+      "reference": "TestExtractSchema.NullScalarSchema",
+      "source": "tests/unit/processor/extract_schema_test.cpp",
+      "source_sha256": "32f8653e829492892442b6992816662cebe70c40bdeafcb0c64b74c4cfc3077d",
+      "rust_test": "libddwaf::extract_schema::null_scalar_schema"
+    },
+    {
+      "reference": "TestExtractSchema.BoolScalarSchema",
+      "source": "tests/unit/processor/extract_schema_test.cpp",
+      "source_sha256": "32f8653e829492892442b6992816662cebe70c40bdeafcb0c64b74c4cfc3077d",
+      "rust_test": "libddwaf::extract_schema::bool_scalar_schema"
+    },
+    {
+      "reference": "TestExtractSchema.IntScalarSchema",
+      "source": "tests/unit/processor/extract_schema_test.cpp",
+      "source_sha256": "32f8653e829492892442b6992816662cebe70c40bdeafcb0c64b74c4cfc3077d",
+      "rust_test": "libddwaf::extract_schema::int_scalar_schema"
+    },
+    {
+      "reference": "TestExtractSchema.StringScalarSchema",
+      "source": "tests/unit/processor/extract_schema_test.cpp",
+      "source_sha256": "32f8653e829492892442b6992816662cebe70c40bdeafcb0c64b74c4cfc3077d",
+      "rust_test": "libddwaf::extract_schema::string_scalar_schema"
+    },
+    {
+      "reference": "TestExtractSchema.FloatScalarSchema",
+      "source": "tests/unit/processor/extract_schema_test.cpp",
+      "source_sha256": "32f8653e829492892442b6992816662cebe70c40bdeafcb0c64b74c4cfc3077d",
+      "rust_test": "libddwaf::extract_schema::float_scalar_schema"
+    },
+    {
+      "reference": "TestExtractSchema.EmptyArraySchema",
+      "source": "tests/unit/processor/extract_schema_test.cpp",
+      "source_sha256": "32f8653e829492892442b6992816662cebe70c40bdeafcb0c64b74c4cfc3077d",
+      "rust_test": "libddwaf::extract_schema::empty_array_schema"
+    },
+    {
+      "reference": "TestExtractSchema.ArraySchema",
+      "source": "tests/unit/processor/extract_schema_test.cpp",
+      "source_sha256": "32f8653e829492892442b6992816662cebe70c40bdeafcb0c64b74c4cfc3077d",
+      "rust_test": "libddwaf::extract_schema::array_schema"
+    },
+    {
+      "reference": "TestExtractSchema.ArrayWithDuplicateScalarSchema",
+      "source": "tests/unit/processor/extract_schema_test.cpp",
+      "source_sha256": "32f8653e829492892442b6992816662cebe70c40bdeafcb0c64b74c4cfc3077d",
+      "rust_test": "libddwaf::extract_schema::array_with_duplicate_scalar_schema"
+    },
+    {
+      "reference": "TestExtractSchema.ArrayWithDuplicateMapsSchema",
+      "source": "tests/unit/processor/extract_schema_test.cpp",
+      "source_sha256": "32f8653e829492892442b6992816662cebe70c40bdeafcb0c64b74c4cfc3077d",
+      "rust_test": "libddwaf::extract_schema::array_with_duplicate_maps_schema"
+    },
+    {
+      "reference": "TestExtractSchema.ArrayWithDuplicateArraysSchema",
+      "source": "tests/unit/processor/extract_schema_test.cpp",
+      "source_sha256": "32f8653e829492892442b6992816662cebe70c40bdeafcb0c64b74c4cfc3077d",
+      "rust_test": "libddwaf::extract_schema::array_with_duplicate_arrays_schema"
+    },
+    {
+      "reference": "TestExtractSchema.ArrayWithDuplicateContainersSchema",
+      "source": "tests/unit/processor/extract_schema_test.cpp",
+      "source_sha256": "32f8653e829492892442b6992816662cebe70c40bdeafcb0c64b74c4cfc3077d",
+      "rust_test": "libddwaf::extract_schema::array_with_duplicate_containers_schema"
+    },
+    {
+      "reference": "TestExtractSchema.EmptyMapSchema",
+      "source": "tests/unit/processor/extract_schema_test.cpp",
+      "source_sha256": "32f8653e829492892442b6992816662cebe70c40bdeafcb0c64b74c4cfc3077d",
+      "rust_test": "libddwaf::extract_schema::empty_map_schema"
+    },
+    {
+      "reference": "TestExtractSchema.MapSchema",
+      "source": "tests/unit/processor/extract_schema_test.cpp",
+      "source_sha256": "32f8653e829492892442b6992816662cebe70c40bdeafcb0c64b74c4cfc3077d",
+      "rust_test": "libddwaf::extract_schema::map_schema"
+    },
+    {
+      "reference": "TestExtractSchema.DepthLimit",
+      "source": "tests/unit/processor/extract_schema_test.cpp",
+      "source_sha256": "32f8653e829492892442b6992816662cebe70c40bdeafcb0c64b74c4cfc3077d",
+      "rust_test": "libddwaf::extract_schema::depth_limit"
+    },
+    {
+      "reference": "TestExtractSchema.ArrayNodesLimit",
+      "source": "tests/unit/processor/extract_schema_test.cpp",
+      "source_sha256": "32f8653e829492892442b6992816662cebe70c40bdeafcb0c64b74c4cfc3077d",
+      "rust_test": "libddwaf::extract_schema::array_nodes_limit"
+    },
+    {
+      "reference": "TestExtractSchema.RecordNodesLimit",
+      "source": "tests/unit/processor/extract_schema_test.cpp",
+      "source_sha256": "32f8653e829492892442b6992816662cebe70c40bdeafcb0c64b74c4cfc3077d",
+      "rust_test": "libddwaf::extract_schema::record_nodes_limit"
+    },
+    {
+      "reference": "TestExtractSchema.SchemaWithSingleScanner",
+      "source": "tests/unit/processor/extract_schema_test.cpp",
+      "source_sha256": "32f8653e829492892442b6992816662cebe70c40bdeafcb0c64b74c4cfc3077d",
+      "rust_test": "libddwaf::extract_schema::schema_with_single_scanner"
+    },
+    {
+      "reference": "TestExtractSchema.SchemaWithMultipleScanners",
+      "source": "tests/unit/processor/extract_schema_test.cpp",
+      "source_sha256": "32f8653e829492892442b6992816662cebe70c40bdeafcb0c64b74c4cfc3077d",
+      "rust_test": "libddwaf::extract_schema::schema_with_multiple_scanners"
+    },
+    {
+      "reference": "TestExtractSchema.SchemaWithScannerNoMatch",
+      "source": "tests/unit/processor/extract_schema_test.cpp",
+      "source_sha256": "32f8653e829492892442b6992816662cebe70c40bdeafcb0c64b74c4cfc3077d",
+      "rust_test": "libddwaf::extract_schema::schema_with_scanner_no_match"
+    },
+    {
+      "reference": "TestExtractSchema.SchemaWithScannerSingleValueNoKey",
+      "source": "tests/unit/processor/extract_schema_test.cpp",
+      "source_sha256": "32f8653e829492892442b6992816662cebe70c40bdeafcb0c64b74c4cfc3077d",
+      "rust_test": "libddwaf::extract_schema::schema_with_scanner_single_value_no_key"
+    },
+    {
+      "reference": "TestExtractSchema.SchemaWithScannerArrayNoKey",
+      "source": "tests/unit/processor/extract_schema_test.cpp",
+      "source_sha256": "32f8653e829492892442b6992816662cebe70c40bdeafcb0c64b74c4cfc3077d",
+      "rust_test": "libddwaf::extract_schema::schema_with_scanner_array_no_key"
+    },
+    {
+      "reference": "TestExtractSchema.SchemaWithScannerArrayWithKey",
+      "source": "tests/unit/processor/extract_schema_test.cpp",
+      "source_sha256": "32f8653e829492892442b6992816662cebe70c40bdeafcb0c64b74c4cfc3077d",
+      "rust_test": "libddwaf::extract_schema::schema_with_scanner_array_with_key"
+    },
+    {
+      "reference": "TestExtractSchema.SchemaWithScannerNestedArrayWithKey",
+      "source": "tests/unit/processor/extract_schema_test.cpp",
+      "source_sha256": "32f8653e829492892442b6992816662cebe70c40bdeafcb0c64b74c4cfc3077d",
+      "rust_test": "libddwaf::extract_schema::schema_with_scanner_nested_array_with_key"
+    },
+    {
+      "reference": "TestScanner.SimpleMatch",
+      "source": "tests/unit/scanner_test.cpp",
+      "source_sha256": "ccf8df4830fc784eb6cff6a33dd8876e791fd0680b48d4f64a750a029059d012",
+      "rust_test": "libddwaf::scanner::simple_match"
+    },
+    {
+      "reference": "TestScanner.SimpleMatchNoKeyMatcher",
+      "source": "tests/unit/scanner_test.cpp",
+      "source_sha256": "ccf8df4830fc784eb6cff6a33dd8876e791fd0680b48d4f64a750a029059d012",
+      "rust_test": "libddwaf::scanner::simple_match_no_key_matcher"
+    },
+    {
+      "reference": "TestScanner.SimpleMatchNoValueMatcher",
+      "source": "tests/unit/scanner_test.cpp",
+      "source_sha256": "ccf8df4830fc784eb6cff6a33dd8876e791fd0680b48d4f64a750a029059d012",
+      "rust_test": "libddwaf::scanner::simple_match_no_value_matcher"
+    },
+    {
+      "reference": "TestScanner.NoMatchOnKey",
+      "source": "tests/unit/scanner_test.cpp",
+      "source_sha256": "ccf8df4830fc784eb6cff6a33dd8876e791fd0680b48d4f64a750a029059d012",
+      "rust_test": "libddwaf::scanner::no_match_on_key"
+    },
+    {
+      "reference": "TestScanner.NoMatchOnValue",
+      "source": "tests/unit/scanner_test.cpp",
+      "source_sha256": "ccf8df4830fc784eb6cff6a33dd8876e791fd0680b48d4f64a750a029059d012",
+      "rust_test": "libddwaf::scanner::no_match_on_value"
+    },
+    {
+      "reference": "TestScanner.InvalidKey",
+      "source": "tests/unit/scanner_test.cpp",
+      "source_sha256": "ccf8df4830fc784eb6cff6a33dd8876e791fd0680b48d4f64a750a029059d012",
+      "rust_test": "libddwaf::scanner::invalid_key"
+    },
+    {
+      "reference": "TestScanner.InvalidValue",
+      "source": "tests/unit/scanner_test.cpp",
+      "source_sha256": "ccf8df4830fc784eb6cff6a33dd8876e791fd0680b48d4f64a750a029059d012",
+      "rust_test": "libddwaf::scanner::invalid_value"
+    },
+    {
+      "reference": "TestScannerParser.ParseKeyOnlyScanner",
+      "source": "tests/unit/configuration/scanner_parser_test.cpp",
+      "source_sha256": "7f6d9b7e6dfc3e53c79c837fb54c4ac5d9f2f1483f37dca79c76c31bebf16ec8",
+      "rust_test": "libddwaf::configuration::parse_key_only_scanner"
+    },
+    {
+      "reference": "TestScannerParser.ParseValueOnlyScanner",
+      "source": "tests/unit/configuration/scanner_parser_test.cpp",
+      "source_sha256": "7f6d9b7e6dfc3e53c79c837fb54c4ac5d9f2f1483f37dca79c76c31bebf16ec8",
+      "rust_test": "libddwaf::configuration::parse_value_only_scanner"
+    },
+    {
+      "reference": "TestScannerParser.ParseKeyValueScanner",
+      "source": "tests/unit/configuration/scanner_parser_test.cpp",
+      "source_sha256": "7f6d9b7e6dfc3e53c79c837fb54c4ac5d9f2f1483f37dca79c76c31bebf16ec8",
+      "rust_test": "libddwaf::configuration::parse_key_value_scanner"
+    },
+    {
+      "reference": "TestScannerParser.ParseNoID",
+      "source": "tests/unit/configuration/scanner_parser_test.cpp",
+      "source_sha256": "7f6d9b7e6dfc3e53c79c837fb54c4ac5d9f2f1483f37dca79c76c31bebf16ec8",
+      "rust_test": "libddwaf::configuration::parse_no_i_d"
+    },
+    {
+      "reference": "TestScannerParser.ParseNoTags",
+      "source": "tests/unit/configuration/scanner_parser_test.cpp",
+      "source_sha256": "7f6d9b7e6dfc3e53c79c837fb54c4ac5d9f2f1483f37dca79c76c31bebf16ec8",
+      "rust_test": "libddwaf::configuration::parse_no_tags"
+    },
+    {
+      "reference": "TestScannerParser.ParseNoKeyValue",
+      "source": "tests/unit/configuration/scanner_parser_test.cpp",
+      "source_sha256": "7f6d9b7e6dfc3e53c79c837fb54c4ac5d9f2f1483f37dca79c76c31bebf16ec8",
+      "rust_test": "libddwaf::configuration::parse_no_key_value"
+    },
+    {
+      "reference": "TestScannerParser.ParseDuplicate",
+      "source": "tests/unit/configuration/scanner_parser_test.cpp",
+      "source_sha256": "7f6d9b7e6dfc3e53c79c837fb54c4ac5d9f2f1483f37dca79c76c31bebf16ec8",
+      "rust_test": "libddwaf::configuration::parse_duplicate"
+    },
+    {
+      "reference": "TestScannerParser.ParseKeyNoOperator",
+      "source": "tests/unit/configuration/scanner_parser_test.cpp",
+      "source_sha256": "7f6d9b7e6dfc3e53c79c837fb54c4ac5d9f2f1483f37dca79c76c31bebf16ec8",
+      "rust_test": "libddwaf::configuration::parse_key_no_operator"
+    },
+    {
+      "reference": "TestScannerParser.ParseKeyNoParameters",
+      "source": "tests/unit/configuration/scanner_parser_test.cpp",
+      "source_sha256": "7f6d9b7e6dfc3e53c79c837fb54c4ac5d9f2f1483f37dca79c76c31bebf16ec8",
+      "rust_test": "libddwaf::configuration::parse_key_no_parameters"
+    },
+    {
+      "reference": "TestScannerParser.ParseValueNoOperator",
+      "source": "tests/unit/configuration/scanner_parser_test.cpp",
+      "source_sha256": "7f6d9b7e6dfc3e53c79c837fb54c4ac5d9f2f1483f37dca79c76c31bebf16ec8",
+      "rust_test": "libddwaf::configuration::parse_value_no_operator"
+    },
+    {
+      "reference": "TestScannerParser.ParseValueNoParameters",
+      "source": "tests/unit/configuration/scanner_parser_test.cpp",
+      "source_sha256": "7f6d9b7e6dfc3e53c79c837fb54c4ac5d9f2f1483f37dca79c76c31bebf16ec8",
+      "rust_test": "libddwaf::configuration::parse_value_no_parameters"
+    },
+    {
+      "reference": "TestScannerParser.ParseUnknownMatcher",
+      "source": "tests/unit/configuration/scanner_parser_test.cpp",
+      "source_sha256": "7f6d9b7e6dfc3e53c79c837fb54c4ac5d9f2f1483f37dca79c76c31bebf16ec8",
+      "rust_test": "libddwaf::configuration::parse_unknown_matcher"
+    },
+    {
+      "reference": "TestScannerParser.ParseRuleDataID",
+      "source": "tests/unit/configuration/scanner_parser_test.cpp",
+      "source_sha256": "7f6d9b7e6dfc3e53c79c837fb54c4ac5d9f2f1483f37dca79c76c31bebf16ec8",
+      "rust_test": "libddwaf::configuration::parse_rule_data_i_d"
+    },
+    {
+      "reference": "TestScannerParser.IncompatibleMinVersion",
+      "source": "tests/unit/configuration/scanner_parser_test.cpp",
+      "source_sha256": "7f6d9b7e6dfc3e53c79c837fb54c4ac5d9f2f1483f37dca79c76c31bebf16ec8",
+      "rust_test": "libddwaf::configuration::incompatible_min_version"
+    },
+    {
+      "reference": "TestScannerParser.IncompatibleMaxVersion",
+      "source": "tests/unit/configuration/scanner_parser_test.cpp",
+      "source_sha256": "7f6d9b7e6dfc3e53c79c837fb54c4ac5d9f2f1483f37dca79c76c31bebf16ec8",
+      "rust_test": "libddwaf::configuration::incompatible_max_version"
+    },
+    {
+      "reference": "TestScannerParser.CompatibleVersion",
+      "source": "tests/unit/configuration/scanner_parser_test.cpp",
+      "source_sha256": "7f6d9b7e6dfc3e53c79c837fb54c4ac5d9f2f1483f37dca79c76c31bebf16ec8",
+      "rust_test": "libddwaf::configuration::compatible_version"
+    },
+    {
+      "reference": "TestProcessorParser.ParseNoGenerator",
+      "source": "tests/unit/configuration/processor_parser_test.cpp",
+      "source_sha256": "adde5569d96d11b4825660a08fbc9eca8d8b6d0b1fecf63ad2c3661c7b6c648b",
+      "rust_test": "libddwaf::processors::parse_no_generator"
+    },
+    {
+      "reference": "TestProcessorParser.ParseNoID",
+      "source": "tests/unit/configuration/processor_parser_test.cpp",
+      "source_sha256": "adde5569d96d11b4825660a08fbc9eca8d8b6d0b1fecf63ad2c3661c7b6c648b",
+      "rust_test": "libddwaf::processors::parse_no_i_d"
+    },
+    {
+      "reference": "TestProcessorParser.ParseNoParameters",
+      "source": "tests/unit/configuration/processor_parser_test.cpp",
+      "source_sha256": "adde5569d96d11b4825660a08fbc9eca8d8b6d0b1fecf63ad2c3661c7b6c648b",
+      "rust_test": "libddwaf::processors::parse_no_parameters"
+    },
+    {
+      "reference": "TestProcessorParser.ParseNoMappings",
+      "source": "tests/unit/configuration/processor_parser_test.cpp",
+      "source_sha256": "adde5569d96d11b4825660a08fbc9eca8d8b6d0b1fecf63ad2c3661c7b6c648b",
+      "rust_test": "libddwaf::processors::parse_no_mappings"
+    },
+    {
+      "reference": "TestProcessorParser.ParseEmptyMappings",
+      "source": "tests/unit/configuration/processor_parser_test.cpp",
+      "source_sha256": "adde5569d96d11b4825660a08fbc9eca8d8b6d0b1fecf63ad2c3661c7b6c648b",
+      "rust_test": "libddwaf::processors::parse_empty_mappings"
+    },
+    {
+      "reference": "TestProcessorParser.ParseNoInput",
+      "source": "tests/unit/configuration/processor_parser_test.cpp",
+      "source_sha256": "adde5569d96d11b4825660a08fbc9eca8d8b6d0b1fecf63ad2c3661c7b6c648b",
+      "rust_test": "libddwaf::processors::parse_no_input"
+    },
+    {
+      "reference": "TestProcessorParser.ParseEmptyInput",
+      "source": "tests/unit/configuration/processor_parser_test.cpp",
+      "source_sha256": "adde5569d96d11b4825660a08fbc9eca8d8b6d0b1fecf63ad2c3661c7b6c648b",
+      "rust_test": "libddwaf::processors::parse_empty_input"
+    },
+    {
+      "reference": "TestProcessorParser.ParseNoOutput",
+      "source": "tests/unit/configuration/processor_parser_test.cpp",
+      "source_sha256": "adde5569d96d11b4825660a08fbc9eca8d8b6d0b1fecf63ad2c3661c7b6c648b",
+      "rust_test": "libddwaf::processors::parse_no_output"
+    },
+    {
+      "reference": "TestProcessorParser.ParseUnknownGenerator",
+      "source": "tests/unit/configuration/processor_parser_test.cpp",
+      "source_sha256": "adde5569d96d11b4825660a08fbc9eca8d8b6d0b1fecf63ad2c3661c7b6c648b",
+      "rust_test": "libddwaf::processors::parse_unknown_generator"
+    },
+    {
+      "reference": "TestProcessorParser.ParseUseless",
+      "source": "tests/unit/configuration/processor_parser_test.cpp",
+      "source_sha256": "adde5569d96d11b4825660a08fbc9eca8d8b6d0b1fecf63ad2c3661c7b6c648b",
+      "rust_test": "libddwaf::processors::parse_useless"
+    },
+    {
+      "reference": "TestProcessorParser.ParsePreprocessor",
+      "source": "tests/unit/configuration/processor_parser_test.cpp",
+      "source_sha256": "adde5569d96d11b4825660a08fbc9eca8d8b6d0b1fecf63ad2c3661c7b6c648b",
+      "rust_test": "libddwaf::processors::parse_preprocessor"
+    },
+    {
+      "reference": "TestProcessorParser.ParsePreprocessorWithOutput",
+      "source": "tests/unit/configuration/processor_parser_test.cpp",
+      "source_sha256": "adde5569d96d11b4825660a08fbc9eca8d8b6d0b1fecf63ad2c3661c7b6c648b",
+      "rust_test": "libddwaf::processors::parse_preprocessor_with_output"
+    },
+    {
+      "reference": "TestProcessorParser.ParsePostprocessor",
+      "source": "tests/unit/configuration/processor_parser_test.cpp",
+      "source_sha256": "adde5569d96d11b4825660a08fbc9eca8d8b6d0b1fecf63ad2c3661c7b6c648b",
+      "rust_test": "libddwaf::processors::parse_postprocessor"
+    },
+    {
+      "reference": "TestProcessorParser.ParseDuplicate",
+      "source": "tests/unit/configuration/processor_parser_test.cpp",
+      "source_sha256": "adde5569d96d11b4825660a08fbc9eca8d8b6d0b1fecf63ad2c3661c7b6c648b",
+      "rust_test": "libddwaf::processors::parse_duplicate"
+    },
+    {
+      "reference": "TestProcessorParser.IncompatibleMinVersion",
+      "source": "tests/unit/configuration/processor_parser_test.cpp",
+      "source_sha256": "adde5569d96d11b4825660a08fbc9eca8d8b6d0b1fecf63ad2c3661c7b6c648b",
+      "rust_test": "libddwaf::processors::incompatible_min_version"
+    },
+    {
+      "reference": "TestProcessorParser.IncompatibleMaxVersion",
+      "source": "tests/unit/configuration/processor_parser_test.cpp",
+      "source_sha256": "adde5569d96d11b4825660a08fbc9eca8d8b6d0b1fecf63ad2c3661c7b6c648b",
+      "rust_test": "libddwaf::processors::incompatible_max_version"
+    },
+    {
+      "reference": "TestProcessorParser.CompatibleVersion",
+      "source": "tests/unit/configuration/processor_parser_test.cpp",
+      "source_sha256": "adde5569d96d11b4825660a08fbc9eca8d8b6d0b1fecf63ad2c3661c7b6c648b",
+      "rust_test": "libddwaf::processors::compatible_version"
+    },
+    {
+      "reference": "TestExtractSchemaIntegration.Postprocessor",
+      "source": "tests/integration/processors/extract_schema/test.cpp",
+      "source_sha256": "8e54d52e6d4b7a3ce3f645317693b01f3d174efaa559a8e8a05bafdbfed5f739",
+      "rust_test": "libddwaf::integration_extract_schema::postprocessor",
+      "scope": "Schema/metadata generation, routing and configuration assertions; WAF attack events, return codes, timeout fields and rule-only known addresses are outside this engine."
+    },
+    {
+      "reference": "TestExtractSchemaIntegration.Preprocessor",
+      "source": "tests/integration/processors/extract_schema/test.cpp",
+      "source_sha256": "8e54d52e6d4b7a3ce3f645317693b01f3d174efaa559a8e8a05bafdbfed5f739",
+      "rust_test": "libddwaf::integration_extract_schema::preprocessor",
+      "scope": "Schema/metadata generation, routing and configuration assertions; WAF attack events, return codes, timeout fields and rule-only known addresses are outside this engine."
+    },
+    {
+      "reference": "TestExtractSchemaIntegration.Processor",
+      "source": "tests/integration/processors/extract_schema/test.cpp",
+      "source_sha256": "8e54d52e6d4b7a3ce3f645317693b01f3d174efaa559a8e8a05bafdbfed5f739",
+      "rust_test": "libddwaf::integration_extract_schema::processor",
+      "scope": "Schema/metadata generation, routing and configuration assertions; WAF attack events, return codes, timeout fields and rule-only known addresses are outside this engine."
+    },
+    {
+      "reference": "TestExtractSchemaIntegration.ProcessorWithScannerByTags",
+      "source": "tests/integration/processors/extract_schema/test.cpp",
+      "source_sha256": "8e54d52e6d4b7a3ce3f645317693b01f3d174efaa559a8e8a05bafdbfed5f739",
+      "rust_test": "libddwaf::integration_extract_schema::processor_with_scanner_by_tags",
+      "scope": "Schema/metadata generation, routing and configuration assertions; WAF attack events, return codes, timeout fields and rule-only known addresses are outside this engine."
+    },
+    {
+      "reference": "TestExtractSchemaIntegration.ProcessorWithScannerByID",
+      "source": "tests/integration/processors/extract_schema/test.cpp",
+      "source_sha256": "8e54d52e6d4b7a3ce3f645317693b01f3d174efaa559a8e8a05bafdbfed5f739",
+      "rust_test": "libddwaf::integration_extract_schema::processor_with_scanner_by_i_d",
+      "scope": "Schema/metadata generation, routing and configuration assertions; WAF attack events, return codes, timeout fields and rule-only known addresses are outside this engine."
+    },
+    {
+      "reference": "TestExtractSchemaIntegration.ProcessorUpdate",
+      "source": "tests/integration/processors/extract_schema/test.cpp",
+      "source_sha256": "8e54d52e6d4b7a3ce3f645317693b01f3d174efaa559a8e8a05bafdbfed5f739",
+      "rust_test": "libddwaf::integration_extract_schema::processor_update",
+      "scope": "Schema/metadata generation, routing and configuration assertions; WAF attack events, return codes, timeout fields and rule-only known addresses are outside this engine."
+    },
+    {
+      "reference": "TestExtractSchemaIntegration.ScannerUpdate",
+      "source": "tests/integration/processors/extract_schema/test.cpp",
+      "source_sha256": "8e54d52e6d4b7a3ce3f645317693b01f3d174efaa559a8e8a05bafdbfed5f739",
+      "rust_test": "libddwaf::integration_extract_schema::scanner_update",
+      "scope": "Schema/metadata generation, routing and configuration assertions; WAF attack events, return codes, timeout fields and rule-only known addresses are outside this engine."
+    },
+    {
+      "reference": "TestExtractSchemaIntegration.ProcessorAndScannerUpdate",
+      "source": "tests/integration/processors/extract_schema/test.cpp",
+      "source_sha256": "8e54d52e6d4b7a3ce3f645317693b01f3d174efaa559a8e8a05bafdbfed5f739",
+      "rust_test": "libddwaf::integration_extract_schema::processor_and_scanner_update",
+      "scope": "Schema/metadata generation, routing and configuration assertions; WAF attack events, return codes, timeout fields and rule-only known addresses are outside this engine."
+    },
+    {
+      "reference": "TestExtractSchemaIntegration.EmptyScannerUpdate",
+      "source": "tests/integration/processors/extract_schema/test.cpp",
+      "source_sha256": "8e54d52e6d4b7a3ce3f645317693b01f3d174efaa559a8e8a05bafdbfed5f739",
+      "rust_test": "libddwaf::integration_extract_schema::empty_scanner_update",
+      "scope": "Schema/metadata generation, routing and configuration assertions; WAF attack events, return codes, timeout fields and rule-only known addresses are outside this engine."
+    },
+    {
+      "reference": "TestExtractSchemaIntegration.EmptyProcessorUpdate",
+      "source": "tests/integration/processors/extract_schema/test.cpp",
+      "source_sha256": "8e54d52e6d4b7a3ce3f645317693b01f3d174efaa559a8e8a05bafdbfed5f739",
+      "rust_test": "libddwaf::integration_extract_schema::empty_processor_update",
+      "scope": "Schema/metadata generation, routing and configuration assertions; WAF attack events, return codes, timeout fields and rule-only known addresses are outside this engine."
+    },
+    {
+      "reference": "TestExtractSchemaIntegration.PostprocessorWithSubcontextMapping",
+      "source": "tests/integration/processors/extract_schema/test.cpp",
+      "source_sha256": "8e54d52e6d4b7a3ce3f645317693b01f3d174efaa559a8e8a05bafdbfed5f739",
+      "rust_test": "libddwaf::integration_extract_schema::postprocessor_with_subcontext_mapping",
+      "scope": "Schema/metadata generation, routing and configuration assertions; WAF attack events, return codes, timeout fields and rule-only known addresses are outside this engine."
+    },
+    {
+      "reference": "TestExtractSchemaIntegration.PreprocessorWithSubcontextMapping",
+      "source": "tests/integration/processors/extract_schema/test.cpp",
+      "source_sha256": "8e54d52e6d4b7a3ce3f645317693b01f3d174efaa559a8e8a05bafdbfed5f739",
+      "rust_test": "libddwaf::integration_extract_schema::preprocessor_with_subcontext_mapping",
+      "scope": "Schema/metadata generation, routing and configuration assertions; WAF attack events, return codes, timeout fields and rule-only known addresses are outside this engine."
+    },
+    {
+      "reference": "TestExtractSchemaIntegration.ProcessorSubcontextExpression",
+      "source": "tests/integration/processors/extract_schema/test.cpp",
+      "source_sha256": "8e54d52e6d4b7a3ce3f645317693b01f3d174efaa559a8e8a05bafdbfed5f739",
+      "rust_test": "libddwaf::integration_extract_schema::processor_subcontext_expression",
+      "scope": "Schema/metadata generation, routing and configuration assertions; WAF attack events, return codes, timeout fields and rule-only known addresses are outside this engine."
+    },
+    {
+      "reference": "TestProcessorOverridesIntegration.AddScannersById",
+      "source": "tests/integration/processors/overrides/test.cpp",
+      "source_sha256": "d3436d51c19b854b032c14eb6fb0e6243e90240eb95e3ba6ab8213606c8f72fc",
+      "rust_test": "libddwaf::integration_overrides::add_scanners_by_id",
+      "scope": "Schema/metadata generation, routing and configuration assertions; WAF attack events, return codes, timeout fields and rule-only known addresses are outside this engine."
+    },
+    {
+      "reference": "TestProcessorOverridesIntegration.AddScannersByTags",
+      "source": "tests/integration/processors/overrides/test.cpp",
+      "source_sha256": "d3436d51c19b854b032c14eb6fb0e6243e90240eb95e3ba6ab8213606c8f72fc",
+      "rust_test": "libddwaf::integration_overrides::add_scanners_by_tags",
+      "scope": "Schema/metadata generation, routing and configuration assertions; WAF attack events, return codes, timeout fields and rule-only known addresses are outside this engine."
+    },
+    {
+      "reference": "TestProcessorOverridesIntegration.AddScannerToPopulatedProcessor",
+      "source": "tests/integration/processors/overrides/test.cpp",
+      "source_sha256": "d3436d51c19b854b032c14eb6fb0e6243e90240eb95e3ba6ab8213606c8f72fc",
+      "rust_test": "libddwaf::integration_overrides::add_scanner_to_populated_processor",
+      "scope": "Schema/metadata generation, routing and configuration assertions; WAF attack events, return codes, timeout fields and rule-only known addresses are outside this engine."
+    },
+    {
+      "reference": "TestProcessorOverridesIntegration.DisableDefaultScanners",
+      "source": "tests/integration/processors/overrides/test.cpp",
+      "source_sha256": "d3436d51c19b854b032c14eb6fb0e6243e90240eb95e3ba6ab8213606c8f72fc",
+      "rust_test": "libddwaf::integration_overrides::disable_default_scanners",
+      "scope": "Schema/metadata generation, routing and configuration assertions; WAF attack events, return codes, timeout fields and rule-only known addresses are outside this engine."
+    },
+    {
+      "reference": "TestProcessorOverridesIntegration.RemoveScannersAfterOverride",
+      "source": "tests/integration/processors/overrides/test.cpp",
+      "source_sha256": "d3436d51c19b854b032c14eb6fb0e6243e90240eb95e3ba6ab8213606c8f72fc",
+      "rust_test": "libddwaf::integration_overrides::remove_scanners_after_override",
+      "scope": "Schema/metadata generation, routing and configuration assertions; WAF attack events, return codes, timeout fields and rule-only known addresses are outside this engine."
+    },
+    {
+      "reference": "TestProcessorOverridesIntegration.RemoveOverride",
+      "source": "tests/integration/processors/overrides/test.cpp",
+      "source_sha256": "d3436d51c19b854b032c14eb6fb0e6243e90240eb95e3ba6ab8213606c8f72fc",
+      "rust_test": "libddwaf::integration_overrides::remove_override",
+      "scope": "Schema/metadata generation, routing and configuration assertions; WAF attack events, return codes, timeout fields and rule-only known addresses are outside this engine."
+    },
+    {
+      "reference": "TestProcessorOverridesIntegration.OverrideMultipleProcessors",
+      "source": "tests/integration/processors/overrides/test.cpp",
+      "source_sha256": "d3436d51c19b854b032c14eb6fb0e6243e90240eb95e3ba6ab8213606c8f72fc",
+      "rust_test": "libddwaf::integration_overrides::override_multiple_processors",
+      "scope": "Schema/metadata generation, routing and configuration assertions; WAF attack events, return codes, timeout fields and rule-only known addresses are outside this engine."
+    },
+    {
+      "reference": "TestProcessorOverridesIntegration.ScannersPrecedenceIdVsTagsOnEmptyProcessor",
+      "source": "tests/integration/processors/overrides/test.cpp",
+      "source_sha256": "d3436d51c19b854b032c14eb6fb0e6243e90240eb95e3ba6ab8213606c8f72fc",
+      "rust_test": "libddwaf::integration_overrides::scanners_precedence_id_vs_tags_on_empty_processor",
+      "scope": "Schema/metadata generation, routing and configuration assertions; WAF attack events, return codes, timeout fields and rule-only known addresses are outside this engine."
+    },
+    {
+      "reference": "TestProcessorOverridesIntegration.ScannersPrecedenceOnDefaultProcessor",
+      "source": "tests/integration/processors/overrides/test.cpp",
+      "source_sha256": "d3436d51c19b854b032c14eb6fb0e6243e90240eb95e3ba6ab8213606c8f72fc",
+      "rust_test": "libddwaf::integration_overrides::scanners_precedence_on_default_processor",
+      "scope": "Schema/metadata generation, routing and configuration assertions; WAF attack events, return codes, timeout fields and rule-only known addresses are outside this engine."
+    },
+    {
+      "reference": "TestProcessorOverridesIntegration.IncludeMultipleScannersById",
+      "source": "tests/integration/processors/overrides/test.cpp",
+      "source_sha256": "d3436d51c19b854b032c14eb6fb0e6243e90240eb95e3ba6ab8213606c8f72fc",
+      "rust_test": "libddwaf::integration_overrides::include_multiple_scanners_by_id",
+      "scope": "Schema/metadata generation, routing and configuration assertions; WAF attack events, return codes, timeout fields and rule-only known addresses are outside this engine."
+    },
+    {
+      "reference": "TestProcessorOverridesIntegration.IncludeMultipleScannersByTags",
+      "source": "tests/integration/processors/overrides/test.cpp",
+      "source_sha256": "d3436d51c19b854b032c14eb6fb0e6243e90240eb95e3ba6ab8213606c8f72fc",
+      "rust_test": "libddwaf::integration_overrides::include_multiple_scanners_by_tags",
+      "scope": "Schema/metadata generation, routing and configuration assertions; WAF attack events, return codes, timeout fields and rule-only known addresses are outside this engine."
+    },
+    {
+      "reference": "TestProcessorOverridesIntegration.IncludeThenExcludeMultipleScannersByIdOnHeaders",
+      "source": "tests/integration/processors/overrides/test.cpp",
+      "source_sha256": "d3436d51c19b854b032c14eb6fb0e6243e90240eb95e3ba6ab8213606c8f72fc",
+      "rust_test": "libddwaf::integration_overrides::include_then_exclude_multiple_scanners_by_id_on_headers",
+      "scope": "Schema/metadata generation, routing and configuration assertions; WAF attack events, return codes, timeout fields and rule-only known addresses are outside this engine."
+    },
+    {
+      "reference": "TestProcessorOverridesIntegration.IncludeMultipleByTagsExcludeOneById",
+      "source": "tests/integration/processors/overrides/test.cpp",
+      "source_sha256": "d3436d51c19b854b032c14eb6fb0e6243e90240eb95e3ba6ab8213606c8f72fc",
+      "rust_test": "libddwaf::integration_overrides::include_multiple_by_tags_exclude_one_by_id",
+      "scope": "Schema/metadata generation, routing and configuration assertions; WAF attack events, return codes, timeout fields and rule-only known addresses are outside this engine."
+    },
+    {
+      "reference": "TestProcessorOverrideParser.ParseOverrideWithoutTargets",
+      "source": "tests/unit/configuration/processor_override_parser_test.cpp",
+      "source_sha256": "f0a7882bc97d376dc7e500556bfa5f7289a32d2532714e6367221928e24aa087",
+      "rust_test": "libddwaf::overrides::parse_override_without_targets"
+    },
+    {
+      "reference": "TestProcessorOverrideParser.ParseOverrideWithTargetByTags",
+      "source": "tests/unit/configuration/processor_override_parser_test.cpp",
+      "source_sha256": "f0a7882bc97d376dc7e500556bfa5f7289a32d2532714e6367221928e24aa087",
+      "rust_test": "libddwaf::overrides::parse_override_with_target_by_tags"
+    },
+    {
+      "reference": "TestProcessorOverrideParser.ParseOverrideWithoutScanners",
+      "source": "tests/unit/configuration/processor_override_parser_test.cpp",
+      "source_sha256": "f0a7882bc97d376dc7e500556bfa5f7289a32d2532714e6367221928e24aa087",
+      "rust_test": "libddwaf::overrides::parse_override_without_scanners"
+    },
+    {
+      "reference": "TestProcessorOverrideParser.ParseOverrideWithScannerById",
+      "source": "tests/unit/configuration/processor_override_parser_test.cpp",
+      "source_sha256": "f0a7882bc97d376dc7e500556bfa5f7289a32d2532714e6367221928e24aa087",
+      "rust_test": "libddwaf::overrides::parse_override_with_scanner_by_id"
+    },
+    {
+      "reference": "TestProcessorOverrideParser.ParseOverrideWithExcludedScannerById",
+      "source": "tests/unit/configuration/processor_override_parser_test.cpp",
+      "source_sha256": "f0a7882bc97d376dc7e500556bfa5f7289a32d2532714e6367221928e24aa087",
+      "rust_test": "libddwaf::overrides::parse_override_with_excluded_scanner_by_id"
+    },
+    {
+      "reference": "TestProcessorOverrideParser.ParseOverrideWithScannerByTags",
+      "source": "tests/unit/configuration/processor_override_parser_test.cpp",
+      "source_sha256": "f0a7882bc97d376dc7e500556bfa5f7289a32d2532714e6367221928e24aa087",
+      "rust_test": "libddwaf::overrides::parse_override_with_scanner_by_tags"
+    },
+    {
+      "reference": "TestProcessorOverrideParser.ParseOverrideWithExcludedScannerByTags",
+      "source": "tests/unit/configuration/processor_override_parser_test.cpp",
+      "source_sha256": "f0a7882bc97d376dc7e500556bfa5f7289a32d2532714e6367221928e24aa087",
+      "rust_test": "libddwaf::overrides::parse_override_with_excluded_scanner_by_tags"
+    },
+    {
+      "reference": "TestProcessorOverrideParser.ParseOverrideWithMultipleTargets",
+      "source": "tests/unit/configuration/processor_override_parser_test.cpp",
+      "source_sha256": "f0a7882bc97d376dc7e500556bfa5f7289a32d2532714e6367221928e24aa087",
+      "rust_test": "libddwaf::overrides::parse_override_with_multiple_targets"
+    },
+    {
+      "reference": "TestProcessorOverrideParser.ParseOverrideWithIncludeAndExcludeScanners",
+      "source": "tests/unit/configuration/processor_override_parser_test.cpp",
+      "source_sha256": "f0a7882bc97d376dc7e500556bfa5f7289a32d2532714e6367221928e24aa087",
+      "rust_test": "libddwaf::overrides::parse_override_with_include_and_exclude_scanners"
+    },
+    {
+      "reference": "TestProcessorOverrideParser.ParseOverrideWithMultipleTargetsAndScanners",
+      "source": "tests/unit/configuration/processor_override_parser_test.cpp",
+      "source_sha256": "f0a7882bc97d376dc7e500556bfa5f7289a32d2532714e6367221928e24aa087",
+      "rust_test": "libddwaf::overrides::parse_override_with_multiple_targets_and_scanners"
+    },
+    {
+      "reference": "TestDiagnosticsIntegration.Processor",
+      "source": "tests/integration/diagnostics/test.cpp",
+      "source_sha256": "f4fc6e52d7c2e59055e2e040013fa6af7a1e0e3f0ade73d61fea0ce7750a9f24",
+      "rust_test": "libddwaf::diagnostics::processor"
+    },
+    {
+      "reference": "TestDiagnosticsIntegration.InvalidScannersContainer",
+      "source": "tests/integration/diagnostics/test.cpp",
+      "source_sha256": "f4fc6e52d7c2e59055e2e040013fa6af7a1e0e3f0ade73d61fea0ce7750a9f24",
+      "rust_test": "libddwaf::diagnostics::invalid_scanners_container"
+    },
+    {
+      "reference": "TestDiagnosticsIntegration.InvalidProcessorsContainer",
+      "source": "tests/integration/diagnostics/test.cpp",
+      "source_sha256": "f4fc6e52d7c2e59055e2e040013fa6af7a1e0e3f0ade73d61fea0ce7750a9f24",
+      "rust_test": "libddwaf::diagnostics::invalid_processors_container"
+    }
+  ],
+  "scope_notes": [
+    "Includes schema extraction, scalar scanner behavior, scanner/processor/override configuration, schema integration and relevant configuration-container diagnostics.",
+    "WAF action execution and attack-rule result-schema validation remain outside the clarified API-schema/scanner scope; matching the word schema or security_scanner alone does not include a test."
+  ],
+  "resources": [
+    {
+      "source": "tests/integration/diagnostics/ruleset/processor.json",
+      "source_sha256": "35517b58eb192ccce5e3ce8b5c56f9613ed253a86fb6731fa72175f135a1501a"
+    },
+    {
+      "source": "tests/integration/processors/extract_schema/ruleset/postprocessor.json",
+      "source_sha256": "874d0d46a522d77b37ce483cf634e5a86b3d81989081c9638d6465cc994b53f7"
+    },
+    {
+      "source": "tests/integration/processors/extract_schema/ruleset/preprocessor.json",
+      "source_sha256": "9fee4dc23d7ffb34dba5aaa0cbf5b38bcc1cbcf92ec865802c988020a287f442"
+    },
+    {
+      "source": "tests/integration/processors/extract_schema/ruleset/processor.json",
+      "source_sha256": "13d481926de0f59b44be6204bd3e460dd5e4583b0cd4787fff26e32130c5470e"
+    },
+    {
+      "source": "tests/integration/processors/extract_schema/ruleset/processor_with_scanner_by_id.json",
+      "source_sha256": "2265a0fad18cc485f8655619ef26120dd51d00a1107405fd0eea99e189e769ea"
+    },
+    {
+      "source": "tests/integration/processors/extract_schema/ruleset/processor_with_scanner_by_tags.json",
+      "source_sha256": "9d8e649cc87985aa66ec96775d901c0b430086bd89417b4d9ad9ff03debfaa74"
+    },
+    {
+      "source": "tests/integration/processors/extract_schema/ruleset/scanners.json",
+      "source_sha256": "415455ac930eb37233c4bfeb55f7938cf8a619e24b91983cecba7f93f69f3b38"
+    },
+    {
+      "source": "tests/integration/processors/overrides/ruleset/processors.json",
+      "source_sha256": "fb8584634b648e4be097ac9759a8126b34c8f3088ce78f55e13afbfd8b69f948"
+    },
+    {
+      "source": "tests/integration/processors/overrides/ruleset/scanners.json",
+      "source_sha256": "4e2809514015e6f63314fbc90fc92a024d57a43354d58a84b546da129a1146ad"
+    }
+  ]
+}

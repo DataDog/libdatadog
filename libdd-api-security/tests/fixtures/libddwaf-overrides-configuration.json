@@ -1,0 +1,319 @@
+[
+  {
+    "name": "ParseOverrideWithoutTargets",
+    "definitions": [
+      {
+        "target": [],
+        "scanners": []
+      }
+    ],
+    "diagnostics": {
+      "loaded": [],
+      "failed": [
+        "index:0"
+      ],
+      "skipped": [],
+      "errors": {
+        "processor override without targets": [
+          "index:0"
+        ]
+      },
+      "warnings": {}
+    }
+  },
+  {
+    "name": "ParseOverrideWithTargetByTags",
+    "definitions": [
+      {
+        "target": [
+          {
+            "tags": {
+              "type": "value"
+            }
+          }
+        ],
+        "scanners": []
+      }
+    ],
+    "diagnostics": {
+      "loaded": [],
+      "failed": [
+        "index:0"
+      ],
+      "skipped": [],
+      "errors": {
+        "processor override with target by tags not supported": [
+          "index:0"
+        ]
+      },
+      "warnings": {}
+    }
+  },
+  {
+    "name": "ParseOverrideWithoutScanners",
+    "definitions": [
+      {
+        "target": [
+          {
+            "id": "extract-content"
+          }
+        ],
+        "scanners": {}
+      }
+    ],
+    "diagnostics": {
+      "loaded": [
+        "index:0"
+      ],
+      "failed": [],
+      "skipped": [],
+      "errors": {},
+      "warnings": {}
+    }
+  },
+  {
+    "name": "ParseOverrideWithScannerById",
+    "definitions": [
+      {
+        "target": [
+          {
+            "id": "extract-content"
+          }
+        ],
+        "scanners": {
+          "include": [
+            {
+              "id": "scanner-001"
+            }
+          ]
+        }
+      }
+    ],
+    "diagnostics": {
+      "loaded": [
+        "index:0"
+      ],
+      "failed": [],
+      "skipped": [],
+      "errors": {},
+      "warnings": {}
+    }
+  },
+  {
+    "name": "ParseOverrideWithExcludedScannerById",
+    "definitions": [
+      {
+        "target": [
+          {
+            "id": "extract-content"
+          }
+        ],
+        "scanners": {
+          "exclude": [
+            {
+              "id": "scanner-001"
+            }
+          ]
+        }
+      }
+    ],
+    "diagnostics": {
+      "loaded": [
+        "index:0"
+      ],
+      "failed": [],
+      "skipped": [],
+      "errors": {},
+      "warnings": {}
+    }
+  },
+  {
+    "name": "ParseOverrideWithScannerByTags",
+    "definitions": [
+      {
+        "target": [
+          {
+            "id": "extract-content"
+          }
+        ],
+        "scanners": {
+          "include": [
+            {
+              "tags": {
+                "type": "email"
+              }
+            }
+          ]
+        }
+      }
+    ],
+    "diagnostics": {
+      "loaded": [
+        "index:0"
+      ],
+      "failed": [],
+      "skipped": [],
+      "errors": {},
+      "warnings": {}
+    }
+  },
+  {
+    "name": "ParseOverrideWithExcludedScannerByTags",
+    "definitions": [
+      {
+        "target": [
+          {
+            "id": "extract-content"
+          }
+        ],
+        "scanners": {
+          "exclude": [
+            {
+              "tags": {
+                "type": "email"
+              }
+            }
+          ]
+        }
+      }
+    ],
+    "diagnostics": {
+      "loaded": [
+        "index:0"
+      ],
+      "failed": [],
+      "skipped": [],
+      "errors": {},
+      "warnings": {}
+    }
+  },
+  {
+    "name": "ParseOverrideWithMultipleTargets",
+    "definitions": [
+      {
+        "target": [
+          {
+            "id": "extract-content"
+          },
+          {
+            "id": "something-else"
+          },
+          {
+            "id": "extract-headers"
+          }
+        ],
+        "scanners": {
+          "include": [
+            {
+              "id": "scanner-001"
+            }
+          ]
+        }
+      }
+    ],
+    "diagnostics": {
+      "loaded": [
+        "index:0"
+      ],
+      "failed": [],
+      "skipped": [],
+      "errors": {},
+      "warnings": {}
+    }
+  },
+  {
+    "name": "ParseOverrideWithIncludeAndExcludeScanners",
+    "definitions": [
+      {
+        "target": [
+          {
+            "id": "extract-content"
+          }
+        ],
+        "scanners": {
+          "include": [
+            {
+              "id": "scanner-001"
+            }
+          ],
+          "exclude": [
+            {
+              "tags": {
+                "type": "email"
+              }
+            }
+          ]
+        }
+      }
+    ],
+    "diagnostics": {
+      "loaded": [
+        "index:0"
+      ],
+      "failed": [],
+      "skipped": [],
+      "errors": {},
+      "warnings": {}
+    }
+  },
+  {
+    "name": "ParseOverrideWithMultipleTargetsAndScanners",
+    "definitions": [
+      {
+        "target": [
+          {
+            "id": "extract-content"
+          }
+        ],
+        "scanners": {
+          "include": [
+            {
+              "id": "scanner-001"
+            }
+          ]
+        }
+      },
+      {
+        "target": [
+          {
+            "id": "something-else"
+          }
+        ],
+        "scanners": {
+          "include": [
+            {
+              "tags": {
+                "type": "value"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "target": [
+          {
+            "id": "extract-headers"
+          }
+        ],
+        "scanners": {
+          "include": [
+            {
+              "id": "scanner-002"
+            }
+          ]
+        }
+      }
+    ],
+    "diagnostics": {
+      "loaded": [
+        "index:0",
+        "index:1",
+        "index:2"
+      ],
+      "failed": [],
+      "skipped": [],
+      "errors": {},
+      "warnings": {}
+    }
+  }
+]

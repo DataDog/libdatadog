@@ -1,0 +1,1599 @@
+{
+  "configurations": {
+    "processors-1": {
+      "version": "2.2",
+      "metadata": {
+        "rules_version": "1.99.99"
+      },
+      "processors": [
+        {
+          "id": "extract-content",
+          "generator": "extract_schema",
+          "conditions": [],
+          "parameters": {
+            "mappings": [
+              {
+                "inputs": [
+                  {
+                    "address": "server.request.body"
+                  }
+                ],
+                "output": "server.request.body.schema"
+              }
+            ],
+            "scanners": []
+          },
+          "evaluate": false,
+          "output": true
+        },
+        {
+          "id": "extract-headers",
+          "generator": "extract_schema",
+          "conditions": [],
+          "parameters": {
+            "mappings": [
+              {
+                "inputs": [
+                  {
+                    "address": "server.request.headers"
+                  }
+                ],
+                "output": "server.request.headers.schema"
+              }
+            ],
+            "scanners": [
+              {
+                "tags": {
+                  "category": "credential"
+                }
+              }
+            ]
+          },
+          "evaluate": false,
+          "output": true
+        }
+      ]
+    },
+    "scanners-1": {
+      "scanners": [
+        {
+          "id": "scanner-001",
+          "key": {
+            "operator": "match_regex",
+            "parameters": {
+              "regex": "(?:email|mail)",
+              "options": {
+                "case_sensitive": false,
+                "min_length": 5
+              }
+            }
+          },
+          "value": {
+            "operator": "match_regex",
+            "parameters": {
+              "regex": "\\b[\\w!#$%&'*+\\/=?`{|}~^-]+(?:\\.[\\w!#$%&'*+\\/=?`{|}~^-]+)*(%40|@)(?:[a-zA-Z0-9-]+\\.)+[a-zA-Z]{2,6}\\b",
+              "options": {
+                "case_sensitive": false,
+                "min_length": 5
+              }
+            }
+          },
+          "tags": {
+            "type": "email",
+            "category": "pii"
+          }
+        },
+        {
+          "id": "scanner-002",
+          "key": {
+            "operator": "match_regex",
+            "parameters": {
+              "regex": ".*",
+              "options": {
+                "case_sensitive": false,
+                "min_length": 5
+              }
+            }
+          },
+          "value": {
+            "operator": "match_regex",
+            "parameters": {
+              "regex": "\\b[\\w!#$%&'*+\\/=?`{|}~^-]+(?:\\.[\\w!#$%&'*+\\/=?`{|}~^-]+)*(%40|@)(?:[a-zA-Z0-9-]+\\.)+[a-zA-Z]{2,6}\\b",
+              "options": {
+                "case_sensitive": false,
+                "min_length": 5
+              }
+            }
+          },
+          "tags": {
+            "type": "token",
+            "category": "credential"
+          }
+        },
+        {
+          "id": "scanner-003",
+          "key": {
+            "operator": "match_regex",
+            "parameters": {
+              "regex": "(?i)(api[-_ ]?key|apikey|token)",
+              "options": {
+                "case_sensitive": false,
+                "min_length": 3
+              }
+            }
+          },
+          "value": {
+            "operator": "match_regex",
+            "parameters": {
+              "regex": "[A-Za-z0-9_-]{16,}",
+              "options": {
+                "case_sensitive": false,
+                "min_length": 16
+              }
+            }
+          },
+          "tags": {
+            "type": "api_key",
+            "category": "auth"
+          }
+        }
+      ]
+    },
+    "override-1": {
+      "processor_overrides": [
+        {
+          "target": [
+            {
+              "id": "extract-content"
+            }
+          ],
+          "scanners": {
+            "include": [
+              {
+                "id": "scanner-001"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "override-2": {
+      "processor_overrides": [
+        {
+          "target": [
+            {
+              "id": "extract-content"
+            }
+          ],
+          "scanners": {
+            "include": [
+              {
+                "tags": {
+                  "type": "email"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "override1-1": {
+      "processor_overrides": [
+        {
+          "target": [
+            {
+              "id": "extract-headers"
+            }
+          ],
+          "scanners": {
+            "include": [
+              {
+                "id": "scanner-001"
+              }
+            ],
+            "exclude": [
+              {
+                "id": "scanner-002"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "override2-1": {
+      "processor_overrides": [
+        {
+          "target": [
+            {
+              "id": "extract-headers"
+            }
+          ],
+          "scanners": {
+            "exclude": [
+              {
+                "id": "scanner-001"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "override-3": {
+      "processor_overrides": [
+        {
+          "target": [
+            {
+              "id": "extract-headers"
+            }
+          ],
+          "scanners": {
+            "exclude": [
+              {
+                "tags": {
+                  "type": "token"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "override-4": {
+      "processor_overrides": [
+        {
+          "target": [
+            {
+              "id": "extract-content"
+            },
+            {
+              "id": "extract-headers"
+            }
+          ],
+          "scanners": {
+            "include": [
+              {
+                "id": "scanner-001"
+              }
+            ],
+            "exclude": [
+              {
+                "tags": {
+                  "type": "token"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "override-5": {
+      "processor_overrides": [
+        {
+          "target": [
+            {
+              "id": "extract-content"
+            }
+          ],
+          "scanners": {
+            "include": [
+              {
+                "tags": {
+                  "type": "email"
+                }
+              }
+            ],
+            "exclude": [
+              {
+                "id": "scanner-001"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "override-6": {
+      "processor_overrides": [
+        {
+          "target": [
+            {
+              "id": "extract-content"
+            }
+          ],
+          "scanners": {
+            "include": [
+              {
+                "id": "scanner-001"
+              }
+            ],
+            "exclude": [
+              {
+                "tags": {
+                  "type": "email"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "override-7": {
+      "processor_overrides": [
+        {
+          "target": [
+            {
+              "id": "extract-content"
+            }
+          ],
+          "scanners": {
+            "include": [
+              {
+                "tags": {
+                  "type": "email"
+                }
+              }
+            ],
+            "exclude": [
+              {
+                "tags": {
+                  "type": "email"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "override-8": {
+      "processor_overrides": [
+        {
+          "target": [
+            {
+              "id": "extract-content"
+            }
+          ],
+          "scanners": {
+            "include": [
+              {
+                "id": "scanner-001"
+              }
+            ],
+            "exclude": [
+              {
+                "id": "scanner-001"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "override-9": {
+      "processor_overrides": [
+        {
+          "target": [
+            {
+              "id": "extract-headers"
+            }
+          ],
+          "scanners": {
+            "include": [
+              {
+                "tags": {
+                  "type": "token"
+                }
+              }
+            ],
+            "exclude": [
+              {
+                "id": "scanner-002"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "override-10": {
+      "processor_overrides": [
+        {
+          "target": [
+            {
+              "id": "extract-content"
+            }
+          ],
+          "scanners": {
+            "include": [
+              {
+                "id": "scanner-001"
+              },
+              {
+                "id": "scanner-003"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "override-11": {
+      "processor_overrides": [
+        {
+          "target": [
+            {
+              "id": "extract-content"
+            }
+          ],
+          "scanners": {
+            "include": [
+              {
+                "tags": {
+                  "type": "email"
+                }
+              },
+              {
+                "tags": {
+                  "type": "api_key"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "override1-2": {
+      "processor_overrides": [
+        {
+          "target": [
+            {
+              "id": "extract-headers"
+            }
+          ],
+          "scanners": {
+            "include": [
+              {
+                "id": "scanner-001"
+              },
+              {
+                "id": "scanner-003"
+              }
+            ],
+            "exclude": [
+              {
+                "tags": {
+                  "category": "credential"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "override2-2": {
+      "processor_overrides": [
+        {
+          "target": [
+            {
+              "id": "extract-headers"
+            }
+          ],
+          "scanners": {
+            "exclude": [
+              {
+                "id": "scanner-001"
+              },
+              {
+                "id": "scanner-003"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "override-12": {
+      "processor_overrides": [
+        {
+          "target": [
+            {
+              "id": "extract-content"
+            }
+          ],
+          "scanners": {
+            "include": [
+              {
+                "tags": {
+                  "type": "email"
+                }
+              },
+              {
+                "tags": {
+                  "type": "api_key"
+                }
+              }
+            ],
+            "exclude": [
+              {
+                "id": "scanner-003"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "cases": [
+    {
+      "name": "AddScannersById",
+      "steps": [
+        {
+          "op": "reset"
+        },
+        {
+          "op": "update",
+          "source": "processors",
+          "configuration": "processors-1"
+        },
+        {
+          "op": "update",
+          "source": "scanners",
+          "configuration": "scanners-1"
+        },
+        {
+          "op": "build"
+        },
+        {
+          "op": "collect",
+          "context": "map",
+          "input": {
+            "server.request.body": {
+              "email": "employee@company.com"
+            }
+          },
+          "attributes": {
+            "server.request.body.schema": [
+              {
+                "email": [
+                  8
+                ]
+              }
+            ]
+          },
+          "evaluation": {}
+        },
+        {
+          "op": "update",
+          "source": "override",
+          "configuration": "override-1"
+        },
+        {
+          "op": "build"
+        },
+        {
+          "op": "collect",
+          "context": "map",
+          "input": {
+            "server.request.body": {
+              "email": "employee@company.com"
+            }
+          },
+          "attributes": {
+            "server.request.body.schema": [
+              {
+                "email": [
+                  8,
+                  {
+                    "type": "email",
+                    "category": "pii"
+                  }
+                ]
+              }
+            ]
+          },
+          "evaluation": {}
+        }
+      ]
+    },
+    {
+      "name": "AddScannersByTags",
+      "steps": [
+        {
+          "op": "reset"
+        },
+        {
+          "op": "update",
+          "source": "processors",
+          "configuration": "processors-1"
+        },
+        {
+          "op": "update",
+          "source": "scanners",
+          "configuration": "scanners-1"
+        },
+        {
+          "op": "build"
+        },
+        {
+          "op": "collect",
+          "context": "map",
+          "input": {
+            "server.request.body": {
+              "email": "employee@company.com"
+            }
+          },
+          "attributes": {
+            "server.request.body.schema": [
+              {
+                "email": [
+                  8
+                ]
+              }
+            ]
+          },
+          "evaluation": {}
+        },
+        {
+          "op": "update",
+          "source": "override",
+          "configuration": "override-2"
+        },
+        {
+          "op": "build"
+        },
+        {
+          "op": "collect",
+          "context": "map",
+          "input": {
+            "server.request.body": {
+              "email": "employee@company.com"
+            }
+          },
+          "attributes": {
+            "server.request.body.schema": [
+              {
+                "email": [
+                  8,
+                  {
+                    "type": "email",
+                    "category": "pii"
+                  }
+                ]
+              }
+            ]
+          },
+          "evaluation": {}
+        }
+      ]
+    },
+    {
+      "name": "AddScannerToPopulatedProcessor",
+      "steps": [
+        {
+          "op": "reset"
+        },
+        {
+          "op": "update",
+          "source": "processors",
+          "configuration": "processors-1"
+        },
+        {
+          "op": "update",
+          "source": "scanners",
+          "configuration": "scanners-1"
+        },
+        {
+          "op": "build"
+        },
+        {
+          "op": "collect",
+          "context": "map",
+          "input": {
+            "server.request.headers": {
+              "email": "employee@company.com"
+            }
+          },
+          "attributes": {
+            "server.request.headers.schema": [
+              {
+                "email": [
+                  8,
+                  {
+                    "type": "token",
+                    "category": "credential"
+                  }
+                ]
+              }
+            ]
+          },
+          "evaluation": {}
+        },
+        {
+          "op": "update",
+          "source": "override1",
+          "configuration": "override1-1"
+        },
+        {
+          "op": "build"
+        },
+        {
+          "op": "collect",
+          "context": "map",
+          "input": {
+            "server.request.headers": {
+              "email": "employee@company.com"
+            }
+          },
+          "attributes": {
+            "server.request.headers.schema": [
+              {
+                "email": [
+                  8,
+                  {
+                    "type": "email",
+                    "category": "pii"
+                  }
+                ]
+              }
+            ]
+          },
+          "evaluation": {}
+        },
+        {
+          "op": "update",
+          "source": "override2",
+          "configuration": "override2-1"
+        },
+        {
+          "op": "build"
+        },
+        {
+          "op": "collect",
+          "context": "map",
+          "input": {
+            "server.request.headers": {
+              "email": "employee@company.com"
+            }
+          },
+          "attributes": {
+            "server.request.headers.schema": [
+              {
+                "email": [
+                  8
+                ]
+              }
+            ]
+          },
+          "evaluation": {}
+        }
+      ]
+    },
+    {
+      "name": "DisableDefaultScanners",
+      "steps": [
+        {
+          "op": "reset"
+        },
+        {
+          "op": "update",
+          "source": "processors",
+          "configuration": "processors-1"
+        },
+        {
+          "op": "update",
+          "source": "scanners",
+          "configuration": "scanners-1"
+        },
+        {
+          "op": "build"
+        },
+        {
+          "op": "collect",
+          "context": "map",
+          "input": {
+            "server.request.headers": {
+              "email": "employee@company.com"
+            }
+          },
+          "attributes": {
+            "server.request.headers.schema": [
+              {
+                "email": [
+                  8,
+                  {
+                    "type": "token",
+                    "category": "credential"
+                  }
+                ]
+              }
+            ]
+          },
+          "evaluation": {}
+        },
+        {
+          "op": "update",
+          "source": "override",
+          "configuration": "override-3"
+        },
+        {
+          "op": "build"
+        },
+        {
+          "op": "collect",
+          "context": "map",
+          "input": {
+            "server.request.headers": {
+              "email": "employee@company.com"
+            }
+          },
+          "attributes": {
+            "server.request.headers.schema": [
+              {
+                "email": [
+                  8
+                ]
+              }
+            ]
+          },
+          "evaluation": {}
+        }
+      ]
+    },
+    {
+      "name": "RemoveScannersAfterOverride",
+      "steps": [
+        {
+          "op": "reset"
+        },
+        {
+          "op": "update",
+          "source": "processors",
+          "configuration": "processors-1"
+        },
+        {
+          "op": "update",
+          "source": "scanners",
+          "configuration": "scanners-1"
+        },
+        {
+          "op": "build"
+        },
+        {
+          "op": "collect",
+          "context": "map",
+          "input": {
+            "server.request.body": {
+              "email": "employee@company.com"
+            }
+          },
+          "attributes": {
+            "server.request.body.schema": [
+              {
+                "email": [
+                  8
+                ]
+              }
+            ]
+          },
+          "evaluation": {}
+        },
+        {
+          "op": "update",
+          "source": "override",
+          "configuration": "override-1"
+        },
+        {
+          "op": "build"
+        },
+        {
+          "op": "collect",
+          "context": "map",
+          "input": {
+            "server.request.body": {
+              "email": "employee@company.com"
+            }
+          },
+          "attributes": {
+            "server.request.body.schema": [
+              {
+                "email": [
+                  8,
+                  {
+                    "type": "email",
+                    "category": "pii"
+                  }
+                ]
+              }
+            ]
+          },
+          "evaluation": {}
+        },
+        {
+          "op": "remove",
+          "source": "scanners"
+        },
+        {
+          "op": "build"
+        },
+        {
+          "op": "collect",
+          "context": "map",
+          "input": {
+            "server.request.body": {
+              "email": "employee@company.com"
+            }
+          },
+          "attributes": {
+            "server.request.body.schema": [
+              {
+                "email": [
+                  8
+                ]
+              }
+            ]
+          },
+          "evaluation": {}
+        }
+      ]
+    },
+    {
+      "name": "RemoveOverride",
+      "steps": [
+        {
+          "op": "reset"
+        },
+        {
+          "op": "update",
+          "source": "processors",
+          "configuration": "processors-1"
+        },
+        {
+          "op": "update",
+          "source": "scanners",
+          "configuration": "scanners-1"
+        },
+        {
+          "op": "build"
+        },
+        {
+          "op": "collect",
+          "context": "map",
+          "input": {
+            "server.request.body": {
+              "email": "employee@company.com"
+            }
+          },
+          "attributes": {
+            "server.request.body.schema": [
+              {
+                "email": [
+                  8
+                ]
+              }
+            ]
+          },
+          "evaluation": {}
+        },
+        {
+          "op": "update",
+          "source": "override",
+          "configuration": "override-1"
+        },
+        {
+          "op": "build"
+        },
+        {
+          "op": "collect",
+          "context": "map",
+          "input": {
+            "server.request.body": {
+              "email": "employee@company.com"
+            }
+          },
+          "attributes": {
+            "server.request.body.schema": [
+              {
+                "email": [
+                  8,
+                  {
+                    "type": "email",
+                    "category": "pii"
+                  }
+                ]
+              }
+            ]
+          },
+          "evaluation": {}
+        },
+        {
+          "op": "remove",
+          "source": "override"
+        },
+        {
+          "op": "build"
+        },
+        {
+          "op": "collect",
+          "context": "map",
+          "input": {
+            "server.request.body": {
+              "email": "employee@company.com"
+            }
+          },
+          "attributes": {
+            "server.request.body.schema": [
+              {
+                "email": [
+                  8
+                ]
+              }
+            ]
+          },
+          "evaluation": {}
+        }
+      ]
+    },
+    {
+      "name": "OverrideMultipleProcessors",
+      "steps": [
+        {
+          "op": "reset"
+        },
+        {
+          "op": "update",
+          "source": "processors",
+          "configuration": "processors-1"
+        },
+        {
+          "op": "update",
+          "source": "scanners",
+          "configuration": "scanners-1"
+        },
+        {
+          "op": "build"
+        },
+        {
+          "op": "collect",
+          "context": "map",
+          "input": {
+            "server.request.body": {
+              "email": "employee@company.com"
+            },
+            "server.request.headers": {
+              "email": "employee@company.com"
+            }
+          },
+          "attributes": {
+            "server.request.headers.schema": [
+              {
+                "email": [
+                  8,
+                  {
+                    "type": "token",
+                    "category": "credential"
+                  }
+                ]
+              }
+            ],
+            "server.request.body.schema": [
+              {
+                "email": [
+                  8
+                ]
+              }
+            ]
+          },
+          "evaluation": {}
+        },
+        {
+          "op": "update",
+          "source": "override",
+          "configuration": "override-4"
+        },
+        {
+          "op": "build"
+        },
+        {
+          "op": "collect",
+          "context": "map",
+          "input": {
+            "server.request.body": {
+              "email": "employee@company.com"
+            },
+            "server.request.headers": {
+              "email": "employee@company.com"
+            }
+          },
+          "attributes": {
+            "server.request.headers.schema": [
+              {
+                "email": [
+                  8,
+                  {
+                    "type": "email",
+                    "category": "pii"
+                  }
+                ]
+              }
+            ],
+            "server.request.body.schema": [
+              {
+                "email": [
+                  8,
+                  {
+                    "type": "email",
+                    "category": "pii"
+                  }
+                ]
+              }
+            ]
+          },
+          "evaluation": {}
+        }
+      ]
+    },
+    {
+      "name": "ScannersPrecedenceIdVsTagsOnEmptyProcessor",
+      "steps": [
+        {
+          "op": "reset"
+        },
+        {
+          "op": "update",
+          "source": "processors",
+          "configuration": "processors-1"
+        },
+        {
+          "op": "update",
+          "source": "scanners",
+          "configuration": "scanners-1"
+        },
+        {
+          "op": "update",
+          "source": "override",
+          "configuration": "override-5"
+        },
+        {
+          "op": "build"
+        },
+        {
+          "op": "collect",
+          "context": "map",
+          "input": {
+            "server.request.body": {
+              "email": "employee@company.com"
+            }
+          },
+          "attributes": {
+            "server.request.body.schema": [
+              {
+                "email": [
+                  8
+                ]
+              }
+            ]
+          },
+          "evaluation": {}
+        },
+        {
+          "op": "reset"
+        },
+        {
+          "op": "update",
+          "source": "processors",
+          "configuration": "processors-1"
+        },
+        {
+          "op": "update",
+          "source": "scanners",
+          "configuration": "scanners-1"
+        },
+        {
+          "op": "update",
+          "source": "override",
+          "configuration": "override-6"
+        },
+        {
+          "op": "build"
+        },
+        {
+          "op": "collect",
+          "context": "map",
+          "input": {
+            "server.request.body": {
+              "email": "employee@company.com"
+            }
+          },
+          "attributes": {
+            "server.request.body.schema": [
+              {
+                "email": [
+                  8,
+                  {
+                    "type": "email",
+                    "category": "pii"
+                  }
+                ]
+              }
+            ]
+          },
+          "evaluation": {}
+        },
+        {
+          "op": "reset"
+        },
+        {
+          "op": "update",
+          "source": "processors",
+          "configuration": "processors-1"
+        },
+        {
+          "op": "update",
+          "source": "scanners",
+          "configuration": "scanners-1"
+        },
+        {
+          "op": "update",
+          "source": "override",
+          "configuration": "override-7"
+        },
+        {
+          "op": "build"
+        },
+        {
+          "op": "collect",
+          "context": "map",
+          "input": {
+            "server.request.body": {
+              "email": "employee@company.com"
+            }
+          },
+          "attributes": {
+            "server.request.body.schema": [
+              {
+                "email": [
+                  8
+                ]
+              }
+            ]
+          },
+          "evaluation": {}
+        },
+        {
+          "op": "reset"
+        },
+        {
+          "op": "update",
+          "source": "processors",
+          "configuration": "processors-1"
+        },
+        {
+          "op": "update",
+          "source": "scanners",
+          "configuration": "scanners-1"
+        },
+        {
+          "op": "update",
+          "source": "override",
+          "configuration": "override-8"
+        },
+        {
+          "op": "build"
+        },
+        {
+          "op": "collect",
+          "context": "map",
+          "input": {
+            "server.request.body": {
+              "email": "employee@company.com"
+            }
+          },
+          "attributes": {
+            "server.request.body.schema": [
+              {
+                "email": [
+                  8
+                ]
+              }
+            ]
+          },
+          "evaluation": {}
+        }
+      ]
+    },
+    {
+      "name": "ScannersPrecedenceOnDefaultProcessor",
+      "steps": [
+        {
+          "op": "reset"
+        },
+        {
+          "op": "update",
+          "source": "processors",
+          "configuration": "processors-1"
+        },
+        {
+          "op": "update",
+          "source": "scanners",
+          "configuration": "scanners-1"
+        },
+        {
+          "op": "update",
+          "source": "override",
+          "configuration": "override-9"
+        },
+        {
+          "op": "build"
+        },
+        {
+          "op": "collect",
+          "context": "map",
+          "input": {
+            "server.request.headers": {
+              "email": "employee@company.com"
+            }
+          },
+          "attributes": {
+            "server.request.headers.schema": [
+              {
+                "email": [
+                  8
+                ]
+              }
+            ]
+          },
+          "evaluation": {}
+        }
+      ]
+    },
+    {
+      "name": "IncludeMultipleScannersById",
+      "steps": [
+        {
+          "op": "reset"
+        },
+        {
+          "op": "update",
+          "source": "processors",
+          "configuration": "processors-1"
+        },
+        {
+          "op": "update",
+          "source": "scanners",
+          "configuration": "scanners-1"
+        },
+        {
+          "op": "update",
+          "source": "override",
+          "configuration": "override-10"
+        },
+        {
+          "op": "build"
+        },
+        {
+          "op": "collect",
+          "context": "map",
+          "input": {
+            "server.request.body": {
+              "email": "employee@company.com",
+              "api_key": "sk_live_1234567890abcdef"
+            }
+          },
+          "attributes": {
+            "server.request.body.schema": [
+              {
+                "email": [
+                  8,
+                  {
+                    "type": "email",
+                    "category": "pii"
+                  }
+                ],
+                "api_key": [
+                  8,
+                  {
+                    "type": "api_key",
+                    "category": "auth"
+                  }
+                ]
+              }
+            ]
+          },
+          "evaluation": {}
+        }
+      ]
+    },
+    {
+      "name": "IncludeMultipleScannersByTags",
+      "steps": [
+        {
+          "op": "reset"
+        },
+        {
+          "op": "update",
+          "source": "processors",
+          "configuration": "processors-1"
+        },
+        {
+          "op": "update",
+          "source": "scanners",
+          "configuration": "scanners-1"
+        },
+        {
+          "op": "update",
+          "source": "override",
+          "configuration": "override-11"
+        },
+        {
+          "op": "build"
+        },
+        {
+          "op": "collect",
+          "context": "map",
+          "input": {
+            "server.request.body": {
+              "email": "employee@company.com",
+              "api_key": "sk_live_1234567890abcdef"
+            }
+          },
+          "attributes": {
+            "server.request.body.schema": [
+              {
+                "email": [
+                  8,
+                  {
+                    "type": "email",
+                    "category": "pii"
+                  }
+                ],
+                "api_key": [
+                  8,
+                  {
+                    "type": "api_key",
+                    "category": "auth"
+                  }
+                ]
+              }
+            ]
+          },
+          "evaluation": {}
+        }
+      ]
+    },
+    {
+      "name": "IncludeThenExcludeMultipleScannersByIdOnHeaders",
+      "steps": [
+        {
+          "op": "reset"
+        },
+        {
+          "op": "update",
+          "source": "processors",
+          "configuration": "processors-1"
+        },
+        {
+          "op": "update",
+          "source": "scanners",
+          "configuration": "scanners-1"
+        },
+        {
+          "op": "update",
+          "source": "override1",
+          "configuration": "override1-2"
+        },
+        {
+          "op": "build"
+        },
+        {
+          "op": "collect",
+          "context": "map",
+          "input": {
+            "server.request.headers": {
+              "email": "employee@company.com",
+              "api_key": "sk_live_1234567890abcdef"
+            }
+          },
+          "attributes": {
+            "server.request.headers.schema": [
+              {
+                "email": [
+                  8,
+                  {
+                    "type": "email",
+                    "category": "pii"
+                  }
+                ],
+                "api_key": [
+                  8,
+                  {
+                    "type": "api_key",
+                    "category": "auth"
+                  }
+                ]
+              }
+            ]
+          },
+          "evaluation": {}
+        },
+        {
+          "op": "update",
+          "source": "override2",
+          "configuration": "override2-2"
+        },
+        {
+          "op": "build"
+        },
+        {
+          "op": "collect",
+          "context": "map",
+          "input": {
+            "server.request.headers": {
+              "email": "employee@company.com",
+              "api_key": "sk_live_1234567890abcdef"
+            }
+          },
+          "attributes": {
+            "server.request.headers.schema": [
+              {
+                "email": [
+                  8
+                ],
+                "api_key": [
+                  8
+                ]
+              }
+            ]
+          },
+          "evaluation": {}
+        }
+      ]
+    },
+    {
+      "name": "IncludeMultipleByTagsExcludeOneById",
+      "steps": [
+        {
+          "op": "reset"
+        },
+        {
+          "op": "update",
+          "source": "processors",
+          "configuration": "processors-1"
+        },
+        {
+          "op": "update",
+          "source": "scanners",
+          "configuration": "scanners-1"
+        },
+        {
+          "op": "update",
+          "source": "override",
+          "configuration": "override-12"
+        },
+        {
+          "op": "build"
+        },
+        {
+          "op": "collect",
+          "context": "map",
+          "input": {
+            "server.request.body": {
+              "email": "employee@company.com",
+              "api_key": "sk_live_1234567890abcdef"
+            }
+          },
+          "attributes": {
+            "server.request.body.schema": [
+              {
+                "email": [
+                  8,
+                  {
+                    "type": "email",
+                    "category": "pii"
+                  }
+                ],
+                "api_key": [
+                  8
+                ]
+              }
+            ]
+          },
+          "evaluation": {}
+        }
+      ]
+    }
+  ]
+}

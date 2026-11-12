@@ -1,0 +1,580 @@
+[
+  {
+    "name": "ParseKeyOnlyScanner",
+    "definitions": [
+      {
+        "id": "ecd",
+        "key": {
+          "operator": "match_regex",
+          "parameters": {
+            "regex": "email"
+          }
+        },
+        "tags": {
+          "type": "email",
+          "category": "pii"
+        }
+      }
+    ],
+    "diagnostics": {
+      "loaded": [
+        "ecd"
+      ],
+      "failed": [],
+      "skipped": [],
+      "errors": {},
+      "warnings": {}
+    },
+    "matches": [
+      {
+        "key": "email",
+        "value": "dog@datadoghq.com",
+        "match": true
+      },
+      {
+        "key": "mail",
+        "value": "dog@datadoghq.com",
+        "match": false
+      },
+      {
+        "key": "email",
+        "value": "ansodinsod",
+        "match": true
+      }
+    ]
+  },
+  {
+    "name": "ParseValueOnlyScanner",
+    "definitions": [
+      {
+        "id": "ecd",
+        "value": {
+          "operator": "match_regex",
+          "parameters": {
+            "regex": "@"
+          }
+        },
+        "tags": {
+          "type": "email",
+          "category": "pii"
+        }
+      }
+    ],
+    "diagnostics": {
+      "loaded": [
+        "ecd"
+      ],
+      "failed": [],
+      "skipped": [],
+      "errors": {},
+      "warnings": {}
+    },
+    "matches": [
+      {
+        "key": "email",
+        "value": "dog@datadoghq.com",
+        "match": true
+      },
+      {
+        "key": "mail",
+        "value": "dog@datadoghq.com",
+        "match": true
+      },
+      {
+        "key": "email",
+        "value": "ansodinsod",
+        "match": false
+      }
+    ]
+  },
+  {
+    "name": "ParseKeyValueScanner",
+    "definitions": [
+      {
+        "id": "ecd",
+        "key": {
+          "operator": "match_regex",
+          "parameters": {
+            "regex": "email"
+          }
+        },
+        "value": {
+          "operator": "match_regex",
+          "parameters": {
+            "regex": "@"
+          }
+        },
+        "tags": {
+          "type": "email",
+          "category": "pii"
+        }
+      }
+    ],
+    "diagnostics": {
+      "loaded": [
+        "ecd"
+      ],
+      "failed": [],
+      "skipped": [],
+      "errors": {},
+      "warnings": {}
+    },
+    "matches": [
+      {
+        "key": "email",
+        "value": "dog@datadoghq.com",
+        "match": true
+      },
+      {
+        "key": "mail",
+        "value": "dog@datadoghq.com",
+        "match": false
+      },
+      {
+        "key": "email",
+        "value": "ansodinsod",
+        "match": false
+      }
+    ]
+  },
+  {
+    "name": "ParseNoID",
+    "definitions": [
+      {
+        "key": {
+          "operator": "match_regex",
+          "parameters": {
+            "regex": "email"
+          }
+        },
+        "value": {
+          "operator": "match_regex",
+          "parameters": {
+            "regex": "@"
+          }
+        },
+        "tags": {
+          "type": "email",
+          "category": "pii"
+        }
+      }
+    ],
+    "diagnostics": {
+      "loaded": [],
+      "failed": [
+        "index:0"
+      ],
+      "skipped": [],
+      "errors": {
+        "missing key 'id'": [
+          "index:0"
+        ]
+      },
+      "warnings": {}
+    },
+    "matches": []
+  },
+  {
+    "name": "ParseNoTags",
+    "definitions": [
+      {
+        "id": "error",
+        "key": {
+          "operator": "match_regex",
+          "parameters": {
+            "regex": "email"
+          }
+        },
+        "value": {
+          "operator": "match_regex",
+          "parameters": {
+            "regex": "@"
+          }
+        }
+      }
+    ],
+    "diagnostics": {
+      "loaded": [],
+      "failed": [
+        "error"
+      ],
+      "skipped": [],
+      "errors": {
+        "missing key 'tags'": [
+          "error"
+        ]
+      },
+      "warnings": {}
+    },
+    "matches": []
+  },
+  {
+    "name": "ParseNoKeyValue",
+    "definitions": [
+      {
+        "id": "error",
+        "tags": {
+          "type": "email",
+          "category": "pii"
+        }
+      }
+    ],
+    "diagnostics": {
+      "loaded": [],
+      "failed": [
+        "error"
+      ],
+      "skipped": [],
+      "errors": {
+        "scanner has no key or value matcher": [
+          "error"
+        ]
+      },
+      "warnings": {}
+    },
+    "matches": []
+  },
+  {
+    "name": "ParseDuplicate",
+    "definitions": [
+      {
+        "id": "ecd",
+        "key": {
+          "operator": "match_regex",
+          "parameters": {
+            "regex": "email"
+          }
+        },
+        "tags": {
+          "type": "email",
+          "category": "pii"
+        }
+      },
+      {
+        "id": "ecd",
+        "key": {
+          "operator": "match_regex",
+          "parameters": {
+            "regex": "email"
+          }
+        },
+        "tags": {
+          "type": "email",
+          "category": "pii"
+        }
+      }
+    ],
+    "diagnostics": {
+      "loaded": [
+        "ecd"
+      ],
+      "failed": [
+        "ecd"
+      ],
+      "skipped": [],
+      "errors": {
+        "duplicate scanner": [
+          "ecd"
+        ]
+      },
+      "warnings": {}
+    },
+    "matches": []
+  },
+  {
+    "name": "ParseKeyNoOperator",
+    "definitions": [
+      {
+        "id": "ecd",
+        "key": {
+          "parameters": {
+            "regex": "email"
+          }
+        },
+        "value": {
+          "operator": "match_regex",
+          "parameters": {
+            "regex": "email"
+          }
+        },
+        "tags": {
+          "type": "email",
+          "category": "pii"
+        }
+      }
+    ],
+    "diagnostics": {
+      "loaded": [],
+      "failed": [
+        "ecd"
+      ],
+      "skipped": [],
+      "errors": {
+        "missing key 'operator'": [
+          "ecd"
+        ]
+      },
+      "warnings": {}
+    },
+    "matches": []
+  },
+  {
+    "name": "ParseKeyNoParameters",
+    "definitions": [
+      {
+        "id": "ecd",
+        "key": {
+          "operator": "match_regex"
+        },
+        "value": {
+          "operator": "match_regex",
+          "parameters": {
+            "regex": "email"
+          }
+        },
+        "tags": {
+          "type": "email",
+          "category": "pii"
+        }
+      }
+    ],
+    "diagnostics": {
+      "loaded": [],
+      "failed": [
+        "ecd"
+      ],
+      "skipped": [],
+      "errors": {
+        "missing key 'parameters'": [
+          "ecd"
+        ]
+      },
+      "warnings": {}
+    },
+    "matches": []
+  },
+  {
+    "name": "ParseValueNoOperator",
+    "definitions": [
+      {
+        "id": "ecd",
+        "key": {
+          "operator": "match_regex",
+          "parameters": {
+            "regex": "email"
+          }
+        },
+        "value": {
+          "parameters": {
+            "regex": "email"
+          }
+        },
+        "tags": {
+          "type": "email",
+          "category": "pii"
+        }
+      }
+    ],
+    "diagnostics": {
+      "loaded": [],
+      "failed": [
+        "ecd"
+      ],
+      "skipped": [],
+      "errors": {
+        "missing key 'operator'": [
+          "ecd"
+        ]
+      },
+      "warnings": {}
+    },
+    "matches": []
+  },
+  {
+    "name": "ParseValueNoParameters",
+    "definitions": [
+      {
+        "id": "ecd",
+        "key": {
+          "operator": "match_regex",
+          "parameters": {
+            "regex": "email"
+          }
+        },
+        "value": {
+          "operator": "match_regex"
+        },
+        "tags": {
+          "type": "email",
+          "category": "pii"
+        }
+      }
+    ],
+    "diagnostics": {
+      "loaded": [],
+      "failed": [
+        "ecd"
+      ],
+      "skipped": [],
+      "errors": {
+        "missing key 'parameters'": [
+          "ecd"
+        ]
+      },
+      "warnings": {}
+    },
+    "matches": []
+  },
+  {
+    "name": "ParseUnknownMatcher",
+    "definitions": [
+      {
+        "id": "ecd",
+        "key": {
+          "operator": "what",
+          "parameters": {
+            "regex": "email"
+          }
+        },
+        "tags": {
+          "type": "email",
+          "category": "pii"
+        }
+      }
+    ],
+    "diagnostics": {
+      "loaded": [],
+      "failed": [
+        "ecd"
+      ],
+      "skipped": [],
+      "errors": {},
+      "warnings": {
+        "unknown operator: 'what'": [
+          "ecd"
+        ]
+      }
+    },
+    "matches": []
+  },
+  {
+    "name": "ParseRuleDataID",
+    "definitions": [
+      {
+        "id": "ecd",
+        "key": {
+          "operator": "exact_match",
+          "parameters": {
+            "data": "invalid"
+          }
+        },
+        "tags": {
+          "type": "email",
+          "category": "pii"
+        }
+      }
+    ],
+    "diagnostics": {
+      "loaded": [],
+      "failed": [
+        "ecd"
+      ],
+      "skipped": [],
+      "errors": {
+        "dynamic data on scanner condition": [
+          "ecd"
+        ]
+      },
+      "warnings": {}
+    },
+    "matches": []
+  },
+  {
+    "name": "IncompatibleMinVersion",
+    "definitions": [
+      {
+        "id": "ecd",
+        "key": {
+          "operator": "match_regex",
+          "parameters": {
+            "regex": "email"
+          }
+        },
+        "tags": {
+          "type": "email",
+          "category": "pii"
+        },
+        "min_version": "99.0.0"
+      }
+    ],
+    "diagnostics": {
+      "loaded": [],
+      "failed": [],
+      "skipped": [
+        "ecd"
+      ],
+      "errors": {},
+      "warnings": {}
+    },
+    "matches": []
+  },
+  {
+    "name": "IncompatibleMaxVersion",
+    "definitions": [
+      {
+        "id": "ecd",
+        "key": {
+          "operator": "match_regex",
+          "parameters": {
+            "regex": "email"
+          }
+        },
+        "tags": {
+          "type": "email",
+          "category": "pii"
+        },
+        "max_version": "0.0.99"
+      }
+    ],
+    "diagnostics": {
+      "loaded": [],
+      "failed": [],
+      "skipped": [
+        "ecd"
+      ],
+      "errors": {},
+      "warnings": {}
+    },
+    "matches": []
+  },
+  {
+    "name": "CompatibleVersion",
+    "definitions": [
+      {
+        "id": "ecd",
+        "key": {
+          "operator": "match_regex",
+          "parameters": {
+            "regex": "email"
+          }
+        },
+        "tags": {
+          "type": "email",
+          "category": "pii"
+        },
+        "min_version": "0.0.99",
+        "max_version": "99.0.0"
+      }
+    ],
+    "diagnostics": {
+      "loaded": [
+        "ecd"
+      ],
+      "failed": [],
+      "skipped": [],
+      "errors": {},
+      "warnings": {}
+    },
+    "matches": []
+  }
+]

@@ -1,0 +1,719 @@
+[
+  {
+    "name": "UnknownScalarSchema",
+    "inputs": [
+      "null"
+    ],
+    "schema": [
+      0
+    ],
+    "scanners": [],
+    "unknown_paths": [
+      []
+    ],
+    "parsed_value_representable": false
+  },
+  {
+    "name": "NullScalarSchema",
+    "inputs": [
+      "null"
+    ],
+    "schema": [
+      1
+    ],
+    "scanners": [],
+    "parsed_value_representable": true
+  },
+  {
+    "name": "BoolScalarSchema",
+    "inputs": [
+      "true"
+    ],
+    "schema": [
+      2
+    ],
+    "scanners": [],
+    "parsed_value_representable": true
+  },
+  {
+    "name": "IntScalarSchema",
+    "inputs": [
+      "5",
+      "-5"
+    ],
+    "schema": [
+      4
+    ],
+    "scanners": [],
+    "parsed_value_representable": true
+  },
+  {
+    "name": "StringScalarSchema",
+    "inputs": [
+      "\"string\""
+    ],
+    "schema": [
+      8
+    ],
+    "scanners": [],
+    "parsed_value_representable": true
+  },
+  {
+    "name": "FloatScalarSchema",
+    "inputs": [
+      "1.5"
+    ],
+    "schema": [
+      16
+    ],
+    "scanners": [],
+    "parsed_value_representable": true
+  },
+  {
+    "name": "EmptyArraySchema",
+    "inputs": [
+      "[]"
+    ],
+    "schema": [
+      [],
+      {
+        "len": 0
+      }
+    ],
+    "scanners": [],
+    "parsed_value_representable": true
+  },
+  {
+    "name": "ArraySchema",
+    "inputs": [
+      "[22,\"string\",null,null]"
+    ],
+    "schema": [
+      [
+        [
+          1
+        ],
+        [
+          0
+        ],
+        [
+          8
+        ],
+        [
+          4
+        ]
+      ],
+      {
+        "len": 4
+      }
+    ],
+    "scanners": [],
+    "unknown_paths": [
+      [
+        2
+      ]
+    ],
+    "parsed_value_representable": false
+  },
+  {
+    "name": "ArrayWithDuplicateScalarSchema",
+    "inputs": [
+      "[\"string\",\"string\",\"string\",\"string\"]"
+    ],
+    "schema": [
+      [
+        [
+          8
+        ]
+      ],
+      {
+        "len": 4
+      }
+    ],
+    "scanners": [],
+    "parsed_value_representable": true
+  },
+  {
+    "name": "ArrayWithDuplicateMapsSchema",
+    "inputs": [
+      "[{\"unsigned\":5,\"string\":\"str\"},{\"signed\":-5},{\"unsigned\":5},{\"unsigned\":109,\"string\":\"wahtever\"}]"
+    ],
+    "schema": [
+      [
+        [
+          {
+            "unsigned": [
+              4
+            ]
+          }
+        ],
+        [
+          {
+            "signed": [
+              4
+            ]
+          }
+        ],
+        [
+          {
+            "string": [
+              8
+            ],
+            "unsigned": [
+              4
+            ]
+          }
+        ]
+      ],
+      {
+        "len": 4
+      }
+    ],
+    "scanners": [],
+    "parsed_value_representable": true
+  },
+  {
+    "name": "ArrayWithDuplicateArraysSchema",
+    "inputs": [
+      "[[5,\"str\"],[-5],[5],[109,\"wahtever\"]]"
+    ],
+    "schema": [
+      [
+        [
+          [
+            [
+              4
+            ]
+          ],
+          {
+            "len": 1
+          }
+        ],
+        [
+          [
+            [
+              8
+            ],
+            [
+              4
+            ]
+          ],
+          {
+            "len": 2
+          }
+        ]
+      ],
+      {
+        "len": 4
+      }
+    ],
+    "scanners": [],
+    "parsed_value_representable": true
+  },
+  {
+    "name": "ArrayWithDuplicateContainersSchema",
+    "inputs": [
+      "[{\"unsigned\":5,\"string\":\"str\"},[-5],[5],{\"string\":\"wahtever\",\"unsigned\":109}]"
+    ],
+    "schema": [
+      [
+        [
+          [
+            [
+              4
+            ]
+          ],
+          {
+            "len": 1
+          }
+        ],
+        [
+          {
+            "string": [
+              8
+            ],
+            "unsigned": [
+              4
+            ]
+          }
+        ]
+      ],
+      {
+        "len": 4
+      }
+    ],
+    "scanners": [],
+    "parsed_value_representable": true
+  },
+  {
+    "name": "EmptyMapSchema",
+    "inputs": [
+      "{}"
+    ],
+    "schema": [
+      {}
+    ],
+    "scanners": [],
+    "parsed_value_representable": true
+  },
+  {
+    "name": "MapSchema",
+    "inputs": [
+      "{\"unsigned\":22,\"string\":\"string\",\"invalid\":null,\"null\":null,\"map\":{\"unsigned\":5,\"string\":\"str\"},\"array\":[-5]}"
+    ],
+    "schema": [
+      {
+        "array": [
+          [
+            [
+              4
+            ]
+          ],
+          {
+            "len": 1
+          }
+        ],
+        "invalid": [
+          0
+        ],
+        "map": [
+          {
+            "unsigned": [
+              4
+            ],
+            "string": [
+              8
+            ]
+          }
+        ],
+        "null": [
+          1
+        ],
+        "string": [
+          8
+        ],
+        "unsigned": [
+          4
+        ]
+      }
+    ],
+    "scanners": [],
+    "unknown_paths": [
+      [
+        "invalid"
+      ]
+    ],
+    "parsed_value_representable": false
+  },
+  {
+    "name": "DepthLimit",
+    "inputs": [
+      "[[[[[[[[[[[[[[[[[[[[[[[[[[[[[]]]]]]]]]]]]]]]]]]]]]]]]]]]]]"
+    ],
+    "schema": [
+      [
+        [
+          [
+            [
+              [
+                [
+                  [
+                    [
+                      [
+                        [
+                          [
+                            [
+                              [
+                                [
+                                  [
+                                    [
+                                      [
+                                        [
+                                          [
+                                            [
+                                              [
+                                                [
+                                                  [
+                                                    [
+                                                      [
+                                                        [
+                                                          [
+                                                            [
+                                                              [
+                                                                [
+                                                                  [
+                                                                    [
+                                                                      [
+                                                                        [
+                                                                          [],
+                                                                          {
+                                                                            "len": 1
+                                                                          }
+                                                                        ]
+                                                                      ],
+                                                                      {
+                                                                        "len": 1
+                                                                      }
+                                                                    ]
+                                                                  ],
+                                                                  {
+                                                                    "len": 1
+                                                                  }
+                                                                ]
+                                                              ],
+                                                              {
+                                                                "len": 1
+                                                              }
+                                                            ]
+                                                          ],
+                                                          {
+                                                            "len": 1
+                                                          }
+                                                        ]
+                                                      ],
+                                                      {
+                                                        "len": 1
+                                                      }
+                                                    ]
+                                                  ],
+                                                  {
+                                                    "len": 1
+                                                  }
+                                                ]
+                                              ],
+                                              {
+                                                "len": 1
+                                              }
+                                            ]
+                                          ],
+                                          {
+                                            "len": 1
+                                          }
+                                        ]
+                                      ],
+                                      {
+                                        "len": 1
+                                      }
+                                    ]
+                                  ],
+                                  {
+                                    "len": 1
+                                  }
+                                ]
+                              ],
+                              {
+                                "len": 1
+                              }
+                            ]
+                          ],
+                          {
+                            "len": 1
+                          }
+                        ]
+                      ],
+                      {
+                        "len": 1
+                      }
+                    ]
+                  ],
+                  {
+                    "len": 1
+                  }
+                ]
+              ],
+              {
+                "len": 1
+              }
+            ]
+          ],
+          {
+            "len": 1
+          }
+        ]
+      ],
+      {
+        "len": 1
+      }
+    ],
+    "scanners": [],
+    "parsed_value_representable": true
+  },
+  {
+    "name": "ArrayNodesLimit",
+    "inputs": [
+      "[[], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], []]"
+    ],
+    "schema": [
+      [
+        [
+          [],
+          {
+            "len": 0
+          }
+        ]
+      ],
+      {
+        "len": 20,
+        "truncated": true
+      }
+    ],
+    "scanners": [],
+    "parsed_value_representable": true
+  },
+  {
+    "name": "RecordNodesLimit",
+    "inputs": [
+      "{\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[],\"child\":[]}"
+    ],
+    "schema": [
+      {
+        "child": [
+          [],
+          {
+            "len": 0
+          }
+        ]
+      },
+      {
+        "truncated": true
+      }
+    ],
+    "scanners": [],
+    "parsed_value_representable": false
+  },
+  {
+    "name": "SchemaWithSingleScanner",
+    "inputs": [
+      "\"string\""
+    ],
+    "schema": [
+      8,
+      {
+        "type": "PII",
+        "category": "IP"
+      }
+    ],
+    "scanners": [
+      {
+        "id": "0",
+        "key": null,
+        "value": "string",
+        "tags": {
+          "type": "PII",
+          "category": "IP"
+        }
+      }
+    ],
+    "parsed_value_representable": true
+  },
+  {
+    "name": "SchemaWithMultipleScanners",
+    "inputs": [
+      "\"string\""
+    ],
+    "schema": [
+      8,
+      {
+        "type": "PII",
+        "category": "second"
+      }
+    ],
+    "scanners": [
+      {
+        "id": "0",
+        "key": null,
+        "value": "strong",
+        "tags": {
+          "type": "PII",
+          "category": "first"
+        }
+      },
+      {
+        "id": "1",
+        "key": null,
+        "value": "string",
+        "tags": {
+          "type": "PII",
+          "category": "second"
+        }
+      },
+      {
+        "id": "2",
+        "key": null,
+        "value": "stng",
+        "tags": {
+          "type": "PII",
+          "category": "third"
+        }
+      }
+    ],
+    "parsed_value_representable": true
+  },
+  {
+    "name": "SchemaWithScannerNoMatch",
+    "inputs": [
+      "\"string\""
+    ],
+    "schema": [
+      8
+    ],
+    "scanners": [
+      {
+        "id": "0",
+        "key": null,
+        "value": "strong",
+        "tags": {
+          "type": "PII",
+          "category": "first"
+        }
+      },
+      {
+        "id": "1",
+        "key": null,
+        "value": "strange",
+        "tags": {
+          "type": "PII",
+          "category": "second"
+        }
+      },
+      {
+        "id": "2",
+        "key": null,
+        "value": "what",
+        "tags": {
+          "type": "PII",
+          "category": "third"
+        }
+      }
+    ],
+    "parsed_value_representable": true
+  },
+  {
+    "name": "SchemaWithScannerSingleValueNoKey",
+    "inputs": [
+      "\"string\""
+    ],
+    "schema": [
+      8
+    ],
+    "scanners": [
+      {
+        "id": "0",
+        "key": "string",
+        "value": "string",
+        "tags": {
+          "type": "PII",
+          "category": "IP"
+        }
+      }
+    ],
+    "parsed_value_representable": true
+  },
+  {
+    "name": "SchemaWithScannerArrayNoKey",
+    "inputs": [
+      "[\"string\"]"
+    ],
+    "schema": [
+      [
+        [
+          8
+        ]
+      ],
+      {
+        "len": 1
+      }
+    ],
+    "scanners": [
+      {
+        "id": "0",
+        "key": "string",
+        "value": "string",
+        "tags": {
+          "type": "PII",
+          "category": "IP"
+        }
+      }
+    ],
+    "parsed_value_representable": true
+  },
+  {
+    "name": "SchemaWithScannerArrayWithKey",
+    "inputs": [
+      "{\"string\":[\"string\"]}"
+    ],
+    "schema": [
+      {
+        "string": [
+          [
+            [
+              8,
+              {
+                "category": "IP",
+                "type": "PII"
+              }
+            ]
+          ],
+          {
+            "len": 1
+          }
+        ]
+      }
+    ],
+    "scanners": [
+      {
+        "id": "0",
+        "key": "string",
+        "value": "string",
+        "tags": {
+          "type": "PII",
+          "category": "IP"
+        }
+      }
+    ],
+    "parsed_value_representable": true
+  },
+  {
+    "name": "SchemaWithScannerNestedArrayWithKey",
+    "inputs": [
+      "{\"string\":[[\"string\"]]}"
+    ],
+    "schema": [
+      {
+        "string": [
+          [
+            [
+              [
+                [
+                  8,
+                  {
+                    "category": "IP",
+                    "type": "PII"
+                  }
+                ]
+              ],
+              {
+                "len": 1
+              }
+            ]
+          ],
+          {
+            "len": 1
+          }
+        ]
+      }
+    ],
+    "scanners": [
+      {
+        "id": "0",
+        "key": "string",
+        "value": "string",
+        "tags": {
+          "type": "PII",
+          "category": "IP"
+        }
+      }
+    ],
+    "parsed_value_representable": true
+  }
+]

@@ -1,0 +1,524 @@
+[
+  {
+    "name": "ParseNoGenerator",
+    "definitions": [
+      {
+        "id": "1"
+      }
+    ],
+    "diagnostics": {
+      "loaded": [],
+      "failed": [
+        "1"
+      ],
+      "skipped": [],
+      "errors": {
+        "missing key 'generator'": [
+          "1"
+        ]
+      },
+      "warnings": {}
+    }
+  },
+  {
+    "name": "ParseNoID",
+    "definitions": [
+      {}
+    ],
+    "diagnostics": {
+      "loaded": [],
+      "failed": [
+        "index:0"
+      ],
+      "skipped": [],
+      "errors": {
+        "missing key 'id'": [
+          "index:0"
+        ]
+      },
+      "warnings": {}
+    }
+  },
+  {
+    "name": "ParseNoParameters",
+    "definitions": [
+      {
+        "id": "1",
+        "generator": "extract_schema"
+      }
+    ],
+    "diagnostics": {
+      "loaded": [],
+      "failed": [
+        "1"
+      ],
+      "skipped": [],
+      "errors": {
+        "missing key 'parameters'": [
+          "1"
+        ]
+      },
+      "warnings": {}
+    }
+  },
+  {
+    "name": "ParseNoMappings",
+    "definitions": [
+      {
+        "id": "1",
+        "generator": "extract_schema",
+        "parameters": {}
+      }
+    ],
+    "diagnostics": {
+      "loaded": [],
+      "failed": [
+        "1"
+      ],
+      "skipped": [],
+      "errors": {
+        "missing key 'mappings'": [
+          "1"
+        ]
+      },
+      "warnings": {}
+    }
+  },
+  {
+    "name": "ParseEmptyMappings",
+    "definitions": [
+      {
+        "id": "1",
+        "generator": "extract_schema",
+        "parameters": {
+          "mappings": []
+        }
+      }
+    ],
+    "diagnostics": {
+      "loaded": [],
+      "failed": [
+        "1"
+      ],
+      "skipped": [],
+      "errors": {
+        "empty mappings": [
+          "1"
+        ]
+      },
+      "warnings": {}
+    }
+  },
+  {
+    "name": "ParseNoInput",
+    "definitions": [
+      {
+        "id": "1",
+        "generator": "extract_schema",
+        "parameters": {
+          "mappings": [
+            {}
+          ]
+        }
+      }
+    ],
+    "diagnostics": {
+      "loaded": [],
+      "failed": [
+        "1"
+      ],
+      "skipped": [],
+      "errors": {
+        "missing key 'inputs'": [
+          "1"
+        ]
+      },
+      "warnings": {}
+    }
+  },
+  {
+    "name": "ParseEmptyInput",
+    "definitions": [
+      {
+        "id": "1",
+        "generator": "extract_schema",
+        "parameters": {
+          "mappings": [
+            {
+              "inputs": [],
+              "output": "out"
+            }
+          ]
+        }
+      }
+    ],
+    "diagnostics": {
+      "loaded": [],
+      "failed": [
+        "1"
+      ],
+      "skipped": [],
+      "errors": {
+        "empty processor input mapping": [
+          "1"
+        ]
+      },
+      "warnings": {}
+    }
+  },
+  {
+    "name": "ParseNoOutput",
+    "definitions": [
+      {
+        "id": "1",
+        "generator": "extract_schema",
+        "parameters": {
+          "mappings": [
+            {
+              "inputs": [
+                {
+                  "address": "in"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ],
+    "diagnostics": {
+      "loaded": [],
+      "failed": [
+        "1"
+      ],
+      "skipped": [],
+      "errors": {
+        "missing key 'output'": [
+          "1"
+        ]
+      },
+      "warnings": {}
+    }
+  },
+  {
+    "name": "ParseUnknownGenerator",
+    "definitions": [
+      {
+        "id": "1",
+        "generator": "unknown",
+        "parameters": {
+          "mappings": [
+            {
+              "inputs": [
+                {
+                  "address": "in"
+                }
+              ],
+              "output": "out"
+            }
+          ]
+        }
+      }
+    ],
+    "diagnostics": {
+      "loaded": [],
+      "failed": [
+        "1"
+      ],
+      "skipped": [],
+      "errors": {},
+      "warnings": {
+        "unknown generator: 'unknown'": [
+          "1"
+        ]
+      }
+    }
+  },
+  {
+    "name": "ParseUseless",
+    "definitions": [
+      {
+        "id": "1",
+        "generator": "extract_schema",
+        "parameters": {
+          "mappings": [
+            {
+              "inputs": [
+                {
+                  "address": "in"
+                }
+              ],
+              "output": "out"
+            }
+          ]
+        },
+        "evaluate": false,
+        "output": false
+      }
+    ],
+    "diagnostics": {
+      "loaded": [],
+      "failed": [
+        "1"
+      ],
+      "skipped": [],
+      "errors": {
+        "processor not used for evaluation or output": [
+          "1"
+        ]
+      },
+      "warnings": {}
+    }
+  },
+  {
+    "name": "ParsePreprocessor",
+    "definitions": [
+      {
+        "id": "1",
+        "generator": "extract_schema",
+        "parameters": {
+          "mappings": [
+            {
+              "inputs": [
+                {
+                  "address": "in"
+                }
+              ],
+              "output": "out"
+            }
+          ]
+        },
+        "evaluate": true,
+        "output": false
+      }
+    ],
+    "diagnostics": {
+      "loaded": [
+        "1"
+      ],
+      "failed": [],
+      "skipped": [],
+      "errors": {},
+      "warnings": {}
+    }
+  },
+  {
+    "name": "ParsePreprocessorWithOutput",
+    "definitions": [
+      {
+        "id": "1",
+        "generator": "extract_schema",
+        "parameters": {
+          "mappings": [
+            {
+              "inputs": [
+                {
+                  "address": "in"
+                }
+              ],
+              "output": "out"
+            }
+          ]
+        },
+        "evaluate": true,
+        "output": true
+      }
+    ],
+    "diagnostics": {
+      "loaded": [
+        "1"
+      ],
+      "failed": [],
+      "skipped": [],
+      "errors": {},
+      "warnings": {}
+    }
+  },
+  {
+    "name": "ParsePostprocessor",
+    "definitions": [
+      {
+        "id": "1",
+        "generator": "extract_schema",
+        "parameters": {
+          "mappings": [
+            {
+              "inputs": [
+                {
+                  "address": "in"
+                }
+              ],
+              "output": "out"
+            }
+          ]
+        },
+        "evaluate": false,
+        "output": true
+      }
+    ],
+    "diagnostics": {
+      "loaded": [
+        "1"
+      ],
+      "failed": [],
+      "skipped": [],
+      "errors": {},
+      "warnings": {}
+    }
+  },
+  {
+    "name": "ParseDuplicate",
+    "definitions": [
+      {
+        "id": "1",
+        "generator": "extract_schema",
+        "parameters": {
+          "mappings": [
+            {
+              "inputs": [
+                {
+                  "address": "in"
+                }
+              ],
+              "output": "out"
+            }
+          ]
+        },
+        "evaluate": false,
+        "output": true
+      },
+      {
+        "id": "1",
+        "generator": "extract_schema",
+        "parameters": {
+          "mappings": [
+            {
+              "inputs": [
+                {
+                  "address": "in"
+                }
+              ],
+              "output": "out"
+            }
+          ]
+        },
+        "evaluate": true,
+        "output": false
+      }
+    ],
+    "diagnostics": {
+      "loaded": [
+        "1"
+      ],
+      "failed": [
+        "1"
+      ],
+      "skipped": [],
+      "errors": {
+        "duplicate processor": [
+          "1"
+        ]
+      },
+      "warnings": {}
+    }
+  },
+  {
+    "name": "IncompatibleMinVersion",
+    "definitions": [
+      {
+        "id": "1",
+        "generator": "extract_schema",
+        "parameters": {
+          "mappings": [
+            {
+              "inputs": [
+                {
+                  "address": "in"
+                }
+              ],
+              "output": "out"
+            }
+          ]
+        },
+        "min_version": "99.0.0",
+        "evaluate": false,
+        "output": true
+      }
+    ],
+    "diagnostics": {
+      "loaded": [],
+      "failed": [],
+      "skipped": [
+        "1"
+      ],
+      "errors": {},
+      "warnings": {}
+    }
+  },
+  {
+    "name": "IncompatibleMaxVersion",
+    "definitions": [
+      {
+        "id": "1",
+        "generator": "extract_schema",
+        "parameters": {
+          "mappings": [
+            {
+              "inputs": [
+                {
+                  "address": "in"
+                }
+              ],
+              "output": "out"
+            }
+          ]
+        },
+        "max_version": "0.0.99",
+        "evaluate": false,
+        "output": true
+      }
+    ],
+    "diagnostics": {
+      "loaded": [],
+      "failed": [],
+      "skipped": [
+        "1"
+      ],
+      "errors": {},
+      "warnings": {}
+    }
+  },
+  {
+    "name": "CompatibleVersion",
+    "definitions": [
+      {
+        "id": "1",
+        "generator": "extract_schema",
+        "parameters": {
+          "mappings": [
+            {
+              "inputs": [
+                {
+                  "address": "in"
+                }
+              ],
+              "output": "out"
+            }
+          ]
+        },
+        "min_version": "0.0.99",
+        "max_version": "99.0.0",
+        "evaluate": false,
+        "output": true
+      }
+    ],
+    "diagnostics": {
+      "loaded": [
+        "1"
+      ],
+      "failed": [],
+      "skipped": [],
+      "errors": {},
+      "warnings": {}
+    }
+  }
+]
