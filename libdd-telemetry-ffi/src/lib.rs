@@ -128,6 +128,90 @@ mod tests {
 
     /// Spins up a worker backed by a file:// endpoint, returns (handle, temp_file).
     /// The caller is responsible for stopping the worker and reading the file.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_new_message_kinds_end_to_end() {
+        use libdd_telemetry::data::{ConfigurationOrigin, Method};
+        unsafe {
+            let (handle, f) = start_file_backed_worker();
+
+            ddog_telemetry_handle_add_config(
+                &handle,
+                ffi::CharSlice::from("DD_TRACE_ENABLED"),
+                ffi::CharSlice::from("true"),
+                ConfigurationOrigin::EnvVar,
+                ffi::CharSlice::from(""),
+                ffi::Option::Some(3),
+            )
+            .unwrap_none();
+            ddog_telemetry_handle_add_product_change(
+                &handle,
+                ffi::CharSlice::from("appsec"),
+                true,
+                ffi::CharSlice::from("1.0"),
+            )
+            .unwrap_none();
+            let req = [ffi::CharSlice::from("application/json")];
+            let codes = [200u32, 404];
+            ddog_telemetry_handle_add_endpoint(
+                &handle,
+                ffi::Option::Some(Method::Get),
+                ffi::CharSlice::from("/users"),
+                ffi::CharSlice::from("http.request"),
+                ffi::CharSlice::from("GET /users"),
+                ffi::Slice::from(&req[..]),
+                ffi::Slice::empty(),
+                ffi::Slice::from(&codes[..]),
+            )
+            .unwrap_none();
+            ddog_telemetry_handle_flush_metrics(&handle).unwrap_none();
+            ddog_telemetry_handle_send_extended_heartbeat(&handle).unwrap_none();
+            ddog_telemetry_handle_flush_data(&handle).unwrap_none();
+
+            ddog_telemetry_handle_stop(&handle).unwrap_none();
+            ddog_telemetry_handle_wait_for_shutdown(handle);
+
+            let output = std::fs::read_to_string(f.path()).unwrap();
+            let conf = find_sub_payloads(&output, "app-client-configuration-change");
+            let c = conf
+                .iter()
+                .filter_map(|p| p["payload"]["configuration"].as_array())
+                .flatten()
+                .find(|c| c["name"] == "DD_TRACE_ENABLED")
+                .unwrap_or_else(|| panic!("config missing:\n{output}"));
+            assert_eq!(c["value"], "true");
+            assert_eq!(c["origin"], "env_var");
+            assert_eq!(c["seq_id"], 3);
+
+            let prod = find_sub_payloads(&output, "app-product-change");
+            assert!(
+                prod.iter()
+                    .any(|p| p["payload"]["products"]["appsec"]["enabled"] == true),
+                "product change missing:\n{output}"
+            );
+
+            let eps = find_sub_payloads(&output, "app-endpoints");
+            let e = eps
+                .iter()
+                .filter_map(|p| p["payload"]["endpoints"].as_array())
+                .flatten()
+                .find(|e| e["resource_name"] == "GET /users")
+                .unwrap_or_else(|| panic!("endpoint missing:\n{output}"));
+            assert_eq!(e["method"], "GET");
+            assert_eq!(e["path"], "/users");
+            assert_eq!(e["response_code"], serde_json::json!([200, 404]));
+            assert_eq!(
+                e["request_body_type"],
+                serde_json::json!(["application/json"])
+            );
+
+            assert!(
+                !find_sub_payloads(&output, "app-extended-heartbeat").is_empty(),
+                "extended heartbeat missing:\n{output}"
+            );
+        }
+    }
+
     unsafe fn start_file_backed_worker() -> (Box<TelemetryWorkerHandle>, tempfile::NamedTempFile) {
         unsafe {
             let mut builder: MaybeUninit<Box<TelemetryWorkerBuilder>> = MaybeUninit::uninit();

@@ -8,8 +8,12 @@ use libdd_capabilities_impl::NativeCapabilities;
 use libdd_common::tag::Tag;
 use libdd_common_ffi as ffi;
 use libdd_telemetry::{
-    data::metrics::{MetricNamespace, MetricType},
+    data::{
+        Configuration, ConfigurationOrigin, Endpoint, Method,
+        metrics::{MetricNamespace, MetricType},
+    },
     metrics::ContextKey,
+    worker::{LifecycleAction, TelemetryActions},
 };
 
 /// FFI-facing alias: the C ABI surface is native-only, so the worker handle is
@@ -76,6 +80,112 @@ pub unsafe extern "C" fn ddog_telemetry_handle_add_log(
         level,
         crate::try_c!(stack_trace.try_to_string_option()),
     ));
+    MaybeError::None
+}
+
+#[allow(clippy::missing_safety_doc)]
+#[unsafe(no_mangle)]
+/// * value: an empty slice is reported as a `null` value
+/// * config_id: an empty slice means no config id
+/// * seq_id: optional sequence id of the configuration entry
+pub unsafe extern "C" fn ddog_telemetry_handle_add_config(
+    handle: &TelemetryWorkerHandle,
+    name: ffi::CharSlice,
+    value: ffi::CharSlice,
+    origin: ConfigurationOrigin,
+    config_id: ffi::CharSlice,
+    seq_id: ffi::Option<u64>,
+) -> MaybeError {
+    let config = Configuration {
+        name: crate::try_c!(name.try_to_string()),
+        value: crate::try_c!(value.try_to_string_option()),
+        origin,
+        config_id: crate::try_c!(config_id.try_to_string_option()),
+        seq_id: seq_id.into(),
+    };
+    crate::try_c!(handle.try_send_msg(TelemetryActions::AddConfig(config)));
+    MaybeError::None
+}
+
+#[allow(clippy::missing_safety_doc)]
+#[unsafe(no_mangle)]
+/// * version: an empty slice means no version
+pub unsafe extern "C" fn ddog_telemetry_handle_add_product_change(
+    handle: &TelemetryWorkerHandle,
+    product: ffi::CharSlice,
+    enabled: bool,
+    version: ffi::CharSlice,
+) -> MaybeError {
+    let product = crate::try_c!(product.try_to_string());
+    let version = crate::try_c!(version.try_to_string_option());
+    crate::try_c!(handle.add_product_change(product, enabled, version));
+    MaybeError::None
+}
+
+#[allow(clippy::missing_safety_doc)]
+#[unsafe(no_mangle)]
+/// * path: an empty slice means no path
+/// * request_body_type, response_body_type, response_code: an empty slice means not set
+pub unsafe extern "C" fn ddog_telemetry_handle_add_endpoint(
+    handle: &TelemetryWorkerHandle,
+    method: ffi::Option<Method>,
+    path: ffi::CharSlice,
+    operation_name: ffi::CharSlice,
+    resource_name: ffi::CharSlice,
+    request_body_type: ffi::Slice<ffi::CharSlice>,
+    response_body_type: ffi::Slice<ffi::CharSlice>,
+    response_code: ffi::Slice<u32>,
+) -> MaybeError {
+    fn strings(s: ffi::Slice<ffi::CharSlice>) -> Result<Option<Vec<String>>, String> {
+        if s.is_empty() {
+            return Ok(None);
+        }
+        s.as_slice()
+            .iter()
+            .map(|c| c.try_to_string().map_err(|e| e.to_string()))
+            .collect::<Result<Vec<_>, _>>()
+            .map(Some)
+    }
+    let codes = response_code.as_slice();
+    let endpoint = Endpoint {
+        method: method.into(),
+        path: crate::try_c!(path.try_to_string_option()),
+        operation_name: crate::try_c!(operation_name.try_to_string()),
+        resource_name: crate::try_c!(resource_name.try_to_string()),
+        request_body_type: crate::try_c!(strings(request_body_type)),
+        response_body_type: crate::try_c!(strings(response_body_type)),
+        response_code: (!codes.is_empty()).then(|| codes.to_vec()),
+    };
+    crate::try_c!(handle.try_send_msg(TelemetryActions::AddEndpoint(endpoint)));
+    MaybeError::None
+}
+
+/// Flushes aggregated metrics into the pending payload queue
+#[unsafe(no_mangle)]
+pub extern "C" fn ddog_telemetry_handle_flush_metrics(
+    handle: &TelemetryWorkerHandle,
+) -> MaybeError {
+    crate::try_c!(handle.try_send_msg(TelemetryActions::Lifecycle(
+        LifecycleAction::FlushMetricAggr
+    )));
+    MaybeError::None
+}
+
+/// Sends all pending telemetry data
+#[unsafe(no_mangle)]
+pub extern "C" fn ddog_telemetry_handle_flush_data(handle: &TelemetryWorkerHandle) -> MaybeError {
+    crate::try_c!(handle.try_send_msg(TelemetryActions::Lifecycle(LifecycleAction::FlushData)));
+    MaybeError::None
+}
+
+/// Sends an app-extended-heartbeat message
+#[unsafe(no_mangle)]
+pub extern "C" fn ddog_telemetry_handle_send_extended_heartbeat(
+    handle: &TelemetryWorkerHandle,
+) -> MaybeError {
+    crate::try_c!(handle.try_send_msg(TelemetryActions::Lifecycle(
+        LifecycleAction::ExtendedHeartbeat
+    )));
     MaybeError::None
 }
 
