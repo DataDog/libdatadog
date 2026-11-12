@@ -146,6 +146,45 @@ fn a_url_that_is_neither_absolute_nor_a_path_is_rejected() {
     assert!(server.nothing_within(Duration::from_millis(200)));
 }
 
+// The two backends reject different malformed requests, so each gets its own test.
+#[cfg(not(feature = "reqwest-backend"))]
+#[test]
+fn a_malformed_absolute_url_is_an_invalid_argument() {
+    let server = spawn_tcp(respond_ok);
+    let client = server.cfg().build().expect("client");
+
+    let error = client
+        .send(&Req::get("http://exa mple/x"))
+        .err()
+        .expect("malformed url");
+
+    assert_eq!(
+        error.code,
+        HttpClientErrorCode::InvalidArgument,
+        "{}",
+        error.message
+    );
+}
+
+#[cfg(feature = "reqwest-backend")]
+#[test]
+fn an_invalid_multipart_content_type_is_an_invalid_argument() {
+    let server = spawn_tcp(respond_ok);
+    let client = server.cfg().build().expect("client");
+
+    let error = client
+        .send(&Req::post("/x").part(Part::new("p", b"v").content_type("not a mime")))
+        .err()
+        .expect("invalid content type");
+
+    assert_eq!(
+        error.code,
+        HttpClientErrorCode::InvalidArgument,
+        "{}",
+        error.message
+    );
+}
+
 #[test]
 fn default_headers_are_sent_with_every_request() {
     let server = spawn_tcp(respond_ok);

@@ -1,7 +1,8 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::error::HttpClientError;
+use crate::error::{HttpClientError, HttpClientErrorCode};
+use crate::gen_error;
 use libdd_common_ffi::slice::{AsBytes, ByteSlice};
 use libdd_common_ffi::{CharSlice, Slice};
 use libdd_http_client::MultipartPart as InnerPart;
@@ -76,66 +77,55 @@ pub struct HttpRequest<'a> {
 }
 
 /// Reads a string argument without panicking on a malformed slice.
-pub(crate) fn str_arg<'a>(slice: CharSlice<'a>, name: &str) -> Result<&'a str, HttpClientError> {
-    let bytes = slice.try_as_bytes().map_err(|e| {
-        HttpClientError::invalid_argument(format!("{name} is not a valid slice: {e:?}"))
-    })?;
-    core::str::from_utf8(bytes)
-        .map_err(|_| HttpClientError::invalid_argument(format!("{name} is not valid UTF-8")))
+pub(crate) fn str_arg(slice: CharSlice<'_>) -> Result<&str, Option<Box<HttpClientError>>> {
+    let bytes = slice
+        .try_as_bytes()
+        .map_err(|_| gen_error!(HttpClientErrorCode::InvalidArgument))?;
+    core::str::from_utf8(bytes).map_err(|_| gen_error!(HttpClientErrorCode::InvalidArgument))
 }
 
-pub(crate) fn bytes_arg<'a>(slice: ByteSlice<'a>, name: &str) -> Result<&'a [u8], HttpClientError> {
-    slice.try_as_bytes().map_err(|e| {
-        HttpClientError::invalid_argument(format!("{name} is not a valid slice: {e:?}"))
-    })
+pub(crate) fn bytes_arg(slice: ByteSlice<'_>) -> Result<&[u8], Option<Box<HttpClientError>>> {
+    slice
+        .try_as_bytes()
+        .map_err(|_| gen_error!(HttpClientErrorCode::InvalidArgument))
 }
 
 /// Header names must be HTTP tokens and values free of control characters.
 pub(crate) fn headers_arg(
     headers: Slice<'_, HttpHeader<'_>>,
-    name: &str,
-) -> Result<Vec<(String, String)>, HttpClientError> {
-    let headers = headers.try_as_slice().map_err(|e| {
-        HttpClientError::invalid_argument(format!("{name} is not a valid slice: {e:?}"))
-    })?;
+) -> Result<Vec<(String, String)>, Option<Box<HttpClientError>>> {
+    let headers = headers
+        .try_as_slice()
+        .map_err(|_| gen_error!(HttpClientErrorCode::InvalidArgument))?;
     headers
         .iter()
         .map(|header| {
-            let header_name = str_arg(header.name, "header name")?;
-            let header_value = str_arg(header.value, "header value")?;
-            if !is_valid_header_name(header_name) {
-                return Err(HttpClientError::invalid_argument(format!(
-                    "invalid header name {header_name:?}"
-                )));
+            let name = str_arg(header.name)?;
+            let value = str_arg(header.value)?;
+            if !is_valid_header_name(name) || !is_valid_header_value(value) {
+                return Err(gen_error!(HttpClientErrorCode::InvalidArgument));
             }
-            if !is_valid_header_value(header_value) {
-                return Err(HttpClientError::invalid_argument(format!(
-                    "invalid value for header {header_name:?}"
-                )));
-            }
-            Ok((header_name.to_owned(), header_value.to_owned()))
+            Ok((name.to_owned(), value.to_owned()))
         })
         .collect()
 }
 
 pub(crate) fn parts_arg(
     parts: Slice<'_, HttpMultipartPart<'_>>,
-) -> Result<Vec<InnerPart>, HttpClientError> {
-    let parts = parts.try_as_slice().map_err(|e| {
-        HttpClientError::invalid_argument(format!("multipart is not a valid slice: {e:?}"))
-    })?;
+) -> Result<Vec<InnerPart>, Option<Box<HttpClientError>>> {
+    let parts = parts
+        .try_as_slice()
+        .map_err(|_| gen_error!(HttpClientErrorCode::InvalidArgument))?;
     parts
         .iter()
         .map(|part| {
-            let name = str_arg(part.name, "multipart part name")?;
+            let name = str_arg(part.name)?;
             if name.is_empty() {
-                return Err(HttpClientError::invalid_argument(
-                    "a multipart part needs a name",
-                ));
+                return Err(gen_error!(HttpClientErrorCode::InvalidArgument));
             }
-            let data = bytes_arg(part.data, "multipart part data")?;
-            let filename = str_arg(part.filename, "multipart part filename")?;
-            let content_type = str_arg(part.content_type, "multipart part content_type")?;
+            let data = bytes_arg(part.data)?;
+            let filename = str_arg(part.filename)?;
+            let content_type = str_arg(part.content_type)?;
             let mut inner = InnerPart::new(name, data.to_vec());
             if !filename.is_empty() {
                 inner = inner.with_filename(filename);

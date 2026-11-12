@@ -11,9 +11,8 @@ static int consume_error(ddog_HttpClientError *error, const char *what) {
     fprintf(stderr, "%s: expected an error\n", what);
     return -1;
   }
-  ddog_HttpClientErrorCode code = ddog_http_client_error_code(error);
-  ddog_CharSlice message = ddog_http_client_error_message(error);
-  printf("%s: %.*s\n", what, (int)message.len, message.ptr);
+  ddog_HttpClientErrorCode code = error->code;
+  printf("%s: %s\n", what, error->message);
   ddog_http_client_error_free(error);
   return (int)code;
 }
