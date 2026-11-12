@@ -9,7 +9,7 @@ variables:
   BASE_CI_IMAGE: registry.ddbuild.io/ci/benchmarking-platform:libdatadog-benchmarks@sha256:941d9b580302c07194e9bd2141d5f47c6cfb97d5a73c8ce9af2fce7a76034a0b
 
   # To bump: get commit sha from repo: https://gitlab.ddbuild.io/DataDog/benchmarking-platform branch: libdatadog/benchmarks
-  BENCHMARKING_PLATFORM_SHA: "1d6ed8466bbe6e8fca75f899a7ec3bdc3003ce4e"
+  BENCHMARKING_PLATFORM_SHA: "eb17f69c717b5a252a9343316b31193f671a8389"
 
 include:
   - local: .gitlab/impacted-crates.yml
