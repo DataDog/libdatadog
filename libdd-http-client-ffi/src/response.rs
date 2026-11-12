@@ -116,7 +116,7 @@ pub unsafe extern "C" fn ddog_http_response_header_get(
     catch_panic!(
         {
             let response = unsafe { response.as_ref() };
-            match (response, str_arg(name, "name")) {
+            match (response, str_arg(name)) {
                 (Some(response), Ok(name)) => response
                     .inner
                     .headers()

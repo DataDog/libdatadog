@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::catch_panic;
-use libdd_common_ffi::CharSlice;
-use libdd_http_client::HttpClientError as InnerError;
+use libdd_http_client::HttpClientError as UpstreamError;
+use std::ffi::{CString, c_char};
+use std::fmt::{self, Display, Formatter};
 
 /// Why a call failed.
 #[repr(C)]
@@ -28,99 +29,73 @@ pub enum HttpClientErrorCode {
     Panic,
 }
 
+impl Display for HttpClientErrorCode {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidArgument => f.write_str("Invalid argument provided"),
+            Self::InvalidConfig => f.write_str("Invalid client configuration"),
+            Self::ConnectionFailed => f.write_str("Connection failed"),
+            Self::TimedOut => f.write_str("Operation timed out"),
+            Self::Cancelled => f.write_str("Operation cancelled"),
+            Self::Io => f.write_str("Input/Output error"),
+            Self::Runtime => f.write_str("Runtime error"),
+            #[cfg(feature = "catch_panic")]
+            Self::Panic => f.write_str("Panic caught at the FFI boundary"),
+        }
+    }
+}
+
 /// Error of a fallible call, where `NULL` means success. Release it with
 /// [`ddog_http_client_error_free`].
+#[repr(C)]
 #[derive(Debug)]
 pub struct HttpClientError {
-    code: HttpClientErrorCode,
-    message: String,
+    pub code: HttpClientErrorCode,
+    pub message: *mut c_char,
 }
 
 impl HttpClientError {
-    pub(crate) fn new(code: HttpClientErrorCode, message: impl Into<String>) -> Self {
+    pub(crate) fn new(code: HttpClientErrorCode, message: &str) -> Self {
         Self {
             code,
-            message: message.into(),
+            message: CString::new(message).unwrap_or_default().into_raw(),
         }
     }
+}
 
-    pub(crate) fn invalid_argument(message: impl Into<String>) -> Self {
-        Self::new(HttpClientErrorCode::InvalidArgument, message)
-    }
-
-    pub(crate) fn invalid_config(message: impl Into<String>) -> Self {
-        Self::new(HttpClientErrorCode::InvalidConfig, message)
-    }
-
-    pub(crate) fn from_build(error: InnerError) -> Self {
-        Self::from_inner(error, HttpClientErrorCode::InvalidConfig)
-    }
-
-    /// When sending, an invalid configuration can only come from the request.
-    pub(crate) fn from_send(error: InnerError) -> Self {
-        Self::from_inner(error, HttpClientErrorCode::InvalidArgument)
-    }
-
-    fn from_inner(error: InnerError, invalid_config_code: HttpClientErrorCode) -> Self {
-        match error {
-            InnerError::ConnectionFailed(message) => {
-                Self::new(HttpClientErrorCode::ConnectionFailed, message)
+impl Drop for HttpClientError {
+    fn drop(&mut self) {
+        if !self.message.is_null() {
+            // SAFETY: `the caller must ensure that `HttpClientError` has been created through its
+            // `new` method which ensures that `msg` property is originated from
+            // `Cstring::into_raw` call. Any other possibility could lead to UB.
+            unsafe {
+                drop(CString::from_raw(self.message));
+                self.message = std::ptr::null_mut();
             }
-            InnerError::TimedOut => Self::new(HttpClientErrorCode::TimedOut, "request timed out"),
-            InnerError::InvalidConfig(message) => Self::new(invalid_config_code, message),
-            InnerError::IoError(message) => Self::new(HttpClientErrorCode::Io, message),
-            // Unreachable: HTTP errors are returned as responses.
-            InnerError::RequestFailed { status, body } => Self::new(
+        }
+    }
+}
+
+impl From<UpstreamError> for HttpClientError {
+    fn from(value: UpstreamError) -> Self {
+        match value {
+            UpstreamError::ConnectionFailed(message) => {
+                Self::new(HttpClientErrorCode::ConnectionFailed, &message)
+            }
+            UpstreamError::TimedOut => {
+                Self::new(HttpClientErrorCode::TimedOut, "request timed out")
+            }
+            UpstreamError::InvalidConfig(message) => {
+                Self::new(HttpClientErrorCode::InvalidConfig, &message)
+            }
+            UpstreamError::IoError(message) => Self::new(HttpClientErrorCode::Io, &message),
+            UpstreamError::RequestFailed { status, body } => Self::new(
                 HttpClientErrorCode::Io,
-                format!("unexpected HTTP error status {status}: {body}"),
+                &format!("unexpected HTTP error status {status}: {body}"),
             ),
         }
     }
-}
-
-#[cfg(feature = "catch_panic")]
-#[allow(dead_code)] // unused with `panic = "abort"`
-pub(crate) fn panic_error() -> Option<Box<HttpClientError>> {
-    Some(Box::new(HttpClientError::new(
-        HttpClientErrorCode::Panic,
-        "panic",
-    )))
-}
-
-/// Returns the code of an error.
-///
-/// # Safety
-///
-/// `error` must be a live error pointer.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_http_client_error_code(
-    error: *const HttpClientError,
-) -> HttpClientErrorCode {
-    catch_panic!(
-        match unsafe { error.as_ref() } {
-            Some(error) => error.code,
-            None => HttpClientErrorCode::InvalidArgument,
-        },
-        HttpClientErrorCode::Runtime
-    )
-}
-
-/// Returns the message of an error, valid until the error is freed.
-///
-/// # Safety
-///
-/// `error` must be a live error pointer.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_http_client_error_message(
-    error: *const HttpClientError,
-) -> CharSlice<'static> {
-    catch_panic!(
-        match unsafe { error.as_ref() } {
-            Some(error) => CharSlice::from(error.message.as_str()),
-            None => CharSlice::default(),
-        },
-        CharSlice::default()
-    )
 }
 
 /// Frees an error. Passing `NULL` is a no-op.
@@ -131,4 +106,20 @@ pub unsafe extern "C" fn ddog_http_client_error_message(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_http_client_error_free(error: Option<Box<HttpClientError>>) {
     catch_panic!(drop(error), ())
+}
+
+#[cfg(all(test, feature = "catch_panic"))]
+mod tests {
+    use super::*;
+    use crate::gen_error;
+    use std::ffi::CStr;
+
+    #[test]
+    fn gen_error_uses_the_description_of_the_code() {
+        let error = gen_error!(HttpClientErrorCode::Panic).expect("an error");
+
+        assert_eq!(error.code, HttpClientErrorCode::Panic);
+        let message = unsafe { CStr::from_ptr(error.message) };
+        assert_eq!(message.to_str(), Ok("Panic caught at the FFI boundary"));
+    }
 }

@@ -76,14 +76,12 @@ fn new_rejects_a_null_out_pointer() {
 fn new_rejects_an_empty_base_url() {
     let error = expect_error(Cfg::new("").build());
     assert_eq!(error.code, HttpClientErrorCode::InvalidConfig);
-    assert!(error.message.contains("base_url"), "{}", error.message);
 }
 
 #[test]
 fn new_rejects_a_zero_timeout() {
     let error = expect_error(Cfg::new("http://localhost").timeout_ms(0).build());
     assert_eq!(error.code, HttpClientErrorCode::InvalidConfig);
-    assert!(error.message.contains("timeout"), "{}", error.message);
 }
 
 #[test]

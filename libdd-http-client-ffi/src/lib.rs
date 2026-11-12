@@ -47,4 +47,11 @@ macro_rules! catch_panic {
     };
 }
 
+macro_rules! gen_error {
+    ($l:expr) => {
+        Some(Box::new(HttpClientError::new($l, &$l.to_string())))
+    };
+}
+
 pub(crate) use catch_panic;
+pub(crate) use gen_error;

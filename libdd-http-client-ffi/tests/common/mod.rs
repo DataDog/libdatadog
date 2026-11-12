@@ -9,6 +9,7 @@ use libdd_common_ffi::slice::{AsBytes, ByteSlice};
 use libdd_common_ffi::{CharSlice, Slice};
 use libdd_http_client_ffi::*;
 use libdd_shared_runtime::ForkSafeRuntime;
+use std::ffi::CStr;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener};
 use std::ptr::{null, null_mut};
@@ -26,14 +27,12 @@ pub struct FfiError {
 
 pub fn take_error(error: Option<Box<HttpClientError>>) -> Result<(), FfiError> {
     let Some(error) = error else { return Ok(()) };
-    let raw = Box::into_raw(error);
-    unsafe {
-        let code = ddog_http_client_error_code(raw);
-        let message =
-            String::from_utf8_lossy(ddog_http_client_error_message(raw).as_bytes()).into_owned();
-        ddog_http_client_error_free(Some(Box::from_raw(raw)));
-        Err(FfiError { code, message })
-    }
+    let code = error.code;
+    let message = unsafe { CStr::from_ptr(error.message) }
+        .to_string_lossy()
+        .into_owned();
+    unsafe { ddog_http_client_error_free(Some(error)) };
+    Err(FfiError { code, message })
 }
 
 #[derive(Clone, Debug)]
