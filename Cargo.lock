@@ -2783,7 +2783,6 @@ dependencies = [
  "bytes",
  "flate2",
  "httpmock",
- "libdd-common",
  "libdd-host-identity",
  "libdd-http-client",
  "rustls",
