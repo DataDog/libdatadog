@@ -174,6 +174,7 @@ jobs:
             # shellcheck disable=SC2086
             cargo nextest run --workspace $CRASHTRACKER_FEATURE --profile ci --verbose --no-tests=pass -E '!test(tracing_integration_tests::)'
             cargo nextest run -p libdd-http-client --no-default-features --features hyper-backend,hyper-proxy,https --profile ci --verbose
+            cargo nextest run -p libdd-http-client --no-default-features --features reqwest-backend,https --profile ci --verbose
             cargo nextest run -p libdd-otel-thread-ctx --no-default-features --features shared-context --profile ci --verbose --no-tests=pass
           else
             # shellcheck disable=SC2086
@@ -182,6 +183,7 @@ jobs:
             cargo nextest run $PACKAGES $CRASHTRACKER_FEATURE --profile ci --verbose --no-tests=pass -E '!test(tracing_integration_tests::)'
             if echo "$PACKAGES" | grep -q "libdd-http-client"; then
               cargo nextest run -p libdd-http-client --no-default-features --features hyper-backend,hyper-proxy,https --profile ci --verbose
+              cargo nextest run -p libdd-http-client --no-default-features --features reqwest-backend,https --profile ci --verbose
             fi
             if echo "$PACKAGES" | grep -q "libdd-otel-thread-ctx"; then
               # The `shared-context` ownership mode is mutually exclusive with the default

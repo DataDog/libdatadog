@@ -4,7 +4,7 @@ HTTP client library for use by external language libraries via FFI. Not intended
 
 ## Overview
 
-`libdd-http-client` provides a simple async HTTP client with connection pooling, configurable retry, and platform-specific transport support. It wraps reqwest behind a stable API surface designed for FFI consumption.
+`libdd-http-client` provides a simple async HTTP client with connection pooling, configurable retry, and platform-specific transport support. It offers a hyper backend (the default) and a reqwest backend behind a stable API surface designed for FFI consumption.
 
 ## Quick Start
 
@@ -19,10 +19,10 @@ let client = HttpClient::new(
 
 let request = HttpRequest::new(
     HttpMethod::Post,
-    "/v0.4/traces".to_owned(),
+    "http://localhost:8126/v0.4/traces".to_owned(),
 );
 let response = client.send(request).await?;
-println!("Status: {}", response.status_code);
+println!("Status: {}", response.status_code());
 ```
 
 ## Builder API
@@ -82,6 +82,21 @@ let retry = RetryConfig::new()
 
 Backoff doubles each attempt: 100ms, 200ms, 400ms, etc.
 
+## Redirects
+
+Redirects are not followed: a 3xx response is returned as it is. Following one resends the request,
+including its body and custom headers such as credentials, to the redirect target.
+
+```rust
+let client = HttpClient::builder()
+    .base_url("http://localhost:8126".to_owned())
+    .timeout(Duration::from_secs(5))
+    .follow_redirects(true) // reqwest backend only
+    .build()?;
+```
+
+With the hyper backend, `follow_redirects(true)` makes `build()` return `InvalidConfig`.
+
 ## Multipart Uploads
 
 Send multipart/form-data requests by adding parts to the request. Content-Type
@@ -108,14 +123,20 @@ Setting both multipart parts and a body on the same request returns an error.
 
 | Feature | Default | Description |
 |---------|---------|-------------|
-| `https` | yes | HTTPS via rustls with aws-lc-rs |
-| `reqwest-backend` | yes | reqwest-based HTTP backend with hickory-dns |
-| `hyper-backend` | no | Lighter hyper-based backend via libdd-common (smaller binary) |
+| `https` | yes | HTTPS via rustls with ring. The hyper backend installs the provider itself; with the reqwest backend, install one before building a client |
+| `hyper-backend` | yes | hyper-based backend via libdd-common, resolving names with the system resolver |
+| `reqwest-backend` | no | reqwest-based backend, resolving names with the in-process hickory-dns resolver |
+| `hyper-proxy` | no | Honor `HTTPS_PROXY`/`NO_PROXY` in the hyper backend |
 | `fips` | no | FIPS-compliant TLS via rustls without default crypto provider |
 
-Enable exactly one of `reqwest-backend` or `hyper-backend`. The hyper backend
-uses libdd-common's Connector infrastructure and produces smaller binaries at
-the cost of depending on libdd-common.
+Enable exactly one of `hyper-backend` or `reqwest-backend`. To use reqwest:
+
+```toml
+libdd-http-client = { version = "...", default-features = false, features = ["https", "reqwest-backend"] }
+```
+
+If both are enabled, reqwest is used, so adding `reqwest-backend` to the default features also
+selects it. The hyper backend does not pull reqwest into the build.
 
 ### FIPS TLS
 
