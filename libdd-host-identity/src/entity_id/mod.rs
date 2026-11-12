@@ -108,3 +108,38 @@ pub fn get_entity_headers() -> impl Iterator<Item = (&'static str, &'static str)
     .into_iter()
     .flatten()
 }
+
+/// Extension trait for request builders carrying entity-related headers, so callers can opt
+/// into them without their HTTP layer depending on this crate.
+pub trait EntityHeadersExt {
+    /// Appends the entity-related headers (`datadog-container-id`, `datadog-entity-id`,
+    /// `datadog-external-env`) to the builder, for each value that is available.
+    fn with_entity_headers(self) -> Self;
+}
+
+impl EntityHeadersExt for http::request::Builder {
+    fn with_entity_headers(self) -> Self {
+        get_entity_headers().fold(self, |builder, (name, value)| builder.header(name, value))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn builder_carries_available_entity_headers() {
+        let request = http::Request::builder()
+            .with_entity_headers()
+            .body(())
+            .expect("building a bodyless request cannot fail");
+
+        for (name, value) in get_entity_headers() {
+            assert_eq!(
+                request.headers().get(name),
+                Some(&http::HeaderValue::from_static(value)),
+                "header {name} should be set by with_entity_headers"
+            );
+        }
+    }
+}
