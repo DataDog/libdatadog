@@ -62,3 +62,22 @@ pub unsafe extern "C" fn ddog_http_cancel_token_cancel(
 pub unsafe extern "C" fn ddog_http_cancel_token_drop(token: Option<Box<HttpCancellationToken>>) {
     catch_panic!(drop(token), ())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cancelling_is_idempotent_and_reports_only_the_first_call() {
+        let token = ddog_http_cancel_token_new().expect("a token");
+
+        assert!(unsafe { ddog_http_cancel_token_cancel(&*token) });
+        assert!(!unsafe { ddog_http_cancel_token_cancel(&*token) });
+        assert!(!unsafe { ddog_http_cancel_token_cancel(&*token) });
+    }
+
+    #[test]
+    fn dropping_a_null_token_is_a_no_op() {
+        unsafe { ddog_http_cancel_token_drop(None) };
+    }
+}

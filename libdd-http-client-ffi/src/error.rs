@@ -108,18 +108,81 @@ pub unsafe extern "C" fn ddog_http_client_error_free(error: Option<Box<HttpClien
     catch_panic!(drop(error), ())
 }
 
-#[cfg(all(test, feature = "catch_panic"))]
+#[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gen_error;
     use std::ffi::CStr;
 
+    fn message(error: &HttpClientError) -> &str {
+        unsafe { CStr::from_ptr(error.message) }
+            .to_str()
+            .expect("a UTF-8 message")
+    }
+
+    #[cfg(feature = "catch_panic")]
     #[test]
     fn gen_error_uses_the_description_of_the_code() {
+        use crate::gen_error;
+
         let error = gen_error!(HttpClientErrorCode::Panic).expect("an error");
 
         assert_eq!(error.code, HttpClientErrorCode::Panic);
-        let message = unsafe { CStr::from_ptr(error.message) };
-        assert_eq!(message.to_str(), Ok("Panic caught at the FFI boundary"));
+        assert_eq!(message(&error), "Panic caught at the FFI boundary");
+    }
+
+    #[test]
+    fn upstream_errors_keep_their_message_and_get_a_code() {
+        for (upstream, code, text) in [
+            (
+                UpstreamError::ConnectionFailed("refused".to_owned()),
+                HttpClientErrorCode::ConnectionFailed,
+                "refused",
+            ),
+            (
+                UpstreamError::InvalidConfig("bad".to_owned()),
+                HttpClientErrorCode::InvalidConfig,
+                "bad",
+            ),
+            (
+                UpstreamError::IoError("broken pipe".to_owned()),
+                HttpClientErrorCode::Io,
+                "broken pipe",
+            ),
+        ] {
+            let error = HttpClientError::from(upstream);
+
+            assert_eq!(error.code, code);
+            assert_eq!(message(&error), text);
+        }
+    }
+
+    #[test]
+    fn an_upstream_timeout_is_a_timed_out_error() {
+        let error = HttpClientError::from(UpstreamError::TimedOut);
+
+        assert_eq!(error.code, HttpClientErrorCode::TimedOut);
+    }
+
+    #[test]
+    fn an_unexpected_http_status_is_an_io_error_naming_the_status() {
+        let error = HttpClientError::from(UpstreamError::RequestFailed {
+            status: 503,
+            body: "down".to_owned(),
+        });
+
+        assert_eq!(error.code, HttpClientErrorCode::Io);
+        assert!(message(&error).contains("503"), "{}", message(&error));
+    }
+
+    #[test]
+    fn a_message_with_an_interior_nul_becomes_empty() {
+        let error = HttpClientError::new(HttpClientErrorCode::Io, "a\0b");
+
+        assert_eq!(message(&error), "");
+    }
+
+    #[test]
+    fn freeing_a_null_error_is_a_no_op() {
+        unsafe { ddog_http_client_error_free(None) };
     }
 }
