@@ -3163,7 +3163,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-host-identity"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "indexmap 2.12.1",
  "libc",

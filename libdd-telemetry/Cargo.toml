@@ -95,7 +95,7 @@ bytes = { workspace = true, features = ["std"], optional = true }
 libdd-capabilities = { version = "4.0.1", path = "../libdd-capabilities", optional = true }
 libdd-common = { version = "9.0.0", path = "../libdd-common", default-features = false }
 libdd-env = { version = "0.1.0", path = "../libdd-env", optional = true }
-libdd-host-identity = { version = "0.1.0", path = "../libdd-host-identity", optional = true }
+libdd-host-identity = { version = "1.0.0", path = "../libdd-host-identity", optional = true }
 embedded-io = { workspace = true, optional = true }
 embedded-io-async = { workspace = true, optional = true }
 reqwless = { workspace = true, optional = true }

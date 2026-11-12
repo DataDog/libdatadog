@@ -3,17 +3,6 @@
 Host identity detection for Datadog libraries: what container, entity, and
 machine the current process runs as.
 
-## Modules
-
-- `entity_id`: container ID and entity ID from the cgroup file, plus the
-  `DD_EXTERNAL_ENV` admission-controller variable; `get_entity_headers()`
-  bundles all three into `datadog-container-id` / `datadog-entity-id` /
-  `datadog-external-env` header pairs.
-- `machine_id`: stable host machine ID as a hyphenated UUID, cached for the
-  process lifetime, mirroring `pkg/util/uuid.GetUUID()` in the Go agent.
-- `azure_app_services`: Azure App Services environment detection and the
-  metadata it reports.
-
 ## Example
 
 ```rust
