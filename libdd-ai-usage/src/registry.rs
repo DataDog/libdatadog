@@ -3,7 +3,11 @@
 
 //! The portable metric registry, the profile identity of a metric
 //! (`PORTABLE-METRICS.md#schema-version-on-points`), and checks of projected
-//! points against the registry.
+//! points against the registry. Test-only: it checks this crate against
+//! the specification's registry, and is no part of the crate's API.
+
+// The registry's whole schema is read, though the tests check only part of it.
+#![allow(dead_code, unreachable_pub)]
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -14,9 +18,7 @@ use serde_json::Value;
 use crate::deployment::Carrier;
 use crate::point::{ErrorCode, MetricError, MetricPoint, reject};
 
-/// The attribute that carries the profile identifier: on the OTLP scope, or
-/// on each point when the SDK cannot set scope attributes.
-pub const PROFILE_ATTRIBUTE: &str = "trajectory.profile";
+use crate::PROFILE_ATTRIBUTE;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Registry {

@@ -1,0 +1,31 @@
+{
+  "description": "A response.completed stream event nests the response, its usage and its tier.",
+  "format": "openai_responses",
+  "operation_name": "chat",
+  "payload": {
+    "type": "response.completed",
+    "sequence_number": 9,
+    "response": {
+      "model": "gpt-5-mini",
+      "service_tier": "priority",
+      "usage": {
+        "input_tokens": 40,
+        "output_tokens": 9,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        }
+      }
+    }
+  },
+  "expected": {
+    "usage": {
+      "input_tokens": 40,
+      "input_basis": "includes_cache",
+      "output_tokens": 9,
+      "output_basis": "includes_reasoning",
+      "reasoning_output_tokens": 0
+    },
+    "response_model": "gpt-5-mini",
+    "service_tier": "priority"
+  }
+}

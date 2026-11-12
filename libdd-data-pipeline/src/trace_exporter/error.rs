@@ -6,7 +6,7 @@ use crate::telemetry::error::TelemetryError;
 use crate::trace_exporter::msgpack_decoder::decode::error::DecodeError;
 use http::StatusCode;
 #[cfg(not(target_arch = "wasm32"))]
-use libdd_common::http_common;
+use libdd_networking::http_common;
 use rmp_serde::encode::Error as EncodeError;
 use std::error::Error;
 use std::fmt::{Debug, Display};

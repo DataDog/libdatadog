@@ -3018,3 +3018,52 @@ fn extend_path<T: AsRef<Path>>(parent: &Path, path: T) -> PathBuf {
     parent.push(path);
     parent
 }
+
+/// Verify that the receiver reads OTel thread contexts from all threads.
+#[test]
+#[cfg_attr(miri, ignore)]
+#[cfg(target_os = "linux")]
+fn test_crash_tracking_otel_thread_ctx() {
+    use bin_tests::modes::unix::test_022_otel_thread_ctx::{MAIN_SPAN_ID, MAIN_TRACE_ID};
+
+    let config = CrashTestConfig::new(
+        BuildProfile::Release,
+        TestMode::OtelThreadCtx,
+        CrashType::NullDeref,
+    );
+    let artifacts = StandardArtifacts::new(config.profile);
+    let artifacts_map = fetch_built_artifacts(&artifacts.as_slice()).unwrap();
+
+    let validator: ValidatorFn = Box::new(move |payload, _fixtures| {
+        let contexts = payload["experimental"]["otel_thread_contexts"]
+            .as_array()
+            .expect("experimental.otel_thread_contexts should be an array");
+        assert!(
+            contexts.len() >= 3,
+            "expected at least 3 OTel thread contexts (main + 2 workers), got {}",
+            contexts.len()
+        );
+
+        // Find the crashing thread's context by trace_id.
+        let main_ctx = contexts
+            .iter()
+            .find(|c| c["trace_id"].as_str() == Some(MAIN_TRACE_ID))
+            .expect("crashing thread context not found");
+        assert_eq!(main_ctx["span_id"].as_str(), Some(MAIN_SPAN_ID));
+        assert_eq!(main_ctx["trace_flags"].as_u64(), Some(0x01));
+
+        // Verify worker threads are present by their trace_ids.
+        let has_http = contexts
+            .iter()
+            .any(|c| c["trace_id"].as_str().is_some_and(|t| t.starts_with("aa")));
+        let has_db = contexts
+            .iter()
+            .any(|c| c["trace_id"].as_str().is_some_and(|t| t.starts_with("cc")));
+        assert!(has_http, "worker-http thread context not found");
+        assert!(has_db, "worker-db thread context not found");
+
+        Ok(())
+    });
+
+    run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
+}

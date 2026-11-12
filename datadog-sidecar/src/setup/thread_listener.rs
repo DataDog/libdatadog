@@ -381,6 +381,7 @@ fn run_listener(
         init_shm_eagerly: false,
         authorizer,
         drain_only_own_process: true,
+        enable_cdn_fetching: false,
     };
 
     let runtime = tokio::runtime::Builder::new_current_thread()

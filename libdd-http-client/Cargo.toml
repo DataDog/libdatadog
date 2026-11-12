@@ -15,14 +15,14 @@ bench = false
 [features]
 default = ["https", "reqwest-backend"]
 # Use rustls-no-provider to avoid reqwest forcing aws-lc-rs. Ring provider is
-# installed explicitly by libdd-common's connector init, or by this crate's own
-# TLS configuration when libdd-common is not in the dependency graph.
+# installed explicitly by libdd-networking's connector init, or by this crate's own
+# TLS configuration when libdd-networking is not in the dependency graph.
 # rustls-platform-verifier and the compromised-key distrust wrapper mirror
-# libdd-common's `connector::https::build_tls_config` (see src/tls.rs).
+# libdd-networking's `connector::https::build_tls_config` (see src/tls.rs).
 https = [
   "dep:reqwest",
   "reqwest?/rustls-no-provider",
-  "libdd-common?/https",
+  "libdd-networking?/https",
   "dep:rustls",
   "rustls?/ring",
   "rustls?/tls12",
@@ -31,20 +31,21 @@ https = [
 reqwest-backend = ["dep:reqwest", "reqwest?/hickory-dns", "reqwest?/multipart"]
 hyper-backend = [
     "dep:libdd-common",
-    "libdd-common/http-client",
+    "dep:libdd-networking",
+    "libdd-networking/http-client",
     "dep:hyper",
     "dep:hyper-util",
     "dep:http-body-util",
 ]
 # Honor HTTPS_PROXY/NO_PROXY environment variables in the hyper backend.
-hyper-proxy = ["hyper-backend", "libdd-common?/hyper-proxy"]
+hyper-proxy = ["hyper-backend", "libdd-networking?/hyper-proxy"]
 fips = [
   "dep:reqwest",
   "reqwest?/rustls-no-provider",
   "dep:rustls",
   "rustls?/aws-lc-rs",
   "rustls?/tls12",
-  "libdd-common?/fips",
+  "libdd-networking?/fips",
   "dep:rustls-platform-verifier",
 ]
 
@@ -57,6 +58,7 @@ reqwest = { workspace = true, optional = true }
 rustls = { workspace = true, optional = true }
 rustls-platform-verifier = { workspace = true, optional = true }
 libdd-common = { version = "9.0.0", path = "../libdd-common", default-features = false, features = ["std"], optional = true }
+libdd-networking = { path = "../libdd-networking", version = "1.0.0", default-features = false, optional = true }
 hyper = { workspace = true, optional = true, features = ["http1", "client"] }
 hyper-util = { workspace = true, optional = true, features = ["http1", "client", "client-legacy", "tokio"] }
 http-body-util = { workspace = true, optional = true }

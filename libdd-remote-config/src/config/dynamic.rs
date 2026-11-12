@@ -88,11 +88,12 @@ pub struct DynamicConfig {
     pub(crate) dynamic_instrumentation_enabled: Option<bool>,
     pub(crate) exception_replay_enabled: Option<bool>,
     pub(crate) code_origin_enabled: Option<bool>,
+    pub(crate) data_streams_enabled: Option<bool>,
 }
 
 impl From<DynamicConfig> for Vec<Configs> {
     fn from(value: DynamicConfig) -> Self {
-        let mut vec = Vec::with_capacity(9);
+        let mut vec = Vec::with_capacity(10);
         if let Some(tags) = value.tracing_header_tags {
             vec.push(Configs::TracingHeaderTags(
                 tags.into_iter().map(|t| (t.header, t.tag_name)).collect(),
@@ -122,6 +123,9 @@ impl From<DynamicConfig> for Vec<Configs> {
         if let Some(enabled) = value.code_origin_enabled {
             vec.push(Configs::CodeOriginEnabled(enabled));
         }
+        if let Some(enabled) = value.data_streams_enabled {
+            vec.push(Configs::DataStreamsEnabled(enabled));
+        }
         vec
     }
 }
@@ -137,6 +141,7 @@ pub enum Configs {
     DynamicInstrumentationEnabled(bool),
     ExceptionReplayEnabled(bool),
     CodeOriginEnabled(bool),
+    DataStreamsEnabled(bool),
 }
 
 pub fn parse_json(data: &[u8]) -> serde_json::error::Result<DynamicConfigFile> {
@@ -209,5 +214,66 @@ pub mod tests {
                 .iter()
                 .any(|c| matches!(c, Configs::TracingSamplingRules(_)))
         );
+    }
+
+    #[test]
+    fn data_streams_enabled_true_and_false_emit_variant() {
+        for expected in [true, false] {
+            let json = format!(
+                r#"{{"action": "", "lib_config": {{"data_streams_enabled": {expected}}}}}"#
+            );
+            let cfg = parse_json(json.as_bytes()).unwrap();
+            assert_eq!(cfg.lib_config.data_streams_enabled, Some(expected));
+            let configs: Vec<Configs> = cfg.lib_config.into();
+            assert_eq!(configs.len(), 1);
+            assert!(matches!(configs[0], Configs::DataStreamsEnabled(v) if v == expected));
+        }
+    }
+
+    #[test]
+    fn data_streams_enabled_absent_or_null_emits_no_variant() {
+        for lib_config in ["{}", r#"{"data_streams_enabled": null}"#] {
+            let json = format!(r#"{{"action": "", "lib_config": {lib_config}}}"#);
+            let cfg = parse_json(json.as_bytes()).unwrap();
+            assert!(cfg.lib_config.data_streams_enabled.is_none());
+            assert!(<Vec<Configs>>::from(cfg.lib_config).is_empty());
+        }
+    }
+
+    #[test]
+    fn data_streams_enabled_is_emitted_next_to_other_fields() {
+        let cfg = parse_json(
+            br#"{"action": "", "lib_config": {"tracing_enabled": true, "tracing_sampling_rate": 0.5, "data_streams_enabled": false}}"#,
+        )
+        .unwrap();
+        let configs: Vec<Configs> = cfg.lib_config.into();
+        assert_eq!(configs.len(), 3);
+        assert!(
+            configs
+                .iter()
+                .any(|c| matches!(c, Configs::TracingEnabled(true)))
+        );
+        assert!(
+            configs
+                .iter()
+                .any(|c| matches!(c, Configs::TracingSamplingRate(r) if *r == 0.5))
+        );
+        assert!(
+            configs
+                .iter()
+                .any(|c| matches!(c, Configs::DataStreamsEnabled(false)))
+        );
+    }
+
+    #[test]
+    fn data_streams_enabled_wrong_type_fails_the_whole_file() {
+        // Like every typed field in `DynamicConfig`, a value of the wrong type is a parse error
+        // for the whole file; it is not skipped.
+        for value in [r#""true""#, "1", "[]", "{}"] {
+            let json = format!(
+                r#"{{"action": "", "lib_config": {{"tracing_enabled": true, "data_streams_enabled": {value}}}}}"#
+            );
+            assert!(parse_json(json.as_bytes()).is_err(), "{value}");
+        }
     }
 }
