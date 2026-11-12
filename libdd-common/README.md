@@ -15,7 +15,6 @@ Common utilities and foundational components shared across Datadog telemetry lib
 ## Modules
 
 - `azure_app_services`: Azure App Services integration
-- `config`: Configuration utilities
 - `entity_id`: Container and entity ID detection
 - `error`: Common error types
 - `header`: Datadog HTTP headers

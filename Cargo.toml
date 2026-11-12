@@ -44,6 +44,7 @@ members = [
   "libdd-regex",
   "libdd-common",
   "libdd-common-ffi",
+  "libdd-env",
   "libdd-process-utils",
   "libdd-telemetry",
   "libdd-telemetry-ffi",

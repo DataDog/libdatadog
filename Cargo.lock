@@ -2864,6 +2864,7 @@ dependencies = [
  "http 1.1.0",
  "indexmap 2.12.1",
  "libc",
+ "libdd-env",
  "libdd-regex",
  "maplit",
  "proptest",
@@ -2908,6 +2909,7 @@ dependencies = [
  "libdd-capabilities",
  "libdd-capabilities-impl",
  "libdd-common",
+ "libdd-env",
  "libdd-gotter",
  "libdd-libunwind-sys",
  "libdd-networking",
@@ -3086,6 +3088,10 @@ dependencies = [
  "tokio",
  "tracing",
 ]
+
+[[package]]
+name = "libdd-env"
+version = "0.1.0"
 
 [[package]]
 name = "libdd-ffe"
@@ -3625,6 +3631,7 @@ dependencies = [
  "libdd-capabilities-impl",
  "libdd-common",
  "libdd-ddsketch",
+ "libdd-env",
  "libdd-networking",
  "libdd-shared-runtime",
  "reqwless",
@@ -3700,7 +3707,7 @@ dependencies = [
  "criterion",
  "duplicate",
  "fluent-uri",
- "libdd-common",
+ "libdd-env",
  "libdd-regex",
  "libdd-tinybytes",
  "libdd-trace-model",
