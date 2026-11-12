@@ -23,8 +23,7 @@ fn new_accepts_every_optional_setting() {
     assert!(client.is_ok(), "{:?}", client.err());
 }
 
-// Not run on reqwest, which panics without an installed crypto provider.
-#[cfg(all(feature = "https", not(feature = "reqwest-backend")))]
+#[cfg(feature = "https")]
 #[test]
 fn new_succeeds_for_an_https_base_url_without_a_preinstalled_crypto_provider() {
     let client = Cfg::new("https://localhost:8443").build();
