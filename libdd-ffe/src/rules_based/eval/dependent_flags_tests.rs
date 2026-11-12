@@ -214,6 +214,21 @@ fn dnf_expansion_memoizes_but_restores_exposure_eligibility_for_the_winning_rule
 }
 
 #[test]
+fn prerequisite_from_rejected_rule_is_not_exposed_by_later_rule_in_same_allocation() {
+    let mut root = flag(vec![]);
+    root["allocations"][0]["rules"] = json!([
+        {"conditions": [dependency("parent"), fails()]},
+        {"conditions": []}
+    ]);
+    let result = eval(wire(json!({"root": root, "parent": flag(vec![])})));
+    assert_eq!(result.result.unwrap().variation_key.as_str(), "on");
+    assert_eq!(result.evaluations.len(), 1);
+    assert_eq!(result.evaluations[0].flag_key.as_str(), "parent");
+    assert!(result.evaluations[0].result.is_ok());
+    assert!(!result.evaluations[0].exposure_eligible);
+}
+
+#[test]
 fn rejected_rules_retain_evaluations_without_exposures() {
     let result = eval(wire(
         json!({"root": flag(vec![dependency("parent"), fails()]), "parent": flag(vec![])}),
@@ -735,4 +750,145 @@ fn prerequisite_first_reached_in_rejected_allocation_is_exposed_once_by_later_al
     assert_eq!(r.result.unwrap().variation_key.as_str(), "on");
     assert_eq!(r.evaluations.len(), 1);
     assert!(r.evaluations[0].exposure_eligible);
+}
+
+// Build/parse outside the measured thread so this isolates evaluation, including
+// prerequisite error recording and destruction of the returned trace.
+#[test]
+fn deep_dependencies_use_a_bounded_thread_stack() {
+    for failure in [
+        None,
+        Some("depth"),
+        Some("missing"),
+        Some("disabled"),
+        Some("cycle"),
+        Some("depth-before-cycle"),
+    ] {
+        let edges = match failure {
+            Some("depth") => 256,
+            Some("cycle") => 254,
+            _ => 255,
+        };
+        let mut w = chain(edges);
+        w["evaluatorParams"] = json!({"maxDependencyDepth": 255});
+        match failure {
+            Some("missing") => {
+                w["flags"].as_object_mut().unwrap().remove("f255");
+            }
+            Some("disabled") => w["flags"]["f255"]["enabled"] = json!(false),
+            Some("cycle" | "depth-before-cycle") => {
+                w["flags"][format!("f{edges}")] = flag(vec![dependency("root")]);
+            }
+            _ => {}
+        }
+        let config = Configuration::from_server_response(
+            UniversalFlagConfig::from_json(serde_json::to_vec(&w).unwrap()).unwrap(),
+        );
+        std::thread::Builder::new()
+            .name("small-stack-dependencies".into())
+            .stack_size(64 * 1024)
+            .spawn(move || {
+                let context = EvaluationContext::new(Some("subject".into()), Default::default());
+                let now = "2026-10-28T00:00:00Z".parse::<DateTime<Utc>>().unwrap();
+                let trace = config.eval_flag_with_trace(
+                    "root",
+                    &context,
+                    ExpectedFlagType::Boolean,
+                    now,
+                    EvaluationOptions::default(),
+                );
+                if failure.is_none() {
+                    assert_eq!(trace.result.as_ref().unwrap().variation_key.as_str(), "on");
+                    assert_eq!(trace.evaluations.len(), 255);
+                    assert!(
+                        trace
+                            .evaluations
+                            .iter()
+                            .all(|record| record.exposure_eligible)
+                    );
+                } else {
+                    let expected = match failure {
+                        Some("missing") => EvaluationError::FlagUnrecognizedOrDisabled,
+                        Some("disabled") => EvaluationError::FlagDisabled,
+                        Some("cycle") => EvaluationError::DependencyCycle,
+                        // At edge 256 the depth check takes precedence over cycle detection.
+                        _ => EvaluationError::DependencyDepthExceeded,
+                    };
+                    let original = trace.result.as_ref().unwrap_err();
+                    let cloned = original.clone();
+                    assert_eq!(&cloned, original);
+                    assert!(!format!("{cloned:?}").is_empty());
+                    let encoded = serde_json::to_vec(&cloned).unwrap();
+                    let decoded: EvaluationError = serde_json::from_slice(&encoded).unwrap();
+                    assert_eq!(&decoded, original);
+                    let binary = bincode::serialize(&cloned).unwrap();
+                    let decoded: EvaluationError = bincode::deserialize(&binary).unwrap();
+                    assert_eq!(&decoded, original);
+                    let message = original.to_string();
+                    let mut expected_message: String = (1..=edges)
+                        .map(|n| format!("prerequisite f{n} failed: "))
+                        .collect();
+                    if matches!(failure, Some("cycle" | "depth-before-cycle")) {
+                        expected_message.push_str("prerequisite root failed: ");
+                    }
+                    expected_message.push_str(&expected.to_string());
+                    assert_eq!(message, expected_message);
+                    let mut error = trace.result.as_ref().unwrap_err();
+                    while let EvaluationError::DependencyEvaluationFailed { source, .. } = error {
+                        error = source;
+                    }
+                    assert_eq!(error, &expected);
+                    assert_eq!(trace.evaluations.len(), edges);
+                    assert!(
+                        trace
+                            .evaluations
+                            .iter()
+                            .all(|record| !record.exposure_eligible)
+                    );
+                }
+                for (record, n) in trace.evaluations.iter().zip((1..=edges).rev()) {
+                    assert_eq!(record.flag_key.as_str(), format!("f{n}"));
+                    let mut error = record.result.as_ref().err();
+                    let mut next = n + 1;
+                    while let Some(EvaluationError::DependencyEvaluationFailed {
+                        flag_key,
+                        source,
+                    }) = error
+                    {
+                        assert_eq!(
+                            flag_key.as_str(),
+                            if next == edges + 1
+                                && matches!(failure, Some("cycle" | "depth-before-cycle"))
+                            {
+                                "root".to_owned()
+                            } else {
+                                format!("f{next}")
+                            }
+                        );
+                        next += 1;
+                        error = Some(source);
+                    }
+                }
+                // Each ancestor's trace copy shares the same suffix as the returned chain.
+                for pair in trace.evaluations.windows(2) {
+                    if let (
+                        Err(EvaluationError::DependencyEvaluationFailed { source: child, .. }),
+                        Err(EvaluationError::DependencyEvaluationFailed { source: parent, .. }),
+                    ) = (&pair[0].result, &pair[1].result)
+                    {
+                        let EvaluationError::DependencyEvaluationFailed { source: suffix, .. } =
+                            parent.as_ref()
+                        else {
+                            panic!("missing shared suffix")
+                        };
+                        assert!(std::ptr::eq(child.as_ref(), suffix.as_ref()));
+                    }
+                }
+                // Exercise nested error destruction on the same small stack.
+                drop(trace);
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
 }

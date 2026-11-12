@@ -114,10 +114,11 @@ fn canonical_dependent_flag_results_and_telemetry() {
                 .filter(|case| case.selection.applies()),
         );
     }
-    if cases.is_empty() {
-        eprintln!("dependent-flag suite is fully excluded for rust");
-        return;
-    }
+    assert_eq!(
+        cases.len(),
+        15,
+        "the pinned fixtures must run all Rust cases"
+    );
     let config = Configuration::from_server_response(
         UniversalFlagConfig::from_json(fs::read(suite.join("ufc-config.json")).unwrap()).unwrap(),
     );

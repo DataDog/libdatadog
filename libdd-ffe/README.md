@@ -147,3 +147,15 @@ The public trace result and prerequisite record types are non-exhaustive. Consum
 to represent a failure before evaluation should use `EvaluationResult::from_error(error)`.
 Both public evaluation APIs emit the root's trace-level diagnostic exactly once, including
 early failures; returning a trace does not publish evaluation or exposure telemetry.
+
+Dependency evaluation stores selected-path edges in an arena and shares error suffixes
+through `EvaluationErrorSource` (backed by `Arc<EvaluationError>`), so retained state grows with the reached graph. Error
+cloning shares the suffix; comparison, debug formatting, display, and destruction walk
+it iteratively. Dependency errors serialize as `DEPENDENCY_EVALUATION_FAILED` with a
+flat `prerequisites` array (outermost first) and terminal `cause`. This replaces the
+nested dependency wire form; nondependency error wire forms stay unchanged. Both JSON
+and bincode round-trip maximum-depth errors on a 64 KiB thread stack.
+
+The `dependent-flags` benchmark includes 127- and 255-edge success and terminal-failure
+chains. It reports latency plus allocation requests and total bytes requested per
+evaluation, excluding configuration compilation and benchmark bookkeeping.

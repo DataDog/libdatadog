@@ -16,6 +16,8 @@ int main(void) {
     ddog_ffe_Handle_ResolutionDetails root = ddog_ffe_get_assignment(
         config, "root", DDOG_FFE_EXPECTED_FLAG_TYPE_BOOLEAN, context);
     CHECK(ddog_ffe_assignment_dependency_count(root) == 1);
+    CHECK(ddog_ffe_assignment_dependency_error_code(root, 0) == DDOG_FFE_ERROR_CODE_OK);
+    CHECK(ddog_ffe_assignment_dependency_error_code(root, 1) == DDOG_FFE_ERROR_CODE_GENERAL);
     struct ddog_ffe_BorrowedStr key = ddog_ffe_assignment_dependency_key(root, 0);
     CHECK(key.len == 6 && memcmp(key.ptr, "parent", 6) == 0);
     CHECK(ddog_ffe_assignment_dependency_exposure_eligible(root, 0));

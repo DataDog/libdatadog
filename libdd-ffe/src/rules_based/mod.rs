@@ -12,7 +12,7 @@ mod ufc;
 
 pub use attributes::Attribute;
 pub use configuration::Configuration;
-pub use error::EvaluationError;
+pub use error::{EvaluationError, EvaluationErrorSource};
 pub use eval::{
     EvaluationContext, EvaluationOptions, EvaluationRecord, EvaluationResult,
     ExperimentationOptOutMode, get_assignment,

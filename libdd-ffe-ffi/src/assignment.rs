@@ -392,7 +392,8 @@ unsafe fn get_assignment_with_mode(
 /// # Safety
 /// `assignment` must be a live handle.
 #[unsafe(no_mangle)]
-// allow(ffi-panic-boundary): reads the length of an owned vector.
+// allow(ffi-panic-boundary): reads the length of an owned vector. Requires a live handle;
+// `Handle::as_ref` can panic on a null handle.
 pub unsafe extern "C" fn ddog_ffe_assignment_dependency_count(
     assignment: Handle<ResolutionDetails>,
 ) -> usize {
@@ -404,7 +405,8 @@ pub unsafe extern "C" fn ddog_ffe_assignment_dependency_count(
 /// # Safety
 /// `assignment` must be a live handle.
 #[unsafe(no_mangle)]
-// allow(ffi-panic-boundary): bounds-checked lookup and borrowing do not allocate.
+// allow(ffi-panic-boundary): bounds-checked lookup and borrowing do not allocate. Requires a live
+// handle; `Handle::as_ref` can panic on a null handle.
 pub unsafe extern "C" fn ddog_ffe_assignment_dependency_key(
     assignment: Handle<ResolutionDetails>,
     index: usize,
@@ -422,7 +424,8 @@ pub unsafe extern "C" fn ddog_ffe_assignment_dependency_key(
 /// # Safety
 /// `assignment` must be a live handle.
 #[unsafe(no_mangle)]
-// allow(ffi-panic-boundary): bounds-checked lookup of a boolean does not allocate.
+// allow(ffi-panic-boundary): bounds-checked lookup of a boolean does not allocate. Requires a live
+// handle; `Handle::as_ref` can panic on a null handle.
 pub unsafe extern "C" fn ddog_ffe_assignment_dependency_exposure_eligible(
     assignment: Handle<ResolutionDetails>,
     index: usize,
@@ -434,11 +437,34 @@ pub unsafe extern "C" fn ddog_ffe_assignment_dependency_exposure_eligible(
         .is_some_and(|record| record.exposure_eligible)
 }
 
+/// Error code for a prerequisite's own evaluation event. Disabled prerequisites and prerequisites
+/// with no assignment report General, even though their child result handles report Ok.
+/// Invalid indices return General.
+/// # Safety
+/// `assignment` must be a live handle.
+#[unsafe(no_mangle)]
+// allow(ffi-panic-boundary): bounds-checked lookup of an owned result does not allocate.
+// Requires a live handle; `Handle::as_ref` can panic on a null handle.
+pub unsafe extern "C" fn ddog_ffe_assignment_dependency_error_code(
+    assignment: Handle<ResolutionDetails>,
+    index: usize,
+) -> ErrorCode {
+    // SAFETY: caller guarantees a live handle.
+    let record = unsafe { assignment.as_ref() }.dependencies.get(index);
+    match record.map(|record| &record.result) {
+        Some(Ok(_)) => ErrorCode::Ok,
+        Some(Err(EvaluationError::FlagDisabled | EvaluationError::DefaultAllocationNull))
+        | None => ErrorCode::General,
+        Some(Err(error)) => ErrorCode::from(error),
+    }
+}
+
 /// Copies a prerequisite result into an independently owned handle, including errors.
 /// Free it with `ddog_ffe_assignment_drop`. Invalid indices return a General error.
 /// # Safety
 /// `assignment` must be a live handle.
 #[unsafe(no_mangle)]
+#[must_use]
 pub unsafe extern "C" fn ddog_ffe_assignment_dependency_result(
     assignment: Handle<ResolutionDetails>,
     index: usize,
@@ -876,11 +902,22 @@ mod tests {
                 {"flagEvaluation":{"key":"parent"},"operator":"ONE_OF","value":["on"]}
               ]}],"splits":[{"variationKey":"on","shards":[]}]}]}
           }}"#;
-        for prerequisite in ["parent", "missing"] {
+        for prerequisite in ["parent", "missing", "disabled", "unassigned"] {
             let wire = String::from_utf8(json.to_vec()).unwrap().replace(
                 "\"flagEvaluation\":{\"key\":\"parent\"}",
                 &format!("\"flagEvaluation\":{{\"key\":\"{prerequisite}\"}}"),
             );
+            let wire = match prerequisite {
+                "disabled" | "unassigned" => {
+                    wire.replace("\"parent\"", &format!("\"{prerequisite}\""))
+                }
+                _ => wire,
+            };
+            let wire = match prerequisite {
+                "disabled" => wire.replacen("\"enabled\":true", "\"enabled\":false", 1),
+                "unassigned" => wire.replace("\"key\":\"parent-allocation\",", "\"key\":\"parent-allocation\",\"rules\":[{\"conditions\":[{\"attribute\":\"country\",\"operator\":\"ONE_OF\",\"value\":[\"US\"]}]}],"),
+                _ => wire,
+            };
             let config = Configuration::from_server_response(
                 ffe::UniversalFlagConfig::from_json(wire.into_bytes()).unwrap(),
             );
@@ -918,6 +955,26 @@ mod tests {
                 unsafe { ddog_ffe_assignment_dependency_exposure_eligible(eligibility_handle, 0) },
                 prerequisite == "parent"
             );
+            for (index, expected) in [
+                (
+                    0,
+                    match prerequisite {
+                        "parent" => ErrorCode::Ok,
+                        "missing" => ErrorCode::FlagNotFound,
+                        _ => ErrorCode::General,
+                    },
+                ),
+                (1, ErrorCode::General),
+                (usize::MAX, ErrorCode::General),
+            ] {
+                // SAFETY: this copy borrows the live root throughout the call.
+                let handle = unsafe { std::ptr::read(&root) };
+                assert_eq!(
+                    // SAFETY: handle borrows the live root, including for invalid indices.
+                    unsafe { ddog_ffe_assignment_dependency_error_code(handle, index) },
+                    expected
+                );
+            }
             // SAFETY: this copy borrows the live root.
             let result_handle = unsafe { std::ptr::read(&root) };
             // SAFETY: result_handle is live; the returned copy owns its result independently.
@@ -929,10 +986,10 @@ mod tests {
             assert_eq!(
                 // SAFETY: error_handle borrows the live child.
                 unsafe { ddog_ffe_assignment_get_error_code(error_handle) },
-                if prerequisite == "parent" {
-                    ErrorCode::Ok
-                } else {
+                if prerequisite == "missing" {
                     ErrorCode::FlagNotFound
+                } else {
+                    ErrorCode::Ok
                 }
             );
             if prerequisite == "parent" {
