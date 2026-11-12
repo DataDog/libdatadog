@@ -12,6 +12,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
 use libdd_common::Endpoint;
+use libdd_host_identity::entity_id::EntityHeadersExt;
 use libdd_networking::endpoint::EndpointExt;
 use libdd_shared_runtime::Worker;
 use sha2::{Digest, Sha256};
@@ -112,6 +113,7 @@ async fn fetch_and_hash_response<C: HttpClientCapability + SleepCapability>(
 ) -> Result<(String, bytes::Bytes, Option<String>)> {
     let req = info_endpoint
         .to_request_builder(concat!("Libdatadog/", env!("CARGO_PKG_VERSION")))?
+        .with_entity_headers()
         .body(Bytes::new())
         .map_err(|e| anyhow!("Failed to build request: {}", e))?;
 
