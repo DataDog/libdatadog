@@ -18,6 +18,10 @@ use libdd_telemetry::{
 
 /// FFI-facing alias: the C ABI surface is native-only, so the worker handle is
 /// always pinned to [`NativeCapabilities`].
+fn panic_to_error(_: Box<dyn std::any::Any + Send>) -> MaybeError {
+    MaybeError::Some(ffi::Error::from("telemetry FFI call panicked"))
+}
+
 type TelemetryWorkerHandle = libdd_telemetry::worker::TelemetryWorkerHandle<NativeCapabilities>;
 
 #[allow(clippy::missing_safety_doc)]
@@ -96,15 +100,18 @@ pub unsafe extern "C" fn ddog_telemetry_handle_add_config(
     config_id: ffi::CharSlice,
     seq_id: ffi::Option<u64>,
 ) -> MaybeError {
-    let config = Configuration {
-        name: crate::try_c!(name.try_to_string()),
-        value: crate::try_c!(value.try_to_string_option()),
-        origin,
-        config_id: crate::try_c!(config_id.try_to_string_option()),
-        seq_id: seq_id.into(),
-    };
-    crate::try_c!(handle.try_send_msg(TelemetryActions::AddConfig(config)));
-    MaybeError::None
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let config = Configuration {
+            name: crate::try_c!(name.try_to_string()),
+            value: crate::try_c!(value.try_to_string_option()),
+            origin,
+            config_id: crate::try_c!(config_id.try_to_string_option()),
+            seq_id: seq_id.into(),
+        };
+        crate::try_c!(handle.try_send_msg(TelemetryActions::AddConfig(config)));
+        MaybeError::None
+    }))
+    .unwrap_or_else(panic_to_error)
 }
 
 #[allow(clippy::missing_safety_doc)]
@@ -116,10 +123,13 @@ pub unsafe extern "C" fn ddog_telemetry_handle_add_product_change(
     enabled: bool,
     version: ffi::CharSlice,
 ) -> MaybeError {
-    let product = crate::try_c!(product.try_to_string());
-    let version = crate::try_c!(version.try_to_string_option());
-    crate::try_c!(handle.add_product_change(product, enabled, version));
-    MaybeError::None
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let product = crate::try_c!(product.try_to_string());
+        let version = crate::try_c!(version.try_to_string_option());
+        crate::try_c!(handle.add_product_change(product, enabled, version));
+        MaybeError::None
+    }))
+    .unwrap_or_else(panic_to_error)
 }
 
 #[allow(clippy::missing_safety_doc)]
@@ -136,28 +146,31 @@ pub unsafe extern "C" fn ddog_telemetry_handle_add_endpoint(
     response_body_type: ffi::Slice<ffi::CharSlice>,
     response_code: ffi::Slice<u32>,
 ) -> MaybeError {
-    fn strings(s: ffi::Slice<ffi::CharSlice>) -> Result<Option<Vec<String>>, String> {
-        if s.is_empty() {
-            return Ok(None);
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        fn strings(s: ffi::Slice<ffi::CharSlice>) -> Result<Option<Vec<String>>, String> {
+            if s.is_empty() {
+                return Ok(None);
+            }
+            s.as_slice()
+                .iter()
+                .map(|c| c.try_to_string().map_err(|e| e.to_string()))
+                .collect::<Result<Vec<_>, _>>()
+                .map(Some)
         }
-        s.as_slice()
-            .iter()
-            .map(|c| c.try_to_string().map_err(|e| e.to_string()))
-            .collect::<Result<Vec<_>, _>>()
-            .map(Some)
-    }
-    let codes = response_code.as_slice();
-    let endpoint = Endpoint {
-        method: method.into(),
-        path: crate::try_c!(path.try_to_string_option()),
-        operation_name: crate::try_c!(operation_name.try_to_string()),
-        resource_name: crate::try_c!(resource_name.try_to_string()),
-        request_body_type: crate::try_c!(strings(request_body_type)),
-        response_body_type: crate::try_c!(strings(response_body_type)),
-        response_code: (!codes.is_empty()).then(|| codes.to_vec()),
-    };
-    crate::try_c!(handle.try_send_msg(TelemetryActions::AddEndpoint(endpoint)));
-    MaybeError::None
+        let codes = response_code.as_slice();
+        let endpoint = Endpoint {
+            method: method.into(),
+            path: crate::try_c!(path.try_to_string_option()),
+            operation_name: crate::try_c!(operation_name.try_to_string()),
+            resource_name: crate::try_c!(resource_name.try_to_string()),
+            request_body_type: crate::try_c!(strings(request_body_type)),
+            response_body_type: crate::try_c!(strings(response_body_type)),
+            response_code: (!codes.is_empty()).then(|| codes.to_vec()),
+        };
+        crate::try_c!(handle.try_send_msg(TelemetryActions::AddEndpoint(endpoint)));
+        MaybeError::None
+    }))
+    .unwrap_or_else(panic_to_error)
 }
 
 /// Flushes aggregated metrics into the pending payload queue
@@ -165,17 +178,23 @@ pub unsafe extern "C" fn ddog_telemetry_handle_add_endpoint(
 pub extern "C" fn ddog_telemetry_handle_flush_metrics(
     handle: &TelemetryWorkerHandle,
 ) -> MaybeError {
-    crate::try_c!(handle.try_send_msg(TelemetryActions::Lifecycle(
-        LifecycleAction::FlushMetricAggr
-    )));
-    MaybeError::None
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        crate::try_c!(handle.try_send_msg(TelemetryActions::Lifecycle(
+            LifecycleAction::FlushMetricAggr
+        )));
+        MaybeError::None
+    }))
+    .unwrap_or_else(panic_to_error)
 }
 
 /// Sends all pending telemetry data
 #[unsafe(no_mangle)]
 pub extern "C" fn ddog_telemetry_handle_flush_data(handle: &TelemetryWorkerHandle) -> MaybeError {
-    crate::try_c!(handle.try_send_msg(TelemetryActions::Lifecycle(LifecycleAction::FlushData)));
-    MaybeError::None
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        crate::try_c!(handle.try_send_msg(TelemetryActions::Lifecycle(LifecycleAction::FlushData)));
+        MaybeError::None
+    }))
+    .unwrap_or_else(panic_to_error)
 }
 
 /// Sends an app-extended-heartbeat message
@@ -183,10 +202,13 @@ pub extern "C" fn ddog_telemetry_handle_flush_data(handle: &TelemetryWorkerHandl
 pub extern "C" fn ddog_telemetry_handle_send_extended_heartbeat(
     handle: &TelemetryWorkerHandle,
 ) -> MaybeError {
-    crate::try_c!(handle.try_send_msg(TelemetryActions::Lifecycle(
-        LifecycleAction::ExtendedHeartbeat
-    )));
-    MaybeError::None
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        crate::try_c!(handle.try_send_msg(TelemetryActions::Lifecycle(
+            LifecycleAction::ExtendedHeartbeat
+        )));
+        MaybeError::None
+    }))
+    .unwrap_or_else(panic_to_error)
 }
 
 #[unsafe(no_mangle)]
