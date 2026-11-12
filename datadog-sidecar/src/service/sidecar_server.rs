@@ -1620,6 +1620,56 @@ mod tests {
         assert_eq!(server.compute_stats().await.active_apps, 1);
     }
 
+    /// A session's checkpoint tables have the slots its configuration asks for, up to the
+    /// maximum, or the default.
+    #[cfg(unix)]
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn dsm_checkpoint_tables_have_the_slots_the_session_asks_for() {
+        use libdd_ipc::shm_dsm_checkpoint::{
+            DEFAULT_DSM_CHECKPOINT_SLOT_COUNT, MAX_DSM_CHECKPOINT_SLOT_COUNT,
+        };
+
+        let server = SidecarServer::default();
+        for (requested, expected) in [
+            (200, 200),
+            (0, DEFAULT_DSM_CHECKPOINT_SLOT_COUNT),
+            (
+                MAX_DSM_CHECKPOINT_SLOT_COUNT + 1,
+                MAX_DSM_CHECKPOINT_SLOT_COUNT,
+            ),
+        ] {
+            let mut handler = test_handler(server.clone());
+            handler
+                .set_connection_config(
+                    InstanceId::new("session", "runtime"),
+                    SessionConfig {
+                        // DSM goes through the agent: an agentless session has no tables.
+                        endpoint: Endpoint {
+                            url: "http://127.0.0.1:1".parse().unwrap(),
+                            ..Endpoint::default()
+                        },
+                        dsm_checkpoint_slot_count: requested,
+                        ..SessionConfig::for_test()
+                    },
+                )
+                .await;
+            let session = handler.session.load().unwrap();
+            let key = DsmTableKey {
+                env: "env".into(),
+                version: "1.0".into(),
+                service: format!("dsm-slots-{}-{requested}", std::process::id()),
+                primary_tag: String::new(),
+            };
+            let state = get_or_create_dsm_table(&server.dsm_tables, key, &session)
+                .expect("an agent session gets DSM tables");
+            let (_, slots) = state.checkpoints.slot_usage();
+            state.checkpoints.unlink();
+            state.backlogs.unlink();
+            assert_eq!(slots, expected, "a session asking for {requested} slots");
+        }
+    }
+
     #[cfg(unix)]
     #[tokio::test]
     #[cfg_attr(miri, ignore)]

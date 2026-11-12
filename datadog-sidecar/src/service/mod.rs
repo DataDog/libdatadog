@@ -102,6 +102,9 @@ pub struct SessionConfig {
     pub parent_session_id: Option<String>,
     /// Optional OTLP metrics intake endpoint.
     pub otlp_metrics_endpoint: Option<Endpoint>,
+    /// Checkpoints per 10 s bucket of the Data Streams checkpoint tables this session creates; 0
+    /// for the default. Capped at `MAX_DSM_CHECKPOINT_SLOT_COUNT`.
+    pub dsm_checkpoint_slot_count: usize,
 }
 
 #[cfg(test)]
@@ -140,6 +143,7 @@ impl SessionConfig {
             root_session_id: None,
             parent_session_id: None,
             otlp_metrics_endpoint: None,
+            dsm_checkpoint_slot_count: 0,
         }
     }
 }

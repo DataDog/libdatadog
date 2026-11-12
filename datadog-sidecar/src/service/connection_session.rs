@@ -19,7 +19,7 @@ use crate::config::get_product_endpoint;
 use crate::log::{MULTI_LOG_FILTER, MULTI_LOG_WRITER, MultiEnvFilterGuard, MultiWriterGuard};
 use crate::service::agent_info::{AgentInfoGuard, AgentInfos};
 use crate::service::application::ActiveApplication;
-use crate::service::data_streams_flusher::{DsmConfig, dsm_endpoint};
+use crate::service::data_streams_flusher::{DsmConfig, checkpoint_slot_count, dsm_endpoint};
 use crate::service::dogstatsd_pool::DogStatsDPool;
 use crate::service::evp_proxy::EVENT_PLATFORM_INTAKE_SUBDOMAIN;
 use crate::service::evp_transport::EvpTransport;
@@ -194,6 +194,7 @@ impl ConnectionSession {
             language_version: config.language_version.clone(),
             tracer_version: config.tracer_version.clone(),
             process_tags: vec![],
+            checkpoint_slot_count: checkpoint_slot_count(config.dsm_checkpoint_slot_count),
         });
 
         let mut session = ConnectionSession {
