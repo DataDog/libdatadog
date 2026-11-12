@@ -84,10 +84,6 @@ impl Cfg {
     }
 
     pub fn build_with_runtime(&self, runtime: *const ForkSafeRuntime) -> Result<Client, FfiError> {
-        // reqwest panics when building a client without an installed crypto provider.
-        #[cfg(feature = "reqwest-backend")]
-        let _ = rustls::crypto::ring::default_provider().install_default();
-
         let headers: Vec<HttpHeader<'_>> = self
             .default_headers
             .iter()

@@ -22,7 +22,7 @@ regex-lite = ["libdd-common-ffi/regex-lite", "libdd-shared-runtime/regex-lite"]
 # Cargo does not enforce a single backend: build and test each with `--no-default-features`.
 https = ["libdd-http-client/https"]
 hyper-backend = ["libdd-http-client/hyper-backend"]
-reqwest-backend = ["libdd-http-client/reqwest-backend"]
+reqwest-backend = ["libdd-http-client/reqwest-backend", "dep:rustls"]
 
 [build-dependencies]
 build_common = { path = "../build-common" }
@@ -31,12 +31,11 @@ build_common = { path = "../build-common" }
 libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false, features = ["std"] }
 libdd-http-client = { path = "../libdd-http-client", default-features = false }
 libdd-shared-runtime = { version = "6.0.0", path = "../libdd-shared-runtime" }
+rustls = { workspace = true, features = ["ring"], optional = true }
 tokio-util.workspace = true
 tracing.workspace = true
 url = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
 httpmock.workspace = true
-# Installs a crypto provider in the reqwest tests.
-rustls = { workspace = true, features = ["ring"] }
 tempfile.workspace = true
