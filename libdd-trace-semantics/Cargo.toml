@@ -29,3 +29,8 @@ serde_json = { workspace = true, features = ["std"] }
 [dev-dependencies]
 serde = { workspace = true, features = ["derive", "std"] }
 serde_json = { workspace = true, features = ["std"] }
+
+[package.metadata.cargo-machete]
+# Used by codegen.rs, which build.rs and tests/codegen.rs include with #[path]; cargo-machete
+# doesn't scan it.
+ignored = ["serde"]
