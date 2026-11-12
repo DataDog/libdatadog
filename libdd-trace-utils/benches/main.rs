@@ -10,6 +10,7 @@ use tools::bench_utils::ReportingAllocator;
 pub static GLOBAL: ReportingAllocator<System> = ReportingAllocator::new(System);
 
 mod agentless_encoding;
+mod chunk_packing;
 mod deserialization;
 mod deserialization_v05;
 mod otlp_encoding;
@@ -19,6 +20,7 @@ mod span_pool_v1;
 
 criterion_main!(
     serialization::serialize_benches,
+    chunk_packing::chunk_packing_benches,
     deserialization::deserialize_benches,
     deserialization::deserialize_alloc_benches,
     deserialization_v05::deserialize_v05_benches,
