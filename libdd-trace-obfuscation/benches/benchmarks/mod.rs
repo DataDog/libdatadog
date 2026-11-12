@@ -3,6 +3,7 @@
 
 pub mod credit_cards_bench;
 pub mod ip_address_bench;
+pub mod obfuscate_span_bench;
 pub mod redis_obfuscation_bench;
 pub mod replace_trace_tags_bench;
 pub mod sql_obfuscation_bench;
