@@ -125,9 +125,8 @@ fn web_span() -> SpanBytes {
     }
 
     // The nested map gives the credit-card scan's recursion a `KeyValueList` to walk. The
-    // scan builds a child path for every entry before checking whether the entry can hold
-    // a card at all, so the non-candidate entries (`retries`, `verified`) cost allocations
-    // too when the scan is on.
+    // scan builds a child path for every card-capable entry (skipping non-candidates like
+    // `verified`), and the first mutable iteration dedups the map, which allocates.
     span.attributes.insert(
         bs("payment"),
         AttributeValue::KeyValueList(
@@ -155,9 +154,9 @@ fn web_span() -> SpanBytes {
     span
 }
 
-/// A span taking the SQL arm. The arm materializes the obfuscated query twice, as the
-/// resource and as the `sql.query` attribute, while the pb path reuses the resource's
-/// capacity in place.
+/// A span taking the SQL arm. The arm writes the obfuscated query to both the resource and
+/// the `sql.query` attribute; reference-counted text types share one allocation between
+/// the two.
 fn sql_span() -> SpanBytes {
     let mut span = SpanBytes {
         service: bs("bench-service"),

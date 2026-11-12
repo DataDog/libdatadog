@@ -27,7 +27,7 @@ use crate::{
     },
     replacer::{
         apply_resource, is_hidden_tag, replace_chunk_tags, replace_span_tags,
-        replace_span_tags_trait, replace_span_tags_v04,
+        replace_span_tags_trait, replace_span_tags_v04, with_decimal,
     },
     sql::obfuscate_sql_resource,
 };
@@ -186,14 +186,18 @@ pub fn obfuscate_span_event(event: &mut pb::SpanEvent, config: &ObfuscationConfi
             if !should_obfuscate_cc_key(k, config) {
                 continue;
             }
-            let str_value = match v.r#type() {
+            let is_card = match v.r#type() {
                 pb::attribute_any_value::AttributeAnyValueType::StringValue => {
-                    v.string_value.clone()
+                    is_card_number(&v.string_value, config.credit_cards.luhn)
                 }
                 pb::attribute_any_value::AttributeAnyValueType::BoolValue => continue, /* Booleans can't be credit cards */
-                pb::attribute_any_value::AttributeAnyValueType::IntValue => v.int_value.to_string(),
+                pb::attribute_any_value::AttributeAnyValueType::IntValue => {
+                    with_decimal(v.int_value, |s| is_card_number(s, config.credit_cards.luhn))
+                }
                 pb::attribute_any_value::AttributeAnyValueType::DoubleValue => {
-                    v.double_value.to_string()
+                    with_decimal(v.double_value, |s| {
+                        is_card_number(s, config.credit_cards.luhn)
+                    })
                 }
                 pb::attribute_any_value::AttributeAnyValueType::ArrayValue => {
                     if let Some(array_value) = v.array_value.as_mut() {
@@ -202,7 +206,7 @@ pub fn obfuscate_span_event(event: &mut pb::SpanEvent, config: &ObfuscationConfi
                     continue;
                 }
             };
-            if is_card_number(&str_value, config.credit_cards.luhn) {
+            if is_card {
                 v.string_value = "?".to_string();
                 v.r#type = AttributeAnyValueType::StringValue.into();
             }
@@ -212,19 +216,23 @@ pub fn obfuscate_span_event(event: &mut pb::SpanEvent, config: &ObfuscationConfi
 
 fn obfuscate_attribute_array(v: &mut pb::AttributeArray, config: &ObfuscationConfig) {
     for elt in &mut v.values {
-        let string_value = match elt.r#type() {
+        let is_card = match elt.r#type() {
             pb::attribute_array_value::AttributeArrayValueType::StringValue => {
-                elt.string_value.clone()
+                is_card_number(&elt.string_value, config.credit_cards.luhn)
             }
             pb::attribute_array_value::AttributeArrayValueType::BoolValue => continue, /* Booleans can't be credit cards */
             pb::attribute_array_value::AttributeArrayValueType::IntValue => {
-                elt.int_value.to_string()
+                with_decimal(elt.int_value, |s| {
+                    is_card_number(s, config.credit_cards.luhn)
+                })
             }
             pb::attribute_array_value::AttributeArrayValueType::DoubleValue => {
-                elt.double_value.to_string()
+                with_decimal(elt.double_value, |s| {
+                    is_card_number(s, config.credit_cards.luhn)
+                })
             }
         };
-        if is_card_number(&string_value, config.credit_cards.luhn) {
+        if is_card {
             elt.string_value = "?".to_string();
             elt.r#type = AttributeArrayValueType::StringValue.into();
         }
@@ -383,8 +391,12 @@ fn obfuscate_v04_attribute_value<T: TraceData>(
     let is_card = match value {
         AttributeArrayValue::String(s) => is_card_number(as_str(s), config.credit_cards.luhn),
         AttributeArrayValue::Boolean(_) => false,
-        AttributeArrayValue::Integer(i) => is_card_number(i.to_string(), config.credit_cards.luhn),
-        AttributeArrayValue::Double(d) => is_card_number(d.to_string(), config.credit_cards.luhn),
+        AttributeArrayValue::Integer(i) => {
+            with_decimal(*i, |s| is_card_number(s, config.credit_cards.luhn))
+        }
+        AttributeArrayValue::Double(d) => {
+            with_decimal(*d, |s| is_card_number(s, config.credit_cards.luhn))
+        }
     };
     if is_card {
         *value = AttributeArrayValue::String(T::Text::from_static_str("?"));
@@ -474,10 +486,14 @@ pub fn obfuscate_span<S: SpanMut>(span: &mut S, config: &ObfuscationConfig) {
             // On failure the resource is discarded for the Agent's marker rather than forwarded
             // as sent; see `obfuscate_sql_resource`.
             let query = obfuscate_sql_resource(span.resource(), &config.sql, dbms);
-            span.set_resource(S::Text::from(query.clone()));
+            // The resource and the `sql.query` attribute share one allocation: `TraceText`
+            // clones share the buffer for reference-counted text types (`BytesString`),
+            // while `String` copies, exactly like the `query.clone()` this replaces.
+            let obfuscated = S::Text::from(query);
+            span.set_resource(obfuscated.clone());
             span.set_attribute(
                 S::Text::from_static(TAG_SQLQUERY),
-                AttributeValue::String(S::Text::from(query)),
+                AttributeValue::String(obfuscated),
             );
         }
         "elasticsearch" if config.elasticsearch.config().enabled => {
@@ -555,12 +571,12 @@ fn obfuscate_attribute_credit_card<V: ValueTypes>(
             }
         }
         AttributeValue::Int(i) => {
-            if is_card_number(i.to_string(), config.credit_cards.luhn) {
+            if with_decimal(*i, |s| is_card_number(s, config.credit_cards.luhn)) {
                 *value = AttributeValue::String(V::Text::from_static("?"));
             }
         }
         AttributeValue::Float(f) => {
-            if is_card_number(f.to_string(), config.credit_cards.luhn) {
+            if with_decimal(*f, |s| is_card_number(s, config.credit_cards.luhn)) {
                 *value = AttributeValue::String(V::Text::from_static("?"));
             }
         }
@@ -571,6 +587,11 @@ fn obfuscate_attribute_credit_card<V: ValueTypes>(
         }
         AttributeValue::KeyValueList(map) => {
             for (k, v) in ValueMapMut::iter_mut(map) {
+                // Values that cannot hold a card number are skipped before the child path is
+                // built, since building it allocates.
+                if matches!(v, AttributeValue::Bool(_) | AttributeValue::Bytes(_)) {
+                    continue;
+                }
                 let child_path = format!("{path}.{k}");
                 if should_obfuscate_cc_key(&child_path, config) {
                     obfuscate_attribute_credit_card(v, config, &child_path);

@@ -376,7 +376,7 @@ fn apply_rule_to_metric(rule: &ReplaceRule, value: &mut f64) -> Option<String> {
 /// and `strconv.FormatFloat(v, 'f', -1, 64)`: the shortest round-tripping digits, never in
 /// exponent form. Infinities differ (`inf` instead of `+Inf`). Floats too long for the stack
 /// buffer (e.g. `1e300`) fall back to a heap allocation.
-fn with_decimal<R>(value: impl Display, f: impl FnOnce(&str) -> R) -> R {
+pub(crate) fn with_decimal<R>(value: impl Display, f: impl FnOnce(&str) -> R) -> R {
     struct StackBuf {
         buf: [u8; 64],
         len: usize,
