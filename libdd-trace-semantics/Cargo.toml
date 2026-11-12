@@ -1,0 +1,31 @@
+# Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "libdd-trace-semantics"
+version = "0.1.0"
+description = "Semantic equivalences between Datadog and OpenTelemetry span attributes, embedded at compile time"
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-trace-semantics"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-trace-semantics"
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+include = ["Cargo.toml", "README.md", "build.rs", "codegen.rs", "mappings.json", "src/**"]
+
+[lib]
+bench = false
+
+[lints]
+workspace = true
+
+[dependencies]
+libdd-trace-model = { version = "1.0.0", path = "../libdd-trace-model" }
+
+[build-dependencies]
+serde = { workspace = true, features = ["derive", "std"] }
+serde_json = { workspace = true, features = ["std"] }
+
+[dev-dependencies]
+serde = { workspace = true, features = ["derive", "std"] }
+serde_json = { workspace = true, features = ["std"] }

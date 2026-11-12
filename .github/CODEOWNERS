@@ -74,6 +74,7 @@ libdd-trace-model                    @DataDog/apm-common-components-core
 libdd-trace-normalization            @DataDog/apm-common-components-core
 libdd-trace-obfuscation              @DataDog/apm-common-components-core
 libdd-trace-protobuf                 @DataDog/serverless @DataDog/apm-common-components-core-reviewers
+libdd-trace-semantics/               @DataDog/agent-apm @DataDog/apm-common-components-core
 libdd-trace-stats                    @DataDog/apm-common-components-core
 libdd-trace-utils                    @DataDog/apm-common-components-core
 libdd-tracer-flare                   @DataDog/apm-common-components-core
@@ -132,6 +133,7 @@ libdd-data-pipeline/src/otlp/                           @DataDog/apm-sdk-capabil
 libdd-data-pipeline/tests/test_trace_exporter_otlp_export.rs @DataDog/apm-sdk-capabilities @DataDog/apm-common-components-core
 libdd-data-pipeline/tests/test_trace_exporter_otlp_grpc.rs @DataDog/apm-sdk-capabilities @DataDog/apm-common-components-core
 libdd-trace-utils/src/otlp_encoder/                     @DataDog/apm-sdk-capabilities @DataDog/apm-common-components-core
+libdd-trace-semantics/mappings.json                     @DataDog/semantic-core @DataDog/agent-apm
 datadog-sidecar/src/service/ffe_exposures_flusher.rs    @DataDog/libdatadog-php @DataDog/feature-flagging-and-experimentation-sdk @DataDog/apm-common-components-core-reviewers
 datadog-sidecar/src/service/ffe_metrics_flusher.rs      @DataDog/libdatadog-php @DataDog/feature-flagging-and-experimentation-sdk @DataDog/apm-common-components-core-reviewers
 .github/workflows/nix.yml                               @DataDog/nix-guild @DataDog/apm-common-components-core
@@ -257,6 +259,7 @@ libdd-trace-obfuscation/CHANGELOG.md         @DataDog/apm-common-components-core
 libdd-trace-obfuscation/Cargo.toml           @DataDog/apm-common-components-core @DataDog/libdatadog-release
 libdd-trace-protobuf/CHANGELOG.md            @DataDog/serverless @DataDog/libdatadog-release @DataDog/apm-common-components-core-reviewers
 libdd-trace-protobuf/Cargo.toml              @DataDog/serverless @DataDog/libdatadog-release @DataDog/apm-common-components-core-reviewers
+libdd-trace-semantics/Cargo.toml             @DataDog/agent-apm @DataDog/apm-common-components-core @DataDog/libdatadog-release
 libdd-trace-utils/CHANGELOG.md               @DataDog/apm-common-components-core @DataDog/libdatadog-release
 libdd-trace-utils/Cargo.toml                 @DataDog/apm-common-components-core @DataDog/libdatadog-release
 
