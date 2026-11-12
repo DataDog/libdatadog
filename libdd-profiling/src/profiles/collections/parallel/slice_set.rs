@@ -72,7 +72,7 @@ impl<T: Copy + hash::Hash + Eq + 'static> ParallelSliceSet<T> {
     /// # Safety
     /// The slice must not have been inserted yet, as it skips checking if
     /// the slice is already present.
-    pub unsafe fn insert_unique_uncontended(
+    pub(super) unsafe fn insert_unique_uncontended(
         &self,
         slice: &[T],
     ) -> Result<ThinSlice<'static, T>, SetError>

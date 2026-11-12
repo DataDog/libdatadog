@@ -73,7 +73,7 @@ impl ParallelStringSet {
     /// # Safety
     /// The string must not have been inserted yet, as it skips checking if
     /// the string is already present.
-    pub unsafe fn insert_unique_uncontended(&self, str: &str) -> Result<StringRef, SetError> {
+    unsafe fn insert_unique_uncontended(&self, str: &str) -> Result<StringRef, SetError> {
         unsafe {
             let thin_slice = self.inner.insert_unique_uncontended(str.as_bytes())?;
             // SAFETY: the slice was just created from `str.as_bytes()`, which
