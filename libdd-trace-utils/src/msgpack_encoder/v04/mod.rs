@@ -249,10 +249,37 @@ fn encode_payload_from_v1<W: RmpWrite, T: TraceData>(
     writer: &mut W,
     payload: &TracerPayload<T>,
 ) -> Result<(), ValueWriteError<W::Error>> {
+    encode_selected_from_v1(
+        writer,
+        payload,
+        payload.chunks.iter().map(|chunk| super::split::ChunkView {
+            chunk,
+            spans: &chunk.spans,
+        }),
+    )
+}
+
+pub(super) fn encode_selection<'a, T: TraceData + 'a>(
+    payload: &TracerPayload<T>,
+    chunks: impl ExactSizeIterator<Item = super::split::ChunkView<'a, T>>,
+) -> Vec<u8> {
+    let mut buf = ByteBuf::with_capacity(0);
+    encode_selected_from_v1(&mut buf, payload, chunks)
+        .map_err(super::flatten_value_write_infallible)
+        .unwrap_infallible();
+    buf.into_vec()
+}
+
+fn encode_selected_from_v1<'a, W: RmpWrite, T: TraceData + 'a>(
+    writer: &mut W,
+    payload: &TracerPayload<T>,
+    chunks: impl ExactSizeIterator<Item = super::split::ChunkView<'a, T>>,
+) -> Result<(), ValueWriteError<W::Error>> {
     use span_v1::{ChunkContext, encode_span};
 
-    write_array_len(writer, payload.chunks.len() as u32)?;
-    for chunk in &payload.chunks {
+    write_array_len(writer, chunks.len() as u32)?;
+    for view in chunks {
+        let chunk = view.chunk;
         // v0.4 has no wire-level equivalent of `dropped_trace`; the closest historical signal
         // is `USER_REJECT` (priority -1), which tells the agent the sampler rejected this trace
         // without dropping the spans themselves. Only force it when the chunk doesn't already
@@ -272,8 +299,8 @@ fn encode_payload_from_v1<W: RmpWrite, T: TraceData>(
             &payload.app_version,
             &payload.attributes,
         );
-        write_array_len(writer, chunk.spans.len() as u32)?;
-        for span in &chunk.spans {
+        write_array_len(writer, view.spans.len() as u32)?;
+        for span in view.spans {
             encode_span(writer, span, &ctx)?;
         }
     }
