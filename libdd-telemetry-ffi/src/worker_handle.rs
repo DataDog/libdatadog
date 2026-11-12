@@ -89,13 +89,13 @@ pub unsafe extern "C" fn ddog_telemetry_handle_add_log(
 
 #[allow(clippy::missing_safety_doc)]
 #[unsafe(no_mangle)]
-/// * value: an empty slice is reported as a `null` value
+/// * value: `None` is reported as a `null` value; `Some("")` as an empty string
 /// * config_id: an empty slice means no config id
 /// * seq_id: optional sequence id of the configuration entry
 pub unsafe extern "C" fn ddog_telemetry_handle_add_config(
     handle: &TelemetryWorkerHandle,
     name: ffi::CharSlice,
-    value: ffi::CharSlice,
+    value: ffi::Option<ffi::CharSlice>,
     origin: ConfigurationOrigin,
     config_id: ffi::CharSlice,
     seq_id: ffi::Option<u64>,
@@ -103,7 +103,10 @@ pub unsafe extern "C" fn ddog_telemetry_handle_add_config(
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let config = Configuration {
             name: crate::try_c!(name.try_to_string()),
-            value: crate::try_c!(value.try_to_string_option()),
+            value: match Option::<ffi::CharSlice>::from(value) {
+                Some(v) => Some(crate::try_c!(v.try_to_string())),
+                None => None,
+            },
             origin,
             config_id: crate::try_c!(config_id.try_to_string_option()),
             seq_id: seq_id.into(),

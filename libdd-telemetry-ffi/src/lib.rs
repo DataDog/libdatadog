@@ -138,7 +138,7 @@ mod tests {
             ddog_telemetry_handle_add_config(
                 &handle,
                 ffi::CharSlice::from("DD_TRACE_ENABLED"),
-                ffi::CharSlice::from("true"),
+                ffi::Option::Some(ffi::CharSlice::from("true")),
                 ConfigurationOrigin::EnvVar,
                 ffi::CharSlice::from(""),
                 ffi::Option::Some(3),
@@ -164,9 +164,61 @@ mod tests {
                 ffi::Slice::from(&codes[..]),
             )
             .unwrap_none();
+            ddog_telemetry_handle_add_config(
+                &handle,
+                ffi::CharSlice::from("DD_EMPTY"),
+                ffi::Option::Some(ffi::CharSlice::from("")),
+                ConfigurationOrigin::Code,
+                ffi::CharSlice::from(""),
+                ffi::Option::None,
+            )
+            .unwrap_none();
+            ddog_telemetry_handle_add_config(
+                &handle,
+                ffi::CharSlice::from("DD_NULL"),
+                ffi::Option::None,
+                ConfigurationOrigin::Code,
+                ffi::CharSlice::from(""),
+                ffi::Option::None,
+            )
+            .unwrap_none();
+
+            let context_key = ddog_telemetry_handle_register_metric_context(
+                &handle,
+                ffi::CharSlice::from("flush_metric"),
+                MetricType::Count,
+                ddog_Vec_Tag_new(),
+                true,
+                MetricNamespace::Apm,
+            );
+            ddog_telemetry_handle_add_point(&handle, &context_key, 2.0).unwrap_none();
             ddog_telemetry_handle_flush_metrics(&handle).unwrap_none();
-            ddog_telemetry_handle_send_extended_heartbeat(&handle).unwrap_none();
             ddog_telemetry_handle_flush_data(&handle).unwrap_none();
+
+            // The flushes alone (before stop) must write the metric and pending payloads.
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            let flushed = loop {
+                let out = std::fs::read_to_string(f.path()).unwrap();
+                let has_metric = find_sub_payloads(&out, "generate-metrics").iter().any(|p| {
+                    p["payload"]["series"]
+                        .as_array()
+                        .is_some_and(|s| s.iter().any(|m| m["metric"] == "flush_metric"))
+                });
+                let has_endpoint = !find_sub_payloads(&out, "app-endpoints").is_empty();
+                if has_metric && has_endpoint {
+                    break true;
+                }
+                if std::time::Instant::now() > deadline {
+                    break false;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            };
+            assert!(
+                flushed,
+                "flush did not write metrics/endpoints before shutdown"
+            );
+
+            ddog_telemetry_handle_send_extended_heartbeat(&handle).unwrap_none();
 
             ddog_telemetry_handle_stop(&handle).unwrap_none();
             ddog_telemetry_handle_wait_for_shutdown(handle);
@@ -182,6 +234,15 @@ mod tests {
             assert_eq!(c["value"], "true");
             assert_eq!(c["origin"], "env_var");
             assert_eq!(c["seq_id"], 3);
+            let all_conf: Vec<&serde_json::Value> = conf
+                .iter()
+                .filter_map(|p| p["payload"]["configuration"].as_array())
+                .flatten()
+                .collect();
+            let empty = all_conf.iter().find(|c| c["name"] == "DD_EMPTY").unwrap();
+            assert_eq!(empty["value"], "");
+            let null = all_conf.iter().find(|c| c["name"] == "DD_NULL").unwrap();
+            assert!(null["value"].is_null());
 
             let prod = find_sub_payloads(&output, "app-product-change");
             assert!(
