@@ -177,8 +177,9 @@ pub unsafe extern "C" fn ddog_telemetry_handle_add_endpoint(
 }
 
 /// Flushes aggregated metrics into the pending payload queue
+#[allow(clippy::missing_safety_doc)]
 #[unsafe(no_mangle)]
-pub extern "C" fn ddog_telemetry_handle_flush_metrics(
+pub unsafe extern "C" fn ddog_telemetry_handle_flush_metrics(
     handle: &TelemetryWorkerHandle,
 ) -> MaybeError {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -191,8 +192,11 @@ pub extern "C" fn ddog_telemetry_handle_flush_metrics(
 }
 
 /// Sends all pending telemetry data
+#[allow(clippy::missing_safety_doc)]
 #[unsafe(no_mangle)]
-pub extern "C" fn ddog_telemetry_handle_flush_data(handle: &TelemetryWorkerHandle) -> MaybeError {
+pub unsafe extern "C" fn ddog_telemetry_handle_flush_data(
+    handle: &TelemetryWorkerHandle,
+) -> MaybeError {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         crate::try_c!(handle.try_send_msg(TelemetryActions::Lifecycle(LifecycleAction::FlushData)));
         MaybeError::None
@@ -201,8 +205,9 @@ pub extern "C" fn ddog_telemetry_handle_flush_data(handle: &TelemetryWorkerHandl
 }
 
 /// Sends an app-extended-heartbeat message
+#[allow(clippy::missing_safety_doc)]
 #[unsafe(no_mangle)]
-pub extern "C" fn ddog_telemetry_handle_send_extended_heartbeat(
+pub unsafe extern "C" fn ddog_telemetry_handle_send_extended_heartbeat(
     handle: &TelemetryWorkerHandle,
 ) -> MaybeError {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
