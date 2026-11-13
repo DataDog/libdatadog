@@ -70,17 +70,6 @@ impl HttpClient {
                 return Err(gen_error!(HttpClientErrorCode::InvalidConfig));
             }
         }
-        // reqwest builds a default rustls config, and panics, if the process has no crypto
-        // provider; `libdd-http-client` only covers https base URLs. Feature unification can
-        // select reqwest even when this crate did not ask for it.
-        // `install_default` fails when one is already installed, and the host's is kept.
-        #[cfg(feature = "https")]
-        {
-            static INSTALL_PROVIDER: std::sync::Once = std::sync::Once::new();
-            INSTALL_PROVIDER.call_once(|| {
-                let _ = rustls::crypto::ring::default_provider().install_default();
-            });
-        }
         let inner = builder
             .build()
             .map_err(|e| Some(Box::new(HttpClientError::from(e))))?;
