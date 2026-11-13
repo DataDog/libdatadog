@@ -90,7 +90,6 @@ windows = { workspace = true, features = ["std", "Win32_System_Diagnostics_Debug
 criterion.workspace = true
 goblin = { workspace = true, features = ["std", "pe32", "pe64"] }
 tempfile.workspace = true
-tokio = { workspace = true, features = ["rt", "macros", "net", "io-util"] }
 
 [target.'cfg(windows)'.dev-dependencies]
 windows = { workspace = true, features = ["std", "Win32_System_LibraryLoader"] }
