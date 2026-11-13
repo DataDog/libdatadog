@@ -1,0 +1,41 @@
+# Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "libdd-http-client-ffi"
+edition.workspace = true
+version.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+crate-type = ["lib", "staticlib", "cdylib"]
+bench = false
+
+[features]
+default = ["cbindgen", "catch_panic", "hyper-backend", "https"]
+# Must also be listed in the `catch_panic` feature of `libdd-profiling-ffi`.
+catch_panic = []
+cbindgen = ["build_common/cbindgen", "libdd-common-ffi/cbindgen"]
+regex-lite = ["libdd-common-ffi/regex-lite", "libdd-shared-runtime/regex-lite"]
+# Cargo does not enforce a single backend: build and test each with `--no-default-features`.
+https = ["libdd-http-client/https", "dep:rustls"]
+hyper-backend = ["libdd-http-client/hyper-backend"]
+reqwest-backend = ["libdd-http-client/reqwest-backend"]
+
+[build-dependencies]
+build_common = { path = "../build-common" }
+
+[dependencies]
+libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false, features = ["std"] }
+libdd-http-client = { path = "../libdd-http-client", default-features = false }
+libdd-shared-runtime = { version = "7.0.0", path = "../libdd-shared-runtime" }
+rustls = { workspace = true, features = ["ring"], optional = true }
+tokio-util.workspace = true
+tracing.workspace = true
+url = { workspace = true, features = ["std"] }
+
+[dev-dependencies]
+httpmock.workspace = true
+tempfile.workspace = true

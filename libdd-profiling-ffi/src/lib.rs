@@ -63,3 +63,8 @@ pub use libdd_common_ffi::*;
 #[cfg(feature = "otel-thread-ctx-ffi")]
 #[allow(unused_imports)]
 pub use libdd_otel_thread_ctx_ffi::*;
+
+// re-export http-client ffi
+#[cfg(feature = "http-client-ffi")]
+#[allow(unused_imports)]
+pub use libdd_http_client_ffi::*;

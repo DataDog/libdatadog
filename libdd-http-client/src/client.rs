@@ -62,7 +62,13 @@ impl HttpClient {
     /// If retry is configured, all errors except
     /// [`HttpClientError::InvalidConfig`] are retried with exponential
     /// backoff.
-    pub async fn send(&self, request: HttpRequest) -> Result<HttpResponse, HttpClientError> {
+    pub async fn send(&self, mut request: HttpRequest) -> Result<HttpResponse, HttpClientError> {
+        // The backends set the multipart Content-Type (with its boundary): drop any existing one.
+        if !request.multipart_parts().is_empty() {
+            request
+                .headers_mut()
+                .retain(|(name, _)| !name.eq_ignore_ascii_case("content-type"));
+        }
         match self.config.retry() {
             Some(retry) => self.send_with_retry(request, retry).await,
             None => self.send_once(request).await,
