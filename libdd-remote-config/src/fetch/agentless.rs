@@ -460,14 +460,21 @@ impl<C: HttpClientCapability + SleepCapability> AgentlessFetcher<C> {
     /// and targets metadata are verified with the keys of the reached root,
     /// and the director targets are checked against the config delegations.
     ///
+    /// The same-chain check runs first: a payload signed by the latched keys
+    /// is routed through the normal `apply()` path WITHOUT the org UUID pin
+    /// below. The pin is a DC-switch-only requirement (the normal path skips
+    /// it when the snapshot does not carry one, see `verify_org_uuid`), so a
+    /// DC that does not pin it must still be able to rejoin after a transient
+    /// failure instead of failing every poll at the org check.
+    ///
     /// The scratch state only replaces the live one when the payload is proven
     /// to be a DC switch:
-    /// - the org UUID in its snapshot matches the org UUID the backend reports for the API key (it
-    ///   is the same org, on a new DC);
     /// - its root keys differ from the latched ones on both repositories (each DC signs with its
     ///   own keys; the same keys mean a replay of the current chain, which the version checks of
     ///   the normal update path already rejected, and re-accepting it from the embedded root would
-    ///   erase the TUF rollback protection).
+    ///   erase the TUF rollback protection);
+    /// - the org UUID in its snapshot matches the org UUID the backend reports for the API key (it
+    ///   is the same org, on a new DC).
     ///
     /// No root version comparison: each DC keeps its own, independent version
     /// counters, so the new DC's chain can legitimately sit at lower root
@@ -546,8 +553,27 @@ impl<C: HttpClientCapability + SleepCapability> AgentlessFetcher<C> {
 
         verify_director_against_config(&config_client, &director_client)?;
 
-        // The new DC's snapshot must carry an org UUID and it must match the
-        // org UUID the backend reports for the API key.
+        // A genuine DC switch changes the root keys of both repositories. The
+        // same keys on either one mean a replay of the current chain: not a
+        // DC switch, keep the live state and route the payload through the
+        // normal `apply()` path (the earlier failure was transient). The root
+        // versions are deliberately not compared: each DC keeps independent
+        // version counters, so the new DC's chain can legitimately sit at
+        // lower root versions than the latched ones.
+        //
+        // This check deliberately runs before the org UUID one: the org pin
+        // is a DC-switch-only requirement (the normal path skips it when the
+        // snapshot does not carry one, see `verify_org_uuid`), so a same-chain
+        // fresh join must not be rejected for a missing pin.
+        if root_key_ids(&config_client) == root_key_ids(&self.config_client)
+            || root_key_ids(&director_client) == root_key_ids(&self.director_client)
+        {
+            return Ok(DcSwitch::SameChain);
+        }
+
+        // A different chain: a genuine DC switch, which must prove it belongs
+        // to the same org. The new DC's snapshot must carry an org UUID and it
+        // must match the org UUID the backend reports for the API key.
         let snapshot_org_uuid = config_client
             .database()
             .trusted_snapshot()
@@ -567,18 +593,6 @@ impl<C: HttpClientCapability + SleepCapability> AgentlessFetcher<C> {
             snapshot_org_uuid == api_key_org_uuid,
             "the fresh-join payload belongs to another org: snapshot org UUID {snapshot_org_uuid}, API key org UUID {api_key_org_uuid}"
         );
-
-        // A genuine DC switch changes the root keys of both repositories. The
-        // same keys mean a replay of the current chain: not a DC switch, keep
-        // the live state and its rollback protection. The root versions are
-        // deliberately not compared: each DC keeps independent version
-        // counters, so the new DC's chain can legitimately sit at lower root
-        // versions than the latched ones.
-        if root_key_ids(&config_client) == root_key_ids(&self.config_client)
-            || root_key_ids(&director_client) == root_key_ids(&self.director_client)
-        {
-            return Ok(DcSwitch::SameChain);
-        }
 
         // Proven valid from the embedded root, same org, and a different
         // trusted chain: a genuine DC switch. Replace the live clients with

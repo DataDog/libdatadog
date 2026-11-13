@@ -632,6 +632,86 @@ fn dc_update(
 /// latched TUF state belongs to the old DC, the normal update cannot repair it
 /// (no roots are sent since both DCs sit at the same root version), and the
 /// fresh-join payload of the new DC must re-verify from the embedded root.
+/// A DC whose config snapshots do not pin an org UUID (the pin is optional:
+/// the normal path skips the org check when the snapshot carries none, see
+/// `verify_org_uuid`, and the agent documents removing the pin as a
+/// last-resort) must not get stuck after a transient `apply()` failure: the
+/// same-chain fresh join of the recovery poll is routed through the normal
+/// `apply()` path without requiring the pin.
+#[tokio::test]
+#[cfg_attr(miri, ignore)]
+async fn test_same_chain_rejoins_without_org_uuid_pin() {
+    let config_key = new_key();
+    let director_key = new_key();
+
+    let cfg1 = build_v1(&config_key).await;
+    let dir1 = build_v1(&director_key).await;
+
+    // No org UUID pin in the config snapshot: the DC does not write one.
+    let good = |top_targets: Option<&[u8]>, roots: &[&[u8]]| {
+        response(
+            roots,
+            cfg1.timestamp().unwrap().as_bytes(),
+            cfg1.snapshot().unwrap().as_bytes(),
+            top_targets,
+            vec![],
+            &dir1,
+        )
+    };
+
+    let http = MockHttp::new();
+    http.set_org_uuid("ORG-A");
+    // Poll 1: good, latches the chain.
+    http.push(&good(
+        Some(cfg1.targets().unwrap().as_bytes()),
+        &[cfg1.root().unwrap().as_bytes()],
+    ));
+    // Poll 2: a garbage delegated-targets blob makes `apply()` fail.
+    let mut bad = good(
+        Some(cfg1.targets().unwrap().as_bytes()),
+        &[cfg1.root().unwrap().as_bytes()],
+    );
+    bad.config_metas.as_mut().unwrap().delegated_targets = vec![remoteconfig::DelegatedMeta {
+        version: 1,
+        role: "APM_TRACING".to_string(),
+        raw: b"not valid tuf metadata".to_vec(),
+    }];
+    http.push(&bad);
+    // Poll 3: the recovery poll, a fresh join for the SAME chain without an
+    // org UUID pin: it must rejoin through the normal apply path, not be
+    // rejected for the missing pin.
+    http.push(&good(
+        Some(cfg1.targets().unwrap().as_bytes()),
+        &[cfg1.root().unwrap().as_bytes()],
+    ));
+
+    let mut f = fetcher(
+        http.clone(),
+        cfg1.root().unwrap().as_bytes().to_vec(),
+        dir1.root().unwrap().as_bytes().to_vec(),
+    )
+    .await;
+    let state = test_state();
+    let storage = NoopStorage;
+    let cache = TargetCache::new(&state, &storage);
+
+    // Poll 1 ok.
+    f.fetch_config(dummy_client(), &cache).await.unwrap();
+    assert_eq!(config_root_version(&f), 1);
+
+    // Poll 2 fails and resets (the recovery is armed for the next poll).
+    assert!(f.fetch_config(dummy_client(), &cache).await.is_err());
+    assert_eq!(f.consecutive_failures(), 1);
+
+    // Poll 3 rejoins: the fresh join is same-chain and pin-less, so it must
+    // NOT be rejected at the org check.
+    f.fetch_config(dummy_client(), &cache).await.unwrap();
+    assert_eq!(config_root_version(&f), 1);
+    assert_eq!(config_snapshot_version(&f), Some(1));
+    assert_eq!(f.consecutive_failures(), 0);
+    assert_eq!(f.next_backoff(), None);
+}
+
 #[tokio::test]
 #[cfg_attr(miri, ignore)]
 async fn test_dc_switch_recovers_from_embedded_root() {
