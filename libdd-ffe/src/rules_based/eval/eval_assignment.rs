@@ -14,6 +14,8 @@ use crate::rules_based::{
     },
 };
 
+const DEFAULT_MAX_DEPENDENCY_DEPTH: u16 = 10;
+
 /// Selects how a subject's opt-out timestamp affects exposure-logging allocations.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ExperimentationOptOutMode {
@@ -527,7 +529,7 @@ impl EvaluationSession<'_> {
             return limit;
         }
         let limit = match &self.config.max_dependency_depth {
-            None => 10,
+            None => DEFAULT_MAX_DEPENDENCY_DEPTH,
             Some(value) => {
                 let depth = value
                     .as_f64()
@@ -536,8 +538,10 @@ impl EvaluationSession<'_> {
                     // The checked value is an integer in 0..=255, so this conversion is lossless.
                     depth as u16
                 } else {
-                    log::debug!("Invalid evaluatorParams.maxDependencyDepth; using default of 10");
-                    10
+                    log::debug!(
+                        "Invalid evaluatorParams.maxDependencyDepth; using default of {DEFAULT_MAX_DEPENDENCY_DEPTH}"
+                    );
+                    DEFAULT_MAX_DEPENDENCY_DEPTH
                 }
             }
         };
