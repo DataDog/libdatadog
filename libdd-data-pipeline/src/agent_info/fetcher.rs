@@ -196,8 +196,8 @@ pub struct AgentInfoFetcher<C: HttpClientCapability + SleepCapability> {
     info_endpoint: Endpoint,
     refresh_interval: Duration,
     trigger_rx: Option<mpsc::Receiver<()>>,
-    /// Set while a fetch is in flight. A fetch cancelled by a pause (see
-    /// [`Worker::cancellable_run`]) leaves it set, so the restarted worker fetches right away
+    /// Set while a fetch is in flight. A fetch cancelled by a pause or flush (see
+    /// [`Worker::cancellable_run`]) leaves it set, so `initial_trigger` fetches right away
     /// instead of waiting for the next refresh: the trigger that started the fetch is gone.
     fetch_pending: bool,
     /// `C` lives on the struct because `Worker::run(&mut self)` (a fixed trait

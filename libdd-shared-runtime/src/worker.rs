@@ -15,7 +15,8 @@ use libdd_capabilities::{MaybeSend, maybe_send::MaybeSync};
 /// The `trigger` function can be interrupted at any yield point (`.await`ed call). The state of the
 /// worker at this point will be saved and used to restart the worker. To be able to safely restart,
 /// the worker must be in a valid state on every call to `.await` within the trigger function.
-/// See [`tokio::select#cancellation-safety`] for more details.
+/// The same applies to [`run`](Self::run) when [`cancellable_run`](Self::cancellable_run) returns
+/// `true`. See [`tokio::select#cancellation-safety`] for more details.
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait Worker: std::fmt::Debug + MaybeSend + MaybeSync {
@@ -29,9 +30,16 @@ pub trait Worker: std::fmt::Debug + MaybeSend + MaybeSync {
     /// before a fork.
     ///
     /// Defaults to `false`: the worker pauses only once `run` completes, so a `run` that sends
-    /// buffered data is never cut off mid-send. Return `true` only if an interrupted `run` loses
-    /// nothing and leaves the worker ready for its next `run`, such as a periodic fetch that
-    /// stores its result once the response has arrived.
+    /// buffered data is never cut off mid-send.
+    ///
+    /// Returning `true` requires `run` to be cancel safe: it can be dropped at any `.await`, and
+    /// the worker is then restarted from [`initial_trigger`](Self::initial_trigger) with whatever
+    /// state `run` left behind. An interrupted `run` must lose nothing and leave the worker ready
+    /// for its next `run`, such as a periodic fetch that stores its result only once the response
+    /// has arrived. See [`tokio::select#cancellation-safety`] for what this means for the futures
+    /// `run` awaits.
+    ///
+    /// This is checked before each `run`, so a worker may allow cancellation for some runs only.
     fn cancellable_run(&self) -> bool {
         false
     }
