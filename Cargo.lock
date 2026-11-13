@@ -3737,6 +3737,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "libdd-trace-semantics"
+version = "0.1.0"
+dependencies = [
+ "libdd-trace-model",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "libdd-trace-stats"
 version = "12.0.0"
 dependencies = [
