@@ -371,7 +371,9 @@ impl<T: Send + BufferSize + 'static> TraceBuffer<T> {
     /// [`TraceBuffer::flush_and_close`] instead to also close the buffer.
     ///
     /// This always queues a force flush, even on an idle buffer, so the exporter also drains
-    /// buffered client-side stats.
+    /// buffered client-side stats. With [`DefaultExport`], the stats flush is only requested
+    /// before the ack: stats are sent afterwards by the stats worker (after the restart if it
+    /// is paused for a fork, or at the latest on shutdown).
     ///
     /// A `timeout` of `None` blocks the calling thread until the exporter acks the export or
     /// until the buffer closes. Neither event is guaranteed: a paused worker never acks and
@@ -778,8 +780,9 @@ impl<T> Waiter<T> {
 /// calling any export method to send traces.
 pub trait Export<T>: Send + Debug {
     /// Export the trace chunks.
-    /// If `force_flush` is true, the exporter should also export any buffered data (like
-    /// metrics) before returning.
+    /// If `force_flush` is true, the exporter should also flush any buffered data (like
+    /// metrics). It may hand that data off to be sent asynchronously instead of waiting for
+    /// it, and must do so if waiting could depend on a worker paused for a fork.
     /// When `force_flush` is true, `trace_chunks` may be empty. In that case,
     /// the exporter should still flush buffered data and return `Ok`.
     fn export_trace_chunks(
@@ -845,8 +848,8 @@ where
         Box::pin(async move {
             // A force flush can arrive with no trace chunks when the buffer was empty.
             // There are no traces to send in that case, so skip the network round-trip;
-            // the only work left is flushing the buffered client-side stats that the
-            // force flush is meant to drain. The agent send path does not short-circuit
+            // the only work left is requesting a flush of the buffered client-side stats
+            // that the force flush is meant to drain. The agent send path does not short-circuit
             // on empty traces, so sending them would emit an empty trace payload.
             let res = if trace_chunks.is_empty() {
                 Ok(AgentResponse::Unchanged)
@@ -859,7 +862,10 @@ where
                     .await
             };
             if force_flush {
-                self.trace_exporter.flush_client_side_stats_async().await;
+                // Only request the stats flush; the stats worker sends them asynchronously.
+                // Waiting here would block `before_fork`: this runs on a worker task, and the
+                // stats worker defers flushes while paused.
+                let _ = self.trace_exporter.request_client_side_stats_flush();
             }
             res
         })
@@ -938,7 +944,8 @@ impl<T: Send + 'static> TraceExporterWorker<T> {
         // live outside the trace batch.
         // `Batch::export` advances the batch generation for a force flush even when the batch is
         // empty, so the ack keeps the generation/ack handshake consistent and unblocks a
-        // caller waiting on `flush_and_wait`.
+        // caller waiting on `flush_and_wait`. The ack covers the trace export; stats flushes
+        // requested by the exporter may still be in flight.
         let should_run_export =
             matches!(export.flush_type, FlushType::Force) || !export.trace_chunks.is_empty();
         if !should_run_export {

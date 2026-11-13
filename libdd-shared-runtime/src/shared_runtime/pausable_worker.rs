@@ -248,18 +248,25 @@ impl<T: Worker + MaybeSend + MaybeSync + 'static> PausableWorker<T> {
     ///
     /// # Errors
     /// Fails if the worker is in an invalid state or the task has been aborted.
+    #[cfg(test)]
     pub(crate) fn request_flush(&self) -> Result<FlushToken, PausableWorkerError> {
-        let sender = match self {
+        self.flush_requester()
+            .ok_or(PausableWorkerError::InvalidState)?
+            .request_flush()
+    }
+
+    /// Returns a requester that sends flush requests to this worker without access to it.
+    ///
+    /// The command channel lives as long as the worker, across pauses and restarts.
+    pub(crate) fn flush_requester(&self) -> Option<FlushRequester> {
+        match self {
             PausableWorker::Running { sender, .. } | PausableWorker::Paused { sender, .. } => {
-                sender
+                Some(FlushRequester {
+                    sender: sender.clone(),
+                })
             }
-            PausableWorker::InvalidState => return Err(PausableWorkerError::InvalidState),
-        };
-        let (tx, rx) = oneshot::channel();
-        sender
-            .send(WorkerCommand::Flush(tx))
-            .map_err(|_| PausableWorkerError::TaskAborted)?;
-        Ok(FlushToken { receiver: rx })
+            PausableWorker::InvalidState => None,
+        }
     }
 
     /// Reset the worker state (e.g. in a fork child).
@@ -309,6 +316,23 @@ impl<T: Worker + MaybeSend + MaybeSync + 'static> PausableWorker<T> {
             let _ = sender.send(cmd);
         }
         pause
+    }
+}
+
+/// Sends flush requests to a worker task without going through the worker registry.
+#[derive(Clone, Debug)]
+pub(crate) struct FlushRequester {
+    sender: CommandSender,
+}
+
+impl FlushRequester {
+    /// Queue a flush request. Fails once the worker has been shut down or dropped.
+    pub(crate) fn request_flush(&self) -> Result<FlushToken, PausableWorkerError> {
+        let (tx, rx) = oneshot::channel();
+        self.sender
+            .send(WorkerCommand::Flush(tx))
+            .map_err(|_| PausableWorkerError::TaskAborted)?;
+        Ok(FlushToken { receiver: rx })
     }
 }
 

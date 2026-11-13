@@ -167,6 +167,7 @@ impl ForkSafeRuntime {
         restart_on_fork: bool,
     ) -> WorkerHandle {
         let worker_id = self.next_worker_id.fetch_add(1, Ordering::Relaxed);
+        let flush_requester = pausable_worker.flush_requester();
         workers_guard.push(WorkerEntry {
             id: worker_id,
             restart_on_fork,
@@ -175,6 +176,7 @@ impl ForkSafeRuntime {
         WorkerHandle {
             worker_id,
             workers: self.workers.clone(),
+            flush_requester,
         }
     }
 }
@@ -522,6 +524,36 @@ mod tests {
         let (worker, receiver) = make_test_worker();
         let handle = shared_runtime.spawn_worker(worker, true).unwrap();
         let token = handle.flush().unwrap();
+        shared_runtime
+            .block_on_with_timeout(token.wait(), Duration::from_secs(2))
+            .unwrap()
+            .unwrap();
+        wait_flush_marker(&receiver);
+    }
+
+    // `before_fork` holds the worker registry lock while waiting for workers to pause. A flush
+    // requested from another worker's task meanwhile must not need that lock, or the fork
+    // deadlocks.
+    #[test]
+    fn test_flush_does_not_take_registry_lock() {
+        let shared_runtime = ForkSafeRuntime::new().unwrap();
+        let (worker, receiver) = make_test_worker();
+        let handle = shared_runtime.spawn_worker(worker, true).unwrap();
+        receiver.recv_timeout(Duration::from_secs(1)).unwrap();
+
+        let (done_tx, done_rx) = channel();
+        let token = {
+            let _registry = shared_runtime.workers.lock_or_panic();
+            let flusher = std::thread::spawn(move || {
+                let _ = done_tx.send(handle.flush().map(|_| ()).is_ok());
+                handle
+            });
+            let requested = done_rx
+                .recv_timeout(Duration::from_secs(2))
+                .expect("flush blocked on the worker registry lock");
+            assert!(requested);
+            flusher.join().unwrap().flush().unwrap()
+        };
         shared_runtime
             .block_on_with_timeout(token.wait(), Duration::from_secs(2))
             .unwrap()

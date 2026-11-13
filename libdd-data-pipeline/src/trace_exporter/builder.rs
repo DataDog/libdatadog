@@ -971,7 +971,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
                 test_token: self.test_session_token.clone(),
                 capabilities: capabilities.clone(),
             };
-            let (shared, flush_handle) = SharedOtlpStatsExporter::wrap(worker);
+            let shared = SharedOtlpStatsExporter::new(worker);
             let worker_handle = shared_runtime
                 .spawn_worker(shared, self.restart_after_fork)
                 .map_err(|e| {
@@ -982,7 +982,6 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             stats = StatsComputationStatus::Enabled {
                 stats_concentrator: concentrator,
                 worker_handle,
-                flush_handle,
             };
             otlp_stats_enabled = true;
         }
@@ -1069,7 +1068,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
                     None
                 },
             );
-            let (shared, flush_handle) = SharedStatsExporter::wrap(stats_exporter);
+            let shared = SharedStatsExporter::new(stats_exporter);
             let worker_handle = shared_runtime
                 .spawn_worker(shared, self.restart_after_fork)
                 .map_err(|e| {
@@ -1080,7 +1079,6 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             stats = StatsComputationStatus::Enabled {
                 stats_concentrator: concentrator,
                 worker_handle,
-                flush_handle,
             };
         }
 
