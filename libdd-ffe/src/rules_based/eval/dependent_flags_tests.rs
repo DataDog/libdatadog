@@ -360,7 +360,7 @@ fn depth_counts_edges_defaults_to_ten_and_preserves_explicit_zero() {
 }
 
 #[test]
-fn invalid_depth_limits_only_fail_when_a_dependency_executes() {
+fn invalid_depth_limits_default_to_ten() {
     for limit in [
         json!(-1),
         json!(256),
@@ -372,37 +372,43 @@ fn invalid_depth_limits_only_fail_when_a_dependency_executes() {
         json!([]),
         json!({}),
     ] {
-        let mut w = wire(json!({"root": flag(vec![]),
-            "dependent": flag(vec![dependency("parent")]), "parent": flag(vec![])}));
-        w["evaluatorParams"] = json!({"maxDependencyDepth": limit});
-        let bytes = serde_json::to_vec(&w).unwrap();
-        let parsed = UniversalFlagConfig::from_json(bytes.clone()).unwrap();
-        assert_eq!(parsed.to_json(), bytes);
-        let config = Configuration::from_server_response(parsed);
-        let context = EvaluationContext::new(Some("subject".into()), Default::default());
-        let now = "2026-10-28T00:00:00Z".parse::<DateTime<Utc>>().unwrap();
-        assert_eq!(
-            config
-                .eval_flag("root", &context, ExpectedFlagType::Boolean, now)
-                .unwrap()
-                .variation_key
-                .as_str(),
-            "on",
-            "limit={limit}"
-        );
-        let result = config.eval_flag_with_trace(
-            "dependent",
-            &context,
-            ExpectedFlagType::Boolean,
-            now,
-            EvaluationOptions::default(),
-        );
-        assert_eq!(
-            result.result.unwrap_err(),
-            EvaluationError::ConfigurationParseError,
-            "limit={limit}"
-        );
-        assert!(result.evaluations.is_empty());
+        for edges in [0, 1, 10, 11] {
+            let mut w = chain(edges);
+            w["evaluatorParams"] = json!({"maxDependencyDepth": limit});
+            let bytes = serde_json::to_vec(&w).unwrap();
+            let parsed = UniversalFlagConfig::from_json(bytes.clone()).unwrap();
+            assert_eq!(parsed.to_json(), bytes);
+            let config = Configuration::from_server_response(parsed);
+            let context = EvaluationContext::new(Some("subject".into()), Default::default());
+            let now = "2026-10-28T00:00:00Z".parse::<DateTime<Utc>>().unwrap();
+            let result = config.eval_flag_with_trace(
+                "root",
+                &context,
+                ExpectedFlagType::Boolean,
+                now,
+                EvaluationOptions::default(),
+            );
+            assert_eq!(
+                result.result.is_ok(),
+                edges <= 10,
+                "limit={limit} edges={edges}"
+            );
+            if edges <= 10 {
+                assert_eq!(result.result.unwrap().variation_key.as_str(), "on");
+                assert_eq!(result.evaluations.len(), edges);
+            } else {
+                assert_eq!(
+                    cause(result.result.as_ref().unwrap_err()),
+                    &EvaluationError::DependencyDepthExceeded
+                );
+                assert!(
+                    result
+                        .evaluations
+                        .iter()
+                        .all(|record| !record.exposure_eligible)
+                );
+            }
+        }
     }
 }
 

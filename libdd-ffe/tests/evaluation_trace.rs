@@ -15,16 +15,24 @@ use serde_json::{Value, json};
 struct TraceLogger(Mutex<Vec<(String, String)>>);
 
 static LOGGER: TraceLogger = TraceLogger(Mutex::new(Vec::new()));
+static DIAGNOSTICS: Mutex<Vec<(log::Level, String)>> = Mutex::new(Vec::new());
 
 impl log::Log for TraceLogger {
-    fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
-        metadata.level() == log::Level::Trace
+    fn enabled(&self, _metadata: &log::Metadata<'_>) -> bool {
+        true
     }
 
     fn log(&self, record: &log::Record<'_>) {
         if self.enabled(record.metadata())
             && record.target() == "libdd_ffe::rules_based::eval::eval_assignment"
         {
+            if record.level() != log::Level::Trace {
+                DIAGNOSTICS
+                    .lock()
+                    .unwrap()
+                    .push((record.level(), record.args().to_string()));
+                return;
+            }
             self.0.lock().unwrap().push((
                 record.args().to_string(),
                 record
@@ -134,4 +142,46 @@ fn trace_and_assignment_apis_log_each_root_once_including_early_errors() {
     );
     assert!(trace.result.is_err());
     assert_one_log("independent", false);
+    assert!(DIAGNOSTICS.lock().unwrap().is_empty());
+
+    for limit in [json!(256), json!("10"), json!(null)] {
+        let mut flags = serde_json::Map::new();
+        flags.insert("leaf".into(), flag(vec![]));
+        for n in (0..10).rev() {
+            let key = format!("f{n}");
+            let parent = if n == 9 {
+                "leaf".into()
+            } else {
+                format!("f{}", n + 1)
+            };
+            flags.insert(key, flag(vec![dependency(&parent)]));
+        }
+        let config = Configuration::from_server_response(
+            UniversalFlagConfig::from_json(
+                serde_json::to_vec(&json!({
+                    "createdAt": "2026-10-28T00:00:00Z",
+                    "environment": {"name": "test"},
+                    "evaluatorParams": {"maxDependencyDepth": limit},
+                    "flags": flags,
+                }))
+                .unwrap(),
+            )
+            .unwrap(),
+        );
+        for _ in 0..2 {
+            assert!(
+                config
+                    .eval_flag("f0", &context, ExpectedFlagType::Boolean, Utc::now())
+                    .is_ok()
+            );
+            assert_one_log("f0", true);
+            assert_eq!(
+                std::mem::take(&mut *DIAGNOSTICS.lock().unwrap()),
+                [(
+                    log::Level::Debug,
+                    "Invalid evaluatorParams.maxDependencyDepth; using default of 10".into()
+                )]
+            );
+        }
+    }
 }

@@ -126,9 +126,9 @@ the root with `DependencyEvaluationFailed`, preserving its cause.
 Each root evaluation uses one configuration, context, timestamp, and experimentation opt-out
 policy. Completed prerequisites are memoized only within that invocation. Cycles fail;
 `evaluatorParams.maxDependencyDepth` limits dependency edges (default 10, accepted range
-0–255). The limit is validated only when a dependency condition executes. Invalid values,
-including explicit `null`, fail that evaluation with `ConfigurationParseError` without
-preventing configuration loading, independent evaluations, or skipped dependency conditions.
+0–255). The limit is resolved only when a dependency condition executes. Invalid values,
+including explicit `null`, use the default of 10 and emit a debug diagnostic once per root
+evaluation that reaches a dependency. Missing or malformed parameter blocks also use 10.
 Cached results retain the deepest dependency visited, including rejected rules, so reuse
 from a deeper path cannot bypass the limit.
 

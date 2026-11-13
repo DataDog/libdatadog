@@ -421,10 +421,10 @@ impl<'a> EvaluationFrame<'a> {
                     } = &condition.check
                     {
                         let Some(result) = dependency.take() else {
-                            // Invalid limits only affect dependency conditions actually reached.
+                            // Resolve the limit only for dependency conditions actually reached.
                             return Ok(FrameStep::Dependency {
                                 key: key.clone(),
-                                limit: session.dependency_depth_limit()?,
+                                limit: session.dependency_depth_limit(),
                             });
                         };
                         let result = result.map_err(|source| {
@@ -522,23 +522,27 @@ impl EvaluationSession<'_> {
         Err(EvaluationError::DefaultAllocationNull)
     }
 
-    fn dependency_depth_limit(&mut self) -> Result<u16, EvaluationError> {
+    fn dependency_depth_limit(&mut self) -> u16 {
         if let Some(limit) = self.max_dependency_depth {
-            return Ok(limit);
+            return limit;
         }
         let limit = match &self.config.max_dependency_depth {
             None => 10,
             Some(value) => {
                 let depth = value
                     .as_f64()
-                    .filter(|depth| depth.fract() == 0.0 && (0.0..=255.0).contains(depth))
-                    .ok_or(EvaluationError::ConfigurationParseError)?;
-                // The checked value is an integer in 0..=255, so this conversion is lossless.
-                depth as u16
+                    .filter(|depth| depth.fract() == 0.0 && (0.0..=255.0).contains(depth));
+                if let Some(depth) = depth {
+                    // The checked value is an integer in 0..=255, so this conversion is lossless.
+                    depth as u16
+                } else {
+                    log::debug!("Invalid evaluatorParams.maxDependencyDepth; using default of 10");
+                    10
+                }
             }
         };
         self.max_dependency_depth = Some(limit);
-        Ok(limit)
+        limit
     }
 
     fn resolve_dependency(
