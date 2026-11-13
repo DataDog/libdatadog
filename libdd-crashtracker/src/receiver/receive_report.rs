@@ -411,7 +411,7 @@ pub(crate) async fn receive_report_from_stream(
 
     let mut lines = stream.lines();
     let mut deadline = None;
-    // Start the timeout counter when the deadline when the first crash message is recieved
+    // Start the timeout counter when the first crash message is received
     let mut remaining_timeout = Duration::MAX;
 
     //TODO: This assumes that the input is valid UTF-8.
@@ -503,7 +503,7 @@ pub(crate) async fn receive_report_from_stream(
             // The clock was already ticking, update the remaining time
             remaining_timeout = deadline - Instant::now()
         } else {
-            // We've recieved the first message from the collector, start the clock ticking.
+            // We've received the first message from the collector, start the clock ticking.
             deadline = Some(Instant::now() + timeout);
             remaining_timeout = timeout;
         }
