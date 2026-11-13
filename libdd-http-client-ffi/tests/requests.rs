@@ -18,6 +18,7 @@ fn offline_client() -> Client {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn every_method_is_supported() {
     let server = MockServer::start();
     let client = Cfg::new(server.base_url()).build().expect("client");
@@ -44,6 +45,7 @@ fn every_method_is_supported() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn post_sends_a_binary_body_and_its_headers_unchanged() {
     let server = MockServer::start();
     // The body is not valid UTF-8, so only its length can be matched.
@@ -67,6 +69,7 @@ fn post_sends_a_binary_body_and_its_headers_unchanged() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn post_sends_a_payload_as_large_as_a_trace_chunk() {
     let size = 5 * 1024 * 1024;
     let server = MockServer::start();
@@ -90,6 +93,7 @@ fn post_sends_a_payload_as_large_as_a_trace_chunk() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn a_relative_url_is_appended_to_the_base_url_with_its_query() {
     let server = MockServer::start();
     let mock = server.mock(|when, then| {
@@ -109,6 +113,7 @@ fn a_relative_url_is_appended_to_the_base_url_with_its_query() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn an_absolute_url_ignores_the_base_url() {
     let server = MockServer::start();
     let mock = server.mock(|when, then| {
@@ -125,6 +130,7 @@ fn an_absolute_url_ignores_the_base_url() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn default_headers_are_sent_with_every_request() {
     let server = MockServer::start();
     let mock = server.mock(|when, then| {
@@ -145,6 +151,7 @@ fn default_headers_are_sent_with_every_request() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn request_headers_replace_default_headers_case_insensitively() {
     let server = MockServer::start();
     let mock = server.mock(|when, then| {
@@ -215,6 +222,7 @@ fn an_invalid_multipart_content_type_is_an_invalid_argument() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn a_multipart_body_is_encoded_with_its_parts() {
     let server = MockServer::start();
     let mock = server.mock(|when, then| {
@@ -259,6 +267,7 @@ fn multipart_mock(server: &MockServer) -> httpmock::Mock<'_> {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn multipart_replaces_a_default_content_type() {
     let server = MockServer::start();
     let mock = multipart_mock(&server);
@@ -275,6 +284,7 @@ fn multipart_replaces_a_default_content_type() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn multipart_replaces_a_request_content_type() {
     let server = MockServer::start();
     let mock = multipart_mock(&server);
@@ -375,6 +385,7 @@ fn send_rejects_a_url_that_is_not_utf8() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn one_client_can_be_used_from_several_threads_at_once() {
     let server = MockServer::start();
     let mock = server.mock(|when, then| {

@@ -19,6 +19,7 @@ fn serve(configure: impl FnOnce(httpmock::Then)) -> (MockServer, Client) {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn error_statuses_are_returned_as_data_with_their_body_and_headers() {
     let server = MockServer::start();
     let client = Cfg::new(server.base_url()).build().expect("client");
@@ -40,6 +41,7 @@ fn error_statuses_are_returned_as_data_with_their_body_and_headers() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn an_empty_response_has_an_empty_body() {
     let (_server, client) = serve(|then| {
         then.status(204);
@@ -52,6 +54,7 @@ fn an_empty_response_has_an_empty_body() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn a_binary_body_is_returned_unchanged() {
     let payload = [0x00, 0xff, 0x01, 0xfe, 0x00];
     let (_server, client) = serve(|then| {
@@ -64,6 +67,7 @@ fn a_binary_body_is_returned_unchanged() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn header_get_is_case_insensitive_and_empty_when_absent() {
     let (_server, client) = serve(|then| {
         then.status(200)
@@ -85,6 +89,7 @@ fn header_get_is_case_insensitive_and_empty_when_absent() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn headers_returns_every_header_and_keeps_repeated_names() {
     let (_server, client) = serve(|then| {
         then.status(200)
@@ -112,6 +117,7 @@ fn headers_returns_every_header_and_keeps_repeated_names() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn headers_returns_the_same_slice_on_every_call() {
     let (_server, client) = serve(|then| {
         then.status(200).header("X-First", "1");
@@ -126,6 +132,7 @@ fn headers_returns_the_same_slice_on_every_call() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn a_response_stays_valid_after_its_client_is_dropped() {
     let (_server, client) = serve(|then| {
         then.status(200).header("X-Kept", "yes").body("still here");

@@ -35,6 +35,7 @@ fn serve_once(path: &Path) -> JoinHandle<String> {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn requests_go_through_the_unix_socket() {
     let dir = tempfile::tempdir().expect("tempdir");
     let socket = dir.path().join("agent.sock");
@@ -56,6 +57,7 @@ fn requests_go_through_the_unix_socket() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn the_host_of_the_base_url_is_ignored_with_a_unix_socket() {
     let dir = tempfile::tempdir().expect("tempdir");
     let socket = dir.path().join("agent.sock");
@@ -77,6 +79,7 @@ fn the_host_of_the_base_url_is_ignored_with_a_unix_socket() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn a_missing_socket_is_connection_failed() {
     let dir = tempfile::tempdir().expect("tempdir");
     let client = Cfg::new("http://localhost")
