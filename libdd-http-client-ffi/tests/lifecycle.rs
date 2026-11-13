@@ -31,6 +31,7 @@ fn new_succeeds_for_an_https_base_url_without_a_preinstalled_crypto_provider() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn a_client_with_a_shared_runtime_keeps_working_after_the_caller_frees_its_reference() {
     let server = MockServer::start();
     server.mock(|when, then| {
@@ -48,6 +49,7 @@ fn a_client_with_a_shared_runtime_keeps_working_after_the_caller_frees_its_refer
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn several_clients_can_share_one_runtime() {
     let server = MockServer::start();
     server.mock(|when, then| {

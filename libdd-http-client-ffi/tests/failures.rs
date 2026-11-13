@@ -58,6 +58,8 @@ fn a_refused_connection_is_connection_failed() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
+#[cfg_attr(miri, ignore)]
 fn a_silent_server_times_out_using_the_client_timeout() {
     let server = slow_server();
     let client = Cfg::new(server.base_url())
@@ -81,6 +83,7 @@ fn a_silent_server_times_out_using_the_client_timeout() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn a_request_timeout_overrides_the_client_timeout() {
     let server = slow_server();
     let client = Cfg::new(server.base_url())
@@ -112,6 +115,7 @@ fn a_dropped_connection_is_an_error_without_retries() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn retries_recover_from_a_dropped_connection() {
     let client = Cfg::for_addr(flaky_server(1))
         .retries(2, 10)
@@ -127,6 +131,7 @@ fn retries_recover_from_a_dropped_connection() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn an_http_error_status_is_never_retried() {
     let server = MockServer::start();
     let mock = server.mock(|when, then| {
@@ -147,6 +152,7 @@ fn an_http_error_status_is_never_retried() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn cancelling_from_another_thread_aborts_a_blocked_send() {
     let server = slow_server();
     let client = Cfg::new(server.base_url())

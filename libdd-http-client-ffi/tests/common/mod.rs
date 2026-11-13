@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Safe wrappers over the C API.
+//!
+//! Tests that need a server are ignored under miri: httpmock's server thread never exits, which
+//! miri reports as a leak, and miri does not support Unix sockets.
 
 #![allow(dead_code)]
 
