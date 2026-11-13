@@ -20,7 +20,7 @@ bench = false
 required-features = ["collector_windows"]
 
 [features]
-default = ["cbindgen", "collector", "demangler", "receiver"]
+default = ["cbindgen", "collector", "demangler", "receiver", "otel-thread-ctx"]
 cbindgen = ["build_common/cbindgen"]
 regex-lite = ["libdd-regex/regex-lite"]
 # Enables the in-process collection of crash-info
@@ -29,13 +29,16 @@ collector_windows = []
 demangler = ["dep:symbolic-demangle", "dep:symbolic-common"]
 # Enables the use of this library to receiver crash-info from a suitable collector
 receiver = []
+# Enables reading OTel thread context from the crashing process
+otel-thread-ctx = ["libdd-crashtracker/otel-thread-ctx"]
 
 [build-dependencies]
 build_common = { path = "../build-common" }
 
 [dependencies]
 anyhow.workspace = true
-libdd-crashtracker = { path = "../libdd-crashtracker" }
+# libdd-crashtracker defaults minus otel-thread-ctx, which is opt-in through the feature above.
+libdd-crashtracker = { path = "../libdd-crashtracker", default-features = false, features = ["collector", "receiver", "collector_windows"] }
 libdd-common = { path = "../libdd-common" }
 libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false, features = ["std"] }
 libdd-regex = { path = "../libdd-regex" }
