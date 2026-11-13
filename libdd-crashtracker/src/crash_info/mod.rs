@@ -13,6 +13,7 @@ mod otel_thread_ctx;
 mod proc_info;
 mod sig_info;
 mod spans;
+mod spans_to_close;
 mod stacktrace;
 mod telemetry;
 pub(crate) mod test_utils;
@@ -33,6 +34,7 @@ pub use otel_thread_ctx::*;
 pub use proc_info::*;
 pub use sig_info::*;
 pub use spans::*;
+pub use spans_to_close::*;
 pub use stacktrace::*;
 pub use telemetry::*;
 pub use ucontext::*;
@@ -67,6 +69,11 @@ macro_rules! parse_tags {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct CrashInfo {
+    /// Spans the crash ends, from `DD_CRASHTRACK_BEGIN_SPANS_TO_CLOSE` blocks.
+    /// The receiver finishes and submits them; never serialized.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub spans_to_close: Vec<SpansToClose>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub counters: HashMap<String, i64>,
     pub data_schema_version: String,
@@ -103,6 +110,28 @@ impl CrashInfo {
 
     pub fn demangle_names(&mut self) -> anyhow::Result<()> {
         self.error.demangle_names()
+    }
+
+    /// The crash's error type, as reported to errors intake and on the spans the crash ended:
+    /// the signal name, else the error kind.
+    pub(crate) fn error_type(&self) -> String {
+        match &self.sig_info {
+            Some(sig_info) => format!("{:?}", sig_info.si_signo_human_readable),
+            None => format!("{:?}", self.error.kind),
+        }
+    }
+
+    /// The crash's error message, as reported to errors intake and on the spans the crash ended:
+    /// the collector's message, else one naming the signal.
+    pub(crate) fn error_message(&self) -> Option<String> {
+        self.error.message.clone().or_else(|| {
+            self.sig_info.as_ref().map(|sig_info| {
+                format!(
+                    "Process terminated with {:?} ({:?})",
+                    sig_info.si_code_human_readable, sig_info.si_signo_human_readable
+                )
+            })
+        })
     }
 
     /// Returns a comma-separated ddtags string for this crash report.
@@ -310,6 +339,7 @@ mod tests {
             );
 
             Self {
+                spans_to_close: vec![],
                 counters,
                 data_schema_version: CrashInfo::current_schema_version(),
                 error: ErrorData::test_instance(seed),

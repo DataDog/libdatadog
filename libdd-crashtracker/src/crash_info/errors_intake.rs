@@ -385,21 +385,8 @@ impl ErrorsIntakePayload {
         ddtags.push(',');
         ddtags.push_str(&crash_info.ddtags());
 
-        let error_type = if let Some(sig_info) = &crash_info.sig_info {
-            Some(format!("{:?}", sig_info.si_signo_human_readable))
-        } else {
-            Some(format!("{:?}", crash_info.error.kind))
-        };
-
-        let error_message = crash_info.error.message.clone().or_else(|| {
-            crash_info.sig_info.as_ref().map(|sig_info| {
-                format!(
-                    "Process terminated with {:?} ({:?})",
-                    sig_info.si_code_human_readable, sig_info.si_signo_human_readable
-                )
-                .to_string()
-            })
-        });
+        let error_type = Some(crash_info.error_type());
+        let error_message = crash_info.error_message();
 
         let error_stack = if !crash_info.error.stack.frames.is_empty() {
             Some(crash_info.error.stack.clone())
