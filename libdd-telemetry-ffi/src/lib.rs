@@ -103,8 +103,34 @@ macro_rules! try_c {
     };
 }
 
+/// Runs `$body` (which evaluates to a `MaybeError`) and turns a panic into an error return,
+/// so it never unwinds across the FFI boundary.
+macro_rules! catch_panic {
+    ($body:block) => {
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> ffi::MaybeError {
+            $body
+        })) {
+            Ok(ret) => ret,
+            Err(info) => {
+                let msg = if let Some(s) = info.downcast_ref::<String>() {
+                    s.as_str()
+                } else if let Some(s) = info.downcast_ref::<&str>() {
+                    s
+                } else {
+                    "unable to retrieve panic context"
+                };
+                ffi::MaybeError::Some(libdd_common_ffi::Error::from(format!(
+                    "{} panicked: {msg}",
+                    function_name!()
+                )))
+            }
+        }
+    };
+}
+
 #[allow(unused_imports)]
 pub(crate) use c_setters;
+pub(crate) use catch_panic;
 
 #[cfg(test)]
 mod tests {

@@ -1,6 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::catch_panic;
 use ffi::MaybeError;
 use ffi::slice::AsBytes;
 use function_name::named;
@@ -18,10 +19,6 @@ use libdd_telemetry::{
 
 /// FFI-facing alias: the C ABI surface is native-only, so the worker handle is
 /// always pinned to [`NativeCapabilities`].
-fn panic_to_error(_: Box<dyn std::any::Any + Send>) -> MaybeError {
-    MaybeError::Some(ffi::Error::from("telemetry FFI call panicked"))
-}
-
 type TelemetryWorkerHandle = libdd_telemetry::worker::TelemetryWorkerHandle<NativeCapabilities>;
 
 #[allow(clippy::missing_safety_doc)]
@@ -92,6 +89,7 @@ pub unsafe extern "C" fn ddog_telemetry_handle_add_log(
 /// * seq_id: optional sequence id of the configuration entry
 #[allow(clippy::missing_safety_doc)]
 #[unsafe(no_mangle)]
+#[named]
 pub unsafe extern "C" fn ddog_telemetry_handle_add_config(
     handle: &TelemetryWorkerHandle,
     name: ffi::CharSlice,
@@ -100,7 +98,7 @@ pub unsafe extern "C" fn ddog_telemetry_handle_add_config(
     config_id: ffi::CharSlice,
     seq_id: ffi::Option<u64>,
 ) -> MaybeError {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+    catch_panic!({
         let config = Configuration {
             name: crate::try_c!(name.try_to_string()),
             value: match Option::<ffi::CharSlice>::from(value) {
@@ -113,32 +111,32 @@ pub unsafe extern "C" fn ddog_telemetry_handle_add_config(
         };
         crate::try_c!(handle.try_send_msg(TelemetryActions::AddConfig(config)));
         MaybeError::None
-    }))
-    .unwrap_or_else(panic_to_error)
+    })
 }
 
 /// * version: an empty slice means no version
 #[allow(clippy::missing_safety_doc)]
 #[unsafe(no_mangle)]
+#[named]
 pub unsafe extern "C" fn ddog_telemetry_handle_add_product_change(
     handle: &TelemetryWorkerHandle,
     product: ffi::CharSlice,
     enabled: bool,
     version: ffi::CharSlice,
 ) -> MaybeError {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+    catch_panic!({
         let product = crate::try_c!(product.try_to_string());
         let version = crate::try_c!(version.try_to_string_option());
         crate::try_c!(handle.add_product_change(product, enabled, version));
         MaybeError::None
-    }))
-    .unwrap_or_else(panic_to_error)
+    })
 }
 
 /// * path: an empty slice means no path
 /// * request_body_type, response_body_type, response_code: an empty slice means not set
 #[allow(clippy::missing_safety_doc)]
 #[unsafe(no_mangle)]
+#[named]
 pub unsafe extern "C" fn ddog_telemetry_handle_add_endpoint(
     handle: &TelemetryWorkerHandle,
     method: ffi::Option<Method>,
@@ -149,7 +147,7 @@ pub unsafe extern "C" fn ddog_telemetry_handle_add_endpoint(
     response_body_type: ffi::Slice<ffi::CharSlice>,
     response_code: ffi::Slice<u32>,
 ) -> MaybeError {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+    catch_panic!({
         fn strings(s: ffi::Slice<ffi::CharSlice>) -> Result<Option<Vec<String>>, String> {
             if s.is_empty() {
                 return Ok(None);
@@ -172,51 +170,50 @@ pub unsafe extern "C" fn ddog_telemetry_handle_add_endpoint(
         };
         crate::try_c!(handle.try_send_msg(TelemetryActions::AddEndpoint(endpoint)));
         MaybeError::None
-    }))
-    .unwrap_or_else(panic_to_error)
+    })
 }
 
 /// Flushes aggregated metrics into the pending payload queue
 #[allow(clippy::missing_safety_doc)]
 #[unsafe(no_mangle)]
+#[named]
 pub unsafe extern "C" fn ddog_telemetry_handle_flush_metrics(
     handle: &TelemetryWorkerHandle,
 ) -> MaybeError {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+    catch_panic!({
         crate::try_c!(handle.try_send_msg(TelemetryActions::Lifecycle(
             LifecycleAction::FlushMetricAggr
         )));
         MaybeError::None
-    }))
-    .unwrap_or_else(panic_to_error)
+    })
 }
 
 /// Sends all pending telemetry data
 #[allow(clippy::missing_safety_doc)]
 #[unsafe(no_mangle)]
+#[named]
 pub unsafe extern "C" fn ddog_telemetry_handle_flush_data(
     handle: &TelemetryWorkerHandle,
 ) -> MaybeError {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+    catch_panic!({
         crate::try_c!(handle.try_send_msg(TelemetryActions::Lifecycle(LifecycleAction::FlushData)));
         MaybeError::None
-    }))
-    .unwrap_or_else(panic_to_error)
+    })
 }
 
 /// Sends an app-extended-heartbeat message
 #[allow(clippy::missing_safety_doc)]
 #[unsafe(no_mangle)]
+#[named]
 pub unsafe extern "C" fn ddog_telemetry_handle_send_extended_heartbeat(
     handle: &TelemetryWorkerHandle,
 ) -> MaybeError {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+    catch_panic!({
         crate::try_c!(handle.try_send_msg(TelemetryActions::Lifecycle(
             LifecycleAction::ExtendedHeartbeat
         )));
         MaybeError::None
-    }))
-    .unwrap_or_else(panic_to_error)
+    })
 }
 
 #[unsafe(no_mangle)]
