@@ -1,0 +1,39 @@
+id: unsafe-fn-missing-safety-doc
+language: rust
+severity: warning
+message: >-
+  `unsafe fn` is missing a `# Safety` doc section explaining the
+  invariants callers must uphold. Add a `/// # Safety` section to the
+  function's doc comment.
+note: |
+  This repo's convention (see the `ToInner` trait in
+  libdd-common-ffi/src/handle.rs) is a `/// # Safety` section in the
+  doc comment of every `unsafe fn`, describing what the caller must
+  guarantee. This matches rustdoc's own `missing_safety_doc` lint
+  convention (clippy's `missing_safety_doc` lint covers public items
+  only; this rule is whole-repo and also covers private/pub(crate)
+  `unsafe fn`s, which this codebase documents the same way).
+
+  Severity is `warning` (non-blocking): the repo currently has existing
+  `unsafe fn`s without a safety doc section. See AGENTS.md "Reliability
+  & integrability".
+files:
+  - "**/*.rs"
+ignores:
+  - "**/tests/**"
+  - "**/examples/**"
+rule:
+  all:
+    - kind: function_item
+    - has:
+        kind: function_modifiers
+        regex: "^unsafe"
+    - not:
+        follows:
+          stopBy:
+            not:
+              any:
+                - kind: attribute_item
+                - kind: line_comment
+          kind: line_comment
+          regex: "^///.*Safety"
