@@ -330,9 +330,10 @@ fn apply_rule_to_attr_value<V: ValueTypes>(rule: &ReplaceRule, value: &mut Attri
                 *value = numeric_attr_from_string(new);
             }
         }
+        // Skip identical results: `42.0` formats as `42`, which would be re-typed as an `Int`.
         AttributeValue::Float(f) => {
             if let Some(new) = with_decimal(*f, |s| {
-                replace_all_opt(&rule.re, &rule.repl, rule.no_expansion, s)
+                replace_all_opt(&rule.re, &rule.repl, rule.no_expansion, s).filter(|new| new != s)
             }) {
                 *value = numeric_attr_from_string(new);
             }
@@ -980,7 +981,8 @@ mod tests {
                 {"name": "*", "pattern": "^4111111111111111$", "repl": "?"},
                 {"name": "*", "pattern": "^42$", "repl": "43"},
                 {"name": "*", "pattern": "5$", "repl": "25"},
-                {"name": "ratio", "pattern": "^0\\.", "repl": "1."}
+                {"name": "ratio", "pattern": "^0\\.", "repl": "1."},
+                {"name": "same", "pattern": "^7$", "repl": "7"}
             ]"#,
         );
         let mut span = v1::SpanBytes::default();
@@ -992,6 +994,8 @@ mod tests {
             ("latency", v1::AttributeValue::Float(1.5)),
             ("ratio", v1::AttributeValue::Float(0.75)),
             ("whole", v1::AttributeValue::Float(42.0)),
+            // A no-op replacement keeps the float type.
+            ("same", v1::AttributeValue::Float(7.0)),
             // Nested numbers are rewritten too.
             (
                 "list",
@@ -1012,6 +1016,7 @@ mod tests {
         assert_eq!(get("ratio"), Some(v1::AttributeValue::Float(1.725)));
         // `42.0` is formatted as `42`, like Go's `FormatFloat(v, 'f', -1, 64)`.
         assert_eq!(get("whole"), Some(v1::AttributeValue::Int(43)));
+        assert_eq!(get("same"), Some(v1::AttributeValue::Float(7.0)));
         assert_eq!(
             get("list"),
             Some(v1::AttributeValue::Array(vec![v1::AttributeValue::Int(43)]))
