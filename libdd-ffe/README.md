@@ -68,11 +68,11 @@ letters. They keep ASCII letters and digits, `:`, `.`, `/`, `-`, and non-ASCII
 letters and digits. Each run of other characters becomes one `_`. A run at the
 end is removed.
 
-The CDN accepts only names that match `^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,99}$`.
-If the name does not match, requests have no header. Examples are `_svc`,
-`café-api` and `___`. This is not a validation error. The fetcher logs it once
-at debug level. `service` is part of the subscription identity, so each service
-has its own fetcher.
+If the name is empty or is not printable ASCII, requests have no header.
+Examples are `café-api`, `支付` and `___`. The CDN decides which names it
+accepts and drops the others. This is not a validation error. The fetcher logs
+it once at debug level. `service` is part of the subscription identity, so each
+service has its own fetcher.
 
 `CdnEndpoint::custom(url)` carries no Datadog API key. Redirects are not
 followed; invalid API-key header values fail endpoint construction. Custom URL

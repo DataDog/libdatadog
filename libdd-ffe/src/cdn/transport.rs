@@ -194,28 +194,22 @@ const MAX_SERVICE_LEN: usize = 100;
 /// `None`.
 ///
 /// APM shows the normalized name ([`normalize_service`]), so `My Service`
-/// becomes `my_service`. The CDN accepts only names that match
-/// `^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,99}$` and drops other values. If the APM
-/// name does not match (`_svc`, `café-api`), the request has no header. A
-/// different name would attribute usage to a service that APM does not show.
-/// The returned value is always a valid header value, so a service cannot
-/// make requests fail.
+/// becomes `my_service`. If that name is empty or is not printable ASCII
+/// (`café-api`, `支付`), the request has no header. A different name would
+/// attribute usage to a service that APM does not show.
+///
+/// The CDN alone decides which values it accepts. It drops the others. The
+/// `http` crate accepts UTF-8 header values, but some tracer HTTP clients reject
+/// them, so all SDKs send only printable ASCII. A service then gets the same
+/// header in each language. The returned value is always a valid header
+/// value, so a service cannot make requests fail.
 fn usage_service(service: Option<String>) -> Option<String> {
     let service = service.filter(|service| !service.is_empty())?;
     let normalized = normalize_service(&service);
-    let accepted = normalized.len() <= MAX_SERVICE_LEN
-        && normalized
-            .as_bytes()
-            .split_first()
-            .is_some_and(|(first, rest)| {
-                first.is_ascii_alphanumeric()
-                    && rest
-                        .iter()
-                        .all(|byte| byte.is_ascii_alphanumeric() || b"_.:/-".contains(byte))
-            });
+    let accepted = !normalized.is_empty() && normalized.bytes().all(|byte| byte.is_ascii_graphic());
     if !accepted {
         log::debug!(
-            "Feature Flags: service {service:?} does not normalize to a name the CDN accepts; DD-Service header not sent"
+            "Feature Flags: service {service:?} has no ASCII APM name; DD-Service header not sent"
         );
     }
     accepted.then_some(normalized)
@@ -237,8 +231,8 @@ fn usage_service(service: Option<String>) -> Option<String> {
 /// - std `is_alphanumeric` also keeps some non-ASCII characters that are not letters or decimal
 ///   digits (`²`, `Ⅻ`). The Agent replaces them.
 ///
-/// In both cases the result keeps a non-ASCII character. The CDN rejects that
-/// result, so the request has no header. Usage never goes to a different name.
+/// In both cases the result keeps a non-ASCII character, so the request has no
+/// header. Usage never goes to a different name.
 fn normalize_service(service: &str) -> String {
     let mut end = service.len().min(MAX_SERVICE_LEN);
     while !service.is_char_boundary(end) {
@@ -450,8 +444,8 @@ mod tests {
     #[test]
     fn the_service_is_sent_as_the_name_apm_shows_or_not_at_all() {
         // The expected values come from the Datadog Agent: `NormalizeService`
-        // in pkg/trace/traceutil/normalize v0.82.3, then the CDN pattern
-        // `^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,99}$`. `None` means no header.
+        // in pkg/trace/traceutil/normalize v0.82.3. The header is sent only if
+        // that name is not empty and is printable ASCII. `None` means no header.
         let a99 = "a".repeat(99);
         let a100 = "a".repeat(100);
         let ab99 = format!("a{}", "b".repeat(99));
@@ -470,7 +464,7 @@ mod tests {
             ("a\tb", "a_b", Some("a_b")),
             ("a  b!", "a_b", Some("a_b")),
             ("svc ", "svc", Some("svc")),
-            (" svc", "_svc", None),
+            (" svc", "_svc", Some("_svc")),
             ("a_", "a", Some("a")),
             ("svc-", "svc-", Some("svc-")),
             ("a..b", "a..b", Some("a..b")),
@@ -496,10 +490,10 @@ mod tests {
             (&ab100, &ab99, Some(&ab99)),
             (&a100_b, &a100, Some(&a100)),
             (&a99_e, &a99, Some(&a99)),
-            ("_svc", "_svc", None),
-            ("-svc", "-svc", None),
-            (".svc", ".svc", None),
-            (":svc", ":svc", None),
+            ("_svc", "_svc", Some("_svc")),
+            ("-svc", "-svc", Some("-svc")),
+            (".svc", ".svc", Some(".svc")),
+            (":svc", ":svc", Some(":svc")),
             ("café-api", "café-api", None),
             ("Café", "café", None),
             ("支付", "支付", None),
@@ -507,7 +501,7 @@ mod tests {
             ("İstanbul", "İstanbul", None),
             (&e60, &e50, None),
             ("___", "", None),
-            ("-", "-", None),
+            ("-", "-", Some("-")),
             ("", "", None),
             ("   ", "", None),
         ];
@@ -535,7 +529,7 @@ mod tests {
                 assert_eq!(
                     logs[0].message,
                     format!(
-                        "Feature Flags: service {service:?} does not normalize to a name the CDN accepts; DD-Service header not sent"
+                        "Feature Flags: service {service:?} has no ASCII APM name; DD-Service header not sent"
                     )
                 );
             } else {

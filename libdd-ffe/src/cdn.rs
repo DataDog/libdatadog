@@ -30,9 +30,9 @@ pub struct CdnConfig {
     /// The service name. Requests send it in the `DD-Service` header, so the
     /// CDN can attribute usage to the service. The header has the name that
     /// APM shows, from the Datadog Agent rules: `My Service` becomes
-    /// `my_service`. If the CDN does not accept that name (`_svc`,
-    /// `café-api`), requests have no header. This is not a validation error,
-    /// so flag fetching continues.
+    /// `my_service`. If that name is empty or is not printable ASCII
+    /// (`café-api`, `___`), requests have no header. This is not a validation
+    /// error, so flag fetching continues.
     #[serde(default)]
     pub service: Option<String>,
 }
@@ -315,19 +315,22 @@ mod tests {
     #[tokio::test]
     #[cfg_attr(miri, ignore = "requires native HTTP")]
     async fn a_service_is_sent_in_dd_service_as_the_name_apm_shows() {
-        let server = httpmock::MockServer::start_async().await;
-        let normalized = server
-            .mock_async(|when, then| {
-                when.method("GET")
-                    .path(SERVER_PATH)
-                    .header("DD-Service", "my_service");
-                then.status(200).body(EMPTY_CONFIG);
-            })
-            .await;
+        // The CDN decides if it accepts `_svc`, so the fetcher sends it.
+        for (service, apm) in [("My Service", "my_service"), ("_svc", "_svc")] {
+            let server = httpmock::MockServer::start_async().await;
+            let normalized = server
+                .mock_async(|when, then| {
+                    when.method("GET")
+                        .path(SERVER_PATH)
+                        .header("DD-Service", apm);
+                    then.status(200).body(EMPTY_CONFIG);
+                })
+                .await;
 
-        fetch(&server, Some("My Service"), 2).await;
+            fetch(&server, Some(service), 2).await;
 
-        assert!(normalized.calls_async().await >= 2);
+            assert!(normalized.calls_async().await >= 2, "{service:?}");
+        }
     }
 
     #[tokio::test]
@@ -352,10 +355,10 @@ mod tests {
 
     #[tokio::test]
     #[cfg_attr(miri, ignore = "requires native HTTP")]
-    async fn a_service_the_cdn_does_not_accept_omits_dd_service_and_keeps_fetching() {
-        // APM shows `_svc` and `café-api` as they are, but the CDN does not
-        // accept them. `支付` keeps non-ASCII letters, and `___` becomes empty.
-        for service in ["_svc", "café-api", "支付", "___"] {
+    async fn a_service_without_an_ascii_apm_name_omits_dd_service_and_keeps_fetching() {
+        // APM shows `café-api` and `支付` as they are, with non-ASCII letters.
+        // `___` becomes empty.
+        for service in ["café-api", "支付", "___"] {
             let server = httpmock::MockServer::start_async().await;
             let without_service = server
                 .mock_async(|when, then| {
