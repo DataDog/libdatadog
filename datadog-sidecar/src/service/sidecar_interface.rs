@@ -264,6 +264,13 @@ pub trait SidecarInterface {
         #[SerializedHandle] completion: libdd_ipc::platform::PlatformHandle<std::io::PipeWriter>,
     );
 
+    /// Keep the writer until the client closes its reader or this sidecar exits.
+    /// This process watch outlives the connection which registered it. No bytes are written.
+    #[oneway]
+    async fn register_liveness(
+        #[SerializedHandle] writer: libdd_ipc::platform::PlatformHandle<std::io::PipeWriter>,
+    );
+
     /// Sets x-datadog-test-session-token on all requests of this connection.
     ///
     /// # Arguments

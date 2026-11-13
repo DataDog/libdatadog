@@ -71,6 +71,12 @@ impl IpcClientConn {
         self.closed
     }
 
+    /// Record an out-of-band peer death notification before its socket necessarily closes.
+    #[cfg(target_os = "linux")]
+    pub fn mark_closed(&mut self) {
+        self.closed = true;
+    }
+
     /// Number of sent-but-not-yet-acked messages on client side.
     pub fn outstanding(&self) -> u64 {
         self.send_count - self.ack_count
