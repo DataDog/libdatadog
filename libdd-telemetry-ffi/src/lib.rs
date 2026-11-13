@@ -126,6 +126,8 @@ mod tests {
     /// [`NativeCapabilities`].
     type TelemetryWorkerHandle = libdd_telemetry::worker::TelemetryWorkerHandle<NativeCapabilities>;
 
+    /// Sends config, product change, endpoint, flush and extended heartbeat messages through
+    /// the FFI and checks each one reaches the worker output.
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_new_message_kinds_end_to_end() {
