@@ -876,8 +876,8 @@ fn emit_ucontext(w: &mut impl Write, ucontext: *const ucontext_t) -> Result<(), 
             write!(w, ", \"sp\": \"0x{:016x}\"", ss.__sp)?;
             write!(w, ", \"fp\": \"0x{:016x}\"", ss.__fp)?;
             write!(w, ", \"lr\": \"0x{:016x}\"", ss.__lr)?;
-            for i in 0..29 {
-                write!(w, ", \"x{}\": \"0x{:016x}\"", i, ss.__x[i])?;
+            for (i, x) in ss.__x.iter().enumerate() {
+                write!(w, ", \"x{}\": \"0x{:016x}\"", i, x)?;
             }
             write!(w, "}}, \"raw\": \"{:?}, {:?}\"", uc, mc)?;
             writeln!(w, "}}")?;
