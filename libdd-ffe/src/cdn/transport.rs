@@ -10,10 +10,12 @@ use http::header::{
 use http::{Method, Request};
 use http_body_util::BodyExt;
 use libdd_networking::http_common::{self, Body};
+use libdd_regex::Regex;
 use percent_encoding::percent_decode_str;
 use std::future::Future;
 use std::io::Read;
 use std::pin::Pin;
+use std::sync::OnceLock;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
@@ -222,17 +224,14 @@ fn usage_service(service: Option<String>) -> Option<String> {
 ///
 /// - Cut the name to 100 bytes or less. Do not split a character.
 /// - Lowercase ASCII letters.
-/// - Keep ASCII letters and digits, `:`, `.`, `/`, `-`, and non-ASCII letters and digits.
+/// - Keep ASCII letters and digits, `:`, `.`, `/`, `-`, and non-ASCII letters and decimal digits
+///   ([`is_letter_or_decimal_digit`]).
 /// - Replace each run of other characters, `_` included, with one `_`.
 /// - Remove a run at the end. Keep a run at the start: ` svc` becomes `_svc`.
 ///
-/// This function differs from the Agent in two ways:
-/// - It does not lowercase non-ASCII letters.
-/// - std `is_alphanumeric` also keeps some non-ASCII characters that are not letters or decimal
-///   digits (`²`, `Ⅻ`). The Agent replaces them.
-///
-/// In both cases the result keeps a non-ASCII character, so the request has no
-/// header. Usage never goes to a different name.
+/// This function does not lowercase non-ASCII letters. The header is the same:
+/// the Agent lowercases a character only if its UTF-8 length does not change,
+/// so a non-ASCII letter stays non-ASCII and the request has no header.
 fn normalize_service(service: &str) -> String {
     let mut end = service.len().min(MAX_SERVICE_LEN);
     while !service.is_char_boundary(end) {
@@ -245,7 +244,7 @@ fn normalize_service(service: &str) -> String {
         if c.is_ascii_lowercase()
             || c.is_ascii_digit()
             || ":./-".contains(c)
-            || (!c.is_ascii() && c.is_alphanumeric())
+            || (!c.is_ascii() && is_letter_or_decimal_digit(c))
         {
             if std::mem::take(&mut pending_underscore) {
                 normalized.push('_');
@@ -256,6 +255,25 @@ fn normalize_service(service: &str) -> String {
         }
     }
     normalized
+}
+
+/// Like `unicode.IsLetter(c) || unicode.IsDigit(c)` in Go, which the Agent uses:
+/// general category L or Nd. std `is_alphanumeric` also accepts No (`²`, `½`),
+/// Nl (`Ⅻ`) and other alphabetic marks (U+0345). The Agent replaces those, so
+/// `a²b` becomes `a_b`, a plain ASCII name that the header can carry.
+///
+/// A character that the regex Unicode tables do not know (`\p{Cn}`) is kept too.
+/// A newer Unicode version can make it a letter, which the Agent then keeps.
+/// Keeping it sends no header, never a different name.
+fn is_letter_or_decimal_digit(c: char) -> bool {
+    static LETTER_OR_DECIMAL_DIGIT: OnceLock<Option<Regex>> = OnceLock::new();
+    let mut buf = [0; 4];
+    // The pattern is constant, so it compiles. If it did not, keeping the
+    // character sends no header, never a different name.
+    LETTER_OR_DECIMAL_DIGIT
+        .get_or_init(|| Regex::new(r"^[\p{L}\p{Nd}\p{Cn}]$").ok())
+        .as_ref()
+        .is_none_or(|regex| regex.is_match(c.encode_utf8(&mut buf)))
 }
 
 fn request_url_and_authorization(
@@ -455,7 +473,7 @@ mod tests {
         let e50 = "é".repeat(50);
         let e60 = "é".repeat(60);
         // (configured service, name APM shows, DD-Service header)
-        let rows: [(&str, &str, Option<&str>); 36] = [
+        let rows: [(&str, &str, Option<&str>); 41] = [
             ("checkout", "checkout", Some("checkout")),
             ("My Service", "my_service", Some("my_service")),
             ("My-API", "my-api", Some("my-api")),
@@ -498,6 +516,12 @@ mod tests {
             ("Café", "café", None),
             ("支付", "支付", None),
             ("a🐶b", "a_b", Some("a_b")),
+            // Not general category L or Nd: the Agent replaces these.
+            ("a²b", "a_b", Some("a_b")),
+            ("zz½", "zz", Some("zz")),
+            ("a①aZ0", "a_az0", Some("a_az0")),
+            ("900\u{345}Z", "900_z", Some("900_z")),
+            ("aⅫb", "a_b", Some("a_b")),
             ("İstanbul", "İstanbul", None),
             (&e60, &e50, None),
             ("___", "", None),
@@ -543,6 +567,14 @@ mod tests {
             build_request(&endpoint, None, "php", "1.27", Some("bad\nvalue")),
             Err(TransportFailure::BuildRequest)
         ));
+    }
+
+    #[test]
+    fn a_character_the_unicode_tables_do_not_know_sends_no_header() {
+        // U+0378 is unassigned. A newer Unicode version can make it a letter,
+        // which the Agent keeps, so `a_b` could be a name that APM does not show.
+        assert_eq!(normalize_service("a\u{378}B"), "a\u{378}b");
+        assert_eq!(usage_service(Some("a\u{378}B".to_owned())), None);
     }
 
     #[test]
