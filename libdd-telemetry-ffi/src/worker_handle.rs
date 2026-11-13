@@ -310,6 +310,73 @@ mod tests {
     use libdd_telemetry::{data::LogLevel, worker::TelemetryWorkerBuilder};
     use std::{mem::MaybeUninit, ptr::NonNull};
 
+    /// Spins up a worker backed by a file:// endpoint, returns (handle, temp_file).
+    /// The caller is responsible for stopping the worker and reading the file.
+    unsafe fn start_file_backed_worker() -> (Box<TelemetryWorkerHandle>, tempfile::NamedTempFile) {
+        unsafe {
+            let mut builder: MaybeUninit<Box<TelemetryWorkerBuilder>> = MaybeUninit::uninit();
+            ddog_telemetry_builder_instantiate(
+                NonNull::new(&mut builder).unwrap().cast(),
+                ffi::CharSlice::from("test-service"),
+                ffi::CharSlice::from("rust"),
+                ffi::CharSlice::from("1.0"),
+                ffi::CharSlice::from("0.0.1"),
+            )
+            .unwrap_none();
+            let mut builder = builder.assume_init();
+
+            let f = tempfile::NamedTempFile::new().unwrap();
+            let url = format!("file://{}", f.path().to_str().unwrap());
+            ddog_telemetry_builder_with_endpoint_config_endpoint(
+                &mut builder,
+                ffi::CharSlice::from(url.as_str()),
+                ffi::CharSlice::from(""),
+                0,
+                ffi::CharSlice::from(""),
+                false,
+            )
+            .unwrap_none();
+
+            let mut handle: MaybeUninit<Box<TelemetryWorkerHandle>> = MaybeUninit::uninit();
+            ddog_telemetry_builder_run(builder, NonNull::new(&mut handle).unwrap().cast())
+                .unwrap_none();
+            let handle = handle.assume_init();
+            ddog_telemetry_handle_start(&handle).unwrap_none();
+            (handle, f)
+        }
+    }
+
+    /// Finds all sub-payloads with the given request_type in a file endpoint output.
+    /// Handles both top-level payloads and those nested inside message-batch.
+    fn find_sub_payloads(output: &str, request_type: &str) -> Vec<serde_json::Value> {
+        let mut results = Vec::new();
+        for line in output.lines() {
+            let Ok(parsed) = serde_json::from_str::<serde_json::Value>(line) else {
+                continue;
+            };
+            collect_payloads_recursive(&parsed, request_type, &mut results);
+        }
+        results
+    }
+
+    fn collect_payloads_recursive(
+        value: &serde_json::Value,
+        target_type: &str,
+        results: &mut Vec<serde_json::Value>,
+    ) {
+        let request_type = value["request_type"].as_str();
+        if request_type == Some(target_type) {
+            results.push(value.clone());
+        }
+        if request_type == Some("message-batch")
+            && let Some(batch) = value["payload"].as_array()
+        {
+            for item in batch {
+                collect_payloads_recursive(item, target_type, results);
+            }
+        }
+    }
+
     /// Sends config, product change, endpoint, flush and extended heartbeat messages through
     /// the FFI and checks each one reaches the worker output.
     #[test]
@@ -453,73 +520,6 @@ mod tests {
                 !find_sub_payloads(&output, "app-extended-heartbeat").is_empty(),
                 "extended heartbeat missing:\n{output}"
             );
-        }
-    }
-
-    /// Spins up a worker backed by a file:// endpoint, returns (handle, temp_file).
-    /// The caller is responsible for stopping the worker and reading the file.
-    unsafe fn start_file_backed_worker() -> (Box<TelemetryWorkerHandle>, tempfile::NamedTempFile) {
-        unsafe {
-            let mut builder: MaybeUninit<Box<TelemetryWorkerBuilder>> = MaybeUninit::uninit();
-            ddog_telemetry_builder_instantiate(
-                NonNull::new(&mut builder).unwrap().cast(),
-                ffi::CharSlice::from("test-service"),
-                ffi::CharSlice::from("rust"),
-                ffi::CharSlice::from("1.0"),
-                ffi::CharSlice::from("0.0.1"),
-            )
-            .unwrap_none();
-            let mut builder = builder.assume_init();
-
-            let f = tempfile::NamedTempFile::new().unwrap();
-            let url = format!("file://{}", f.path().to_str().unwrap());
-            ddog_telemetry_builder_with_endpoint_config_endpoint(
-                &mut builder,
-                ffi::CharSlice::from(url.as_str()),
-                ffi::CharSlice::from(""),
-                0,
-                ffi::CharSlice::from(""),
-                false,
-            )
-            .unwrap_none();
-
-            let mut handle: MaybeUninit<Box<TelemetryWorkerHandle>> = MaybeUninit::uninit();
-            ddog_telemetry_builder_run(builder, NonNull::new(&mut handle).unwrap().cast())
-                .unwrap_none();
-            let handle = handle.assume_init();
-            ddog_telemetry_handle_start(&handle).unwrap_none();
-            (handle, f)
-        }
-    }
-
-    /// Finds all sub-payloads with the given request_type in a file endpoint output.
-    /// Handles both top-level payloads and those nested inside message-batch.
-    fn find_sub_payloads(output: &str, request_type: &str) -> Vec<serde_json::Value> {
-        let mut results = Vec::new();
-        for line in output.lines() {
-            let Ok(parsed) = serde_json::from_str::<serde_json::Value>(line) else {
-                continue;
-            };
-            collect_payloads_recursive(&parsed, request_type, &mut results);
-        }
-        results
-    }
-
-    fn collect_payloads_recursive(
-        value: &serde_json::Value,
-        target_type: &str,
-        results: &mut Vec<serde_json::Value>,
-    ) {
-        let request_type = value["request_type"].as_str();
-        if request_type == Some(target_type) {
-            results.push(value.clone());
-        }
-        if request_type == Some("message-batch")
-            && let Some(batch) = value["payload"].as_array()
-        {
-            for item in batch {
-                collect_payloads_recursive(item, target_type, results);
-            }
         }
     }
 
