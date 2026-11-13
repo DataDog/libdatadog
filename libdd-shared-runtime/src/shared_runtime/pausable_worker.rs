@@ -124,8 +124,9 @@ impl core::error::Error for PausableWorkerError {}
 ///
 /// Commands are handled between runs. If the worker allows it
 /// ([`Worker::cancellable_run`]), a command received during `run` cancels the run at its next
-/// yield point instead, so a pause before a fork does not wait for a slow run. Such a `run` is
-/// wrapped with [`WeakWakerFuture::new`] as well, since it may be dropped with its waker still
+/// yield point instead, so a pause before a fork does not wait for a slow run. The worker then
+/// resumes from `initial_trigger` once the command is handled or the worker restarts. Such a `run`
+/// is wrapped with [`WeakWakerFuture::new`] as well, since it may be dropped with its waker still
 /// stored somewhere.
 async fn run_worker<T: Worker>(mut worker: T, mut receiver: CommandReceiver) -> TaskOutput<T> {
     let mut first = true;
@@ -145,11 +146,15 @@ async fn run_worker<T: Worker>(mut worker: T, mut receiver: CommandReceiver) -> 
                     worker.run().await;
                     continue;
                 }
-                select! {
+                let cmd = select! {
                     biased;
                     cmd = WeakWakerFuture::new(receiver.recv()) => cmd,
                     _ = WeakWakerFuture::new(worker.run()) => continue,
-                }
+                };
+                // The run was cancelled. Resume from `initial_trigger`, as after a restart, so a
+                // worker can redo the cancelled run instead of waiting for its next trigger.
+                first = true;
+                cmd
             }
         };
         match command {
@@ -474,7 +479,8 @@ mod tests {
         assert!(matches!(pw, PausableWorker::Paused { .. }));
     }
 
-    /// Worker whose `run` takes `delay`, like a fetch of an agent that does not answer.
+    /// Worker whose `run` takes `delay`, like a fetch of an agent that does not answer. It runs
+    /// only from `initial_trigger`: `trigger` never fires.
     #[derive(Debug)]
     struct SlowWorker {
         delay: Duration,
@@ -489,7 +495,11 @@ mod tests {
             sleep(self.delay).await;
         }
 
-        async fn trigger(&mut self) {}
+        async fn trigger(&mut self) {
+            std::future::pending::<()>().await
+        }
+
+        async fn initial_trigger(&mut self) {}
 
         fn cancellable_run(&self) -> bool {
             self.cancellable
@@ -540,6 +550,19 @@ mod tests {
         assert!(matches!(pw, PausableWorker::Paused { .. }));
 
         pw.start(tokio_spawn_fn(&handle)).unwrap();
+        wait_for_runs(&runs, 2);
+    }
+
+    // A flush cancels a cancellable `run`, and the worker then resumes from `initial_trigger`
+    // instead of waiting for its next trigger.
+    #[test]
+    fn test_flush_cancels_cancellable_run_and_resumes_it() {
+        let (mut pw, runs, runtime) = slow_setup(Duration::from_secs(10), true);
+        pw.start(tokio_spawn_fn(runtime.handle())).unwrap();
+        wait_for_runs(&runs, 1);
+
+        let token = pw.request_flush().unwrap();
+        runtime.block_on(token.wait()).unwrap();
         wait_for_runs(&runs, 2);
     }
 
