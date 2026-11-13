@@ -54,9 +54,9 @@ data-pipeline-stats-obfuscation = ["data-pipeline-ffi", "libdd-data-pipeline-ffi
 data-pipeline-external-observations = ["data-pipeline-ffi", "libdd-data-pipeline-ffi/external-observations"]
 crashtracker-ffi = ["dep:libdd-crashtracker-ffi"]
 # Enables the in-process collection of crash-info
-crashtracker-collector = ["crashtracker-ffi", "libdd-crashtracker-ffi/collector"]
+crashtracker-collector = ["crashtracker-ffi", "libdd-crashtracker-ffi/collector", "libdd-crashtracker-ffi/otel-thread-ctx"]
 # Enables the use of this library to receiver crash-info from a suitable collector
-crashtracker-receiver = ["crashtracker-ffi", "libdd-crashtracker-ffi/receiver"]
+crashtracker-receiver = ["crashtracker-ffi", "libdd-crashtracker-ffi/receiver", "libdd-crashtracker-ffi/otel-thread-ctx"]
 demangler = ["crashtracker-ffi", "libdd-crashtracker-ffi/demangler"]
 datadog-library-config-ffi = ["dep:libdd-library-config-ffi", "libdd-library-config-ffi/std"]
 ddcommon-ffi = ["dep:libdd-common-ffi", "libdd-common-ffi/std"]
