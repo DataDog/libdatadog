@@ -126,8 +126,6 @@ mod tests {
     /// [`NativeCapabilities`].
     type TelemetryWorkerHandle = libdd_telemetry::worker::TelemetryWorkerHandle<NativeCapabilities>;
 
-    /// Spins up a worker backed by a file:// endpoint, returns (handle, temp_file).
-    /// The caller is responsible for stopping the worker and reading the file.
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_new_message_kinds_end_to_end() {
@@ -273,6 +271,8 @@ mod tests {
         }
     }
 
+    /// Spins up a worker backed by a file:// endpoint, returns (handle, temp_file).
+    /// The caller is responsible for stopping the worker and reading the file.
     unsafe fn start_file_backed_worker() -> (Box<TelemetryWorkerHandle>, tempfile::NamedTempFile) {
         unsafe {
             let mut builder: MaybeUninit<Box<TelemetryWorkerBuilder>> = MaybeUninit::uninit();

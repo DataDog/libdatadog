@@ -87,11 +87,11 @@ pub unsafe extern "C" fn ddog_telemetry_handle_add_log(
     MaybeError::None
 }
 
-#[allow(clippy::missing_safety_doc)]
-#[unsafe(no_mangle)]
 /// * value: `None` is reported as a `null` value; `Some("")` as an empty string
 /// * config_id: an empty slice means no config id
 /// * seq_id: optional sequence id of the configuration entry
+#[allow(clippy::missing_safety_doc)]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_telemetry_handle_add_config(
     handle: &TelemetryWorkerHandle,
     name: ffi::CharSlice,
@@ -117,9 +117,9 @@ pub unsafe extern "C" fn ddog_telemetry_handle_add_config(
     .unwrap_or_else(panic_to_error)
 }
 
+/// * version: an empty slice means no version
 #[allow(clippy::missing_safety_doc)]
 #[unsafe(no_mangle)]
-/// * version: an empty slice means no version
 pub unsafe extern "C" fn ddog_telemetry_handle_add_product_change(
     handle: &TelemetryWorkerHandle,
     product: ffi::CharSlice,
@@ -135,10 +135,10 @@ pub unsafe extern "C" fn ddog_telemetry_handle_add_product_change(
     .unwrap_or_else(panic_to_error)
 }
 
-#[allow(clippy::missing_safety_doc)]
-#[unsafe(no_mangle)]
 /// * path: an empty slice means no path
 /// * request_body_type, response_body_type, response_code: an empty slice means not set
+#[allow(clippy::missing_safety_doc)]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_telemetry_handle_add_endpoint(
     handle: &TelemetryWorkerHandle,
     method: ffi::Option<Method>,
