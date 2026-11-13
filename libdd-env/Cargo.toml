@@ -1,0 +1,15 @@
+# Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "libdd-env"
+version = "0.1.0"
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-env"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-env"
+description = "Shared environment-variable parsing conventions for libdatadog crates"
+
+[lib]
+bench = false

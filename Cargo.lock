@@ -720,7 +720,7 @@ dependencies = [
 
 [[package]]
 name = "build_common"
-version = "48.0.0"
+version = "49.0.0"
 dependencies = [
  "cbindgen",
  "serde_json",
@@ -729,7 +729,7 @@ dependencies = [
 
 [[package]]
 name = "builder"
-version = "48.0.0"
+version = "49.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -1367,7 +1367,7 @@ checksum = "d7a1e2f27636f116493b8b860f5546edb47c8d8f8ea73e1d2a20be88e28d1fea"
 
 [[package]]
 name = "datadog-profiling-replayer"
-version = "48.0.0"
+version = "49.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1411,6 +1411,7 @@ dependencies = [
  "libdd-remote-config",
  "libdd-telemetry",
  "libdd-tinybytes",
+ "libdd-trace-model",
  "libdd-trace-stats",
  "libdd-trace-utils",
  "manual_future",
@@ -2778,7 +2779,7 @@ checksum = "7581282928bc99698341d1de7590964c28db747c164eaac9409432a3eaed098a"
 
 [[package]]
 name = "libdd-agent-client"
-version = "48.0.0"
+version = "49.0.0"
 dependencies = [
  "bytes",
  "flate2",
@@ -2864,6 +2865,7 @@ dependencies = [
  "http 1.1.0",
  "indexmap 2.12.1",
  "libc",
+ "libdd-env",
  "libdd-regex",
  "maplit",
  "proptest",
@@ -2875,7 +2877,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-common-ffi"
-version = "48.0.0"
+version = "49.0.0"
 dependencies = [
  "anyhow",
  "assert_no_alloc",
@@ -2908,6 +2910,7 @@ dependencies = [
  "libdd-capabilities",
  "libdd-capabilities-impl",
  "libdd-common",
+ "libdd-env",
  "libdd-gotter",
  "libdd-libunwind-sys",
  "libdd-networking",
@@ -2935,7 +2938,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-crashtracker-ffi"
-version = "48.0.0"
+version = "49.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -3028,7 +3031,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-data-pipeline-ffi"
-version = "48.0.0"
+version = "49.0.0"
 dependencies = [
  "build_common",
  "httpmock",
@@ -3062,7 +3065,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-ddsketch-ffi"
-version = "48.0.0"
+version = "49.0.0"
 dependencies = [
  "build_common",
  "libdd-common-ffi",
@@ -3086,6 +3089,10 @@ dependencies = [
  "tokio",
  "tracing",
 ]
+
+[[package]]
+name = "libdd-env"
+version = "0.1.0"
 
 [[package]]
 name = "libdd-ffe"
@@ -3142,7 +3149,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-ffe-test-suite"
-version = "48.0.0"
+version = "49.0.0"
 dependencies = [
  "chrono",
  "criterion",
@@ -3321,7 +3328,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-log-ffi"
-version = "48.0.0"
+version = "49.0.0"
 dependencies = [
  "build_common",
  "libdd-common-ffi",
@@ -3488,7 +3495,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-profiling-heap-gotter-ffi"
-version = "48.0.0"
+version = "49.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -3596,7 +3603,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-shared-runtime-ffi"
-version = "48.0.0"
+version = "49.0.0"
 dependencies = [
  "async-trait",
  "build_common",
@@ -3625,6 +3632,7 @@ dependencies = [
  "libdd-capabilities-impl",
  "libdd-common",
  "libdd-ddsketch",
+ "libdd-env",
  "libdd-networking",
  "libdd-shared-runtime",
  "reqwless",
@@ -3647,7 +3655,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-telemetry-ffi"
-version = "48.0.0"
+version = "49.0.0"
 dependencies = [
  "build_common",
  "function_name",
@@ -3700,7 +3708,7 @@ dependencies = [
  "criterion",
  "duplicate",
  "fluent-uri",
- "libdd-common",
+ "libdd-env",
  "libdd-regex",
  "libdd-tinybytes",
  "libdd-trace-model",
@@ -6040,7 +6048,7 @@ dependencies = [
 
 [[package]]
 name = "symbolizer-ffi"
-version = "48.0.0"
+version = "49.0.0"
 dependencies = [
  "blazesym-c",
  "build_common",
@@ -6496,7 +6504,7 @@ dependencies = [
 
 [[package]]
 name = "tools"
-version = "48.0.0"
+version = "49.0.0"
 dependencies = [
  "anyhow",
  "bytes",

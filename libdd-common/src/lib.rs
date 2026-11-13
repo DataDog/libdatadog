@@ -13,8 +13,6 @@ extern crate alloc;
 #[cfg(feature = "std")]
 pub mod azure_app_services;
 #[cfg(feature = "std")]
-pub mod config;
-#[cfg(feature = "std")]
 mod endpoint;
 #[cfg(feature = "std")]
 pub mod entity_id;
