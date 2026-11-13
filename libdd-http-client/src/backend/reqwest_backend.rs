@@ -38,6 +38,11 @@ impl super::Backend for ReqwestBackend {
         // configuration eagerly loads the system CA roots, which must not happen
         // for plain-HTTP clients in minimal environments that have no CA
         // certificates installed.
+        //
+        // reqwest builds its default rustls configuration, and panics without a crypto provider,
+        // even for plain-HTTP base URLs, so the provider is installed in every case.
+        #[cfg(any(feature = "https", feature = "fips"))]
+        crate::tls::ensure_crypto_provider_initialized();
         #[cfg(any(feature = "https", feature = "fips"))]
         if base_url_is_https {
             builder = builder.tls_backend_preconfigured(crate::tls::build_tls_config()?);
