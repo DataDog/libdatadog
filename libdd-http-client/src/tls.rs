@@ -27,7 +27,7 @@ use crate::HttpClientError;
 /// Ensures the rustls default CryptoProvider is installed (ring for non-FIPS).
 /// In FIPS mode, the caller must install the FIPS provider before any TLS use.
 #[cfg(feature = "https")]
-fn ensure_crypto_provider_initialized() {
+pub(crate) fn ensure_crypto_provider_initialized() {
     use std::sync::Once;
 
     static INIT_CRYPTO_PROVIDER: Once = Once::new();
@@ -41,7 +41,7 @@ fn ensure_crypto_provider_initialized() {
 /// (e.g. via [`crate::init_fips_crypto`]) before any TLS connections are
 /// established.
 #[cfg(not(feature = "https"))]
-fn ensure_crypto_provider_initialized() {}
+pub(crate) fn ensure_crypto_provider_initialized() {}
 
 /// Builds the client TLS config for the reqwest backend using the system
 /// trust roots. `SSL_CERT_FILE` and `SSL_CERT_DIR` variables are only
