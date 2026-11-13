@@ -149,6 +149,11 @@ impl super::Backend for HyperBackend {
         client_config: &HttpClientConfig,
         transport: TransportConfig,
     ) -> Result<Self, HttpClientError> {
+        if client_config.follow_redirects() {
+            return Err(HttpClientError::InvalidConfig(
+                "the hyper backend does not follow redirects".to_owned(),
+            ));
+        }
         let mut builder = http_common::client_builder();
 
         // Limit the number of idle connections kept in the pool, as a safety resource bound.

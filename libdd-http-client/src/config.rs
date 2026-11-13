@@ -47,6 +47,7 @@ pub struct HttpClientConfig {
     /// If this client is setup for periodic flushes. This mostly affects connection pooling, see
     /// [`HttpClientBuilder::periodic`].
     periodic: bool,
+    follow_redirects: bool,
 }
 
 impl HttpClientConfig {
@@ -59,6 +60,7 @@ impl HttpClientConfig {
             treat_http_errors_as_errors: true,
             retry: None,
             periodic: false,
+            follow_redirects: false,
         }
     }
 
@@ -86,6 +88,11 @@ impl HttpClientConfig {
     pub fn periodic(&self) -> bool {
         self.periodic
     }
+
+    /// Whether redirects are followed. See [HttpClientBuilder::follow_redirects].
+    pub fn follow_redirects(&self) -> bool {
+        self.follow_redirects
+    }
 }
 
 /// Builder for [`crate::HttpClient`].
@@ -99,6 +106,7 @@ pub struct HttpClientBuilder {
     retry: Option<RetryConfig>,
     transport: TransportConfig,
     periodic: bool,
+    follow_redirects: bool,
 }
 
 impl Default for HttpClientBuilder {
@@ -110,6 +118,7 @@ impl Default for HttpClientBuilder {
             retry: Default::default(),
             transport: Default::default(),
             periodic: false,
+            follow_redirects: false,
         }
     }
 }
@@ -189,6 +198,18 @@ impl HttpClientBuilder {
         self
     }
 
+    /// Follow HTTP redirects. Defaults to `false`: a 3xx response is returned as it is.
+    ///
+    /// Following a redirect resends the request, including its body and custom headers such as
+    /// credentials, to the redirect target, even when it is another origin.
+    ///
+    /// Only the reqwest backend can follow redirects: with the hyper backend, enabling this makes
+    /// [`HttpClientBuilder::build`] return [`crate::HttpClientError::InvalidConfig`].
+    pub fn follow_redirects(mut self, follow: bool) -> Self {
+        self.follow_redirects = follow;
+        self
+    }
+
     /// Build the [`crate::HttpClient`].
     ///
     /// Returns [`crate::HttpClientError::InvalidConfig`] if required fields
@@ -206,6 +227,7 @@ impl HttpClientBuilder {
             treat_http_errors_as_errors: self.treat_http_errors_as_errors,
             retry: self.retry,
             periodic: self.periodic,
+            follow_redirects: self.follow_redirects,
         };
         crate::HttpClient::from_config_and_transport(config, self.transport)
     }
@@ -302,6 +324,18 @@ mod tests {
             .build()
             .unwrap();
         assert!(!client.config().periodic());
+    }
+
+    #[cfg_attr(miri, ignore)] // real TLS/HTTP client construction is prohibitively slow under Miri
+    #[test]
+    fn builder_follow_redirects_defaults_false() {
+        ensure_crypto_provider();
+        let client = HttpClientBuilder::new()
+            .base_url("http://localhost".to_owned())
+            .timeout(Duration::from_secs(1))
+            .build()
+            .unwrap();
+        assert!(!client.config().follow_redirects());
     }
 
     #[cfg_attr(miri, ignore)] // real TLS/HTTP client construction is prohibitively slow under Miri
