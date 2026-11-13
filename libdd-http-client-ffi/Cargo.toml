@@ -20,9 +20,9 @@ catch_panic = []
 cbindgen = ["build_common/cbindgen", "libdd-common-ffi/cbindgen"]
 regex-lite = ["libdd-common-ffi/regex-lite", "libdd-shared-runtime/regex-lite"]
 # Cargo does not enforce a single backend: build and test each with `--no-default-features`.
-https = ["libdd-http-client/https"]
+https = ["libdd-http-client/https", "dep:rustls"]
 hyper-backend = ["libdd-http-client/hyper-backend"]
-reqwest-backend = ["libdd-http-client/reqwest-backend", "dep:rustls"]
+reqwest-backend = ["libdd-http-client/reqwest-backend"]
 
 [build-dependencies]
 build_common = { path = "../build-common" }

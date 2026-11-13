@@ -70,9 +70,10 @@ impl HttpClient {
                 return Err(gen_error!(HttpClientErrorCode::InvalidConfig));
             }
         }
-        // reqwest panics while building a client if the process has no rustls crypto provider.
+        // reqwest panics while building a client if the process has no rustls crypto provider, and
+        // feature unification can select it even when this crate did not ask for it.
         // `install_default` fails when one is already installed, and the host's is kept.
-        #[cfg(all(feature = "reqwest-backend", feature = "https"))]
+        #[cfg(feature = "https")]
         {
             static INSTALL_PROVIDER: std::sync::Once = std::sync::Once::new();
             INSTALL_PROVIDER.call_once(|| {
