@@ -177,22 +177,30 @@ fn an_invalid_header_name_is_rejected() {
         .err()
         .expect("invalid header name");
 
-    // reqwest reports it as an I/O error.
-    if !cfg!(feature = "reqwest-backend") {
-        assert_eq!(error.code, HttpClientErrorCode::InvalidArgument);
-    }
+    assert_malformed_request(error.code);
 }
 
-// The two backends reject different malformed requests, so each gets its own test.
-#[cfg(not(feature = "reqwest-backend"))]
+/// Cargo feature unification can pick either backend, and they classify these errors differently:
+/// hyper reports an invalid argument, reqwest an I/O error.
+fn assert_malformed_request(code: HttpClientErrorCode) {
+    assert!(
+        matches!(
+            code,
+            HttpClientErrorCode::InvalidArgument | HttpClientErrorCode::Io
+        ),
+        "unexpected code {code:?}"
+    );
+}
+
+// The two backends reject different malformed requests, so the multipart one has its own test.
 #[test]
-fn a_malformed_absolute_url_is_an_invalid_argument() {
+fn a_malformed_absolute_url_is_rejected() {
     let error = offline_client()
         .send(&Req::get("http://exa mple/x"))
         .err()
         .expect("malformed url");
 
-    assert_eq!(error.code, HttpClientErrorCode::InvalidArgument);
+    assert_malformed_request(error.code);
 }
 
 #[cfg(feature = "reqwest-backend")]
