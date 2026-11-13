@@ -762,6 +762,9 @@ fn prerequisite_first_reached_in_rejected_allocation_is_exposed_once_by_later_al
 // prerequisite error recording and destruction of the returned trace.
 #[test]
 fn deep_dependencies_use_a_bounded_thread_stack() {
+    // Keep every scenario under Miri without interpreting the full native stress workload.
+    // Native runs retain coverage at the evaluator's maximum supported depth.
+    const DEPENDENCY_DEPTH_LIMIT: usize = if cfg!(miri) { 8 } else { 255 };
     for failure in [
         None,
         Some("depth"),
@@ -771,17 +774,20 @@ fn deep_dependencies_use_a_bounded_thread_stack() {
         Some("depth-before-cycle"),
     ] {
         let edges = match failure {
-            Some("depth") => 256,
-            Some("cycle") => 254,
-            _ => 255,
+            Some("depth") => DEPENDENCY_DEPTH_LIMIT + 1,
+            Some("cycle") => DEPENDENCY_DEPTH_LIMIT - 1,
+            _ => DEPENDENCY_DEPTH_LIMIT,
         };
         let mut w = chain(edges);
-        w["evaluatorParams"] = json!({"maxDependencyDepth": 255});
+        w["evaluatorParams"] = json!({"maxDependencyDepth": DEPENDENCY_DEPTH_LIMIT});
         match failure {
             Some("missing") => {
-                w["flags"].as_object_mut().unwrap().remove("f255");
+                w["flags"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove(&format!("f{edges}"));
             }
-            Some("disabled") => w["flags"]["f255"]["enabled"] = json!(false),
+            Some("disabled") => w["flags"][format!("f{edges}")]["enabled"] = json!(false),
             Some("cycle" | "depth-before-cycle") => {
                 w["flags"][format!("f{edges}")] = flag(vec![dependency("root")]);
             }
@@ -805,7 +811,7 @@ fn deep_dependencies_use_a_bounded_thread_stack() {
                 );
                 if failure.is_none() {
                     assert_eq!(trace.result.as_ref().unwrap().variation_key.as_str(), "on");
-                    assert_eq!(trace.evaluations.len(), 255);
+                    assert_eq!(trace.evaluations.len(), edges);
                     assert!(
                         trace
                             .evaluations
@@ -817,7 +823,7 @@ fn deep_dependencies_use_a_bounded_thread_stack() {
                         Some("missing") => EvaluationError::FlagUnrecognizedOrDisabled,
                         Some("disabled") => EvaluationError::FlagDisabled,
                         Some("cycle") => EvaluationError::DependencyCycle,
-                        // At edge 256 the depth check takes precedence over cycle detection.
+                        // Beyond the configured limit, depth takes precedence over cycle detection.
                         _ => EvaluationError::DependencyDepthExceeded,
                     };
                     let original = trace.result.as_ref().unwrap_err();
