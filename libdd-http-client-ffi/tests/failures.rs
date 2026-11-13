@@ -43,6 +43,7 @@ fn flaky_server(dropped: usize) -> SocketAddr {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn a_refused_connection_is_connection_failed() {
     let client = Cfg::for_addr(refused_addr()).build().expect("client");
 
@@ -103,6 +104,7 @@ fn a_request_timeout_overrides_the_client_timeout() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn a_dropped_connection_is_an_error_without_retries() {
     let client = Cfg::for_addr(flaky_server(1)).build().expect("client");
 
@@ -176,6 +178,7 @@ fn cancelling_from_another_thread_aborts_a_blocked_send() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn an_already_cancelled_token_fails_without_sending() {
     let server = MockServer::start();
     let mock = server.mock(|when, then| {
@@ -196,6 +199,7 @@ fn an_already_cancelled_token_fails_without_sending() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn an_uncancelled_token_does_not_disturb_a_send() {
     let server = MockServer::start();
     server.mock(|when, then| {

@@ -292,6 +292,7 @@ fn multipart_replaces_a_request_content_type() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn a_default_content_type_still_applies_without_multipart() {
     let server = MockServer::start();
     let mock = server.mock(|when, then| {

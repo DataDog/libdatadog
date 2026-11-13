@@ -70,8 +70,9 @@ impl HttpClient {
                 return Err(gen_error!(HttpClientErrorCode::InvalidConfig));
             }
         }
-        // reqwest panics while building a client if the process has no rustls crypto provider, and
-        // feature unification can select it even when this crate did not ask for it.
+        // reqwest builds a default rustls config, and panics, if the process has no crypto
+        // provider; `libdd-http-client` only covers https base URLs. Feature unification can
+        // select reqwest even when this crate did not ask for it.
         // `install_default` fails when one is already installed, and the host's is kept.
         #[cfg(feature = "https")]
         {
