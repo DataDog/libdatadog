@@ -141,7 +141,7 @@ mod linux {
         println!("pre-install is_installed={}", unsafe { is_installed() });
         check(unsafe { install() }, "ddog_heap_gotter_install")?;
         println!("post-install is_installed={}", unsafe { is_installed() });
-        println!("attach a tracer on `usdt:*:ddheap:*`; producing allocation pressure...");
+        println!("attach a tracer on `usdt:*:otel_memory:*`; producing allocation pressure...");
 
         for i in 0..30_u64 {
             let parts: Vec<String> = (0..1000)

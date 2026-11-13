@@ -14,7 +14,7 @@
  *
  * Applies the architecture-specific sample flag to raw (tagging the pointer
  * on arm64, writing a header magic word on x86-64) to produce the
- * user-visible pointer, then fires the ddheap:alloc USDT so an attached
+ * user-visible pointer, then fires the otel_memory:alloc USDT so an attached
  * profiler can record the sample. Finally closes the reentry guard that
  * dd_allocation_requested_slow opened.
  *
@@ -24,7 +24,7 @@
  * TODO: on x86-64, consider abandoning the sample when raw falls within
  * DD_HEADER_BYTES of a page boundary. The free-side fast path already bails
  * in that case (to avoid reading before the page), so those allocations will
- * never emit a ddheap:free. Dropping them at alloc time would keep the
+ * never emit a otel_memory:free. Dropping them at alloc time would keep the
  * alloc/free pair balanced at the cost of occasionally missing a sample.
  *
  * (ddprof: AllocTrackerHelper::track / AllocationTracker push_alloc_sample)
