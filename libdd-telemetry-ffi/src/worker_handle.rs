@@ -301,3 +301,156 @@ pub extern "C" fn ddog_telemetry_handle_wait_for_shutdown_ms(
 pub extern "C" fn ddog_telemetry_handle_drop(handle: Box<TelemetryWorkerHandle>) {
     drop(handle);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tests::{find_sub_payloads, start_file_backed_worker};
+    use ffi::tags::ddog_Vec_Tag_new;
+
+    /// Sends config, product change, endpoint, flush and extended heartbeat messages through
+    /// the FFI and checks each one reaches the worker output.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_handle_end_to_end() {
+        unsafe {
+            let (handle, f) = start_file_backed_worker();
+
+            ddog_telemetry_handle_add_config(
+                &handle,
+                ffi::CharSlice::from("DD_TRACE_ENABLED"),
+                ffi::Option::Some(ffi::CharSlice::from("true")),
+                ConfigurationOrigin::EnvVar,
+                ffi::CharSlice::from(""),
+                ffi::Option::Some(3),
+            )
+            .unwrap_none();
+            ddog_telemetry_handle_add_product_change(
+                &handle,
+                ffi::CharSlice::from("appsec"),
+                true,
+                ffi::CharSlice::from("1.0"),
+            )
+            .unwrap_none();
+            let req = [ffi::CharSlice::from("application/json")];
+            let codes = [200u32, 404];
+            ddog_telemetry_handle_add_endpoint(
+                &handle,
+                ffi::Option::Some(Method::Get),
+                ffi::CharSlice::from("/users"),
+                ffi::CharSlice::from("http.request"),
+                ffi::CharSlice::from("GET /users"),
+                ffi::Slice::from(&req[..]),
+                ffi::Slice::empty(),
+                ffi::Slice::from(&codes[..]),
+            )
+            .unwrap_none();
+            ddog_telemetry_handle_add_config(
+                &handle,
+                ffi::CharSlice::from("DD_EMPTY"),
+                ffi::Option::Some(ffi::CharSlice::from("")),
+                ConfigurationOrigin::Code,
+                ffi::CharSlice::from(""),
+                ffi::Option::None,
+            )
+            .unwrap_none();
+            ddog_telemetry_handle_add_config(
+                &handle,
+                ffi::CharSlice::from("DD_NULL"),
+                ffi::Option::None,
+                ConfigurationOrigin::Code,
+                ffi::CharSlice::from(""),
+                ffi::Option::None,
+            )
+            .unwrap_none();
+
+            let context_key = ddog_telemetry_handle_register_metric_context(
+                &handle,
+                ffi::CharSlice::from("flush_metric"),
+                MetricType::Count,
+                ddog_Vec_Tag_new(),
+                true,
+                MetricNamespace::Apm,
+            );
+            ddog_telemetry_handle_add_point(&handle, &context_key, 2.0).unwrap_none();
+            ddog_telemetry_handle_flush_metrics(&handle).unwrap_none();
+            ddog_telemetry_handle_flush_data(&handle).unwrap_none();
+
+            // The flushes alone (before stop) must write the metric and pending payloads.
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            let flushed = loop {
+                let out = std::fs::read_to_string(f.path()).unwrap();
+                let has_metric = find_sub_payloads(&out, "generate-metrics").iter().any(|p| {
+                    p["payload"]["series"]
+                        .as_array()
+                        .is_some_and(|s| s.iter().any(|m| m["metric"] == "flush_metric"))
+                });
+                let has_endpoint = !find_sub_payloads(&out, "app-endpoints").is_empty();
+                if has_metric && has_endpoint {
+                    break true;
+                }
+                if std::time::Instant::now() > deadline {
+                    break false;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            };
+            assert!(
+                flushed,
+                "flush did not write metrics/endpoints before shutdown"
+            );
+
+            ddog_telemetry_handle_send_extended_heartbeat(&handle).unwrap_none();
+
+            ddog_telemetry_handle_stop(&handle).unwrap_none();
+            ddog_telemetry_handle_wait_for_shutdown(handle);
+
+            let output = std::fs::read_to_string(f.path()).unwrap();
+            let conf = find_sub_payloads(&output, "app-client-configuration-change");
+            let c = conf
+                .iter()
+                .filter_map(|p| p["payload"]["configuration"].as_array())
+                .flatten()
+                .find(|c| c["name"] == "DD_TRACE_ENABLED")
+                .unwrap_or_else(|| panic!("config missing:\n{output}"));
+            assert_eq!(c["value"], "true");
+            assert_eq!(c["origin"], "env_var");
+            assert_eq!(c["seq_id"], 3);
+            let all_conf: Vec<&serde_json::Value> = conf
+                .iter()
+                .filter_map(|p| p["payload"]["configuration"].as_array())
+                .flatten()
+                .collect();
+            let empty = all_conf.iter().find(|c| c["name"] == "DD_EMPTY").unwrap();
+            assert_eq!(empty["value"], "");
+            let null = all_conf.iter().find(|c| c["name"] == "DD_NULL").unwrap();
+            assert!(null["value"].is_null());
+
+            let prod = find_sub_payloads(&output, "app-product-change");
+            assert!(
+                prod.iter()
+                    .any(|p| p["payload"]["products"]["appsec"]["enabled"] == true),
+                "product change missing:\n{output}"
+            );
+
+            let eps = find_sub_payloads(&output, "app-endpoints");
+            let e = eps
+                .iter()
+                .filter_map(|p| p["payload"]["endpoints"].as_array())
+                .flatten()
+                .find(|e| e["resource_name"] == "GET /users")
+                .unwrap_or_else(|| panic!("endpoint missing:\n{output}"));
+            assert_eq!(e["method"], "GET");
+            assert_eq!(e["path"], "/users");
+            assert_eq!(e["response_code"], serde_json::json!([200, 404]));
+            assert_eq!(
+                e["request_body_type"],
+                serde_json::json!(["application/json"])
+            );
+
+            assert!(
+                !find_sub_payloads(&output, "app-extended-heartbeat").is_empty(),
+                "extended heartbeat missing:\n{output}"
+            );
+        }
+    }
+}
