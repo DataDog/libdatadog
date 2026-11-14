@@ -35,7 +35,7 @@ these over inventing a parallel job.
 | verify-proto-files | `.proto` sync with datadog-agent + committed `pb.rs` / `pb.idx.rs`. | `verify-proto-files.yml` |
 | verify-profiling-heap-sampler-bindings | Committed bindgen output matches regen. | `verify-profiling-heap-sampler-bindings.yml` |
 | actionlint (+ shellcheck) | GitHub Actions YAML. | `lint.yml` `actionlint` job |
-| CODEOWNERS validator | `CODEOWNERS` files / dup patterns / syntax. | `lint.yml` `codeowners-validator` |
+| CODEOWNERS validator | `CODEOWNERS` file / dup patterns / inert patterns / unowned files / owner validity via GitHub's API. | `lint.yml` `codeowners-validate` |
 | commitlint | Conventional Commits on PR titles. | `.config/commitlint.config.js` |
 | pr-title-semver-check | Semver floor from the PR title vs public API. | `pr-title-semver-check.yml`; `scripts/semver-level.sh` |
 
