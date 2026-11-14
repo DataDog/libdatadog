@@ -50,6 +50,10 @@ Iterate fastest with `cargo check -p <crate>` while editing; validate each affec
    cargo deny check
    ```
 
+### Comparing performance
+
+Compare benchmarks between trees with `benchmark/stable-benchmarks.py BASE NEW -p <crate>` (`benchmark/README.md`). It measures each tree over several lld-randomized code and data layouts and reports a confidence interval. Code layout alone moves a single build by several percent, so don't draw conclusions from one build per side, and don't align or reorder code to steady the numbers. Narrow the run with `-p`, `--bench` and `--filter`, because each tree runs once per seed.
+
 ### Per-crate test notes
 
 - **crashtracker**: needs `--features libdd-crashtracker/generate-unit-test-files` for unit tests.
