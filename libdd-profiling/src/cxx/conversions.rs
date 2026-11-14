@@ -68,6 +68,7 @@ impl TryFrom<ffi::SampleType> for api::SampleType {
             ffi::SampleType::Custom5 => api::SampleType::Custom5,
             ffi::SampleType::GcTime => api::SampleType::GcTime,
             ffi::SampleType::GcSamples => api::SampleType::GcSamples,
+            ffi::SampleType::UiHangTime => api::SampleType::UiHangTime,
             _ => anyhow::bail!("invalid SampleType discriminant from C++"),
         })
     }
@@ -125,6 +126,38 @@ impl<'a> From<&ffi::Label<'a>> for api::Label<'a> {
             num: label.num,
             num_unit: label.num_unit,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ui_hang_time_conversion() {
+        let sample_type = api::SampleType::try_from(ffi::SampleType::UiHangTime).unwrap();
+        assert_eq!(sample_type, api::SampleType::UiHangTime);
+        assert_eq!(
+            api::ValueType::from(sample_type),
+            api::ValueType::new("ui-hang-time", "nanoseconds")
+        );
+
+        let period = api::Period::try_from(&ffi::Period {
+            value_type: ffi::SampleType::UiHangTime,
+            value: 10_000_000,
+        })
+        .unwrap();
+        assert_eq!(period.sample_type, api::SampleType::UiHangTime);
+        assert_eq!(period.value, 10_000_000);
+    }
+
+    #[test]
+    fn appended_sample_type_discriminants() {
+        assert_eq!(ffi::SampleType::Custom1.repr, 52);
+        assert_eq!(ffi::SampleType::Custom5.repr, 56);
+        assert_eq!(ffi::SampleType::GcTime.repr, 57);
+        assert_eq!(ffi::SampleType::GcSamples.repr, 58);
+        assert_eq!(ffi::SampleType::UiHangTime.repr, 59);
     }
 }
 
