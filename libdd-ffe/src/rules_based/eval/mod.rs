@@ -5,5 +5,11 @@ mod eval_assignment;
 mod eval_rules;
 mod evaluation_context;
 
-pub use eval_assignment::{EvaluationOptions, ExperimentationOptOutMode, get_assignment};
+pub use eval_assignment::{
+    EvaluationOptions, EvaluationRecord, EvaluationResult, ExperimentationOptOutMode,
+    get_assignment,
+};
 pub use evaluation_context::EvaluationContext;
+
+#[cfg(test)]
+mod dependent_flags_tests;
