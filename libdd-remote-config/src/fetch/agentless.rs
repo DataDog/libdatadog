@@ -581,7 +581,7 @@ impl<C: HttpClientCapability + SleepCapability> AgentlessFetcher<C> {
             agent_uuid: self
                 .agent_uuid_override
                 .as_deref()
-                .unwrap_or_else(|| libdd_common::machine_id::get_machine_id())
+                .unwrap_or_else(|| libdd_host_identity::machine_id::get_machine_id())
                 .to_owned(),
         };
         // During first poll only fetch org data in parallel with the config request
