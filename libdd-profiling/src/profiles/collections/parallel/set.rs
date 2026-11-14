@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::profiles::collections::parallel::sharded::Sharded;
-use crate::profiles::collections::{Arc, SET_MIN_CAPACITY, Set, SetError, SetId};
+use crate::profiles::collections::{Arc, SET_MIN_CAPACITY, Set, SetError, SetHasher, SetId};
 use core::hash;
 use libdd_alloc::Global;
 use std::ffi::c_void;
@@ -48,7 +48,7 @@ impl<T: hash::Hash + Eq + 'static, const N: usize> ParallelSet<T, N> {
     }
 
     pub fn try_insert(&self, value: T) -> Result<SetId<T>, SetError> {
-        let hash = crate::profiles::collections::SetHasher::default().hash_one(&value);
+        let hash = SetHasher::default().hash_one(&value);
         let idx = Self::select_shard(hash);
         let lock = &self.storage().shards[idx];
 
@@ -78,7 +78,7 @@ impl<T: hash::Hash + Eq + 'static, const N: usize> ParallelSet<T, N> {
     /// Returns the `SetId` for `value` if it exists in the parallel set, without inserting.
     /// Intended for tests and debugging; typical usage should prefer `try_insert`.
     pub fn find(&self, value: &T) -> Option<SetId<T>> {
-        let hash = crate::profiles::collections::SetHasher::default().hash_one(value);
+        let hash = SetHasher::default().hash_one(value);
         let idx = Self::select_shard(hash);
         let lock = &self.storage().shards[idx];
         let guard = lock.read();
@@ -115,13 +115,6 @@ impl<T: hash::Hash + Eq + 'static, const N: usize> ParallelSet<T, N> {
         Self { storage }
     }
 }
-
-// SAFETY: uses `RwLock<Set<T>>` to synchronize access. All reads/writes in
-// this wrapper go through those locks. All non-mut methods of
-// `ParallelSetStorage` and `Set` are safe to call under a read-lock, and all
-// mut methods are safe to call under a write-lock.
-unsafe impl<T: hash::Hash + Eq + 'static, const N: usize> Send for ParallelSet<T, N> {}
-unsafe impl<T: hash::Hash + Eq + 'static, const N: usize> Sync for ParallelSet<T, N> {}
 
 #[cfg(test)]
 mod tests {
