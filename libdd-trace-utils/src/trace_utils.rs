@@ -12,7 +12,7 @@ use anyhow::anyhow;
 use bytes::Buf;
 use bytes::buf::Reader;
 use http_body_util::BodyExt;
-use libdd_common::azure_app_services;
+use libdd_host_identity::azure_app_services;
 use libdd_trace_normalization::normalizer;
 use libdd_trace_protobuf::pb;
 use rmp::decode::read_array_len;

@@ -12,14 +12,14 @@ depend on this crate.
 ## Features
 
 - **HTTP/HTTPS Client**: Async HTTP client built on hyper with rustls support
-- **Endpoint extensions**: `EndpointExt` holds the request handling for a `libdd_common::Endpoint`: standard headers, request builders, and a reqwest client builder (requires `reqwest`)
+- **Endpoint extensions**: `EndpointExt` holds the request handling for a `libdd_common::Endpoint`: standard headers, request builders, and a reqwest client builder (requires `reqwest`). Entity headers are not part of the standard set; callers that want them opt in via `libdd-host-identity`'s `EntityHeadersExt`.
 - **URI Parsing**: Special handling for Unix sockets, Windows named pipes, and file URIs
 - **Connectors**: HTTP/HTTPS, Unix domain socket, and Windows named pipe connectors
 
 ## Modules
 
 - `connector`: HTTP/HTTPS connector implementations
-- `endpoint`: `EndpointExt` (`set_standard_headers`, `to_request_builder`, and `to_reqwest_client_builder` with `reqwest`)
+- `endpoint`: `EndpointExt` (`set_standard_headers`, `to_request_builder`, and `to_reqwest_client_builder` with `reqwest`); entity headers are opt-in via `libdd-host-identity`'s `EntityHeadersExt`
 - `http_common`: Hyper version migration helpers
 - `dump_server`: Local server that dumps received requests (requires `reqwest`)
 

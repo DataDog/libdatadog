@@ -6,7 +6,7 @@ use crate::data;
 pub fn build_host() -> data::Host {
     tracing::debug!("Building telemetry host information");
     let hostname = os::real_hostname().unwrap_or_else(|_| String::from("unknown_hostname"));
-    let container_id = libdd_common::entity_id::get_container_id().map(|f| f.to_string());
+    let container_id = libdd_host_identity::entity_id::get_container_id().map(|f| f.to_string());
     let os_version = os::os_version().ok();
 
     tracing::debug!(

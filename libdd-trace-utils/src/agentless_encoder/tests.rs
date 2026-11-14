@@ -34,7 +34,7 @@ fn json_from_bytes(b: &[u8]) -> Value {
 }
 
 fn expected_container_field() -> String {
-    libdd_common::entity_id::get_container_id()
+    libdd_host_identity::entity_id::get_container_id()
         .map(|container_id| format!(",\"containerID\":\"{container_id}\""))
         .unwrap_or_default()
 }

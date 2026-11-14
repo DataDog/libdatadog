@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use http::request::Builder as HttpRequestBuilder;
+use libdd_host_identity::entity_id::EntityHeadersExt;
 use libdd_networking::endpoint::EndpointExt;
 
 use crate::config::Config;
@@ -61,8 +62,9 @@ pub fn request_builder(c: &Config) -> anyhow::Result<HttpRequestBuilder> {
                 telemetry.version = env!("CARGO_PKG_VERSION"),
                 "Building telemetry request"
             );
-            let mut builder =
-                e.to_request_builder(concat!("telemetry/", env!("CARGO_PKG_VERSION")));
+            let mut builder = e
+                .to_request_builder(concat!("telemetry/", env!("CARGO_PKG_VERSION")))
+                .map(|builder| builder.with_entity_headers());
             if c.debug_enabled {
                 debug!(
                     telemetry.debug_enabled = true,

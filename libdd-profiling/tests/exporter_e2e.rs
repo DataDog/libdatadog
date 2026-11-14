@@ -303,7 +303,7 @@ fn validate_full_export(req: &ReceivedRequest, expected_path: &str) -> anyhow::R
     assert_eq!(req.method, "POST");
     assert_eq!(req.path, expected_path);
 
-    // Check for entity headers and validate their values match what libdd_common provides
+    // Check for entity headers and validate their values match what libdd_host_identity provides
     common::assert_entity_headers_match(&req.headers);
 
     // Parse the request to get multipart parts

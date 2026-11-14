@@ -12,6 +12,7 @@ use http::uri::PathAndQuery;
 use libdd_capabilities::{Bytes, HttpClientCapability, HttpError, SleepCapability};
 use libdd_capabilities_impl::ResponseBodyLimit;
 use libdd_common::Endpoint;
+use libdd_host_identity::entity_id::EntityHeadersExt;
 use libdd_networking::endpoint::EndpointExt;
 use serde::{Deserialize, Deserializer, Serialize};
 use sha2::{Digest, Sha256};
@@ -669,6 +670,7 @@ impl EvpTransport {
         let request = endpoint
             .to_request_builder(USER_AGENT)
             .ok()?
+            .with_entity_headers()
             .method(Method::GET)
             // Native clients enforce this while reading, before collecting the
             // entire body. Keep the length check below for in-memory test clients.
@@ -743,6 +745,7 @@ impl EvpTransport {
         let mut builder = endpoint
             .to_request_builder(USER_AGENT)
             .map_err(DeliveryFailure::DefinitivePreSend)?
+            .with_entity_headers()
             .method(Method::POST)
             .header("Content-Type", event.content_type)
             .header(EVP_ORIGIN_HEADER, self.producer.origin())

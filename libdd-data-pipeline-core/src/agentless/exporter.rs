@@ -245,7 +245,7 @@ fn build_agentless_headers(metadata: &TracerMetadata, trace_count: usize) -> Hea
         http::HeaderName::from_static("x-datadog-trace-count"),
         http::HeaderValue::from(trace_count),
     );
-    for (name, value) in libdd_common::entity_id::get_entity_headers() {
+    for (name, value) in libdd_host_identity::entity_id::get_entity_headers() {
         if let Ok(value) = http::HeaderValue::from_str(value) {
             headers.insert(http::HeaderName::from_static(name), value);
         }

@@ -1,0 +1,41 @@
+# Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "libdd-host-identity"
+version = "1.0.0"
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-host-identity"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-host-identity"
+description = "Host identity detection: container/entity IDs, machine ID, and Azure App Services context"
+
+[lib]
+bench = false
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+libc = { workspace = true }
+
+[target.'cfg(windows)'.dependencies.windows-sys]
+workspace = true
+features = [
+    "Win32_Foundation",
+    "Win32_System_Registry",
+]
+
+[dependencies]
+http = { workspace = true, features = ["std"] }
+libdd-regex = { version = "0.1.0", path = "../libdd-regex" }
+libdd-env = { version = "0.1.0", path = "../libdd-env" }
+
+[dev-dependencies]
+indexmap = { workspace = true, default-features = true }
+maplit.workspace = true
+tempfile.workspace = true
+
+[features]
+default = []
+# Enable stubbing of the cgroup path so end-to-end tests can inject a fake
+# /proc/self/cgroup (php uses this for their e2e tests).
+cgroup_testing = []

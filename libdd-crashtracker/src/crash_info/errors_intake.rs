@@ -3,6 +3,7 @@
 
 use alloc::borrow::Cow;
 use core::time::Duration;
+use libdd_host_identity::entity_id::EntityHeadersExt;
 use libdd_networking::endpoint::EndpointExt;
 use std::time::SystemTime;
 
@@ -563,8 +564,9 @@ impl ErrorsIntakeUploader {
         }
 
         // Build HTTP request using the same pattern as telemetry
-        let mut req_builder =
-            endpoint.to_request_builder(concat!("crashtracker/", env!("CARGO_PKG_VERSION")))?;
+        let mut req_builder = endpoint
+            .to_request_builder(concat!("crashtracker/", env!("CARGO_PKG_VERSION")))?
+            .with_entity_headers();
 
         // Add errors intake specific headers
         if endpoint.api_key.is_some() {

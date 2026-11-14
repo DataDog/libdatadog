@@ -12,6 +12,7 @@ use libdd_capabilities_impl::NativeHttpClient;
 use libdd_common::Endpoint;
 use libdd_common::tag::Tag;
 use libdd_data_pipeline::agent_info::schema::AgentInfoStruct;
+use libdd_host_identity::entity_id::EntityHeadersExt;
 use libdd_networking::endpoint::EndpointExt;
 use percent_encoding::{CONTROLS, percent_encode};
 use serde::{Deserialize, Serialize};
@@ -410,6 +411,7 @@ impl PayloadSender {
 
         let mut req = endpoint
             .to_request_builder(concat!("Tracer/", env!("CARGO_PKG_VERSION")))?
+            .with_entity_headers()
             .method(Method::POST)
             .uri(url);
 
@@ -643,6 +645,7 @@ async fn send_symdb_to_endpoint<C: HttpClientCapability>(
 ) -> anyhow::Result<()> {
     let mut req = endpoint
         .to_request_builder(concat!("Tracer/", env!("CARGO_PKG_VERSION")))?
+        .with_entity_headers()
         .method(Method::POST)
         .header("X-Datadog-Additional-Tags", tags)
         .header("Content-type", content_type);
