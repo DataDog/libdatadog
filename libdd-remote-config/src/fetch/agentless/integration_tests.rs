@@ -312,6 +312,8 @@ async fn fetcher(
         )
         .await
         .unwrap(),
+        config_root_bytes: config_root,
+        director_root_bytes: director_root,
         last_config_top_targets: None,
         org_uuid: None,
         org_data_prefetched: false,
@@ -321,6 +323,7 @@ async fn fetcher(
         opaque_backend_state: Vec::new(),
         refresh_interval: Duration::from_secs(60),
         consecutive_failures: 0,
+        dc_switch_recovery: false,
     }
 }
 
@@ -416,9 +419,10 @@ async fn test_root_rotation_without_top_targets_still_converges() {
 }
 
 /// D-F1: an `apply()` that fails *after* advancing the config trusted DB must
-/// leave the fetcher recoverable. The reset rebuilds the clients from the
-/// pinned roots, so the next poll reports the clean (embedded) versions and
-/// converges — no stuck from a partially-advanced trusted DB.
+/// leave the fetcher recoverable. The reset re-anchors both clients at the
+/// pinned (embedded) roots, so the next poll reports the embedded versions,
+/// the backend re-sends the rotation chain, and everything re-verifies from
+/// scratch — no stuck from a partially-advanced trusted DB.
 #[tokio::test]
 #[cfg_attr(miri, ignore)]
 async fn test_apply_error_resets_and_recovers() {
@@ -429,11 +433,15 @@ async fn test_apply_error_resets_and_recovers() {
     let cfg2 = rotate_root(&config_key, &cfg1).await;
     let dir1 = build_v1(&director_key).await;
 
+    // The config snapshot pins an org UUID, like the real DC snapshots do, so
+    // the fresh-join recovery can check it against /api/v0.1/org.
+    let (cfg1_snap_bytes, cfg1_ts_bytes) =
+        config_snapshot_with_org_uuid(&cfg1, &config_key, "ORG-A");
     let good = |top_targets: Option<&[u8]>, roots: &[&[u8]]| {
         response(
             roots,
-            cfg1.timestamp().unwrap().as_bytes(),
-            cfg1.snapshot().unwrap().as_bytes(),
+            &cfg1_ts_bytes,
+            &cfg1_snap_bytes,
             top_targets,
             vec![],
             &dir1,
@@ -441,6 +449,7 @@ async fn test_apply_error_resets_and_recovers() {
     };
 
     let http = MockHttp::new();
+    http.set_org_uuid("ORG-A");
     // Poll 1: good, advances to config root v1.
     http.push(&good(
         Some(cfg1.targets().unwrap().as_bytes()),
@@ -459,10 +468,11 @@ async fn test_apply_error_resets_and_recovers() {
         raw: b"not valid tuf metadata".to_vec(),
     }];
     http.push(&bad);
-    // Poll 3: good again — must recover.
+    // Poll 3: good again — must recover. The client reports the embedded
+    // root v1, so the response carries the full rotation chain (root v2).
     http.push(&good(
         Some(cfg1.targets().unwrap().as_bytes()),
-        &[cfg1.root().unwrap().as_bytes()],
+        &[cfg2.root().unwrap().as_bytes()],
     ));
 
     let mut f = fetcher(
@@ -485,9 +495,10 @@ async fn test_apply_error_resets_and_recovers() {
 
     // Poll 2 fails (after the config root advanced to v2) and resets.
     assert!(f.fetch_config(dummy_client(), &cache).await.is_err());
-    // Reset purges snapshot/targets/timestamp/delegations but preserves the
-    // trusted root that `update()` already advanced to v2 — recovery does not
-    // roll back the trust chain to the embedded root v1.
+    // The reset purges the non-root trusted metadata but preserves the
+    // trusted root v2 (and its rollback protection): the failed poll may
+    // have advanced the databases in place, and re-anchoring at the embedded
+    // root would throw that protection away.
     assert_eq!(config_root_version(&f), 2);
     assert_eq!(config_snapshot_version(&f), None);
     assert!(f.opaque_backend_state.is_empty());
@@ -498,10 +509,11 @@ async fn test_apply_error_resets_and_recovers() {
     // verification failures instead of hot-looping.
     assert_eq!(f.consecutive_failures(), 1);
 
-    // Poll 3 recovers. The response's `cfg1.root` (v1) is older than the
-    // preserved trusted root v2 and is ignored by `update_root`; snapshot,
-    // timestamp and targets are re-signed by the same key that root v2 trusts,
-    // so they verify and repopulate the purged non-root state.
+    // Poll 3 recovers as a fresh join: the client reports the embedded root
+    // v1, so the backend re-sends the rotation chain (root v2) and the full
+    // metadata, all re-verified from the embedded root. The verified chain
+    // carries the same root keys as the latched one, so it is not a DC
+    // switch: it is applied through the normal path.
     f.fetch_config(dummy_client(), &cache).await.unwrap();
     assert_eq!(config_root_version(&f), 2);
     assert_eq!(config_snapshot_version(&f), Some(1));
@@ -509,13 +521,487 @@ async fn test_apply_error_resets_and_recovers() {
     assert_eq!(f.consecutive_failures(), 0);
     assert_eq!(f.next_backoff(), None);
 
-    // The post-reset poll reported the *preserved* trusted root version (v2)
-    // and the cleared snapshot version (0), so the backend does not have to
-    // re-send the root rotation chain.
+    // The post-reset poll reported the *embedded* trusted root version (v1)
+    // and the cleared snapshot version (0), so the backend re-sends the root
+    // rotation chain.
     let req3 = http.request_at(2);
     assert_eq!(req3.current_config_snapshot_version, 0);
-    assert_eq!(req3.current_config_root_version, 2);
+    assert_eq!(req3.current_config_root_version, 1);
     assert_eq!(req3.current_director_root_version, 1);
+}
+
+// ---- DC switch (agent PR #60072 parity) -----------------------------------
+
+/// Fresh keys for every role of a DC's TUF repo.
+struct DcKeys {
+    root: Ed25519PrivateKey,
+    targets: Ed25519PrivateKey,
+    snapshot: Ed25519PrivateKey,
+    timestamp: Ed25519PrivateKey,
+}
+
+fn new_dc_keys() -> DcKeys {
+    DcKeys {
+        root: new_key(),
+        targets: new_key(),
+        snapshot: new_key(),
+        timestamp: new_key(),
+    }
+}
+
+/// Rotate the shared embedded v1 repo once to a DC's local keys, the way every
+/// DC migrated off the shared open-source roots: root v2 (threshold 1),
+/// cross-signed by the shared (embedded) root key so the rotation step
+/// verifies from the embedded root, with the other roles moved to the DC's
+/// keys.
+async fn dc_rotate(
+    shared_root_key: &Ed25519PrivateKey,
+    dc: &DcKeys,
+    prev: &RawSignedMetadataSet<Json>,
+) -> RawSignedMetadataSet<Json> {
+    let db = Database::<Json>::from_trusted_metadata(prev).unwrap();
+    let mut repo = EphemeralRepository::<Json>::new();
+    RepoBuilder::from_database(&mut repo, &db)
+        .trusted_root_keys(&[&dc.root])
+        .trusted_targets_keys(&[&dc.targets])
+        .trusted_snapshot_keys(&[&dc.snapshot])
+        .trusted_timestamp_keys(&[&dc.timestamp])
+        // Cross-signed with both the shared embedded key (so the step
+        // verifies from the embedded root) and the DC's own key (so chaining
+        // a second rotation verifies from this root).
+        .signing_root_keys(&[shared_root_key, &dc.root])
+        .stage_root()
+        .unwrap()
+        .commit()
+        .await
+        .unwrap()
+}
+
+/// A v2 root at the DC's keys that was **not** signed by the shared embedded
+/// root key: a chain the embedded root cannot verify. Built from scratch —
+/// `RepoBuilder::from_database` refuses to commit a root the previous
+/// database does not cross-sign.
+async fn dc_rotate_untrusted(dc: &DcKeys) -> RawSignedMetadataSet<Json> {
+    let mut repo = EphemeralRepository::<Json>::new();
+    RepoBuilder::create(&mut repo)
+        .trusted_root_keys(&[&dc.root])
+        .trusted_targets_keys(&[&dc.targets])
+        .trusted_snapshot_keys(&[&dc.snapshot])
+        .trusted_timestamp_keys(&[&dc.timestamp])
+        .stage_root_with_builder(|b| b.version(2))
+        .unwrap()
+        .commit()
+        .await
+        .unwrap()
+}
+
+/// A `LatestConfigsResponse` with the DC's full metadata and its root chain —
+/// what the backend sends on a fresh join (the client reports the embedded
+/// root version, so every root newer than that is included).
+fn fresh_join(
+    cfg: &RawSignedMetadataSet<Json>,
+    director: &RawSignedMetadataSet<Json>,
+) -> remoteconfig::LatestConfigsResponse {
+    response(
+        &[cfg.root().unwrap().as_bytes()],
+        cfg.timestamp().unwrap().as_bytes(),
+        cfg.snapshot().unwrap().as_bytes(),
+        Some(cfg.targets().unwrap().as_bytes()),
+        vec![],
+        director,
+    )
+}
+
+/// A `LatestConfigsResponse` with the DC's metadata but no roots — what the
+/// backend sends once the client reports the DC's current root version.
+fn dc_update(
+    cfg: &RawSignedMetadataSet<Json>,
+    director: &RawSignedMetadataSet<Json>,
+) -> remoteconfig::LatestConfigsResponse {
+    response(
+        &[],
+        cfg.timestamp().unwrap().as_bytes(),
+        cfg.snapshot().unwrap().as_bytes(),
+        Some(cfg.targets().unwrap().as_bytes()),
+        vec![],
+        director,
+    )
+}
+
+/// When the org moves to another DC behind the same endpoint, the fetcher's
+/// latched TUF state belongs to the old DC, the normal update cannot repair it
+/// (no roots are sent since both DCs sit at the same root version), and the
+/// fresh-join payload of the new DC must re-verify from the embedded root.
+/// A DC whose config snapshots do not pin an org UUID (the pin is optional:
+/// the normal path skips the org check when the snapshot carries none, see
+/// `verify_org_uuid`, and the agent documents removing the pin as a
+/// last-resort) must not get stuck after a transient `apply()` failure: the
+/// same-chain fresh join of the recovery poll is routed through the normal
+/// `apply()` path without requiring the pin.
+#[tokio::test]
+#[cfg_attr(miri, ignore)]
+async fn test_same_chain_rejoins_without_org_uuid_pin() {
+    let config_key = new_key();
+    let director_key = new_key();
+
+    let cfg1 = build_v1(&config_key).await;
+    let dir1 = build_v1(&director_key).await;
+
+    // No org UUID pin in the config snapshot: the DC does not write one.
+    let good = |top_targets: Option<&[u8]>, roots: &[&[u8]]| {
+        response(
+            roots,
+            cfg1.timestamp().unwrap().as_bytes(),
+            cfg1.snapshot().unwrap().as_bytes(),
+            top_targets,
+            vec![],
+            &dir1,
+        )
+    };
+
+    let http = MockHttp::new();
+    http.set_org_uuid("ORG-A");
+    // Poll 1: good, latches the chain.
+    http.push(&good(
+        Some(cfg1.targets().unwrap().as_bytes()),
+        &[cfg1.root().unwrap().as_bytes()],
+    ));
+    // Poll 2: a garbage delegated-targets blob makes `apply()` fail.
+    let mut bad = good(
+        Some(cfg1.targets().unwrap().as_bytes()),
+        &[cfg1.root().unwrap().as_bytes()],
+    );
+    bad.config_metas.as_mut().unwrap().delegated_targets = vec![remoteconfig::DelegatedMeta {
+        version: 1,
+        role: "APM_TRACING".to_string(),
+        raw: b"not valid tuf metadata".to_vec(),
+    }];
+    http.push(&bad);
+    // Poll 3: the recovery poll, a fresh join for the SAME chain without an
+    // org UUID pin: it must rejoin through the normal apply path, not be
+    // rejected for the missing pin.
+    http.push(&good(
+        Some(cfg1.targets().unwrap().as_bytes()),
+        &[cfg1.root().unwrap().as_bytes()],
+    ));
+
+    let mut f = fetcher(
+        http.clone(),
+        cfg1.root().unwrap().as_bytes().to_vec(),
+        dir1.root().unwrap().as_bytes().to_vec(),
+    )
+    .await;
+    let state = test_state();
+    let storage = NoopStorage;
+    let cache = TargetCache::new(&state, &storage);
+
+    // Poll 1 ok.
+    f.fetch_config(dummy_client(), &cache).await.unwrap();
+    assert_eq!(config_root_version(&f), 1);
+
+    // Poll 2 fails and resets (the recovery is armed for the next poll).
+    assert!(f.fetch_config(dummy_client(), &cache).await.is_err());
+    assert_eq!(f.consecutive_failures(), 1);
+
+    // Poll 3 rejoins: the fresh join is same-chain and pin-less, so it must
+    // NOT be rejected at the org check.
+    f.fetch_config(dummy_client(), &cache).await.unwrap();
+    assert_eq!(config_root_version(&f), 1);
+    assert_eq!(config_snapshot_version(&f), Some(1));
+    assert_eq!(f.consecutive_failures(), 0);
+    assert_eq!(f.next_backoff(), None);
+}
+
+#[tokio::test]
+#[cfg_attr(miri, ignore)]
+async fn test_dc_switch_recovers_from_embedded_root() {
+    let shared_config_key = new_key();
+    let shared_director_key = new_key();
+    // The shared embedded roots (v1): one root version and one key set before
+    // any DC-local rotation.
+    let embedded_cfg = build_v1(&shared_config_key).await;
+    let embedded_dir = build_v1(&shared_director_key).await;
+
+    // Every DC rotated once to its own local keys, so they all sit at root v2.
+    let cfg_a = dc_rotate(&shared_config_key, &new_dc_keys(), &embedded_cfg).await;
+    let dir_a = dc_rotate(&shared_director_key, &new_dc_keys(), &embedded_dir).await;
+    let dc_b_config = new_dc_keys();
+    let cfg_b = dc_rotate(&shared_config_key, &dc_b_config, &embedded_cfg).await;
+    let dir_b = dc_rotate(&shared_director_key, &new_dc_keys(), &embedded_dir).await;
+
+    // DC B's snapshot pins the org UUID, like the real DC snapshots do.
+    let (b_snap_bytes, b_ts_bytes) = config_snapshot_with_org_uuid_keys(
+        &cfg_b,
+        &dc_b_config.snapshot,
+        &dc_b_config.timestamp,
+        "ORG-A",
+    );
+    let b_fresh_join = {
+        let mut r = fresh_join(&cfg_b, &dir_b);
+        let metas = r.config_metas.as_mut().unwrap();
+        metas.snapshot = Some(top(&b_snap_bytes));
+        metas.timestamp = Some(top(&b_ts_bytes));
+        r
+    };
+
+    let http = MockHttp::new();
+    http.set_org_uuid("ORG-A");
+    // Poll 1: fresh join into DC A.
+    http.push(&fresh_join(&cfg_a, &dir_a));
+    // Poll 2: the org moved to DC B. No roots are sent (the client reports
+    // root v2, and DC B is also at v2), so its metadata cannot verify against
+    // DC A's keys — the permanent failure loop without the reset fix.
+    http.push(&dc_update(&cfg_b, &dir_b));
+    // Poll 3: the recovery poll. The fetcher reports the embedded root v1,
+    // so the backend re-sends DC B's full chain, cross-signed from the
+    // shared embedded root.
+    http.push(&b_fresh_join);
+
+    let mut f = fetcher(
+        http.clone(),
+        embedded_cfg.root().unwrap().as_bytes().to_vec(),
+        embedded_dir.root().unwrap().as_bytes().to_vec(),
+    )
+    .await;
+    let state = test_state();
+    let storage = NoopStorage;
+    let cache = TargetCache::new(&state, &storage);
+
+    // Poll 1: latches DC A.
+    f.fetch_config(dummy_client(), &cache).await.unwrap();
+    assert_eq!(config_root_version(&f), 2);
+    assert_eq!(config_snapshot_version(&f), Some(2));
+
+    // Poll 2: DC B's metadata fails verification against DC A's trusted keys.
+    assert!(f.fetch_config(dummy_client(), &cache).await.is_err());
+    // The reset purges the non-root trusted metadata but preserves DC A's
+    // trusted root v2 (and its rollback protection).
+    assert_eq!(config_root_version(&f), 2);
+    assert_eq!(config_snapshot_version(&f), None);
+    assert_eq!(f.consecutive_failures(), 1);
+
+    // Poll 3: recovers as a fresh join into DC B.
+    f.fetch_config(dummy_client(), &cache).await.unwrap();
+    assert_eq!(config_root_version(&f), 2);
+    assert_eq!(config_snapshot_version(&f), Some(2));
+    assert_eq!(f.consecutive_failures(), 0);
+
+    // The recovery poll reported the embedded root versions, and the org data
+    // was re-fetched (the reset re-armed the one-shot prefetch).
+    let req3 = http.request_at(2);
+    assert_eq!(req3.current_config_root_version, 1);
+    assert_eq!(req3.current_director_root_version, 1);
+    assert_eq!(http.org_request_count(), 2);
+}
+
+/// A DC switch to a DC whose root version is LOWER than the latched one must
+/// still be accepted: each DC keeps independent version counters, so the new
+/// DC's chain can legitimately sit at a lower root version. Only the key
+/// difference identifies a genuine DC switch (like the datadog-agent fix,
+/// which does not compare versions either).
+#[tokio::test]
+#[cfg_attr(miri, ignore)]
+async fn test_dc_switch_to_lower_root_version_accepted() {
+    let shared_config_key = new_key();
+    let shared_director_key = new_key();
+    let embedded_cfg = build_v1(&shared_config_key).await;
+    let embedded_dir = build_v1(&shared_director_key).await;
+
+    // DC A rotated twice (root v3), DC B only once (root v2).
+    let dc_a = new_dc_keys();
+    let cfg_a2 = dc_rotate(&shared_config_key, &dc_a, &embedded_cfg).await;
+    let cfg_a3 = dc_rotate(&shared_config_key, &dc_a, &cfg_a2).await;
+    let dir_a = dc_rotate(&shared_director_key, &new_dc_keys(), &embedded_dir).await;
+
+    let dc_b_config = new_dc_keys();
+    let cfg_b = dc_rotate(&shared_config_key, &dc_b_config, &embedded_cfg).await;
+    let dir_b = dc_rotate(&shared_director_key, &new_dc_keys(), &embedded_dir).await;
+
+    // DC B's snapshot pins the org UUID, like the real DC snapshots do.
+    let (b_snap_bytes, b_ts_bytes) = config_snapshot_with_org_uuid_keys(
+        &cfg_b,
+        &dc_b_config.snapshot,
+        &dc_b_config.timestamp,
+        "ORG-A",
+    );
+    let b_fresh_join = {
+        let mut r = fresh_join(&cfg_b, &dir_b);
+        let metas = r.config_metas.as_mut().unwrap();
+        metas.snapshot = Some(top(&b_snap_bytes));
+        metas.timestamp = Some(top(&b_ts_bytes));
+        r
+    };
+
+    let http = MockHttp::new();
+    http.set_org_uuid("ORG-A");
+    // Poll 1: fresh join into DC A. Both rotation roots are sent, like the
+    // backend does for a client reporting the embedded root version.
+    http.push(&{
+        let mut r = fresh_join(&cfg_a3, &dir_a);
+        let metas = r.config_metas.as_mut().unwrap();
+        metas.roots = vec![
+            top(cfg_a2.root().unwrap().as_bytes()),
+            top(cfg_a3.root().unwrap().as_bytes()),
+        ];
+        r
+    });
+    // Poll 2: the org moved to DC B. No roots are sent (the client reports
+    // root v3, and DC B is at v2, which is not newer), so its metadata cannot
+    // verify against DC A's keys.
+    http.push(&dc_update(&cfg_b, &dir_b));
+    // Poll 3: the recovery poll re-verifies DC B's chain from the embedded
+    // root. DC B's root v2 is LOWER than the latched v3, and that is fine.
+    http.push(&b_fresh_join);
+
+    let mut f = fetcher(
+        http.clone(),
+        embedded_cfg.root().unwrap().as_bytes().to_vec(),
+        embedded_dir.root().unwrap().as_bytes().to_vec(),
+    )
+    .await;
+    let state = test_state();
+    let storage = NoopStorage;
+    let cache = TargetCache::new(&state, &storage);
+
+    // Poll 1: latches DC A at root v3.
+    f.fetch_config(dummy_client(), &cache).await.unwrap();
+    assert_eq!(config_root_version(&f), 3);
+    assert!(config_snapshot_version(&f).is_some());
+
+    // Poll 2: DC B's metadata fails verification against DC A's trusted keys.
+    assert!(f.fetch_config(dummy_client(), &cache).await.is_err());
+    assert_eq!(config_root_version(&f), 3);
+    assert_eq!(config_snapshot_version(&f), None);
+    assert_eq!(f.consecutive_failures(), 1);
+
+    // Poll 3: recovers into DC B at root v2 — lower than the latched v3.
+    f.fetch_config(dummy_client(), &cache).await.unwrap();
+    assert_eq!(config_root_version(&f), 2);
+    assert_eq!(config_snapshot_version(&f), Some(2));
+    assert_eq!(f.consecutive_failures(), 0);
+}
+
+/// A DC whose rotation was not cross-signed by the shared embedded root key
+/// cannot be latched: the fresh-join root chain fails verification from the
+/// embedded root and the fetcher stays failed at the embedded root.
+#[tokio::test]
+#[cfg_attr(miri, ignore)]
+async fn test_dc_switch_untrusted_chain_stays_failed() {
+    let shared_config_key = new_key();
+    let shared_director_key = new_key();
+    let embedded_cfg = build_v1(&shared_config_key).await;
+    let embedded_dir = build_v1(&shared_director_key).await;
+
+    let cfg_a = dc_rotate(&shared_config_key, &new_dc_keys(), &embedded_cfg).await;
+    let dir_a = dc_rotate(&shared_director_key, &new_dc_keys(), &embedded_dir).await;
+    let cfg_b = dc_rotate_untrusted(&new_dc_keys()).await;
+    let dir_b = dc_rotate(&shared_director_key, &new_dc_keys(), &embedded_dir).await;
+
+    let http = MockHttp::new();
+    http.push(&fresh_join(&cfg_a, &dir_a));
+    http.push(&dc_update(&cfg_b, &dir_b));
+    // The backend (compromised or misconfigured) serves DC B's chain signed
+    // only by its own new root key.
+    http.push(&fresh_join(&cfg_b, &dir_b));
+
+    let mut f = fetcher(
+        http.clone(),
+        embedded_cfg.root().unwrap().as_bytes().to_vec(),
+        embedded_dir.root().unwrap().as_bytes().to_vec(),
+    )
+    .await;
+    let state = test_state();
+    let storage = NoopStorage;
+    let cache = TargetCache::new(&state, &storage);
+
+    // Poll 1: latches DC A.
+    f.fetch_config(dummy_client(), &cache).await.unwrap();
+    assert_eq!(config_root_version(&f), 2);
+
+    // Poll 2: fails; the reset purges the non-root trusted metadata but
+    // preserves DC A's trusted root v2.
+    assert!(f.fetch_config(dummy_client(), &cache).await.is_err());
+    assert_eq!(config_root_version(&f), 2);
+
+    // Poll 3: the untrusted chain is rejected; the fetcher stays on DC A's
+    // trusted root and keeps backing off.
+    assert!(f.fetch_config(dummy_client(), &cache).await.is_err());
+    assert_eq!(config_root_version(&f), 2);
+    assert_eq!(config_snapshot_version(&f), None);
+    assert_eq!(f.consecutive_failures(), 2);
+}
+
+/// A DC switch whose fresh-join payload pins a different org UUID than the
+/// /org endpoint reports must be rejected: the recovery re-verifies the whole
+/// state, including the org pin, and does not latch the new DC.
+#[tokio::test]
+#[cfg_attr(miri, ignore)]
+async fn test_dc_switch_org_mismatch_rejected() {
+    let shared_config_key = new_key();
+    let shared_director_key = new_key();
+    let embedded_cfg = build_v1(&shared_config_key).await;
+    let embedded_dir = build_v1(&shared_director_key).await;
+
+    let cfg_a = dc_rotate(&shared_config_key, &new_dc_keys(), &embedded_cfg).await;
+    let dir_a = dc_rotate(&shared_director_key, &new_dc_keys(), &embedded_dir).await;
+    let dc_b_config = new_dc_keys();
+    let cfg_b = dc_rotate(&shared_config_key, &dc_b_config, &embedded_cfg).await;
+    let dir_b = dc_rotate(&shared_director_key, &new_dc_keys(), &embedded_dir).await;
+
+    // DC B's snapshot pins an org UUID that differs from the /org answer.
+    let (b_snap_bytes, b_ts_bytes) = config_snapshot_with_org_uuid_keys(
+        &cfg_b,
+        &dc_b_config.snapshot,
+        &dc_b_config.timestamp,
+        "ORG-A",
+    );
+    let b_fresh_join = {
+        let mut r = fresh_join(&cfg_b, &dir_b);
+        let metas = r.config_metas.as_mut().unwrap();
+        metas.snapshot = Some(top(&b_snap_bytes));
+        metas.timestamp = Some(top(&b_ts_bytes));
+        r
+    };
+
+    let http = MockHttp::new();
+    http.set_org_uuid("ORG-B");
+    http.push(&fresh_join(&cfg_a, &dir_a));
+    http.push(&dc_update(&cfg_b, &dir_b));
+    http.push(&b_fresh_join);
+
+    let mut f = fetcher(
+        http.clone(),
+        embedded_cfg.root().unwrap().as_bytes().to_vec(),
+        embedded_dir.root().unwrap().as_bytes().to_vec(),
+    )
+    .await;
+    let state = test_state();
+    let storage = NoopStorage;
+    let cache = TargetCache::new(&state, &storage);
+
+    // Poll 1: latches DC A.
+    f.fetch_config(dummy_client(), &cache).await.unwrap();
+    assert_eq!(config_root_version(&f), 2);
+
+    // Poll 2: fails; the reset purges the non-root trusted metadata but
+    // preserves DC A's trusted root v2.
+    assert!(f.fetch_config(dummy_client(), &cache).await.is_err());
+    assert_eq!(config_root_version(&f), 2);
+
+    // Poll 3: DC B's chain verifies from the embedded root, but the org UUID
+    // pin mismatches and the poll fails; no latch.
+    let Err(err) = f.fetch_config(dummy_client(), &cache).await else {
+        panic!("an org-UUID mismatch in the fresh-join payload must fail the poll");
+    };
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("org UUID"),
+        "expected an org-UUID mismatch error, got: {msg}"
+    );
+    // The live state is untouched: DC A's trusted root v2 stays.
+    assert_eq!(config_root_version(&f), 2);
+    assert_eq!(config_snapshot_version(&f), None);
+    assert_eq!(f.consecutive_failures(), 2);
 }
 
 /// Build a config repo (v1) that authorizes both `known_path` and
@@ -1097,6 +1583,17 @@ fn config_snapshot_with_org_uuid(
     config_key: &Ed25519PrivateKey,
     uuid: &str,
 ) -> (Vec<u8>, Vec<u8>) {
+    config_snapshot_with_org_uuid_keys(cfg, config_key, config_key, uuid)
+}
+
+/// Like [`config_snapshot_with_org_uuid`], but with separate keys for the
+/// snapshot and the timestamp (a DC's repo has distinct keys per role).
+fn config_snapshot_with_org_uuid_keys(
+    cfg: &RawSignedMetadataSet<Json>,
+    snapshot_key: &Ed25519PrivateKey,
+    timestamp_key: &Ed25519PrivateKey,
+    uuid: &str,
+) -> (Vec<u8>, Vec<u8>) {
     // Grab the `signed` object out of the raw snapshot bytes, inject
     // `custom.org_uuid`, then re-hydrate a `SnapshotMetadata` via serde (the
     // rust-tuf shim flattens unknown top-level fields into `additional_fields`,
@@ -1113,13 +1610,14 @@ fn config_snapshot_with_org_uuid(
             serde_json::json!({ "org_uuid": uuid }),
         );
     let new_snap: SnapshotMetadata = serde_json::from_value(signed["signed"].clone()).unwrap();
-    let signed_snap = SignedMetadata::<Json, SnapshotMetadata>::new(&new_snap, config_key).unwrap();
+    let signed_snap =
+        SignedMetadata::<Json, SnapshotMetadata>::new(&new_snap, snapshot_key).unwrap();
     let raw_snap = signed_snap.to_raw().unwrap().as_bytes().to_vec();
 
     let signed_ts =
         TimestampMetadataBuilder::from_snapshot::<Json>(&signed_snap, &[HashAlgorithm::Sha256])
             .unwrap()
-            .signed::<Json>(config_key)
+            .signed::<Json>(timestamp_key)
             .unwrap();
     let raw_ts = signed_ts.to_raw().unwrap().as_bytes().to_vec();
 
