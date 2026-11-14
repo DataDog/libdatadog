@@ -47,9 +47,15 @@ pub struct Config {
     pub telemetry_heartbeat_interval: Duration,
     pub telemetry_extended_heartbeat_interval: Duration,
     pub direct_submission_enabled: bool,
-    /// Prevents LifecycleAction::Stop from terminating the worker (except if the WorkerHandle is
-    /// dropped)
+    /// Prevents `LifecycleAction::Stop` from ending the worker's processing (except if every
+    /// `TelemetryWorkerHandle` is dropped). Without it, Stop closes the mailbox; the worker's
+    /// runtime slot is released by `TelemetryWorkerHandle::stop_worker`.
     pub restartable: bool,
+    /// Upper bound on stopping the worker with `TelemetryWorkerHandle::stop_worker`, counted from
+    /// the call: once it elapses, in-flight and later requests are cancelled so the stop returns.
+    /// It also bounds the final flush when the runtime itself shuts the worker down. `None` waits
+    /// for the agent indefinitely. Defaults to [`Config::DEFAULT_SHUTDOWN_TIMEOUT`].
+    pub shutdown_timeout: Option<Duration>,
 
     pub debug_enabled: bool,
 
@@ -217,6 +223,7 @@ impl Default for Config {
             telemetry_extended_heartbeat_interval: Duration::from_secs(60 * 60 * 24),
             direct_submission_enabled: false,
             restartable: false,
+            shutdown_timeout: Some(Self::DEFAULT_SHUTDOWN_TIMEOUT),
             debug_enabled: false,
             session_id: None,
             parent_session_id: None,
@@ -228,6 +235,10 @@ impl Default for Config {
 }
 
 impl Config {
+    /// Default [`Config::shutdown_timeout`]: long enough for the final flush to reach a local
+    /// agent, short enough not to noticeably delay host process exit.
+    pub const DEFAULT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(1);
+
     // Implemented following
     // https://github.com/DataDog/architecture/blob/master/rfcs/apm/integrations/trace-autodetect-agent-config/rfc.md
     fn trace_agent_url_from_setting(settings: &Settings) -> String {
@@ -368,6 +379,7 @@ impl Config {
             telemetry_extended_heartbeat_interval: settings.telemetry_extended_heartbeat_interval,
             direct_submission_enabled: settings.direct_submission_enabled,
             restartable: false,
+            shutdown_timeout: Some(Self::DEFAULT_SHUTDOWN_TIMEOUT),
             debug_enabled: false,
             session_id: None,
             parent_session_id: None,

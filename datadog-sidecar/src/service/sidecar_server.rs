@@ -529,7 +529,9 @@ impl ConnectionSidecarHandler {
                     env,
                     &telemetry_mutex,
                 );
-                drop(retired_client);
+                if let Some(retired_client) = retired_client {
+                    tokio::spawn(retired_client.shutdown());
+                }
                 info!("Removing telemetry client for instance {instance_id:?}");
             }
         }

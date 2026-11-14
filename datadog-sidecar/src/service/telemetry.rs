@@ -22,6 +22,7 @@ use tokio::task::JoinHandle;
 
 use libdd_capabilities_impl::NativeCapabilities;
 use libdd_common::tag::Tag;
+use libdd_shared_runtime::{SharedRuntime, WeakHandleRuntime, WorkerHandle};
 use libdd_telemetry::worker::TelemetryWorkerBuilder;
 use serde::{Deserialize, Serialize};
 use std::ops::Sub;
@@ -407,6 +408,8 @@ pub struct TelemetryCachedClient {
     pub telemetry_metrics: HashMap<String, ContextKey>,
     pub handle: Option<JoinHandle<()>>,
     pub shared: TelemetryCachedClientShmData,
+    /// Registration of the worker on the shared runtime; released by [`Self::shutdown`].
+    worker_handle: Option<WorkerHandle>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -430,6 +433,7 @@ impl Default for TelemetryCachedClientShmData {
 
 impl TelemetryCachedClient {
     fn new(
+        runtime: &WeakHandleRuntime,
         service: &str,
         env: &str,
         instance_id: &InstanceId,
@@ -457,8 +461,12 @@ impl TelemetryCachedClient {
         let config = get_config();
         builder.config = config.clone();
 
-        let (handle, _join) = builder.spawn();
-        info!("spawned telemetry worker {config:?}");
+        let (handle, worker) = builder.build_worker::<NativeCapabilities>();
+        let worker_handle = runtime
+            .spawn_worker(worker, true)
+            .inspect(|_| info!("spawned telemetry worker {config:?}"))
+            .inspect_err(|e| warn!("Could not spawn telemetry worker: {e}. Continuing without it."))
+            .ok();
         // Queue Start before another batch can send Stop to this worker.
         handle.send_start().ok();
 
@@ -469,10 +477,22 @@ impl TelemetryCachedClient {
             shared: TelemetryCachedClientShmData::default(),
             telemetry_metrics: Default::default(),
             handle: None,
+            worker_handle,
         };
         // Reset acknowledgements even if the first batch adds no cacheable data.
         client.write_shm_file();
         client
+    }
+
+    /// Waits for queued sends, then stops the worker: it drains its mailbox, performs the final
+    /// flush and releases its slot on the shared runtime. Call it when retiring or evicting.
+    pub async fn shutdown(mut self) {
+        if let Some(pending) = self.handle.take() {
+            pending.await.ok();
+        }
+        if let Some(worker_handle) = self.worker_handle.take() {
+            self.worker.stop_worker(worker_handle).await.ok();
+        }
     }
 
     /// Creates the segment on first use, and again on later writes if a previous attempt
@@ -649,6 +669,31 @@ impl Drop for TelemetryCachedClient {
     }
 }
 
+/// Removes clients idle for at least `max_idle` and shuts them down.
+async fn evict_idle_clients(
+    clients: &Mutex<HashMap<TelemetryCachedClientKey, TelemetryCachedEntry>>,
+    max_idle: Duration,
+) {
+    let evicted: Vec<_> = {
+        let mut lock = clients.lock_or_panic();
+        let mut evicted = Vec::new();
+        lock.retain(|_, c| {
+            let keep = c.last_used.elapsed() < max_idle;
+            if !keep {
+                evicted.push(c.client.clone());
+            }
+            keep
+        });
+        evicted
+    };
+    // Retire each client (others observe `None`) before shutting it down outside the lock.
+    let retired: Vec<_> = evicted
+        .iter()
+        .filter_map(|client| client.lock_or_panic().take())
+        .collect();
+    futures::future::join_all(retired.into_iter().map(TelemetryCachedClient::shutdown)).await;
+}
+
 type ServiceString = String;
 type EnvString = String;
 type TelemetryCachedClientKey = (ServiceString, EnvString);
@@ -656,6 +701,8 @@ type TelemetryCachedClientKey = (ServiceString, EnvString);
 pub struct TelemetryCachedClientSet {
     pub(crate) inner: Arc<Mutex<HashMap<TelemetryCachedClientKey, TelemetryCachedEntry>>>,
     cleanup_handle: Option<tokio::task::JoinHandle<()>>,
+    /// Shared runtime running every telemetry worker, on top of the sidecar's tokio runtime.
+    runtime: Arc<WeakHandleRuntime>,
 }
 
 impl Default for TelemetryCachedClientSet {
@@ -667,14 +714,16 @@ impl Default for TelemetryCachedClientSet {
         let handle = tokio::spawn(async move {
             loop {
                 sleep(Duration::from_secs(60)).await;
-                let mut lock = clients.lock_or_panic();
-                lock.retain(|_, c| c.last_used.elapsed() < Duration::from_secs(1800));
+                evict_idle_clients(&clients, Duration::from_secs(1800)).await;
             }
         });
 
         Self {
             inner,
             cleanup_handle: Some(handle),
+            runtime: Arc::new(WeakHandleRuntime::from_handle(
+                tokio::runtime::Handle::current(),
+            )),
         }
     }
 }
@@ -692,11 +741,17 @@ impl Clone for TelemetryCachedClientSet {
         Self {
             inner: Arc::clone(&self.inner),
             cleanup_handle: None,
+            runtime: Arc::clone(&self.runtime),
         }
     }
 }
 
 impl TelemetryCachedClientSet {
+    /// The shared runtime running the sidecar's telemetry workers.
+    pub(crate) fn runtime(&self) -> &Arc<WeakHandleRuntime> {
+        &self.runtime
+    }
+
     fn get_existing_client(
         &self,
         service: &str,
@@ -740,6 +795,7 @@ impl TelemetryCachedClientSet {
             }
         }
         let client = Arc::new(Mutex::new(Some(TelemetryCachedClient::new(
+            &self.runtime,
             service,
             env,
             instance_id,
@@ -904,7 +960,9 @@ mod tests {
                 libdd_common::parse_uri(&format!("file://{}", path.display())).unwrap(),
             )
             .unwrap();
+        let runtime = WeakHandleRuntime::from_handle(tokio::runtime::Handle::current());
         let client = TelemetryCachedClient::new(
+            &runtime,
             &format!("telemetry-start-stop-{}", std::process::id()),
             "test",
             &InstanceId::new("session", "runtime"),
@@ -934,6 +992,125 @@ mod tests {
         assert!(output.contains("app-closing"));
     }
 
+    const TELEMETRY_PATH: &str = "/telemetry/proxy/api/v2/apmtelemetry";
+
+    fn mock_config(server: &httpmock::MockServer) -> Config {
+        let mut config = Config::default();
+        config
+            .set_endpoint(libdd_telemetry::config::TelemetryEndpoint {
+                url: Some(server.url("/")),
+                ..Default::default()
+            })
+            .unwrap();
+        config
+    }
+
+    /// A stopped worker is no longer registered: stopping it again reports `AlreadyStopped`.
+    async fn assert_unregistered(worker_handle: WorkerHandle) {
+        assert!(matches!(
+            worker_handle.stop().await,
+            Err(libdd_shared_runtime::WorkerHandleError::AlreadyStopped)
+        ));
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)] // Uses OS shared memory and a local HTTP server.
+    async fn retired_client_releases_runtime_slot() {
+        let server = httpmock::MockServer::start_async().await;
+        let _telemetry = server
+            .mock_async(|when, then| {
+                when.method(httpmock::Method::POST).path(TELEMETRY_PATH);
+                then.status(202);
+            })
+            .await;
+        let config = mock_config(&server);
+        let clients = TelemetryCachedClientSet::default();
+        let service = format!("telemetry-retire-{}", std::process::id());
+        let client = clients.get_or_create(
+            &service,
+            "test",
+            &InstanceId::new("session", "runtime"),
+            &RuntimeMetadata::new("php", "8", "test"),
+            || config,
+            vec![],
+        );
+        let worker_handle = {
+            let guard = client.lock_or_panic();
+            let telemetry = guard.as_ref().unwrap();
+            telemetry.worker.send_stop().unwrap();
+            telemetry.worker_handle.clone().unwrap()
+        };
+        // Retire like sidecar_server: take the client out, remove it from the cache, shut down.
+        let retired = client.lock_or_panic().take().unwrap();
+        clients.remove_telemetry_client(&service, "test", &client);
+        retired.shutdown().await;
+
+        assert_unregistered(worker_handle).await;
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)] // Uses OS shared memory and a local HTTP server.
+    async fn evicted_client_flushes_pending_sends_and_releases_runtime_slot() {
+        let server = httpmock::MockServer::start_async().await;
+        let final_flush = server
+            .mock_async(|when, then| {
+                when.method(httpmock::Method::POST)
+                    .path(TELEMETRY_PATH)
+                    .body_includes("pending-before-eviction")
+                    .body_includes("app-closing");
+                then.status(202);
+            })
+            .await;
+        // Acknowledge the other requests (app-started).
+        let _other = server
+            .mock_async(|when, then| {
+                when.method(httpmock::Method::POST).path(TELEMETRY_PATH);
+                then.status(202);
+            })
+            .await;
+        let config = mock_config(&server);
+        let clients = TelemetryCachedClientSet::default();
+        let service = format!("telemetry-evict-{}", std::process::id());
+        let client = clients.get_or_create(
+            &service,
+            "test",
+            &InstanceId::new("session", "runtime"),
+            &RuntimeMetadata::new("php", "8", "test"),
+            || config,
+            vec![],
+        );
+        let worker_handle = {
+            let mut guard = client.lock_or_panic();
+            let telemetry = guard.as_mut().unwrap();
+            // A pending send that only completes after the client is evicted.
+            let worker = telemetry.worker.clone();
+            telemetry.handle = Some(tokio::spawn(async move {
+                sleep(Duration::from_millis(50)).await;
+                worker
+                    .send_msg(TelemetryActions::AddConfig(data::Configuration {
+                        name: "pending-before-eviction".into(),
+                        value: Some("value".into()),
+                        origin: data::ConfigurationOrigin::Code,
+                        config_id: None,
+                        seq_id: None,
+                    }))
+                    .await
+                    .unwrap();
+            }));
+            telemetry.worker_handle.clone().unwrap()
+        };
+        evict_idle_clients(&clients.inner, Duration::ZERO).await;
+        assert!(
+            client.lock_or_panic().is_none(),
+            "evicted client is retired"
+        );
+        assert!(clients.inner.lock_or_panic().is_empty());
+
+        assert_unregistered(worker_handle).await;
+        // The final flush carries the pending send and app-closing in one request.
+        final_flush.assert_calls_async(1).await;
+    }
+
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
     async fn a_new_client_replaces_old_acknowledgements() {
@@ -955,7 +1132,9 @@ mod tests {
         assert!(reader.read().0);
         let generation = reader.last_read_generation();
 
+        let runtime = WeakHandleRuntime::from_handle(tokio::runtime::Handle::current());
         let _new = TelemetryCachedClient::new(
+            &runtime,
             &service,
             "test",
             &InstanceId::new("session", "runtime"),
@@ -1013,11 +1192,14 @@ mod tests {
     }
 
     /// A delayed removal must not evict a newer client stored under the same key.
-    #[test]
-    fn stale_client_removal_preserves_replacement() {
+    #[tokio::test]
+    async fn stale_client_removal_preserves_replacement() {
         let clients = TelemetryCachedClientSet {
             inner: Arc::new(Mutex::new(HashMap::new())),
             cleanup_handle: None,
+            runtime: Arc::new(WeakHandleRuntime::from_handle(
+                tokio::runtime::Handle::current(),
+            )),
         };
         let stale = Arc::new(Mutex::new(None));
         let replacement = Arc::new(Mutex::new(None));

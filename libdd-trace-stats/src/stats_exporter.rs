@@ -1669,6 +1669,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_collapsed_spans_telemetry() {
+        use libdd_shared_runtime::{SharedRuntime, WeakHandleRuntime};
         use libdd_telemetry::worker::TelemetryWorkerBuilder;
 
         let server = MockServer::start_async().await;
@@ -1678,14 +1679,18 @@ mod tests {
             })
             .await;
 
-        let (handle, _join_handle) = TelemetryWorkerBuilder::new(
+        let (handle, worker) = TelemetryWorkerBuilder::new(
             "test-host".to_string(),
             "test-service".to_string(),
             "rust".to_string(),
             "1.0".to_string(),
             "0.0.0".to_string(),
         )
-        .spawn();
+        .build_worker();
+        let runtime = WeakHandleRuntime::from_handle(tokio::runtime::Handle::current());
+        let worker_handle = runtime
+            .spawn_worker(worker, true)
+            .expect("failed to spawn telemetry worker");
 
         let stats_exporter = StatsExporter::<NativeCapabilities>::new(
             BUCKETS_DURATION,
@@ -1722,5 +1727,9 @@ mod tests {
             stats.metric_buckets.buckets, 3,
             "exactly 3 metric bucket expected after one whole-key collapsed-spans, one resource key collapsed-span and one resource key+http_endpoint key emissions"
         );
+        worker_handle
+            .stop()
+            .await
+            .expect("failed to stop telemetry worker");
     }
 }

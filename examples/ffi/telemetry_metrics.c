@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <datadog/common.h>
+#include <datadog/shared-runtime.h>
 #include <datadog/telemetry.h>
 #include <stdio.h>
 #include <string.h>
@@ -59,10 +60,19 @@ int main(void) {
   TRY(ddog_telemetry_builder_with_str_application_env(builder, env));
 
   TRY(ddog_telemetry_builder_with_bool_config_telemetry_debug_logging_enabled(builder, true));
+  TRY(ddog_telemetry_builder_with_shutdown_timeout_ms(builder, 10));
 
   ddog_TelemetryWorkerHandle *handle;
   // builder is consummed after the call to build
-  TRY(ddog_telemetry_builder_run_metric_logs(builder, &handle));
+  const ddog_ForkSafeRuntime *runtime;
+  ddog_SharedRuntimeFFIError *runtime_err = ddog_shared_runtime_new(&runtime);
+  if (runtime_err) {
+    fprintf(stderr, "ERROR: could not create the shared runtime\n");
+    ddog_shared_runtime_error_free(runtime_err);
+    return 1;
+  }
+  ddog_TelemetryWorkerRuntimeHandle *worker;
+  TRY(ddog_telemetry_builder_spawn_metric_logs(builder, runtime, false, &handle, &worker));
   TRY(ddog_telemetry_handle_start(handle));
 
   ddog_CharSlice metric_name = DDOG_CHARSLICE_C("test.telemetry");
@@ -89,7 +99,10 @@ int main(void) {
 
   sleep(11);
   TRY(ddog_telemetry_handle_stop(handle));
-  ddog_telemetry_handle_wait_for_shutdown_ms(handle, 10);
+  // Blocks until the final flush is done, at most the shutdown timeout.
+  TRY(ddog_telemetry_worker_stop(worker));
+  ddog_telemetry_handle_drop(handle);
+  ddog_shared_runtime_free(runtime);
 
   return 0;
 }

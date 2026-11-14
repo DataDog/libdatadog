@@ -1409,6 +1409,7 @@ dependencies = [
  "libdd-networking",
  "libdd-process-utils",
  "libdd-remote-config",
+ "libdd-shared-runtime",
  "libdd-telemetry",
  "libdd-tinybytes",
  "libdd-trace-model",
@@ -3642,6 +3643,7 @@ dependencies = [
  "strum",
  "strum_macros",
  "sys-info",
+ "tempfile",
  "thiserror 2.0.17",
  "tokio",
  "tokio-util",
@@ -3663,10 +3665,12 @@ dependencies = [
  "libdd-common",
  "libdd-common-ffi",
  "libdd-regex",
+ "libdd-shared-runtime",
  "libdd-telemetry",
  "paste",
  "serde_json",
  "tempfile",
+ "tokio",
 ]
 
 [[package]]

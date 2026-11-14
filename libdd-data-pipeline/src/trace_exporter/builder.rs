@@ -845,7 +845,8 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
                     if let Err(e) = client_tel.start() {
                         tracing::warn!("Failed to start telemetry: {e}");
                     }
-                    (Some(client_tel), Some(handle))
+                    let telemetry_handle = client_tel.worker_handle().clone();
+                    (Some(client_tel), Some((handle, telemetry_handle)))
                 }
                 None => (None, None),
             }
@@ -1148,6 +1149,8 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
                 info_fetcher: info_fetcher_handle,
                 #[cfg(feature = "telemetry")]
                 telemetry: telemetry_handle,
+                #[cfg(not(feature = "telemetry"))]
+                _capabilities: std::marker::PhantomData,
             },
             agent_payload_response_version: self
                 .agent_rates_payload_version_enabled

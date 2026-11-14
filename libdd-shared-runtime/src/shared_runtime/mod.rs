@@ -12,6 +12,8 @@ mod basic;
 mod fork_safe;
 #[cfg(target_arch = "wasm32")]
 mod local;
+#[cfg(not(target_arch = "wasm32"))]
+mod weak_handle;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use basic::BasicRuntime;
@@ -20,6 +22,8 @@ pub use fork_safe::ForkSafeRuntime;
 use libdd_capabilities::maybe_send::MaybeSync;
 #[cfg(target_arch = "wasm32")]
 pub use local::LocalRuntime;
+#[cfg(not(target_arch = "wasm32"))]
+pub use weak_handle::WeakHandleRuntime;
 
 use crate::worker::Worker;
 use libdd_capabilities::MaybeSend;
@@ -47,6 +51,7 @@ pub(crate) struct WorkerEntry {
 /// |-----------|---------|
 /// | Native, host process may call `fork(2)` | [`ForkSafeRuntime`] |
 /// | Native, caller owns a tokio runtime and wants to share it | [`BasicRuntime`] |
+/// | Native, caller only has a `tokio::runtime::Handle` and keeps its runtime alive | [`WeakHandleRuntime`] |
 /// | Wasm / single-threaded JS event loop | `LocalRuntime` |
 ///
 /// Sync entry points (e.g. a blocking `build` or `send`) additionally require

@@ -113,6 +113,7 @@ mod tests {
     use ffi::tags::{PushTagResult, ddog_Vec_Tag_new, ddog_Vec_Tag_push};
     use libdd_capabilities_impl::NativeCapabilities;
     use libdd_common_ffi as ffi;
+    use libdd_shared_runtime::{ForkSafeRuntime, SharedRuntime};
     use libdd_telemetry::{
         data::{
             LogLevel,
@@ -120,7 +121,92 @@ mod tests {
         },
         worker::TelemetryWorkerBuilder,
     };
-    use std::{mem::MaybeUninit, ptr::NonNull};
+    use std::{mem::MaybeUninit, ptr::NonNull, sync::Arc};
+
+    /// Spawns `builder` on a fresh ForkSafeRuntime through the FFI. The returned worker handle
+    /// keeps the runtime alive.
+    unsafe fn spawn_worker(
+        builder: Box<TelemetryWorkerBuilder>,
+        metric_logs: bool,
+    ) -> (
+        Box<TelemetryWorkerHandle>,
+        Box<TelemetryWorkerRuntimeHandle>,
+    ) {
+        unsafe {
+            let runtime = Arc::into_raw(Arc::new(ForkSafeRuntime::new().unwrap()));
+            let mut handle: MaybeUninit<Box<TelemetryWorkerHandle>> = MaybeUninit::uninit();
+            let mut worker: MaybeUninit<Box<TelemetryWorkerRuntimeHandle>> = MaybeUninit::uninit();
+            let spawn = if metric_logs {
+                ddog_telemetry_builder_spawn_metric_logs
+            } else {
+                ddog_telemetry_builder_spawn
+            };
+            spawn(
+                builder,
+                runtime,
+                false,
+                NonNull::new(&mut handle).unwrap().cast(),
+                NonNull::new(&mut worker).unwrap().cast(),
+            )
+            .unwrap_none();
+            // The caller's reference is released; the worker holds its own.
+            drop(Arc::from_raw(runtime));
+            (handle.assume_init(), worker.assume_init())
+        }
+    }
+
+    /// Stops the worker and releases both handles.
+    fn stop_worker(handle: Box<TelemetryWorkerHandle>, worker: Box<TelemetryWorkerRuntimeHandle>) {
+        ddog_telemetry_worker_stop(worker).unwrap_none();
+        ddog_telemetry_handle_drop(handle);
+    }
+
+    /// Dropping the last runtime reference from an async context makes tokio panic; the FFI
+    /// must report it as an error instead of unwinding across the boundary.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_worker_drop_in_async_context_is_contained() {
+        unsafe {
+            let builder = Box::new(TelemetryWorkerBuilder::new(
+                "h".into(),
+                "s".into(),
+                "rust".into(),
+                "1".into(),
+                "1".into(),
+            ));
+            let (handle, worker) = spawn_worker(builder, false);
+            let outer = tokio::runtime::Builder::new_current_thread()
+                .build()
+                .unwrap();
+            let res = outer.block_on(async move { ddog_telemetry_worker_drop(worker) });
+            assert!(matches!(res, MaybeError::Some(_)));
+            ddog_telemetry_handle_drop(handle);
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_spawn_null_runtime_errors() {
+        unsafe {
+            let builder = Box::new(TelemetryWorkerBuilder::new(
+                "h".into(),
+                "s".into(),
+                "rust".into(),
+                "1".into(),
+                "1".into(),
+            ));
+            let mut handle: MaybeUninit<Box<TelemetryWorkerHandle>> = MaybeUninit::uninit();
+            let mut worker: MaybeUninit<Box<TelemetryWorkerRuntimeHandle>> = MaybeUninit::uninit();
+            let res = ddog_telemetry_builder_spawn(
+                builder,
+                std::ptr::null(),
+                false,
+                NonNull::new(&mut handle).unwrap().cast(),
+                NonNull::new(&mut worker).unwrap().cast(),
+            );
+            assert!(matches!(res, MaybeError::Some(_)));
+        }
+    }
 
     /// Test-side alias: matches the FFI surface, which pins `C` to
     /// [`NativeCapabilities`].
@@ -128,7 +214,11 @@ mod tests {
 
     /// Spins up a worker backed by a file:// endpoint, returns (handle, temp_file).
     /// The caller is responsible for stopping the worker and reading the file.
-    unsafe fn start_file_backed_worker() -> (Box<TelemetryWorkerHandle>, tempfile::NamedTempFile) {
+    unsafe fn start_file_backed_worker() -> (
+        Box<TelemetryWorkerHandle>,
+        Box<TelemetryWorkerRuntimeHandle>,
+        tempfile::NamedTempFile,
+    ) {
         unsafe {
             let mut builder: MaybeUninit<Box<TelemetryWorkerBuilder>> = MaybeUninit::uninit();
             ddog_telemetry_builder_instantiate(
@@ -153,12 +243,9 @@ mod tests {
             )
             .unwrap_none();
 
-            let mut handle: MaybeUninit<Box<TelemetryWorkerHandle>> = MaybeUninit::uninit();
-            ddog_telemetry_builder_run(builder, NonNull::new(&mut handle).unwrap().cast())
-                .unwrap_none();
-            let handle = handle.assume_init();
+            let (handle, worker) = spawn_worker(builder, false);
             ddog_telemetry_handle_start(&handle).unwrap_none();
-            (handle, f)
+            (handle, worker, f)
         }
     }
 
@@ -337,14 +424,11 @@ mod tests {
             )
             .unwrap_none();
 
-            let mut handle: MaybeUninit<Box<TelemetryWorkerHandle>> = MaybeUninit::uninit();
-            ddog_telemetry_builder_run(builder, NonNull::new(&mut handle).unwrap().cast())
-                .unwrap_none();
-            let handle = handle.assume_init();
+            let (handle, worker) = spawn_worker(builder, false);
 
             ddog_telemetry_handle_start(&handle).unwrap_none();
             ddog_telemetry_handle_stop(&handle).unwrap_none();
-            ddog_telemetry_handle_wait_for_shutdown(handle);
+            stop_worker(handle, worker);
         }
     }
 
@@ -384,13 +468,7 @@ mod tests {
             )
             .unwrap_none();
 
-            let mut handle: MaybeUninit<Box<TelemetryWorkerHandle>> = MaybeUninit::uninit();
-            ddog_telemetry_builder_run_metric_logs(
-                builder,
-                NonNull::new(&mut handle).unwrap().cast(),
-            )
-            .unwrap_none();
-            let handle = handle.assume_init();
+            let (handle, worker) = spawn_worker(builder, true);
 
             assert!(matches!(
                 ddog_telemetry_handle_start(&handle),
@@ -418,7 +496,7 @@ mod tests {
             ddog_telemetry_handle_add_point(&handle, &context_key, 1.0).unwrap_none();
 
             assert_eq!(ddog_telemetry_handle_stop(&handle), MaybeError::None);
-            ddog_telemetry_handle_wait_for_shutdown(handle);
+            stop_worker(handle, worker);
         }
     }
 
@@ -457,7 +535,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn test_add_dependency_preserves_version() {
         unsafe {
-            let (handle, f) = start_file_backed_worker();
+            let (handle, worker, f) = start_file_backed_worker();
 
             ddog_telemetry_handle_add_dependency(
                 &handle,
@@ -474,7 +552,7 @@ mod tests {
             .unwrap_none();
 
             ddog_telemetry_handle_stop(&handle).unwrap_none();
-            ddog_telemetry_handle_wait_for_shutdown(handle);
+            stop_worker(handle, worker);
 
             let output = std::fs::read_to_string(f.path()).unwrap();
             let dep_payloads = find_sub_payloads(&output, "app-dependencies-loaded");
@@ -515,7 +593,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn test_add_integration_preserves_version() {
         unsafe {
-            let (handle, f) = start_file_backed_worker();
+            let (handle, worker, f) = start_file_backed_worker();
 
             ddog_telemetry_handle_add_integration(
                 &handle,
@@ -538,7 +616,7 @@ mod tests {
             .unwrap_none();
 
             ddog_telemetry_handle_stop(&handle).unwrap_none();
-            ddog_telemetry_handle_wait_for_shutdown(handle);
+            stop_worker(handle, worker);
 
             let output = std::fs::read_to_string(f.path()).unwrap();
             let int_payloads = find_sub_payloads(&output, "app-integrations-change");
@@ -579,7 +657,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn test_add_log_preserves_stack_trace() {
         unsafe {
-            let (handle, f) = start_file_backed_worker();
+            let (handle, worker, f) = start_file_backed_worker();
 
             ddog_telemetry_handle_add_log(
                 &handle,
@@ -600,7 +678,7 @@ mod tests {
             .unwrap_none();
 
             ddog_telemetry_handle_stop(&handle).unwrap_none();
-            ddog_telemetry_handle_wait_for_shutdown(handle);
+            stop_worker(handle, worker);
 
             let output = std::fs::read_to_string(f.path()).unwrap();
             let log_payloads = find_sub_payloads(&output, "logs");

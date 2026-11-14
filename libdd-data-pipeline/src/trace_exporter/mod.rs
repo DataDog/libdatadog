@@ -228,13 +228,19 @@ pub(crate) enum OtlpExportMode {
 
 /// Handles for the background workers owned by a [`TraceExporter`].
 #[derive(Debug)]
-pub(crate) struct TraceExporterWorkers {
+pub(crate) struct TraceExporterWorkers<
+    C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
+> {
     dogstatsd: Option<WorkerHandle>,
     /// `None` when no background `/info` fetcher is started (agentless trace
     /// export mode, log-export mode).
     info_fetcher: Option<WorkerHandle>,
+    /// The telemetry worker with the handle it was built with, used to stop it within its
+    /// shutdown timeout (the exporter's telemetry client can be replaced at runtime).
     #[cfg(feature = "telemetry")]
-    telemetry: Option<WorkerHandle>,
+    telemetry: Option<(WorkerHandle, TelemetryWorkerHandle<C>)>,
+    #[cfg(not(feature = "telemetry"))]
+    _capabilities: std::marker::PhantomData<fn() -> C>,
 }
 
 /// The TraceExporter ingest traces from the tracers serialized as messagepack and forward them to
@@ -304,7 +310,7 @@ pub struct TraceExporter<
     telemetry: ArcSwapOption<TelemetryClient<C>>,
     health_metrics_enabled: bool,
     capabilities: C,
-    workers: TraceExporterWorkers,
+    workers: TraceExporterWorkers<C>,
     agent_payload_response_version: Option<AgentResponsePayloadVersion>,
     /// When set, traces are exported via OTLP instead of the Datadog agent.
     otlp: Option<OtlpExportMode>,
@@ -486,18 +492,28 @@ impl<
             handles.push(dogstatsd)
         }
 
-        #[cfg(feature = "telemetry")]
-        if let Some(telemetry) = self.workers.telemetry {
-            handles.push(telemetry);
-        }
-
         let mut futures: FuturesUnordered<_> = handles.into_iter().map(|h| h.stop()).collect();
-
-        while let Some(result) = futures.next().await {
-            if let Err(e) = result {
-                error!("Worker failed to shutdown: {:?}", e);
+        let others = async {
+            while let Some(result) = futures.next().await {
+                if let Err(e) = result {
+                    error!("Worker failed to shutdown: {:?}", e);
+                }
             }
-        }
+        };
+
+        // Telemetry goes through `stop_worker` so its stop is bounded by the shutdown timeout.
+        #[cfg(feature = "telemetry")]
+        let telemetry = async {
+            if let Some((worker_handle, telemetry)) = self.workers.telemetry
+                && let Err(e) = telemetry.stop_worker(worker_handle).await
+            {
+                error!("Telemetry worker failed to shutdown: {:?}", e);
+            }
+        };
+        #[cfg(not(feature = "telemetry"))]
+        let telemetry = async {};
+
+        futures::future::join(others, telemetry).await;
     }
 
     /// Send msgpack serialized traces to the agent.
@@ -3678,6 +3694,58 @@ mod telemetry_metrics_tests {
             std::thread::sleep(Duration::from_millis(100));
         }
         metrics_endpoint.assert_calls(1);
+    }
+
+    /// A telemetry flush already in flight when the exporter shuts down is bounded by the
+    /// telemetry shutdown timeout instead of the telemetry HTTP timeout.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_shutdown_bounds_in_flight_telemetry_flush() {
+        let server = MockServer::start();
+        let _traces_endpoint = server.mock(|when, then| {
+            when.method(POST).path(V04_TRACES_ENDPOINT);
+            then.status(200)
+                .header("content-type", "application/json")
+                .body("{}");
+        });
+        // Never answers within the telemetry HTTP timeout.
+        let telemetry_endpoint = server.mock(|when, then| {
+            when.method(POST)
+                .path("/telemetry/proxy/api/v2/apmtelemetry");
+            then.status(200).delay(Duration::from_secs(30));
+        });
+
+        let mut builder = TraceExporter::<NativeCapabilities, ForkSafeRuntime>::builder();
+        builder
+            .set_url(&server.url("/"))
+            .set_service("foo")
+            .set_env("foo-env")
+            .set_tracer_version("v0.1")
+            .set_language("nodejs")
+            .set_language_version("1.0")
+            .set_language_interpreter("v8")
+            .enable_telemetry(TelemetryConfig {
+                heartbeat: 100,
+                ..Default::default()
+            });
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
+
+        let traces = msgpack_encoder::v04::to_vec_from_v04(&[vec![SpanBytes::default()]]);
+        let _ = exporter.send(traces.as_ref());
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while telemetry_endpoint.calls() == 0 {
+            assert!(std::time::Instant::now() < deadline, "no telemetry flush");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        // The flush now hangs until the 3s HTTP timeout; shutdown must stop at the 1s bound.
+        let start = std::time::Instant::now();
+        exporter.shutdown(None).unwrap();
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed < Duration::from_millis(1800),
+            "shutdown took {elapsed:?}, expected about the 1s telemetry shutdown timeout"
+        );
     }
 
     #[test]
