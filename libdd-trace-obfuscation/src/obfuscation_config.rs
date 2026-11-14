@@ -155,6 +155,12 @@ pub struct StatsObfuscationConfig {
     pub sql_obfuscation_mode: SqlObfuscationMode,
 }
 
+/// Reads a boolean flag from the environment, defaulting to `false`.
+#[cfg(not(target_arch = "wasm32"))]
+fn env_flag(name: &str) -> bool {
+    libdd_env::env_bool(name).unwrap_or(false)
+}
+
 impl ObfuscationConfig {
     /// Builds the obfuscation config from environment variables.
     ///
@@ -163,7 +169,6 @@ impl ObfuscationConfig {
     /// Returns an error if one of the regular expressions used by the config cannot be compiled.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn new_from_env() -> Result<Self, Box<dyn core::error::Error>> {
-        use libdd_common::config::parse_env;
         use log::{debug, error};
         use std::env;
 
@@ -180,17 +185,13 @@ impl ObfuscationConfig {
             },
             Err(_) => Vec::new(),
         };
-        let http_remove_query_string =
-            parse_env::bool("DD_APM_OBFUSCATION_HTTP_REMOVE_QUERY_STRING").unwrap_or(false);
-        let http_remove_path_digits =
-            parse_env::bool("DD_APM_OBFUSCATION_HTTP_REMOVE_PATHS_WITH_DIGITS").unwrap_or(false);
-        let obfuscation_redis_enabled =
-            parse_env::bool("DD_APM_OBFUSCATION_REDIS_ENABLED").unwrap_or(false);
+        let http_remove_query_string = env_flag("DD_APM_OBFUSCATION_HTTP_REMOVE_QUERY_STRING");
+        let http_remove_path_digits = env_flag("DD_APM_OBFUSCATION_HTTP_REMOVE_PATHS_WITH_DIGITS");
+        let obfuscation_redis_enabled = env_flag("DD_APM_OBFUSCATION_REDIS_ENABLED");
         let obfuscation_redis_remove_all_args =
-            parse_env::bool("DD_APM_OBFUSCATION_REDIS_REMOVE_ALL_ARGS").unwrap_or(false);
+            env_flag("DD_APM_OBFUSCATION_REDIS_REMOVE_ALL_ARGS");
 
-        let obfuscate_memcached =
-            parse_env::bool("DD_APM_OBFUSCATION_MEMCACHED_ENABLED").unwrap_or(false);
+        let obfuscate_memcached = env_flag("DD_APM_OBFUSCATION_MEMCACHED_ENABLED");
 
         Ok(Self {
             tag_replace_rules,

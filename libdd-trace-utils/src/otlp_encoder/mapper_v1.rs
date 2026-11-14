@@ -11,7 +11,7 @@
 use super::OtlpResourceInfo;
 use super::mapper::{MAX_ATTRIBUTES_PER_SPAN, SpanResourceAttributes, build_resource, proto_kv};
 use crate::span::trace_utils::SDK_OTLP_EXPORT_KEY;
-use crate::span::v1::{AttributeValue, Span, SpanEvent, SpanLink, TraceChunk};
+use crate::span::v1::{AttributeValue, Span, SpanEvent, SpanKind, SpanLink, TraceChunk};
 use crate::span::{SPAN_LINK_FLAGS_SET_SENTINEL, TraceData};
 use std::borrow::Borrow;
 use std::collections::hash_map::Entry;
@@ -146,7 +146,6 @@ fn collect_span_attributes_v1<T: TraceData>(
     merged: &[(&str, &AttributeValue<T>)],
     resource_service: &str,
     resource_attributes: &SpanResourceAttributes<'_>,
-    effective_priority: Option<i32>,
     otel_trace_semantics_enabled: bool,
 ) -> (Vec<ProtoKeyValue>, usize) {
     // With OTel-semantics enabled the DD-specific attributes are omitted: the four promoted tags
@@ -171,7 +170,7 @@ fn collect_span_attributes_v1<T: TraceData>(
     let origin = chunk.origin.borrow();
     let has_origin = !origin.is_empty();
     let has_sampling_mechanism = chunk.sampling_mechanism.is_some();
-    let has_sampling_priority = effective_priority.is_some();
+    let has_sampling_priority = chunk.priority.is_some();
 
     // A `merged` entry is eligible for generic emission unless its key collides with one of the
     // dedicated attributes emitted below (a `merged` key merely named e.g. "env" is fine to emit
@@ -272,7 +271,7 @@ fn collect_span_attributes_v1<T: TraceData>(
             ProtoValue::StringValue(value),
         ));
     }
-    if let Some(priority) = effective_priority {
+    if let Some(priority) = chunk.priority {
         // i32 -> i64 is a lossless widening conversion.
         attrs.push(proto_kv(
             "_sampling_priority_v1".to_string(),
@@ -288,17 +287,6 @@ fn collect_span_attributes_v1<T: TraceData>(
     );
     let dropped = total.saturating_sub(attrs.len());
     (attrs, dropped)
-}
-
-/// Resolves the chunk's effective sampling priority, honoring `dropped_trace`: mirrors
-/// `msgpack_encoder::v04::mod::encode_payload_from_v1`, forcing a negative (rejected) priority
-/// when the chunk was dropped, unless it already carries one.
-fn effective_priority_v1<T: TraceData>(chunk: &TraceChunk<T>) -> Option<i32> {
-    if chunk.dropped_trace {
-        Some(chunk.priority.filter(|&p| p < 0).unwrap_or(-1))
-    } else {
-        chunk.priority
-    }
 }
 
 fn map_span_link_v1<T: TraceData>(link: &SpanLink<T>) -> ProtoLink {
@@ -346,7 +334,6 @@ fn map_span_v1<T: TraceData>(
     resource_service: &str,
     resource_attributes: &SpanResourceAttributes<'_>,
     flags: u32,
-    effective_priority: Option<i32>,
     otel_trace_semantics_enabled: bool,
 ) -> ProtoSpan {
     let parent_span_id = if span.parent_id != 0 {
@@ -362,7 +349,6 @@ fn map_span_v1<T: TraceData>(
         &merged,
         resource_service,
         &resource_attributes,
-        effective_priority,
         otel_trace_semantics_enabled,
     );
     let (code, message) = span_status_v1(span, &merged, &index);
@@ -388,7 +374,11 @@ fn map_span_v1<T: TraceData>(
         // v1's `span_kind` discriminants (Internal=1, Server=2, Client=3, Producer=4,
         // Consumer=5) already match the OTLP SpanKind enum, so no meta lookup/fallback is
         // needed like the v0.4 mapper's `span_kind()`/`tag_to_otlp_kind`/`dd_type_to_otlp_kind`.
-        kind: span.span_kind as i32,
+        // An unset kind goes out as INTERNAL, which is what OTel lets receivers assume for it.
+        kind: match span.span_kind {
+            SpanKind::Unspecified => SpanKind::Internal as i32,
+            kind => kind as i32,
+        },
         // OTLP timestamps are unsigned; a negative value has no valid representation, so fall
         // back to 0 rather than wrapping.
         start_time_unix_nano: u64::try_from(span.start).unwrap_or(0),
@@ -426,12 +416,10 @@ pub fn map_traces_to_otlp_v1<T: TraceData>(
     let total_spans: usize = trace_chunks.iter().map(|chunk| chunk.spans.len()).sum();
     let mut all_spans: Vec<ProtoSpan> = Vec::with_capacity(total_spans);
     for chunk in trace_chunks {
-        // Resolve the chunk-level sampling priority once per chunk and apply it to every span's
-        // flags (see the module/function doc for why this differs from v0.4's per-span metric).
-        // `effective_priority_v1` folds in `dropped_trace`, matching the v0.4 downgrade encoder's
-        // `encode_payload_from_v1` so a rejected trace can't be reported as sampled.
-        let effective_priority = effective_priority_v1(chunk);
-        let flags = effective_priority.map(|p| (p >= 1) as u32).unwrap_or(0);
+        // The chunk-level priority sets every span's flags (see the function doc for why this
+        // differs from v0.4's per-span metric). `dropped_trace` is agent-owned, see
+        // `TraceChunk::dropped_trace`.
+        let flags = chunk.priority.map(|p| (p >= 1) as u32).unwrap_or(0);
         for span in &chunk.spans {
             all_spans.push(map_span_v1(
                 span,
@@ -439,7 +427,6 @@ pub fn map_traces_to_otlp_v1<T: TraceData>(
                 &resource_info.service,
                 &resource_attributes,
                 flags,
-                effective_priority,
                 otel_trace_semantics_enabled,
             ));
         }
@@ -466,7 +453,6 @@ pub fn map_traces_to_otlp_v1<T: TraceData>(
 mod tests_v1 {
     use super::*;
     use crate::span::BytesData;
-    use crate::span::v1::SpanKind;
     use libdd_tinybytes::BytesString;
     use libdd_trace_protobuf::opentelemetry::proto::common::v1::any_value::Value as PV;
 
@@ -602,6 +588,16 @@ mod tests_v1 {
     }
 
     #[test]
+    fn unspecified_span_kind_maps_to_internal() {
+        let mut span = minimal_span();
+        span.span_kind = SpanKind::Unspecified;
+        let chunk = minimal_chunk([1; 16], span);
+        let req = map_traces_to_otlp_v1(&[chunk], &OtlpResourceInfo::default(), false);
+        let s = &req.resource_spans[0].scope_spans[0].spans[0];
+        assert_eq!(s.kind, 1); // OTLP SpanKind INTERNAL
+    }
+
+    #[test]
     fn error_true_promotes_error_message_attribute_to_status() {
         let mut span = minimal_span();
         span.error = true;
@@ -657,6 +653,21 @@ mod tests_v1 {
         let req = map_traces_to_otlp_v1(&[chunk], &OtlpResourceInfo::default(), false);
         let s = &req.resource_spans[0].scope_spans[0].spans[0];
         assert_eq!(s.flags, 0);
+    }
+
+    #[test]
+    fn dropped_trace_is_ignored() {
+        // `dropped_trace` is agent-owned output, not a sampling input: the span (flags and
+        // `_sampling_priority_v1` attribute) must map exactly as if the flag were unset.
+        for priority in [Some(1), None] {
+            let map = |dropped_trace| {
+                let mut chunk = minimal_chunk([1; 16], minimal_span());
+                chunk.priority = priority;
+                chunk.dropped_trace = dropped_trace;
+                map_traces_to_otlp_v1(&[chunk], &OtlpResourceInfo::default(), false)
+            };
+            assert_eq!(map(true), map(false), "priority={priority:?}");
+        }
     }
 
     #[test]

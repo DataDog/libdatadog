@@ -762,13 +762,15 @@ impl MetricBatch {
             .collect()
     }
 
-    /// The Datadog series of the batch, as one submission. Resources whose
-    /// tags normalize to the same series share its Counts.
+    /// The Datadog API series of the batch, as one submission: Counters as
+    /// Rates over [`crate::DATADOG_RATE_INTERVAL_SECS`], Histogram samples as
+    /// Distributions. Resources whose tags normalize to the same series share
+    /// its Rates.
     pub fn datadog_series(&self, historical: bool) -> Result<Vec<DatadogSeries>, MetricError> {
         Ok(self.series_builder(historical, false)?.finish())
     }
 
-    /// The Counts of the batch, and its Distributions with their samples in
+    /// The Rates of the batch, and its Distributions with their samples in
     /// recording order, for a take that encodes each Distribution once.
     pub(crate) fn datadog_parts(
         &self,
@@ -824,12 +826,12 @@ impl MetricBatch {
     /// The batch as DogStatsD lines, one per series point, without trailing
     /// newlines. Callers may join them with `\n` into datagrams of the size
     /// their transport allows.
+    ///
+    /// A Counter's line is a `c` of its total over the batch, which the
+    /// Agent stores as the same Rate [`MetricBatch::datadog_series`] submits
+    /// to the API.
     pub fn dogstatsd_lines(&self) -> Result<Vec<String>, MetricError> {
-        Ok(self
-            .datadog_series(false)?
-            .iter()
-            .map(DatadogSeries::to_dogstatsd)
-            .collect())
+        Ok(self.series_builder(false, false)?.finish_dogstatsd())
     }
 }
 
@@ -1088,8 +1090,8 @@ mod tests {
             .filter(|s| s.name == "gen_ai.client.inference.duration.sum")
             .collect();
         assert_eq!(sums.len(), 1, "{sums:?}");
-        assert_eq!(sums[0].value, 0.2 + 0.3 + 0.4);
-        assert_ne!(sums[0].value, 0.2 + 0.4 + 0.3);
+        assert_eq!(sums[0].value, (0.2 + 0.3 + 0.4) / 10.0);
+        assert_ne!(sums[0].value, (0.2 + 0.4 + 0.3) / 10.0);
         let samples = series
             .iter()
             .filter(|s| s.name == "gen_ai.client.inference.duration")

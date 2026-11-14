@@ -21,6 +21,7 @@ arc-swap = { workspace = true, optional = true }
 hex = { workspace = true, features = ["std"], optional = true }
 http = { workspace = true, features = ["std"], optional = true }
 libdd-regex = { version = "0.1.0", path = "../libdd-regex", optional = true }
+libdd-env = { version = "0.1.0", path = "../libdd-env", optional = true }
 serde = { workspace = true, features = ["derive"] }
 static_assertions = { workspace = true, optional = true }
 const_format = { workspace = true, optional = true }
@@ -58,6 +59,7 @@ std = [
     "dep:http",
     "dep:libc",
     "dep:libdd-regex",
+    "dep:libdd-env",
     "dep:windows-sys",
     "serde/std",
 ]

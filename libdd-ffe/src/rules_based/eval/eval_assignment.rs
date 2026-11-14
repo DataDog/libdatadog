@@ -2,13 +2,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use chrono::{DateTime, Utc};
+use std::collections::{HashMap, HashSet};
 
 use crate::rules_based::{
-    Configuration, EvaluationContext, ExpectedFlagType, Timestamp,
+    Configuration, EvaluationContext, ExpectedFlagType, Str, Timestamp,
     error::EvaluationError,
     timestamp::OptOutTimestamp,
-    ufc::{Allocation, Assignment, AssignmentReason, CompiledFlagsConfig, Flag, Shard, Split},
+    ufc::{
+        Allocation, Assignment, AssignmentReason, CompiledFlagsConfig, ConditionCheck, Flag, Shard,
+        Split,
+    },
 };
+
+const DEFAULT_MAX_DEPENDENCY_DEPTH: u16 = 10;
 
 /// Selects how a subject's opt-out timestamp affects exposure-logging allocations.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -132,13 +138,24 @@ impl Configuration {
         now: DateTime<Utc>,
         options: EvaluationOptions,
     ) -> Result<Assignment, EvaluationError> {
-        let exclusion = options.experimentation_exclusion(context)?;
-        let result =
-            self.flags
-                .compiled
-                .eval_flag(flag_key, context, expected_type, now, exclusion);
+        self.eval_flag_with_trace(flag_key, context, expected_type, now, options)
+            .result
+    }
 
-        match &result {
+    /// Evaluate with the prerequisite records needed for SDK evaluation and exposure logging.
+    /// Records exclude the requested root flag and occur once per evaluated prerequisite.
+    /// An unsuccessful root has no eligible prerequisite exposures. SDKs must additionally
+    /// honor each assignment's `do_log`, consent, and exposure deduplication policy.
+    pub fn eval_flag_with_trace(
+        &self,
+        flag_key: &str,
+        context: &EvaluationContext,
+        expected_type: ExpectedFlagType,
+        now: DateTime<Utc>,
+        options: EvaluationOptions,
+    ) -> EvaluationResult {
+        let trace = self.eval_flag_with_trace_impl(flag_key, context, expected_type, now, options);
+        match &trace.result {
             Ok(assignment) => {
                 log::trace!(
                     flag_key,
@@ -155,24 +172,129 @@ impl Configuration {
             }
         }
 
-        result
+        trace
+    }
+
+    fn eval_flag_with_trace_impl(
+        &self,
+        flag_key: &str,
+        context: &EvaluationContext,
+        expected_type: ExpectedFlagType,
+        now: DateTime<Utc>,
+        options: EvaluationOptions,
+    ) -> EvaluationResult {
+        let exclusion = match options.experimentation_exclusion(context) {
+            Ok(exclusion) => exclusion,
+            Err(error) => {
+                return EvaluationResult::from_error(error);
+            }
+        };
+        // Most evaluations have no dependencies. Preserve their allocation-only path rather
+        // than initializing memoization and exposure bookkeeping for every SDK call.
+        match self.flags.compiled.get_flag(flag_key) {
+            Ok(flag) if !flag.has_dependencies => {
+                return EvaluationResult {
+                    result: flag.evaluate_independent(context, expected_type, now, exclusion),
+                    evaluations: Vec::new(),
+                };
+            }
+            Err(error) => {
+                return EvaluationResult::from_error(error);
+            }
+            Ok(_) => {}
+        }
+        let mut session = EvaluationSession {
+            config: &self.flags.compiled,
+            root_key: flag_key,
+            context,
+            now,
+            exclusion,
+            max_dependency_depth: None,
+            active: HashSet::new(),
+            provenance: Vec::new(),
+            memo: HashMap::new(),
+            evaluations: Vec::new(),
+        };
+        let evaluated = session.evaluate_flag(flag_key, expected_type, 0);
+        if let Ok(root) = &evaluated {
+            let mut pending = vec![root.provenance];
+            let mut visited = HashSet::new();
+            let mut exposed = HashSet::new();
+            while let Some(index) = pending.pop() {
+                if visited.insert(index) {
+                    let (key, children) = &session.provenance[index];
+                    exposed.insert(key.clone());
+                    pending.extend(children);
+                }
+            }
+            for record in &mut session.evaluations {
+                record.exposure_eligible = exposed.contains(&record.flag_key);
+            }
+        }
+        EvaluationResult {
+            result: evaluated.map(|result| result.assignment),
+            evaluations: session.evaluations,
+        }
     }
 }
 
-impl CompiledFlagsConfig {
-    /// Evaluate the flag for the given subject, expecting `expected_type` type.
-    fn eval_flag(
-        &self,
-        flag_key: &str,
-        subject: &EvaluationContext,
-        expected_type: ExpectedFlagType,
-        now: DateTime<Utc>,
-        exclusion: ExperimentationExclusion,
-    ) -> Result<Assignment, EvaluationError> {
-        self.get_flag(flag_key)?
-            .eval(subject, expected_type, now, exclusion)
-    }
+/// One requested evaluation and the prerequisites it actually evaluated.
+#[derive(Debug)]
+#[non_exhaustive]
+pub struct EvaluationResult {
+    /// The requested flag's result; SDKs return their caller default on failure.
+    pub result: Result<Assignment, EvaluationError>,
+    /// Unique prerequisite evaluations, in completion order; excludes the root.
+    pub evaluations: Vec<EvaluationRecord>,
+}
 
+impl EvaluationResult {
+    /// Construct a failed root evaluation without prerequisite records.
+    pub fn from_error(error: EvaluationError) -> Self {
+        Self {
+            result: Err(error),
+            evaluations: Vec::new(),
+        }
+    }
+}
+
+/// Telemetry for a prerequisite reached within one root evaluation.
+#[derive(Debug)]
+#[non_exhaustive]
+pub struct EvaluationRecord {
+    /// Key of the evaluated prerequisite.
+    pub flag_key: Str,
+    /// The prerequisite result, including failures.
+    pub result: Result<Assignment, EvaluationError>,
+    /// Whether this result belongs to the root's successful assignment path.
+    /// This does not override `do_log` or the SDK's ordinary exposure policy.
+    pub exposure_eligible: bool,
+}
+
+#[derive(Clone)]
+struct EvaluatedFlag {
+    assignment: Assignment,
+    // Includes all reached branches, even rejected rules, to keep memoization depth-safe.
+    height: u16,
+    // Only dependencies on the selected rule/split path, not every successful evaluation.
+    provenance: usize,
+}
+
+struct EvaluationSession<'a> {
+    config: &'a CompiledFlagsConfig,
+    root_key: &'a str,
+    context: &'a EvaluationContext,
+    now: Timestamp,
+    exclusion: ExperimentationExclusion,
+    max_dependency_depth: Option<u16>,
+    active: HashSet<Str>,
+    // Arena of selected-path edges; memo entries share indices, never transitive sets.
+    provenance: Vec<(Str, Vec<usize>)>,
+    memo: HashMap<Str, EvaluatedFlag>,
+    evaluations: Vec<EvaluationRecord>,
+}
+
+impl CompiledFlagsConfig {
     fn get_flag(&self, flag_key: &str) -> Result<&Flag, EvaluationError> {
         self.flags
             .get(flag_key)
@@ -183,14 +305,11 @@ impl CompiledFlagsConfig {
 }
 
 impl Flag {
-    fn eval(
+    fn validate(
         &self,
-        context: &EvaluationContext,
         expected_type: ExpectedFlagType,
-        now: DateTime<Utc>,
         exclusion: ExperimentationExclusion,
-    ) -> Result<Assignment, EvaluationError> {
-        // D004: flag-wide activation validity is consumed only by effective future policy.
+    ) -> Result<(), EvaluationError> {
         if matches!(exclusion, ExperimentationExclusion::ActivatedAtOrAfter(_))
             && self.has_invalid_activation
         {
@@ -202,65 +321,314 @@ impl Flag {
                 found: self.variation_type.into(),
             });
         }
-
-        let (allocation, split, reason) = self.find_allocation(context, now, exclusion)?;
-
-        Ok(Assignment {
-            value: split.value.clone(),
-            variation_key: split.variation_key.clone(),
-            allocation_key: allocation.key.clone(),
-            reason,
-            serial_id: split.serial_id,
-            do_log: allocation.do_log,
-            features: split.features.clone(),
-        })
+        Ok(())
     }
 
-    fn find_allocation(
+    fn evaluate_independent(
         &self,
         context: &EvaluationContext,
-        now: DateTime<Utc>,
+        expected_type: ExpectedFlagType,
+        now: Timestamp,
         exclusion: ExperimentationExclusion,
-    ) -> Result<(&Allocation, &Split, AssignmentReason), EvaluationError> {
+    ) -> Result<Assignment, EvaluationError> {
+        self.validate(expected_type, exclusion)?;
         for allocation in &self.allocations {
-            if exclusion != ExperimentationExclusion::None && exclusion.excludes(allocation) {
+            if !allocation.is_active(now, exclusion) {
                 continue;
             }
-            if let Some((split, reason)) = allocation.get_matching_split(context, now)? {
-                return Ok((allocation, split, reason));
+            if !allocation.rules.is_empty()
+                && !allocation.rules.iter().any(|rule| rule.eval(context))
+            {
+                continue;
+            }
+            if let Some(split) = allocation.find_split(context)? {
+                return Ok(allocation.assignment(split));
             }
         }
-
         Err(EvaluationError::DefaultAllocationNull)
     }
 }
 
-impl Allocation {
-    fn get_matching_split(
-        &self,
-        context: &EvaluationContext,
-        now: Timestamp,
-    ) -> Result<Option<(&Split, AssignmentReason)>, EvaluationError> {
-        if self.start_at.is_some_and(|t| now < t) {
-            return Ok(None);
-        }
-        if self.end_at.is_some_and(|t| now > t) {
-            return Ok(None);
-        }
+// Each frame holds the loop cursors that recursive calls would otherwise leave on the
+// caller's stack. A dependency suspends its parent's current condition until completion.
+struct EvaluationFrame<'a> {
+    key: Str,
+    flag: &'a Flag,
+    depth: u16,
+    allocation: usize,
+    allocation_started: bool,
+    rule: usize,
+    condition: usize,
+    height: u16,
+    exposures: Vec<usize>,
+}
 
-        let is_allowed_by_rules =
-            self.rules.is_empty() || self.rules.iter().any(|rule| rule.eval(context));
-        if !is_allowed_by_rules {
-            return Ok(None);
-        }
+enum FrameStep {
+    Dependency { key: Str, limit: u16 },
+    Complete(EvaluatedFlag),
+}
 
-        let Some(split) = self.find_split(context)? else {
-            return Ok(None);
+impl<'a> EvaluationFrame<'a> {
+    fn new(key: Str, flag: &'a Flag, depth: u16) -> Self {
+        Self {
+            key,
+            flag,
+            depth,
+            allocation: 0,
+            allocation_started: false,
+            rule: 0,
+            condition: 0,
+            height: 0,
+            exposures: Vec::new(),
+        }
+    }
+
+    fn next_allocation(&mut self) {
+        self.allocation += 1;
+        self.allocation_started = false;
+        self.rule = 0;
+        self.condition = 0;
+        self.exposures.clear();
+    }
+
+    fn next_rule(&mut self) {
+        self.rule += 1;
+        self.condition = 0;
+        self.exposures.clear();
+    }
+
+    fn advance(
+        &mut self,
+        session: &mut EvaluationSession<'_>,
+        mut dependency: Option<Result<EvaluatedFlag, EvaluationError>>,
+    ) -> Result<FrameStep, EvaluationError> {
+        while let Some(allocation) = self.flag.allocations.get(self.allocation) {
+            if !self.allocation_started {
+                if !allocation.is_active(session.now, session.exclusion) {
+                    self.next_allocation();
+                    continue;
+                }
+                self.allocation_started = true;
+            }
+            if !allocation.rules.is_empty() {
+                let Some(rule) = allocation.rules.get(self.rule) else {
+                    self.next_allocation();
+                    continue;
+                };
+                if let Some(condition) = rule.conditions.get(self.condition) {
+                    let matched = if let ConditionCheck::FlagEvaluation {
+                        key,
+                        expected_membership,
+                        values,
+                    } = &condition.check
+                    {
+                        let Some(result) = dependency.take() else {
+                            // Resolve the limit only for dependency conditions actually reached.
+                            return Ok(FrameStep::Dependency {
+                                key: key.clone(),
+                                limit: session.dependency_depth_limit(),
+                            });
+                        };
+                        let result = result.map_err(|source| {
+                            EvaluationError::DependencyEvaluationFailed {
+                                flag_key: key.clone(),
+                                source: source.into(),
+                            }
+                        })?;
+                        // Retain visited height even if this condition or a later one rejects
+                        // the rule, so memoized results cannot bypass the depth guard.
+                        self.height = self.height.max(1 + result.height);
+                        let matched = values.iter().any(|value| {
+                            value.as_ref() == result.assignment.variation_key.as_str()
+                        }) == *expected_membership;
+                        if matched {
+                            self.exposures.push(result.provenance);
+                        }
+                        matched
+                    } else {
+                        condition.eval(session.context)
+                    };
+                    if matched {
+                        self.condition += 1;
+                    } else {
+                        self.next_rule();
+                    }
+                    continue;
+                }
+            }
+            let Some(split) = allocation.find_split(session.context)? else {
+                self.next_allocation();
+                continue;
+            };
+            let provenance = session.provenance.len();
+            session
+                .provenance
+                .push((self.key.clone(), std::mem::take(&mut self.exposures)));
+            return Ok(FrameStep::Complete(EvaluatedFlag {
+                assignment: allocation.assignment(split),
+                height: self.height,
+                provenance,
+            }));
+        }
+        Err(EvaluationError::DefaultAllocationNull)
+    }
+}
+
+impl EvaluationSession<'_> {
+    fn evaluate_flag(
+        &mut self,
+        flag_key: &str,
+        expected_type: ExpectedFlagType,
+        depth: u16,
+    ) -> Result<EvaluatedFlag, EvaluationError> {
+        let flag = self.config.get_flag(flag_key)?;
+        flag.validate(expected_type, self.exclusion)?;
+        let mut stack = vec![EvaluationFrame::new(flag_key.into(), flag, depth)];
+        let mut dependency = None;
+        while let Some(mut frame) = stack.pop() {
+            let result = match frame.advance(self, dependency.take()) {
+                Ok(FrameStep::Dependency { key, limit }) => {
+                    let depth = frame.depth + 1;
+                    stack.push(frame);
+                    match self.resolve_dependency(&key, depth, limit) {
+                        Ok(Some(result)) => dependency = Some(Ok(result)),
+                        Err(error) => dependency = Some(Err(error)),
+                        Ok(None) => {
+                            let flag = self.config.get_flag(&key).and_then(|flag| {
+                                flag.validate(ExpectedFlagType::Any, self.exclusion)?;
+                                Ok(flag)
+                            });
+                            match flag {
+                                Ok(flag) => {
+                                    self.active.insert(key.clone());
+                                    stack.push(EvaluationFrame::new(key, flag, depth));
+                                }
+                                Err(error) => {
+                                    dependency = Some(self.complete_dependency(key, Err(error)));
+                                }
+                            }
+                        }
+                    }
+                    continue;
+                }
+                Ok(FrameStep::Complete(result)) => Ok(result),
+                Err(error) => Err(error),
+            };
+            if frame.depth == 0 {
+                return result;
+            }
+            self.active.remove(&frame.key);
+            dependency = Some(self.complete_dependency(frame.key, result));
+        }
+        // The root frame always returns above, including when evaluation fails.
+        Err(EvaluationError::DefaultAllocationNull)
+    }
+
+    fn dependency_depth_limit(&mut self) -> u16 {
+        if let Some(limit) = self.max_dependency_depth {
+            return limit;
+        }
+        let limit = match &self.config.max_dependency_depth {
+            None => DEFAULT_MAX_DEPENDENCY_DEPTH,
+            Some(value) => {
+                let depth = value
+                    .as_f64()
+                    .filter(|depth| depth.fract() == 0.0 && (0.0..=255.0).contains(depth));
+                if let Some(depth) = depth {
+                    // The checked value is an integer in 0..=255, so this conversion is lossless.
+                    depth as u16
+                } else {
+                    log::debug!(
+                        "Invalid evaluatorParams.maxDependencyDepth; using default of {DEFAULT_MAX_DEPENDENCY_DEPTH}"
+                    );
+                    DEFAULT_MAX_DEPENDENCY_DEPTH
+                }
+            }
         };
+        self.max_dependency_depth = Some(limit);
+        limit
+    }
 
-        // Determine the reason for assignment
+    fn resolve_dependency(
+        &mut self,
+        key: &Str,
+        depth: u16,
+        limit: u16,
+    ) -> Result<Option<EvaluatedFlag>, EvaluationError> {
+        if depth > limit {
+            if key.as_str() != self.root_key
+                && !self.active.contains(key)
+                && !self.memo.contains_key(key)
+            {
+                self.evaluations.push(EvaluationRecord {
+                    flag_key: key.clone(),
+                    result: Err(EvaluationError::DependencyDepthExceeded),
+                    exposure_eligible: false,
+                });
+            }
+            return Err(EvaluationError::DependencyDepthExceeded);
+        }
+        if key.as_str() == self.root_key || self.active.contains(key) {
+            return Err(EvaluationError::DependencyCycle);
+        }
+        if let Some(result) = self.memo.get(key) {
+            if depth + result.height > limit {
+                return Err(EvaluationError::DependencyDepthExceeded);
+            }
+            return Ok(Some(result.clone()));
+        }
+        Ok(None)
+    }
+
+    fn complete_dependency(
+        &mut self,
+        key: Str,
+        result: Result<EvaluatedFlag, EvaluationError>,
+    ) -> Result<EvaluatedFlag, EvaluationError> {
+        let result = result.and_then(|result| {
+            if result.assignment.variation_key.is_empty() {
+                Err(EvaluationError::DefaultAllocationNull)
+            } else {
+                Ok(result)
+            }
+        });
+        self.evaluations.push(EvaluationRecord {
+            flag_key: key.clone(),
+            result: result
+                .as_ref()
+                .map(|result| result.assignment.clone())
+                .map_err(Clone::clone),
+            exposure_eligible: false,
+        });
+        if let Ok(result) = &result {
+            self.memo.insert(key, result.clone());
+        }
+        result
+    }
+}
+
+impl Allocation {
+    fn is_active(&self, now: Timestamp, exclusion: ExperimentationExclusion) -> bool {
+        !(exclusion != ExperimentationExclusion::None && exclusion.excludes(self)
+            || self.start_at.is_some_and(|t| now < t)
+            || self.end_at.is_some_and(|t| now > t))
+    }
+
+    fn assignment(&self, split: &Split) -> Assignment {
+        Assignment {
+            value: split.value.clone(),
+            variation_key: split.variation_key.clone(),
+            allocation_key: self.key.clone(),
+            reason: self.assignment_reason(split),
+            serial_id: split.serial_id,
+            do_log: self.do_log,
+            features: split.features.clone(),
+        }
+    }
+
+    fn assignment_reason(&self, split: &Split) -> AssignmentReason {
         let has_time_bounds = self.start_at.is_some() || self.end_at.is_some();
-        let reason = if !self.rules.is_empty() {
+        if !self.rules.is_empty() {
             AssignmentReason::TargetingMatch
         } else if has_time_bounds && self.splits.len() == 1 && split.shards.is_empty() {
             AssignmentReason::Default
@@ -268,9 +636,7 @@ impl Allocation {
             AssignmentReason::Static
         } else {
             AssignmentReason::Split
-        };
-
-        Ok(Some((split, reason)))
+        }
     }
 
     fn find_split(&self, subject: &EvaluationContext) -> Result<Option<&Split>, EvaluationError> {
