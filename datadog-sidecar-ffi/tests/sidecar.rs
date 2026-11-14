@@ -222,6 +222,7 @@ fn test_ddog_sidecar_register_app() {
             "".into(),
             "".into(),
             false,
+            0,
         )
         .unwrap_none();
 
@@ -335,6 +336,7 @@ fn test_ddog_sidecar_register_app() {
             "".into(),
             "".into(),
             false,
+            0,
         )
         .unwrap_none();
 
@@ -416,6 +418,7 @@ impl FfeSidecar {
                 "".into(),
                 "".into(),
                 false,
+                0,
             )
             .unwrap_none();
         }
