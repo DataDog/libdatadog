@@ -1,0 +1,52 @@
+{
+  "description": "cacheDetails splits a Converse response's cache writes by lifetime (1h before 5m, as AWS sorts them), and serviceTier names the tier that served it.",
+  "format": "bedrock_converse",
+  "operation_name": "chat",
+  "payload": {
+    "output": {
+      "message": {
+        "content": [
+          {
+            "text": "x"
+          }
+        ],
+        "role": "assistant"
+      }
+    },
+    "stopReason": "end_turn",
+    "serviceTier": {
+      "type": "priority"
+    },
+    "usage": {
+      "inputTokens": 4,
+      "outputTokens": 266,
+      "totalTokens": 23312,
+      "cacheReadInputTokens": 0,
+      "cacheWriteInputTokens": 23042,
+      "cacheDetails": [
+        {
+          "inputTokens": 20000,
+          "ttl": "1h"
+        },
+        {
+          "inputTokens": 3042,
+          "ttl": "5m"
+        }
+      ]
+    }
+  },
+  "expected": {
+    "usage": {
+      "input_tokens": 4,
+      "input_basis": "excludes_cache",
+      "output_tokens": 266,
+      "output_basis": "includes_reasoning",
+      "cache_read_input_tokens": 0,
+      "cache_write_input_tokens": 23042,
+      "cache_write_5m_input_tokens": 3042,
+      "cache_write_1h_input_tokens": 20000
+    },
+    "response_model": null,
+    "service_tier": "priority"
+  }
+}

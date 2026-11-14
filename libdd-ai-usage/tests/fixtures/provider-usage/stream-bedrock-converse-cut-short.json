@@ -1,0 +1,13 @@
+{
+  "description": "A ConverseStream response cut inside a message, before messageStop and metadata: open, with no usage.",
+  "format": "auto",
+  "operation_name": "chat",
+  "body_base64": "AAAAhwAAAFLjgYMzCzpldmVudC10eXBlBwAMbWVzc2FnZVN0YXJ0DTpjb250ZW50LXR5cGUHABBhcHBsaWNhdGlvbi9qc29uDTptZXNzYWdlLXR5cGUHAAVldmVudHsicCI6ImFiY2RlZmdoaWoiLCJyb2xlIjoiYXNzaXN0YW50In10WSZKAAAA7QAAAFdAaRhQCzpldmVudC10eXBlBwARY29udGVudEJsb2NrRGVsdGENOmNvbnRlbnQtdHlwZQcAEGFwcGxpY2F0aW9uL2pzb24NOm1lc3NhZ2UtdHlwZQcABWV2ZW50eyJjb250ZW50QmxvY2tJbmRleCI6MCwiZGVsdGEiOnsidGV4dCI6ImdlbmVyYXRlZCB0ZXh0IG5hbWluZyBcInVzYWdlXCIsIFwibWV0YWRhdGFcIiBhbmQgXCJtZXNzYWdlU3RvcFwiIGlzIG5vdCBhbiBldmVudCJ9LCJwIjoiYWJjIn15l85xAAAAjAAAAFaTPHY7CzpldmVudC10eXBlBwAQY29udGVudEJsb2NrU3RvcA06Y29udGVudC10eXBlBwAQYXBwbGljYXRpb24vanNvbg06bWVzc2FnZS10eXBlBwAFZXZlbnR7ImNvbnRlbnRCbG9ja0luZGV4IjowLCJwIjoiYWJjZGVmZ2gifXGvZBoAAACFAAAAUQA=",
+  "expected": {
+    "usage": null,
+    "response_model": null,
+    "service_tier": null,
+    "outcome": "open",
+    "error_name": null
+  }
+}

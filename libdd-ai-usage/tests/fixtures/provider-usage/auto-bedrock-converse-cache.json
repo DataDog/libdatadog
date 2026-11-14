@@ -1,0 +1,42 @@
+{
+  "description": "A Converse response with cache reads and writes, told apart by its camelCase usage: inputTokens leaves both out (AWS: total input = inputTokens + cacheReadInputTokens + cacheWriteInputTokens). The numbers are the spec interop case 'Converse cache and request identity' (33 input tokens in all).",
+  "format": "auto",
+  "operation_name": "chat",
+  "payload": {
+    "output": {
+      "message": {
+        "content": [
+          {
+            "toolUse": {
+              "toolUseId": "tool-1",
+              "name": "weather",
+              "input": {
+                "city": "Boston"
+              }
+            }
+          }
+        ]
+      }
+    },
+    "stopReason": "tool_use",
+    "usage": {
+      "inputTokens": 10,
+      "outputTokens": 5,
+      "totalTokens": 38,
+      "cacheReadInputTokens": 20,
+      "cacheWriteInputTokens": 3
+    }
+  },
+  "expected": {
+    "usage": {
+      "input_tokens": 10,
+      "input_basis": "excludes_cache",
+      "output_tokens": 5,
+      "output_basis": "includes_reasoning",
+      "cache_read_input_tokens": 20,
+      "cache_write_input_tokens": 3
+    },
+    "response_model": null,
+    "service_tier": null
+  }
+}

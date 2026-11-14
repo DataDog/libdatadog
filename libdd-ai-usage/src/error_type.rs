@@ -38,7 +38,13 @@ pub const ERROR_TYPES: [&str; 12] = [
 
 /// The error names providers and SDKs report, other than the vocabulary's
 /// own values, which map to themselves. Matched in any case.
-const ERROR_NAMES: [(&str, &str); 29] = [
+const ERROR_NAMES: [(&str, &str); 33] = [
+    // Amazon Bedrock exceptions, as its errors and event streams name them
+    // (`throttlingException`). `modelStreamErrorException` names no cause.
+    ("ThrottlingException", ERROR_TYPE_RATE_LIMIT),
+    ("ValidationException", ERROR_TYPE_BAD_REQUEST),
+    ("InternalServerException", ERROR_TYPE_INTERNAL_SERVER),
+    ("ServiceUnavailableException", ERROR_TYPE_INTERNAL_SERVER),
     // Anthropic and OpenAI error types and codes.
     ("invalid_request_error", ERROR_TYPE_BAD_REQUEST),
     // Anthropic's type for HTTP 413, which has no `error.type` of its own:

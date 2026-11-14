@@ -27,5 +27,7 @@ libdd-ai-usage = { path = "../libdd-ai-usage", version = "0.1.0", default-featur
 serde_json = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
+# Decodes the binary (AWS event stream) test vectors.
+base64 = { workspace = true, features = ["std"] }
 # Regenerates the checked-in header to check that it is current.
 cbindgen = { workspace = true }

@@ -8,6 +8,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as BASE64;
 use libdd_ai_usage::{
     Json, Profile, ProviderAttemptObservation, StreamOutcome, TokenBreakdownObservation,
     UsageFormat, UsageStream, bedrock_arn_account, classify_error, classify_known_error,
@@ -57,17 +59,27 @@ fn provider_usage_cases() {
         let format = UsageFormat::from_name(case["format"].as_str().unwrap()).unwrap();
         let embeddings = case["operation_name"] == "embeddings";
         let expected = &case["expected"];
-        let actual = if let Some(body) = case["body"].as_str() {
-            let (response, outcome, error) =
-                parse_provider_body(format, body.as_bytes(), embeddings);
+        // A binary body (an AWS event stream) is written in base64.
+        let body = case["body"]
+            .as_str()
+            .map(|body| body.as_bytes().to_vec())
+            .or_else(|| {
+                case["body_base64"]
+                    .as_str()
+                    .map(|body| BASE64.decode(body).unwrap())
+            });
+        let actual = if let Some(body) = body {
+            let (response, outcome, error) = parse_provider_body(format, &body, embeddings);
             let mut value = serde_json::to_value(&response).unwrap();
             value["outcome"] = json!(outcome.as_str());
             value["error_name"] = json!(error);
             // The same stream read one byte at a time, which splits every
-            // line and every CRLF.
-            if !body.trim_start().starts_with(['{', '[']) {
+            // line and every CRLF, and every event stream message.
+            if !body.trim_ascii_start().starts_with(b"{")
+                && !body.trim_ascii_start().starts_with(b"[")
+            {
                 let mut stream = UsageStream::new(format, embeddings);
-                for byte in body.as_bytes() {
+                for byte in &body {
                     stream.feed(std::slice::from_ref(byte));
                 }
                 let (bytewise, bytewise_outcome, bytewise_error) = stream.finish();
@@ -493,6 +505,13 @@ fn error_types() {
         // The same failure as HTTP 413.
         ("request_too_large", Some("api_error")),
         ("rate_limit_error", Some("rate_limit_error")),
+        // Bedrock's exceptions, as its event streams spell them.
+        ("throttlingException", Some("rate_limit_error")),
+        ("validationException", Some("bad_request_error")),
+        ("internalServerException", Some("internal_server_error")),
+        ("serviceUnavailableException", Some("internal_server_error")),
+        ("ThrottlingException", Some("rate_limit_error")),
+        ("modelStreamErrorException", None),
         ("SomethingElse", None),
     ] {
         assert_eq!(error_type_for_name(name), expected, "{name}");
