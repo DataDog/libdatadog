@@ -14,10 +14,11 @@ macro_rules! assert_maybe_no_error {
 use datadog_sidecar::service::blocking::SidecarTransport;
 use datadog_sidecar::service::{DynamicInstrumentationConfigState, InstanceId};
 use libdd_common::Endpoint;
-use std::path::PathBuf;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::ptr::{null, null_mut};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 #[cfg(unix)]
 use std::{
     ffi::CString,
@@ -37,32 +38,42 @@ fn generated_header_exposes_native_evp_transport_abi() {
         .unwrap()
         .to_path_buf();
     let generated = tempfile::tempdir().unwrap();
-    build_common::generate_header(
-        workspace.join("libdd-common-ffi"),
-        "common.h",
-        generated.path().to_path_buf(),
-    );
-    // Seed shared option types with telemetry's unconditional definitions before
-    // deduplicating platform-specific sidecar declarations, as in release builds.
-    build_common::generate_header(
-        workspace.join("libdd-telemetry-ffi"),
-        "telemetry.h",
-        generated.path().to_path_buf(),
-    );
-    // Windows-only sidecar declarations use crashtracker metadata. Include
-    // those definitions in the shared header just as the release builder does.
-    build_common::generate_header(
-        workspace.join("libdd-crashtracker-ffi"),
-        "crashtracker.h",
-        generated.path().to_path_buf(),
-    );
-    build_common::generate_header(
-        workspace.join("datadog-sidecar-ffi"),
-        "sidecar.h",
-        generated.path().to_path_buf(),
-    );
-
     let include_dir = generated.path().join(build_common::HEADER_PATH);
+    fs::create_dir_all(&include_dir).unwrap();
+
+    // Copy the headers the `-ffi` build scripts already generated into the
+    // target directory; they only re-run on cbindgen.toml changes, so check
+    // freshness against the crate's sources. `sidecar.h`'s build script does
+    // not generate a header, so it always takes the regenerate path.
+    let cached_include = std::env::var_os("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| workspace.join("target"))
+        .join(build_common::HEADER_PATH);
+    let header_sources = [
+        ("libdd-common-ffi", "common.h"),
+        // Seed shared option types with telemetry's unconditional definitions
+        // before deduplicating platform-specific sidecar declarations, as in
+        // release builds.
+        ("libdd-telemetry-ffi", "telemetry.h"),
+        // Windows-only sidecar declarations use crashtracker metadata. Include
+        // those definitions in the shared header just as the release builder
+        // does.
+        ("libdd-crashtracker-ffi", "crashtracker.h"),
+        ("datadog-sidecar-ffi", "sidecar.h"),
+    ];
+    for (crate_name, header_name) in header_sources {
+        let cached = cached_include.join(header_name);
+        if cached.is_file() && cached_header_is_fresh(&cached, &workspace.join(crate_name)) {
+            fs::copy(&cached, include_dir.join(header_name)).unwrap();
+        } else {
+            build_common::generate_header(
+                workspace.join(crate_name),
+                header_name,
+                generated.path().to_path_buf(),
+            );
+        }
+    }
+
     let common_header = include_dir.join("common.h");
     let telemetry_header = include_dir.join("telemetry.h");
     let crashtracker_header = include_dir.join("crashtracker.h");
@@ -108,6 +119,31 @@ fn generated_header_exposes_native_evp_transport_abi() {
         compiler.flag("/wd4201");
     }
     compiler.try_compile("sidecar_evp_transport_abi").unwrap();
+}
+
+/// Whether the cached header postdates every file of the crate that generated
+/// it.
+fn cached_header_is_fresh(cached: &Path, crate_dir: &Path) -> bool {
+    match fs::metadata(cached).and_then(|m| m.modified()) {
+        Ok(header_time) => header_time >= newest_mtime(crate_dir),
+        Err(_) => false,
+    }
+}
+
+fn newest_mtime(dir: &Path) -> SystemTime {
+    fn visit(dir: &Path, best: &mut SystemTime) {
+        for entry in fs::read_dir(dir).into_iter().flatten().flatten() {
+            if let Ok(time) = entry.metadata().and_then(|m| m.modified()) {
+                *best = (*best).max(time);
+            }
+            if entry.file_type().is_ok_and(|t| t.is_dir()) {
+                visit(&entry.path(), best);
+            }
+        }
+    }
+    let mut best = SystemTime::UNIX_EPOCH;
+    visit(dir, &mut best);
+    best
 }
 
 fn set_sidecar_per_process() {

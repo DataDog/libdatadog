@@ -40,7 +40,7 @@ fn get_tests_folder_path() -> PathBuf {
 /// `cc::Build::compile` only produces static libraries, so test fixtures that
 /// must be `.so` files invoke the detected compiler directly.
 #[cfg(feature = "generate-unit-test-files")]
-fn compile_shared_lib(src: &Path, dst: &str, cpp: bool, flags: &[&str]) {
+fn compile_shared_lib(src: &Path, dst: &Path, cpp: bool, flags: &[&str]) {
     let mut build = cc::Build::new();
     if cpp {
         build.cpp(true);
@@ -68,7 +68,32 @@ fn compile_shared_lib(src: &Path, dst: &str, cpp: bool, flags: &[&str]) {
         .expect("failed to spawn compiler")
         .wait()
         .expect("failed to wait for compiler");
-    assert!(status.success(), "compilation failed for {dst}");
+    assert!(status.success(), "compilation failed for {}", dst.display());
+}
+
+/// Installs the fixture only when its bytes differ: rewriting an unchanged file
+/// bumps its mtime, which dirties this crate on the next cargo invocation.
+#[cfg(feature = "generate-unit-test-files")]
+fn install_fixture_if_changed(staged: &Path, dst: &Path) {
+    let staged_bytes = std::fs::read(staged)
+        .unwrap_or_else(|e| panic!("failed to read staged fixture {}: {e}", staged.display()));
+    if std::fs::read(dst)
+        .map(|existing| existing == staged_bytes)
+        .unwrap_or(false)
+    {
+        return;
+    }
+    std::fs::copy(staged, dst)
+        .unwrap_or_else(|e| panic!("failed to install fixture {}: {e}", dst.display()));
+}
+
+#[cfg(feature = "generate-unit-test-files")]
+fn staged_fixture(dst: &Path) -> PathBuf {
+    let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR is not set");
+    Path::new(&out_dir).join(
+        dst.file_name()
+            .expect("fixture destination has no file name"),
+    )
 }
 
 #[cfg(feature = "generate-unit-test-files")]
@@ -77,16 +102,15 @@ fn build_c_file() {
 
     let src = base_path.join("libtest.c");
     let dst = base_path.join("libtest.so");
-    let dst_file = dst
-        .to_str()
-        .expect("Failed to convert dst file path to str");
+    let staged = staged_fixture(&dst);
 
-    println!("cargo:rerun-if-changed={}", dst_file);
+    println!("cargo:rerun-if-changed={}", dst.display());
+
     // this is needed for the cross compile (cargo cross)
     // Fix build id to ease in testing.
     compile_shared_lib(
         &src,
-        dst_file,
+        &staged,
         false,
         &[
             "-std=c99",
@@ -104,14 +128,16 @@ fn build_c_file() {
     // debug ELF sections.
     let mut modify_alignment = Command::new("objcopy")
         .args(["--set-section-alignment", ".debug_abbrev=1"])
-        .arg(dst_file)
-        .arg(dst_file)
+        .arg(&staged)
+        .arg(&staged)
         .spawn()
         .expect("failed to spawn objcopy");
 
     modify_alignment
         .wait()
         .expect("Failed to change alignement of debug_abbrev ELF section");
+
+    install_fixture_if_changed(&staged, &dst);
 }
 
 #[cfg(feature = "generate-unit-test-files")]
@@ -120,15 +146,14 @@ fn build_cpp_file() {
 
     let src = base_path.join("libtest_cpp.cpp");
     let dst = base_path.join("libtest_cpp.so");
-    let dst_file = dst
-        .to_str()
-        .expect("Failed to convert dst file path to str");
+    let staged = staged_fixture(&dst);
 
-    println!("cargo:rerun-if-changed={}", dst_file);
+    println!("cargo:rerun-if-changed={}", dst.display());
+
     // Fix build id to ease in testing.
     compile_shared_lib(
         &src,
-        dst_file,
+        &staged,
         true,
         &[
             "-std=c++11",
@@ -137,6 +162,8 @@ fn build_cpp_file() {
             "-gdwarf-4",
         ],
     );
+
+    install_fixture_if_changed(&staged, &dst);
 }
 
 fn main() {
