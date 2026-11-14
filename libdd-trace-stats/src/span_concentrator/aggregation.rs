@@ -309,11 +309,13 @@ impl<'a> BorrowedAggregationKey<'a> {
     /// key.
     /// If `additional_metric_tags` is not empty then matching span tags keys are included in the
     /// key.
+    ///
+    /// Also returns whether an additional metric tag value was replaced for being too long.
     pub(super) fn from_span<C: TraceChunk>(
         span: &'a ChunkSpanView<'a, C>,
         peer_tag_keys: &'a [String],
         additional_metric_tag_keys: &'a [String],
-    ) -> Self {
+    ) -> (Self, bool) {
         Self::from_obfuscated_span(
             span.resource(),
             span,
@@ -327,7 +329,7 @@ impl<'a> BorrowedAggregationKey<'a> {
         span: &'b ChunkSpanView<'b, C>,
         peer_tag_keys: &'b [String],
         additional_metric_tag_keys: &'b [String],
-    ) -> BorrowedAggregationKey<'a>
+    ) -> (BorrowedAggregationKey<'a>, bool)
     where
         C: TraceChunk,
         // resource_name is a temporary string on the stack the span will outlive it
@@ -385,6 +387,7 @@ impl<'a> BorrowedAggregationKey<'a> {
         let grpc_status_code = get_grpc_status_code(span);
         let service_source = span.attribute_str(TAG_SVC_SRC).unwrap_or_default();
 
+        let mut oversized_additional_tags = false;
         let additional_metric_tags: Vec<(&'a str, &'a str)> = additional_metric_tag_keys
             .iter()
             .filter_map(|key| match compat.attribute_str(key.as_str()) {
@@ -394,6 +397,7 @@ impl<'a> BorrowedAggregationKey<'a> {
                             "additional_metric_tags: value for key '{}' exceeds {} characters; substituting tracer_blocked_value",
                             key, ADDITIONAL_METRIC_TAG_VALUE_MAX_LEN,
                         );
+                        oversized_additional_tags = true;
                         Some((key.as_str(), TRACER_BLOCKED_VALUE))
                     } else {
                         Some((key.as_str(), v))
@@ -403,7 +407,7 @@ impl<'a> BorrowedAggregationKey<'a> {
             })
             .collect();
 
-        Self {
+        let key = Self {
             fixed: FixedAggregationKey {
                 resource_name,
                 service_name: span.service(),
@@ -424,7 +428,8 @@ impl<'a> BorrowedAggregationKey<'a> {
             },
             peer_tags,
             additional_metric_tags,
-        }
+        };
+        (key, oversized_additional_tags)
     }
 
     /// Truncates string fields in accordance with the cardinality limit RFC
@@ -667,12 +672,16 @@ impl StatsBucket {
     pub(super) fn insert(
         &mut self,
         mut key: BorrowedAggregationKey<'_>,
+        oversized_additional_tags: bool,
         duration: i64,
         is_error: bool,
         is_top_level: bool,
     ) {
         // Per field cardinality limiting
-        self.collapse_key_fields_cardinality(&mut key);
+        let mut collapsed_fields = self.collapse_key_fields_cardinality(&mut key);
+        if oversized_additional_tags {
+            collapsed_fields.add(CollapsedFieldSet::OVERSIZED_ADDITIONAL_TAGS);
+        }
 
         // The map can't change size before the entry below is resolved, so this single read
         // covers the `max_entries` check in the vacant branch without a further lookup.
@@ -681,6 +690,7 @@ impl StatsBucket {
         match self.data.entry_ref(&key) {
             // Existing key, merge
             hashbrown::hash_map::EntryRef::Occupied(mut e) => {
+                self.collapsed_fields_metrics.increment(collapsed_fields);
                 e.get_mut().insert(duration, is_error, is_top_level);
             }
             hashbrown::hash_map::EntryRef::Vacant(e) => {
@@ -688,6 +698,13 @@ impl StatsBucket {
                 // sentinel.
                 if len_before_insert >= self.cardinality_limits.whole_key_limit {
                     self.collapsed_count += 1;
+                    // Whole-key overflow replaces the per-field tags; oversized is kept.
+                    let mut whole_key = CollapsedFieldSet::empty();
+                    whole_key.add(CollapsedFieldSet::WHOLE_KEY);
+                    if oversized_additional_tags {
+                        whole_key.add(CollapsedFieldSet::OVERSIZED_ADDITIONAL_TAGS);
+                    }
+                    self.collapsed_fields_metrics.increment(whole_key);
                     self.data
                         .entry(OwnedAggregationKey::overflow_key())
                         .or_default()
@@ -695,6 +712,7 @@ impl StatsBucket {
                     return;
                 }
                 // Within the max entry limit, admit key as a new distinct entry.
+                self.collapsed_fields_metrics.increment(collapsed_fields);
                 e.insert_with_key(OwnedAggregationKey::from(&key), GroupedStats::default())
                     .insert(duration, is_error, is_top_level);
             }
@@ -702,7 +720,10 @@ impl StatsBucket {
     }
 
     /// Collapse an aggregation key fields following the bucket's `CardinalityLimitConfig`
-    fn collapse_key_fields_cardinality(&mut self, key: &mut BorrowedAggregationKey<'_>) {
+    fn collapse_key_fields_cardinality(
+        &mut self,
+        key: &mut BorrowedAggregationKey<'_>,
+    ) -> CollapsedFieldSet {
         use hashbrown::hash_set::Entry;
         fn hash(input: &impl Hash) -> u64 {
             let mut hasher = DefaultHasher::new();
@@ -755,7 +776,7 @@ impl StatsBucket {
                 slot.insert();
             }
         }
-        self.collapsed_fields_metrics.increment(collapsed_fields);
+        collapsed_fields
     }
 
     /// Consume the bucket and return a ClientStatsBucket containing the bucket stats.
@@ -861,7 +882,7 @@ mod tests {
         view: &ChunkSpanView<'_, C>,
         peer_tag_keys: &[String],
     ) -> OwnedAggregationKey {
-        let borrowed = BorrowedAggregationKey::from_span(view, peer_tag_keys, &[]);
+        let (borrowed, _) = BorrowedAggregationKey::from_span(view, peer_tag_keys, &[]);
         let owned = OwnedAggregationKey::from(&borrowed);
         assert_eq!(
             get_hash(&borrowed),
