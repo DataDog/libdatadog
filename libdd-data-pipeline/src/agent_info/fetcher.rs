@@ -196,6 +196,10 @@ pub struct AgentInfoFetcher<C: HttpClientCapability + SleepCapability> {
     info_endpoint: Endpoint,
     refresh_interval: Duration,
     trigger_rx: Option<mpsc::Receiver<()>>,
+    /// Set while a fetch is in flight. A fetch cancelled by a pause or flush (see
+    /// [`Worker::cancellable_run`]) leaves it set, so `initial_trigger` fetches right away
+    /// instead of waiting for the next refresh: the trigger that started the fetch is gone.
+    fetch_pending: bool,
     /// `C` lives on the struct because `Worker::run(&mut self)` (a fixed trait
     /// signature) calls `fetch_info_with_state::<C>()` internally.
     _phantom: PhantomData<C>,
@@ -216,6 +220,7 @@ impl<C: HttpClientCapability + SleepCapability> AgentInfoFetcher<C> {
             info_endpoint,
             refresh_interval,
             trigger_rx: Some(trigger_rx),
+            fetch_pending: false,
             _phantom: PhantomData,
         };
 
@@ -239,8 +244,8 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Wor
     for AgentInfoFetcher<C>
 {
     async fn initial_trigger(&mut self) {
-        // Skip initial wait if cache is not populated
-        if AGENT_INFO_CACHE.load().is_none() {
+        // Fetch right away if the cache is not populated or a fetch was cancelled by a pause.
+        if AGENT_INFO_CACHE.load().is_none() || self.fetch_pending {
             return;
         }
         self.trigger().await
@@ -271,7 +276,17 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Wor
     }
 
     async fn run(&mut self) {
+        self.fetch_pending = true;
         self.fetch_and_update().await;
+        self.fetch_pending = false;
+    }
+
+    /// `run` only stores its result once the `/info` response has arrived, so an interrupted
+    /// fetch loses nothing: `fetch_pending` makes the restarted worker retry it at once. Without
+    /// this, a pause before a fork waits for an in-flight fetch, which takes the full request
+    /// timeout when the agent accepts connections but never answers.
+    fn cancellable_run(&self) -> bool {
+        true
     }
 }
 
@@ -610,6 +625,79 @@ mod single_threaded_tests {
         mock.assert();
         assert_eq!(agent_info.state_hash, TEST_INFO_HASH.to_string());
         assert_eq!(agent_info.info, serde_json::from_str(TEST_INFO).unwrap(),);
+    }
+
+    /// Waits until the cached agent info reports `version`.
+    fn wait_for_version(version: &str) {
+        let start = std::time::Instant::now();
+        loop {
+            let cached = agent_info::get_agent_info();
+            if cached.is_some_and(|info| info.info.version.as_deref() == Some(version)) {
+                return;
+            }
+            assert!(
+                start.elapsed() <= Duration::from_secs(10),
+                "Timeout waiting for /info version {version}"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
+    // A pause cancels an in-flight fetch instead of waiting for it, and the restarted worker
+    // fetches again right away instead of waiting for the refresh interval.
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_pause_cancels_fetch_and_restart_retries_it() {
+        AGENT_INFO_CACHE.store(None);
+        let server = MockServer::start();
+        let mut mock_v1 = server.mock(|when, then| {
+            when.path("/info");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(r#"{"version":"1"}"#);
+        });
+        let endpoint = Endpoint::from_url(server.url("/info").parse().unwrap());
+        let (fetcher, response_observer) = AgentInfoFetcher::<NativeCapabilities>::new(
+            endpoint,
+            // Long enough that only an immediate retry can pass this test.
+            Duration::from_secs(60),
+        );
+        let shared_runtime = ForkSafeRuntime::new().unwrap();
+        let _ = shared_runtime.spawn_worker(fetcher, true).unwrap();
+        wait_for_version("1");
+
+        // An agent that accepts the request but does not answer in time.
+        mock_v1.delete();
+        let mut mock_hung = server.mock(|when, then| {
+            when.path("/info");
+            then.delay(Duration::from_secs(30))
+                .status(200)
+                .header("content-type", "application/json")
+                .body(r#"{"version":"2"}"#);
+        });
+        response_observer.manual_trigger();
+        let start = std::time::Instant::now();
+        while mock_hung.calls() == 0 {
+            assert!(
+                start.elapsed() <= Duration::from_secs(10),
+                "Timeout waiting for the fetch to start"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+
+        let start = std::time::Instant::now();
+        shared_runtime.before_fork();
+        assert!(start.elapsed() < Duration::from_secs(5));
+
+        mock_hung.delete();
+        let _mock_v3 = server.mock(|when, then| {
+            when.path("/info");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(r#"{"version":"3"}"#);
+        });
+        shared_runtime.after_fork_parent().unwrap();
+        wait_for_version("3");
     }
 
     #[cfg_attr(miri, ignore)]
