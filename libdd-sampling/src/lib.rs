@@ -5,6 +5,7 @@
 //!
 //! This crate provides generic sampling infrastructure including:
 //! - Trait abstractions for trace IDs, attributes, and span properties
+//! - Sampling of spans implementing the `libdd-trace-model` traits (and v0.4 spans)
 //! - Rate-based sampling algorithms
 //! - Rate limiting functionality
 //! - Glob pattern matching for sampling rules
@@ -35,6 +36,7 @@ pub(crate) mod glob_matcher;
 #[cfg(feature = "bench-internals")]
 #[doc(hidden)]
 pub mod glob_matcher;
+pub(crate) mod model_span;
 pub(crate) mod rate_limiter;
 pub(crate) mod rate_sampler;
 pub(crate) mod rules_sampler;
@@ -48,7 +50,10 @@ pub mod v04_span;
 
 // Re-export key types for convenience
 pub use agent_service_sampler::ServicesSampler;
-pub use datadog_sampler::{DatadogSampler, OtelConsistentSampling, SamplingRulesCallback};
+pub use datadog_sampler::{
+    DatadogSampler, DdSamplingResult, OtelConsistentSampling, SamplingRulesCallback,
+    TraceRootSamplingInfo,
+};
 pub use dd_sampling::{SamplingDecision, SamplingMechanism, SamplingPriority, mechanism, priority};
 pub use sampling_rule::SamplingRule;
 pub use sampling_rule_config::{ParsedSamplingRules, SamplingRuleConfig};
