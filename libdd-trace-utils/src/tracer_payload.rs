@@ -7,7 +7,7 @@ use crate::{msgpack_decoder, trace_utils::cmp_send_data_payloads};
 use libdd_trace_protobuf::pb;
 use std::cmp::Ordering;
 use std::iter::Iterator;
-use tracing::warn;
+use tracing::debug;
 
 pub type TracerPayloadV04 = Vec<v04::SpanBytes>;
 pub type TracerPayloadV05 = Vec<v05::Span>;
@@ -108,7 +108,7 @@ impl TracerPayloadCollection {
                 // trace_utils::coalesce_send_data, so both V1 payloads
                 // typically share tracer-level metadata. If all metadata
                 // fields match we append `src`'s chunks into `dest`; if any diverge we no-op
-                // (logging a warning) rather than silently dropping `src`'s metadata.
+                // (logging at debug level) rather than silently dropping `src`'s metadata.
                 if metadata_matches_v1(dest, src) {
                     dest.chunks.append(&mut src.chunks);
                     true
@@ -122,6 +122,27 @@ impl TracerPayloadCollection {
                 unimplemented!("Append for V05 not implemented")
             }
             _ => false,
+        }
+    }
+
+    /// Returns the V1 tracer-level metadata compared by [`Self::append`], as a sort key, or
+    /// `None` for non-V1 collections.
+    ///
+    /// Sorting by this key puts mergeable V1 payloads next to each other. `attributes` is left
+    /// out: [`Self::append`] still checks it.
+    pub(crate) fn v1_group_key(&self) -> Option<[&str; 8]> {
+        match self {
+            TracerPayloadCollection::V1(payload) => Some([
+                payload.runtime_id.as_str(),
+                payload.container_id.as_str(),
+                payload.language_name.as_str(),
+                payload.language_version.as_str(),
+                payload.tracer_version.as_str(),
+                payload.env.as_str(),
+                payload.hostname.as_str(),
+                payload.app_version.as_str(),
+            ]),
+            _ => None,
         }
     }
 
@@ -284,7 +305,7 @@ pub fn decode_to_trace_chunks(
 /// V1 payloads carry tracer metadata (env, hostname, language, …) inside the payload itself, so
 /// merging two payloads whose metadata diverges would silently drop one set of values. Callers
 /// use this to gate the merge: on a `false` return, append is skipped (no-op) and the two
-/// payloads stay separate. A warning is logged listing the diverging fields so the situation
+/// payloads stay separate. A debug message lists the diverging fields so the situation
 /// is observable rather than silent.
 fn metadata_matches_v1(
     dest: &v1::TracerPayload<BytesData>,
@@ -306,7 +327,7 @@ fn metadata_matches_v1(
     ];
 
     if fields.iter().any(|(_, eq)| !eq) {
-        warn!(
+        debug!(
             "Skipping V1 TracerPayload append: diverging metadata fields {:?}",
             fields
                 .iter()

@@ -350,6 +350,13 @@ pub fn coalesce_send_data(mut data: Vec<SendData>) -> Vec<SendData> {
             .to_string()
             .cmp(&b.get_target().url.to_string())
             .then(a.get_target().test_token.cmp(&b.get_target().test_token))
+            // Group V1 payloads by metadata: workers with distinct runtime ids interleave, and
+            // dedup_by only merges neighbours.
+            .then_with(|| {
+                a.tracer_payloads
+                    .v1_group_key()
+                    .cmp(&b.tracer_payloads.v1_group_key())
+            })
     });
     data.dedup_by(|a, b| {
         if a.get_target().url == b.get_target().url
@@ -685,12 +692,13 @@ pub fn is_partial_snapshot(span: &pb::Span) -> bool {
 mod tests {
     use super::*;
     use crate::{
-        span::SharedDictBytes,
+        span::{SharedDictBytes, v1},
         test_utils::{create_test_no_alloc_span, create_test_span},
     };
     use http::Request;
     use libdd_common::Endpoint;
     use libdd_networking::http_common;
+    use libdd_tinybytes::BytesString;
     use serde_json::json;
 
     fn find_index_in_dict(dict: &SharedDictBytes, value: &str) -> Option<u32> {
@@ -750,6 +758,94 @@ mod tests {
                 > 1
         );
         assert!(coalesced.len() > 1 && coalesced.len() < 5);
+    }
+
+    fn v1_send_data(runtime_id: &'static str) -> SendData {
+        SendData::new(
+            100,
+            TracerPayloadCollection::V1(Box::new(v1::TracerPayload {
+                runtime_id: BytesString::from_static(runtime_id),
+                chunks: vec![v1::TraceChunk::default()],
+                ..Default::default()
+            })),
+            TracerHeaderTags::default(),
+            &Endpoint::default(),
+        )
+    }
+
+    fn v1_runtime_id_and_chunks(send_data: &SendData) -> (&str, usize) {
+        match &send_data.tracer_payloads {
+            TracerPayloadCollection::V1(payload) => {
+                (payload.runtime_id.as_str(), payload.chunks.len())
+            }
+            _ => panic!("expected a V1 payload"),
+        }
+    }
+
+    #[test]
+    fn test_coalesce_v1_interleaved_runtime_ids() {
+        let coalesced = coalesce_send_data(vec![
+            v1_send_data("A"),
+            v1_send_data("B"),
+            v1_send_data("A"),
+            v1_send_data("B"),
+        ]);
+        let mut entries: Vec<_> = coalesced.iter().map(v1_runtime_id_and_chunks).collect();
+        entries.sort_unstable();
+        assert_eq!(vec![("A", 2), ("B", 2)], entries);
+        assert_eq!(
+            4,
+            coalesced
+                .iter()
+                .map(|s| s.tracer_payloads.size())
+                .sum::<usize>()
+        );
+    }
+
+    #[test]
+    fn test_coalesce_v1_diverging_attributes_not_merged() {
+        fn with_attribute(value: i64) -> SendData {
+            let mut send_data = v1_send_data("A");
+            if let TracerPayloadCollection::V1(payload) = &mut send_data.tracer_payloads {
+                payload.attributes.insert(
+                    BytesString::from_static("key"),
+                    v1::AttributeValue::Int(value),
+                );
+            }
+            send_data
+        }
+        let coalesced = coalesce_send_data(vec![with_attribute(1), with_attribute(2)]);
+        let entries: Vec<_> = coalesced.iter().map(v1_runtime_id_and_chunks).collect();
+        assert_eq!(vec![("A", 1), ("A", 1)], entries);
+    }
+
+    #[test]
+    fn test_coalesce_v1_and_v04_payloads() {
+        fn v04_send_data() -> SendData {
+            SendData::new(
+                100,
+                TracerPayloadCollection::V04(vec![vec![create_test_no_alloc_span(
+                    0, 1, 0, 2, true,
+                )]]),
+                TracerHeaderTags::default(),
+                &Endpoint::default(),
+            )
+        }
+        let coalesced = coalesce_send_data(vec![
+            v04_send_data(),
+            v1_send_data("A"),
+            v04_send_data(),
+            v1_send_data("A"),
+        ]);
+        assert_eq!(2, coalesced.len());
+        for send_data in &coalesced {
+            assert_eq!(2, send_data.tracer_payloads.size());
+        }
+        assert!(
+            coalesced
+                .iter()
+                .any(|s| matches!(s.tracer_payloads, TracerPayloadCollection::V04(_)))
+        );
     }
 
     #[tokio::test]
