@@ -22,6 +22,7 @@ use tokio_util::sync::CancellationToken as TokioCancellationToken;
 ///
 /// # Safety
 /// `config`, when non-null, must be a live, exclusively borrowed configuration.
+#[deprecated(note = "Use ddog_trace_exporter_builder_enable_observations instead")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_trace_exporter_config_enable_observations(
     config: Option<&mut TraceExporterConfig>,
