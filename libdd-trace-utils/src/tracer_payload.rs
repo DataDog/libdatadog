@@ -1,11 +1,15 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::span::vec_map::VecMap;
 use crate::span::{BytesData, SharedDictBytes, TraceData, v1, v04, v05};
 use crate::trace_utils::convert_trace_chunks_v04_to_v05;
 use crate::{msgpack_decoder, trace_utils::cmp_send_data_payloads};
+use libdd_tinybytes::BytesString;
 use libdd_trace_protobuf::pb;
 use std::cmp::Ordering;
+use std::collections::hash_map::RandomState;
+use std::hash::{BuildHasher, Hash, Hasher};
 use std::iter::Iterator;
 use tracing::debug;
 
@@ -104,12 +108,11 @@ impl TracerPayloadCollection {
                 true
             }
             (TracerPayloadCollection::V1(dest), TracerPayloadCollection::V1(src)) => {
-                // Same-target SendData entries are coalesced by
-                // trace_utils::coalesce_send_data, so both V1 payloads
-                // typically share tracer-level metadata. If all metadata
-                // fields match we append `src`'s chunks into `dest`; if any diverge we no-op
-                // (logging at debug level) rather than silently dropping `src`'s metadata.
                 if metadata_matches_v1(dest, src) {
+                    if dest.runtime_id != src.runtime_id {
+                        move_runtime_id_to_spans(dest);
+                        move_runtime_id_to_spans(src);
+                    }
                     dest.chunks.append(&mut src.chunks);
                     true
                 } else {
@@ -125,23 +128,31 @@ impl TracerPayloadCollection {
         }
     }
 
-    /// Returns the V1 tracer-level metadata compared by [`Self::append`], as a sort key, or
-    /// `None` for non-V1 collections.
+    /// Returns a 128-bit hash of V1 metadata, excluding runtime ID, as a sort key, or
+    /// `None` for non-V1 collections. Different runtimes can share a payload after their IDs
+    /// are moved to span attributes.
     ///
-    /// Sorting by this key puts mergeable V1 payloads next to each other. `attributes` is left
-    /// out: [`Self::append`] still checks it.
-    pub(crate) fn v1_group_key(&self) -> Option<[&str; 8]> {
+    /// The coalescer caches this key so each payload's attributes are hashed only once.
+    pub(crate) fn v1_group_key(&self, hashers: &[RandomState; 2]) -> Option<[u64; 2]> {
         match self {
-            TracerPayloadCollection::V1(payload) => Some([
-                payload.runtime_id.as_str(),
-                payload.container_id.as_str(),
-                payload.language_name.as_str(),
-                payload.language_version.as_str(),
-                payload.tracer_version.as_str(),
-                payload.env.as_str(),
-                payload.hostname.as_str(),
-                payload.app_version.as_str(),
-            ]),
+            TracerPayloadCollection::V1(payload) => {
+                let metadata = [
+                    payload.container_id.as_str(),
+                    payload.language_name.as_str(),
+                    payload.language_version.as_str(),
+                    payload.tracer_version.as_str(),
+                    payload.env.as_str(),
+                    payload.hostname.as_str(),
+                    payload.app_version.as_str(),
+                ];
+                // Independent seeds give a 128-bit key without adding a hashing dependency.
+                Some(hashers.each_ref().map(|builder| {
+                    let mut hasher = builder.build_hasher();
+                    metadata.hash(&mut hasher);
+                    hash_attribute_map(&payload.attributes, &mut hasher);
+                    hasher.finish()
+                }))
+            }
             _ => None,
         }
     }
@@ -299,8 +310,8 @@ pub fn decode_to_trace_chunks(
     }
 }
 
-/// Returns `true` if and only if every tracer-level metadata field (string fields and attributes)
-/// of `src` matches `dest`.
+/// Returns whether tracer-level metadata matches, excluding the runtime IDs that can be
+/// preserved on individual spans when payloads from different runtimes are merged.
 ///
 /// V1 payloads carry tracer metadata (env, hostname, language, …) inside the payload itself, so
 /// merging two payloads whose metadata diverges would silently drop one set of values. Callers
@@ -319,7 +330,6 @@ fn metadata_matches_v1(
             dest.language_version == src.language_version,
         ),
         ("tracer_version", dest.tracer_version == src.tracer_version),
-        ("runtime_id", dest.runtime_id == src.runtime_id),
         ("env", dest.env == src.env),
         ("hostname", dest.hostname == src.hostname),
         ("app_version", dest.app_version == src.app_version),
@@ -337,6 +347,71 @@ fn metadata_matches_v1(
         return false;
     }
     true
+}
+
+fn hash_attribute_map(
+    attributes: &VecMap<BytesString, v1::AttributeValueBytes>,
+    hasher: &mut impl Hasher,
+) {
+    // Match VecMap equality: insertion order is irrelevant and the last value for a key wins.
+    let mut entries: Vec<_> = attributes.iter_unique().collect();
+    entries.sort_unstable_by(|(a, _), (b, _)| a.as_str().cmp(b.as_str()));
+    entries.len().hash(hasher);
+    for (key, value) in entries {
+        key.hash(hasher);
+        hash_attribute_value(value, hasher);
+    }
+}
+
+fn hash_attribute_value(value: &v1::AttributeValueBytes, hasher: &mut impl Hasher) {
+    std::mem::discriminant(value).hash(hasher);
+    match value {
+        v1::AttributeValue::String(value) => value.hash(hasher),
+        v1::AttributeValue::Bool(value) => value.hash(hasher),
+        v1::AttributeValue::Int(value) => value.hash(hasher),
+        v1::AttributeValue::Float(value) => {
+            // Positive and negative zero compare equal.
+            let bits = if *value == 0.0 { 0 } else { value.to_bits() };
+            bits.hash(hasher);
+        }
+        v1::AttributeValue::Bytes(value) => value.hash(hasher),
+        v1::AttributeValue::Array(values) => {
+            values.len().hash(hasher);
+            for value in values {
+                hash_attribute_value(value, hasher);
+            }
+        }
+        v1::AttributeValue::KeyValueList(attributes) => hash_attribute_map(attributes, hasher),
+    }
+}
+
+fn move_runtime_id_to_spans(payload: &mut v1::TracerPayload<BytesData>) {
+    let runtime_id = std::mem::take(&mut payload.runtime_id);
+    if runtime_id.is_empty() {
+        return;
+    }
+
+    for chunk in &mut payload.chunks {
+        let span = if chunk.priority.is_some_and(|priority| priority <= 0) {
+            // Rejected traces may only retain single-span sampled spans in the agent.
+            chunk.spans.iter_mut().find(|span| {
+                span.attributes
+                    .get("_dd.span_sampling.mechanism")
+                    .and_then(v1::AttributeValue::as_f64)
+                    .is_some()
+            })
+        } else {
+            chunk.spans.first_mut()
+        };
+        if let Some(span) = span
+            && !span.attributes.contains_key("runtime-id")
+        {
+            span.attributes.insert(
+                BytesString::from_static("runtime-id"),
+                v1::AttributeValue::String(runtime_id.clone()),
+            );
+        }
+    }
 }
 
 #[cfg(test)]
