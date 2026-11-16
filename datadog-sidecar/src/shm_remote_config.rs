@@ -1293,6 +1293,157 @@ mod tests {
         assert!(matches!(manager.fetch_update(), RemoteConfigUpdate::None));
     }
 
+    /// Versions of the config file served by the fd tests, one per test. The version is part of
+    /// the stored segment's name (`/ddrc<namespace>-<version>-<hash>`), which tells the stored
+    /// files apart from the publication directory segment (`/ddrc<namespace>-<hash>`) that lives
+    /// as long as the ShmRemoteConfigs. Each test has its own, as tests of one process (plain
+    /// `cargo test` runs them on threads) would otherwise share segment names and fd counts.
+    #[cfg(target_os = "linux")]
+    const VERSION_RUNTIME_LEAVES: u64 = 7777;
+
+    /// Paths of the stored config shm segments this process currently holds a file descriptor for.
+    /// Filtering by name makes the count robust against unrelated fds (sockets, the test server's
+    /// listener, ...).
+    #[cfg(target_os = "linux")]
+    fn open_config_shm_fds(version: u64) -> Vec<String> {
+        let prefix = format!("/dev/shm/ddrc{}-{version}-", crate::shm_namespace());
+        let mut open: Vec<String> = std::fs::read_dir("/proc/self/fd")
+            .expect("readable /proc/self/fd")
+            .filter_map(|entry| std::fs::read_link(entry.ok()?.path()).ok())
+            .map(|target| target.to_string_lossy().into_owned())
+            .filter(|target| target.starts_with(&prefix))
+            .collect();
+        open.sort();
+        open
+    }
+
+    /// Waits for the stored config file to be fetched and published for `runtime_id`, then returns
+    /// the guard keeping the runtime registered.
+    #[cfg(target_os = "linux")]
+    async fn add_runtime_and_await_first_fetch(
+        shm: &ShmRemoteConfigs<NotifyDummy>,
+        server: &RemoteConfigServer,
+        runtime_id: &str,
+    ) -> ShmRemoteConfigsGuard<NotifyDummy> {
+        let (sender, mut receiver) = tokio::sync::mpsc::channel(1);
+        let guard = shm.add_runtime(
+            InstanceId {
+                session_id: runtime_id.to_string(),
+                runtime_id: runtime_id.to_string(),
+            },
+            0,
+            NotifyDummy(Arc::new(sender)),
+            "env".to_string(),
+            "service".to_string(),
+            "1.3.5".to_string(),
+            vec![],
+            ProductCapabilities {
+                products: server.dummy_options().products,
+                capabilities: server.dummy_options().capabilities,
+            },
+            DynamicInstrumentationConfigState::Disabled,
+            vec![],
+        );
+        tokio::time::timeout(Duration::from_secs(10), receiver.recv())
+            .await
+            .expect("first fetch notification");
+        guard
+    }
+
+    #[cfg(target_os = "linux")]
+    fn server_with_one_config(version: u64) -> Arc<RemoteConfigServer> {
+        let server = RemoteConfigServer::spawn();
+        server.files.lock().unwrap().insert(
+            PATH_FIRST.clone(),
+            (
+                vec![DUMMY_TARGET.clone()],
+                version,
+                serde_json::to_string(&dummy_dynamic_config(true)).unwrap(),
+            ),
+        );
+        server
+    }
+
+    #[cfg(target_os = "linux")]
+    fn new_shm(version: u64) -> (Arc<RemoteConfigServer>, ShmRemoteConfigs<NotifyDummy>) {
+        let server = server_with_one_config(version);
+        let shm = ShmRemoteConfigs::new(
+            server.dummy_options().invariants,
+            Box::new(|| {}),
+            // A short fetch interval makes the target's loop wake often, which is what exposes the
+            // race between its sleep timer and the cancellation by shutdown().
+            Duration::from_millis(1),
+            None,
+        );
+        (server, shm)
+    }
+
+    /// Waits until the fetcher is dead and then asserts that every stored shm fd was closed. A
+    /// leaked file is never released later, so a short grace period for asynchronous teardown is
+    /// enough to tell a slow release from a leak.
+    #[cfg(target_os = "linux")]
+    async fn assert_all_config_fds_closed(
+        shm: &ShmRemoteConfigs<NotifyDummy>,
+        version: u64,
+        context: &str,
+    ) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !(shm.is_dead() && open_config_shm_fds(version).is_empty())
+            && Instant::now() < deadline
+        {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        assert!(
+            shm.is_dead(),
+            "{context}: fetcher still alive after shutdown"
+        );
+        assert_eq!(
+            open_config_shm_fds(version),
+            Vec::<String>::new(),
+            "{context}: stored config shm fds leaked"
+        );
+    }
+
+    /// The runtime leaves (guard dropped) and the sidecar shuts down right after. The target's
+    /// removal then races with shutdown(); before the fix the target's run future could be dropped
+    /// unpolled, leaking the stored files. Repeated to hit the race on a multi-threaded runtime.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    #[cfg_attr(miri, ignore)]
+    #[cfg(target_os = "linux")]
+    async fn test_shm_fds_closed_when_runtime_leaves_then_shutdown() {
+        for iteration in 0..200 {
+            let (server, shm) = new_shm(VERSION_RUNTIME_LEAVES);
+            let guard = add_runtime_and_await_first_fetch(
+                &shm,
+                &server,
+                "3b43524b-a70c-45dc-921d-34504e50c5eb",
+            )
+            .await;
+            assert_eq!(
+                open_config_shm_fds(VERSION_RUNTIME_LEAVES).len(),
+                1,
+                "iteration {iteration}: exactly the stored config must be open after first fetch: {:?}",
+                open_config_shm_fds(VERSION_RUNTIME_LEAVES)
+            );
+
+            drop(guard);
+            match iteration % 4 {
+                0 => {}
+                1 => tokio::task::yield_now().await,
+                2 => tokio::time::sleep(Duration::from_micros(200)).await,
+                _ => tokio::time::sleep(Duration::from_millis(2)).await,
+            }
+            shm.shutdown();
+
+            assert_all_config_fds_closed(
+                &shm,
+                VERSION_RUNTIME_LEAVES,
+                &format!("iteration {iteration}"),
+            )
+            .await;
+        }
+    }
+
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
     async fn test_live_debugger_config_parsed() {
