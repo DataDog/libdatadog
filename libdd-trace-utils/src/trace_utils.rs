@@ -888,11 +888,11 @@ mod tests {
         assert!(payload.runtime_id.is_empty());
         assert_eq!(payload.chunks.len(), 14);
         for chunk in &payload.chunks {
-            let carrier = usize::from(chunk.priority.is_some_and(|priority| priority <= 0));
+            let rejected = chunk.priority.is_some_and(|priority| priority <= 0);
             for (index, span) in chunk.spans.iter().enumerate() {
                 let expected = if index == 3 {
                     Some("explicit")
-                } else if index == carrier {
+                } else if index == 0 || (rejected && index == 1) {
                     Some(span.service.as_str())
                 } else {
                     None
@@ -926,13 +926,44 @@ mod tests {
         let TracerPayloadCollection::V1(payload) = &coalesced[0].tracer_payloads else {
             panic!("expected a V1 payload");
         };
-        assert!(
-            payload
-                .chunks
-                .iter()
-                .flat_map(|chunk| &chunk.spans)
-                .all(|span| !span.attributes.contains_key("runtime-id"))
-        );
+        let mut runtime_ids: Vec<_> = payload
+            .chunks
+            .iter()
+            .flat_map(|chunk| &chunk.spans)
+            .map(|span| span.attributes.get("runtime-id").unwrap().as_str().unwrap())
+            .collect();
+        runtime_ids.sort_unstable();
+        assert_eq!(runtime_ids, ["A", "B"]);
+    }
+
+    #[test]
+    fn test_coalesce_v1_first_span_is_single_span_sampled() {
+        let mut data = Vec::new();
+        for runtime_id in ["A", "B"] {
+            let mut send_data = v1_send_data(runtime_id);
+            let TracerPayloadCollection::V1(payload) = &mut send_data.tracer_payloads else {
+                panic!("expected a V1 payload");
+            };
+            let chunk = &mut payload.chunks[0];
+            chunk.priority = Some(0);
+            chunk.spans.push(v1::Span::default());
+            for span in &mut chunk.spans {
+                span.attributes.insert(
+                    BytesString::from_static("_dd.span_sampling.mechanism"),
+                    v1::AttributeValue::Int(8),
+                );
+            }
+            data.push(send_data);
+        }
+        let coalesced = coalesce_send_data(data);
+        assert_eq!(coalesced.len(), 1);
+        let TracerPayloadCollection::V1(payload) = &coalesced[0].tracer_payloads else {
+            panic!("expected a V1 payload");
+        };
+        for chunk in &payload.chunks {
+            assert!(chunk.spans[0].attributes.contains_key("runtime-id"));
+            assert!(!chunk.spans[1].attributes.contains_key("runtime-id"));
+        }
     }
 
     #[test]

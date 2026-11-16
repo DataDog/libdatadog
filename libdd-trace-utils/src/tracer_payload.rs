@@ -392,24 +392,26 @@ fn move_runtime_id_to_spans(payload: &mut v1::TracerPayload<BytesData>) {
     }
 
     for chunk in &mut payload.chunks {
-        let span = if chunk.priority.is_some_and(|priority| priority <= 0) {
+        let sampled_span = if chunk.priority.is_some_and(|priority| priority <= 0) {
             // Rejected traces may only retain single-span sampled spans in the agent.
-            chunk.spans.iter_mut().find(|span| {
+            chunk.spans.iter().position(|span| {
                 span.attributes
                     .get("_dd.span_sampling.mechanism")
                     .and_then(v1::AttributeValue::as_f64)
                     .is_some()
             })
         } else {
-            chunk.spans.first_mut()
+            None
         };
-        if let Some(span) = span
-            && !span.attributes.contains_key("runtime-id")
-        {
-            span.attributes.insert(
-                BytesString::from_static("runtime-id"),
-                v1::AttributeValue::String(runtime_id.clone()),
-            );
+        for index in std::iter::once(0).chain(sampled_span.filter(|&index| index != 0)) {
+            if let Some(span) = chunk.spans.get_mut(index)
+                && !span.attributes.contains_key("runtime-id")
+            {
+                span.attributes.insert(
+                    BytesString::from_static("runtime-id"),
+                    v1::AttributeValue::String(runtime_id.clone()),
+                );
+            }
         }
     }
 }
