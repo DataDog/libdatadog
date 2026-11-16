@@ -1008,10 +1008,15 @@ fn emit_otel_thread_contexts(
         attach_thread, detach_thread, enumerate_threads, read_thread_pointer,
     };
 
-    let slot_addr = libdd_otel_thread_ctx::linux::tls_slot_address();
-    if slot_addr == 0 {
+    // Discover the TLS module metadata by scanning ELF dynamic symbol tables via
+    // dl_iterate_phdr. This avoids TLSDESC relocations (which overflow in large ThinLTO
+    // binaries) and works in both statically and dynamically linked builds.
+    let Some(tls_info) = tls_module_info() else {
         return Ok(()); // Symbol not linked.
-    }
+    };
+
+    // The calling thread's TLS variable address, used for the TP-relative fallback.
+    let slot_addr = tls_info.tls_block_base + tls_info.offset;
 
     let stop_timeout = core::time::Duration::from_millis(100);
 
@@ -1039,11 +1044,9 @@ fn emit_otel_thread_contexts(
     //
     // 2. TP-relative offset (fallback): compute `slot_addr - TP` once and apply it to every thread.
     //    Only correct for static TLS (constant TP-relative offset). Used when the DTV layout is
-    //    unknown or dl_iterate_phdr returns NULL tls_data (e.g. older glibc like CentOS 7).
-    let dtv_resolution = tls_module_info().and_then(|info| {
-        let dtv_off = validated_dtv_offset(own_tp, info.modid, info.tls_block_base)?;
-        Some((info.modid, info.offset, dtv_off))
-    });
+    //    unknown or validated_dtv_offset fails.
+    let dtv_resolution = validated_dtv_offset(own_tp, tls_info.modid, tls_info.tls_block_base)
+        .map(|dtv_off| (tls_info.modid, tls_info.offset, dtv_off));
 
     // Fallback: single TP-relative offset from the crashing thread.
     let tp_offset = if dtv_resolution.is_none() {
