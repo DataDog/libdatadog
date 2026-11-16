@@ -2994,6 +2994,7 @@ dependencies = [
  "rand 0.8.8",
  "regex",
  "rmp-serde",
+ "semver",
  "serde",
  "serde_ignored",
  "serde_json",
