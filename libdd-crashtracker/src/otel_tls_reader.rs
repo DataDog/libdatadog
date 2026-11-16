@@ -182,7 +182,12 @@ pub(crate) struct TlsModuleInfo {
     pub offset: usize,
     /// The calling thread's TLS block base for this module (`dlpi_tls_data`).
     /// Equal to `dtv[modid]` for the calling thread.
-    pub tls_block_base: usize,
+    ///
+    /// `None` when `dlpi_tls_data` is NULL — this happens when the calling thread has never
+    /// accessed TLS from a `dlopen`'d library. The DTV walk for *remote* threads can still
+    /// succeed via `modid` + `offset`; only DTV offset validation (which compares against the
+    /// calling thread's block) is unavailable.
+    pub tls_block_base: Option<usize>,
 }
 
 // ELF constants for parsing the dynamic symbol table. These are ABI-stable values from the
@@ -193,6 +198,7 @@ const DT_STRTAB: u64 = 5;
 const DT_SYMTAB: u64 = 6;
 const DT_GNU_HASH: u64 = 0x6fff_fef5;
 const STT_TLS: u8 = 6;
+const SHN_UNDEF: u16 = 0;
 
 /// 64-bit ELF dynamic section entry.
 #[repr(C)]
@@ -207,9 +213,26 @@ struct Elf64Sym {
     st_name: u32,
     st_info: u8,
     _st_other: u8,
-    _st_shndx: u16,
+    st_shndx: u16,
     st_value: u64,
     _st_size: u64,
+}
+
+/// Whether `DT_SYMTAB`, `DT_STRTAB`, and hash-table `d_val` fields are object-relative
+/// virtual addresses (musl) or already-relocated pointers (glibc).
+///
+/// glibc's loader relocates these entries in-place during `_dl_relocate_object`, so they are
+/// absolute virtual addresses by the time `dl_iterate_phdr` runs. musl stores the raw `p_vaddr`
+/// values and adds the load address at lookup time. We therefore need to add `dlpi_addr` on musl
+/// to get valid pointers.
+#[cfg(target_env = "musl")]
+const fn resolve_dyn_ptr(d_val: u64, load_addr: u64) -> usize {
+    (load_addr + d_val) as usize
+}
+
+#[cfg(not(target_env = "musl"))]
+const fn resolve_dyn_ptr(d_val: u64, _load_addr: u64) -> usize {
+    d_val as usize
 }
 
 const SYMBOL_NAME: &[u8] = b"otel_thread_ctx_v1";
@@ -246,18 +269,18 @@ unsafe fn find_tls_symbol_offset(phdrs: &[libc::Elf64_Phdr], base_addr: u64) -> 
             break;
         }
         match entry.d_tag as u64 {
-            DT_SYMTAB => symtab = entry.d_val as *const Elf64Sym,
-            DT_STRTAB => strtab = entry.d_val as *const u8,
+            DT_SYMTAB => symtab = resolve_dyn_ptr(entry.d_val, base_addr) as *const Elf64Sym,
+            DT_STRTAB => strtab = resolve_dyn_ptr(entry.d_val, base_addr) as *const u8,
             DT_HASH => {
                 // ELF hash table layout: [ nbucket: u32, nchain: u32, ... ]
                 // `nchain` equals the number of symbols in `.dynsym`.
-                let hash_ptr = entry.d_val as *const u32;
+                let hash_ptr = resolve_dyn_ptr(entry.d_val, base_addr) as *const u32;
                 // SAFETY: the ELF hash table is within the mapped pages of the loaded
                 // object and always starts with two u32 fields (nbucket and nchain).
                 nsyms = unsafe { *hash_ptr.add(1) } as usize;
             }
             DT_GNU_HASH => {
-                gnu_hash_ptr = entry.d_val as *const u32;
+                gnu_hash_ptr = resolve_dyn_ptr(entry.d_val, base_addr) as *const u32;
             }
             _ => {}
         }
@@ -269,11 +292,6 @@ unsafe fn find_tls_symbol_offset(phdrs: &[libc::Elf64_Phdr], base_addr: u64) -> 
         return None;
     }
 
-    // If we didn't find DT_HASH, derive the symbol count from DT_GNU_HASH.
-    // GNU hash layout: [ nbuckets, symoffset, bloom_size, bloom_shift,
-    //                     bloom[bloom_size], buckets[nbuckets], chains[...] ]
-    // The highest symbol index is max(buckets[i]), then walk the chain from there
-    // until bit 0 is set (end-of-chain marker). nsyms = that index + 1.
     // If DT_HASH was not present, derive the symbol count from DT_GNU_HASH.
     //
     // GNU hash layout (all fields native-endian u32 unless noted):
@@ -335,6 +353,12 @@ unsafe fn find_tls_symbol_offset(phdrs: &[libc::Elf64_Phdr], base_addr: u64) -> 
         if sym.st_info & 0xf != STT_TLS {
             continue;
         }
+        // Skip undefined (imported) TLS symbols — they have st_value == 0 and would
+        // incorrectly match against the importing module's TLS block rather than the
+        // defining library's.
+        if sym.st_shndx == SHN_UNDEF {
+            continue;
+        }
         // SAFETY: `st_name` is an index into the `.dynstr` string table, which is within
         // the mapped pages of the loaded object. The string is NUL-terminated per ELF spec.
         let name_ptr = unsafe { strtab.add(sym.st_name as usize) };
@@ -377,21 +401,25 @@ pub(crate) fn tls_module_info() -> Option<TlsModuleInfo> {
         // SAFETY: `info` is a valid `dl_phdr_info` provided by `dl_iterate_phdr`.
         let info = unsafe { &*info };
 
-        let tls_data = info.dlpi_tls_data;
-        if tls_data.is_null() {
-            return 0; // continue — can't compute tls_block_base without dlpi_tls_data
-        }
-
         // SAFETY: `dl_iterate_phdr` holds the loader lock, so the program headers are valid.
         let phdrs =
             unsafe { core::slice::from_raw_parts(info.dlpi_phdr, info.dlpi_phnum as usize) };
 
         // SAFETY: `info.dlpi_addr` is the load address of a currently-loaded ELF object.
         if let Some(offset) = unsafe { find_tls_symbol_offset(phdrs, info.dlpi_addr) } {
+            // `dlpi_tls_data` may be NULL if the calling thread has never accessed TLS from
+            // this module (e.g. a dlopen'd library used only by worker threads). We still
+            // record modid + offset so the DTV walk can resolve remote threads; only the
+            // DTV offset validation (which needs the calling thread's block base) is skipped.
+            let tls_block_base = if info.dlpi_tls_data.is_null() {
+                None
+            } else {
+                Some(info.dlpi_tls_data as usize)
+            };
             state.result = Some(TlsModuleInfo {
                 modid: info.dlpi_tls_modid,
                 offset,
-                tls_block_base: tls_data as usize,
+                tls_block_base,
             });
             return 1; // stop iteration
         }
