@@ -113,6 +113,11 @@ pub unsafe extern "C" fn ddog_Error_drop(error: Option<&mut Error>) {
     }
 }
 
+/// Drops and frees a boxed error, such as the one returned by
+/// `ddog_endpoint_from_api_key_and_site`. Null is accepted.
+#[unsafe(no_mangle)]
+pub extern "C" fn ddog_Error_free(_error: Option<Box<Error>>) {}
+
 /// Returns a CharSlice of the error's message that is valid until the error
 /// is dropped.
 /// # Safety
