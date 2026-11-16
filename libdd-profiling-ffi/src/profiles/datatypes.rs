@@ -883,6 +883,36 @@ unsafe fn add_upscaling_rule(
     )
 }
 
+/// Copies an already encoded profile into libdatadog-owned storage, without parsing,
+/// validating, or compressing its contents. For export, `bytes` must contain a pprof
+/// payload in a format supported by the intake.
+///
+/// `start_time` and `end_time` are used as export metadata; they do not alter the payload.
+/// Endpoint statistics are empty. The caller may release or reuse `bytes` after this call.
+/// Drop the returned profile with `ddog_prof_EncodedProfile_drop`, or consume it with an
+/// exporter. On failure, drop the error with `ddog_Error_drop`.
+///
+/// # Safety
+/// `bytes` must point to `len` readable bytes for the duration of this call.
+/// Its pointer may be null only when its length is zero.
+#[unsafe(no_mangle)]
+#[must_use]
+#[named]
+pub unsafe extern "C" fn ddog_prof_EncodedProfile_from_bytes(
+    bytes: ByteSlice<'_>,
+    start_time: Timespec,
+    end_time: Timespec,
+) -> libdd_common_ffi::Result<Handle<internal::EncodedProfile>> {
+    wrap_with_ffi_result!({
+        anyhow::Ok(Handle::from(internal::EncodedProfile {
+            start: start_time.into(),
+            end: end_time.into(),
+            buffer: bytes.try_as_slice()?.to_vec(),
+            endpoints_stats: Default::default(),
+        }))
+    })
+}
+
 /// # Safety
 /// Only pass a reference to a valid `ddog_prof_EncodedProfile`, or null. A
 /// valid reference also means that it hasn't already been dropped or exported (do not
@@ -1005,6 +1035,39 @@ mod tests {
     use libdd_profiling::profiles::datatypes::{
         Function2 as DictionaryFunction2, FunctionId2, Mapping2 as DictionaryMapping2, MappingId2,
     };
+
+    #[test]
+    fn encoded_profile_from_bytes_owns_copy_and_preserves_metadata() {
+        let start = Timespec {
+            seconds: 1_700_000_001,
+            nanoseconds: 123_456_789,
+        };
+        let end = Timespec {
+            seconds: 1_700_000_067,
+            nanoseconds: 987_654_321,
+        };
+        let mut bytes = b"custom\x00\xffpayload".to_vec();
+        let mut profile = unsafe {
+            ddog_prof_EncodedProfile_from_bytes(ByteSlice::new(&bytes), start, end).unwrap()
+        };
+        bytes.fill(0);
+        drop(bytes);
+
+        unsafe {
+            let inner = profile.to_inner_mut().unwrap();
+            assert_eq!(inner.start, SystemTime::from(start));
+            assert_eq!(inner.end, SystemTime::from(end));
+            assert!(inner.endpoints_stats.is_empty());
+            assert_eq!(
+                ddog_prof_EncodedProfile_bytes(&mut profile)
+                    .unwrap()
+                    .as_slice(),
+                b"custom\x00\xffpayload"
+            );
+            ddog_prof_EncodedProfile_drop(&mut profile);
+            assert!(profile.to_inner_mut().is_err());
+        }
+    }
 
     fn insert_dictionary_string(dict: Option<&ProfilesDictionary>, value: &str) -> StringId2 {
         let mut id = StringId2::default();
