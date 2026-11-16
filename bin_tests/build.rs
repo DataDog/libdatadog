@@ -57,6 +57,11 @@ fn main() {
         println!("cargo:rustc-link-search=native={}", out_dir.display());
         println!("cargo:rustc-link-lib=static=trigger_assert");
         println!("cargo:rerun-if-changed=src/c/trigger_assert.c");
+
+        // Export otel_thread_ctx_v1 to the dynamic symbol table. The OTel thread
+        // context spec requires this even for executables (not just shared libraries).
+        // https://github.com/open-telemetry/opentelemetry-specification/blob/a4e05d9704fc5218d85a4154fb5b143ea3f5340e/oteps/profiles/4947-thread-ctx.md?plain=1#L93
+        println!("cargo:rustc-link-arg=-Wl,--export-dynamic-symbol=otel_thread_ctx_v1");
     }
 }
 

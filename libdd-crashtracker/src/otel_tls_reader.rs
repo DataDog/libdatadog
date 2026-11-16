@@ -185,19 +185,184 @@ pub(crate) struct TlsModuleInfo {
     pub tls_block_base: usize,
 }
 
-/// Discover TLS module metadata for `otel_thread_ctx_v1` via `dl_iterate_phdr`.
+// ELF constants for parsing the dynamic symbol table. These are ABI-stable values from the
+// ELF specification.
+const DT_NULL: u64 = 0;
+const DT_HASH: u64 = 4;
+const DT_STRTAB: u64 = 5;
+const DT_SYMTAB: u64 = 6;
+const DT_GNU_HASH: u64 = 0x6fff_fef5;
+const STT_TLS: u8 = 6;
+
+/// 64-bit ELF dynamic section entry.
+#[repr(C)]
+struct Elf64Dyn {
+    d_tag: i64,
+    d_val: u64,
+}
+
+/// 64-bit ELF symbol table entry.
+#[repr(C)]
+struct Elf64Sym {
+    st_name: u32,
+    st_info: u8,
+    _st_other: u8,
+    _st_shndx: u16,
+    st_value: u64,
+    _st_size: u64,
+}
+
+const SYMBOL_NAME: &[u8] = b"otel_thread_ctx_v1";
+
+/// Search the dynamic symbol table of a loaded ELF object for `otel_thread_ctx_v1`.
 ///
-/// Returns `None` if `tls_slot_address()` is 0 (symbol not linked) or no module's TLS range
-/// contains the slot address (can happen on older glibc where `_dl_tls_get_addr_soft` returns
-/// NULL after fork).
-pub(crate) fn tls_module_info() -> Option<TlsModuleInfo> {
-    let slot_addr = libdd_otel_thread_ctx::linux::tls_slot_address();
-    if slot_addr == 0 {
+/// Returns the symbol's `st_value` (TLS offset within the module's TLS block) if found,
+/// or `None` if the symbol is not present or is not a TLS symbol.
+///
+/// # Safety
+///
+/// `base_addr` must be the load address of a currently-loaded ELF object whose program
+/// headers are valid and readable. Called from within a `dl_iterate_phdr` callback where the
+/// loader lock is held.
+unsafe fn find_tls_symbol_offset(phdrs: &[libc::Elf64_Phdr], base_addr: u64) -> Option<usize> {
+    // 1. Find PT_DYNAMIC.
+    let dyn_phdr = phdrs.iter().find(|p| p.p_type == libc::PT_DYNAMIC)?;
+    let dyn_addr = base_addr + dyn_phdr.p_vaddr;
+
+    // 2. Walk dynamic entries to find DT_SYMTAB, DT_STRTAB, and a hash table.
+    let mut symtab: *const Elf64Sym = core::ptr::null();
+    let mut strtab: *const u8 = core::ptr::null();
+    let mut nsyms: usize = 0;
+    let mut gnu_hash_ptr: *const u32 = core::ptr::null();
+
+    let mut dyn_ptr = dyn_addr as *const Elf64Dyn;
+    loop {
+        // SAFETY: the dynamic section is a DT_NULL-terminated array of Elf64_Dyn entries
+        // within the mapped pages of the loaded object. We start at the address derived from
+        // PT_DYNAMIC and advance one entry at a time, stopping at DT_NULL. The loader lock
+        // held by `dl_iterate_phdr` prevents concurrent unloading.
+        let entry = unsafe { &*dyn_ptr };
+        if entry.d_tag == DT_NULL as i64 {
+            break;
+        }
+        match entry.d_tag as u64 {
+            DT_SYMTAB => symtab = entry.d_val as *const Elf64Sym,
+            DT_STRTAB => strtab = entry.d_val as *const u8,
+            DT_HASH => {
+                // ELF hash table layout: [ nbucket: u32, nchain: u32, ... ]
+                // `nchain` equals the number of symbols in `.dynsym`.
+                let hash_ptr = entry.d_val as *const u32;
+                // SAFETY: the ELF hash table is within the mapped pages of the loaded
+                // object and always starts with two u32 fields (nbucket and nchain).
+                nsyms = unsafe { *hash_ptr.add(1) } as usize;
+            }
+            DT_GNU_HASH => {
+                gnu_hash_ptr = entry.d_val as *const u32;
+            }
+            _ => {}
+        }
+        // SAFETY: advancing within the dynamic section; the loop terminates at DT_NULL.
+        dyn_ptr = unsafe { dyn_ptr.add(1) };
+    }
+
+    if symtab.is_null() || strtab.is_null() {
         return None;
     }
 
+    // If we didn't find DT_HASH, derive the symbol count from DT_GNU_HASH.
+    // GNU hash layout: [ nbuckets, symoffset, bloom_size, bloom_shift,
+    //                     bloom[bloom_size], buckets[nbuckets], chains[...] ]
+    // The highest symbol index is max(buckets[i]), then walk the chain from there
+    // until bit 0 is set (end-of-chain marker). nsyms = that index + 1.
+    // If DT_HASH was not present, derive the symbol count from DT_GNU_HASH.
+    //
+    // GNU hash layout (all fields native-endian u32 unless noted):
+    //   [ nbuckets, symoffset, bloom_size, bloom_shift,
+    //     bloom[bloom_size] (u64 entries),
+    //     buckets[nbuckets],
+    //     chains[...] ]
+    //
+    // The highest populated symbol index is `max(buckets[i])`. From there, walk the
+    // chain array until bit 0 is set (end-of-chain marker). `nsyms = last_index + 1`.
+    if nsyms == 0 && !gnu_hash_ptr.is_null() {
+        // SAFETY: DT_GNU_HASH points to a valid GNU hash table header (4 × u32) within
+        // the mapped pages of the loaded object.
+        let nbuckets = unsafe { *gnu_hash_ptr } as usize;
+        let symoffset = unsafe { *gnu_hash_ptr.add(1) } as usize;
+        let bloom_size = unsafe { *gnu_hash_ptr.add(2) } as usize;
+
+        // SAFETY: the bloom filter is `bloom_size` u64 entries (= `bloom_size * 2` u32
+        // slots) starting at header offset 4. The buckets array follows immediately.
+        let buckets_ptr = unsafe { gnu_hash_ptr.add(4 + bloom_size * 2) };
+        // SAFETY: the chains array follows the buckets array.
+        let chains_ptr = unsafe { buckets_ptr.add(nbuckets) };
+
+        // Find the maximum bucket value (highest starting symbol index).
+        let mut max_sym = 0usize;
+        for i in 0..nbuckets {
+            // SAFETY: `i < nbuckets`, so `buckets_ptr.add(i)` is within the buckets array.
+            let bucket = unsafe { *buckets_ptr.add(i) } as usize;
+            if bucket > max_sym {
+                max_sym = bucket;
+            }
+        }
+
+        // Walk the chain from max_sym to find the last symbol.
+        if max_sym >= symoffset {
+            let mut idx = max_sym;
+            loop {
+                // SAFETY: `idx - symoffset` is within the chains array; the chain is
+                // terminated by a value with bit 0 set, so this loop is bounded.
+                let chain_val = unsafe { *chains_ptr.add(idx - symoffset) };
+                if chain_val & 1 != 0 {
+                    break; // End-of-chain marker.
+                }
+                idx += 1;
+            }
+            nsyms = idx + 1;
+        }
+    }
+
+    if nsyms == 0 {
+        return None;
+    }
+
+    // 3. Linear scan of the symbol table.
+    for i in 0..nsyms {
+        // SAFETY: `i < nsyms` and `.dynsym` has at least `nsyms` entries (derived from
+        // DT_HASH's nchain or the DT_GNU_HASH chain walk above).
+        let sym = unsafe { &*symtab.add(i) };
+        if sym.st_info & 0xf != STT_TLS {
+            continue;
+        }
+        // SAFETY: `st_name` is an index into the `.dynstr` string table, which is within
+        // the mapped pages of the loaded object. The string is NUL-terminated per ELF spec.
+        let name_ptr = unsafe { strtab.add(sym.st_name as usize) };
+        // Compare the symbol name byte-by-byte up to and including the NUL terminator.
+        // SAFETY: we read at most `SYMBOL_NAME.len() + 1` bytes from the NUL-terminated
+        // string starting at `name_ptr`, which is within the `.dynstr` section.
+        let matches = SYMBOL_NAME
+            .iter()
+            .enumerate()
+            .all(|(j, &b)| unsafe { *name_ptr.add(j) == b })
+            && unsafe { *name_ptr.add(SYMBOL_NAME.len()) == 0 };
+        if matches {
+            return Some(sym.st_value as usize);
+        }
+    }
+
+    None
+}
+
+/// Discover TLS module metadata for `otel_thread_ctx_v1` via `dl_iterate_phdr`.
+///
+/// Scans the dynamic symbol table of each loaded ELF object for a `STT_TLS` symbol named
+/// `otel_thread_ctx_v1`. This avoids TLSDESC relocations (which can overflow in large ThinLTO
+/// binaries) and works in both statically and dynamically linked builds.
+///
+/// Returns `None` if the symbol is not found or `dlpi_tls_data` is NULL
+pub(crate) fn tls_module_info() -> Option<TlsModuleInfo> {
     struct State {
-        slot_addr: usize,
         result: Option<TlsModuleInfo>,
     }
 
@@ -214,38 +379,30 @@ pub(crate) fn tls_module_info() -> Option<TlsModuleInfo> {
 
         let tls_data = info.dlpi_tls_data;
         if tls_data.is_null() {
-            return 0; // continue
+            return 0; // continue — can't compute tls_block_base without dlpi_tls_data
         }
 
-        // SAFETY: `dl_iterate_phdr` holds the loader lock, so no concurrent dlopen/dlclose
-        // can invalidate the program headers. `dlpi_phdr` points to a valid array of
-        // `dlpi_phnum` entries for a currently-loaded ELF object.
+        // SAFETY: `dl_iterate_phdr` holds the loader lock, so the program headers are valid.
         let phdrs =
             unsafe { core::slice::from_raw_parts(info.dlpi_phdr, info.dlpi_phnum as usize) };
-        for phdr in phdrs {
-            if phdr.p_type == libc::PT_TLS {
-                let base = tls_data as usize;
-                let end = base + phdr.p_memsz as usize;
-                if state.slot_addr >= base && state.slot_addr < end {
-                    state.result = Some(TlsModuleInfo {
-                        modid: info.dlpi_tls_modid,
-                        offset: state.slot_addr - base,
-                        tls_block_base: base,
-                    });
-                    return 1; // stop iteration
-                }
-            }
+
+        // SAFETY: `info.dlpi_addr` is the load address of a currently-loaded ELF object.
+        if let Some(offset) = unsafe { find_tls_symbol_offset(phdrs, info.dlpi_addr) } {
+            state.result = Some(TlsModuleInfo {
+                modid: info.dlpi_tls_modid,
+                offset,
+                tls_block_base: tls_data as usize,
+            });
+            return 1; // stop iteration
         }
+
         0 // continue
     }
 
-    let mut state = State {
-        slot_addr,
-        result: None,
-    };
+    let mut state = State { result: None };
 
-    // SAFETY: `callback` has the correct signature for `dl_iterate_phdr`. `state` is live for
-    // the duration of the call.
+    // SAFETY: `callback` has the correct signature for `dl_iterate_phdr`. `state` is live
+    // for the duration of the call and passed as an opaque pointer.
     unsafe {
         libc::dl_iterate_phdr(
             Some(callback),
