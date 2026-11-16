@@ -63,8 +63,9 @@ impl AgentInfos {
 /// The trace route the agent advertises in `/info` once it supports the V1 trace protocol.
 const V1_TRACES_ENDPOINT: &str = "/v1.0/traces";
 
-/// Whether the agent's `/info` advertises `/v1.0/traces`. Matches
-/// `TraceExporter::refresh_v1_active` so the sidecar and in-process exporter negotiate V1 alike.
+/// Whether the agent's `/info` advertises `/v1.0/traces`. Mirrors the endpoint check of
+/// `TraceExporter::refresh_v1_active`; the sidecar additionally falls back to v0.4 for agents older
+/// than 7.79 (see [`agent_supports_v1_traces`]).
 fn agent_info_advertises_v1(info: &AgentInfoStruct) -> bool {
     info.endpoints
         .as_ref()
