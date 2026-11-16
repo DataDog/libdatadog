@@ -272,7 +272,9 @@ fn init_crashtracker(dependency_paths: Option<*const *const libc::c_char>) -> an
         .create_alt_stack(true)
         .use_alt_stack(true)
         .resolve_frames(StacktraceCollection::EnabledWithSymbolsInReceiver)
-        .demangle_names(true);
+        .demangle_names(true)
+        .collect_otel_thread_contexts(true);
+
     if let Some(ep) = Config::get().crashtracker_endpoint.as_ref() {
         config_builder = config_builder.endpoint_url(&ep.url.to_string());
         if let Some(api_key) = ep.api_key.as_deref() {
