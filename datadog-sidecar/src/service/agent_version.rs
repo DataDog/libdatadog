@@ -14,7 +14,7 @@ const V1_STATS_LANG_FIXED_IN: &str = "7.79.0-rc.6";
 /// Agents before 7.79.0-rc.6 drop `lang` from the stats they compute for V1 payloads, which breaks
 /// Service Remapping, and V1 is opt-in before 7.77 anyway. The pre-release cut mirrors
 /// dd-trace-go's `agentOmitsLangInV1Stats` (`ddtrace/tracer/agent_version.go`).
-pub fn agent_supports_v1_traces(version: &str) -> Option<bool> {
+pub(super) fn agent_supports_v1_traces(version: &str) -> Option<bool> {
     let fixed_in = Version::parse(V1_STATS_LANG_FIXED_IN).ok()?;
     Version::parse(version).ok().map(|v| v >= fixed_in)
 }

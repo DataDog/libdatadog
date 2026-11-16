@@ -8,6 +8,7 @@
 //! It writes the raw agent response to shared memory at a fixed per-endpoint location, to be
 //! consumed be tracers.
 
+use super::agent_version::agent_supports_v1_traces;
 use crate::shm_path::keyed_shm_path;
 use arc_swap::ArcSwap;
 use futures::FutureExt;
@@ -17,9 +18,7 @@ use libdd_capabilities_impl::NativeCapabilities;
 use libdd_common::Endpoint;
 use libdd_common::MutexExt;
 use libdd_data_pipeline::agent_info::schema::AgentInfoStruct;
-use libdd_data_pipeline::agent_info::{
-    FetchInfoStatus, agent_supports_v1_traces, fetch_info_with_state,
-};
+use libdd_data_pipeline::agent_info::{FetchInfoStatus, fetch_info_with_state};
 use libdd_ipc::one_way_shared_memory::{OneWayShmReader, OneWayShmWriter, open_named_shm};
 use libdd_ipc::platform::NamedShmHandle;
 use libdd_live_debugger::sender::agent_info_supports_debugger_v2_endpoint;
@@ -88,7 +87,7 @@ impl AgentInfoGuard {
     }
 
     /// Whether to send V1 traces: the last fetched info advertises `/v1.0/traces`, from an agent
-    /// 7.79+ ([`agent_supports_v1_traces`]), and no 404 from it came since. False until the first
+    /// 7.79+ (`agent_supports_v1_traces`), and no 404 from it came since. False until the first
     /// info has been fetched.
     pub fn v1_active(&self) -> bool {
         self.fetcher.v1_active.load(Ordering::Relaxed)
