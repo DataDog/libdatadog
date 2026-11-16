@@ -185,6 +185,12 @@
             "type": "string"
           }
         },
+        "otel_thread_contexts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/OtelThreadContext"
+          }
+        },
         "runtime_stack": {
           "anyOf": [
             {
@@ -250,6 +256,71 @@
           "type": "string"
         },
         "version": {
+          "type": "string"
+        }
+      }
+    },
+    "OtelAttribute": {
+      "description": "A single key-value attribute from the OTel thread context record.",
+      "type": "object",
+      "required": [
+        "key_index",
+        "value"
+      ],
+      "properties": {
+        "key_index": {
+          "description": "Key index into the string table (0 = `local_root_span_id`).",
+          "type": "integer",
+          "format": "uint8",
+          "minimum": 0.0
+        },
+        "value": {
+          "description": "The attribute value as a UTF-8 string.",
+          "type": "string"
+        }
+      }
+    },
+    "OtelThreadContext": {
+      "description": "A decoded OTel thread-level context from one thread",
+      "type": "object",
+      "required": [
+        "span_id",
+        "tid",
+        "trace_flags",
+        "trace_id"
+      ],
+      "properties": {
+        "attributes": {
+          "description": "Decoded key-value attributes from the record's packed `attrs_data`",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/OtelAttribute"
+          }
+        },
+        "span_id": {
+          "description": "Span-id as 16 lowercase hex characters.",
+          "type": "string"
+        },
+        "thread_name": {
+          "description": "Thread name",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tid": {
+          "description": "Thread ID that owned this context.",
+          "type": "integer",
+          "format": "int32"
+        },
+        "trace_flags": {
+          "description": "trace-flags byte.",
+          "type": "integer",
+          "format": "uint8",
+          "minimum": 0.0
+        },
+        "trace_id": {
+          "description": "trace-id as 32 lowercase hex characters.",
           "type": "string"
         }
       }

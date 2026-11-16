@@ -1,6 +1,8 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+mod builder;
+
 use crate::error::{ExporterError, ExporterErrorCode as ErrorCode};
 use crate::response::ExporterResponse;
 use crate::{catch_panic, gen_error};
@@ -106,6 +108,7 @@ pub struct TraceExporterConfig {
     mutable_metadata: Option<MutableMetadataHandle>,
 }
 
+#[deprecated(note = "Use ddog_trace_exporter_builder_new instead")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_trace_exporter_config_new(
     out_handle: NonNull<Box<TraceExporterConfig>>,
@@ -121,12 +124,14 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_new(
 }
 
 /// Frees TraceExporterConfig handle internal resources.
+#[deprecated(note = "Use ddog_trace_exporter_builder_free instead")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_trace_exporter_config_free(handle: Box<TraceExporterConfig>) {
     drop(handle);
 }
 
 /// Sets traces destination.
+#[deprecated(note = "Use ddog_trace_exporter_builder_set_url instead")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_trace_exporter_config_set_url(
     config: Option<&mut TraceExporterConfig>,
@@ -147,6 +152,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_url(
 }
 
 /// Sets tracer's version to be included in the headers request.
+#[deprecated(note = "Use ddog_trace_exporter_builder_set_tracer_version instead")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_trace_exporter_config_set_tracer_version(
     config: Option<&mut TraceExporterConfig>,
@@ -167,6 +173,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_tracer_version(
 }
 
 /// Sets tracer's language to be included in the headers request.
+#[deprecated(note = "Use ddog_trace_exporter_builder_set_language instead")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_trace_exporter_config_set_language(
     config: Option<&mut TraceExporterConfig>,
@@ -187,6 +194,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_language(
 }
 
 /// Sets tracer's language version to be included in the headers request.
+#[deprecated(note = "Use ddog_trace_exporter_builder_set_language_version instead")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_trace_exporter_config_set_lang_version(
     config: Option<&mut TraceExporterConfig>,
@@ -207,6 +215,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_lang_version(
 }
 
 /// Sets tracer's language interpreter to be included in the headers request.
+#[deprecated(note = "Use ddog_trace_exporter_builder_set_language_interpreter instead")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_trace_exporter_config_set_lang_interpreter(
     config: Option<&mut TraceExporterConfig>,
@@ -227,6 +236,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_lang_interpreter(
 }
 
 /// Sets hostname information to be included in the headers request.
+#[deprecated(note = "Use ddog_trace_exporter_builder_set_hostname instead")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_trace_exporter_config_set_hostname(
     config: Option<&mut TraceExporterConfig>,
@@ -247,6 +257,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_hostname(
 }
 
 /// Sets environment information to be included in the headers request.
+#[deprecated(note = "Use ddog_trace_exporter_builder_set_env instead")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_trace_exporter_config_set_env(
     config: Option<&mut TraceExporterConfig>,
@@ -266,6 +277,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_env(
     )
 }
 
+#[deprecated(note = "Use ddog_trace_exporter_builder_set_app_version instead")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_trace_exporter_config_set_version(
     config: Option<&mut TraceExporterConfig>,
@@ -286,6 +298,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_version(
 }
 
 /// Sets service name to be included in the headers request.
+#[deprecated(note = "Use ddog_trace_exporter_builder_set_service instead")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_trace_exporter_config_set_service(
     config: Option<&mut TraceExporterConfig>,
@@ -306,6 +319,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_service(
 }
 
 /// Enables health metrics emission.
+#[deprecated(note = "Use ddog_trace_exporter_builder_enable_health_metrics instead")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_trace_exporter_config_enable_health_metrics(
     config: Option<&mut TraceExporterConfig>,
@@ -323,6 +337,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_enable_health_metrics(
 }
 
 /// Enables telemetry metrics.
+#[deprecated(note = "Use ddog_trace_exporter_builder_enable_telemetry instead")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_trace_exporter_config_enable_telemetry(
     config: Option<&mut TraceExporterConfig>,
@@ -362,6 +377,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_enable_telemetry(
 }
 
 /// Set client-side stats computation status.
+#[deprecated(note = "Use ddog_trace_exporter_builder_enable_stats instead")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_trace_exporter_config_set_compute_stats(
     config: Option<&mut TraceExporterConfig>,
@@ -380,6 +396,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_compute_stats(
 
 /// Indicates that the tracer has already marked top-level spans with `_dd.top_level`.
 /// Sets the `Datadog-Client-Computed-Top-Level` header without enabling stats computation.
+#[deprecated(note = "Use ddog_trace_exporter_builder_set_client_computed_top_level instead")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_trace_exporter_config_set_client_computed_top_level(
     config: Option<&mut TraceExporterConfig>,
@@ -408,6 +425,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_client_computed_top_leve
 /// A common use case is in Application Security Monitoring (ASM) scenarios:
 /// when APM is disabled but ASM is enabled, setting this header to `true`
 /// ensures that no stats are computed at any level (exporter or agent).
+#[deprecated(note = "Use ddog_trace_exporter_builder_set_client_computed_stats instead")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_trace_exporter_config_set_client_computed_stats(
     config: Option<&mut TraceExporterConfig>,
@@ -428,6 +446,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_client_computed_stats(
 ///
 /// When set, this supersedes `ddog_trace_exporter_config_set_process_tags` and
 /// `ddog_trace_exporter_config_set_runtime_id`.
+#[deprecated(note = "Use ddog_trace_exporter_builder_set_mutable_metadata instead")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_trace_exporter_config_set_mutable_metadata(
     config: Option<&mut TraceExporterConfig>,
@@ -447,6 +466,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_mutable_metadata(
 /// Sets the process tags to be included in the stats payload.
 ///
 /// This should not be used when `ddog_trace_exporter_config_set_mutable_metadata` is used.
+#[deprecated(note = "Use ddog_trace_exporter_builder_set_process_tags instead")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_trace_exporter_config_set_process_tags(
     config: Option<&mut TraceExporterConfig>,
@@ -469,6 +489,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_process_tags(
 /// Sets the runtime id used in payloads.
 ///
 /// This should not be used when `ddog_trace_exporter_config_set_mutable_metadata` is used.
+#[deprecated(note = "Use ddog_trace_exporter_builder_set_runtime_id instead")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_trace_exporter_config_set_runtime_id(
     config: Option<&mut TraceExporterConfig>,
@@ -489,6 +510,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_runtime_id(
 }
 
 /// Sets the `X-Datadog-Test-Session-Token` header. Only used for testing with the test agent.
+#[deprecated(note = "Use ddog_trace_exporter_builder_set_test_session_token instead")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_trace_exporter_config_set_test_session_token(
     config: Option<&mut TraceExporterConfig>,
@@ -509,6 +531,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_test_session_token(
 }
 
 /// Sets the timeout in ms for all agent's connections.
+#[deprecated(note = "Use ddog_trace_exporter_builder_set_connection_timeout instead")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_trace_exporter_config_set_connection_timeout(
     config: Option<&mut TraceExporterConfig>,
@@ -534,6 +557,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_connection_timeout(
 /// The config holds a clone of the `Arc` (increments the strong count), so the
 /// original handle remains valid and must still be freed with
 /// `ddog_shared_runtime_free`.
+#[deprecated(note = "Use ddog_trace_exporter_builder_set_shared_runtime instead")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_trace_exporter_config_set_shared_runtime(
     config: Option<&mut TraceExporterConfig>,
@@ -563,6 +587,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_shared_runtime(
 /// `ddog_trace_exporter_config_set_otlp_protocol` instead of the Datadog agent. The host language
 /// is responsible for resolving the endpoint from its configuration (e.g.
 /// `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`) before calling this function.
+#[deprecated(note = "Use ddog_trace_exporter_builder_set_otlp_endpoint instead")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_trace_exporter_config_set_otlp_endpoint(
     config: Option<&mut TraceExporterConfig>,
@@ -593,6 +618,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_otlp_endpoint(
 ///
 /// Returns `None` on success, `ErrorCode::InvalidArgument` for a null config or an unaccepted
 /// value, and `ErrorCode::InvalidInput` for a non-UTF-8 string.
+#[deprecated(note = "Use ddog_trace_exporter_builder_set_otlp_protocol instead")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_trace_exporter_config_set_otlp_protocol(
     config: Option<&mut TraceExporterConfig>,
@@ -623,6 +649,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_otlp_protocol(
 /// Has no effect unless an OTLP endpoint is also configured via
 /// `ddog_trace_exporter_config_set_otlp_endpoint`; without one, traces are sent to the
 /// Datadog agent and this scope metadata is ignored.
+#[deprecated(note = "Use ddog_trace_exporter_builder_set_otlp_instrumentation_scope instead")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_trace_exporter_config_set_otlp_instrumentation_scope(
     config: Option<&mut TraceExporterConfig>,
@@ -657,6 +684,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_otlp_instrumentation_sco
 ///
 /// Has no effect unless stats computation is enabled via
 /// `ddog_trace_exporter_config_set_compute_stats`.
+#[deprecated(note = "Use ddog_trace_exporter_builder_set_stats_cardinality_limit instead")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_trace_exporter_config_set_stats_cardinality_limit(
     config: Option<&mut TraceExporterConfig>,
@@ -674,6 +702,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_stats_cardinality_limit(
 }
 
 /// Returns a `CardinalityLimitConfig` with default values
+#[deprecated(note = "Use ddog_trace_exporter_builder_default_stats_cardinality_limit instead")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_trace_exporter_config_default_stats_cardinality_limit()
 -> CardinalityLimitConfig {
@@ -687,6 +716,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_default_stats_cardinality_li
 /// exclusive with both an agent URL ([`ddog_trace_exporter_config_set_url`]) and an OTLP endpoint
 /// ([`ddog_trace_exporter_config_set_otlp_endpoint`]); combining either with this setter causes
 /// [`ddog_trace_exporter_new`] to return an error.
+#[deprecated(note = "Use ddog_trace_exporter_builder_set_agentless_endpoint instead")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_trace_exporter_config_set_agentless_endpoint(
     config: Option<&mut TraceExporterConfig>,
@@ -717,6 +747,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_agentless_endpoint(
 ///
 /// Defaults to 15 seconds when unset. Calling this without also setting an agentless endpoint
 /// causes [`ddog_trace_exporter_new`] to return an error.
+#[deprecated(note = "Use ddog_trace_exporter_builder_set_agentless_timeout instead")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_trace_exporter_config_set_agentless_timeout(
     config: Option<&mut TraceExporterConfig>,
@@ -748,6 +779,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_agentless_timeout(
 ///     "{\"http\":{\"remove_query_string\":true},"
 ///     "\"credit_cards\":{\"enabled\":true}}"));
 /// ```
+#[deprecated(note = "Use ddog_trace_exporter_builder_set_span_obfuscation_config instead")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_trace_exporter_config_set_obfuscation_config(
     config: Option<&mut TraceExporterConfig>,
@@ -798,6 +830,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_obfuscation_config(
 ///
 /// Writes are synchronous/blocking on stdout, so this mode targets single-threaded / current-thread
 /// serverless runtimes (e.g. AWS Lambda) where a blocking write won't stall a shared async reactor.
+#[deprecated(note = "Use ddog_trace_exporter_builder_set_output_to_log instead")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_trace_exporter_config_set_output_to_log(
     config: Option<&mut TraceExporterConfig>,
@@ -826,6 +859,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_output_to_log(
 ///
 /// * `out_handle` - The handle to write the TraceExporter instance in.
 /// * `config` - The configuration used to set up the TraceExporter handle.
+#[deprecated(note = "Use ddog_trace_exporter_builder_build instead")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_trace_exporter_new(
     out_handle: NonNull<Box<TraceExporter>>,
@@ -1047,6 +1081,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_send(
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
     use crate::error::ddog_trace_exporter_error_free;

@@ -360,7 +360,7 @@ fn depth_counts_edges_defaults_to_ten_and_preserves_explicit_zero() {
 }
 
 #[test]
-fn invalid_depth_limits_only_fail_when_a_dependency_executes() {
+fn invalid_depth_limits_default_to_ten() {
     for limit in [
         json!(-1),
         json!(256),
@@ -372,37 +372,43 @@ fn invalid_depth_limits_only_fail_when_a_dependency_executes() {
         json!([]),
         json!({}),
     ] {
-        let mut w = wire(json!({"root": flag(vec![]),
-            "dependent": flag(vec![dependency("parent")]), "parent": flag(vec![])}));
-        w["evaluatorParams"] = json!({"maxDependencyDepth": limit});
-        let bytes = serde_json::to_vec(&w).unwrap();
-        let parsed = UniversalFlagConfig::from_json(bytes.clone()).unwrap();
-        assert_eq!(parsed.to_json(), bytes);
-        let config = Configuration::from_server_response(parsed);
-        let context = EvaluationContext::new(Some("subject".into()), Default::default());
-        let now = "2026-10-28T00:00:00Z".parse::<DateTime<Utc>>().unwrap();
-        assert_eq!(
-            config
-                .eval_flag("root", &context, ExpectedFlagType::Boolean, now)
-                .unwrap()
-                .variation_key
-                .as_str(),
-            "on",
-            "limit={limit}"
-        );
-        let result = config.eval_flag_with_trace(
-            "dependent",
-            &context,
-            ExpectedFlagType::Boolean,
-            now,
-            EvaluationOptions::default(),
-        );
-        assert_eq!(
-            result.result.unwrap_err(),
-            EvaluationError::ConfigurationParseError,
-            "limit={limit}"
-        );
-        assert!(result.evaluations.is_empty());
+        for edges in [0, 1, 10, 11] {
+            let mut w = chain(edges);
+            w["evaluatorParams"] = json!({"maxDependencyDepth": limit});
+            let bytes = serde_json::to_vec(&w).unwrap();
+            let parsed = UniversalFlagConfig::from_json(bytes.clone()).unwrap();
+            assert_eq!(parsed.to_json(), bytes);
+            let config = Configuration::from_server_response(parsed);
+            let context = EvaluationContext::new(Some("subject".into()), Default::default());
+            let now = "2026-10-28T00:00:00Z".parse::<DateTime<Utc>>().unwrap();
+            let result = config.eval_flag_with_trace(
+                "root",
+                &context,
+                ExpectedFlagType::Boolean,
+                now,
+                EvaluationOptions::default(),
+            );
+            assert_eq!(
+                result.result.is_ok(),
+                edges <= 10,
+                "limit={limit} edges={edges}"
+            );
+            if edges <= 10 {
+                assert_eq!(result.result.unwrap().variation_key.as_str(), "on");
+                assert_eq!(result.evaluations.len(), edges);
+            } else {
+                assert_eq!(
+                    cause(result.result.as_ref().unwrap_err()),
+                    &EvaluationError::DependencyDepthExceeded
+                );
+                assert!(
+                    result
+                        .evaluations
+                        .iter()
+                        .all(|record| !record.exposure_eligible)
+                );
+            }
+        }
     }
 }
 
@@ -756,6 +762,9 @@ fn prerequisite_first_reached_in_rejected_allocation_is_exposed_once_by_later_al
 // prerequisite error recording and destruction of the returned trace.
 #[test]
 fn deep_dependencies_use_a_bounded_thread_stack() {
+    // Keep every scenario under Miri without interpreting the full native stress workload.
+    // Native runs retain coverage at the evaluator's maximum supported depth.
+    const DEPENDENCY_DEPTH_LIMIT: usize = if cfg!(miri) { 8 } else { 255 };
     for failure in [
         None,
         Some("depth"),
@@ -765,17 +774,20 @@ fn deep_dependencies_use_a_bounded_thread_stack() {
         Some("depth-before-cycle"),
     ] {
         let edges = match failure {
-            Some("depth") => 256,
-            Some("cycle") => 254,
-            _ => 255,
+            Some("depth") => DEPENDENCY_DEPTH_LIMIT + 1,
+            Some("cycle") => DEPENDENCY_DEPTH_LIMIT - 1,
+            _ => DEPENDENCY_DEPTH_LIMIT,
         };
         let mut w = chain(edges);
-        w["evaluatorParams"] = json!({"maxDependencyDepth": 255});
+        w["evaluatorParams"] = json!({"maxDependencyDepth": DEPENDENCY_DEPTH_LIMIT});
         match failure {
             Some("missing") => {
-                w["flags"].as_object_mut().unwrap().remove("f255");
+                w["flags"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove(&format!("f{edges}"));
             }
-            Some("disabled") => w["flags"]["f255"]["enabled"] = json!(false),
+            Some("disabled") => w["flags"][format!("f{edges}")]["enabled"] = json!(false),
             Some("cycle" | "depth-before-cycle") => {
                 w["flags"][format!("f{edges}")] = flag(vec![dependency("root")]);
             }
@@ -799,7 +811,7 @@ fn deep_dependencies_use_a_bounded_thread_stack() {
                 );
                 if failure.is_none() {
                     assert_eq!(trace.result.as_ref().unwrap().variation_key.as_str(), "on");
-                    assert_eq!(trace.evaluations.len(), 255);
+                    assert_eq!(trace.evaluations.len(), edges);
                     assert!(
                         trace
                             .evaluations
@@ -811,7 +823,7 @@ fn deep_dependencies_use_a_bounded_thread_stack() {
                         Some("missing") => EvaluationError::FlagUnrecognizedOrDisabled,
                         Some("disabled") => EvaluationError::FlagDisabled,
                         Some("cycle") => EvaluationError::DependencyCycle,
-                        // At edge 256 the depth check takes precedence over cycle detection.
+                        // Beyond the configured limit, depth takes precedence over cycle detection.
                         _ => EvaluationError::DependencyDepthExceeded,
                     };
                     let original = trace.result.as_ref().unwrap_err();

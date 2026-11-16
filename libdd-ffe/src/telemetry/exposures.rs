@@ -4,8 +4,10 @@
 //! Reusable FFE exposure payload and deduplication primitives.
 
 use super::FfeTelemetryContext;
+use super::features::features_map;
 use lru::LruCache;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex};
 
@@ -35,6 +37,11 @@ pub struct FfeExposure {
     /// organization, so `Some(0)` is a real value and must not be treated as
     /// absent.
     pub serial_id: Option<i32>,
+    /// Flat JSON object of the split features routed to exposures, canonical
+    /// when it comes from the FFI. Empty, invalid or non-object JSON means no
+    /// features; it is validated again when the payload is built. Not part of
+    /// deduplication.
+    pub features_json: String,
 }
 
 // Whole IPC requests are logged on receive and when an oversized send is rejected.
@@ -198,6 +205,8 @@ struct ExposureEvent {
     subject: Subject,
     #[serde(skip_serializing_if = "Option::is_none")]
     serial_id: Option<i32>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    features: BTreeMap<String, serde_json::Value>,
 }
 
 impl From<FfeExposure> for ExposureEvent {
@@ -216,6 +225,7 @@ impl From<FfeExposure> for ExposureEvent {
                 attributes: subject_attributes(&value.subject_attributes_json),
             },
             serial_id: value.serial_id,
+            features: features_map(&value.features_json),
         }
     }
 }
@@ -275,6 +285,7 @@ mod tests {
             allocation_key: allocation_key.to_owned(),
             variant: variant.to_owned(),
             serial_id: None,
+            features_json: String::new(),
         }
     }
 
@@ -557,6 +568,82 @@ mod tests {
 
         assert_eq!(first.unwrap()["exposures"][0]["serial_id"], 0);
         assert_eq!(duplicate, None);
+    }
+
+    fn exposure_with_features(features_json: &str) -> FfeExposure {
+        FfeExposure {
+            features_json: features_json.to_owned(),
+            ..exposure("user", "alloc", "variant")
+        }
+    }
+
+    #[test]
+    fn serializes_scalar_features_as_a_flat_object() {
+        let payload = encode_one(
+            &ExposureDeduplicator::new(4),
+            exposure_with_features(
+                r#"{"holdout.key":"h1","weight":2,"included":false,"nested":{"a":1}}"#,
+            ),
+        )
+        .unwrap();
+
+        assert_eq!(
+            payload["exposures"][0]["features"],
+            serde_json::json!({"holdout.key":"h1","weight":2.0,"included":false})
+        );
+    }
+
+    #[test]
+    fn omits_features_when_none_survive_and_keeps_the_exposure() {
+        for features_json in ["", "not json", "[1]", "{}", r#"{"a":null}"#] {
+            let payload = encode_one(
+                &ExposureDeduplicator::new(4),
+                exposure_with_features(features_json),
+            )
+            .unwrap();
+
+            assert_eq!(payload["exposures"][0].get("features"), None);
+            assert_eq!(payload["exposures"][0]["flag"]["key"], "flag");
+        }
+    }
+
+    #[test]
+    fn exposure_features_are_truncated_at_the_byte_cap() {
+        use crate::telemetry::features::{MAX_FEATURES_BYTES, features_of_encoded_len};
+        let over_cap = features_of_encoded_len(MAX_FEATURES_BYTES + 1);
+        let payload = encode_one(
+            &ExposureDeduplicator::new(4),
+            exposure_with_features(&over_cap),
+        )
+        .unwrap();
+        let features = &payload["exposures"][0]["features"];
+        let input: serde_json::Map<String, Value> = serde_json::from_str(&over_cap).unwrap();
+        assert_eq!(features.as_object().unwrap().len(), input.len() - 1);
+        assert!(serde_json::to_string(features).unwrap().len() <= MAX_FEATURES_BYTES);
+    }
+
+    #[test]
+    fn features_round_trip_via_bincode() {
+        let batch = FfeExposureBatch {
+            context: context(),
+            exposures: vec![
+                exposure_with_features(r#"{"a":1}"#),
+                exposure("user", "alloc", "variant"),
+            ],
+        };
+        let bytes = bincode::serialize(&batch).unwrap();
+        let decoded: FfeExposureBatch = bincode::deserialize(&bytes).unwrap();
+        assert_eq!(decoded, batch);
+    }
+
+    #[test]
+    fn features_do_not_affect_deduplication() {
+        let deduplicator = ExposureDeduplicator::new(4);
+        let first = encode_one(&deduplicator, exposure_with_features(r#"{"a":"1"}"#));
+        let changed = encode_one(&deduplicator, exposure_with_features(r#"{"a":"2"}"#));
+
+        assert_eq!(first.unwrap()["exposures"][0]["features"]["a"], "1");
+        assert_eq!(changed, None);
     }
 
     #[test]

@@ -38,8 +38,18 @@ pub trait Worker: std::fmt::Debug + MaybeSend + MaybeSync {
     /// Reset the worker state. Called in the child after a fork to cleanup parent state.
     fn reset(&mut self) {}
 
+    /// Force-flush buffered data.
+    ///
+    /// Called when a flush is requested through a
+    /// [`WorkerHandle::flush`](crate::WorkerHandle::flush) and, by default, by
+    /// [`shutdown`](Self::shutdown). Defaults to a no-op.
+    async fn flush(&mut self) {}
+
     /// Hook called when the app is shutting down. Can be used to flush remaining data.
-    async fn shutdown(&mut self) {}
+    /// Defaults to calling [`flush`](Self::flush).
+    async fn shutdown(&mut self) {
+        self.flush().await
+    }
 }
 
 // Blanket implementation for boxed trait objects
@@ -60,6 +70,10 @@ impl Worker for Box<dyn Worker> {
 
     fn reset(&mut self) {
         (**self).reset()
+    }
+
+    async fn flush(&mut self) {
+        (**self).flush().await
     }
 
     async fn shutdown(&mut self) {

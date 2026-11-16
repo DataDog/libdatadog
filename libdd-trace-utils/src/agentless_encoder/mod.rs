@@ -482,10 +482,10 @@ fn serialize_scalar<S: serde::Serializer, T: TraceData>(
 
 /// Reserved v0.4 `meta`/`metrics` key names written from dedicated typed fields (`env`, chunk
 /// `origin`, ...) rather than from the v1 attribute map — the dedicated field always wins and
-/// a colliding attribute is dropped. See
-/// [`crate::msgpack_encoder::v04::span_v1::PROMOTED_ATTR_KEYS`] for the sibling list on the
-/// msgpack side (this one omits `_dd.p.tid`, which is handled below with "seen" tracking
-/// instead, matching this module's own `_dd.p.tid`/`_dd.span_links`/`events` convention).
+/// a colliding attribute is dropped. The msgpack-side v0.4 downgrade
+/// ([`crate::msgpack_encoder::v04::to_vec_from_v1`]) drops it only when the field is set (this
+/// list omits `_dd.p.tid`, which is handled below with "seen" tracking instead, matching this
+/// module's own `_dd.p.tid`/`_dd.span_links`/`events` convention).
 const PROMOTED_ATTR_KEYS_V1: &[&str] = &[
     "env",
     "version",
@@ -500,7 +500,7 @@ const PROMOTED_ATTR_KEYS_V1: &[&str] = &[
 /// callers can skip emitting the default value.
 fn span_kind_to_meta_v1(kind: v1::SpanKind) -> Option<&'static str> {
     match kind {
-        v1::SpanKind::Internal => None,
+        v1::SpanKind::Unspecified | v1::SpanKind::Internal => None,
         v1::SpanKind::Server => Some("server"),
         v1::SpanKind::Client => Some("client"),
         v1::SpanKind::Producer => Some("producer"),
@@ -661,8 +661,8 @@ fn collect_attrs_v1<'a, T: TraceData>(
 /// V1-native analog of [`encode_payload`]. Downgrades v1's unified attribute model back to the
 /// same `meta`/`metrics`/`meta_struct`-shaped wire fields, so the emitted JSON body is
 /// equivalent to what a v0.4 tracer would produce for the same trace. Chunk-level
-/// context (`trace_id`, `origin`, `priority`, `sampling_mechanism`, `dropped_trace`, chunk
-/// attributes) is propagated into every span, matching the [`v1::TraceChunk`]-level granularity v1
+/// context (`trace_id`, `origin`, `priority`, `sampling_mechanism`, chunk attributes) is
+/// propagated into every span, matching the [`v1::TraceChunk`]-level granularity v1
 /// operates at.
 ///
 /// `client_side_stats` has the same meaning as in [`encode_payload`]: when `true`, the encoder
@@ -794,14 +794,8 @@ fn encode_span_v1<'a, T: TraceData, S: Serializer>(
     let meta_leaves = &collected.meta;
     let metrics_leaves = &collected.metrics;
     let bytes_attrs = &collected.meta_struct;
-    let priority = if chunk.dropped_trace {
-        // v0.4 has no wire-level equivalent of `dropped_trace`; force `USER_REJECT` (-1)
-        // unless the chunk already carries a negative (reject-like) priority — same
-        // convention as the msgpack downgrade encoder.
-        Some(chunk.priority.filter(|&p| p < 0).unwrap_or(-1))
-    } else {
-        chunk.priority
-    };
+    // `dropped_trace` is agent-owned, see `TraceChunk::dropped_trace`.
+    let priority = chunk.priority;
 
     map.serialize_entry(
         "meta",

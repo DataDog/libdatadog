@@ -12,6 +12,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
 use libdd_common::Endpoint;
+use libdd_networking::endpoint::EndpointExt;
 use libdd_shared_runtime::Worker;
 use sha2::{Digest, Sha256};
 use std::marker::PhantomData;

@@ -1,0 +1,81 @@
+name: Dispatch Release Notification to Downstreams
+
+# The octo-sts mints live here because workflow_run resolves this file from
+# the default branch. A mint in the tag-push shim hands the token to whoever
+# can push release tags. Each downstream trust policy pins this file to
+# refs/heads/main. The triggering run proves only that a push happened.
+# These guards and this code decide the rest.
+#
+# Adding a downstream: one matrix entry here plus the downstream's trust
+# policy.
+
+on: # yamllint disable-line rule:truthy
+  workflow_run: # zizmor: ignore[dangerous-triggers]
+    workflows:
+      # The shim is unnamed, so its default name is its file path. Renaming
+      # the shim file breaks this hop.
+      - ".github/workflows/notify-downstreams.yml"
+    types:
+      - completed
+
+permissions: {}
+
+env:
+  VERSION: ${{ github.event.workflow_run.head_branch }}
+  TAG_SHA: ${{ github.event.workflow_run.head_sha }}
+
+jobs:
+  validate:
+    name: "Validate release tag"
+    if: >-
+      ${{ github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_repository.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    outputs:
+      skip: ${{ steps.check.outputs.skip }}
+    steps:
+      # Version and tag commit come from the event payload: head_branch is
+      # the tag name, head_sha is the commit it points at. Nothing is fetched
+      # from the repository. The event is the release record.
+      - name: Validate version
+        id: check
+        run: |
+          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::notice::${VERSION} is not a plain release tag. Nothing to notify."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  dispatch:
+    name: "Notify ${{ matrix.consumer.repository }}"
+    needs: validate
+    if: needs.validate.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        consumer:
+          # repository: octo-sts scope and dispatch target.
+          # policy: trust policy name in that repository.
+          - repository: DataDog/libdatadog-rb
+            policy: libdatadog.notify-consumers
+    steps:
+      - name: Get GitHub Token via dd-octo-sts
+        id: generate-token
+        uses: DataDog/dd-octo-sts-action@c85802a58e202b7e764b5441e4378c76043c8108 # v1.0.5
+        with:
+          scope: ${{ matrix.consumer.repository }}
+          policy: ${{ matrix.consumer.policy }}
+
+      - name: Dispatch to ${{ matrix.consumer.repository }}
+        env:
+          GH_TOKEN: ${{ steps.generate-token.outputs.token }}
+        run: |
+          gh api "repos/${{ matrix.consumer.repository }}/dispatches" \
+            -f event_type=libdatadog-released \
+            -f "client_payload[version]=${VERSION#v}" \
+            -f "client_payload[tag_sha]=${TAG_SHA}" \
+            -f "client_payload[triggered_by]=${{ github.repository }}" \
+            -f "client_payload[source_run_url]=${{ github.event.workflow_run.html_url }}"

@@ -1,0 +1,34 @@
+{
+  "description": "An SDK's Chat Completions shape that keeps Anthropic's cache counts and lifetimes.",
+  "format": "auto",
+  "operation_name": "chat",
+  "payload": {
+    "usage": {
+      "prompt_tokens": 1700,
+      "completion_tokens": 80,
+      "cache_read_input_tokens": 1000,
+      "cache_creation_input_tokens": 600,
+      "prompt_tokens_details": {
+        "cached_tokens": 1000,
+        "cache_creation_token_details": {
+          "ephemeral_5m_input_tokens": 600,
+          "ephemeral_1h_input_tokens": 0
+        }
+      }
+    }
+  },
+  "expected": {
+    "usage": {
+      "input_tokens": 1700,
+      "input_basis": "includes_cache",
+      "output_tokens": 80,
+      "output_basis": "includes_reasoning",
+      "cache_read_input_tokens": 1000,
+      "cache_write_input_tokens": 600,
+      "cache_write_5m_input_tokens": 600,
+      "cache_write_1h_input_tokens": 0
+    },
+    "response_model": null,
+    "service_tier": null
+  }
+}
