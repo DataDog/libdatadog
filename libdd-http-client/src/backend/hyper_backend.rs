@@ -12,14 +12,24 @@ use libdd_networking::http_common::{self, Body};
 pub(crate) struct HyperBackend {
     client: http_common::GenericHttpClient<Connector>,
     transport: TransportConfig,
+    base_url_is_https: bool,
 }
 
 impl std::fmt::Debug for HyperBackend {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("HyperBackend")
             .field("transport", &self.transport)
+            .field("base_url_is_https", &self.base_url_is_https)
             .finish_non_exhaustive()
     }
+}
+
+/// Returns whether `url` parses with an `https` scheme.
+fn is_https_url(url: &str) -> bool {
+    url.parse::<hyper::Uri>().is_ok_and(|uri| {
+        uri.scheme_str()
+            .is_some_and(|scheme| scheme.eq_ignore_ascii_case("https"))
+    })
 }
 
 impl HyperBackend {
@@ -171,6 +181,7 @@ impl super::Backend for HyperBackend {
         Ok(Self {
             client: builder.build(Connector::default()),
             transport,
+            base_url_is_https: is_https_url(client_config.base_url()),
         })
     }
 
@@ -179,6 +190,9 @@ impl super::Backend for HyperBackend {
         mut request: HttpRequest,
         config: &HttpClientConfig,
     ) -> Result<HttpResponse, HttpClientError> {
+        if is_https_url(&request.url) != self.base_url_is_https {
+            return Err(super::scheme_mismatch(&request.url));
+        }
         let uri = self.rewrite_url(&request.url)?;
         let method = convert_method(request.method);
         let (body, multipart_content_type) = build_body(&mut request)?;

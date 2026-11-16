@@ -123,7 +123,7 @@ Setting both multipart parts and a body on the same request returns an error.
 
 | Feature | Default | Description |
 |---------|---------|-------------|
-| `https` | yes | HTTPS via rustls with ring. The hyper backend installs the provider itself; with the reqwest backend, install one before building a client |
+| `https` | yes | HTTPS via rustls with ring, which both backends install themselves if the process has no provider |
 | `hyper-backend` | yes | hyper-based backend via libdd-common, resolving names with the system resolver |
 | `reqwest-backend` | no | reqwest-based backend, resolving names with the in-process hickory-dns resolver |
 | `hyper-proxy` | no | Honor `HTTPS_PROXY`/`NO_PROXY` in the hyper backend |
