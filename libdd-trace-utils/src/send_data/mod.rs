@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 pub mod send_data_result;
+mod v1_proto;
 
 use crate::msgpack_encoder;
 use crate::send_with_retry::compression::{add_headers, compress};
@@ -19,7 +20,7 @@ use libdd_common::Endpoint;
 use libdd_common::header::{
     APPLICATION_MSGPACK, APPLICATION_PROTOBUF, DATADOG_SEND_REAL_HTTP_STATUS, DATADOG_TRACE_COUNT,
 };
-use libdd_trace_protobuf::pb::{AgentPayload, TracerPayload};
+use libdd_trace_protobuf::pb::{AgentPayload, TracerPayload, idx};
 use send_data_result::SendDataResult;
 use std::collections::HashMap;
 
@@ -270,36 +271,47 @@ impl SendData {
         #[allow(clippy::unwrap_used)]
         let chunks = u64::try_from(self.tracer_payloads.size()).unwrap();
 
-        match &self.tracer_payloads {
+        let agent_payload = match &self.tracer_payloads {
             TracerPayloadCollection::V07(payloads) => {
-                let agent_payload = construct_agent_payload(payloads.to_vec());
-                let serialized_trace_payload = match serialize_proto_payload(&agent_payload)
-                    .context("Failed to serialize trace agent payload, dropping traces")
-                {
-                    Ok(p) => p,
-                    Err(e) => return result.error(e),
-                };
-                let mut request_headers = self.headers.clone();
-
-                request_headers.insert(CONTENT_TYPE, APPLICATION_PROTOBUF);
-
-                let (response, bytes_sent, chunks) = self
-                    .send_payload(
-                        capabilities,
-                        chunks,
-                        serialized_trace_payload,
-                        request_headers,
-                        endpoint.as_ref(),
-                        self.compression,
-                    )
-                    .await;
-
-                result.update(response, bytes_sent, chunks);
-
-                result
+                construct_agent_payload(payloads.to_vec(), Vec::new())
             }
-            _ => result,
-        }
+            TracerPayloadCollection::V1(payload) => {
+                match v1_proto::to_idx_tracer_payload(payload) {
+                    Ok(idx_payload) => construct_agent_payload(Vec::new(), vec![idx_payload]),
+                    Err(e) => {
+                        return result.error(
+                            anyhow!(e)
+                                .context("Failed to convert V1 trace payload, dropping traces"),
+                        );
+                    }
+                }
+            }
+            // TODO(APMSP-4270): v0.4/v0.5 payloads are not converted to protobuf and are silently
+            // dropped.
+            _ => return result,
+        };
+
+        let serialized_trace_payload = match serialize_proto_payload(&agent_payload)
+            .context("Failed to serialize trace agent payload, dropping traces")
+        {
+            Ok(p) => p,
+            Err(e) => return result.error(e),
+        };
+        let mut request_headers = self.headers.clone();
+        request_headers.insert(CONTENT_TYPE, APPLICATION_PROTOBUF);
+
+        let (response, bytes_sent, chunks) = self
+            .send_payload(
+                capabilities,
+                chunks,
+                serialized_trace_payload,
+                request_headers,
+                endpoint.as_ref(),
+                self.compression,
+            )
+            .await;
+        result.update(response, bytes_sent, chunks);
+        result
     }
 
     async fn send_with_msgpack<C: HttpClientCapability + SleepCapability>(
@@ -411,7 +423,10 @@ impl SendData {
     }
 }
 
-fn construct_agent_payload(tracer_payloads: Vec<TracerPayload>) -> AgentPayload {
+fn construct_agent_payload(
+    tracer_payloads: Vec<TracerPayload>,
+    idx_tracer_payloads: Vec<idx::TracerPayload>,
+) -> AgentPayload {
     AgentPayload {
         host_name: "".to_string(),
         env: "".to_string(),
@@ -421,7 +436,7 @@ fn construct_agent_payload(tracer_payloads: Vec<TracerPayload>) -> AgentPayload 
         tags: HashMap::new(),
         tracer_payloads,
         rare_sampler_enabled: false,
-        idx_tracer_payloads: Vec::new(),
+        idx_tracer_payloads,
     }
 }
 
@@ -498,7 +513,7 @@ mod tests {
     fn compute_payload_len(collection: &TracerPayloadCollection) -> usize {
         match collection {
             TracerPayloadCollection::V07(payloads) => {
-                let agent_payload = construct_agent_payload(payloads.to_vec());
+                let agent_payload = construct_agent_payload(payloads.to_vec(), Vec::new());
                 let serialized_trace_payload = serialize_proto_payload(&agent_payload).unwrap();
                 serialized_trace_payload.len()
             }
@@ -621,6 +636,91 @@ mod tests {
         assert_eq!(res.chunks_sent, 1);
         assert_eq!(res.bytes_sent, data_payload_len as u64);
         assert_eq!(*res.responses_count_per_code.get(&202).unwrap(), 1_u64);
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn request_protobuf_v1() {
+        use crate::span::v1::{Span as V1Span, TraceChunk as V1Chunk, TracerPayload as V1Payload};
+        use libdd_tinybytes::BytesString;
+        use prost::Message;
+
+        let server = MockServer::start_async().await;
+        // Only accept a protobuf AgentPayload carrying the span in `idxTracerPayloads`.
+        let mock = server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .header("Content-type", "application/x-protobuf")
+                    .header("DD-API-KEY", "TEST-KEY")
+                    .path("/")
+                    .is_true(|req| {
+                        let Ok(agent_payload) = AgentPayload::decode(req.body().as_ref()) else {
+                            return false;
+                        };
+                        let [idx_payload] = agent_payload.idx_tracer_payloads.as_slice() else {
+                            return false;
+                        };
+                        let resolve = |r: u32| {
+                            usize::try_from(r)
+                                .ok()
+                                .and_then(|i| idx_payload.strings.get(i))
+                                .map(String::as_str)
+                        };
+                        let Some(span) = idx_payload.chunks.first().and_then(|c| c.spans.first())
+                        else {
+                            return false;
+                        };
+                        agent_payload.tracer_payloads.is_empty()
+                            && idx_payload.strings.first().is_some_and(String::is_empty)
+                            && resolve(idx_payload.language_name_ref) == Some("test-lang")
+                            && idx_payload.chunks[0].trace_id == [1; 16]
+                            // The chunk leaves priority unset; it must go out as PriorityNone.
+                            && idx_payload.chunks[0].priority == -128
+                            && span.span_id == 222
+                            && resolve(span.service_ref) == Some("test-service")
+                    });
+                then.status(202).body("");
+            })
+            .await;
+
+        let payload = V1Payload::<crate::span::BytesData> {
+            language_name: BytesString::from_static("test-lang"),
+            chunks: vec![V1Chunk {
+                trace_id: [1; 16],
+                spans: vec![V1Span {
+                    service: BytesString::from_static("test-service"),
+                    name: BytesString::from_static("test-name"),
+                    span_id: 222,
+                    start: 1,
+                    duration: 5,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let data = SendData::new(
+            100,
+            TracerPayloadCollection::V1(Box::new(payload)),
+            TracerHeaderTags::default(),
+            &Endpoint {
+                api_key: Some(std::borrow::Cow::Borrowed("TEST-KEY")),
+                url: server.url("/").parse::<hyper::Uri>().unwrap(),
+                timeout_ms: ONE_SECOND,
+                ..Endpoint::default()
+            },
+        );
+
+        let res = data.send(&NativeCapabilities::new_client()).await;
+
+        mock.assert_async().await;
+        assert_eq!(
+            res.last_result.unwrap().status(),
+            http::StatusCode::ACCEPTED
+        );
+        assert_eq!(res.requests_count, 1);
+        assert_eq!(res.chunks_sent, 1);
+        assert!(res.bytes_sent > 0);
     }
 
     #[cfg_attr(miri, ignore)]

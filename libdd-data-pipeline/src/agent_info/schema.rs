@@ -32,6 +32,8 @@ pub struct AgentInfoStruct {
     pub feature_flags: Vec<String>,
     pub client_drop_p0s: Option<bool>,
     pub span_meta_structs: Option<bool>,
+    /// Whether the agent accepts the native v0.4 `span_events` field
+    pub span_events: Option<bool>,
     pub long_running_spans: Option<bool>,
     pub evp_proxy_allowed_headers: Option<Vec<String>>,
     /// Configuration of the agent

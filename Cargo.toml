@@ -114,7 +114,7 @@ ignored = [
 [workspace.package]
 rust-version = "1.91.1"
 edition = "2024"
-version = "48.0.0"
+version = "49.0.0"
 license = "Apache-2.0"
 authors = ["Datadog Inc. <info@datadoghq.com>"]
 
