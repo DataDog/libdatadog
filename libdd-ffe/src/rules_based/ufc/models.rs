@@ -18,6 +18,8 @@ use crate::rules_based::{EvaluationError, FlagType, Str, Timestamp};
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct UniversalFlagConfigWire {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evaluator_params: Option<serde_json::Value>,
     /// When configuration was last updated.
     pub created_at: Timestamp,
     /// Environment this configuration belongs to.
@@ -190,6 +192,11 @@ pub(crate) struct Condition {
 
 #[derive(Debug, Clone)]
 pub(crate) enum ConditionCheck {
+    FlagEvaluation {
+        key: Str,
+        expected_membership: bool,
+        values: Box<[Box<str>]>,
+    },
     Comparison {
         operator: ComparisonOperator,
         comparand: f64,
@@ -260,14 +267,57 @@ impl From<SemverComparisonOperator> for ConditionOperator {
 #[serde(rename_all = "camelCase")]
 #[allow(missing_docs)]
 pub(crate) struct ConditionWire {
-    pub attribute: Box<str>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub attribute: Option<Box<str>>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub flag_evaluation: Option<FlagEvaluationWire>,
     pub operator: ConditionOperator,
     pub value: ConditionValue,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub(crate) struct FlagEvaluationWire {
+    pub key: Str,
+}
+
+// An absent selector is allowed, but an explicit null must not be treated as absent.
+fn deserialize_present<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    T::deserialize(deserializer).map(Some)
+}
+
 impl From<Condition> for ConditionWire {
     fn from(condition: Condition) -> Self {
+        if let ConditionCheck::FlagEvaluation {
+            key,
+            expected_membership,
+            values,
+        } = condition.check
+        {
+            return Self {
+                attribute: None,
+                flag_evaluation: Some(FlagEvaluationWire { key }),
+                operator: if expected_membership {
+                    ConditionOperator::OneOf
+                } else {
+                    ConditionOperator::NotOneOf
+                },
+                value: ConditionValue::Multiple(values),
+            };
+        }
         let (operator, value) = match condition.check {
+            ConditionCheck::FlagEvaluation { .. } => unreachable!("handled above"),
             ConditionCheck::Comparison {
                 operator,
                 comparand,
@@ -308,7 +358,8 @@ impl From<Condition> for ConditionWire {
             ),
         };
         ConditionWire {
-            attribute: condition.attribute,
+            attribute: Some(condition.attribute),
+            flag_evaluation: None,
             operator,
             value,
         }
@@ -325,7 +376,30 @@ impl TryFrom<ConditionWire> for Condition {
     type Error = EvaluationError;
 
     fn try_from(condition: ConditionWire) -> Result<Self, Self::Error> {
-        let attribute = condition.attribute;
+        if let Some(reference) = condition.flag_evaluation {
+            if condition.attribute.is_some() || reference.key.is_empty() {
+                return Err(EvaluationError::ConfigurationParseError);
+            }
+            let expected_membership = match condition.operator {
+                ConditionOperator::OneOf => true,
+                ConditionOperator::NotOneOf => false,
+                _ => return Err(EvaluationError::ConfigurationParseError),
+            };
+            let ConditionValue::Multiple(values) = condition.value else {
+                return Err(EvaluationError::ConfigurationParseError);
+            };
+            return Ok(Self {
+                attribute: "".into(),
+                check: ConditionCheck::FlagEvaluation {
+                    key: reference.key,
+                    expected_membership,
+                    values,
+                },
+            });
+        }
+        let attribute = condition
+            .attribute
+            .ok_or(EvaluationError::ConfigurationParseError)?;
         let check = match condition.operator {
             ConditionOperator::Matches | ConditionOperator::NotMatches => {
                 let expected_match = condition.operator == ConditionOperator::Matches;

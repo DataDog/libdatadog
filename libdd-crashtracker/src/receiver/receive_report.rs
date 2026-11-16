@@ -101,6 +101,9 @@ pub(crate) enum StdinState {
     RuntimeStackFrame(Vec<StackFrame>),
     RuntimeStackString(Vec<String>),
     Message,
+    /// A single OTel thread context record. The tid comes from the begin
+    /// marker; the hex-encoded 640-byte record is on the next line.
+    OtelThreadCtx(i32),
 }
 
 /// A state machine that processes data from the crash-tracker collector line by
@@ -337,6 +340,31 @@ fn process_line(
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_WHOLE_STACKTRACE) => {
             StdinState::WholeStackTrace
         }
+        StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_OTEL_THREAD_CTX) => {
+            // "DD_CRASHTRACK_BEGIN_OTEL_THREAD_CTX <tid>"
+            let tid = line
+                .strip_prefix(DD_CRASHTRACK_BEGIN_OTEL_THREAD_CTX)
+                .unwrap_or("")
+                .trim()
+                .parse::<i32>()
+                .unwrap_or(0);
+            StdinState::OtelThreadCtx(tid)
+        }
+        StdinState::OtelThreadCtx(_) if line.starts_with(DD_CRASHTRACK_END_OTEL_THREAD_CTX) => {
+            StdinState::Waiting
+        }
+        StdinState::OtelThreadCtx(tid) => {
+            #[cfg(all(target_os = "linux", feature = "otel-thread-ctx"))]
+            if let Some(ctx) = decode_hex_otel_record(tid, line.trim()) {
+                builder
+                    .otel_thread_contexts
+                    .get_or_insert_with(Vec::new)
+                    .push(ctx);
+            }
+            #[cfg(not(all(target_os = "linux", feature = "otel-thread-ctx")))]
+            let _ = tid;
+            StdinState::OtelThreadCtx(tid)
+        }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_DONE) => {
             builder.with_incomplete(false)?;
             StdinState::Done
@@ -395,6 +423,9 @@ pub(crate) async fn receive_report_from_stream(
         // We need to wait until at least we receive config, metadata, and kind (on non-Windows
         // platforms) before sending the crash ping
         if !crash_ping_sent && builder.is_ping_ready() {
+            if builder.timestamp.is_none() {
+                builder.with_timestamp_now()?;
+            }
             if let Some(ref config_ref) = config {
                 let config_clone = config_ref.clone();
                 crash_ping_sent = true;
@@ -516,6 +547,17 @@ pub(crate) async fn receive_report_from_stream(
     }
 
     enrich_thread_name(&mut builder)?;
+
+    #[cfg(all(target_os = "linux", feature = "otel-thread-ctx"))]
+    if let Some(ref mut contexts) = builder.otel_thread_contexts
+        && let Some(proc_info) = builder.proc_info.as_ref()
+    {
+        let pid = proc_info.pid;
+        for ctx in contexts.iter_mut() {
+            ctx.thread_name = crate::otel_tls_reader::read_thread_name(pid, ctx.tid);
+        }
+    }
+
     builder.with_os_info_this_machine()?;
 
     // Without a config, we don't even know the endpoint to transmit to.  Not much to do to recover.
@@ -671,6 +713,25 @@ fn collect_and_add_thread_contexts(
     }
     let _ = builder.with_threads(threads);
     Ok(())
+}
+
+/// Decode a hex-encoded 640-byte OTel record into an `OtelThreadContext`.
+#[cfg(all(target_os = "linux", feature = "otel-thread-ctx"))]
+fn decode_hex_otel_record(tid: i32, hex: &str) -> Option<crate::crash_info::OtelThreadContext> {
+    use crate::otel_tls_reader::RECORD_HEADER_SIZE;
+
+    let hex_len = hex.len();
+    // At least the 28-byte header (56 hex chars), at most 640 bytes (1280 hex chars), even.
+    if !(RECORD_HEADER_SIZE * 2..=1280).contains(&hex_len) || !hex_len.is_multiple_of(2) {
+        return None;
+    }
+
+    let byte_len = hex_len / 2;
+    let mut buf = [0u8; 640];
+    for i in 0..byte_len {
+        buf[i] = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).ok()?;
+    }
+    crate::otel_tls_reader::decode_record(tid, &buf[..byte_len])
 }
 
 /// Recover callers before a collector-emitted stack replaces the one that has them.

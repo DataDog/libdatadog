@@ -149,6 +149,17 @@ pub(crate) fn emit_crashreport(
         );
     }
 
+    #[cfg(all(target_os = "linux", feature = "otel-thread-ctx"))]
+    if config.collect_otel_thread_contexts() {
+        let _ = emit_otel_thread_contexts(
+            pipe,
+            ppid,
+            crashing_tid,
+            config.max_threads(),
+            threads_deadline,
+        );
+    }
+
     writeln!(pipe, "{DD_CRASHTRACK_DONE}")?;
     pipe.flush()?;
     Ok(())
@@ -967,6 +978,177 @@ fn emit_text_file(w: &mut impl Write, path: &str) -> Result<(), EmitterError> {
     }
     writeln!(w, "\n{DD_CRASHTRACK_END_FILE} \"{path}\"")?;
     w.flush()?;
+    Ok(())
+}
+
+/// Stream per-thread OTel context records to the receiver one at a time.
+///
+/// For each thread: ptrace-attach to read the TP register, resolve the TLS
+/// slot address via DTV walk, read the record pointer and the 640-byte record
+/// from `/proc/<ppid>/mem` while the thread is still stopped, then detach.
+/// Each valid record is emitted as its own protocol section so the receiver
+/// decodes and collects them individually.
+///
+/// # Preconditions
+///
+/// * The process must use libdatadog's own `libdd-otel-thread-ctx` crate to publish OTel thread
+///   context. If another implementation defines the `otel_thread_ctx_v1` TLS symbol in a different
+///   shared object, this function will resolve libdatadog's unwritten copy and silently produce no
+///   results.
+#[cfg(all(target_os = "linux", feature = "otel-thread-ctx"))]
+fn emit_otel_thread_contexts(
+    w: &mut impl Write,
+    ppid: i32,
+    crashing_tid: libc::pid_t,
+    max_threads: usize,
+    deadline: Instant,
+) -> Result<(), EmitterError> {
+    use crate::otel_tls_reader::{ProcMemReader, tls_module_info, validated_dtv_offset};
+    use crate::ptrace_collector::{
+        attach_thread, detach_thread, enumerate_threads, read_thread_pointer,
+    };
+
+    let slot_addr = libdd_otel_thread_ctx::linux::tls_slot_address();
+    if slot_addr == 0 {
+        return Ok(()); // Symbol not linked.
+    }
+
+    let stop_timeout = core::time::Duration::from_millis(100);
+
+    // Read the collector's own TP for computing offsets.
+    #[cfg(target_arch = "x86_64")]
+    let own_tp: u64 = unsafe {
+        let tp: u64;
+        // SAFETY: reading fs:0 is a single register read with no side effects.
+        core::arch::asm!("movq %fs:0, {}", out(reg) tp, options(att_syntax, nomem, nostack));
+        tp
+    };
+    #[cfg(target_arch = "aarch64")]
+    let own_tp: u64 = unsafe {
+        let tp: u64;
+        // SAFETY: reading tpidr_el0 is a single register read with no side effects.
+        core::arch::asm!("mrs {}, tpidr_el0", out(reg) tp, options(nomem, nostack));
+        tp
+    };
+
+    // Resolution strategy:
+    //
+    // 1. DTV walk (preferred): look up the DTV pointer at a known (arch, libc)-specific offset from
+    //    TP, validate it against dl_iterate_phdr metadata, then walk each remote thread's DTV.
+    //    Correct for both static and dynamic TLS.
+    //
+    // 2. TP-relative offset (fallback): compute `slot_addr - TP` once and apply it to every thread.
+    //    Only correct for static TLS (constant TP-relative offset). Used when the DTV layout is
+    //    unknown or dl_iterate_phdr returns NULL tls_data (e.g. older glibc like CentOS 7).
+    let dtv_resolution = tls_module_info().and_then(|info| {
+        let dtv_off = validated_dtv_offset(own_tp, info.modid, info.tls_block_base)?;
+        Some((info.modid, info.offset, dtv_off))
+    });
+
+    // Fallback: single TP-relative offset from the crashing thread.
+    let tp_offset = if dtv_resolution.is_none() {
+        let stop_deadline = (Instant::now() + stop_timeout).min(deadline);
+        let Ok(()) = attach_thread(crashing_tid, stop_deadline) else {
+            return Ok(());
+        };
+        let crashing_tp = read_thread_pointer(crashing_tid);
+        let _ = detach_thread(crashing_tid);
+        let Ok(crashing_tp) = crashing_tp else {
+            return Ok(());
+        };
+        Some(slot_addr as i64 - crashing_tp as i64)
+    } else {
+        None
+    };
+
+    let Ok(tids) = enumerate_threads(ppid) else {
+        return Ok(());
+    };
+
+    let pid = ppid as u32;
+    // Stack workspace reused across threads; only the first `record_len` bytes
+    // are valid after each read.
+    let mut record_buf = [0u8; 640];
+    // Opened lazily after the first ptrace attach, since some kernels require an
+    // active ptrace relationship before allowing /proc/<pid>/mem access.
+    let mut mem: Option<ProcMemReader> = None;
+    let mut processed = 0;
+
+    // attach, resolve TLS, read record, detach, emit.
+    let mut try_emit_otel = |tid: libc::pid_t| -> Result<bool, EmitterError> {
+        let stop_deadline = (Instant::now() + stop_timeout).min(deadline);
+        if attach_thread(tid, stop_deadline).is_err() {
+            return Ok(false);
+        }
+
+        // Keep the thread stopped while reading TP, resolving TLS, and reading
+        // the record so it cannot resume and invalidate the addresses.
+        let emitted = (|| -> Result<bool, EmitterError> {
+            let mem = match mem.as_mut() {
+                Some(m) => m,
+                None => match ProcMemReader::open(pid) {
+                    Ok(m) => mem.insert(m),
+                    Err(_) => return Ok(false),
+                },
+            };
+
+            let tp = match read_thread_pointer(tid) {
+                Ok(tp) => tp,
+                Err(_) => return Ok(false),
+            };
+
+            // Try DTV walk; fall back to TP-relative offset.
+            let slot_addr = if let Some((modid, offset, dtv_off)) = dtv_resolution {
+                match mem.resolve_tls_addr(tp, dtv_off, modid, offset) {
+                    Ok(addr) => addr,
+                    Err(_) => return Ok(false),
+                }
+            } else if let Some(off) = tp_offset {
+                (tp as i64).wrapping_add(off) as u64
+            } else {
+                return Ok(false);
+            };
+
+            let record_ptr = match mem.read_tls_slot(slot_addr) {
+                Ok(ptr) if ptr != 0 => ptr,
+                _ => return Ok(false),
+            };
+            let record_len = match mem.read_record(record_ptr, &mut record_buf) {
+                Ok(Some(n)) => n,
+                _ => return Ok(false),
+            };
+
+            writeln!(w, "{DD_CRASHTRACK_BEGIN_OTEL_THREAD_CTX} {tid}")?;
+            for byte in &record_buf[..record_len] {
+                write!(w, "{byte:02x}")?;
+            }
+            writeln!(w)?;
+            writeln!(w, "{DD_CRASHTRACK_END_OTEL_THREAD_CTX}")?;
+            w.flush()?;
+            Ok(true)
+        })();
+
+        let _ = detach_thread(tid);
+        emitted
+    };
+
+    // Process the crashing thread first so it is never dropped by the cap.
+    if crashing_tid != 0 && tids.contains(&crashing_tid) {
+        let _ = try_emit_otel(crashing_tid);
+    }
+
+    for tid in tids {
+        if tid == crashing_tid {
+            continue;
+        }
+        if Instant::now() >= deadline || processed >= max_threads {
+            break;
+        }
+        if matches!(try_emit_otel(tid), Ok(true)) {
+            processed += 1;
+        }
+    }
+
     Ok(())
 }
 

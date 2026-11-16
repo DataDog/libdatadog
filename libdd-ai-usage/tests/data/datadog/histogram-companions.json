@@ -1,7 +1,7 @@
 {
   "binding": "0.1.0",
   "case": "histogram-companions",
-  "description": "Three duration samples in one second, two of them with the same tags. Every sample is a Distribution sample, and each tag set also gets one sum Count and one count Count. Names are under trajectory, and every series carries the profile tag with / as its separator.",
+  "description": "Three duration samples in one second, two of them with the same tags. Every sample is a Distribution sample, and each tag set also gets one sum Rate and one count Rate, each its total divided by 10. Names are under trajectory, and every series carries the profile tag with / as its separator.",
   "profile": "gen_ai.client.provider_attempt@0.1.0",
   "historical": false,
   "points": [
@@ -77,8 +77,9 @@
     },
     {
       "name": "gen_ai.client.inference.duration.count",
-      "type": "count",
-      "value": 1,
+      "type": "rate",
+      "interval": 10,
+      "value": 0.1,
       "tags": [
         "error.type:timeout",
         "gen_ai.operation.name:chat",
@@ -89,8 +90,9 @@
     },
     {
       "name": "gen_ai.client.inference.duration.count",
-      "type": "count",
-      "value": 2,
+      "type": "rate",
+      "interval": 10,
+      "value": 0.2,
       "tags": [
         "gen_ai.operation.name:chat",
         "gen_ai.provider.name:exampleai",
@@ -100,8 +102,9 @@
     },
     {
       "name": "gen_ai.client.inference.duration.sum",
-      "type": "count",
-      "value": 2,
+      "type": "rate",
+      "interval": 10,
+      "value": 0.2,
       "tags": [
         "error.type:timeout",
         "gen_ai.operation.name:chat",
@@ -112,8 +115,9 @@
     },
     {
       "name": "gen_ai.client.inference.duration.sum",
-      "type": "count",
-      "value": 0.75,
+      "type": "rate",
+      "interval": 10,
+      "value": 0.075,
       "tags": [
         "gen_ai.operation.name:chat",
         "gen_ai.provider.name:exampleai",

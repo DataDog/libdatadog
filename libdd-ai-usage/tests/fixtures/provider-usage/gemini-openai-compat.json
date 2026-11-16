@@ -1,0 +1,24 @@
+{
+  "description": "Google's OpenAI-compatible endpoint leaves thinking out of completion_tokens; total_tokens counts it.",
+  "format": "gemini_openai_compat",
+  "operation_name": "chat",
+  "payload": {
+    "model": "gemini-2.5-pro",
+    "usage": {
+      "prompt_tokens": 10,
+      "completion_tokens": 5,
+      "total_tokens": 20
+    }
+  },
+  "expected": {
+    "usage": {
+      "input_tokens": 10,
+      "input_basis": "includes_cache",
+      "output_tokens": 5,
+      "output_basis": "excludes_reasoning",
+      "reasoning_output_tokens": 5
+    },
+    "response_model": "gemini-2.5-pro",
+    "service_tier": null
+  }
+}

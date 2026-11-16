@@ -1,0 +1,18 @@
+{
+  "description": "A usage object of zeros is what an SDK reports for usage it does not know.",
+  "format": "auto",
+  "operation_name": "chat",
+  "payload": {
+    "model": "m",
+    "usage": {
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "total_tokens": 0
+    }
+  },
+  "expected": {
+    "usage": null,
+    "response_model": "m",
+    "service_tier": null
+  }
+}

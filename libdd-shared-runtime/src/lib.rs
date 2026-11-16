@@ -47,5 +47,7 @@ pub use shared_runtime::BlockingRuntime;
 pub use shared_runtime::ForkSafeRuntime;
 #[cfg(target_arch = "wasm32")]
 pub use shared_runtime::LocalRuntime;
-pub use shared_runtime::{SharedRuntime, SharedRuntimeError, WorkerHandle, WorkerHandleError};
+pub use shared_runtime::{
+    FlushToken, SharedRuntime, SharedRuntimeError, WorkerHandle, WorkerHandleError,
+};
 pub use worker::Worker;

@@ -9,9 +9,9 @@
 //! selected crypto provider apply. Without this, reqwest would build its own
 //! platform verifier, bypassing the distrust wrapper.
 //!
-//! This mirrors `libdd-common::connector::https::build_tls_config` (used by
-//! the hyper backend through `libdd-common`'s connector) for builds that do
-//! not depend on `libdd-common`. Keep both in sync.
+//! This mirrors `libdd-networking::connector::https::build_tls_config` (used by
+//! the hyper backend through `libdd-networking`'s connector) for builds that do
+//! not depend on `libdd-networking`. Keep both in sync.
 
 mod certificate_distrust;
 

@@ -119,6 +119,7 @@ pub struct CrashInfoBuilder {
     pub log_messages: Option<Vec<String>>,
     pub metadata: Option<Metadata>,
     pub os_info: Option<OsInfo>,
+    pub otel_thread_contexts: Option<Vec<OtelThreadContext>>,
     pub proc_info: Option<ProcInfo>,
     pub sig_info: Option<SigInfo>,
     pub span_ids: Option<Vec<Span>>,
@@ -140,6 +141,7 @@ impl Default for CrashInfoBuilder {
             log_messages: None,
             metadata: None,
             os_info: None,
+            otel_thread_contexts: None,
             proc_info: None,
             sig_info: None,
             span_ids: None,
@@ -156,7 +158,13 @@ impl CrashInfoBuilder {
         let counters = self.counters.unwrap_or_default();
         let data_schema_version = CrashInfo::current_schema_version().to_string();
         let (error, incomplete_error) = self.error.build()?;
-        let experimental = self.experimental;
+        let otel_thread_contexts = self.otel_thread_contexts.unwrap_or_default();
+        let mut experimental = self.experimental;
+        if !otel_thread_contexts.is_empty() {
+            experimental
+                .get_or_insert_with(Experimental::default)
+                .otel_thread_contexts = otel_thread_contexts;
+        }
         let files = self.files.unwrap_or_default();
         let fingerprint = self.fingerprint;
         let incomplete = incomplete_error || self.incomplete.unwrap_or(false);
@@ -328,6 +336,14 @@ impl CrashInfoBuilder {
 
     pub fn with_os_info_this_machine(&mut self) -> anyhow::Result<()> {
         self.with_os_info(::os_info::get().into())?;
+        Ok(())
+    }
+
+    pub fn with_otel_thread_contexts(
+        &mut self,
+        contexts: Vec<OtelThreadContext>,
+    ) -> anyhow::Result<()> {
+        self.otel_thread_contexts = Some(contexts);
         Ok(())
     }
 

@@ -35,8 +35,13 @@ impl AgentResponsePayloadVersion {
 
     /// Checks if the response header has changed and updates the internal state if it has.
     ///
-    /// Returns `true` if the value was updated, `false` if it was unchanged.
+    /// Returns `true` if the value was updated, `false` if it was unchanged. An empty header is
+    /// never stored: the agent sends one until it has computed rates, and if it were sent back
+    /// the agent would reply without a version header, so its rates would never be applied.
     pub fn check_and_update(&self, response_header: &str) -> bool {
+        if response_header.is_empty() {
+            return false;
+        }
         let payload_version = self.payload_version.load();
         if payload_version.as_str() == response_header {
             return false;
@@ -69,5 +74,18 @@ mod tests {
         // Change to new version returns true
         assert!(version.check_and_update("xyz789"));
         assert_eq!(version.header_value(), "xyz789");
+    }
+
+    #[test]
+    fn test_check_and_update_ignores_empty_version() {
+        let version = AgentResponsePayloadVersion::new();
+
+        // The agent sends an empty version until it has computed rates
+        assert!(!version.check_and_update(""));
+        assert_eq!(version.header_value(), "0");
+
+        assert!(version.check_and_update("abc123"));
+        assert!(!version.check_and_update(""));
+        assert_eq!(version.header_value(), "abc123");
     }
 }

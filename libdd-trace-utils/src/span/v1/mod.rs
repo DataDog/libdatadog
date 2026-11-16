@@ -5,6 +5,7 @@ use crate::span::vec_map::VecMap;
 use crate::span::{BytesData, SliceData, TraceData};
 pub use libdd_trace_model::AttributeValue;
 use libdd_trace_model::TraceText;
+use libdd_trace_model::ValueTypes;
 pub use thin_vec::ThinVec;
 
 pub mod span_pool;
@@ -14,6 +15,9 @@ pub mod span_pool;
 #[repr(u32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SpanKind {
+    /// The tracer set no `span.kind`. The sidecar span builder starts spans with it, as the Go
+    /// and Java V1 tracers send 0 for such spans.
+    Unspecified = 0,
     #[default]
     Internal = 1,
     Server = 2,
@@ -35,9 +39,11 @@ impl SpanKind {
         }
     }
 
-    /// Renders this [`SpanKind`] as the lowercase string used for the v0.4 `span.kind` meta value.
+    /// Renders this [`SpanKind`] as the lowercase string used for the v0.4 `span.kind` meta value
+    /// (empty for `Unspecified`).
     pub fn as_meta_str(&self) -> &'static str {
         match self {
+            SpanKind::Unspecified => "",
             SpanKind::Internal => "internal",
             SpanKind::Server => "server",
             SpanKind::Client => "client",
@@ -48,9 +54,10 @@ impl SpanKind {
 }
 
 impl From<u32> for SpanKind {
-    /// OTEL SpanKind wire value → enum; unset/unknown → Internal (per OTEL spec).
+    /// OTEL SpanKind wire value → enum; 0 → Unspecified, unknown → Internal (per OTEL spec).
     fn from(kind: u32) -> Self {
         match kind {
+            0 => SpanKind::Unspecified,
             2 => SpanKind::Server,
             3 => SpanKind::Client,
             4 => SpanKind::Producer,
@@ -92,8 +99,9 @@ pub struct Span<T: TraceData> {
     pub span_events: ThinVec<SpanEvent<T>>,
 }
 
-/// Implements [`libdd_trace_model::Attributes`] and [`libdd_trace_model::AttributesIter`] for a v1
-/// type storing its attributes in an `attributes: VecMap<T::Text, AttributeValue<T>>` field.
+/// Implements [`libdd_trace_model::Attributes`], [`libdd_trace_model::AttributesIter`] and
+/// [`libdd_trace_model::AttributesMut`] for a v1 type storing its attributes in an
+/// `attributes: VecMap<T::Text, AttributeValue<T>>` field.
 macro_rules! impl_vec_map_attributes {
     ($ty:ident) => {
         impl<T: TraceData> libdd_trace_model::Attributes for $ty<T> {
@@ -125,6 +133,27 @@ macro_rules! impl_vec_map_attributes {
                 self.attributes
                     .iter_unique()
                     .map(|(k, v)| (k.as_str(), v.into()))
+            }
+        }
+
+        impl<T: TraceData> libdd_trace_model::AttributesMut for $ty<T> {
+            fn retain_attributes(
+                &mut self,
+                f: impl FnMut(&str, &mut libdd_trace_model::Value<Self>) -> bool,
+            ) {
+                libdd_trace_model::ValueMapMut::retain(&mut self.attributes, f);
+            }
+
+            fn attribute_mut(&mut self, key: &str) -> Option<&mut libdd_trace_model::Value<Self>> {
+                self.attributes.get_mut(key)
+            }
+
+            fn set_attribute(&mut self, key: Self::Text, value: libdd_trace_model::Value<Self>) {
+                self.attributes.insert_or_replace(key, value);
+            }
+
+            fn remove_attribute(&mut self, key: &str) -> Option<libdd_trace_model::Value<Self>> {
+                self.attributes.remove(key)
             }
         }
     };
@@ -177,8 +206,9 @@ impl<T: TraceData> libdd_trace_model::Span for Span<T> {
 
     fn span_kind(&self) -> Option<&str> {
         // `Internal` is the wire-level default and indistinguishable from "unset", so it's
-        // treated as no value.
-        (self.span_kind != SpanKind::Internal).then(|| self.span_kind.as_meta_str())
+        // treated as no value, like `Unspecified`.
+        (!matches!(self.span_kind, SpanKind::Internal | SpanKind::Unspecified))
+            .then(|| self.span_kind.as_meta_str())
     }
 
     // `env`, `version` and `component` are promoted to dedicated fields rather than stored in
@@ -201,6 +231,64 @@ impl<T: TraceData> libdd_trace_model::Span for Span<T> {
 
     fn span_links(&self) -> impl Iterator<Item = &Self::SpanLink> {
         self.span_links.iter()
+    }
+}
+
+impl<T: TraceData> libdd_trace_model::SpanMut for Span<T> {
+    fn set_service(&mut self, value: Self::Text) {
+        self.service = value;
+    }
+
+    fn set_resource(&mut self, value: Self::Text) {
+        self.resource = value;
+    }
+
+    fn set_name(&mut self, value: Self::Text) {
+        self.name = value;
+    }
+
+    fn set_type(&mut self, value: Self::Text) {
+        self.r#type = value;
+    }
+
+    fn set_parent_id(&mut self, value: u64) {
+        self.parent_id = value;
+    }
+
+    fn set_start(&mut self, value: i64) {
+        self.start = value;
+    }
+
+    fn set_duration(&mut self, value: i64) {
+        self.duration = value;
+    }
+
+    fn set_error(&mut self, value: bool) {
+        self.error = value;
+    }
+
+    fn set_span_kind(&mut self, value: &str) {
+        self.span_kind = SpanKind::from_meta(value);
+    }
+
+    fn set_env(&mut self, value: Self::Text) {
+        self.env = value;
+    }
+
+    fn set_version(&mut self, value: Self::Text) {
+        self.version = value;
+    }
+
+    fn set_component(&mut self, value: Self::Text) {
+        self.component = value;
+    }
+
+    fn span_events_mut(&mut self) -> impl Iterator<Item = &mut Self::SpanEvent> {
+        self.span_events.iter_mut()
+    }
+
+    fn span_links_mut(&mut self) -> impl Iterator<Item = &mut Self::SpanLink> {
+        self.span_links.iter_mut()
     }
 }
 
@@ -244,6 +332,32 @@ impl<T: TraceData> libdd_trace_model::TraceChunk for TraceChunk<T> {
 
     fn dropped_trace(&self) -> bool {
         self.dropped_trace
+    }
+}
+
+impl<T: TraceData> libdd_trace_model::TraceChunkMut for TraceChunk<T> {
+    fn set_origin(&mut self, value: Self::Text) {
+        self.origin = value;
+    }
+
+    fn set_priority(&mut self, priority: i32) {
+        self.priority = Some(priority);
+    }
+
+    fn set_sampling_mechanism(&mut self, mechanism: u32) {
+        self.sampling_mechanism = Some(mechanism);
+    }
+
+    fn set_dropped_trace(&mut self, value: bool) {
+        self.dropped_trace = value;
+    }
+
+    fn spans_mut(&mut self) -> impl Iterator<Item = &mut Self::Span> {
+        self.spans.iter_mut()
+    }
+
+    fn retain_spans(&mut self, f: impl FnMut(&mut Self::Span) -> bool) {
+        self.spans.retain_mut(f);
     }
 }
 
@@ -292,6 +406,10 @@ pub struct TraceChunk<T: TraceData> {
     pub priority: Option<i32>,
     pub origin: T::Text,
     pub sampling_mechanism: Option<u32>,
+    /// Whether the trace-agent's samplers dropped this trace. Agent-owned output: the agent
+    /// overwrites any incoming value with its own sampling decision, and tracers aren't expected
+    /// to set it. It is decoded, but sampling decisions use `priority` instead, and encoders
+    /// omit it or send `false`.
     pub dropped_trace: bool,
     pub attributes: VecMap<T::Text, AttributeValue<T>>,
     pub spans: Vec<Span<T>>,
@@ -336,6 +454,62 @@ impl<T: TraceData> TraceChunk<T> {
     }
 }
 
+type AttributeMap<T> = VecMap<<T as ValueTypes>::Text, AttributeValue<T>>;
+
+/// Applies `f` to the maps nested in `map`'s values, recursively. Call it before `f(map)`:
+/// `iter_mut` clears `map`'s dedup flag.
+fn for_each_nested_map<T: TraceData>(map: &mut AttributeMap<T>, f: fn(&mut AttributeMap<T>)) {
+    for (_, v) in map.iter_mut() {
+        for_each_map_in_value(v, f);
+    }
+}
+
+fn for_each_map_in_value<T: TraceData>(v: &mut AttributeValue<T>, f: fn(&mut AttributeMap<T>)) {
+    match v {
+        AttributeValue::KeyValueList(map) => {
+            for_each_nested_map(map, f);
+            f(map);
+        }
+        AttributeValue::Array(items) => items.iter_mut().for_each(|v| for_each_map_in_value(v, f)),
+        _ => {}
+    }
+}
+
+impl<T: TraceData> TracerPayload<T> {
+    /// Applies `f` to every attribute map of the payload, including the `KeyValueList` maps nested
+    /// in values, which [`Span::dedup`] leaves to `defensive_dedup`'s on-the-fly copy.
+    fn for_each_attr_map(&mut self, f: fn(&mut AttributeMap<T>)) {
+        let apply = |map: &mut AttributeMap<T>| {
+            for_each_nested_map(map, f);
+            f(map);
+        };
+        apply(&mut self.attributes);
+        for chunk in &mut self.chunks {
+            apply(&mut chunk.attributes);
+            for span in &mut chunk.spans {
+                apply(&mut span.attributes);
+                for link in &mut span.span_links {
+                    apply(&mut link.attributes);
+                }
+                for event in &mut span.span_events {
+                    apply(&mut event.attributes);
+                }
+            }
+        }
+    }
+
+    /// Dedups every attribute map of the payload, nested ones included.
+    pub fn dedup(&mut self) {
+        self.for_each_attr_map(VecMap::dedup);
+    }
+
+    /// Flags every attribute map as deduped without scanning, for a payload decoded from an
+    /// encoding of an already-deduped payload (see [`VecMap::mark_deduped`]).
+    pub fn mark_deduped(&mut self) {
+        self.for_each_attr_map(VecMap::mark_deduped);
+    }
+}
+
 pub type SpanBytes = Span<BytesData>;
 pub type SpanLinkBytes = SpanLink<BytesData>;
 pub type SpanEventBytes = SpanEvent<BytesData>;
@@ -355,8 +529,9 @@ mod tests {
     use super::*;
     use libdd_tinybytes::BytesString;
     use libdd_trace_model::{
-        AttributeRef, Attributes as _, AttributesIter as _, ChunkSpanView, Span as _,
-        SpanEvent as _, SpanLink as _, TraceChunk as _,
+        AttributeRef, Attributes as _, AttributesIter as _, AttributesMut as _, ChunkSpanView,
+        Span as _, SpanEvent as _, SpanLink as _, SpanMut as _, TraceChunk as _,
+        TraceChunkMut as _,
     };
 
     #[test]
@@ -435,6 +610,9 @@ mod tests {
     #[test]
     fn span_kind_default_is_internal() {
         assert_eq!(SpanKind::default(), SpanKind::Internal);
+        assert_eq!(SpanKind::from(0), SpanKind::Unspecified);
+        assert_eq!(SpanKind::from(1), SpanKind::Internal);
+        assert_eq!(SpanKind::from(9), SpanKind::Internal);
     }
 
     #[test]
@@ -450,6 +628,7 @@ mod tests {
 
     #[test]
     fn span_kind_repr_matches_otel_spec() {
+        assert_eq!(SpanKind::Unspecified as u32, 0);
         assert_eq!(SpanKind::Internal as u32, 1);
         assert_eq!(SpanKind::Server as u32, 2);
         assert_eq!(SpanKind::Client as u32, 3);
@@ -496,6 +675,241 @@ mod tests {
         assert_eq!(span.compat().attribute_f64("env"), None);
         // Empty text is unset.
         assert_eq!(SpanBytes::default().env(), None);
+    }
+
+    #[test]
+    fn model_mut_traits_write_v1_fields() {
+        let mut span = SpanBytes {
+            span_id: 1,
+            ..Default::default()
+        };
+        span.span_links.push(SpanLinkBytes::default());
+        span.span_events.push(SpanEventBytes::default());
+        for link in span.span_links_mut() {
+            link.set_attribute(BytesString::from_static("k"), AttributeValue::Bool(true));
+        }
+        for event in span.span_events_mut() {
+            event.set_attribute(BytesString::from_static("k"), AttributeValue::Int(1));
+        }
+        assert_eq!(
+            span.span_links[0].attributes.get("k"),
+            Some(&AttributeValue::Bool(true))
+        );
+        assert_eq!(span.span_events[0].attribute_i64("k"), Some(1));
+
+        span.set_service(BytesString::from_static("svc"));
+        span.set_resource(BytesString::from_static("GET /"));
+        span.set_name(BytesString::from_static("http.request"));
+        span.set_type(BytesString::from_static("web"));
+        span.set_parent_id(9);
+        span.set_start(10);
+        span.set_duration(20);
+        span.set_env(BytesString::from_static("prod"));
+        span.set_version(BytesString::from_static("1.2"));
+        span.set_component(BytesString::from_static("http"));
+        assert_eq!(
+            (span.service(), span.resource(), span.name(), span.typ()),
+            ("svc", "GET /", "http.request", "web")
+        );
+        assert_eq!(
+            (span.parent_id(), span.start(), span.duration()),
+            (9, 10, 20)
+        );
+        assert_eq!(
+            (span.env(), span.version(), span.component()),
+            (Some("prod"), Some("1.2"), Some("http"))
+        );
+        // The empty string unsets a text field.
+        span.set_env(BytesString::from_static(""));
+        assert_eq!(span.env(), None);
+
+        span.set_attribute(BytesString::from_static("big"), AttributeValue::Int(1));
+        if let Some(value) = span.attribute_mut("big") {
+            *value = AttributeValue::Int(i64::MAX);
+        }
+        assert_eq!(span.attribute_i64("big"), Some(i64::MAX));
+        assert_eq!(
+            span.remove_attribute("big"),
+            Some(AttributeValue::Int(i64::MAX))
+        );
+        assert_eq!(span.remove_attribute("big"), None);
+
+        let mut chunk = TraceChunkBytes {
+            spans: vec![span, SpanBytes::default()],
+            ..Default::default()
+        };
+        chunk.set_origin(BytesString::from_static("synthetics"));
+        chunk.set_priority(2);
+        chunk.set_sampling_mechanism(4);
+        chunk.set_dropped_trace(true);
+        assert_eq!(
+            (
+                chunk.origin(),
+                chunk.priority(),
+                chunk.sampling_mechanism(),
+                chunk.dropped_trace()
+            ),
+            ("synthetics", Some(2), Some(4), true)
+        );
+        // Chunk setters don't touch the attributes.
+        assert!(chunk.attributes.is_empty());
+
+        for span in chunk.spans_mut() {
+            span.set_error(true);
+        }
+        chunk.retain_spans(|span| span.span_id() == 1);
+        assert_eq!(chunk.spans.len(), 1);
+        assert!(chunk.spans[0].is_error());
+    }
+
+    #[test]
+    fn retain_attributes_sees_each_key_once() {
+        let mut span = SpanBytes::default();
+        // A shadowed duplicate, as a decoder may produce.
+        span.attributes
+            .insert(BytesString::from_static("k"), AttributeValue::Int(1));
+        span.attributes
+            .insert(BytesString::from_static("k"), AttributeValue::Int(2));
+        span.attributes
+            .insert(BytesString::from_static("drop"), AttributeValue::Int(3));
+        let mut seen = Vec::new();
+        span.retain_attributes(|key, value| {
+            seen.push((key.to_owned(), value.as_i64()));
+            if let AttributeValue::Int(i) = value {
+                *i += 10;
+            }
+            key != "drop"
+        });
+        seen.sort_unstable();
+        assert_eq!(
+            seen,
+            [("drop".to_owned(), Some(3)), ("k".to_owned(), Some(2))]
+        );
+        assert_eq!(span.attribute_i64("k"), Some(12));
+        assert!(!span.has_attribute("drop"));
+    }
+
+    #[test]
+    fn set_span_kind_maps_to_enum() {
+        let mut span = SpanBytes::default();
+        span.set_span_kind("client");
+        assert_eq!(span.span_kind, SpanKind::Client);
+        assert_eq!(span.span_kind(), Some("client"));
+        // Kinds outside the OTel ones read as unset.
+        span.set_span_kind("custom");
+        assert_eq!(span.span_kind(), None);
+    }
+
+    #[test]
+    fn plain_attribute_writes_skip_promoted_fields() {
+        let s = |v: &'static str| AttributeValue::String(BytesString::from_static(v));
+        let mut span = SpanBytes {
+            env: BytesString::from_static("prod"),
+            ..Default::default()
+        };
+        span.set_attribute(BytesString::from_static("env"), s("staging"));
+        assert_eq!(span.env(), Some("prod"));
+        assert_eq!(span.attribute_str("env"), Some("staging"));
+        assert_eq!(span.remove_attribute("env"), Some(s("staging")));
+        assert_eq!(span.env(), Some("prod"));
+    }
+
+    #[test]
+    fn compat_mut_redirects_promoted_span_tags_to_fields() {
+        let s = |v: &'static str| AttributeValue::String(BytesString::from_static(v));
+        let mut span = SpanBytes::default();
+        let compat = span.compat_mut();
+        compat.set_attribute(BytesString::from_static("span.kind"), s("server"));
+        compat.set_attribute(BytesString::from_static("env"), s("prod"));
+        compat.set_attribute(BytesString::from_static("version"), s("1.2"));
+        compat.set_attribute(BytesString::from_static("component"), s("http"));
+        // Values the field can't hold are dropped rather than stored as attributes.
+        compat.set_attribute(BytesString::from_static("env"), AttributeValue::Int(1));
+        compat.set_attribute(
+            BytesString::from_static("span.kind"),
+            AttributeValue::Bool(true),
+        );
+        // Other keys are plain attributes.
+        compat.set_attribute(BytesString::from_static("peer.service"), s("db"));
+        assert_eq!(compat.attribute_str("env"), Some("prod"));
+        assert_eq!(span.attributes.len(), 1);
+        assert_eq!(span.attribute_str("peer.service"), Some("db"));
+        assert_eq!(
+            (
+                span.span_kind,
+                span.env.as_str(),
+                span.version.as_str(),
+                span.component.as_str()
+            ),
+            (SpanKind::Server, "prod", "1.2", "http")
+        );
+        // The plain attribute getters still don't see promoted tags.
+        assert_eq!(span.attribute_str("env"), None);
+
+        let compat = span.compat_mut();
+        assert_eq!(compat.remove_attribute("span.kind"), Some(s("server")));
+        assert_eq!(compat.remove_attribute("env"), Some(s("prod")));
+        assert_eq!(compat.remove_attribute("env"), None);
+        assert_eq!(compat.remove_attribute("peer.service"), Some(s("db")));
+        assert_eq!((span.span_kind(), span.env()), (None, None));
+        assert_eq!(span.version(), Some("1.2"));
+        assert!(span.attributes.is_empty());
+
+        let compat = span.compat_mut();
+        assert_eq!(compat.remove_attribute("version"), Some(s("1.2")));
+        assert_eq!(compat.remove_attribute("component"), Some(s("http")));
+        assert_eq!((span.version(), span.component()), (None, None));
+    }
+
+    #[test]
+    fn compat_mut_writes_drop_hidden_attributes_of_promoted_tags() {
+        let s = |v: &'static str| AttributeValue::String(BytesString::from_static(v));
+        // Stale attributes, e.g. from a tracer whose tags weren't promoted.
+        let mut span = SpanBytes::default();
+        for key in ["env", "version", "component"] {
+            span.attributes
+                .insert(BytesString::from_static(key), s("stale"));
+        }
+
+        let compat = span.compat_mut();
+        compat.set_attribute(BytesString::from_static("env"), s("prod"));
+        // The field was unset: compat reads ignore the hidden attribute, so nothing is returned.
+        assert_eq!(compat.remove_attribute("version"), None);
+        // A value the field can't hold is dropped, and leaves the hidden attribute alone.
+        compat.set_attribute(
+            BytesString::from_static("component"),
+            AttributeValue::Int(1),
+        );
+        assert_eq!(span.env(), Some("prod"));
+        assert!(!span.has_attribute("env"));
+        assert!(!span.has_attribute("version"));
+        assert_eq!(span.attribute_str("component"), Some("stale"));
+    }
+
+    #[test]
+    fn compat_mut_hides_attributes_named_like_promoted_tags() {
+        let s = |v: &'static str| AttributeValue::String(BytesString::from_static(v));
+        let mut span = SpanBytes {
+            env: BytesString::from_static("prod"),
+            ..Default::default()
+        };
+        // A stale attribute, e.g. from a tracer that didn't promote it.
+        span.attributes
+            .insert(BytesString::from_static("env"), s("stale"));
+        span.attributes
+            .insert(BytesString::from_static("team"), s("core"));
+
+        let compat = span.compat_mut();
+        assert!(compat.attribute_mut("env").is_none());
+        let mut seen = Vec::new();
+        compat.retain_attributes(|key, _| {
+            seen.push(key.to_owned());
+            false
+        });
+        assert_eq!(seen, ["team"]);
+        // The hidden attribute is kept untouched.
+        assert_eq!(span.attribute_str("env"), Some("stale"));
+        assert!(!span.has_attribute("team"));
     }
 
     #[test]
@@ -668,5 +1082,61 @@ mod tests {
             chunk.spans[0].attributes.get(&key("y")),
             Some(&AttributeValue::Int(2))
         );
+    }
+
+    fn nested_attrs() -> AttributeMap<BytesData> {
+        let mut inner = VecMap::new();
+        inner.insert(key("k"), AttributeValue::Int(1));
+        inner.insert(key("k"), AttributeValue::Int(2));
+        let mut map = VecMap::new();
+        map.insert(
+            key("m"),
+            AttributeValueBytes::Array(vec![AttributeValueBytes::KeyValueList(inner)]),
+        );
+        map
+    }
+
+    fn nested_map(map: &AttributeMap<BytesData>) -> &AttributeMap<BytesData> {
+        match map.get(&key("m")) {
+            Some(AttributeValue::Array(items)) => match &items[0] {
+                AttributeValue::KeyValueList(m) => m,
+                _ => panic!("nested map missing"),
+            },
+            _ => panic!("nested array missing"),
+        }
+    }
+
+    #[test]
+    fn tracer_payload_dedup_reaches_nested_maps() {
+        let mut payload = TracerPayloadBytes {
+            attributes: nested_attrs(),
+            chunks: vec![TraceChunk {
+                spans: vec![Span {
+                    attributes: nested_attrs(),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        payload.dedup();
+        let span_attrs = &payload.chunks[0].spans[0].attributes;
+        assert!(payload.attributes.is_deduped() && span_attrs.is_deduped());
+        let m = nested_map(span_attrs);
+        assert!(m.is_deduped() && nested_map(&payload.attributes).is_deduped());
+        assert_eq!(m.len(), 1);
+        assert_eq!(m.get(&key("k")), Some(&AttributeValue::Int(2)));
+    }
+
+    #[test]
+    fn tracer_payload_mark_deduped_flags_nested_maps_without_dropping_entries() {
+        let mut payload = TracerPayloadBytes {
+            attributes: nested_attrs(),
+            ..Default::default()
+        };
+        payload.mark_deduped();
+        let m = nested_map(&payload.attributes);
+        assert!(payload.attributes.is_deduped() && m.is_deduped());
+        assert_eq!(m.len(), 2);
     }
 }

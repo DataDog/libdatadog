@@ -108,6 +108,7 @@ jobs:
               - '**/*.rs'
               - '**/*.c'
               - '**/*.sh'
+              - '.github/workflows/lint.yml'
             license_3rdparty:
               - 'Cargo.lock'
               - '**/Cargo.toml'
@@ -364,7 +365,16 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
       - name: Install licensecheck
-        run: sudo apt-get install -y licensecheck
+        # Retry so transient apt mirror or DNS failures don't fail the job
+        run: |
+          for attempt in 1 2 3; do
+            sudo apt-get -o Acquire::Retries=5 update \
+              && sudo apt-get -o Acquire::Retries=5 install -y --no-install-recommends licensecheck \
+              && exit 0
+            echo "apt attempt $attempt failed, retrying in 10s"
+            sleep 10
+          done
+          exit 1
       - name: Check licenses
         # Exclude symbolizer-ffi from the checks (mostly imported code)
         run: '! find . \( -name "*.rs" -o -name "*.c" -o -name "*.sh" \)  -not -path "./symbolizer-ffi/*" -not -path "./datadog-ipc/plugins/*" -not -path "./datadog-ipc/tarpc/*" -not -path "./vendor/*" -print0 | xargs -0 licensecheck -c ".*" | grep -v "Apache License 2.0"'
