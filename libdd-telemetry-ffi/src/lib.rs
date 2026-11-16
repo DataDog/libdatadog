@@ -105,6 +105,12 @@ macro_rules! try_c {
 
 /// Runs `$body` (which evaluates to a `MaybeError`) and turns a panic into an error return,
 /// so it never unwinds across the FFI boundary.
+///
+/// Differs from the `catch_panic!` in `libdd-data-pipeline-ffi`, which takes an explicit error
+/// value, only logs the panic message through `tracing`, and is a no-op without its
+/// `catch_panic` feature. This one always catches, and returns the panic message to the caller in
+/// the `MaybeError`. `wrap_with_void_ffi_result!` from `libdd-common-ffi` isn't used because it
+/// returns a `VoidResult`, while the telemetry handle API returns `MaybeError`.
 macro_rules! catch_panic {
     ($body:block) => {
         match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> ffi::MaybeError {
