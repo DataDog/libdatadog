@@ -731,8 +731,8 @@ impl SidecarServer {
                     return;
                 }
 
-                // Agent lacks `/v1.0/traces`: downgrade to v0.4 and re-decode so the existing v0.4
-                // send path handles serialization/retries unchanged.
+                // Agent lacks `/v1.0/traces` or is older than 7.79: downgrade to v0.4 and re-decode
+                // so the existing v0.4 send path handles serialization/retries unchanged.
                 let TraceChunks::V1(tracer_payload) = &payload else {
                     unreachable!("payload is still TraceChunks::V1");
                 };
@@ -747,7 +747,7 @@ impl SidecarServer {
                 {
                     Ok((v04_payload, v04_size)) => {
                         debug!(
-                            "Agent does not advertise /v1.0/traces; downgrading to v0.4 ({} bytes) for {:?} with headers {:?}",
+                            "Agent does not accept V1; downgrading to v0.4 ({} bytes) for {:?} with headers {:?}",
                             v04_size, v04_target, headers
                         );
                         self.enqueue_trace(
@@ -777,7 +777,8 @@ impl SidecarServer {
 
     /// Whether the agent accepts V1 (non-blocking). Fails closed to v0.4 until `/info` advertises
     /// `/v1.0/traces`, so we never send V1 to an agent that can't decode it, and after a 404 from
-    /// it until `/info` changes. Agentless is always V1.
+    /// it until `/info` changes. Agents before 7.79 get v0.4 too (see
+    /// [`AgentInfoGuard::v1_active`]). Agentless is always V1.
     fn agent_supports_v1(session: &ConnectionSession, v04_target: &Endpoint) -> bool {
         if v04_target.api_key.is_some() {
             return true;
@@ -3447,7 +3448,7 @@ mod tests {
         let info_mock = http_server
             .mock_async(|when, then| {
                 when.path("/info");
-                then.status(200).body(info_body("7.70.0"));
+                then.status(200).body(info_body("7.80.0"));
             })
             .await;
         let v1_mock = http_server
@@ -3501,7 +3502,7 @@ mod tests {
         let info_mock = http_server
             .mock_async(|when, then| {
                 when.path("/info");
-                then.status(200).body(info_body("7.71.0"));
+                then.status(200).body(info_body("7.81.0"));
             })
             .await;
         let v1_mock = http_server
