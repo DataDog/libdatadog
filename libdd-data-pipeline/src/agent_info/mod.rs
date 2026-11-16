@@ -9,6 +9,7 @@ use arc_swap::ArcSwapOption;
 
 pub mod schema;
 
+mod agent_version;
 mod fetcher;
 
 static AGENT_INFO_CACHE: LazyLock<ArcSwapOption<schema::AgentInfo>> =
@@ -29,6 +30,7 @@ pub fn get_agent_info() -> Option<Arc<schema::AgentInfo>> {
     AGENT_INFO_CACHE.load_full()
 }
 
+pub use agent_version::agent_supports_v1_traces;
 pub use fetcher::{
     AgentInfoFetcher, FetchInfoStatus, ResponseObserver, fetch_info, fetch_info_with_state,
 };

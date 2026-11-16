@@ -17,7 +17,9 @@ use libdd_capabilities_impl::NativeCapabilities;
 use libdd_common::Endpoint;
 use libdd_common::MutexExt;
 use libdd_data_pipeline::agent_info::schema::AgentInfoStruct;
-use libdd_data_pipeline::agent_info::{FetchInfoStatus, fetch_info_with_state};
+use libdd_data_pipeline::agent_info::{
+    FetchInfoStatus, agent_supports_v1_traces, fetch_info_with_state,
+};
 use libdd_ipc::one_way_shared_memory::{OneWayShmReader, OneWayShmWriter, open_named_shm};
 use libdd_ipc::platform::NamedShmHandle;
 use libdd_live_debugger::sender::agent_info_supports_debugger_v2_endpoint;
@@ -84,8 +86,9 @@ impl AgentInfoGuard {
         self.fetcher.lacks_debugger_v2.load(Ordering::Relaxed)
     }
 
-    /// Whether to send V1 traces: the last fetched info advertises `/v1.0/traces` and no 404 from
-    /// it came since. False until the first info has been fetched.
+    /// Whether to send V1 traces: the last fetched info advertises `/v1.0/traces`, from an agent
+    /// 7.79+ ([`agent_supports_v1_traces`]), and no 404 from it came since. False until the first
+    /// info has been fetched.
     pub fn v1_active(&self) -> bool {
         self.fetcher.v1_active.load(Ordering::Relaxed)
     }
@@ -124,7 +127,7 @@ pub struct AgentInfoFetcher {
     /// are simply directly replacing this with a resolved future.
     infos: ArcSwap<Shared<ManualFuture<AgentInfoStruct>>>,
     lacks_debugger_v2: AtomicBool,
-    /// Set from each new info's endpoints, cleared by [`AgentInfoGuard::reject_v1`].
+    /// Set from each new info's endpoints and version, cleared by [`AgentInfoGuard::reject_v1`].
     v1_active: AtomicBool,
     /// Wakes the fetch loop before its next poll.
     refresh: Notify,
@@ -162,8 +165,16 @@ impl AgentInfoFetcher {
             !agent_info_supports_debugger_v2_endpoint(&info),
             Ordering::Relaxed,
         );
-        self.v1_active
-            .store(agent_info_advertises_v1(&info), Ordering::Relaxed);
+        // An unparseable version (e.g. a serverless agent's scheme) keeps trusting the endpoints.
+        let v1_version = info
+            .version
+            .as_deref()
+            .and_then(agent_supports_v1_traces)
+            .unwrap_or(true);
+        self.v1_active.store(
+            agent_info_advertises_v1(&info) && v1_version,
+            Ordering::Relaxed,
+        );
         publish(&json);
         if let Some(completer) = completer.take() {
             completer.complete(info).await;
@@ -440,6 +451,43 @@ mod tests {
             .update(AgentInfoStruct::default(), &mut completer, |_| {})
             .await;
         assert!(!guard.v1_active());
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn v1_is_off_for_agents_before_7_79() {
+        let (future, completer) = ManualFuture::new();
+        let fetcher = Arc::new(AgentInfoFetcher {
+            rc: AtomicU32::new(1),
+            created_at: Instant::now(),
+            last_update_ms: AtomicU64::new(0),
+            infos: ArcSwap::from_pointee(future.shared()),
+            lacks_debugger_v2: AtomicBool::new(false),
+            v1_active: AtomicBool::new(false),
+            refresh: Notify::new(),
+        });
+        let guard = AgentInfoGuard {
+            fetcher: fetcher.clone(),
+        };
+        let mut completer = Some(completer);
+
+        for (version, v1) in [
+            (Some("7.78.9"), false),
+            (Some("7.79.0-rc.5"), false),
+            (Some("7.79.0-rc.6"), true),
+            (Some("7.80.1"), true),
+            // Unparseable or missing: trust the endpoints.
+            (Some("v7.77.0"), true),
+            (None, true),
+        ] {
+            let info = AgentInfoStruct {
+                version: version.map(str::to_string),
+                endpoints: Some(vec!["/v1.0/traces".to_string()]),
+                ..Default::default()
+            };
+            fetcher.update(info, &mut completer, |_| {}).await;
+            assert_eq!(guard.v1_active(), v1, "{version:?}");
+        }
     }
 
     #[cfg_attr(miri, ignore)]
