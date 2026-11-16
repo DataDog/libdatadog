@@ -63,6 +63,8 @@ async fn check_http_export(protocol: OtlpProtocol, content_type: &'static str) {
                         Ok::<_, Infallible>(Response::new(Full::new(Bytes::new())))
                     }),
                 )
+                // The exporter can close first; a second shutdown returns ENOTCONN on macOS.
+                .without_shutdown()
                 .await
                 .unwrap();
         }
