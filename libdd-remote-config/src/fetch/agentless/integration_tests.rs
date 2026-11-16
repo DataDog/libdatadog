@@ -420,10 +420,12 @@ async fn test_root_rotation_without_top_targets_still_converges() {
 }
 
 /// D-F1: an `apply()` that fails *after* advancing the config trusted DB must
-/// leave the fetcher recoverable. The reset re-anchors both clients at the
-/// pinned (embedded) roots, so the next poll reports the embedded versions,
-/// the backend re-sends the rotation chain, and everything re-verifies from
-/// scratch — no stuck from a partially-advanced trusted DB.
+/// leave the fetcher recoverable. The reset purges the non-root trusted
+/// metadata but keeps the latched trusted roots (and their rollback
+/// protection); the next poll is a fresh join that reports the embedded
+/// versions, the backend re-sends the rotation chain, and everything
+/// re-verifies from the embedded root — no stuck from a partially-advanced
+/// trusted DB.
 #[tokio::test]
 #[cfg_attr(miri, ignore)]
 async fn test_apply_error_resets_and_recovers() {

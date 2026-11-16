@@ -400,7 +400,7 @@ impl<C: HttpClientCapability + SleepCapability> AgentlessFetcher<C> {
                 TUFRepo::new(),
             )
             .await?,
-            // The trust anchors `reset()` re-builds the clients from.
+            // The trust anchors the DC-switch recovery re-verifies from.
             config_root_bytes: config_root,
             director_root_bytes: director_root,
             dc_switch_recovery: false,
@@ -923,8 +923,9 @@ impl<C: HttpClientCapability + SleepCapability> AgentlessFetcher<C> {
         // During a DC switch recovery, verify the fresh-join payload in scratch
         // clients anchored at the embedded roots before letting it anywhere
         // near the live state. Only a payload that proves to be a genuine DC
-        // switch (same org, no root version rollback, different root keys on
-        // both repositories) replaces the live clients; a valid fresh join for
+        // switch (different root keys on both repositories, and the same org;
+        // root versions are deliberately not compared) replaces the live
+        // clients; a valid fresh join for
         // the current chain means the earlier failure was transient and it is
         // applied normally.
         if self.dc_switch_recovery {
