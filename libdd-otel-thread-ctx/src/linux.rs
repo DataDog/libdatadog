@@ -8,11 +8,17 @@
 //! handle types live in the private `owned` and `shared` submodules, exactly one of which is
 //! compiled (see the crate-level documentation).
 
-// Exactly one ownership mode must be selected, otherwise the crate exposes no context type at all.
-#[cfg(not(any(feature = "owned-context", feature = "shared-context")))]
+// At least one mode must be selected: a publisher mode (`owned-context` / `shared-context`) that
+// defines the TLS symbol and provides an ownership API, or `reader` for consumers that only need
+// `tls_slot_address()` and the record types.
+#[cfg(not(any(
+    feature = "owned-context",
+    feature = "shared-context",
+    feature = "reader"
+)))]
 compile_error!(
-    "No ownership mode selected for otel-thread-ctx. Enable either `owned-context` (the default) \
-     or `shared-context`."
+    "No mode selected for otel-thread-ctx. Enable `owned-context` (default) or `shared-context` \
+     for publishing, or `reader` for read-only access to the TLS slot and record types."
 );
 
 #[cfg(feature = "owned-context")]
@@ -30,8 +36,13 @@ mod shared;
 pub use shared::*;
 
 use std::{
-    mem, ptr,
-    sync::atomic::{AtomicPtr, AtomicU8, Ordering, compiler_fence},
+    mem,
+    sync::atomic::{AtomicPtr, AtomicU8},
+};
+#[cfg(any(feature = "owned-context", feature = "shared-context"))]
+use std::{
+    ptr,
+    sync::atomic::{Ordering, compiler_fence},
 };
 
 // Define the thread-local pointer that external readers (e.g. the eBPF profiler) discover via
@@ -41,9 +52,33 @@ use std::{
 // Stable `rustc` cannot select the TLS dialect for a `#[thread_local]` static, so we declare
 // the symbol directly in assembly (an 8-byte, zero-initialised slot in `.tbss`) and resolve
 // its per-thread address through TLSDESC in [`tls_slot`].
+//
+// Publisher modes emit a strong global definition — the canonical owner of the slot.
+#[cfg(any(feature = "owned-context", feature = "shared-context"))]
 core::arch::global_asm!(
     ".section .tbss,\"awT\",@nobits",
     ".globl otel_thread_ctx_v1",
+    ".type  otel_thread_ctx_v1, @tls_object",
+    ".size  otel_thread_ctx_v1, 8",
+    ".balign 8",
+    "otel_thread_ctx_v1:",
+    ".zero  8",
+    ".previous",
+);
+
+// Reader mode emits a weak definition so the TLSDESC reference in `tls_slot()` always
+// resolves, even in binaries with no publisher. A strong definition from the publisher
+// (tracer C code or a publisher-mode build of this crate) overrides the weak one at
+// link time. When no publisher is present, the slot stays null and `tls_slot_address()`
+// returns a valid but unused address
+#[cfg(all(
+    feature = "reader",
+    not(feature = "owned-context"),
+    not(feature = "shared-context")
+))]
+core::arch::global_asm!(
+    ".section .tbss,\"awT\",@nobits",
+    ".weak otel_thread_ctx_v1",
     ".type  otel_thread_ctx_v1, @tls_object",
     ".size  otel_thread_ctx_v1, 8",
     ".balign 8",
@@ -310,6 +345,7 @@ impl ThreadContextRecord {
     /// handler) is the only one to ever _write_ to the slot, so the store we load the value
     /// from automatically happens-before (because it's sequenced-before) the swap. We still
     /// need a release fence to avoid exposing uninitialized memory to the handler.
+    #[cfg(any(feature = "owned-context", feature = "shared-context"))]
     fn attach_raw(record_ptr: *mut ThreadContextRecord) -> *mut ThreadContextRecord {
         compiler_fence(Ordering::Release);
         with_tls_slot(|slot| slot.swap(record_ptr, Ordering::Relaxed))
@@ -321,6 +357,7 @@ impl ThreadContextRecord {
     /// This is the low-level detach primitive shared by `OwnedThreadContext` and
     /// `SharedThreadContext`. As with [`Self::attach_raw`], the caller is responsible for
     /// releasing the returned memory.
+    #[cfg(any(feature = "owned-context", feature = "shared-context"))]
     fn detach_raw() -> *mut ThreadContextRecord {
         // We don't need any fence here, see [^tls-slot-ordering].
         with_tls_slot(|slot| slot.swap(ptr::null_mut(), Ordering::Relaxed))
@@ -382,7 +419,10 @@ pub fn tls_slot_address() -> usize {
 
 /// Read the TLS pointer for the current thread (the value stored in the TLS slot, not the address
 /// of the slot itself). Shared by the tests of both ownership modes.
-#[cfg(any(test, feature = "test-utils"))]
+#[cfg(all(
+    any(test, feature = "test-utils"),
+    any(feature = "owned-context", feature = "shared-context")
+))]
 fn read_tls_context_ptr() -> *const ThreadContextRecord {
     with_tls_slot(|slot| slot.load(Ordering::Relaxed))
 }
@@ -394,7 +434,10 @@ fn read_tls_context_ptr() -> *const ThreadContextRecord {
 /// Exposed under the `test-utils` feature, which carries no stability guarantee. Do not
 /// dereference the returned pointer: the record is owned by the library, and may be freed by the
 /// autocleaner as soon as the calling thread detaches it or exits.
-#[cfg(any(test, feature = "test-utils"))]
+#[cfg(all(
+    any(test, feature = "test-utils"),
+    any(feature = "owned-context", feature = "shared-context")
+))]
 pub fn read_tls_pointer_untyped() -> *const u8 {
     read_tls_context_ptr().cast()
 }

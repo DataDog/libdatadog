@@ -8,14 +8,24 @@
 //! Since `rustc` doesn't currently support the TLSDESC dialect, we define the thread-local
 //! storage symbol and its accessor using inline assembly (`global_asm!` / `asm!`).
 //!
-//! ## Ownership modes
+//! ## Modes
 //!
-//! The crate provides exactly one of two context ownership flavours, selected by two mutually
-//! exclusive features: `owned-context` (the default) gives `OwnedThreadContext`, a record owned by
-//! a single thread that can be updated in place, while `shared-context` gives
-//! `SharedThreadContext`, an `Arc`-backed immutable record that can be cloned and attached on
-//! several threads. They can't coexist because the TLS slot is untyped. If both features are
-//! enabled, `owned-context` wins and the build script emits a warning.
+//! The crate has three modes, selected by mutually exclusive features. At least one must be
+//! enabled:
+//!
+//! - **`owned-context`** (default) — publisher mode. Defines the `otel_thread_ctx_v1` TLS symbol
+//!   and provides `OwnedThreadContext`, a record owned by a single thread that can be updated in
+//!   place. Used by the FFI and by Rust-native tracers (e.g. dd-trace-py).
+//! - **`shared-context`** — publisher mode. Defines the TLS symbol and provides
+//!   `SharedThreadContext`, an `Arc`-backed immutable record that can be cloned and attached on
+//!   several threads. Used by dd-trace-rs.
+//! - **`reader`** — read-only mode. Exposes `tls_slot_address()` and the record types with only a
+//!   weak definition of the TLS symbol. A strong definition from the publisher overrides it at link
+//!   time; when no publisher is present the slot stays null and callers no-op gracefully.
+//!
+//! The two publisher modes can't coexist because the TLS slot is untyped. If both are enabled,
+//! `owned-context` wins and the build script emits a warning. `reader` is additive with the
+//! publisher modes — if Cargo feature unification enables both, the publisher mode takes effect.
 #![cfg_attr(
     all(feature = "owned-context", target_os = "linux"),
     doc = "The active mode is `owned-context`. See [`linux::OwnedThreadContext`]."
@@ -25,14 +35,31 @@
     doc = "The active mode is `owned-context`. See `linux::OwnedThreadContext`."
 )]
 #![cfg_attr(
-    all(not(feature = "owned-context"), target_os = "linux"),
+    all(
+        feature = "shared-context",
+        not(feature = "owned-context"),
+        target_os = "linux"
+    ),
     doc = "The active mode is `shared-context`. See [`linux::SharedThreadContext`], which also \
            explains why the two modes can't be mixed."
 )]
 #![cfg_attr(
-    all(not(feature = "owned-context"), not(target_os = "linux")),
+    all(
+        feature = "shared-context",
+        not(feature = "owned-context"),
+        not(target_os = "linux")
+    ),
     doc = "The active mode is `shared-context`. See `linux::SharedThreadContext`, which also \
            explains why the two modes can't be mixed."
+)]
+#![cfg_attr(
+    all(
+        feature = "reader",
+        not(feature = "owned-context"),
+        not(feature = "shared-context")
+    ),
+    doc = "The active mode is `reader`. The TLS symbol is not defined by this crate; it must be \
+           provided by a publisher in the final binary."
 )]
 //!
 //! ## ID representation

@@ -27,6 +27,12 @@ default = ["owned-context"]
 # ignored). See the crate-level documentation.
 owned-context = []
 shared-context = []
+# Reader-only mode: exposes `tls_slot_address()` and record types with only a
+# weak definition of the TLS symbol (a strong publisher definition overrides it
+# at link time). Additive with `owned-context`/`shared-context` — if a publisher
+# feature is also enabled (via Cargo feature unification), the publisher's
+# strong definition takes effect.
+reader = []
 # Autoclean contexts on thread exit. See README.
 thread-exit-autoclean = []
 sanity-check = ["dep:elf", "dep:anyhow"]
