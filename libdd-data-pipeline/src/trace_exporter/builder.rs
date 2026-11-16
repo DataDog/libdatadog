@@ -500,7 +500,8 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
     /// [`OtlpProtocol::HttpProtobuf`], or [`OtlpProtocol::Grpc`]. The host language resolves this
     /// from `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL` / `OTEL_EXPORTER_OTLP_PROTOCOL`; all three OTel
     /// protocol strings (`http/json`, `http/protobuf`, `grpc`) parse into [`OtlpProtocol`]. gRPC
-    /// export requires a plaintext `http://` endpoint: an `https://` gRPC endpoint is rejected at
+    /// export accepts plaintext `http://` endpoints and `unix:///absolute/socket/path` on Unix.
+    /// An `https://` gRPC endpoint is rejected at
     /// [`build`](Self::build) time, and gRPC is not supported on wasm32 targets (also rejected at
     /// build time).
     pub fn set_otlp_protocol(&mut self, protocol: OtlpProtocol) -> &mut Self {
@@ -1718,6 +1719,18 @@ mod tests {
         let resource = exporter.otlp_resource_info.load();
         assert_eq!(resource.instrumentation_scope_name, "dd-trace-js");
         assert_eq!(resource.instrumentation_scope_version, "7.0.0-pre");
+    }
+
+    #[cfg(unix)]
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn build_with_grpc_unix_endpoint_succeeds_without_a_socket() {
+        let mut builder = TraceExporterBuilder::default();
+        builder
+            .set_otlp_endpoint("unix:///dev/otel-grpc.sock")
+            .set_otlp_protocol(OtlpProtocol::Grpc);
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
+        assert!(matches!(exporter.otlp, Some(OtlpExportMode::Grpc(_))));
     }
 
     #[cfg_attr(miri, ignore)]
