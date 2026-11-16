@@ -6,11 +6,11 @@ Data pipeline for processing and exporting APM data to Datadog.
 
 `libdd-data-pipeline` provides a high-performance pipeline for processing distributed tracing data, applying normalization and obfuscation, computing statistics, and exporting to Datadog backends.
 
-OTLP gRPC export accepts plaintext `http://host:port` endpoints and, on Unix,
-`unix:///absolute/path/to/socket`. A Unix endpoint contains the literal absolute socket
-path without a host, query, or fragment; the socket path is not an RPC path prefix.
-Constructing the exporter does not connect to the socket. Each export opens a fresh
-connection, and an unavailable socket produces a retryable send error.
+OTLP trace export supports `unix:///absolute/path/to/socket` on Unix with all three
+protocols: HTTP/JSON, HTTP/protobuf, and gRPC. HTTP sends to `/` on that socket;
+the socket path is not an HTTP or RPC path prefix. gRPC also accepts plaintext
+`http://host:port` endpoints and opens a fresh connection per export. Construction
+does not connect to the socket; an unavailable socket fails at send time.
 
 ## Status
 Currently the project is a proof of concept so the API is not definitive and possible frequent changes should be

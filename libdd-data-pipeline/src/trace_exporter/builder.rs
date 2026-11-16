@@ -490,6 +490,9 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
     /// [`Self::set_url`] alongside OTLP is allowed; the agent URL is still used for
     /// auxiliary endpoints (e.g. agent info / stats).
     ///
+    /// On Unix, all protocols also support `unix:///absolute/path/to/socket`.
+    /// HTTP sends to `/` on that socket; the socket path is not a request path.
+    ///
     /// Example: `set_otlp_endpoint("http://localhost:4318/v1/traces")`
     pub fn set_otlp_endpoint(&mut self, url: &str) -> &mut Self {
         self.otlp_endpoint = Some(url.to_owned());
@@ -1719,18 +1722,6 @@ mod tests {
         let resource = exporter.otlp_resource_info.load();
         assert_eq!(resource.instrumentation_scope_name, "dd-trace-js");
         assert_eq!(resource.instrumentation_scope_version, "7.0.0-pre");
-    }
-
-    #[cfg(unix)]
-    #[cfg_attr(miri, ignore)]
-    #[test]
-    fn build_with_grpc_unix_endpoint_succeeds_without_a_socket() {
-        let mut builder = TraceExporterBuilder::default();
-        builder
-            .set_otlp_endpoint("unix:///dev/otel-grpc.sock")
-            .set_otlp_protocol(OtlpProtocol::Grpc);
-        let exporter = builder.build::<NativeCapabilities>().unwrap();
-        assert!(matches!(exporter.otlp, Some(OtlpExportMode::Grpc(_))));
     }
 
     #[cfg_attr(miri, ignore)]

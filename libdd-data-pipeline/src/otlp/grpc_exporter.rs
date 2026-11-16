@@ -181,17 +181,12 @@ pub(crate) mod prost_codec {
     }
 }
 
+/// Dials a fresh plaintext HTTP/2 connection for each gRPC request.
 #[derive(Clone, Debug, PartialEq, Eq)]
-enum GrpcEndpoint {
+pub(crate) enum H2Service {
     Tcp(Arc<str>),
     #[cfg(unix)]
     Unix(Arc<str>),
-}
-
-/// Dials a fresh plaintext HTTP/2 connection for each gRPC request.
-#[derive(Clone, Debug)]
-pub(crate) struct H2Service {
-    endpoint: GrpcEndpoint,
 }
 
 impl GrpcService<TonicBody> for H2Service {
@@ -206,16 +201,16 @@ impl GrpcService<TonicBody> for H2Service {
     }
 
     fn call(&mut self, req: http::Request<TonicBody>) -> Self::Future {
-        let endpoint = self.endpoint.clone();
+        let endpoint = self.clone();
         Box::pin(async move {
             match endpoint {
-                GrpcEndpoint::Tcp(authority) => {
+                H2Service::Tcp(authority) => {
                     let tcp = TcpStream::connect(authority.as_ref()).await?;
                     tcp.set_nodelay(true)?;
                     send_h2_request(tcp, req).await
                 }
                 #[cfg(unix)]
-                GrpcEndpoint::Unix(path) => {
+                H2Service::Unix(path) => {
                     let socket = tokio::net::UnixStream::connect(path.as_ref()).await?;
                     send_h2_request(socket, req).await
                 }
@@ -269,9 +264,7 @@ pub(crate) struct OtlpGrpcTransport {
     metadata_headers: Vec<(AsciiMetadataKey, AsciiMetadataValue)>,
 }
 
-fn parse_grpc_endpoint(
-    endpoint_url: &str,
-) -> Result<(GrpcEndpoint, http::Uri), TraceExporterError> {
+fn parse_grpc_endpoint(endpoint_url: &str) -> Result<(H2Service, http::Uri), TraceExporterError> {
     if let Some(path) = endpoint_url.strip_prefix("unix://") {
         #[cfg(unix)]
         {
@@ -283,7 +276,7 @@ fn parse_grpc_endpoint(
             }
             // The filesystem path selects the socket, not an HTTP authority or RPC prefix.
             return Ok((
-                GrpcEndpoint::Unix(Arc::from(path)),
+                H2Service::Unix(Arc::from(path)),
                 http::Uri::from_static("http://localhost/"),
             ));
         }
@@ -345,7 +338,7 @@ fn parse_grpc_endpoint(
             )));
         }
     };
-    let endpoint = GrpcEndpoint::Tcp(Arc::from(dial_authority));
+    let endpoint = H2Service::Tcp(Arc::from(dial_authority));
 
     // Origin = scheme+authority + normalized path prefix; tonic appends the RPC method path.
     let prefix = uri.path().trim_end_matches('/').to_string();
@@ -371,8 +364,7 @@ pub(crate) fn build_grpc_transport(
         timeout,
         otel_trace_semantics_enabled,
     } = config;
-    let (endpoint, origin) = parse_grpc_endpoint(endpoint_url)?;
-    let service = H2Service { endpoint };
+    let (service, origin) = parse_grpc_endpoint(endpoint_url)?;
 
     // Parse custom headers to gRPC metadata once here rather than on every send. Invalid entries
     // are skipped with a single warning (logging only the key: a value may carry a secret).
@@ -628,8 +620,8 @@ mod build_tests {
             "http://localhost/".parse::<http::Uri>().unwrap()
         );
         assert_eq!(
-            transport.service.endpoint,
-            GrpcEndpoint::Unix(Arc::from("/dev/otel-grpc.sock"))
+            transport.service,
+            H2Service::Unix(Arc::from("/dev/otel-grpc.sock"))
         );
     }
 
@@ -662,10 +654,7 @@ mod build_tests {
     fn supplies_http_default_port_for_dialing() {
         let transport = build_grpc_transport("http://collector", cfg()).unwrap();
 
-        assert_eq!(
-            transport.service.endpoint,
-            GrpcEndpoint::Tcp(Arc::from("collector:80"))
-        );
+        assert_eq!(transport.service, H2Service::Tcp("collector:80".into()));
         assert_eq!(
             transport
                 .origin
@@ -675,25 +664,16 @@ mod build_tests {
         );
 
         let ipv6_transport = build_grpc_transport("http://[::1]", cfg()).unwrap();
-        assert_eq!(
-            ipv6_transport.service.endpoint,
-            GrpcEndpoint::Tcp(Arc::from("[::1]:80"))
-        );
+        assert_eq!(ipv6_transport.service, H2Service::Tcp("[::1]:80".into()));
     }
 
     #[test]
     fn preserves_explicit_port_for_dialing() {
         let transport = build_grpc_transport("http://collector:4317", cfg()).unwrap();
-        assert_eq!(
-            transport.service.endpoint,
-            GrpcEndpoint::Tcp(Arc::from("collector:4317"))
-        );
+        assert_eq!(transport.service, H2Service::Tcp("collector:4317".into()));
 
         let ipv6_transport = build_grpc_transport("http://[::1]:4317", cfg()).unwrap();
-        assert_eq!(
-            ipv6_transport.service.endpoint,
-            GrpcEndpoint::Tcp(Arc::from("[::1]:4317"))
-        );
+        assert_eq!(ipv6_transport.service, H2Service::Tcp("[::1]:4317".into()));
     }
 
     #[test]
@@ -812,9 +792,7 @@ mod integration_tests {
             sender.await.unwrap();
         });
 
-        let mut service = H2Service {
-            endpoint: GrpcEndpoint::Tcp(Arc::from(addr.to_string())),
-        };
+        let mut service = H2Service::Tcp(Arc::from(addr.to_string()));
         let request = http::Request::builder()
             .uri("http://localhost/")
             .body(TonicBody::empty())
