@@ -65,7 +65,8 @@ pub struct HttpMultipartPart<'a> {
 #[derive(Copy, Clone, Debug)]
 pub struct HttpRequest<'a> {
     pub method: HttpMethod,
-    /// An absolute `http(s)` URL, or a path starting with `/` appended to the client's `base_url`.
+    /// An absolute `http(s)` URL with the same scheme as the client's `base_url`, or a path
+    /// starting with `/` appended to it. A different scheme is an `INVALID_ARGUMENT`.
     pub url: CharSlice<'a>,
     pub headers: Slice<'a, HttpHeader<'a>>,
     /// Raw request body. Mutually exclusive with `multipart`.

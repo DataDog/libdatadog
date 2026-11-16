@@ -130,6 +130,16 @@ fn an_absolute_url_ignores_the_base_url() {
 }
 
 #[test]
+fn an_absolute_url_with_another_scheme_than_the_base_is_an_invalid_argument() {
+    let error = offline_client()
+        .send(&Req::get("https://localhost:1/x"))
+        .err()
+        .expect("scheme mismatch");
+
+    assert_eq!(error.code, HttpClientErrorCode::InvalidArgument);
+}
+
+#[test]
 #[cfg_attr(miri, ignore)]
 fn default_headers_are_sent_with_every_request() {
     let server = MockServer::start();
@@ -184,30 +194,34 @@ fn an_invalid_header_name_is_rejected() {
         .err()
         .expect("invalid header name");
 
-    assert_malformed_request(error.code);
+    assert_eq!(error.code, HttpClientErrorCode::InvalidArgument);
 }
 
-/// Cargo feature unification can pick either backend, and they classify these errors differently:
-/// hyper reports an invalid argument, reqwest an I/O error.
-fn assert_malformed_request(code: HttpClientErrorCode) {
-    assert!(
-        matches!(
-            code,
-            HttpClientErrorCode::InvalidArgument | HttpClientErrorCode::Io
-        ),
-        "unexpected code {code:?}"
-    );
-}
-
-// The two backends reject different malformed requests, so the multipart one has its own test.
 #[test]
-fn a_malformed_absolute_url_is_rejected() {
+fn a_malformed_request_is_not_retried() {
+    let client = Cfg::new("http://localhost")
+        .retries(3, 5_000)
+        .build()
+        .expect("client");
+    let started = std::time::Instant::now();
+
+    let error = client
+        .send(&Req::get("/h").header("bad header", "v"))
+        .err()
+        .expect("invalid header name");
+
+    assert_eq!(error.code, HttpClientErrorCode::InvalidArgument);
+    assert!(started.elapsed() < std::time::Duration::from_secs(4));
+}
+
+#[test]
+fn a_malformed_absolute_url_is_an_invalid_argument() {
     let error = offline_client()
         .send(&Req::get("http://exa mple/x"))
         .err()
         .expect("malformed url");
 
-    assert_malformed_request(error.code);
+    assert_eq!(error.code, HttpClientErrorCode::InvalidArgument);
 }
 
 #[cfg(feature = "reqwest-backend")]

@@ -180,8 +180,15 @@ fn inner_method(method: HttpMethod) -> InnerMethod {
 }
 
 fn full_url(base: &str, url: &str) -> Result<String, Option<Box<HttpClientError>>> {
-    if has_prefix_ignore_case(url, "http://") || has_prefix_ignore_case(url, "https://") {
-        Ok(url.to_owned())
+    let is_https = |s| has_prefix_ignore_case(s, "https://");
+    if is_https(url) || has_prefix_ignore_case(url, "http://") {
+        // The reqwest backend cannot send a scheme other than its base URL's, so every backend
+        // gets the same restriction.
+        if is_https(url) == is_https(base) {
+            Ok(url.to_owned())
+        } else {
+            Err(gen_error!(HttpClientErrorCode::InvalidArgument))
+        }
     } else if url.starts_with('/') && !url.starts_with("//") {
         Ok(format!("{base}{url}"))
     } else {
@@ -467,8 +474,26 @@ mod tests {
 
     #[test]
     fn absolute_urls_are_used_as_they_are() {
-        for url in ["http://other:1/x?a=1", "HTTPS://Other/x"] {
-            assert_eq!(full_url("http://base", url).expect("an absolute url"), url);
+        for (base, url) in [
+            ("http://base", "http://other:1/x?a=1"),
+            ("http://base", "HTTP://Other/x"),
+            ("https://base", "HTTPS://Other/x"),
+        ] {
+            assert_eq!(full_url(base, url).expect("an absolute url"), url);
+        }
+    }
+
+    #[test]
+    fn an_absolute_url_with_another_scheme_than_the_base_is_an_invalid_argument() {
+        for (base, url) in [
+            ("http://base", "https://other/x"),
+            ("https://base", "http://other/x"),
+        ] {
+            assert_eq!(
+                code(full_url(base, url)),
+                HttpClientErrorCode::InvalidArgument,
+                "{base} {url}"
+            );
         }
     }
 
