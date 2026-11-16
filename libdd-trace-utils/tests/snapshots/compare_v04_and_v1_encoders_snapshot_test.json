@@ -7,7 +7,6 @@
     "span_id": 1,
     "parent_id": 0,
     "meta": {
-      "_dd.p.tid": "0x0",
       "env": "test-env",
       "http.method": "GET",
       "span.kind": "internal"
@@ -15,6 +14,52 @@
     "metrics": {
       "http.duration_ms": 12.5
     },
+    "span_events": [
+      {
+        "time_unix_nano": 1002000,
+        "name": "evt",
+        "attributes": {
+          "even": {
+            "type": 4,
+            "array_value": {
+              "values": [
+                {
+                  "type": 3,
+                  "double_value": 1.5
+                },
+                {
+                  "type": 0,
+                  "string_value": "b"
+                }
+              ]
+            }
+          },
+          "odd": {
+            "type": 4,
+            "array_value": {
+              "values": [
+                {
+                  "type": 0,
+                  "string_value": "a"
+                },
+                {
+                  "type": 1,
+                  "bool_value": true
+                },
+                {
+                  "type": 2,
+                  "int_value": -7
+                }
+              ]
+            }
+          },
+          "single": {
+            "type": 2,
+            "int_value": 9
+          }
+        }
+      }
+    ],
     "duration": 5000,
     "start": 1000000
   }],
@@ -27,7 +72,6 @@
     "span_id": 1,
     "parent_id": 0,
     "meta": {
-      "_dd.p.tid": "0x0",
       "env": "test-env",
       "http.method": "GET",
       "span.kind": "internal"
@@ -35,6 +79,52 @@
     "metrics": {
       "http.duration_ms": 12.5
     },
+    "span_events": [
+      {
+        "time_unix_nano": 1002000,
+        "name": "evt",
+        "attributes": {
+          "even": {
+            "type": 4,
+            "array_value": {
+              "values": [
+                {
+                  "type": 3,
+                  "double_value": 1.5
+                },
+                {
+                  "type": 0,
+                  "string_value": "b"
+                }
+              ]
+            }
+          },
+          "odd": {
+            "type": 4,
+            "array_value": {
+              "values": [
+                {
+                  "type": 0,
+                  "string_value": "a"
+                },
+                {
+                  "type": 1,
+                  "bool_value": true
+                },
+                {
+                  "type": 2,
+                  "int_value": -7
+                }
+              ]
+            }
+          },
+          "single": {
+            "type": 2,
+            "int_value": 9
+          }
+        }
+      }
+    ],
     "duration": 5000,
     "start": 1000000
   }]]

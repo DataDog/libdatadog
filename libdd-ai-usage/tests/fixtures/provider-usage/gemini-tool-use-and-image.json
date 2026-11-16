@@ -1,0 +1,40 @@
+{
+  "description": "The tool-use prompt is billed input; IMAGE candidates are an image part.",
+  "format": "gemini",
+  "operation_name": "chat",
+  "payload": {
+    "usageMetadata": {
+      "promptTokenCount": 16,
+      "toolUsePromptTokenCount": 6,
+      "candidatesTokenCount": 1120,
+      "thoughtsTokenCount": 127,
+      "totalTokenCount": 1269,
+      "candidatesTokensDetails": [
+        {
+          "modality": "IMAGE",
+          "tokenCount": 1120
+        }
+      ],
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 16
+        }
+      ]
+    }
+  },
+  "expected": {
+    "usage": {
+      "input_tokens": 22,
+      "input_basis": "includes_cache",
+      "output_tokens": 1247,
+      "output_basis": "includes_reasoning",
+      "reasoning_output_tokens": 127,
+      "output_tokens_by_modality": {
+        "image": 1120
+      }
+    },
+    "response_model": null,
+    "service_tier": null
+  }
+}

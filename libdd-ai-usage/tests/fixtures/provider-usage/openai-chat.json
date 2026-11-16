@@ -1,0 +1,42 @@
+{
+  "description": "Chat Completions: inclusive totals, cached input, reasoning, audio parts and the served tier.",
+  "format": "openai_chat",
+  "operation_name": "chat",
+  "payload": {
+    "id": "chatcmpl-1",
+    "model": "gpt-5-2026-08-07",
+    "service_tier": "default",
+    "choices": [],
+    "usage": {
+      "prompt_tokens": 1200,
+      "completion_tokens": 300,
+      "total_tokens": 1500,
+      "prompt_tokens_details": {
+        "cached_tokens": 1024,
+        "audio_tokens": 0
+      },
+      "completion_tokens_details": {
+        "reasoning_tokens": 256,
+        "audio_tokens": 12
+      }
+    }
+  },
+  "expected": {
+    "usage": {
+      "input_tokens": 1200,
+      "input_basis": "includes_cache",
+      "output_tokens": 300,
+      "output_basis": "includes_reasoning",
+      "cache_read_input_tokens": 1024,
+      "reasoning_output_tokens": 256,
+      "input_tokens_by_modality": {
+        "audio": 0
+      },
+      "output_tokens_by_modality": {
+        "audio": 12
+      }
+    },
+    "response_model": "gpt-5-2026-08-07",
+    "service_tier": "default"
+  }
+}

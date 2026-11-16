@@ -3,7 +3,7 @@
 
 //! The proxy environment variables are read only once, ever, on the first
 //! `HttpProxyConnector` constructed in the process (see `PROXY_MATCHER` in
-//! `libdd_common::connector::proxy`) to avoid racing a concurrent `setenv`.
+//! `libdd_networking::connector::proxy`) to avoid racing a concurrent `setenv`.
 //! Therefore, there must be only a single test in thie file that touches
 //! `HTTPS_PROXY`, and must set it before constructing its first `HttpClient`.
 #![cfg(feature = "hyper-proxy")]

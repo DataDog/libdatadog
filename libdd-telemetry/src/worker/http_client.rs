@@ -1,7 +1,8 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use libdd_common::HttpRequestBuilder;
+use http::request::Builder as HttpRequestBuilder;
+use libdd_networking::endpoint::EndpointExt;
 
 use crate::config::Config;
 use tracing::{debug, error};

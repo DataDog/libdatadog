@@ -21,7 +21,8 @@ use flate2::write::GzEncoder;
 use futures::future::join_all;
 use http::uri::PathAndQuery;
 use libdd_capabilities_impl::{HttpClientCapability, NativeCapabilities};
-use libdd_common::{Endpoint, MutexExt};
+use libdd_common::Endpoint;
+use libdd_common::MutexExt;
 use libdd_ipc::shm_dsm_backlog::{
     DEFAULT_DSM_BACKLOG_SLOT_COUNT, DEFAULT_DSM_BACKLOG_STRING_POOL_BYTES, DsmBacklog,
     DsmBacklogBucket, ShmDsmBacklogTable,

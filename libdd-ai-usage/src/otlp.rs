@@ -16,7 +16,10 @@
 //!   Agent's OTLP receiver or Datadog's OTLP intake), the encoding follows the Datadog binding
 //!   instead: a `{nanoUSD}` counter is summed exactly and sent in USD as a double, divided by 10^9
 //!   once, and `{id}@{version}` attribute values use `/`. Metrics then store the same values
-//!   whether they arrive over OTLP or DogStatsD.
+//!   whether they arrive over OTLP or DogStatsD, but not the same type: Datadog stores a delta sum
+//!   as a COUNT, while DogStatsD counts and the API series of [`crate::datadog_series`] are RATEs
+//!   over 10 s, and Datadog keeps one type per metric. A Datadog destination that also receives the
+//!   metrics over DogStatsD or the API must not receive them over OTLP.
 //!
 //! Only the messages and fields this encoder writes are declared here, with
 //! their field numbers from `opentelemetry/proto/metrics/v1/metrics.proto`.
@@ -25,10 +28,10 @@ use std::borrow::Cow;
 
 use prost::Message;
 
-use crate::batch::MetricBatch;
+use crate::PROFILE_ATTRIBUTE;
+use crate::batch::{Data, MetricBatch};
 use crate::datadog::{NANO_USD, NANO_USD_PER_USD, is_versioned};
 use crate::point::{Attributes, Sum};
-use crate::registry::PROFILE_ATTRIBUTE;
 
 /// The unit of a `{nanoUSD}` counter under [`OtlpBinding::Datadog`].
 const USD: &str = "USD";
@@ -115,7 +118,8 @@ impl MetricBatch {
     ) -> pb::ExportMetricsServiceRequest {
         let datadog = binding == OtlpBinding::Datadog;
         let mut resource_metrics: Vec<pb::ResourceMetrics> = Vec::new();
-        for ((resource, profile), group) in &self.groups {
+        for group in &self.groups() {
+            let (resource, profile) = (group.resource, group.profile);
             // Groups are sorted by resource, so one resource's profiles are adjacent.
             let same_resource = resource_metrics.last().is_some_and(|last| {
                 last.resource.as_ref().map(|r| &r.attributes)
@@ -147,7 +151,11 @@ impl MetricBatch {
                 }
             };
             let mut sums: Vec<(usize, pb::NumberDataPoint)> = Vec::new();
-            for ((name, attributes), (unit, sum)) in &group.counters {
+            for series in &group.series {
+                let Data::Counter(sum) = &series.data else {
+                    continue;
+                };
+                let (name, attributes, unit) = (&series.name, &series.attributes, &series.unit);
                 let in_usd = datadog && unit == NANO_USD;
                 let value = match sum {
                     // One division of the exact sum, converted to a double once.
@@ -172,7 +180,11 @@ impl MetricBatch {
                 ));
             }
             let mut histograms: Vec<(usize, pb::HistogramDataPoint)> = Vec::new();
-            for ((name, attributes), (unit, samples)) in &group.histograms {
+            for series in &group.series {
+                let Data::Histogram(samples) = &series.data else {
+                    continue;
+                };
+                let (name, attributes, unit) = (&series.name, &series.attributes, &series.unit);
                 histograms.push((
                     metric(name, unit),
                     histogram_point(
@@ -612,13 +624,15 @@ mod tests {
             sum.data_points[0].value,
             Some(pb::number_data_point::Value::AsDouble(0.04026))
         );
-        // The same cost as the Datadog series DogStatsD sends.
-        let series = batch.datadog_series(false).unwrap();
-        let dogstatsd = series
-            .iter()
-            .find(|s| s.name == "trajectory.gen_ai.client.inference.usage.cost")
-            .unwrap();
-        assert_eq!(dogstatsd.value, 0.04026);
+        // The same cost as the Counter DogStatsD sends.
+        let lines = batch.dogstatsd_lines().unwrap();
+        assert!(
+            lines
+                .iter()
+                .any(|line| line
+                    .starts_with("trajectory.gen_ai.client.inference.usage.cost:0.04026|c|")),
+            "{lines:?}"
+        );
         // Token counts are unchanged.
         let tokens = metrics
             .iter()

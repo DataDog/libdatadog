@@ -1,0 +1,25 @@
+{
+  "description": "Input served wholly from cache reads zero input and is not a placeholder.",
+  "format": "auto",
+  "operation_name": "chat",
+  "payload": {
+    "usage": {
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cache_read_input_tokens": 1200,
+      "cache_creation_input_tokens": 0
+    }
+  },
+  "expected": {
+    "usage": {
+      "input_tokens": 0,
+      "input_basis": "excludes_cache",
+      "output_tokens": 0,
+      "output_basis": "includes_reasoning",
+      "cache_read_input_tokens": 1200,
+      "cache_write_input_tokens": 0
+    },
+    "response_model": null,
+    "service_tier": null
+  }
+}

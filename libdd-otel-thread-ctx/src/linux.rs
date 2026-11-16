@@ -371,6 +371,15 @@ impl ThreadContext {
     }
 }
 
+/// Return the virtual address of the `otel_thread_ctx_v1` TLS slot for the current thread.
+///
+/// This is the address of the slot itself (not the value stored in it). Combined with
+/// `dl_iterate_phdr` metadata, it can be used to discover the TLS module ID and
+/// intra-module offset needed to resolve other threads' copies of the same variable.
+pub fn tls_slot_address() -> usize {
+    with_tls_slot(|slot| slot as *const _ as usize)
+}
+
 /// Read the TLS pointer for the current thread (the value stored in the TLS slot, not the address
 /// of the slot itself). Shared by the tests of both ownership modes.
 #[cfg(any(test, feature = "test-utils"))]

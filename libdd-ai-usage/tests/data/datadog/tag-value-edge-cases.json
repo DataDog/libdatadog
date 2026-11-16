@@ -87,8 +87,9 @@
   "expected_series": [
     {
       "name": "gen_ai.client.inference.usage.input_tokens",
-      "type": "count",
-      "value": 3,
+      "type": "rate",
+      "interval": 10,
+      "value": 0.3,
       "tags": [
         "gen_ai.operation.name:chat",
         "gen_ai.provider.name:exampleai",
@@ -100,8 +101,9 @@
     },
     {
       "name": "gen_ai.client.inference.usage.input_tokens",
-      "type": "count",
-      "value": 2,
+      "type": "rate",
+      "interval": 10,
+      "value": 0.2,
       "tags": [
         "gen_ai.operation.name:chat",
         "gen_ai.provider.name:exampleai",
@@ -113,8 +115,9 @@
     },
     {
       "name": "gen_ai.client.inference.usage.input_tokens",
-      "type": "count",
-      "value": 1,
+      "type": "rate",
+      "interval": 10,
+      "value": 0.1,
       "tags": [
         "gen_ai.operation.name:chat",
         "gen_ai.provider.name:exampleai",
@@ -126,8 +129,9 @@
     },
     {
       "name": "gen_ai.client.inference.usage.input_tokens",
-      "type": "count",
-      "value": 4,
+      "type": "rate",
+      "interval": 10,
+      "value": 0.4,
       "tags": [
         "gen_ai.operation.name:chat",
         "gen_ai.provider.name:exampleai",
@@ -139,8 +143,9 @@
     },
     {
       "name": "gen_ai.client.inference.usage.input_tokens",
-      "type": "count",
-      "value": 5,
+      "type": "rate",
+      "interval": 10,
+      "value": 0.5,
       "tags": [
         "gen_ai.operation.name:chat",
         "gen_ai.provider.name:exampleai",
@@ -152,8 +157,9 @@
     },
     {
       "name": "gen_ai.client.inference.usage.input_tokens",
-      "type": "count",
-      "value": 6,
+      "type": "rate",
+      "interval": 10,
+      "value": 0.6,
       "tags": [
         "gen_ai.operation.name:chat",
         "gen_ai.provider.name:exampleai",

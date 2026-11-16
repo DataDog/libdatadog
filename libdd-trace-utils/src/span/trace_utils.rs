@@ -28,6 +28,22 @@ const PARTIAL_VERSION_KEY: &str = "_dd.partial_version";
 ///   are stripped from OTLP span attributes so they can never contradict the resource value.
 pub const SDK_OTLP_EXPORT_KEY: &str = "_dd.sdk.otlp_export";
 
+/// Dedicated span/trace keys written by the V1 → v0.4 downgrade encoder.
+pub(crate) const ENV_KEY: &str = "env";
+pub(crate) const VERSION_KEY: &str = "version";
+pub(crate) const COMPONENT_KEY: &str = "component";
+pub(crate) const SPAN_KIND_KEY: &str = "span.kind";
+/// High 64 bits of the trace id, as lower-case hex.
+pub(crate) const TRACE_ID_HIGH_KEY: &str = "_dd.p.tid";
+pub(crate) const ORIGIN_KEY: &str = "_dd.origin";
+pub(crate) const DECISION_MAKER_KEY: &str = "_dd.p.dm";
+pub(crate) const HOSTNAME_KEY: &str = "_dd.hostname";
+pub(crate) const PROCESS_TAGS_KEY: &str = "_dd.tags.process";
+pub(crate) const GIT_COMMIT_SHA_KEY: &str = "_dd.git.commit.sha";
+pub(crate) const GIT_REPOSITORY_URL_KEY: &str = "_dd.git.repository_url";
+/// Legacy JSON-encoded span events, for agents without native v0.4 `span_events`.
+pub(crate) const SPAN_EVENTS_KEY: &str = "events";
+
 fn set_top_level_span<T>(span: &mut Span<T>)
 where
     T: TraceData,
@@ -148,7 +164,7 @@ pub struct DroppedP0Stats {
 }
 
 // Keys used for sampling
-const SAMPLING_PRIORITY_KEY: &str = "_sampling_priority_v1";
+pub(crate) const SAMPLING_PRIORITY_KEY: &str = "_sampling_priority_v1";
 const SAMPLING_SINGLE_SPAN_MECHANISM: &str = "_dd.span_sampling.mechanism";
 const SAMPLING_ANALYTICS_RATE_KEY: &str = "_dd1.sr.eausr";
 

@@ -108,6 +108,7 @@ impl SeqpacketConn {
     pub fn connect_abstract(name: &[u8]) -> io::Result<Self> {
         let fd = create_seqpacket_socket()?;
         let addr = UnixAddr::new_abstract(name).map_err(io::Error::from)?;
+        super::set_nonblocking(fd.as_raw_fd(), true)?;
         connect(fd.as_raw_fd(), &addr).map_err(io::Error::from)?;
         Self::from_owned(fd)
     }
@@ -180,5 +181,43 @@ mod tests {
                 .expect("expected the queued message, not ECONNRESET");
             assert_eq!(got, expected);
         }
+    }
+}
+
+#[cfg(test)]
+mod crucible_connect {
+    use super::*;
+    #[test]
+    #[cfg_attr(miri, ignore = "requires native IPC and threads")]
+    fn crucible_c04_full_abstract_queue_does_not_block_connect() {
+        let name = format!("crucible-c04-{}", std::process::id()).into_bytes();
+        let listener = SeqpacketListener::bind_abstract(&name).unwrap();
+        let addr = UnixAddr::new_abstract(&name).unwrap();
+        let mut queued = Vec::new();
+        loop {
+            let fd = create_seqpacket_socket().unwrap();
+            super::super::set_nonblocking(fd.as_raw_fd(), true).unwrap();
+            match connect(fd.as_raw_fd(), &addr) {
+                Ok(()) => queued.push(fd),
+                Err(nix::errno::Errno::EAGAIN) => break,
+                Err(error) => panic!("{error}"),
+            }
+            assert!(queued.len() < 4096);
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let result = SeqpacketConn::connect_abstract(&name);
+            tx.send(result.err().map(|e| e.kind())).unwrap();
+        });
+        let result = rx.recv_timeout(std::time::Duration::from_millis(200));
+        // Release a blocked original implementation before asserting.
+        let accepted = listener.try_accept().unwrap();
+        worker.join().unwrap();
+        drop(accepted);
+        assert!(
+            matches!(result, Ok(Some(io::ErrorKind::WouldBlock))),
+            "{result:?}"
+        );
+        drop(queued);
     }
 }

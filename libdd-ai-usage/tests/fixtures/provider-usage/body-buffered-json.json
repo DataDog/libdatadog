@@ -1,0 +1,18 @@
+{
+  "description": "A buffered JSON response is complete unless it reports a failure.",
+  "format": "anthropic",
+  "operation_name": "chat",
+  "body": "{\n  \"type\": \"message\",\n  \"model\": \"claude-haiku-4-5\",\n  \"usage\": {\n    \"input_tokens\": 3,\n    \"output_tokens\": 1\n  }\n}",
+  "expected": {
+    "usage": {
+      "input_tokens": 3,
+      "input_basis": "excludes_cache",
+      "output_tokens": 1,
+      "output_basis": "includes_reasoning"
+    },
+    "response_model": "claude-haiku-4-5",
+    "service_tier": null,
+    "outcome": "completed",
+    "error_name": null
+  }
+}
