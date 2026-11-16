@@ -102,11 +102,7 @@ impl super::Backend for ReqwestBackend {
         config: &HttpClientConfig,
     ) -> Result<HttpResponse, HttpClientError> {
         if is_https_url(&request.url) != self.base_url_is_https {
-            return Err(HttpClientError::InvalidConfig(format!(
-                "request URL '{}' does not use the same scheme as the client's base URL: \
-                 requests are only accepted over the scheme the client was configured with",
-                request.url
-            )));
+            return Err(super::scheme_mismatch(&request.url));
         }
 
         let method = match request.method {

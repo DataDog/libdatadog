@@ -20,7 +20,6 @@ default = ["https", "hyper-backend"]
 # rustls-platform-verifier and the compromised-key distrust wrapper mirror
 # libdd-networking's `connector::https::build_tls_config` (see src/tls.rs).
 https = [
-  "dep:reqwest",
   "reqwest?/rustls-no-provider",
   "libdd-networking?/https",
   "dep:rustls",
