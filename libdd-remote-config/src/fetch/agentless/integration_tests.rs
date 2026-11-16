@@ -531,6 +531,22 @@ async fn test_apply_error_resets_and_recovers() {
     assert_eq!(req3.current_config_snapshot_version, 0);
     assert_eq!(req3.current_config_root_version, 1);
     assert_eq!(req3.current_director_root_version, 1);
+
+    // Poll 4: the recovery was one-shot. The client reports the live trusted
+    // versions again (config root v2, snapshot v1), so the request is back
+    // to incremental and the backend sends no roots.
+    http.push(&good(Some(cfg1.targets().unwrap().as_bytes()), &[]));
+    f.fetch_config(dummy_client(), &cache).await.unwrap();
+    assert_eq!(config_root_version(&f), 2);
+    assert_eq!(config_snapshot_version(&f), Some(1));
+    assert_eq!(f.consecutive_failures(), 0);
+    let req4 = http.request_at(3);
+    assert_eq!(req4.current_config_snapshot_version, 1);
+    assert_eq!(req4.current_config_root_version, 2);
+    assert_eq!(req4.current_director_root_version, 1);
+    // The org data is not re-fetched: poll 3 consumed the prefetch that the
+    // reset re-armed, and no new reset happened.
+    assert_eq!(http.org_request_count(), 2);
 }
 
 // ---- DC switch (agent PR #60072 parity) -----------------------------------
@@ -794,6 +810,22 @@ async fn test_dc_switch_recovers_from_embedded_root() {
     let req3 = http.request_at(2);
     assert_eq!(req3.current_config_root_version, 1);
     assert_eq!(req3.current_director_root_version, 1);
+    assert_eq!(http.org_request_count(), 2);
+
+    // Poll 4: the recovery was one-shot. The client reports DC B's latched
+    // versions again, so the request is back to incremental and DC B sends
+    // no roots.
+    http.push(&dc_update(&cfg_b, &dir_b));
+    f.fetch_config(dummy_client(), &cache).await.unwrap();
+    assert_eq!(config_root_version(&f), 2);
+    assert_eq!(config_snapshot_version(&f), Some(2));
+    assert_eq!(f.consecutive_failures(), 0);
+    let req4 = http.request_at(3);
+    assert_eq!(req4.current_config_snapshot_version, 2);
+    assert_eq!(req4.current_config_root_version, 2);
+    assert_eq!(req4.current_director_root_version, 2);
+    // The org data is not re-fetched: poll 3 consumed the prefetch that the
+    // reset re-armed, and no new reset happened.
     assert_eq!(http.org_request_count(), 2);
 }
 
