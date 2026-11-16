@@ -118,6 +118,8 @@ pub unsafe extern "C" fn ddog_telemetry_handle_register_metric_context(
     )
 }
 
+/// Submit a metric point without waiting for buffer space. If the buffer is full,
+/// this call drops the point and returns success.
 #[allow(clippy::missing_safety_doc)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_telemetry_handle_add_point(
@@ -129,6 +131,8 @@ pub unsafe extern "C" fn ddog_telemetry_handle_add_point(
     MaybeError::None
 }
 
+/// Submit a tagged metric point without waiting for buffer space. If the buffer is full,
+/// this call drops the point and returns success. It always takes ownership of `extra_tags`.
 #[allow(clippy::missing_safety_doc)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_telemetry_handle_add_point_with_tags(
