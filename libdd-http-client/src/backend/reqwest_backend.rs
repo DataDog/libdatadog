@@ -26,24 +26,11 @@ impl super::Backend for ReqwestBackend {
         let mut builder = reqwest::Client::builder().timeout(client_config.timeout());
         let base_url_is_https = is_https_url(client_config.base_url());
 
-        // Route reqwest HTTPS through the shared TLS configuration so the
-        // compromised-key distrust check and the selected crypto provider apply
-        // (see `crate::tls`). Without this, reqwest would build its own platform
-        // verifier, bypassing the distrust wrapper.
-        //
-        // Only HTTPS base URLs get the preconfigured TLS backend: building the
-        // configuration eagerly loads the system CA roots, which must not happen
-        // for plain-HTTP clients in minimal environments that have no CA
-        // certificates installed.
         #[cfg(any(feature = "https", feature = "fips"))]
         if base_url_is_https {
             builder = builder.tls_backend_preconfigured(crate::tls::build_tls_config()?);
         } else {
-            // Plain-HTTP clients have no preconfigured TLS backend (see above),
-            // so a redirect to an `https` URL would negotiate TLS on reqwest's
-            // default verifier, bypassing the compromised-key distrust check.
-            // Stop such redirects instead of following them: the redirect
-            // response itself is returned to the caller and no TLS connection
+            // HTTPS redirections are returned to the caller and no TLS connection
             // to the redirected URL is ever made.
             builder = builder.redirect(reqwest::redirect::Policy::custom(|attempt| {
                 // Custom policies do not inherit the default hop limit, so keep
@@ -76,9 +63,6 @@ impl super::Backend for ReqwestBackend {
         builder = builder.pool_max_idle_per_host(crate::config::POOL_MAX_IDLE);
 
         if client_config.periodic() {
-            // Pool connections with a small idle timeout instead of disabling pooling entirely,
-            // so consecutive requests within a flush interval can still reuse a connection
-            // while avoiding reusing connections the receiver may have closed.
             builder = builder.pool_idle_timeout(crate::config::PERIODIC_POOL_IDLE_TIMEOUT);
         }
 
@@ -210,6 +194,8 @@ fn map_reqwest_error(e: reqwest::Error) -> HttpClientError {
         HttpClientError::TimedOut
     } else if e.is_connect() {
         HttpClientError::ConnectionFailed(error_chain(&e))
+    } else if e.is_builder() {
+        HttpClientError::InvalidConfig(error_chain(&e))
     } else {
         HttpClientError::IoError(error_chain(&e))
     }
@@ -279,5 +265,26 @@ mod tests {
         if let Err(HttpClientError::InvalidConfig(message)) = backend.send(request, &config).await {
             panic!("request with a matching scheme must pass URL validation: {message}");
         }
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn a_malformed_header_is_a_non_retryable_invalid_config() {
+        let (backend, config) = backend("http://localhost:8126");
+        let mut request = HttpRequest::new(HttpMethod::Get, "http://127.0.0.1:1/".to_owned());
+        request
+            .headers_mut()
+            .push(("bad header".to_owned(), "v".to_owned()));
+
+        let error = backend
+            .send(request, &config)
+            .await
+            .expect_err("malformed header");
+
+        assert!(
+            matches!(error, HttpClientError::InvalidConfig(_)),
+            "unexpected error: {error}"
+        );
+        assert!(!crate::retry::is_retryable(&error));
     }
 }
