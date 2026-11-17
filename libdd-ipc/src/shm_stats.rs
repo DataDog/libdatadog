@@ -431,9 +431,11 @@ impl OwnedShmSpanInput {
 }
 
 impl ShmTable<SpanStats> {
-    /// Submit a span to shared memory. Returns false if no current mapping is available.
+    /// Submit a span to shared memory. Returns false if no current writable mapping is
+    /// available, allowing the caller to fall back to IPC during a forced drain.
     pub fn add_span(&self, input: &ShmSpanInput<'_>) -> bool {
-        self.with_current(|mem| mem.add_span(input)).is_some()
+        self.with_current(|mem| mem.add_span(input))
+            .unwrap_or(false)
     }
 
     /// Drain the inactive bucket, or both buckets if `force` is true.
@@ -462,7 +464,7 @@ impl ShmTable<SpanStats> {
 
 impl ShmTableMapping<SpanStats> {
     /// Add a span to the currently-active bucket.  Thread-safe.
-    fn add_span(&self, input: &ShmSpanInput<'_>) {
+    fn add_span(&self, input: &ShmSpanInput<'_>) -> bool {
         let mut additional_tags = [("", ""); MAX_ADDITIONAL_TAGS];
         let mut additional_tag_count = 0;
         let mut oversized_key = None;
@@ -480,7 +482,7 @@ impl ShmTableMapping<SpanStats> {
             .len()
             .min(MAX_PEER_TAGS - additional_tag_count)];
 
-        let (inserted, log_blocked) = self.with_active_bucket(|bucket| {
+        let Some((inserted, log_blocked)) = self.with_active_bucket(|bucket| {
             // One budget of waits on slots being written for the whole span, masked retry
             // included; see `ShmTableMapping::insert`.
             let mut waits = 0u32;
@@ -529,7 +531,9 @@ impl ShmTableMapping<SpanStats> {
                 log_blocked = state.additional_tag_warned.swap(1, Relaxed) == 0;
             }
             (inserted, log_blocked)
-        });
+        }) else {
+            return false;
+        };
 
         // Logged after leaving the bucket, so that a flush does not wait on the log.
         if log_blocked {
@@ -562,6 +566,7 @@ impl ShmTableMapping<SpanStats> {
                 }
             }
         }
+        true
     }
 
     fn drain_stats(&self, force: bool) -> Drained {
@@ -638,7 +643,7 @@ impl ShmTableMapping<SpanStats> {
         budget: &mut usize,
     ) -> Option<pb::ClientGroupedStats> {
         let s = &entry.value;
-        // fence(Acquire) in drain_bucket's spin-wait loop already synchronises these reads.
+        // drain_bucket's exclusive Acquire claim synchronises these reads with every writer.
         let hits = s.hits.swap(0, Relaxed);
         let errors = s.errors.swap(0, Relaxed);
         let duration_sum = s.duration_sum.swap(0, Relaxed);
@@ -1560,6 +1565,106 @@ mod tests {
         let third = c.drain(true);
         assert_eq!(additional_tags_of(&third), ["[tenant:c] x1"]);
         assert_eq!(blocked(&third), (0, 0));
+    }
+
+    /// A forced flush must not reset the string pool underneath a new writer. In particular,
+    /// the aliased PHP tag fixture writes a "property" resource while the sidecar can flush.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn a_writer_cannot_publish_into_a_bucket_being_cleared() {
+        let c = default_concentrator(test_path());
+        c.add_span(&span("svc", "seed", 1_000));
+        let mem = c.mem.load_full().unwrap();
+        let mut attempted = false;
+        let mut accepted = true;
+        mem.drain_buckets_with_state(true, ShmTableMapping::drain_entry, |_| {
+            if !attempted {
+                attempted = true;
+                // The drain has cleared the slots but has not reset the pool yet.
+                accepted = c.add_span(&tagged("property", &[("span.kind", "producer")], 100));
+            }
+        });
+        // The caller's IPC fallback can submit the span after the drain completes.
+        if !accepted {
+            assert!(c.add_span(&tagged("property", &[("span.kind", "producer")], 100)));
+        }
+        assert!(c.add_span(&span("svc", &"x".repeat(128), 1_000)));
+        let drained = c.drain(true);
+        let property = drained
+            .buckets
+            .iter()
+            .flat_map(|b| &b.stats)
+            .find(|g| g.resource == "property")
+            .expect("the resource must not be overwritten by another key's strings");
+        assert_eq!(property.hits, 1);
+        assert_eq!(property.additional_metric_tags, ["span.kind:producer"]);
+        assert!(
+            !accepted,
+            "a busy bucket must send the caller to its fallback"
+        );
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn an_inactive_bucket_with_a_stalled_writer_is_not_cleared() {
+        let c = default_concentrator(test_path());
+        c.add_span(&span("svc", "property", 1_000));
+        let mem = c.mem.load_full().unwrap();
+        let active = mem.header().active_idx.load(Acquire);
+        let bucket = mem.bucket(active);
+        let cursor = bucket.hdr.string_cursor.load(Relaxed);
+        bucket.hdr.in_flight.store(1, Release);
+        assert!(c.drain(false).buckets.is_empty());
+        assert_eq!(bucket.hdr.string_cursor.load(Relaxed), cursor);
+        bucket.hdr.in_flight.store(0, Release);
+
+        let drained = c.drain(true);
+        assert_eq!(drained.buckets[0].stats[0].resource, "property");
+        assert_eq!(drained.buckets[0].stats[0].hits, 1);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn concurrent_forced_drains_preserve_keys_and_counts() {
+        let c = default_concentrator(test_path());
+        let start = std::sync::Barrier::new(5);
+        let remaining = AtomicU32::new(4);
+        let mut groups = Vec::new();
+        std::thread::scope(|scope| {
+            for worker in 0..4 {
+                let c = &c;
+                let start = &start;
+                let remaining = &remaining;
+                scope.spawn(move || {
+                    start.wait();
+                    for i in 0..1_000 {
+                        let resource = format!("property-{worker}-{}", i % 8);
+                        let input = span("svc", &resource, 1_000);
+                        while !c.add_span(&input) {
+                            std::thread::yield_now();
+                        }
+                    }
+                    remaining.fetch_sub(1, Release);
+                });
+            }
+            start.wait();
+            while remaining.load(Acquire) > 0 {
+                groups.extend(c.drain(true).buckets.into_iter().flat_map(|b| b.stats));
+                std::thread::yield_now();
+            }
+        });
+        groups.extend(c.drain(true).buckets.into_iter().flat_map(|b| b.stats));
+        let mut hits = std::collections::HashMap::<String, u64>::new();
+        for group in groups {
+            assert_eq!(group.duration, group.hits * 1_000);
+            *hits.entry(group.resource).or_default() += group.hits;
+        }
+        assert_eq!(hits.len(), 32);
+        for worker in 0..4 {
+            for key in 0..8 {
+                assert_eq!(hits[&format!("property-{worker}-{key}")], 125);
+            }
+        }
     }
 
     /// The telemetry for blocked values travels with the flushed buckets: values over the limit
