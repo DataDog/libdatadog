@@ -10,12 +10,11 @@ use http::header::{
 use http::{Method, Request};
 use http_body_util::BodyExt;
 use libdd_networking::http_common::{self, Body};
-use libdd_regex::Regex;
+use libdd_trace_normalization::normalize_utils::normalize_service;
 use percent_encoding::percent_decode_str;
 use std::future::Future;
 use std::io::Read;
 use std::pin::Pin;
-use std::sync::OnceLock;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
@@ -190,90 +189,36 @@ fn build_request(
         .map_err(|_| TransportFailure::BuildRequest)
 }
 
-const MAX_SERVICE_LEN: usize = 100;
+/// The name that [`normalize_service`] gives a service that has nothing left
+/// after normalization.
+const FALLBACK_SERVICE: &str = "unnamed-service";
 
-/// Returns the `DD-Service` value: the name APM shows for the service, or
-/// `None`.
+/// Returns the `DD-Service` value: the normalized service name, or `None`.
 ///
-/// APM shows the normalized name ([`normalize_service`]), so `My Service`
-/// becomes `my_service`. If that name is empty or is not printable ASCII
-/// (`café-api`, `支付`), the request has no header. A different name would
-/// attribute usage to a service that APM does not show.
+/// The name comes from the trace normalizer ([`normalize_service`]), so
+/// `My Service` becomes `my_service`. If the normalized name is the normalizer
+/// fallback `unnamed-service` (for example from `___`), or is not printable
+/// ASCII (`café-api`, `支付`), the request has no header. A service that is
+/// itself named `unnamed-service` also has no header, because it is the same
+/// value as the fallback.
 ///
 /// The CDN alone decides which values it accepts. It drops the others. The
 /// `http` crate accepts UTF-8 header values, but some tracer HTTP clients reject
-/// them, so all SDKs send only printable ASCII. A service then gets the same
-/// header in each language. The returned value is always a valid header
-/// value, so a service cannot make requests fail.
+/// them, so all SDKs send only printable ASCII. The returned value is always a
+/// valid header value, so a service cannot make requests fail.
 fn usage_service(service: Option<String>) -> Option<String> {
     let service = service.filter(|service| !service.is_empty())?;
-    let normalized = normalize_service(&service);
-    let accepted = !normalized.is_empty() && normalized.bytes().all(|byte| byte.is_ascii_graphic());
+    let mut normalized = service.clone();
+    normalize_service(&mut normalized);
+    let accepted = normalized != FALLBACK_SERVICE
+        && !normalized.is_empty()
+        && normalized.bytes().all(|byte| byte.is_ascii_graphic());
     if !accepted {
         log::debug!(
-            "Feature Flags: service {service:?} has no ASCII APM name; DD-Service header not sent"
+            "Feature Flags: service {service:?} has no ASCII normalized name; DD-Service header not sent"
         );
     }
     accepted.then_some(normalized)
-}
-
-/// Normalizes a service name with the Datadog Agent rules for spans, so the
-/// result is the name that APM shows. The rules come from `NormalizeService`
-/// in pkg/trace/traceutil/normalize, v0.82.3. Where the Agent uses its
-/// `unnamed-service` fallback, this function returns an empty string.
-///
-/// - Cut the name to 100 bytes or less. Do not split a character.
-/// - Lowercase ASCII letters.
-/// - Keep ASCII letters and digits, `:`, `.`, `/`, `-`, and non-ASCII letters and decimal digits
-///   ([`is_letter_or_decimal_digit`]).
-/// - Replace each run of other characters, `_` included, with one `_`.
-/// - Remove a run at the end. Keep a run at the start: ` svc` becomes `_svc`.
-///
-/// This function does not lowercase non-ASCII letters. The header is the same:
-/// the Agent lowercases a character only if its UTF-8 length does not change,
-/// so a non-ASCII letter stays non-ASCII and the request has no header.
-fn normalize_service(service: &str) -> String {
-    let mut end = service.len().min(MAX_SERVICE_LEN);
-    while !service.is_char_boundary(end) {
-        end -= 1;
-    }
-    let mut normalized = String::with_capacity(end);
-    let mut pending_underscore = false;
-    for c in service[..end].chars() {
-        let c = c.to_ascii_lowercase();
-        if c.is_ascii_lowercase()
-            || c.is_ascii_digit()
-            || ":./-".contains(c)
-            || (!c.is_ascii() && is_letter_or_decimal_digit(c))
-        {
-            if std::mem::take(&mut pending_underscore) {
-                normalized.push('_');
-            }
-            normalized.push(c);
-        } else {
-            pending_underscore = true;
-        }
-    }
-    normalized
-}
-
-/// Like `unicode.IsLetter(c) || unicode.IsDigit(c)` in Go, which the Agent uses:
-/// general category L or Nd. std `is_alphanumeric` also accepts No (`²`, `½`),
-/// Nl (`Ⅻ`) and other alphabetic marks (U+0345). The Agent replaces those, so
-/// `a²b` becomes `a_b`, a plain ASCII name that the header can carry.
-///
-/// A character that the regex Unicode tables do not know (`\p{Cn}`) is kept too.
-/// A newer Unicode version can make it a letter, which the Agent then keeps.
-/// Keeping it sends no header, never a different name.
-fn is_letter_or_decimal_digit(c: char) -> bool {
-    static LETTER_OR_DECIMAL_DIGIT: OnceLock<Option<Regex>> = OnceLock::new();
-    let mut buf = [0; 4];
-    // The pattern is constant, so it compiles. If it did not, keeping the
-    // character sends no header, never a different name.
-    LETTER_OR_DECIMAL_DIGIT
-        .get_or_init(|| Regex::new(r"^[\p{L}\p{Nd}\p{Cn}]$").ok())
-        .as_ref()
-        .is_none_or(|regex| regex.is_match(c.encode_utf8(&mut buf)))
 }
 
 fn request_url_and_authorization(
@@ -460,78 +405,22 @@ mod tests {
     }
 
     #[test]
-    fn the_service_is_sent_as_the_name_apm_shows_or_not_at_all() {
-        // The expected values come from the Datadog Agent: `NormalizeService`
-        // in pkg/trace/traceutil/normalize v0.82.3. The header is sent only if
-        // that name is not empty and is printable ASCII. `None` means no header.
-        let a99 = "a".repeat(99);
-        let a100 = "a".repeat(100);
-        let ab99 = format!("a{}", "b".repeat(99));
-        let ab100 = format!("a{}", "b".repeat(100));
-        let a100_b = format!("{a100} b");
-        let a99_e = format!("{a99}é");
-        let e50 = "é".repeat(50);
-        let e60 = "é".repeat(60);
-        // (configured service, name APM shows, DD-Service header)
-        let rows: [(&str, &str, Option<&str>); 41] = [
-            ("checkout", "checkout", Some("checkout")),
-            ("My Service", "my_service", Some("my_service")),
-            ("My-API", "my-api", Some("my-api")),
-            ("UPPER", "upper", Some("upper")),
-            ("bad\nvalue", "bad_value", Some("bad_value")),
-            ("a\tb", "a_b", Some("a_b")),
-            ("a  b!", "a_b", Some("a_b")),
-            ("svc ", "svc", Some("svc")),
-            (" svc", "_svc", Some("_svc")),
-            ("a_", "a", Some("a")),
-            ("svc-", "svc-", Some("svc-")),
-            ("a..b", "a..b", Some("a..b")),
-            ("2fa-service", "2fa-service", Some("2fa-service")),
-            ("9lives", "9lives", Some("9lives")),
-            (
-                "unnamed-service",
-                "unnamed-service",
-                Some("unnamed-service"),
-            ),
-            (
-                "svc_name.v2:api/edge-1",
-                "svc_name.v2:api/edge-1",
-                Some("svc_name.v2:api/edge-1"),
-            ),
-            ("my__service", "my_service", Some("my_service")),
-            (
-                "Default Web Site/Shop",
-                "default_web_site/shop",
-                Some("default_web_site/shop"),
-            ),
-            (&ab99, &ab99, Some(&ab99)),
-            (&ab100, &ab99, Some(&ab99)),
-            (&a100_b, &a100, Some(&a100)),
-            (&a99_e, &a99, Some(&a99)),
-            ("_svc", "_svc", Some("_svc")),
-            ("-svc", "-svc", Some("-svc")),
-            (".svc", ".svc", Some(".svc")),
-            (":svc", ":svc", Some(":svc")),
-            ("café-api", "café-api", None),
-            ("Café", "café", None),
-            ("支付", "支付", None),
-            ("a🐶b", "a_b", Some("a_b")),
-            // Not general category L or Nd: the Agent replaces these.
-            ("a²b", "a_b", Some("a_b")),
-            ("zz½", "zz", Some("zz")),
-            ("a①aZ0", "a_az0", Some("a_az0")),
-            ("900\u{345}Z", "900_z", Some("900_z")),
-            ("aⅫb", "a_b", Some("a_b")),
-            ("İstanbul", "İstanbul", None),
-            (&e60, &e50, None),
-            ("___", "", None),
-            ("-", "-", Some("-")),
-            ("", "", None),
-            ("   ", "", None),
+    fn the_service_is_sent_normalized_or_not_at_all() {
+        // The trace normalizer has its own tests. These rows check only that the
+        // header carries its result, and that some results send no header.
+        // (configured service, DD-Service header)
+        let rows: [(&str, Option<&str>); 6] = [
+            ("checkout", Some("checkout")),
+            ("My Service", Some("my_service")),
+            ("Default Web Site/Shop", Some("default_web_site/shop")),
+            // Not printable ASCII.
+            ("café-api", None),
+            // The normalizer fallback `unnamed-service`.
+            ("___", None),
+            ("   ", None),
         ];
         let endpoint = CdnEndpoint::custom("http://localhost/config").unwrap();
-        for (service, apm, header) in rows {
-            assert_eq!(normalize_service(service), apm, "{service:?}");
+        for (service, header) in rows {
             crate::test_logging::start_log_capture();
             let sent = usage_service(Some(service.to_owned()));
             assert_eq!(sent.as_deref(), header, "{service:?}");
@@ -547,13 +436,13 @@ mod tests {
             );
             // A service that is set but not sent has one debug log.
             let logs = crate::test_logging::captured_logs();
-            if header.is_none() && !service.is_empty() {
+            if header.is_none() {
                 assert_eq!(logs.len(), 1, "{service:?}");
                 assert_eq!(logs[0].level, log::Level::Debug);
                 assert_eq!(
                     logs[0].message,
                     format!(
-                        "Feature Flags: service {service:?} has no ASCII APM name; DD-Service header not sent"
+                        "Feature Flags: service {service:?} has no ASCII normalized name; DD-Service header not sent"
                     )
                 );
             } else {
@@ -567,14 +456,10 @@ mod tests {
             build_request(&endpoint, None, "php", "1.27", Some("bad\nvalue")),
             Err(TransportFailure::BuildRequest)
         ));
-    }
-
-    #[test]
-    fn a_character_the_unicode_tables_do_not_know_sends_no_header() {
-        // U+0378 is unassigned. A newer Unicode version can make it a letter,
-        // which the Agent keeps, so `a_b` could be a name that APM does not show.
-        assert_eq!(normalize_service("a\u{378}B"), "a\u{378}b");
-        assert_eq!(usage_service(Some("a\u{378}B".to_owned())), None);
+        assert_eq!(
+            usage_service(Some("bad\nvalue".to_owned())).as_deref(),
+            Some("bad_value")
+        );
     }
 
     #[test]

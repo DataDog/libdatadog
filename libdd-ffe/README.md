@@ -59,17 +59,13 @@ fetcher.run(cancellation_token).await;
 ```
 
 Each request sends `service` in the `DD-Service` header. The CDN uses it to
-attribute usage to the service. The value is the name that APM shows, or there
-is no header.
+attribute usage to the service. The value is the service name after the trace
+normalizer (`normalize_service` in `libdd-trace-normalization`), so
+`My Service` becomes `my_service`.
 
-The name comes from the Datadog Agent rules for service names. `My Service`
-becomes `my_service`. The rules cut the name to 100 bytes and lowercase ASCII
-letters. They keep ASCII letters and digits, `:`, `.`, `/`, `-`, and non-ASCII
-letters and digits. Each run of other characters becomes one `_`. A run at the
-end is removed.
-
-If the name is empty or is not printable ASCII, requests have no header.
-Examples are `café-api`, `支付` and `___`. The CDN decides which names it
+If the normalized name is the normalizer fallback `unnamed-service` or is not
+printable ASCII, requests have no header. Examples are `café-api`, `支付` and
+`___`. The CDN decides which names it
 accepts and drops the others. This is not a validation error. The fetcher logs
 it once at debug level. `service` is part of the subscription identity, so each
 service has its own fetcher.
