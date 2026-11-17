@@ -1,0 +1,50 @@
+# Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+id: miri-integration-test-gate
+language: rust
+severity: error
+message: >-
+  Integration test files run under `cargo miri` unless excluded: add
+  `#![cfg(not(miri))]` as the first line after the license header (merge
+  into an existing compound `#![cfg(all(...))]` gate). Miri-designated
+  files are named `tests/miri_*.rs` and carry no gate — they run under
+  both cargo test and cargo miri. See AGENTS.md "Miri test architecture".
+note: |
+  The inner-attribute check accepts any file-level gate containing
+  `not(miri)`, compound or single. Files without test fns are not
+  flagged, so shared helper modules under tests/ pass without edits;
+  the ignores list covers the known non-targets: helper dirs
+  (tests/common, tests/unit — the #[path]-included sidecar module),
+  crates that live under tests/ (spawn_from_lib, test_app), the
+  standalone GitHub-action tools, and src-level directories that happen
+  to be named tests/.
+files:
+  - "**/tests/**/*.rs"
+ignores:
+  # Miri-designated files: no gate by design.
+  - "**/tests/miri_*.rs"
+  - "**/tests/**/miri_*.rs"
+  # Shared helper modules included by (gated) test files, not cargo targets.
+  - "**/tests/common/**"
+  # datadog-sidecar's #[path]-included module; excluded at the include site.
+  - "**/tests/unit/**"
+  # Crates living under tests/ (spawn_from_lib, crashtracker test_app).
+  - "**/tests/**/src/**"
+  - "**/tests/**/build.rs"
+  # Standalone GitHub-action tools, not workspace members.
+  - ".github/**"
+  # src-level directories named tests/ (e.g. telemetry signal_safe).
+  - "**/src/**"
+rule:
+  all:
+    - kind: source_file
+    - has:
+        stopBy: end
+        kind: attribute_item
+        regex: '^#\[(tokio::)?test'
+    - not:
+        has:
+          stopBy: end
+          kind: inner_attribute_item
+          regex: 'not\(miri\)'

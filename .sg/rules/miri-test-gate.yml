@@ -1,0 +1,73 @@
+# Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+id: miri-test-gate
+language: rust
+severity: error
+message: >-
+  Test code in src/ runs under `cargo miri` unless excluded: a non-miri
+  test mod must gate `not(miri)` (e.g. `#[cfg(all(test, not(miri)))]
+  mod tests`), and a bare `#[test]` fn at file scope needs its own
+  `#[cfg(all(test, not(miri)))]` gate. Miri-designated mods are named
+  `*miri_tests` (miri_tests, v04_miri_tests, ...) and keep the plain
+  `#[cfg(test)]` gate so they run under both cargo test and cargo miri.
+  See AGENTS.md "Miri test architecture".
+note: |
+  `cargo miri test` compiles test targets with both cfg(test) and
+  cfg(miri) set; plain `cargo test` sets only cfg(test). The defaults
+  after the miri_tests refactor: regular tests are excluded from Miri at
+  the cfg level; only `*miri_tests` mods run under Miri. This rule fails
+  the common regression — writing the muscle-memory `#[cfg(test)]
+  mod tests` — which silently opts a whole test module back into Miri.
+  Compound gates such as `#[cfg(all(test, not(miri), feature = "x"))]`
+  are accepted. Mods that contain no `#[test]`/`#[tokio::test]` fn and
+  are not include-style `mod tests;` declarations are not flagged
+  (shared test-support code may legitimately keep `#[cfg(test)]` so it
+  compiles for both the regular and the miri_test mods).
+files:
+  - "**/src/**/*.rs"
+ignores:
+  # Not a workspace member — never compiled by the workspace Miri job.
+  - "build-common/**"
+rule:
+  # A mod that contains test fns, or an include-style `mod tests;`
+  # declaration: must carry not(miri) unless named *miri_tests.
+  # (Bare `#[test]` fns at file scope are covered by
+  # miri-bare-test-fn-gate, which is filename-scoped.)
+  all:
+    - kind: mod_item
+    - not:
+        has:
+          kind: identifier
+          regex: "miri_tests$"
+    - follows:
+        stopBy:
+          not:
+            any:
+              - kind: attribute_item
+              - kind: line_comment
+        kind: attribute_item
+        regex: '(?s)#\[cfg\(((all|any)\()?\s*test[\s,)]'
+    - not:
+        follows:
+          stopBy:
+            not:
+              any:
+                - kind: attribute_item
+                - kind: line_comment
+          kind: attribute_item
+          regex: '(?s)#\[cfg\(.*not\(miri\)'
+    - any:
+        # contains test fns
+        - has:
+            stopBy: end
+            kind: attribute_item
+            regex: '^#\[(tokio::)?test'
+        # or is an include-style declaration named tests/test
+        - all:
+            - not:
+                has:
+                  kind: declaration_list
+            - has:
+                kind: identifier
+                regex: 'tests?$'

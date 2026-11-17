@@ -1,0 +1,57 @@
+# Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+id: miri-bare-test-fn-gate
+language: rust
+severity: error
+message: >-
+  A bare `#[test]` fn at file scope runs under `cargo miri` unless the fn
+  itself is gated `#[cfg(all(test, not(miri)))]`. Test fns inside mods are
+  governed by their mod's gate; this rule only fires on fns that live at
+  file scope. See AGENTS.md "Miri test architecture".
+note: |
+  A file-scope test fn cannot inherit a mod gate — files included via
+  `mod foo;` and plain src files look identical to a per-file parse, so
+  the rule cannot know whether a parent `#[cfg(all(test, not(miri)))]
+  mod foo;` exists. It therefore only applies to files that are not
+  included-test-modules by naming convention (tests.rs, *_tests.rs,
+  *_test.rs, tests/ directories): in production-named src files the only
+  correct exclusion for a file-scope test fn is a local cfg gate, which
+  is exactly what this rule requires.
+files:
+  - "**/src/**/*.rs"
+ignores:
+  # Included test modules: their gate lives at the parent include site.
+  # Broad on purpose — any file whose name says "tests" is an included
+  # test module (tests.rs, *_tests.rs, tests_v1.rs, pb_test.rs, ...).
+  - "**/src/**/*tests*.rs"
+  - "**/src/**/*test.rs"
+  - "**/src/tests/**"
+  - "**/src/**/tests/**"
+  - "**/src/**/miri_tests/**"
+  # Not a workspace member — never compiled by the workspace Miri job.
+  - "build-common/**"
+rule:
+  all:
+    - kind: function_item
+    - follows:
+        stopBy:
+          not:
+            any:
+              - kind: attribute_item
+              - kind: line_comment
+        kind: attribute_item
+        regex: '^#\[(tokio::)?test'
+    - not:
+        follows:
+          stopBy:
+            not:
+              any:
+                - kind: attribute_item
+                - kind: line_comment
+          kind: attribute_item
+          regex: '(?s)#\[cfg\(.*not\(miri\)'
+    - not:
+        inside:
+          stopBy: end
+          kind: mod_item
