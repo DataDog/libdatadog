@@ -23,7 +23,7 @@ pub(crate) struct UniversalFlagConfigWire {
     /// When configuration was last updated.
     pub created_at: Timestamp,
     /// Environment this configuration belongs to.
-    pub environment: Environment,
+    pub environment: EnvironmentWire,
     /// Opt-in boolean for emitting full flag evaluation data from SDKs to Datadog. Flag evaluation
     /// data may contain PII; defaults to `false` for privacy.
     ///
@@ -41,6 +41,16 @@ pub(crate) struct UniversalFlagConfigWire {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Environment {
+    /// Name of the environment.
+    pub name: Str,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct EnvironmentWire {
+    /// Stable identifier of the environment. Absent in legacy configurations.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<Str>,
     /// Name of the environment.
     pub name: Str,
 }

@@ -65,6 +65,43 @@ pub unsafe extern "C" fn ddog_ffe_configuration_get_observe_full_evaluation_data
     unsafe { config.as_ref() }.observe_full_evaluation_data()
 }
 
+/// Get the stable ID of the feature flag environment.
+///
+/// Returns an empty string for legacy configurations without an environment ID.
+/// The returned string borrows from `config` and must not outlive it.
+///
+/// # Safety
+///
+/// `config` must be a valid `Configuration` handle created by `ddog_ffe_configuration_new`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ddog_ffe_configuration_get_environment_id(
+    config: Handle<Configuration>,
+) -> BorrowedStr {
+    // SAFETY: the caller must ensure that config is a valid handle.
+    match unsafe { config.as_ref() }.environment_id() {
+        // SAFETY: the returned value borrows from the live configuration.
+        Some(id) => unsafe { BorrowedStr::borrow_from_str(id) },
+        None => BorrowedStr::empty(),
+    }
+}
+
+/// Get the name of the feature flag environment.
+///
+/// The returned string borrows from `config` and must not outlive it.
+///
+/// # Safety
+///
+/// `config` must be a valid `Configuration` handle created by `ddog_ffe_configuration_new`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ddog_ffe_configuration_get_environment_name(
+    config: Handle<Configuration>,
+) -> BorrowedStr {
+    // SAFETY: the caller must ensure that config is a valid handle.
+    let environment = unsafe { config.as_ref() }.environment();
+    // SAFETY: the returned value borrows from the live configuration.
+    unsafe { BorrowedStr::borrow_from_str(environment) }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -142,5 +179,63 @@ mod tests {
                 "value={value}"
             );
         }
+    }
+
+    fn environment_identity_via_ffi(json: &str) -> (String, String) {
+        let borrowed = BorrowedStr {
+            ptr: json.as_ptr(),
+            len: json.len(),
+        };
+        // SAFETY: `borrowed` points to the live input string.
+        let result = unsafe { ddog_ffe_configuration_new(borrowed) };
+        let mut handle = match result {
+            Result::Ok(handle) => handle,
+            Result::Err(err) => panic!("configuration must parse: {err:?}"),
+        };
+        // SAFETY: Handle has no Drop; both copies borrow the same live configuration.
+        let id_handle = unsafe { std::ptr::read(&handle) };
+        // SAFETY: Handle has no Drop; both copies borrow the same live configuration.
+        let name_handle = unsafe { std::ptr::read(&handle) };
+        // SAFETY: both copied handles refer to the live configuration.
+        let id = unsafe { ddog_ffe_configuration_get_environment_id(id_handle) };
+        // SAFETY: both copied handles refer to the live configuration.
+        let name = unsafe { ddog_ffe_configuration_get_environment_name(name_handle) };
+        let id = if id.len == 0 {
+            String::new()
+        } else {
+            // SAFETY: the returned view borrows from the live configuration and is non-empty.
+            String::from_utf8(unsafe { id.as_bytes() }.to_vec()).unwrap()
+        };
+        // SAFETY: the returned views borrow from the configuration, which remains live here.
+        let name = String::from_utf8(unsafe { name.as_bytes() }.to_vec()).unwrap();
+        // SAFETY: free the original handle exactly once after copying the borrowed strings.
+        unsafe { ddog_ffe_configuration_drop(&mut handle) };
+        (id, name)
+    }
+
+    #[test]
+    fn ffi_exposes_current_and_legacy_environment_identity() {
+        let current = r#"{
+            "createdAt":"2026-01-01T00:00:00Z",
+            "environment":{"id":"11111111-1111-4111-8111-111111111111","name":"Production"},
+            "flags":{}
+        }"#;
+        assert_eq!(
+            environment_identity_via_ffi(current),
+            (
+                "11111111-1111-4111-8111-111111111111".to_owned(),
+                "Production".to_owned(),
+            )
+        );
+
+        let legacy = r#"{
+            "createdAt":"2026-01-01T00:00:00Z",
+            "environment":{"name":"Legacy"},
+            "flags":{}
+        }"#;
+        assert_eq!(
+            environment_identity_via_ffi(legacy),
+            (String::new(), "Legacy".to_owned())
+        );
     }
 }

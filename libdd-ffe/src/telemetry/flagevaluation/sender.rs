@@ -1,7 +1,10 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use super::{FfeFlagEvaluationBatch, encode_flag_evaluation_payloads};
+use super::{
+    FfeFlagEvaluationBatch, FfeFlagEvaluationBatchV2, encode_flag_evaluation_payloads,
+    encode_flag_evaluation_payloads_v2,
+};
 use http::Method;
 use http::header::HeaderValue;
 use http::uri::PathAndQuery;
@@ -106,6 +109,36 @@ pub async fn send_flag_evaluation_batch<C: HttpClientCapability + SleepCapabilit
     config: &FlagEvaluationEvpSendConfig,
 ) -> Option<super::FlagEvaluationEvpPayloadBuildResult> {
     let result = match encode_flag_evaluation_payloads(batch, config.payload_size_limit) {
+        Ok(result) => result,
+        Err(e) => {
+            log::debug!("ffe flagevaluation sender failed to encode batch payload: {e:?}");
+            return None;
+        }
+    };
+
+    if result.dropped_oversized_rows > 0 {
+        log::warn!(
+            "ffe flagevaluation sender dropped {} flag evaluation row(s) because they exceeded the {} byte EVP payload limit after degradation",
+            result.dropped_oversized_rows,
+            config.payload_size_limit
+        );
+    }
+
+    for payload in &result.payloads {
+        send_payload(client, endpoint, payload.clone(), config).await;
+    }
+
+    Some(result)
+}
+
+/// POST an environment-aware flag evaluation batch through the Agent EVP proxy.
+pub async fn send_flag_evaluation_batch_v2<C: HttpClientCapability + SleepCapability>(
+    client: &C,
+    endpoint: &Endpoint,
+    batch: FfeFlagEvaluationBatchV2,
+    config: &FlagEvaluationEvpSendConfig,
+) -> Option<super::FlagEvaluationEvpPayloadBuildResult> {
+    let result = match encode_flag_evaluation_payloads_v2(batch, config.payload_size_limit) {
         Ok(result) => result,
         Err(e) => {
             log::debug!("ffe flagevaluation sender failed to encode batch payload: {e:?}");

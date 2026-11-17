@@ -14,13 +14,13 @@
 //! optional originating-tracer identity headers.
 
 use crate::service::evp_transport::EvpTransport;
-use crate::service::{FfeFlagEvaluationBatch, FfeTelemetryContext};
+use crate::service::{FfeFlagEvaluationBatchV2, FfeTelemetryContext};
 use libdd_capabilities_impl::NativeCapabilities;
 use libdd_common::Endpoint;
 use libdd_ffe::telemetry::flagevaluation::{
     EVP_PAYLOAD_SIZE_LIMIT, FlagEvaluationEvpCoalescer as CommonFlagEvaluationEvpCoalescer,
-    FlagEvaluationEvpSendConfig, FlagEvaluationEvpWriterStats, encode_flag_evaluation_payloads,
-    flagevaluation_agent_proxy_endpoint, send_flag_evaluation_batch,
+    FlagEvaluationEvpSendConfig, FlagEvaluationEvpWriterStats, encode_flag_evaluation_payloads_v2,
+    flagevaluation_agent_proxy_endpoint, send_flag_evaluation_batch_v2,
 };
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -83,7 +83,7 @@ impl FlagEvaluationCoalescer {
         &self,
         client: NativeCapabilities,
         endpoint: Endpoint,
-        batch: FfeFlagEvaluationBatch,
+        batch: FfeFlagEvaluationBatchV2,
         origin: Option<impl AsRef<str>>,
         origin_version: impl AsRef<str>,
     ) {
@@ -106,7 +106,7 @@ impl FlagEvaluationCoalescer {
         &self,
         client: NativeCapabilities,
         transport: EvpTransport,
-        batch: FfeFlagEvaluationBatch,
+        batch: FfeFlagEvaluationBatchV2,
     ) {
         self.enqueue_delivery(client, Delivery::Explicit(transport), batch);
     }
@@ -115,13 +115,13 @@ impl FlagEvaluationCoalescer {
         &self,
         client: NativeCapabilities,
         delivery: Delivery,
-        batch: FfeFlagEvaluationBatch,
+        batch: FfeFlagEvaluationBatchV2,
     ) {
         let destination_key = DestinationKey {
             delivery,
             context: batch.context.clone(),
         };
-        if self.inner.enqueue(destination_key, batch) {
+        if self.inner.enqueue_v2(destination_key, batch) {
             let coalescer = self.clone();
             tokio::spawn(async move {
                 coalescer.flush_loop(client).await;
@@ -135,7 +135,7 @@ impl FlagEvaluationCoalescer {
     }
 
     async fn flush_available_batches(&self, client: NativeCapabilities) {
-        let batches = self.inner.take_batches();
+        let batches = self.inner.take_batches_v2();
         futures::future::join_all(batches.into_iter().map(|(destination, batch)| {
             let client = client.clone();
             let coalescer = self.inner.clone();
@@ -149,7 +149,7 @@ impl FlagEvaluationCoalescer {
                         send_config,
                     } => {
                         if let Some(result) =
-                            send_flag_evaluation_batch(&client, &endpoint, batch, &send_config)
+                            send_flag_evaluation_batch_v2(&client, &endpoint, batch, &send_config)
                                 .await
                         {
                             coalescer.record_payload_build_result(&result);
@@ -189,10 +189,10 @@ pub(crate) fn flagevaluation_endpoint(base: &Endpoint) -> Option<Endpoint> {
 async fn send_batch_with_writer_stats(
     client: &NativeCapabilities,
     transport: &EvpTransport,
-    batch: FfeFlagEvaluationBatch,
+    batch: FfeFlagEvaluationBatchV2,
     coalescer: &CommonFlagEvaluationEvpCoalescer<DestinationKey>,
 ) {
-    let result = match encode_flag_evaluation_payloads(batch, EVP_PAYLOAD_SIZE_LIMIT) {
+    let result = match encode_flag_evaluation_payloads_v2(batch, EVP_PAYLOAD_SIZE_LIMIT) {
         Ok(result) => result,
         Err(error) => {
             debug!("{LOG_PREFIX}: failed to encode batch payload: {error:?}");
@@ -314,7 +314,7 @@ mod tests {
         coalescer.enqueue(
             client,
             Endpoint::default(),
-            batch,
+            batch.into(),
             Some(BorrowOnly("dd-trace-php")),
             BorrowOnly("9.9.9"),
         );
@@ -379,11 +379,17 @@ mod tests {
         coalescer.enqueue(
             client.clone(),
             ep.clone(),
-            batch(),
+            batch().into(),
             Some("dd-trace-php"),
             "9.9.9",
         );
-        coalescer.enqueue(client.clone(), ep, batch(), Some("dd-trace-php"), "9.9.9");
+        coalescer.enqueue(
+            client.clone(),
+            ep,
+            batch().into(),
+            Some("dd-trace-php"),
+            "9.9.9",
+        );
 
         for _ in 0..100 {
             if mock.calls_async().await == 1 {
@@ -441,18 +447,24 @@ mod tests {
         coalescer.enqueue(
             client.clone(),
             ep.clone(),
-            batch(),
+            batch().into(),
             Some("producer-a"),
             "1.0.0",
         );
         coalescer.enqueue(
             client.clone(),
             ep.clone(),
-            batch(),
+            batch().into(),
             Some("producer-b"),
             "1.0.0",
         );
-        coalescer.enqueue(client.clone(), ep, batch(), Some("producer-a"), "2.0.0");
+        coalescer.enqueue(
+            client.clone(),
+            ep,
+            batch().into(),
+            Some("producer-a"),
+            "2.0.0",
+        );
         coalescer.flush_now(client).await;
 
         baseline.assert_calls_async(1).await;
@@ -478,7 +490,7 @@ mod tests {
         let coalescer = FlagEvaluationCoalescer::default();
         let guard = coalescer.flush_mutex.lock().await;
 
-        coalescer.enqueue_with_transport(client.clone(), transport, batch());
+        coalescer.enqueue_with_transport(client.clone(), transport, batch().into());
 
         let mut flush = tokio::spawn({
             let coalescer = coalescer.clone();

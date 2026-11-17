@@ -29,11 +29,12 @@ use datadog_sidecar::service::{
     EvpTransportConfigWithIdentity, EvpTransportMode as SidecarEvpTransportMode,
     FfeEvaluationMetric as SidecarFfeEvaluationMetric, FfeExposure as SidecarFfeExposure,
     FfeExposureBatch as SidecarFfeExposureBatch,
-    FfeFlagEvaluationBatch as SidecarFfeFlagEvaluationBatch,
+    FfeFlagEvaluationBatchV2 as SidecarFfeFlagEvaluationBatch,
     FfeFlagEvaluationEvent as SidecarFfeFlagEvaluationEvent,
+    FfeFlagEvaluationEventV2 as SidecarFfeFlagEvaluationEventV2,
     FfeTelemetryContext as SidecarFfeTelemetryContext, FieldOmissions, FlagEvalEventContext,
-    FlagKey, InstanceId, RuntimeMetadata, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
-    SidecarFlushOptions, TargetingRuleKey, VariantKey,
+    FlagEvaluationEnvironment, FlagKey, InstanceId, RuntimeMetadata, SerializedTracerHeaderTags,
+    SessionConfig, SidecarAction, SidecarFlushOptions, TargetingRuleKey, VariantKey,
     blocking::{self, SidecarTransport},
     canonical_features_json, prune_context_json,
 };
@@ -1101,6 +1102,20 @@ pub struct FfeFlagEvaluation<'a> {
     pub features_json: CharSlice<'a>,
 }
 
+/// Versioned flag-evaluation input carrying feature flag environment identity.
+///
+/// The original `FfeFlagEvaluation` remains unchanged so binaries built against older headers
+/// can continue calling the original submission functions safely.
+#[repr(C)]
+pub struct FfeFlagEvaluationV2<'a> {
+    pub event: FfeFlagEvaluation<'a>,
+    /// Stable ID captured from the configuration used for this evaluation. Empty for legacy
+    /// configurations or when no configuration was evaluated.
+    pub environment_id: CharSlice<'a>,
+    /// Name captured from the same configuration as `environment_id`.
+    pub environment_name: CharSlice<'a>,
+}
+
 /// Send structured Feature Flags exposure events to the sidecar. The sidecar owns
 /// route selection, deduplication, JSON serialization, and EVP delivery. This
 /// function is caller-driven; shared libdatadog evaluator calls do not log unless
@@ -1229,13 +1244,70 @@ fn ddog_sidecar_send_ffe_flag_evaluation_batch_impl(
     let flag_evaluations = try_c!(
         flag_evaluations
             .iter()
-            .map(|event| ffe_flag_evaluation_from_ffi(event, &context.service))
+            .map(|event| ffe_flag_evaluation_from_ffi_v2(event, &context.service))
             .collect::<Result<Vec<_>, _>>()
     );
 
     if flag_evaluations.is_empty() {
         return MaybeError::None;
     }
+
+    try_c!(blocking::enqueue_actions(
+        transport,
+        vec![SidecarAction::FfeFlagEvaluationBatch(
+            SidecarFfeFlagEvaluationBatch {
+                context,
+                flag_evaluations,
+            }
+        )],
+    ));
+    MaybeError::None
+}
+
+/// Send flag-evaluation events with evaluation-time feature flag environment identity.
+///
+/// This versioned entry point leaves the original event ABI unchanged. Identity belongs to each
+/// event so buffered evaluations from different configurations cannot be relabeled or coalesced.
+/// Submission and safety requirements otherwise match
+/// `ddog_sidecar_send_ffe_flag_evaluation_batch`.
+#[unsafe(no_mangle)]
+#[allow(clippy::missing_safety_doc)]
+// allow(ffi-panic-boundary): datadog-sidecar-ffi is always built with panic=abort.
+pub unsafe extern "C" fn ddog_sidecar_send_ffe_flag_evaluation_batch_v2(
+    transport: &mut Box<SidecarTransport>,
+    context: &FfeTelemetryContext<'_>,
+    flag_evaluations: Slice<FfeFlagEvaluationV2<'_>>,
+) -> MaybeError {
+    ddog_sidecar_send_ffe_flag_evaluation_batch_v2_impl(transport, context, flag_evaluations)
+}
+
+fn ddog_sidecar_send_ffe_flag_evaluation_batch_v2_impl(
+    transport: &mut Box<SidecarTransport>,
+    context: &FfeTelemetryContext<'_>,
+    flag_evaluations: Slice<FfeFlagEvaluationV2<'_>>,
+) -> MaybeError {
+    let flag_evaluations = try_c!(
+        flag_evaluations
+            .try_as_slice()
+            .map_err(|e| format!("Invalid flag evaluation v2 slice: {e}"))
+    );
+    if flag_evaluations.is_empty() {
+        return MaybeError::None;
+    }
+
+    let context = try_c!(ffe_context_from_ffi(context));
+    let flag_evaluations = try_c!(
+        flag_evaluations
+            .iter()
+            .map(|event| {
+                ffe_flag_evaluation_from_ffi_with_environment(
+                    &event.event,
+                    &context.service,
+                    Some((event.environment_id, event.environment_name)),
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()
+    );
 
     try_c!(blocking::enqueue_actions(
         transport,
@@ -1330,10 +1402,31 @@ fn ffi_features(features_json: CharSlice) -> Option<String> {
     canonical_features_json(features_json.try_to_utf8().ok()?)
 }
 
+#[cfg(test)]
 fn ffe_flag_evaluation_from_ffi(
     event: &FfeFlagEvaluation<'_>,
     service: &str,
 ) -> Result<SidecarFfeFlagEvaluationEvent, String> {
+    ffe_flag_evaluation_from_ffi_v2(event, service).map(|event| event.event)
+}
+
+fn ffe_flag_evaluation_from_ffi_v2(
+    event: &FfeFlagEvaluation<'_>,
+    service: &str,
+) -> Result<SidecarFfeFlagEvaluationEventV2, String> {
+    ffe_flag_evaluation_from_ffi_with_environment(event, service, None)
+}
+
+fn ffe_flag_evaluation_from_ffi_with_environment(
+    event: &FfeFlagEvaluation<'_>,
+    service: &str,
+    environment: Option<(CharSlice<'_>, CharSlice<'_>)>,
+) -> Result<SidecarFfeFlagEvaluationEventV2, String> {
+    let environment = environment.and_then(|(id, name)| {
+        let id = optional_string_if_valid_utf8(id).unwrap_or_default();
+        let name = optional_string_if_valid_utf8(name).unwrap_or_default();
+        (!id.is_empty() || !name.is_empty()).then_some(FlagEvaluationEnvironment { id, name })
+    });
     let mut field_omissions = FieldOmissions::default();
     let raw_evaluation =
         if event.observe_full_evaluation_data && !event.evaluation_context_json.is_empty() {
@@ -1373,31 +1466,34 @@ fn ffe_flag_evaluation_from_ffi(
 
     // Build the event from borrowed input, storing only the pruned context.
     // Aggregation and output still apply their independent privacy checks.
-    Ok(SidecarFfeFlagEvaluationEvent {
-        timestamp: event.timestamp_ms,
-        flag: FlagKey {
-            key: char_slice_to_string(event.flag_key)?,
+    Ok(SidecarFfeFlagEvaluationEventV2 {
+        environment,
+        event: SidecarFfeFlagEvaluationEvent {
+            timestamp: event.timestamp_ms,
+            flag: FlagKey {
+                key: char_slice_to_string(event.flag_key)?,
+            },
+            first_evaluation: event.first_evaluation_ms,
+            last_evaluation: event.last_evaluation_ms,
+            evaluation_count: event.evaluation_count,
+            variant: optional_string_if_valid_utf8(event.variant).map(|key| VariantKey { key }),
+            allocation: optional_string_if_valid_utf8(event.allocation_key)
+                .map(|key| AllocationKey { key }),
+            targeting_rule: optional_string_if_valid_utf8(event.targeting_rule_key)
+                .map(|key| TargetingRuleKey { key }),
+            targeting_key,
+            context,
+            error: if event.error_message.is_empty() {
+                None
+            } else {
+                EvalError::from_message(event.error_message.try_to_utf8().unwrap_or("GENERAL"))
+            },
+            runtime_default_used: event.runtime_default_used,
+            features: ffi_features(event.features_json),
+            observe_full_evaluation_data: event.observe_full_evaluation_data,
+            is_degraded: false,
+            field_omissions,
         },
-        first_evaluation: event.first_evaluation_ms,
-        last_evaluation: event.last_evaluation_ms,
-        evaluation_count: event.evaluation_count,
-        variant: optional_string_if_valid_utf8(event.variant).map(|key| VariantKey { key }),
-        allocation: optional_string_if_valid_utf8(event.allocation_key)
-            .map(|key| AllocationKey { key }),
-        targeting_rule: optional_string_if_valid_utf8(event.targeting_rule_key)
-            .map(|key| TargetingRuleKey { key }),
-        targeting_key,
-        context,
-        error: if event.error_message.is_empty() {
-            None
-        } else {
-            EvalError::from_message(event.error_message.try_to_utf8().unwrap_or("GENERAL"))
-        },
-        runtime_default_used: event.runtime_default_used,
-        features: ffi_features(event.features_json),
-        observe_full_evaluation_data: event.observe_full_evaluation_data,
-        is_degraded: false,
-        field_omissions,
     })
 }
 
@@ -2377,6 +2473,48 @@ mod tests {
         assert_eq!(
             context.dd.expect("dd context must be present").service,
             "checkout"
+        );
+    }
+
+    #[test]
+    fn ffe_flag_evaluation_v2_captures_current_and_legacy_environment_identity() {
+        let event = ffi_flag_evaluation("");
+        let current = ffe_flag_evaluation_from_ffi_with_environment(
+            &event,
+            "checkout",
+            Some((
+                CharSlice::from("11111111-1111-4111-8111-111111111111"),
+                CharSlice::from("Production"),
+            )),
+        )
+        .unwrap();
+        assert_eq!(
+            current.environment,
+            Some(FlagEvaluationEnvironment {
+                id: "11111111-1111-4111-8111-111111111111".to_owned(),
+                name: "Production".to_owned(),
+            })
+        );
+
+        let legacy = ffe_flag_evaluation_from_ffi_with_environment(
+            &event,
+            "checkout",
+            Some((CharSlice::empty(), CharSlice::from("Legacy"))),
+        )
+        .unwrap();
+        assert_eq!(
+            legacy.environment,
+            Some(FlagEvaluationEnvironment {
+                id: String::new(),
+                name: "Legacy".to_owned(),
+            })
+        );
+
+        assert!(
+            ffe_flag_evaluation_from_ffi_v2(&event, "checkout")
+                .unwrap()
+                .environment
+                .is_none()
         );
     }
 

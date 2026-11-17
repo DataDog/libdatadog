@@ -10,7 +10,8 @@ pub use libdd_ffe::telemetry::evaluation_metrics::FfeEvaluationMetric;
 pub use libdd_ffe::telemetry::exposures::{FfeExposure, FfeExposureBatch};
 pub use libdd_ffe::telemetry::flagevaluation::{
     AllocationKey, ContextDD, ContextTruncationReason, EvalError, FfeFlagEvaluationBatch,
-    FfeFlagEvaluationEvent, FieldOmissions, FlagEvalEventContext, FlagKey, MAX_CONTEXT_DEPTH,
+    FfeFlagEvaluationBatchV2, FfeFlagEvaluationEvent, FfeFlagEvaluationEventV2, FieldOmissions,
+    FlagEvalEventContext, FlagEvaluationEnvironment, FlagKey, MAX_CONTEXT_DEPTH,
     MAX_CONTEXT_FIELDS, MAX_FIELD_LENGTH, TargetingRuleKey, VariantKey, canonical_features_json,
     prune_context_json,
 };
@@ -192,5 +193,5 @@ pub enum SidecarAction {
     /// Keep this appended after pre-existing variants: this enum crosses the
     /// bincode sidecar IPC boundary, so inserting a variant before existing
     /// variants changes their wire ordinals.
-    FfeFlagEvaluationBatch(FfeFlagEvaluationBatch),
+    FfeFlagEvaluationBatch(FfeFlagEvaluationBatchV2),
 }

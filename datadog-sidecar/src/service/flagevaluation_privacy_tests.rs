@@ -64,10 +64,13 @@ fn request_with_context(
     SidecarInterfaceRequest::EnqueueActions {
         actions: vec![
             ordinary(),
-            SidecarAction::FfeFlagEvaluationBatch(FfeFlagEvaluationBatch {
-                context,
-                flag_evaluations: events,
-            }),
+            SidecarAction::FfeFlagEvaluationBatch(
+                FfeFlagEvaluationBatch {
+                    context,
+                    flag_evaluations: events,
+                }
+                .into(),
+            ),
             ordinary(),
         ],
     }
@@ -593,6 +596,7 @@ fn kernel_size_excess_is_delivered_intact_via_shared_memory_without_reshedding()
     let [row] = batch.flag_evaluations.as_slice() else {
         panic!("wrong row count")
     };
+    let row = &row.event;
     assert!(!row.is_degraded);
     assert_eq!(
         row.targeting_key.as_deref(),

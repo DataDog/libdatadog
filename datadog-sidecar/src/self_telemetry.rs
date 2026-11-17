@@ -509,7 +509,8 @@ mod tests {
                     version: "1".into(),
                 },
                 flag_evaluations: vec![row.clone(), row],
-            },
+            }
+            .into(),
             Some("dd-trace-php"),
             "test",
         );

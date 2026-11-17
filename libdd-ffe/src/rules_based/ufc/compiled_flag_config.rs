@@ -8,8 +8,8 @@ use serde::Deserialize;
 use crate::rules_based::{Str, Timestamp, error::EvaluationError, sharder::PreSaltedSharder};
 
 use super::{
-    AllocationWire, AssignmentValue, Environment, Feature, FlagWire, RuleWire, ShardRange,
-    ShardWire, SplitWire, TryParse, UniversalFlagConfigWire, VariationType,
+    AllocationWire, AssignmentValue, Environment, EnvironmentWire, Feature, FlagWire, RuleWire,
+    ShardRange, ShardWire, SplitWire, TryParse, UniversalFlagConfigWire, VariationType,
 };
 
 #[derive(Debug)]
@@ -28,6 +28,8 @@ pub(crate) struct CompiledFlagsConfig {
     pub created_at: Timestamp,
     /// Environment this configuration belongs to.
     pub environment: Environment,
+    /// Stable environment identifier supplied by current configurations.
+    pub environment_id: Option<Str>,
     /// Opt-in boolean for emitting full flag evaluation data from SDKs to Datadog. Flag evaluation
     /// data may contain PII; defaults to `false` for privacy.
     pub observe_full_evaluation_data: bool,
@@ -89,6 +91,10 @@ impl UniversalFlagConfig {
 
 impl From<UniversalFlagConfigWire> for CompiledFlagsConfig {
     fn from(config: UniversalFlagConfigWire) -> Self {
+        let EnvironmentWire {
+            id: environment_id,
+            name: environment_name,
+        } = config.environment;
         let flags = config
             .flags
             .into_iter()
@@ -108,7 +114,10 @@ impl From<UniversalFlagConfigWire> for CompiledFlagsConfig {
                 .evaluator_params
                 .and_then(|params| params.get("maxDependencyDepth").cloned()),
             created_at: config.created_at,
-            environment: config.environment,
+            environment: Environment {
+                name: environment_name,
+            },
+            environment_id,
             observe_full_evaluation_data: config.observe_full_evaluation_data,
             flags,
         }
