@@ -18,10 +18,10 @@ pub struct ResolutionDetails {
     inner: Pin<Box<ResolutionInner>>,
     // memoizing some fields, so we can hand off references to them:
     error_message: Option<String>,
-    // Heap-backed values for `flag_metadata`. The strings must not be modified while the
-    // corresponding borrowed pointers are exposed through the FFI.
+    // Stable backing values for `flag_metadata`. This fixed-capacity vector must not be modified
+    // while the corresponding borrowed pointers are exposed through the FFI.
     #[allow(dead_code)]
-    flag_metadata_backing: Vec<(&'static str, String)>,
+    flag_metadata_backing: Vec<(&'static str, Str)>,
     flag_metadata: Vec<KeyValue<BorrowedStr, BorrowedStr>>,
     // Views of the selected split's features, borrowing from the pinned assignment. Empty (and
     // unallocated) when the split has no features.
@@ -34,14 +34,8 @@ pub struct ResolutionDetails {
     feature_destinations: Vec<BorrowedStr>,
 }
 
-struct EnvironmentIdentityBacking {
-    id: Option<Str>,
-    name: Str,
-}
-
 struct ResolutionInner {
     result: Result<Assignment, EvaluationError>,
-    environment_identity: Option<EnvironmentIdentityBacking>,
 }
 
 impl ResolutionDetails {
@@ -55,39 +49,28 @@ impl ResolutionDetails {
     ) -> ResolutionDetails {
         // `Str` is optimized for cheap cloning, so the snapshot shares the UFC strings without
         // copying their contents.
-        let inner = Box::pin(ResolutionInner {
-            result: value,
-            environment_identity: environment
-                .map(|(id, name)| EnvironmentIdentityBacking { id, name }),
-        });
+        let inner = Box::pin(ResolutionInner { result: value });
 
         let error_message = inner.result.as_ref().err().map(|err| err.to_string());
 
         let mut flag_metadata_backing = Vec::with_capacity(3);
         if let Ok(value) = inner.result.as_ref() {
-            flag_metadata_backing.push((
-                "__dd_allocation_key",
-                value.allocation_key.as_str().to_owned(),
-            ));
+            flag_metadata_backing.push(("__dd_allocation_key", value.allocation_key.clone()));
         }
-        if let Some(identity) = &inner.environment_identity {
-            for (key, value) in [
-                (
-                    "__dd_environment_id",
-                    identity.id.as_ref().map_or("", Str::as_str),
-                ),
-                ("__dd_environment_name", identity.name.as_str()),
-            ] {
-                flag_metadata_backing.push((key, value.to_owned()));
-            }
+        if let Some((id, name)) = environment {
+            flag_metadata_backing.push((
+                "__dd_environment_id",
+                id.unwrap_or_else(|| Str::from_static_str("")),
+            ));
+            flag_metadata_backing.push(("__dd_environment_name", name));
         }
         let flag_metadata = flag_metadata_backing
             .iter()
             .map(|(key, value)| KeyValue {
                 key: BorrowedStr::borrow_static(key),
-                // SAFETY: the string allocations are owned by ResolutionDetails and are never
+                // SAFETY: the backing strings are owned by ResolutionDetails and are never
                 // modified while their borrowed pointers are exposed through the FFI.
-                value: unsafe { BorrowedStr::borrow_from_str(value) },
+                value: unsafe { BorrowedStr::borrow_from_str(value.as_str()) },
             })
             .collect();
 
