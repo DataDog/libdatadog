@@ -32,6 +32,7 @@ pub unsafe extern "C" fn ddog_crasht_demangle(
     })
 }
 
+#[cfg(all(test, not(miri)))]
 #[test]
 #[cfg_attr(miri, ignore)]
 fn test_demangle() {
@@ -56,17 +57,22 @@ fn test_demangle() {
     );
 }
 
-#[test]
-fn test_demangle_fails() {
-    let test_string = "_ZNSt28__fdf";
-    let test_slice = CharSlice::from(test_string);
-    let result: String = unsafe { ddog_crasht_demangle(test_slice, DemangleOptions::Complete) }
-        .unwrap()
-        .into();
-    assert_eq!(result, "");
+#[cfg(test)]
+mod miri_tests {
+    use super::*;
 
-    let result: String = unsafe { ddog_crasht_demangle(test_slice, DemangleOptions::NameOnly) }
-        .unwrap()
-        .into();
-    assert_eq!(result, "");
+    #[test]
+    fn test_demangle_fails() {
+        let test_string = "_ZNSt28__fdf";
+        let test_slice = CharSlice::from(test_string);
+        let result: String = unsafe { ddog_crasht_demangle(test_slice, DemangleOptions::Complete) }
+            .unwrap()
+            .into();
+        assert_eq!(result, "");
+
+        let result: String = unsafe { ddog_crasht_demangle(test_slice, DemangleOptions::NameOnly) }
+            .unwrap()
+            .into();
+        assert_eq!(result, "");
+    }
 }

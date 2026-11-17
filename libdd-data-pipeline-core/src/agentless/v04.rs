@@ -162,19 +162,17 @@ pub fn agentless_stats_version(tracer_version: &str, language: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
+mod test_support {
     use std::sync::{Arc, Mutex};
 
     use bytes::Bytes;
     use libdd_capabilities::HttpError;
-    use libdd_tinybytes::BytesString;
-    use libdd_trace_utils::span::v04::SpanBytes;
 
     use super::*;
 
     #[derive(Clone, Debug, Default)]
-    struct TestCapabilities {
-        requests: Arc<Mutex<Vec<http::Request<Bytes>>>>,
+    pub(super) struct TestCapabilities {
+        pub(super) requests: Arc<Mutex<Vec<http::Request<Bytes>>>>,
     }
 
     impl HttpClientCapability for TestCapabilities {
@@ -206,7 +204,7 @@ mod tests {
         async fn sleep(&self, _duration: Duration) {}
     }
 
-    fn metadata() -> TracerMetadata {
+    pub(super) fn metadata() -> TracerMetadata {
         let metadata = TracerMetadata {
             hostname: "host-1".to_string(),
             env: "prod".to_string(),
@@ -225,7 +223,7 @@ mod tests {
         metadata
     }
 
-    fn trace_config() -> AgentlessTraceConfig {
+    pub(super) fn trace_config() -> AgentlessTraceConfig {
         AgentlessTraceConfig {
             endpoint_url: "https://traces.example.test/api/v0.4/traces".to_string(),
             api_key: "test-api-key".to_string(),
@@ -234,7 +232,7 @@ mod tests {
         }
     }
 
-    fn stats_config() -> AgentlessStatsConfig {
+    pub(super) fn stats_config() -> AgentlessStatsConfig {
         AgentlessStatsConfig {
             endpoint_url: "https://stats.example.test/api/v0.2/stats".to_string(),
             bucket_size: Duration::from_secs(10),
@@ -242,6 +240,15 @@ mod tests {
             additional_metric_tag_keys: Vec::new(),
         }
     }
+}
+
+#[cfg(all(test, not(miri)))]
+mod tests {
+    use libdd_tinybytes::BytesString;
+    use libdd_trace_utils::span::v04::SpanBytes;
+
+    use super::test_support::{TestCapabilities, metadata, stats_config, trace_config};
+    use super::*;
 
     fn payload_with_sampling_priority(sampling_priority: Option<f64>) -> Vec<u8> {
         let span = SpanBytes {
@@ -358,20 +365,6 @@ mod tests {
     }
 
     #[test]
-    fn skips_empty_v04_payload_without_stats() {
-        let capabilities = TestCapabilities::default();
-        let exporter =
-            AgentlessV04Exporter::new(capabilities.clone(), metadata(), trace_config(), None)
-                .unwrap();
-        let traces: Vec<Vec<SpanBytes>> = Vec::new();
-        let payload = libdd_trace_utils::msgpack_encoder::v04::to_vec_from_v04(&traces);
-
-        futures::executor::block_on(exporter.send_v04(&payload)).unwrap();
-
-        assert!(capabilities.requests.lock().unwrap().is_empty());
-    }
-
-    #[test]
     fn preserves_precomputed_stats_without_local_stats() {
         let capabilities = TestCapabilities::default();
         let mut metadata = metadata();
@@ -439,6 +432,28 @@ mod tests {
             result,
             Err(AgentlessV04Error::InvalidStatsInterval)
         ));
+    }
+}
+
+#[cfg(test)]
+mod miri_tests {
+    use libdd_trace_utils::span::v04::SpanBytes;
+
+    use super::test_support::{TestCapabilities, metadata, stats_config, trace_config};
+    use super::*;
+
+    #[test]
+    fn skips_empty_v04_payload_without_stats() {
+        let capabilities = TestCapabilities::default();
+        let exporter =
+            AgentlessV04Exporter::new(capabilities.clone(), metadata(), trace_config(), None)
+                .unwrap();
+        let traces: Vec<Vec<SpanBytes>> = Vec::new();
+        let payload = libdd_trace_utils::msgpack_encoder::v04::to_vec_from_v04(&traces);
+
+        futures::executor::block_on(exporter.send_v04(&payload)).unwrap();
+
+        assert!(capabilities.requests.lock().unwrap().is_empty());
     }
 
     #[test]

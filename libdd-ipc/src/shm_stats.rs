@@ -812,7 +812,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_add_and_flush() {
         let c = ShmSpanConcentrator::create(
             test_path(),
@@ -835,7 +834,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_open_from_worker() {
         let path = test_path();
         let creator = ShmSpanConcentrator::create(
@@ -859,7 +857,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_needs_reload() {
         let path = test_path();
         let creator = ShmSpanConcentrator::create(
@@ -876,7 +873,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn workers_follow_replacements_while_owners_keep_the_old_mapping() {
         let path = test_path();
         let old = default_concentrator(path.clone());
@@ -925,7 +921,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn a_reader_retries_missing_and_retired_mappings() {
         let path = test_path();
         let worker = ShmSpanConcentrator::new_reader(path.clone());
@@ -947,7 +942,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn concurrent_workers_follow_a_replacement() {
         let path = test_path();
         let _old = default_concentrator(path.clone());
@@ -980,7 +974,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_flush_empty() {
         let c = ShmSpanConcentrator::create(
             test_path(),
@@ -1003,7 +996,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_slot_usage() {
         let c = ShmSpanConcentrator::create(
             test_path(),
@@ -1083,7 +1075,6 @@ mod tests {
     /// An opener has nothing but the header to learn the layout from, so that is where it has
     /// to be checked rather than trusted.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn a_header_that_does_not_describe_the_mapping_is_refused() {
         let path = test_path();
         let c = default_concentrator(path.clone());
@@ -1105,7 +1096,6 @@ mod tests {
     /// addresses and its divisor would all follow from them. A handle that has already
     /// validated its layout keeps using it, so rewriting the header moves nothing.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn a_rewritten_header_does_not_move_an_open_handle() {
         let path = test_path();
         let c = default_concentrator(path.clone());
@@ -1140,7 +1130,6 @@ mod tests {
     /// anything got to inspect it. They are decoded instead, and an entry that fails to decode
     /// costs only itself.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn malformed_scalars_drop_only_their_own_entry() {
         let c = default_concentrator(test_path());
         for resource in ["a", "b", "c", "d", "e", "f", "g"] {
@@ -1183,7 +1172,6 @@ mod tests {
     /// reading another bucket's slots - and an entry with a reference that misses is dropped
     /// rather than exported with that field blank.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn string_references_outside_the_pool_drop_their_entry() {
         let c = default_concentrator(test_path());
         for resource in ["a", "b", "c"] {
@@ -1215,59 +1203,11 @@ mod tests {
         assert_eq!(groups[0].hits, 1);
     }
 
-    #[test]
-    fn pool_copies_stay_in_bounds_and_export_owned_strings() {
-        let storage = [const { AtomicU8::new(b'?') }; 16];
-        let pool = &storage[4..12];
-        let cursor = AtomicU32::new(5);
-        let sr = alloc_str(pool, &cursor, "€");
-        assert_eq!((sr.offset, sr.len), (5, 3));
-
-        let mut budget = 3;
-        let owned = pool_string(pool, sr, &mut budget).unwrap();
-        assert_eq!(owned, "€");
-        assert_eq!(budget, 0);
-
-        pool[5].store(0xff, Relaxed);
-        pool[6].store(b'x', Relaxed);
-        pool[7].store(b'y', Relaxed);
-        let mut budget = 3;
-        assert_eq!(pool_string(pool, sr, &mut budget).unwrap(), "\u{fffd}xy");
-        assert_eq!(budget, 0);
-        assert_eq!(owned, "€", "exported strings must own their bytes");
-
-        let mut budget = 2;
-        assert_eq!(pool_string(pool, sr, &mut budget), None);
-        assert_eq!(budget, 2);
-
-        let outside = StringRef { offset: 6, len: 3 };
-        let mut budget = 8;
-        assert_eq!(pool_string(pool, outside, &mut budget), None);
-        assert_eq!(budget, 8);
-
-        let mut budget = 0;
-        assert_eq!(
-            pool_string(pool, StringRef::default(), &mut budget).unwrap(),
-            ""
-        );
-
-        assert_eq!(alloc_str(pool, &cursor, "!").len, 0);
-        cursor.store(u32::MAX, Relaxed);
-        assert_eq!(alloc_str(pool, &cursor, "!").len, 0);
-        assert!(
-            storage[..9]
-                .iter()
-                .chain(&storage[12..])
-                .all(|b| b.load(Relaxed) == b'?')
-        );
-    }
-
     /// Bounding each reference to the pool still leaves a peer free to repeat one large
     /// reference across every slot. The pool's capacity is the most real data a bucket can
     /// hold, so it is also the budget for what one flush copies out of it; entries past it are
     /// dropped.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn one_large_reference_repeated_across_slots_is_bounded() {
         const POOL: usize = 4096;
         let c = ShmSpanConcentrator::create(test_path(), 10_000_000_000, 8, POOL).unwrap();
@@ -1322,7 +1262,6 @@ mod tests {
     /// must not be able to hold `add_span` in that slot forever: in the sidecar `add_span` runs
     /// on the IPC handler's own thread.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn a_permanent_slot_marker_does_not_trap_add_span() {
         let c = default_concentrator(test_path());
         for entry in mapping(&c).bucket(0).entries {
@@ -1346,7 +1285,6 @@ mod tests {
     /// back where it went in. Adding the same span twice also exercises the matching path,
     /// which compares those fields in that same order.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn a_key_round_trips_every_fixed_string_field() {
         let c = default_concentrator(test_path());
         let input = ShmSpanInput {
@@ -1437,7 +1375,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn additional_tags_are_part_of_the_key() {
         let c = default_concentrator(test_path());
         let tags = [("region", "eu"), ("tenant", "acme")];
@@ -1457,7 +1394,6 @@ mod tests {
     /// Peer tags get whatever room the additional metric tags leave in the shared arrays, and
     /// each kind drains back into its own field.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn peer_tags_and_additional_tags_share_the_slot_arrays() {
         let c = default_concentrator(test_path());
         let peer_tags: Vec<String> = (0..MAX_PEER_TAGS).map(|i| format!("peer.{i:02}")).collect();
@@ -1480,7 +1416,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn oversized_additional_tag_values_are_blocked() {
         let c = default_concentrator(test_path());
         // The limit counts characters, not bytes.
@@ -1507,7 +1442,6 @@ mod tests {
     /// Past the limit a new key keeps its additional metric tag keys with masked values, while
     /// keys admitted earlier in the bucket keep counting as themselves.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn the_cardinality_limit_masks_only_new_keys() {
         let c = default_concentrator(test_path());
         for tenant in ["a", "b", "c", "a", "d"] {
@@ -1535,7 +1469,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn the_cardinality_limit_resets_with_each_bucket() {
         let c = default_concentrator(test_path());
         c.add_span(&tagged("res", &[("tenant", "a")], 1));
@@ -1565,7 +1498,6 @@ mod tests {
     /// The telemetry for blocked values travels with the flushed buckets: values over the limit
     /// as collapsed, and values too long as oversized, which is no cardinality limit.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn blocked_additional_tags_are_reported_with_the_flush() {
         let mut c = default_concentrator(test_path());
         let too_long = "x".repeat(ADDITIONAL_METRIC_TAG_VALUE_MAX_LEN + 1);
@@ -1589,7 +1521,6 @@ mod tests {
     /// A key no free slot is left for is masked like one over the limit, so it still counts if
     /// its masked entry exists.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn a_full_table_masks_new_keys_rather_than_dropping_them() {
         let c = ShmSpanConcentrator::create(test_path(), 10_000_000_000, 4, 4096).unwrap();
         for tenant in ["a", "b", "c"] {
@@ -1614,7 +1545,6 @@ mod tests {
 
     /// A span the full table cannot take even masked was dropped, so it blocked no value.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn a_span_a_full_table_drops_is_not_counted_as_blocked() {
         let c = ShmSpanConcentrator::create(test_path(), 10_000_000_000, 4, 4096).unwrap();
         for resource in ["a", "b", "c", "d"] {
@@ -1632,7 +1562,6 @@ mod tests {
     /// Writers racing to add the same new key must all count into it: room another writer has
     /// taken under the limit, but not used yet, is not the limit being reached.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn concurrent_writers_of_one_new_key_are_not_masked() {
         const WRITERS: usize = 8;
         let c = default_concentrator(test_path());
@@ -1666,5 +1595,57 @@ mod tests {
         assert_eq!(input.peer_tags, [("peer.service", "upstream")]);
         assert_eq!(input.additional_tags, [("tenant", "acme")]);
         assert_eq!(input.additional_tags_cardinality_limit, 7);
+    }
+}
+
+#[cfg(test)]
+mod miri_tests {
+    use super::*;
+
+    #[test]
+    fn pool_copies_stay_in_bounds_and_export_owned_strings() {
+        let storage = [const { AtomicU8::new(b'?') }; 16];
+        let pool = &storage[4..12];
+        let cursor = AtomicU32::new(5);
+        let sr = alloc_str(pool, &cursor, "€");
+        assert_eq!((sr.offset, sr.len), (5, 3));
+
+        let mut budget = 3;
+        let owned = pool_string(pool, sr, &mut budget).unwrap();
+        assert_eq!(owned, "€");
+        assert_eq!(budget, 0);
+
+        pool[5].store(0xff, Relaxed);
+        pool[6].store(b'x', Relaxed);
+        pool[7].store(b'y', Relaxed);
+        let mut budget = 3;
+        assert_eq!(pool_string(pool, sr, &mut budget).unwrap(), "\u{fffd}xy");
+        assert_eq!(budget, 0);
+        assert_eq!(owned, "€", "exported strings must own their bytes");
+
+        let mut budget = 2;
+        assert_eq!(pool_string(pool, sr, &mut budget), None);
+        assert_eq!(budget, 2);
+
+        let outside = StringRef { offset: 6, len: 3 };
+        let mut budget = 8;
+        assert_eq!(pool_string(pool, outside, &mut budget), None);
+        assert_eq!(budget, 8);
+
+        let mut budget = 0;
+        assert_eq!(
+            pool_string(pool, StringRef::default(), &mut budget).unwrap(),
+            ""
+        );
+
+        assert_eq!(alloc_str(pool, &cursor, "!").len, 0);
+        cursor.store(u32::MAX, Relaxed);
+        assert_eq!(alloc_str(pool, &cursor, "!").len, 0);
+        assert!(
+            storage[..9]
+                .iter()
+                .chain(&storage[12..])
+                .all(|b| b.load(Relaxed) == b'?')
+        );
     }
 }

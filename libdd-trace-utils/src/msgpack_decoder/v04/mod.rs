@@ -155,11 +155,78 @@ pub fn from_buffer<T: DeserializableTraceData>(
 #[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
-    use crate::test_utils::{create_test_json_span, create_test_no_alloc_span};
     use bolero::check;
-    use libdd_tinybytes::{Bytes, BytesString};
-    use rmp_serde;
+    use libdd_tinybytes::BytesString;
     use rmp_serde::to_vec_named;
+
+    #[test]
+    fn fuzz_from_bytes() {
+        check!()
+            .with_type::<(
+                String,
+                String,
+                String,
+                String,
+                String,
+                String,
+                String,
+                String,
+                u64,
+                u64,
+                u64,
+                i64,
+            )>()
+            .cloned()
+            .for_each(
+                |(
+                    name,
+                    service,
+                    resource,
+                    span_type,
+                    meta_key,
+                    meta_value,
+                    metric_key,
+                    metric_value,
+                    trace_id,
+                    span_id,
+                    parent_id,
+                    start,
+                )| {
+                    let span = SpanBytes {
+                        name: BytesString::from_slice(name.as_ref()).unwrap(),
+                        service: BytesString::from_slice(service.as_ref()).unwrap(),
+                        resource: BytesString::from_slice(resource.as_ref()).unwrap(),
+                        r#type: BytesString::from_slice(span_type.as_ref()).unwrap(),
+                        meta: vec![(
+                            BytesString::from_slice(meta_key.as_ref()).unwrap(),
+                            BytesString::from_slice(meta_value.as_ref()).unwrap(),
+                        )]
+                        .into(),
+                        metrics: vec![(
+                            BytesString::from_slice(metric_key.as_ref()).unwrap(),
+                            metric_value.parse::<f64>().unwrap_or_default(),
+                        )]
+                        .into(),
+                        trace_id: trace_id as u128,
+                        span_id,
+                        parent_id,
+                        start,
+                        ..Default::default()
+                    };
+                    let encoded_data = to_vec_named(&vec![vec![span]]).unwrap();
+                    let result = from_bytes(libdd_tinybytes::Bytes::from(encoded_data));
+
+                    assert!(result.is_ok());
+                },
+            );
+    }
+}
+
+#[cfg(test)]
+mod miri_tests {
+    use super::*;
+    use crate::test_utils::{create_test_json_span, create_test_no_alloc_span};
+    use libdd_tinybytes::{Bytes, BytesString};
     use serde_json::json;
     use std::collections::HashMap;
 
@@ -629,68 +696,5 @@ mod tests {
             )),
             result
         );
-    }
-
-    #[test]
-    #[cfg_attr(miri, ignore)]
-    fn fuzz_from_bytes() {
-        check!()
-            .with_type::<(
-                String,
-                String,
-                String,
-                String,
-                String,
-                String,
-                String,
-                String,
-                u64,
-                u64,
-                u64,
-                i64,
-            )>()
-            .cloned()
-            .for_each(
-                |(
-                    name,
-                    service,
-                    resource,
-                    span_type,
-                    meta_key,
-                    meta_value,
-                    metric_key,
-                    metric_value,
-                    trace_id,
-                    span_id,
-                    parent_id,
-                    start,
-                )| {
-                    let span = SpanBytes {
-                        name: BytesString::from_slice(name.as_ref()).unwrap(),
-                        service: BytesString::from_slice(service.as_ref()).unwrap(),
-                        resource: BytesString::from_slice(resource.as_ref()).unwrap(),
-                        r#type: BytesString::from_slice(span_type.as_ref()).unwrap(),
-                        meta: vec![(
-                            BytesString::from_slice(meta_key.as_ref()).unwrap(),
-                            BytesString::from_slice(meta_value.as_ref()).unwrap(),
-                        )]
-                        .into(),
-                        metrics: vec![(
-                            BytesString::from_slice(metric_key.as_ref()).unwrap(),
-                            metric_value.parse::<f64>().unwrap_or_default(),
-                        )]
-                        .into(),
-                        trace_id: trace_id as u128,
-                        span_id,
-                        parent_id,
-                        start,
-                        ..Default::default()
-                    };
-                    let encoded_data = to_vec_named(&vec![vec![span]]).unwrap();
-                    let result = from_bytes(libdd_tinybytes::Bytes::from(encoded_data));
-
-                    assert!(result.is_ok());
-                },
-            );
     }
 }

@@ -176,7 +176,6 @@ impl criterion::measurement::ValueFormatter for AllocationFormatter {
 #[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
-    use core::alloc::{GlobalAlloc, Layout};
     use criterion::measurement::{Measurement, ValueFormatter};
     use std::alloc::System;
 
@@ -192,43 +191,6 @@ mod tests {
         assert_eq!(s.allocations, 0);
     }
 
-    #[test]
-    fn alloc_increments_both_counters() {
-        let a = ReportingAllocator::new(System);
-        let layout = Layout::from_size_align(64, 8).unwrap();
-        let ptr = unsafe { a.alloc(layout) };
-        assert!(!ptr.is_null());
-        assert_eq!(a.stats().allocated_bytes, 64);
-        assert_eq!(a.stats().allocations, 1);
-        unsafe { a.dealloc(ptr, layout) };
-    }
-
-    #[test]
-    fn dealloc_does_not_change_counters() {
-        let a = ReportingAllocator::new(System);
-        let layout = Layout::from_size_align(32, 8).unwrap();
-        let ptr = unsafe { a.alloc(layout) };
-        let bytes_after_alloc = a.stats().allocated_bytes;
-        unsafe { a.dealloc(ptr, layout) };
-        assert_eq!(a.stats().allocated_bytes, bytes_after_alloc);
-        assert_eq!(a.stats().allocations, 1);
-    }
-
-    #[test]
-    fn multiple_allocs_accumulate() {
-        let a = ReportingAllocator::new(System);
-        let l1 = Layout::from_size_align(16, 8).unwrap();
-        let l2 = Layout::from_size_align(32, 8).unwrap();
-        let p1 = unsafe { a.alloc(l1) };
-        let p2 = unsafe { a.alloc(l2) };
-        assert_eq!(a.stats().allocated_bytes, 48);
-        assert_eq!(a.stats().allocations, 2);
-        unsafe {
-            a.dealloc(p1, l1);
-            a.dealloc(p2, l2);
-        }
-    }
-
     // --- AllocatedBytesMeasurement ---
 
     #[test]
@@ -236,17 +198,6 @@ mod tests {
         let m = AllocatedBytesMeasurement(Cell::new(false), &SHARED);
         assert_eq!(m.zero(), 0);
         assert_eq!(m.add(&100, &200), 300);
-    }
-
-    #[test]
-    fn measurement_start_end_tracks_delta() {
-        let m = AllocatedBytesMeasurement(Cell::new(false), &SHARED);
-        let start = m.start();
-        let layout = Layout::from_size_align(256, 8).unwrap();
-        let ptr = unsafe { SHARED.alloc(layout) };
-        // Other tests may also allocate via SHARED concurrently, so allow >= 256.
-        assert!(m.end(start) >= 256);
-        unsafe { SHARED.dealloc(ptr, layout) };
     }
 
     #[test]
@@ -337,5 +288,63 @@ mod tests {
         let f = AllocationFormatter;
         let mut v = [1000.0_f64];
         assert_eq!(f.scale_for_machines(&mut v), "b");
+    }
+}
+
+#[cfg(test)]
+mod miri_tests {
+    use super::*;
+    use core::alloc::{GlobalAlloc, Layout};
+    use criterion::measurement::Measurement;
+    use std::alloc::System;
+
+    static SHARED: ReportingAllocator<System> = ReportingAllocator::new(System);
+
+    #[test]
+    fn alloc_increments_both_counters() {
+        let a = ReportingAllocator::new(System);
+        let layout = Layout::from_size_align(64, 8).unwrap();
+        let ptr = unsafe { a.alloc(layout) };
+        assert!(!ptr.is_null());
+        assert_eq!(a.stats().allocated_bytes, 64);
+        assert_eq!(a.stats().allocations, 1);
+        unsafe { a.dealloc(ptr, layout) };
+    }
+
+    #[test]
+    fn dealloc_does_not_change_counters() {
+        let a = ReportingAllocator::new(System);
+        let layout = Layout::from_size_align(32, 8).unwrap();
+        let ptr = unsafe { a.alloc(layout) };
+        let bytes_after_alloc = a.stats().allocated_bytes;
+        unsafe { a.dealloc(ptr, layout) };
+        assert_eq!(a.stats().allocated_bytes, bytes_after_alloc);
+        assert_eq!(a.stats().allocations, 1);
+    }
+
+    #[test]
+    fn multiple_allocs_accumulate() {
+        let a = ReportingAllocator::new(System);
+        let l1 = Layout::from_size_align(16, 8).unwrap();
+        let l2 = Layout::from_size_align(32, 8).unwrap();
+        let p1 = unsafe { a.alloc(l1) };
+        let p2 = unsafe { a.alloc(l2) };
+        assert_eq!(a.stats().allocated_bytes, 48);
+        assert_eq!(a.stats().allocations, 2);
+        unsafe {
+            a.dealloc(p1, l1);
+            a.dealloc(p2, l2);
+        }
+    }
+
+    #[test]
+    fn measurement_start_end_tracks_delta() {
+        let m = AllocatedBytesMeasurement(Cell::new(false), &SHARED);
+        let start = m.start();
+        let layout = Layout::from_size_align(256, 8).unwrap();
+        let ptr = unsafe { SHARED.alloc(layout) };
+        // Other tests may also allocate via SHARED concurrently, so allow >= 256.
+        assert!(m.end(start) >= 256);
+        unsafe { SHARED.dealloc(ptr, layout) };
     }
 }

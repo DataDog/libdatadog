@@ -1339,7 +1339,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn maps_snapshot_rereads_only_when_dlpi_adds_changes() {
         let mut maps = LazyMapsSnapshot::default();
         reset_maps_reads();
@@ -1380,7 +1379,6 @@ mod tests {
     /// Hooking a symbol imported by several Full-RELRO objects reads `/proc/self/maps` once per
     /// pass, not once per patched object, and restores every read-only GOT page.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn hook_pass_reads_proc_maps_once() {
         use std::process::Command;
 
@@ -1488,36 +1486,6 @@ mod tests {
     }
 
     #[test]
-    fn test_gnu_hash_symbol_count_too_small() {
-        let data: [u32; 3] = [0; 3];
-        assert_eq!(
-            unsafe { gnu_hash_symbol_count(data.as_ptr(), data.len()) },
-            None
-        );
-    }
-
-    #[test]
-    fn test_gnu_hash_symbol_count_zero_buckets() {
-        let data: [u32; 6] = [0, 0, 1, 0, 0, 0];
-        assert_eq!(
-            unsafe { gnu_hash_symbol_count(data.as_ptr(), data.len()) },
-            None,
-        );
-    }
-
-    #[test]
-    fn test_gnu_hash_symbol_count_valid_single_chain() {
-        // nbuckets=1, symbias=1, bloom_size=1 (2 u32 words), bloom_shift=0
-        // bloom: [0, 0], bucket: [1], chain: [1 (LSB set = end)]
-        // sym_count = 1 + 1 = 2
-        let data: [u32; 8] = [1, 1, 1, 0, 0, 0, 1, 1];
-        assert_eq!(
-            unsafe { gnu_hash_symbol_count(data.as_ptr(), data.len()) },
-            Some(2),
-        );
-    }
-
-    #[test]
     fn test_sysv_hash_known_values() {
         // Reference values from the ELF spec and glibc's dl-hash.h.
         // Empty string hashes to 0.
@@ -1534,7 +1502,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_iterate_libraries_finds_loaded_objects() {
         let mut count = 0usize;
         iterate_libraries(|_info, _is_exe| {
@@ -1545,7 +1512,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_dynamic_info_parses_loaded_library() {
         let mut found = false;
         iterate_libraries(|info, _| {
@@ -1559,7 +1525,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_all_loaded_libraries_have_valid_sym_count() {
         iterate_libraries(|info, _| {
             // SAFETY: `info` is a valid `dl_phdr_info` from `dl_iterate_phdr`.
@@ -1582,7 +1547,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)] // miri doesn't support dl_iterate_phdr
     fn test_can_lookup_known_symbol() {
         let r = lookup_symbol("malloc", 0); // malloc is definitely known
         assert!(r.is_some(), "expected to find malloc in loaded libraries");
@@ -1590,14 +1554,12 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)] // miri doesn't support dl_iterate_phdr
     fn test_unknown_symbol_lookup_returns_none() {
         let r = lookup_symbol("definitely_not_a_real_libc_symbol_xyzzy", 0);
         assert!(r.is_none());
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_read_proc_maps_returns_entries() {
         let maps = read_proc_maps();
         // Every running Linux process has at least a few mappings
@@ -1633,7 +1595,6 @@ mod tests {
     /// DT_GNU_HASH), dlopen it, and verify that `DynamicInfo::from_phdr`
     /// parses it with a valid sym_count calculated from DT_HASH nchain.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_sysv_hash_library_parsed_correctly() {
         use std::io::Write;
         use std::process::Command;
@@ -1790,7 +1751,6 @@ mod tests {
     /// the hook's own library. Due to rust's testing infrastructure, this test only
     /// covers PIE executables.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_hook_symbol_excluding_self_skips_own_library() {
         // Use a dummy hook function defined in this test binary.
         unsafe extern "C" fn dummy_hook() {}
@@ -1827,7 +1787,6 @@ mod tests {
     /// Sanity check against real loaded libraries: the filter should
     /// accept some relocations (GOT entries exist) and reject some
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_is_got_pointer_reloc_filters_real_relocations() {
         let mut accepted = 0usize;
         let mut rejected = 0usize;
@@ -1919,5 +1878,40 @@ mod tests {
         phdr.p_type = PT_DYNAMIC; // not PT_LOAD
         let phdrs = [phdr];
         assert_eq!(find_containing_load_segment(&phdrs, 0, 0x1500), None);
+    }
+}
+
+#[cfg(test)]
+mod miri_tests {
+    use super::*;
+
+    #[test]
+    fn test_gnu_hash_symbol_count_too_small() {
+        let data: [u32; 3] = [0; 3];
+        assert_eq!(
+            unsafe { gnu_hash_symbol_count(data.as_ptr(), data.len()) },
+            None
+        );
+    }
+
+    #[test]
+    fn test_gnu_hash_symbol_count_zero_buckets() {
+        let data: [u32; 6] = [0, 0, 1, 0, 0, 0];
+        assert_eq!(
+            unsafe { gnu_hash_symbol_count(data.as_ptr(), data.len()) },
+            None,
+        );
+    }
+
+    #[test]
+    fn test_gnu_hash_symbol_count_valid_single_chain() {
+        // nbuckets=1, symbias=1, bloom_size=1 (2 u32 words), bloom_shift=0
+        // bloom: [0, 0], bucket: [1], chain: [1 (LSB set = end)]
+        // sym_count = 1 + 1 = 2
+        let data: [u32; 8] = [1, 1, 1, 0, 0, 0, 1, 1];
+        assert_eq!(
+            unsafe { gnu_hash_symbol_count(data.as_ptr(), data.len()) },
+            Some(2),
+        );
     }
 }

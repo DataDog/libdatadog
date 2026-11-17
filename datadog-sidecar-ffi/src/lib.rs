@@ -2109,8 +2109,74 @@ pub extern "C" fn ddog_sidecar_appsec_response_drop(response: AppsecCResponse) {
 #[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
-    use datadog_sidecar::service::{MAX_CONTEXT_FIELDS, MAX_FIELD_LENGTH};
     use std::borrow::Cow;
+
+    #[test]
+    fn otlp_metrics_endpoint_inherits_agent_test_token_when_missing() {
+        let agent_endpoint = Endpoint {
+            test_token: Some(Cow::Borrowed("agent-token")),
+            ..Endpoint::default()
+        };
+
+        let endpoint =
+            otlp_metrics_endpoint_with_agent_test_token(Some(Endpoint::default()), &agent_endpoint)
+                .expect("expected OTLP metrics endpoint");
+
+        assert_eq!(endpoint.test_token.as_deref(), Some("agent-token"));
+    }
+
+    #[test]
+    fn otlp_metrics_endpoint_keeps_explicit_test_token() {
+        let agent_endpoint = Endpoint {
+            test_token: Some(Cow::Borrowed("agent-token")),
+            ..Endpoint::default()
+        };
+        let otlp_metrics_endpoint = Endpoint {
+            test_token: Some(Cow::Borrowed("metrics-token")),
+            ..Endpoint::default()
+        };
+
+        let endpoint = otlp_metrics_endpoint_with_agent_test_token(
+            Some(otlp_metrics_endpoint),
+            &agent_endpoint,
+        )
+        .expect("expected OTLP metrics endpoint");
+
+        assert_eq!(endpoint.test_token.as_deref(), Some("metrics-token"));
+    }
+
+    fn ffi_exposure<'a>(serial_id: i32, has_serial_id: bool) -> FfeExposure<'a> {
+        FfeExposure {
+            timestamp_ms: 1_700_000_000_000,
+            flag_key: CharSlice::from("flag-a"),
+            subject_id: CharSlice::from("user-1"),
+            subject_attributes_json: CharSlice::from("{}"),
+            allocation_key: CharSlice::from("alloc-a"),
+            variant: CharSlice::from("blue"),
+            serial_id,
+            has_serial_id,
+            features_json: CharSlice::empty(),
+        }
+    }
+
+    #[test]
+    fn ffe_exposure_keeps_features_exactly_one_packet_long() {
+        let at_limit = format!(
+            r#"{{"a":"x"{}}}"#,
+            " ".repeat(libdd_ipc::max_message_size() - 9)
+        );
+        assert_eq!(at_limit.len(), libdd_ipc::max_message_size());
+        let mut exposure = ffi_exposure(0, false);
+        exposure.features_json = CharSlice::from(at_limit.as_str());
+        let converted = ffe_exposure_from_ffi(&exposure).unwrap();
+        assert_eq!(converted.features_json, r#"{"a":"x"}"#);
+    }
+}
+
+#[cfg(test)]
+mod miri_tests {
+    use super::*;
+    use datadog_sidecar::service::{MAX_CONTEXT_FIELDS, MAX_FIELD_LENGTH};
 
     fn ffi_producer_identity<'a>(origin: &'a str, version: &'a str) -> EvpProducerIdentity<'a> {
         EvpProducerIdentity {
@@ -2230,40 +2296,6 @@ mod tests {
         ddog_free_traces(traces);
     }
 
-    #[test]
-    fn otlp_metrics_endpoint_inherits_agent_test_token_when_missing() {
-        let agent_endpoint = Endpoint {
-            test_token: Some(Cow::Borrowed("agent-token")),
-            ..Endpoint::default()
-        };
-
-        let endpoint =
-            otlp_metrics_endpoint_with_agent_test_token(Some(Endpoint::default()), &agent_endpoint)
-                .expect("expected OTLP metrics endpoint");
-
-        assert_eq!(endpoint.test_token.as_deref(), Some("agent-token"));
-    }
-
-    #[test]
-    fn otlp_metrics_endpoint_keeps_explicit_test_token() {
-        let agent_endpoint = Endpoint {
-            test_token: Some(Cow::Borrowed("agent-token")),
-            ..Endpoint::default()
-        };
-        let otlp_metrics_endpoint = Endpoint {
-            test_token: Some(Cow::Borrowed("metrics-token")),
-            ..Endpoint::default()
-        };
-
-        let endpoint = otlp_metrics_endpoint_with_agent_test_token(
-            Some(otlp_metrics_endpoint),
-            &agent_endpoint,
-        )
-        .expect("expected OTLP metrics endpoint");
-
-        assert_eq!(endpoint.test_token.as_deref(), Some("metrics-token"));
-    }
-
     fn ffi_exposure<'a>(serial_id: i32, has_serial_id: bool) -> FfeExposure<'a> {
         FfeExposure {
             timestamp_ms: 1_700_000_000_000,
@@ -2306,20 +2338,6 @@ mod tests {
             assert_eq!(converted.features_json, "");
             assert_eq!(converted.flag_key, "flag-a");
         }
-    }
-
-    #[test]
-    #[cfg_attr(miri, ignore = "parses a packet-sized input")]
-    fn ffe_exposure_keeps_features_exactly_one_packet_long() {
-        let at_limit = format!(
-            r#"{{"a":"x"{}}}"#,
-            " ".repeat(libdd_ipc::max_message_size() - 9)
-        );
-        assert_eq!(at_limit.len(), libdd_ipc::max_message_size());
-        let mut exposure = ffi_exposure(0, false);
-        exposure.features_json = CharSlice::from(at_limit.as_str());
-        let converted = ffe_exposure_from_ffi(&exposure).unwrap();
-        assert_eq!(converted.features_json, r#"{"a":"x"}"#);
     }
 
     #[test]

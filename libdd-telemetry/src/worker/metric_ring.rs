@@ -203,47 +203,6 @@ mod tests {
     }
 
     #[test]
-    fn encode_decode_roundtrip() {
-        for (idx, t) in [
-            (0u32, MetricType::Gauge),
-            (1, MetricType::Count),
-            (u32::MAX, MetricType::Distribution),
-            (12345, MetricType::Rate),
-        ] {
-            let k = key(idx, t);
-            let e = encode_key(k);
-            assert_ne!(
-                e, 0,
-                "encoded key must never collide with the empty sentinel"
-            );
-            assert_eq!(decode_key(e), k);
-        }
-    }
-
-    #[test]
-    fn single_producer_single_consumer_preserves_all_points() {
-        let ring = MetricRing::new();
-        let n = RING_SIZE as u32 * 4; // force wraparound several times
-        let mut consumed = 0u64;
-        let mut sum = 0.0f64;
-        let mut next_expected = 0u32;
-        for i in 0..n {
-            ring.push(i as f64, key(i, MetricType::Count), Vec::new());
-            // Drain frequently so the single-threaded producer never blocks on a full ring.
-            ring.drain(|v, k, _| {
-                assert_eq!(k.index(), next_expected, "points must arrive in order");
-                assert_eq!(v as u32, next_expected);
-                next_expected += 1;
-                consumed += 1;
-                sum += v;
-            });
-        }
-        assert_eq!(consumed, n as u64);
-        assert_eq!(sum, (0..n).map(|i| i as f64).sum::<f64>());
-    }
-
-    #[cfg_attr(miri, ignore)] // very slow
-    #[test]
     fn multi_producer_batch_drain_loses_nothing() {
         let ring = Arc::new(MetricRing::new());
         let producers = 4u32;
@@ -298,5 +257,54 @@ mod tests {
         );
         let expected_sum = producers as u64 * (0..per_producer as u64).sum::<u64>();
         assert_eq!(value_sum.load(Ordering::Relaxed), expected_sum);
+    }
+}
+
+#[cfg(test)]
+mod miri_tests {
+    use super::*;
+
+    fn key(index: u32, t: MetricType) -> ContextKey {
+        ContextKey::from_parts(index, t)
+    }
+
+    #[test]
+    fn encode_decode_roundtrip() {
+        for (idx, t) in [
+            (0u32, MetricType::Gauge),
+            (1, MetricType::Count),
+            (u32::MAX, MetricType::Distribution),
+            (12345, MetricType::Rate),
+        ] {
+            let k = key(idx, t);
+            let e = encode_key(k);
+            assert_ne!(
+                e, 0,
+                "encoded key must never collide with the empty sentinel"
+            );
+            assert_eq!(decode_key(e), k);
+        }
+    }
+
+    #[test]
+    fn single_producer_single_consumer_preserves_all_points() {
+        let ring = MetricRing::new();
+        let n = RING_SIZE as u32 * 4; // force wraparound several times
+        let mut consumed = 0u64;
+        let mut sum = 0.0f64;
+        let mut next_expected = 0u32;
+        for i in 0..n {
+            ring.push(i as f64, key(i, MetricType::Count), Vec::new());
+            // Drain frequently so the single-threaded producer never blocks on a full ring.
+            ring.drain(|v, k, _| {
+                assert_eq!(k.index(), next_expected, "points must arrive in order");
+                assert_eq!(v as u32, next_expected);
+                next_expected += 1;
+                consumed += 1;
+                sum += v;
+            });
+        }
+        assert_eq!(consumed, n as u64);
+        assert_eq!(sum, (0..n).map(|i| i as f64).sum::<f64>());
     }
 }

@@ -631,26 +631,27 @@ fn should_obfuscate_cc_key(key: &str, config: &ObfuscationConfig) -> bool {
     true
 }
 
+/// Non-empty SQL resources that tokenize to nothing, so obfuscation fails and the Agent's
+/// `Non-parsable SQL query` marker has to replace them. The comment-only cases carry text no
+/// test expects to see again, so a resource forwarded as sent instead of discarded fails
+/// loudly.
 #[cfg(test)]
+const UNOBFUSCATABLE_SQL: &[&str] = &[
+    "   ",
+    "\n\t \r\n",
+    "-- SELECT secret-hunter2-must-not-leak",
+    "/* SELECT secret-hunter2-must-not-leak */",
+];
+
+#[cfg(all(test, not(miri)))]
 mod tests {
-    use super::{obfuscate_pb_span, obfuscate_resource_for_stats, pb};
+    use super::{UNOBFUSCATABLE_SQL, obfuscate_pb_span, obfuscate_resource_for_stats, pb};
     use crate::{
         obfuscation_config::{self, SqlConfig},
         replacer,
         sql::SQL_NON_PARSABLE_REPLACEMENT,
     };
     use libdd_trace_utils::test_utils;
-
-    /// Non-empty SQL resources that tokenize to nothing, so obfuscation fails and the Agent's
-    /// `Non-parsable SQL query` marker has to replace them. The comment-only cases carry text no
-    /// test expects to see again, so a resource forwarded as sent instead of discarded fails
-    /// loudly.
-    pub(super) const UNOBFUSCATABLE_SQL: &[&str] = &[
-        "   ",
-        "\n\t \r\n",
-        "-- SELECT secret-hunter2-must-not-leak",
-        "/* SELECT secret-hunter2-must-not-leak */",
-    ];
 
     // test helper with default params
     fn obfuscate_stats(span_type: &str, resource: &str) -> Option<String> {
@@ -734,7 +735,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_replace_span_tags() {
         let mut span = test_utils::create_test_span(111, 222, 0, 1, true);
         span.meta
@@ -884,8 +884,8 @@ mod tests {
 }
 
 #[cfg(test)]
-mod v04_tests {
-    use super::{obfuscate_v04_span, tests::UNOBFUSCATABLE_SQL};
+mod v04_miri_tests {
+    use super::{UNOBFUSCATABLE_SQL, obfuscate_v04_span};
     use crate::obfuscation_config::{
         CreditCardConfig, HttpConfig, MemcachedConfig, ObfuscationConfig, RedisConfig,
     };
@@ -932,7 +932,6 @@ mod v04_tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_replace_span_tags() {
         let mut span = test_span();
         span.meta.insert(bs("custom.tag"), bs("/foo/bar/foo"));
@@ -1193,7 +1192,7 @@ mod v04_tests {
 }
 
 #[cfg(test)]
-mod v1_tests {
+mod v1_miri_tests {
     use super::{obfuscate_v1_chunk_attributes, obfuscate_v1_span};
     use crate::obfuscation_config::{
         CreditCardConfig, HttpConfig, MemcachedConfig, ObfuscationConfig, RedisConfig,
@@ -1238,7 +1237,6 @@ mod v1_tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_replace_span_tags() {
         let mut span = test_span();
         span.attributes

@@ -334,8 +334,109 @@ impl FlushToken {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
+    use async_trait::async_trait;
+    use tokio::{runtime::Builder, time::sleep};
+
+    use super::*;
+    use std::{
+        sync::{
+            Arc,
+            atomic::{AtomicU32, Ordering},
+            mpsc::{Receiver, Sender, channel},
+        },
+        time::Duration,
+    };
+
+    /// Test worker incrementing the state and sending it with the sender.
+    #[derive(Debug)]
+    struct TestWorker {
+        state: u32,
+        sender: Sender<u32>,
+        flushes: Arc<AtomicU32>,
+    }
+
+    #[async_trait]
+    impl Worker for TestWorker {
+        async fn run(&mut self) {
+            let _ = self.sender.send(self.state);
+            self.state += 1;
+        }
+
+        async fn trigger(&mut self) {
+            sleep(Duration::from_millis(20)).await;
+        }
+
+        async fn flush(&mut self) {
+            self.flushes.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    type Setup = (
+        PausableWorker<Box<dyn Worker>>,
+        Receiver<u32>,
+        Arc<AtomicU32>,
+        tokio::runtime::Runtime,
+    );
+
+    fn setup() -> Setup {
+        let (sender, receiver) = channel::<u32>();
+        let flushes = Arc::new(AtomicU32::new(0));
+        let worker = TestWorker {
+            state: 0,
+            sender,
+            flushes: flushes.clone(),
+        };
+        let runtime = Builder::new_multi_thread().enable_time().build().unwrap();
+        (
+            PausableWorker::new(Box::new(worker)),
+            receiver,
+            flushes,
+            runtime,
+        )
+    }
+
+    // Shutdown flushes once and resolves every queued flush token successfully.
+    #[test]
+    fn test_shutdown_acks_queued_flushes() {
+        let (mut pw, _receiver, flushes, runtime) = setup();
+        let tokens: Vec<_> = (0..3).map(|_| pw.request_flush().unwrap()).collect();
+        runtime.block_on(async {
+            pw.shutdown().await;
+            for token in tokens {
+                token.wait().await.unwrap();
+            }
+        });
+        // Default shutdown flushes once; queued requests are acked by that flush.
+        assert_eq!(flushes.load(Ordering::SeqCst), 1);
+    }
+
+    // Dropping a worker without shutdown makes pending flush tokens return `FlushAborted`.
+    #[test]
+    fn test_drop_aborts_flush() {
+        let (pw, _receiver, _, runtime) = setup();
+        let token = pw.request_flush().unwrap();
+        drop(pw);
+        assert!(matches!(
+            runtime.block_on(token.wait()),
+            Err(WorkerHandleError::FlushAborted)
+        ));
+    }
+
+    // Requesting a flush on a worker in an invalid state returns an error.
+    #[test]
+    fn test_request_flush_invalid_state() {
+        let pw: PausableWorker<Box<dyn Worker>> = PausableWorker::InvalidState;
+        assert!(matches!(
+            pw.request_flush(),
+            Err(PausableWorkerError::InvalidState)
+        ));
+    }
+}
+
+#[cfg(test)]
+mod miri_tests {
     use async_trait::async_trait;
     use tokio::{runtime::Builder, time::sleep};
 
@@ -491,42 +592,5 @@ mod tests {
         assert_eq!(flushes.load(Ordering::SeqCst), 1);
         // State preserved across pause
         assert_eq!(receiver.recv().unwrap(), next);
-    }
-
-    // Shutdown flushes once and resolves every queued flush token successfully.
-    #[test]
-    fn test_shutdown_acks_queued_flushes() {
-        let (mut pw, _receiver, flushes, runtime) = setup();
-        let tokens: Vec<_> = (0..3).map(|_| pw.request_flush().unwrap()).collect();
-        runtime.block_on(async {
-            pw.shutdown().await;
-            for token in tokens {
-                token.wait().await.unwrap();
-            }
-        });
-        // Default shutdown flushes once; queued requests are acked by that flush.
-        assert_eq!(flushes.load(Ordering::SeqCst), 1);
-    }
-
-    // Dropping a worker without shutdown makes pending flush tokens return `FlushAborted`.
-    #[test]
-    fn test_drop_aborts_flush() {
-        let (pw, _receiver, _, runtime) = setup();
-        let token = pw.request_flush().unwrap();
-        drop(pw);
-        assert!(matches!(
-            runtime.block_on(token.wait()),
-            Err(WorkerHandleError::FlushAborted)
-        ));
-    }
-
-    // Requesting a flush on a worker in an invalid state returns an error.
-    #[test]
-    fn test_request_flush_invalid_state() {
-        let pw: PausableWorker<Box<dyn Worker>> = PausableWorker::InvalidState;
-        assert!(matches!(
-            pw.request_flush(),
-            Err(PausableWorkerError::InvalidState)
-        ));
     }
 }

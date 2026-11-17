@@ -763,33 +763,6 @@ mod tests {
     }
 
     #[test]
-    fn retain_attributes_sees_each_key_once() {
-        let mut span = SpanBytes::default();
-        // A shadowed duplicate, as a decoder may produce.
-        span.attributes
-            .insert(BytesString::from_static("k"), AttributeValue::Int(1));
-        span.attributes
-            .insert(BytesString::from_static("k"), AttributeValue::Int(2));
-        span.attributes
-            .insert(BytesString::from_static("drop"), AttributeValue::Int(3));
-        let mut seen = Vec::new();
-        span.retain_attributes(|key, value| {
-            seen.push((key.to_owned(), value.as_i64()));
-            if let AttributeValue::Int(i) = value {
-                *i += 10;
-            }
-            key != "drop"
-        });
-        seen.sort_unstable();
-        assert_eq!(
-            seen,
-            [("drop".to_owned(), Some(3)), ("k".to_owned(), Some(2))]
-        );
-        assert_eq!(span.attribute_i64("k"), Some(12));
-        assert!(!span.has_attribute("drop"));
-    }
-
-    #[test]
     fn set_span_kind_maps_to_enum() {
         let mut span = SpanBytes::default();
         span.set_span_kind("client");
@@ -859,57 +832,6 @@ mod tests {
         assert_eq!(compat.remove_attribute("version"), Some(s("1.2")));
         assert_eq!(compat.remove_attribute("component"), Some(s("http")));
         assert_eq!((span.version(), span.component()), (None, None));
-    }
-
-    #[test]
-    fn compat_mut_writes_drop_hidden_attributes_of_promoted_tags() {
-        let s = |v: &'static str| AttributeValue::String(BytesString::from_static(v));
-        // Stale attributes, e.g. from a tracer whose tags weren't promoted.
-        let mut span = SpanBytes::default();
-        for key in ["env", "version", "component"] {
-            span.attributes
-                .insert(BytesString::from_static(key), s("stale"));
-        }
-
-        let compat = span.compat_mut();
-        compat.set_attribute(BytesString::from_static("env"), s("prod"));
-        // The field was unset: compat reads ignore the hidden attribute, so nothing is returned.
-        assert_eq!(compat.remove_attribute("version"), None);
-        // A value the field can't hold is dropped, and leaves the hidden attribute alone.
-        compat.set_attribute(
-            BytesString::from_static("component"),
-            AttributeValue::Int(1),
-        );
-        assert_eq!(span.env(), Some("prod"));
-        assert!(!span.has_attribute("env"));
-        assert!(!span.has_attribute("version"));
-        assert_eq!(span.attribute_str("component"), Some("stale"));
-    }
-
-    #[test]
-    fn compat_mut_hides_attributes_named_like_promoted_tags() {
-        let s = |v: &'static str| AttributeValue::String(BytesString::from_static(v));
-        let mut span = SpanBytes {
-            env: BytesString::from_static("prod"),
-            ..Default::default()
-        };
-        // A stale attribute, e.g. from a tracer that didn't promote it.
-        span.attributes
-            .insert(BytesString::from_static("env"), s("stale"));
-        span.attributes
-            .insert(BytesString::from_static("team"), s("core"));
-
-        let compat = span.compat_mut();
-        assert!(compat.attribute_mut("env").is_none());
-        let mut seen = Vec::new();
-        compat.retain_attributes(|key, _| {
-            seen.push(key.to_owned());
-            false
-        });
-        assert_eq!(seen, ["team"]);
-        // The hidden attribute is kept untouched.
-        assert_eq!(span.attribute_str("env"), Some("stale"));
-        assert!(!span.has_attribute("team"));
     }
 
     #[test]
@@ -1026,6 +948,151 @@ mod tests {
         libdd_tinybytes::BytesString::from_slice(s.as_bytes()).unwrap()
     }
 
+    fn nested_attrs() -> AttributeMap<BytesData> {
+        let mut inner = VecMap::new();
+        inner.insert(key("k"), AttributeValue::Int(1));
+        inner.insert(key("k"), AttributeValue::Int(2));
+        let mut map = VecMap::new();
+        map.insert(
+            key("m"),
+            AttributeValueBytes::Array(vec![AttributeValueBytes::KeyValueList(inner)]),
+        );
+        map
+    }
+
+    fn nested_map(map: &AttributeMap<BytesData>) -> &AttributeMap<BytesData> {
+        match map.get(&key("m")) {
+            Some(AttributeValue::Array(items)) => match &items[0] {
+                AttributeValue::KeyValueList(m) => m,
+                _ => panic!("nested map missing"),
+            },
+            _ => panic!("nested array missing"),
+        }
+    }
+
+    #[test]
+    fn tracer_payload_mark_deduped_flags_nested_maps_without_dropping_entries() {
+        let mut payload = TracerPayloadBytes {
+            attributes: nested_attrs(),
+            ..Default::default()
+        };
+        payload.mark_deduped();
+        let m = nested_map(&payload.attributes);
+        assert!(payload.attributes.is_deduped() && m.is_deduped());
+        assert_eq!(m.len(), 2);
+    }
+}
+
+#[cfg(test)]
+mod miri_tests {
+    use super::*;
+    use libdd_tinybytes::BytesString;
+    use libdd_trace_model::{Attributes as _, AttributesMut as _, Span as _, SpanMut as _};
+
+    fn key(s: &str) -> libdd_tinybytes::BytesString {
+        libdd_tinybytes::BytesString::from_slice(s.as_bytes()).unwrap()
+    }
+
+    fn nested_attrs() -> AttributeMap<BytesData> {
+        let mut inner = VecMap::new();
+        inner.insert(key("k"), AttributeValue::Int(1));
+        inner.insert(key("k"), AttributeValue::Int(2));
+        let mut map = VecMap::new();
+        map.insert(
+            key("m"),
+            AttributeValueBytes::Array(vec![AttributeValueBytes::KeyValueList(inner)]),
+        );
+        map
+    }
+
+    fn nested_map(map: &AttributeMap<BytesData>) -> &AttributeMap<BytesData> {
+        match map.get(&key("m")) {
+            Some(AttributeValue::Array(items)) => match &items[0] {
+                AttributeValue::KeyValueList(m) => m,
+                _ => panic!("nested map missing"),
+            },
+            _ => panic!("nested array missing"),
+        }
+    }
+
+    #[test]
+    fn retain_attributes_sees_each_key_once() {
+        let mut span = SpanBytes::default();
+        // A shadowed duplicate, as a decoder may produce.
+        span.attributes
+            .insert(BytesString::from_static("k"), AttributeValue::Int(1));
+        span.attributes
+            .insert(BytesString::from_static("k"), AttributeValue::Int(2));
+        span.attributes
+            .insert(BytesString::from_static("drop"), AttributeValue::Int(3));
+        let mut seen = Vec::new();
+        span.retain_attributes(|key, value| {
+            seen.push((key.to_owned(), value.as_i64()));
+            if let AttributeValue::Int(i) = value {
+                *i += 10;
+            }
+            key != "drop"
+        });
+        seen.sort_unstable();
+        assert_eq!(
+            seen,
+            [("drop".to_owned(), Some(3)), ("k".to_owned(), Some(2))]
+        );
+        assert_eq!(span.attribute_i64("k"), Some(12));
+        assert!(!span.has_attribute("drop"));
+    }
+
+    #[test]
+    fn compat_mut_writes_drop_hidden_attributes_of_promoted_tags() {
+        let s = |v: &'static str| AttributeValue::String(BytesString::from_static(v));
+        // Stale attributes, e.g. from a tracer whose tags weren't promoted.
+        let mut span = SpanBytes::default();
+        for key in ["env", "version", "component"] {
+            span.attributes
+                .insert(BytesString::from_static(key), s("stale"));
+        }
+
+        let compat = span.compat_mut();
+        compat.set_attribute(BytesString::from_static("env"), s("prod"));
+        // The field was unset: compat reads ignore the hidden attribute, so nothing is returned.
+        assert_eq!(compat.remove_attribute("version"), None);
+        // A value the field can't hold is dropped, and leaves the hidden attribute alone.
+        compat.set_attribute(
+            BytesString::from_static("component"),
+            AttributeValue::Int(1),
+        );
+        assert_eq!(span.env(), Some("prod"));
+        assert!(!span.has_attribute("env"));
+        assert!(!span.has_attribute("version"));
+        assert_eq!(span.attribute_str("component"), Some("stale"));
+    }
+
+    #[test]
+    fn compat_mut_hides_attributes_named_like_promoted_tags() {
+        let s = |v: &'static str| AttributeValue::String(BytesString::from_static(v));
+        let mut span = SpanBytes {
+            env: BytesString::from_static("prod"),
+            ..Default::default()
+        };
+        // A stale attribute, e.g. from a tracer that didn't promote it.
+        span.attributes
+            .insert(BytesString::from_static("env"), s("stale"));
+        span.attributes
+            .insert(BytesString::from_static("team"), s("core"));
+
+        let compat = span.compat_mut();
+        assert!(compat.attribute_mut("env").is_none());
+        let mut seen = Vec::new();
+        compat.retain_attributes(|key, _| {
+            seen.push(key.to_owned());
+            false
+        });
+        assert_eq!(seen, ["team"]);
+        // The hidden attribute is kept untouched.
+        assert_eq!(span.attribute_str("env"), Some("stale"));
+        assert!(!span.has_attribute("team"));
+    }
+
     #[test]
     fn span_dedup_removes_duplicate_keys_everywhere() {
         let mut span = SpanBytes::default();
@@ -1084,28 +1151,6 @@ mod tests {
         );
     }
 
-    fn nested_attrs() -> AttributeMap<BytesData> {
-        let mut inner = VecMap::new();
-        inner.insert(key("k"), AttributeValue::Int(1));
-        inner.insert(key("k"), AttributeValue::Int(2));
-        let mut map = VecMap::new();
-        map.insert(
-            key("m"),
-            AttributeValueBytes::Array(vec![AttributeValueBytes::KeyValueList(inner)]),
-        );
-        map
-    }
-
-    fn nested_map(map: &AttributeMap<BytesData>) -> &AttributeMap<BytesData> {
-        match map.get(&key("m")) {
-            Some(AttributeValue::Array(items)) => match &items[0] {
-                AttributeValue::KeyValueList(m) => m,
-                _ => panic!("nested map missing"),
-            },
-            _ => panic!("nested array missing"),
-        }
-    }
-
     #[test]
     fn tracer_payload_dedup_reaches_nested_maps() {
         let mut payload = TracerPayloadBytes {
@@ -1126,17 +1171,5 @@ mod tests {
         assert!(m.is_deduped() && nested_map(&payload.attributes).is_deduped());
         assert_eq!(m.len(), 1);
         assert_eq!(m.get(&key("k")), Some(&AttributeValue::Int(2)));
-    }
-
-    #[test]
-    fn tracer_payload_mark_deduped_flags_nested_maps_without_dropping_entries() {
-        let mut payload = TracerPayloadBytes {
-            attributes: nested_attrs(),
-            ..Default::default()
-        };
-        payload.mark_deduped();
-        let m = nested_map(&payload.attributes);
-        assert!(payload.attributes.is_deduped() && m.is_deduped());
-        assert_eq!(m.len(), 2);
     }
 }

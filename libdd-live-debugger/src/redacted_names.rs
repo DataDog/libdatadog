@@ -224,29 +224,38 @@ pub fn is_redacted_type<I: AsRef<[u8]>>(name: I) -> bool {
     }
 }
 
-#[test]
-#[cfg_attr(miri, ignore)]
-fn test_redacted_name() {
-    unsafe { add_redacted_name("test") }
+// Runs under Miri on purpose: Miri (Stacked Borrows) reports a real
+// invalid-reference-casting UB in add_redacted_name/add_redacted_type —
+// shared references to the statics are cast to *mut and written through
+// (the pattern `#![allow(invalid_reference_casting)]` at the top of this
+// file suppresses in rustc). These tests stay under Miri and fail until
+// the statics are restructured with interior mutability.
+#[cfg(test)]
+mod miri_tests {
+    use super::*;
 
-    assert!(is_redacted_name("test"));
-    assert!(is_redacted_name("te-st"));
-    assert!(is_redacted_name("CSRF"));
-    assert!(is_redacted_name("$XSRF"));
-    assert!(!is_redacted_name("foo"));
-    assert!(!is_redacted_name("@"));
-}
+    #[test]
+    fn test_redacted_name() {
+        unsafe { add_redacted_name("test") }
 
-#[test]
-#[cfg_attr(miri, ignore)]
-fn test_redacted_type() {
-    unsafe {
-        add_redacted_type("other");
-        add_redacted_type("type*");
+        assert!(is_redacted_name("test"));
+        assert!(is_redacted_name("te-st"));
+        assert!(is_redacted_name("CSRF"));
+        assert!(is_redacted_name("$XSRF"));
+        assert!(!is_redacted_name("foo"));
+        assert!(!is_redacted_name("@"));
     }
 
-    assert!(is_redacted_type("other"));
-    assert!(is_redacted_type("type"));
-    assert!(is_redacted_type("type.foo"));
-    assert!(!is_redacted_type("typ"));
+    #[test]
+    fn test_redacted_type() {
+        unsafe {
+            add_redacted_type("other");
+            add_redacted_type("type*");
+        }
+
+        assert!(is_redacted_type("other"));
+        assert!(is_redacted_type("type"));
+        assert!(is_redacted_type("type.foo"));
+        assert!(!is_redacted_type("typ"));
+    }
 }

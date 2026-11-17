@@ -134,8 +134,40 @@ pub fn insert_str(
     Ok(set.try_insert(string.as_ref())?)
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
+    use super::*;
+
+    #[test]
+    #[allow(invalid_from_utf8)] // Checking error conversion
+    fn test_utf8_conversion_error_display() {
+        let err = Utf8ConversionError::Utf8Error(std::str::from_utf8(b"\xFF").unwrap_err());
+        assert_eq!(
+            err.as_ffi_str().to_str().unwrap(),
+            "invalid input: string was not utf-8"
+        );
+    }
+
+    #[test]
+    fn test_utf8_conversion_error_from_try_reserve() {
+        let mut v = vec![0u8];
+        let reserve_err = v.try_reserve(isize::MAX as usize).unwrap_err();
+        let err = Utf8ConversionError::from(reserve_err);
+
+        match err {
+            Utf8ConversionError::OutOfMemory(_) => (),
+            _ => panic!("Expected OutOfMemory"),
+        }
+
+        assert_eq!(
+            err.as_ffi_str().to_str().unwrap(),
+            "out of memory: utf8 conversion failed"
+        );
+    }
+}
+
+#[cfg(test)]
+mod miri_tests {
     use super::*;
 
     #[test]
@@ -223,32 +255,5 @@ mod tests {
         let result = try_from_utf8_lossy(bytes).unwrap();
         assert_eq!(result, "Hello 👋 World 🌍");
         assert!(matches!(result, Cow::Borrowed(_)));
-    }
-
-    #[test]
-    #[allow(invalid_from_utf8)] // Checking error conversion
-    fn test_utf8_conversion_error_display() {
-        let err = Utf8ConversionError::Utf8Error(std::str::from_utf8(b"\xFF").unwrap_err());
-        assert_eq!(
-            err.as_ffi_str().to_str().unwrap(),
-            "invalid input: string was not utf-8"
-        );
-    }
-
-    #[test]
-    fn test_utf8_conversion_error_from_try_reserve() {
-        let mut v = vec![0u8];
-        let reserve_err = v.try_reserve(isize::MAX as usize).unwrap_err();
-        let err = Utf8ConversionError::from(reserve_err);
-
-        match err {
-            Utf8ConversionError::OutOfMemory(_) => (),
-            _ => panic!("Expected OutOfMemory"),
-        }
-
-        assert_eq!(
-            err.as_ffi_str().to_str().unwrap(),
-            "out of memory: utf8 conversion failed"
-        );
     }
 }

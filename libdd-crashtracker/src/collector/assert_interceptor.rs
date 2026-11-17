@@ -228,8 +228,28 @@ pub(crate) fn install_assert_hook() {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn test_install_assert_hook() {
+        install_assert_hook();
+        // On statically linked binaries, __assert_fail won't appear in
+        // the dynamic symbol table and dlsym returns null. Verify the
+        // hook doesn't crash regardless.
+        let orig = ORIG_ASSERT_FN.load(Acquire);
+        if orig == 0 {
+            eprintln!(
+                "note: __assert_fail not found in dynamic symbol table \
+                 (static libc?), GOT hook not installed"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod miri_tests {
     use super::*;
 
     #[test]
@@ -299,21 +319,5 @@ mod tests {
         assert_eq!(format_u32(1, &mut buf), "1");
         assert_eq!(format_u32(42, &mut buf), "42");
         assert_eq!(format_u32(4294967295, &mut buf), "4294967295");
-    }
-
-    #[cfg_attr(miri, ignore)]
-    #[test]
-    fn test_install_assert_hook() {
-        install_assert_hook();
-        // On statically linked binaries, __assert_fail won't appear in
-        // the dynamic symbol table and dlsym returns null. Verify the
-        // hook doesn't crash regardless.
-        let orig = ORIG_ASSERT_FN.load(Acquire);
-        if orig == 0 {
-            eprintln!(
-                "note: __assert_fail not found in dynamic symbol table \
-                 (static libc?), GOT hook not installed"
-            );
-        }
     }
 }

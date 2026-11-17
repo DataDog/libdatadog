@@ -620,4 +620,6 @@ pub use self::profile::{EncodedProfile, Profile};
 pub use self::profile_exporter::ProfileExporter;
 
 #[cfg(test)]
+mod miri_tests;
+#[cfg(all(test, not(miri)))]
 mod tests;

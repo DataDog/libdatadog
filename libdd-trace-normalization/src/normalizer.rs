@@ -108,16 +108,13 @@ pub fn normalize_chunk(chunk: &mut pb::TraceChunk, root_span_index: usize) -> an
 }
 
 #[cfg(test)]
-mod tests {
-    use crate::normalize_utils;
-    use crate::normalize_utils::{DEFAULT_SPAN_NAME, MAX_TYPE_LEN};
-    use crate::normalizer;
+mod test_support {
     use libdd_trace_protobuf::pb;
     use rand::Rng;
     use std::collections::HashMap;
     use std::time::SystemTime;
 
-    fn new_test_span() -> pb::Span {
+    pub(super) fn new_test_span() -> pb::Span {
         let mut rng = rand::thread_rng();
 
         pb::Span {
@@ -142,7 +139,7 @@ mod tests {
         }
     }
 
-    fn new_test_chunk_with_span(span: pb::Span) -> pb::TraceChunk {
+    pub(super) fn new_test_chunk_with_span(span: pb::Span) -> pb::TraceChunk {
         pb::TraceChunk {
             priority: 1,
             origin: "".to_string(),
@@ -151,6 +148,140 @@ mod tests {
             dropped_trace: false,
         }
     }
+
+    pub(super) fn get_current_time() -> i64 {
+        SystemTime::UNIX_EPOCH.elapsed().unwrap().as_nanos() as i64
+    }
+}
+
+#[cfg(all(test, not(miri)))]
+mod tests {
+    use super::test_support::{new_test_chunk_with_span, new_test_span};
+    use crate::normalizer;
+
+    #[test]
+    fn test_normalize_no_trace_id() {
+        let mut test_span = new_test_span();
+        test_span.trace_id = 0;
+        assert!(normalizer::normalize_span(&mut test_span).is_err());
+    }
+
+    #[test]
+    fn test_normalize_no_span_id() {
+        let mut test_span = new_test_span();
+        test_span.span_id = 0;
+        assert!(normalizer::normalize_span(&mut test_span).is_err());
+    }
+
+    #[test]
+    fn test_normalize_trace_empty() {
+        let mut trace = vec![];
+        let result = normalizer::normalize_trace(&mut trace);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Normalize Trace Error: Trace is empty")
+        );
+    }
+
+    #[test]
+    fn test_is_valid_status_code() {
+        assert!(normalizer::is_valid_http_status_code("100"));
+        assert!(normalizer::is_valid_http_status_code("599"));
+        assert!(!normalizer::is_valid_http_status_code("99"));
+        assert!(!normalizer::is_valid_http_status_code("600"));
+        assert!(!normalizer::is_valid_http_status_code(
+            "Invalid status code"
+        ));
+    }
+
+    #[test]
+    fn test_normalize_chunk_populating_origin() {
+        let mut root = new_test_span();
+        root.meta
+            .insert(normalizer::TAG_ORIGIN.to_string(), "rum".to_string());
+
+        let mut chunk = new_test_chunk_with_span(root);
+        chunk.origin = "".to_string();
+        assert!(normalizer::normalize_chunk(&mut chunk, 0).is_ok());
+        assert_eq!("rum".to_string(), chunk.origin);
+    }
+
+    #[test]
+    fn test_normalize_chunk_not_populating_origin() {
+        let mut root = new_test_span();
+        root.meta
+            .insert(normalizer::TAG_ORIGIN.to_string(), "rum".to_string());
+
+        let mut chunk = new_test_chunk_with_span(root);
+        chunk.origin = "lambda".to_string();
+        assert!(normalizer::normalize_chunk(&mut chunk, 0).is_ok());
+        assert_eq!("lambda".to_string(), chunk.origin);
+    }
+
+    #[test]
+    fn test_normalize_chunk_populating_sampling_priority() {
+        let mut root = new_test_span();
+        root.metrics.insert(
+            normalizer::TAG_SAMPLING_PRIORITY.to_string(),
+            normalizer::SamplerPriority::UserKeep as i32 as f64,
+        );
+
+        let mut chunk = new_test_chunk_with_span(root);
+        chunk.priority = normalizer::SamplerPriority::None as i32;
+        assert!(normalizer::normalize_chunk(&mut chunk, 0).is_ok());
+        assert_eq!(normalizer::SamplerPriority::UserKeep as i32, chunk.priority);
+    }
+
+    #[test]
+    fn test_normalize_chunk_not_populating_sampling_priority() {
+        let mut root = new_test_span();
+        root.metrics.insert(
+            normalizer::TAG_SAMPLING_PRIORITY.to_string(),
+            normalizer::SamplerPriority::UserKeep as i32 as f64,
+        );
+
+        let mut chunk = new_test_chunk_with_span(root);
+        chunk.priority = normalizer::SamplerPriority::AutoDrop as i32;
+        assert!(normalizer::normalize_chunk(&mut chunk, 0).is_ok());
+        assert_eq!(normalizer::SamplerPriority::AutoDrop as i32, chunk.priority);
+    }
+
+    #[test]
+    fn test_normalize_chunk_invalid_root_span() {
+        let mut chunk = new_test_chunk_with_span(new_test_span());
+
+        let result = normalizer::normalize_chunk(&mut chunk, 1);
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Normalize Chunk Error: root_span_index > length of trace chunk spans"
+        );
+    }
+
+    #[test]
+    fn test_normalize_populate_priority_from_any_span() {
+        let mut chunk = new_test_chunk_with_span(new_test_span());
+        chunk.priority = normalizer::SamplerPriority::None as i32;
+        chunk.spans = vec![new_test_span(), new_test_span(), new_test_span()];
+        chunk.spans[1].metrics.insert(
+            normalizer::TAG_SAMPLING_PRIORITY.to_string(),
+            normalizer::SamplerPriority::UserKeep as i32 as f64,
+        );
+        assert!(normalizer::normalize_chunk(&mut chunk, 0).is_ok());
+        assert_eq!(normalizer::SamplerPriority::UserKeep as i32, chunk.priority);
+    }
+}
+
+#[cfg(test)]
+mod miri_tests {
+    use crate::normalize_utils::{self, DEFAULT_SPAN_NAME, MAX_TYPE_LEN};
+    use crate::normalizer;
+    use std::collections::HashMap;
+
+    use super::test_support::{get_current_time, new_test_span};
 
     #[test]
     fn test_normalize_name_passes() {
@@ -230,13 +361,6 @@ mod tests {
     }
 
     #[test]
-    fn test_normalize_no_trace_id() {
-        let mut test_span = new_test_span();
-        test_span.trace_id = 0;
-        assert!(normalizer::normalize_span(&mut test_span).is_err());
-    }
-
-    #[test]
     fn test_normalize_component_to_name() {
         let mut test_span = new_test_span();
         let before_trace_id = test_span.trace_id;
@@ -256,22 +380,11 @@ mod tests {
     }
 
     #[test]
-    fn test_normalize_no_span_id() {
-        let mut test_span = new_test_span();
-        test_span.span_id = 0;
-        assert!(normalizer::normalize_span(&mut test_span).is_err());
-    }
-
-    #[test]
     fn test_normalize_start_passes() {
         let mut test_span = new_test_span();
         let before_start = test_span.start;
         assert!(normalizer::normalize_span(&mut test_span).is_ok());
         assert_eq!(before_start, test_span.start);
-    }
-
-    fn get_current_time() -> i64 {
-        SystemTime::UNIX_EPOCH.elapsed().unwrap().as_nanos() as i64
     }
 
     #[test]
@@ -427,19 +540,6 @@ mod tests {
     }
 
     #[test]
-    fn test_normalize_trace_empty() {
-        let mut trace = vec![];
-        let result = normalizer::normalize_trace(&mut trace);
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("Normalize Trace Error: Trace is empty")
-        );
-    }
-
-    #[test]
     fn test_normalize_trace_trace_id_mismatch() {
         let mut span_1 = new_test_span();
         let mut span_2 = new_test_span();
@@ -476,93 +576,5 @@ mod tests {
 
         let mut trace = vec![span_1, span_2];
         assert!(normalizer::normalize_trace(&mut trace).is_ok());
-    }
-
-    #[test]
-    fn test_is_valid_status_code() {
-        assert!(normalizer::is_valid_http_status_code("100"));
-        assert!(normalizer::is_valid_http_status_code("599"));
-        assert!(!normalizer::is_valid_http_status_code("99"));
-        assert!(!normalizer::is_valid_http_status_code("600"));
-        assert!(!normalizer::is_valid_http_status_code(
-            "Invalid status code"
-        ));
-    }
-
-    #[test]
-    fn test_normalize_chunk_populating_origin() {
-        let mut root = new_test_span();
-        root.meta
-            .insert(normalizer::TAG_ORIGIN.to_string(), "rum".to_string());
-
-        let mut chunk = new_test_chunk_with_span(root);
-        chunk.origin = "".to_string();
-        assert!(normalizer::normalize_chunk(&mut chunk, 0).is_ok());
-        assert_eq!("rum".to_string(), chunk.origin);
-    }
-
-    #[test]
-    fn test_normalize_chunk_not_populating_origin() {
-        let mut root = new_test_span();
-        root.meta
-            .insert(normalizer::TAG_ORIGIN.to_string(), "rum".to_string());
-
-        let mut chunk = new_test_chunk_with_span(root);
-        chunk.origin = "lambda".to_string();
-        assert!(normalizer::normalize_chunk(&mut chunk, 0).is_ok());
-        assert_eq!("lambda".to_string(), chunk.origin);
-    }
-
-    #[test]
-    fn test_normalize_chunk_populating_sampling_priority() {
-        let mut root = new_test_span();
-        root.metrics.insert(
-            normalizer::TAG_SAMPLING_PRIORITY.to_string(),
-            normalizer::SamplerPriority::UserKeep as i32 as f64,
-        );
-
-        let mut chunk = new_test_chunk_with_span(root);
-        chunk.priority = normalizer::SamplerPriority::None as i32;
-        assert!(normalizer::normalize_chunk(&mut chunk, 0).is_ok());
-        assert_eq!(normalizer::SamplerPriority::UserKeep as i32, chunk.priority);
-    }
-
-    #[test]
-    fn test_normalize_chunk_not_populating_sampling_priority() {
-        let mut root = new_test_span();
-        root.metrics.insert(
-            normalizer::TAG_SAMPLING_PRIORITY.to_string(),
-            normalizer::SamplerPriority::UserKeep as i32 as f64,
-        );
-
-        let mut chunk = new_test_chunk_with_span(root);
-        chunk.priority = normalizer::SamplerPriority::AutoDrop as i32;
-        assert!(normalizer::normalize_chunk(&mut chunk, 0).is_ok());
-        assert_eq!(normalizer::SamplerPriority::AutoDrop as i32, chunk.priority);
-    }
-
-    #[test]
-    fn test_normalize_chunk_invalid_root_span() {
-        let mut chunk = new_test_chunk_with_span(new_test_span());
-
-        let result = normalizer::normalize_chunk(&mut chunk, 1);
-        assert!(result.is_err());
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            "Normalize Chunk Error: root_span_index > length of trace chunk spans"
-        );
-    }
-
-    #[test]
-    fn test_normalize_populate_priority_from_any_span() {
-        let mut chunk = new_test_chunk_with_span(new_test_span());
-        chunk.priority = normalizer::SamplerPriority::None as i32;
-        chunk.spans = vec![new_test_span(), new_test_span(), new_test_span()];
-        chunk.spans[1].metrics.insert(
-            normalizer::TAG_SAMPLING_PRIORITY.to_string(),
-            normalizer::SamplerPriority::UserKeep as i32 as f64,
-        );
-        assert!(normalizer::normalize_chunk(&mut chunk, 0).is_ok());
-        assert_eq!(normalizer::SamplerPriority::UserKeep as i32, chunk.priority);
     }
 }

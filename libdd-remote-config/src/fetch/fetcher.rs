@@ -836,7 +836,6 @@ pub mod tests {
     use http::Response;
     use libdd_capabilities_impl::NativeCapabilities;
     use libdd_networking::http_common;
-    use std::mem::transmute;
     use std::sync::LazyLock;
 
     pub(crate) static PATH_FIRST: LazyLock<RemoteConfigPath> = LazyLock::new(|| {
@@ -944,7 +943,6 @@ pub mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn test_inactive() {
         let server = RemoteConfigServer::spawn();
         let storage = Arc::new(Storage::default());
@@ -979,7 +977,6 @@ pub mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn test_expired_config_status_drops_all_configs() {
         let server = RemoteConfigServer::spawn();
         server.files.lock().unwrap().insert(
@@ -1083,7 +1080,6 @@ pub mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn test_fetch_cache() {
         let server = RemoteConfigServer::spawn();
 
@@ -1289,7 +1285,6 @@ pub mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn test_extra_services_forwarded_in_client_tracer() {
         let server: Arc<RemoteConfigServer> = RemoteConfigServer::spawn();
         server.files.lock().unwrap().insert(
@@ -1389,7 +1384,6 @@ pub mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn test_process_tags_forwarded_in_client_tracer() {
         let server: Arc<RemoteConfigServer> = RemoteConfigServer::spawn();
         server.files.lock().unwrap().insert(
@@ -1439,9 +1433,14 @@ pub mod tests {
             ]
         );
     }
+}
+
+#[cfg(test)]
+mod miri_tests {
+    use super::*;
+    use std::mem::transmute;
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_capability_encoding() {
         let state = ConfigProductCapabilities::new(vec![], unsafe {
             vec![

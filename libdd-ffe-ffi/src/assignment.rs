@@ -751,8 +751,28 @@ pub unsafe extern "C" fn ddog_ffe_assignment_drop(assignment: *mut Handle<Resolu
     unsafe { Handle::free(assignment) }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn rejected_flag_is_exposed_as_parse_error() {
+        let details = ResolutionDetails::from(EvaluationError::FlagConfigurationInvalid);
+
+        assert!(matches!(Reason::from(&details), Reason::Error));
+        assert_eq!(ErrorCode::from(&details), ErrorCode::ParseError);
+    }
+
+    #[test]
+    fn invalid_opt_out_is_exposed_as_invalid_context() {
+        let details = ResolutionDetails::from(EvaluationError::InvalidContext);
+        assert!(matches!(Reason::from(&details), Reason::Error));
+        assert_eq!(ErrorCode::from(&details), ErrorCode::InvalidContext);
+    }
+}
+
+#[cfg(test)]
+mod miri_tests {
     use std::{collections::HashMap, sync::Arc};
 
     use super::*;
@@ -894,21 +914,6 @@ mod tests {
         }
         // SAFETY: all calls completed and the configuration handle is still live.
         unsafe { Handle::free(&mut config) };
-    }
-
-    #[test]
-    fn rejected_flag_is_exposed_as_parse_error() {
-        let details = ResolutionDetails::from(EvaluationError::FlagConfigurationInvalid);
-
-        assert!(matches!(Reason::from(&details), Reason::Error));
-        assert_eq!(ErrorCode::from(&details), ErrorCode::ParseError);
-    }
-
-    #[test]
-    fn invalid_opt_out_is_exposed_as_invalid_context() {
-        let details = ResolutionDetails::from(EvaluationError::InvalidContext);
-        assert!(matches!(Reason::from(&details), Reason::Error));
-        assert_eq!(ErrorCode::from(&details), ErrorCode::InvalidContext);
     }
 
     #[test]

@@ -86,18 +86,6 @@ mod tests {
     use super::*;
     use crate::change_buffer::Result;
 
-    /// # Safety
-    ///
-    /// The original mutable borrowed vec must survive for the lifetime of the change buffer.
-    unsafe fn change_buffer_from_vec(buffer: &mut Vec<u8>) -> ChangeBuffer {
-        unsafe {
-            ChangeBuffer::from_raw_parts(
-                std::ptr::NonNull::new(buffer.as_mut_ptr()).unwrap(),
-                buffer.len(),
-            )
-        }
-    }
-
     #[test]
     fn opcode_try_from_valid_values() -> Result<()> {
         let expected = [
@@ -134,6 +122,24 @@ mod tests {
         assert!(OpCode::try_from(17u16).is_err());
         assert!(OpCode::try_from(100u16).is_err());
         assert!(OpCode::try_from(u16::MAX).is_err());
+    }
+}
+
+#[cfg(test)]
+mod miri_tests {
+    use super::*;
+    use crate::change_buffer::Result;
+
+    /// # Safety
+    ///
+    /// The original mutable borrowed vec must survive for the lifetime of the change buffer.
+    unsafe fn change_buffer_from_vec(buffer: &mut Vec<u8>) -> ChangeBuffer {
+        unsafe {
+            ChangeBuffer::from_raw_parts(
+                std::ptr::NonNull::new(buffer.as_mut_ptr()).unwrap(),
+                buffer.len(),
+            )
+        }
     }
 
     #[test]

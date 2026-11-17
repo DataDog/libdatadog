@@ -337,6 +337,19 @@ mod tests {
     }
 
     #[test]
+    fn test_profile_error_debug() {
+        let err = ProfileError::AllocError;
+        let debug_str = format!("{err:?}");
+        assert!(debug_str.contains("AllocError"));
+    }
+}
+
+#[cfg(test)]
+mod miri_tests {
+    use super::*;
+    use std::io::ErrorKind;
+
+    #[test]
     fn test_from_io_error_other() {
         // This kind isn't specially handled and hits the Other path.
         let kind = ErrorKind::NotFound;
@@ -358,12 +371,5 @@ mod tests {
         let result: Result<(), Cow<'static, CStr>> = status.into();
         let cstr = result.unwrap_err();
         assert!(cstr.to_str().unwrap().contains("memory allocator"));
-    }
-
-    #[test]
-    fn test_profile_error_debug() {
-        let err = ProfileError::AllocError;
-        let debug_str = format!("{err:?}");
-        assert!(debug_str.contains("AllocError"));
     }
 }

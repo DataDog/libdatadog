@@ -594,10 +594,7 @@ mod tests {
     use super::Regex;
     use crate::replacer;
     use duplicate::duplicate_item;
-    use libdd_tinybytes::BytesString;
-    use libdd_trace_model::{Attributes as _, Span as _, TraceChunk as _};
     use libdd_trace_protobuf::pb;
-    use libdd_trace_utils::span::{BytesData, v1, v04, vec_map::VecMap};
     use std::collections::HashMap;
 
     fn new_test_span_with_tags(tags: HashMap<&str, &str>) -> pb::Span {
@@ -671,7 +668,6 @@ mod tests {
                     ];
     )]
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_name() {
         let parsed_rules = replacer::parse_rules_from_string(rules);
 
@@ -699,7 +695,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_replace_rule_serde_uses_agent_fields() {
         let agent_rules = serde_json::json!([{
             "name": "http.url",
@@ -719,7 +714,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_replace_rule_eq() {
         let rule1 = replacer::ReplaceRule {
             name: "http.url".to_string(),
@@ -737,7 +731,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_replace_rule_neq() {
         let rule1 = replacer::ReplaceRule {
             name: "http.url".to_string(),
@@ -754,6 +747,62 @@ mod tests {
         assert_ne!(rule1, rule2);
     }
 
+    #[test]
+    fn decimal_form_matches_go_formatting() {
+        let fmt = |v: f64| super::with_decimal(v, str::to_owned);
+        assert_eq!(fmt(42.0), "42");
+        assert_eq!(fmt(1.5), "1.5");
+        assert_eq!(fmt(1e-7), "0.0000001");
+        assert_eq!(fmt(4_111_111_111_111_111.0), "4111111111111111");
+        // Too long for the stack buffer: falls back to the heap.
+        assert_eq!(fmt(1e100), format!("1{}", "0".repeat(100)));
+        assert_eq!(
+            super::with_decimal(i64::MIN, str::to_owned),
+            i64::MIN.to_string()
+        );
+    }
+}
+
+#[cfg(test)]
+mod miri_tests {
+    use crate::replacer;
+    use libdd_tinybytes::BytesString;
+    use libdd_trace_model::{Attributes as _, Span as _, TraceChunk as _};
+    use libdd_trace_protobuf::pb;
+    use libdd_trace_utils::span::{BytesData, v1, v04, vec_map::VecMap};
+    use std::collections::HashMap;
+
+    fn new_test_span_with_tags(tags: HashMap<&str, &str>) -> pb::Span {
+        let mut span = pb::Span {
+            duration: 10000000,
+            error: 0,
+            resource: "GET /some/raclette".to_string(),
+            service: "django".to_string(),
+            name: "django.controller".to_string(),
+            span_id: 123,
+            start: 1448466874000000000,
+            trace_id: 424242,
+            meta: HashMap::new(),
+            metrics: HashMap::from([("cheese_weight".to_string(), 100000.0)]),
+            parent_id: 1111,
+            r#type: "http".to_string(),
+            meta_struct: HashMap::new(),
+            span_links: vec![],
+            span_events: vec![],
+        };
+        for (key, val) in tags {
+            match key {
+                "resource.name" => {
+                    span.resource = val.to_string();
+                }
+                _ => {
+                    span.meta.insert(key.to_string(), val.to_string());
+                }
+            }
+        }
+        span
+    }
+
     fn bs(s: &str) -> BytesString {
         BytesString::from_string(s.to_owned())
     }
@@ -767,7 +816,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn star_rule_skips_hidden_tags_in_every_format() {
         let rules = rules(r#"[{"name": "*", "pattern": "secret", "repl": "?"}]"#);
 
@@ -806,7 +854,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn named_rules_can_target_hidden_tags() {
         let rules = rules(r#"[{"name": "_dd.hidden", "pattern": "secret", "repl": "?"}]"#);
         let mut span = v1::SpanBytes::default();
@@ -816,7 +863,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn star_rule_replaces_promoted_span_tags_v1() {
         let rules = rules(
             r#"[
@@ -855,7 +901,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn named_rules_replace_promoted_span_tag_fields_v1() {
         let rules = rules(
             r#"[
@@ -876,7 +921,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn star_rule_can_unset_the_span_kind_v1() {
         let rules = rules(r#"[{"name": "*", "pattern": "^client$", "repl": "custom"}]"#);
         let mut span = v1::SpanBytes {
@@ -888,7 +932,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn unset_promoted_tags_are_never_matched_v1() {
         // Like a tag missing from v0.4 `meta`, even a pattern matching the empty string.
         let rules = rules(
@@ -912,7 +955,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn star_rule_scrubs_stale_promoted_attribute_when_field_is_unset_v1() {
         let rules = rules(r#"[{"name": "*", "pattern": "secret", "repl": "?"}]"#);
         let mut span = v1::SpanBytes::default();
@@ -924,7 +966,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn env_is_never_rewritten_in_any_format() {
         // Like the Datadog Agent: "*" rules skip the env and rules named "env" are ignored, so
         // the env used for sampling and stats can't change. Other tags are still rewritten.
@@ -974,7 +1015,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn rules_match_numeric_attributes_in_decimal_form_v1() {
         let rules = rules(
             r#"[
@@ -1025,7 +1065,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn rules_leave_bytes_attributes_untouched_v1() {
         let rules = rules(r#"[{"name": "*", "pattern": "secret", "repl": "?"}]"#);
         let bytes = v1::AttributeValue::Bytes(libdd_tinybytes::Bytes::from_static(b"\xa6secret"));
@@ -1036,7 +1075,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn rules_apply_to_metrics_like_the_agent() {
         let rules = rules(
             r#"[
@@ -1086,22 +1124,6 @@ mod tests {
     }
 
     #[test]
-    fn decimal_form_matches_go_formatting() {
-        let fmt = |v: f64| super::with_decimal(v, str::to_owned);
-        assert_eq!(fmt(42.0), "42");
-        assert_eq!(fmt(1.5), "1.5");
-        assert_eq!(fmt(1e-7), "0.0000001");
-        assert_eq!(fmt(4_111_111_111_111_111.0), "4111111111111111");
-        // Too long for the stack buffer: falls back to the heap.
-        assert_eq!(fmt(1e100), format!("1{}", "0".repeat(100)));
-        assert_eq!(
-            super::with_decimal(i64::MIN, str::to_owned),
-            i64::MIN.to_string()
-        );
-    }
-
-    #[test]
-    #[cfg_attr(miri, ignore)]
     fn chunk_rules_leave_the_origin_field_untouched() {
         let rules = rules(
             r#"[
@@ -1120,7 +1142,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn chunk_rules_treat_attributes_named_like_promoted_chunk_tags_as_plain_attributes() {
         let star = rules(r#"[{"name": "*", "pattern": "secret", "repl": "?"}]"#);
         let named = rules(
@@ -1175,7 +1196,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn named_rules_can_target_hidden_tags_in_every_format() {
         let rules = rules(r#"[{"name": "_dd.hidden", "pattern": "secret", "repl": "?"}]"#);
 
@@ -1220,7 +1240,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn rules_recurse_into_arrays_and_maps_v1() {
         for json in [
             r#"[{"name": "*", "pattern": "secret", "repl": "?"}]"#,

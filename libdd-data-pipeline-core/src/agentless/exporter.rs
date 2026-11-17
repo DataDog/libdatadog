@@ -271,6 +271,8 @@ mod tests {
         status: Option<http::StatusCode>,
     }
 
+    // Test double: unwrap is fine here; the crate-level deny targets production code.
+    #[allow(clippy::unwrap_used)]
     impl HttpClientCapability for TestCapabilities {
         fn new_client() -> Self {
             Self::default()

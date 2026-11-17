@@ -61,7 +61,7 @@ impl<T: SpanText> Default for SharedDict<T> {
 
 #[cfg(all(test, not(miri)))]
 mod tests {
-    use libdd_tinybytes::{Bytes, BytesString};
+    use libdd_tinybytes::BytesString;
 
     use super::*;
 
@@ -71,6 +71,13 @@ mod tests {
 
         assert_eq!(dict.map.len(), 1);
     }
+}
+
+#[cfg(test)]
+mod miri_tests {
+    use libdd_tinybytes::{Bytes, BytesString};
+
+    use super::*;
 
     #[test]
     fn get_or_insert_test() {

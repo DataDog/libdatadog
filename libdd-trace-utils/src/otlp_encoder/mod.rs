@@ -51,8 +51,55 @@ pub struct OtlpResourceInfo {
     pub client_computed_stats: bool,
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod encode_tests {
+    use super::*;
+    use crate::span::BytesData;
+    use crate::span::v04::Span;
+    use libdd_trace_protobuf::opentelemetry::proto::collector::trace::v1::ExportTraceServiceRequest as ProtoReq;
+    use prost::Message;
+
+    fn sample_native() -> (Vec<Vec<Span<BytesData>>>, OtlpResourceInfo) {
+        let resource_info = OtlpResourceInfo {
+            service: "svc".to_string(),
+            ..Default::default()
+        };
+        let mut span: Span<BytesData> = Span {
+            trace_id: 0x5b8efff798038103_d269b633813fc60c_u128,
+            span_id: 0xEEE19B7EC3C1B174,
+            name: libdd_tinybytes::BytesString::from_static("op"),
+            resource: libdd_tinybytes::BytesString::from_static("res"),
+            start: 1,
+            duration: 2,
+            error: 1,
+            ..Default::default()
+        };
+        span.meta.insert(
+            "error.msg".into(),
+            libdd_tinybytes::BytesString::from_static("boom"),
+        );
+        span.meta.insert(
+            "http.method".into(),
+            libdd_tinybytes::BytesString::from_static("GET"),
+        );
+        (vec![vec![span]], resource_info)
+    }
+
+    #[test]
+    fn protobuf_round_trips_through_prost() {
+        // Round-trip the IR through the protobuf wire format: decoding the encoded bytes
+        // reproduces the original prost request, i.e. the encoding is lossless. (A JSON round-trip
+        // would need a deserializer mirroring `json_serializer`, which this crate doesn't ship;
+        // `json_and_protobuf_carry_same_span` guards that the JSON matches this same IR.)
+        let (chunks, info) = sample_native();
+        let req = map_traces_to_otlp(&chunks, &info, false);
+        let decoded = ProtoReq::decode(encode_otlp_protobuf(&req).as_slice()).unwrap();
+        assert_eq!(decoded, req);
+    }
+}
+
+#[cfg(test)]
+mod miri_tests {
     use super::*;
     use crate::span::BytesData;
     use crate::span::v04::Span;
@@ -129,17 +176,5 @@ mod encode_tests {
         };
         assert_eq!(jattr["value"]["stringValue"].as_str().unwrap(), pval);
         assert_eq!(jattr["value"]["stringValue"].as_str().unwrap(), "GET");
-    }
-
-    #[test]
-    fn protobuf_round_trips_through_prost() {
-        // Round-trip the IR through the protobuf wire format: decoding the encoded bytes
-        // reproduces the original prost request, i.e. the encoding is lossless. (A JSON round-trip
-        // would need a deserializer mirroring `json_serializer`, which this crate doesn't ship;
-        // `json_and_protobuf_carry_same_span` guards that the JSON matches this same IR.)
-        let (chunks, info) = sample_native();
-        let req = map_traces_to_otlp(&chunks, &info, false);
-        let decoded = ProtoReq::decode(encode_otlp_protobuf(&req).as_slice()).unwrap();
-        assert_eq!(decoded, req);
     }
 }

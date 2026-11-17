@@ -494,8 +494,6 @@ pub type TraceChunksBytes = TraceChunks<BytesData>;
 #[cfg(all(test, not(miri)))]
 mod tests {
     use super::{AttributeAnyValue, AttributeArrayValue, Span, SpanEvent, SpanLink};
-    use crate::msgpack_decoder::decode::buffer::Buffer;
-    use crate::msgpack_decoder::v04::span::decode_span;
     use crate::span::SliceData;
     use std::borrow::Cow;
     use std::collections::HashMap;
@@ -549,6 +547,48 @@ mod tests {
         assert_eq!(span.span_links().count(), 1);
         assert_eq!(span.span_events().count(), 1);
     }
+
+    #[test]
+    fn model_attributes_read_dedicated_maps() {
+        use crate::span::v04::SpanBytes;
+        use libdd_tinybytes::BytesString;
+        use libdd_trace_model::{Attributes, Span as _};
+
+        let mut span = SpanBytes {
+            parent_id: 0,
+            error: 1,
+            ..Default::default()
+        };
+        span.meta
+            .insert(BytesString::from("shared"), BytesString::from("str"));
+        span.metrics.insert(BytesString::from("shared"), 2.0);
+        span.metrics.insert(BytesString::from("_dd.measured"), 1.0);
+        span.meta
+            .insert(BytesString::from("span.kind"), BytesString::from("Server"));
+
+        // A key in both maps stays reachable through both typed reads.
+        assert_eq!(span.attribute_str("shared"), Some("str"));
+        assert_eq!(span.attribute_f64("shared"), Some(2.0));
+        assert_eq!(span.attribute_str("missing"), None);
+        assert_eq!(span.attribute_f64("missing"), None);
+
+        // span.kind is returned verbatim, without normalization.
+        assert_eq!(span.span_kind(), Some("Server"));
+        assert!(span.is_measured());
+        assert!(span.is_error());
+        assert!(span.is_trace_root());
+        assert!(!span.has_top_level());
+    }
+}
+
+#[cfg(test)]
+mod miri_tests {
+    use super::{AttributeAnyValue, AttributeArrayValue, Span, SpanEvent, SpanLink};
+    use crate::msgpack_decoder::decode::buffer::Buffer;
+    use crate::msgpack_decoder::v04::span::decode_span;
+    use crate::span::SliceData;
+    use std::borrow::Cow;
+    use std::collections::HashMap;
 
     #[test]
     fn skip_serializing_empty_fields_test() {
@@ -656,37 +696,5 @@ mod tests {
 
         let serialized = rmp_serde::encode::to_vec_named(&span).unwrap();
         assert_eq!(expected, serialized.as_slice());
-    }
-
-    #[test]
-    fn model_attributes_read_dedicated_maps() {
-        use crate::span::v04::SpanBytes;
-        use libdd_tinybytes::BytesString;
-        use libdd_trace_model::{Attributes, Span as _};
-
-        let mut span = SpanBytes {
-            parent_id: 0,
-            error: 1,
-            ..Default::default()
-        };
-        span.meta
-            .insert(BytesString::from("shared"), BytesString::from("str"));
-        span.metrics.insert(BytesString::from("shared"), 2.0);
-        span.metrics.insert(BytesString::from("_dd.measured"), 1.0);
-        span.meta
-            .insert(BytesString::from("span.kind"), BytesString::from("Server"));
-
-        // A key in both maps stays reachable through both typed reads.
-        assert_eq!(span.attribute_str("shared"), Some("str"));
-        assert_eq!(span.attribute_f64("shared"), Some(2.0));
-        assert_eq!(span.attribute_str("missing"), None);
-        assert_eq!(span.attribute_f64("missing"), None);
-
-        // span.kind is returned verbatim, without normalization.
-        assert_eq!(span.span_kind(), Some("Server"));
-        assert!(span.is_measured());
-        assert!(span.is_error());
-        assert!(span.is_trace_root());
-        assert!(!span.has_top_level());
     }
 }

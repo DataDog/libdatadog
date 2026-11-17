@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #[cfg(test)]
-mod fuzz_tests;
+mod fuzz_miri_tests;
 
 pub mod interning_api;
 mod profiles_dictionary_translator;
@@ -1188,77 +1188,10 @@ fn oob_label_set() -> io::Error {
 }
 
 #[cfg(test)]
-mod api_tests {
+mod api_test_helpers {
     use super::*;
-    use crate::pprof::test_utils::{roundtrip_to_pprof, sorted_samples, string_table_fetch};
-    use libdd_profiling_protobuf::prost_impls;
-    use std::collections::HashSet;
 
-    #[test]
-    fn interning() {
-        let sample_types = [api::SampleType::CpuSamples];
-        let mut profiles = Profile::new(&sample_types, None);
-
-        let expected_id = StringId::from_offset(profiles.interned_strings_count());
-
-        let string = "a";
-        let id1 = profiles.intern(string);
-        let id2 = profiles.intern(string);
-
-        assert_eq!(id1, id2);
-        assert_eq!(id1, expected_id);
-    }
-
-    #[test]
-    fn api() {
-        let sample_types = [api::SampleType::CpuSamples, api::SampleType::WallTime];
-
-        let mapping = api::Mapping {
-            filename: "php",
-            ..Default::default()
-        };
-
-        let index = api::Function {
-            filename: "index.php",
-            ..Default::default()
-        };
-
-        let locations = vec![
-            api::Location {
-                mapping,
-                function: api::Function {
-                    name: "phpinfo",
-                    system_name: "phpinfo",
-                    filename: "index.php",
-                },
-                ..Default::default()
-            },
-            api::Location {
-                mapping,
-                function: index,
-                line: 3,
-                ..Default::default()
-            },
-        ];
-
-        let mut profile = Profile::new(&sample_types, None);
-        assert_eq!(profile.only_for_testing_num_aggregated_samples(), 0);
-
-        profile
-            .try_add_sample(
-                api::Sample {
-                    locations,
-                    values: &[1, 10000],
-                    labels: vec![],
-                },
-                None,
-            )
-            .expect("add to succeed");
-
-        assert_eq!(profile.only_for_testing_num_aggregated_samples(), 1);
-    }
-
-    fn provide_distinct_locations() -> Profile {
+    pub(super) fn provide_distinct_locations() -> Profile {
         let sample_types = [api::SampleType::CpuSamples];
 
         let mapping = api::Mapping {
@@ -1338,6 +1271,527 @@ mod api_tests {
             .expect("profile to not be full");
         assert_eq!(profile.only_for_testing_num_timestamped_samples(), 1);
         profile
+    }
+
+    pub(super) fn create_samples_types() -> Vec<api::SampleType> {
+        vec![
+            api::SampleType::CpuSamples,
+            api::SampleType::WallTime,
+            api::SampleType::CpuTime,
+        ]
+    }
+    pub(super) fn create_label(key: &'static str, str: &'static str) -> api::Label<'static> {
+        api::Label {
+            key,
+            str,
+            num: 0,
+            num_unit: "",
+        }
+    }
+}
+
+#[cfg(all(test, not(miri)))]
+mod api_tests {
+    use super::api_test_helpers::{create_label, create_samples_types};
+    use super::*;
+
+    #[test]
+    fn reset_period() {
+        /* The previous test (reset) checked quite a few properties already, so
+         * this one will focus only on the period.
+         */
+        let sample_types = [api::SampleType::WallTime];
+        let period = api::Period {
+            sample_type: sample_types[0],
+            value: 10_000_000,
+        };
+        let mut profile = Profile::new(&sample_types, Some(period));
+
+        let prev = profile
+            .reset_and_return_previous()
+            .expect("reset to succeed");
+
+        assert_eq!(profile.period, Some(period));
+        assert_eq!(prev.period, Some(period));
+    }
+
+    #[test]
+    fn adding_local_root_span_id_with_string_value_fails() {
+        let sample_types = [api::SampleType::WallTime];
+
+        let mut profile: Profile = Profile::new(&sample_types, None);
+
+        let id_label = api::Label {
+            key: "local root span id",
+            str: "10", // bad value, should use .num instead for local root span id
+            num: 0,
+            num_unit: "",
+        };
+
+        let sample = api::Sample {
+            locations: vec![],
+            values: &[1, 10000],
+            labels: vec![id_label],
+        };
+
+        assert!(profile.try_add_sample(sample, None).is_err());
+    }
+
+    #[test]
+    fn local_root_span_id_label_cannot_occur_more_than_once() {
+        let sample_types = [api::SampleType::WallTime];
+
+        let mut profile: Profile = Profile::new(&sample_types, None);
+
+        let labels = vec![
+            api::Label {
+                key: "local root span id",
+                str: "",
+                num: 5738080760940355267_i64,
+                num_unit: "",
+            },
+            api::Label {
+                key: "local root span id",
+                str: "",
+                num: 8182855815056056749_i64,
+                num_unit: "",
+            },
+        ];
+
+        let sample = api::Sample {
+            locations: vec![],
+            values: &[10000],
+            labels,
+        };
+
+        profile.try_add_sample(sample, None).unwrap_err();
+    }
+
+    #[test]
+    fn test_cannot_add_a_rule_with_invalid_poisson_info() {
+        let sample_types = create_samples_types();
+
+        let mut profile: Profile = Profile::new(&sample_types, None);
+
+        let sample1 = api::Sample {
+            locations: vec![],
+            values: &[1, 16, 0],
+            labels: vec![],
+        };
+
+        profile
+            .try_add_sample(sample1, None)
+            .expect("add to success");
+
+        // invalid sampling_distance value
+        let upscaling_info = UpscalingInfo::Poisson {
+            sum_value_offset: 1,
+            count_value_offset: 2,
+            sampling_distance: 0,
+        };
+
+        let values_offset: Vec<usize> = vec![1];
+        profile
+            .add_upscaling_rule(values_offset.as_slice(), "", "", upscaling_info)
+            .expect_err("Cannot add a rule if sampling_distance is equal to 0");
+
+        // x value is greater than the number of value types
+        let upscaling_info2 = UpscalingInfo::Poisson {
+            sum_value_offset: 42,
+            count_value_offset: 2,
+            sampling_distance: 10,
+        };
+        profile
+            .add_upscaling_rule(values_offset.as_slice(), "", "", upscaling_info2)
+            .expect_err("Cannot add a rule if the offset x is invalid");
+
+        // y value is greater than the number of value types
+        let upscaling_info3 = UpscalingInfo::Poisson {
+            sum_value_offset: 1,
+            count_value_offset: 42,
+            sampling_distance: 10,
+        };
+        profile
+            .add_upscaling_rule(values_offset.as_slice(), "", "", upscaling_info3)
+            .expect_err("Cannot add a rule if the offset y is invalid");
+    }
+
+    #[test]
+    fn test_add_same_byvalue_rule_twice() {
+        let sample_types = create_samples_types();
+
+        let mut profile: Profile = Profile::new(&sample_types, None);
+
+        // adding same offsets
+        let upscaling_info = UpscalingInfo::Proportional { scale: 2.0 };
+        let mut value_offsets: Vec<usize> = vec![0, 2];
+        profile
+            .add_upscaling_rule(value_offsets.as_slice(), "", "", upscaling_info)
+            .expect("Rule added");
+
+        let upscaling_info2 = UpscalingInfo::Proportional { scale: 2.0 };
+        profile
+            .add_upscaling_rule(value_offsets.as_slice(), "", "", upscaling_info2)
+            .expect_err("Duplicated rules");
+
+        // adding offsets with overlap on 2
+        value_offsets.clear();
+        value_offsets.push(2);
+        value_offsets.push(1);
+        let upscaling_info3 = UpscalingInfo::Proportional { scale: 2.0 };
+        profile
+            .add_upscaling_rule(value_offsets.as_slice(), "", "", upscaling_info3)
+            .expect_err("Duplicated rules");
+
+        // same offsets in different order
+        value_offsets.clear();
+        value_offsets.push(2);
+        value_offsets.push(0);
+        let upscaling_info4 = UpscalingInfo::Proportional { scale: 2.0 };
+        profile
+            .add_upscaling_rule(value_offsets.as_slice(), "", "", upscaling_info4)
+            .expect_err("Duplicated rules");
+    }
+
+    #[test]
+    fn test_add_two_bylabel_rules_with_overlap_on_values() {
+        let sample_types = create_samples_types();
+
+        let mut profile: Profile = Profile::new(&sample_types, None);
+
+        // adding same offsets
+        let mut value_offsets: Vec<usize> = vec![0, 2];
+        let upscaling_info = UpscalingInfo::Proportional { scale: 2.0 };
+        profile
+            .add_upscaling_rule(value_offsets.as_slice(), "my label", "coco", upscaling_info)
+            .expect("Rule added");
+        let upscaling_info2 = UpscalingInfo::Proportional { scale: 2.0 };
+        profile
+            .add_upscaling_rule(
+                value_offsets.as_slice(),
+                "my label",
+                "coco",
+                upscaling_info2,
+            )
+            .expect_err("Duplicated rules");
+
+        // adding offsets with overlap on 2
+        value_offsets.clear();
+        value_offsets.append(&mut vec![2, 1]);
+        let upscaling_info3 = UpscalingInfo::Proportional { scale: 2.0 };
+        profile
+            .add_upscaling_rule(
+                value_offsets.as_slice(),
+                "my label",
+                "coco",
+                upscaling_info3,
+            )
+            .expect_err("Duplicated rules");
+
+        // same offsets in different order
+        value_offsets.clear();
+        value_offsets.push(2);
+        value_offsets.push(0);
+        let upscaling_info4 = UpscalingInfo::Proportional { scale: 2.0 };
+        profile
+            .add_upscaling_rule(
+                value_offsets.as_slice(),
+                "my label",
+                "coco",
+                upscaling_info4,
+            )
+            .expect_err("Duplicated rules");
+    }
+
+    #[test]
+    fn test_fail_if_bylabel_rule_and_by_value_rule_with_overlap_on_values() {
+        let sample_types = create_samples_types();
+
+        let mut profile: Profile = Profile::new(&sample_types, None);
+
+        // adding same offsets
+        let mut value_offsets: Vec<usize> = vec![0, 2];
+        let upscaling_info = UpscalingInfo::Proportional { scale: 2.0 };
+
+        // add by value rule
+        profile
+            .add_upscaling_rule(value_offsets.as_slice(), "", "", upscaling_info)
+            .expect("Rule added");
+
+        // add by-label rule
+        let upscaling_info2 = UpscalingInfo::Proportional { scale: 2.0 };
+        profile
+            .add_upscaling_rule(
+                value_offsets.as_slice(),
+                "my label",
+                "coco",
+                upscaling_info2,
+            )
+            .expect_err("Duplicated rules");
+
+        // adding offsets with overlap on 2
+        value_offsets.clear();
+        value_offsets.append(&mut vec![2, 1]);
+        let upscaling_info3 = UpscalingInfo::Proportional { scale: 2.0 };
+        profile
+            .add_upscaling_rule(
+                value_offsets.as_slice(),
+                "my label",
+                "coco",
+                upscaling_info3,
+            )
+            .expect_err("Duplicated rules");
+
+        // same offsets in different order
+        value_offsets.clear();
+        value_offsets.push(2);
+        value_offsets.push(0);
+        let upscaling_info4 = UpscalingInfo::Proportional { scale: 2.0 };
+        profile
+            .add_upscaling_rule(
+                value_offsets.as_slice(),
+                "my label",
+                "coco",
+                upscaling_info4,
+            )
+            .expect_err("Duplicated rules");
+    }
+
+    #[test]
+    fn test_add_rule_with_offset_out_of_bound() {
+        let sample_types = create_samples_types();
+
+        let mut profile: Profile = Profile::new(&sample_types, None);
+
+        // adding same offsets
+        let by_value_offsets: Vec<usize> = vec![0, 4];
+        let upscaling_info = UpscalingInfo::Proportional { scale: 2.0 };
+        profile
+            .add_upscaling_rule(
+                by_value_offsets.as_slice(),
+                "my label",
+                "coco",
+                upscaling_info,
+            )
+            .expect_err("Invalid offset");
+    }
+
+    #[test]
+    fn test_add_rule_with_offset_out_of_bound_poisson_function() {
+        let sample_types = create_samples_types();
+
+        let mut profile: Profile = Profile::new(&sample_types, None);
+
+        // adding same offsets
+        let by_value_offsets: Vec<usize> = vec![0, 4];
+        let upscaling_info = UpscalingInfo::Poisson {
+            sum_value_offset: 1,
+            count_value_offset: 100,
+            sampling_distance: 1,
+        };
+        profile
+            .add_upscaling_rule(
+                by_value_offsets.as_slice(),
+                "my label",
+                "coco",
+                upscaling_info,
+            )
+            .expect_err("Invalid offset");
+    }
+
+    #[test]
+    fn test_add_rule_with_offset_out_of_bound_poisson_function2() {
+        let sample_types = create_samples_types();
+
+        let mut profile: Profile = Profile::new(&sample_types, None);
+
+        // adding same offsets
+        let by_value_offsets: Vec<usize> = vec![0, 4];
+        let upscaling_info = UpscalingInfo::Poisson {
+            sum_value_offset: 100,
+            count_value_offset: 1,
+            sampling_distance: 1,
+        };
+        profile
+            .add_upscaling_rule(
+                by_value_offsets.as_slice(),
+                "my label",
+                "coco",
+                upscaling_info,
+            )
+            .expect_err("Invalid offset");
+    }
+
+    #[test]
+    fn test_add_rule_with_offset_out_of_bound_poisson_function3() {
+        let sample_types = create_samples_types();
+
+        let mut profile: Profile = Profile::new(&sample_types, None);
+
+        // adding same offsets
+        let by_value_offsets: Vec<usize> = vec![0, 4];
+        let upscaling_info = UpscalingInfo::Poisson {
+            sum_value_offset: 1100,
+            count_value_offset: 100,
+            sampling_distance: 1,
+        };
+        profile
+            .add_upscaling_rule(
+                by_value_offsets.as_slice(),
+                "my label",
+                "coco",
+                upscaling_info,
+            )
+            .expect_err("Invalid offset");
+    }
+
+    #[test]
+    fn test_fails_when_adding_byvalue_rule_colliding_on_offset_with_existing_bylabel_rule() {
+        let sample_types = create_samples_types();
+
+        let mut profile: Profile = Profile::new(&sample_types, None);
+
+        let id_label = create_label("my label", "coco");
+
+        let sample1 = api::Sample {
+            locations: vec![],
+            values: &[1, 10000, 42],
+            labels: vec![id_label],
+        };
+
+        profile
+            .try_add_sample(sample1, None)
+            .expect("add to success");
+
+        let mut value_offsets: Vec<usize> = vec![0, 1];
+        // Add by-label rule first
+        let upscaling_info2 = UpscalingInfo::Proportional { scale: 2.0 };
+        profile
+            .add_upscaling_rule(
+                value_offsets.as_slice(),
+                id_label.key,
+                id_label.str,
+                upscaling_info2,
+            )
+            .expect("Rule added");
+
+        // add by-value rule
+        let upscaling_info = UpscalingInfo::Proportional { scale: 2.0 };
+        value_offsets.clear();
+        value_offsets.push(0);
+        profile
+            .add_upscaling_rule(value_offsets.as_slice(), "", "", upscaling_info)
+            .expect_err("Rule added");
+    }
+
+    /// A profile created with custom slots rejects samples that have the wrong
+    /// number of values (same guard as for stable SampleType-based profiles).
+    #[test]
+    fn custom_sample_type_slot_wrong_value_count_is_rejected() {
+        let mut profile = Profile::new(&[api::SampleType::Custom1], None);
+        profile
+            .set_custom_sample_type(
+                api::SampleType::Custom1,
+                api::ValueType::new("my-custom-type", "count"),
+            )
+            .unwrap();
+
+        let bad_sample = api::Sample {
+            locations: vec![],
+            values: &[1, 2], // two values, but only one type declared
+            labels: vec![],
+        };
+        assert!(
+            profile.try_add_sample(bad_sample, None).is_err(),
+            "expected error for mismatched value count"
+        );
+    }
+
+    #[test]
+    fn custom_sample_type_setter_rejects_non_custom_slot() {
+        let mut profile = Profile::new(&[api::SampleType::WallTime], None);
+        assert!(
+            profile
+                .set_custom_sample_type(
+                    api::SampleType::WallTime,
+                    api::ValueType::new("memory-breakdown", "bytes"),
+                )
+                .is_err(),
+            "expected setter to reject non-custom sample type slots"
+        );
+    }
+}
+
+#[cfg(test)]
+mod miri_tests {
+    use super::api_test_helpers::{create_label, create_samples_types, provide_distinct_locations};
+    use super::*;
+    use crate::pprof::test_utils::{roundtrip_to_pprof, sorted_samples, string_table_fetch};
+    use libdd_profiling_protobuf::prost_impls;
+    use std::collections::HashSet;
+
+    #[test]
+    fn interning() {
+        let sample_types = [api::SampleType::CpuSamples];
+        let mut profiles = Profile::new(&sample_types, None);
+
+        let expected_id = StringId::from_offset(profiles.interned_strings_count());
+
+        let string = "a";
+        let id1 = profiles.intern(string);
+        let id2 = profiles.intern(string);
+
+        assert_eq!(id1, id2);
+        assert_eq!(id1, expected_id);
+    }
+
+    #[test]
+    fn api() {
+        let sample_types = [api::SampleType::CpuSamples, api::SampleType::WallTime];
+
+        let mapping = api::Mapping {
+            filename: "php",
+            ..Default::default()
+        };
+
+        let index = api::Function {
+            filename: "index.php",
+            ..Default::default()
+        };
+
+        let locations = vec![
+            api::Location {
+                mapping,
+                function: api::Function {
+                    name: "phpinfo",
+                    system_name: "phpinfo",
+                    filename: "index.php",
+                },
+                ..Default::default()
+            },
+            api::Location {
+                mapping,
+                function: index,
+                line: 3,
+                ..Default::default()
+            },
+        ];
+
+        let mut profile = Profile::new(&sample_types, None);
+        assert_eq!(profile.only_for_testing_num_aggregated_samples(), 0);
+
+        profile
+            .try_add_sample(
+                api::Sample {
+                    locations,
+                    values: &[1, 10000],
+                    labels: vec![],
+                },
+                None,
+            )
+            .expect("add to succeed");
+
+        assert_eq!(profile.only_for_testing_num_aggregated_samples(), 1);
     }
 
     #[test]
@@ -1463,48 +1917,6 @@ mod api_tests {
 
         // The string table should have at least the empty string.
         assert!(profile.strings.len() > 0);
-    }
-
-    #[test]
-    fn reset_period() {
-        /* The previous test (reset) checked quite a few properties already, so
-         * this one will focus only on the period.
-         */
-        let sample_types = [api::SampleType::WallTime];
-        let period = api::Period {
-            sample_type: sample_types[0],
-            value: 10_000_000,
-        };
-        let mut profile = Profile::new(&sample_types, Some(period));
-
-        let prev = profile
-            .reset_and_return_previous()
-            .expect("reset to succeed");
-
-        assert_eq!(profile.period, Some(period));
-        assert_eq!(prev.period, Some(period));
-    }
-
-    #[test]
-    fn adding_local_root_span_id_with_string_value_fails() {
-        let sample_types = [api::SampleType::WallTime];
-
-        let mut profile: Profile = Profile::new(&sample_types, None);
-
-        let id_label = api::Label {
-            key: "local root span id",
-            str: "10", // bad value, should use .num instead for local root span id
-            num: 0,
-            num_unit: "",
-        };
-
-        let sample = api::Sample {
-            locations: vec![],
-            values: &[1, 10000],
-            labels: vec![id_label],
-        };
-
-        assert!(profile.try_add_sample(sample, None).is_err());
     }
 
     #[test]
@@ -1698,36 +2110,6 @@ mod api_tests {
     }
 
     #[test]
-    fn local_root_span_id_label_cannot_occur_more_than_once() {
-        let sample_types = [api::SampleType::WallTime];
-
-        let mut profile: Profile = Profile::new(&sample_types, None);
-
-        let labels = vec![
-            api::Label {
-                key: "local root span id",
-                str: "",
-                num: 5738080760940355267_i64,
-                num_unit: "",
-            },
-            api::Label {
-                key: "local root span id",
-                str: "",
-                num: 8182855815056056749_i64,
-                num_unit: "",
-            },
-        ];
-
-        let sample = api::Sample {
-            locations: vec![],
-            values: &[10000],
-            labels,
-        };
-
-        profile.try_add_sample(sample, None).unwrap_err();
-    }
-
-    #[test]
     fn test_no_upscaling_if_no_rules() {
         let sample_types = vec![api::SampleType::CpuSamples, api::SampleType::WallTime];
 
@@ -1757,23 +2139,6 @@ mod api_tests {
 
         assert_eq!(first.values[0], 1);
         assert_eq!(first.values[1], 10000);
-    }
-
-    fn create_samples_types() -> Vec<api::SampleType> {
-        vec![
-            api::SampleType::CpuSamples,
-            api::SampleType::WallTime,
-            api::SampleType::CpuTime,
-        ]
-    }
-
-    fn create_label(key: &'static str, str: &'static str) -> api::Label<'static> {
-        api::Label {
-            key,
-            str,
-            num: 0,
-            num_unit: "",
-        }
     }
 
     #[test]
@@ -1936,55 +2301,6 @@ mod api_tests {
         let first = serialized_profile.samples.first().expect("one sample");
 
         assert_eq!(first.values, vec![1, 16, 0]);
-    }
-
-    #[test]
-    fn test_cannot_add_a_rule_with_invalid_poisson_info() {
-        let sample_types = create_samples_types();
-
-        let mut profile: Profile = Profile::new(&sample_types, None);
-
-        let sample1 = api::Sample {
-            locations: vec![],
-            values: &[1, 16, 0],
-            labels: vec![],
-        };
-
-        profile
-            .try_add_sample(sample1, None)
-            .expect("add to success");
-
-        // invalid sampling_distance value
-        let upscaling_info = UpscalingInfo::Poisson {
-            sum_value_offset: 1,
-            count_value_offset: 2,
-            sampling_distance: 0,
-        };
-
-        let values_offset: Vec<usize> = vec![1];
-        profile
-            .add_upscaling_rule(values_offset.as_slice(), "", "", upscaling_info)
-            .expect_err("Cannot add a rule if sampling_distance is equal to 0");
-
-        // x value is greater than the number of value types
-        let upscaling_info2 = UpscalingInfo::Poisson {
-            sum_value_offset: 42,
-            count_value_offset: 2,
-            sampling_distance: 10,
-        };
-        profile
-            .add_upscaling_rule(values_offset.as_slice(), "", "", upscaling_info2)
-            .expect_err("Cannot add a rule if the offset x is invalid");
-
-        // y value is greater than the number of value types
-        let upscaling_info3 = UpscalingInfo::Poisson {
-            sum_value_offset: 1,
-            count_value_offset: 42,
-            sampling_distance: 10,
-        };
-        profile
-            .add_upscaling_rule(values_offset.as_slice(), "", "", upscaling_info3)
-            .expect_err("Cannot add a rule if the offset y is invalid");
     }
 
     #[test]
@@ -2400,6 +2716,7 @@ mod api_tests {
 
         assert_eq!(first.values, vec![2, 20000, 42]);
     }
+
     #[test]
     fn test_upscaling_by_value_and_by_label_different_values() {
         let sample_types = create_samples_types();
@@ -2443,274 +2760,6 @@ mod api_tests {
         let first = serialized_profile.samples.first().expect("one sample");
 
         assert_eq!(first.values, vec![2, 10000, 210]);
-    }
-
-    #[test]
-    fn test_add_same_byvalue_rule_twice() {
-        let sample_types = create_samples_types();
-
-        let mut profile: Profile = Profile::new(&sample_types, None);
-
-        // adding same offsets
-        let upscaling_info = UpscalingInfo::Proportional { scale: 2.0 };
-        let mut value_offsets: Vec<usize> = vec![0, 2];
-        profile
-            .add_upscaling_rule(value_offsets.as_slice(), "", "", upscaling_info)
-            .expect("Rule added");
-
-        let upscaling_info2 = UpscalingInfo::Proportional { scale: 2.0 };
-        profile
-            .add_upscaling_rule(value_offsets.as_slice(), "", "", upscaling_info2)
-            .expect_err("Duplicated rules");
-
-        // adding offsets with overlap on 2
-        value_offsets.clear();
-        value_offsets.push(2);
-        value_offsets.push(1);
-        let upscaling_info3 = UpscalingInfo::Proportional { scale: 2.0 };
-        profile
-            .add_upscaling_rule(value_offsets.as_slice(), "", "", upscaling_info3)
-            .expect_err("Duplicated rules");
-
-        // same offsets in different order
-        value_offsets.clear();
-        value_offsets.push(2);
-        value_offsets.push(0);
-        let upscaling_info4 = UpscalingInfo::Proportional { scale: 2.0 };
-        profile
-            .add_upscaling_rule(value_offsets.as_slice(), "", "", upscaling_info4)
-            .expect_err("Duplicated rules");
-    }
-
-    #[test]
-    fn test_add_two_bylabel_rules_with_overlap_on_values() {
-        let sample_types = create_samples_types();
-
-        let mut profile: Profile = Profile::new(&sample_types, None);
-
-        // adding same offsets
-        let mut value_offsets: Vec<usize> = vec![0, 2];
-        let upscaling_info = UpscalingInfo::Proportional { scale: 2.0 };
-        profile
-            .add_upscaling_rule(value_offsets.as_slice(), "my label", "coco", upscaling_info)
-            .expect("Rule added");
-        let upscaling_info2 = UpscalingInfo::Proportional { scale: 2.0 };
-        profile
-            .add_upscaling_rule(
-                value_offsets.as_slice(),
-                "my label",
-                "coco",
-                upscaling_info2,
-            )
-            .expect_err("Duplicated rules");
-
-        // adding offsets with overlap on 2
-        value_offsets.clear();
-        value_offsets.append(&mut vec![2, 1]);
-        let upscaling_info3 = UpscalingInfo::Proportional { scale: 2.0 };
-        profile
-            .add_upscaling_rule(
-                value_offsets.as_slice(),
-                "my label",
-                "coco",
-                upscaling_info3,
-            )
-            .expect_err("Duplicated rules");
-
-        // same offsets in different order
-        value_offsets.clear();
-        value_offsets.push(2);
-        value_offsets.push(0);
-        let upscaling_info4 = UpscalingInfo::Proportional { scale: 2.0 };
-        profile
-            .add_upscaling_rule(
-                value_offsets.as_slice(),
-                "my label",
-                "coco",
-                upscaling_info4,
-            )
-            .expect_err("Duplicated rules");
-    }
-
-    #[test]
-    fn test_fail_if_bylabel_rule_and_by_value_rule_with_overlap_on_values() {
-        let sample_types = create_samples_types();
-
-        let mut profile: Profile = Profile::new(&sample_types, None);
-
-        // adding same offsets
-        let mut value_offsets: Vec<usize> = vec![0, 2];
-        let upscaling_info = UpscalingInfo::Proportional { scale: 2.0 };
-
-        // add by value rule
-        profile
-            .add_upscaling_rule(value_offsets.as_slice(), "", "", upscaling_info)
-            .expect("Rule added");
-
-        // add by-label rule
-        let upscaling_info2 = UpscalingInfo::Proportional { scale: 2.0 };
-        profile
-            .add_upscaling_rule(
-                value_offsets.as_slice(),
-                "my label",
-                "coco",
-                upscaling_info2,
-            )
-            .expect_err("Duplicated rules");
-
-        // adding offsets with overlap on 2
-        value_offsets.clear();
-        value_offsets.append(&mut vec![2, 1]);
-        let upscaling_info3 = UpscalingInfo::Proportional { scale: 2.0 };
-        profile
-            .add_upscaling_rule(
-                value_offsets.as_slice(),
-                "my label",
-                "coco",
-                upscaling_info3,
-            )
-            .expect_err("Duplicated rules");
-
-        // same offsets in different order
-        value_offsets.clear();
-        value_offsets.push(2);
-        value_offsets.push(0);
-        let upscaling_info4 = UpscalingInfo::Proportional { scale: 2.0 };
-        profile
-            .add_upscaling_rule(
-                value_offsets.as_slice(),
-                "my label",
-                "coco",
-                upscaling_info4,
-            )
-            .expect_err("Duplicated rules");
-    }
-
-    #[test]
-    fn test_add_rule_with_offset_out_of_bound() {
-        let sample_types = create_samples_types();
-
-        let mut profile: Profile = Profile::new(&sample_types, None);
-
-        // adding same offsets
-        let by_value_offsets: Vec<usize> = vec![0, 4];
-        let upscaling_info = UpscalingInfo::Proportional { scale: 2.0 };
-        profile
-            .add_upscaling_rule(
-                by_value_offsets.as_slice(),
-                "my label",
-                "coco",
-                upscaling_info,
-            )
-            .expect_err("Invalid offset");
-    }
-
-    #[test]
-    fn test_add_rule_with_offset_out_of_bound_poisson_function() {
-        let sample_types = create_samples_types();
-
-        let mut profile: Profile = Profile::new(&sample_types, None);
-
-        // adding same offsets
-        let by_value_offsets: Vec<usize> = vec![0, 4];
-        let upscaling_info = UpscalingInfo::Poisson {
-            sum_value_offset: 1,
-            count_value_offset: 100,
-            sampling_distance: 1,
-        };
-        profile
-            .add_upscaling_rule(
-                by_value_offsets.as_slice(),
-                "my label",
-                "coco",
-                upscaling_info,
-            )
-            .expect_err("Invalid offset");
-    }
-
-    #[test]
-    fn test_add_rule_with_offset_out_of_bound_poisson_function2() {
-        let sample_types = create_samples_types();
-
-        let mut profile: Profile = Profile::new(&sample_types, None);
-
-        // adding same offsets
-        let by_value_offsets: Vec<usize> = vec![0, 4];
-        let upscaling_info = UpscalingInfo::Poisson {
-            sum_value_offset: 100,
-            count_value_offset: 1,
-            sampling_distance: 1,
-        };
-        profile
-            .add_upscaling_rule(
-                by_value_offsets.as_slice(),
-                "my label",
-                "coco",
-                upscaling_info,
-            )
-            .expect_err("Invalid offset");
-    }
-
-    #[test]
-    fn test_add_rule_with_offset_out_of_bound_poisson_function3() {
-        let sample_types = create_samples_types();
-
-        let mut profile: Profile = Profile::new(&sample_types, None);
-
-        // adding same offsets
-        let by_value_offsets: Vec<usize> = vec![0, 4];
-        let upscaling_info = UpscalingInfo::Poisson {
-            sum_value_offset: 1100,
-            count_value_offset: 100,
-            sampling_distance: 1,
-        };
-        profile
-            .add_upscaling_rule(
-                by_value_offsets.as_slice(),
-                "my label",
-                "coco",
-                upscaling_info,
-            )
-            .expect_err("Invalid offset");
-    }
-
-    #[test]
-    fn test_fails_when_adding_byvalue_rule_colliding_on_offset_with_existing_bylabel_rule() {
-        let sample_types = create_samples_types();
-
-        let mut profile: Profile = Profile::new(&sample_types, None);
-
-        let id_label = create_label("my label", "coco");
-
-        let sample1 = api::Sample {
-            locations: vec![],
-            values: &[1, 10000, 42],
-            labels: vec![id_label],
-        };
-
-        profile
-            .try_add_sample(sample1, None)
-            .expect("add to success");
-
-        let mut value_offsets: Vec<usize> = vec![0, 1];
-        // Add by-label rule first
-        let upscaling_info2 = UpscalingInfo::Proportional { scale: 2.0 };
-        profile
-            .add_upscaling_rule(
-                value_offsets.as_slice(),
-                id_label.key,
-                id_label.str,
-                upscaling_info2,
-            )
-            .expect("Rule added");
-
-        // add by-value rule
-        let upscaling_info = UpscalingInfo::Proportional { scale: 2.0 };
-        value_offsets.clear();
-        value_offsets.push(0);
-        profile
-            .add_upscaling_rule(value_offsets.as_slice(), "", "", upscaling_info)
-            .expect_err("Rule added");
     }
 
     #[test]
@@ -2826,7 +2875,6 @@ mod api_tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_try_new_with_dictionary_and_try_add_sample2() {
         struct Frame {
             file_name: &'static str,
@@ -3369,29 +3417,6 @@ mod api_tests {
         Ok(())
     }
 
-    /// A profile created with custom slots rejects samples that have the wrong
-    /// number of values (same guard as for stable SampleType-based profiles).
-    #[test]
-    fn custom_sample_type_slot_wrong_value_count_is_rejected() {
-        let mut profile = Profile::new(&[api::SampleType::Custom1], None);
-        profile
-            .set_custom_sample_type(
-                api::SampleType::Custom1,
-                api::ValueType::new("my-custom-type", "count"),
-            )
-            .unwrap();
-
-        let bad_sample = api::Sample {
-            locations: vec![],
-            values: &[1, 2], // two values, but only one type declared
-            labels: vec![],
-        };
-        assert!(
-            profile.try_add_sample(bad_sample, None).is_err(),
-            "expected error for mismatched value count"
-        );
-    }
-
     #[test]
     fn unresolved_custom_sample_type_slot_is_rejected_on_serialize() {
         let profile = Profile::new(&[api::SampleType::Custom1], None);
@@ -3399,20 +3424,6 @@ mod api_tests {
         assert!(
             result.is_err(),
             "expected serialization to fail for unresolved custom sample type slot"
-        );
-    }
-
-    #[test]
-    fn custom_sample_type_setter_rejects_non_custom_slot() {
-        let mut profile = Profile::new(&[api::SampleType::WallTime], None);
-        assert!(
-            profile
-                .set_custom_sample_type(
-                    api::SampleType::WallTime,
-                    api::ValueType::new("memory-breakdown", "bytes"),
-                )
-                .is_err(),
-            "expected setter to reject non-custom sample type slots"
         );
     }
 }

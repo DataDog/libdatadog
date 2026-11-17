@@ -163,146 +163,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
-    fn test_set_builder_str_param() {
-        unsafe {
-            let mut builder: MaybeUninit<Box<TelemetryWorkerBuilder>> = MaybeUninit::uninit();
-            assert_eq!(
-                ddog_telemetry_builder_instantiate(
-                    NonNull::new(&mut builder).unwrap().cast(),
-                    ffi::CharSlice::from("service_name"),
-                    ffi::CharSlice::from("language_name"),
-                    ffi::CharSlice::from("language_version"),
-                    ffi::CharSlice::from("tracer_version"),
-                ),
-                MaybeError::None
-            );
-            let mut builder = builder.assume_init();
-
-            assert_eq!(
-                ddog_telemetry_builder_with_str_named_property(
-                    &mut builder,
-                    ffi::CharSlice::from("runtime_id"),
-                    ffi::CharSlice::from("abcd")
-                ),
-                MaybeError::None,
-            );
-            assert_eq!(builder.runtime_id.as_deref(), Some("abcd"));
-
-            assert_eq!(
-                ddog_telemetry_builder_with_str_named_property(
-                    &mut builder,
-                    ffi::CharSlice::from("application.runtime_name"),
-                    ffi::CharSlice::from("rust")
-                ),
-                MaybeError::None,
-            );
-            assert_eq!(builder.application.runtime_name.as_deref(), Some("rust"));
-
-            assert_eq!(
-                ddog_telemetry_builder_with_str_named_property(
-                    &mut builder,
-                    ffi::CharSlice::from("host.kernel_version"),
-                    ffi::CharSlice::from("ダタドグ")
-                ),
-                MaybeError::None,
-            );
-            assert_eq!(builder.host.kernel_version.as_deref(), Some("ダタドグ"));
-
-            assert!(
-                ddog_telemetry_builder_with_str_named_property(
-                    &mut builder,
-                    ffi::CharSlice::from("doesnt exist"),
-                    ffi::CharSlice::from("abc")
-                )
-                .to_std()
-                .is_none(),
-            );
-        }
-    }
-
-    #[test]
-    #[cfg_attr(miri, ignore)]
-    fn test_set_builder_enum_param() {
-        let mut builder: MaybeUninit<Box<TelemetryWorkerBuilder>> = MaybeUninit::uninit();
-        unsafe {
-            assert_eq!(
-                ddog_telemetry_builder_instantiate(
-                    NonNull::new(&mut builder).unwrap().cast(),
-                    ffi::CharSlice::from("service_name"),
-                    ffi::CharSlice::from("language_name"),
-                    ffi::CharSlice::from("language_version"),
-                    ffi::CharSlice::from("tracer_version"),
-                ),
-                MaybeError::None,
-            );
-            let mut builder = builder.assume_init();
-
-            assert_eq!(
-                ddog_telemetry_builder_with_property_str(
-                    &mut builder,
-                    TelemetryWorkerBuilderStrProperty::RuntimeId,
-                    ffi::CharSlice::from("abcd")
-                ),
-                MaybeError::None,
-            );
-            assert_eq!(builder.runtime_id.as_deref(), Some("abcd"));
-
-            assert_eq!(
-                ddog_telemetry_builder_with_property_str(
-                    &mut builder,
-                    TelemetryWorkerBuilderStrProperty::SessionId,
-                    ffi::CharSlice::from("sess-1")
-                ),
-                MaybeError::None,
-            );
-            assert_eq!(builder.config.session_id.as_deref(), Some("sess-1"));
-            assert_eq!(
-                ddog_telemetry_builder_with_property_str(
-                    &mut builder,
-                    TelemetryWorkerBuilderStrProperty::RootSessionId,
-                    ffi::CharSlice::from("root-9")
-                ),
-                MaybeError::None,
-            );
-            assert_eq!(builder.config.root_session_id.as_deref(), Some("root-9"));
-            assert_eq!(
-                ddog_telemetry_builder_with_property_str(
-                    &mut builder,
-                    TelemetryWorkerBuilderStrProperty::ParentSessionId,
-                    ffi::CharSlice::from("parent-2")
-                ),
-                MaybeError::None,
-            );
-            assert_eq!(
-                builder.config.parent_session_id.as_deref(),
-                Some("parent-2")
-            );
-
-            assert_eq!(
-                ddog_telemetry_builder_with_property_str(
-                    &mut builder,
-                    TelemetryWorkerBuilderStrProperty::ApplicationRuntimeName,
-                    ffi::CharSlice::from("rust")
-                ),
-                MaybeError::None,
-            );
-            assert_eq!(builder.application.runtime_name.as_deref(), Some("rust"));
-
-            assert_eq!(
-                ddog_telemetry_builder_with_property_str(
-                    &mut builder,
-                    TelemetryWorkerBuilderStrProperty::HostKernelVersion,
-                    ffi::CharSlice::from("ダタドグ")
-                ),
-                MaybeError::None,
-            );
-            assert_eq!(builder.host.kernel_version.as_deref(), Some("ダタドグ"));
-        }
-    }
-
-    #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_worker_run() {
         unsafe {
             let mut builder: MaybeUninit<Box<TelemetryWorkerBuilder>> = MaybeUninit::uninit();
@@ -349,7 +209,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_metrics_worker_run() {
         unsafe {
             let mut builder: MaybeUninit<Box<TelemetryWorkerBuilder>> = MaybeUninit::uninit();
@@ -454,7 +313,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_add_dependency_preserves_version() {
         unsafe {
             let (handle, f) = start_file_backed_worker();
@@ -512,7 +370,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_add_integration_preserves_version() {
         unsafe {
             let (handle, f) = start_file_backed_worker();
@@ -576,7 +433,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_add_log_preserves_stack_trace() {
         unsafe {
             let (handle, f) = start_file_backed_worker();
@@ -634,6 +490,152 @@ mod tests {
                 "Empty stack_trace string should map to null/None, got {:?}",
                 without_trace["stack_trace"]
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod miri_tests {
+    use crate::builder::*;
+    use ffi::MaybeError;
+    use libdd_common_ffi as ffi;
+    use libdd_telemetry::worker::TelemetryWorkerBuilder;
+    use std::{mem::MaybeUninit, ptr::NonNull};
+
+    #[test]
+    fn test_set_builder_str_param() {
+        unsafe {
+            let mut builder: MaybeUninit<Box<TelemetryWorkerBuilder>> = MaybeUninit::uninit();
+            assert_eq!(
+                ddog_telemetry_builder_instantiate(
+                    NonNull::new(&mut builder).unwrap().cast(),
+                    ffi::CharSlice::from("service_name"),
+                    ffi::CharSlice::from("language_name"),
+                    ffi::CharSlice::from("language_version"),
+                    ffi::CharSlice::from("tracer_version"),
+                ),
+                MaybeError::None
+            );
+            let mut builder = builder.assume_init();
+
+            assert_eq!(
+                ddog_telemetry_builder_with_str_named_property(
+                    &mut builder,
+                    ffi::CharSlice::from("runtime_id"),
+                    ffi::CharSlice::from("abcd")
+                ),
+                MaybeError::None,
+            );
+            assert_eq!(builder.runtime_id.as_deref(), Some("abcd"));
+
+            assert_eq!(
+                ddog_telemetry_builder_with_str_named_property(
+                    &mut builder,
+                    ffi::CharSlice::from("application.runtime_name"),
+                    ffi::CharSlice::from("rust")
+                ),
+                MaybeError::None,
+            );
+            assert_eq!(builder.application.runtime_name.as_deref(), Some("rust"));
+
+            assert_eq!(
+                ddog_telemetry_builder_with_str_named_property(
+                    &mut builder,
+                    ffi::CharSlice::from("host.kernel_version"),
+                    ffi::CharSlice::from("ダタドグ")
+                ),
+                MaybeError::None,
+            );
+            assert_eq!(builder.host.kernel_version.as_deref(), Some("ダタドグ"));
+
+            assert!(
+                ddog_telemetry_builder_with_str_named_property(
+                    &mut builder,
+                    ffi::CharSlice::from("doesnt exist"),
+                    ffi::CharSlice::from("abc")
+                )
+                .to_std()
+                .is_none(),
+            );
+        }
+    }
+
+    #[test]
+    fn test_set_builder_enum_param() {
+        let mut builder: MaybeUninit<Box<TelemetryWorkerBuilder>> = MaybeUninit::uninit();
+        unsafe {
+            assert_eq!(
+                ddog_telemetry_builder_instantiate(
+                    NonNull::new(&mut builder).unwrap().cast(),
+                    ffi::CharSlice::from("service_name"),
+                    ffi::CharSlice::from("language_name"),
+                    ffi::CharSlice::from("language_version"),
+                    ffi::CharSlice::from("tracer_version"),
+                ),
+                MaybeError::None,
+            );
+            let mut builder = builder.assume_init();
+
+            assert_eq!(
+                ddog_telemetry_builder_with_property_str(
+                    &mut builder,
+                    TelemetryWorkerBuilderStrProperty::RuntimeId,
+                    ffi::CharSlice::from("abcd")
+                ),
+                MaybeError::None,
+            );
+            assert_eq!(builder.runtime_id.as_deref(), Some("abcd"));
+
+            assert_eq!(
+                ddog_telemetry_builder_with_property_str(
+                    &mut builder,
+                    TelemetryWorkerBuilderStrProperty::SessionId,
+                    ffi::CharSlice::from("sess-1")
+                ),
+                MaybeError::None,
+            );
+            assert_eq!(builder.config.session_id.as_deref(), Some("sess-1"));
+            assert_eq!(
+                ddog_telemetry_builder_with_property_str(
+                    &mut builder,
+                    TelemetryWorkerBuilderStrProperty::RootSessionId,
+                    ffi::CharSlice::from("root-9")
+                ),
+                MaybeError::None,
+            );
+            assert_eq!(builder.config.root_session_id.as_deref(), Some("root-9"));
+            assert_eq!(
+                ddog_telemetry_builder_with_property_str(
+                    &mut builder,
+                    TelemetryWorkerBuilderStrProperty::ParentSessionId,
+                    ffi::CharSlice::from("parent-2")
+                ),
+                MaybeError::None,
+            );
+            assert_eq!(
+                builder.config.parent_session_id.as_deref(),
+                Some("parent-2")
+            );
+
+            assert_eq!(
+                ddog_telemetry_builder_with_property_str(
+                    &mut builder,
+                    TelemetryWorkerBuilderStrProperty::ApplicationRuntimeName,
+                    ffi::CharSlice::from("rust")
+                ),
+                MaybeError::None,
+            );
+            assert_eq!(builder.application.runtime_name.as_deref(), Some("rust"));
+
+            assert_eq!(
+                ddog_telemetry_builder_with_property_str(
+                    &mut builder,
+                    TelemetryWorkerBuilderStrProperty::HostKernelVersion,
+                    ffi::CharSlice::from("ダタドグ")
+                ),
+                MaybeError::None,
+            );
+            assert_eq!(builder.host.kernel_version.as_deref(), Some("ダタドグ"));
         }
     }
 }

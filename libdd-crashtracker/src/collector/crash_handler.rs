@@ -546,8 +546,67 @@ pub fn report_unhandled_exception(
         &timeout_manager,
     )
 }
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn test_format_message_with_message_and_location() {
+        let location = panic::Location::caller();
+        let result = format_message("message", "test panic", Some(location));
+
+        assert!(result.starts_with("Process panicked with message \"test panic\" ("));
+        assert!(result.contains(&format!("{}:", location.file())));
+        assert!(result.contains(&format!(":{}", location.line())));
+        assert!(result.ends_with(&format!("{})", location.column())));
+    }
+
+    #[test]
+    fn test_format_message_with_message_no_location() {
+        let result = format_message("message", "test panic", None);
+        assert_eq!(result, "Process panicked with message \"test panic\"");
+    }
+
+    #[test]
+    fn test_format_message_empty_message_with_location() {
+        let location = panic::Location::caller();
+        let result = format_message("unknown type", "", Some(location));
+
+        assert!(result.starts_with("Process panicked with unknown type ("));
+        assert!(result.contains(&format!("{}:", location.file())));
+        assert!(result.ends_with(&format!("{})", location.column())));
+    }
+
+    #[test]
+    fn test_format_message_empty_message_no_location() {
+        let result = format_message("unknown type", "", None);
+        assert_eq!(result, "Process panicked with unknown type");
+    }
+
+    #[test]
+    fn test_format_message_different_categories() {
+        let result1 = format_message("message", "test", None);
+        assert_eq!(result1, "Process panicked with message \"test\"");
+
+        let result2 = format_message("unknown type", "", None);
+        assert_eq!(result2, "Process panicked with unknown type");
+
+        let result3 = format_message("custom category", "content", None);
+        assert_eq!(result3, "Process panicked with custom category \"content\"");
+    }
+
+    #[test]
+    fn test_format_message_with_special_characters() {
+        let result = format_message("message", "test \"quoted\" 'text'", None);
+        assert_eq!(
+            result,
+            "Process panicked with message \"test \"quoted\" 'text'\""
+        );
+    }
+}
+
+#[cfg(test)]
+mod miri_tests {
     use super::*;
     use core::time::Duration;
 
@@ -669,60 +728,6 @@ mod tests {
             let (stored_metadata, _) = &*metadata_ptr;
             assert_eq!(stored_metadata.library_name, "test");
         }
-    }
-
-    #[test]
-    fn test_format_message_with_message_and_location() {
-        let location = panic::Location::caller();
-        let result = format_message("message", "test panic", Some(location));
-
-        assert!(result.starts_with("Process panicked with message \"test panic\" ("));
-        assert!(result.contains(&format!("{}:", location.file())));
-        assert!(result.contains(&format!(":{}", location.line())));
-        assert!(result.ends_with(&format!("{})", location.column())));
-    }
-
-    #[test]
-    fn test_format_message_with_message_no_location() {
-        let result = format_message("message", "test panic", None);
-        assert_eq!(result, "Process panicked with message \"test panic\"");
-    }
-
-    #[test]
-    fn test_format_message_empty_message_with_location() {
-        let location = panic::Location::caller();
-        let result = format_message("unknown type", "", Some(location));
-
-        assert!(result.starts_with("Process panicked with unknown type ("));
-        assert!(result.contains(&format!("{}:", location.file())));
-        assert!(result.ends_with(&format!("{})", location.column())));
-    }
-
-    #[test]
-    fn test_format_message_empty_message_no_location() {
-        let result = format_message("unknown type", "", None);
-        assert_eq!(result, "Process panicked with unknown type");
-    }
-
-    #[test]
-    fn test_format_message_different_categories() {
-        let result1 = format_message("message", "test", None);
-        assert_eq!(result1, "Process panicked with message \"test\"");
-
-        let result2 = format_message("unknown type", "", None);
-        assert_eq!(result2, "Process panicked with unknown type");
-
-        let result3 = format_message("custom category", "content", None);
-        assert_eq!(result3, "Process panicked with custom category \"content\"");
-    }
-
-    #[test]
-    fn test_format_message_with_special_characters() {
-        let result = format_message("message", "test \"quoted\" 'text'", None);
-        assert_eq!(
-            result,
-            "Process panicked with message \"test \"quoted\" 'text'\""
-        );
     }
 
     // take_metadata_ptr

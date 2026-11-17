@@ -458,7 +458,7 @@ impl TracerFlareManager {
 #[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
-    use std::io::{Read, Write};
+    use std::io::Read;
     use tempfile::TempDir;
 
     fn create_test_files(temp_dir: &TempDir) -> Vec<String> {
@@ -536,6 +536,21 @@ mod tests {
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), FlareError::ZipError(_)));
     }
+
+    #[tokio::test]
+    async fn test_zip_and_send_requires_send_action() {
+        let manager = TracerFlareManager::new("http://localhost:8126", "rust");
+        let result = manager
+            .zip_and_send(vec![], FlareAction::Set(LogLevel::Info))
+            .await;
+        assert!(matches!(result, Err(FlareError::SendError(_))));
+    }
+}
+
+#[cfg(test)]
+mod miri_tests {
+    use super::*;
+    use std::io::Write;
 
     #[test]
     fn test_generate_payload_fields_headers_and_order() {
@@ -655,15 +670,6 @@ mod tests {
         zip_file.write_all(b"zip-content").unwrap();
 
         let result = manager.send(zip_file, agent_task).await;
-        assert!(matches!(result, Err(FlareError::SendError(_))));
-    }
-
-    #[tokio::test]
-    async fn test_zip_and_send_requires_send_action() {
-        let manager = TracerFlareManager::new("http://localhost:8126", "rust");
-        let result = manager
-            .zip_and_send(vec![], FlareAction::Set(LogLevel::Info))
-            .await;
         assert!(matches!(result, Err(FlareError::SendError(_))));
     }
 }
