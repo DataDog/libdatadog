@@ -1051,8 +1051,8 @@ mod tests {
             // SAFETY: child is freed once.
             unsafe { ddog_ffe_assignment_drop(&mut child) };
         }
-        // SAFETY: root is live.
         assert_eq!(
+            // SAFETY: root is live.
             unsafe { ddog_ffe_assignment_get_dependency_key(r(), 3) }.len,
             0
         );
