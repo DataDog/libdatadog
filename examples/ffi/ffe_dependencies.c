@@ -16,20 +16,20 @@ int main(void) {
     ddog_ffe_Handle_ResolutionDetails root = ddog_ffe_get_assignment(
         config, "root", DDOG_FFE_EXPECTED_FLAG_TYPE_BOOLEAN, context);
     // parent is referenced twice but reported once.
-    CHECK(ddog_ffe_assignment_dependency_count(root) == 1);
-    struct ddog_ffe_BorrowedStr key = ddog_ffe_assignment_dependency_key(root, 0);
+    CHECK(ddog_ffe_assignment_get_dependency_count(root) == 1);
+    struct ddog_ffe_BorrowedStr key = ddog_ffe_assignment_get_dependency_key(root, 0);
     CHECK(key.len == 6 && memcmp(key.ptr, "parent", 6) == 0);
-    CHECK(ddog_ffe_assignment_dependency_exposure_eligible(root, 0));
-    CHECK(ddog_ffe_assignment_dependency_key(root, 1).len == 0);
-    CHECK(!ddog_ffe_assignment_dependency_exposure_eligible(root, 1));
-    ddog_ffe_Handle_ResolutionDetails child = ddog_ffe_assignment_dependency_result(root, 0);
+    CHECK(ddog_ffe_assignment_get_dependency_exposure_eligible(root, 0));
+    CHECK(ddog_ffe_assignment_get_dependency_key(root, 1).len == 0);
+    CHECK(!ddog_ffe_assignment_get_dependency_exposure_eligible(root, 1));
+    ddog_ffe_Handle_ResolutionDetails child = ddog_ffe_assignment_get_dependency_result(root, 0);
     ddog_ffe_assignment_drop(&root);
     // Each child owns its data independently of the root result and configuration.
     ddog_ffe_configuration_drop(&config);
     CHECK(ddog_ffe_assignment_get_error_code(child) == DDOG_FFE_ERROR_CODE_OK);
     struct ddog_ffe_VariantValue value = ddog_ffe_assignment_get_value(child);
     CHECK(value.tag == DDOG_FFE_VARIANT_VALUE_BOOLEAN && value.boolean);
-    CHECK(ddog_ffe_assignment_dependency_count(child) == 0);
+    CHECK(ddog_ffe_assignment_get_dependency_count(child) == 0);
     ddog_ffe_assignment_drop(&child);
     ddog_ffe_evaluation_context_drop(&context);
     return 0;

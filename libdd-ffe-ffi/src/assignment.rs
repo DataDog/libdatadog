@@ -390,13 +390,13 @@ unsafe fn get_assignment_with_mode(
 
 /// Number of distinct prerequisite flags reached while evaluating this root, including transitive
 /// prerequisites and those on rules that did not match; excludes the root. Indices follow
-/// completion order. Always 0 for handles returned by `ddog_ffe_assignment_dependency_result`.
+/// completion order. Always 0 for handles returned by `ddog_ffe_assignment_get_dependency_result`.
 /// # Safety
 /// `assignment` must be a live handle.
 #[unsafe(no_mangle)]
 // allow(ffi-panic-boundary): reads the length of an owned vector. Requires a live handle;
 // `Handle::as_ref` can panic on a null handle.
-pub unsafe extern "C" fn ddog_ffe_assignment_dependency_count(
+pub unsafe extern "C" fn ddog_ffe_assignment_get_dependency_count(
     assignment: Handle<ResolutionDetails>,
 ) -> usize {
     // SAFETY: caller guarantees a live handle.
@@ -409,7 +409,7 @@ pub unsafe extern "C" fn ddog_ffe_assignment_dependency_count(
 #[unsafe(no_mangle)]
 // allow(ffi-panic-boundary): bounds-checked lookup and borrowing do not allocate. Requires a live
 // handle; `Handle::as_ref` can panic on a null handle.
-pub unsafe extern "C" fn ddog_ffe_assignment_dependency_key(
+pub unsafe extern "C" fn ddog_ffe_assignment_get_dependency_key(
     assignment: Handle<ResolutionDetails>,
     index: usize,
 ) -> BorrowedStr {
@@ -422,13 +422,14 @@ pub unsafe extern "C" fn ddog_ffe_assignment_dependency_key(
 }
 
 /// Whether this prerequisite contributed to the root's successful assignment.
+/// Returns false for an invalid index.
 /// This does not override the prerequisite's `do_log` or SDK consent and deduplication.
 /// # Safety
 /// `assignment` must be a live handle.
 #[unsafe(no_mangle)]
 // allow(ffi-panic-boundary): bounds-checked lookup of a boolean does not allocate. Requires a live
 // handle; `Handle::as_ref` can panic on a null handle.
-pub unsafe extern "C" fn ddog_ffe_assignment_dependency_exposure_eligible(
+pub unsafe extern "C" fn ddog_ffe_assignment_get_dependency_exposure_eligible(
     assignment: Handle<ResolutionDetails>,
     index: usize,
 ) -> bool {
@@ -445,7 +446,7 @@ pub unsafe extern "C" fn ddog_ffe_assignment_dependency_exposure_eligible(
 /// `assignment` must be a live handle.
 #[unsafe(no_mangle)]
 #[must_use]
-pub unsafe extern "C" fn ddog_ffe_assignment_dependency_result(
+pub unsafe extern "C" fn ddog_ffe_assignment_get_dependency_result(
     assignment: Handle<ResolutionDetails>,
     index: usize,
 ) -> Handle<ResolutionDetails> {
@@ -916,13 +917,13 @@ mod tests {
             let count_handle = unsafe { std::ptr::read(&root) };
             assert_eq!(
                 // SAFETY: count_handle borrows the live root.
-                unsafe { ddog_ffe_assignment_dependency_count(count_handle) },
+                unsafe { ddog_ffe_assignment_get_dependency_count(count_handle) },
                 1
             );
             // SAFETY: this copy borrows the live root.
             let key_handle = unsafe { std::ptr::read(&root) };
             // SAFETY: key_handle remains valid throughout this call.
-            let key = unsafe { ddog_ffe_assignment_dependency_key(key_handle, 0) };
+            let key = unsafe { ddog_ffe_assignment_get_dependency_key(key_handle, 0) };
             assert_eq!(
                 // SAFETY: the key is borrowed from the live root.
                 unsafe { std::slice::from_raw_parts(key.ptr, key.len) },
@@ -932,13 +933,16 @@ mod tests {
             let eligibility_handle = unsafe { std::ptr::read(&root) };
             assert_eq!(
                 // SAFETY: eligibility_handle remains valid throughout this call.
-                unsafe { ddog_ffe_assignment_dependency_exposure_eligible(eligibility_handle, 0) },
+                unsafe {
+                    ddog_ffe_assignment_get_dependency_exposure_eligible(eligibility_handle, 0)
+                },
                 prerequisite == "parent"
             );
             // SAFETY: this copy borrows the live root.
             let result_handle = unsafe { std::ptr::read(&root) };
             // SAFETY: result_handle is live; the returned copy owns its result independently.
-            let mut dependency = unsafe { ddog_ffe_assignment_dependency_result(result_handle, 0) };
+            let mut dependency =
+                unsafe { ddog_ffe_assignment_get_dependency_result(result_handle, 0) };
             // SAFETY: all root borrows ended.
             unsafe { ddog_ffe_assignment_drop(&mut root) };
             // SAFETY: the child owns its result and survives the root's destruction.
@@ -1012,27 +1016,27 @@ mod tests {
             ErrorCode::Ok
         );
         // SAFETY: root is live.
-        assert_eq!(unsafe { ddog_ffe_assignment_dependency_count(r()) }, 3);
+        assert_eq!(unsafe { ddog_ffe_assignment_get_dependency_count(r()) }, 3);
         for (index, (key, eligible)) in [("a", false), ("c", true), ("b", true)]
             .into_iter()
             .enumerate()
         {
             // SAFETY: root is live, so the key borrow is valid for this iteration.
-            let actual = unsafe { ddog_ffe_assignment_dependency_key(r(), index) };
+            let actual = unsafe { ddog_ffe_assignment_get_dependency_key(r(), index) };
             // SAFETY: actual borrows from the live root.
             assert_eq!(unsafe { actual.as_bytes() }, key.as_bytes());
             assert_eq!(
                 // SAFETY: root is live.
-                unsafe { ddog_ffe_assignment_dependency_exposure_eligible(r(), index) },
+                unsafe { ddog_ffe_assignment_get_dependency_exposure_eligible(r(), index) },
                 eligible
             );
             // SAFETY: root is live; the child is freed below.
-            let mut child = unsafe { ddog_ffe_assignment_dependency_result(r(), index) };
+            let mut child = unsafe { ddog_ffe_assignment_get_dependency_result(r(), index) };
             // SAFETY: the copy borrows the live child.
             let child_count_copy = unsafe { std::ptr::read(&child) };
             assert_eq!(
                 // SAFETY: child is live; child results do not retain prerequisite observations.
-                unsafe { ddog_ffe_assignment_dependency_count(child_count_copy) },
+                unsafe { ddog_ffe_assignment_get_dependency_count(child_count_copy) },
                 0
             );
             // SAFETY: the copy borrows the live child.
@@ -1048,11 +1052,14 @@ mod tests {
             unsafe { ddog_ffe_assignment_drop(&mut child) };
         }
         // SAFETY: root is live.
-        assert_eq!(unsafe { ddog_ffe_assignment_dependency_key(r(), 3) }.len, 0);
+        assert_eq!(
+            unsafe { ddog_ffe_assignment_get_dependency_key(r(), 3) }.len,
+            0
+        );
         // SAFETY: root is live.
-        assert!(!unsafe { ddog_ffe_assignment_dependency_exposure_eligible(r(), 3) });
+        assert!(!unsafe { ddog_ffe_assignment_get_dependency_exposure_eligible(r(), 3) });
         // SAFETY: root is live; the invalid-index child is freed below.
-        let mut invalid = unsafe { ddog_ffe_assignment_dependency_result(r(), 3) };
+        let mut invalid = unsafe { ddog_ffe_assignment_get_dependency_result(r(), 3) };
         // SAFETY: invalid is live.
         let details = unsafe { invalid.as_ref() };
         assert_eq!(ErrorCode::from(details), ErrorCode::General);
