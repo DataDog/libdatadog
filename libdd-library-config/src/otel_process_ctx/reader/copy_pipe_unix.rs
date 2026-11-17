@@ -194,7 +194,7 @@ fn last_error(context: &'static str) -> io::Error {
     io::Error::new(err.kind(), format!("{context}: {err}"))
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use core::ptr;
 

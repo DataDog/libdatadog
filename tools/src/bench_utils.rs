@@ -173,7 +173,7 @@ impl criterion::measurement::ValueFormatter for AllocationFormatter {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use core::alloc::{GlobalAlloc, Layout};

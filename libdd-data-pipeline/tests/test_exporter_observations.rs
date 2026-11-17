@@ -1,7 +1,7 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-#![cfg(feature = "external-observations")]
+#![cfg(all(feature = "external-observations", not(miri)))]
 
 use httpmock::MockServer;
 use libdd_capabilities_impl::NativeCapabilities;

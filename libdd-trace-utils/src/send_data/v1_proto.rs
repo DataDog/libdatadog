@@ -243,7 +243,7 @@ fn convert_value<'a, T: TraceData>(
     Ok(idx::AnyValue { value: Some(value) })
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use crate::span::BytesData;

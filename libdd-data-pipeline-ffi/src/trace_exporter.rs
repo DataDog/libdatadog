@@ -1080,7 +1080,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_send(
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 #[allow(deprecated)]
 mod tests {
     use super::*;

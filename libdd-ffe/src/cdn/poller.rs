@@ -119,7 +119,7 @@ impl WarningSlots {
         self.0.fetch_or(category as u8, Ordering::Relaxed) & category as u8 == 0
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, not(miri)))]
     fn reset(&self) {
         self.0.store(0, Ordering::Relaxed);
     }
@@ -409,7 +409,7 @@ fn retry_delay(poll_interval: Duration, attempt: usize, random: f64) -> Duration
         .max(Duration::from_secs(1))
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::super::ApplyError;
     use super::super::transport::FetchFuture;

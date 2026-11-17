@@ -362,7 +362,7 @@ fn byte_slice_as_hex(bv: &[u8]) -> String {
     s
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 impl super::test_utils::TestInstance for StackTrace {
     fn test_instance(_seed: u64) -> Self {
         let frames = (0..10).map(StackFrame::test_instance).collect();
@@ -370,7 +370,7 @@ impl super::test_utils::TestInstance for StackTrace {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 impl super::test_utils::TestInstance for StackFrame {
     fn test_instance(seed: u64) -> Self {
         let ip = Some(format!("{seed:#x}"));
@@ -412,7 +412,7 @@ impl super::test_utils::TestInstance for StackFrame {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
 

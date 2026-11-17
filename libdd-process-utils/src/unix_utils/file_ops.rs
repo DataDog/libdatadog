@@ -19,7 +19,7 @@ pub fn open_file_or_quiet(filename: Option<&str>) -> std::io::Result<RawFd> {
     Ok(file.into_raw_fd())
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use std::fs;

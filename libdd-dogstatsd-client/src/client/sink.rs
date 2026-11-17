@@ -78,7 +78,7 @@ pub(super) fn create_udp_sink(endpoint: &Endpoint) -> anyhow::Result<UdpMetricSi
         .map_err(|e| anyhow!("failed to build UdpMetricSink: {}", e))
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     #[cfg(unix)]

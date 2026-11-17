@@ -1,6 +1,8 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+#![cfg(not(miri))]
+
 //! A separate test binary isolates trace capture from the telemetry unit-test logger.
 
 use std::sync::Mutex;

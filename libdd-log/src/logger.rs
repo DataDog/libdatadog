@@ -88,7 +88,7 @@ struct Logger {
 }
 
 impl Logger {
-    #[cfg(test)]
+    #[cfg(all(test, not(miri)))]
     fn setup() -> Result<Self, Error> {
         Self::setup_with_global(false)
     }
@@ -349,7 +349,7 @@ pub fn logger_set_log_level(log_level: LogEventLevel) -> Result<(), Error> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use std::sync::{Arc, Mutex};
     use tempfile::TempDir;

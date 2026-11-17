@@ -24,7 +24,7 @@ use tokio::sync::Mutex as AsyncMutex;
 use tracing::{debug, warn};
 
 pub(crate) use evp_proxy::SUBDOMAIN_HEADER as EVP_SUBDOMAIN_HEADER;
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 const EVP_SUBDOMAIN_VALUE: &str = evp_proxy::EVENT_PLATFORM_INTAKE_SUBDOMAIN;
 
 const USER_AGENT: &str = concat!("ddtrace-sidecar/", crate::sidecar_version!());
@@ -527,12 +527,12 @@ impl EvpTransport {
         )
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, not(miri)))]
     pub(crate) fn shares_route_state(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.state, &other.state)
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, not(miri)))]
     pub(crate) fn producer(&self) -> &EvpProducerIdentity {
         &self.producer
     }
@@ -548,7 +548,7 @@ impl EvpTransport {
         &self.deduplication_scope
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, not(miri)))]
     fn with_clock(
         mut self,
         clock: Arc<dyn Fn() -> Instant + Send + Sync>,
@@ -875,7 +875,7 @@ fn log_failure(log_prefix: &str, failure: &DeliveryFailure) {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use libdd_capabilities::MaybeSend;

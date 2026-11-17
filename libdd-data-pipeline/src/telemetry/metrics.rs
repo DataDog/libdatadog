@@ -197,7 +197,7 @@ impl Metrics {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use libdd_capabilities_impl::NativeCapabilities;

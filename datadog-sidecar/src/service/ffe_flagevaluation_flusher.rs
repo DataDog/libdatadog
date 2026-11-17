@@ -223,7 +223,7 @@ async fn send_batch_with_writer_stats(
     coalescer.record_payload_build_result(&result);
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use crate::service::evp_proxy::EVENT_PLATFORM_INTAKE_SUBDOMAIN;

@@ -112,7 +112,7 @@ fn tunnel_destination(uri: hyper::Uri) -> Result<hyper::Uri, http::Error> {
     Ok(hyper::Uri::from_parts(parts)?)
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use alloc::sync::Arc;

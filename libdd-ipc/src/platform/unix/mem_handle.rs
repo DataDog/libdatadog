@@ -488,7 +488,7 @@ fn grow_with_ftruncate(fd: &OwnedFd, size: usize) -> bool {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::FORCE_FALLBACKS;
     use crate::platform::{FileBackedHandle, NamedShmHandle};

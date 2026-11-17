@@ -59,7 +59,7 @@ impl<T: SpanText> Default for SharedDict<T> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use libdd_tinybytes::{Bytes, BytesString};
 

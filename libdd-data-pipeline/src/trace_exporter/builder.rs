@@ -1279,7 +1279,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use crate::agent_info;

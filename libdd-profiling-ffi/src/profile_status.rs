@@ -284,7 +284,7 @@ pub unsafe extern "C" fn ddog_prof_Status_drop(status: *mut ProfileStatus) {
     drop(Result::from(status));
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use std::ffi::CStr;

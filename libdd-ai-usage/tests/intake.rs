@@ -1,5 +1,6 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+#![cfg(not(miri))]
 
 //! A batch taken as metrics intake takes it: RATE points, sketches in
 //! intake's `sketchpb.Sparse` form, the writer's tags and the timestamp

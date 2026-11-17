@@ -558,7 +558,7 @@ pub unsafe extern "C" fn ddog_prof_ExporterManager_drop(mut manager: *mut Handle
     unsafe { drop(manager.take()) }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use libdd_common::tag;

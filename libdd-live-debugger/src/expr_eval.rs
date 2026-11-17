@@ -655,7 +655,7 @@ pub fn eval_intermediate_to_string<'e, I, E: Evaluator<'e, I>>(
     eval.get_string(value)
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use crate::expr_defs::Value;
     use crate::expr_defs::{

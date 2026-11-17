@@ -13,7 +13,11 @@
 //! response is returned to the caller. Scheme validation of request URLs
 //! themselves is covered by unit tests in `src/backend/reqwest_backend.rs`.
 
-#![cfg(all(feature = "reqwest-backend", any(feature = "https", feature = "fips")))]
+#![cfg(all(
+    not(miri),
+    feature = "reqwest-backend",
+    any(feature = "https", feature = "fips")
+))]
 
 use httpmock::prelude::*;
 use libdd_http_client::{HttpClient, HttpMethod, HttpRequest};

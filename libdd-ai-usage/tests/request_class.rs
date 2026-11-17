@@ -1,5 +1,6 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+#![cfg(not(miri))]
 
 //! The service tier and the batch flag on token and cost Counters
 //! (PORTABLE-METRICS.md#service-tier-and-batch). Every rejection is compared

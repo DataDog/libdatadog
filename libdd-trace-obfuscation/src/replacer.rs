@@ -588,7 +588,7 @@ fn replace_all_opt(
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
 
     use super::Regex;

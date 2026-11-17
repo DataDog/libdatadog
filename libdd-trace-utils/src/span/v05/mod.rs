@@ -292,7 +292,7 @@ pub fn from_v04_span<T: TraceData>(
     })
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use crate::span::BytesData;

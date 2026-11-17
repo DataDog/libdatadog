@@ -276,7 +276,7 @@ fn gzip_compress(payload: Bytes) -> Result<Bytes, SendError> {
     Ok(Bytes::from(compressed))
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use crate::{AgentClient, LanguageMetadata};

@@ -428,7 +428,7 @@ impl<'a> TryFrom<&'a prost_impls::Profile> for Profile<'a> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
 

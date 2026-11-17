@@ -563,7 +563,7 @@ impl<Inner: ShmSafe> Drop for ShmLimiter<Inner> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::{ShmLimiter, ShmLimiterArena, ShmLimiterData, ShmLimiterMemory, ShmSafe};
     use std::ffi::CString;

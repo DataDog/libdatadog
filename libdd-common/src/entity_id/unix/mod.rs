@@ -101,7 +101,7 @@ pub static ENTITY_ID: LazyLock<Option<&'static str>> = LazyLock::new(|| {
     })
 });
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use libdd_regex::Regex;

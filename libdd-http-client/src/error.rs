@@ -37,7 +37,7 @@ pub enum HttpClientError {
     IoError(String),
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
 

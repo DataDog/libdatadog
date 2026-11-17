@@ -284,7 +284,7 @@ unsafe impl<T> Send for MappedMem<T> where T: FileBackedHandle {}
 #[cfg(feature = "tiny-bytes")]
 impl UnderlyingBytes for MappedMem<ShmHandle> {}
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use crate::platform::{FileBackedHandle, NamedShmHandle, ShmHandle};
     use std::ffi::CString;

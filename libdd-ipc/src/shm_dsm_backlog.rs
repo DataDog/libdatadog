@@ -298,7 +298,7 @@ impl ShmDsmBacklogMapping {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use crate::shm_dsm_checkpoint::{DSM_BUCKET_NANOS, ShmDsmCheckpointTable};

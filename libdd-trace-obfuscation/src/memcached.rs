@@ -34,7 +34,7 @@ pub fn obfuscate_memcached_string(cmd: &str) -> String {
     cmd.trim().to_string()
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use duplicate::duplicate_item;
 

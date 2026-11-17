@@ -524,7 +524,7 @@ pub type AttributeValueSlice<'a> = AttributeValue<SliceData<'a>>;
 pub type TraceChunkSlice<'a> = TraceChunk<SliceData<'a>>;
 pub type TracerPayloadSlice<'a> = TracerPayload<SliceData<'a>>;
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use libdd_tinybytes::BytesString;

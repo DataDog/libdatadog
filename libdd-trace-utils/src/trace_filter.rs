@@ -326,7 +326,7 @@ impl TraceFilterer {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::TraceFilterer;
     use crate::span::span_pool::PooledChunks;

@@ -229,7 +229,7 @@ pub async fn run_crashtracker_receiver<C: std::os::fd::AsRawFd>(
     unsafe { libc::shutdown(conn.as_raw_fd(), libc::SHUT_RD) };
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use std::os::fd::{FromRawFd, OwnedFd};

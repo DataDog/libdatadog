@@ -772,7 +772,7 @@ pub fn read_proc_maps() -> Vec<MapEntry> {
 
 /// Append the entries of /proc/self/maps to `out`; returns whether the whole file was read.
 fn read_proc_maps_into(out: &mut Vec<MapEntry>) -> bool {
-    #[cfg(test)]
+    #[cfg(all(test, not(miri)))]
     tests::MAPS_READS.with(|reads| reads.set(reads.get() + 1));
     let Ok(f) = std::fs::File::open("/proc/self/maps") else {
         return false;
@@ -1292,7 +1292,7 @@ unsafe fn patch_got_entries(
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use std::cell::Cell;

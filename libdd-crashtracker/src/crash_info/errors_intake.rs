@@ -596,7 +596,7 @@ impl ErrorsIntakeUploader {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use crate::crash_info::test_utils::TestInstance;

@@ -97,7 +97,7 @@ impl DebugLogger {
 
     /// A logger that drops everything, for tests that do not exercise upload.
     /// Also avoids `tokio::spawn` outside of a runtime in synchronous tests.
-    #[cfg(test)]
+    #[cfg(all(test, not(miri)))]
     pub(crate) fn disabled() -> Self {
         Self {
             uploader: None,
@@ -150,7 +150,7 @@ impl DebugLogger {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
 

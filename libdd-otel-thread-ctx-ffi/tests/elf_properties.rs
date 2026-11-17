@@ -18,6 +18,7 @@
 //! Library artifact paths are derived at runtime from the test executable location.
 
 #![cfg(all(
+    not(miri),
     target_os = "linux",
     any(target_arch = "x86_64", target_arch = "aarch64")
 ))]

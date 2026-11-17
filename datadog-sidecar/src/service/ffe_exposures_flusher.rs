@@ -10,7 +10,7 @@
 //! and otherwise uses authenticated direct intake.
 
 use crate::service::FfeExposureBatch;
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 use crate::service::evp_proxy::{
     EVENT_PLATFORM_INTAKE_SUBDOMAIN as EVP_SUBDOMAIN_VALUE,
     SUBDOMAIN_HEADER as EVP_SUBDOMAIN_HEADER,
@@ -22,7 +22,7 @@ use libdd_ffe::telemetry::exposures::encode_exposure_batch_in_scope;
 use tracing::debug;
 
 /// Historical Agent-only EVP v2 path for Feature Flags exposure intake.
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 pub(crate) const EVP_EXPOSURES_PATH: &str = "/evp_proxy/v2/api/v2/exposures";
 const EXPOSURES_INTAKE_PATH: &str = "/api/v2/exposures";
 
@@ -58,7 +58,7 @@ pub(crate) async fn send_batch<C: HttpClientCapability + SleepCapability>(
         .await;
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use crate::service::{FfeExposure, FfeTelemetryContext};

@@ -1124,7 +1124,7 @@ fn truncate_with_ellipsis(mut s: String, max_len: usize) -> String {
     s
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests;
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests_v1;

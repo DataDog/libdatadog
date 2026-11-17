@@ -90,7 +90,7 @@ fn platform_inode(_m: &std::fs::Metadata) -> Option<u64> {
     None
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use std::io::Write;

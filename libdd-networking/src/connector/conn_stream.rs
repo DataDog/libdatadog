@@ -288,7 +288,7 @@ impl hyper::rt::Write for ConnStream {
     }
 }
 
-#[cfg(all(test, windows))]
+#[cfg(all(test, not(miri), windows))]
 mod windows_named_pipe_tests {
     use super::ConnStream;
     use crate::connector::named_pipe::named_pipe_path_to_uri;

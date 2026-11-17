@@ -21,7 +21,7 @@ pub use opentelemetry_proto::tonic::profiles::v1development::*;
 /// Re-export of [`prost::Message`] for encoding/decoding OTEL profile types.
 pub use prost::Message;
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
 

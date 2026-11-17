@@ -664,7 +664,7 @@ pub fn ping(transport: &mut SidecarTransport) -> io::Result<Duration> {
     Ok(start.elapsed())
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 #[cfg(unix)]
 mod tests {
     use super::try_submit_ffe;

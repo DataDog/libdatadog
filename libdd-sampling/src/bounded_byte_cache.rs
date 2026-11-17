@@ -93,7 +93,7 @@ where
         self.current_bytes += entry_bytes;
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, not(miri)))]
     #[inline]
     pub fn current_bytes(&self) -> usize {
         self.current_bytes
@@ -118,7 +118,7 @@ where
     const PER_ENTRY_OVERHEAD: usize = 64;
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
 

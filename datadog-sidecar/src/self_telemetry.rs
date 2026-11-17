@@ -413,7 +413,7 @@ impl SelfTelemetry {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use crate::service::{

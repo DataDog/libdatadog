@@ -127,7 +127,7 @@ impl ExceptionHashRateLimiter {
     }
 }
 
-#[cfg(all(test, unix))]
+#[cfg(all(test, unix, not(miri)))]
 mod tests {
     use super::*;
 

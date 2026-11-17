@@ -1,5 +1,6 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+#![cfg(not(miri))]
 
 //! The Datadog binding cases in `tests/data/datadog`: the metric points of one
 //! profile for one second, and the exact series an exporter submits for them.

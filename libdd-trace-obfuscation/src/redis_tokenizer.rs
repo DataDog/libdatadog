@@ -137,7 +137,7 @@ impl<'a> RedisTokenizer<'a> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use duplicate::duplicate_item;
 

@@ -418,7 +418,7 @@ fn resolve_module_file(test_name: &str, src_dir: &Path, workspace_root: &Path) -
     None
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
 

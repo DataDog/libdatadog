@@ -6,7 +6,7 @@
 //! `libdd_networking::connector::proxy`) to avoid racing a concurrent `setenv`.
 //! Therefore, there must be only a single test in thie file that touches
 //! `HTTPS_PROXY`, and must set it before constructing its first `HttpClient`.
-#![cfg(feature = "hyper-proxy")]
+#![cfg(all(not(miri), feature = "hyper-proxy"))]
 
 use libdd_http_client::{HttpClient, HttpMethod, HttpRequest};
 use std::sync::Arc;

@@ -1,6 +1,8 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+#![cfg(not(miri))]
+
 use libdd_ipc::{SeqpacketConn, ipc_server::OwnedServerConn};
 use std::sync::atomic::AtomicU64;
 

@@ -19,6 +19,7 @@
 //! per-test selection with `--exact`.
 
 #[cfg(all(
+    not(miri),
     target_os = "linux",
     any(target_arch = "x86_64", target_arch = "aarch64")
 ))]
@@ -157,6 +158,7 @@ mod imp {
     }
 }
 
+#[cfg(not(miri))]
 fn main() {
     #[cfg(all(
         target_os = "linux",
@@ -164,3 +166,8 @@ fn main() {
     ))]
     imp::run();
 }
+
+// Miri does not support the TLSDESC inline assembly used to access the TLS slot, so
+// this test binary is a no-op under Miri (see the skip note in `imp::run`).
+#[cfg(miri)]
+fn main() {}

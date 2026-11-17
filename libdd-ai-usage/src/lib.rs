@@ -75,13 +75,13 @@ mod project;
 mod provider;
 // The metric registry (`tests/data/registry.json`), read only by the tests
 // that check the crate against it.
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod registry;
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 extern crate self as libdd_ai_usage;
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod conformance_tests;
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod robustness_tests;
 mod usage;
 

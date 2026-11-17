@@ -141,7 +141,7 @@ pub struct DebuggerDiagnosticsBookkeeperStats {
     total_probes: u32,
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use libdd_live_debugger::debugger_defs::{

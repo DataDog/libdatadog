@@ -2301,7 +2301,7 @@ fn normalize_plan_sql(s: &str) -> String {
     result
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::{
         DbmsKind, SqlConfig, SqlObfuscationError, SqlObfuscationMode, obfuscate_sql,

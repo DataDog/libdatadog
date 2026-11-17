@@ -1,6 +1,8 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+#![cfg(not(miri))]
+
 //! The shared dependent-flag contract, including prerequisite telemetry eligibility.
 
 use std::{collections::HashMap, fs, path::PathBuf, sync::Arc};

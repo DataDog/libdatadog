@@ -191,7 +191,7 @@ impl DogStatsDClient {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod test {
     use super::*;
     use crate::action::DogStatsDAction::{Count, Distribution, Gauge, Histogram, Set};

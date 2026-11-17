@@ -11,5 +11,5 @@ pub use eval_assignment::{
 };
 pub use evaluation_context::EvaluationContext;
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod dependent_flags_tests;

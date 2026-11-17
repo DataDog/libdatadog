@@ -171,7 +171,7 @@ const fn valid_card_prefix(n: u32) -> FuzzyBool {
     FuzzyBool::False
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use crate::credit_cards::{
         FuzzyBool, calculate_luhn, is_card_number, luhn_valid, valid_card_prefix,

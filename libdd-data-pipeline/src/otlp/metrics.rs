@@ -379,7 +379,7 @@ impl<C: StatsCap> Worker for SharedOtlpStatsExporter<C> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use libdd_trace_stats::span_concentrator::{OtlpExactCell, OtlpExactGroup};

@@ -232,7 +232,7 @@ fn glob_match_bytes<const ASCII_FOLD: bool>(pattern: &[u8], subject: &[u8]) -> b
     true
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
 

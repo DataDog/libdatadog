@@ -449,7 +449,7 @@ pub fn map_traces_to_otlp_v1<T: TraceData>(
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests_v1 {
     use super::*;
     use crate::span::BytesData;

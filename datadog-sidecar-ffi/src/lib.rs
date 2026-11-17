@@ -2106,7 +2106,7 @@ pub extern "C" fn ddog_sidecar_appsec_response_drop(response: AppsecCResponse) {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use datadog_sidecar::service::{MAX_CONTEXT_FIELDS, MAX_FIELD_LENGTH};

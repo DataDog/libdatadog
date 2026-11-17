@@ -24,7 +24,7 @@ impl EnvCapability for NativeEnvCapability {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
 

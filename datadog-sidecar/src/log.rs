@@ -560,7 +560,7 @@ pub(crate) fn enable_logging() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::{
         AppSecLogFormatter, AppSecLogWriter, MULTI_LOG_FILTER, TemporarilyRetainedKeyParser,

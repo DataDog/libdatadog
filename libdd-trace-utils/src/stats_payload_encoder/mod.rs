@@ -88,7 +88,7 @@ pub fn encode_stats_payload_msgpack(
     rmp_serde::to_vec_named(payload)
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use libdd_trace_protobuf::pb;

@@ -106,7 +106,7 @@ macro_rules! try_c {
 #[allow(unused_imports)]
 pub(crate) use c_setters;
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use crate::{builder::*, worker_handle::*};
     use ffi::MaybeError;

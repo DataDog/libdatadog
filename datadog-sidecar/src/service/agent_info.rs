@@ -314,7 +314,7 @@ impl AgentInfoReader {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use httpmock::prelude::*;

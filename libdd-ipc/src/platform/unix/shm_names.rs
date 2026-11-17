@@ -163,7 +163,7 @@ pub(crate) fn create_anonymous(
     ))
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
 

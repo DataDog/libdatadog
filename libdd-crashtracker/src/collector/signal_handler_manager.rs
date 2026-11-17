@@ -212,7 +212,7 @@ unsafe fn register_signal_handler(
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     #[cfg(target_os = "linux")]
     #[test]

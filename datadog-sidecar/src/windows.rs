@@ -245,11 +245,13 @@ pub fn shm_namespace() -> &'static str {
     primary_sidecar_identifier()
 }
 
+#[cfg(not(miri))]
 #[test]
 fn test_fetch_identifier() {
     assert!(primary_sidecar_identifier().starts_with("S-"));
 }
 
+#[cfg(not(miri))]
 #[test]
 fn test_fetch_identifier_while_impersonating() {
     use windows_sys::Win32::Security::{ImpersonateAnonymousToken, RevertToSelf};

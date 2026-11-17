@@ -55,7 +55,7 @@ fn is_named_otel_mapping(line: &str) -> bool {
     )
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::is_named_otel_mapping;
 

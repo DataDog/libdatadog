@@ -1,6 +1,8 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+#![cfg(not(miri))]
+
 use core::time::Duration;
 use libdd_ipc::rate_limiter::now;
 use std::time::Instant;

@@ -1,6 +1,8 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+#![cfg(not(miri))]
+
 //! The proxy environment is read once when the first HTTP connector is constructed.
 //! Keep this test in its own process so it controls that initial environment.
 

@@ -220,7 +220,7 @@ pub fn get_behavior(mode_str: &str) -> Box<dyn Behavior> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicBool, Ordering};

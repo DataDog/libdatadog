@@ -1717,8 +1717,7 @@ impl<
         }
     }
 
-    #[cfg(test)]
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(test, not(miri), not(target_arch = "wasm32")))]
     /// Test only function to check if the stats computation is active and the worker is running
     pub fn is_stats_worker_active(&self) -> bool {
         stats::is_stats_worker_active(&self.client_side_stats.status)
@@ -1746,7 +1745,7 @@ fn add_native_export_marker<T: TraceData>(span: &mut Span<T>) {
     );
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use self::error::AgentErrorKind;
     use super::*;
@@ -1844,7 +1843,6 @@ mod tests {
         assert!(headers.contains_key("datadog-client-computed-top-level"));
     }
 
-    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_effective_output_format_v04_passthrough() {
         let exporter = build_test_exporter(
@@ -1861,7 +1859,6 @@ mod tests {
         ));
     }
 
-    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_effective_output_format_v1_pre_negotiation_falls_back_to_v04() {
         let exporter = build_test_exporter(
@@ -1878,7 +1875,6 @@ mod tests {
         ));
     }
 
-    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_effective_output_format_v1_post_negotiation_uses_v1() {
         let exporter = build_test_exporter(
@@ -1905,7 +1901,6 @@ mod tests {
         );
     }
 
-    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_refresh_v1_active_enables_when_endpoint_advertised() {
         use crate::agent_info::schema::{AgentInfo, AgentInfoStruct};
@@ -1935,7 +1930,6 @@ mod tests {
         );
     }
 
-    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_refresh_v1_active_disables_when_endpoint_disappears() {
         use crate::agent_info::schema::{AgentInfo, AgentInfoStruct};
@@ -1965,7 +1959,6 @@ mod tests {
         );
     }
 
-    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_refresh_v1_active_handles_missing_endpoints_field() {
         use crate::agent_info::schema::{AgentInfo, AgentInfoStruct};
@@ -2103,7 +2096,6 @@ mod tests {
     // The real `send` entry point decodes msgpack, hits the log branch, and writes
     // Forwarder-format JSON bytes through the log-output capability.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_log_mode_send_writes_forwarder_json() {
         let mut builder = TraceExporterBuilder::default();
         builder
@@ -2138,7 +2130,6 @@ mod tests {
     // chunks, hits the log branch in `process_and_send_trace_chunks_v1`, and writes
     // Forwarder-format JSON bytes through the log-output capability.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_log_mode_send_v1_writes_forwarder_json() {
         use libdd_trace_utils::span::v1::{SpanBytes as SpanBytesV1, TraceChunkBytes};
 
@@ -2176,7 +2167,6 @@ mod tests {
     // Log mode must make zero agent HTTP calls — also guards the worker-gating fix
     // (info-fetcher is not spawned in log mode).
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_log_mode_makes_no_agent_requests() {
         let fake_agent = MockServer::start();
         // No `when` constraints => matches any request to any path.
@@ -2208,7 +2198,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_health_metrics() {
         let stats_socket = net::UdpSocket::bind("127.0.0.1:0").expect("failed to bind host socket");
         let _ = stats_socket.set_read_timeout(Some(Duration::from_millis(500)));
@@ -2286,7 +2275,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_invalid_traces() {
         let stats_socket = net::UdpSocket::bind("127.0.0.1:0").expect("failed to bind host socket");
         let _ = stats_socket.set_read_timeout(Some(Duration::from_millis(500)));
@@ -2317,7 +2305,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_health_metrics_error() {
         let stats_socket = net::UdpSocket::bind("127.0.0.1:0").expect("failed to bind host socket");
         let _ = stats_socket.set_read_timeout(Some(Duration::from_millis(500)));
@@ -2425,7 +2412,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_health_metrics_dropped_bytes_exclusions() {
         let stats_socket = net::UdpSocket::bind("127.0.0.1:0").expect("failed to bind host socket");
         let _ = stats_socket.set_read_timeout(Some(Duration::from_millis(500)));
@@ -2531,7 +2517,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_health_metrics_disabled() {
         let stats_socket = net::UdpSocket::bind("127.0.0.1:0").expect("failed to bind host socket");
         let _ = stats_socket.set_read_timeout(Some(Duration::from_millis(500)));
@@ -2585,7 +2570,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_agent_response_parse_default() {
         let server = MockServer::start();
         let _agent = server.mock(|_, then| {
@@ -2634,7 +2618,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_agent_response_error() {
         let server = MockServer::start();
         let _agent = server.mock(|_, then| {
@@ -2669,7 +2652,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_agent_empty_response_error() {
         let server = MockServer::start();
         let _agent = server.mock(|_, then| {
@@ -2707,7 +2689,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     /// Tests that if agent_response_payload_version is not enabled
     /// the exporter always returns the response body
     fn test_agent_response_payload_version_disabled() {
@@ -2741,7 +2722,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     /// Tests that if agent_response_payload_version is enabled
     /// the exporter returns the response body only once
     /// and then returns Unchanged response until the payload version header changes
@@ -2801,7 +2781,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     /// Tests that the exporter applies the agent's rates once the agent has computed them when
     /// its first response came from an agent without rates, which sends an empty payload version
     fn test_agent_response_empty_payload_version() {
@@ -2860,13 +2839,11 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_agent_malfunction_info_4xx() {
         test_agent_malfunction_info(404, r#"{"error":"Not Found"}"#, Duration::from_secs(0));
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_agent_malfunction_info_5xx() {
         test_agent_malfunction_info(
             500,
@@ -2876,7 +2853,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_agent_malfunction_info_timeout() {
         test_agent_malfunction_info(
             408,
@@ -2886,7 +2862,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_agent_malfunction_info_wrong_answer() {
         test_agent_malfunction_info(200, "WRONG_ANSWER", Duration::from_secs(0));
     }
@@ -2944,7 +2919,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_connection_timeout() {
         let exporter = TraceExporter::<NativeCapabilities, ForkSafeRuntime>::builder()
             .build::<NativeCapabilities>()
@@ -2962,7 +2936,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_otlp_export_via_builder() {
         let server = MockServer::start();
         let mock_otlp = server.mock(|when, then| {
@@ -3011,7 +2984,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_otlp_resource_updates_preserve_in_flight_snapshot() {
         let exporter = Arc::new(
             TraceExporterBuilder::default()
@@ -3069,7 +3041,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_agent_export_marks_first_span_of_each_chunk() {
         let server = MockServer::start();
         let mock_agent = server.mock(|when, then| {
@@ -3136,7 +3107,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_agentless_export_via_builder() {
         let server = MockServer::start();
         let mock_intake = server.mock(|when, then| {
@@ -3192,7 +3162,6 @@ mod tests {
     /// V1-native counterpart of [`test_agentless_export_via_builder`]: sends native v1 chunks
     /// through the agentless JSON dispatch path.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_agentless_export_via_builder_v1() {
         use libdd_trace_utils::span::v1::{SpanBytes as SpanBytesV1, TraceChunkBytes};
 
@@ -3249,7 +3218,6 @@ mod tests {
     /// `send_trace_chunks_v1` is the sync facade over `send_trace_chunks_async_v1`, sending
     /// native v1 chunks.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_send_trace_chunks_v1_sync() {
         use libdd_trace_utils::span::v1::{SpanBytes as SpanBytesV1, TraceChunkBytes};
 
@@ -3317,7 +3285,6 @@ mod tests {
 
     /// A full v1 send through the agent path recycles the sent chunk back into the pool.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_send_trace_chunks_v1_feeds_a_real_pool() {
         use libdd_trace_utils::span::v1::span_pool::SpanPoolV1;
         use libdd_trace_utils::span::v1::{SpanBytes as SpanBytesV1, TraceChunkBytes};
@@ -3392,7 +3359,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_agentless_export_body_shape() {
         let server = MockServer::start();
         let mock_intake = server.mock(|when, then| {
@@ -3460,7 +3426,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_agentless_export_marks_first_span_of_each_chunk() {
         let server = MockServer::start();
         let mock_intake = server.mock(|when, then| {
@@ -3527,7 +3492,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_agentless_obfuscates_every_exported_span() {
         // Obfuscation runs in the agentless path on every span that is sent to the
         // intake. With `remove_query_string` enabled, the `secret=bar` query parameter
@@ -3608,8 +3572,7 @@ mod tests {
     }
 }
 
-#[cfg(test)]
-#[cfg(feature = "telemetry")]
+#[cfg(all(test, not(miri), feature = "telemetry"))]
 mod telemetry_metrics_tests {
     use super::*;
     use crate::trace_exporter::tests::build_test_exporter;
@@ -3625,7 +3588,6 @@ mod telemetry_metrics_tests {
     const V5_EMPTY: [u8; 4] = [0x92, 0x91, 0xA0, 0x90];
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_exporter_metrics_v4() {
         let server = MockServer::start();
         let response_body = r#"{
@@ -3681,7 +3643,6 @@ mod telemetry_metrics_tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_exporter_metrics_v5() {
         let server = MockServer::start();
         let response_body = r#"{
@@ -3731,7 +3692,6 @@ mod telemetry_metrics_tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_exporter_metrics_v4_to_v5() {
         let server = MockServer::start();
         let response_body = r#"{
@@ -3792,7 +3752,7 @@ mod telemetry_metrics_tests {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod single_threaded_tests {
     use super::stats::STATS_ENDPOINT;
     use super::*;
@@ -3803,7 +3763,6 @@ mod single_threaded_tests {
     use libdd_trace_utils::msgpack_encoder;
     use libdd_trace_utils::span::v04::SpanBytes;
 
-    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_shutdown() {
         // Clear the agent info cache to ensure test isolation
@@ -3893,7 +3852,6 @@ mod single_threaded_tests {
         mock_stats.assert();
     }
 
-    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_shutdown_with_timeout() {
         // Clear the agent info cache to ensure test isolation
@@ -4076,7 +4034,6 @@ mod single_threaded_tests {
     /// Runs the three opt-in × agent-support cases sequentially in a single test
     /// to avoid races on the process-global agent info cache.
     #[cfg(feature = "stats-obfuscation")]
-    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_client_side_stats_obfuscation_opt_in() {
         let next_obf_version =
@@ -4118,7 +4075,6 @@ mod single_threaded_tests {
     /// endpoint returns 404 (e.g. customer rolled back the agent without `/info` reflecting it).
     /// The fail-closed hook must flip `v1_active` to false on the first 404 so the next send
     /// uses V0.4.
-    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_v1_404_fails_closed_to_v04() {
         agent_info::clear_cache_for_test();

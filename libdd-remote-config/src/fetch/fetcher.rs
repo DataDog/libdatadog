@@ -829,7 +829,7 @@ fn make_agent_configs_endpoint(endpoint: &Endpoint) -> Endpoint {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 pub mod tests {
     use super::*;
     use crate::fetch::test_server::RemoteConfigServer;

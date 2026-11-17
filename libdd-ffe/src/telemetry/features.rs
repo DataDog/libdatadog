@@ -92,7 +92,7 @@ fn within_text_cap(text: &str) -> bool {
     text.chars().take(MAX_FEATURE_TEXT_LENGTH + 1).count() <= MAX_FEATURE_TEXT_LENGTH
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 /// Features whose canonical encoding is exactly `len` bytes.
 pub(crate) fn features_of_encoded_len(len: usize) -> String {
     // A full entry `"kNNN":"<100 x>"` is 109 bytes; entries after the first add a comma.
@@ -117,7 +117,7 @@ pub(crate) fn features_of_encoded_len(len: usize) -> String {
     raw
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use serde_json::json;

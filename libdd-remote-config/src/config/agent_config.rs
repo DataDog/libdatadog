@@ -57,7 +57,7 @@ pub fn parse_json(data: &[u8]) -> serde_json::error::Result<AgentConfigFile> {
     serde_json::from_slice(data)
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
 

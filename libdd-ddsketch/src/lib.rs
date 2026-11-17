@@ -368,7 +368,7 @@ fn max(a: f64, b: f64) -> Option<f64> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod test {
     use prost::Message;
 

@@ -1152,7 +1152,7 @@ fn emit_otel_thread_contexts(
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use crate::StackFrame;
 

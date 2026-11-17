@@ -129,8 +129,7 @@ mod unix {
         SiCodes::from_i32(translated).unwrap_or(SiCodes::UNKNOWN)
     }
 
-    #[cfg(test)]
-    #[cfg_attr(miri, ignore)]
+    #[cfg(all(test, not(miri)))]
     #[test]
     fn test_si_code() {
         // standard values differ between oses, but it seems like segv match
@@ -316,7 +315,7 @@ impl SigInfo {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 impl SigInfo {
     pub fn test_instance(_seed: u64) -> Self {
         Self {

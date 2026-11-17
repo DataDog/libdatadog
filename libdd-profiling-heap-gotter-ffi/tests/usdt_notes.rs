@@ -21,7 +21,10 @@
 //! The cdylib path is derived at runtime from the test executable location.
 //! Both the test binary and the cdylib live in `target/<[triple/]profile>/deps/`.
 
-#![cfg(target_os = "linux")]
+// Excluded from Miri: the cdylib under inspection is never produced
+// under cargo miri (no native codegen), so the .so this test reads
+// does not exist in a Miri build.
+#![cfg(all(target_os = "linux", not(miri)))]
 
 use std::path::PathBuf;
 

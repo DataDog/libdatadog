@@ -86,7 +86,7 @@ fn truncate(bytes: &[u8], cap: usize) -> String {
     String::from_utf8_lossy(&bytes[..take]).into_owned()
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use httpmock::MockServer;

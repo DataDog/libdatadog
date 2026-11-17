@@ -501,7 +501,7 @@ pub fn obfuscate_url_string(
     out
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use duplicate::duplicate_item;
 

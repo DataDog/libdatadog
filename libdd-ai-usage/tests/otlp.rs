@@ -5,7 +5,7 @@
 //! definitions: every valid conformance observation is projected, batched and
 //! encoded, and the decoded export must carry exactly the batch's points.
 
-#![cfg(feature = "otlp")]
+#![cfg(all(feature = "otlp", not(miri)))]
 
 use std::collections::BTreeMap;
 use std::fs;

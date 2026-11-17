@@ -135,7 +135,7 @@ fn proc_info(pid: u32) -> Option<ProcInfo> {
     })
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     // These resolve real pids: through `/proc` on Linux, `proc_pidinfo` on macOS, and
     // `getpid`/`getppid` on both. Miri implements none of them - it refuses the foreign calls

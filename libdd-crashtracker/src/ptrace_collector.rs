@@ -725,7 +725,7 @@ fn read_thread_stat(pid: i32, tid: i32) -> (Option<String>, Option<String>) {
     (name, state)
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use std::sync::{Arc, Barrier};

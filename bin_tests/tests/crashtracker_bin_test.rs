@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #![cfg(unix)]
+#![cfg(not(miri))]
 
 use std::collections::HashMap;
 use std::io::{BufWriter, Read, Write};

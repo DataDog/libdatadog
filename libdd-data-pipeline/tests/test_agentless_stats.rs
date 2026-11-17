@@ -1,6 +1,8 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+#![cfg(not(miri))]
+
 //! Integration tests for the agentless stats export feature.
 //!
 //! Each test runs inside `spawn_blocking` (required because `send_trace_chunks` calls `block_on`)

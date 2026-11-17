@@ -458,7 +458,7 @@ fn encode_payload(
     Ok(rmp_serde::to_vec_named(&payload)?)
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use libdd_ipc::shm_dsm_checkpoint::DsmCheckpoint;

@@ -154,7 +154,7 @@ mod vec_storage {
     }
 }
 
-#[cfg(all(test, feature = "alloc"))]
+#[cfg(all(test, not(miri), feature = "alloc"))]
 mod tests {
     use alloc::vec::Vec;
 

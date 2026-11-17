@@ -116,7 +116,7 @@ pub fn profiling_features(selection: &Selection) -> Vec<String> {
     features.into_iter().map(str::to_string).collect()
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use std::fs;

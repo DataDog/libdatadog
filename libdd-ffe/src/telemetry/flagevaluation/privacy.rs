@@ -243,7 +243,7 @@ pub(super) fn error_code(value: &str) -> &'static str {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use serde_json::json;

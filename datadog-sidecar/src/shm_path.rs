@@ -30,7 +30,7 @@ pub(crate) fn keyed_shm_path(prefix: &str, key: &impl Hash) -> CString {
     shm_path(prefix, &format!("-{hash}"))
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
 

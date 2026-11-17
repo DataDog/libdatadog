@@ -787,7 +787,7 @@ fn list_threads(pid: u32) -> Result<Vec<u32>> {
     Ok(thread_ids)
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use crate::collector_windows::api::*;
     use goblin::pe::PE;

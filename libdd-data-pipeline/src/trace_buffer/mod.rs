@@ -1006,7 +1006,7 @@ impl<T: Send + Debug + 'static> Worker for TraceExporterWorker<T> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};

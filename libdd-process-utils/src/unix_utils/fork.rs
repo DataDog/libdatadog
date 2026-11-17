@@ -132,8 +132,7 @@ pub fn alt_fork() -> libc::pid_t {
     }
 }
 
-#[cfg(target_os = "linux")]
-#[cfg(test)]
+#[cfg(all(target_os = "linux", test, not(miri)))]
 mod tests {
     use crate::unix_utils::fork::BUFFER_SIZE;
     use crate::unix_utils::fork::is_being_traced_internal;

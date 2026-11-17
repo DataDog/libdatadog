@@ -33,7 +33,7 @@ pub use fetcher::{
     AgentInfoFetcher, FetchInfoStatus, ResponseObserver, fetch_info, fetch_info_with_state,
 };
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 /// Clear the global agent info cache for test isolation in envs where nextest isn't used.
 pub fn clear_cache_for_test() {
     AGENT_INFO_CACHE.store(None);

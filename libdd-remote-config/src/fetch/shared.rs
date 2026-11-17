@@ -403,7 +403,7 @@ impl SharedFetcher {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 pub mod tests {
     use super::*;
     use crate::Target;

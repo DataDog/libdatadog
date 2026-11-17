@@ -41,12 +41,12 @@ impl RulesSampler {
     }
 
     // Test-only inspection helpers.
-    #[cfg(test)]
+    #[cfg(all(test, not(miri)))]
     pub(crate) fn is_empty(&self) -> bool {
         self.inner.read_or_panic().is_empty()
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, not(miri)))]
     pub(crate) fn len(&self) -> usize {
         self.inner.read_or_panic().len()
     }

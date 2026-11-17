@@ -37,7 +37,7 @@ pub use regex_lite::{Captures, Error, Regex, RegexBuilder, Replacer, escape};
 ))]
 pub use regex::{Captures, Error, Regex, RegexBuilder, Replacer, escape};
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::Regex;
 

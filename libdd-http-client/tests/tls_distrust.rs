@@ -24,6 +24,7 @@
 //! the hyper backend is covered by `libdd-common`'s `tests/tls_distrust.rs`.
 
 #![cfg(all(
+    not(miri),
     unix,
     not(target_os = "android"),
     not(target_vendor = "apple"),

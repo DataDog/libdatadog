@@ -272,7 +272,7 @@ pub use linux::*;
 #[cfg(not(target_os = "linux"))]
 pub use other::*;
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use libdd_trace_protobuf::opentelemetry::proto::common::v1::any_value;

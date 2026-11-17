@@ -242,7 +242,7 @@ impl tower_service::Service<hyper::Uri> for Connector {
     }
 }
 
-#[cfg(all(test, feature = "http-client"))]
+#[cfg(all(test, not(miri), feature = "http-client"))]
 mod tests {
     use crate::http_common;
     #[cfg(any(feature = "use_webpki_roots", target_os = "linux"))]

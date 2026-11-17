@@ -471,6 +471,7 @@ mod linux {
         }
     }
 
+    #[cfg(all(test, not(miri)))]
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_abstract_socket_can_connect() {
@@ -551,7 +552,7 @@ pub use linux::*;
 #[cfg(target_os = "macos")]
 pub type DefaultLiason = SharedDirLiaison;
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use std::{thread, time::Duration};
 

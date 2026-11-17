@@ -288,7 +288,7 @@ fn synthesize_module_offsets(stack: &mut crate::crash_info::StackTrace) {
     }
 }
 
-#[cfg(all(test, target_os = "linux"))]
+#[cfg(all(test, not(miri), target_os = "linux"))]
 mod tests {
     use super::*;
     use crate::crash_info::{StackFrame, StackTrace};

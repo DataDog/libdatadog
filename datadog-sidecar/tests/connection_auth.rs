@@ -6,7 +6,7 @@
 //! The decision logic itself is unit-tested in `datadog_sidecar::auth`; what these tests cover
 //! is the wiring - that `main_loop` consults the authorizer before serving a single request.
 
-#![cfg(unix)]
+#![cfg(all(unix, not(miri)))]
 
 use std::io;
 use std::sync::Arc;

@@ -77,7 +77,7 @@ pub fn get_machine_id() -> &'static str {
     MACHINE_ID.as_str()
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
 

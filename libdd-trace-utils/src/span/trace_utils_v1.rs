@@ -112,7 +112,7 @@ where
     true
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use crate::span::trace_utils::get_root_span_index;

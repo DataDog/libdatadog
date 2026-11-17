@@ -129,7 +129,7 @@ impl BlockingRuntime for BasicRuntime {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use crate::shared_runtime::BlockOnTimeoutError;

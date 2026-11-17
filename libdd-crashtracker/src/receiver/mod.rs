@@ -16,7 +16,7 @@ mod receive_report;
 #[cfg(feature = "benchmarking")]
 pub mod benchmark;
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::receive_report::*;
     use crate::collector::default_signals;

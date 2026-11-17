@@ -476,7 +476,7 @@ impl SidecarSender {
     }
 }
 
-#[cfg(all(test, unix))]
+#[cfg(all(test, unix, not(miri)))]
 mod tests {
     use super::*;
     use crate::service::DynamicInstrumentationConfigState;

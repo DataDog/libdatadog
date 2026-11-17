@@ -253,7 +253,7 @@ pub(super) fn decode_response_body(
     Ok(decoded)
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use std::io::Write;

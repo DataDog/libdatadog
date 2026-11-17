@@ -129,7 +129,7 @@ impl<S: SpanWithTraceId> TraceChunk for RootSpanChunk<'_, S> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use crate::span::v04::SpanBytes;

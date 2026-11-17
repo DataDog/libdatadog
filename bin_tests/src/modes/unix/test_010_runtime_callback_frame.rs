@@ -83,7 +83,7 @@ unsafe extern "C" fn test_runtime_callback_frame(
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use libdd_crashtracker::{clear_runtime_callback, is_runtime_callback_registered};

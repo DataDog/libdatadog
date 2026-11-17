@@ -179,7 +179,7 @@ impl From<std::io::Error> for ProfileError {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use std::io::ErrorKind;

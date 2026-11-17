@@ -92,7 +92,7 @@ fn decode_span_link<T: DeserializableTraceData>(
     Ok(span)
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::SpanLinkKey;
     use crate::msgpack_decoder::decode::error::DecodeError;

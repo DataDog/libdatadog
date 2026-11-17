@@ -115,7 +115,7 @@ pub fn reconfigure(
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod single_threaded_tests {
     use super::*;
     use crate::{

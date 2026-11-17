@@ -1,5 +1,6 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+#![cfg(not(miri))]
 
 //! The provider helpers: the usage cases in `tests/fixtures/provider-usage`,
 //! and the names, error types, ids and DogStatsD packing every integration

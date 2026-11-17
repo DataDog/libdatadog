@@ -556,7 +556,7 @@ impl<'b, 'a: 'b, K, V> Iterator for DedupedVecMapIter<'b, 'a, K, V> {
 
 impl<'b, 'a: 'b, K, V> ExactSizeIterator for DedupedVecMapIter<'b, 'a, K, V> {}
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use crate::span::BytesData;

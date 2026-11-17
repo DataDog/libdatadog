@@ -72,7 +72,7 @@ impl Write for FallibleStringWriter {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use std::fmt::Write;

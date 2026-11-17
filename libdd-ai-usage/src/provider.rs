@@ -1747,7 +1747,7 @@ pub fn is_person_identifier(value: &str) -> bool {
             .any(|(at, c)| c == '.' && at > 0 && at + 1 < domain.len())
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
 

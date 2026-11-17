@@ -169,7 +169,7 @@ fn parse_ip_v4(s: &str, sep: char) -> Option<(&str, &str)> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
 

@@ -19,7 +19,7 @@ pub(super) fn agent_supports_v1_traces(version: &str) -> Option<bool> {
     Version::parse(version).ok().map(|v| v >= fixed_in)
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::agent_supports_v1_traces;
 

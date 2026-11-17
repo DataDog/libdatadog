@@ -329,7 +329,7 @@ impl<T: TraceData> Drop for PooledTraceChunks<'_, T> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use crate::span::v1::{AttributeValue, Span};

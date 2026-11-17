@@ -847,7 +847,7 @@ fn encode_grouped_stats(key: OwnedAggregationKey, group: GroupedStats) -> pb::Cl
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use libdd_trace_utils::span::v04::{self, SpanBytes, SpanSlice};
     use libdd_trace_utils::span::{RootSpanChunk, TraceData};

@@ -873,7 +873,7 @@ fn check_profile(profile: Profile, projection: &Projection) -> Result<(), Metric
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use crate::{Json, project_result};

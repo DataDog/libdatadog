@@ -147,7 +147,7 @@ pub(crate) mod prost_codec {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, not(miri)))]
     mod codec_tests {
         use super::{ProstCodecImpl, ProstDecoder, ProstEncoder};
         use bytes::BytesMut;
@@ -534,7 +534,7 @@ fn retry_info_delay(status: &Status) -> Option<Duration> {
     })
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod build_tests {
     use super::*;
     use std::time::Duration;
@@ -631,7 +631,7 @@ mod build_tests {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod integration_tests {
     use super::*;
     use bytes::Bytes;
@@ -973,7 +973,7 @@ mod integration_tests {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod send_tests {
     use super::*;
     use libdd_trace_protobuf::opentelemetry::proto::collector::trace::v1::ExportTraceServiceRequest;

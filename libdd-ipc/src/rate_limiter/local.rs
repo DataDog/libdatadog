@@ -18,7 +18,7 @@ const TIME_PER_SECOND: u64 = 1_000_000_000; // nanoseconds
 /// When set to a non-zero value, `now()` returns this instead of the real clock.
 /// This allows tests to control time deterministically, avoiding flakiness from
 /// wall-clock timing on CI machines.
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 static MOCK_NOW: AtomicU64 = AtomicU64::new(0);
 
 /// Monotonic nanoseconds from a system-wide clock, comparable across processes.
@@ -27,7 +27,7 @@ pub fn now() -> u64 {
 }
 
 fn monotonic_now() -> Option<u64> {
-    #[cfg(test)]
+    #[cfg(all(test, not(miri)))]
     {
         let mock = MOCK_NOW.load(Ordering::Relaxed);
         if mock != 0 {
@@ -150,7 +150,7 @@ fn debt(deadline: &AtomicU64, granularity: u64, now: u64) -> f64 {
     deadline.load(Ordering::Relaxed).saturating_sub(now) as f64 / granularity as f64
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::{LocalLimiter, MOCK_NOW, TIME_PER_SECOND, admit, debt, duration_nanos, now};
     use core::sync::atomic::{AtomicU64, Ordering};

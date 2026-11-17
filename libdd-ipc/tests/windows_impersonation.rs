@@ -1,6 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 #![cfg(windows)]
+#![cfg(not(miri))]
 
 //! Pipes and shared memory must belong to the process identity, which the sidecar runs as, even
 //! when created by a thread impersonating a user (here ANONYMOUS LOGON) that may not access them.

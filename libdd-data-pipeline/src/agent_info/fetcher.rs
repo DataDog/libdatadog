@@ -351,7 +351,7 @@ impl ResponseObserver {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod single_threaded_tests {
     use super::*;
     use crate::agent_info;

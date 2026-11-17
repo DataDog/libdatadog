@@ -373,7 +373,7 @@ pub fn get_peer_credentials(fd: RawFd) -> io::Result<PeerCredentials> {
     Ok(PeerCredentials { pid, uid, gid })
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     // Every test here drives real sockets: a bound AF_UNIX path, a socketpair, or a wait for
     // hangup through `poll` or mio's `kqueue`. Miri implements none of those - it supports

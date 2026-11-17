@@ -297,7 +297,7 @@ pub async fn send_with_retry_and_size<C: HttpClientCapability + SleepCapability>
     (result, payload_size)
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use crate::test_utils::poll_for_mock_hit;

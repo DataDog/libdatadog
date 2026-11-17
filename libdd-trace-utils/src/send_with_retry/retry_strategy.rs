@@ -125,7 +125,7 @@ impl RetryStrategy {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 // For tests RetryStrategy tests the observed delay should be approximate.
 mod tests {
     use super::*;

@@ -55,7 +55,7 @@ pub fn extract_container_id(cgroup_path: &Path) -> Result<String, CgroupFilePars
     Err(CgroupFileParsingError::ContainerIdNotFound)
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use maplit::hashmap;

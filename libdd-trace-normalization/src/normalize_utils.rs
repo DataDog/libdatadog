@@ -286,7 +286,7 @@ pub(crate) fn truncate_utf8(s: &mut String, limit: usize) {
     s.truncate(boundary);
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
 
     use super::*;

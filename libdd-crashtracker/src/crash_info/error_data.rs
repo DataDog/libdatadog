@@ -210,7 +210,7 @@ pub struct ThreadData {
     pub state: Option<String>,
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 impl super::test_utils::TestInstance for ErrorData {
     fn test_instance(seed: u64) -> Self {
         Self {
@@ -225,7 +225,7 @@ impl super::test_utils::TestInstance for ErrorData {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use crate::crash_info::test_utils::TestInstance;

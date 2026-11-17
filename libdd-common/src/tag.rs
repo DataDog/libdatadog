@@ -295,7 +295,7 @@ pub fn parse_tags(str: &str) -> (Vec<Tag>, Option<String>) {
     (tags, error_message)
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
 
@@ -351,7 +351,7 @@ mod tests {
     }
 }
 
-#[cfg(all(test, feature = "alloc"))]
+#[cfg(all(test, not(miri), feature = "alloc"))]
 mod alloc_tests {
     use super::*;
     use proptest::prelude::*;

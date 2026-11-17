@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Integration test for PreparedExecve::exec
 
-#![cfg(unix)]
+#![cfg(all(unix, not(miri)))]
 
 use libdd_process_utils::unix_utils::PreparedExecve;
 use std::io::Read;

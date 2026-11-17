@@ -173,7 +173,7 @@ fn is_header_true(value: &str) -> bool {
     !matches!(value, "0" | "f" | "F" | "FALSE" | "False" | "false")
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
 

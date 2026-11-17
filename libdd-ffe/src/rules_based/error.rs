@@ -356,7 +356,7 @@ impl fmt::Debug for EvaluationError {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
 

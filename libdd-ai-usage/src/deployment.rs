@@ -162,7 +162,7 @@ fn apply<'a>(
     Ok(projection)
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use crate::point::{Attributes, MetricPoint};

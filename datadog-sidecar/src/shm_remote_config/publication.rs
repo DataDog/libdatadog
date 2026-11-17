@@ -261,7 +261,7 @@ pub(super) fn publish_directory(
     Ok(true)
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use libdd_ffe::{cdn::CdnEndpoint, rules_based::UniversalFlagConfig};

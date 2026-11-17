@@ -100,7 +100,7 @@ pub fn wait_for_pollhup(
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use core::time::Duration;

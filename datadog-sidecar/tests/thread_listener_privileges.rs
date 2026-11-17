@@ -1,7 +1,7 @@
 // Copyright 2026 Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-#![cfg(target_os = "linux")]
+#![cfg(all(target_os = "linux", not(miri)))]
 
 use datadog_sidecar::auth::{ConnectionAuthorizer, Decision};
 use datadog_sidecar::config::Config;

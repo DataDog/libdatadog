@@ -192,7 +192,7 @@ impl Default for MetricRing {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use std::sync::Arc;

@@ -28,7 +28,8 @@
     not(target_vendor = "apple"),
     feature = "https",
     feature = "reqwest",
-    not(feature = "use_webpki_roots")
+    not(feature = "use_webpki_roots"),
+    not(miri)
 ))]
 
 // The crate lints require `alloc`/`core` imports over their `std` aliases; `alloc`

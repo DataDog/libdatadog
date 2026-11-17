@@ -684,7 +684,7 @@ pub fn generate_new_id() -> Uuid {
     Uuid::new_v4()
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use libdd_capabilities::{ChunkFuture, HttpError, MaybeSend, StreamingBodySender};

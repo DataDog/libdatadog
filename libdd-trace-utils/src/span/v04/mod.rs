@@ -491,7 +491,7 @@ pub type AttributeArrayValueSlice<'a> = AttributeArrayValue<SliceData<'a>>;
 
 pub type TraceChunksBytes = TraceChunks<BytesData>;
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::{AttributeAnyValue, AttributeArrayValue, Span, SpanEvent, SpanLink};
     use crate::msgpack_decoder::decode::buffer::Buffer;

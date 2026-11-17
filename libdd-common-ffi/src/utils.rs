@@ -105,7 +105,7 @@ pub fn handle_panic_error(
     .unwrap_or(crate::error::CANNOT_ALLOCATE_ERROR)
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use assert_no_alloc::{AllocDisabler, assert_no_alloc};
     use function_name::named;

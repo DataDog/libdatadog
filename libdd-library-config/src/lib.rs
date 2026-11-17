@@ -478,7 +478,7 @@ impl Configurator {
         LoggedResult::Ok(stable_config, messages)
     }
 
-    #[cfg(all(feature = "std", test))]
+    #[cfg(all(feature = "std", test, not(miri)))]
     fn parse_stable_config_file<F: std::io::Read>(
         &self,
         mut f: F,
@@ -825,7 +825,7 @@ mod std_api {
     }
 }
 
-#[cfg(all(test, feature = "std"))]
+#[cfg(all(test, not(miri), feature = "std"))]
 mod tests {
     use alloc::collections::BTreeMap;
     use std::{io::Write, path::Path};
@@ -1412,7 +1412,7 @@ rules:
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod config_read_tests {
     use alloc::collections::BTreeMap;
     use alloc::format;

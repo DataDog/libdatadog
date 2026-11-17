@@ -268,7 +268,7 @@ unsafe fn exchange(_channel: &PreparedRequest) -> i32 {
     -libc::ENOTSUP
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use std::io::Write;

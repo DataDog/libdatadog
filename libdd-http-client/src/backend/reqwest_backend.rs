@@ -227,7 +227,7 @@ fn error_chain(error: &dyn std::error::Error) -> String {
     chain
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use crate::HttpRequest;

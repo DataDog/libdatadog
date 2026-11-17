@@ -161,7 +161,7 @@ fn refuse(path: &Path, reason: String) -> io::Error {
     )
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     // Every test in here compares a real file's owner against `geteuid()`. Miri answers
     // `geteuid()` with a fixed 1000 while `-Zmiri-disable-isolation` lets the filesystem calls

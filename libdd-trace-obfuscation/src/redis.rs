@@ -364,7 +364,7 @@ fn ascii_uppercase<'a>(s: &str, dest: &'a mut [u8]) -> Option<&'a [u8]> {
     Some(&dest[0..s.len()])
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use duplicate::duplicate_item;
 

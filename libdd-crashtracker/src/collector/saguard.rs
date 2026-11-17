@@ -94,7 +94,7 @@ impl<const N: usize> Drop for SaGuard<N> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod single_threaded_tests {
     use super::*;
     use core::sync::atomic::{AtomicBool, Ordering};

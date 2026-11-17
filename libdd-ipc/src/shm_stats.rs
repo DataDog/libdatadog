@@ -760,7 +760,7 @@ impl FlushableConcentrator for ShmSpanConcentrator {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use crate::shm_table::{SLOT_EMPTY, SLOT_INIT, bucket_hdr_size};

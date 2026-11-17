@@ -242,7 +242,7 @@ impl ConnectionSession {
     }
 
     /// A session without any endpoints, for tests to fill in what they need.
-    #[cfg(test)]
+    #[cfg(all(test, not(miri)))]
     pub(crate) fn for_test(instance_id: InstanceId) -> ConnectionSession {
         ConnectionSession {
             instance_id,
@@ -442,7 +442,7 @@ impl ConnectionSession {
     }
 
     /// Replaces the agent info, for tests that prime it from a mock agent.
-    #[cfg(test)]
+    #[cfg(all(test, not(miri)))]
     pub(crate) fn set_agent_info(&mut self, agent_info: AgentInfoGuard) {
         self.agent_info = Some(Arc::new(agent_info));
     }
@@ -547,7 +547,7 @@ impl ConnectionSession {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     #[cfg(feature = "tracing")]

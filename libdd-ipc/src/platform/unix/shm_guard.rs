@@ -59,7 +59,7 @@ fn current_uid() -> u32 {
     unsafe { libc::geteuid() }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     // `verify_owner` compares a real descriptor's owner against `geteuid()`. Miri answers the
     // latter with a fixed 1000 while letting the filesystem calls through for real, so the two

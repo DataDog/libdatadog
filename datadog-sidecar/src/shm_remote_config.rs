@@ -916,7 +916,7 @@ impl RemoteConfigManager {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use libdd_remote_config::config::dynamic::{

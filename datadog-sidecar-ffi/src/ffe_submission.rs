@@ -313,7 +313,7 @@ fn build_request(
     })
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use crate::{FfeFlagEvaluation, FfeTelemetryContext};

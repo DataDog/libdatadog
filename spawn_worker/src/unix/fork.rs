@@ -55,7 +55,7 @@ pub(crate) unsafe fn fork_skip_atfork_handlers() -> Result<Fork, std::io::Error>
 ///
 /// When forking a multithreaded application, no code should allocate or access other potentially
 /// locked resources until call to exec is executed
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 unsafe fn fork_fn<Args>(args: Args, f: fn(Args) -> ()) -> Result<libc::pid_t, std::io::Error> {
     unsafe {
         match fork()? {
@@ -78,7 +78,7 @@ pub fn set_default_child_panic_handler() {
     }));
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod single_threaded_tests {
     use io_lifetimes::OwnedFd;
     use std::{

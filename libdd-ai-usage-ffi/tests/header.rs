@@ -1,6 +1,8 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+#![cfg(not(miri))]
+
 //! The checked-in C header is what cbindgen generates from the crate. Run
 //! with `UPDATE_HEADER=1` to regenerate it.
 

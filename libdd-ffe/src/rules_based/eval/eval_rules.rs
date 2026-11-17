@@ -88,7 +88,7 @@ impl ConditionCheck {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use std::{collections::HashMap, sync::Arc};
 

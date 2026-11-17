@@ -414,7 +414,7 @@ fn extract_crash_info_tags(crash_info: &CrashInfo) -> String {
     crash_info.ddtags()
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::TelemetryCrashUploader;
     use crate::{

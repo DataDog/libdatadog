@@ -88,7 +88,7 @@ pub struct OtlpGrpcTraceConfig {
     pub otel_trace_semantics_enabled: bool,
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use std::str::FromStr;

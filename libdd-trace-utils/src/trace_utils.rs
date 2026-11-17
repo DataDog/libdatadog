@@ -681,7 +681,7 @@ pub fn is_partial_snapshot(span: &pb::Span) -> bool {
         .is_some_and(|v| *v >= 0.0)
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use crate::{

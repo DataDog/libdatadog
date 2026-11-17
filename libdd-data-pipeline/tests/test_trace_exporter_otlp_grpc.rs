@@ -1,5 +1,8 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+
+#![cfg(not(miri))]
+
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod grpc_export_tests {
     use bytes::Bytes;

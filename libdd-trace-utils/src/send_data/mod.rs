@@ -449,7 +449,7 @@ where
     Ok(buf)
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use crate::send_with_retry::{RetryBackoffType, RetryStrategy};

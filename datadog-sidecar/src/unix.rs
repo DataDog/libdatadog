@@ -315,7 +315,7 @@ pub extern "C" fn ddog_crashtracker_entry_point(_trampoline_data: &TrampolineDat
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
 

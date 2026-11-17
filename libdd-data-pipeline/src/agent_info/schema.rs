@@ -147,7 +147,7 @@ impl From<AgentObfuscationConfig> for ObfuscationConfig {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::AgentInfoStruct;
     #[duplicate::duplicate_item(

@@ -287,7 +287,7 @@ impl SendResult {
     }
 
     /// Returns whether the send operation was successful
-    #[cfg(test)]
+    #[cfg(all(test, not(miri)))]
     pub(crate) fn is_success(&self) -> bool {
         self.error_type.is_none()
     }
@@ -359,7 +359,7 @@ impl SendResult {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
 

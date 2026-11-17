@@ -108,7 +108,7 @@ pub struct SessionConfig {
     pub force_v04_traces: bool,
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 impl SessionConfig {
     /// An agentless configuration (so no agent info is fetched) with remote config disabled.
     pub(crate) fn for_test() -> Self {

@@ -156,7 +156,7 @@ pub fn get_peer_credentials(fd: RawFd) -> io::Result<PeerCredentials> {
     })
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     // These tests drive real sockets, which Miri does not support.
     use super::*;
@@ -213,7 +213,7 @@ mod tests {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod crucible_connect {
     use super::*;
     #[test]

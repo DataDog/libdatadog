@@ -191,7 +191,7 @@ pub unsafe extern "C" fn ddog_tracer_metadata_store(
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use libdd_library_config::tracer_metadata::ThreadLocalMetadata;

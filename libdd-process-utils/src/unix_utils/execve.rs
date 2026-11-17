@@ -98,7 +98,7 @@ impl PreparedExecve {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     // Note: None of these tests call the exec() method, because execve replaces the current process
     // image. If exec() were called, the test process would be replaced and the test runner

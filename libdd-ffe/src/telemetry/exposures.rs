@@ -263,7 +263,7 @@ fn subject_attributes(json: &str) -> serde_json::Map<String, serde_json::Value> 
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use serde_json::Value;

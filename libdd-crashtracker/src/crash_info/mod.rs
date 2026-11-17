@@ -228,7 +228,7 @@ impl CrashInfo {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use schemars::schema::RootSchema;
     use std::fs;

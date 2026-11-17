@@ -4,7 +4,7 @@
 use libdd_common::MutexExt;
 use std::fmt;
 use std::sync::{Arc, Mutex};
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 use std::time::Duration;
 use std::time::Instant;
 
@@ -16,12 +16,12 @@ use std::time::Instant;
 #[derive(Clone)]
 pub(crate) enum Clock {
     System,
-    #[cfg(test)]
+    #[cfg(all(test, not(miri)))]
     Mock(Arc<MockClockInner>),
 }
 
 /// Shared state for the mock clock variant.
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 pub(crate) struct MockClockInner {
     now: Mutex<Instant>,
 }
@@ -34,7 +34,7 @@ impl Clock {
 
     /// Controllable clock for tests. Starts at an arbitrary `Instant` and only
     /// advances when [`Clock::advance`] is called.
-    #[cfg(test)]
+    #[cfg(all(test, not(miri)))]
     pub(crate) fn mock() -> Self {
         Clock::Mock(Arc::new(MockClockInner {
             now: Mutex::new(Instant::now()),
@@ -45,13 +45,13 @@ impl Clock {
     pub(crate) fn now(&self) -> Instant {
         match self {
             Clock::System => Instant::now(),
-            #[cfg(test)]
+            #[cfg(all(test, not(miri)))]
             Clock::Mock(inner) => *inner.now.lock().unwrap(),
         }
     }
 
     /// Advances the mock clock by `dur`. Panics if called on [`Clock::System`].
-    #[cfg(test)]
+    #[cfg(all(test, not(miri)))]
     pub(crate) fn advance(&self, dur: Duration) {
         match self {
             Clock::System => panic!("cannot advance the system clock"),
@@ -297,7 +297,7 @@ impl RateLimiter {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use std::sync::Barrier;

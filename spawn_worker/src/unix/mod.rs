@@ -176,7 +176,12 @@ macro_rules! assert_child_exit {
     };
 }
 
-#[cfg(all(test, target_os = "linux", feature = "trampoline-host-loader"))]
+#[cfg(all(
+    test,
+    not(miri),
+    target_os = "linux",
+    feature = "trampoline-host-loader"
+))]
 mod trampoline_interp_tests {
     use super::{elf_interp, read_pt_interp_self, trampoline_bin};
     use std::os::unix::ffi::OsStrExt;

@@ -1585,16 +1585,16 @@ impl SidecarInterface for ConnectionSidecarHandler {
     }
 }
 
-#[cfg(all(test, unix))]
+#[cfg(all(test, unix, not(miri)))]
 #[path = "flagevaluation_privacy_tests.rs"]
 mod flagevaluation_privacy_tests;
 
-#[cfg(all(test, unix))]
+#[cfg(all(test, unix, not(miri)))]
 // These tests exercise private connection state, so keep them in this module.
 #[path = "../../tests/unit/cdn.rs"]
 mod cdn_tests;
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use crate::service::evp_proxy;

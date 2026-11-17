@@ -416,7 +416,7 @@ fn move_runtime_id_to_spans(payload: &mut v1::TracerPayload<BytesData>) {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use crate::span::v04::{SpanBytes, VecMap};

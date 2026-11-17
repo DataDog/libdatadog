@@ -650,7 +650,7 @@ impl Display for RawExpr {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use crate::{
         CaptureConfiguration, EvaluateAt, LiveDebuggingData, LogProbe, MetricKind, MetricProbe,

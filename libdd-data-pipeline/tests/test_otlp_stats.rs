@@ -1,6 +1,8 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+#![cfg(not(miri))]
+
 //! Integration tests for the OTLP trace-metrics stats flusher
 //! (`traces.span.sdk.metrics.duration` histograms sent to the OTLP metrics endpoint).
 //!

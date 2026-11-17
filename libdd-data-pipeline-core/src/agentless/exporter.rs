@@ -253,7 +253,7 @@ fn build_agentless_headers(metadata: &TracerMetadata, trace_count: usize) -> Hea
     headers
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use bytes::Bytes;
@@ -334,6 +334,8 @@ mod tests {
         }]])
     }
 
+    // Test helper: unwrap is fine here; the crate-level deny targets production code.
+    #[allow(clippy::unwrap_used)]
     fn request_body(request: &http::Request<Bytes>) -> Vec<u8> {
         #[cfg(feature = "compression")]
         let body = zstd::decode_all(request.body().as_ref()).unwrap();
