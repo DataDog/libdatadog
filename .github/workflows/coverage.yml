@@ -93,14 +93,6 @@ jobs:
       - name: sccache
         id: sccache
         uses: ./.github/actions/setup-sccache
-      - name: Stress-test waitall_nohang (temporary, 100 iterations)
-        env:
-          RUSTUP_TOOLCHAIN: ${{ steps.nightly-version.outputs.version }}
-        run: |
-          for i in $(seq 1 100); do
-            echo "=== Run $i/100 ==="
-            cargo nextest run -p libdd-crashtracker --all-features test_waitall_nohang 2>&1 | tail -1
-          done
       - name: Generate code coverage (including doc tests)
         env:
           # Override rust-toolchain.toml so cargo-llvm-cov runs on the dated
