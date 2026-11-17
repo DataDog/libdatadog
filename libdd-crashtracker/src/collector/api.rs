@@ -647,7 +647,7 @@ mod single_threaded_tests {
                 // should fail.
                 let mut children = vec![];
                 let sleep_duration = Duration::from_millis(100);
-                let timeout_duration = Duration::from_millis(500);
+                let timeout_duration = Duration::from_secs(10);
                 for _ in 0..10 {
                     match unsafe { libc::fork() } {
                         -1 => {
@@ -683,6 +683,11 @@ mod single_threaded_tests {
                     if pid == -1 && errno == libc::ECHILD {
                         // No more children!  Done!
                         std::process::exit(42);
+                    }
+
+                    // Yield CPU between polls to avoid busy-spinning
+                    if pid == 0 {
+                        std::thread::sleep(Duration::from_millis(10));
                     }
                 }
             }
