@@ -50,6 +50,10 @@ pub struct MainLoopConfig {
     /// In-process listeners set this to false so applications open no CDN connections;
     /// their registration messages are ignored without starting a fetcher.
     pub enable_cdn_fetching: bool,
+    /// Whether connections may register liveness pipes that outlive the connection.
+    /// In-process listeners must disable this: worker-supplied descriptors would otherwise
+    /// accumulate in the potentially privileged host's shared file descriptor table.
+    pub allow_liveness_watch: bool,
 }
 
 impl Default for MainLoopConfig {
@@ -61,6 +65,7 @@ impl Default for MainLoopConfig {
             authorizer: ConnectionAuthorizer::for_spawned_sidecar(),
             drain_only_own_process: false,
             enable_cdn_fetching: true,
+            allow_liveness_watch: true,
         }
     }
 }
@@ -115,7 +120,9 @@ where
         });
     }
 
-    let server = SidecarServer::default().with_cdn_fetching(loop_config.enable_cdn_fetching);
+    let server = SidecarServer::default()
+        .with_cdn_fetching(loop_config.enable_cdn_fetching)
+        .with_liveness_watch(loop_config.allow_liveness_watch);
     if loop_config.init_shm_eagerly {
         server.shm_limiters();
     }
