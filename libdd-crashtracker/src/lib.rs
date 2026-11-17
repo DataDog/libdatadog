@@ -59,6 +59,10 @@ mod collector_windows;
 #[cfg(unix)]
 mod common;
 mod crash_info;
+/// Out-of-process OTel thread context collection. Discovers TLS metadata from
+/// `/proc/<pid>/maps` and ELF files, then reads per-thread records via ptrace.
+#[cfg(all(target_os = "linux", feature = "receiver", feature = "otel-thread-ctx"))]
+mod otel_remote_reader;
 /// Read OTel thread-level context from a remote (crashing) process via ptrace
 /// and `/proc/<pid>/mem`.
 #[cfg(all(target_os = "linux", feature = "receiver", feature = "otel-thread-ctx"))]
