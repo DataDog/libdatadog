@@ -22,9 +22,17 @@ jobs:
         # Only this verification job needs libclang; the normal build
         # path for libdd-profiling-heap-sampler consumes the checked-in bindings
         # under `src/generated/` and does not depend on bindgen at all.
+        #
+        # Install the clang binary and libclang as a matched pair, and point
+        # bindgen at that libclang. The floating `libclang-dev` metapackage
+        # drifts under us as the runner image moves (it pulled libclang-21 in
+        # Nov 2026), and bindgen parsing with one libclang while discovering
+        # include paths through a different clang binary produces
+        # undeclared-identifier errors from <stdatomic.h> that have nothing to
+        # do with the headers under test.
         run: |
           sudo apt-get update
-          sudo apt-get install -y libclang-dev
+          sudo apt-get install -y libclang-21-dev clang-21
       - name: Read Rust version from rust-toolchain.toml
         id: rust-version
         run: echo "version=$(grep -Po '^channel = "\K[^"]+' rust-toolchain.toml)" >> $GITHUB_OUTPUT
@@ -40,6 +48,8 @@ jobs:
         # them. We use an env var (rather than a cargo feature) so that
         # unrelated `--all-features` CI jobs cannot accidentally invoke
         # bindgen — see libdd-profiling-heap-sampler/Cargo.toml for the rationale.
+        env:
+          LIBCLANG_PATH: /usr/lib/llvm-21/lib
         run: LIBDD_PROFILING_HEAP_SAMPLER_REGEN=1 cargo build -p libdd-profiling-heap-sampler
       - name: Verify committed bindings match regenerated output
         run: |

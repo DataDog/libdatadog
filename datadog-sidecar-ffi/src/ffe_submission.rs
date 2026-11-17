@@ -318,7 +318,7 @@ mod tests {
     use super::*;
     use crate::{FfeFlagEvaluation, FfeTelemetryContext};
     use datadog_sidecar::service::{ContextTruncationReason as Reason, SidecarAction};
-    use serde_json::{Value, json};
+    use serde_json::Value;
     fn metadata() -> FfeTelemetryContext<'static> {
         FfeTelemetryContext {
             service: "svc".into(),
@@ -447,6 +447,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn ffi_owns_the_accepted_snapshot() {
+        use serde_json::json;
         let (conn, peer) = libdd_ipc::SeqpacketConn::socketpair().unwrap();
         let mut transport = SidecarTransport::from(conn);
         let mut source = event(true);
