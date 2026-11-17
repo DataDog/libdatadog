@@ -22,6 +22,14 @@ crashtracker receiver inside the crash report. The receiver then:
 The description is a single line of JSON in a new crash report section,
 `SPANS_TO_CLOSE`.
 
+NOTE: Keeping track of APM Spans from an SDK's POV is a hard problem. Most
+internal representations of Traces and Spans are not safe to access at crash
+time, and keeping a separate JSON serialized copy incurs a lot of overhead. The
+target consumer of this is long running `training.rank` spans, which are single
+spans that last for the lifetime of a long running training job. Such spans do
+not change often, and are updated at a rate orders of magnitude lower than typical
+runtime spans. 
+
 ## Problem
 
 A span is only sent to the agent once it finishes. When a process
