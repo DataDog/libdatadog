@@ -13,14 +13,13 @@ repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-http-client"
 bench = false
 
 [features]
-default = ["https", "reqwest-backend"]
+default = ["https", "hyper-backend"]
 # Use rustls-no-provider to avoid reqwest forcing aws-lc-rs. Ring provider is
 # installed explicitly by libdd-networking's connector init, or by this crate's own
 # TLS configuration when libdd-networking is not in the dependency graph.
 # rustls-platform-verifier and the compromised-key distrust wrapper mirror
 # libdd-networking's `connector::https::build_tls_config` (see src/tls.rs).
 https = [
-  "dep:reqwest",
   "reqwest?/rustls-no-provider",
   "libdd-networking?/https",
   "dep:rustls",

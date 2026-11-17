@@ -24,13 +24,34 @@ impl super::Backend for ReqwestBackend {
         transport: TransportConfig,
     ) -> Result<Self, HttpClientError> {
         let mut builder = reqwest::Client::builder().timeout(client_config.timeout());
+        if !client_config.follow_redirects() {
+            builder = builder.redirect(reqwest::redirect::Policy::none());
+        }
         let base_url_is_https = is_https_url(client_config.base_url());
 
+        // Route reqwest HTTPS through the shared TLS configuration so the
+        // compromised-key distrust check and the selected crypto provider apply
+        // (see `crate::tls`). Without this, reqwest would build its own platform
+        // verifier, bypassing the distrust wrapper.
+        //
+        // Only HTTPS base URLs get the preconfigured TLS backend: building the
+        // configuration eagerly loads the system CA roots, which must not happen
+        // for plain-HTTP clients in minimal environments that have no CA
+        // certificates installed.
+        //
+        // reqwest builds its default rustls configuration, and panics without a crypto provider,
+        // even for plain-HTTP base URLs, so the provider is installed in every case.
+        #[cfg(any(feature = "https", feature = "fips"))]
+        crate::tls::ensure_crypto_provider_initialized();
         #[cfg(any(feature = "https", feature = "fips"))]
         if base_url_is_https {
             builder = builder.tls_backend_preconfigured(crate::tls::build_tls_config()?);
-        } else {
-            // HTTPS redirections are returned to the caller and no TLS connection
+        } else if client_config.follow_redirects() {
+            // Plain-HTTP clients have no preconfigured TLS backend (see above),
+            // so a redirect to an `https` URL would negotiate TLS on reqwest's
+            // default verifier, bypassing the compromised-key distrust check.
+            // Stop such redirects instead of following them: the redirect
+            // response itself is returned to the caller and no TLS connection
             // to the redirected URL is ever made.
             builder = builder.redirect(reqwest::redirect::Policy::custom(|attempt| {
                 // Custom policies do not inherit the default hop limit, so keep
@@ -81,11 +102,7 @@ impl super::Backend for ReqwestBackend {
         config: &HttpClientConfig,
     ) -> Result<HttpResponse, HttpClientError> {
         if is_https_url(&request.url) != self.base_url_is_https {
-            return Err(HttpClientError::InvalidConfig(format!(
-                "request URL '{}' does not use the same scheme as the client's base URL: \
-                 requests are only accepted over the scheme the client was configured with",
-                request.url
-            )));
+            return Err(super::scheme_mismatch(&request.url));
         }
 
         let method = match request.method {
