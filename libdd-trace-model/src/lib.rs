@@ -314,8 +314,10 @@ pub trait TraceChunk: Attributes {
     fn priority(&self) -> Option<i32>;
     /// The sampling mechanism (decision maker) of the chunk, `None` if unset
     fn sampling_mechanism(&self) -> Option<u32>;
-    /// Returns true if the tracer dropped this trace, keeping only some of its spans (e.g. for
-    /// single span sampling). Such a chunk must be treated as rejected whatever its priority.
+    /// Returns true if the trace-agent's samplers dropped this trace. This is agent-owned output:
+    /// the agent overwrites any incoming value with its own decision, which is primarily driven
+    /// by `priority`. Senders should base sampling decisions on [`Self::priority`], not on this
+    /// flag.
     fn dropped_trace(&self) -> bool;
 }
 
@@ -329,7 +331,8 @@ pub trait TraceChunkMut: TraceChunk<Span: SpanMut> + AttributesMut {
     fn set_priority(&mut self, priority: i32);
     /// Set the sampling mechanism (decision maker) of the chunk
     fn set_sampling_mechanism(&mut self, mechanism: u32);
-    /// Mark the chunk as dropped by the tracer, see [`TraceChunk::dropped_trace`]
+    /// Set the agent-owned dropped flag, see [`TraceChunk::dropped_trace`]. Senders don't need to
+    /// set it: it is ignored on send paths, and the agent overwrites it.
     fn set_dropped_trace(&mut self, value: bool);
     /// Iterate mutably over the spans of this chunk
     fn spans_mut(&mut self) -> impl Iterator<Item = &mut Self::Span>;

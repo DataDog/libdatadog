@@ -345,6 +345,7 @@ fn wait_for_registers(tid: libc::pid_t, deadline: Instant) -> bool {
 ///
 /// On x86_64 this is `fs_base` (from `user_regs_struct`).
 /// On aarch64 this is `tpidr_el0` (via `NT_ARM_TLS`).
+#[cfg(feature = "otel-thread-ctx")]
 pub(crate) fn read_thread_pointer(tid: libc::pid_t) -> Result<u64, PtraceError> {
     #[cfg(target_arch = "x86_64")]
     {
