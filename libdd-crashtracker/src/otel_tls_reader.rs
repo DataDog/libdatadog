@@ -183,11 +183,89 @@ pub(crate) struct TlsModuleInfo {
     /// The calling thread's TLS block base for this module (`dlpi_tls_data`).
     /// Equal to `dtv[modid]` for the calling thread.
     ///
-    /// `None` when `dlpi_tls_data` is NULL — this happens when the calling thread has never
-    /// accessed TLS from a `dlopen`'d library. The DTV walk for *remote* threads can still
-    /// succeed via `modid` + `offset`; only DTV offset validation (which compares against the
-    /// calling thread's block) is unavailable.
+    /// `None` when `dlpi_tls_data` is NULL
+    ///
+    /// When `None`, the DTV walk for remote threads can still succeed via `modid` + `offset`
+    /// but DTV offset validation and the TP-relative fallback are unavailable.
     pub tls_block_base: Option<usize>,
+    /// PT_TLS p_memsz and p_align from the ELF program headers. Used to compute the static
+    /// TLS block address when the DTV entry is `TLS_DTV_UNALLOCATED`.
+    pub tls_memsz: usize,
+    pub tls_align: usize,
+}
+
+/// Read the calling thread's TLS block base for `modid`.
+///
+/// First tries the DTV entry. If it's `TLS_DTV_UNALLOCATED` (`-1`), falls back to
+/// computing the static TLS address from TP and the PT_TLS block size
+///
+/// All reads are pure pointer arithmetic
+fn read_own_tls_block_base(modid: usize, tls_memsz: usize, tls_align: usize) -> Option<usize> {
+    let dtv_off = dtv_pointer_offset()?;
+
+    // Read the calling thread's TP.
+    #[cfg(target_arch = "x86_64")]
+    let tp: u64 = unsafe {
+        let val: u64;
+        // SAFETY: reading fs:0 is a single register read with no side effects.
+        core::arch::asm!("movq %fs:0, {}", out(reg) val, options(att_syntax, nomem, nostack));
+        val
+    };
+    #[cfg(target_arch = "aarch64")]
+    let tp: u64 = unsafe {
+        let val: u64;
+        // SAFETY: reading tpidr_el0 is a single register read with no side effects.
+        core::arch::asm!("mrs {}, tpidr_el0", out(reg) val, options(nomem, nostack));
+        val
+    };
+
+    let dtv_addr = tp.checked_add_signed(dtv_off as i64)?;
+    // SAFETY: dtv_addr is within the calling thread's own TCB, which is valid and
+    // readable memory. The offset is a well-known libc ABI constant.
+    let dtv_ptr = unsafe { *(dtv_addr as *const u64) };
+    if dtv_ptr == 0 {
+        return None;
+    }
+
+    #[cfg(target_env = "gnu")]
+    const DTV_ENTRY_SIZE: u64 = 16;
+    #[cfg(target_env = "musl")]
+    const DTV_ENTRY_SIZE: u64 = 8;
+
+    let entry_addr = dtv_ptr.checked_add((modid as u64).checked_mul(DTV_ENTRY_SIZE)?)?;
+    // SAFETY: if dtv_ptr is the real DTV and modid is valid (from dl_iterate_phdr),
+    // this entry is within the allocated DTV array.
+    let entry_value = unsafe { *(entry_addr as *const u64) };
+
+    if entry_value == 0 {
+        return None;
+    }
+
+    // TLS_DTV_UNALLOCATED (glibc uses (void*)-1): the DTV entry hasn't been lazily
+    // filled yet, but for static TLS the block is always allocated next to the TCB.
+    // Compute the address from TP and the PT_TLS block size.
+    //
+    // On x86_64 glibc (variant II): TLS block is below TP.
+    //   block_base = TP - align_up(tls_memsz, tls_align)
+    // On aarch64 glibc (variant I): TLS block is above TP + TCB_SIZE, aligned.
+    if entry_value == u64::MAX {
+        if tls_memsz == 0 {
+            return None;
+        }
+        let align = if tls_align == 0 { 1 } else { tls_align };
+        let aligned_size = (tls_memsz + align - 1) & !(align - 1);
+
+        #[cfg(target_arch = "x86_64")]
+        return Some(tp.wrapping_sub(aligned_size as u64) as usize);
+        #[cfg(target_arch = "aarch64")]
+        return Some({
+            // TCB is 16 bytes on aarch64 glibc (2 pointers: dtv + private).
+            let after_tcb = tp + 16;
+            (after_tcb as usize + align - 1) & !(align - 1)
+        });
+    }
+
+    Some(entry_value as usize)
 }
 
 // ELF constants for parsing the dynamic symbol table. These are ABI-stable values from the
@@ -237,7 +315,7 @@ const fn resolve_dyn_ptr(d_val: u64, _load_addr: u64) -> usize {
 
 const SYMBOL_NAME: &[u8] = b"otel_thread_ctx_v1";
 
-/// Compute the ELF hash of a symbol name (the `elf_hash` / `dl_new_hash` algorithm).
+/// Compute the ELF (SysV) hash of a symbol name.
 const fn elf_hash(name: &[u8]) -> u32 {
     let mut h: u32 = 0;
     let mut i = 0;
@@ -513,19 +591,24 @@ pub(crate) fn tls_module_info() -> Option<TlsModuleInfo> {
 
         // SAFETY: `info.dlpi_addr` is the load address of a currently-loaded ELF object.
         if let Some(offset) = unsafe { find_tls_symbol_offset(phdrs, info.dlpi_addr) } {
-            // `dlpi_tls_data` may be NULL if the calling thread has never accessed TLS from
-            // this module (e.g. a dlopen'd library used only by worker threads). We still
-            // record modid + offset so the DTV walk can resolve remote threads; only the
-            // DTV offset validation (which needs the calling thread's block base) is skipped.
+            let modid = info.dlpi_tls_modid;
             let tls_block_base = if info.dlpi_tls_data.is_null() {
                 None
             } else {
                 Some(info.dlpi_tls_data as usize)
             };
+            // Read PT_TLS memsz and align for static TLS offset computation.
+            let (tls_memsz, tls_align) = phdrs
+                .iter()
+                .find(|p| p.p_type == libc::PT_TLS)
+                .map(|p| (p.p_memsz as usize, p.p_align as usize))
+                .unwrap_or((0, 1));
             state.result = Some(TlsModuleInfo {
-                modid: info.dlpi_tls_modid,
+                modid,
                 offset,
                 tls_block_base,
+                tls_memsz,
+                tls_align,
             });
             return 1; // stop iteration
         }
@@ -542,6 +625,16 @@ pub(crate) fn tls_module_info() -> Option<TlsModuleInfo> {
             Some(callback),
             &mut state as *mut State as *mut core::ffi::c_void,
         );
+    }
+
+    // If dlpi_tls_data was NULL, resolve tls_block_base by reading the calling thread's
+    // DTV directly. This is done outside the dl_iterate_phdr callback to avoid calling
+    // __tls_get_addr (not async-signal-safe) under the loader lock. Direct DTV reads are
+    // pure pointer arithmetic — safe in a signal handler.
+    if let Some(ref mut info) = state.result
+        && info.tls_block_base.is_none()
+    {
+        info.tls_block_base = read_own_tls_block_base(info.modid, info.tls_memsz, info.tls_align);
     }
 
     state.result

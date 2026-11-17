@@ -1016,8 +1016,6 @@ fn emit_otel_thread_contexts(
     };
 
     // The calling thread's TLS variable address, used for the TP-relative fallback.
-    // Only available when dlpi_tls_data was non-null (i.e. this thread has accessed the
-    // publisher's TLS module).
     let slot_addr = tls_info.tls_block_base.map(|base| base + tls_info.offset);
 
     let stop_timeout = core::time::Duration::from_millis(100);
@@ -1047,18 +1045,13 @@ fn emit_otel_thread_contexts(
     // 2. TP-relative offset (fallback): compute `slot_addr - TP` once and apply it to every thread.
     //    Only correct for static TLS (constant TP-relative offset). Used when the DTV layout is
     //    unknown or validated_dtv_offset fails.
-    // DTV validation requires the calling thread's TLS block base (to verify
-    // that dtv[modid] matches). Skip when tls_block_base is None (dlopen'd module
-    // not yet accessed by this thread).
     let dtv_resolution = tls_info
         .tls_block_base
         .and_then(|base| validated_dtv_offset(own_tp, tls_info.modid, base))
         .map(|dtv_off| (tls_info.modid, tls_info.offset, dtv_off));
 
     // Fallback: single TP-relative offset from the crashing thread.
-    // Only usable when we know the calling thread's slot address (tls_block_base was
-    // available). When tls_block_base is None but DTV resolution succeeded, we don't
-    // need this fallback.
+    // Only usable when we know the calling thread's slot address.
     let tp_offset = if dtv_resolution.is_none() {
         let Some(slot_addr) = slot_addr else {
             return Ok(()); // Can't resolve without DTV or TP-relative offset.

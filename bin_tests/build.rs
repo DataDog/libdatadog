@@ -58,10 +58,47 @@ fn main() {
         println!("cargo:rustc-link-lib=static=trigger_assert");
         println!("cargo:rerun-if-changed=src/c/trigger_assert.c");
 
-        // Export otel_thread_ctx_v1 to the dynamic symbol table. The OTel thread
-        // context spec requires this even for executables (not just shared libraries).
-        // https://github.com/open-telemetry/opentelemetry-specification/blob/a4e05d9704fc5218d85a4154fb5b143ea3f5340e/oteps/profiles/4947-thread-ctx.md?plain=1#L93
-        println!("cargo:rustc-link-arg=-Wl,--export-dynamic-symbol=otel_thread_ctx_v1");
+        // Export otel_thread_ctx_v1 to the dynamic symbol table (.dynsym).
+        //
+        // The OTel thread context spec requires the symbol in .dynsym even for
+        // executables. However, when definition and reference are in the same PIE
+        // executable, both lld and GNU ld relax TLSDESC accesses to TP-relative,
+        // eliminating the symbol name from .dynsym (the TLS allocation survives but
+        // the name doesn't). This only affects this test binary — in production the
+        // publisher is always in a separate .so where names are preserved.
+        //
+        // Fix: assemble a weak definition of the symbol that the linker merges with
+        // the strong one from libdd-otel-thread-ctx's global_asm!. The weak definition
+        // isn't subject to relaxation-based name elimination, so the name survives for
+        // --export-dynamic to promote into .dynsym. --export-dynamic is universally
+        // supported (GNU ld >= 2.17, lld), unlike --export-dynamic-symbol (>= 2.35).
+        let otel_asm_src = out_dir.join("otel_tls_anchor.s");
+        let otel_asm_obj = out_dir.join("otel_tls_anchor.o");
+        std::fs::write(
+            &otel_asm_src,
+            ".section .tbss,\"awT\",@nobits\n\
+             .weak otel_thread_ctx_v1\n\
+             .type  otel_thread_ctx_v1, @tls_object\n\
+             .size  otel_thread_ctx_v1, 8\n\
+             .balign 8\n\
+             otel_thread_ctx_v1:\n\
+             .zero  8\n\
+             .previous\n",
+        )
+        .expect("failed to write otel TLS anchor assembly");
+
+        let status = Command::new("cc")
+            .args(["-c", "-o"])
+            .arg(&otel_asm_obj)
+            .arg(&otel_asm_src)
+            .status()
+            .expect("failed to assemble otel_tls_anchor.s");
+        if !status.success() {
+            panic!("assembling otel_tls_anchor.s failed with status {status}");
+        }
+
+        println!("cargo:rustc-link-arg={}", otel_asm_obj.display());
+        println!("cargo:rustc-link-arg=-Wl,--export-dynamic");
     }
 }
 
