@@ -485,6 +485,7 @@ mod linux {
     /// The refusal case is exercised through `verify_server` directly: staging a listener under
     /// another uid would need privileges, while the uid to compare against is exactly what this
     /// function takes as an argument.
+    #[cfg(all(test, not(miri)))]
     #[test]
     fn abstract_client_refuses_a_server_of_another_uid() {
         // Its own name, so this cannot collide with the test above under parallel execution.

@@ -307,26 +307,40 @@ mod miri_tests {
     use super::*;
 
     struct TestHeaderMemory {
-        header: Box<MappingHeader>,
+        // Models the mmap-backed holder: the header lives outside Rust's borrow
+        // system, reachable only through this untagged raw pointer, so the write
+        // protocol may store through a pointer obtained from a shared holder.
+        // Deriving it from a Rust reference (NonNull::from(self.header.as_ref()))
+        // would tag it SharedReadOnly and make those stores UB under Miri.
+        header: NonNull<MappingHeader>,
         discovery_count: usize,
+    }
+
+    impl Drop for TestHeaderMemory {
+        fn drop(&mut self) {
+            // SAFETY: `header` came from `Box::into_raw` in `new` and is freed exactly once.
+            drop(unsafe { Box::from_raw(self.header.as_ptr()) });
+        }
     }
 
     impl HeaderMemoryHolder for TestHeaderMemory {
         fn new() -> io::Result<Self> {
+            let header = MappingHeader {
+                signature: [0; 8],
+                version: 0,
+                payload_size: AtomicU32::new(0),
+                monotonic_published_at_ns: AtomicU64::new(UNPUBLISHED_OR_UPDATING),
+                payload_ptr: AtomicPtr::new(ptr::null_mut()),
+            };
+            // SAFETY: `Box::into_raw` never returns null.
             Ok(Self {
-                header: Box::new(MappingHeader {
-                    signature: [0; 8],
-                    version: 0,
-                    payload_size: AtomicU32::new(0),
-                    monotonic_published_at_ns: AtomicU64::new(UNPUBLISHED_OR_UPDATING),
-                    payload_ptr: AtomicPtr::new(ptr::null_mut()),
-                }),
+                header: unsafe { NonNull::new_unchecked(Box::into_raw(Box::new(header))) },
                 discovery_count: 0,
             })
         }
 
         fn as_ptr(&self) -> Option<NonNull<MappingHeader>> {
-            Some(NonNull::from(self.header.as_ref()))
+            Some(self.header)
         }
 
         fn make_discoverable(&mut self) {

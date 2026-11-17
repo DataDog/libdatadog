@@ -231,7 +231,7 @@ pub fn is_redacted_name<I: AsRef<[u8]>>(name: I) -> bool {
     }
     let normalized = &copy[0..copy.len()];
     // Exclusions take precedence: if explicitly excluded, do not redact.
-    if !EXCLUDED_NAMES.get().as_ref().is_some_and(|s| !s.is_empty()) {
+    if EXCLUDED_NAMES.get().as_ref().is_none_or(|s| s.is_empty()) {
         EXCLUDED_NAMES_INITIALIZED.store(true, Ordering::Relaxed);
         if EXCLUDED_NAMES
             .get()
