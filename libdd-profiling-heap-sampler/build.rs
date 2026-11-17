@@ -173,6 +173,10 @@ mod linux {
                 // (no sdt-config.h companion file) and so works
                 // identically across glibc and musl distros.
                 .clang_arg("-Ivendor")
+                // libclang-21+ defaults to C23, where glibc's <stdatomic.h> no longer
+                // declares atomic_load_explicit as a function; pin the header dialect
+                // the vendored headers are written against.
+                .clang_arg("-std=c11")
                 .allowlist_function("dd_.*")
                 .allowlist_type("dd_.*")
                 .allowlist_var("DD_SAMPLING_INTERVAL_DEFAULT")
