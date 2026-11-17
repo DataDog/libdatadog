@@ -2159,6 +2159,8 @@ mod tests {
         }
     }
 
+    // Excluded from miri_tests: prohibitively slow under Miri (parses a packet-sized (4 MiB) JSON
+    // input through serde_json)
     #[test]
     fn ffe_exposure_keeps_features_exactly_one_packet_long() {
         let at_limit = format!(

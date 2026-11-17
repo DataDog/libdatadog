@@ -377,6 +377,8 @@ mod tests {
         serde_json::from_str(event.context.as_ref().unwrap().evaluation.as_ref().unwrap()).unwrap()
     }
 
+    // Excluded from miri_tests: prohibitively slow under Miri (256-field fixtures through both
+    // scalar and JSON conversion paths, 232s measured)
     #[test]
     fn scalar_and_json_entry_points_agree_on_top_level_truncation() {
         let overlength = "x".repeat(257);
@@ -426,6 +428,8 @@ mod tests {
         }
     }
 
+    // Excluded from miri_tests: prohibitively slow under Miri (4 MiB max_message_size identity
+    // fixtures rebuilt per iteration, 88s measured)
     #[test]
     fn features_are_canonicalized_and_survive_identity_degradation() {
         let oversized = "x".repeat(libdd_ipc::max_message_size());

@@ -125,6 +125,8 @@ impl Drop for TrimmedObservation {
 mod tests {
     use super::*;
 
+    // Excluded from miri_tests: intentionally leaks memory (Miri reports leaked allocations as
+    // errors at test exit)
     #[test]
     #[should_panic]
     // This test has an explicit memory leak, and shows that we panic if that

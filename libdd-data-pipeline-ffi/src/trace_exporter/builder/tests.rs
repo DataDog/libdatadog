@@ -16,6 +16,8 @@ type StringSetter = unsafe extern "C" fn(
     CharSlice<'_>,
 ) -> Option<Box<ExporterError>>;
 
+// Excluded from miri_tests: prohibitively slow under Miri (75s: 20 setters x 3
+// invocations each, every invocation Debug-formatting the whole builder).
 #[test]
 fn config_string_setters() {
     let setters: &[(StringSetter, &str)] = &[

@@ -159,6 +159,7 @@ mod tests {
     use libdd_tinybytes::BytesString;
     use rmp_serde::to_vec_named;
 
+    // Excluded from miri_tests: prohibitively slow under Miri (bolero fuzz case generation)
     #[test]
     fn fuzz_from_bytes() {
         check!()

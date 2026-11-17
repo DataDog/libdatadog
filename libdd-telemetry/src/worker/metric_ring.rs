@@ -202,6 +202,8 @@ mod tests {
         ContextKey::from_parts(index, t)
     }
 
+    // Excluded from miri_tests: prohibitively slow under Miri (multi-threaded 200k-point stress;
+    // the single-threaded 8k-point variant already takes ~22s)
     #[test]
     fn multi_producer_batch_drain_loses_nothing() {
         let ring = Arc::new(MetricRing::new());

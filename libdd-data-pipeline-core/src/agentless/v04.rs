@@ -271,6 +271,8 @@ mod tests {
         payload_with_sampling_priority(None)
     }
 
+    // Excluded from miri_tests: prohibitively slow under Miri (full agentless send +
+    // stats flush pipeline; the same pipeline measured 33–81s per test under Miri)
     #[test]
     fn sends_v04_traces_and_flushes_stats() {
         let capabilities = TestCapabilities::default();
@@ -318,6 +320,8 @@ mod tests {
         );
     }
 
+    // Excluded from miri_tests: prohibitively slow under Miri (full agentless send +
+    // stats flush pipeline; the same pipeline measured 33–81s per test under Miri)
     #[test]
     fn aggregates_and_drops_priority_zero_traces() {
         let capabilities = TestCapabilities::default();
@@ -342,6 +346,8 @@ mod tests {
         assert_eq!(requests[0].uri().path(), "/api/v0.2/stats");
     }
 
+    // Excluded from miri_tests: prohibitively slow under Miri (full agentless send +
+    // stats flush pipeline; the same pipeline measured 33–81s per test under Miri)
     #[test]
     fn sends_v04_traces_without_stats() {
         let capabilities = TestCapabilities::default();
@@ -364,6 +370,8 @@ mod tests {
         );
     }
 
+    // Excluded from miri_tests: prohibitively slow under Miri (full agentless send +
+    // stats flush pipeline; the same pipeline measured 33–81s per test under Miri)
     #[test]
     fn preserves_precomputed_stats_without_local_stats() {
         let capabilities = TestCapabilities::default();

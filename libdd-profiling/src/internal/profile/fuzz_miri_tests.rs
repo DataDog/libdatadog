@@ -582,6 +582,9 @@ impl From<&FuzzOperation> for Operation {
 mod tests {
     use super::*;
 
+    // Excluded from miri_tests: prohibitively slow under Miri (unbounded bolero fuzz over full
+    // sample sets)
+    /// Fuzzes adding a bunch of samples to the profile.
     #[test]
     fn test_fuzz_add_sample() {
         let sample_types_gen = Vec::<api::SampleType>::produce();
@@ -622,6 +625,8 @@ mod tests {
             })
     }
 
+    // Excluded from miri_tests: prohibitively slow under Miri (bolero fuzz with 60s shrink time
+    // over generated samples/locations)
     #[test]
     fn fuzz_add_sample_with_fixed_sample_length() {
         let sample_length_gen = 1..=64usize;
@@ -693,6 +698,8 @@ mod tests {
             });
     }
 
+    // Excluded from miri_tests: prohibitively slow under Miri (bolero fuzz over mixed
+    // add-sample/add-endpoint operation streams)
     #[test]
     fn fuzz_api_function_calls() {
         let sample_length_gen = 1..=64usize;

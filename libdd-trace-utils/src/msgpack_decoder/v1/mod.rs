@@ -449,6 +449,7 @@ mod tests {
     /// serialises it, and the decoder must accept its own output (no panic, no error). Mirrors
     /// the v04 `fuzz_from_bytes` pattern. Bolero caps tuples at 12 fields — extra metadata is
     /// either omitted or filled with deterministic defaults.
+    // Excluded from miri_tests: prohibitively slow under Miri (bolero fuzz case generation)
     #[test]
     fn fuzz_from_bytes() {
         check!()

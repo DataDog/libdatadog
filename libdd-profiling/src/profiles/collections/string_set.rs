@@ -206,6 +206,8 @@ impl UnsyncStringSet {
 mod tests {
     use super::*;
 
+    // Excluded from miri_tests: prohibitively slow under Miri (multi-MiB string allocations through
+    // the arena allocator; ~2.7 MiB of copied string bytes)
     #[test]
     fn test_large_strings() {
         let mut set = UnsyncStringSet::try_new().unwrap();

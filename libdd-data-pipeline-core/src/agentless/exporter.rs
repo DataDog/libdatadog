@@ -346,6 +346,8 @@ mod tests {
         body
     }
 
+    // Excluded from miri_tests: prohibitively slow under Miri (full agentless send pipeline:
+    // obfuscation + manual JSON byte encoding; measured 81.3s)
     #[test]
     fn sends_decoded_traces_with_top_level_tags() {
         let capabilities = TestCapabilities::default();
@@ -370,6 +372,8 @@ mod tests {
         );
     }
 
+    // Excluded from miri_tests: prohibitively slow under Miri (full agentless send pipeline;
+    // measured 33.0s)
     #[test]
     fn reports_final_send_result_and_payload_size() {
         let capabilities = TestCapabilities::default();
@@ -389,6 +393,8 @@ mod tests {
         assert!(payload_size > 0);
     }
 
+    // Excluded from miri_tests: prohibitively slow under Miri (full agentless send pipeline,
+    // run twice; measured 58.7s)
     #[test]
     fn reports_redirects_as_failed_sends() {
         for status in [

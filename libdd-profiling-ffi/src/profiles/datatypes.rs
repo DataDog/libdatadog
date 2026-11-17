@@ -1028,6 +1028,9 @@ mod tests {
     use super::*;
 
     #[test]
+    // Excluded from miri_tests: qualifies by the bar (extern "C" profile
+    // add/drop) but was ignored under Miri with no recorded reason beyond
+    // "TODO FIX". Re-examine and designate once it is known to pass.
     fn aggregate_samples() -> anyhow::Result<()> {
         unsafe {
             let sample_type = SampleType::CpuSamples;
