@@ -22,8 +22,9 @@
 #
 # Destination: adms routes uploads from the default branch to
 # datadog/first-party and from any other branch to datadog/first-party-testing.
-# DEPOT_REPOSITORY must name the expected one; the upload is refused if adms
-# would route it elsewhere.
+# DEPOT_REPOSITORY must name the expected one: adms versions that support
+# --repository refuse an upload they would route elsewhere, and the job fails
+# unless each crate appears in that repository's index.
 
 set -euo pipefail
 
@@ -162,7 +163,13 @@ upload() {
     return 0
   fi
   echo "==> Uploading $name $version to $DEPOT_REPOSITORY"
-  adms first-party rust upload --repository "$DEPOT_REPOSITORY" "$crate"
+  # Older adms builds lack --repository; the index check below then still fails a
+  # crate routed to an unexpected repository.
+  local repo_flag=()
+  if adms first-party rust upload --help 2>/dev/null | grep -q -- '--repository'; then
+    repo_flag=(--repository "$DEPOT_REPOSITORY")
+  fi
+  adms first-party rust upload "${repo_flag[@]}" "$crate"
   wait_for_index "$name" "$version"
 }
 
