@@ -120,6 +120,8 @@ pub struct SidecarServer {
     remote_configs: RemoteConfigs,
     cdn_configs: super::ffe_config::CdnConfigs,
     cdn_enabled: bool,
+    /// Only subprocess sidecars may retain client liveness writers across connections.
+    allow_liveness_watch: bool,
     /// Diagnostics bookkeeper
     debugger_diagnostics_bookkeeper: Arc<DebuggerDiagnosticsBookkeeper>,
     /// Per-env&version SHM span concentrators (global across all sessions).
@@ -145,6 +147,17 @@ struct ConnectionStats {
     connections: AtomicU32,
     applications: AtomicU32,
     remote_config_clients: AtomicU32,
+}
+
+#[cfg(target_os = "linux")]
+fn retain_liveness_writer(
+    writer: libdd_ipc::platform::PlatformHandle<std::io::PipeWriter>,
+) -> std::io::Result<tokio::task::JoinHandle<()>> {
+    // The empty pipe is always writable. Wait only for EPOLLERR when its last reader closes.
+    let writer = tokio::io::unix::AsyncFd::with_interest(writer, tokio::io::Interest::ERROR)?;
+    Ok(tokio::spawn(async move {
+        let _ = writer.ready(tokio::io::Interest::ERROR).await;
+    }))
 }
 
 /// The application slot of a connection, keeping the server-wide counters up to date.
@@ -558,6 +571,11 @@ impl Drop for ConnectionSidecarHandler {
 }
 
 impl SidecarServer {
+    pub(crate) fn with_liveness_watch(mut self, enabled: bool) -> Self {
+        self.allow_liveness_watch = enabled;
+        self
+    }
+
     pub(crate) fn with_cdn_fetching(mut self, enabled: bool) -> Self {
         self.cdn_enabled = enabled;
         self
@@ -1522,6 +1540,24 @@ impl SidecarInterface for ConnectionSidecarHandler {
         drop(completion);
     }
 
+    async fn register_liveness(
+        &mut self,
+        writer: libdd_ipc::platform::PlatformHandle<std::io::PipeWriter>,
+    ) {
+        if !self.server.allow_liveness_watch {
+            return;
+        }
+        #[cfg(target_os = "linux")]
+        {
+            // The task outlives this connection and releases its writer on client exit.
+            if let Err(error) = retain_liveness_writer(writer) {
+                warn!("Could not register process liveness pipe: {error}");
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        drop(writer);
+    }
+
     async fn set_test_session_token(&mut self, token: String) {
         let token = if token.is_empty() {
             None
@@ -1619,6 +1655,129 @@ mod tests {
     use libdd_ipc::PeerCredentials;
     use libdd_telemetry::config::Config;
     use tokio::time::{Duration as TokioDuration, sleep};
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    #[cfg_attr(miri, ignore = "requires native pipe readiness")]
+    async fn liveness_writer_waits_for_client_exit_and_reports_sidecar_exit() {
+        use libdd_ipc::platform::PlatformHandle;
+        use std::os::fd::AsRawFd;
+
+        let (reader, writer) = std::io::pipe().unwrap();
+        let task = retain_liveness_writer(PlatformHandle::from(writer)).unwrap();
+        tokio::task::yield_now().await;
+        assert!(!task.is_finished());
+        drop(reader);
+        tokio::time::timeout(Duration::from_secs(2), task)
+            .await
+            .unwrap()
+            .unwrap();
+
+        let (reader, writer) = std::io::pipe().unwrap();
+        let task = retain_liveness_writer(PlatformHandle::from(writer)).unwrap();
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+        let mut fd = libc::pollfd {
+            fd: reader.as_raw_fd(),
+            events: 0,
+            revents: 0,
+        };
+        // SAFETY: fd points to one initialized pollfd for the duration of the call.
+        assert_eq!(unsafe { libc::poll(&mut fd, 1, 0) }, 1);
+        assert_ne!(fd.revents & libc::POLLHUP, 0);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    #[cfg_attr(miri, ignore = "requires native IPC sockets")]
+    async fn disabled_liveness_watch_releases_repeated_registrations() {
+        use super::super::blocking::SidecarTransport;
+        use libdd_ipc::platform::PlatformHandle;
+        use std::os::fd::AsRawFd;
+
+        let (reader, writer) = std::io::pipe().unwrap();
+        let (client, server) = SeqpacketConn::socketpair().unwrap();
+        let server = tokio::spawn(SidecarServer::default().accept_connection(server));
+        tokio::task::spawn_blocking(move || {
+            let mut transport = SidecarTransport::from(client);
+            // Repeated SCM_RIGHTS transfers of the same pipe each create a new server fd.
+            for _ in 0..16 {
+                transport
+                    .inner
+                    .channel
+                    .send_request_blocking(
+                        &super::super::sidecar_interface::SidecarInterfaceRequest::RegisterLiveness {
+                            writer: PlatformHandle::from(writer.try_clone().unwrap()),
+                        },
+                    )
+                    .unwrap();
+            }
+            drop(writer);
+            // The reply confirms every registration was processed. Keep the connection and
+            // reader open to verify that neither disconnect nor client exit is needed for cleanup.
+            transport.inner.channel.call_ping().unwrap();
+            let mut fd = libc::pollfd {
+                fd: reader.as_raw_fd(),
+                events: 0,
+                revents: 0,
+            };
+            // SAFETY: fd points to one initialized pollfd for the duration of the call.
+            assert_eq!(unsafe { libc::poll(&mut fd, 1, 0) }, 1);
+            assert_ne!(fd.revents & libc::POLLHUP, 0);
+        })
+        .await
+        .unwrap();
+        tokio::time::timeout(Duration::from_secs(2), server)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    #[cfg_attr(miri, ignore = "requires native IPC sockets")]
+    async fn liveness_pipe_outlives_the_registering_connection() {
+        use super::super::blocking::SidecarTransport;
+        use libdd_ipc::platform::PlatformHandle;
+        use std::os::fd::AsRawFd;
+
+        let (reader, writer) = std::io::pipe().unwrap();
+        let (client, server) = SeqpacketConn::socketpair().unwrap();
+        let server = tokio::spawn(
+            SidecarServer::default()
+                .with_liveness_watch(true)
+                .accept_connection(server),
+        );
+        tokio::task::spawn_blocking(move || {
+            let mut transport = SidecarTransport::from(client);
+            transport
+                .inner
+                .channel
+                .send_request_blocking(
+                    &super::super::sidecar_interface::SidecarInterfaceRequest::RegisterLiveness {
+                        writer: PlatformHandle::from(writer),
+                    },
+                )
+                .unwrap();
+            transport.inner.channel.call_ping().unwrap();
+        })
+        .await
+        .unwrap();
+        tokio::time::timeout(Duration::from_secs(2), server)
+            .await
+            .unwrap()
+            .unwrap();
+        let mut fd = libc::pollfd {
+            fd: reader.as_raw_fd(),
+            events: 0,
+            revents: 0,
+        };
+        // The registration was transferred by SCM_RIGHTS and its connection is gone,
+        // but the independent sidecar task still owns the writer.
+        // SAFETY: fd points to one initialized pollfd for the duration of the call.
+        assert_eq!(unsafe { libc::poll(&mut fd, 1, 0) }, 0);
+        drop(reader);
+    }
 
     /// Build a handler backed by a throwaway socketpair connection. These tests call the handler
     /// methods directly and never read the connection, but the handler requires one.

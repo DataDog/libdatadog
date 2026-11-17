@@ -712,6 +712,29 @@ mod tests {
         buf[..len].to_vec()
     }
 
+    #[test]
+    #[cfg(target_os = "linux")]
+    #[cfg_attr(miri, ignore)]
+    fn process_death_notification_recovers_before_socket_eof() {
+        let (conn, _still_open_peer) = SeqpacketConn::socketpair().unwrap();
+        let mut transport = SidecarTransport::from(conn);
+        assert!(!transport.is_closed());
+
+        // During exit, the kernel may close the watch writer before the IPC socket.
+        transport.inner.channel.0.mark_closed();
+        let (replacement, peer) = SeqpacketConn::socketpair().unwrap();
+        assert!(transport.reconnect(|| Some(Box::new(SidecarTransport::from(replacement)))));
+        assert!(!transport.is_closed());
+        transport
+            .inner
+            .channel
+            .0
+            .conn
+            .try_send_raw(vec![42], &[])
+            .unwrap();
+        assert_eq!(receive_packet(&peer), [42]);
+    }
+
     fn assert_evp_configs(peer: &SeqpacketConn, expected: &[EvpTransportConfigWithIdentity]) {
         match libdd_ipc::codec::decode::<SidecarInterfaceRequest>(&receive_packet(peer)).unwrap() {
             SidecarInterfaceRequest::AddSessionEvpTransports { configs } => {
