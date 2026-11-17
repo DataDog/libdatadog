@@ -276,7 +276,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_abort_without_queuing_unblocks_recv() {
         // This is the key fix - abort should unblock recv() by dropping the sender
         let mut fixture = TestFixture::new("test_abort");
@@ -312,7 +311,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_profile_actually_sent() {
         // Verify that queued profiles are actually sent by the worker thread
         let mut fixture = TestFixture::new("test_sent");
@@ -335,7 +333,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_multiple_profiles_processed() {
         // Note: file dump server overwrites the file for each request,
         // so we can only verify that at least one was processed
@@ -356,7 +353,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_abort_during_send_cancels_properly() {
         // Test that abort cancels in-progress sends via the cancellation token
         let mut fixture = TestFixture::new("test_cancel");
@@ -371,7 +367,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_channel_respects_bounded_size() {
         // The channel is bounded(2), verify we can queue at least 2
         let mut fixture = TestFixture::new("test_bounded");
@@ -391,7 +386,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_prefork_delegates_to_abort() {
         let mut fixture = TestFixture::new("test_prefork");
         let file_path = fixture.file_path.clone();
@@ -412,7 +406,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_queue_with_additional_files_and_tags() {
         let mut fixture = TestFixture::new("test_additional");
 
@@ -457,7 +450,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_abort_drains_unprocessed_messages() {
         // Verify that messages still in the channel are captured in inflight
         let mut fixture = TestFixture::new("test_drain");
@@ -497,7 +489,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_worker_thread_exits_on_channel_disconnect() {
         // Verify that dropping sender causes worker thread to exit cleanly
         let mut fixture = TestFixture::new("test_disconnect");
@@ -527,7 +518,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_abort_verifies_thread_exit() {
         // Explicit test that abort() actually waits for thread to exit
         let mut fixture = TestFixture::new("test_thread_exit");
@@ -547,7 +537,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_postfork_child_creates_new_manager() {
         // postfork_child should create a fresh manager, discarding inflight messages
         let mut fixture = TestFixture::new("test_postfork_child");
@@ -578,7 +567,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_postfork_parent_requeues_inflight() {
         // postfork_parent should create a new manager and re-queue inflight messages
         let mut fixture = TestFixture::new("test_postfork_parent");
@@ -617,7 +605,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_full_fork_workflow() {
         // Test a complete fork workflow: create -> queue -> prefork -> postfork
         // Parent: create manager and queue some work

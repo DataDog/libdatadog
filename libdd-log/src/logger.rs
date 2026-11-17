@@ -470,14 +470,12 @@ mod tests {
         }
     }
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_logger_setup() {
         let logger = Logger::setup();
         assert!(logger.is_ok(), "Logger setup should succeed");
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_logger_with_std() {
         let events: Arc<Mutex<Vec<String>>> = Default::default();
         let mut logger = Logger::setup().expect("Should setup logger successfully");
@@ -516,7 +514,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_logger_with_file() {
         let events: Arc<Mutex<Vec<String>>> = Default::default();
         let mut logger = Logger::setup().expect("Should setup logger successfully");
@@ -576,7 +573,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_logger_with_std_and_file() {
         let events: Arc<Mutex<Vec<String>>> = Default::default();
         let mut logger = Logger::setup().expect("Should setup logger successfully");
@@ -633,7 +629,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_logger_level_change() {
         let events: Arc<Mutex<Vec<String>>> = Default::default();
         let logger = Logger::setup().expect("Should setup logger successfully");

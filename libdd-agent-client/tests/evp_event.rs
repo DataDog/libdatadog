@@ -9,7 +9,6 @@ use httpmock::prelude::*;
 use libdd_agent_client::EvpEventRequest;
 
 #[tokio::test]
-#[cfg_attr(miri, ignore)]
 async fn posts_to_path_with_subdomain_header() {
     let server = MockServer::start();
     let mock = server.mock(|when, then| {

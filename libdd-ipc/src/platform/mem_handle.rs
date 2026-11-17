@@ -292,7 +292,6 @@ mod tests {
 
     #[test]
     #[cfg(unix)]
-    #[cfg_attr(miri, ignore)]
     fn detaching_after_fork_preserves_the_parent_mapping() {
         use crate::platform::lock_shm;
         use std::sync::atomic::{AtomicU64, Ordering};
@@ -337,7 +336,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_anon_shm() {
         let shm = ShmHandle::new(5).unwrap();
         let mut mapped = shm.map().unwrap();
@@ -350,7 +348,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_named_shm() {
         let path = CString::new("/foo").unwrap();
         let shm = NamedShmHandle::create(path.clone(), 5).unwrap();
@@ -371,7 +368,6 @@ mod tests {
     /// be root while the peer is a worker that dropped privileges.
     #[test]
     #[cfg(not(any(target_os = "macos", windows)))]
-    #[cfg_attr(miri, ignore)]
     fn test_shm_size_is_clamped_to_its_backing() {
         let mut shm = ShmHandle::new(4096).unwrap();
 
@@ -396,7 +392,6 @@ mod tests {
     // Same gating as the test above: the clamp is a deliberate no-op where segments are a fixed
     // size that carries its committed length internally.
     #[cfg(not(any(target_os = "macos", windows)))]
-    #[cfg_attr(miri, ignore)]
     fn received_shm_size_is_clamped_to_its_backing() {
         use crate::handles::TransferHandles;
         use crate::platform::FdSource;
@@ -425,7 +420,6 @@ mod tests {
     /// would also let the `ftruncate` fallback shrink it underneath them. The old segment is
     /// replaced instead - its readers keep what they have, new openers get the fresh one.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_named_shm_recreate_is_fresh() {
         let path = CString::new(format!("/recreate-own-{}", std::process::id())).unwrap();
         let first = NamedShmHandle::create(path.clone(), 5).unwrap();
@@ -461,7 +455,6 @@ mod tests {
     /// The owner that was replaced must not remove the name on its way out: by then the name
     /// refers to its successor.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn a_replaced_owner_does_not_unlink_its_successor() {
         let path = CString::new(format!("/late-owner-{}", std::process::id())).unwrap();
         let old = NamedShmHandle::create(path.clone(), 16)
@@ -491,7 +484,6 @@ mod tests {
     /// memory reports no inode. Covers every format at once: stats, limiters, one-way streams.
     #[test]
     #[cfg(unix)]
-    #[cfg_attr(miri, ignore)]
     fn an_owner_replaced_from_another_process_leaves_the_name() {
         use std::io::{Read, Write};
         use std::os::unix::net::UnixStream;
@@ -531,7 +523,6 @@ mod tests {
 
     /// A reader's handle never removes anything, however it is dropped.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn an_opened_handle_does_not_unlink() {
         let path = CString::new(format!("/reader-drop-{}", std::process::id())).unwrap();
         let owner = NamedShmHandle::create(path.clone(), 16).unwrap();
@@ -545,7 +536,6 @@ mod tests {
     /// callers may hold references into the segment across a growth and need no lock to keep
     /// readers away from a resize.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn growing_a_segment_does_not_move_it() {
         let shm = ShmHandle::new(4096).unwrap();
         let mut mapped = shm.map().unwrap();
@@ -577,7 +567,6 @@ mod tests {
     /// macOS only raises a length counter. Concurrent callers asking for different sizes must
     /// therefore all end up with at least what they asked for, with no lock between them.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn concurrent_growth_settles_on_the_largest_request() {
         const SIZES: [usize; 6] = [1 << 16, 1 << 20, 1 << 18, 1 << 20, 1 << 14, 1 << 19];
 

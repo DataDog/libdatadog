@@ -300,7 +300,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore = "requires native IPC sockets and inline assembly")]
     fn waits_for_pipe_close_even_if_data_is_readable() {
         let (flush, peer) = pair();
         let server = std::thread::spawn(move || {
@@ -327,7 +326,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore = "requires native IPC sockets and inline assembly")]
     fn retries_send_after_backpressure() {
         let (flush, peer) = pair();
         let filler = [0u8; 512];
@@ -374,7 +372,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore = "requires native IPC sockets and inline assembly")]
     fn rejects_a_closed_peer_without_sigpipe() {
         let (flush, peer) = pair();
         drop(peer);
@@ -382,7 +379,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore = "requires native IPC sockets and inline assembly")]
     fn open_pipe_has_one_ten_second_deadline() {
         let (flush, _peer) = pair();
         let start = Instant::now();
@@ -392,7 +388,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore = "requires native IPC sockets and inline assembly")]
     fn shares_packet_order_and_transfers_a_private_completion_pipe() {
         let (sender, server) = SeqpacketConn::socketpair().unwrap();
         let (receiver, completion) = std::io::pipe().unwrap();

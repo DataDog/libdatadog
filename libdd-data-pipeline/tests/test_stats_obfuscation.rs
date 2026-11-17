@@ -53,7 +53,6 @@ async fn wait_for_agent_info() {
 
 mod tracing_integration_tests {
     use super::*;
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn client_side_stats_follows_agent_sql_config_snapshot_test() {
         // Keep both modes identical: TRUE, NULL, and the trailing semicolon can only survive if the

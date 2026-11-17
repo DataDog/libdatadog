@@ -59,7 +59,6 @@ mod tracing_integration_tests {
         )
     }
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_listener_set_then_send() {
         // End-to-end Remote Config flow against the Datadog test agent.
@@ -92,7 +91,6 @@ mod tracing_integration_tests {
         assert!(matches!(action, FlareAction::Send(_)));
     }
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_zip_and_send_payload_fields() {
         // End-to-end payload validation: multipart field order and expected content.
@@ -168,7 +166,6 @@ mod tracing_integration_tests {
         );
     }
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_listener_task_without_config() {
         let test_agent = DatadogTestAgent::new(None, None, &[]).await;
@@ -192,7 +189,6 @@ mod tracing_integration_tests {
         assert!(matches!(action, FlareAction::Send(_)));
     }
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_listener_config_updates_log_level() {
         let test_agent = DatadogTestAgent::new(None, None, &[]).await;
@@ -230,7 +226,6 @@ mod tracing_integration_tests {
         assert!(manager.is_collecting());
     }
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_listener_ignores_non_flare_config() {
         let test_agent = DatadogTestAgent::new(None, None, &[]).await;
@@ -260,7 +255,6 @@ mod tracing_integration_tests {
         assert!(matches!(action, FlareAction::None));
     }
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_listener_invalid_log_level_returns_error() {
         let test_agent = DatadogTestAgent::new(None, None, &[]).await;

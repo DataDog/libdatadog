@@ -331,7 +331,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_rate_limiter_accumulates_fractional_tokens() {
         // With rate=2/s each token takes 500ms. Sleeping 300ms twice (600ms total) must
         // yield at least one token. Before the fix, each sub-token call reset last_update
@@ -358,7 +357,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_rate_limiter_limit_rate() {
         let limiter = RateLimiter::new(5, None); // 5 per second
 
@@ -381,7 +379,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_rate_limiter_effective_rate() {
         let limiter = RateLimiter::new(50, None); // 50 per second
 
@@ -405,7 +402,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_rate_limiter_thread_safety_no_panic() {
         // Frozen clock: no replenishment, no window rollover. The only thing this
         // test asserts is that a shared limiter does not panic under contention —
@@ -433,7 +429,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_rate_limiter_budget_invariant_concurrent() {
         // Frozen clock ⇒ `replenish` always computes 0 tokens and the window never
         // resets. Four threads race on a shared limiter with a budget of 100; the
@@ -472,7 +467,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_rate_limiter_window_reset_under_contention() {
         // Deterministic window rollover: the first window is drained with an
         // asymmetric allow/deny ratio so its rate is distinguishable from the

@@ -1621,7 +1621,6 @@ mod tests {
             .1
     }
 
-    #[cfg_attr(miri, ignore)] // reqwest in build_worker
     #[test]
     fn telemetry_requests_observe_shared_runtime_id_updates() {
         let metadata = MutableMetadataHandle::default();
@@ -1655,7 +1654,6 @@ mod tests {
         assert_eq!(second["seq_id"], first["seq_id"].as_u64().unwrap() + 1);
     }
 
-    #[cfg_attr(miri, ignore)] // reqwest in build_worker
     #[test]
     fn mutable_identity_overrides_static_headers_atomically() {
         use libdd_common::mutable_metadata::InstrumentationSession;
@@ -1687,7 +1685,6 @@ mod tests {
         assert!(!empty.headers().contains_key("dd-parent-session-id"));
     }
 
-    #[cfg_attr(miri, ignore)]
     #[test]
     fn telemetry_http_includes_dd_session_id() {
         let req = test_worker(Some("sess".into()), None, None)
@@ -1701,7 +1698,6 @@ mod tests {
         assert!(req.headers().get(DD_PARENT_SESSION_ID).is_none());
     }
 
-    #[cfg_attr(miri, ignore)] // reqwest in build_worker
     #[test]
     fn telemetry_http_omits_root_session_id_when_same_as_session_id() {
         let req = test_worker(
@@ -1726,7 +1722,6 @@ mod tests {
         );
     }
 
-    #[cfg_attr(miri, ignore)] // reqwest in build_worker
     #[test]
     fn telemetry_http_omits_parent_session_id_when_same_as_session_id() {
         let req = test_worker(
@@ -1751,7 +1746,6 @@ mod tests {
         assert!(req.headers().get(DD_PARENT_SESSION_ID).is_none());
     }
 
-    #[cfg_attr(miri, ignore)] // reqwest in build_worker
     #[test]
     fn telemetry_http_omits_session_family_without_valid_session_id() {
         let assert_no_session_headers = |req: &http::Request<bytes::Bytes>| {
@@ -1775,7 +1769,6 @@ mod tests {
         assert_no_session_headers(&req);
     }
 
-    #[cfg_attr(miri, ignore)] // reqwest in build_worker
     #[test]
     fn telemetry_http_includes_dd_session_root_and_parent_session_ids() {
         let req = test_worker(
@@ -1833,7 +1826,6 @@ mod tests {
     /// to come back in later payloads, and only the very first of them may set `is_first` (the
     /// backend replaces its endpoint set on a first payload and merges on the others).
     #[tokio::test]
-    #[cfg_attr(miri, ignore)] // reqwest in build_worker
     async fn endpoints_message_limit_chunks_payloads_and_flags_only_the_first() {
         let mut worker = build_test_worker_with_flavor(TelemetryWorkerFlavor::Full);
         worker.config.endpoints_message_limit = 2;
@@ -1876,7 +1868,6 @@ mod tests {
     /// `delays` forever and its handler never fires. Walking `delays` (rather than
     /// enumerating variants) guards against future periodic actions regressing.
     #[tokio::test]
-    #[cfg_attr(miri, ignore)] // reqwest in dispatch_action
     async fn full_flavor_start_schedules_every_periodic_action() {
         let mut worker = build_test_worker_with_flavor(TelemetryWorkerFlavor::Full);
 
@@ -1901,7 +1892,6 @@ mod tests {
     /// `MetricsLogs` flavor intentionally excludes lifecycle events. Negative guard
     /// so any future change emitting them from this flavor has to update the test.
     #[tokio::test]
-    #[cfg_attr(miri, ignore)] // reqwest in build_worker
     async fn metrics_logs_flavor_start_does_not_schedule_extended_heartbeat() {
         let mut worker = build_test_worker_with_flavor(TelemetryWorkerFlavor::MetricsLogs);
 
@@ -1925,7 +1915,6 @@ mod tests {
     /// firing would push FlushData to `now + heartbeat_interval` and the next
     /// (sooner) ExtendedHeartbeat would push it again — starving FlushData forever.
     #[tokio::test]
-    #[cfg_attr(miri, ignore)] // reqwest in dispatch_action
     async fn extended_heartbeat_does_not_reset_flush_data() {
         let mut worker = build_test_worker_with_flavor(TelemetryWorkerFlavor::Full);
 
@@ -1966,7 +1955,6 @@ mod tests {
     /// `app-extended-heartbeat` is validated with the v1 rules and is expected to carry both.
     /// Both events are built from the same `data::AppStarted` shape, so it is easy to regress one
     /// into the other.
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn app_started_omits_dependencies_and_integrations() {
         let mut worker = build_test_worker_with_flavor(TelemetryWorkerFlavor::Full);
@@ -2018,7 +2006,6 @@ mod tests {
 
     /// The counterpart to the above: the extended heartbeat re-states the full accumulated
     /// application state, dependencies and integrations included.
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn extended_heartbeat_carries_dependencies_and_integrations() {
         let mut worker = build_test_worker_with_flavor(TelemetryWorkerFlavor::Full);
@@ -2082,7 +2069,6 @@ mod tests {
             )
         }
 
-        #[cfg_attr(miri, ignore)]
         #[test]
         fn fork_child_starts_a_new_sequence_without_resetting_the_parent() {
             use crate::config::TelemetryEndpoint;
@@ -2168,7 +2154,6 @@ mod tests {
         }
 
         /// After reset(), pending buffered telemetry and dedupe history is cleared.
-        #[cfg_attr(miri, ignore)] // reqwest in build_worker
         #[tokio::test]
         async fn test_reset_clears_buffered_data() {
             let (handle, mut worker) = build_test_worker();
@@ -2260,7 +2245,6 @@ mod tests {
         }
 
         /// After reset(), actions queued in the mailbox before the fork are discarded.
-        #[cfg_attr(miri, ignore)] // reqwest in build_worker
         #[tokio::test]
         async fn test_reset_drains_mailbox() {
             let (handle, mut worker) = build_test_worker();
@@ -2301,7 +2285,6 @@ mod tests {
             assert_eq!(stats.logs, 0, "queued AddLog must be discarded");
         }
 
-        #[cfg_attr(miri, ignore)]
         #[tokio::test]
         async fn metrics_reset_keeps_queued_start_and_staged_flush_alive() {
             let (handle, mut worker) = build_test_worker();
@@ -2327,7 +2310,6 @@ mod tests {
             }
         }
 
-        #[cfg_attr(miri, ignore)]
         #[tokio::test]
         async fn metrics_reset_preserves_ordered_lifecycle_state() {
             use LifecycleAction::*;
@@ -2389,7 +2371,6 @@ mod tests {
         }
 
         /// After reset(), the worker accepts new telemetry and processes it normally.
-        #[cfg_attr(miri, ignore)] // reqwest in build_worker
         #[tokio::test]
         async fn test_worker_accepts_new_data_after_reset() {
             let (handle, mut worker) = build_test_worker();
@@ -2417,7 +2398,6 @@ mod tests {
         }
 
         /// After reset(), lifecycle state needed to keep periodic flushing alive is preserved.
-        #[cfg_attr(miri, ignore)] // reqwest in build_worker
         #[tokio::test]
         async fn test_reset_preserves_started_and_deadlines() {
             let (_handle, mut worker) = build_test_worker();
@@ -2456,7 +2436,6 @@ mod tests {
         }
     }
 
-    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_channel_close_flushes_and_parks_via_shared_runtime() {
         use httpmock::prelude::*;
@@ -2545,7 +2524,6 @@ mod tests {
     /// An action enqueued into the mailbox but not yet processed by the runloop
     /// must still be reflected in the final Stop flush. Drives `shutdown()`
     /// directly (no `run_loop`) so the assertion is deterministic.
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn shutdown_drains_pending_actions_before_stop() {
         use crate::data::metrics::{MetricNamespace, MetricType};

@@ -132,7 +132,6 @@ mod tests {
     use super::*;
 
     #[test]
-    #[cfg_attr(miri, ignore)] // Spawns a process and uses OS shared memory.
     fn startup_replaces_arenas_before_any_acquisition() {
         const CHILD: &str = "DD_TEST_LIMITER_STARTUP_CHILD";
         if std::env::var_os(CHILD).is_none() {

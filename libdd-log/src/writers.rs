@@ -303,7 +303,6 @@ mod tests {
     use std::fs;
     use tempfile::TempDir;
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_file_writer_basic_functionality() {
         let temp_dir = TempDir::new().unwrap();
         let file_path = temp_dir.path().join("test.log");
@@ -329,7 +328,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_file_writer_creates_directories() {
         let temp_dir = TempDir::new().unwrap();
         let nested_path = temp_dir
@@ -350,7 +348,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_basic_rotation() {
         let temp_dir = TempDir::new().unwrap();
         let file_path = temp_dir.path().join("rotate.log");
@@ -381,7 +378,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_max_files_cleanup() {
         let temp_dir = TempDir::new().unwrap();
         let file_path = temp_dir.path().join("cleanup.log");
@@ -415,7 +411,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_max_files_one_keeps_only_current() {
         let temp_dir = TempDir::new().unwrap();
         let file_path = temp_dir.path().join("single.log");
@@ -449,7 +444,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_no_rotation_when_size_not_specified() {
         let temp_dir = TempDir::new().unwrap();
         let file_path = temp_dir.path().join("no_rotation.log");
@@ -481,7 +475,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_invalid_path_handling() {
         let config = FileConfig {
             path: String::new(),

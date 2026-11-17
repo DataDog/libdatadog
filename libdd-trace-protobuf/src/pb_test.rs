@@ -37,7 +37,6 @@ mod tests {
 
     use crate::pb::{ClientGroupedStats, ClientStatsBucket, ClientStatsPayload, Trilean::NotSet};
 
-    #[cfg_attr(all(miri, target_os = "macos"), ignore)]
     #[tokio::test]
     async fn test_deserialize_client_stats_payload() {
         let stats_json = r#"{

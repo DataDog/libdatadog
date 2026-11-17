@@ -515,7 +515,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn pending_configuration_precedes_actions_after_acks_restore_capacity() {
         let (mut sender, peer) = sender();
         sender.max_outstanding = 21;
@@ -545,7 +544,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn actions_use_the_existing_shared_load_shedding_policy() {
         let (mut sender, peer) = sender();
         sender.max_outstanding = 21;
@@ -570,7 +568,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn unchanged_application_is_sent_once() {
         let (mut sender, peer) = sender();
         sender.set_application(Some(application("svc")), 1);
@@ -591,7 +588,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn adopted_state_is_replayed_in_order_before_the_next_message() {
         let instance_id = InstanceId::new("session", "runtime");
         let process_tags = vec![Tag::new("entrypoint.name", "php").unwrap()];
@@ -635,7 +631,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn new_instance_replays_the_state_with_the_given_generation() {
         let process_tags = vec![Tag::new("entrypoint.name", "php").unwrap()];
         let (mut previous, previous_peer) = sender();
@@ -693,7 +688,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn instrumentation_update_of_a_registered_application_requests_no_notification() {
         let (mut sender, peer) = sender();
         sender.set_application(Some(application("svc")), 3);
@@ -707,7 +701,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn instrumentation_update_keeps_the_generation_of_an_unsent_application() {
         let (mut sender, peer) = sender();
         // Backpressure: nothing is sent.
@@ -725,7 +718,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn instrumentation_update_keeps_the_generation_of_a_replayed_application() {
         let (mut previous, previous_peer) = sender();
         previous.set_application(Some(application("svc")), 3);
@@ -742,7 +734,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn replaced_configuration_resends_the_state_layered_on_it() {
         let (mut sender, peer) = sender();
         let instance_id = InstanceId::new("session", "runtime");
@@ -774,7 +765,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn a_failed_state_message_fails_the_blocking_call_and_stays_pending() {
         let (mut sender, peer) = sender();
         // Backpressure: the state is not sent along.
@@ -788,7 +778,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn cleared_application_is_not_replayed() {
         let (mut previous, _previous_peer) = sender();
         previous.set_connection_config(
@@ -811,7 +800,6 @@ mod tests {
         }
     }
     #[test]
-    #[cfg_attr(miri, ignore = "requires native IPC sockets")]
     fn cdn_registration_is_replayed_after_reconnect_without_a_reply() {
         use crate::shm_remote_config::CdnRegistration;
         use libdd_ffe::cdn::{CdnConfig, CdnEndpoint};

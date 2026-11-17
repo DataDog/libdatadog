@@ -118,7 +118,6 @@ fn config_shared_runtime_ownership() {
     }
 }
 
-#[cfg_attr(miri, ignore)]
 #[test]
 fn exporter_constructor_test() {
     unsafe {
@@ -136,7 +135,6 @@ fn exporter_constructor_test() {
     }
 }
 
-#[cfg_attr(miri, ignore)]
 #[test]
 fn exporter_constructor_error_consumes_config() {
     unsafe {
@@ -189,7 +187,6 @@ fn agent_config(url: &str) -> Box<TraceExporterBuilder<ForkSafeRuntime>> {
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn exporter_send_empty_array_test() {
     // Test added due to ensure the exporter is able to send empty arrays because some tracers
     // (.NET) ping the agent with the aforementioned data type.
@@ -243,7 +240,6 @@ fn exporter_send_empty_array_test() {
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn exporter_send_telemetry_test() {
     unsafe {
         let server = MockServer::start();

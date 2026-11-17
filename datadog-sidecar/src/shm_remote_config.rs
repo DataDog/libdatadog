@@ -1021,7 +1021,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn new_client_opening_an_old_directory_is_notified_by_its_replacement() {
         let invariants: RemoteConfigInvariants = ConfigInvariants {
             language: "php".to_string(),
@@ -1098,7 +1097,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn test_shm_updates() {
         let server = RemoteConfigServer::spawn();
 
@@ -1294,7 +1292,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn test_live_debugger_config_parsed() {
         use libdd_live_debugger::LiveDebuggingData;
 
@@ -1369,7 +1366,6 @@ mod tests {
     /// Identical config files and limiter indices still refer to a new arena after restart.
     #[test]
     #[cfg(unix)]
-    #[cfg_attr(miri, ignore)]
     fn a_replaced_directory_is_reapplied_even_when_identical() {
         const CHILD: &str = "DD_TEST_RC_MASTER_CHANGE";
         if std::env::var_os(CHILD).is_none() {

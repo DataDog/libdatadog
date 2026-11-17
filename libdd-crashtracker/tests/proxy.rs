@@ -50,7 +50,6 @@ fn spawn_connect_proxy() -> (SocketAddr, Receiver<String>) {
     (address, receiver)
 }
 
-#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn direct_crash_requests_use_https_proxy() -> anyhow::Result<()> {
     let (proxy_address, targets) = spawn_connect_proxy();

@@ -137,7 +137,6 @@ mod tests {
     // of the retry logic is we wait a minimum amount of time.
     const RETRY_STRATEGY_TIME_TOLERANCE_MS: u64 = 100;
 
-    #[cfg_attr(miri, ignore)]
     // Enabling "paused" tokio mode so the tokio's inner clock is auto-advanced to the nearest
     // pending deadline. Warning: this only works in current-thread runtime, it can't be combined
     // with "multi-thread".
@@ -178,7 +177,6 @@ mod tests {
         );
     }
 
-    #[cfg_attr(miri, ignore)]
     // Enabling "paused" tokio mode so the tokio's inner clock is auto-advanced to the nearest
     // pending deadline. Warning: this only works in current-thread runtime, it can't be combined
     // with "multi-thread".
@@ -222,7 +220,6 @@ mod tests {
         );
     }
 
-    #[cfg_attr(miri, ignore)]
     // Enabling "paused" tokio mode so the tokio's inner clock is auto-advanced to the nearest
     // pending deadline. Warning: this only works in current-thread runtime, it can't be combined
     // with "multi-thread".
@@ -264,7 +261,6 @@ mod tests {
         );
     }
 
-    #[cfg_attr(miri, ignore)]
     // Enabling "paused" tokio mode so the tokio's inner clock is auto-advanced to the nearest
     // pending deadline. Warning: this only works in current-thread runtime, it can't be combined
     // with "multi-thread".
@@ -294,7 +290,6 @@ mod tests {
         );
     }
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_retry_strategy_max_retries() {
         let retry_strategy = RetryStrategy {

@@ -1148,7 +1148,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_receiver_sender_flush() {
         let (rt, sem, sender) = make_buffer(
             Box::new(|chunks, force_flush| {
@@ -1178,7 +1177,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_receiver_sender_batch_drop() {
         let (rt, sem, sender) = make_buffer(
             Box::new(|chunks, force_flush| {
@@ -1221,7 +1219,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_receiver_sender_timeout() {
         let (rt, sem, sender) = make_buffer(
             Box::new(|chunks, force_flush| {
@@ -1240,7 +1237,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_send_after_shutdown() {
         let (rt, _, sender) = make_buffer(
             Box::new(|_, _| panic!("shouldn't be called after shutdown")),
@@ -1255,7 +1251,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_synchronous_mode() {
         let (rt, sem, sender) = make_buffer(
             Box::new(|chunks, force_flush| {
@@ -1283,7 +1278,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_force_flush() {
         // Set thresholds high enough that send_chunk alone never triggers a flush,
         // and the timer long enough that it won't fire during the test.
@@ -1312,7 +1306,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_force_flush_without_spans_triggers_export() {
         // A force flush with no spans must still invoke the export operation so that
         // buffered client-side stats get flushed. The batch is empty, so the export carries
@@ -1348,7 +1341,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_shutdown_flushes_pending_chunk() {
         // `Worker::shutdown` drains any chunk still in the batch before it acks, so the chunk
         // reaches the exporter. `PausableWorker::pause`'s biased `select!` cancels
@@ -1362,7 +1354,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_flush_and_close_exports_pending_chunk() {
         let (rt, sem, sender) = make_buffer_with_pending_chunk();
 
@@ -1385,7 +1376,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_flush_and_close_marks_closed_even_on_timeout() {
         // Pause the worker so the exporter never processes the triggered flush, which
         // guarantees that flush_and_close times out waiting for it.
@@ -1413,7 +1403,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_flush_and_close_propagates_already_closed() {
         let (rt, _sem, sender) = make_buffer_with_pending_chunk();
         sender
@@ -1429,7 +1418,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_flush_and_close_on_idle_buffer_returns_ok_promptly() {
         let (rt, sem, sender) = make_buffer(
             Box::new(|chunks, force_flush| {
@@ -1459,7 +1447,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_wait_flush_done_does_not_report_ok_for_unexported_data_on_concurrent_close() {
         // Pause the worker so that no exporter ever acks the triggered generation.
         let (rt, _sem, sender) = make_buffer_with_pending_chunk();
@@ -1489,7 +1476,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_worker_shutdown_does_not_drop_chunks_sent_during_drain_export() {
         let chunks_handed_to_export = Arc::new(AtomicUsize::new(0));
         let gate = Arc::new(tokio::sync::Semaphore::new(0));
@@ -1543,7 +1529,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_flush_and_wait_flushes_without_shutting_down() {
         let (rt, sem, sender) = make_buffer_with_pending_chunk();
 
@@ -1559,7 +1544,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_flush_and_wait_on_idle_buffer_triggers_and_waits_for_force_flush() {
         // flush_and_wait on an idle buffer must still queue a force flush (so the exporter
         // drains buffered client-side stats) and block until that export completes. It must
@@ -1611,7 +1595,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_flush_and_wait_waits_for_an_in_flight_export() {
         let chunks_handed_to_export = Arc::new(AtomicUsize::new(0));
         let gate = Arc::new(tokio::sync::Semaphore::new(0));
@@ -1656,7 +1639,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_flush_and_wait_leaves_the_buffer_usable_after_a_timeout() {
         let (rt, sem, sender) = make_buffer(
             Box::new(|_chunks, force_flush| {
@@ -1696,7 +1678,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_wait_flush_done_polls_an_acked_generation_with_a_zero_timeout() {
         let (rt, sem, sender) = make_buffer_with_pending_chunk();
 
@@ -1716,7 +1697,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_worker_reset() {
         let (rt, sem, sender) = make_buffer(
             Box::new(|chunks, force_flush| {

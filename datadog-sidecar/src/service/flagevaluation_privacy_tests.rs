@@ -123,7 +123,6 @@ impl Write for LogBuffer {
 }
 
 #[tokio::test]
-#[cfg_attr(miri, ignore)]
 async fn matching_ipc_enforces_privacy_in_http_and_keeps_connection_healthy() {
     let http = MockServer::start_async().await;
     let output = http
@@ -291,7 +290,6 @@ async fn matching_ipc_enforces_privacy_in_http_and_keeps_connection_healthy() {
 }
 
 #[test]
-#[cfg_attr(miri, ignore = "requires native IPC sockets")]
 fn oversized_ipc_warning_does_not_log_evaluation_data() {
     let logs = LogBuffer(Arc::new(Mutex::new(Vec::new())));
     let log_writer = logs.clone();
@@ -322,7 +320,6 @@ fn oversized_ipc_warning_does_not_log_evaluation_data() {
 }
 
 #[tokio::test]
-#[cfg_attr(miri, ignore = "requires native IPC sockets")]
 async fn bounded_ffe_submission_preserves_http_privacy_and_survives_rejection() {
     use crate::service::blocking::{SidecarTransport, try_submit_ffe};
     use crate::service::ffe_submission::FfeSubmissionStatus;
@@ -481,7 +478,6 @@ async fn bounded_ffe_submission_preserves_http_privacy_and_survives_rejection() 
 }
 
 #[test]
-#[cfg_attr(miri, ignore = "requires native IPC sockets")]
 fn oversized_ipc_warning_does_not_log_exposure_data() {
     let logs = LogBuffer(Arc::new(Mutex::new(Vec::new())));
     let log_writer = logs.clone();
@@ -527,7 +523,6 @@ fn oversized_ipc_warning_does_not_log_exposure_data() {
 
 #[test]
 #[cfg(target_os = "linux")]
-#[cfg_attr(miri, ignore = "requires native IPC sockets")]
 fn kernel_size_excess_is_delivered_intact_via_shared_memory_without_reshedding() {
     use crate::service::blocking::{SidecarTransport, try_submit_ffe};
     use crate::service::ffe_submission::FfeSubmissionStatus;

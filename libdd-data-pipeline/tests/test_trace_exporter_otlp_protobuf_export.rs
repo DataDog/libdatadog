@@ -14,8 +14,6 @@ mod otlp_protobuf_tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
     use tokio::task;
-
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn otlp_protobuf_export_sends_decodable_payload() {
         use httpmock::MockServer;

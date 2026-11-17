@@ -10,7 +10,6 @@ fn ensure_crypto_provider() {
     let _ = rustls::crypto::ring::default_provider().install_default();
 }
 
-#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_multiple_requests_reuse_client() {
     ensure_crypto_provider();
@@ -41,7 +40,6 @@ async fn test_multiple_requests_reuse_client() {
     mock.assert_calls_async(5).await;
 }
 
-#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_concurrent_requests_succeed() {
     ensure_crypto_provider();

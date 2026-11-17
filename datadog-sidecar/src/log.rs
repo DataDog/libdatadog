@@ -678,7 +678,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     #[serial_test::serial(log_counter)]
     fn test_logs_created_counter() {
         enable_logging().ok();
@@ -708,7 +707,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_multi_env_filter() {
         let filter = MultiEnvFilter::default();
         filter.add("warn".to_string());

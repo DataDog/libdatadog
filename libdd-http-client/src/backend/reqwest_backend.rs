@@ -258,7 +258,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn rejects_request_urls_that_mismatch_the_base_scheme() {
         // HTTPS requests through a plain-HTTP client.
         assert_scheme_mismatch("http://localhost:8126", "https://example.com/").await;
@@ -270,7 +269,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn matching_scheme_request_urls_pass_url_validation() {
         let (backend, config) = backend("http://localhost:8126");
         // Port 1 (discard protocol) is not served; the request must pass URL

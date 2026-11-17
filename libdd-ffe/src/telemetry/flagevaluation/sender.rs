@@ -288,7 +288,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn posts_to_evp_proxy() {
         let server = MockServer::start_async().await;
         let mock = server
@@ -315,7 +314,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn posts_without_optional_producer_identity() {
         let server = MockServer::start_async().await;
         let mock = server
@@ -340,7 +338,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn posts_valid_producer_identity_headers_independently() {
         let server = MockServer::start_async().await;
         let origin_only = server
@@ -377,7 +374,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn omits_invalid_producer_identity_without_dropping_payload() {
         let server = MockServer::start_async().await;
         let invalid_origin = server
@@ -416,7 +412,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn splits_large_batches_before_posting() {
         let server = MockServer::start_async().await;
         let mock = server
@@ -447,7 +442,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn send_batch_splits_posts_by_encoded_byte_limit() {
         let server = MockServer::start_async().await;
         let mock = server
@@ -487,7 +481,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn non_2xx_does_not_panic() {
         let server = MockServer::start_async().await;
         let _mock = server
@@ -511,7 +504,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn delivery_loss_paths_log_at_warn_level() {
         start_log_capture();
 
@@ -575,7 +567,6 @@ mod tests {
         }
     }
 
-    #[cfg_attr(miri, ignore)] // hanging HTTP timeout is prohibitively slow under Miri
     #[tokio::test]
     async fn timeout_returns_without_waiting_for_http_response() {
         let ep = Endpoint {

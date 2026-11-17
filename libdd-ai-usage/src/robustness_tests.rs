@@ -68,10 +68,6 @@ fn variants(observation: &JsonObject) -> Vec<Json> {
 }
 
 #[test]
-#[cfg_attr(
-    miri,
-    ignore = "tens of thousands of projections; the rule tests cover these paths under Miri"
-)]
 fn perturbed_observations_never_panic_and_stay_within_the_registry() {
     let registry =
         Registry::from_json(&fs::read_to_string(data().join("registry.json")).unwrap()).unwrap();

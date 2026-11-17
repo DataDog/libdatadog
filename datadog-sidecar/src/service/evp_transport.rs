@@ -1745,7 +1745,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn native_http_response_limit_is_opt_in_for_both_request_apis() {
         use libdd_capabilities_impl::NativeCapabilities;
         let server = httpmock::MockServer::start_async().await;
@@ -1779,7 +1778,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn native_discovery_bounds_unfinished_response_while_reading() {
         use libdd_capabilities_impl::NativeCapabilities;
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -1832,7 +1830,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn native_discovery_accepts_response_at_byte_limit() {
         use libdd_capabilities_impl::NativeCapabilities;
         let server = httpmock::MockServer::start_async().await;
@@ -1870,7 +1867,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn native_local_delivery_does_not_follow_redirects_or_retry_responses() {
         use httpmock::MockServer;
         use libdd_capabilities_impl::NativeCapabilities;

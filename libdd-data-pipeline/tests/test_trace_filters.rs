@@ -21,7 +21,6 @@ use serde_json::json;
 mod tracing_integration_tests {
     use super::*;
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn trace_filters_snapshot_test() {
         const EXTRA_INFO: &str = r#"{

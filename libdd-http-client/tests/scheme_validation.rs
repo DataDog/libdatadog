@@ -27,7 +27,6 @@ fn ensure_crypto_provider() {
     let _ = rustls::crypto::ring::default_provider().install_default();
 }
 
-#[cfg_attr(miri, ignore)] // real reqwest client construction is prohibitively slow under Miri
 #[tokio::test]
 async fn plain_http_client_does_not_follow_cross_scheme_redirects() {
     ensure_crypto_provider();

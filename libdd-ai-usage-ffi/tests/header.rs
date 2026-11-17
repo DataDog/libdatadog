@@ -10,7 +10,6 @@ use std::fs;
 use std::path::Path;
 
 #[test]
-#[cfg_attr(miri, ignore)] // cbindgen runs `cargo metadata`; miri can't spawn processes
 fn header_is_current() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let config = cbindgen::Config::from_file(crate_dir.join("cbindgen.toml")).unwrap();

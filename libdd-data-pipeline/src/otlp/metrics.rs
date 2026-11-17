@@ -800,7 +800,6 @@ mod tests {
     /// `force_flush` upgrades and exports OTLP metrics. The weak handle also works behind the
     /// `Weak<dyn FlushableStatsExport>` used by the trace exporter.
     #[cfg(not(target_arch = "wasm32"))]
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_shared_otlp_stats_exporter_wrap_force_flush() {
         use httpmock::prelude::*;

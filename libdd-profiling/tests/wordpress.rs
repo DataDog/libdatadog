@@ -24,8 +24,6 @@ fn php_location<'a>(name: &'a str, filename: &'a str, line: i64) -> api::Locatio
 }
 
 #[test]
-// This test is too slow for miri
-#[cfg_attr(miri, ignore)]
 fn wordpress() {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/wordpress.pprof");
     let bytes = std::fs::read(path).unwrap();

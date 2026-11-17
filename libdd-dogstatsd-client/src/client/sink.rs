@@ -88,7 +88,6 @@ mod tests {
     use libdd_networking::connector::uds::socket_path_to_uri;
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_create_udp_sink() {
         let res = create_udp_sink(&Endpoint::default());
         assert!(res.is_err());
@@ -107,7 +106,6 @@ mod tests {
 
     #[test]
     #[cfg(unix)]
-    #[cfg_attr(miri, ignore)]
     fn test_create_unix_sink() {
         let res = create_unix_sink(&Endpoint::from_url(
             "unix://localhost:80".parse::<Uri>().unwrap(),

@@ -130,7 +130,6 @@ fn connect(socket_path: &std::path::Path) -> SidecarTransport {
 /// Miri cannot run this: it supports only `AF_INET`/`AF_INET6`, and every socket here is
 /// `AF_UNIX`.
 #[test]
-#[cfg_attr(miri, ignore)]
 fn an_authorized_peer_is_served() {
     let tmpdir = tempfile::tempdir().expect("tempdir");
     let socket_path = tmpdir.path().join("auth_allow.sock");
@@ -161,7 +160,6 @@ mod directory_guard {
     /// A directory of ours left writable by others is repaired - discarded and recreated - so a
     /// recoverable mistake does not permanently disable tracing.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn listening_repairs_a_permissive_directory() {
         let tmpdir = tempfile::tempdir().expect("tempdir");
         let dir = tmpdir.path().join("loose");
@@ -183,7 +181,6 @@ mod directory_guard {
     /// When the repair cannot be carried out, listening fails - and the error has to say which
     /// directory and why, because that is all an operator gets to work from.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn listening_fails_with_a_clear_error_when_the_directory_cannot_be_fixed() {
         let tmpdir = tempfile::tempdir().expect("tempdir");
         let parent = tmpdir.path().join("locked");

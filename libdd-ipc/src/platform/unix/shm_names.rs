@@ -172,7 +172,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn a_failed_initialisation_leaves_no_name_behind() {
         let name = test_name("init");
         let result = create_replacing(&name, Mode::S_IRUSR | Mode::S_IWUSR, |_| {
@@ -187,7 +186,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn a_failed_replacement_leaves_no_name_behind() {
         let name = test_name("replace");
         let old = crate::platform::NamedShmHandle::create(name.clone(), 16).unwrap();

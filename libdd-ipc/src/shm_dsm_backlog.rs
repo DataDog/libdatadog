@@ -373,7 +373,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn a_backlog_keeps_the_highest_offset() {
         let t = table(test_path());
         for offset in [5, 12, 7] {
@@ -399,7 +398,6 @@ mod tests {
 
     /// However the tags are given, a backlog is one key and is reported in position order.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn tags_are_keyed_and_reported_by_position_not_given_order() {
         let t = table(test_path());
         let given = [
@@ -435,7 +433,6 @@ mod tests {
 
     /// A tag at a position between others takes its place there, leaving theirs in order.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn a_tag_comes_at_its_own_position() {
         let t = table(test_path());
         t.add_backlog(&produce("0", 1).with(BacklogTag::KafkaClusterId, "c1"));
@@ -452,7 +449,6 @@ mod tests {
 
     /// The type is part of the key: a partition's produce and commit offsets are two backlogs.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn the_type_tells_backlogs_apart() {
         let t = table(test_path());
         t.add_backlog(&produce("0", 9));
@@ -464,7 +460,6 @@ mod tests {
     /// An absent tag and a present one with an empty value are different keys; the empty one is
     /// still reported, as the Java tracer reports an empty consumer group.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn an_empty_value_is_not_an_absent_tag() {
         let t = table(test_path());
         t.add_backlog(&produce("0", 1));
@@ -494,7 +489,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn an_offset_of_zero_is_reported() {
         let t = table(test_path());
         t.add_backlog(&produce("0", 0));
@@ -502,7 +496,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn negative_offsets_are_dropped() {
         let t = table(test_path());
         // RD_KAFKA_OFFSET_INVALID
@@ -512,7 +505,6 @@ mod tests {
 
     /// A slot's value restarts from zero once drained, rather than carrying a maximum over.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn each_bucket_has_its_own_maximum() {
         let t = table(test_path());
         t.add_backlog(&produce("0", 50));
@@ -523,7 +515,6 @@ mod tests {
 
     /// Two backlogs whose slots collide still keep their own offsets.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn colliding_backlogs_do_not_share_a_slot() {
         let t = ShmDsmBacklogTable::create(test_path(), DSM_BUCKET_NANOS, 1, 4096).unwrap();
         t.add_backlog(&produce("0", 1));
@@ -535,7 +526,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn a_worker_writes_into_the_sidecars_table() {
         let path = test_path();
         let owner = table(path.clone());
@@ -550,7 +540,6 @@ mod tests {
     /// The backlog table and the checkpoint table are drained into one payload; an opener must
     /// never take one for the other.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn a_segment_opens_only_as_its_own_schema() {
         let path = test_path();
         let _backlogs = table(path.clone());
@@ -559,7 +548,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn buckets_are_dated_like_the_checkpoint_buckets() {
         let t = table(test_path());
         let now = 123 * DSM_BUCKET_NANOS + 4_000;
@@ -577,7 +565,6 @@ mod tests {
     /// The presence mask is a peer's to write; a mask naming a position no tag has drops only
     /// its own backlog.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn a_malformed_presence_mask_drops_only_its_own_backlog() {
         let t = table(test_path());
         t.add_backlog(&produce("0", 1));
@@ -601,7 +588,6 @@ mod tests {
     /// A backlog with a value that does not resolve is dropped rather than exported with that
     /// value blank, which would merge it with, or pass it off as, another backlog.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn string_references_outside_the_pool_drop_their_backlog() {
         let t = table(test_path());
         t.add_backlog(&produce("0", 1));

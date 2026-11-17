@@ -1152,7 +1152,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn test_receive_report_no_data_sends_debug_log() {
         // Stand in for the agent, so the debug log has somewhere to land
         // without a config block telling the receiver where to send.

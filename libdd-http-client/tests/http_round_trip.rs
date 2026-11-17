@@ -10,7 +10,6 @@ fn ensure_crypto_provider() {
     let _ = rustls::crypto::ring::default_provider().install_default();
 }
 
-#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_post_round_trip() {
     ensure_crypto_provider();
@@ -37,7 +36,6 @@ async fn test_post_round_trip() {
     mock.assert_async().await;
 }
 
-#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_get_round_trip() {
     ensure_crypto_provider();
@@ -63,7 +61,6 @@ async fn test_get_round_trip() {
     mock.assert_async().await;
 }
 
-#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_response_headers_returned() {
     ensure_crypto_provider();
@@ -94,7 +91,6 @@ async fn test_response_headers_returned() {
     mock.assert_async().await;
 }
 
-#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_4xx_returns_request_failed() {
     ensure_crypto_provider();
@@ -121,7 +117,6 @@ async fn test_4xx_returns_request_failed() {
     }
 }
 
-#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_4xx_returns_ok_when_errors_disabled() {
     ensure_crypto_provider();
@@ -148,7 +143,6 @@ async fn test_4xx_returns_ok_when_errors_disabled() {
     assert_eq!(response.body().as_ref(), b"not found");
 }
 
-#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_5xx_returns_request_failed() {
     ensure_crypto_provider();

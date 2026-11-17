@@ -316,7 +316,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)] // many encodings are too slow under Miri
     fn sketches_count_and_fold() {
         let sketch = Sketch::of(&[1.0, 1.0, 2.0, f64::NAN, 0.5, 0.0]).unwrap();
         assert_eq!(sketch.count, 5);
@@ -336,7 +335,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)] // every key is too slow under Miri
     fn every_key_is_read_back_as_put() {
         for key in 1..=INF_KEY {
             let mut sketch = DDSketch::with_log_mapping(gamma(), f64::from(key_bias())).unwrap();

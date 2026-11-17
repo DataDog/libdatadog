@@ -461,7 +461,6 @@ fn test_send_encoded_profile_with_attachments() {
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn test_send_encoded_profile_file_export_preserves_metadata() {
     let mut profile = create_test_profile();
     profile.add_sample(&create_test_sample());
@@ -545,7 +544,6 @@ fn test_send_encoded_profile_file_export_preserves_metadata() {
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn test_send_encoded_profile_with_cancelled_token_does_not_send() {
     let mut profile = create_test_profile();
     profile.add_sample(&create_test_sample());

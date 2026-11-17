@@ -34,7 +34,6 @@ pub unsafe extern "C" fn ddog_crasht_demangle(
 
 #[cfg(all(test, not(miri)))]
 #[test]
-#[cfg_attr(miri, ignore)]
 fn test_demangle() {
     // It appears that Miri might change the behavior of symbolic_common::Name::demangle, so we
     // don't run this test under Miri.
