@@ -1423,6 +1423,7 @@ dependencies = [
  "rand 0.8.8",
  "rmp-serde",
  "rmpv",
+ "semver",
  "serde",
  "serde_json",
  "serde_with",
@@ -3721,6 +3722,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.17",
+ "tools",
 ]
 
 [[package]]

@@ -8,9 +8,11 @@ use criterion::criterion_main;
 mod benchmarks;
 
 criterion_main!(
+    benchmarks::obfuscate_span_bench::alloc_benches,
     benchmarks::credit_cards_bench::benches,
     benchmarks::redis_obfuscation_bench::benches,
     benchmarks::replace_trace_tags_bench::benches,
+    benchmarks::obfuscate_span_bench::benches,
     benchmarks::sql_obfuscation_bench::benches,
     benchmarks::ip_address_bench::benches,
 );
