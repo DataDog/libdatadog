@@ -61,13 +61,12 @@ fetcher.run(cancellation_token).await;
 Each request sends `service` in the `DD-Service` header. The CDN uses it to
 attribute usage to the service. The value is the service name after the trace
 normalizer (`normalize_service` in `libdd-trace-normalization`), so
-`My Service` becomes `my_service`.
+`My Service` becomes `my_service`. A non-ASCII name, such as `café-api`, goes
+out as UTF-8 bytes.
 
-If the normalized name is the normalizer fallback `unnamed-service` or is not
-printable ASCII, requests have no header. Examples are `café-api`, `支付` and
-`___`. The CDN decides which names it
-accepts and drops the others. This is not a validation error. The fetcher logs
-it once at debug level. `service` is part of the subscription identity, so each
+If the normalized name is empty or the normalizer fallback `unnamed-service`
+(for example from `___`), requests have no header. This is not a validation
+error. The fetcher logs it once at debug level. `service` is part of the subscription identity, so each
 service has its own fetcher.
 
 `CdnEndpoint::custom(url)` carries no Datadog API key. Redirects are not

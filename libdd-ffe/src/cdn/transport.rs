@@ -196,26 +196,24 @@ const FALLBACK_SERVICE: &str = "unnamed-service";
 /// Returns the `DD-Service` value: the normalized service name, or `None`.
 ///
 /// The name comes from the trace normalizer ([`normalize_service`]), so
-/// `My Service` becomes `my_service`. If the normalized name is the normalizer
-/// fallback `unnamed-service` (for example from `___`), or is not printable
-/// ASCII (`café-api`, `支付`), the request has no header. A service that is
-/// itself named `unnamed-service` also has no header, because it is the same
-/// value as the fallback.
+/// `My Service` becomes `my_service`, and `café-api` stays `café-api`. If the
+/// normalized name is empty or the normalizer fallback `unnamed-service` (for
+/// example from `___`), the request has no header. A service that is itself
+/// named `unnamed-service` also has no header, because it is the same value as
+/// the fallback.
 ///
-/// The CDN alone decides which values it accepts. It drops the others. The
-/// `http` crate accepts UTF-8 header values, but some tracer HTTP clients reject
-/// them, so all SDKs send only printable ASCII. The returned value is always a
-/// valid header value, so a service cannot make requests fail.
+/// The `http` crate accepts UTF-8 header values and sends their bytes. The
+/// normalizer replaces line breaks and other control characters with `_`, so
+/// the returned value is always a valid header value, and a service cannot
+/// make requests fail.
 fn usage_service(service: Option<String>) -> Option<String> {
     let service = service.filter(|service| !service.is_empty())?;
     let mut normalized = service.clone();
     normalize_service(&mut normalized);
-    let accepted = normalized != FALLBACK_SERVICE
-        && !normalized.is_empty()
-        && normalized.bytes().all(|byte| byte.is_ascii_graphic());
+    let accepted = normalized != FALLBACK_SERVICE && !normalized.is_empty();
     if !accepted {
         log::debug!(
-            "Feature Flags: service {service:?} has no ASCII normalized name; DD-Service header not sent"
+            "Feature Flags: service {service:?} has an empty normalized name; DD-Service header not sent"
         );
     }
     accepted.then_some(normalized)
@@ -409,12 +407,13 @@ mod tests {
         // The trace normalizer has its own tests. These rows check only that the
         // header carries its result, and that some results send no header.
         // (configured service, DD-Service header)
-        let rows: [(&str, Option<&str>); 6] = [
+        let rows: [(&str, Option<&str>); 7] = [
             ("checkout", Some("checkout")),
             ("My Service", Some("my_service")),
             ("Default Web Site/Shop", Some("default_web_site/shop")),
-            // Not printable ASCII.
-            ("café-api", None),
+            // The header carries non-ASCII names as UTF-8 bytes.
+            ("café-api", Some("café-api")),
+            ("支付", Some("支付")),
             // The normalizer fallback `unnamed-service`.
             ("___", None),
             ("   ", None),
@@ -430,8 +429,8 @@ mod tests {
                 request
                     .headers()
                     .get(SERVICE_HEADER)
-                    .map(|value| value.to_str().unwrap()),
-                header,
+                    .map(|value| value.as_bytes()),
+                header.map(str::as_bytes),
                 "{service:?}"
             );
             // A service that is set but not sent has one debug log.
@@ -442,7 +441,7 @@ mod tests {
                 assert_eq!(
                     logs[0].message,
                     format!(
-                        "Feature Flags: service {service:?} has no ASCII normalized name; DD-Service header not sent"
+                        "Feature Flags: service {service:?} has an empty normalized name; DD-Service header not sent"
                     )
                 );
             } else {

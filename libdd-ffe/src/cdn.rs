@@ -30,8 +30,8 @@ pub struct CdnConfig {
     /// The service name. Requests send it in the `DD-Service` header, so the
     /// CDN can attribute usage to the service. The header has the name from the
     /// trace normalizer (`libdd-trace-normalization`): `My Service` becomes
-    /// `my_service`. If that name is the normalizer fallback `unnamed-service`
-    /// or is not printable ASCII (`café-api`, `___`), requests have no header.
+    /// `my_service`. If that name is empty or the normalizer fallback
+    /// `unnamed-service` (for example from `___`), requests have no header.
     /// This is not a validation error, so flag fetching continues.
     #[serde(default)]
     pub service: Option<String>,
@@ -257,8 +257,14 @@ mod tests {
     /// Polls the root of `server` as a custom CDN endpoint. Stops after
     /// `polls` successful polls.
     async fn fetch(server: &httpmock::MockServer, service: Option<&str>, polls: usize) {
+        fetch_url(&server.base_url(), service, polls).await;
+    }
+
+    /// Polls `base_url` as a custom CDN endpoint. Stops after `polls`
+    /// successful polls.
+    async fn fetch_url(base_url: &str, service: Option<&str>, polls: usize) {
         let config = CdnConfig {
-            endpoint: CdnEndpoint::custom(&server.base_url()).unwrap(),
+            endpoint: CdnEndpoint::custom(base_url).unwrap(),
             poll_interval: Duration::from_millis(10),
             request_timeout: Duration::from_secs(1),
             language: "php".into(),
@@ -335,6 +341,59 @@ mod tests {
         }
     }
 
+    /// Serves `EMPTY_CONFIG` on a local socket, and records the raw bytes of
+    /// the `DD-Service` value of each request. httpmock cannot match a header
+    /// value that is not ASCII.
+    fn raw_server() -> (String, Arc<std::sync::Mutex<Vec<Vec<u8>>>>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let received = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let recorded = received.clone();
+        std::thread::spawn(move || {
+            for mut stream in listener.incoming().flatten() {
+                let mut request = Vec::new();
+                let mut buffer = [0; 1024];
+                while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+                    match stream.read(&mut buffer) {
+                        Ok(0) | Err(_) => break,
+                        Ok(read) => request.extend_from_slice(&buffer[..read]),
+                    }
+                }
+                let service = request.split(|byte| *byte == b'\n').find_map(|line| {
+                    let line = line.strip_suffix(b"\r").unwrap_or(line);
+                    let (name, value) = line.split_at(line.iter().position(|b| *b == b':')?);
+                    name.eq_ignore_ascii_case(b"dd-service")
+                        .then(|| value[1..].trim_ascii().to_vec())
+                });
+                recorded.lock().unwrap().extend(service);
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{EMPTY_CONFIG}",
+                    EMPTY_CONFIG.len()
+                );
+            }
+        });
+        (base_url, received)
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore = "requires native HTTP")]
+    async fn a_non_ascii_service_is_sent_as_utf8_and_fetching_continues() {
+        for service in ["café-api", "支付"] {
+            let (base_url, received) = raw_server();
+
+            fetch_url(&base_url, Some(service), 2).await;
+
+            let received = received.lock().unwrap();
+            assert!(received.len() >= 2, "{service:?}");
+            assert!(
+                received.iter().all(|value| value == service.as_bytes()),
+                "{service:?}"
+            );
+        }
+    }
+
     #[tokio::test]
     #[cfg_attr(miri, ignore = "requires native HTTP")]
     async fn a_missing_service_omits_dd_service_and_keeps_fetching() {
@@ -357,10 +416,9 @@ mod tests {
 
     #[tokio::test]
     #[cfg_attr(miri, ignore = "requires native HTTP")]
-    async fn a_service_without_an_ascii_normalized_name_omits_dd_service_and_keeps_fetching() {
-        // The normalizer keeps the non-ASCII letters of `café-api` and `支付`.
+    async fn a_service_without_a_normalized_name_omits_dd_service_and_keeps_fetching() {
         // `___` becomes the normalizer fallback `unnamed-service`.
-        for service in ["café-api", "支付", "___"] {
+        for service in ["___", "!!!"] {
             let server = httpmock::MockServer::start_async().await;
             let without_service = server
                 .mock_async(|when, then| {
