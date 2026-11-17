@@ -7,7 +7,7 @@
 #define CHECK(condition) do { if (!(condition)) { fprintf(stderr, "failed: %s\n", #condition); return 1; } } while (0)
 
 int main(void) {
-    const char *json = "{\"createdAt\":\"2026-01-01T00:00:00Z\",\"environment\":{\"name\":\"test\"},\"observeFullEvaluationData\":false,\"flags\":{\"root\":{\"key\":\"root\",\"enabled\":true,\"variationType\":\"BOOLEAN\",\"variations\":{\"on\":{\"key\":\"on\",\"value\":true},\"off\":{\"key\":\"off\",\"value\":false}},\"allocations\":[{\"key\":\"root-allocation\",\"doLog\":true,\"splits\":[{\"variationKey\":\"on\",\"shards\":[]}],\"rules\":[{\"conditions\":[{\"flagEvaluation\":{\"key\":\"parent\"},\"operator\":\"ONE_OF\",\"value\":[\"on\"]},{\"flagEvaluation\":{\"key\":\"parent\"},\"operator\":\"ONE_OF\",\"value\":[\"on\"]}]}]}]},\"parent\":{\"key\":\"parent\",\"enabled\":true,\"variationType\":\"BOOLEAN\",\"variations\":{\"on\":{\"key\":\"on\",\"value\":true},\"off\":{\"key\":\"off\",\"value\":false}},\"allocations\":[{\"key\":\"parent-allocation\",\"doLog\":true,\"splits\":[{\"variationKey\":\"on\",\"shards\":[]}]}]},\"missing\":{\"key\":\"missing\",\"enabled\":true,\"variationType\":\"BOOLEAN\",\"variations\":{\"on\":{\"key\":\"on\",\"value\":true},\"off\":{\"key\":\"off\",\"value\":false}},\"allocations\":[{\"key\":\"missing-allocation\",\"doLog\":true,\"splits\":[{\"variationKey\":\"on\",\"shards\":[]}],\"rules\":[{\"conditions\":[{\"flagEvaluation\":{\"key\":\"absent\"},\"operator\":\"ONE_OF\",\"value\":[\"on\"]}]}]}]}}}";
+    const char *json = "{\"createdAt\":\"2026-01-01T00:00:00Z\",\"environment\":{\"name\":\"test\"},\"observeFullEvaluationData\":false,\"flags\":{\"root\":{\"key\":\"root\",\"enabled\":true,\"variationType\":\"BOOLEAN\",\"variations\":{\"on\":{\"key\":\"on\",\"value\":true},\"off\":{\"key\":\"off\",\"value\":false}},\"allocations\":[{\"key\":\"root-allocation\",\"doLog\":true,\"splits\":[{\"variationKey\":\"on\",\"shards\":[]}],\"rules\":[{\"conditions\":[{\"flagEvaluation\":{\"key\":\"parent\"},\"operator\":\"ONE_OF\",\"value\":[\"on\"]},{\"flagEvaluation\":{\"key\":\"parent\"},\"operator\":\"ONE_OF\",\"value\":[\"on\"]}]}]}]},\"parent\":{\"key\":\"parent\",\"enabled\":true,\"variationType\":\"BOOLEAN\",\"variations\":{\"on\":{\"key\":\"on\",\"value\":true},\"off\":{\"key\":\"off\",\"value\":false}},\"allocations\":[{\"key\":\"parent-allocation\",\"doLog\":true,\"splits\":[{\"variationKey\":\"on\",\"shards\":[]}]}]}}}";
     struct ddog_ffe_Result_HandleConfiguration parsed = ddog_ffe_configuration_new(
         (struct ddog_ffe_BorrowedStr){.ptr = (const uint8_t *)json, .len = strlen(json)});
     CHECK(parsed.tag == DDOG_FFE_RESULT_HANDLE_CONFIGURATION_OK_HANDLE_CONFIGURATION);
@@ -15,9 +15,8 @@ int main(void) {
     ddog_ffe_Handle_EvaluationContext context = ddog_ffe_evaluation_context_new("subject", NULL, 0);
     ddog_ffe_Handle_ResolutionDetails root = ddog_ffe_get_assignment(
         config, "root", DDOG_FFE_EXPECTED_FLAG_TYPE_BOOLEAN, context);
+    // parent is referenced twice but reported once.
     CHECK(ddog_ffe_assignment_dependency_count(root) == 1);
-    CHECK(ddog_ffe_assignment_dependency_error_code(root, 0) == DDOG_FFE_ERROR_CODE_OK);
-    CHECK(ddog_ffe_assignment_dependency_error_code(root, 1) == DDOG_FFE_ERROR_CODE_GENERAL);
     struct ddog_ffe_BorrowedStr key = ddog_ffe_assignment_dependency_key(root, 0);
     CHECK(key.len == 6 && memcmp(key.ptr, "parent", 6) == 0);
     CHECK(ddog_ffe_assignment_dependency_exposure_eligible(root, 0));

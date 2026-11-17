@@ -388,7 +388,9 @@ unsafe fn get_assignment_with_mode(
     Handle::new(details)
 }
 
-/// Number of unique prerequisites reached by this evaluation.
+/// Number of distinct prerequisite flags reached while evaluating this root, including transitive
+/// prerequisites and those on rules that did not match; excludes the root. Indices follow
+/// completion order. Always 0 for handles returned by `ddog_ffe_assignment_dependency_result`.
 /// # Safety
 /// `assignment` must be a live handle.
 #[unsafe(no_mangle)]
@@ -435,28 +437,6 @@ pub unsafe extern "C" fn ddog_ffe_assignment_dependency_exposure_eligible(
         .dependencies
         .get(index)
         .is_some_and(|record| record.exposure_eligible)
-}
-
-/// Error code for a prerequisite's own evaluation event. Disabled prerequisites and prerequisites
-/// with no assignment report General, even though their child result handles report Ok.
-/// Invalid indices return General.
-/// # Safety
-/// `assignment` must be a live handle.
-#[unsafe(no_mangle)]
-// allow(ffi-panic-boundary): bounds-checked lookup of an owned result does not allocate.
-// Requires a live handle; `Handle::as_ref` can panic on a null handle.
-pub unsafe extern "C" fn ddog_ffe_assignment_dependency_error_code(
-    assignment: Handle<ResolutionDetails>,
-    index: usize,
-) -> ErrorCode {
-    // SAFETY: caller guarantees a live handle.
-    let record = unsafe { assignment.as_ref() }.dependencies.get(index);
-    match record.map(|record| &record.result) {
-        Some(Ok(_)) => ErrorCode::Ok,
-        Some(Err(EvaluationError::FlagDisabled | EvaluationError::DefaultAllocationNull))
-        | None => ErrorCode::General,
-        Some(Err(error)) => ErrorCode::from(error),
-    }
 }
 
 /// Copies a prerequisite result into an independently owned handle, including errors.
@@ -955,26 +935,6 @@ mod tests {
                 unsafe { ddog_ffe_assignment_dependency_exposure_eligible(eligibility_handle, 0) },
                 prerequisite == "parent"
             );
-            for (index, expected) in [
-                (
-                    0,
-                    match prerequisite {
-                        "parent" => ErrorCode::Ok,
-                        "missing" => ErrorCode::FlagNotFound,
-                        _ => ErrorCode::General,
-                    },
-                ),
-                (1, ErrorCode::General),
-                (usize::MAX, ErrorCode::General),
-            ] {
-                // SAFETY: this copy borrows the live root throughout the call.
-                let handle = unsafe { std::ptr::read(&root) };
-                assert_eq!(
-                    // SAFETY: handle borrows the live root, including for invalid indices.
-                    unsafe { ddog_ffe_assignment_dependency_error_code(handle, index) },
-                    expected
-                );
-            }
             // SAFETY: this copy borrows the live root.
             let result_handle = unsafe { std::ptr::read(&root) };
             // SAFETY: result_handle is live; the returned copy owns its result independently.
@@ -1007,6 +967,107 @@ mod tests {
             // SAFETY: all child borrows ended; free its owned copy once.
             unsafe { ddog_ffe_assignment_drop(&mut dependency) };
         }
+    }
+
+    #[test]
+    fn entry_point_exposes_ordered_prerequisites_and_selected_path_eligibility() {
+        // root's first allocation reads `a` and is rejected; the second reads `b`, which reads `c`.
+        let json = br#"{"createdAt":"2026-01-01T00:00:00Z","environment":{"name":"test"},"flags":{
+          "root":{"key":"root","enabled":true,"variationType":"BOOLEAN",
+            "variations":{"on":{"key":"on","value":true},"off":{"key":"off","value":false}},
+            "allocations":[
+              {"key":"rejected","doLog":true,"rules":[{"conditions":[{"flagEvaluation":{"key":"a"},"operator":"ONE_OF","value":["off"]}]}],"splits":[{"variationKey":"off","shards":[]}]},
+              {"key":"selected","doLog":true,"rules":[{"conditions":[{"flagEvaluation":{"key":"b"},"operator":"ONE_OF","value":["on"]}]}],"splits":[{"variationKey":"on","shards":[]}]}]},
+          "a":{"key":"a","enabled":true,"variationType":"BOOLEAN","variations":{"on":{"key":"on","value":true}},
+            "allocations":[{"key":"a-allocation","doLog":true,"splits":[{"variationKey":"on","shards":[]}]}]},
+          "b":{"key":"b","enabled":true,"variationType":"BOOLEAN","variations":{"on":{"key":"on","value":true}},
+            "allocations":[{"key":"b-allocation","doLog":true,"rules":[{"conditions":[{"flagEvaluation":{"key":"c"},"operator":"ONE_OF","value":["on"]}]}],"splits":[{"variationKey":"on","shards":[]}]}]},
+          "c":{"key":"c","enabled":true,"variationType":"BOOLEAN","variations":{"on":{"key":"on","value":true}},
+            "allocations":[{"key":"c-allocation","doLog":true,"splits":[{"variationKey":"on","shards":[]}]}]}}}"#;
+        let mut config = Handle::new(Configuration::from_server_response(
+            ffe::UniversalFlagConfig::from_json(json.to_vec()).unwrap(),
+        ));
+        let mut context = Handle::new(EvaluationContext::new(
+            Some("subject".into()),
+            Default::default(),
+        ));
+        // SAFETY: the copy borrows config, which is freed below.
+        let config_copy = unsafe { std::ptr::read(&config) };
+        // SAFETY: the copy borrows context, which is freed below.
+        let context_copy = unsafe { std::ptr::read(&context) };
+        // SAFETY: both handles are live and the key is NUL-terminated.
+        let mut root = unsafe {
+            ddog_ffe_get_assignment(
+                config_copy,
+                c"root".as_ptr(),
+                ExpectedFlagType::Boolean,
+                context_copy,
+            )
+        };
+        // SAFETY: each copy borrows root, which stays live until it is freed below.
+        let r = || unsafe { std::ptr::read(&root) };
+        assert_eq!(
+            // SAFETY: root is live.
+            unsafe { ddog_ffe_assignment_get_error_code(r()) },
+            ErrorCode::Ok
+        );
+        // SAFETY: root is live.
+        assert_eq!(unsafe { ddog_ffe_assignment_dependency_count(r()) }, 3);
+        for (index, (key, eligible)) in [("a", false), ("c", true), ("b", true)]
+            .into_iter()
+            .enumerate()
+        {
+            // SAFETY: root is live, so the key borrow is valid for this iteration.
+            let actual = unsafe { ddog_ffe_assignment_dependency_key(r(), index) };
+            // SAFETY: actual borrows from the live root.
+            assert_eq!(unsafe { actual.as_bytes() }, key.as_bytes());
+            assert_eq!(
+                // SAFETY: root is live.
+                unsafe { ddog_ffe_assignment_dependency_exposure_eligible(r(), index) },
+                eligible
+            );
+            // SAFETY: root is live; the child is freed below.
+            let mut child = unsafe { ddog_ffe_assignment_dependency_result(r(), index) };
+            // SAFETY: the copy borrows the live child.
+            let child_count_copy = unsafe { std::ptr::read(&child) };
+            assert_eq!(
+                // SAFETY: child is live; child results do not retain prerequisite observations.
+                unsafe { ddog_ffe_assignment_dependency_count(child_count_copy) },
+                0
+            );
+            // SAFETY: the copy borrows the live child.
+            let child_copy = unsafe { std::ptr::read(&child) };
+            // SAFETY: child is live.
+            let allocation = unsafe { ddog_ffe_assignment_get_allocation_key(child_copy) };
+            assert_eq!(
+                // SAFETY: allocation borrows from the live child.
+                unsafe { allocation.as_bytes() },
+                format!("{key}-allocation").as_bytes()
+            );
+            // SAFETY: child is freed once.
+            unsafe { ddog_ffe_assignment_drop(&mut child) };
+        }
+        // SAFETY: root is live.
+        assert_eq!(unsafe { ddog_ffe_assignment_dependency_key(r(), 3) }.len, 0);
+        // SAFETY: root is live.
+        assert!(!unsafe { ddog_ffe_assignment_dependency_exposure_eligible(r(), 3) });
+        // SAFETY: root is live; the invalid-index child is freed below.
+        let mut invalid = unsafe { ddog_ffe_assignment_dependency_result(r(), 3) };
+        // SAFETY: invalid is live.
+        let details = unsafe { invalid.as_ref() };
+        assert_eq!(ErrorCode::from(details), ErrorCode::General);
+        assert_eq!(
+            details.error_message.as_deref(),
+            Some("internal error: invalid prerequisite index")
+        );
+        // SAFETY: invalid is freed exactly once.
+        unsafe { ddog_ffe_assignment_drop(&mut invalid) };
+        // SAFETY: all root borrows ended; root is freed exactly once.
+        unsafe { ddog_ffe_assignment_drop(&mut root) };
+        // SAFETY: config is freed exactly once after the evaluation.
+        unsafe { crate::configuration::ddog_ffe_configuration_drop(&mut config) };
+        // SAFETY: context is freed exactly once after the evaluation.
+        unsafe { crate::evaluation_context::ddog_ffe_evaluation_context_drop(&mut context) };
     }
 
     #[test]

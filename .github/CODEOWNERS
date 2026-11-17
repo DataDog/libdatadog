@@ -125,6 +125,7 @@ flake.*                              @DataDog/nix-guild @DataDog/apm-common-comp
 
 # Specific overrides (must come after their general patterns above)
 examples/ffi/ffe.c                  @DataDog/feature-flagging-and-experimentation-sdk
+examples/ffi/ffe_dependencies.c     @DataDog/feature-flagging-and-experimentation-sdk
 bin_tests/tests/test_the_tests.rs    @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 bin_tests/src/bin/test_the_tests.rs  @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 tools/sidecar_mockgen/               @DataDog/libdatadog-php
