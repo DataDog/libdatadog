@@ -23,6 +23,7 @@ fn event() -> FfeFlagEvaluationEvent {
         flag: FlagKey {
             key: "protected".into(),
         },
+        environment: None,
         first_evaluation: 1_760_000_000_000,
         last_evaluation: 1_760_000_000_001,
         evaluation_count: 7,

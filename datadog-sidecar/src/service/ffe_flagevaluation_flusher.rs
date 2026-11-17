@@ -266,6 +266,7 @@ mod tests {
             flag: FlagKey {
                 key: "my-flag".to_owned(),
             },
+            environment: None,
             first_evaluation: 1_699_999_990_000,
             last_evaluation: 1_700_000_000_000,
             evaluation_count: 5,

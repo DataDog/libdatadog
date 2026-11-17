@@ -247,6 +247,7 @@ fn flag_eval_events(profile: FlagEvalBenchProfile) -> Vec<FfeFlagEvaluationEvent
             flag: FlagKey {
                 key: format!("bench-flag-{}", i % profile.num_flags),
             },
+            environment: None,
             first_evaluation: 1_760_000_000_000 + i as i64,
             last_evaluation: 1_760_000_000_000 + i as i64,
             evaluation_count: 1,

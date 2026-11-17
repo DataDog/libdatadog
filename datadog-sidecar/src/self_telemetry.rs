@@ -478,6 +478,7 @@ mod tests {
             flag: FlagKey {
                 key: "test-flag".into(),
             },
+            environment: None,
             variant: None,
             allocation: None,
             targeting_rule: None,

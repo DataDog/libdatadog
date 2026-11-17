@@ -2013,6 +2013,7 @@ mod tests {
                 flag: FlagKey {
                     key: "flag".to_owned(),
                 },
+                environment: None,
                 first_evaluation: 100,
                 last_evaluation: 123,
                 evaluation_count: 1,
