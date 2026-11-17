@@ -107,6 +107,10 @@ pub struct FfeFlagEvaluationEvent {
     pub timestamp: i64,
     /// Required: the flag key.
     pub flag: FlagKey,
+    /// Identity of the feature flag environment whose configuration produced this evaluation.
+    /// Absent when no configuration was evaluated or both fields are unavailable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environment: Option<FlagEvaluationEnvironment>,
     /// Earliest evaluation in this bucket (milliseconds since epoch).
     pub first_evaluation: i64,
     /// Latest evaluation in this bucket (milliseconds since epoch).
@@ -194,6 +198,17 @@ impl std::fmt::Debug for FfeFlagEvaluationEvent {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct FlagKey {
     pub key: String,
+}
+
+/// Stable identity and display name of the feature flag environment.
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+pub struct FlagEvaluationEnvironment {
+    /// Stable environment identifier. Empty for legacy configurations.
+    #[serde(default)]
+    pub id: String,
+    /// Environment name captured from the same configuration as `id`.
+    #[serde(default)]
+    pub name: String,
 }
 
 /// Holds the variant key for the `variant` field.
@@ -390,6 +405,7 @@ fn add_counter(counter: &AtomicU64, count: u64) {
 struct EventKey {
     // Degraded rows intentionally ignore consent, unlike full-detail rows.
     consent: Option<bool>,
+    environment: Option<FlagEvaluationEnvironment>,
     flag_key: String,
     variant_key: Option<String>,
     allocation_key: Option<String>,
@@ -409,6 +425,7 @@ impl EventKey {
         }
         Self {
             consent: Some(event.observe_full_evaluation_data),
+            environment: event.environment.clone(),
             flag_key: event.flag.key.clone(),
             variant_key: event.variant.as_ref().map(|v| v.key.clone()),
             allocation_key: event.allocation.as_ref().map(|a| a.key.clone()),
@@ -431,6 +448,7 @@ impl EventKey {
     fn degraded(event: &FfeFlagEvaluationEvent) -> Self {
         Self {
             consent: None,
+            environment: event.environment.clone(),
             flag_key: event.flag.key.clone(),
             variant_key: event.variant.as_ref().map(|v| v.key.clone()),
             allocation_key: event.allocation.as_ref().map(|a| a.key.clone()),
@@ -880,6 +898,7 @@ fn degrade_event_for_payload_limit(
     Some(FfeFlagEvaluationEvent {
         timestamp: event.timestamp,
         flag: event.flag.clone(),
+        environment: event.environment.clone(),
         first_evaluation: event.first_evaluation,
         last_evaluation: event.last_evaluation,
         evaluation_count: event.evaluation_count,
@@ -923,6 +942,15 @@ fn build_event_payload(event: &FfeFlagEvaluationEvent) -> Result<String, serde_j
         object.remove("observe_full_evaluation_data");
         object.remove("is_degraded");
         object.remove("field_omissions");
+        if let Some(environment) = object
+            .get_mut("environment")
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            environment.retain(|_, value| value.as_str().is_none_or(|value| !value.is_empty()));
+            if environment.is_empty() {
+                object.remove("environment");
+            }
+        }
         if event.is_degraded {
             object.remove("targeting_key");
             object.remove("context");
@@ -1474,6 +1502,7 @@ mod tests {
             flag: FlagKey {
                 key: "my-flag".to_owned(),
             },
+            environment: None,
             first_evaluation: 1_699_999_990_000,
             last_evaluation: 1_700_000_000_000,
             evaluation_count: 42,
@@ -1530,6 +1559,40 @@ mod tests {
         assert_eq!(ev["variant"]["key"], "on");
         assert_eq!(ev["allocation"]["key"], "alloc-a");
         assert_eq!(ev["targeting_key"], "user-123");
+        assert!(ev.get("environment").is_none());
+    }
+
+    #[test]
+    fn payload_emits_environment_identity_and_supports_legacy_configs() {
+        let mut current = full_event();
+        current.environment = Some(FlagEvaluationEnvironment {
+            id: "11111111-1111-4111-8111-111111111111".to_owned(),
+            name: "Production".to_owned(),
+        });
+        let mut legacy = full_event();
+        legacy.environment = Some(FlagEvaluationEnvironment {
+            id: String::new(),
+            name: "Legacy".to_owned(),
+        });
+        legacy.flag.key = "legacy-flag".to_owned();
+
+        let payload = build_payload(&FfeFlagEvaluationBatch {
+            context: context(),
+            flag_evaluations: vec![current, legacy],
+        })
+        .unwrap();
+        let value: Value = serde_json::from_str(&payload).unwrap();
+        assert_eq!(
+            value["flagEvaluations"][0]["environment"],
+            json!({
+                "id": "11111111-1111-4111-8111-111111111111",
+                "name": "Production"
+            })
+        );
+        assert_eq!(
+            value["flagEvaluations"][1]["environment"],
+            json!({"name": "Legacy"})
+        );
     }
 
     fn degraded_event() -> FfeFlagEvaluationEvent {
@@ -1538,6 +1601,7 @@ mod tests {
             flag: FlagKey {
                 key: "flag-b".to_owned(),
             },
+            environment: None,
             first_evaluation: 1_699_999_990_000,
             last_evaluation: 1_700_000_000_000,
             evaluation_count: 7,
@@ -2013,6 +2077,10 @@ mod tests {
     #[test]
     fn payload_encoding_degrades_oversized_full_event_before_drop() {
         let mut oversized = full_event();
+        oversized.environment = Some(FlagEvaluationEnvironment {
+            id: "11111111-1111-4111-8111-111111111111".to_owned(),
+            name: "Production".to_owned(),
+        });
         oversized.targeting_rule = Some(TargetingRuleKey {
             key: "rule-1".to_owned(),
         });
@@ -2035,6 +2103,7 @@ mod tests {
         assert_eq!(degraded.last_evaluation, oversized.last_evaluation);
         assert_eq!(degraded.evaluation_count, oversized.evaluation_count);
         assert_eq!(degraded.flag.key, oversized.flag.key);
+        assert_eq!(degraded.environment, oversized.environment);
         assert_eq!(
             degraded.observe_full_evaluation_data,
             oversized.observe_full_evaluation_data
@@ -2090,6 +2159,13 @@ mod tests {
         assert_eq!(ev["allocation"]["key"], "alloc-a");
         assert_eq!(ev["targeting_rule"]["key"], "rule-1");
         assert_eq!(ev["error"]["message"], "GENERAL");
+        assert_eq!(
+            ev["environment"],
+            json!({
+                "id": "11111111-1111-4111-8111-111111111111",
+                "name": "Production"
+            })
+        );
     }
 
     #[test]
@@ -2137,6 +2213,40 @@ mod tests {
         assert_eq!(batches[0].1.flag_evaluations.len(), 1);
         assert_eq!(batches[0].1.flag_evaluations[0].evaluation_count, 84);
         assert!(coalescer.finish_flush_cycle());
+    }
+
+    #[test]
+    fn coalescer_does_not_merge_different_environment_identities() {
+        let coalescer = FlagEvaluationEvpCoalescer::<String>::default();
+        for (id, name) in [
+            ("11111111-1111-4111-8111-111111111111", "Production"),
+            ("11111111-1111-4111-8111-111111111111", "Renamed"),
+            ("22222222-2222-4222-8222-222222222222", "Production"),
+        ] {
+            let mut event = full_event();
+            event.environment = Some(FlagEvaluationEnvironment {
+                id: id.to_owned(),
+                name: name.to_owned(),
+            });
+            coalescer.enqueue(
+                "agent".to_owned(),
+                FfeFlagEvaluationBatch {
+                    context: context(),
+                    flag_evaluations: vec![event],
+                },
+            );
+        }
+
+        let batches = coalescer.take_batches();
+        assert_eq!(batches.len(), 1);
+        assert_eq!(batches[0].1.flag_evaluations.len(), 3);
+        assert!(
+            batches[0]
+                .1
+                .flag_evaluations
+                .iter()
+                .all(|event| event.evaluation_count == 42)
+        );
     }
 
     #[cfg_attr(miri, ignore)] // large cap-boundary fixture is prohibitively slow under Miri

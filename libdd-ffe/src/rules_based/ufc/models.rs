@@ -41,6 +41,9 @@ pub(crate) struct UniversalFlagConfigWire {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Environment {
+    /// Stable identifier of the environment. Absent in legacy configurations.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<Str>,
     /// Name of the environment.
     pub name: Str,
 }

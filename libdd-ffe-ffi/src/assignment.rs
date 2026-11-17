@@ -14,9 +14,8 @@ use crate::Handle;
 
 /// Opaque type representing a result of evaluation.
 pub struct ResolutionDetails {
-    // Pin the inner result to ensure the memory address remains stable,
-    // allowing us to safely store borrowed pointers to its contents.
-    inner: Pin<Box<Result<Assignment, EvaluationError>>>,
+    // Pin the result and environment snapshot to keep borrowed metadata pointers stable.
+    inner: Pin<Box<ResolutionInner>>,
     // memoizing some fields, so we can hand off references to them:
     error_message: Option<String>,
     flag_metadata: Vec<KeyValue<BorrowedStr, BorrowedStr>>,
@@ -30,15 +29,38 @@ pub struct ResolutionDetails {
     #[allow(dead_code)]
     feature_destinations: Vec<BorrowedStr>,
 }
+
+struct EnvironmentIdentityBacking {
+    id: Option<Str>,
+    name: Str,
+}
+
+struct ResolutionInner {
+    result: Result<Assignment, EvaluationError>,
+    environment_identity: Option<EnvironmentIdentityBacking>,
+}
+
 impl ResolutionDetails {
     fn new(value: Result<Assignment, EvaluationError>) -> ResolutionDetails {
-        // Pin the value to the heap to ensure its memory address remains stable
-        let inner = Box::pin(value);
+        Self::new_with_environment(value, None)
+    }
 
-        let error_message = (*inner).as_ref().err().map(|err| err.to_string());
+    fn new_with_environment(
+        value: Result<Assignment, EvaluationError>,
+        environment: Option<(Option<Str>, Str)>,
+    ) -> ResolutionDetails {
+        // `Str` is optimized for cheap cloning, so the snapshot shares the UFC strings without
+        // copying their contents.
+        let inner = Box::pin(ResolutionInner {
+            result: value,
+            environment_identity: environment
+                .map(|(id, name)| EnvironmentIdentityBacking { id, name }),
+        });
 
-        let mut flag_metadata = Vec::new();
-        if let Ok(value) = (*inner).as_ref() {
+        let error_message = inner.result.as_ref().err().map(|err| err.to_string());
+
+        let mut flag_metadata = Vec::with_capacity(3);
+        if let Ok(value) = inner.result.as_ref() {
             flag_metadata.push(KeyValue {
                 key: BorrowedStr::borrow_static("__dd_allocation_key"),
                 // SAFETY: The returned BorrowedStr does not outlive the source string v. The
@@ -48,8 +70,24 @@ impl ResolutionDetails {
                 value: unsafe { BorrowedStr::borrow_from_str(&value.allocation_key) },
             });
         }
+        if let Some(identity) = &inner.environment_identity {
+            for (key, value) in [
+                (
+                    "__dd_environment_id",
+                    identity.id.as_ref().map_or("", Str::as_str),
+                ),
+                ("__dd_environment_name", identity.name.as_str()),
+            ] {
+                flag_metadata.push(KeyValue {
+                    key: BorrowedStr::borrow_static(key),
+                    // SAFETY: the strings live in pinned backing storage owned by
+                    // ResolutionDetails and are never modified.
+                    value: unsafe { BorrowedStr::borrow_from_str(value) },
+                });
+            }
+        }
 
-        let (features, feature_destinations) = Self::borrow_features((*inner).as_ref());
+        let (features, feature_destinations) = Self::borrow_features(inner.result.as_ref());
 
         ResolutionDetails {
             inner,
@@ -142,7 +180,7 @@ impl From<Result<Assignment, EvaluationError>> for ResolutionDetails {
 }
 impl AsRef<Result<Assignment, EvaluationError>> for ResolutionDetails {
     fn as_ref(&self) -> &Result<Assignment, EvaluationError> {
-        &self.inner
+        &self.inner.result
     }
 }
 
@@ -347,28 +385,30 @@ unsafe fn get_assignment_with_mode(
     context: Handle<EvaluationContext>,
     mode: ExperimentationOptOutMode,
 ) -> Handle<ResolutionDetails> {
+    // SAFETY: the caller must ensure that configuration handle is valid.
+    let config = unsafe { config.as_ref() };
+    let environment = config.environment_identity();
+    let with_environment = move |result| {
+        Handle::new(ResolutionDetails::new_with_environment(
+            result,
+            Some(environment),
+        ))
+    };
+
     if flag_key.is_null() {
-        return Handle::new(
-            EvaluationError::Internal(Str::from_static_str(
-                "ddog_ffe_get_assignment: flag_key must not be NULL",
-            ))
-            .into(),
-        );
+        return with_environment(Err(EvaluationError::Internal(Str::from_static_str(
+            "ddog_ffe_get_assignment: flag_key must not be NULL",
+        ))));
     }
 
-    // SAFETY: the caller must ensure that configuration handle is valid
-    let config = unsafe { config.as_ref() };
     // SAFETY: the caller must ensure that context handle is valid
     let context = unsafe { context.as_ref() };
 
     // SAFETY: we checked that flag_key is not NULL.
     let Ok(flag_key) = unsafe { CStr::from_ptr(flag_key) }.to_str() else {
-        return Handle::new(
-            EvaluationError::Internal(Str::from_static_str(
-                "ddog_ffe_get_assignment: flag_key is not a valid UTF-8 string",
-            ))
-            .into(),
-        );
+        return with_environment(Err(EvaluationError::Internal(Str::from_static_str(
+            "ddog_ffe_get_assignment: flag_key is not a valid UTF-8 string",
+        ))));
     };
 
     let assignment_result = config.eval_flag_with_options(
@@ -381,7 +421,7 @@ unsafe fn get_assignment_with_mode(
         },
     );
 
-    Handle::new(assignment_result.into())
+    with_environment(assignment_result)
 }
 
 #[repr(C)]
@@ -481,7 +521,7 @@ impl BorrowedStr {
     /// - The returned value must non outlive `s`.
     /// - `s` must not be modified while `BorrowedStr` is alive.
     #[inline]
-    unsafe fn borrow_from_str(s: &str) -> BorrowedStr {
+    pub(crate) unsafe fn borrow_from_str(s: &str) -> BorrowedStr {
         BorrowedStr {
             ptr: s.as_ptr(),
             len: s.len(),
@@ -496,7 +536,7 @@ impl BorrowedStr {
     }
 
     #[inline]
-    const fn empty() -> BorrowedStr {
+    pub(crate) const fn empty() -> BorrowedStr {
         BorrowedStr {
             ptr: std::ptr::null(),
             len: 0,
@@ -800,6 +840,58 @@ mod tests {
         assert!(details.flag_metadata.is_empty());
         // SAFETY: all borrows ended; free the owned result once.
         unsafe { ddog_ffe_assignment_drop(&mut result) };
+    }
+
+    fn metadata(details: &ResolutionDetails) -> HashMap<&str, &str> {
+        details
+            .flag_metadata
+            .iter()
+            .map(|entry| (borrowed(&entry.key), borrowed(&entry.value)))
+            .collect()
+    }
+
+    #[test]
+    fn evaluation_metadata_snapshots_environment_on_success_and_error() {
+        let identity = Some((
+            Some(Str::from("11111111-1111-4111-8111-111111111111")),
+            Str::from("Production"),
+        ));
+        let assignment = Assignment {
+            value: AssignmentValue::String(Str::from("on")),
+            variation_key: Str::from("on"),
+            allocation_key: Str::from("allocation"),
+            reason: AssignmentReason::Static,
+            serial_id: None,
+            do_log: true,
+            features: None,
+        };
+        let success = ResolutionDetails::new_with_environment(Ok(assignment), identity.clone());
+        assert_eq!(
+            metadata(&success),
+            HashMap::from([
+                ("__dd_allocation_key", "allocation"),
+                (
+                    "__dd_environment_id",
+                    "11111111-1111-4111-8111-111111111111",
+                ),
+                ("__dd_environment_name", "Production"),
+            ])
+        );
+
+        let error = ResolutionDetails::new_with_environment(
+            Err(EvaluationError::ConfigurationMissing),
+            identity,
+        );
+        assert_eq!(
+            metadata(&error),
+            HashMap::from([
+                (
+                    "__dd_environment_id",
+                    "11111111-1111-4111-8111-111111111111",
+                ),
+                ("__dd_environment_name", "Production"),
+            ])
+        );
     }
 
     #[test]
