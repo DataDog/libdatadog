@@ -87,7 +87,15 @@ pub unsafe extern "C" fn ddog_telemetry_handle_add_log(
 /// * value: `None` is reported as a `null` value; `Some("")` as an empty string
 /// * config_id: an empty slice means no config id
 /// * seq_id: optional sequence id of the configuration entry
-#[allow(clippy::missing_safety_doc)]
+///
+/// # Safety
+///
+/// * `handle` must be a valid, non-null pointer to a live `TelemetryWorkerHandle`, not dropped
+///   during the call.
+/// * Every `CharSlice` must point to `len` readable bytes (the pointer may be null only when `len`
+///   is 0) and must not be mutated during the call. Strings that are not valid UTF-8 return an
+///   error.
+/// * `value`, when `Some`, follows the same `CharSlice` rules.
 #[unsafe(no_mangle)]
 #[named]
 pub unsafe extern "C" fn ddog_telemetry_handle_add_config(
@@ -115,7 +123,14 @@ pub unsafe extern "C" fn ddog_telemetry_handle_add_config(
 }
 
 /// * version: an empty slice means no version
-#[allow(clippy::missing_safety_doc)]
+///
+/// # Safety
+///
+/// * `handle` must be a valid, non-null pointer to a live `TelemetryWorkerHandle`, not dropped
+///   during the call.
+/// * Every `CharSlice` must point to `len` readable bytes (the pointer may be null only when `len`
+///   is 0) and must not be mutated during the call. Strings that are not valid UTF-8 return an
+///   error.
 #[unsafe(no_mangle)]
 #[named]
 pub unsafe extern "C" fn ddog_telemetry_handle_add_product_change(
@@ -134,7 +149,17 @@ pub unsafe extern "C" fn ddog_telemetry_handle_add_product_change(
 
 /// * path: an empty slice means no path
 /// * request_body_type, response_body_type, response_code: an empty slice means not set
-#[allow(clippy::missing_safety_doc)]
+///
+/// # Safety
+///
+/// * `handle` must be a valid, non-null pointer to a live `TelemetryWorkerHandle`, not dropped
+///   during the call.
+/// * Every `CharSlice` must point to `len` readable bytes (the pointer may be null only when `len`
+///   is 0) and must not be mutated during the call. Strings that are not valid UTF-8 return an
+///   error.
+/// * `request_body_type`, `response_body_type` and `response_code` must each point to `len` valid,
+///   initialized elements (null only when `len` is 0), and each `CharSlice` element follows the
+///   rules above. None of them may be mutated during the call.
 #[unsafe(no_mangle)]
 #[named]
 pub unsafe extern "C" fn ddog_telemetry_handle_add_endpoint(
@@ -174,7 +199,11 @@ pub unsafe extern "C" fn ddog_telemetry_handle_add_endpoint(
 }
 
 /// Flushes aggregated metrics into the pending payload queue
-#[allow(clippy::missing_safety_doc)]
+///
+/// # Safety
+///
+/// * `handle` must be a valid, non-null pointer to a live `TelemetryWorkerHandle`, not dropped
+///   during the call.
 #[unsafe(no_mangle)]
 #[named]
 pub unsafe extern "C" fn ddog_telemetry_handle_flush_metrics(
@@ -189,7 +218,11 @@ pub unsafe extern "C" fn ddog_telemetry_handle_flush_metrics(
 }
 
 /// Sends all pending telemetry data
-#[allow(clippy::missing_safety_doc)]
+///
+/// # Safety
+///
+/// * `handle` must be a valid, non-null pointer to a live `TelemetryWorkerHandle`, not dropped
+///   during the call.
 #[unsafe(no_mangle)]
 #[named]
 pub unsafe extern "C" fn ddog_telemetry_handle_flush_data(
@@ -202,7 +235,11 @@ pub unsafe extern "C" fn ddog_telemetry_handle_flush_data(
 }
 
 /// Sends an app-extended-heartbeat message
-#[allow(clippy::missing_safety_doc)]
+///
+/// # Safety
+///
+/// * `handle` must be a valid, non-null pointer to a live `TelemetryWorkerHandle`, not dropped
+///   during the call.
 #[unsafe(no_mangle)]
 #[named]
 pub unsafe extern "C" fn ddog_telemetry_handle_send_extended_heartbeat(
