@@ -127,3 +127,33 @@ pub fn shm_limiter_path() -> CString {
     #[allow(clippy::unwrap_used)]
     CString::new(format!("/ddlimiters-{}", crate::shm_namespace())).unwrap()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::get_product_endpoint;
+    use http::uri::{Authority, Parts};
+    use libdd_trace_utils::config_utils::PROD_INTAKE_SUBDOMAIN;
+
+    #[test]
+    fn agentless_trace_intake_url() {
+        for site in ["datadoghq.com", "datadoghq.eu"] {
+            // Built like `ddog_endpoint_from_api_key_and_site`.
+            let mut parts = Parts::default();
+            parts.authority = Some(Authority::from_static(site));
+            let endpoint = Endpoint {
+                url: http::Uri::from_parts(parts).unwrap(),
+                api_key: Some("api-key".into()),
+                ..Default::default()
+            };
+            let mut config = Config::default();
+            config
+                .set_endpoint(get_product_endpoint(PROD_INTAKE_SUBDOMAIN, &endpoint))
+                .unwrap();
+
+            let expected = format!("https://trace.agent.{site}/api/v0.2/traces");
+            assert_eq!(config.endpoint.unwrap().url.to_string(), expected);
+            assert_eq!(config.endpoint_v1.unwrap().url.to_string(), expected);
+        }
+    }
+}

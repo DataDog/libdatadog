@@ -20,6 +20,7 @@ use libdd_ipc::SeqpacketConn;
 use libdd_ipc::platform::{FileBackedHandle, ShmHandle};
 use libdd_telemetry::metrics::MetricContext;
 use libdd_telemetry::worker::{LifecycleAction, TelemetryActions, TelemetryWorkerStats};
+use libdd_trace_normalization::normalizer_v1;
 use libdd_trace_utils::msgpack_encoder;
 use libdd_trace_utils::msgpack_encoder::v04::V1DowngradeOptions;
 use libdd_trace_utils::send_with_retry::{RetryBackoffType, RetryStrategy};
@@ -692,6 +693,15 @@ impl SidecarServer {
                 let lang_version = tracer_payload.language_version.clone();
                 let tracer_version = tracer_payload.tracer_version.clone();
                 let container_id = tracer_payload.container_id.clone();
+
+                // Agentless payloads skip the agent, so normalize them as it would have.
+                if supports_v1 && v1_target.api_key.is_some() {
+                    tracer_payload.chunks.retain_mut(|chunk| {
+                        normalizer_v1::normalize_chunk(chunk, lang.borrow())
+                            .inspect_err(|e| warn!("Dropping agentless V1 trace chunk: {e}"))
+                            .is_ok()
+                    });
+                }
 
                 // The V1 endpoint expects the tracer to mark top-level spans (`_dd.top_level`).
                 if supports_v1
@@ -3026,10 +3036,11 @@ mod tests {
     }
 
     fn sample_v1_trace_payload_bytes() -> Vec<u8> {
-        sample_v1_trace_payload_bytes_with_events(Default::default())
+        sample_v1_trace_payload_bytes_with("svc", Default::default())
     }
 
-    fn sample_v1_trace_payload_bytes_with_events(
+    fn sample_v1_trace_payload_bytes_with(
+        service: &str,
         span_events: libdd_trace_utils::span::v1::ThinVec<
             libdd_trace_utils::span::v1::SpanEventBytes,
         >,
@@ -3045,7 +3056,7 @@ mod tests {
         }
 
         let span = V1Span {
-            service: bs("svc"),
+            service: bs(service),
             name: bs("GET /users"),
             resource: bs("/users"),
             span_id: 42,
@@ -3177,6 +3188,71 @@ mod tests {
 
         v1_mock.assert_async().await;
         assert_eq!(v04_mock.calls_async().await, 0);
+    }
+
+    /// Agentless V1 payloads skip the agent, so the sidecar normalizes them; agent-bound payloads
+    /// are left for the agent to normalize.
+    #[tokio::test(flavor = "current_thread")]
+    #[cfg_attr(miri, ignore)]
+    async fn send_trace_v1_bytes_normalizes_only_agentless_payloads() {
+        for agentless in [true, false] {
+            let http_server = MockServer::start_async().await;
+            let path = if agentless {
+                "/api/v0.2/traces"
+            } else {
+                "/v1.0/traces"
+            };
+            let normalized = http_server
+                .mock_async(|when, then| {
+                    when.method(POST)
+                        .path(path)
+                        .body_includes("unnamed-rust-service");
+                    then.status(200);
+                })
+                .await;
+            let unnormalized = http_server
+                .mock_async(|when, then| {
+                    when.method(POST)
+                        .path(path)
+                        .body_excludes("unnamed-rust-service");
+                    then.status(200);
+                })
+                .await;
+
+            let mut handler = test_handler(SidecarServer::default());
+            let agent_info = prime_agent_info(
+                &http_server,
+                &handler.server,
+                &["/v0.4/traces", "/v1.0/traces"],
+            )
+            .await;
+            configure_session(&handler, InstanceId::new("session", "runtime"), |session| {
+                let endpoint = Endpoint {
+                    url: http_server.url("/").parse().unwrap(),
+                    api_key: agentless.then(|| "api-key".into()),
+                    ..Endpoint::default()
+                };
+                session.tracer_config.set_endpoint(endpoint).unwrap();
+                session.set_agent_info(agent_info);
+            });
+
+            handler
+                .send_trace_v1_bytes(
+                    sample_v1_trace_payload_bytes_with("", Default::default()),
+                    TracerGenericTags {
+                        client_computed_top_level: true,
+                        ..Default::default()
+                    },
+                    "cpython".to_owned(),
+                    "cpython-vendor".to_owned(),
+                )
+                .await;
+            sleep(TokioDuration::from_millis(50)).await;
+            handler.server.trace_flusher.join().await.unwrap();
+
+            assert_eq!(normalized.calls_async().await, usize::from(agentless));
+            assert_eq!(unnormalized.calls_async().await, usize::from(!agentless));
+        }
     }
 
     /// When the agent does not advertise `/v1.0/traces`, `send_trace_v1_bytes` downgrades to v0.4
@@ -3422,7 +3498,8 @@ mod tests {
 
             send_v1_and_flush(
                 &mut handler,
-                sample_v1_trace_payload_bytes_with_events(
+                sample_v1_trace_payload_bytes_with(
+                    "svc",
                     libdd_trace_utils::span::v1::ThinVec::from_iter([sample_span_event()]),
                 ),
             )

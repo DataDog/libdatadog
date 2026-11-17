@@ -1412,6 +1412,7 @@ dependencies = [
  "libdd-telemetry",
  "libdd-tinybytes",
  "libdd-trace-model",
+ "libdd-trace-normalization",
  "libdd-trace-stats",
  "libdd-trace-utils",
  "manual_future",
@@ -3699,6 +3700,7 @@ dependencies = [
  "arbitrary",
  "criterion",
  "duplicate",
+ "libdd-trace-model",
  "libdd-trace-protobuf",
  "rand 0.8.8",
 ]

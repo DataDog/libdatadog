@@ -75,7 +75,8 @@ pub fn trace_intake_url(site: &str) -> String {
 }
 
 pub fn trace_intake_url_prefixed(endpoint_prefix: &str) -> String {
-    format!("{endpoint_prefix}{TRACE_INTAKE_ROUTE}")
+    let prefix = endpoint_prefix.trim_end_matches('/');
+    format!("{prefix}{TRACE_INTAKE_ROUTE}")
 }
 
 pub fn trace_stats_url(site: &str) -> String {
@@ -83,7 +84,8 @@ pub fn trace_stats_url(site: &str) -> String {
 }
 
 pub fn trace_stats_url_prefixed(endpoint_prefix: &str) -> String {
-    format!("{endpoint_prefix}{TRACE_STATS_INTAKE_ROUTE}")
+    let prefix = endpoint_prefix.trim_end_matches('/');
+    format!("{prefix}{TRACE_STATS_INTAKE_ROUTE}")
 }
 
 fn construct_trace_intake_url(prefix: &str, route: &str) -> String {
@@ -110,6 +112,23 @@ mod tests {
             env::remove_var("K_SERVICE");
             env::remove_var("FUNCTION_TARGET");
             env::remove_var("ASCSVCRT_SPRING__APPLICATION__NAME");
+        }
+    }
+
+    #[test]
+    fn test_intake_url_prefixed_joins_without_double_slash() {
+        for prefix in [
+            "https://trace.agent.datadoghq.eu",
+            "https://trace.agent.datadoghq.eu/",
+        ] {
+            assert_eq!(
+                trace_intake_url_prefixed(prefix),
+                "https://trace.agent.datadoghq.eu/api/v0.2/traces"
+            );
+            assert_eq!(
+                trace_stats_url_prefixed(prefix),
+                "https://trace.agent.datadoghq.eu/api/v0.2/stats"
+            );
         }
     }
 
