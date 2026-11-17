@@ -478,7 +478,6 @@ mod tests {
             flag: FlagKey {
                 key: "test-flag".into(),
             },
-            environment: None,
             variant: None,
             allocation: None,
             targeting_rule: None,
@@ -510,7 +509,8 @@ mod tests {
                     version: "1".into(),
                 },
                 flag_evaluations: vec![row.clone(), row],
-            },
+            }
+            .into(),
             Some("dd-trace-php"),
             "test",
         );

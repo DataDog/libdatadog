@@ -315,44 +315,46 @@ fn build_request(
     let dd = (!is_degraded && !service.is_empty()).then(|| service::ContextDD {
         service: service.to_owned(),
     });
-    let event = service::FfeFlagEvaluationEvent {
-        timestamp: source.timestamp_ms,
-        flag: service::FlagKey {
-            key: flag.to_owned(),
-        },
+    let event = service::FfeFlagEvaluationEventV2 {
         environment: (!environment_id.is_empty() || !environment_name.is_empty()).then(|| {
             service::FlagEvaluationEnvironment {
                 id: environment_id.to_owned(),
                 name: environment_name.to_owned(),
             }
         }),
-        first_evaluation: source.timestamp_ms,
-        last_evaluation: source.timestamp_ms,
-        evaluation_count: 1,
-        variant: variant.map(|key| service::VariantKey {
-            key: key.to_owned(),
-        }),
-        allocation: allocation.map(|key| service::AllocationKey {
-            key: key.to_owned(),
-        }),
-        targeting_rule: rule.map(|key| service::TargetingRuleKey {
-            key: key.to_owned(),
-        }),
-        targeting_key: target.filter(|_| !is_degraded).map(str::to_owned),
-        context: (evaluation.is_some() || dd.is_some())
-            .then_some(service::FlagEvalEventContext { evaluation, dd }),
-        error: safe_error(source.error_message),
-        runtime_default_used: source.runtime_default_used,
-        features,
-        observe_full_evaluation_data: source.observe_full_evaluation_data,
-        is_degraded,
-        field_omissions: omissions,
+        event: service::FfeFlagEvaluationEvent {
+            timestamp: source.timestamp_ms,
+            flag: service::FlagKey {
+                key: flag.to_owned(),
+            },
+            first_evaluation: source.timestamp_ms,
+            last_evaluation: source.timestamp_ms,
+            evaluation_count: 1,
+            variant: variant.map(|key| service::VariantKey {
+                key: key.to_owned(),
+            }),
+            allocation: allocation.map(|key| service::AllocationKey {
+                key: key.to_owned(),
+            }),
+            targeting_rule: rule.map(|key| service::TargetingRuleKey {
+                key: key.to_owned(),
+            }),
+            targeting_key: target.filter(|_| !is_degraded).map(str::to_owned),
+            context: (evaluation.is_some() || dd.is_some())
+                .then_some(service::FlagEvalEventContext { evaluation, dd }),
+            error: safe_error(source.error_message),
+            runtime_default_used: source.runtime_default_used,
+            features,
+            observe_full_evaluation_data: source.observe_full_evaluation_data,
+            is_degraded,
+            field_omissions: omissions,
+        },
     };
     // Context and errors are already sanitized above; the sidecar independently
     // validates them again at aggregation, without another JSON pass here.
     Ok(SidecarInterfaceRequest::EnqueueActions {
         actions: vec![SidecarAction::FfeFlagEvaluationBatch(
-            service::FfeFlagEvaluationBatch {
+            service::FfeFlagEvaluationBatchV2 {
                 context: service::FfeTelemetryContext {
                     service: service.to_owned(),
                     env: env.to_owned(),
@@ -422,7 +424,7 @@ mod tests {
             panic!("wrong action")
         };
         assert_eq!(batch.flag_evaluations.len(), 1);
-        batch.flag_evaluations.remove(0)
+        batch.flag_evaluations.remove(0).event
     }
 
     #[test]
@@ -596,6 +598,7 @@ mod tests {
                 panic!("wrong action")
             };
             let row = &batch.flag_evaluations[0];
+            let row = &row.event;
             assert!(row.context.as_ref().unwrap().evaluation.is_none());
             assert_eq!(
                 row.field_omissions.contains_context(Reason::SnapshotError),
@@ -950,10 +953,10 @@ mod tests {
             panic!("wrong action")
         };
         assert_eq!(
-            context(&batch.flag_evaluations[0]),
+            context(&batch.flag_evaluations[0].event),
             json!({"key":"captured"})
         );
-        assert!(batch.flag_evaluations[0].observe_full_evaluation_data);
+        assert!(batch.flag_evaluations[0].event.observe_full_evaluation_data);
         assert_eq!(
             unsafe {
                 ddog_sidecar_try_submit_ffe_flag_evaluation(

@@ -23,7 +23,6 @@ fn event() -> FfeFlagEvaluationEvent {
         flag: FlagKey {
             key: "protected".into(),
         },
-        environment: None,
         first_evaluation: 1_760_000_000_000,
         last_evaluation: 1_760_000_000_001,
         evaluation_count: 7,
@@ -65,10 +64,13 @@ fn request_with_context(
     SidecarInterfaceRequest::EnqueueActions {
         actions: vec![
             ordinary(),
-            SidecarAction::FfeFlagEvaluationBatch(FfeFlagEvaluationBatch {
-                context,
-                flag_evaluations: events,
-            }),
+            SidecarAction::FfeFlagEvaluationBatch(
+                FfeFlagEvaluationBatch {
+                    context,
+                    flag_evaluations: events,
+                }
+                .into(),
+            ),
             ordinary(),
         ],
     }
@@ -594,6 +596,7 @@ fn kernel_size_excess_is_delivered_intact_via_shared_memory_without_reshedding()
     let [row] = batch.flag_evaluations.as_slice() else {
         panic!("wrong row count")
     };
+    let row = &row.event;
     assert!(!row.is_degraded);
     assert_eq!(
         row.targeting_key.as_deref(),

@@ -233,6 +233,7 @@ pub fn try_submit_ffe(
     let [event] = batch.flag_evaluations.as_mut_slice() else {
         return status;
     };
+    let event = &mut event.event;
     if event.is_degraded || (event.targeting_key.is_none() && event.context.is_none()) {
         return status;
     }

@@ -42,6 +42,7 @@ mod sender;
 pub use sender::{
     EVP_FLAGEVALUATION_PATH, EVP_PAYLOAD_SIZE_LIMIT, EVP_SUBDOMAIN_HEADER, EVP_SUBDOMAIN_VALUE,
     FlagEvaluationEvpSendConfig, flagevaluation_agent_proxy_endpoint, send_flag_evaluation_batch,
+    send_flag_evaluation_batch_v2,
 };
 
 // ── Aggregation caps ────────────────────────────────────────────────────────
@@ -91,6 +92,29 @@ pub struct FfeFlagEvaluationBatch {
     pub flag_evaluations: Vec<FfeFlagEvaluationEvent>,
 }
 
+/// Versioned batch carrying feature flag environment identity per evaluation.
+///
+/// The wrapper keeps [`FfeFlagEvaluationBatch`] source-compatible for existing Rust callers and
+/// gives the bincode IPC wire an explicit, coordinated layout for environment-aware senders.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct FfeFlagEvaluationBatchV2 {
+    pub context: FfeTelemetryContext,
+    pub flag_evaluations: Vec<FfeFlagEvaluationEventV2>,
+}
+
+impl From<FfeFlagEvaluationBatch> for FfeFlagEvaluationBatchV2 {
+    fn from(batch: FfeFlagEvaluationBatch) -> Self {
+        Self {
+            context: batch.context,
+            flag_evaluations: batch
+                .flag_evaluations
+                .into_iter()
+                .map(FfeFlagEvaluationEventV2::from)
+                .collect(),
+        }
+    }
+}
+
 // ── Per-event payload ────────────────────────────────────────────────────────
 
 /// A single aggregated flag evaluation event.
@@ -107,10 +131,6 @@ pub struct FfeFlagEvaluationEvent {
     pub timestamp: i64,
     /// Required: the flag key.
     pub flag: FlagKey,
-    /// Identity of the feature flag environment whose configuration produced this evaluation.
-    /// Absent when no configuration was evaluated or both fields are unavailable.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub environment: Option<FlagEvaluationEnvironment>,
     /// Earliest evaluation in this bucket (milliseconds since epoch).
     pub first_evaluation: i64,
     /// Latest evaluation in this bucket (milliseconds since epoch).
@@ -167,6 +187,38 @@ pub struct FfeFlagEvaluationEvent {
     /// Internal omission reasons accumulated before aggregation, never EVP data.
     #[serde(default)]
     pub field_omissions: FieldOmissions,
+}
+
+/// Versioned event carrying the identity of the feature flag environment used for evaluation.
+///
+/// `event` intentionally remains a nested field on the bincode IPC wire. EVP JSON encoding
+/// flattens its fields and inserts `environment` at the top level.
+#[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
+pub struct FfeFlagEvaluationEventV2 {
+    pub event: FfeFlagEvaluationEvent,
+    /// Absent when no configuration was evaluated or both identity fields are unavailable.
+    #[serde(default)]
+    pub environment: Option<FlagEvaluationEnvironment>,
+}
+
+impl std::fmt::Debug for FfeFlagEvaluationEventV2 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // This wrapper also crosses IPC, whose request Debug output is used by
+        // oversized-message warnings and receiver trace logging. Delegate only
+        // to the redacted event summary and never print environment identity.
+        f.debug_struct("FfeFlagEvaluationEventV2")
+            .field("event", &self.event)
+            .finish_non_exhaustive()
+    }
+}
+
+impl From<FfeFlagEvaluationEvent> for FfeFlagEvaluationEventV2 {
+    fn from(event: FfeFlagEvaluationEvent) -> Self {
+        Self {
+            event,
+            environment: None,
+        }
+    }
 }
 
 impl FfeFlagEvaluationEvent {
@@ -419,13 +471,15 @@ struct EventKey {
 }
 
 impl EventKey {
-    fn new(event: &FfeFlagEvaluationEvent) -> Self {
+    fn new(event: &FfeFlagEvaluationEventV2) -> Self {
+        let environment = event.environment.clone();
+        let event = &event.event;
         if event.is_degraded {
-            return Self::degraded(event);
+            return Self::degraded_with_environment(event, environment);
         }
         Self {
             consent: Some(event.observe_full_evaluation_data),
-            environment: event.environment.clone(),
+            environment,
             flag_key: event.flag.key.clone(),
             variant_key: event.variant.as_ref().map(|v| v.key.clone()),
             allocation_key: event.allocation.as_ref().map(|a| a.key.clone()),
@@ -445,10 +499,17 @@ impl EventKey {
         }
     }
 
-    fn degraded(event: &FfeFlagEvaluationEvent) -> Self {
+    fn degraded(event: &FfeFlagEvaluationEventV2) -> Self {
+        Self::degraded_with_environment(&event.event, event.environment.clone())
+    }
+
+    fn degraded_with_environment(
+        event: &FfeFlagEvaluationEvent,
+        environment: Option<FlagEvaluationEnvironment>,
+    ) -> Self {
         Self {
             consent: None,
-            environment: event.environment.clone(),
+            environment,
             flag_key: event.flag.key.clone(),
             variant_key: event.variant.as_ref().map(|v| v.key.clone()),
             allocation_key: event.allocation.as_ref().map(|a| a.key.clone()),
@@ -466,7 +527,7 @@ impl EventKey {
 struct PendingDestination<D> {
     destination: D,
     context: FfeTelemetryContext,
-    events: HashMap<EventKey, FfeFlagEvaluationEvent>,
+    events: HashMap<EventKey, FfeFlagEvaluationEventV2>,
 }
 
 struct CoalescerState<D> {
@@ -529,7 +590,12 @@ where
     D: Clone + Eq + Hash,
 {
     /// Enqueue a batch and return whether the caller should start a flush loop.
-    pub fn enqueue(&self, destination: D, mut batch: FfeFlagEvaluationBatch) -> bool {
+    pub fn enqueue(&self, destination: D, batch: FfeFlagEvaluationBatch) -> bool {
+        self.enqueue_v2(destination, batch.into())
+    }
+
+    /// Enqueue an environment-aware batch and return whether the caller should start a flush loop.
+    pub fn enqueue_v2(&self, destination: D, mut batch: FfeFlagEvaluationBatchV2) -> bool {
         if batch.flag_evaluations.is_empty() {
             return false;
         }
@@ -537,7 +603,7 @@ where
         // Parsing and pruning only need the owned event, not shared aggregation
         // state. Keep that work out of the lock used by other enqueues and flushes.
         for event in &mut batch.flag_evaluations {
-            normalize_for_aggregation(event);
+            normalize_for_aggregation(&mut event.event);
         }
 
         let mut state = lock_or_recover(&self.state);
@@ -551,20 +617,20 @@ where
             });
 
         for mut event in batch.flag_evaluations {
-            self.writer_stats.record_field_omissions(&mut event);
+            self.writer_stats.record_field_omissions(&mut event.event);
             let key = EventKey::new(&event);
             if merge_pending_event(&mut state, &destination, &key, &event) {
                 continue;
             }
 
-            let flag_key = event.flag.key.clone();
+            let flag_key = event.event.flag.key.clone();
             let full_bucket_count_for_flag = state
                 .full_bucket_count_by_flag
                 .get(&flag_key)
                 .copied()
                 .unwrap_or(0);
 
-            if !event.is_degraded
+            if !event.event.is_degraded
                 && state.full_bucket_count < GLOBAL_CAP
                 && full_bucket_count_for_flag < PER_FLAG_CAP
             {
@@ -575,11 +641,11 @@ where
                 continue;
             }
 
-            let was_degraded_on_arrival = event.is_degraded;
-            event.targeting_key = None;
-            event.context = None;
-            event.is_degraded = true;
-            let evaluation_count = event.evaluation_count;
+            let was_degraded_on_arrival = event.event.is_degraded;
+            event.event.targeting_key = None;
+            event.event.context = None;
+            event.event.is_degraded = true;
+            let evaluation_count = event.event.evaluation_count;
             let degraded_key = EventKey::degraded(&event);
             if merge_pending_event(&mut state, &destination, &degraded_key, &event) {
                 if !was_degraded_on_arrival {
@@ -616,6 +682,26 @@ where
     }
 
     pub fn take_batches(&self) -> Vec<(D, FfeFlagEvaluationBatch)> {
+        self.take_batches_v2()
+            .into_iter()
+            .map(|(destination, batch)| {
+                (
+                    destination,
+                    FfeFlagEvaluationBatch {
+                        context: batch.context,
+                        flag_evaluations: batch
+                            .flag_evaluations
+                            .into_iter()
+                            .map(|event| event.event)
+                            .collect(),
+                    },
+                )
+            })
+            .collect()
+    }
+
+    /// Drain pending environment-aware batches.
+    pub fn take_batches_v2(&self) -> Vec<(D, FfeFlagEvaluationBatchV2)> {
         let mut state = lock_or_recover(&self.state);
         if state.dropped_overflow > 0 {
             log::warn!(
@@ -638,7 +724,7 @@ where
                 }
                 Some((
                     pending.destination,
-                    FfeFlagEvaluationBatch {
+                    FfeFlagEvaluationBatchV2 {
                         context: pending.context,
                         flag_evaluations: pending.events.into_values().collect(),
                     },
@@ -688,7 +774,7 @@ fn merge_pending_event<D>(
     state: &mut CoalescerState<D>,
     destination: &D,
     key: &EventKey,
-    event: &FfeFlagEvaluationEvent,
+    event: &FfeFlagEvaluationEventV2,
 ) -> bool
 where
     D: Eq + Hash,
@@ -698,7 +784,7 @@ where
     };
 
     if let Some(existing) = pending.events.get_mut(key) {
-        merge_event(existing, event);
+        merge_event(&mut existing.event, &event.event);
         true
     } else {
         false
@@ -709,7 +795,7 @@ fn insert_pending_event<D>(
     state: &mut CoalescerState<D>,
     destination: &D,
     key: EventKey,
-    event: FfeFlagEvaluationEvent,
+    event: FfeFlagEvaluationEventV2,
 ) -> bool
 where
     D: Eq + Hash,
@@ -767,7 +853,15 @@ pub fn encode_flag_evaluation_payloads(
     batch: FfeFlagEvaluationBatch,
     payload_size_limit: usize,
 ) -> Result<FlagEvaluationEvpPayloadBuildResult, serde_json::Error> {
-    let FfeFlagEvaluationBatch {
+    encode_flag_evaluation_payloads_v2(batch.into(), payload_size_limit)
+}
+
+/// Encode an environment-aware batch into bounded EVP payloads.
+pub fn encode_flag_evaluation_payloads_v2(
+    batch: FfeFlagEvaluationBatchV2,
+    payload_size_limit: usize,
+) -> Result<FlagEvaluationEvpPayloadBuildResult, serde_json::Error> {
+    let FfeFlagEvaluationBatchV2 {
         context,
         flag_evaluations,
     } = batch;
@@ -792,22 +886,22 @@ pub fn encode_flag_evaluation_payloads(
             current_size = base_payload_size;
         }
 
-        let mut encoded_event = build_event_payload(&event)?;
+        let mut encoded_event = build_event_payload_v2(&event)?;
         let mut event_size = encoded_event.len();
         if !single_event_fits(base_payload_size, event_size, payload_size_limit) {
             let Some(degraded_event) = degrade_event_for_payload_limit(&event) else {
                 result.dropped_oversized_rows = result
                     .dropped_oversized_rows
-                    .saturating_add(event.evaluation_count);
+                    .saturating_add(event.event.evaluation_count);
                 continue;
             };
 
-            let degraded_encoded_event = build_event_payload(&degraded_event)?;
+            let degraded_encoded_event = build_event_payload_v2(&degraded_event)?;
             let degraded_event_size = degraded_encoded_event.len();
             if !single_event_fits(base_payload_size, degraded_event_size, payload_size_limit) {
                 result.dropped_oversized_rows = result
                     .dropped_oversized_rows
-                    .saturating_add(event.evaluation_count);
+                    .saturating_add(event.event.evaluation_count);
                 continue;
             }
 
@@ -815,7 +909,7 @@ pub fn encode_flag_evaluation_payloads(
             event_size = degraded_event_size;
             result.degraded_oversized_rows = result
                 .degraded_oversized_rows
-                .saturating_add(degraded_event.evaluation_count);
+                .saturating_add(degraded_event.event.evaluation_count);
         }
 
         let separator_size = usize::from(!current_events.is_empty());
@@ -889,30 +983,34 @@ fn push_payload(
 }
 
 fn degrade_event_for_payload_limit(
-    event: &FfeFlagEvaluationEvent,
-) -> Option<FfeFlagEvaluationEvent> {
-    if event.is_degraded || (event.targeting_key.is_none() && event.context.is_none()) {
+    event: &FfeFlagEvaluationEventV2,
+) -> Option<FfeFlagEvaluationEventV2> {
+    if event.event.is_degraded
+        || (event.event.targeting_key.is_none() && event.event.context.is_none())
+    {
         return None;
     }
 
-    Some(FfeFlagEvaluationEvent {
-        timestamp: event.timestamp,
-        flag: event.flag.clone(),
+    Some(FfeFlagEvaluationEventV2 {
         environment: event.environment.clone(),
-        first_evaluation: event.first_evaluation,
-        last_evaluation: event.last_evaluation,
-        evaluation_count: event.evaluation_count,
-        variant: event.variant.clone(),
-        allocation: event.allocation.clone(),
-        targeting_rule: event.targeting_rule.clone(),
-        targeting_key: None,
-        context: None,
-        error: event.error.clone(),
-        runtime_default_used: event.runtime_default_used,
-        features: event.features.clone(),
-        observe_full_evaluation_data: event.observe_full_evaluation_data,
-        is_degraded: true,
-        field_omissions: event.field_omissions,
+        event: FfeFlagEvaluationEvent {
+            timestamp: event.event.timestamp,
+            flag: event.event.flag.clone(),
+            first_evaluation: event.event.first_evaluation,
+            last_evaluation: event.event.last_evaluation,
+            evaluation_count: event.event.evaluation_count,
+            variant: event.event.variant.clone(),
+            allocation: event.event.allocation.clone(),
+            targeting_rule: event.event.targeting_rule.clone(),
+            targeting_key: None,
+            context: None,
+            error: event.event.error.clone(),
+            runtime_default_used: event.event.runtime_default_used,
+            features: event.event.features.clone(),
+            observe_full_evaluation_data: event.event.observe_full_evaluation_data,
+            is_degraded: true,
+            field_omissions: event.event.field_omissions,
+        },
     })
 }
 
@@ -930,32 +1028,54 @@ fn build_payload(batch: &FfeFlagEvaluationBatch) -> Result<String, serde_json::E
     ))
 }
 
+#[cfg(test)]
+fn build_payload_v2(batch: &FfeFlagEvaluationBatchV2) -> Result<String, serde_json::Error> {
+    let context_json = build_context_payload(&batch.context)?;
+    let mut encoded_events = Vec::with_capacity(batch.flag_evaluations.len());
+    for event in &batch.flag_evaluations {
+        encoded_events.push(build_event_payload_v2(event)?);
+    }
+
+    Ok(build_payload_from_encoded_events(
+        &context_json,
+        &encoded_events,
+    ))
+}
+
 fn build_context_payload(context: &FfeTelemetryContext) -> Result<String, serde_json::Error> {
     let mut value = serde_json::to_value(context)?;
     strip_placeholders(&mut value);
     serde_json::to_string(&value)
 }
 
+#[cfg(test)]
 fn build_event_payload(event: &FfeFlagEvaluationEvent) -> Result<String, serde_json::Error> {
-    let mut value = serde_json::to_value(event)?;
+    build_event_payload_v2(&event.clone().into())
+}
+
+fn build_event_payload_v2(event: &FfeFlagEvaluationEventV2) -> Result<String, serde_json::Error> {
+    let mut value = serde_json::to_value(&event.event)?;
     if let Some(object) = value.as_object_mut() {
         object.remove("observe_full_evaluation_data");
         object.remove("is_degraded");
         object.remove("field_omissions");
-        if let Some(environment) = object
-            .get_mut("environment")
-            .and_then(serde_json::Value::as_object_mut)
-        {
-            environment.retain(|_, value| value.as_str().is_none_or(|value| !value.is_empty()));
-            if environment.is_empty() {
-                object.remove("environment");
+        if let Some(environment) = &event.environment {
+            let mut environment = serde_json::to_value(environment)?;
+            if let Some(environment) = environment.as_object_mut() {
+                environment.retain(|_, value| value.as_str().is_none_or(|value| !value.is_empty()));
+                if !environment.is_empty() {
+                    object.insert(
+                        "environment".into(),
+                        serde_json::Value::Object(environment.clone()),
+                    );
+                }
             }
         }
-        if event.is_degraded {
+        if event.event.is_degraded {
             object.remove("targeting_key");
             object.remove("context");
-        } else if !event.observe_full_evaluation_data {
-            if let Some(key) = &event.targeting_key {
+        } else if !event.event.observe_full_evaluation_data {
+            if let Some(key) = &event.event.targeting_key {
                 object.insert(
                     "targeting_key".into(),
                     privacy::protected_targeting_key(key).into(),
@@ -968,7 +1088,7 @@ fn build_event_payload(event: &FfeFlagEvaluationEvent) -> Result<String, serde_j
                 context.remove("evaluation");
             }
         }
-        if let Some(error) = &event.error {
+        if let Some(error) = &event.event.error {
             if error.message.is_empty() {
                 object.remove("error");
             } else {
@@ -1172,13 +1292,21 @@ mod tests {
         event.error = Some(EvalError {
             message: "private-error-canary".into(),
         });
-        let batch = FfeFlagEvaluationBatch {
+        let batch = FfeFlagEvaluationBatchV2 {
             context: context(),
-            flag_evaluations: vec![event],
+            flag_evaluations: vec![FfeFlagEvaluationEventV2 {
+                event,
+                environment: Some(FlagEvaluationEnvironment {
+                    id: "private-environment-id-canary".into(),
+                    name: "private-environment-name-canary".into(),
+                }),
+            }],
         };
         let debug = format!("{batch:?}");
         assert!(!debug.contains("private-identity-canary"));
         assert!(!debug.contains("private-error-canary"));
+        assert!(!debug.contains("private-environment-id-canary"));
+        assert!(!debug.contains("private-environment-name-canary"));
         assert!(!debug.contains("premium"));
     }
 
@@ -1241,17 +1369,17 @@ mod tests {
 
     #[test]
     fn consent_separates_full_but_not_degraded_identity() {
-        let mut protected = full_event();
-        protected.observe_full_evaluation_data = false;
+        let mut protected = FfeFlagEvaluationEventV2::from(full_event());
+        protected.event.observe_full_evaluation_data = false;
         let mut consented = protected.clone();
-        consented.observe_full_evaluation_data = true;
+        consented.event.observe_full_evaluation_data = true;
         assert!(EventKey::new(&protected) != EventKey::new(&consented));
         assert!(EventKey::degraded(&protected) == EventKey::degraded(&consented));
-        protected.targeting_key = None;
-        protected.context = None;
+        protected.event.targeting_key = None;
+        protected.event.context = None;
         assert!(EventKey::new(&protected) != EventKey::degraded(&protected));
-        protected.is_degraded = true;
-        consented.is_degraded = true;
+        protected.event.is_degraded = true;
+        consented.event.is_degraded = true;
         assert!(EventKey::new(&protected) == EventKey::degraded(&protected));
         assert!(EventKey::new(&consented) == EventKey::degraded(&consented));
         assert!(EventKey::new(&protected) == EventKey::new(&consented));
@@ -1502,7 +1630,6 @@ mod tests {
             flag: FlagKey {
                 key: "my-flag".to_owned(),
             },
-            environment: None,
             first_evaluation: 1_699_999_990_000,
             last_evaluation: 1_700_000_000_000,
             evaluation_count: 42,
@@ -1559,26 +1686,27 @@ mod tests {
         assert_eq!(ev["variant"]["key"], "on");
         assert_eq!(ev["allocation"]["key"], "alloc-a");
         assert_eq!(ev["targeting_key"], "user-123");
-        assert!(ev.get("environment").is_none());
     }
 
     #[test]
     fn payload_emits_environment_identity_and_supports_legacy_configs() {
-        let mut current = full_event();
+        let mut current = FfeFlagEvaluationEventV2::from(full_event());
         current.environment = Some(FlagEvaluationEnvironment {
             id: "11111111-1111-4111-8111-111111111111".to_owned(),
             name: "Production".to_owned(),
         });
-        let mut legacy = full_event();
+        let mut legacy = FfeFlagEvaluationEventV2::from(full_event());
         legacy.environment = Some(FlagEvaluationEnvironment {
             id: String::new(),
             name: "Legacy".to_owned(),
         });
-        legacy.flag.key = "legacy-flag".to_owned();
+        legacy.event.flag.key = "legacy-flag".to_owned();
+        let mut absent = FfeFlagEvaluationEventV2::from(full_event());
+        absent.event.flag.key = "no-config-flag".to_owned();
 
-        let payload = build_payload(&FfeFlagEvaluationBatch {
+        let payload = build_payload_v2(&FfeFlagEvaluationBatchV2 {
             context: context(),
-            flag_evaluations: vec![current, legacy],
+            flag_evaluations: vec![current, legacy, absent],
         })
         .unwrap();
         let value: Value = serde_json::from_str(&payload).unwrap();
@@ -1593,6 +1721,7 @@ mod tests {
             value["flagEvaluations"][1]["environment"],
             json!({"name": "Legacy"})
         );
+        assert!(value["flagEvaluations"][2].get("environment").is_none());
     }
 
     fn degraded_event() -> FfeFlagEvaluationEvent {
@@ -1601,7 +1730,6 @@ mod tests {
             flag: FlagKey {
                 key: "flag-b".to_owned(),
             },
-            environment: None,
             first_evaluation: 1_699_999_990_000,
             last_evaluation: 1_700_000_000_000,
             evaluation_count: 7,
@@ -2076,20 +2204,20 @@ mod tests {
 
     #[test]
     fn payload_encoding_degrades_oversized_full_event_before_drop() {
-        let mut oversized = full_event();
+        let mut oversized = FfeFlagEvaluationEventV2::from(full_event());
         oversized.environment = Some(FlagEvaluationEnvironment {
             id: "11111111-1111-4111-8111-111111111111".to_owned(),
             name: "Production".to_owned(),
         });
-        oversized.targeting_rule = Some(TargetingRuleKey {
+        oversized.event.targeting_rule = Some(TargetingRuleKey {
             key: "rule-1".to_owned(),
         });
-        oversized.error = Some(EvalError {
+        oversized.event.error = Some(EvalError {
             message: "boom".to_owned(),
         });
-        oversized.runtime_default_used = true;
-        oversized.field_omissions.targeting_key_invalid = true;
-        oversized.context = Some(FlagEvalEventContext {
+        oversized.event.runtime_default_used = true;
+        oversized.event.field_omissions.targeting_key_invalid = true;
+        oversized.event.context = Some(FlagEvalEventContext {
             evaluation: Some(json!({ "blob": "x".repeat(1024) }).to_string()),
             dd: Some(ContextDD {
                 service: "frontend".to_owned(),
@@ -2098,28 +2226,40 @@ mod tests {
 
         let degraded = degrade_event_for_payload_limit(&oversized)
             .expect("full event should have a degraded form");
-        assert_eq!(degraded.timestamp, oversized.timestamp);
-        assert_eq!(degraded.first_evaluation, oversized.first_evaluation);
-        assert_eq!(degraded.last_evaluation, oversized.last_evaluation);
-        assert_eq!(degraded.evaluation_count, oversized.evaluation_count);
-        assert_eq!(degraded.flag.key, oversized.flag.key);
+        assert_eq!(degraded.event.timestamp, oversized.event.timestamp);
+        assert_eq!(
+            degraded.event.first_evaluation,
+            oversized.event.first_evaluation
+        );
+        assert_eq!(
+            degraded.event.last_evaluation,
+            oversized.event.last_evaluation
+        );
+        assert_eq!(
+            degraded.event.evaluation_count,
+            oversized.event.evaluation_count
+        );
+        assert_eq!(degraded.event.flag.key, oversized.event.flag.key);
         assert_eq!(degraded.environment, oversized.environment);
         assert_eq!(
-            degraded.observe_full_evaluation_data,
-            oversized.observe_full_evaluation_data
+            degraded.event.observe_full_evaluation_data,
+            oversized.event.observe_full_evaluation_data
         );
-        assert_eq!(degraded.field_omissions, oversized.field_omissions);
-        assert!(degraded.runtime_default_used);
-        assert!(degraded.is_degraded);
-        assert!(degraded.targeting_key.is_none());
-        assert!(degraded.context.is_none());
-        let degraded_limit = build_payload(&FfeFlagEvaluationBatch {
+        assert_eq!(
+            degraded.event.field_omissions,
+            oversized.event.field_omissions
+        );
+        assert!(degraded.event.runtime_default_used);
+        assert!(degraded.event.is_degraded);
+        assert!(degraded.event.targeting_key.is_none());
+        assert!(degraded.event.context.is_none());
+        let degraded_limit = build_payload_v2(&FfeFlagEvaluationBatchV2 {
             context: context(),
             flag_evaluations: vec![degraded],
         })
         .unwrap()
         .len();
-        let full_size = build_payload(&FfeFlagEvaluationBatch {
+        let full_size = build_payload_v2(&FfeFlagEvaluationBatchV2 {
             context: context(),
             flag_evaluations: vec![oversized.clone()],
         })
@@ -2130,8 +2270,8 @@ mod tests {
             "test setup must make the full event exceed the degraded limit"
         );
 
-        let result = encode_flag_evaluation_payloads(
-            FfeFlagEvaluationBatch {
+        let result = encode_flag_evaluation_payloads_v2(
+            FfeFlagEvaluationBatchV2 {
                 context: context(),
                 flag_evaluations: vec![oversized],
             },
@@ -2223,21 +2363,21 @@ mod tests {
             ("11111111-1111-4111-8111-111111111111", "Renamed"),
             ("22222222-2222-4222-8222-222222222222", "Production"),
         ] {
-            let mut event = full_event();
+            let mut event = FfeFlagEvaluationEventV2::from(full_event());
             event.environment = Some(FlagEvaluationEnvironment {
                 id: id.to_owned(),
                 name: name.to_owned(),
             });
-            coalescer.enqueue(
+            coalescer.enqueue_v2(
                 "agent".to_owned(),
-                FfeFlagEvaluationBatch {
+                FfeFlagEvaluationBatchV2 {
                     context: context(),
                     flag_evaluations: vec![event],
                 },
             );
         }
 
-        let batches = coalescer.take_batches();
+        let batches = coalescer.take_batches_v2();
         assert_eq!(batches.len(), 1);
         assert_eq!(batches[0].1.flag_evaluations.len(), 3);
         assert!(
@@ -2245,7 +2385,7 @@ mod tests {
                 .1
                 .flag_evaluations
                 .iter()
-                .all(|event| event.evaluation_count == 42)
+                .all(|event| event.event.evaluation_count == 42)
         );
     }
 
@@ -2450,22 +2590,23 @@ mod tests {
 
     #[test]
     fn payload_limit_degradation_keeps_features() {
-        let mut oversized = event_with_features(r#"{"holdout.key":"h1"}"#);
-        oversized.context = Some(FlagEvalEventContext {
+        let mut oversized =
+            FfeFlagEvaluationEventV2::from(event_with_features(r#"{"holdout.key":"h1"}"#));
+        oversized.event.context = Some(FlagEvalEventContext {
             evaluation: Some(json!({ "blob": "x".repeat(1024) }).to_string()),
             dd: None,
         });
         let degraded = degrade_event_for_payload_limit(&oversized).unwrap();
-        assert_eq!(degraded.features, oversized.features);
+        assert_eq!(degraded.event.features, oversized.event.features);
 
-        let limit = build_payload(&FfeFlagEvaluationBatch {
+        let limit = build_payload_v2(&FfeFlagEvaluationBatchV2 {
             context: context(),
             flag_evaluations: vec![degraded],
         })
         .unwrap()
         .len();
-        let result = encode_flag_evaluation_payloads(
-            FfeFlagEvaluationBatch {
+        let result = encode_flag_evaluation_payloads_v2(
+            FfeFlagEvaluationBatchV2 {
                 context: context(),
                 flag_evaluations: vec![oversized],
             },

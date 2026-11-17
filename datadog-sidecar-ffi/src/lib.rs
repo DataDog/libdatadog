@@ -29,8 +29,9 @@ use datadog_sidecar::service::{
     EvpTransportConfigWithIdentity, EvpTransportMode as SidecarEvpTransportMode,
     FfeEvaluationMetric as SidecarFfeEvaluationMetric, FfeExposure as SidecarFfeExposure,
     FfeExposureBatch as SidecarFfeExposureBatch,
-    FfeFlagEvaluationBatch as SidecarFfeFlagEvaluationBatch,
+    FfeFlagEvaluationBatchV2 as SidecarFfeFlagEvaluationBatch,
     FfeFlagEvaluationEvent as SidecarFfeFlagEvaluationEvent,
+    FfeFlagEvaluationEventV2 as SidecarFfeFlagEvaluationEventV2,
     FfeTelemetryContext as SidecarFfeTelemetryContext, FieldOmissions, FlagEvalEventContext,
     FlagEvaluationEnvironment, FlagKey, InstanceId, RuntimeMetadata, SerializedTracerHeaderTags,
     SessionConfig, SidecarAction, SidecarFlushOptions, TargetingRuleKey, VariantKey,
@@ -1243,7 +1244,7 @@ fn ddog_sidecar_send_ffe_flag_evaluation_batch_impl(
     let flag_evaluations = try_c!(
         flag_evaluations
             .iter()
-            .map(|event| ffe_flag_evaluation_from_ffi(event, &context.service))
+            .map(|event| ffe_flag_evaluation_from_ffi_v2(event, &context.service))
             .collect::<Result<Vec<_>, _>>()
     );
 
@@ -1401,10 +1402,18 @@ fn ffi_features(features_json: CharSlice) -> Option<String> {
     canonical_features_json(features_json.try_to_utf8().ok()?)
 }
 
+#[cfg(test)]
 fn ffe_flag_evaluation_from_ffi(
     event: &FfeFlagEvaluation<'_>,
     service: &str,
 ) -> Result<SidecarFfeFlagEvaluationEvent, String> {
+    ffe_flag_evaluation_from_ffi_v2(event, service).map(|event| event.event)
+}
+
+fn ffe_flag_evaluation_from_ffi_v2(
+    event: &FfeFlagEvaluation<'_>,
+    service: &str,
+) -> Result<SidecarFfeFlagEvaluationEventV2, String> {
     ffe_flag_evaluation_from_ffi_with_environment(event, service, None)
 }
 
@@ -1412,7 +1421,7 @@ fn ffe_flag_evaluation_from_ffi_with_environment(
     event: &FfeFlagEvaluation<'_>,
     service: &str,
     environment: Option<(CharSlice<'_>, CharSlice<'_>)>,
-) -> Result<SidecarFfeFlagEvaluationEvent, String> {
+) -> Result<SidecarFfeFlagEvaluationEventV2, String> {
     let environment = environment.and_then(|(id, name)| {
         let id = optional_string_if_valid_utf8(id).unwrap_or_default();
         let name = optional_string_if_valid_utf8(name).unwrap_or_default();
@@ -1457,32 +1466,34 @@ fn ffe_flag_evaluation_from_ffi_with_environment(
 
     // Build the event from borrowed input, storing only the pruned context.
     // Aggregation and output still apply their independent privacy checks.
-    Ok(SidecarFfeFlagEvaluationEvent {
-        timestamp: event.timestamp_ms,
-        flag: FlagKey {
-            key: char_slice_to_string(event.flag_key)?,
-        },
+    Ok(SidecarFfeFlagEvaluationEventV2 {
         environment,
-        first_evaluation: event.first_evaluation_ms,
-        last_evaluation: event.last_evaluation_ms,
-        evaluation_count: event.evaluation_count,
-        variant: optional_string_if_valid_utf8(event.variant).map(|key| VariantKey { key }),
-        allocation: optional_string_if_valid_utf8(event.allocation_key)
-            .map(|key| AllocationKey { key }),
-        targeting_rule: optional_string_if_valid_utf8(event.targeting_rule_key)
-            .map(|key| TargetingRuleKey { key }),
-        targeting_key,
-        context,
-        error: if event.error_message.is_empty() {
-            None
-        } else {
-            EvalError::from_message(event.error_message.try_to_utf8().unwrap_or("GENERAL"))
+        event: SidecarFfeFlagEvaluationEvent {
+            timestamp: event.timestamp_ms,
+            flag: FlagKey {
+                key: char_slice_to_string(event.flag_key)?,
+            },
+            first_evaluation: event.first_evaluation_ms,
+            last_evaluation: event.last_evaluation_ms,
+            evaluation_count: event.evaluation_count,
+            variant: optional_string_if_valid_utf8(event.variant).map(|key| VariantKey { key }),
+            allocation: optional_string_if_valid_utf8(event.allocation_key)
+                .map(|key| AllocationKey { key }),
+            targeting_rule: optional_string_if_valid_utf8(event.targeting_rule_key)
+                .map(|key| TargetingRuleKey { key }),
+            targeting_key,
+            context,
+            error: if event.error_message.is_empty() {
+                None
+            } else {
+                EvalError::from_message(event.error_message.try_to_utf8().unwrap_or("GENERAL"))
+            },
+            runtime_default_used: event.runtime_default_used,
+            features: ffi_features(event.features_json),
+            observe_full_evaluation_data: event.observe_full_evaluation_data,
+            is_degraded: false,
+            field_omissions,
         },
-        runtime_default_used: event.runtime_default_used,
-        features: ffi_features(event.features_json),
-        observe_full_evaluation_data: event.observe_full_evaluation_data,
-        is_degraded: false,
-        field_omissions,
     })
 }
 
@@ -2500,7 +2511,7 @@ mod tests {
         );
 
         assert!(
-            ffe_flag_evaluation_from_ffi(&event, "checkout")
+            ffe_flag_evaluation_from_ffi_v2(&event, "checkout")
                 .unwrap()
                 .environment
                 .is_none()

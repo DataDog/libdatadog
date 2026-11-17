@@ -4,7 +4,7 @@
 use crate::log::{MULTI_LOG_FILTER, MULTI_LOG_WRITER, TemporarilyRetainedMapStats};
 use crate::service::{
     ApplicationConfig, ConnectionSessionHandle, ContextDD, EvpTransportConfigWithIdentity,
-    FfeFlagEvaluationBatch, FfeTelemetryContext, FlagEvalEventContext, InstanceId,
+    FfeFlagEvaluationBatchV2, FfeTelemetryContext, FlagEvalEventContext, InstanceId,
     MAX_FIELD_LENGTH, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
     SidecarFlushOptions, SidecarInterface,
     application::ActiveApplication,
@@ -249,7 +249,7 @@ impl ConnectionSidecarHandler {
 
     /// Snapshot the current application's identity before the batch enters the shared coalescer.
     /// Any explicit batch context opts out; an absent application leaves the batch unattributed.
-    fn attach_flagevaluation_application(&self, batch: &mut FfeFlagEvaluationBatch) {
+    fn attach_flagevaluation_application(&self, batch: &mut FfeFlagEvaluationBatchV2) {
         if batch.context != FfeTelemetryContext::default() {
             return;
         }
@@ -278,6 +278,7 @@ impl ConnectionSidecarHandler {
             return;
         }
         for event in &mut batch.flag_evaluations {
+            let event = &mut event.event;
             // Degraded events must remain context-free, even with application attribution.
             if event.is_degraded {
                 continue;
@@ -1601,8 +1602,9 @@ mod tests {
     use crate::service::{
         DynamicInstrumentationConfigState, EvpProducerIdentity, EvpTransportConfig,
         EvpTransportMode, FfeEvaluationMetric, FfeExposure, FfeExposureBatch,
-        FfeFlagEvaluationBatch, FfeFlagEvaluationEvent, FfeTelemetryContext, FlagKey,
-        RuntimeMetadata, sender::SidecarSender, sidecar_interface::SidecarInterfaceChannel,
+        FfeFlagEvaluationBatch, FfeFlagEvaluationBatchV2, FfeFlagEvaluationEvent,
+        FfeTelemetryContext, FlagKey, RuntimeMetadata, sender::SidecarSender,
+        sidecar_interface::SidecarInterfaceChannel,
     };
     use httpmock::{Method::POST, MockServer};
     use libdd_ffe::telemetry::flagevaluation::EVP_FLAGEVALUATION_PATH;
@@ -2005,7 +2007,7 @@ mod tests {
         }
     }
 
-    fn ffe_flag_evaluation_batch() -> FfeFlagEvaluationBatch {
+    fn ffe_flag_evaluation_batch() -> FfeFlagEvaluationBatchV2 {
         FfeFlagEvaluationBatch {
             context: ffe_context(),
             flag_evaluations: vec![FfeFlagEvaluationEvent {
@@ -2013,7 +2015,6 @@ mod tests {
                 flag: FlagKey {
                     key: "flag".to_owned(),
                 },
-                environment: None,
                 first_evaluation: 100,
                 last_evaluation: 123,
                 evaluation_count: 1,
@@ -2030,6 +2031,7 @@ mod tests {
                 field_omissions: Default::default(),
             }],
         }
+        .into()
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -2215,6 +2217,7 @@ mod tests {
                     batch.context = FfeTelemetryContext::default();
                     handler.attach_flagevaluation_application(&mut batch);
                     let event_service = batch.flag_evaluations[0]
+                        .event
                         .context
                         .as_ref()
                         .and_then(|context| context.dd.as_ref())
@@ -2238,7 +2241,7 @@ mod tests {
                             "{case}: batch context"
                         );
                         assert!(
-                            batch.flag_evaluations[0].context.is_none(),
+                            batch.flag_evaluations[0].event.context.is_none(),
                             "{case}: event context"
                         );
                     }
@@ -2299,8 +2302,8 @@ mod tests {
         let mut batch = ffe_flag_evaluation_batch();
         batch.context = FfeTelemetryContext::default();
         let mut degraded = batch.flag_evaluations[0].clone();
-        degraded.is_degraded = true;
-        batch.flag_evaluations[0].context = Some(FlagEvalEventContext {
+        degraded.event.is_degraded = true;
+        batch.flag_evaluations[0].event.context = Some(FlagEvalEventContext {
             evaluation: None,
             dd: Some(ContextDD {
                 service: String::new(),
@@ -2309,9 +2312,10 @@ mod tests {
         batch.flag_evaluations.push(degraded);
         handler.attach_flagevaluation_application(&mut batch);
         // Check before normalization, which also clears degraded context.
-        assert!(batch.flag_evaluations[1].context.is_none());
+        assert!(batch.flag_evaluations[1].event.context.is_none());
         assert_eq!(
             batch.flag_evaluations[0]
+                .event
                 .context
                 .as_ref()
                 .unwrap()

@@ -39,14 +39,14 @@ impl Configuration {
 
     /// Stable identifier of the feature flag environment, when supplied by the configuration.
     pub fn environment_id(&self) -> Option<&str> {
-        self.flags.compiled.environment.id.as_deref()
+        self.flags.compiled.environment_id.as_deref()
     }
 
     /// Cheaply clone the environment identity for evaluation metadata that may outlive this
     /// configuration handle.
     pub fn environment_identity(&self) -> (Option<Str>, Str) {
         (
-            self.flags.compiled.environment.id.clone(),
+            self.flags.compiled.environment_id.clone(),
             self.flags.compiled.environment.name.clone(),
         )
     }
