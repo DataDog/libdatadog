@@ -14,10 +14,14 @@ use crate::Handle;
 
 /// Opaque type representing a result of evaluation.
 pub struct ResolutionDetails {
-    // Pin the result and environment snapshot to keep borrowed metadata pointers stable.
+    // Pin the result to keep borrowed feature pointers stable.
     inner: Pin<Box<ResolutionInner>>,
     // memoizing some fields, so we can hand off references to them:
     error_message: Option<String>,
+    // Heap-backed values for `flag_metadata`. The strings must not be modified while the
+    // corresponding borrowed pointers are exposed through the FFI.
+    #[allow(dead_code)]
+    flag_metadata_backing: Vec<(&'static str, String)>,
     flag_metadata: Vec<KeyValue<BorrowedStr, BorrowedStr>>,
     // Views of the selected split's features, borrowing from the pinned assignment. Empty (and
     // unallocated) when the split has no features.
@@ -59,16 +63,12 @@ impl ResolutionDetails {
 
         let error_message = inner.result.as_ref().err().map(|err| err.to_string());
 
-        let mut flag_metadata = Vec::with_capacity(3);
+        let mut flag_metadata_backing = Vec::with_capacity(3);
         if let Ok(value) = inner.result.as_ref() {
-            flag_metadata.push(KeyValue {
-                key: BorrowedStr::borrow_static("__dd_allocation_key"),
-                // SAFETY: The returned BorrowedStr does not outlive the source string v. The
-                // source string v lives in the pinned Assignment inside `inner`, which is owned
-                // by ResolutionDetails and will not move (guaranteed by Pin) or be modified (we
-                // only hold shared references).
-                value: unsafe { BorrowedStr::borrow_from_str(&value.allocation_key) },
-            });
+            flag_metadata_backing.push((
+                "__dd_allocation_key",
+                value.allocation_key.as_str().to_owned(),
+            ));
         }
         if let Some(identity) = &inner.environment_identity {
             for (key, value) in [
@@ -78,20 +78,25 @@ impl ResolutionDetails {
                 ),
                 ("__dd_environment_name", identity.name.as_str()),
             ] {
-                flag_metadata.push(KeyValue {
-                    key: BorrowedStr::borrow_static(key),
-                    // SAFETY: the strings live in pinned backing storage owned by
-                    // ResolutionDetails and are never modified.
-                    value: unsafe { BorrowedStr::borrow_from_str(value) },
-                });
+                flag_metadata_backing.push((key, value.to_owned()));
             }
         }
+        let flag_metadata = flag_metadata_backing
+            .iter()
+            .map(|(key, value)| KeyValue {
+                key: BorrowedStr::borrow_static(key),
+                // SAFETY: the string allocations are owned by ResolutionDetails and are never
+                // modified while their borrowed pointers are exposed through the FFI.
+                value: unsafe { BorrowedStr::borrow_from_str(value) },
+            })
+            .collect();
 
         let (features, feature_destinations) = Self::borrow_features(inner.result.as_ref());
 
         ResolutionDetails {
             inner,
             error_message,
+            flag_metadata_backing,
             flag_metadata,
             features,
             feature_destinations,
