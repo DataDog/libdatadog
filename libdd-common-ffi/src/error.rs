@@ -115,6 +115,7 @@ pub unsafe extern "C" fn ddog_Error_drop(error: Option<&mut Error>) {
 
 /// Drops and frees a boxed error, such as the one returned by
 /// `ddog_endpoint_from_api_key_and_site`. Null is accepted.
+// allow(ffi-panic-boundary): only drops a `Box<Error>` holding a `Vec<u8>`, so it cannot panic.
 #[unsafe(no_mangle)]
 pub extern "C" fn ddog_Error_free(error: Option<Box<Error>>) {
     drop(error);
