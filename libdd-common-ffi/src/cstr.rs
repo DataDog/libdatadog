@@ -134,7 +134,7 @@ impl Drop for CString {
 }
 
 #[cfg(test)]
-mod tests {
+mod miri_tests {
     use super::*;
 
     #[test]

@@ -349,7 +349,7 @@ pub fn to_encoded_byte_len_from_v1<T: TraceData>(payload: &TracerPayload<T>) -> 
 }
 
 #[cfg(test)]
-mod tests {
+mod miri_tests {
     //! Regression tests for [`msgpack_const_string_encoding`] across every msgpack string
     //! length-marker boundary (fixstr / str8 / str16), since the length only fits in the
     //! low-order bytes of `len.to_be_bytes()` and it's easy to accidentally copy from the

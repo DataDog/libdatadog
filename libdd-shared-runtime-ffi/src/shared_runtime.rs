@@ -345,7 +345,7 @@ pub unsafe extern "C" fn ddog_shared_runtime_worker_flush(
 }
 
 #[cfg(test)]
-mod tests {
+mod miri_tests {
     use super::*;
     use std::mem::MaybeUninit;
 

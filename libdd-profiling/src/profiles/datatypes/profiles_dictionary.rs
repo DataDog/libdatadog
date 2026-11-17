@@ -107,7 +107,7 @@ impl ProfilesDictionary {
 }
 
 #[cfg(test)]
-mod tests {
+mod miri_tests {
     use super::*;
     use crate::profiles::collections::StringRef;
     use proptest::prelude::*;

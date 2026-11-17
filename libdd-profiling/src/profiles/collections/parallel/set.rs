@@ -124,7 +124,7 @@ unsafe impl<T: hash::Hash + Eq + 'static, const N: usize> Send for ParallelSet<T
 unsafe impl<T: hash::Hash + Eq + 'static, const N: usize> Sync for ParallelSet<T, N> {}
 
 #[cfg(test)]
-mod tests {
+mod miri_tests {
     use super::*;
     use proptest::prelude::*;
     use std::collections::HashSet as StdHashSet;

@@ -246,7 +246,7 @@ fn flush_line(out: &mut impl Write, line: &mut Vec<u8>) -> std::io::Result<()> {
 // the CI target nonetheless reports them as `useless_conversion` to `&str` (a false positive
 // not reproduced on all hosts); allow it here rather than dropping the necessary `.into()`.
 #[allow(clippy::useless_conversion)]
-mod tests {
+mod miri_tests {
     use super::*;
     use crate::span::v04::SpanSlice;
     use serde_json::Value;

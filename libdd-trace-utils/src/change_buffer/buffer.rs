@@ -101,7 +101,7 @@ impl ChangeBuffer {
 }
 
 #[cfg(test)]
-mod tests {
+mod miri_tests {
     use super::ChangeBuffer;
     use super::NonNull;
     use crate::change_buffer::Result;

@@ -109,7 +109,7 @@ impl<F: Future> Future for WeakWakerFuture<F> {
 }
 
 #[cfg(test)]
-mod tests {
+mod miri_tests {
     use std::future::Future;
     use std::pin::pin;
     use std::sync::Arc;

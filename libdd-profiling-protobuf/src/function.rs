@@ -65,7 +65,7 @@ impl From<Function> for crate::prost_impls::Function {
 }
 
 #[cfg(test)]
-mod tests {
+mod miri_tests {
     use super::*;
     use crate::prost_impls;
     use prost::Message;

@@ -135,7 +135,7 @@ impl<T: Copy + hash::Hash + Eq + 'static> ParallelSliceSet<T> {
 }
 
 #[cfg(test)]
-mod tests {
+mod miri_tests {
     use crate::profiles::collections::string_set::{StringRef, UnsyncStringSet};
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};

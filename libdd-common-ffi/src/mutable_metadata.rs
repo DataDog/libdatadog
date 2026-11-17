@@ -122,7 +122,7 @@ pub unsafe extern "C" fn ddog_mutable_metadata_set_identity(
 }
 
 #[cfg(test)]
-mod tests {
+mod miri_tests {
     use super::*;
     use alloc::string::ToString;
 

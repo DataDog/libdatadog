@@ -343,7 +343,7 @@ impl<'a> CharSlice<'a> {
 }
 
 #[cfg(test)]
-mod tests {
+mod miri_tests {
     use super::*;
     use core::ffi::c_char;
     use core::ptr;

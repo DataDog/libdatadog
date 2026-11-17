@@ -744,7 +744,7 @@ where
 /// call operates on its own isolated segment state (keyed by `segment_id`
 /// rather than `trace_id`).
 #[cfg(test)]
-mod segment_isolation_tests {
+mod miri_tests {
     use super::*;
     use crate::span::SliceData;
     use std::borrow::Cow;

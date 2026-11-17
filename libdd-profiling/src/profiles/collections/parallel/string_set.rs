@@ -107,7 +107,7 @@ impl ParallelStringSet {
 }
 
 #[cfg(test)]
-mod tests {
+mod miri_tests {
     use super::*;
     use crate::profiles::collections::SetHasher as Hasher;
     use crate::profiles::collections::parallel::slice_set::N_SHARDS;

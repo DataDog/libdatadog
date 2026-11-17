@@ -929,7 +929,7 @@ impl<T: TraceData> Serialize for JsonAttr<'_, T> {
 }
 
 #[cfg(test)]
-mod tests {
+mod miri_tests {
     //! Unit tests for the v1::Span → v0.4 downgrade encoder. Each test encodes a small
     //! `TracerPayload` via [`super::super::to_vec_from_v1`] and decodes the bytes with
     //! `rmpv` to assert on the resulting v0.4 shape — this implicitly checks that the output

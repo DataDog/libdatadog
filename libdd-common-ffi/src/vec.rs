@@ -143,7 +143,7 @@ impl<T> Default for Vec<T> {
 }
 
 #[cfg(test)]
-mod tests {
+mod miri_tests {
     use super::*;
     use alloc::vec;
 

@@ -69,7 +69,7 @@ impl From<&Label> for crate::prost_impls::Label {
 }
 
 #[cfg(test)]
-mod tests {
+mod miri_tests {
     use super::*;
     use crate::prost_impls;
     use prost::Message;

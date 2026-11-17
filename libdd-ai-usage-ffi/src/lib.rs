@@ -1763,7 +1763,7 @@ pub unsafe extern "C" fn ddog_ai_usage_buffer_drop(buffer: *mut Buffer) {
 }
 
 #[cfg(test)]
-mod tests {
+mod miri_tests {
     use super::*;
 
     fn read(out: &mut Buffer) -> String {

@@ -219,7 +219,7 @@ impl libdd_trace_model::TraceText for BytesString {
 }
 
 #[cfg(test)]
-mod tests {
+mod miri_tests {
     use super::*;
     use std::hash::{DefaultHasher, Hash, Hasher};
 
@@ -245,7 +245,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_from_bytes_invalid_utf8() {
         let invalid_utf8_bytes = Bytes::copy_from_slice(&[0, 159, 146, 150]);
         let result = BytesString::from_bytes(invalid_utf8_bytes);
