@@ -1,0 +1,81 @@
+# Publishes libdd-ai-usage and libdd-ai-usage-ffi to Datadog's internal first-party
+# Rust registry, so internal Cargo builds can depend on them by version instead of
+# a libdatadog git revision. crates.io releases are unaffected.
+#
+# - ai_usage_depot_package: on branches that change these crates, runs `cargo package`,
+#   which builds the packaged crates against registry dependencies, so a crate that
+#   would not build for a consumer fails here before it merges.
+# - ai_usage_depot_publish: on the default branch, publishes automatically when these
+#   crates change, as <version>-<YYYYMMDD>-<sha12>. On other branches it is manual and
+#   uploads to the testing registry, to try a change end to end.
+#
+# See scripts/publish-ai-usage-depot.sh.
+
+.ai_usage_depot_paths: &ai_usage_depot_paths
+  - libdd-ai-usage/**/*
+  - libdd-ai-usage-ffi/**/*
+  - .gitlab/publish-ai-usage-depot.yml
+  - scripts/publish-ai-usage-depot.sh
+
+.ai_usage_depot:
+  tags: ["arch:amd64"]
+  needs: []
+  # Bundles cargo and adms.
+  # To bump: crane digest registry.ddbuild.io/event-libs:1.0
+  image: registry.ddbuild.io/event-libs:1.0@sha256:b5b104cd6f903f825df54bcfc39fac6ab75ac161ba5791c936a575cf883680b9
+  variables:
+    # Use the image's preinstalled toolchain rather than installing the one pinned by
+    # rust-toolchain.toml; it only needs to be at least the workspace rust-version.
+    RUSTUP_TOOLCHAIN: $RUST_VERSION
+  timeout: 30m
+  before_script:
+    - git config --global --add safe.directory "$CI_PROJECT_DIR"
+    - cargo --version
+
+ai_usage_depot_package:
+  extends: .ai_usage_depot
+  stage: test
+  rules:
+    - !reference [.untrusted_ref_guard, rules]
+    - if: '$CI_COMMIT_TAG || $CI_PIPELINE_SOURCE == "schedule"'
+      when: never
+    # On the default branch the publish job packages the crates itself.
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      when: never
+    - if: '$CI_COMMIT_BRANCH'
+      changes:
+        paths: *ai_usage_depot_paths
+        compare_to: refs/heads/main
+  script:
+    - scripts/publish-ai-usage-depot.sh --package-only
+
+ai_usage_depot_publish:
+  extends: .ai_usage_depot
+  stage: deploy
+  # One publish at a time, so the dependency-ordered uploads never interleave.
+  resource_group: ai-usage-depot-publish
+  rules:
+    - !reference [.untrusted_ref_guard, rules]
+    - if: '$CI_COMMIT_TAG || $CI_PIPELINE_SOURCE == "schedule"'
+      when: never
+    - if: '$CI_COMMIT_BRANCH =~ /^mq-working-branch-/'
+      when: never
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      changes:
+        paths: *ai_usage_depot_paths
+      allow_failure: true
+      variables:
+        DEPOT_REPOSITORY: datadog/first-party
+    # Re-publish the current default branch by hand, e.g. after a failed run.
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      when: manual
+      allow_failure: true
+      variables:
+        DEPOT_REPOSITORY: datadog/first-party
+    - if: '$CI_COMMIT_BRANCH'
+      when: manual
+      allow_failure: true
+      variables:
+        DEPOT_REPOSITORY: datadog/first-party-testing
+  script:
+    - scripts/publish-ai-usage-depot.sh

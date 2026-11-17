@@ -21,6 +21,7 @@ sgconfig.yml                         @DataDog/apm-common-components-core @DataDo
 .gitlab/benchmarks.yml               @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 .gitlab/fuzz.yml                     @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers @DataDog/chaos-engineering
 .gitlab/impacted-crates.yml          @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
+.gitlab/publish-ai-usage-depot.yml   @DataDog/agent-console @DataDog/trajectory
 benchmark/                           @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
 bin_tests/                           @DataDog/libdatadog-profiling @DataDog/libdatadog-crashtracking-reviewers
 build-common/                        @DataDog/apm-common-components-core @DataDog/libdatadog-guild-reviewers
@@ -97,6 +98,7 @@ scripts/exclude-from-green-ci.sh     @DataDog/apm-common-components-core
 scripts/major-bumps-level.sh         @DataDog/apm-common-components-core
 scripts/mirror-community-pull-request.sh @DataDog/apm-common-components-core
 scripts/publication-order.sh         @DataDog/apm-common-components-core
+scripts/publish-ai-usage-depot.sh    @DataDog/agent-console @DataDog/trajectory
 scripts/reformat_copyright.sh        @DataDog/apm-common-components-core
 scripts/release-excluded-crates-hints.sh  @DataDog/apm-common-components-core
 scripts/release-generate-changelogs.sh  @DataDog/apm-common-components-core
