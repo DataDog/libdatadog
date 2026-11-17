@@ -237,10 +237,74 @@ const fn resolve_dyn_ptr(d_val: u64, _load_addr: u64) -> usize {
 
 const SYMBOL_NAME: &[u8] = b"otel_thread_ctx_v1";
 
+/// Compute the ELF hash of a symbol name (the `elf_hash` / `dl_new_hash` algorithm).
+const fn elf_hash(name: &[u8]) -> u32 {
+    let mut h: u32 = 0;
+    let mut i = 0;
+    while i < name.len() {
+        h = (h << 4).wrapping_add(name[i] as u32);
+        let g = h & 0xf000_0000;
+        if g != 0 {
+            h ^= g >> 24;
+        }
+        h &= !g;
+        i += 1;
+    }
+    h
+}
+
+/// Compute the GNU hash of a symbol name (the `dl_new_hash` algorithm).
+const fn gnu_hash(name: &[u8]) -> u32 {
+    let mut h: u32 = 5381;
+    let mut i = 0;
+    while i < name.len() {
+        h = h.wrapping_mul(33).wrapping_add(name[i] as u32);
+        i += 1;
+    }
+    h
+}
+
+/// Compare a NUL-terminated C string at `ptr` with `name`.
+///
+/// # Safety
+///
+/// `ptr` must point to a valid NUL-terminated string within readable memory, with at least
+/// `name.len() + 1` readable bytes.
+unsafe fn streq(ptr: *const u8, name: &[u8]) -> bool {
+    // SAFETY: caller guarantees `ptr` points to a NUL-terminated string with at least
+    // `name.len() + 1` readable bytes.
+    unsafe { name.iter().enumerate().all(|(j, &b)| *ptr.add(j) == b) && *ptr.add(name.len()) == 0 }
+}
+
+/// Check whether a symbol entry matches: defined (not `SHN_UNDEF`), `STT_TLS` type, and
+/// correct name. Returns the `st_value` (TLS offset) on match.
+///
+/// # Safety
+///
+/// `sym` must point to a valid `Elf64Sym` entry. `strtab` must point to the base of a valid
+/// `.dynstr` section.
+unsafe fn check_sym(sym: &Elf64Sym, strtab: *const u8) -> Option<usize> {
+    if sym.st_info & 0xf != STT_TLS {
+        return None;
+    }
+    if sym.st_shndx == SHN_UNDEF {
+        return None;
+    }
+    // SAFETY: `st_name` is an offset into `.dynstr`, which is within the mapped pages.
+    // The string at `name_ptr` is NUL-terminated per ELF spec.
+    let name_ptr = unsafe { strtab.add(sym.st_name as usize) };
+    if unsafe { streq(name_ptr, SYMBOL_NAME) } {
+        Some(sym.st_value as usize)
+    } else {
+        None
+    }
+}
+
 /// Search the dynamic symbol table of a loaded ELF object for `otel_thread_ctx_v1`.
 ///
-/// Returns the symbol's `st_value` (TLS offset within the module's TLS block) if found,
-/// or `None` if the symbol is not present or is not a TLS symbol.
+/// Uses hash-based lookup via `DT_GNU_HASH` or `DT_HASH`. Returns the symbol's
+/// `st_value` (TLS offset within the module's TLS block) if found, or `None`
+/// if the symbol is absent, undefined, or not a TLS symbol.
 ///
 /// # Safety
 ///
@@ -252,10 +316,10 @@ unsafe fn find_tls_symbol_offset(phdrs: &[libc::Elf64_Phdr], base_addr: u64) -> 
     let dyn_phdr = phdrs.iter().find(|p| p.p_type == libc::PT_DYNAMIC)?;
     let dyn_addr = base_addr + dyn_phdr.p_vaddr;
 
-    // 2. Walk dynamic entries to find DT_SYMTAB, DT_STRTAB, and a hash table.
+    // 2. Walk dynamic entries to find DT_SYMTAB, DT_STRTAB, and hash tables.
     let mut symtab: *const Elf64Sym = core::ptr::null();
     let mut strtab: *const u8 = core::ptr::null();
-    let mut nsyms: usize = 0;
+    let mut elf_hash_ptr: *const u32 = core::ptr::null();
     let mut gnu_hash_ptr: *const u32 = core::ptr::null();
 
     let mut dyn_ptr = dyn_addr as *const Elf64Dyn;
@@ -272,12 +336,7 @@ unsafe fn find_tls_symbol_offset(phdrs: &[libc::Elf64_Phdr], base_addr: u64) -> 
             DT_SYMTAB => symtab = resolve_dyn_ptr(entry.d_val, base_addr) as *const Elf64Sym,
             DT_STRTAB => strtab = resolve_dyn_ptr(entry.d_val, base_addr) as *const u8,
             DT_HASH => {
-                // ELF hash table layout: [ nbucket: u32, nchain: u32, ... ]
-                // `nchain` equals the number of symbols in `.dynsym`.
-                let hash_ptr = resolve_dyn_ptr(entry.d_val, base_addr) as *const u32;
-                // SAFETY: the ELF hash table is within the mapped pages of the loaded
-                // object and always starts with two u32 fields (nbucket and nchain).
-                nsyms = unsafe { *hash_ptr.add(1) } as usize;
+                elf_hash_ptr = resolve_dyn_ptr(entry.d_val, base_addr) as *const u32;
             }
             DT_GNU_HASH => {
                 gnu_hash_ptr = resolve_dyn_ptr(entry.d_val, base_addr) as *const u32;
@@ -292,90 +351,137 @@ unsafe fn find_tls_symbol_offset(phdrs: &[libc::Elf64_Phdr], base_addr: u64) -> 
         return None;
     }
 
-    // If DT_HASH was not present, derive the symbol count from DT_GNU_HASH.
-    //
-    // GNU hash layout (all fields native-endian u32 unless noted):
-    //   [ nbuckets, symoffset, bloom_size, bloom_shift,
-    //     bloom[bloom_size] (u64 entries),
-    //     buckets[nbuckets],
-    //     chains[...] ]
-    //
-    // The highest populated symbol index is `max(buckets[i])`. From there, walk the
-    // chain array until bit 0 is set (end-of-chain marker). `nsyms = last_index + 1`.
-    if nsyms == 0 && !gnu_hash_ptr.is_null() {
-        // SAFETY: DT_GNU_HASH points to a valid GNU hash table header (4 × u32) within
-        // the mapped pages of the loaded object.
-        let nbuckets = unsafe { *gnu_hash_ptr } as usize;
-        let symoffset = unsafe { *gnu_hash_ptr.add(1) } as usize;
-        let bloom_size = unsafe { *gnu_hash_ptr.add(2) } as usize;
+    // 3. Hash-based lookup. Try GNU hash first then fall back to ELF hash.
 
-        // SAFETY: the bloom filter is `bloom_size` u64 entries (= `bloom_size * 2` u32
-        // slots) starting at header offset 4. The buckets array follows immediately.
-        let buckets_ptr = unsafe { gnu_hash_ptr.add(4 + bloom_size * 2) };
-        // SAFETY: the chains array follows the buckets array.
-        let chains_ptr = unsafe { buckets_ptr.add(nbuckets) };
-
-        // Find the maximum bucket value (highest starting symbol index).
-        let mut max_sym = 0usize;
-        for i in 0..nbuckets {
-            // SAFETY: `i < nbuckets`, so `buckets_ptr.add(i)` is within the buckets array.
-            let bucket = unsafe { *buckets_ptr.add(i) } as usize;
-            if bucket > max_sym {
-                max_sym = bucket;
-            }
-        }
-
-        // Walk the chain from max_sym to find the last symbol.
-        if max_sym >= symoffset {
-            let mut idx = max_sym;
-            loop {
-                // SAFETY: `idx - symoffset` is within the chains array; the chain is
-                // terminated by a value with bit 0 set, so this loop is bounded.
-                let chain_val = unsafe { *chains_ptr.add(idx - symoffset) };
-                if chain_val & 1 != 0 {
-                    break; // End-of-chain marker.
-                }
-                idx += 1;
-            }
-            nsyms = idx + 1;
+    if !gnu_hash_ptr.is_null() {
+        // SAFETY: gnu_hash_ptr was resolved from DT_GNU_HASH and points to valid memory.
+        if let result @ Some(_) = unsafe { lookup_gnu_hash(gnu_hash_ptr, symtab, strtab) } {
+            return result;
         }
     }
 
-    if nsyms == 0 {
-        return None;
-    }
-
-    // 3. Linear scan of the symbol table.
-    for i in 0..nsyms {
-        // SAFETY: `i < nsyms` and `.dynsym` has at least `nsyms` entries (derived from
-        // DT_HASH's nchain or the DT_GNU_HASH chain walk above).
-        let sym = unsafe { &*symtab.add(i) };
-        if sym.st_info & 0xf != STT_TLS {
-            continue;
-        }
-        // Skip undefined (imported) TLS symbols — they have st_value == 0 and would
-        // incorrectly match against the importing module's TLS block rather than the
-        // defining library's.
-        if sym.st_shndx == SHN_UNDEF {
-            continue;
-        }
-        // SAFETY: `st_name` is an index into the `.dynstr` string table, which is within
-        // the mapped pages of the loaded object. The string is NUL-terminated per ELF spec.
-        let name_ptr = unsafe { strtab.add(sym.st_name as usize) };
-        // Compare the symbol name byte-by-byte up to and including the NUL terminator.
-        // SAFETY: we read at most `SYMBOL_NAME.len() + 1` bytes from the NUL-terminated
-        // string starting at `name_ptr`, which is within the `.dynstr` section.
-        let matches = SYMBOL_NAME
-            .iter()
-            .enumerate()
-            .all(|(j, &b)| unsafe { *name_ptr.add(j) == b })
-            && unsafe { *name_ptr.add(SYMBOL_NAME.len()) == 0 };
-        if matches {
-            return Some(sym.st_value as usize);
+    if !elf_hash_ptr.is_null() {
+        // SAFETY: elf_hash_ptr was resolved from DT_HASH and points to valid memory.
+        if let result @ Some(_) = unsafe { lookup_elf_hash(elf_hash_ptr, symtab, strtab) } {
+            return result;
         }
     }
 
     None
+}
+
+/// Look up `SYMBOL_NAME` via the GNU hash table. O(1) expected time.
+///
+/// GNU hash layout: `[nbuckets, symoffset, bloom_size, bloom_shift,
+///                    bloom[bloom_size] (u64), buckets[nbuckets], chains[...]]`
+///
+/// # Safety
+///
+/// `gnu_hash_ptr` must point to a valid DT_GNU_HASH table, `symtab`/`strtab` to valid
+/// `.dynsym`/`.dynstr` sections, all within mapped pages under the loader lock.
+unsafe fn lookup_gnu_hash(
+    gnu_hash_ptr: *const u32,
+    symtab: *const Elf64Sym,
+    strtab: *const u8,
+) -> Option<usize> {
+    // SAFETY: all pointer dereferences in this function operate on the DT_GNU_HASH table,
+    // `.dynsym`, and `.dynstr` sections, which are within the mapped pages of a loaded ELF
+    // object. The loader lock held by `dl_iterate_phdr` prevents concurrent unloading.
+    unsafe {
+        let h = gnu_hash(SYMBOL_NAME);
+
+        let nbuckets = *gnu_hash_ptr;
+        let symoffset = *gnu_hash_ptr.add(1);
+        let bloom_size = *gnu_hash_ptr.add(2);
+        let bloom_shift = *gnu_hash_ptr.add(3);
+
+        if nbuckets == 0 {
+            return None;
+        }
+
+        // Bloom filter check. quickly reject symbols that are definitely absent.
+        let bloom = gnu_hash_ptr.add(4) as *const u64;
+        let bloom_word = *bloom.add((h as usize / 64) % bloom_size as usize);
+        let mask = (1u64 << (h % 64)) | (1u64 << ((h >> bloom_shift) % 64));
+        if bloom_word & mask != mask {
+            return None;
+        }
+
+        let buckets = gnu_hash_ptr.add(4 + bloom_size as usize * 2);
+        let bucket_idx = h % nbuckets;
+        let mut sym_idx = *buckets.add(bucket_idx as usize);
+        if sym_idx == 0 {
+            return None;
+        }
+
+        let chains = buckets.add(nbuckets as usize);
+
+        // Walk the chain. Each entry stores (gnu_hash | 1_if_last). Compare the hash
+        // (masking out bit 0) before the expensive string comparison.
+        loop {
+            if sym_idx < symoffset {
+                return None; // Corrupt. sym_idx should be >= symoffset.
+            }
+            let chain_val = *chains.add((sym_idx - symoffset) as usize);
+            if (chain_val ^ h) & !1 == 0 {
+                let sym = &*symtab.add(sym_idx as usize);
+                if let result @ Some(_) = check_sym(sym, strtab) {
+                    return result;
+                }
+            }
+            if chain_val & 1 != 0 {
+                break;
+            }
+            sym_idx += 1;
+        }
+
+        None
+    }
+}
+
+/// Look up `SYMBOL_NAME` via the ELF (SysV) hash table. O(1) expected time.
+///
+/// ELF hash layout: `[nbucket, nchain, bucket[nbucket], chain[nchain]]`
+///
+/// # Safety
+///
+/// `elf_hash_ptr` must point to a valid DT_HASH table, `symtab`/`strtab` to valid
+/// `.dynsym`/`.dynstr` sections, all within mapped pages under the loader lock.
+unsafe fn lookup_elf_hash(
+    elf_hash_ptr: *const u32,
+    symtab: *const Elf64Sym,
+    strtab: *const u8,
+) -> Option<usize> {
+    // SAFETY: all pointer dereferences in this function operate on the DT_HASH table,
+    // `.dynsym`, and `.dynstr` sections, which are within the mapped pages of a loaded ELF
+    // object. The loader lock held by `dl_iterate_phdr` prevents concurrent unloading.
+    unsafe {
+        let h = elf_hash(SYMBOL_NAME);
+
+        let nbucket = *elf_hash_ptr;
+        let nchain = *elf_hash_ptr.add(1);
+
+        if nbucket == 0 {
+            return None;
+        }
+
+        let bucket = elf_hash_ptr.add(2);
+        let chain = bucket.add(nbucket as usize);
+
+        let bucket_idx = h % nbucket;
+        let mut sym_idx = *bucket.add(bucket_idx as usize);
+
+        // Walk the chain (0 = end, indices bounded by nchain)
+        while sym_idx != 0 && sym_idx < nchain {
+            let sym = &*symtab.add(sym_idx as usize);
+            if let result @ Some(_) = check_sym(sym, strtab) {
+                return result;
+            }
+            sym_idx = *chain.add(sym_idx as usize);
+        }
+
+        None
+    }
 }
 
 /// Discover TLS module metadata for `otel_thread_ctx_v1` via `dl_iterate_phdr`.
