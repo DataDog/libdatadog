@@ -278,13 +278,18 @@ impl SharedFetcher {
     }
 
     /// Runs.
-    /// On successful fetches on_fetch() is called with the new configuration.
+    /// On successful fetches on_fetch() is called with the new configuration. The files it was
+    /// called with previously are released only after it returns, so whatever it published may
+    /// keep naming them until then.
+    /// Once the run-loop ends, on_finish() is called, before the files on_fetch() was last
+    /// called with are released: it must stop publishing them.
     /// Should not be called more than once.
     #[allow(clippy::type_complexity)]
     pub async fn run<S: FileStorage + Clone, C: HttpClientCapability + SleepCapability>(
         &self,
         storage: RefcountingStorage<S, C>,
         on_fetch: Box<dyn Send + Fn(&Vec<Arc<S::StoredFile>>)>,
+        on_finish: Box<dyn Send + FnOnce()>,
     ) where
         S::StoredFile: RefcountedFile,
     {
@@ -293,6 +298,7 @@ impl SharedFetcher {
             Ok(f) => f,
             Err(e) => {
                 error!("failed to create the fetcher: {:?}", e);
+                on_finish();
                 return;
             }
         };
@@ -352,15 +358,17 @@ impl SharedFetcher {
 
                         clean_inactive();
 
-                        for file in last_files {
+                        // Publish the new files before releasing the previous ones: until
+                        // on_fetch() returns, the published listing still names them.
+                        let previous_files = std::mem::replace(&mut last_files, files);
+
+                        on_fetch(&last_files);
+
+                        for file in previous_files {
                             if file.delref() == 1 {
                                 fetcher.file_storage.expire_file(file);
                             }
                         }
-
-                        last_files = files;
-
-                        on_fetch(&last_files);
                     } else {
                         clean_inactive();
                     }
@@ -387,6 +395,8 @@ impl SharedFetcher {
                 _ = sleep(Duration::from_nanos(self.interval.load(Ordering::Relaxed))) => {}
             }
         }
+
+        on_finish();
 
         for file in last_files {
             if file.delref() == 1 {
@@ -435,7 +445,7 @@ pub mod tests {
     }
 
     #[derive(Default, Clone)]
-    pub struct RcFileStorage(Arc<Storage>);
+    pub struct RcFileStorage(pub Arc<Storage>);
 
     impl FileStorage for RcFileStorage {
         type StoredFile = RcPathStore;
@@ -596,6 +606,92 @@ pub mod tests {
         );
     }
 
+    /// A target's listing names the files it was last delivered. Each of them must stay alive
+    /// until the listing replacing it has been delivered, whether the path got a new version or
+    /// was removed, and at shutdown until on_finish() withdrew the listing.
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn previous_files_outlive_the_delivery_of_new_ones() {
+        let server = RemoteConfigServer::spawn();
+        let storage = RcFileStorage::default();
+        let rc_storage = RefcountingStorage::new(
+            storage.clone(),
+            ConfigFetcherState::with_client(
+                server.dummy_options().invariants,
+                NativeCapabilities::new_periodic(),
+            ),
+        );
+        server.files.lock().unwrap().insert(
+            PATH_FIRST.clone(),
+            (vec![DUMMY_TARGET.clone()], 1, "v1".to_string()),
+        );
+
+        let fetcher = SharedFetcher::new(
+            DUMMY_TARGET.clone(),
+            "3b43524b-a70c-45dc-921d-34504e50c5eb".to_string(),
+            server.dummy_product_capabilities(),
+        );
+        let iteration = AtomicU32::new(0);
+        let previous: Arc<Mutex<Vec<std::sync::Weak<RcPathStore>>>> = Default::default();
+        let finish_previous = previous.clone();
+        let inner_fetcher = unsafe { &*(&fetcher as *const SharedFetcher) };
+        let inner_server = server.clone();
+        server.files.lock().unwrap().insert(
+            PATH_SECOND.clone(),
+            (vec![DUMMY_TARGET.clone()], 1, "X".to_string()),
+        );
+        fetcher
+            .run(
+                rc_storage,
+                Box::new(move |fetched| {
+                    let i = iteration.fetch_add(1, Ordering::SeqCst);
+                    let mut previous = previous.lock().unwrap();
+                    assert!(
+                        previous.iter().all(|f| f.strong_count() > 0),
+                        "delivery {i}: a file the previous listing named was released before \
+                         the new listing was delivered"
+                    );
+                    *previous = fetched.iter().map(Arc::downgrade).collect();
+                    let mut files = inner_server.files.lock().unwrap();
+                    let mut contents: Vec<String> = fetched
+                        .iter()
+                        .map(|f| f.store.data.lock().unwrap().contents.clone())
+                        .collect();
+                    contents.sort();
+                    match i {
+                        0 => {
+                            assert_eq!(contents, ["X", "v1"]);
+                            files.insert(
+                                PATH_FIRST.clone(),
+                                (vec![DUMMY_TARGET.clone()], 2, "v2".to_string()),
+                            );
+                        }
+                        1 => {
+                            assert_eq!(contents, ["X", "v2"]);
+                            files.remove(&*PATH_FIRST);
+                        }
+                        2 => {
+                            // PATH_SECOND stays listed, to be released at shutdown.
+                            assert_eq!(contents, ["X"]);
+                            inner_fetcher.cancel();
+                        }
+                        _ => panic!("Unexpected"),
+                    }
+                }),
+                Box::new(move || {
+                    let previous = finish_previous.lock().unwrap();
+                    assert!(!previous.is_empty());
+                    assert!(
+                        previous.iter().all(|f| f.strong_count() > 0),
+                        "a file the last listing named was released before on_finish"
+                    );
+                }),
+            )
+            .await;
+
+        assert!(storage.0.files.lock().unwrap().is_empty());
+    }
+
     #[tokio::test]
     async fn stats_and_expiration_do_not_deadlock() {
         let storage = RefcountingStorage::new(
@@ -690,7 +786,8 @@ pub mod tests {
                         }
                         2 => {
                             assert_eq!(fetched.len(), 1);
-                            assert_eq!(inner_storage.0.files.lock().unwrap().len(), 1);
+                            // The removed file is released once this listing is published.
+                            assert_eq!(inner_storage.0.files.lock().unwrap().len(), 2);
                             let req = server.last_request.lock().unwrap();
                             let req = req.as_ref().unwrap();
                             let client = req.client.as_ref().unwrap();
@@ -702,6 +799,7 @@ pub mod tests {
                         _ => panic!("Unexpected"),
                     },
                 ),
+                Box::new(|| {}),
             )
             .await;
 
@@ -769,22 +867,14 @@ pub mod tests {
         let server_3_storage = storage.clone();
         let server_3_rc_storage = rc_storage.clone();
         let server_third_1 = move || {
-            // It may happen that the other fetcher is _right now_ doing a fetch.
-            // This leads to a race condition:
-            // - If the other fetcher is currently fetching, then the file will be inactive and
-            //   dropped once its fetching ended.
-            // - If there's no other fetching active, it'll immediately drop the file.
-            let (runners, _) = server_3_rc_storage.run_id.runners_and_run_id();
-            let (expected_files, expected_inactive) = if runners == 0 { (1, 0) } else { (2, 1) };
-            assert_eq!(
-                server_3_rc_storage.inactive.lock().unwrap().len(),
-                expected_inactive
-            );
-            // one file should be expired by now
-            assert_eq!(
-                server_3_storage.0.files.lock().unwrap().len(),
-                expected_files
-            );
+            // Called while the target delivering second publishes its new files. Its previous
+            // files, PATH_SECOND among them as both targets held it, are released only after
+            // that, so they are neither expired nor inactive yet. The previous files of the
+            // target which delivered first were released once it published: PATH_SECOND is
+            // still held, and if its v1 of PATH_FIRST went inactive, it was cleaned up when the
+            // fetch of the target delivering now, which was in flight then, completed.
+            assert_eq!(server_3_rc_storage.inactive.lock().unwrap().len(), 0);
+            assert_eq!(server_3_storage.0.files.lock().unwrap().len(), 2);
             server_3.files.lock().unwrap().clear();
         };
         let server_third_2 = server_third_1.clone();
@@ -840,6 +930,7 @@ pub mod tests {
                         _ => panic!("Unexpected"),
                     },
                 ),
+                Box::new(|| {}),
             ),
             fetcher_2.run(
                 rc_storage,
@@ -872,6 +963,7 @@ pub mod tests {
                         _ => panic!("Unexpected"),
                     },
                 ),
+                Box::new(|| {}),
             ),
         ])
         .await;
