@@ -116,10 +116,7 @@ rm -f "$tmp"
 # --allow-dirty covers the version patches above and the Cargo.lock update they
 # cause; no other dependency is re-resolved.
 echo "==> cargo package"
-# TEMPORARY, for testing the upload path only; reverted before review.
-extra=()
-if [ "$MODE" = publish ] && [ "${DEPOT_REPOSITORY:-}" = datadog/first-party-testing ]; then extra=(--no-verify); fi
-cargo package -p "$CORE" -p "$FFI" --allow-dirty "${extra[@]}"
+cargo package -p "$CORE" -p "$FFI" --allow-dirty
 
 CORE_CRATE="$TARGET_DIR/package/${CORE}-${CORE_VERSION}.crate"
 FFI_CRATE="$TARGET_DIR/package/${FFI}-${FFI_VERSION}.crate"
