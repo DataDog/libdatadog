@@ -286,7 +286,7 @@ impl<T> Arc<T> {
 }
 
 #[cfg(test)]
-mod tests {
+mod miri_tests {
     use super::*;
 
     #[test]

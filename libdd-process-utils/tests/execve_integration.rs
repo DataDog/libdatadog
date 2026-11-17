@@ -2,13 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 // Integration test for PreparedExecve::exec
 
-#![cfg(unix)]
+#![cfg(all(unix, not(miri)))]
 
 use libdd_process_utils::unix_utils::PreparedExecve;
 use std::io::Read;
 use std::os::unix::io::FromRawFd;
 
-#[cfg_attr(miri, ignore)] // miri doesn't support fork
 #[test]
 fn test_prepared_execve_exec_echo_with_output() {
     use nix::sys::wait::{WaitStatus, waitpid};
@@ -70,7 +69,6 @@ fn test_prepared_execve_exec_echo_with_output() {
     }
 }
 
-#[cfg_attr(miri, ignore)] // miri doesn't support fork
 #[test]
 fn test_prepared_execve_exec_env_with_environment_variables() {
     use nix::sys::wait::{WaitStatus, waitpid};
@@ -142,7 +140,6 @@ fn test_prepared_execve_exec_env_with_environment_variables() {
     }
 }
 
-#[cfg_attr(miri, ignore)] // miri doesn't support fork
 #[test]
 fn test_prepared_execve_exec_with_complex_arguments() {
     use nix::sys::wait::{WaitStatus, waitpid};
@@ -214,7 +211,6 @@ fn test_prepared_execve_exec_with_complex_arguments() {
     }
 }
 
-#[cfg_attr(miri, ignore)] // miri doesn't support fork
 #[test]
 fn test_prepared_execve_exec_nonexistent_binary() {
     use nix::sys::wait::{WaitStatus, waitpid};

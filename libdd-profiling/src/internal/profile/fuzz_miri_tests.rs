@@ -523,120 +523,6 @@ fn fuzz_failure_001() {
     );
 }
 
-/// Fuzzes adding a bunch of samples to the profile.
-#[test]
-#[cfg_attr(miri, ignore)]
-fn test_fuzz_add_sample() {
-    let sample_types_gen = Vec::<api::SampleType>::produce();
-    let samples_gen = Vec::<(Option<Timestamp>, FuzzSample)>::produce();
-
-    bolero::check!()
-        .with_generator((sample_types_gen, samples_gen))
-        .for_each(|(expected_sample_types, samples)| {
-            let samples = samples
-                .iter()
-                .map(|(tstamp, sample)| (*tstamp, Sample::from(sample)))
-                .collect::<Vec<_>>();
-
-            let mut expected_profile = Profile::new(expected_sample_types, None);
-            configure_custom_sample_types(&mut expected_profile, expected_sample_types);
-            let mut samples_with_timestamps = Vec::new();
-            let mut samples_without_timestamps: HashMap<(&[Location], &[Label]), Vec<i64>> =
-                HashMap::new();
-            for (timestamp, sample) in &samples {
-                fuzz_add_sample(
-                    timestamp,
-                    sample,
-                    expected_sample_types,
-                    &mut expected_profile,
-                    &mut samples_with_timestamps,
-                    &mut samples_without_timestamps,
-                );
-            }
-            let profile = test_utils::roundtrip_to_pprof(expected_profile).unwrap();
-            assert_sample_types_eq(&profile, expected_sample_types);
-            assert_samples_eq(
-                &samples,
-                &profile,
-                &samples_with_timestamps,
-                &samples_without_timestamps,
-                &FxIndexMap::default(),
-            );
-        })
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
-fn fuzz_add_sample_with_fixed_sample_length() {
-    let sample_length_gen = 1..=64usize;
-
-    bolero::check!()
-        .with_shrink_time(Duration::from_secs(60))
-        .with_generator(sample_length_gen)
-        .and_then(|sample_len| {
-            let sample_types = Vec::<api::SampleType>::produce().with().len(sample_len);
-
-            let timestamps = Option::<Timestamp>::produce();
-            let locations = Vec::<Location>::produce();
-            let values = Vec::<i64>::produce().with().len(sample_len);
-            // Generate labels with unique keys
-            let labels = HashMap::<Box<str>, LabelValue>::produce();
-
-            let samples = Vec::<(
-                Option<Timestamp>,
-                Vec<Location>,
-                Vec<i64>,
-                HashMap<Box<str>, LabelValue>,
-            )>::produce()
-            .with()
-            .values((timestamps, locations, values, labels));
-            (sample_types, samples)
-        })
-        .for_each(|(sample_types, samples)| {
-            let mut profile = Profile::new(sample_types, None);
-            configure_custom_sample_types(&mut profile, sample_types);
-            let mut samples_with_timestamps = Vec::new();
-            let mut samples_without_timestamps: HashMap<(&[Location], &[Label]), Vec<i64>> =
-                HashMap::new();
-
-            let samples: Vec<(Option<Timestamp>, Sample)> = samples
-                .iter()
-                .map(|(timestamp, locations, values, labels)| {
-                    (
-                        *timestamp,
-                        Sample {
-                            locations: locations.clone(),
-                            values: values.clone(),
-                            labels: labels.iter().map(Label::from).collect::<Vec<Label>>(),
-                        },
-                    )
-                })
-                .collect();
-
-            for (timestamp, sample) in samples.iter() {
-                fuzz_add_sample(
-                    timestamp,
-                    sample,
-                    sample_types,
-                    &mut profile,
-                    &mut samples_with_timestamps,
-                    &mut samples_without_timestamps,
-                );
-            }
-            let serialized_profile =
-                test_utils::roundtrip_to_pprof(profile).expect("Failed to roundtrip to pprof");
-
-            assert_sample_types_eq(&serialized_profile, sample_types);
-            assert_samples_eq(
-                &samples,
-                &serialized_profile,
-                &samples_with_timestamps,
-                &samples_without_timestamps,
-                &FxIndexMap::default(),
-            );
-        });
-}
-
 #[test]
 fn fuzz_add_endpoint() {
     bolero::check!()
@@ -692,63 +578,185 @@ impl From<&FuzzOperation> for Operation {
     }
 }
 
-#[test]
-#[cfg_attr(miri, ignore)]
-fn fuzz_api_function_calls() {
-    let sample_length_gen = 1..=64usize;
+#[cfg(all(test, not(miri)))]
+mod tests {
+    use super::*;
 
-    bolero::check!()
-        .with_generator(sample_length_gen)
-        .and_then(|sample_len| {
-            let sample_types = Vec::<api::SampleType>::produce().with().len(sample_len);
-            let operations = Vec::<FuzzOperation>::produce();
+    // Excluded from miri_tests: prohibitively slow under Miri (unbounded bolero fuzz over full
+    // sample sets)
+    /// Fuzzes adding a bunch of samples to the profile.
+    #[test]
+    fn test_fuzz_add_sample() {
+        let sample_types_gen = Vec::<api::SampleType>::produce();
+        let samples_gen = Vec::<(Option<Timestamp>, FuzzSample)>::produce();
 
-            (sample_types, operations)
-        })
-        .for_each(|(sample_types, operations)| {
-            let operations = operations.iter().map(Operation::from).collect::<Vec<_>>();
+        bolero::check!()
+            .with_generator((sample_types_gen, samples_gen))
+            .for_each(|(expected_sample_types, samples)| {
+                let samples = samples
+                    .iter()
+                    .map(|(tstamp, sample)| (*tstamp, Sample::from(sample)))
+                    .collect::<Vec<_>>();
 
-            let mut profile = Profile::new(sample_types, None);
-            configure_custom_sample_types(&mut profile, sample_types);
-            let mut samples_with_timestamps: Vec<&Sample> = Vec::new();
-            let mut samples_without_timestamps: HashMap<(&[Location], &[Label]), Vec<i64>> =
-                HashMap::new();
-            let mut endpoint_mappings: FxIndexMap<u64, &String> = FxIndexMap::default();
+                let mut expected_profile = Profile::new(expected_sample_types, None);
+                configure_custom_sample_types(&mut expected_profile, expected_sample_types);
+                let mut samples_with_timestamps = Vec::new();
+                let mut samples_without_timestamps: HashMap<(&[Location], &[Label]), Vec<i64>> =
+                    HashMap::new();
+                for (timestamp, sample) in &samples {
+                    fuzz_add_sample(
+                        timestamp,
+                        sample,
+                        expected_sample_types,
+                        &mut expected_profile,
+                        &mut samples_with_timestamps,
+                        &mut samples_without_timestamps,
+                    );
+                }
+                let profile = test_utils::roundtrip_to_pprof(expected_profile).unwrap();
+                assert_sample_types_eq(&profile, expected_sample_types);
+                assert_samples_eq(
+                    &samples,
+                    &profile,
+                    &samples_with_timestamps,
+                    &samples_without_timestamps,
+                    &FxIndexMap::default(),
+                );
+            })
+    }
 
-            let mut original_samples = Vec::new();
+    // Excluded from miri_tests: prohibitively slow under Miri (bolero fuzz with 60s shrink time
+    // over generated samples/locations)
+    #[test]
+    fn fuzz_add_sample_with_fixed_sample_length() {
+        let sample_length_gen = 1..=64usize;
 
-            for operation in &operations {
-                match operation {
-                    Operation::AddSample(timestamp, sample) => {
-                        // Track the inputs for debugging.
-                        original_samples.push((*timestamp, sample.clone()));
+        bolero::check!()
+            .with_shrink_time(Duration::from_secs(60))
+            .with_generator(sample_length_gen)
+            .and_then(|sample_len| {
+                let sample_types = Vec::<api::SampleType>::produce().with().len(sample_len);
 
-                        fuzz_add_sample(
-                            timestamp,
-                            sample,
-                            sample_types,
-                            &mut profile,
-                            &mut samples_with_timestamps,
-                            &mut samples_without_timestamps,
-                        );
-                    }
-                    Operation::AddEndpoint(local_root_span_id, endpoint) => {
-                        profile
-                            .add_endpoint(*local_root_span_id, endpoint.into())
-                            .expect("add_endpoint to succeed");
-                        endpoint_mappings.insert(*local_root_span_id, endpoint);
+                let timestamps = Option::<Timestamp>::produce();
+                let locations = Vec::<Location>::produce();
+                let values = Vec::<i64>::produce().with().len(sample_len);
+                // Generate labels with unique keys
+                let labels = HashMap::<Box<str>, LabelValue>::produce();
+
+                let samples = Vec::<(
+                    Option<Timestamp>,
+                    Vec<Location>,
+                    Vec<i64>,
+                    HashMap<Box<str>, LabelValue>,
+                )>::produce()
+                .with()
+                .values((timestamps, locations, values, labels));
+                (sample_types, samples)
+            })
+            .for_each(|(sample_types, samples)| {
+                let mut profile = Profile::new(sample_types, None);
+                configure_custom_sample_types(&mut profile, sample_types);
+                let mut samples_with_timestamps = Vec::new();
+                let mut samples_without_timestamps: HashMap<(&[Location], &[Label]), Vec<i64>> =
+                    HashMap::new();
+
+                let samples: Vec<(Option<Timestamp>, Sample)> = samples
+                    .iter()
+                    .map(|(timestamp, locations, values, labels)| {
+                        (
+                            *timestamp,
+                            Sample {
+                                locations: locations.clone(),
+                                values: values.clone(),
+                                labels: labels.iter().map(Label::from).collect::<Vec<Label>>(),
+                            },
+                        )
+                    })
+                    .collect();
+
+                for (timestamp, sample) in samples.iter() {
+                    fuzz_add_sample(
+                        timestamp,
+                        sample,
+                        sample_types,
+                        &mut profile,
+                        &mut samples_with_timestamps,
+                        &mut samples_without_timestamps,
+                    );
+                }
+                let serialized_profile =
+                    test_utils::roundtrip_to_pprof(profile).expect("Failed to roundtrip to pprof");
+
+                assert_sample_types_eq(&serialized_profile, sample_types);
+                assert_samples_eq(
+                    &samples,
+                    &serialized_profile,
+                    &samples_with_timestamps,
+                    &samples_without_timestamps,
+                    &FxIndexMap::default(),
+                );
+            });
+    }
+
+    // Excluded from miri_tests: prohibitively slow under Miri (bolero fuzz over mixed
+    // add-sample/add-endpoint operation streams)
+    #[test]
+    fn fuzz_api_function_calls() {
+        let sample_length_gen = 1..=64usize;
+
+        bolero::check!()
+            .with_generator(sample_length_gen)
+            .and_then(|sample_len| {
+                let sample_types = Vec::<api::SampleType>::produce().with().len(sample_len);
+                let operations = Vec::<FuzzOperation>::produce();
+
+                (sample_types, operations)
+            })
+            .for_each(|(sample_types, operations)| {
+                let operations = operations.iter().map(Operation::from).collect::<Vec<_>>();
+
+                let mut profile = Profile::new(sample_types, None);
+                configure_custom_sample_types(&mut profile, sample_types);
+                let mut samples_with_timestamps: Vec<&Sample> = Vec::new();
+                let mut samples_without_timestamps: HashMap<(&[Location], &[Label]), Vec<i64>> =
+                    HashMap::new();
+                let mut endpoint_mappings: FxIndexMap<u64, &String> = FxIndexMap::default();
+
+                let mut original_samples = Vec::new();
+
+                for operation in &operations {
+                    match operation {
+                        Operation::AddSample(timestamp, sample) => {
+                            // Track the inputs for debugging.
+                            original_samples.push((*timestamp, sample.clone()));
+
+                            fuzz_add_sample(
+                                timestamp,
+                                sample,
+                                sample_types,
+                                &mut profile,
+                                &mut samples_with_timestamps,
+                                &mut samples_without_timestamps,
+                            );
+                        }
+                        Operation::AddEndpoint(local_root_span_id, endpoint) => {
+                            profile
+                                .add_endpoint(*local_root_span_id, endpoint.into())
+                                .expect("add_endpoint to succeed");
+                            endpoint_mappings.insert(*local_root_span_id, endpoint);
+                        }
                     }
                 }
-            }
 
-            let pprof_profile = test_utils::roundtrip_to_pprof(profile).unwrap();
-            assert_sample_types_eq(&pprof_profile, sample_types);
-            assert_samples_eq(
-                &original_samples,
-                &pprof_profile,
-                &samples_with_timestamps,
-                &samples_without_timestamps,
-                &endpoint_mappings,
-            );
-        })
+                let pprof_profile = test_utils::roundtrip_to_pprof(profile).unwrap();
+                assert_sample_types_eq(&pprof_profile, sample_types);
+                assert_samples_eq(
+                    &original_samples,
+                    &pprof_profile,
+                    &samples_with_timestamps,
+                    &samples_without_timestamps,
+                    &endpoint_mappings,
+                );
+            })
+    }
 }

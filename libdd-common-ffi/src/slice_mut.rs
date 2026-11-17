@@ -214,7 +214,7 @@ impl<'a> From<&'a mut str> for MutSlice<'a, c_char> {
 }
 
 #[cfg(test)]
-mod tests {
+mod miri_tests {
     use super::*;
     use core::ptr;
 

@@ -239,7 +239,7 @@ impl Iterator for ObservationsIntoIter {
 }
 
 #[cfg(test)]
-mod tests {
+mod miri_tests {
     use super::*;
     use crate::collections::identifiable::*;
     use crate::internal::{LabelSetId, StackTraceId};

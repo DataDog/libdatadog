@@ -1,5 +1,6 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+#![cfg(not(miri))]
 
 //! The provider helpers: the usage cases in `tests/fixtures/provider-usage`,
 //! and the names, error types, ids and DogStatsD packing every integration
@@ -249,7 +250,6 @@ fn parsed_usage_projects() {
 }
 
 #[test]
-#[cfg_attr(miri, ignore)] // multi-megabyte lines are too slow under Miri
 fn stream_outcomes() {
     let mut stream = UsageStream::new(UsageFormat::Auto, false);
     assert_eq!(stream.outcome(), StreamOutcome::Open);
@@ -342,7 +342,6 @@ fn gemini_compat_event(completion: u64, total: u64) -> String {
 }
 
 #[test]
-#[cfg_attr(miri, ignore)] // multi-megabyte lines are too slow under Miri
 fn split_events_read_as_the_stream_does() {
     let events = [
         (

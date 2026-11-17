@@ -1,7 +1,7 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-#![cfg(target_arch = "wasm32")]
+#![cfg(all(target_arch = "wasm32", not(miri)))]
 
 // These modules are standalone, while their parent crates have unrelated
 // native-only dependencies. Compile the production source directly here.

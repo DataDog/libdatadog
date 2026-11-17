@@ -129,7 +129,7 @@ impl From<SetId<Mapping>> for MappingId2 {
 }
 
 #[cfg(test)]
-mod tests {
+mod miri_tests {
     use super::*;
     use crate::profiles::datatypes::ProfilesDictionary;
     use std::collections::hash_map::DefaultHasher;

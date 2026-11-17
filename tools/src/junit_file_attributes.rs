@@ -418,7 +418,7 @@ fn resolve_module_file(test_name: &str, src_dir: &Path, workspace_root: &Path) -
     None
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
 
@@ -486,7 +486,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_process_junit_xml_ffi_library() {
         let manifest_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
         let (lookup, workspace_root) = build_target_lookup(Some(&manifest_path)).unwrap();

@@ -721,7 +721,7 @@ fn unescape<'a>(literal: &'a str, buffer: &mut String) -> Unescaped<'a> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use alloc::borrow::Cow;
     use core::cell::Cell;
@@ -780,6 +780,9 @@ mod tests {
         out
     }
 
+    // The mod gate carries not(miri) alongside test, which defeats clippy's
+    // allow-expect-in-tests in-test detection; this is test-only code.
+    #[allow(clippy::expect_used)]
     fn assert_json_eq(result: &str, expected: &str) {
         let result: serde_json::Value =
             serde_json::from_str(result).expect("result is not valid JSON");

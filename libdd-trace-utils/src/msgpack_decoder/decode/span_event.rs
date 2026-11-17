@@ -318,7 +318,7 @@ fn decode_attribute_array<T: DeserializableTraceData>(
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::AttributeAnyKey;
     use super::AttributeArrayKey;

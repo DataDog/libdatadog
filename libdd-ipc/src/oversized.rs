@@ -109,13 +109,12 @@ pub fn decode<T: serde::de::DeserializeOwned>(
     crate::codec::decode(payload)
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use crate::example_interface::ExampleInterfaceRequest;
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn small_requests_stay_inline() {
         let req = ExampleInterfaceRequest::EchoLen {
             payload: vec![1; 10],
@@ -129,7 +128,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn large_requests_carry_shared_memory() {
         let req = ExampleInterfaceRequest::EchoLen {
             payload: vec![1; 4096],
@@ -145,7 +143,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn requests_beyond_the_configured_limit_are_rejected() {
         let req = ExampleInterfaceRequest::EchoLen {
             payload: vec![1; max_message_size()],

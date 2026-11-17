@@ -1,7 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-#![cfg(windows)]
+#![cfg(all(windows, not(miri)))]
 
 use anyhow::Context;
 use std::path::PathBuf;

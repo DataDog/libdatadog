@@ -1,6 +1,8 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+#![cfg(not(miri))]
+
 use std::{collections::HashMap, fs, path::PathBuf, sync::Arc};
 
 use chrono::Utc;
@@ -37,7 +39,6 @@ fn fixture_root() -> PathBuf {
 }
 
 #[test]
-#[cfg_attr(miri, ignore)] // this test is too slow on miri
 fn evaluates_canonical_json_fixtures() {
     let _ = env_logger::builder().is_test(true).try_init();
 

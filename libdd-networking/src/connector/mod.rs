@@ -242,7 +242,7 @@ impl tower_service::Service<hyper::Uri> for Connector {
     }
 }
 
-#[cfg(all(test, feature = "http-client"))]
+#[cfg(all(test, not(miri), feature = "http-client"))]
 mod tests {
     use crate::http_common;
     #[cfg(any(feature = "use_webpki_roots", target_os = "linux"))]
@@ -251,7 +251,6 @@ mod tests {
     use {crate::http_common::Body, hyper::Request};
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     #[cfg(not(feature = "use_webpki_roots"))]
     /// Verify that the Connector type implements the correct bound Connect + Clone
     /// to be able to use the hyper::Client
@@ -260,14 +259,12 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     #[cfg(feature = "use_webpki_roots")]
     fn test_hyper_client_from_connector_with_webpki_roots() {
         let _ = http_common::new_default_client();
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     #[cfg(not(feature = "use_webpki_roots"))]
     // Only Linux eagerly loads roots at connector construction; macOS/Windows verify lazily
     // during the TLS handshake, so SSL_CERT_FILE/SSL_CERT_DIR cannot be exercised there.
@@ -291,7 +288,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     #[cfg(feature = "use_webpki_roots")]
     #[cfg(feature = "tls-core")]
     /// Verify that Connector builds an Https connector using webpki certificates
@@ -308,7 +304,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     #[cfg(feature = "tls-core")]
     /// Verify that a HTTPS GET request succeeds using
     /// the default Connector (native platform TLS verifier or webpki roots).

@@ -79,7 +79,7 @@ impl<'a> MetricsEmitter<'a> {
 }
 
 // Primary testing is done in the main TraceExporter module for now.
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use libdd_common::tag;

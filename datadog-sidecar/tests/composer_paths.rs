@@ -1,13 +1,12 @@
 // Copyright 2026 Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-#![cfg(unix)]
+#![cfg(all(unix, not(miri)))]
 
 use datadog_sidecar::service::telemetry::TelemetryCachedClient;
 use std::os::fd::AsRawFd;
 
 #[tokio::test]
-#[cfg_attr(miri, ignore)] // Requires native /dev/fd aliases.
 async fn composer_paths_are_checked_before_reusing_cached_dependencies() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("installed.json");

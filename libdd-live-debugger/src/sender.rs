@@ -684,7 +684,7 @@ pub fn generate_new_id() -> Uuid {
     Uuid::new_v4()
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use libdd_capabilities::{ChunkFuture, HttpError, MaybeSend, StreamingBodySender};
@@ -869,7 +869,6 @@ mod tests {
         }
     }
 
-    #[cfg_attr(miri, ignore)] // stalled async request cancellation is prohibitively slow under Miri
     #[tokio::test]
     async fn test_dropping_payload_sender_aborts_in_flight_request() {
         let cancelled = Arc::new(AtomicBool::new(false));

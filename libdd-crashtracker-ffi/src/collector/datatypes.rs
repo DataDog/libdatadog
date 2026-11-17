@@ -156,7 +156,7 @@ impl From<anyhow::Result<[i64; OpTypes::SIZE as usize]>> for CrashtrackerGetCoun
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use libdd_crashtracker::CrashtrackerConfiguration;

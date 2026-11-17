@@ -21,7 +21,10 @@
 //! The cdylib path is derived at runtime from the test executable location.
 //! Both the test binary and the cdylib live in `target/<[triple/]profile>/deps/`.
 
-#![cfg(target_os = "linux")]
+// Excluded from Miri: the cdylib under inspection is never produced
+// under cargo miri (no native codegen), so the .so this test reads
+// does not exist in a Miri build.
+#![cfg(all(target_os = "linux", not(miri)))]
 
 use std::path::PathBuf;
 
@@ -35,7 +38,6 @@ fn cdylib_path() -> PathBuf {
 /// `ddheap:alloc` is unconditional: every build samples allocations, so its
 /// note must always be present exactly once.
 #[test]
-#[cfg_attr(miri, ignore)]
 fn ddheap_alloc_probe_has_one_note() {
     let path = cdylib_path();
     libdd_profiling_heap_sampler::usdt_check::check_usdt_probes_in(&path, &["alloc"]).unwrap();
@@ -46,7 +48,6 @@ fn ddheap_alloc_probe_has_one_note() {
 /// runs, and only asserts the note is present, in builds that opt in.
 #[cfg(feature = "live-heap")]
 #[test]
-#[cfg_attr(miri, ignore)]
 fn ddheap_free_probe_has_one_note() {
     let path = cdylib_path();
     libdd_profiling_heap_sampler::usdt_check::check_usdt_probes_in(&path, &["free"]).unwrap();

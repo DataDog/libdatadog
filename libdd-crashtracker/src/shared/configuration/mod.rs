@@ -257,7 +257,7 @@ impl CrashtrackerConfiguration {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::CrashtrackerReceiverConfig;
 

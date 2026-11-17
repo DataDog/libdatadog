@@ -1,5 +1,6 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+#![cfg(not(miri))]
 
 mod common;
 
@@ -8,7 +9,6 @@ use httpmock::prelude::*;
 use libdd_agent_client::{TraceFormat, TraceSendOptions};
 
 #[tokio::test]
-#[cfg_attr(miri, ignore)]
 async fn v5_puts_to_correct_endpoint() {
     let server = MockServer::start();
     let mock = server.mock(|when, then| {
@@ -31,7 +31,6 @@ async fn v5_puts_to_correct_endpoint() {
 }
 
 #[tokio::test]
-#[cfg_attr(miri, ignore)]
 async fn v4_puts_to_v4_endpoint() {
     let server = MockServer::start();
     let mock = server.mock(|when, then| {
@@ -53,7 +52,6 @@ async fn v4_puts_to_v4_endpoint() {
 }
 
 #[tokio::test]
-#[cfg_attr(miri, ignore)]
 async fn injects_trace_count_header() {
     let server = MockServer::start();
     let mock = server.mock(|when, then| {
@@ -77,7 +75,6 @@ async fn injects_trace_count_header() {
 }
 
 #[tokio::test]
-#[cfg_attr(miri, ignore)]
 async fn injects_send_real_http_status_header() {
     let server = MockServer::start();
     let mock = server.mock(|when, then| {
@@ -101,7 +98,6 @@ async fn injects_send_real_http_status_header() {
 }
 
 #[tokio::test]
-#[cfg_attr(miri, ignore)]
 async fn computed_top_level_injects_header() {
     let server = MockServer::start();
     let mock = server.mock(|when, then| {
@@ -128,7 +124,6 @@ async fn computed_top_level_injects_header() {
 }
 
 #[tokio::test]
-#[cfg_attr(miri, ignore)]
 async fn client_computed_stats_injects_header() {
     let server = MockServer::start();
     let mock = server.mock(|when, then| {
@@ -155,7 +150,6 @@ async fn client_computed_stats_injects_header() {
 }
 
 #[tokio::test]
-#[cfg_attr(miri, ignore)]
 async fn parses_rate_by_service() {
     let server = MockServer::start();
     server.mock(|when, then| {
@@ -183,7 +177,6 @@ async fn parses_rate_by_service() {
 }
 
 #[tokio::test]
-#[cfg_attr(miri, ignore)]
 async fn returns_http_error_on_5xx() {
     let server = MockServer::start();
     server.mock(|when, then| {

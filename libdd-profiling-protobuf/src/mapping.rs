@@ -77,7 +77,7 @@ impl From<Mapping> for crate::prost_impls::Mapping {
 }
 
 #[cfg(test)]
-mod tests {
+mod miri_tests {
     use super::*;
     use crate::prost_impls;
     use prost::Message;

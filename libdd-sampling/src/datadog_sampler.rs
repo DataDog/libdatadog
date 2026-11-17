@@ -51,7 +51,7 @@ impl DatadogSampler {
     }
 
     // Test-only helper that bypasses the agent-response parsing path.
-    #[cfg(test)]
+    #[cfg(all(test, not(miri)))]
     pub(crate) fn update_service_rates(&self, rates: impl IntoIterator<Item = (String, f64)>) {
         self.service_samplers.update_rates(rates);
     }
@@ -374,7 +374,7 @@ impl DdSamplingResult {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use crate::constants::{

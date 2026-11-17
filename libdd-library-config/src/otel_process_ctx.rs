@@ -62,6 +62,7 @@ fn retry_on_eintr<T>(mut operation: impl FnMut() -> io::Result<T>) -> io::Result
 
 #[cfg(all(
     test,
+    not(miri),
     feature = "process-context-reader",
     feature = "process-context-writer"
 ))]
@@ -103,7 +104,6 @@ mod tests {
     use linux::{is_published, read_process_context};
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn publish_then_read_process_context() {
         let context = ProcessContext {
             resource: None,
@@ -140,7 +140,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn publish_then_update_process_context() {
         let payload_v1 = "example process context payload";
         let payload_v2 = "another example process context payload of different size";
@@ -203,7 +202,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn unpublish_process_context() {
         let payload = "example process context payload";
 
@@ -225,7 +223,6 @@ mod tests {
 
     /// End-to-end test using `ProcessContextSelfReader`.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn publish_read_update_read_and_unpublish() {
         fn context(service_name: &str) -> ProcessContext {
             ProcessContext {
@@ -271,7 +268,6 @@ mod tests {
 
     #[test]
     #[cfg(target_os = "linux")]
-    #[cfg_attr(miri, ignore)]
     fn child_can_republish_after_fork() {
         fn context(service_name: &str) -> ProcessContext {
             ProcessContext {

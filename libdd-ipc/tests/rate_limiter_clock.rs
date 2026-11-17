@@ -1,12 +1,13 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+#![cfg(not(miri))]
+
 use core::time::Duration;
 use libdd_ipc::rate_limiter::now;
 use std::time::Instant;
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn clock_uses_nanoseconds() {
     let started = Instant::now();
     let before = now();

@@ -253,7 +253,7 @@ fn build_agentless_headers(metadata: &TracerMetadata, trace_count: usize) -> Hea
     headers
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use bytes::Bytes;
@@ -271,6 +271,8 @@ mod tests {
         status: Option<http::StatusCode>,
     }
 
+    // Test double: unwrap is fine here; the crate-level deny targets production code.
+    #[allow(clippy::unwrap_used)]
     impl HttpClientCapability for TestCapabilities {
         fn new_client() -> Self {
             Self::default()
@@ -334,6 +336,8 @@ mod tests {
         }]])
     }
 
+    // Test helper: unwrap is fine here; the crate-level deny targets production code.
+    #[allow(clippy::unwrap_used)]
     fn request_body(request: &http::Request<Bytes>) -> Vec<u8> {
         #[cfg(feature = "compression")]
         let body = zstd::decode_all(request.body().as_ref()).unwrap();
@@ -342,6 +346,8 @@ mod tests {
         body
     }
 
+    // Excluded from miri_tests: prohibitively slow under Miri (full agentless send pipeline:
+    // obfuscation + manual JSON byte encoding; measured 81.3s)
     #[test]
     fn sends_decoded_traces_with_top_level_tags() {
         let capabilities = TestCapabilities::default();
@@ -366,6 +372,8 @@ mod tests {
         );
     }
 
+    // Excluded from miri_tests: prohibitively slow under Miri (full agentless send pipeline;
+    // measured 33.0s)
     #[test]
     fn reports_final_send_result_and_payload_size() {
         let capabilities = TestCapabilities::default();
@@ -385,6 +393,8 @@ mod tests {
         assert!(payload_size > 0);
     }
 
+    // Excluded from miri_tests: prohibitively slow under Miri (full agentless send pipeline,
+    // run twice; measured 58.7s)
     #[test]
     fn reports_redirects_as_failed_sends() {
         for status in [

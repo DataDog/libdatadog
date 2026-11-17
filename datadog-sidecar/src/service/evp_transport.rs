@@ -24,7 +24,7 @@ use tokio::sync::Mutex as AsyncMutex;
 use tracing::{debug, warn};
 
 pub(crate) use evp_proxy::SUBDOMAIN_HEADER as EVP_SUBDOMAIN_HEADER;
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 const EVP_SUBDOMAIN_VALUE: &str = evp_proxy::EVENT_PLATFORM_INTAKE_SUBDOMAIN;
 
 const USER_AGENT: &str = concat!("ddtrace-sidecar/", crate::sidecar_version!());
@@ -527,12 +527,12 @@ impl EvpTransport {
         )
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, not(miri)))]
     pub(crate) fn shares_route_state(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.state, &other.state)
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, not(miri)))]
     pub(crate) fn producer(&self) -> &EvpProducerIdentity {
         &self.producer
     }
@@ -548,7 +548,7 @@ impl EvpTransport {
         &self.deduplication_scope
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, not(miri)))]
     fn with_clock(
         mut self,
         clock: Arc<dyn Fn() -> Instant + Send + Sync>,
@@ -875,7 +875,7 @@ fn log_failure(log_prefix: &str, failure: &DeliveryFailure) {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use libdd_capabilities::MaybeSend;
@@ -1745,7 +1745,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn native_http_response_limit_is_opt_in_for_both_request_apis() {
         use libdd_capabilities_impl::NativeCapabilities;
         let server = httpmock::MockServer::start_async().await;
@@ -1779,7 +1778,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn native_discovery_bounds_unfinished_response_while_reading() {
         use libdd_capabilities_impl::NativeCapabilities;
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -1832,7 +1830,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn native_discovery_accepts_response_at_byte_limit() {
         use libdd_capabilities_impl::NativeCapabilities;
         let server = httpmock::MockServer::start_async().await;
@@ -1870,7 +1867,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn native_local_delivery_does_not_follow_redirects_or_retry_responses() {
         use httpmock::MockServer;
         use libdd_capabilities_impl::NativeCapabilities;

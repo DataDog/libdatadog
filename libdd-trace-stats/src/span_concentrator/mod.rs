@@ -496,5 +496,5 @@ impl StatsComputationObfuscationConfig {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests;

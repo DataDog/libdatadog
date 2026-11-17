@@ -416,7 +416,7 @@ async fn parse_multipart(boundary: String, body: Vec<u8>) -> anyhow::Result<Vec<
     Ok(parts)
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
 

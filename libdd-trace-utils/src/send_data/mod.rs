@@ -449,7 +449,7 @@ where
     Ok(buf)
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use crate::send_with_retry::{RetryBackoffType, RetryStrategy};
@@ -590,7 +590,6 @@ mod tests {
         }
     }
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn request_protobuf() {
         let server = MockServer::start_async().await;
@@ -638,7 +637,6 @@ mod tests {
         assert_eq!(*res.responses_count_per_code.get(&202).unwrap(), 1_u64);
     }
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn request_protobuf_v1() {
         use crate::span::v1::{Span as V1Span, TraceChunk as V1Chunk, TracerPayload as V1Payload};
@@ -723,7 +721,6 @@ mod tests {
         assert!(res.bytes_sent > 0);
     }
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn request_protobuf_several_payloads() {
         let server = MockServer::start_async().await;
@@ -771,7 +768,6 @@ mod tests {
         assert_eq!(*res.responses_count_per_code.get(&202).unwrap(), 1_u64);
     }
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn request_msgpack_v07() {
         let server = MockServer::start_async().await;
@@ -830,7 +826,6 @@ mod tests {
         assert_eq!(*res.responses_count_per_code.get(&200).unwrap(), 1_u64);
     }
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn request_msgpack_v04() {
         let server = MockServer::start_async().await;
@@ -888,7 +883,6 @@ mod tests {
         assert_eq!(*res.responses_count_per_code.get(&200).unwrap(), 1_u64);
     }
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn request_msgpack_several_payloads() {
         let server = MockServer::start_async().await;
@@ -932,7 +926,6 @@ mod tests {
         assert_eq!(*res.responses_count_per_code.get(&200).unwrap(), 2_u64);
     }
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn request_error_status_code() {
         let server = MockServer::start_async().await;
@@ -977,7 +970,6 @@ mod tests {
         assert_eq!(*res.responses_count_per_code.get(&500).unwrap(), 1_u64);
     }
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn request_error_network() {
         // Server not created in order to return a 'connection refused' error.
@@ -1018,7 +1010,6 @@ mod tests {
         assert_eq!(res.responses_count_per_code.len(), 0);
     }
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn request_error_timeout_v04() {
         let server = MockServer::start_async().await;
@@ -1080,7 +1071,6 @@ mod tests {
         assert_eq!(res.responses_count_per_code.len(), 0);
     }
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn request_error_timeout_v07() {
         let server = MockServer::start_async().await;

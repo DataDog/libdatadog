@@ -146,16 +146,12 @@ impl TraceSerializer {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::trace_exporter::agent_response::AgentResponsePayloadVersion;
-    use http::header::CONTENT_TYPE;
-    use libdd_common::header::APPLICATION_MSGPACK_STR;
+mod test_support {
     use libdd_tinybytes::BytesString;
     use libdd_trace_utils::span::v04::SpanBytes;
     use libdd_trace_utils::trace_utils::{TracerGenericTags, TracerHeaderTags};
 
-    fn create_test_span() -> SpanBytes {
+    pub(crate) fn create_test_span() -> SpanBytes {
         SpanBytes {
             name: BytesString::from_slice(b"test_span").unwrap(),
             service: BytesString::from_slice(b"test_service").unwrap(),
@@ -171,7 +167,7 @@ mod tests {
         }
     }
 
-    fn create_test_header_tags() -> TracerHeaderTags<'static> {
+    pub(crate) fn create_test_header_tags() -> TracerHeaderTags<'static> {
         TracerHeaderTags {
             lang: "rust",
             lang_version: "1.70.0",
@@ -186,6 +182,16 @@ mod tests {
             ..Default::default()
         }
     }
+}
+
+#[cfg(all(test, not(miri)))]
+mod tests {
+    use super::test_support::{create_test_header_tags, create_test_span};
+    use super::*;
+    use crate::trace_exporter::agent_response::AgentResponsePayloadVersion;
+    use http::header::CONTENT_TYPE;
+    use libdd_common::header::APPLICATION_MSGPACK_STR;
+    use libdd_trace_utils::trace_utils::{TracerGenericTags, TracerHeaderTags};
 
     #[test]
     fn test_trace_serializer_new() {
@@ -236,6 +242,69 @@ mod tests {
         assert!(headers.contains_key(DATADOG_RATES_PAYLOAD_VERSION));
         assert_eq!(headers.get(DATADOG_TRACE_COUNT).unwrap(), "2");
     }
+
+    #[test]
+    fn test_prepare_traces_payload_v05() {
+        let serializer = TraceSerializer::new();
+        let traces = vec![vec![create_test_span()]];
+        let header_tags = create_test_header_tags();
+
+        let result = serializer.prepare_traces_payload(
+            &traces,
+            header_tags,
+            &TracerMetadata::default(),
+            None,
+            TraceExporterOutputFormat::V05,
+        );
+        assert!(result.is_ok());
+
+        let prepared = result.unwrap();
+        assert_eq!(prepared.chunk_count, 1);
+        assert!(!prepared.data.is_empty());
+        assert!(!prepared.headers.is_empty());
+    }
+
+    #[test]
+    fn test_header_tags_conversion() {
+        let header_tags = TracerHeaderTags {
+            lang: "python",
+            lang_version: "3.9.0",
+            tracer_version: "2.0.0",
+            lang_interpreter: "cpython",
+            lang_vendor: "python.org",
+            generic: TracerGenericTags {
+                client_computed_stats: false,
+                client_computed_top_level: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let serializer = TraceSerializer::new();
+        let headers = serializer.build_traces_headers(header_tags, 1, None);
+
+        assert_eq!(headers.get("datadog-meta-lang").unwrap(), "python");
+        assert_eq!(headers.get("datadog-meta-lang-version").unwrap(), "3.9.0");
+        assert_eq!(headers.get("datadog-meta-tracer-version").unwrap(), "2.0.0");
+        assert_eq!(
+            headers.get("datadog-meta-lang-interpreter").unwrap(),
+            "cpython"
+        );
+        assert_eq!(
+            headers.get("datadog-meta-lang-interpreter-vendor").unwrap(),
+            "python.org"
+        );
+        assert!(!headers.contains_key("datadog-client-computed-stats"));
+        assert!(headers.contains_key("datadog-client-computed-top-level"));
+    }
+}
+
+#[cfg(test)]
+mod miri_tests {
+    use super::test_support::{create_test_header_tags, create_test_span};
+    use super::*;
+    use crate::trace_exporter::agent_response::AgentResponsePayloadVersion;
+    use libdd_trace_utils::span::v04::SpanBytes;
 
     #[test]
     fn test_serialize_payload_v04() {
@@ -338,27 +407,6 @@ mod tests {
     }
 
     #[test]
-    fn test_prepare_traces_payload_v05() {
-        let serializer = TraceSerializer::new();
-        let traces = vec![vec![create_test_span()]];
-        let header_tags = create_test_header_tags();
-
-        let result = serializer.prepare_traces_payload(
-            &traces,
-            header_tags,
-            &TracerMetadata::default(),
-            None,
-            TraceExporterOutputFormat::V05,
-        );
-        assert!(result.is_ok());
-
-        let prepared = result.unwrap();
-        assert_eq!(prepared.chunk_count, 1);
-        assert!(!prepared.data.is_empty());
-        assert!(!prepared.headers.is_empty());
-    }
-
-    #[test]
     fn test_prepare_traces_payload_with_agent_version() {
         let agent_version = AgentResponsePayloadVersion::new();
         let serializer = TraceSerializer::new();
@@ -398,39 +446,5 @@ mod tests {
         assert_eq!(prepared.chunk_count, 0);
         assert!(!prepared.data.is_empty()); // Even empty traces result in some serialized data
         assert_eq!(prepared.headers.get(DATADOG_TRACE_COUNT).unwrap(), "0");
-    }
-
-    #[test]
-    fn test_header_tags_conversion() {
-        let header_tags = TracerHeaderTags {
-            lang: "python",
-            lang_version: "3.9.0",
-            tracer_version: "2.0.0",
-            lang_interpreter: "cpython",
-            lang_vendor: "python.org",
-            generic: TracerGenericTags {
-                client_computed_stats: false,
-                client_computed_top_level: true,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-
-        let serializer = TraceSerializer::new();
-        let headers = serializer.build_traces_headers(header_tags, 1, None);
-
-        assert_eq!(headers.get("datadog-meta-lang").unwrap(), "python");
-        assert_eq!(headers.get("datadog-meta-lang-version").unwrap(), "3.9.0");
-        assert_eq!(headers.get("datadog-meta-tracer-version").unwrap(), "2.0.0");
-        assert_eq!(
-            headers.get("datadog-meta-lang-interpreter").unwrap(),
-            "cpython"
-        );
-        assert_eq!(
-            headers.get("datadog-meta-lang-interpreter-vendor").unwrap(),
-            "python.org"
-        );
-        assert!(!headers.contains_key("datadog-client-computed-stats"));
-        assert!(headers.contains_key("datadog-client-computed-top-level"));
     }
 }

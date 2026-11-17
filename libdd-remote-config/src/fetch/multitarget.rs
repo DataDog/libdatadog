@@ -778,7 +778,7 @@ where
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use crate::fetch::fetcher::tests::*;
@@ -946,7 +946,6 @@ mod tests {
     static RT_ID_3: &str = "0125dff8-d9a7-4fd3-a0c2-0ca3b12816a1";
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn test_multi_fetcher() {
         let server = RemoteConfigServer::spawn();
         let (on_dead, on_dead_completer) = ManualFuture::new();

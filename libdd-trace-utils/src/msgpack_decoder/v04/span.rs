@@ -83,7 +83,7 @@ fn fill_span<T: DeserializableTraceData>(
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::SpanKey;
     use crate::span::SpanKeyParseError;

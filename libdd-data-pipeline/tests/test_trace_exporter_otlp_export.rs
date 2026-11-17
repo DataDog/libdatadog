@@ -1,5 +1,8 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+
+#![cfg(not(miri))]
+
 #[cfg(test)]
 mod otlp_export_tests {
     use libdd_capabilities_impl::NativeCapabilities;
@@ -12,7 +15,6 @@ mod otlp_export_tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
     use tokio::task;
-
     fn get_v04_trace_snapshot_test_payload(name_prefix: &str) -> Vec<u8> {
         let mut span_1 = create_test_json_span(1234, 12342, 0, 1, false);
         span_1["name"] = json!(format!("{name_prefix}_01"));
@@ -40,7 +42,6 @@ mod otlp_export_tests {
         rmp_serde::to_vec(&(dict, vec![vec![span]])).unwrap()
     }
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn otlp_export_sends_correct_payload() {
         use httpmock::MockServer;
@@ -146,7 +147,6 @@ mod otlp_export_tests {
         );
     }
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn otlp_mutable_metadata_runtime_id_updates_propagate() {
         use httpmock::MockServer;
@@ -242,7 +242,6 @@ mod otlp_export_tests {
         }
     }
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn otlp_v05_export_sets_sampled_flag() {
         use httpmock::MockServer;
@@ -284,7 +283,6 @@ mod otlp_export_tests {
         mock.delete();
     }
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn otlp_export_unsampled_traces_not_exported() {
         use httpmock::MockServer;

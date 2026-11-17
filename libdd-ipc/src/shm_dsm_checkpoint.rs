@@ -378,7 +378,7 @@ impl ShmDsmCheckpointMapping {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use crate::shm_stats::{DEFAULT_SLOT_COUNT, DEFAULT_STRING_POOL_BYTES, ShmSpanConcentrator};
@@ -476,7 +476,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn a_checkpoint_round_trips_into_backend_sketches() {
         let t = table(test_path());
         let tags = ["direction:out", "topic:orders", "type:kafka"];
@@ -507,7 +506,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn a_checkpoint_keeps_its_first_inputs_key_fields() {
         let t = table(test_path());
         t.add_checkpoint(&checkpoint(7, &["topic:a"]));
@@ -527,7 +525,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn values_outside_the_bins_land_at_their_ends() {
         let t = table(test_path());
         t.add_checkpoint(&DsmCheckpointInput {
@@ -571,7 +568,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn edge_tags_beyond_the_maximum_are_dropped() {
         let t = table(test_path());
         let tags: Vec<String> = (0..MAX_EDGE_TAGS + 3).map(|i| format!("k{i}:v")).collect();
@@ -581,7 +577,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn a_worker_writes_into_the_sidecars_table() {
         let path = test_path();
         let owner = table(path.clone());
@@ -607,7 +602,6 @@ mod tests {
     /// The slot size an opener validates against is its own schema's; opening another schema's
     /// segment would put every slot boundary in the wrong place.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn a_segment_opens_only_as_its_own_schema() {
         let dsm_path = test_path();
         let _dsm = table(dsm_path.clone());
@@ -634,7 +628,6 @@ mod tests {
     /// A forced drain dates the bucket still being written as the current interval, and the
     /// other one as the interval before it; a regular drain closes the interval just ended.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn buckets_are_dated_by_the_interval_they_close() {
         let t = table(test_path());
         let mem = mapping(&t);
@@ -656,7 +649,6 @@ mod tests {
     /// The edge-tag count is a peer's to write; a count no writer produces drops only its own
     /// group, and its histograms are still cleared rather than left for the slot's next key.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn a_malformed_tag_count_drops_only_its_own_checkpoint() {
         let t = table(test_path());
         for h in 1..=3 {
@@ -675,7 +667,6 @@ mod tests {
     /// Edge tags are copied out of the pool under one allowance for the whole bucket, however
     /// often a peer repeats a large reference; checkpoints past it are dropped.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn one_large_reference_repeated_across_slots_is_bounded() {
         const POOL: usize = 4096;
         let t = ShmDsmCheckpointTable::create(test_path(), DSM_BUCKET_NANOS, 8, POOL).unwrap();
@@ -710,7 +701,6 @@ mod tests {
     /// A checkpoint with an edge tag that does not resolve is dropped rather than exported with
     /// a blank tag next to a hash that was computed over the real one.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn string_references_outside_the_pool_drop_their_checkpoint() {
         let t = table(test_path());
         t.add_checkpoint(&checkpoint(1, &["topic:x", "type:kafka"]));

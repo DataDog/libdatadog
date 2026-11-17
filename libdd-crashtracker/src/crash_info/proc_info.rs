@@ -10,7 +10,7 @@ pub struct ProcInfo {
     pub tid: Option<u32>,
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 impl super::test_utils::TestInstance for ProcInfo {
     fn test_instance(seed: u64) -> Self {
         Self {

@@ -307,7 +307,7 @@ fn os_error(error: u32) -> io::Error {
     io::Error::from_raw_os_error(error as i32)
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use libdd_common::MutexExt;
 

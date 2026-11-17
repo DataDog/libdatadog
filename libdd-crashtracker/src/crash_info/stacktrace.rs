@@ -362,7 +362,7 @@ fn byte_slice_as_hex(bv: &[u8]) -> String {
     s
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 impl super::test_utils::TestInstance for StackTrace {
     fn test_instance(_seed: u64) -> Self {
         let frames = (0..10).map(StackFrame::test_instance).collect();
@@ -370,7 +370,7 @@ impl super::test_utils::TestInstance for StackTrace {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 impl super::test_utils::TestInstance for StackFrame {
     fn test_instance(seed: u64) -> Self {
         let ip = Some(format!("{seed:#x}"));
@@ -412,7 +412,7 @@ impl super::test_utils::TestInstance for StackFrame {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
 
@@ -475,12 +475,11 @@ mod tests {
 
 // These test the `comments` fallback with garbage input against the live process,
 // so unlike `unix_test` they need no generated `.so` fixtures or extra feature flags.
-#[cfg(all(unix, test))]
+#[cfg(all(test, not(miri), unix))]
 mod unix_comment_tests {
     use super::*;
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_normalize_ips_with_garbage_ip_adds_comment() {
         let mut symbolizer = Symbolizer::new();
         let normalizer = Normalizer::new();
@@ -506,7 +505,6 @@ mod unix_comment_tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_resolve_names_unresolvable_address_adds_comment() {
         let mut frame = StackFrame::new();
         frame.ip = Some(format!("{:#x}", u64::MAX));
@@ -526,14 +524,18 @@ mod unix_comment_tests {
 }
 
 // Tests are disabled on macos because we cannot generate the libs
-#[cfg(all(unix, not(target_os = "macos"), feature = "generate-unit-test-files"))]
-#[cfg(test)]
+#[cfg(all(
+    test,
+    not(miri),
+    unix,
+    not(target_os = "macos"),
+    feature = "generate-unit-test-files"
+))]
 mod unix_test {
     use super::*;
     use crate::{SharedLibrary, get_tests_folder_path};
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_normalize_ip() {
         let test_so = get_tests_folder_path()
             .expect("Failed to get the tests folder path")
@@ -568,7 +570,6 @@ mod unix_test {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_normalize_ip_cpp() {
         let test_so = get_tests_folder_path()
             .expect("Failed to get the tests folder path")
@@ -603,7 +604,6 @@ mod unix_test {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_symbolization() {
         let test_so = get_tests_folder_path()
             .expect("Failed to get the tests folder path")
@@ -633,7 +633,6 @@ mod unix_test {
     /// whenever the receiver outlives it. `normalize_ip` runs while the process is
     /// alive, then `resolve_names` falls back to the recorded ELF file and offset.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_symbolization_after_process_exit() {
         let test_so = get_tests_folder_path()
             .expect("Failed to get the tests folder path")
@@ -671,7 +670,6 @@ mod unix_test {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_symbolization_cpp() {
         let test_so = get_tests_folder_path()
             .expect("Failed to get the tests folder path")

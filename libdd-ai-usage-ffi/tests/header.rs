@@ -1,6 +1,8 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+#![cfg(not(miri))]
+
 //! The checked-in C header is what cbindgen generates from the crate. Run
 //! with `UPDATE_HEADER=1` to regenerate it.
 
@@ -8,7 +10,6 @@ use std::fs;
 use std::path::Path;
 
 #[test]
-#[cfg_attr(miri, ignore)] // cbindgen runs `cargo metadata`; miri can't spawn processes
 fn header_is_current() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let config = cbindgen::Config::from_file(crate_dir.join("cbindgen.toml")).unwrap();

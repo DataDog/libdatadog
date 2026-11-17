@@ -90,7 +90,7 @@ pub extern "C" fn ddog_endpoint_set_use_system_resolver(
 pub extern "C" fn ddog_endpoint_drop(_: Box<Endpoint>) {}
 
 #[cfg(test)]
-mod tests {
+mod miri_tests {
     use super::*;
     use crate::CharSlice;
 

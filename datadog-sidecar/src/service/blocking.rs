@@ -664,7 +664,7 @@ pub fn ping(transport: &mut SidecarTransport) -> io::Result<Duration> {
     Ok(start.elapsed())
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 #[cfg(unix)]
 mod tests {
     use super::try_submit_ffe;
@@ -722,7 +722,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn coalesced_evp_updates_follow_connection_setup_before_data() {
         let (conn, peer) = SeqpacketConn::socketpair().unwrap();
         let mut transport = SidecarTransport::from(conn);
@@ -755,7 +754,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn failed_blocking_drain_retains_evp_configuration() {
         let (conn, peer) = SeqpacketConn::socketpair().unwrap();
         let mut transport = SidecarTransport::from(conn);
@@ -777,7 +775,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn reconnect_replays_latest_evp_configuration_before_data() {
         for pending in [false, true] {
             let (conn, peer) = SeqpacketConn::socketpair().unwrap();
@@ -813,7 +810,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn reconnect_keeps_new_factory_evp_configuration() {
         let (conn, old_peer) = SeqpacketConn::socketpair().unwrap();
         let mut transport = SidecarTransport::from(conn);
@@ -848,7 +844,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn a_new_transport_does_not_inherit_ended_connection_evp_settings() {
         let (conn, _peer) = SeqpacketConn::socketpair().unwrap();
         let mut transport = SidecarTransport::from(conn);
@@ -868,7 +863,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn evp_configuration_is_replayed_after_reconfiguration_and_fork() {
         let (conn, peer) = SeqpacketConn::socketpair().unwrap();
         let mut transport = SidecarTransport::from(conn);
@@ -902,7 +896,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn stats_fallback_reports_whether_the_span_was_sent() {
         let (conn, peer) = SeqpacketConn::socketpair().unwrap();
         let mut transport = SidecarTransport::from(conn);
@@ -944,7 +937,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn dsm_fallback_reports_whether_the_point_was_sent() {
         let (conn, peer) = SeqpacketConn::socketpair().unwrap();
         let mut transport = SidecarTransport::from(conn);
@@ -995,7 +987,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn dsm_backlog_fallback_reports_whether_the_offset_was_sent() {
         use libdd_ipc::shm_dsm_backlog::BacklogTag;
         let (conn, peer) = SeqpacketConn::socketpair().unwrap();
@@ -1049,7 +1040,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn kafka_cluster_id_reports_whether_the_id_was_sent() {
         let (conn, peer) = SeqpacketConn::socketpair().unwrap();
         let mut transport = SidecarTransport::from(conn);
@@ -1130,7 +1120,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn ffe_closed_transport_does_not_reconnect() {
         let (conn, peer) = SeqpacketConn::socketpair().unwrap();
         let mut transport = SidecarTransport::from(conn);
@@ -1146,7 +1135,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn ffe_does_not_reconnect_when_the_send_finds_a_broken_connection() {
         let (mut transport, new_peer) = broken_transport(true);
         let mut request = SidecarInterfaceRequest::EnqueueActions { actions: vec![] };
@@ -1159,7 +1147,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn a_request_finding_the_connection_broken_is_sent_on_a_new_one() {
         let (mut transport, new_peer) = broken_transport(true);
         send_dogstatsd_actions(&mut transport, vec![]).unwrap();
@@ -1180,7 +1167,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn without_reconnect_a_request_finding_the_connection_broken_is_dropped() {
         let (mut transport, new_peer) = broken_transport(false);
         send_dogstatsd_actions(&mut transport, vec![]).unwrap();
@@ -1235,7 +1221,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn actions_exceeding_the_granted_message_size_are_sent_in_shared_memory() {
         let (mut transport, peer) = small_buffer_transport();
         let paths: Vec<String> = (0..2000).map(|i| format!("/route/{i}")).collect();
@@ -1255,7 +1240,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     #[serial_test::serial(log_counter)]
     fn actions_exceeding_the_configured_message_size_are_dropped() {
         let (mut transport, peer) = small_buffer_transport();
@@ -1280,7 +1264,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     #[serial_test::serial(log_counter)]
     fn test_reconnect() {
         let tmpdir = tempdir().unwrap();
@@ -1312,7 +1295,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_connection_basic() {
         let tmpdir = tempdir().unwrap();
         let socket_path = tmpdir.path().join("test_basic.sock");
@@ -1327,7 +1309,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_peer_pid_returns_current_process() {
         let tmpdir = tempdir().unwrap();
         let socket_path = tmpdir.path().join("test_peer_pid.sock");

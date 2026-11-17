@@ -128,7 +128,7 @@ impl<
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use libdd_trace_utils::send_with_retry::SendWithRetryError;

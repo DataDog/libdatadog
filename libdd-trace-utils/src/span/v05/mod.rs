@@ -292,10 +292,9 @@ pub fn from_v04_span<T: TraceData>(
     })
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
-    use crate::span::BytesData;
     use crate::span::v04::{SpanBytes, VecMap};
     use libdd_tinybytes::BytesString;
 
@@ -395,6 +394,75 @@ mod tests {
         }
     }
 
+    /// Empty links/events add no meta keys (matches the agent, which only writes them when
+    /// non-empty).
+    #[test]
+    fn from_v04_span_empty_links_events_no_meta_keys_test() {
+        let mut dict = SharedDictBytes::default();
+        let v05_span = from_v04_span(&base_span(), &mut dict).unwrap();
+        assert_eq!(v05_span.meta.len(), 1);
+        assert!(meta_json(&dict, &v05_span, "_dd.span_links").is_none());
+        assert!(meta_json(&dict, &v05_span, "events").is_none());
+    }
+
+    /// `meta_struct` has no v0.5 representation and must be dropped; conversion still succeeds
+    /// and produces no extra meta keys.
+    #[test]
+    fn from_v04_span_drops_meta_struct_test() {
+        let mut span = base_span();
+        span.meta_struct = vec![(
+            BytesString::from("appsec"),
+            libdd_tinybytes::Bytes::from_static(&[0x01, 0x02, 0x03]),
+        )]
+        .into();
+
+        let mut dict = SharedDictBytes::default();
+        let v05_span = from_v04_span(&span, &mut dict).unwrap();
+        assert_eq!(v05_span.meta.len(), 1);
+        assert!(meta_json(&dict, &v05_span, "appsec").is_none());
+        assert!(meta_json(&dict, &v05_span, "meta_struct").is_none());
+    }
+}
+
+#[cfg(test)]
+mod miri_tests {
+    use super::*;
+    use crate::span::BytesData;
+    use crate::span::v04::{SpanBytes, VecMap};
+    use libdd_tinybytes::BytesString;
+
+    /// Returns the JSON string interned in `meta` under `key`, if present.
+    fn meta_json(dict: &SharedDictBytes, span: &Span, key: &str) -> Option<String> {
+        let entries: Vec<&str> = dict.iter().map(|s| s.as_str()).collect();
+        let key_idx = entries.iter().position(|s| *s == key)? as u32;
+        let val_idx = *span.meta.get(&key_idx)?;
+        Some(entries[val_idx as usize].to_string())
+    }
+
+    fn base_span() -> SpanBytes {
+        SpanBytes {
+            service: BytesString::from("service"),
+            name: BytesString::from("name"),
+            resource: BytesString::from("resource"),
+            r#type: BytesString::from("type"),
+            trace_id: 1,
+            span_id: 1,
+            parent_id: 0,
+            start: 1,
+            duration: 111,
+            error: 0,
+            meta: vec![(
+                BytesString::from("meta_field"),
+                BytesString::from("meta_value"),
+            )]
+            .into(),
+            metrics: VecMap::new(),
+            meta_struct: VecMap::new(),
+            span_links: vec![],
+            span_events: vec![],
+        }
+    }
+
     /// Span links and span events are flattened into `meta` as agent-compatible JSON under
     /// the `_dd.span_links` and `events` keys.
     #[test]
@@ -434,35 +502,6 @@ mod tests {
         );
         // Original meta entry plus the two synthesized keys.
         assert_eq!(v05_span.meta.len(), 3);
-    }
-
-    /// Empty links/events add no meta keys (matches the agent, which only writes them when
-    /// non-empty).
-    #[test]
-    fn from_v04_span_empty_links_events_no_meta_keys_test() {
-        let mut dict = SharedDictBytes::default();
-        let v05_span = from_v04_span(&base_span(), &mut dict).unwrap();
-        assert_eq!(v05_span.meta.len(), 1);
-        assert!(meta_json(&dict, &v05_span, "_dd.span_links").is_none());
-        assert!(meta_json(&dict, &v05_span, "events").is_none());
-    }
-
-    /// `meta_struct` has no v0.5 representation and must be dropped; conversion still succeeds
-    /// and produces no extra meta keys.
-    #[test]
-    fn from_v04_span_drops_meta_struct_test() {
-        let mut span = base_span();
-        span.meta_struct = vec![(
-            BytesString::from("appsec"),
-            libdd_tinybytes::Bytes::from_static(&[0x01, 0x02, 0x03]),
-        )]
-        .into();
-
-        let mut dict = SharedDictBytes::default();
-        let v05_span = from_v04_span(&span, &mut dict).unwrap();
-        assert_eq!(v05_span.meta.len(), 1);
-        assert!(meta_json(&dict, &v05_span, "appsec").is_none());
-        assert!(meta_json(&dict, &v05_span, "meta_struct").is_none());
     }
 
     /// A link with no tracestate and no attributes serializes only hex `trace_id`/`span_id`,

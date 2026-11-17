@@ -13,7 +13,11 @@
 //! response is returned to the caller. Scheme validation of request URLs
 //! themselves is covered by unit tests in `src/backend/reqwest_backend.rs`.
 
-#![cfg(all(feature = "reqwest-backend", any(feature = "https", feature = "fips")))]
+#![cfg(all(
+    not(miri),
+    feature = "reqwest-backend",
+    any(feature = "https", feature = "fips")
+))]
 
 use httpmock::prelude::*;
 use libdd_http_client::{HttpClient, HttpMethod, HttpRequest};
@@ -23,7 +27,6 @@ fn ensure_crypto_provider() {
     let _ = rustls::crypto::ring::default_provider().install_default();
 }
 
-#[cfg_attr(miri, ignore)] // real reqwest client construction is prohibitively slow under Miri
 #[tokio::test]
 async fn plain_http_client_does_not_follow_cross_scheme_redirects() {
     ensure_crypto_provider();

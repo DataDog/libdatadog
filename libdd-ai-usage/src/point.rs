@@ -544,7 +544,7 @@ pub fn merge_counter_points(points: Vec<MetricPoint>) -> Vec<MetricPoint> {
         .collect()
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
 

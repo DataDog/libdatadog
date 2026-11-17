@@ -55,7 +55,7 @@ fn is_named_otel_mapping(line: &str) -> bool {
     )
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::is_named_otel_mapping;
 
@@ -87,7 +87,6 @@ mod tests {
         use crate::otel_process_ctx::{UNPUBLISHED_OR_UPDATING, writer::MappingHeader};
 
         #[test]
-        #[cfg_attr(miri, ignore)]
         #[serial_test::serial]
         fn read_returns_would_block_while_context_is_being_updated() {
             crate::otel_process_ctx::writer::publish_raw_payload(b"published payload".to_vec())
@@ -116,7 +115,6 @@ mod tests {
         }
 
         #[test]
-        #[cfg_attr(miri, ignore)]
         #[serial_test::serial]
         fn discovers_and_reads_published_context() {
             crate::otel_process_ctx::writer::publish_raw_payload(b"published payload".to_vec())

@@ -170,7 +170,7 @@ impl libdd_trace_model::SpanEvent for pb::SpanEvent {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use libdd_trace_model::{Span as _, SpanLink as _};

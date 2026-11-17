@@ -471,8 +471,8 @@ mod linux {
         }
     }
 
+    #[cfg(all(test, not(miri)))]
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_abstract_socket_can_connect() {
         let l = AbstractUnixSocketLiaison::ipc_per_process();
         super::tests::basic_liaison_connection_test(&l).unwrap();
@@ -485,8 +485,8 @@ mod linux {
     /// The refusal case is exercised through `verify_server` directly: staging a listener under
     /// another uid would need privileges, while the uid to compare against is exactly what this
     /// function takes as an argument.
+    #[cfg(all(test, not(miri)))]
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn abstract_client_refuses_a_server_of_another_uid() {
         // Its own name, so this cannot collide with the test above under parallel execution.
         let path = PathBuf::from(format!(
@@ -551,7 +551,7 @@ pub use linux::*;
 #[cfg(target_os = "macos")]
 pub type DefaultLiason = SharedDirLiaison;
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use std::{thread, time::Duration};
 
@@ -563,7 +563,6 @@ mod tests {
 
     /// Refuse stale sockets when the listener's identity can no longer be verified.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn connect_is_refused_when_the_listener_pid_is_gone() {
         let tmp = tempdir().unwrap();
         let path = tmp.path().join("stale.sock");
@@ -580,7 +579,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn socket_owner_check_accepts_our_own_socket() {
         let tmp = tempdir().unwrap();
         let path = tmp.path().join("own.sock");
@@ -599,7 +597,6 @@ mod tests {
 
     /// Someone who got to the name first need not have left a socket there at all.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn socket_owner_check_rejects_a_non_socket() {
         let tmp = tempdir().unwrap();
         let path = tmp.path().join("not-a.sock");
@@ -612,7 +609,6 @@ mod tests {
     /// The reason the check stats the link and not its target: a symlink we followed would let
     /// its author choose where our connect lands while we inspected the target's ownership.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn socket_owner_check_rejects_a_symlink_to_a_valid_socket() {
         let tmp = tempdir().unwrap();
         let real = tmp.path().join("real.sock");
@@ -625,7 +621,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_shared_dir_can_connect_to_socket() -> anyhow::Result<()> {
         let tmpdir = tempdir().unwrap();
         let liaison = super::SharedDirLiaison::new(tmpdir.path());

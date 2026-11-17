@@ -537,7 +537,7 @@ mod platform {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use std::io::{Read, Write};
@@ -560,7 +560,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn reads_an_ordinary_file() {
         let dir = tmp_dir();
         let path = dir.join("ordinary.txt");
@@ -571,7 +570,6 @@ mod tests {
     // The macOS fallback refuses symlinks as the final component.
     #[cfg(target_os = "linux")]
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn follows_an_ordinary_symlink_to_a_regular_file() {
         let dir = tmp_dir();
         let target = dir.join("real.txt");
@@ -584,7 +582,6 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn rejects_procfs_regular_file() {
         // This is a regular file, not a magic link.
         let err = open_regular_for_read(std::path::Path::new("/proc/self/status")).unwrap_err();
@@ -599,7 +596,6 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn rejects_proc_self_fd_magic_link() {
         let dir = tmp_dir();
         let secret = dir.join("secret.txt");
@@ -618,7 +614,6 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn rejects_symlink_to_proc_self_fd() {
         let dir = tmp_dir();
         let secret = dir.join("secret2.txt");
@@ -643,7 +638,6 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn rejects_a_fifo() {
         let dir = tmp_dir();
         let fifo = dir.join("fifo");
@@ -661,7 +655,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn append_writes_to_an_ordinary_file() {
         let dir = tmp_dir();
         let path = dir.join("append.log");
@@ -679,7 +672,6 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn append_rejects_symlinked_final_component() {
         let dir = tmp_dir();
         let real = dir.join("real-target.log");
@@ -700,7 +692,6 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn follows_relative_symlinks_and_parent_components() {
         let dir = tmp_dir().join("relative-links");
         std::fs::create_dir_all(dir.join("real/subdir")).unwrap();
@@ -712,7 +703,6 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn creates_appends_and_truncates_through_directory_symlinks() {
         let dir = tmp_dir().join("output-directory-links");
         std::fs::create_dir_all(dir.join("real")).unwrap();
@@ -741,7 +731,6 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn refuses_symlink_loops_and_non_directory_components() {
         let dir = tmp_dir().join("invalid-paths");
         std::fs::create_dir_all(&dir).unwrap();
@@ -760,7 +749,6 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn rejects_devices_and_symlinked_pseudo_filesystems() {
         for path in ["/dev/null", "/dev/zero", "/sys/kernel/uevent_seqnum"] {
             assert!(matches!(

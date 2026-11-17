@@ -18,7 +18,7 @@ pub struct Ucontext {
     pub raw: Option<String>,
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 impl Ucontext {
     pub fn test_instance(_seed: u64) -> Self {
         Self {

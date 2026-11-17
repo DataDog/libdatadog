@@ -181,7 +181,7 @@ impl<T: Hash + Eq + 'static> Set<T> {
 }
 
 #[cfg(test)]
-mod tests {
+mod miri_tests {
     use super::*;
     use proptest::prelude::*;
     use std::collections::HashSet as StdHashSet;

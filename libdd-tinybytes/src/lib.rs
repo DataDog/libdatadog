@@ -472,4 +472,4 @@ mod bytes_string;
 pub use bytes_string::BytesString;
 
 #[cfg(test)]
-mod test;
+mod miri_tests;

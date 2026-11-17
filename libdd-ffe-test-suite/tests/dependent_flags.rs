@@ -1,6 +1,8 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+#![cfg(not(miri))]
+
 //! The shared dependent-flag contract, including prerequisite telemetry eligibility.
 
 use std::{collections::HashMap, fs, path::PathBuf, sync::Arc};
@@ -91,7 +93,6 @@ fn assert_events(kind: &str, case: &Case, mut actual: Vec<Value>) {
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn canonical_dependent_flag_results_and_telemetry() {
     let suite = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("ffe-system-test-data/evaluation-suites/dependent-flags");

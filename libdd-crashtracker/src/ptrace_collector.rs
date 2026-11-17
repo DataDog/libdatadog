@@ -725,7 +725,7 @@ fn read_thread_stat(pid: i32, tid: i32) -> (Option<String>, Option<String>) {
     (name, state)
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use std::sync::{Arc, Barrier};
@@ -749,7 +749,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn enumerate_discovers_spawned_thread() {
         let barrier = Arc::new(Barrier::new(2));
         let b = Arc::clone(&barrier);
@@ -776,7 +775,6 @@ mod tests {
 
     /// A stopped thread should produce at least one frame (the IP at ptrace-stop).
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn capture_context_produces_frames() {
         let barrier = Arc::new(Barrier::new(2));
         let b = Arc::clone(&barrier);
@@ -813,7 +811,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn stream_respects_max_threads_limit() {
         // Spawn 3 extra threads so there are definitely more than 2 to iterate.
         let barrier = Arc::new(Barrier::new(4));
@@ -844,7 +841,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn stream_includes_all_threads() {
         let barrier = Arc::new(Barrier::new(2));
         let b: Arc<Barrier> = Arc::clone(&barrier);

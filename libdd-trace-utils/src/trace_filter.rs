@@ -326,7 +326,7 @@ impl TraceFilterer {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::TraceFilterer;
     use crate::span::span_pool::PooledChunks;
@@ -472,7 +472,6 @@ mod tests {
         assert!(traces.is_empty());
     }
 
-    #[cfg_attr(miri, ignore)] // regex compilation is prohibitively slow under Miri
     #[test]
     fn reject_regex_value_no_match_keeps() {
         let mut traces = one_trace(span_with("r", &[("env", "staging")]));
@@ -530,7 +529,6 @@ mod tests {
 
     // ---- require_regex (TagRegexFilter – literal key, regex value) ----
 
-    #[cfg_attr(miri, ignore)] // regex compilation is prohibitively slow under Miri
     #[test]
     fn require_regex_value_match_keeps() {
         let mut traces = one_trace(span_with("r", &[("env", "production")]));
@@ -717,7 +715,6 @@ mod tests {
         assert!(traces.is_empty());
     }
 
-    #[cfg_attr(miri, ignore)] // regex compilation is prohibitively slow under Miri
     #[test]
     fn regex_require_spaces_around_colon_keeps() {
         let mut traces = one_trace(span_with("r", &[("env", "production")]));

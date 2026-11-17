@@ -136,7 +136,7 @@ unsafe impl<A: Allocator> Allocator for LinearAllocator<A> {
 }
 
 #[cfg(test)]
-mod tests {
+mod miri_tests {
     use super::*;
     use crate::utils::*;
     use allocator_api2::alloc::Global;
@@ -210,7 +210,7 @@ mod tests {
 }
 
 #[cfg(test)]
-mod alignment_tests {
+mod alignment_miri_tests {
     use super::*;
     use allocator_api2::alloc::Global;
     use core::mem::{align_of, size_of};

@@ -556,7 +556,7 @@ impl<'b, 'a: 'b, K, V> Iterator for DedupedVecMapIter<'b, 'a, K, V> {
 
 impl<'b, 'a: 'b, K, V> ExactSizeIterator for DedupedVecMapIter<'b, 'a, K, V> {}
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use crate::span::BytesData;
@@ -600,28 +600,6 @@ mod tests {
         assert_eq!(ValueMap::len(&map), 3);
         // The raw view is untouched.
         assert_eq!(map.len(), 4);
-    }
-
-    #[test]
-    fn value_map_mut_traversals_drop_shadowed_duplicates() {
-        let mut map = with_duplicates();
-        let mut seen = Vec::new();
-        for (k, v) in ValueMapMut::iter_mut(&mut map) {
-            seen.push(k.to_owned());
-            *v = AttributeValue::Int(0);
-        }
-        assert_eq!(seen, ["b", "a", "c"]);
-        assert!(map.is_deduped());
-        assert_eq!(map.len(), 3);
-
-        let mut map = with_duplicates();
-        let mut seen = Vec::new();
-        ValueMapMut::retain(&mut map, |k, _| {
-            seen.push(k.to_owned());
-            k != "b"
-        });
-        assert_eq!(seen, ["b", "a", "c"]);
-        assert_eq!(entries(&map), vec![("a", 3), ("c", 4)]);
     }
 
     #[test]
@@ -724,6 +702,95 @@ mod tests {
     fn is_deduped_false_after_collect() {
         let m: VecMap<&str, i32> = vec![("a", 1)].into_iter().collect();
         assert!(!m.is_deduped());
+    }
+
+    #[test]
+    fn deduped_vec_map_copy_iter_and_len() {
+        let mut m = VecMap::new();
+        m.insert("a", 1);
+        m.insert("a", 2);
+        m.insert("b", 3);
+
+        let d = m.defensive_dedup();
+        assert!(matches!(d, DedupedVecMap::Owned(_)));
+        assert_eq!(d.len(), 2);
+
+        let items: HashMap<&&str, &i32> = d.iter().collect();
+        assert_eq!(items[&"a"], &2);
+        assert_eq!(items[&"b"], &3);
+    }
+
+    #[test]
+    fn deduped_vec_map_empty() {
+        let m: VecMap<String, i32> = VecMap::new();
+        let d = DedupedVecMap::Borrowed(&m);
+        assert_eq!(d.len(), 0);
+        assert_eq!(d.iter().count(), 0);
+    }
+
+    #[test]
+    fn serialize_deduplicates_keeping_last() {
+        let mut m = VecMap::new();
+        m.insert("a", 0);
+        m.insert("b", 0);
+        m.insert("b", 1);
+        m.insert("a", 1);
+        m.insert("a", 3);
+        m.insert("b", 2);
+
+        let serialized: serde_json::Value = serde_json::to_value(&m).unwrap();
+        let obj = serialized.as_object().unwrap();
+
+        assert_eq!(obj.len(), 2);
+        assert_eq!(obj.get("a").unwrap(), 3);
+        assert_eq!(obj.get("b").unwrap(), 2);
+    }
+}
+
+#[cfg(test)]
+mod miri_tests {
+    use super::*;
+    use crate::span::BytesData;
+    use libdd_tinybytes::BytesString;
+
+    fn with_duplicates() -> VecMap<BytesString, AttributeValue<BytesData>> {
+        let mut map = VecMap::new();
+        map.insert(BytesString::from_static("a"), AttributeValue::Int(1));
+        map.insert(BytesString::from_static("b"), AttributeValue::Int(2));
+        map.insert(BytesString::from_static("a"), AttributeValue::Int(3));
+        map.insert(BytesString::from_static("c"), AttributeValue::Int(4));
+        map
+    }
+
+    fn entries(map: &VecMap<BytesString, AttributeValue<BytesData>>) -> Vec<(&str, i64)> {
+        ValueMap::iter(map)
+            .map(|(k, v)| match v {
+                AttributeValue::Int(i) => (k, *i),
+                _ => unreachable!(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn value_map_mut_traversals_drop_shadowed_duplicates() {
+        let mut map = with_duplicates();
+        let mut seen = Vec::new();
+        for (k, v) in ValueMapMut::iter_mut(&mut map) {
+            seen.push(k.to_owned());
+            *v = AttributeValue::Int(0);
+        }
+        assert_eq!(seen, ["b", "a", "c"]);
+        assert!(map.is_deduped());
+        assert_eq!(map.len(), 3);
+
+        let mut map = with_duplicates();
+        let mut seen = Vec::new();
+        ValueMapMut::retain(&mut map, |k, _| {
+            seen.push(k.to_owned());
+            k != "b"
+        });
+        assert_eq!(seen, ["b", "a", "c"]);
+        assert_eq!(entries(&map), vec![("a", 3), ("c", 4)]);
     }
 
     #[test]
@@ -837,22 +904,6 @@ mod tests {
     }
 
     #[test]
-    fn deduped_vec_map_copy_iter_and_len() {
-        let mut m = VecMap::new();
-        m.insert("a", 1);
-        m.insert("a", 2);
-        m.insert("b", 3);
-
-        let d = m.defensive_dedup();
-        assert!(matches!(d, DedupedVecMap::Owned(_)));
-        assert_eq!(d.len(), 2);
-
-        let items: HashMap<&&str, &i32> = d.iter().collect();
-        assert_eq!(items[&"a"], &2);
-        assert_eq!(items[&"b"], &3);
-    }
-
-    #[test]
     fn deduped_vec_map_iter_exact_size() {
         let mut m = VecMap::new();
         m.insert("a", 1);
@@ -865,14 +916,6 @@ mod tests {
         assert_eq!(iter.len(), 3);
         iter.next();
         assert_eq!(iter.len(), 2);
-    }
-
-    #[test]
-    fn deduped_vec_map_empty() {
-        let m: VecMap<String, i32> = VecMap::new();
-        let d = DedupedVecMap::Borrowed(&m);
-        assert_eq!(d.len(), 0);
-        assert_eq!(d.iter().count(), 0);
     }
 
     #[test]
@@ -912,23 +955,5 @@ mod tests {
         assert_eq!(m.len(), 2);
         assert_eq!(m.get(&NonCloneKey(1)), Some(&"c"));
         assert_eq!(m.get(&NonCloneKey(2)), Some(&"b"));
-    }
-
-    #[test]
-    fn serialize_deduplicates_keeping_last() {
-        let mut m = VecMap::new();
-        m.insert("a", 0);
-        m.insert("b", 0);
-        m.insert("b", 1);
-        m.insert("a", 1);
-        m.insert("a", 3);
-        m.insert("b", 2);
-
-        let serialized: serde_json::Value = serde_json::to_value(&m).unwrap();
-        let obj = serialized.as_object().unwrap();
-
-        assert_eq!(obj.len(), 2);
-        assert_eq!(obj.get("a").unwrap(), 3);
-        assert_eq!(obj.get("b").unwrap(), 2);
     }
 }

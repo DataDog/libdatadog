@@ -97,7 +97,7 @@ impl DebugLogger {
 
     /// A logger that drops everything, for tests that do not exercise upload.
     /// Also avoids `tokio::spawn` outside of a runtime in synchronous tests.
-    #[cfg(test)]
+    #[cfg(all(test, not(miri)))]
     pub(crate) fn disabled() -> Self {
         Self {
             uploader: None,
@@ -150,11 +150,10 @@ impl DebugLogger {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
 
-    #[cfg_attr(miri, ignore)] // HTTP uploader construction is prohibitively slow under Miri
     #[test]
     fn test_debug_logger_usable_without_config_or_metadata() {
         // The receiver must be able to report problems before (or without) the
@@ -164,7 +163,6 @@ mod tests {
         assert!(logger.uploader.is_some());
     }
 
-    #[cfg_attr(miri, ignore)] // HTTP uploader construction is prohibitively slow under Miri
     #[test]
     fn test_debug_logger_rebuilds_as_blocks_arrive() {
         let mut logger = DebugLogger::new(None, None);

@@ -1,0 +1,39 @@
+id: miri-bare-test-fn-gate
+snapshots:
+  ? |
+    #[cfg(test)]
+    #[test]
+    fn file_scope_cfg_test_without_not_miri() {}
+  : labels:
+    - source: fn file_scope_cfg_test_without_not_miri() {}
+      style: primary
+      start: 21
+      end: 65
+    - source: '#[test]'
+      style: secondary
+      start: 13
+      end: 20
+  ? |
+    #[test]
+    fn file_scope_test_runs_under_miri() {}
+  : labels:
+    - source: fn file_scope_test_runs_under_miri() {}
+      style: primary
+      start: 8
+      end: 47
+    - source: '#[test]'
+      style: secondary
+      start: 0
+      end: 7
+  ? |
+    #[tokio::test]
+    async fn async_file_scope_test_runs_under_miri() {}
+  : labels:
+    - source: async fn async_file_scope_test_runs_under_miri() {}
+      style: primary
+      start: 15
+      end: 66
+    - source: '#[tokio::test]'
+      style: secondary
+      start: 0
+      end: 14

@@ -313,13 +313,193 @@ fn build_request(
     })
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use crate::{FfeFlagEvaluation, FfeTelemetryContext};
     use datadog_sidecar::service::{ContextTruncationReason as Reason, SidecarAction};
-    use serde_json::{Value, json};
+    use serde_json::Value;
+    fn metadata() -> FfeTelemetryContext<'static> {
+        FfeTelemetryContext {
+            service: "svc".into(),
+            env: "test".into(),
+            version: "1".into(),
+        }
+    }
 
+    fn event(consent: bool) -> FfeFlagEvaluation<'static> {
+        FfeFlagEvaluation {
+            timestamp_ms: 100,
+            first_evaluation_ms: 100,
+            last_evaluation_ms: 100,
+            evaluation_count: 1,
+            flag_key: "flag".into(),
+            variant: "blue".into(),
+            allocation_key: "allocation".into(),
+            targeting_rule_key: "".into(),
+            targeting_key: "jane@example.com".into(),
+            evaluation_context_json: "private-json-canary".into(),
+            error_message: "".into(),
+            runtime_default_used: false,
+            observe_full_evaluation_data: consent,
+            features_json: "".into(),
+        }
+    }
+
+    fn attr<'a>(key: &'a str, value: &'a str) -> FfeScalarAttribute<'a> {
+        FfeScalarAttribute {
+            key: key.into(),
+            kind: 0,
+            string_value: value.into(),
+            bool_value: false,
+            integer_value: 0,
+            double_value: 0.0,
+        }
+    }
+
+    fn convert(
+        event: &FfeFlagEvaluation<'_>,
+        attrs: &[FfeScalarAttribute<'_>],
+        state: FfeSnapshotState,
+    ) -> service::FfeFlagEvaluationEvent {
+        let request = build_request(&metadata(), event, attrs.into(), &state).unwrap();
+        let SidecarInterfaceRequest::EnqueueActions { mut actions, .. } = request else {
+            panic!("wrong request")
+        };
+        let SidecarAction::FfeFlagEvaluationBatch(mut batch) = actions.remove(0) else {
+            panic!("wrong action")
+        };
+        assert_eq!(batch.flag_evaluations.len(), 1);
+        batch.flag_evaluations.remove(0)
+    }
+
+    fn context(event: &service::FfeFlagEvaluationEvent) -> Value {
+        serde_json::from_str(event.context.as_ref().unwrap().evaluation.as_ref().unwrap()).unwrap()
+    }
+
+    // Excluded from miri_tests: prohibitively slow under Miri (256-field fixtures through both
+    // scalar and JSON conversion paths, 232s measured)
+    #[test]
+    fn scalar_and_json_entry_points_agree_on_top_level_truncation() {
+        let overlength = "x".repeat(257);
+        for count in [256, 257] {
+            for reject_first in [false, true] {
+                let names: Vec<_> = (0..count).map(|i| format!("field{i:03}")).collect();
+                let values: Vec<_> = (0..count)
+                    .map(|i| {
+                        if reject_first && i == 0 {
+                            overlength.as_str()
+                        } else {
+                            "kept"
+                        }
+                    })
+                    .collect();
+                let attrs: Vec<_> = names
+                    .iter()
+                    .zip(&values)
+                    .map(|(key, value)| attr(key, value))
+                    .collect();
+                let json = serde_json::to_string(
+                    &names
+                        .iter()
+                        .zip(&values)
+                        .collect::<std::collections::BTreeMap<_, _>>(),
+                )
+                .unwrap();
+                let mut source = event(true);
+                source.evaluation_context_json = json.as_str().into();
+                let scalar = convert(&source, &attrs, FfeSnapshotState::default());
+                let legacy = crate::ffe_flag_evaluation_from_ffi(&source, "svc").unwrap();
+                let mut expected = FieldOmissions::default();
+                if count > 256 {
+                    expected.record_context(Reason::MaxContextFields);
+                }
+                if reject_first {
+                    expected.record_context(Reason::MaxValueLength);
+                }
+                assert_eq!(scalar.field_omissions, expected);
+                assert_eq!(legacy.field_omissions, expected);
+                assert_eq!(context(&scalar), context(&legacy));
+                assert_eq!(
+                    context(&scalar).as_object().unwrap().len(),
+                    256 - usize::from(reject_first)
+                );
+            }
+        }
+    }
+
+    // Excluded from miri_tests: prohibitively slow under Miri (4 MiB max_message_size identity
+    // fixtures rebuilt per iteration, 88s measured)
+    #[test]
+    fn features_are_canonicalized_and_survive_identity_degradation() {
+        let oversized = "x".repeat(libdd_ipc::max_message_size());
+        for consent in [false, true] {
+            for target in ["jane", oversized.as_str()] {
+                let mut source = event(consent);
+                source.targeting_key = target.into();
+                source.features_json = r#"{"b":true,"a":2}"#.into();
+                let row = convert(&source, &[], FfeSnapshotState::default());
+                assert_eq!(row.features.as_deref(), Some(r#"{"a":2.0,"b":true}"#));
+            }
+        }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn ffi_owns_the_accepted_snapshot() {
+        use serde_json::json;
+        let (conn, peer) = libdd_ipc::SeqpacketConn::socketpair().unwrap();
+        let mut transport = SidecarTransport::from(conn);
+        let mut source = event(true);
+        let mut value = String::from("captured");
+        let mut send = |attrs: &[FfeScalarAttribute<'_>]| unsafe {
+            ddog_sidecar_try_submit_ffe_flag_evaluation(
+                Some(&mut transport),
+                &metadata(),
+                &source,
+                attrs.into(),
+                &FfeSnapshotState::default(),
+            )
+        };
+        assert_eq!(send(&[attr("key", &value)]), FfeSubmissionStatus::Accepted);
+        value.clear();
+        source.observe_full_evaluation_data = false;
+        assert!(value.is_empty() && !source.observe_full_evaluation_data);
+        let mut buf = vec![0; libdd_ipc::max_message_size()];
+        let (len, _) = peer.try_recv_raw(&mut buf).unwrap();
+        let decoded: SidecarInterfaceRequest = libdd_ipc::codec::decode(&buf[..len]).unwrap();
+        let SidecarInterfaceRequest::EnqueueActions { actions, .. } = decoded else {
+            panic!("wrong request")
+        };
+        let SidecarAction::FfeFlagEvaluationBatch(batch) = &actions[0] else {
+            panic!("wrong action")
+        };
+        assert_eq!(
+            context(&batch.flag_evaluations[0]),
+            json!({"key":"captured"})
+        );
+        assert!(batch.flag_evaluations[0].observe_full_evaluation_data);
+        assert_eq!(
+            unsafe {
+                ddog_sidecar_try_submit_ffe_flag_evaluation(
+                    None,
+                    &metadata(),
+                    &source,
+                    Slice::empty(),
+                    &FfeSnapshotState::default(),
+                )
+            },
+            FfeSubmissionStatus::Unavailable
+        );
+    }
+}
+
+#[cfg(test)]
+mod miri_tests {
+    use super::*;
+    use crate::{FfeFlagEvaluation, FfeTelemetryContext};
+    use datadog_sidecar::service::{ContextTruncationReason as Reason, SidecarAction};
+    use serde_json::{Value, json};
     fn metadata() -> FfeTelemetryContext<'static> {
         FfeTelemetryContext {
             service: "svc".into(),
@@ -536,55 +716,6 @@ mod tests {
     }
 
     #[test]
-    fn scalar_and_json_entry_points_agree_on_top_level_truncation() {
-        let overlength = "x".repeat(257);
-        for count in [256, 257] {
-            for reject_first in [false, true] {
-                let names: Vec<_> = (0..count).map(|i| format!("field{i:03}")).collect();
-                let values: Vec<_> = (0..count)
-                    .map(|i| {
-                        if reject_first && i == 0 {
-                            overlength.as_str()
-                        } else {
-                            "kept"
-                        }
-                    })
-                    .collect();
-                let attrs: Vec<_> = names
-                    .iter()
-                    .zip(&values)
-                    .map(|(key, value)| attr(key, value))
-                    .collect();
-                let json = serde_json::to_string(
-                    &names
-                        .iter()
-                        .zip(&values)
-                        .collect::<std::collections::BTreeMap<_, _>>(),
-                )
-                .unwrap();
-                let mut source = event(true);
-                source.evaluation_context_json = json.as_str().into();
-                let scalar = convert(&source, &attrs, FfeSnapshotState::default());
-                let legacy = crate::ffe_flag_evaluation_from_ffi(&source, "svc").unwrap();
-                let mut expected = FieldOmissions::default();
-                if count > 256 {
-                    expected.record_context(Reason::MaxContextFields);
-                }
-                if reject_first {
-                    expected.record_context(Reason::MaxValueLength);
-                }
-                assert_eq!(scalar.field_omissions, expected);
-                assert_eq!(legacy.field_omissions, expected);
-                assert_eq!(context(&scalar), context(&legacy));
-                assert_eq!(
-                    context(&scalar).as_object().unwrap().len(),
-                    256 - usize::from(reject_first)
-                );
-            }
-        }
-    }
-
-    #[test]
     fn unicode_limits_skip_instead_of_truncating() {
         let exact = "é".repeat(256);
         let over = "é".repeat(257);
@@ -767,20 +898,6 @@ mod tests {
     }
 
     #[test]
-    fn features_are_canonicalized_and_survive_identity_degradation() {
-        let oversized = "x".repeat(libdd_ipc::max_message_size());
-        for consent in [false, true] {
-            for target in ["jane", oversized.as_str()] {
-                let mut source = event(consent);
-                source.targeting_key = target.into();
-                source.features_json = r#"{"b":true,"a":2}"#.into();
-                let row = convert(&source, &[], FfeSnapshotState::default());
-                assert_eq!(row.features.as_deref(), Some(r#"{"a":2.0,"b":true}"#));
-            }
-        }
-    }
-
-    #[test]
     fn malformed_or_oversized_features_are_omitted_without_rejecting() {
         let invalid = [0xffu8];
         let oversized = "x".repeat(libdd_ipc::max_message_size() + 1);
@@ -828,54 +945,5 @@ mod tests {
         let row = convert(&source, &[], FfeSnapshotState::default());
         assert_eq!(row.error.unwrap().message, "GENERAL");
         assert!(row.context.unwrap().evaluation.is_none());
-    }
-
-    #[test]
-    #[cfg(unix)]
-    #[cfg_attr(miri, ignore)]
-    fn ffi_owns_the_accepted_snapshot() {
-        let (conn, peer) = libdd_ipc::SeqpacketConn::socketpair().unwrap();
-        let mut transport = SidecarTransport::from(conn);
-        let mut source = event(true);
-        let mut value = String::from("captured");
-        let mut send = |attrs: &[FfeScalarAttribute<'_>]| unsafe {
-            ddog_sidecar_try_submit_ffe_flag_evaluation(
-                Some(&mut transport),
-                &metadata(),
-                &source,
-                attrs.into(),
-                &FfeSnapshotState::default(),
-            )
-        };
-        assert_eq!(send(&[attr("key", &value)]), FfeSubmissionStatus::Accepted);
-        value.clear();
-        source.observe_full_evaluation_data = false;
-        assert!(value.is_empty() && !source.observe_full_evaluation_data);
-        let mut buf = vec![0; libdd_ipc::max_message_size()];
-        let (len, _) = peer.try_recv_raw(&mut buf).unwrap();
-        let decoded: SidecarInterfaceRequest = libdd_ipc::codec::decode(&buf[..len]).unwrap();
-        let SidecarInterfaceRequest::EnqueueActions { actions, .. } = decoded else {
-            panic!("wrong request")
-        };
-        let SidecarAction::FfeFlagEvaluationBatch(batch) = &actions[0] else {
-            panic!("wrong action")
-        };
-        assert_eq!(
-            context(&batch.flag_evaluations[0]),
-            json!({"key":"captured"})
-        );
-        assert!(batch.flag_evaluations[0].observe_full_evaluation_data);
-        assert_eq!(
-            unsafe {
-                ddog_sidecar_try_submit_ffe_flag_evaluation(
-                    None,
-                    &metadata(),
-                    &source,
-                    Slice::empty(),
-                    &FfeSnapshotState::default(),
-                )
-            },
-            FfeSubmissionStatus::Unavailable
-        );
     }
 }

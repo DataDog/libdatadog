@@ -388,7 +388,7 @@ impl Serialize for AnyValueSeq<'_> {
 }
 
 #[cfg(test)]
-mod tests {
+mod miri_tests {
     use super::*;
     use libdd_trace_protobuf::opentelemetry::proto::collector::trace::v1::ExportTraceServiceRequest as ProtoReq;
     use libdd_trace_protobuf::opentelemetry::proto::common::v1::{

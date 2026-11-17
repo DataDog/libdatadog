@@ -66,7 +66,7 @@ pub unsafe extern "C" fn ddog_ffe_configuration_get_observe_full_evaluation_data
 }
 
 #[cfg(test)]
-mod tests {
+mod miri_tests {
     use super::*;
 
     /// Builds a configuration handle through the real FFI entry point, reads the flag back through

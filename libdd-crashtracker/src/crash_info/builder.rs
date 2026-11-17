@@ -456,7 +456,7 @@ impl CrashInfoBuilder {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use crate::crash_info::test_utils::TestInstance;
@@ -666,7 +666,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)] // os_info::get() spawns subprocess, unsupported by Miri
     fn test_with_os_info_this_machine() {
         let mut builder = CrashInfoBuilder::new();
         builder.with_kind(ErrorKind::UnixSignal).unwrap();

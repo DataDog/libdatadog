@@ -266,7 +266,7 @@ impl<'a> PayloadValidator<'a> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use serde_json::json;

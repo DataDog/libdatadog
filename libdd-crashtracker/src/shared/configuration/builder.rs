@@ -207,7 +207,7 @@ impl CrashtrackerConfigurationBuilder {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use crate::{default_signals, shared::constants};

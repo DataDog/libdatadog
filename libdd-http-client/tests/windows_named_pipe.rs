@@ -1,7 +1,7 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-#![cfg(windows)]
+#![cfg(all(windows, not(miri)))]
 
 use libdd_http_client::{HttpClient, HttpMethod, HttpRequest};
 use std::time::Duration;
@@ -12,7 +12,6 @@ fn ensure_crypto_provider() {
     let _ = rustls::crypto::ring::default_provider().install_default();
 }
 
-#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_named_pipe_round_trip() {
     ensure_crypto_provider();

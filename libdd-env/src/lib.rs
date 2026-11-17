@@ -51,7 +51,7 @@ pub fn env_str_not_empty(name: &str) -> Option<String> {
     std::env::var(name).ok().filter(|s| !s.is_empty())
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use std::sync::Mutex;

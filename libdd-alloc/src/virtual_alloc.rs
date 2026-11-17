@@ -185,7 +185,7 @@ pub mod os {
 }
 
 #[cfg(test)]
-mod tests {
+mod miri_tests {
     use super::*;
     use crate::utils::*;
     use allocator_api2::alloc::Allocator;

@@ -315,13 +315,12 @@ pub extern "C" fn ddog_crashtracker_entry_point(_trampoline_data: &TrampolineDat
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
 
     /// Isolate the process-wide namespace change from other tests.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn thread_mode_sidecars_get_names_of_their_own() {
         // SAFETY: the child only formats names and leaves through _exit.
         match unsafe { libc::fork() } {

@@ -147,7 +147,7 @@ pub(crate) mod prost_codec {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, not(miri)))]
     mod codec_tests {
         use super::{ProstCodecImpl, ProstDecoder, ProstEncoder};
         use bytes::BytesMut;
@@ -534,7 +534,7 @@ fn retry_info_delay(status: &Status) -> Option<Duration> {
     })
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod build_tests {
     use super::*;
     use std::time::Duration;
@@ -631,7 +631,7 @@ mod build_tests {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod integration_tests {
     use super::*;
     use bytes::Bytes;
@@ -648,7 +648,6 @@ mod integration_tests {
         }
     }
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn connection_refused_maps_to_io() {
         let transport = build_grpc_transport("http://127.0.0.1:1", cfg()).unwrap();
@@ -672,7 +671,6 @@ mod integration_tests {
         );
     }
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn response_body_is_limited() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -773,7 +771,6 @@ mod integration_tests {
         handler.await.unwrap()
     }
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn sends_and_server_decodes_request() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -792,7 +789,6 @@ mod integration_tests {
         assert_eq!(decoded.resource_spans.len(), 1);
     }
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn successful_response_wins_over_connection_teardown() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -852,7 +848,6 @@ mod integration_tests {
         server.await.unwrap();
     }
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn refused_stream_is_retryable() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -888,7 +883,6 @@ mod integration_tests {
         );
     }
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn timeout_maps_to_io_timedout() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -925,7 +919,6 @@ mod integration_tests {
         }
     }
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn post_connect_transport_failure_maps_to_io() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -973,7 +966,7 @@ mod integration_tests {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod send_tests {
     use super::*;
     use libdd_trace_protobuf::opentelemetry::proto::collector::trace::v1::ExportTraceServiceRequest;

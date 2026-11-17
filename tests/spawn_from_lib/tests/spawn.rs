@@ -1,5 +1,6 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+#![cfg(not(miri))]
 // #![cfg(feature = "prefer-dynamic")]
 // use test_spawn_from_lib::spawn_self;
 

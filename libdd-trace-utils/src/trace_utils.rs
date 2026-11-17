@@ -681,7 +681,7 @@ pub fn is_partial_snapshot(span: &pb::Span) -> bool {
         .is_some_and(|v| *v >= 0.0)
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use crate::{
@@ -1190,90 +1190,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[allow(clippy::type_complexity)]
-    #[cfg_attr(all(miri, target_os = "macos"), ignore)]
-    async fn test_get_v05_traces_from_request_body() {
-        let data: (
-            Vec<String>,
-            Vec<
-                Vec<(
-                    u8,
-                    u8,
-                    u8,
-                    u64,
-                    u64,
-                    u64,
-                    i64,
-                    i64,
-                    i32,
-                    HashMap<u8, u8>,
-                    HashMap<u8, f64>,
-                    u8,
-                )>,
-            >,
-        ) = (
-            vec![
-                "baggage".to_string(),
-                "item".to_string(),
-                "elasticsearch.version".to_string(),
-                "7.0".to_string(),
-                "my-name".to_string(),
-                "X".to_string(),
-                "my-service".to_string(),
-                "my-resource".to_string(),
-                "_dd.sampling_rate_whatever".to_string(),
-                "value whatever".to_string(),
-                "sql".to_string(),
-            ],
-            vec![vec![(
-                6,
-                4,
-                7,
-                1,
-                2,
-                3,
-                123,
-                456,
-                1,
-                HashMap::from([(8, 9), (0, 1), (2, 3)]),
-                HashMap::from([(5, 1.2)]),
-                10,
-            )]],
-        );
-        let bytes = rmp_serde::to_vec(&data).unwrap();
-        let res = get_v05_traces_from_request_body(http_common::Body::from(bytes)).await;
-        assert!(res.is_ok());
-        let (_, traces) = res.unwrap();
-        let span = traces[0][0].clone();
-        let test_span = pb::Span {
-            service: "my-service".to_string(),
-            name: "my-name".to_string(),
-            resource: "my-resource".to_string(),
-            trace_id: 1,
-            span_id: 2,
-            parent_id: 3,
-            start: 123,
-            duration: 456,
-            error: 1,
-            meta: HashMap::from([
-                ("baggage".to_string(), "item".to_string()),
-                ("elasticsearch.version".to_string(), "7.0".to_string()),
-                (
-                    "_dd.sampling_rate_whatever".to_string(),
-                    "value whatever".to_string(),
-                ),
-            ]),
-            metrics: HashMap::from([("X".to_string(), 1.2)]),
-            meta_struct: HashMap::default(),
-            r#type: "sql".to_string(),
-            span_links: vec![],
-            span_events: vec![],
-        };
-        assert_eq!(span, test_span);
-    }
-
-    #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn test_get_traces_from_request_body() {
         let pairs = vec![
             (
@@ -1350,7 +1266,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn test_get_traces_from_request_body_with_span_links() {
         let trace_input = json!([[{
             "service": "test-service",
@@ -1941,5 +1856,93 @@ mod tests {
 
         let trace = vec![root.clone(), duplicate];
         assert_eq!(search_trace_for_field(&root, &trace, "version"), None);
+    }
+}
+
+#[cfg(test)]
+mod miri_tests {
+    use super::*;
+    use libdd_networking::http_common;
+
+    #[tokio::test]
+    #[allow(clippy::type_complexity)]
+    async fn test_get_v05_traces_from_request_body() {
+        let data: (
+            Vec<String>,
+            Vec<
+                Vec<(
+                    u8,
+                    u8,
+                    u8,
+                    u64,
+                    u64,
+                    u64,
+                    i64,
+                    i64,
+                    i32,
+                    HashMap<u8, u8>,
+                    HashMap<u8, f64>,
+                    u8,
+                )>,
+            >,
+        ) = (
+            vec![
+                "baggage".to_string(),
+                "item".to_string(),
+                "elasticsearch.version".to_string(),
+                "7.0".to_string(),
+                "my-name".to_string(),
+                "X".to_string(),
+                "my-service".to_string(),
+                "my-resource".to_string(),
+                "_dd.sampling_rate_whatever".to_string(),
+                "value whatever".to_string(),
+                "sql".to_string(),
+            ],
+            vec![vec![(
+                6,
+                4,
+                7,
+                1,
+                2,
+                3,
+                123,
+                456,
+                1,
+                HashMap::from([(8, 9), (0, 1), (2, 3)]),
+                HashMap::from([(5, 1.2)]),
+                10,
+            )]],
+        );
+        let bytes = rmp_serde::to_vec(&data).unwrap();
+        let res = get_v05_traces_from_request_body(http_common::Body::from(bytes)).await;
+        assert!(res.is_ok());
+        let (_, traces) = res.unwrap();
+        let span = traces[0][0].clone();
+        let test_span = pb::Span {
+            service: "my-service".to_string(),
+            name: "my-name".to_string(),
+            resource: "my-resource".to_string(),
+            trace_id: 1,
+            span_id: 2,
+            parent_id: 3,
+            start: 123,
+            duration: 456,
+            error: 1,
+            meta: HashMap::from([
+                ("baggage".to_string(), "item".to_string()),
+                ("elasticsearch.version".to_string(), "7.0".to_string()),
+                (
+                    "_dd.sampling_rate_whatever".to_string(),
+                    "value whatever".to_string(),
+                ),
+            ]),
+            metrics: HashMap::from([("X".to_string(), 1.2)]),
+            meta_struct: HashMap::default(),
+            r#type: "sql".to_string(),
+            span_links: vec![],
+            span_events: vec![],
+        };
+        assert_eq!(span, test_span);
     }
 }

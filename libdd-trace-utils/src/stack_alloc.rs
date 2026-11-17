@@ -148,7 +148,7 @@ unsafe impl<const N: usize> Allocator for &StackBump<N> {
 }
 
 #[cfg(test)]
-mod tests {
+mod miri_tests {
     use super::*;
     use allocator_api2::vec::Vec as AllocVec;
 

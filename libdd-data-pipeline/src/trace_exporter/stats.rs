@@ -498,8 +498,7 @@ pub(crate) fn process_traces_for_stats_v1<
     }
 }
 
-#[cfg(test)]
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(test, not(miri), not(target_arch = "wasm32")))]
 /// Test only function to check if the stats computation is active and the worker is running
 pub(crate) fn is_stats_worker_active(client_side_stats: &ArcSwap<StatsComputationStatus>) -> bool {
     matches!(
@@ -508,7 +507,7 @@ pub(crate) fn is_stats_worker_active(client_side_stats: &ArcSwap<StatsComputatio
     )
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     #[cfg(feature = "stats-obfuscation")]
     #[test]
@@ -785,7 +784,6 @@ mod tests {
         /// `process_traces_for_stats_v1` reports that stats were computed, and flips both
         /// `client_computed_*` header tags, when stats computation is enabled.
         #[test]
-        #[cfg_attr(miri, ignore)]
         fn process_traces_for_stats_v1_enabled() {
             use libdd_shared_runtime::{ForkSafeRuntime, SharedRuntime, Worker};
 

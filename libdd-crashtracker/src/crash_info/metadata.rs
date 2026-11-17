@@ -42,7 +42,7 @@ impl UnknownValue for Metadata {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::Metadata;
     use crate::crash_info::test_utils::TestInstance;

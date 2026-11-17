@@ -454,7 +454,7 @@ pub static AAS_METADATA: LazyLock<Option<AzureMetadata>> =
 pub static AAS_METADATA_FUNCTION: LazyLock<Option<AzureMetadata>> =
     LazyLock::new(|| AzureMetadata::new_function(RealEnv {}));
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
 
     use indexmap::IndexMap;

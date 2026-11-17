@@ -478,7 +478,7 @@ pub(crate) mod pb {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use crate::{Json, Profile, project_result};

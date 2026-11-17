@@ -59,7 +59,7 @@ impl<T: Clone + Eq> Scheduler<T> {
 #[derive(Debug)]
 enum Now {
     Std,
-    #[cfg(test)]
+    #[cfg(all(test, not(miri)))]
     Mock(Instant),
 }
 
@@ -67,13 +67,13 @@ impl Now {
     fn now(&self) -> Instant {
         match self {
             Self::Std => Instant::now(),
-            #[cfg(test)]
+            #[cfg(all(test, not(miri)))]
             Self::Mock(now) => *now,
         }
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use std::fmt::Debug;
 

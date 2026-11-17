@@ -4,7 +4,7 @@
 use libdd_common::MutexExt;
 use std::fmt;
 use std::sync::{Arc, Mutex};
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 use std::time::Duration;
 use std::time::Instant;
 
@@ -16,12 +16,12 @@ use std::time::Instant;
 #[derive(Clone)]
 pub(crate) enum Clock {
     System,
-    #[cfg(test)]
+    #[cfg(all(test, not(miri)))]
     Mock(Arc<MockClockInner>),
 }
 
 /// Shared state for the mock clock variant.
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 pub(crate) struct MockClockInner {
     now: Mutex<Instant>,
 }
@@ -34,7 +34,7 @@ impl Clock {
 
     /// Controllable clock for tests. Starts at an arbitrary `Instant` and only
     /// advances when [`Clock::advance`] is called.
-    #[cfg(test)]
+    #[cfg(all(test, not(miri)))]
     pub(crate) fn mock() -> Self {
         Clock::Mock(Arc::new(MockClockInner {
             now: Mutex::new(Instant::now()),
@@ -45,13 +45,13 @@ impl Clock {
     pub(crate) fn now(&self) -> Instant {
         match self {
             Clock::System => Instant::now(),
-            #[cfg(test)]
+            #[cfg(all(test, not(miri)))]
             Clock::Mock(inner) => *inner.now.lock().unwrap(),
         }
     }
 
     /// Advances the mock clock by `dur`. Panics if called on [`Clock::System`].
-    #[cfg(test)]
+    #[cfg(all(test, not(miri)))]
     pub(crate) fn advance(&self, dur: Duration) {
         match self {
             Clock::System => panic!("cannot advance the system clock"),
@@ -297,7 +297,7 @@ impl RateLimiter {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use std::sync::Barrier;
@@ -331,7 +331,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_rate_limiter_accumulates_fractional_tokens() {
         // With rate=2/s each token takes 500ms. Sleeping 300ms twice (600ms total) must
         // yield at least one token. Before the fix, each sub-token call reset last_update
@@ -358,7 +357,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_rate_limiter_limit_rate() {
         let limiter = RateLimiter::new(5, None); // 5 per second
 
@@ -381,7 +379,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_rate_limiter_effective_rate() {
         let limiter = RateLimiter::new(50, None); // 50 per second
 
@@ -405,7 +402,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_rate_limiter_thread_safety_no_panic() {
         // Frozen clock: no replenishment, no window rollover. The only thing this
         // test asserts is that a shared limiter does not panic under contention —
@@ -433,7 +429,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_rate_limiter_budget_invariant_concurrent() {
         // Frozen clock ⇒ `replenish` always computes 0 tokens and the window never
         // resets. Four threads race on a shared limiter with a budget of 100; the
@@ -472,7 +467,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_rate_limiter_window_reset_under_contention() {
         // Deterministic window rollover: the first window is drained with an
         // asymmetric allow/deny ratio so its rate is distinguishable from the

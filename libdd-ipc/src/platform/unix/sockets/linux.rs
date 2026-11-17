@@ -156,7 +156,7 @@ pub fn get_peer_credentials(fd: RawFd) -> io::Result<PeerCredentials> {
     })
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     // These tests drive real sockets, which Miri does not support.
     use super::*;
@@ -165,7 +165,6 @@ mod tests {
     /// SOCK_SEQPACKET socket with unread data resets the connection, and Linux reports that
     /// before the messages the client sent earlier: the server must still receive them.
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn test_recv_async_drains_queued_messages_after_reset() {
         let (client, server) = SeqpacketConn::socketpair().expect("socketpair");
         let server = server.into_async_conn().expect("into_async_conn");
@@ -213,11 +212,10 @@ mod tests {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod crucible_connect {
     use super::*;
     #[test]
-    #[cfg_attr(miri, ignore = "requires native IPC and threads")]
     fn crucible_c04_full_abstract_queue_does_not_block_connect() {
         let name = format!("crucible-c04-{}", std::process::id()).into_bytes();
         let listener = SeqpacketListener::bind_abstract(&name).unwrap();

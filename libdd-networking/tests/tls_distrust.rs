@@ -28,7 +28,8 @@
     not(target_vendor = "apple"),
     feature = "https",
     feature = "reqwest",
-    not(feature = "use_webpki_roots")
+    not(feature = "use_webpki_roots"),
+    not(miri)
 ))]
 
 // The crate lints require `alloc`/`core` imports over their `std` aliases; `alloc`
@@ -165,7 +166,6 @@ fn assert_distrust(error: &dyn core::error::Error) {
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn all_http_clients_enforce_distrust() {
     // This integration-test process contains one test. Configure the platform
     // roots through `SSL_CERT_FILE` before any client or async task is created.

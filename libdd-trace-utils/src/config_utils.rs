@@ -90,7 +90,7 @@ fn construct_trace_intake_url(prefix: &str, route: &str) -> String {
     format!("https://{PROD_INTAKE_SUBDOMAIN}.{prefix}{route}")
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use std::sync::Mutex;

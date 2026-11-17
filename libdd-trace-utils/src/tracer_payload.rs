@@ -416,14 +416,11 @@ fn move_runtime_id_to_spans(payload: &mut v1::TracerPayload<BytesData>) {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
-    use crate::span::v04::{SpanBytes, VecMap};
     use crate::test_utils::create_test_no_alloc_span;
-    use libdd_tinybytes::BytesString;
     use libdd_trace_protobuf::pb;
-    use serde_json::json;
 
     fn create_dummy_collection_v07() -> TracerPayloadCollection {
         TracerPayloadCollection::V07(vec![pb::TracerPayload {
@@ -445,15 +442,6 @@ mod tests {
             app_version: "".to_string(),
             container_debug: None,
         }])
-    }
-
-    fn create_trace() -> Vec<SpanBytes> {
-        vec![
-            // create a root span with metrics
-            create_test_no_alloc_span(1234, 12341, 0, 1, true),
-            create_test_no_alloc_span(1234, 12342, 12341, 1, false),
-            create_test_no_alloc_span(1234, 12343, 12342, 1, false),
-        ]
     }
 
     #[test]
@@ -512,6 +500,24 @@ mod tests {
         } else {
             panic!("Unexpected type");
         }
+    }
+}
+
+#[cfg(test)]
+mod miri_tests {
+    use super::*;
+    use crate::span::v04::{SpanBytes, VecMap};
+    use crate::test_utils::create_test_no_alloc_span;
+    use libdd_tinybytes::BytesString;
+    use serde_json::json;
+
+    fn create_trace() -> Vec<SpanBytes> {
+        vec![
+            // create a root span with metrics
+            create_test_no_alloc_span(1234, 12341, 0, 1, true),
+            create_test_no_alloc_span(1234, 12342, 12341, 1, false),
+            create_test_no_alloc_span(1234, 12343, 12342, 1, false),
+        ]
     }
 
     #[test]
@@ -601,7 +607,6 @@ mod tests {
         }
     }
 
-    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_try_into_empty() {
         let empty_data = vec![0x90];

@@ -223,7 +223,7 @@ async fn send_batch_with_writer_stats(
     coalescer.record_payload_build_result(&result);
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use crate::service::evp_proxy::EVENT_PLATFORM_INTAKE_SUBDOMAIN;
@@ -356,7 +356,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn coalesces_identical_batches_before_posting() {
         let server = MockServer::start_async().await;
         let mock = server
@@ -396,7 +395,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn does_not_coalesce_different_producer_identities() {
         let server = MockServer::start_async().await;
         let baseline = server
@@ -461,7 +459,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn flush_now_waits_for_in_flight_flush_section() {
         let server = MockServer::start_async().await;
         let mock = server

@@ -695,7 +695,7 @@ impl<T: ValueTypes> Debug for AttributeRef<'_, T> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
 

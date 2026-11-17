@@ -1,5 +1,6 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+#![cfg(not(miri))]
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -42,7 +43,8 @@ struct Testcase {
     expected: libdd_trace_protobuf::pb::Span,
 }
 
-#[cfg_attr(miri, ignore)] // large fixture suite, prohibitively slow under Miri
+// Excluded from miri_tests: prohibitively slow under Miri (large fixture suite of 45 span cases,
+// each run through the pb and v04 paths)
 #[test]
 fn test_obfuscate_span() {
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))

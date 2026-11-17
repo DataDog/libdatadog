@@ -170,13 +170,12 @@ impl IpcClientConn {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
 
     #[test]
     #[cfg(target_os = "linux")]
-    #[cfg_attr(miri, ignore)]
     fn oversized_packet_preserves_connection_and_ack_accounting() {
         let (conn, peer) = SeqpacketConn::socketpair().unwrap();
         let mut client = IpcClientConn::new(conn);
@@ -217,7 +216,6 @@ mod tests {
 
     #[test]
     #[cfg(target_os = "linux")]
-    #[cfg_attr(miri, ignore)]
     fn send_limit_follows_granted_socket_buffer() {
         let (conn, peer) = SeqpacketConn::socketpair().unwrap();
         // Linux doubles the requested size, as it does when capping at net.core.wmem_max.
@@ -236,7 +234,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn configured_packet_limit_rejects_without_sending_or_closing() {
         let (conn, peer) = SeqpacketConn::socketpair().unwrap();
         let mut client = IpcClientConn::new(conn);

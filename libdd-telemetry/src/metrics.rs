@@ -246,7 +246,7 @@ impl MetricContexts {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use libdd_common::tag;
     use std::fmt::Debug;

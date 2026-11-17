@@ -400,7 +400,7 @@ pub fn read_tls_pointer_untyped() -> *const u8 {
 }
 
 #[cfg(test)]
-mod tests {
+mod miri_tests {
     use super::ThreadContextRecord;
 
     const NO_TRACE_FLAGS: u8 = 0;

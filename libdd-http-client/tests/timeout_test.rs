@@ -1,5 +1,6 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+#![cfg(not(miri))]
 
 use httpmock::prelude::*;
 use libdd_http_client::{HttpClient, HttpClientError, HttpMethod, HttpRequest};
@@ -9,7 +10,6 @@ fn ensure_crypto_provider() {
     let _ = rustls::crypto::ring::default_provider().install_default();
 }
 
-#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_request_times_out() {
     ensure_crypto_provider();
@@ -33,7 +33,6 @@ async fn test_request_times_out() {
     );
 }
 
-#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_per_request_timeout_overrides_client() {
     ensure_crypto_provider();
@@ -60,7 +59,6 @@ async fn test_per_request_timeout_overrides_client() {
     );
 }
 
-#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_connection_refused() {
     ensure_crypto_provider();

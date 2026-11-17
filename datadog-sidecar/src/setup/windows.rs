@@ -64,7 +64,7 @@ impl Default for NamedPipeLiaison {
 
 pub type DefaultLiason = NamedPipeLiaison;
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::Liaison;
     use libdd_ipc::{SeqpacketConn, SeqpacketListener};

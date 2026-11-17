@@ -1,5 +1,6 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+#![cfg(not(miri))]
 
 //! The model's canonical name on cost points
 //! (PORTABLE-METRICS.md#canonical-model). The expected values come from that

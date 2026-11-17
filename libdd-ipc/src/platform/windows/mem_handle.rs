@@ -439,7 +439,7 @@ impl<T: FileBackedHandle> MappedMem<T> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
 

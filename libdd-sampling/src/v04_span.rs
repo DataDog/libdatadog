@@ -239,7 +239,7 @@ impl AttributeFactory for V04AttributeFactory {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use libdd_trace_utils::span::{SliceData, v04::Span};
 

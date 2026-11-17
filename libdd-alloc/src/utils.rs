@@ -46,7 +46,7 @@ pub(crate) fn fuzzer_inner_loop<A: crate::Allocator>(
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 pub(crate) mod tests {
     use crate::utils::is_aligned_to;
 

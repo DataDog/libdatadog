@@ -1,6 +1,8 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+#![cfg(not(miri))]
+
 #[cfg(test)]
 mod tracing_integration_tests {
     use libdd_capabilities_impl::NativeCapabilities;
@@ -11,7 +13,6 @@ mod tracing_integration_tests {
     use libdd_trace_utils::test_utils::datadog_test_agent::DatadogTestAgent;
     use std::time::Duration;
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_fetch_info_from_test_agent() {
         let test_agent = DatadogTestAgent::new(None, None, &[]).await;
@@ -27,7 +28,6 @@ mod tracing_integration_tests {
         );
     }
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_agent_info_fetcher_with_test_agent() {
         let test_agent = DatadogTestAgent::new(None, None, &[]).await;

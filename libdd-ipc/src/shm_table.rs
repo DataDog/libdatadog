@@ -1168,7 +1168,7 @@ impl<S: Schema> ShmTableMapping<S> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use crate::shm_stats::{DEFAULT_SLOT_COUNT, DEFAULT_STRING_POOL_BYTES, ShmSpanConcentrator};
@@ -1217,7 +1217,6 @@ mod tests {
     /// The slot size an opener validates against is its own schema's; opening another schema's
     /// segment would put every slot boundary in the wrong place.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn a_segment_opens_only_as_its_own_schema() {
         let counter_path = test_path();
         let counter = ShmTable::<Counter>::create(counter_path.clone(), 10, 8, 64).unwrap();
@@ -1245,7 +1244,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn a_schema_records_and_drains_through_the_table() {
         let table = ShmTable::<Counter>::create(test_path(), 10, 8, 64).unwrap();
         for input in [3, 3, 5] {
@@ -1267,7 +1265,6 @@ mod tests {
 
     /// A limit stops only new keys, and each bucket gets the whole limit again once drained.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn a_limit_on_new_keys_spares_known_keys_and_resets_with_the_bucket() {
         let table = ShmTable::<Counter>::create(test_path(), 10, 8, 64).unwrap();
         let mem = table.mem.load_full().unwrap();

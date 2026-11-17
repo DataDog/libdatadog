@@ -243,7 +243,7 @@ fn convert_value<'a, T: TraceData>(
     Ok(idx::AnyValue { value: Some(value) })
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use crate::span::BytesData;
@@ -503,21 +503,108 @@ mod tests {
             Some(Value::IntValue(9))
         );
     }
+}
 
-    /// The protobuf path must agree with what the msgpack path delivers: converting a payload
-    /// directly gives the same result as converting it after a V1 msgpack round trip.
-    #[test]
-    fn matches_msgpack_round_trip() {
-        let original = sample_payload(false);
-        let encoded = crate::msgpack_encoder::v1::to_vec_from_v1(&original);
-        let (decoded, _) = crate::msgpack_decoder::v1::from_bytes(Bytes::from(encoded)).unwrap();
+#[cfg(test)]
+mod miri_tests {
+    use super::*;
+    use crate::span::BytesData;
+    use idx::any_value::Value;
+    use libdd_tinybytes::{Bytes, BytesString};
+    use libdd_trace_model::SPAN_LINK_FLAGS_SET_SENTINEL;
 
-        // Interning order depends on attribute iteration order, which the round trip may
-        // change, so compare with both string tables sorted.
-        assert_eq!(
-            canonicalize(to_idx_tracer_payload(&original).unwrap()),
-            canonicalize(to_idx_tracer_payload(&decoded).unwrap())
+    fn bs(s: &str) -> BytesString {
+        BytesString::from_slice(s.as_bytes()).unwrap()
+    }
+
+    fn one_attr(key: &str, value: &str) -> VecMap<BytesString, AttributeValue<BytesData>> {
+        let mut m = VecMap::new();
+        m.insert(bs(key), AttributeValue::String(bs(value)));
+        m
+    }
+
+    /// Every string field has a distinct value, so a swapped ref is caught.
+    fn sample_payload(with_duplicates: bool) -> TracerPayload<BytesData> {
+        let mut span_attrs = VecMap::new();
+        span_attrs.insert(bs("http.method"), AttributeValue::String(bs("GET")));
+        span_attrs.insert(bs("count"), AttributeValue::Int(1));
+        if with_duplicates {
+            span_attrs.insert(bs("count"), AttributeValue::Int(2));
+        }
+        span_attrs.insert(bs("ratio"), AttributeValue::Float(0.5));
+        span_attrs.insert(bs("flag"), AttributeValue::Bool(true));
+        span_attrs.insert(
+            bs("raw"),
+            AttributeValue::Bytes(Bytes::copy_from_slice(b"\xde\xad")),
         );
+        span_attrs.insert(
+            bs("list"),
+            AttributeValue::Array(vec![
+                AttributeValue::String(bs("item")),
+                AttributeValue::Array(vec![AttributeValue::Int(3)]),
+            ]),
+        );
+        let mut inner = VecMap::new();
+        inner.insert(bs("deep"), AttributeValue::Int(9));
+        let mut nested = VecMap::new();
+        nested.insert(bs("nk"), AttributeValue::Bool(false));
+        nested.insert(bs("inner"), AttributeValue::KeyValueList(inner));
+        if with_duplicates {
+            nested.insert(bs("nk"), AttributeValue::Bool(true));
+        }
+        span_attrs.insert(bs("kv"), AttributeValue::KeyValueList(nested));
+
+        let span = Span {
+            service: bs("svc"),
+            name: bs("op"),
+            resource: bs("res"),
+            r#type: bs("web"),
+            span_id: 2,
+            parent_id: 1,
+            start: 100,
+            duration: 50,
+            error: true,
+            span_kind: SpanKind::Server,
+            env: bs("span-env"),
+            version: bs("span-version"),
+            component: bs("span-component"),
+            attributes: span_attrs,
+            span_links: vec![SpanLink {
+                trace_id: [7; 16],
+                span_id: 9,
+                tracestate: bs("dd=s:1"),
+                flags: 1 | SPAN_LINK_FLAGS_SET_SENTINEL,
+                attributes: one_attr("link.k", "link.v"),
+            }]
+            .into(),
+            span_events: vec![SpanEvent {
+                time_unix_nano: 42,
+                name: bs("exception"),
+                attributes: one_attr("event.k", "event.v"),
+            }]
+            .into(),
+        };
+
+        TracerPayload {
+            container_id: bs("cid"),
+            language_name: bs("php"),
+            language_version: bs("8.3"),
+            tracer_version: bs("1.0.0"),
+            runtime_id: bs("rid"),
+            env: bs("payload-env"),
+            hostname: bs("host"),
+            app_version: bs("app-1"),
+            attributes: one_attr("payload.k", "payload.v"),
+            chunks: vec![TraceChunk {
+                trace_id: [1; 16],
+                priority: Some(2),
+                origin: bs("rum"),
+                sampling_mechanism: Some(4),
+                dropped_trace: true,
+                attributes: one_attr("chunk.k", "chunk.v"),
+                spans: vec![span],
+            }],
+        }
     }
 
     /// Sorts the string table and rewrites every ref to match, so payloads that differ only in
@@ -604,5 +691,21 @@ mod tests {
         }
         p.strings = sorted;
         p
+    }
+
+    /// The protobuf path must agree with what the msgpack path delivers: converting a payload
+    /// directly gives the same result as converting it after a V1 msgpack round trip.
+    #[test]
+    fn matches_msgpack_round_trip() {
+        let original = sample_payload(false);
+        let encoded = crate::msgpack_encoder::v1::to_vec_from_v1(&original);
+        let (decoded, _) = crate::msgpack_decoder::v1::from_bytes(Bytes::from(encoded)).unwrap();
+
+        // Interning order depends on attribute iteration order, which the round trip may
+        // change, so compare with both string tables sorted.
+        assert_eq!(
+            canonicalize(to_idx_tracer_payload(&original).unwrap()),
+            canonicalize(to_idx_tracer_payload(&decoded).unwrap())
+        );
     }
 }

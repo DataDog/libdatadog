@@ -77,7 +77,7 @@ impl From<Sample<'_>> for prost_impls::Sample {
 }
 
 #[cfg(test)]
-mod tests {
+mod miri_tests {
     use super::*;
     use bolero::generator::TypeGenerator;
     use prost::Message;

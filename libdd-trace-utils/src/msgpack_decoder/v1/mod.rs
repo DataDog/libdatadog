@@ -434,16 +434,102 @@ where
     Ok(chunk)
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use crate::msgpack_encoder::v1::to_vec_from_v1;
     use crate::span::v1::{
-        AttributeValue, Span as V1Span, SpanBytes as V1SpanBytes, SpanKind, TraceChunkBytes,
-        TracerPayloadBytes,
+        AttributeValue, SpanBytes as V1SpanBytes, TraceChunkBytes, TracerPayloadBytes,
     };
     use crate::span::vec_map::VecMap;
     use bolero::check;
+    use libdd_tinybytes::{Bytes, BytesString};
+
+    /// Fuzz test: bolero generates random strings + numbers for the V1 payload, the encoder
+    /// serialises it, and the decoder must accept its own output (no panic, no error). Mirrors
+    /// the v04 `fuzz_from_bytes` pattern. Bolero caps tuples at 12 fields — extra metadata is
+    /// either omitted or filled with deterministic defaults.
+    // Excluded from miri_tests: prohibitively slow under Miri (bolero fuzz case generation)
+    #[test]
+    fn fuzz_from_bytes() {
+        check!()
+            .with_type::<(
+                String, // language_name
+                String, // env (payload-level)
+                String, // service
+                String, // name
+                String, // resource
+                String, // span env
+                String, // attr_key
+                String, // attr_value
+                u64,    // span_id
+                u64,    // parent_id
+                u64,    // start
+                bool,   // error
+            )>()
+            .cloned()
+            .for_each(
+                |(
+                    lang,
+                    payload_env,
+                    service,
+                    name,
+                    resource,
+                    span_env,
+                    attr_key,
+                    attr_value,
+                    span_id,
+                    parent_id,
+                    start,
+                    error,
+                )| {
+                    let bs = |s: &str| BytesString::from_slice(s.as_ref()).unwrap();
+                    let mut attrs = VecMap::<BytesString, AttributeValue<_>>::new();
+                    attrs.insert(bs(&attr_key), AttributeValue::String(bs(&attr_value)));
+
+                    let span = V1SpanBytes {
+                        service: bs(&service),
+                        name: bs(&name),
+                        resource: bs(&resource),
+                        span_id,
+                        parent_id,
+                        start: start as i64,
+                        error,
+                        env: bs(&span_env),
+                        attributes: attrs,
+                        ..Default::default()
+                    };
+
+                    let payload = TracerPayloadBytes {
+                        language_name: bs(&lang),
+                        env: bs(&payload_env),
+                        chunks: vec![TraceChunkBytes {
+                            trace_id: [0xab; 16],
+                            spans: vec![span],
+                            ..Default::default()
+                        }],
+                        ..Default::default()
+                    };
+
+                    let encoded = to_vec_from_v1(&payload);
+                    let result = from_bytes(Bytes::from(encoded));
+                    assert!(
+                        result.is_ok(),
+                        "decoder rejected its own encoded output: {result:?}"
+                    );
+                },
+            );
+    }
+}
+
+#[cfg(test)]
+mod miri_tests {
+    use super::*;
+    use crate::msgpack_encoder::v1::to_vec_from_v1;
+    use crate::span::v1::{
+        AttributeValue, Span as V1Span, SpanKind, TraceChunkBytes, TracerPayloadBytes,
+    };
+    use crate::span::vec_map::VecMap;
     use libdd_tinybytes::{Bytes, BytesString};
 
     fn bs(s: &str) -> BytesString {
@@ -670,82 +756,6 @@ mod tests {
             }
             _ => panic!("attribute should decode as KeyValue"),
         }
-    }
-
-    /// Fuzz test: bolero generates random strings + numbers for the V1 payload, the encoder
-    /// serialises it, and the decoder must accept its own output (no panic, no error). Mirrors
-    /// the v04 `fuzz_from_bytes` pattern. Bolero caps tuples at 12 fields — extra metadata is
-    /// either omitted or filled with deterministic defaults.
-    #[test]
-    #[cfg_attr(miri, ignore)]
-    fn fuzz_from_bytes() {
-        check!()
-            .with_type::<(
-                String, // language_name
-                String, // env (payload-level)
-                String, // service
-                String, // name
-                String, // resource
-                String, // span env
-                String, // attr_key
-                String, // attr_value
-                u64,    // span_id
-                u64,    // parent_id
-                u64,    // start
-                bool,   // error
-            )>()
-            .cloned()
-            .for_each(
-                |(
-                    lang,
-                    payload_env,
-                    service,
-                    name,
-                    resource,
-                    span_env,
-                    attr_key,
-                    attr_value,
-                    span_id,
-                    parent_id,
-                    start,
-                    error,
-                )| {
-                    let bs = |s: &str| BytesString::from_slice(s.as_ref()).unwrap();
-                    let mut attrs = VecMap::<BytesString, AttributeValue<_>>::new();
-                    attrs.insert(bs(&attr_key), AttributeValue::String(bs(&attr_value)));
-
-                    let span = V1SpanBytes {
-                        service: bs(&service),
-                        name: bs(&name),
-                        resource: bs(&resource),
-                        span_id,
-                        parent_id,
-                        start: start as i64,
-                        error,
-                        env: bs(&span_env),
-                        attributes: attrs,
-                        ..Default::default()
-                    };
-
-                    let payload = TracerPayloadBytes {
-                        language_name: bs(&lang),
-                        env: bs(&payload_env),
-                        chunks: vec![TraceChunkBytes {
-                            trace_id: [0xab; 16],
-                            spans: vec![span],
-                            ..Default::default()
-                        }],
-                        ..Default::default()
-                    };
-
-                    let encoded = to_vec_from_v1(&payload);
-                    let result = from_bytes(Bytes::from(encoded));
-                    assert!(
-                        result.is_ok(),
-                        "decoder rejected its own encoded output: {result:?}"
-                    );
-                },
-            );
     }
 
     // ---------------------------------------------------------------------------------------------

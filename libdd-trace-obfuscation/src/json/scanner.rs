@@ -459,7 +459,7 @@ const fn is_space(c: char) -> bool {
     matches!(c, ' ' | '\t' | '\r' | '\n')
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
 

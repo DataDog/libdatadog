@@ -1,7 +1,7 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use crate::deserializers::is_default;
     use crate::pb::Span;
@@ -37,7 +37,6 @@ mod tests {
 
     use crate::pb::{ClientGroupedStats, ClientStatsBucket, ClientStatsPayload, Trilean::NotSet};
 
-    #[cfg_attr(all(miri, target_os = "macos"), ignore)]
     #[tokio::test]
     async fn test_deserialize_client_stats_payload() {
         let stats_json = r#"{

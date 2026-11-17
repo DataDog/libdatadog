@@ -1,6 +1,8 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+#![cfg(not(miri))]
+
 //! Integration tests for the agentless stats export feature.
 //!
 //! Each test runs inside `spawn_blocking` (required because `send_trace_chunks` calls `block_on`)
@@ -132,7 +134,6 @@ fn grouped_stats_from_request(
 ///
 /// The stats request must carry the `dd-api-key` header and
 /// `Content-Type: application/msgpack`.
-#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_agentless_stats_sent_to_correct_endpoint() {
     let mock = MockHttpCapabilities::new();
@@ -208,7 +209,6 @@ async fn test_agentless_stats_sent_to_correct_endpoint() {
     );
 }
 
-#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_agentless_stats_payload_structure() {
     let mock = MockHttpCapabilities::new();
@@ -304,7 +304,6 @@ async fn test_agentless_stats_payload_structure() {
 /// A span with positive sampling priority (`_sampling_priority_v1 = 1`) must
 /// be forwarded to `/v1/input`.  The body must contain exactly one span and
 /// the stats bucket must record `hits = 1, errors = 0`.
-#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_sampled_span_sent_to_intake_with_correct_stats() {
     let mock = MockHttpCapabilities::new();
@@ -356,7 +355,6 @@ async fn test_sampled_span_sent_to_intake_with_correct_stats() {
 /// A span with a **negative** sampling priority and no error must be dropped
 /// by `drop_chunks` after stats are recorded.  The exporter must therefore
 /// skip the `/v1/input` POST entirely and only send the stats flush.
-#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_p0_span_not_sent_to_intake_but_counted_in_stats() {
     let mock = MockHttpCapabilities::new();
@@ -393,7 +391,6 @@ async fn test_p0_span_not_sent_to_intake_but_counted_in_stats() {
 /// A span with a **negative** sampling priority but `error = 1` must be kept
 /// by the error-sampler path in `drop_chunks` and forwarded to `/v1/input`.
 /// Stats must record `hits = 1, errors = 1`.
-#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_error_span_with_negative_priority_kept_by_error_sampler() {
     let mock = MockHttpCapabilities::new();
@@ -433,7 +430,6 @@ async fn test_error_span_with_negative_priority_kept_by_error_sampler() {
 /// Sending **two** trace chunks in separate calls — one sampled (`priority = 1`) and one dropped
 /// (`priority = -1`, no error) — must forward only the sampled chunk to `/v1/input`,
 /// while the stats bucket records `hits = 2` (both counted before dropping).
-#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_mixed_sampling_priorities_span_count_and_stats() {
     let mock = MockHttpCapabilities::new();
@@ -482,7 +478,6 @@ async fn test_mixed_sampling_priorities_span_count_and_stats() {
 
 /// `set_agentless_stats_endpoint` without `set_agentless_endpoint` must be
 /// rejected at build time.
-#[cfg_attr(miri, ignore)]
 #[test]
 fn test_builder_rejects_agentless_stats_without_agentless_traces() {
     let mock = MockHttpCapabilities::new();
@@ -506,7 +501,6 @@ fn test_builder_rejects_agentless_stats_without_agentless_traces() {
 
 /// `set_agentless_stats_endpoint` combined with `set_otlp_metrics_endpoint`
 /// must be rejected at build time.
-#[cfg_attr(miri, ignore)]
 #[test]
 fn test_builder_rejects_agentless_stats_with_otlp_stats() {
     let mock = MockHttpCapabilities::new();
@@ -533,7 +527,6 @@ fn test_builder_rejects_agentless_stats_with_otlp_stats() {
 /// A relative agentless stats endpoint (no scheme/authority) must be rejected
 /// at build time rather than silently losing every flush in the background
 /// worker.
-#[cfg_attr(miri, ignore)]
 #[test]
 fn test_builder_rejects_relative_agentless_stats_endpoint() {
     let mock = MockHttpCapabilities::new();
@@ -563,7 +556,6 @@ fn test_builder_rejects_relative_agentless_stats_endpoint() {
 
 /// The caller-configured container id must be preserved on the agentless stats
 /// `ClientStatsPayload` (the Agent would normally enrich it downstream).
-#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_agentless_stats_preserves_container_id() {
     let mock = MockHttpCapabilities::new();
@@ -618,7 +610,6 @@ async fn test_agentless_stats_preserves_container_id() {
 
 /// Keys set via `set_additional_metric_tag_keys` must reach the agentless concentrator
 /// (the builder previously passed `vec![]`, silently dropping them).
-#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_agentless_stats_honors_additional_metric_tag_keys() {
     let mock = MockHttpCapabilities::new();
@@ -689,7 +680,6 @@ fn expect_stats_request(reqs: &[common::mock_http::CapturedRequest]) -> pb::Stat
 /// `TraceExporter::flush_client_side_stats` must trigger an immediate forced flush of the
 /// agentless stats exporter through the `Weak<dyn FlushableStatsExport>` handle stored in
 /// `StatsComputationStatus::Enabled`, without waiting for the periodic worker or shutdown.
-#[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_flush_client_side_stats_sends_agentless_stats() {
     let mock = MockHttpCapabilities::new();

@@ -148,7 +148,7 @@ pub fn parse_json(data: &[u8]) -> serde_json::error::Result<DynamicConfigFile> {
     serde_json::from_slice(data)
 }
 
-#[cfg(feature = "test")]
+#[cfg(all(feature = "test", not(miri)))]
 pub mod tests {
     use super::*;
 

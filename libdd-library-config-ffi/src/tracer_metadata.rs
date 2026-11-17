@@ -191,47 +191,12 @@ pub unsafe extern "C" fn ddog_tracer_metadata_store(
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
-    use libdd_library_config::tracer_metadata::ThreadLocalMetadata;
 
-    #[test]
-    fn include_otel_thread_context_rejects_null() {
-        let result =
-            unsafe { ddog_tracer_metadata_include_otel_thread_context(core::ptr::null_mut()) };
-
-        let error = result.unwrap_err();
-        assert!(error.to_string().contains("null pointer"), "{error}");
-    }
-
-    #[test]
-    fn include_otel_thread_context_preserves_existing_metadata() {
-        unsafe {
-            let ptr = ddog_tracer_metadata_new();
-
-            (*ptr).threadlocal_metadata = Some(ThreadLocalMetadata {
-                attribute_keys: vec!["some.key".to_owned()],
-                schema_version: Some("some_schema".to_owned()),
-                ..Default::default()
-            });
-
-            ddog_tracer_metadata_include_otel_thread_context(ptr).unwrap();
-
-            let metadata = (*ptr)
-                .threadlocal_metadata
-                .as_ref()
-                .expect("thread-context metadata should remain present");
-
-            assert_eq!(metadata.attribute_keys, vec!["some.key".to_owned()]);
-            assert_eq!(metadata.schema_version.as_deref(), Some("some_schema"));
-
-            ddog_tracer_metadata_free(ptr);
-        }
-    }
     #[cfg(target_os = "linux")]
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn included_thread_context_metadata_is_published() {
         use libdd_library_config::otel_process_ctx::{ProcessContextSelfReader, unpublish};
         use std::os::fd::{FromRawFd, OwnedFd};
@@ -283,5 +248,45 @@ mod tests {
             std::panic::catch_unwind(|| -> VoidResult { wrap_with_ffi_result!({ operation() }) });
 
         assert!(result.is_err());
+    }
+}
+
+#[cfg(test)]
+mod miri_tests {
+    use super::*;
+    use libdd_library_config::tracer_metadata::ThreadLocalMetadata;
+
+    #[test]
+    fn include_otel_thread_context_rejects_null() {
+        let result =
+            unsafe { ddog_tracer_metadata_include_otel_thread_context(core::ptr::null_mut()) };
+
+        let error = result.unwrap_err();
+        assert!(error.to_string().contains("null pointer"), "{error}");
+    }
+
+    #[test]
+    fn include_otel_thread_context_preserves_existing_metadata() {
+        unsafe {
+            let ptr = ddog_tracer_metadata_new();
+
+            (*ptr).threadlocal_metadata = Some(ThreadLocalMetadata {
+                attribute_keys: vec!["some.key".to_owned()],
+                schema_version: Some("some_schema".to_owned()),
+                ..Default::default()
+            });
+
+            ddog_tracer_metadata_include_otel_thread_context(ptr).unwrap();
+
+            let metadata = (*ptr)
+                .threadlocal_metadata
+                .as_ref()
+                .expect("thread-context metadata should remain present");
+
+            assert_eq!(metadata.attribute_keys, vec!["some.key".to_owned()]);
+            assert_eq!(metadata.schema_version.as_deref(), Some("some_schema"));
+
+            ddog_tracer_metadata_free(ptr);
+        }
     }
 }

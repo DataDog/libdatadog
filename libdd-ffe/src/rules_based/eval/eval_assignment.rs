@@ -43,14 +43,14 @@ enum ExperimentationExclusion {
     ActivatedAtOrAfter(Timestamp),
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 thread_local! {
     static EXCLUSION_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 impl ExperimentationExclusion {
     fn excludes(self, allocation: &Allocation) -> bool {
-        #[cfg(test)]
+        #[cfg(all(test, not(miri)))]
         EXCLUSION_CALLS.with(|calls| calls.set(calls.get() + 1));
         if !allocation.do_log {
             return false;
@@ -678,7 +678,7 @@ impl Shard {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod opt_out_tests {
     use super::*;
     use crate::rules_based::{Attribute, Str, UniversalFlagConfig};
@@ -1011,7 +1011,7 @@ mod opt_out_tests {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use std::{collections::HashMap, sync::Arc};
 

@@ -1,5 +1,6 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+#![cfg(not(miri))]
 
 //! Rules of the contract that the shared cases do not pin, or pin once:
 //! the order of checks and partial usage. Every rejection is compared by

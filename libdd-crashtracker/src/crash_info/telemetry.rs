@@ -414,7 +414,7 @@ fn extract_crash_info_tags(crash_info: &CrashInfo) -> String {
     crash_info.ddtags()
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::TelemetryCrashUploader;
     use crate::{
@@ -448,7 +448,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_profiler_config_extraction() {
         let t = new_test_uploader(1);
 
@@ -466,7 +465,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn test_crash_request_content() -> anyhow::Result<()> {
         // This keeps alive for scope
         let tmp = tempfile::tempdir().unwrap();
@@ -536,7 +534,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn test_crash_ping_content() -> anyhow::Result<()> {
         // This keeps alive for scope
         let tmp = tempfile::tempdir().unwrap();
@@ -615,7 +612,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn test_crash_ping_with_different_config() -> anyhow::Result<()> {
         // This keeps alive for scope
         let tmp = tempfile::tempdir().unwrap();
@@ -708,7 +704,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn test_crash_ping_builder_basic() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir().unwrap();
         let output_filename = {
@@ -777,7 +772,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_crash_ping_builder_validation() {
         // Test that crash ping can be built with only metadata (no sig_info)
         let mut crash_info_builder = CrashInfoBuilder::new();
@@ -826,7 +820,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_crash_ping_all_fields_present() {
         let sig_info = crate::SigInfo::test_instance(99);
         let metadata = Metadata::test_instance(2);
@@ -846,7 +839,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_crash_ping_with_message_generated_from_sig_info() {
         let sig_info = crate::SigInfo::test_instance(99);
         let metadata = Metadata::test_instance(2);
@@ -872,7 +864,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_crash_ping_with_custom_message() {
         let sig_info = crate::SigInfo::test_instance(99);
         let metadata = Metadata::test_instance(2);
@@ -899,7 +890,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn test_crash_ping_telemetry_upload_all_fields() -> anyhow::Result<()> {
         // Test that when crash ping is uploaded via telemetry, all fields are preserved
         let tmp = tempfile::tempdir().unwrap();
@@ -981,7 +971,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn test_general_log_upload() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir().unwrap();
         let output_filename = {

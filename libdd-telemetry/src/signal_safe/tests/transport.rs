@@ -1,10 +1,7 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use alloc::{
-    string::{String, ToString},
-    vec::Vec,
-};
+use alloc::vec::Vec;
 use core::convert::Infallible;
 use reqwless::client::{HttpConnection, HttpResource};
 
@@ -47,86 +44,6 @@ fn empty_request<'a>(application: &'a Application, host: &'a Host) -> MetricsReq
         origin: None,
         series: &[],
     }
-}
-
-#[tokio::test]
-async fn sends_encoded_metrics_and_accepts_success_statuses() {
-    let application = Application {
-        language_name: "rust".to_string(),
-        tracer_version: "1.0.0".to_string(),
-        ..Application::default()
-    };
-    let host = Host::default();
-    let request = empty_request(&application, &host);
-    let mut connection = FakeConnection {
-        response: b"HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\n\r\n",
-        response_offset: 0,
-        request: Vec::new(),
-    };
-    let mut body_buffer = [0_u8; 1_024];
-    let mut response_buffer = [0_u8; 256];
-    let status = {
-        let mut resource = HttpResource {
-            conn: HttpConnection::Plain(&mut connection),
-            host: "localhost",
-            base_path: "",
-        };
-        send_metrics(
-            &mut resource,
-            "/telemetry/proxy/api/v2/apmtelemetry",
-            &request,
-            &[("DD-API-KEY", "secret")],
-            &mut body_buffer,
-            &mut response_buffer,
-        )
-        .await
-        .unwrap()
-    };
-
-    assert_eq!(status, 202);
-    let written = String::from_utf8(connection.request).unwrap();
-    assert!(written.starts_with("POST /telemetry/proxy/api/v2/apmtelemetry HTTP/1.1\r\n"));
-    assert!(written.contains("dd-telemetry-request-type: generate-metrics\r\n"));
-    assert!(written.contains("dd-client-library-language: rust\r\n"));
-    assert!(written.contains("Connection: close\r\n"));
-    assert!(written.contains("DD-API-KEY: secret\r\n"));
-    assert!(written.ends_with("\"series\":[]}}"));
-}
-
-#[tokio::test]
-async fn rejects_unsuccessful_statuses() {
-    let application = Application {
-        language_name: "rust".to_string(),
-        tracer_version: "1.0.0".to_string(),
-        ..Application::default()
-    };
-    let host = Host::default();
-    let request = empty_request(&application, &host);
-    let mut connection = FakeConnection {
-        response: b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n",
-        response_offset: 0,
-        request: Vec::new(),
-    };
-    let mut resource = HttpResource {
-        conn: HttpConnection::Plain(&mut connection),
-        host: "localhost",
-        base_path: "",
-    };
-    let mut body_buffer = [0_u8; 1_024];
-    let mut response_buffer = [0_u8; 256];
-
-    assert!(matches!(
-        send_metrics(
-            &mut resource,
-            "/telemetry/proxy/api/v2/apmtelemetry",
-            &request,
-            &[],
-            &mut body_buffer,
-            &mut response_buffer,
-        )
-        .await,
-        Err(Error::UnexpectedStatus(500))
-    ));
 }
 
 #[tokio::test]

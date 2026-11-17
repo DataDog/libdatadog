@@ -433,7 +433,7 @@ pub fn start_or_connect_to_sidecar_with_entrypoint(
     ))
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
 

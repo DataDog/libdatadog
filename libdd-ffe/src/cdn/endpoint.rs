@@ -268,7 +268,7 @@ fn normalize_site(site: &str) -> Result<String, EndpointError> {
     Ok(site.to_ascii_lowercase())
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
 

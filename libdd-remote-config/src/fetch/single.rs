@@ -287,7 +287,7 @@ where
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use crate::fetch::test_server::RemoteConfigServer;
@@ -295,7 +295,6 @@ mod tests {
     use libdd_capabilities_impl::NativeCapabilities;
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn updates_identity_without_resetting_client_state() {
         let server = RemoteConfigServer::spawn();
         let target = Target::new(

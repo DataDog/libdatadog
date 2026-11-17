@@ -62,7 +62,7 @@ unsafe impl Value for i64 {
 }
 
 #[cfg(test)]
-mod tests {
+mod miri_tests {
     use super::*;
 
     #[test]

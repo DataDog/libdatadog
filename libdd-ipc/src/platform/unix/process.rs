@@ -135,7 +135,7 @@ fn proc_info(pid: u32) -> Option<ProcInfo> {
     })
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     // These resolve real pids: through `/proc` on Linux, `proc_pidinfo` on macOS, and
     // `getpid`/`getppid` on both. Miri implements none of them - it refuses the foreign calls
@@ -143,7 +143,6 @@ mod tests {
     use super::*;
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn own_process_resolves_to_own_credentials() {
         let pid = std::process::id();
         assert_eq!(
@@ -159,7 +158,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn foreign_process_is_readable() {
         // pid 1 always exists and is usually owned by another user; the macOS peer-uid path
         // depends on being able to read it without privileges. Its uid is not asserted
@@ -168,7 +166,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn dead_pid_resolves_to_none() {
         // Well above any /proc/sys/kernel/pid_max default, so it cannot be live.
         assert_eq!(effective_uid_of(0x7FFF_FFFF), None);
@@ -176,7 +173,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn descendant_chain_is_walked() {
         let pid = std::process::id();
         assert!(is_descendant_of(pid, pid), "a pid is its own ancestor");
@@ -215,7 +211,6 @@ mod tests {
     /// A chain this test controls: grandchild -> child -> this process, whatever the
     /// environment above it looks like.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn a_grandchild_descends_from_its_grandparent_only() {
         let grandparent = std::process::id();
         // SAFETY: the forked processes only query the process table, fork, wait and _exit.

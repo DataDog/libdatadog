@@ -377,7 +377,7 @@ impl TraceFlusher {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use httpmock::MockServer;
@@ -385,7 +385,6 @@ mod tests {
     use libdd_trace_utils::test_utils::{create_send_data, poll_for_mock_hit};
     use std::sync::Arc;
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     // Test scenario: Enqueue two traces with a size less than the minimum force flush size, and
     // observe that a request to the trace agent is not made. Then enqueue a third trace exceeding
@@ -433,7 +432,6 @@ mod tests {
         assert!(poll_for_mock_hit(&mut mock, 25, 100, 1, true).await);
     }
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_flush_on_interval() {
         // Set the interval lower than the default to reduce test time
@@ -470,7 +468,6 @@ mod tests {
         assert!(poll_for_mock_hit(&mut mock, 25, 100, 1, true).await);
     }
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     // Test scenario: A session with a very long flush interval enqueues a trace, then a session
     // with a short interval enqueues another. The short interval must wake the already sleeping
@@ -506,7 +503,6 @@ mod tests {
         assert!(poll_for_mock_hit(&mut mock, 25, 100, 1, true).await);
     }
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     // Test scenario: Enqueue a trace with a size greater than the minimum force drop size, and
     // observe that it is not sent.
@@ -542,7 +538,6 @@ mod tests {
         assert!(poll_for_mock_hit(&mut mock, 5, 250, 0, true).await);
     }
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     // Test scenario: the agent answers with an error status. Unlike a successful response, its body
     // is not stored as the agent's remote config.

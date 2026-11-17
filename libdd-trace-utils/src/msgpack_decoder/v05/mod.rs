@@ -279,7 +279,7 @@ where
 }
 
 #[cfg(test)]
-mod tests {
+mod miri_tests {
     use super::*;
     use crate::span::SliceData;
     use std::collections::HashMap;

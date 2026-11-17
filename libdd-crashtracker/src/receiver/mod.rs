@@ -16,7 +16,7 @@ mod receive_report;
 #[cfg(feature = "benchmarking")]
 pub mod benchmark;
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::receive_report::*;
     use crate::collector::default_signals;
@@ -83,7 +83,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn test_receive_report_short_timeout() -> anyhow::Result<()> {
         let (sender, receiver) = tokio::net::UnixStream::pair()?;
 
@@ -107,7 +106,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn test_receive_report_long_timeout() -> anyhow::Result<()> {
         let (sender, receiver) = tokio::net::UnixStream::pair()?;
 
@@ -134,7 +132,6 @@ mod tests {
     /// `/proc/<pid>/maps` and the process' mapped files, so returning the report must not
     /// close the connection: the caller has to keep it open until symbolization is done.
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn test_receive_report_keeps_collector_connection_open() -> anyhow::Result<()> {
         let (mut sender, receiver) = tokio::net::UnixStream::pair()?;
 

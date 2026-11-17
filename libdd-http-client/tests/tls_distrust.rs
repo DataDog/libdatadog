@@ -24,6 +24,7 @@
 //! the hyper backend is covered by `libdd-common`'s `tests/tls_distrust.rs`.
 
 #![cfg(all(
+    not(miri),
     unix,
     not(target_os = "android"),
     not(target_vendor = "apple"),
@@ -130,7 +131,6 @@ async fn serve_origin(config: Arc<ServerConfig>) -> (String, JoinHandle<()>) {
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn reqwest_backend_enforces_distrust() {
     // This integration-test process contains one test. Configure the platform
     // roots through `SSL_CERT_FILE` before any client or async task is created.

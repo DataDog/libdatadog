@@ -1,5 +1,6 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+#![cfg(not(miri))]
 
 mod common;
 
@@ -8,7 +9,6 @@ use httpmock::prelude::*;
 use libdd_agent_client::EvpEventRequest;
 
 #[tokio::test]
-#[cfg_attr(miri, ignore)]
 async fn posts_to_path_with_subdomain_header() {
     let server = MockServer::start();
     let mock = server.mock(|when, then| {

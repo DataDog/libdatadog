@@ -1,0 +1,67 @@
+# Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+id: miri-test-gate
+valid:
+  - |
+    #[cfg(all(test, not(miri)))]
+    mod tests {
+        #[test]
+        fn regular_test() {}
+    }
+  - |
+    #[cfg(all(test, not(miri), feature = "alloc"))]
+    mod alloc_tests {
+        #[test]
+        fn feature_gated_regular() {}
+    }
+  - |
+    #[cfg(test)]
+    mod miri_tests {
+        #[test]
+        fn runs_under_both() {}
+    }
+  - |
+    #[cfg(test)]
+    mod v04_miri_tests {
+        #[test]
+        fn suffixed_name_is_designated() {}
+    }
+  - |
+    #[cfg(all(test, not(miri)))]
+    mod tests;
+  - |
+    #[cfg(test)]
+    mod test_support {
+        // No test fns: shared support compiled for both gates is fine.
+        fn helper() {}
+    }
+  - |
+    #[cfg(all(test, not(miri)))]
+    #[test]
+    fn file_scope_test_excluded_from_miri() {}
+  - |
+    #[cfg(feature = "test-support")]
+    mod gated_by_feature_not_test {}
+invalid:
+  - |
+    #[cfg(test)]
+    mod tests {
+        #[test]
+        fn forgotten_gate() {}
+    }
+  - |
+    #[cfg(all(test, feature = "mini_agent"))]
+    mod tests {
+        #[test]
+        fn missing_not_miri() {}
+    }
+  - |
+    #[cfg(test)]
+    mod tests;
+  - |
+    #[cfg(all(test, target_os = "linux"))]
+    mod linux_tests {
+        #[test]
+        fn platform_gate_without_miri_exclusion() {}
+    }

@@ -82,7 +82,7 @@ pub(crate) fn is_retryable(err: &HttpClientError) -> bool {
     !matches!(err, HttpClientError::InvalidConfig(_))
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
 

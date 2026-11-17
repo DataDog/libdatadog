@@ -202,116 +202,13 @@ impl UnsyncStringSet {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
 
+    // Excluded from miri_tests: prohibitively slow under Miri (multi-MiB string allocations through
+    // the arena allocator; ~2.7 MiB of copied string bytes)
     #[test]
-    fn test_string_set_basic_operations() {
-        let mut set = UnsyncStringSet::try_new().unwrap();
-
-        // Test inserting new strings
-        let id1 = set.try_insert("hello").unwrap();
-        let id2 = set.try_insert("world").unwrap();
-        let id3 = set.try_insert("hello").unwrap(); // duplicate
-
-        // Verify duplicate returns same ID
-        assert_eq!(&*id1.0, &*id3.0);
-        assert_ne!(&*id1.0, &*id2.0);
-
-        // Verify retrieval
-        unsafe {
-            assert_eq!(set.get_string(id1), "hello");
-            assert_eq!(set.get_string(id2), "world");
-            assert_eq!(set.get_string(id3), "hello");
-        }
-    }
-
-    #[test]
-    fn test_string_lengths_and_alignment() {
-        let mut set = UnsyncStringSet::try_new().unwrap();
-
-        // Test various string lengths that might cause alignment issues
-        let test_strings = [
-            "",                                    // 0 bytes
-            "a",                                   // 1 byte
-            "ab",                                  // 2 bytes
-            "abc",                                 // 3 bytes
-            "abcd",                                // 4 bytes
-            "abcdefg",                             // 7 bytes
-            "abcdefgh",                            // 8 bytes (usize boundary on 64-bit)
-            "abcdefghijklmno",                     // 15 bytes
-            "abcdefghijklmnop",                    // 16 bytes
-            "abcdefghijklmnopqrstuvwxyz123456789", // 35 bytes
-        ];
-
-        let mut ids = Vec::new();
-        for s in &test_strings {
-            let id = set.try_insert(s).unwrap();
-            ids.push(id);
-        }
-
-        // Verify all strings can be retrieved correctly
-        for (id, expected) in ids.iter().zip(&test_strings) {
-            unsafe {
-                assert_eq!(set.get_string(*id), *expected);
-            }
-        }
-    }
-
-    #[test]
-    fn test_unicode_strings() {
-        let mut set = UnsyncStringSet::try_new().unwrap();
-
-        let unicode_strings = [
-            "café",         // Latin with accents
-            "🦀",           // Emoji (4 bytes)
-            "こんにちは",   // Japanese
-            "Здравствуй",   // Cyrillic
-            "🔥💯✨",       // Multiple emoji
-            "a\u{0000}b",   // Embedded null
-            "line1\nline2", // Newline
-            "tab\there",    // Tab
-        ];
-
-        let mut ids = Vec::new();
-        for s in &unicode_strings {
-            let id = set.try_insert(s).unwrap();
-            ids.push(id);
-        }
-
-        // Verify all Unicode strings are preserved correctly
-        for (id, expected) in ids.iter().zip(&unicode_strings) {
-            unsafe {
-                assert_eq!(set.get_string(*id), *expected);
-            }
-        }
-    }
-
-    #[test]
-    fn test_capacity_and_growth() {
-        // Test with minimal capacity
-        let mut set = UnsyncStringSet::try_with_capacity(1).unwrap();
-
-        // Insert more strings than initial capacity to force growth
-        let test_strings: Vec<String> = (0..50).map(|i| format!("growth_test_{}", i)).collect();
-
-        let mut ids = Vec::new();
-        for s in &test_strings {
-            let id = set.try_insert(s).unwrap();
-            ids.push(id);
-        }
-
-        // Verify all strings are still accessible after growth
-        for (id, expected) in ids.iter().zip(&test_strings) {
-            unsafe {
-                assert_eq!(set.get_string(*id), expected);
-            }
-        }
-    }
-
-    #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_large_strings() {
         let mut set = UnsyncStringSet::try_new().unwrap();
 
@@ -344,7 +241,112 @@ mod tests {
             assert_eq!(set.get_string(id2), very_large_string);
         }
     }
+}
 
+#[cfg(test)]
+mod miri_tests {
+    use super::*;
+
+    #[test]
+    fn test_string_set_basic_operations() {
+        let mut set = UnsyncStringSet::try_new().unwrap();
+
+        // Test inserting new strings
+        let id1 = set.try_insert("hello").unwrap();
+        let id2 = set.try_insert("world").unwrap();
+        let id3 = set.try_insert("hello").unwrap(); // duplicate
+
+        // Verify duplicate returns same ID
+        assert_eq!(&*id1.0, &*id3.0);
+        assert_ne!(&*id1.0, &*id2.0);
+
+        // Verify retrieval
+        unsafe {
+            assert_eq!(set.get_string(id1), "hello");
+            assert_eq!(set.get_string(id2), "world");
+            assert_eq!(set.get_string(id3), "hello");
+        }
+    }
+    #[test]
+    fn test_string_lengths_and_alignment() {
+        let mut set = UnsyncStringSet::try_new().unwrap();
+
+        // Test various string lengths that might cause alignment issues
+        let test_strings = [
+            "",                                    // 0 bytes
+            "a",                                   // 1 byte
+            "ab",                                  // 2 bytes
+            "abc",                                 // 3 bytes
+            "abcd",                                // 4 bytes
+            "abcdefg",                             // 7 bytes
+            "abcdefgh",                            // 8 bytes (usize boundary on 64-bit)
+            "abcdefghijklmno",                     // 15 bytes
+            "abcdefghijklmnop",                    // 16 bytes
+            "abcdefghijklmnopqrstuvwxyz123456789", // 35 bytes
+        ];
+
+        let mut ids = Vec::new();
+        for s in &test_strings {
+            let id = set.try_insert(s).unwrap();
+            ids.push(id);
+        }
+
+        // Verify all strings can be retrieved correctly
+        for (id, expected) in ids.iter().zip(&test_strings) {
+            unsafe {
+                assert_eq!(set.get_string(*id), *expected);
+            }
+        }
+    }
+    #[test]
+    fn test_unicode_strings() {
+        let mut set = UnsyncStringSet::try_new().unwrap();
+
+        let unicode_strings = [
+            "café",         // Latin with accents
+            "🦀",           // Emoji (4 bytes)
+            "こんにちは",   // Japanese
+            "Здравствуй",   // Cyrillic
+            "🔥💯✨",       // Multiple emoji
+            "a\u{0000}b",   // Embedded null
+            "line1\nline2", // Newline
+            "tab\there",    // Tab
+        ];
+
+        let mut ids = Vec::new();
+        for s in &unicode_strings {
+            let id = set.try_insert(s).unwrap();
+            ids.push(id);
+        }
+
+        // Verify all Unicode strings are preserved correctly
+        for (id, expected) in ids.iter().zip(&unicode_strings) {
+            unsafe {
+                assert_eq!(set.get_string(*id), *expected);
+            }
+        }
+    }
+    #[test]
+    fn test_capacity_and_growth() {
+        // Test with minimal capacity
+        let mut set = UnsyncStringSet::try_with_capacity(1).unwrap();
+
+        // Insert more strings than initial capacity to force growth
+        let test_strings: Vec<String> = (0..50).map(|i| format!("growth_test_{}", i)).collect();
+
+        let mut ids = Vec::new();
+        for s in &test_strings {
+            let id = set.try_insert(s).unwrap();
+            ids.push(id);
+        }
+
+        // Verify all strings are still accessible after growth
+        for (id, expected) in ids.iter().zip(&test_strings) {
+            unsafe {
+                assert_eq!(set.get_string(*id), expected);
+            }
+        }
+    }
     #[test]
     fn test_many_small_strings() {
         const NUM_STRINGS: usize = if cfg!(miri) { 100 } else { 1000 };

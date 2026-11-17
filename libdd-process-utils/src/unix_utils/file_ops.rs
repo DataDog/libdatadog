@@ -19,7 +19,7 @@ pub fn open_file_or_quiet(filename: Option<&str>) -> std::io::Result<RawFd> {
     Ok(file.into_raw_fd())
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use std::fs;
@@ -28,7 +28,6 @@ mod tests {
     use std::os::fd::FromRawFd;
     use tempfile::tempdir;
 
-    #[cfg_attr(miri, ignore)] // expected failure under miri
     #[test]
     fn test_open_file_or_quiet_none() {
         // Test opening /dev/null when no filename is provided

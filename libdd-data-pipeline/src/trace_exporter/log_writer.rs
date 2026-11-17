@@ -60,7 +60,7 @@ pub(crate) fn write_log_traces_v1<C: LogWriterCapability + ?Sized, T: TraceData>
     Ok(stats)
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use libdd_trace_utils::span::SliceData;

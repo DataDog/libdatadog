@@ -1,6 +1,8 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+#![cfg(not(miri))]
+
 use std::{
     collections::HashMap,
     time::{Duration, Instant},
@@ -19,7 +21,6 @@ use serde_json::json;
 mod tracing_integration_tests {
     use super::*;
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn trace_filters_snapshot_test() {
         const EXTRA_INFO: &str = r#"{

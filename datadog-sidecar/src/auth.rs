@@ -178,7 +178,7 @@ fn peer_descends_from(_pid: u32, _ancestor: u32) -> bool {
     false
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
 

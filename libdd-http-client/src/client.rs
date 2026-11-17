@@ -102,7 +102,7 @@ impl HttpClient {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
 
@@ -110,7 +110,6 @@ mod tests {
         let _ = rustls::crypto::ring::default_provider().install_default();
     }
 
-    #[cfg_attr(miri, ignore)] // real TLS/HTTP client construction is prohibitively slow under Miri
     #[test]
     fn new_creates_client() {
         ensure_crypto_provider();
@@ -121,7 +120,6 @@ mod tests {
         assert_eq!(client.config().timeout(), Duration::from_secs(3));
     }
 
-    #[cfg_attr(miri, ignore)] // real TLS/HTTP client construction is prohibitively slow under Miri
     #[test]
     fn builder_creates_client() {
         ensure_crypto_provider();
@@ -134,7 +132,6 @@ mod tests {
         assert_eq!(client.config().timeout(), Duration::from_secs(5));
     }
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn send_returns_error_when_no_server() {
         ensure_crypto_provider();

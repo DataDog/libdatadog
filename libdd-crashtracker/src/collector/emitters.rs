@@ -1152,7 +1152,7 @@ fn emit_otel_thread_contexts(
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use crate::StackFrame;
 
@@ -1275,7 +1275,6 @@ mod tests {
 
     #[test]
     #[cfg(target_os = "linux")]
-    // #[cfg_attr(miri, ignore)]
     fn test_emit_procinfo() {
         let pid = unsafe { libc::getpid() };
         let tid = unsafe { libc::syscall(libc::SYS_gettid) as libc::pid_t };
@@ -1382,27 +1381,8 @@ mod tests {
         assert!(out.contains(&long_message[..100])); // At least first 100 chars
     }
 
-    // We only test edge cases specific to this wrapper function here.
-    // The core unwinding logic is tested in the libunwind crate.
     #[test]
     #[cfg(target_os = "linux")]
-    fn test_emit_backtrace_via_libunwind_null_ucontext() {
-        let mut buf = Vec::new();
-        unsafe {
-            emit_backtrace_via_libunwind(
-                &mut buf,
-                StacktraceCollection::WithoutSymbols,
-                core::ptr::null(),
-            )
-            .expect("should handle null ucontext gracefully");
-        }
-        // With null ucontext, function should return early and emit nothing
-        assert!(buf.is_empty());
-    }
-
-    #[test]
-    #[cfg(target_os = "linux")]
-    #[cfg_attr(miri, ignore)]
     fn test_emit_backtrace_via_libunwind_unw_init_failure() {
         // Test that when unw_init_local2 fails (e.g., with invalid context),
         // the function returns Ok(()) gracefully without writing anything
@@ -1420,6 +1400,30 @@ mod tests {
             buf.is_empty(),
             "Function should return early on unw_init_local2 failure"
         );
+    }
+}
+
+#[cfg(test)]
+mod miri_tests {
+    use super::*;
+    use alloc::str;
+
+    // We only test edge cases specific to this wrapper function here.
+    // The core unwinding logic is tested in the libunwind crate.
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn test_emit_backtrace_via_libunwind_null_ucontext() {
+        let mut buf = Vec::new();
+        unsafe {
+            emit_backtrace_via_libunwind(
+                &mut buf,
+                StacktraceCollection::WithoutSymbols,
+                core::ptr::null(),
+            )
+            .expect("should handle null ucontext gracefully");
+        }
+        // With null ucontext, function should return early and emit nothing
+        assert!(buf.is_empty());
     }
 
     #[test]
@@ -1524,7 +1528,6 @@ mod tests {
 
     #[test]
     #[cfg(target_os = "macos")]
-    #[cfg_attr(miri, ignore)]
     fn test_emit_ucontext_macos_valid() {
         use libc::__darwin_ucontext;
         // Create a minimal valid ucontext_t for macOS
@@ -1602,7 +1605,6 @@ mod tests {
 
     #[test]
     #[cfg(target_os = "macos")]
-    #[cfg_attr(miri, ignore)]
     fn test_emit_ucontext_macos_null_mcontext() {
         // Test the fallback case when mcontext is null
         let mut context: libc::ucontext_t = unsafe { core::mem::zeroed() };

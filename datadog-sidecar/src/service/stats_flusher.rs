@@ -327,7 +327,7 @@ pub async fn flush_all_stats_now(
     .await;
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
 

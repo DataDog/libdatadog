@@ -96,7 +96,7 @@ impl<'a> TryFrom<TracerHeaderTags<'a>> for SerializedTracerHeaderTags {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use libdd_trace_utils::trace_utils::TracerGenericTags;

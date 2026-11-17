@@ -239,8 +239,19 @@ impl BlockingRuntime for ForkSafeRuntime {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn test_fork_safe_runtime_creation() {
+        let shared_runtime = ForkSafeRuntime::new();
+        assert!(shared_runtime.is_ok());
+    }
+}
+
+#[cfg(test)]
+mod miri_tests {
     use super::*;
     use async_trait::async_trait;
     use std::sync::mpsc::{Receiver, Sender, channel};
@@ -296,12 +307,6 @@ mod tests {
             self.state = -1;
             let _ = self.sender.send(self.state);
         }
-    }
-
-    #[test]
-    fn test_fork_safe_runtime_creation() {
-        let shared_runtime = ForkSafeRuntime::new();
-        assert!(shared_runtime.is_ok());
     }
 
     #[test]

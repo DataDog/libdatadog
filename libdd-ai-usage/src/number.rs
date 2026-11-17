@@ -128,7 +128,7 @@ pub fn usd_from_nano_usd(nanos: u64) -> f64 {
     integer_to_f64(u128::from(nanos)) / 1e9
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
 

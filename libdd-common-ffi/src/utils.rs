@@ -105,37 +105,9 @@ pub fn handle_panic_error(
     .unwrap_or(crate::error::CANNOT_ALLOCATE_ERROR)
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
-    use assert_no_alloc::{AllocDisabler, assert_no_alloc};
     use function_name::named;
-
-    #[cfg(debug_assertions)] // required when disable_release is set (default)
-    #[global_allocator]
-    static ALLOCATOR: AllocDisabler = AllocDisabler;
-
-    #[test]
-    fn test_handle_panic_error_fallback_does_not_allocate() {
-        let mut error_result_buffer: [core::ffi::c_char; 100] = [0; 100];
-
-        assert_no_alloc(|| {
-            // Simulate fallback code path of handle_panic_error + ddog_Error_message
-            let fallback_error = crate::error::CANNOT_ALLOCATE_ERROR;
-            let error_message = unsafe { crate::ddog_Error_message(Some(&fallback_error)) };
-
-            // Stash error message so we can assert on it
-            let n = error_message.len().min(error_result_buffer.len());
-            error_result_buffer[..n].copy_from_slice(&error_message[..n]);
-        });
-
-        unsafe {
-            let c_str = core::ffi::CStr::from_ptr(error_result_buffer.as_ptr());
-            assert_eq!(
-                c_str.to_str().unwrap(),
-                "libdatadog failed: (panic) Cannot allocate error message"
-            );
-        };
-    }
 
     #[test]
     #[named]
@@ -172,5 +144,37 @@ mod tests {
             result.unwrap_err().to_string(),
             "test_wrap_with_ffi_result_does_not_modify_other_kinds_of_errors failed: this is a test error message"
         );
+    }
+}
+
+#[cfg(test)]
+mod miri_tests {
+    use assert_no_alloc::{AllocDisabler, assert_no_alloc};
+
+    #[cfg(debug_assertions)] // required when disable_release is set (default)
+    #[global_allocator]
+    static ALLOCATOR: AllocDisabler = AllocDisabler;
+
+    #[test]
+    fn test_handle_panic_error_fallback_does_not_allocate() {
+        let mut error_result_buffer: [core::ffi::c_char; 100] = [0; 100];
+
+        assert_no_alloc(|| {
+            // Simulate fallback code path of handle_panic_error + ddog_Error_message
+            let fallback_error = crate::error::CANNOT_ALLOCATE_ERROR;
+            let error_message = unsafe { crate::ddog_Error_message(Some(&fallback_error)) };
+
+            // Stash error message so we can assert on it
+            let n = error_message.len().min(error_result_buffer.len());
+            error_result_buffer[..n].copy_from_slice(&error_message[..n]);
+        });
+
+        unsafe {
+            let c_str = core::ffi::CStr::from_ptr(error_result_buffer.as_ptr());
+            assert_eq!(
+                c_str.to_str().unwrap(),
+                "libdatadog failed: (panic) Cannot allocate error message"
+            );
+        };
     }
 }

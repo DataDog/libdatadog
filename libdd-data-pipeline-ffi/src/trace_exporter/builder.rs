@@ -1203,4 +1203,6 @@ pub unsafe extern "C" fn ddog_trace_exporter_builder_build(
 }
 
 #[cfg(test)]
+mod miri_tests;
+#[cfg(all(test, not(miri)))]
 mod tests;

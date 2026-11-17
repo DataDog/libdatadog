@@ -1,5 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+#![cfg(not(miri))]
+
 use datadog_sidecar_ffi::*;
 
 macro_rules! assert_maybe_no_error {
@@ -27,10 +29,6 @@ use std::{
 };
 
 #[test]
-#[cfg_attr(
-    miri,
-    ignore = "header generation and C compilation spawn native processes"
-)]
 fn generated_header_exposes_native_evp_transport_abi() {
     let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -116,7 +114,6 @@ fn set_sidecar_per_process() {
 
 #[test]
 #[cfg(unix)]
-#[cfg_attr(miri, ignore)]
 #[cfg_attr(coverage_nightly, ignore)] // this fails on nightly coverage
 fn test_ddog_ph_file_handling() {
     let fname = CString::new(std::env::temp_dir().join("test_file").to_str().unwrap()).unwrap();
@@ -156,7 +153,6 @@ fn test_ddog_sidecar_connection() {
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
 // On Windows the spawn trampoline must GetProcAddress `ddog_daemon_entry_point` from the module
 // containing it - here the test .exe, which (unlike a DLL) exports no symbols. The daemon thus
 // exits immediately and connecting only succeeds when it wins the race against that exit.
@@ -449,7 +445,6 @@ impl Drop for FfeSidecar {
 // Covers FFI conversion, IPC, the sidecar exposure deduplicator and EVP encoding. Uses the
 // in-process listener: a spawned daemon resets the connection in the CentOS 7 CI container.
 #[test]
-#[cfg_attr(miri, ignore)]
 #[cfg_attr(
     windows,
     ignore = "the in-process listener is only exercised on Unix here"
@@ -545,7 +540,6 @@ fn test_ddog_sidecar_ffe_exposure_features_reach_the_intake() {
 // Both FFE batch APIs deliver a batch larger than the kernel socket buffer, which the
 // transport moves to shared memory, as one message.
 #[test]
-#[cfg_attr(miri, ignore)]
 #[cfg_attr(
     windows,
     ignore = "the in-process listener is only exercised on Unix here"
@@ -677,7 +671,6 @@ fn test_ddog_sidecar_ffe_large_batches_reach_the_intake() {
 // caller, which has no read timeout by default.
 #[test]
 #[cfg(unix)]
-#[cfg_attr(miri, ignore)]
 fn test_ddog_sidecar_ffe_batches_do_not_wait_for_a_stalled_sidecar() {
     let (client, peer) = libdd_ipc::SeqpacketConn::socketpair().unwrap();
     // Larger than half the kernel send size, so it cannot sit next to the first request.

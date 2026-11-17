@@ -276,7 +276,7 @@ impl<'a> TryFrom<ValueType<'a>> for SampleType {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use strum::IntoEnumIterator;

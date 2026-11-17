@@ -283,7 +283,7 @@ pub fn encode_span<W: RmpWrite, T: TraceData>(
 }
 
 #[cfg(test)]
-mod tests {
+mod miri_tests {
     use super::super::to_vec_from_v04;
     use crate::span::BytesData;
     use crate::span::v04::SpanLink;

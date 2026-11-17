@@ -297,7 +297,7 @@ pub async fn send_with_retry_and_size<C: HttpClientCapability + SleepCapability>
     (result, payload_size)
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use crate::test_utils::poll_for_mock_hit;
@@ -305,7 +305,6 @@ mod tests {
     use libdd_capabilities::HttpClientCapability;
     use libdd_capabilities_impl::NativeCapabilities;
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn redirects_are_terminal_errors() {
         let server = MockServer::start_async().await;
@@ -353,7 +352,6 @@ mod tests {
         }
     }
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_zero_retries_on_error() {
         let server = MockServer::start();
@@ -403,7 +401,6 @@ mod tests {
         assert!(poll_for_mock_hit(&mut mock_503, 10, 100, 1, true).await);
     }
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_retry_logic_error_then_success() {
         let server = MockServer::start();
@@ -456,7 +453,6 @@ mod tests {
         );
     }
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_retry_logic_max_errors() {
         let server = MockServer::start();
@@ -508,7 +504,6 @@ mod tests {
         );
     }
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_retry_logic_no_errors() {
         let server = MockServer::start();

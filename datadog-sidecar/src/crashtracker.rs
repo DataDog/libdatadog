@@ -229,7 +229,7 @@ pub async fn run_crashtracker_receiver<C: std::os::fd::AsRawFd>(
     unsafe { libc::shutdown(conn.as_raw_fd(), libc::SHUT_RD) };
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use std::os::fd::{FromRawFd, OwnedFd};
@@ -289,7 +289,6 @@ mod tests {
     /// The adapter concatenates ordered datagrams back into the original stream — including one
     /// larger than the read buffer (the leftover path) — and reports EOF on peer close.
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn test_seqpacket_stream_reader_multichunk() {
         let (a, b) = dgram_pair();
 
@@ -333,7 +332,6 @@ mod tests {
     /// fails right away (its existing "connection closed" path already breaks the loop), instead
     /// of blocking forever in `readable()` for a request that will never arrive.
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn test_run_crashtracker_receiver_unblocks_next_recv() {
         use libdd_ipc::recv_raw_async;
 

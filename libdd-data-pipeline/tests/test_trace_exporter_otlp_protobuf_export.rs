@@ -1,5 +1,8 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+
+#![cfg(not(miri))]
+
 #[cfg(test)]
 mod otlp_protobuf_tests {
     use libdd_capabilities_impl::NativeCapabilities;
@@ -11,8 +14,6 @@ mod otlp_protobuf_tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
     use tokio::task;
-
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn otlp_protobuf_export_sends_decodable_payload() {
         use httpmock::MockServer;

@@ -814,7 +814,7 @@ fn get_telemetry_client(
     ))
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use libdd_ipc::one_way_shared_memory::{OneWayShmReader, open_named_shm};
@@ -822,7 +822,6 @@ mod tests {
 
     #[test]
     #[cfg(unix)]
-    #[cfg_attr(miri, ignore)]
     fn fork_cleanup_does_not_wait_for_the_old_composer_cache() {
         const CHILD: &str = "DD_TEST_COMPOSER_FORK_CHILD";
         if std::env::var_os(CHILD).is_none() {
@@ -894,7 +893,6 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    #[cfg_attr(miri, ignore)] // Uses OS shared memory and file output.
     async fn client_start_precedes_immediate_stop() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("telemetry.json");
@@ -935,7 +933,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn a_new_client_replaces_old_acknowledgements() {
         let service = format!("telemetry-replacement-{}", std::process::id());
         let path = path_for_telemetry(&service, "test");
@@ -975,7 +972,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn concurrent_creation_shares_one_telemetry_client() {
         let clients = TelemetryCachedClientSet::default();
         let service = format!("telemetry-concurrent-{}", std::process::id());

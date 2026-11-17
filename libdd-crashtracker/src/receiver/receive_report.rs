@@ -844,7 +844,7 @@ fn enrich_thread_name(_builder: &mut CrashInfoBuilder) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use crate::crash_info::ThreadData;
@@ -1152,7 +1152,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn test_receive_report_no_data_sends_debug_log() {
         // Stand in for the agent, so the debug log has somewhere to land
         // without a config block telling the receiver where to send.
@@ -1504,7 +1503,7 @@ mod tests {
     }
 }
 
-#[cfg(all(test, target_os = "linux"))]
+#[cfg(all(test, not(miri), target_os = "linux"))]
 mod crashing_thread_tests {
     use super::*;
     use crate::ptrace_collector::drop_frames_above_crash_site;

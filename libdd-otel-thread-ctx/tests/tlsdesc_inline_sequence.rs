@@ -21,6 +21,7 @@
 //! are derived at runtime from the test executable location.
 
 #![cfg(all(
+    not(miri),
     target_os = "linux",
     any(target_arch = "x86_64", target_arch = "aarch64")
 ))]
@@ -63,7 +64,6 @@ fn regenerate_hint() -> String {
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn tlsdesc_inline_assembly_matches_reference_bytes() {
     let rlib = rlib_path("libdd_otel_thread_ctx");
 

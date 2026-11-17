@@ -277,7 +277,7 @@ impl ValueLike for ValueI64 {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use crate::sampling_rule_config::SamplingRuleConfig;

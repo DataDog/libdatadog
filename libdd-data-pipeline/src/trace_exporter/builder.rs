@@ -1279,7 +1279,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use crate::agent_info;
@@ -1288,7 +1288,6 @@ mod tests {
     use libdd_capabilities_impl::NativeCapabilities;
     use libdd_shared_runtime::ForkSafeRuntime;
 
-    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_log_output_mode() {
         let mut builder = TraceExporterBuilder::default();
@@ -1320,7 +1319,6 @@ mod tests {
         assert_eq!(builder.log_max_line_size, None);
     }
 
-    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_new() {
         let mut builder = TraceExporterBuilder::default();
@@ -1375,7 +1373,6 @@ mod tests {
     }
 
     #[cfg(feature = "telemetry")]
-    #[cfg_attr(miri, ignore)]
     #[test]
     fn mutable_metadata_fallback() {
         // Without a shared handle, `set_runtime_id` and `set_process_tags` seed
@@ -1414,7 +1411,6 @@ mod tests {
         assert_eq!(snapshot.runtime_id, "updated-id");
     }
 
-    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_new_defaults() {
         let builder = TraceExporterBuilder::default();
@@ -1438,7 +1434,6 @@ mod tests {
         assert!(exporter.telemetry.load().is_none());
     }
 
-    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_set_shared_runtime() {
         let mut builder = TraceExporterBuilder::default();
@@ -1451,7 +1446,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_builder_error() {
         let mut builder = TraceExporterBuilder::default();
         builder
@@ -1513,7 +1507,6 @@ mod tests {
         }
     }
 
-    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_otlp_and_agentless_rejected() {
         let mut builder = TraceExporterBuilder::default();
@@ -1530,7 +1523,6 @@ mod tests {
         );
     }
 
-    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_agentless_and_agent_url_rejected() {
         let mut builder = TraceExporterBuilder::default();
@@ -1547,7 +1539,6 @@ mod tests {
         );
     }
 
-    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_agentless_timeout_without_endpoint_rejected() {
         let mut builder = TraceExporterBuilder::default();
@@ -1560,7 +1551,6 @@ mod tests {
     }
 
     #[cfg(feature = "telemetry")]
-    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_agentless_skips_info_fetcher_and_telemetry() {
         let mut builder = TraceExporterBuilder::default();
@@ -1584,7 +1574,6 @@ mod tests {
         assert!(exporter.agentless_config.is_some());
     }
 
-    #[cfg_attr(miri, ignore)]
     #[test]
     #[cfg(feature = "stats-obfuscation")]
     fn test_agentless_stats_without_agentless_traces_rejected() {
@@ -1597,7 +1586,6 @@ mod tests {
         );
     }
 
-    #[cfg_attr(miri, ignore)]
     #[test]
     #[cfg(feature = "stats-obfuscation")]
     fn test_agentless_stats_with_zero_bucket_size_rejected() {
@@ -1616,7 +1604,6 @@ mod tests {
         );
     }
 
-    #[cfg_attr(miri, ignore)]
     #[test]
     #[cfg(feature = "stats-obfuscation")]
     fn test_agentless_stats_with_otlp_stats_rejected() {
@@ -1635,7 +1622,6 @@ mod tests {
         );
     }
 
-    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_otlp_with_agent_url_allowed() {
         // OTLP + agent URL must coexist (only agentless conflicts with the agent URL).
@@ -1647,7 +1633,6 @@ mod tests {
     }
 
     #[cfg(feature = "stats-obfuscation")]
-    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_otlp_stats_receive_obfuscation_flag() {
         use libdd_trace_utils::span::v04::SpanBytes;
@@ -1705,7 +1690,6 @@ mod tests {
         );
     }
 
-    #[cfg_attr(miri, ignore)]
     #[test]
     fn build_with_grpc_protocol_and_endpoint_succeeds() {
         let mut builder = TraceExporterBuilder::default();
@@ -1720,7 +1704,6 @@ mod tests {
         assert_eq!(resource.instrumentation_scope_version, "7.0.0-pre");
     }
 
-    #[cfg_attr(miri, ignore)]
     #[test]
     fn invalid_grpc_endpoint_does_not_start_info_worker() {
         agent_info::clear_cache_for_test();
@@ -1747,7 +1730,6 @@ mod tests {
         assert_eq!(info.calls(), 0);
     }
 
-    #[cfg_attr(miri, ignore)]
     #[test]
     fn build_with_grpc_protocol_no_endpoint_uses_agent_path() {
         let mut builder = TraceExporterBuilder::default();
@@ -1756,7 +1738,6 @@ mod tests {
         assert!(exporter.otlp.is_none());
     }
 
-    #[cfg_attr(miri, ignore)]
     #[test]
     fn build_with_grpc_https_endpoint_rejected() {
         let mut builder = TraceExporterBuilder::default();
@@ -1766,7 +1747,6 @@ mod tests {
         assert!(builder.build::<NativeCapabilities>().is_err());
     }
 
-    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_build_with_v1_starts_inactive() {
         let mut builder = TraceExporterBuilder::default();

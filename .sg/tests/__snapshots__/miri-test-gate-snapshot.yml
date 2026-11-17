@@ -1,0 +1,112 @@
+id: miri-test-gate
+snapshots:
+  ? |
+    #[cfg(all(test, feature = "mini_agent"))]
+    mod tests {
+        #[test]
+        fn missing_not_miri() {}
+    }
+  : labels:
+    - source: |-
+        mod tests {
+            #[test]
+            fn missing_not_miri() {}
+        }
+      style: primary
+      start: 42
+      end: 96
+    - source: '#[cfg(all(test, feature = "mini_agent"))]'
+      style: secondary
+      start: 0
+      end: 41
+    - source: '#[test]'
+      style: secondary
+      start: 58
+      end: 65
+  ? |
+    #[cfg(all(test, target_os = "linux"))]
+    mod linux_tests {
+        #[test]
+        fn platform_gate_without_miri_exclusion() {}
+    }
+  : labels:
+    - source: |-
+        mod linux_tests {
+            #[test]
+            fn platform_gate_without_miri_exclusion() {}
+        }
+      style: primary
+      start: 39
+      end: 119
+    - source: '#[cfg(all(test, target_os = "linux"))]'
+      style: secondary
+      start: 0
+      end: 38
+    - source: '#[test]'
+      style: secondary
+      start: 61
+      end: 68
+  ? |
+    #[cfg(test)]
+    #[test]
+    fn file_scope_cfg_test_without_not_miri() {}
+  : labels:
+    - source: fn file_scope_cfg_test_without_not_miri() {}
+      style: primary
+      start: 21
+      end: 65
+    - source: '#[test]'
+      style: secondary
+      start: 13
+      end: 20
+  ? |
+    #[cfg(test)]
+    mod tests {
+        #[test]
+        fn forgotten_gate() {}
+    }
+  : labels:
+    - source: |-
+        mod tests {
+            #[test]
+            fn forgotten_gate() {}
+        }
+      style: primary
+      start: 13
+      end: 65
+    - source: '#[cfg(test)]'
+      style: secondary
+      start: 0
+      end: 12
+    - source: '#[test]'
+      style: secondary
+      start: 29
+      end: 36
+  ? |
+    #[cfg(test)]
+    mod tests;
+  : labels:
+    - source: mod tests;
+      style: primary
+      start: 13
+      end: 23
+    - source: '#[cfg(test)]'
+      style: secondary
+      start: 0
+      end: 12
+    - source: tests
+      style: secondary
+      start: 17
+      end: 22
+  ? |
+    #[test]
+    fn file_scope_test_runs_under_miri() {}
+  : labels:
+    - source: fn file_scope_test_runs_under_miri() {}
+      style: primary
+      start: 8
+      end: 47
+    - source: '#[test]'
+      style: secondary
+      start: 0
+      end: 7

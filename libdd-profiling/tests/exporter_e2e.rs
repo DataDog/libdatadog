@@ -1,6 +1,8 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+#![cfg(not(miri))]
+
 //! End-to-end tests for ProfileExporter
 //!
 //! These tests validate the full export flow across different endpoint types.
@@ -492,7 +494,6 @@ async fn test_agentless_with_transport(transport: Transport) -> anyhow::Result<(
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn test_send_blocking_across_threads() -> anyhow::Result<()> {
     fn send_profile(exporter: &mut ProfileExporter) -> anyhow::Result<()> {
         let status = exporter.send_blocking(
@@ -552,47 +553,40 @@ fn test_send_blocking_across_threads() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-#[cfg_attr(miri, ignore)]
 async fn test_export_agent_tcp() -> anyhow::Result<()> {
     test_agent_with_transport(Transport::Tcp).await
 }
 
 #[cfg(unix)]
 #[tokio::test]
-#[cfg_attr(miri, ignore)]
 async fn test_export_agent_uds() -> anyhow::Result<()> {
     test_agent_with_transport(Transport::UnixSocket).await
 }
 
 #[tokio::test]
-#[cfg_attr(miri, ignore)]
 async fn test_export_agentless_tcp() -> anyhow::Result<()> {
     test_agentless_with_transport(Transport::Tcp).await
 }
 
 #[cfg(unix)]
 #[tokio::test]
-#[cfg_attr(miri, ignore)]
 async fn test_export_agentless_uds() -> anyhow::Result<()> {
     test_agentless_with_transport(Transport::UnixSocket).await
 }
 
 #[cfg(windows)]
 #[tokio::test]
-#[cfg_attr(miri, ignore)]
 async fn test_export_agent_named_pipe() -> anyhow::Result<()> {
     test_agent_with_transport(Transport::NamedPipe).await
 }
 
 #[cfg(windows)]
 #[tokio::test]
-#[cfg_attr(miri, ignore)]
 async fn test_export_agentless_named_pipe() -> anyhow::Result<()> {
     test_agentless_with_transport(Transport::NamedPipe).await
 }
 
 #[tokio::test]
-#[cfg_attr(miri, ignore)]
 async fn test_export_file() -> anyhow::Result<()> {
     let file_path = create_temp_file_path("http");
     let endpoint = config::file(file_path.to_string_lossy().as_ref())?;

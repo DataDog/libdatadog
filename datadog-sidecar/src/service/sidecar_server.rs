@@ -1585,16 +1585,16 @@ impl SidecarInterface for ConnectionSidecarHandler {
     }
 }
 
-#[cfg(all(test, unix))]
+#[cfg(all(test, unix, not(miri)))]
 #[path = "flagevaluation_privacy_tests.rs"]
 mod flagevaluation_privacy_tests;
 
-#[cfg(all(test, unix))]
+#[cfg(all(test, unix, not(miri)))]
 // These tests exercise private connection state, so keep them in this module.
 #[path = "../../tests/unit/cdn.rs"]
 mod cdn_tests;
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use crate::service::evp_proxy;
@@ -1660,7 +1660,6 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    #[cfg_attr(miri, ignore)]
     async fn stop_releases_client_before_cache_removal() {
         use libdd_telemetry::data::{Configuration, ConfigurationOrigin};
         use std::time::Instant;
@@ -1802,7 +1801,6 @@ mod tests {
     /// Connections of the same instance (e.g. threads of one process) each hold their own
     /// application, so closing one of them must not drop the application of the others.
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn cleanup_keeps_applications_of_other_connections_of_the_instance() {
         let server = SidecarServer::default();
         let instance_id = InstanceId::new("session", "runtime");
@@ -1833,7 +1831,6 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn new_connection_config_drops_the_application_of_the_previous_session() {
         let mut handler = test_handler(SidecarServer::default());
         configure_session(&handler, InstanceId::new("session", "runtime"), |_| {});
@@ -1852,7 +1849,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn application_without_remote_config_is_kept_until_cleared() {
         let server = SidecarServer::default();
         let (local, _peer) = SeqpacketConn::socketpair().unwrap();
@@ -1901,7 +1897,6 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    #[cfg_attr(miri, ignore = "requires native IPC sockets")]
     async fn signal_flush_preserves_normal_reply_accounting() {
         use super::super::blocking::SidecarTransport;
         use libdd_ipc::platform::PlatformHandle;
@@ -1940,7 +1935,6 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[tokio::test]
-    #[cfg_attr(miri, ignore = "requires native IPC sockets and inline assembly")]
     async fn raw_signal_flush_preserves_normal_reply_accounting() {
         use super::super::{blocking::SidecarTransport, signal_flush::SignalFlush};
         let (client, server) = SeqpacketConn::socketpair().unwrap();
@@ -2032,7 +2026,6 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    #[cfg_attr(miri, ignore)]
     async fn evp_transport_config_reaches_the_session_through_ipc() {
         let (server_connection, client) = SeqpacketConn::socketpair().expect("socketpair");
         let server_connection = OwnedServerConn::new(server_connection).expect("OwnedServerConn");
@@ -2185,7 +2178,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn flagevaluation_application_identity_is_bounded_before_copying() {
         let mut handler = test_handler(SidecarServer::default());
         for character in ["a", "é"] {
@@ -2247,7 +2239,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn flagevaluation_oversized_identity_preserves_counts_across_batches() {
         let http = MockServer::start_async().await;
         let output = http
@@ -2289,7 +2280,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn flagevaluation_fill_skips_degraded_rows_and_replaces_empty_service() {
         let mut handler = test_handler(SidecarServer::default());
         handler
@@ -2323,7 +2313,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn flagevaluation_empty_application_service_only_attributes_the_batch() {
         let http = MockServer::start_async().await;
         let output = http
@@ -2374,7 +2363,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn flagevaluation_for_explicit_service_is_not_attributed_to_the_connection() {
         let http = MockServer::start_async().await;
         let output = http
@@ -2415,7 +2403,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn flagevaluation_application_identity_is_snapshotted_before_coalescing() {
         let http = MockServer::start_async().await;
         let identities = [
@@ -2511,7 +2498,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn flagevaluation_explicit_context_is_not_filled_or_overwritten() {
         let http = MockServer::start_async().await;
         let mut handler = test_handler(SidecarServer::default());
@@ -2572,7 +2558,6 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    #[cfg_attr(miri, ignore)]
     async fn flagevaluation_uses_pending_application_replayed_after_reconnect() {
         let http = MockServer::start_async().await;
         let output = http
@@ -2672,7 +2657,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn ffe_exposure_actions_dispatch_without_registered_application() {
         let http_server = MockServer::start_async().await;
         let exposures_mock = http_server
@@ -2709,7 +2693,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn ffe_metric_actions_dispatch_without_registered_application() {
         let http_server = MockServer::start_async().await;
         let test_session_token = "ffe/evaluation_metrics_sidecar";
@@ -2752,7 +2735,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn mixed_flag_evaluation_and_telemetry_actions_reach_their_consumers() {
         let http_server = MockServer::start_async().await;
         let evaluations = http_server
@@ -2794,7 +2776,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn flush_options_control_ffe_flag_evaluations() {
         let http_server = MockServer::start_async().await;
         let flag_evaluations_mock = http_server
@@ -2831,7 +2812,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn explicitly_configured_transport_is_shared_by_both_flag_writers() {
         let http_server = MockServer::start_async().await;
         let discovery = http_server
@@ -2920,7 +2900,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn flag_evaluations_use_originating_tracer_identity() {
         let http_server = MockServer::start_async().await;
         let flag_evaluations_mock = http_server
@@ -2956,7 +2935,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn flag_evaluations_omit_origin_when_tracer_language_is_blank() {
         let http_server = MockServer::start_async().await;
         let flag_evaluations_mock = http_server
@@ -2992,7 +2970,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn registered_sdk_without_ffe_actions_does_not_emit_ffe_telemetry() {
         let http_server = MockServer::start_async().await;
         let exposures_mock = http_server
@@ -3120,7 +3097,6 @@ mod tests {
     /// and `lang_interpreter`/`lang_vendor` (absent from the V1 payload model) survive as headers
     /// alongside the payload-carried `lang`/`lang_version`/`tracer_version` (see `send_trace_v1`).
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn send_trace_v1_bytes_routes_to_v1_endpoint_when_agent_advertises_v1() {
         let http_server = MockServer::start_async().await;
         let v1_mock = http_server
@@ -3182,7 +3158,6 @@ mod tests {
     /// When the agent does not advertise `/v1.0/traces`, `send_trace_v1_bytes` downgrades to v0.4
     /// and sends to `/v0.4/traces` instead, so old agents keep receiving traces.
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn send_trace_v1_bytes_downgrades_to_v04_when_agent_lacks_v1() {
         let http_server = MockServer::start_async().await;
         let v1_mock = http_server
@@ -3233,7 +3208,6 @@ mod tests {
     /// `force_v04` (`DD_TRACE_AGENT_PROTOCOL_VERSION=0.4`) downgrades even when the agent
     /// advertises `/v1.0/traces`.
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn send_trace_v1_bytes_downgrades_to_v04_when_forced() {
         let http_server = MockServer::start_async().await;
         let v1_mock = http_server
@@ -3282,7 +3256,6 @@ mod tests {
     /// fetch has resolved: the send path reads the session's agent info rather than starting a
     /// separate fetcher keyed by the `/v0.4/traces` endpoint.
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn first_send_after_connection_config_uses_v1() {
         let http_server = MockServer::start_async().await;
         let info_mock = http_server
@@ -3388,7 +3361,6 @@ mod tests {
     /// The downgrade writes native v0.4 `span_events` only when `/info` advertises them, and
     /// falls back to the legacy `events` meta JSON otherwise.
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn downgrade_uses_native_span_events_only_when_info_advertises_them() {
         for span_events in [Some(true), None] {
             let http_server = MockServer::start_async().await;
@@ -3435,7 +3407,6 @@ mod tests {
     /// A 404 from `/v1.0/traces` turns V1 off and re-fetches `/info` right away. The 404'd payload
     /// is not re-sent, the next one goes to v0.4, and V1 comes back once `/info` changes.
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn v1_404_falls_back_to_v04_until_info_changes() {
         let http_server = MockServer::start_async().await;
         let info_body = |version: &str| {

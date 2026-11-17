@@ -309,7 +309,7 @@ impl<A: Allocator + Clone> Drop for ChainAllocator<A> {
 }
 
 #[cfg(test)]
-mod tests {
+mod miri_tests {
     use super::*;
     use crate::utils::*;
     use allocator_api2::alloc::Global;

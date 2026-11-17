@@ -101,7 +101,7 @@ pub static ENTITY_ID: LazyLock<Option<&'static str>> = LazyLock::new(|| {
     })
 });
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use libdd_regex::Regex;
@@ -136,25 +136,21 @@ mod tests {
         }
     }
 
-    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_entity_id_for_v2() {
         test_entity_id("cgroup.v2", Some(&*IN_REGEX))
     }
 
-    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_entity_id_for_v1() {
         test_entity_id("cgroup.linux", Some(&*IN_REGEX))
     }
 
-    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_entity_id_for_container_id() {
         test_entity_id("cgroup.docker", Some(&*CI_REGEX))
     }
 
-    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_entity_id_for_no_id() {
         test_entity_id("cgroup.no_memory", None)

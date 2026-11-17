@@ -351,7 +351,7 @@ impl ResponseObserver {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod single_threaded_tests {
     use super::*;
     use crate::agent_info;
@@ -472,7 +472,6 @@ mod single_threaded_tests {
 
     const TEST_INFO_HASH: &str = "4e2f660408e869b937e9639738f5620f75e806b854f6f13edaac12c637683c41";
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_fetch_info_without_state() {
         let server = MockServer::start();
@@ -499,7 +498,6 @@ mod single_threaded_tests {
         );
     }
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_fetch_info_with_state() {
         let server = MockServer::start();
@@ -533,7 +531,6 @@ mod single_threaded_tests {
         assert!(matches!(same_state_info_status, FetchInfoStatus::SameState));
     }
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_fetch_info_with_same_state_but_different_container_tags_hash() {
         let server = MockServer::start();
@@ -568,7 +565,6 @@ mod single_threaded_tests {
         );
     }
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_fetch_info_can_ignore_container_tags_hash() {
         let server = MockServer::start();
@@ -592,7 +588,6 @@ mod single_threaded_tests {
         assert!(matches!(info_status, FetchInfoStatus::SameState));
     }
 
-    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_fetch_info() {
         let server = MockServer::start();
@@ -612,7 +607,6 @@ mod single_threaded_tests {
         assert_eq!(agent_info.info, serde_json::from_str(TEST_INFO).unwrap(),);
     }
 
-    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_agent_info_fetcher_run() {
         AGENT_INFO_CACHE.store(None);
@@ -690,7 +684,6 @@ mod single_threaded_tests {
         }
     }
 
-    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_agent_info_trigger_different_state() {
         let server = MockServer::start();
@@ -769,7 +762,6 @@ mod single_threaded_tests {
         );
     }
 
-    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_agent_info_trigger_same_state() {
         let server = MockServer::start();

@@ -88,7 +88,7 @@ struct Logger {
 }
 
 impl Logger {
-    #[cfg(test)]
+    #[cfg(all(test, not(miri)))]
     fn setup() -> Result<Self, Error> {
         Self::setup_with_global(false)
     }
@@ -349,7 +349,7 @@ pub fn logger_set_log_level(log_level: LogEventLevel) -> Result<(), Error> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use std::sync::{Arc, Mutex};
     use tempfile::TempDir;
@@ -470,14 +470,12 @@ mod tests {
         }
     }
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_logger_setup() {
         let logger = Logger::setup();
         assert!(logger.is_ok(), "Logger setup should succeed");
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_logger_with_std() {
         let events: Arc<Mutex<Vec<String>>> = Default::default();
         let mut logger = Logger::setup().expect("Should setup logger successfully");
@@ -516,7 +514,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_logger_with_file() {
         let events: Arc<Mutex<Vec<String>>> = Default::default();
         let mut logger = Logger::setup().expect("Should setup logger successfully");
@@ -576,7 +573,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_logger_with_std_and_file() {
         let events: Arc<Mutex<Vec<String>>> = Default::default();
         let mut logger = Logger::setup().expect("Should setup logger successfully");
@@ -633,7 +629,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_logger_level_change() {
         let events: Arc<Mutex<Vec<String>>> = Default::default();
         let logger = Logger::setup().expect("Should setup logger successfully");

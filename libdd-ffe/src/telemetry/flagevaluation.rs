@@ -652,7 +652,7 @@ where
         self.writer_stats.add_payload_splits(result.payload_splits);
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, not(miri)))]
     fn force_bucket_counts_for_test(&self, full_bucket_count: usize, degraded_bucket_count: usize) {
         let mut state = lock_or_recover(&self.state);
         state.flush_running = true;
@@ -897,7 +897,7 @@ fn degrade_event_for_payload_limit(
     })
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 fn build_payload(batch: &FfeFlagEvaluationBatch) -> Result<String, serde_json::Error> {
     let context_json = build_context_payload(&batch.context)?;
     let mut encoded_events = Vec::with_capacity(batch.flag_evaluations.len());
@@ -978,7 +978,7 @@ fn expand_event_features(event: &mut serde_json::Value) {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 fn build_payload_from_encoded_events(context_json: &str, encoded_events: &[String]) -> String {
     let events_size: usize = encoded_events.iter().map(String::len).sum();
     let separators_size = encoded_events.len().saturating_sub(1);
@@ -1090,7 +1090,7 @@ fn is_array_placeholder(value: &serde_json::Value) -> bool {
 
 // ── Tests ────────────────────────────────────────────────────────────────────
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use serde_json::{Value, json};
@@ -2139,7 +2139,6 @@ mod tests {
         assert!(coalescer.finish_flush_cycle());
     }
 
-    #[cfg_attr(miri, ignore)] // large cap-boundary fixture is prohibitively slow under Miri
     #[test]
     fn coalescer_degrades_after_per_flag_cap() {
         let coalescer = FlagEvaluationEvpCoalescer::<String>::default();

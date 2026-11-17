@@ -1,6 +1,8 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+#![cfg(not(miri))]
+
 use libdd_ipc::{SeqpacketConn, ipc_server::OwnedServerConn};
 use std::sync::atomic::AtomicU64;
 
@@ -33,7 +35,6 @@ impl Oneway for Handler {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[cfg_attr(miri, ignore = "requires native IPC sockets")]
 async fn oneway_packets_preserve_order_without_consuming_reply_slots() {
     let (client, server) = SeqpacketConn::socketpair().unwrap();
     let mut handler = Handler {

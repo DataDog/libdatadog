@@ -140,9 +140,9 @@ fn read_heap_sampling_enabled() -> bool {
     parse_heap_sampling_enabled(None)
 }
 
-// Pure-logic tests for the env-var policy; no FFI, safe on every target
-// and under miri.
-#[cfg(test)]
+// Pure-logic tests for the env-var policy; no FFI, no unsafe — regular
+// tests (cargo test only).
+#[cfg(all(test, not(miri)))]
 mod sampling_flag_tests {
     use super::parse_heap_sampling_enabled;
 

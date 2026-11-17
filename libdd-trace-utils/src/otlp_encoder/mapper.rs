@@ -705,7 +705,7 @@ fn map_span_events<T: TraceData>(events: &[SpanEvent<T>]) -> (Vec<ProtoEvent>, u
     (out, dropped)
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use crate::otlp_encoder::OtlpResourceInfo;

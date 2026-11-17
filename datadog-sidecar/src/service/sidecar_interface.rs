@@ -364,7 +364,7 @@ pub trait SidecarInterface {
     async fn set_cdn_configuration(config: Option<crate::shm_remote_config::CdnRegistration>);
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::{SidecarInterfaceClientRequest, SidecarInterfaceRequest};
     use crate::service::{

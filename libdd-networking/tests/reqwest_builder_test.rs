@@ -1,6 +1,8 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+#![cfg(not(miri))]
+
 #[cfg(feature = "reqwest")]
 mod tests {
     use libdd_common::Endpoint;
@@ -29,7 +31,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn test_file_dump_captures_http_request() {
         ensure_crypto_provider();
         let file_path = create_temp_file_path("libdd_common_test", "http");
@@ -78,7 +79,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn test_unsupported_scheme_returns_error() {
         let endpoint = Endpoint::from_slice("ftp://example.com/file");
 
@@ -93,7 +93,6 @@ mod tests {
     /// network). Does not verify which resolver is actually used; that is done by
     /// test_system_resolver_uses_extra_thread.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_both_resolver_configs_build_client() {
         ensure_crypto_provider();
         let url = "http://example.com/";
@@ -118,7 +117,6 @@ mod tests {
     #[test]
     #[allow(dead_code)]
     #[ignore] // This test is too flaky for now.  Leaving it in place since it's useful for debugging.
-    #[cfg_attr(miri, ignore)]
     #[cfg(any(target_os = "linux", target_os = "macos", windows))]
     fn test_system_resolver_uses_extra_thread() {
         let initial =

@@ -173,6 +173,10 @@ mod linux {
                 // (no sdt-config.h companion file) and so works
                 // identically across glibc and musl distros.
                 .clang_arg("-Ivendor")
+                // The vendored headers are written against C11 (_Atomic,
+                // _Thread_local); declare the dialect rather than relying on
+                // whatever default std the parsing frontend ships with.
+                .clang_arg("-std=c11")
                 .allowlist_function("dd_.*")
                 .allowlist_type("dd_.*")
                 .allowlist_var("DD_SAMPLING_INTERVAL_DEFAULT")

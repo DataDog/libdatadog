@@ -1,0 +1,37 @@
+# Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+id: miri-integration-test-gate
+valid:
+  - |
+    #![cfg(not(miri))]
+
+    #[test]
+    fn excluded_from_miri() {}
+  - |
+    #![cfg(all(unix, not(miri)))]
+
+    #[tokio::test]
+    async fn compound_gate() {}
+  - |
+    #![cfg(all(feature = "telemetry", not(target_arch = "wasm32"), not(miri)))]
+
+    #[test]
+    fn deep_compound_gate() {}
+  - |
+    // No test fns: a helper module is not flagged.
+    fn shared_helper() {}
+invalid:
+  - |
+    #[test]
+    fn integration_test_runs_under_miri() {}
+  - |
+    #![cfg(unix)]
+
+    #[test]
+    fn platform_gate_without_miri_exclusion() {}
+  - |
+    #![cfg(all(feature = "https"))]
+
+    #[tokio::test]
+    async fn feature_gate_without_miri_exclusion() {}

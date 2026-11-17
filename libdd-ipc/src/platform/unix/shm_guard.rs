@@ -59,7 +59,7 @@ fn current_uid() -> u32 {
     unsafe { libc::geteuid() }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     // `verify_owner` compares a real descriptor's owner against `geteuid()`. Miri answers the
     // latter with a fixed 1000 while letting the filesystem calls through for real, so the two
@@ -69,7 +69,6 @@ mod tests {
     use std::os::fd::AsFd;
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn accepts_a_segment_we_own() {
         #[allow(clippy::unwrap_used)]
         let file = tempfile::tempfile().unwrap();
@@ -78,7 +77,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn foreign_owners_are_refused() {
         // 0 is root, 500 stands in for "us"; anything else is somebody who should not be able
         // to hand us memory. This is the case a test cannot stage for real without privileges.
@@ -96,7 +94,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn owner_uid_override_round_trips() {
         assert_eq!(shm_owner_uid(), None, "no override by default");
         set_shm_owner_uid(4242);

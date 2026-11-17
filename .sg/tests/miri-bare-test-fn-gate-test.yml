@@ -1,0 +1,31 @@
+# Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+id: miri-bare-test-fn-gate
+valid:
+  - |
+    #[cfg(all(test, not(miri)))]
+    #[test]
+    fn excluded_from_miri() {}
+  - |
+    #[cfg(test)]
+    mod tests {
+        // Fns inside mods are governed by the mod's gate.
+        #[test]
+        fn inside_mod() {}
+    }
+  - |
+    #[cfg(all(test, not(miri)))]
+    #[tokio::test]
+    async fn async_excluded_from_miri() {}
+invalid:
+  - |
+    #[test]
+    fn file_scope_test_runs_under_miri() {}
+  - |
+    #[cfg(test)]
+    #[test]
+    fn file_scope_cfg_test_without_not_miri() {}
+  - |
+    #[tokio::test]
+    async fn async_file_scope_test_runs_under_miri() {}

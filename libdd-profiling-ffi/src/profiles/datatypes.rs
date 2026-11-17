@@ -1023,8 +1023,80 @@ pub unsafe extern "C" fn ddog_prof_Profile_reset(profile: *mut Profile) -> Profi
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
+    use super::*;
+
+    #[test]
+    // Excluded from miri_tests: qualifies by the bar (extern "C" profile
+    // add/drop) but was ignored under Miri with no recorded reason beyond
+    // "TODO FIX". Re-examine and designate once it is known to pass.
+    fn aggregate_samples() -> anyhow::Result<()> {
+        unsafe {
+            let sample_type = SampleType::CpuSamples;
+            let mut profile = Result::from(ddog_prof_Profile_new(
+                Slice::from_raw_parts(&sample_type, 1),
+                None,
+            ))?;
+
+            let mapping = Mapping {
+                filename: "php".into(),
+                ..Default::default()
+            };
+
+            let locations = vec![Location {
+                mapping,
+                function: Function {
+                    name: "{main}".into(),
+                    name_id: ManagedStringId { value: 0 },
+                    system_name: "{main}".into(),
+                    system_name_id: ManagedStringId { value: 0 },
+                    filename: "index.php".into(),
+                    filename_id: ManagedStringId { value: 0 },
+                },
+                ..Default::default()
+            }];
+            let values: Vec<i64> = vec![1];
+            let labels = vec![Label {
+                key: Slice::from("pid"),
+                num: 101,
+                ..Default::default()
+            }];
+
+            let sample = Sample {
+                locations: Slice::from(&locations),
+                values: Slice::from(&values),
+                labels: Slice::from(&labels),
+            };
+
+            Result::from(ddog_prof_Profile_add(&mut profile, sample, None))?;
+            assert_eq!(
+                profile
+                    .inner
+                    .as_ref()
+                    .unwrap()
+                    .only_for_testing_num_aggregated_samples(),
+                1
+            );
+
+            Result::from(ddog_prof_Profile_add(&mut profile, sample, None))?;
+            assert_eq!(
+                profile
+                    .inner
+                    .as_ref()
+                    .unwrap()
+                    .only_for_testing_num_aggregated_samples(),
+                1
+            );
+
+            ddog_prof_Profile_drop(&mut profile);
+            Ok(())
+        }
+    }
+}
+
+#[cfg(test)]
+mod miri_tests {
     use super::super::profiles_dictionary::{
         ddog_prof_ProfilesDictionary_drop, ddog_prof_ProfilesDictionary_insert_function,
         ddog_prof_ProfilesDictionary_insert_mapping, ddog_prof_ProfilesDictionary_insert_str,
@@ -1310,72 +1382,6 @@ mod tests {
 
             ddog_prof_Profile_drop(&mut profile);
             ddog_prof_ProfilesDictionary_drop(&mut dictionary_handle);
-        }
-    }
-
-    #[test]
-    // TODO FIX
-    #[cfg_attr(miri, ignore)]
-    fn aggregate_samples() -> anyhow::Result<()> {
-        unsafe {
-            let sample_type = SampleType::CpuSamples;
-            let mut profile = Result::from(ddog_prof_Profile_new(
-                Slice::from_raw_parts(&sample_type, 1),
-                None,
-            ))?;
-
-            let mapping = Mapping {
-                filename: "php".into(),
-                ..Default::default()
-            };
-
-            let locations = vec![Location {
-                mapping,
-                function: Function {
-                    name: "{main}".into(),
-                    name_id: ManagedStringId { value: 0 },
-                    system_name: "{main}".into(),
-                    system_name_id: ManagedStringId { value: 0 },
-                    filename: "index.php".into(),
-                    filename_id: ManagedStringId { value: 0 },
-                },
-                ..Default::default()
-            }];
-            let values: Vec<i64> = vec![1];
-            let labels = vec![Label {
-                key: Slice::from("pid"),
-                num: 101,
-                ..Default::default()
-            }];
-
-            let sample = Sample {
-                locations: Slice::from(&locations),
-                values: Slice::from(&values),
-                labels: Slice::from(&labels),
-            };
-
-            Result::from(ddog_prof_Profile_add(&mut profile, sample, None))?;
-            assert_eq!(
-                profile
-                    .inner
-                    .as_ref()
-                    .unwrap()
-                    .only_for_testing_num_aggregated_samples(),
-                1
-            );
-
-            Result::from(ddog_prof_Profile_add(&mut profile, sample, None))?;
-            assert_eq!(
-                profile
-                    .inner
-                    .as_ref()
-                    .unwrap()
-                    .only_for_testing_num_aggregated_samples(),
-                1
-            );
-
-            ddog_prof_Profile_drop(&mut profile);
-            Ok(())
         }
     }
 

@@ -336,7 +336,7 @@ unsafe fn emit_frame_as_json(
 }
 
 #[cfg(all(test, unix))]
-mod tests {
+mod miri_tests {
     use super::*;
     use std::sync::Mutex;
 
@@ -398,7 +398,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     #[cfg(feature = "collector")]
     fn test_frame_collection() {
         let _guard = TEST_MUTEX.lock().unwrap();
@@ -454,7 +453,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     #[cfg(feature = "collector")]
     fn test_stacktrace_string_collection() {
         let _guard = TEST_MUTEX.lock().unwrap();
@@ -506,7 +504,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     #[cfg(feature = "collector")]
     fn test_direct_pipe_writing() {
         let _guard = TEST_MUTEX.lock().unwrap();

@@ -1,5 +1,6 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+#![cfg(not(miri))]
 
 mod common;
 
@@ -7,7 +8,6 @@ use bytes::Bytes;
 use httpmock::prelude::*;
 
 #[tokio::test]
-#[cfg_attr(miri, ignore)]
 async fn posts_to_correct_endpoint() {
     let server = MockServer::start();
     let mock = server.mock(|when, then| {
@@ -24,7 +24,6 @@ async fn posts_to_correct_endpoint() {
 }
 
 #[tokio::test]
-#[cfg_attr(miri, ignore)]
 async fn sets_gzip_encoding() {
     let server = MockServer::start();
     let mock = server.mock(|when, then| {

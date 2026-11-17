@@ -1,7 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-#![cfg(unix)]
+#![cfg(all(unix, not(miri)))]
 use std::{
     fs::File,
     io::{Read, Seek},
@@ -18,7 +18,6 @@ fn rewind_and_read(file: &mut File) -> anyhow::Result<String> {
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn test_spawning_trampoline_worker() {
     let mut stdout = tempfile::tempfile().unwrap();
     let mut stderr = tempfile::tempfile().unwrap();

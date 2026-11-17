@@ -342,7 +342,7 @@ pub mod headers {
         write_parts(&mut BufWriter::new(&base_header), &[&deduped_base]).unwrap();
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, not(miri)))]
     mod tests {
         use super::*;
 

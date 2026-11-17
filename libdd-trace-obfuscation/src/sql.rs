@@ -2301,7 +2301,7 @@ fn normalize_plan_sql(s: &str) -> String {
     result
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::{
         DbmsKind, SqlConfig, SqlObfuscationError, SqlObfuscationMode, obfuscate_sql,
@@ -2404,7 +2404,6 @@ mod tests {
         );
     }
 
-    #[cfg_attr(miri, ignore)] // huge nested input, prohibitively slow under Miri
     #[test]
     fn test_dollar_quote_nesting_does_not_overflow_stack() {
         const NESTING: usize = 20_000;
@@ -3878,7 +3877,6 @@ mod tests {
         ("-012345678", "?"),
     ];
 
-    #[cfg_attr(miri, ignore)] // large fixture suite, prohibitively slow under Miri
     #[test]
     fn test_sql_obfuscation_suite() {
         let mut errors = String::new();

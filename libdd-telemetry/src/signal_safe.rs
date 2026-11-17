@@ -245,5 +245,8 @@ where
     }
 }
 
-#[cfg(all(test, feature = "alloc"))]
+#[cfg(all(test, not(miri), feature = "alloc"))]
 mod tests;
+
+#[cfg(test)]
+mod miri_tests;

@@ -133,10 +133,6 @@ fn check_valid(registry: &Registry, profile: Profile, fixture: &Json) -> Result<
 }
 
 #[test]
-#[cfg_attr(
-    miri,
-    ignore = "projects every case; the rule tests cover these paths under Miri"
-)]
 fn valid_fixtures_project_exactly_and_stay_within_the_registry() {
     let registry = registry();
     let mut failures = Vec::new();
@@ -151,10 +147,6 @@ fn valid_fixtures_project_exactly_and_stay_within_the_registry() {
 }
 
 #[test]
-#[cfg_attr(
-    miri,
-    ignore = "projects every case; the rule tests cover these paths under Miri"
-)]
 fn invalid_fixtures_are_rejected_with_the_expected_error_code() {
     let codes: BTreeSet<&str> = ErrorCode::ALL.iter().map(|code| code.as_str()).collect();
     let mut failures = Vec::new();
@@ -338,10 +330,6 @@ fn counters_are_aggregated_per_attribute_set() {
 /// a `Projection`: every case gives the same points, issues and error code
 /// both ways.
 #[test]
-#[cfg_attr(
-    miri,
-    ignore = "projects every case; the rule tests cover these paths under Miri"
-)]
 fn adding_a_request_matches_adding_its_projection() {
     use libdd_ai_usage::{
         Document, GatewayRequestObservation, MetricBatch, Observation, ProviderAttemptObservation,

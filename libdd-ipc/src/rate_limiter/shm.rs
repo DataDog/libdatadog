@@ -563,7 +563,7 @@ impl<Inner: ShmSafe> Drop for ShmLimiter<Inner> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::{ShmLimiter, ShmLimiterArena, ShmLimiterData, ShmLimiterMemory, ShmSafe};
     use std::ffi::CString;
@@ -585,7 +585,6 @@ mod tests {
     /// write it. Its contents are theirs to corrupt; what must hold is that nothing derived
     /// from them reaches outside the mapping.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn a_forged_free_list_head_stays_inside_the_mapping() {
         let path = CString::new("/ddlimiters-forged".to_string()).unwrap();
         let mut limiters = ShmLimiterMemory::<()>::create(path).unwrap();
@@ -625,7 +624,6 @@ mod tests {
     /// A scan that finds nothing must not allocate: exception-hash lookup scans before
     /// requesting a new limiter, so a miss is the common case, not an error path.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn an_unsuccessful_scan_does_not_grow_the_arena() {
         let path = CString::new("/ddlimiters-scan".to_string()).unwrap();
         let limiters = ShmLimiterMemory::<()>::create(path).unwrap();
@@ -642,7 +640,6 @@ mod tests {
 
     /// Malformed process-local configuration and peer-writable reference counts must not panic.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn malformed_limiter_values_do_not_panic() {
         let path = CString::new("/ddlimiters-malformed".to_string()).unwrap();
         let mut limiters = ShmLimiterMemory::<()>::create(path).unwrap();
@@ -670,7 +667,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn granularity_is_supplied_by_the_caller() {
         let path = CString::new("/ddlimiters-granularity".to_string()).unwrap();
         let mut limiters = ShmLimiterMemory::<()>::create(path).unwrap();
@@ -685,7 +681,6 @@ mod tests {
     /// An index that never came from the allocator is refused rather than dereferenced - and
     /// not asserted on either, since it arrives from a peer.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn indices_outside_the_mapping_are_refused() {
         let path = CString::new("/ddlimiters-bounds".to_string()).unwrap();
         let limiters = ShmLimiterMemory::<()>::create(path).unwrap();
@@ -699,7 +694,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_limiters() {
         let mut limiters = ShmLimiterMemory::<()>::create(path()).unwrap();
         let limiter = limiters.alloc().unwrap();
@@ -736,7 +730,6 @@ mod tests {
     /// Contend for far more slots than the initial page holds, so growth happens repeatedly
     /// underneath the contention, and require every index to come back distinct and usable.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn concurrent_allocation_across_arena_growth() {
         const THREADS: usize = 4;
 
@@ -787,36 +780,6 @@ mod tests {
         );
     }
 
-    /// Bringing a slot into service must not mutate anything through a shared reference.
-    ///
-    /// The allocator only ever holds a `&ShmLimiterData`: slots live in a mapping shared
-    /// with other processes, so no exclusive borrow exists to be taken. Rust's rule is that
-    /// bytes reachable through a live shared reference do not change unless they sit in an
-    /// `UnsafeCell`, and the limiter's own state is not payload, so it is not in one - every
-    /// field of it therefore has to be individually interior-mutable.
-    ///
-    /// This drives the real publication path against a slot in ordinary memory, with no
-    /// mapping involved, so Miri can see it:
-    /// `cargo +nightly miri test -p libdd-ipc publishing_a_slot`.
-    #[test]
-    fn publishing_a_slot_does_not_mutate_through_a_shared_reference() {
-        let slot = ShmLimiterData::<()>::default();
-
-        // Exactly what the allocator gets, and it stays live across the call.
-        let shared: &ShmLimiterData<()> = &slot;
-        shared.initialise_and_publish(|_| ());
-
-        assert_eq!(
-            shared.rc.load(Ordering::SeqCst),
-            1,
-            "the slot must come back published"
-        );
-        assert!(
-            shared.limiter.inc(1, Duration::from_secs(7)),
-            "with a working limiter"
-        );
-    }
-
     /// A recycled slot must not be searchable until the allocation that took it has finished
     /// writing it.
     ///
@@ -829,7 +792,6 @@ mod tests {
     /// before returning to the caller, and letting the caller fill the payload afterwards,
     /// is what turns that window into one an unrelated process can observe.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn a_slot_is_not_searchable_until_its_payload_is_written() {
         const OLD: u64 = 0xbad;
         const NEW: u64 = 0x900d;
@@ -905,7 +867,6 @@ mod tests {
     /// handing it to the next allocation while that owner goes on using it.
     #[test]
     #[cfg(unix)]
-    #[cfg_attr(miri, ignore)]
     fn a_handle_inherited_through_fork_is_not_released_twice() {
         fn rc(mem: &ShmLimiterMemory<()>, idx: u32) -> i32 {
             #[allow(clippy::unwrap_used)]
@@ -974,7 +935,6 @@ mod tests {
     /// would all survive into an arena that believes it is empty, and the first allocation
     /// would store `rc = 1` over a slot an older process may still hold a handle to.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn a_restarted_owner_does_not_adopt_a_stale_arena() {
         fn payload(mem: &ShmLimiterMemory<AtomicU64>, idx: u32) -> Option<u64> {
             arena(mem).with_slot(idx, |slot| {
@@ -1044,7 +1004,6 @@ mod tests {
     /// the retirement signal: a client that let go of its last slot must not make the arena
     /// look retired.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn releasing_a_slot_does_not_retire_the_arena() {
         let path = CString::new(format!("/ddlimiters-release-{}", std::process::id())).unwrap();
         let mut limiters = ShmLimiterMemory::<()>::create(path.clone()).unwrap();
@@ -1058,7 +1017,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn a_reader_follows_replacement_without_moving_existing_slots() {
         let path = CString::new(format!("/ddlim-swap-{}", std::process::id())).unwrap();
         let mut old = ShmLimiterMemory::<AtomicU64>::create(path.clone()).unwrap();
@@ -1105,7 +1063,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn a_reader_follows_replacement_when_searching() {
         let path = CString::new(format!("/ddlim-find-{}", std::process::id())).unwrap();
         let mut old = ShmLimiterMemory::<AtomicU64>::create(path.clone()).unwrap();
@@ -1141,7 +1098,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn a_reader_retries_after_a_failed_open() {
         let path = CString::new(format!("/ddlim-late-{}", std::process::id())).unwrap();
         let reader = ShmLimiterMemory::<()>::new_reader(path.clone());
@@ -1155,7 +1111,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn reconnect_follows_the_current_name() {
         static NAMESPACE: AtomicU64 = AtomicU64::new(0);
         fn path() -> CString {
@@ -1207,7 +1162,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn a_search_keeps_one_arena_when_replaced_mid_scan() {
         let path = CString::new(format!("/ddlim-scan-{}", std::process::id())).unwrap();
         let mut old = ShmLimiterMemory::<AtomicU64>::create(path.clone()).unwrap();
@@ -1254,7 +1208,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn concurrent_readers_follow_replacement() {
         let path = CString::new(format!("/ddlim-race-{}", std::process::id())).unwrap();
         let mut old = ShmLimiterMemory::<AtomicU64>::create(path.clone()).unwrap();
@@ -1292,7 +1245,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn find_sees_slots_another_opener_added() {
         let path = CString::new("/ddlimiters-grown".to_string()).unwrap();
         let mut owner = ShmLimiterMemory::<AtomicU64>::create(path.clone()).unwrap();
@@ -1358,7 +1310,6 @@ mod tests {
     /// only for non-zero would increment -1 to 0 and hand out an owning handle to a slot
     /// sitting on the free list.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn a_refused_acquisition_leaves_the_refcount_alone() {
         fn rc(mem: &ShmLimiterMemory<()>, idx: u32) -> i32 {
             #[allow(clippy::unwrap_used)]
@@ -1422,7 +1373,6 @@ mod tests {
     /// so a hash whose slot cannot be found allocates another slot on every occurrence and is
     /// never rate limited.
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn a_freshly_allocated_slot_is_findable() {
         let path = CString::new("/ddlimiters-fresh".to_string()).unwrap();
         let mut limiters = ShmLimiterMemory::<AtomicU64>::create(path).unwrap();
@@ -1460,6 +1410,43 @@ mod tests {
                 .find(|hash| hash.load(Ordering::Relaxed) == 42)
                 .is_none(),
             "while the payload it was retired with no longer matches"
+        );
+    }
+}
+
+#[cfg(test)]
+mod miri_tests {
+    use super::ShmLimiterData;
+    use std::sync::atomic::Ordering;
+    use std::time::Duration;
+
+    /// Bringing a slot into service must not mutate anything through a shared reference.
+    ///
+    /// The allocator only ever holds a `&ShmLimiterData`: slots live in a mapping shared
+    /// with other processes, so no exclusive borrow exists to be taken. Rust's rule is that
+    /// bytes reachable through a live shared reference do not change unless they sit in an
+    /// `UnsafeCell`, and the limiter's own state is not payload, so it is not in one - every
+    /// field of it therefore has to be individually interior-mutable.
+    ///
+    /// This drives the real publication path against a slot in ordinary memory, with no
+    /// mapping involved, so Miri can see it:
+    /// `cargo +nightly miri test -p libdd-ipc publishing_a_slot`.
+    #[test]
+    fn publishing_a_slot_does_not_mutate_through_a_shared_reference() {
+        let slot = ShmLimiterData::<()>::default();
+
+        // Exactly what the allocator gets, and it stays live across the call.
+        let shared: &ShmLimiterData<()> = &slot;
+        shared.initialise_and_publish(|_| ());
+
+        assert_eq!(
+            shared.rc.load(Ordering::SeqCst),
+            1,
+            "the slot must come back published"
+        );
+        assert!(
+            shared.limiter.inc(1, Duration::from_secs(7)),
+            "with a working limiter"
         );
     }
 }

@@ -596,7 +596,7 @@ impl ErrorsIntakeUploader {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use crate::crash_info::test_utils::TestInstance;
@@ -618,7 +618,6 @@ mod tests {
         unsafe { std::env::remove_var("DD_CRASHTRACKING_ERRORS_INTAKE_ENABLED") };
     }
 
-    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_errors_payload_from_crash_info() {
         let crash_info = CrashInfo::test_instance(1);
@@ -693,7 +692,6 @@ mod tests {
         assert!(ddtags.contains("si_signo_human_readable:SIGSEGV"));
     }
 
-    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_errors_payload_from_crash_ping() {
         let metadata = Metadata::test_instance(1);
@@ -739,7 +737,6 @@ mod tests {
         assert!(ddtags.contains("si_signo_human_readable:SIGSEGV"));
     }
 
-    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_errors_intake_has_all_telemetry_tags() {
         let crash_info = CrashInfo::test_instance(1);
@@ -775,7 +772,6 @@ mod tests {
         }
     }
 
-    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_crash_ping_has_all_telemetry_tags() {
         let metadata = Metadata::test_instance(1);
@@ -818,7 +814,6 @@ mod tests {
         }
     }
 
-    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_process_tags_in_crash_info_ddtags() {
         let mut crash_info = CrashInfo::test_instance(1);
@@ -840,7 +835,6 @@ mod tests {
         );
     }
 
-    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_process_tags_in_crash_ping_ddtags() {
         let mut metadata = Metadata::test_instance(1);

@@ -96,7 +96,7 @@ impl<T: Item> Dedup<T> for FxIndexSet<T> {
 }
 
 #[cfg(test)]
-mod tests {
+mod miri_tests {
     use super::*;
 
     #[test]

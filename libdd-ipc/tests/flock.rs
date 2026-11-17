@@ -1,6 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 #![cfg(unix)]
+#![cfg(not(miri))]
 
 use std::{
     io::{self, Read, Write},
@@ -32,7 +33,6 @@ pub extern "C" fn flock_test_entrypoint(_trampoline_data: &TrampolineData) {
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn test_file_locking_works_as_expected() {
     let d = tempdir().unwrap();
     let lock_path = d.path().join("file.lock");

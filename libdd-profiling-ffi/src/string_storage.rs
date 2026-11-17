@@ -295,7 +295,7 @@ impl From<anyhow::Result<ManagedStringId>> for ManagedStringStorageInternResult 
 }
 
 #[cfg(test)]
-mod tests {
+mod miri_tests {
     use super::*;
 
     #[test]

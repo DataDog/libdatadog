@@ -36,17 +36,17 @@ impl ServicesSampler {
 
     // Test-only inspection helpers.
 
-    #[cfg(test)]
+    #[cfg(all(test, not(miri)))]
     pub(crate) fn is_empty(&self) -> bool {
         self.inner.read_or_panic().is_empty()
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, not(miri)))]
     pub(crate) fn len(&self) -> usize {
         self.inner.read_or_panic().len()
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, not(miri)))]
     pub(crate) fn contains_key(&self, service: &str) -> bool {
         self.inner.read_or_panic().contains_key(service)
     }

@@ -39,7 +39,7 @@ pub fn get_machine_id_impl() -> String {
     )
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
 

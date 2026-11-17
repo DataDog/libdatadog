@@ -115,7 +115,7 @@ pub fn reconfigure(
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod single_threaded_tests {
     use super::*;
     use crate::{
@@ -221,7 +221,6 @@ mod single_threaded_tests {
         if res == 0 { Some(sigaltstack) } else { None }
     }
 
-    #[cfg_attr(miri, ignore)]
     #[cfg(target_os = "linux")]
     #[test]
     fn test_altstack_use_create() {
@@ -331,7 +330,6 @@ mod single_threaded_tests {
         }
     }
 
-    #[cfg_attr(miri, ignore)]
     #[cfg(target_os = "linux")]
     #[test]
     fn test_altstack_use_nocreate() {
@@ -446,7 +444,6 @@ mod single_threaded_tests {
         }
     }
 
-    #[cfg_attr(miri, ignore)]
     #[cfg(target_os = "linux")]
     #[test]
     fn test_altstack_nouse() {
@@ -560,7 +557,6 @@ mod single_threaded_tests {
         }
     }
 
-    #[cfg_attr(miri, ignore)]
     #[cfg(target_os = "linux")]
     #[test]
     fn test_waitall_nohang() {

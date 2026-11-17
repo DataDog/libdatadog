@@ -511,7 +511,7 @@ pub async fn run_remote_config_listener(
     Ok(state)
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     #[cfg(feature = "listener")]
     use crate::FlareAction;

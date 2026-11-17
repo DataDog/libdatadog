@@ -134,14 +134,13 @@ unsafe extern "C" fn test_runtime_callback_frame_with_invalid_utf8(
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use libdd_crashtracker::{clear_runtime_callback, is_runtime_callback_registered};
     use serial_test::serial;
 
     #[test]
-    #[cfg_attr(miri, ignore)] // serial_test has intentional leaks that Miri flags
     #[serial(runtime_callback)]
     fn test_runtime_callback_frame_invalid_utf8_registration() {
         // Ensure clean state

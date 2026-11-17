@@ -151,6 +151,16 @@ workspace MSRV). Run it locally the same way:
 - FIPS (US government cloud) builds: aws-lc-rs via `fips` feature flag
 - Windows FIPS requires env var: `AWS_LC_FIPS_SYS_NO_ASM=1`
 
+### Miri test architecture
+
+`cargo miri test` sets `cfg(miri)` on top of `cfg(test)`, so gates decide what Miri runs:
+
+- Regular tests: `#[cfg(all(test, not(miri)))] mod tests` — not compiled under Miri. Same gate on include sites (`mod tests;`) and on bare `#[test]` fns at file scope. Regular integration test files start with `#![cfg(not(miri))]` after the license header.
+- Miri-designated tests: `#[cfg(test)] mod miri_tests` (or `tests/miri_*.rs` files) — run under **both** `cargo test` and `cargo miri test`.
+- Enforced by ast-grep (`.sg/rules/miri-*`): a non-`*miri_tests` mod containing tests, or a bare file-scope test fn, must carry `not(miri)`; a `tests/*.rs` target without the header fails the lint.
+
+A test belongs in `miri_tests` only if it transitively exercises workspace `unsafe`/FFI with memory-safety surface (raw pointers, mmap/shm, signal handlers, `extern "C"` entry points) or hand-rolled byte-level encode/decode into buffers (wire formats, msgpack). **Most tests do not** — pure safe-Rust logic cannot UB, dependency-side codecs (prost, rmp_serde, serde_json), scalar libc syscalls, and anything Miri can't run (fork, poll, native IPC, foreign code) stay regular. Default to `mod tests`; adding tests to `miri_tests` costs every Miri run. A qualifying test that is prohibitively slow under Miri stays regular with a `// Excluded from miri_tests: prohibitively slow under Miri (<reason>)` comment.
+
 ### Commit Messages
 PR titles and commits must follow **Conventional Commits**: `<type>([scope]): <description>`  
 Common types: `feat`, `fix`, `docs`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`  

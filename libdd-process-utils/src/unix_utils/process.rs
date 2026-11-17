@@ -100,12 +100,11 @@ pub fn wait_for_pollhup(
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
     use core::time::Duration;
 
-    #[cfg_attr(miri, ignore)] // miri doesn't support waitpid
     #[test]
     fn test_reap_child_non_blocking_timeout() {
         let timeout = Duration::from_millis(10);
@@ -116,7 +115,6 @@ mod tests {
         assert!(matches!(result, Ok(false)));
     }
 
-    #[cfg_attr(miri, ignore)] // miri doesn't support waitpid
     #[test]
     fn test_reap_child_non_blocking_exited_child() {
         // This test would require actually creating a child process
@@ -128,7 +126,6 @@ mod tests {
         assert!(matches!(result, Ok(false)));
     }
 
-    #[cfg_attr(miri, ignore)] // miri doesn't support waitpid
     #[test]
     fn test_reap_child_non_blocking_nonexistent_pid() {
         let timeout = Duration::from_secs(1);
@@ -138,7 +135,6 @@ mod tests {
         assert!(matches!(result, Ok(false)));
     }
 
-    #[cfg_attr(miri, ignore)] // miri needs to support poll https://github.com/rust-lang/miri/issues/4413
     #[test]
     fn test_wait_for_pollhup_timeout() {
         let timeout = Duration::from_millis(10);
@@ -149,7 +145,6 @@ mod tests {
         assert!(matches!(result, Ok(false)));
     }
 
-    #[cfg_attr(miri, ignore)] // miri doesn't support poll
     #[test]
     fn test_wait_for_pollhup_invalid_fd() {
         let timeout = Duration::from_secs(1);

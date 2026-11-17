@@ -1,12 +1,47 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-#![allow(invalid_reference_casting)]
-
 use libdd_regex::Regex;
+use std::cell::UnsafeCell;
 use std::collections::HashSet;
 use std::sync::LazyLock;
 use std::sync::atomic::{AtomicBool, Ordering};
+
+/// Interior mutability for statics that are written only through the `add_*`
+/// entry points (each `unsafe fn`, documented as startup-only: single-threaded,
+/// before the matching `*_INITIALIZED` latch flips) and read afterwards.
+///
+/// Writing through `&mut (*(&*LOCK as *const T).cast_mut())` is undefined
+/// behavior under Stacked Borrows — a `&T` shared reference cannot be written
+/// through, which is exactly what Miri reported — while `UnsafeCell` is the
+/// blessed mechanism for writing through `&self`. `UnsafeCell` itself is not
+/// `Sync`; the impl below re-states the startup-only write contract.
+struct StartupCell<T>(UnsafeCell<T>);
+
+// SAFETY: writes happen only before the startup latch flips (enforced by the
+// `assert!` in every `add_*` entry point); after the latch, access is `&` only.
+// The caller's startup sequencing establishes the happens-before edge between
+// the last write and the first concurrent read.
+unsafe impl<T> Sync for StartupCell<T> {}
+
+impl<T> StartupCell<T> {
+    const fn new(value: T) -> Self {
+        Self(UnsafeCell::new(value))
+    }
+
+    /// Shared read; sound only because writes are startup-only.
+    fn get(&self) -> &T {
+        unsafe { &*self.0.get() }
+    }
+
+    /// Startup-phase write access; only call before the latch flips.
+    // allow(clippy::mut_from_ref): the point of this wrapper is interior
+    // mutability; the startup-only write contract is on the type docs above.
+    #[allow(clippy::mut_from_ref)]
+    fn get_mut(&self) -> &mut T {
+        unsafe { &mut *self.0.get() }
+    }
+}
 
 static REDACTED_NAMES: LazyLock<HashSet<&'static [u8]>> = LazyLock::new(|| {
     HashSet::from([
@@ -100,23 +135,21 @@ static REDACTED_NAMES: LazyLock<HashSet<&'static [u8]>> = LazyLock::new(|| {
     ])
 });
 
-static ADDED_REDACTED_NAMES: LazyLock<Vec<Vec<u8>>> = LazyLock::new(Vec::new);
+static ADDED_REDACTED_NAMES: StartupCell<Option<HashSet<&'static [u8]>>> = StartupCell::new(None);
 
 // Exclusions take precedence over the built-in REDACTED_NAMES set.
-static EXCLUDED_NAMES: LazyLock<HashSet<Vec<u8>>> = LazyLock::new(HashSet::new);
+static EXCLUDED_NAMES: StartupCell<Option<HashSet<Vec<u8>>>> = StartupCell::new(None);
 static EXCLUDED_NAMES_INITIALIZED: AtomicBool = AtomicBool::new(false);
 
-static REDACTED_TYPES: LazyLock<HashSet<&'static [u8]>> = LazyLock::new(HashSet::new);
+static REDACTED_TYPES: StartupCell<Option<HashSet<&'static [u8]>>> = StartupCell::new(None);
 
-static ADDED_REDACTED_TYPES: LazyLock<Vec<Vec<u8>>> = LazyLock::new(Vec::new);
-
-static REDACTED_WILDCARD_TYPES_PATTERN: LazyLock<String> = LazyLock::new(|| "".to_string());
+static REDACTED_WILDCARD_TYPES_PATTERN: StartupCell<String> = StartupCell::new(String::new());
 
 static REDACTED_TYPES_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     REDACTED_TYPES_INITIALIZED.store(true, Ordering::Relaxed);
 
     #[allow(clippy::unwrap_used)]
-    Regex::new(&REDACTED_WILDCARD_TYPES_PATTERN).unwrap()
+    Regex::new(REDACTED_WILDCARD_TYPES_PATTERN.get()).unwrap()
 });
 
 static ASSUMED_SAFE_NAME_LEN: LazyLock<usize> = LazyLock::new(|| {
@@ -134,51 +167,45 @@ static REDACTED_TYPES_INITIALIZED: AtomicBool = AtomicBool::new(false);
 /// # Safety
 /// May only be called while not running yet - concurrent access to is_redacted_name is forbidden.
 pub unsafe fn add_redacted_name<I: Into<Vec<u8>>>(name: I) {
-    unsafe {
-        assert!(!REDACTED_NAMES_INITIALIZED.load(Ordering::Relaxed));
-        // I really don't want to Mutex this often checked value.
-        // Hence, unsafe, and caller has to ensure safety.
-        // An UnsafeCell would be perfect, but it isn't Sync...
-        let added_names = &mut (*(&*ADDED_REDACTED_NAMES as *const Vec<Vec<u8>>).cast_mut());
-        added_names.push(name.into());
-
-        let redacted_names = &mut (*(&*REDACTED_NAMES as *const HashSet<&'static [u8]>).cast_mut());
-        redacted_names.insert(&added_names[added_names.len() - 1]);
-    }
+    assert!(!REDACTED_NAMES_INITIALIZED.load(Ordering::Relaxed));
+    // Leak the name so the set holds `&'static [u8]` without borrowing
+    // from a backing Vec that a later push could reallocate.
+    let name: &'static [u8] = Box::leak(name.into().into_boxed_slice());
+    ADDED_REDACTED_NAMES
+        .get_mut()
+        .get_or_insert_with(HashSet::new)
+        .insert(name);
 }
 /// # Safety
 /// May only be called while not running yet - concurrent access to is_excluded_name is forbidden.
 pub unsafe fn add_excluded_name<I: Into<Vec<u8>>>(name: I) {
-    unsafe {
-        assert!(!EXCLUDED_NAMES_INITIALIZED.load(Ordering::Relaxed));
-        let excluded_names = &mut (*(&*EXCLUDED_NAMES as *const HashSet<Vec<u8>>).cast_mut());
-        excluded_names.insert(name.into());
-    }
+    assert!(!EXCLUDED_NAMES_INITIALIZED.load(Ordering::Relaxed));
+    EXCLUDED_NAMES
+        .get_mut()
+        .get_or_insert_with(HashSet::new)
+        .insert(name.into());
 }
 
 /// # Safety
 /// May only be called while not running yet - concurrent access to is_redacted_type is forbidden.
 pub unsafe fn add_redacted_type<I: AsRef<[u8]>>(name: I) {
-    unsafe {
-        assert!(!REDACTED_TYPES_INITIALIZED.load(Ordering::Relaxed));
-        let name = name.as_ref();
+    assert!(!REDACTED_TYPES_INITIALIZED.load(Ordering::Relaxed));
+    let name = name.as_ref();
 
-        if name.ends_with(b"*") {
-            let regex_str = &mut *(&*REDACTED_WILDCARD_TYPES_PATTERN as *const String).cast_mut();
-            if !regex_str.is_empty() {
-                regex_str.push('|')
-            }
-            let name = String::from_utf8_lossy(name);
-            regex_str.push_str(libdd_regex::escape(&name[..name.len() - 1]).as_str());
-            regex_str.push_str(".*");
-        } else {
-            let added_types = &mut (*(&*ADDED_REDACTED_TYPES as *const Vec<Vec<u8>>).cast_mut());
-            added_types.push(name.to_vec());
-
-            let redacted_types =
-                &mut (*(&*REDACTED_TYPES as *const HashSet<&'static [u8]>).cast_mut());
-            redacted_types.insert(&added_types[added_types.len() - 1]);
+    if name.ends_with(b"*") {
+        let regex_str = REDACTED_WILDCARD_TYPES_PATTERN.get_mut();
+        if !regex_str.is_empty() {
+            regex_str.push('|')
         }
+        let name = String::from_utf8_lossy(name);
+        regex_str.push_str(libdd_regex::escape(&name[..name.len() - 1]).as_str());
+        regex_str.push_str(".*");
+    } else {
+        let name: &'static [u8] = Box::leak(name.to_vec().into_boxed_slice());
+        REDACTED_TYPES
+            .get_mut()
+            .get_or_insert_with(HashSet::new)
+            .insert(name);
     }
 }
 
@@ -204,49 +231,70 @@ pub fn is_redacted_name<I: AsRef<[u8]>>(name: I) -> bool {
     }
     let normalized = &copy[0..copy.len()];
     // Exclusions take precedence: if explicitly excluded, do not redact.
-    if !EXCLUDED_NAMES.is_empty() {
+    if EXCLUDED_NAMES.get().as_ref().is_none_or(|s| s.is_empty()) {
         EXCLUDED_NAMES_INITIALIZED.store(true, Ordering::Relaxed);
-        if EXCLUDED_NAMES.contains(normalized as &[u8]) {
+        if EXCLUDED_NAMES
+            .get()
+            .as_ref()
+            .is_some_and(|s| s.contains(normalized as &[u8]))
+        {
             return false;
         }
     }
     REDACTED_NAMES.contains(normalized)
+        || ADDED_REDACTED_NAMES
+            .get()
+            .as_ref()
+            .is_some_and(|s| s.contains(normalized))
 }
 
 pub fn is_redacted_type<I: AsRef<[u8]>>(name: I) -> bool {
     let name = name.as_ref();
-    if REDACTED_TYPES.contains(name) {
+    if REDACTED_TYPES
+        .get()
+        .as_ref()
+        .is_some_and(|s| s.contains(name))
+    {
         true
-    } else if !REDACTED_WILDCARD_TYPES_PATTERN.is_empty() {
+    } else if !REDACTED_WILDCARD_TYPES_PATTERN.get().is_empty() {
         std::str::from_utf8(name).is_ok_and(|s| REDACTED_TYPES_REGEX.is_match(s))
     } else {
         false
     }
 }
 
-#[test]
-#[cfg_attr(miri, ignore)]
-fn test_redacted_name() {
-    unsafe { add_redacted_name("test") }
+// Runs under Miri on purpose: it previously reported a real
+// invalid-reference-casting UB in add_redacted_name/add_redacted_type —
+// shared references to the statics were cast to *mut and written through.
+// The statics now route their startup-only writes through `StartupCell`
+// (UnsafeCell), which is Stacked Borrows-clean. These tests stay under
+// Miri as the tripwire for that contract.
+#[cfg(test)]
+mod miri_tests {
+    use super::*;
 
-    assert!(is_redacted_name("test"));
-    assert!(is_redacted_name("te-st"));
-    assert!(is_redacted_name("CSRF"));
-    assert!(is_redacted_name("$XSRF"));
-    assert!(!is_redacted_name("foo"));
-    assert!(!is_redacted_name("@"));
-}
+    #[test]
+    fn test_redacted_name() {
+        unsafe { add_redacted_name("test") }
 
-#[test]
-#[cfg_attr(miri, ignore)]
-fn test_redacted_type() {
-    unsafe {
-        add_redacted_type("other");
-        add_redacted_type("type*");
+        assert!(is_redacted_name("test"));
+        assert!(is_redacted_name("te-st"));
+        assert!(is_redacted_name("CSRF"));
+        assert!(is_redacted_name("$XSRF"));
+        assert!(!is_redacted_name("foo"));
+        assert!(!is_redacted_name("@"));
     }
 
-    assert!(is_redacted_type("other"));
-    assert!(is_redacted_type("type"));
-    assert!(is_redacted_type("type.foo"));
-    assert!(!is_redacted_type("typ"));
+    #[test]
+    fn test_redacted_type() {
+        unsafe {
+            add_redacted_type("other");
+            add_redacted_type("type*");
+        }
+
+        assert!(is_redacted_type("other"));
+        assert!(is_redacted_type("type"));
+        assert!(is_redacted_type("type.foo"));
+        assert!(!is_redacted_type("typ"));
+    }
 }

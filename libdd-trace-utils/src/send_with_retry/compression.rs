@@ -90,7 +90,7 @@ pub fn add_headers(headers: &mut http::HeaderMap, strategy: CompressionStrategy)
     }
 }
 
-#[cfg(all(test, feature = "compression", not(target_arch = "wasm32")))]
+#[cfg(all(test, not(miri), feature = "compression", not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
 

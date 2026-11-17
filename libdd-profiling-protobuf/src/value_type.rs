@@ -49,7 +49,7 @@ impl From<&ValueType> for crate::prost_impls::ValueType {
 }
 
 #[cfg(test)]
-mod tests {
+mod miri_tests {
     use super::*;
     use crate::prost_impls;
     use prost::Message;

@@ -286,11 +286,9 @@ pub(crate) fn truncate_utf8(s: &mut String, limit: usize) {
     s.truncate(boundary);
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
-
     use super::*;
-    use duplicate::duplicate_item;
 
     #[test]
     fn test_normalize_span_start_duration_handles_min_start() {
@@ -308,6 +306,12 @@ mod tests {
         normalize_span_start_duration(&mut start, &mut duration);
         assert_eq!(duration, 0);
     }
+}
+
+#[cfg(test)]
+mod miri_tests {
+    use super::*;
+    use duplicate::duplicate_item;
 
     #[duplicate_item(
         test_name                       input                               expected;

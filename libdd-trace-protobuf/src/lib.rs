@@ -12,5 +12,5 @@ mod serde;
 #[cfg(feature = "trace-model")]
 mod trace_model;
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod pb_test;

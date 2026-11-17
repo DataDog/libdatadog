@@ -1747,7 +1747,7 @@ pub fn is_person_identifier(value: &str) -> bool {
             .any(|(at, c)| c == '.' && at > 0 && at + 1 < domain.len())
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
 
@@ -1756,7 +1756,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)] // many large inputs are too slow under Miri
     fn long_strings_are_cut_at_safe_boundaries() {
         let short = r#"{"model": "gpt-4o", "usage": {"prompt_tokens": 3}}"#;
         assert_eq!(cut(short), short);
@@ -1847,7 +1846,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)] // many inputs are too slow under Miri
     fn the_block_scanner_finds_the_quote_a_bytewise_scan_finds() {
         // Runs of backslashes of every length, across 64-byte block edges.
         let mut seed = 0x9E37_79B9_7F4A_7C15u64;

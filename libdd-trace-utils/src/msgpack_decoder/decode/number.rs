@@ -210,7 +210,7 @@ pub fn read_nullable_number<T: DeserializableTraceData, R: TryFrom<Number, Error
 }
 
 #[cfg(test)]
-mod tests {
+mod miri_tests {
     use super::*;
     use crate::span::SliceData;
     use serde_json::json;

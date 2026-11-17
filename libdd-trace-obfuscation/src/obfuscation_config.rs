@@ -283,7 +283,7 @@ pub struct SqlConfig {
     pub obfuscation_mode: SqlObfuscationMode,
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::JsonObfuscatorConfig;
 

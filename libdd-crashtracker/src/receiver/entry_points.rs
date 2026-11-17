@@ -288,7 +288,7 @@ fn synthesize_module_offsets(stack: &mut crate::crash_info::StackTrace) {
     }
 }
 
-#[cfg(all(test, target_os = "linux"))]
+#[cfg(all(test, not(miri), target_os = "linux"))]
 mod tests {
     use super::*;
     use crate::crash_info::{StackFrame, StackTrace};
@@ -419,7 +419,6 @@ mod tests {
         assert_eq!(stack.frames.len(), 2);
     }
 
-    #[cfg_attr(miri, ignore)] // CrashInfo::test_instance spawns a process
     #[test]
     fn finish_native_stacks_changes_nothing_unless_opted_in() -> anyhow::Result<()> {
         use crate::crash_info::test_utils::TestInstance;

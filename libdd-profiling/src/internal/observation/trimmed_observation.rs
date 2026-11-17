@@ -121,8 +121,25 @@ impl Drop for TrimmedObservation {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
+    use super::*;
+
+    // Excluded from miri_tests: intentionally leaks memory (Miri reports leaked allocations as
+    // errors at test exit)
+    #[test]
+    #[should_panic]
+    // This test has an explicit memory leak, and shows that we panic if that
+    // happens
+    fn drop_owned_data_panics_test() {
+        let v = &[1, 2];
+        let o = ObservationLength::new(2);
+        let _t = TrimmedObservation::new(v, o);
+    }
+}
+
+#[cfg(test)]
+mod miri_tests {
     use super::*;
     use bolero::TypeGenerator;
 
@@ -147,17 +164,6 @@ mod tests {
         unsafe {
             t.consume(o);
         }
-    }
-
-    #[test]
-    #[should_panic]
-    // This test has an explicit memory leak, and shows that we panic if that
-    // happens
-    #[cfg_attr(miri, ignore)]
-    fn drop_owned_data_panics_test() {
-        let v = &[1, 2];
-        let o = ObservationLength::new(2);
-        let _t = TrimmedObservation::new(v, o);
     }
 
     #[test]

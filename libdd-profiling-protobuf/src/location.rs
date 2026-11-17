@@ -112,7 +112,7 @@ impl From<Location> for crate::prost_impls::Location {
 }
 
 #[cfg(test)]
-mod tests {
+mod miri_tests {
     use super::*;
     use crate::prost_impls;
     use prost::Message;

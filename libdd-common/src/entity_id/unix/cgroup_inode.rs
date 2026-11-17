@@ -98,7 +98,7 @@ pub fn get_cgroup_inode(
     Some(get_inode(&cgroup_mount_path).ok()?.to_string())
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::super::CGROUP_V1_BASE_CONTROLLER;
     use super::*;
