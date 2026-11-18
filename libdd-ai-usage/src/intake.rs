@@ -3,7 +3,8 @@
 
 //! A batch as Datadog metrics intake takes it from a writer that submits
 //! straight to the API (a gateway, not through the Agent): Counters as RATE
-//! points over the flush interval, distributions as one DDSketch per series
+//! points over [`DATADOG_RATE_INTERVAL_SECS`], the interval the Agent stores
+//! DogStatsD counts with, distributions as one DDSketch per series
 //! in intake's `sketchpb.Sparse` form, stamped at a second no earlier flush
 //! of the same writer used, and tagged with the writer's identity.
 //!
@@ -15,7 +16,7 @@
 use libdd_ddsketch::DDSketch;
 
 use crate::MetricBatch;
-use crate::datadog::{DatadogSeries, SeriesType, datadog_tag_value};
+use crate::datadog::{DATADOG_RATE_INTERVAL_SECS, DatadogSeries, SeriesType, datadog_tag_value};
 use crate::point::MetricError;
 
 /// `ε` of intake's DDSketch: `γ = 1 + 2ε`, a relative accuracy slightly
@@ -187,7 +188,8 @@ impl Sketch {
 }
 
 /// One Counter series as a RATE point: the sum since the last take divided
-/// by the interval, to be aggregated by SUM across writers.
+/// by [`DATADOG_RATE_INTERVAL_SECS`], to be submitted with type RATE and
+/// that interval, and aggregated by SUM across writers.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RateSeries {
     pub metric: String,
@@ -208,7 +210,7 @@ pub struct SketchSeries {
 pub struct IntakeTake {
     /// The second every point is stamped at.
     pub timestamp: i64,
-    /// The RATE interval, in seconds.
+    /// The RATE interval, in seconds: always [`DATADOG_RATE_INTERVAL_SECS`].
     pub interval: u32,
     pub rates: Vec<RateSeries>,
     pub sketches: Vec<SketchSeries>,
@@ -233,19 +235,19 @@ impl MetricBatch {
 
     /// Take every point, leaving the batch empty, as metrics intake takes it
     /// from a writer that submits to the API: Counters (the `.count` and
-    /// `.sum` of distributions included) as RATE points of `sum /
-    /// interval_secs`, distributions as one [`Sketch`] per series. Every
-    /// point is stamped at `now_unix_seconds`, or at the second after this
-    /// batch's previous take when that is later, so one writer never stamps
-    /// a series twice at the same second. Tags are sorted, with the writer's
-    /// (see [`MetricBatch::set_writer`]) added. An `interval_secs` of 0 is
-    /// read as 1.
-    pub fn take_intake(
-        &mut self,
-        interval_secs: u32,
-        now_unix_seconds: i64,
-    ) -> Result<IntakeTake, MetricError> {
-        let interval = interval_secs.max(1);
+    /// `.sum` of distributions included) as RATE points of `sum / 10` over
+    /// [`DATADOG_RATE_INTERVAL_SECS`], distributions as one [`Sketch`] per
+    /// series. Every point is stamped at `now_unix_seconds`, or at the second
+    /// after this batch's previous take when that is later, so one writer
+    /// never stamps a series twice at the same second. Tags are sorted, with
+    /// the writer's (see [`MetricBatch::set_writer`]) added.
+    ///
+    /// The interval is 10 s whatever the time between takes: it is part of
+    /// the metric's stored type, which every writer of the metric must state
+    /// alike, and `as_count()` reads each point back as `value * 10`, the sum
+    /// since the last take. A writer that takes every 10 s also gives the
+    /// per-second values the Agent gives.
+    pub fn take_intake(&mut self, now_unix_seconds: i64) -> Result<IntakeTake, MetricError> {
         let timestamp = now_unix_seconds.max(self.next_second);
         self.next_second = timestamp.saturating_add(1);
         let dropped = self.take_dropped();
@@ -261,14 +263,14 @@ impl MetricBatch {
         let (counts, distributions) = taken.datadog_parts()?;
         let rates = counts
             .into_iter()
-            .filter(|series| series.series_type == SeriesType::Count)
+            .filter(|series| series.series_type == SeriesType::Rate)
             .map(
                 |DatadogSeries {
                      name, value, tags, ..
                  }| RateSeries {
                     metric: name,
                     tags: with_writer(tags),
-                    value: value / f64::from(interval),
+                    value,
                 },
             )
             .collect();
@@ -285,7 +287,7 @@ impl MetricBatch {
         sketches.sort_by(|a, b| a.metric.cmp(&b.metric).then_with(|| a.tags.cmp(&b.tags)));
         Ok(IntakeTake {
             timestamp,
-            interval,
+            interval: DATADOG_RATE_INTERVAL_SECS,
             rates,
             sketches,
             dropped,

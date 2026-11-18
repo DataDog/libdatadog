@@ -31,11 +31,13 @@ datadog-sidecar-macros = { path = "../datadog-sidecar-macros" }
 libdd-telemetry = { path = "../libdd-telemetry", features = ["tracing"] }
 libdd-data-pipeline = { path = "../libdd-data-pipeline" }
 libdd-trace-utils = { path = "../libdd-trace-utils" }
+libdd-trace-model = { path = "../libdd-trace-model" }
+libdd-trace-normalization = { path = "../libdd-trace-normalization" }
 libdd-trace-stats = { path = "../libdd-trace-stats", features = ["telemetry", "dogstatsd"] }
 libdd-remote-config = { path = "../libdd-remote-config" }
 libdd-live-debugger = { path = "../libdd-live-debugger" }
 libdd-ffe = { path = "../libdd-ffe", features = ["exposure-events", "evaluation-metrics", "flagevaluation-evp", "cdn"] }
-libdd-crashtracker = { path = "../libdd-crashtracker" }
+libdd-crashtracker = { path = "../libdd-crashtracker", default-features = false, features = ["collector", "receiver"] }
 libdd-dogstatsd-client = { path = "../libdd-dogstatsd-client" }
 libdd-tinybytes = { path = "../libdd-tinybytes" }
 
@@ -56,6 +58,7 @@ serde_json.workspace = true
 base64 = { workspace = true, features = ["std"] }
 spawn_worker = { path = "../spawn_worker" }
 zwohash = { workspace = true, default-features = true }
+semver.workspace = true
 sha2 = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["fs", "sync", "io-util", "signal", "rt-multi-thread", "time"] }
 tokio-util = { workspace = true, features = ["codec"] }

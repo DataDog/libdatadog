@@ -1,8 +1,8 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use alloc::fmt;
 use std::error;
+use std::fmt;
 use std::path::Path;
 use std::sync::LazyLock;
 

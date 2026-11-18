@@ -35,3 +35,15 @@ fn header_is_current() {
          `UPDATE_HEADER=1 cargo test -p libdd-ai-usage-ffi --test header`"
     );
 }
+
+#[test]
+fn the_header_states_the_abi_version_and_no_removed_function() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("include/ai_usage.h");
+    let header = fs::read_to_string(path).unwrap();
+    assert!(header.contains("uint32_t ddog_ai_usage_abi_version(void);"));
+    assert!(header.contains("#define ddog_ai_usage_ABI_VERSION 1"));
+    assert!(header.contains("ddog_ai_usage_batch_take_intake("));
+    // The function that took an interval changed its signature, so its name
+    // is gone: a stale binding fails to resolve it instead of calling it.
+    assert!(!header.contains("ddog_ai_usage_batch_take_series"));
+}

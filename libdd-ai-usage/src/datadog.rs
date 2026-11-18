@@ -2,11 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! The Datadog binding of the metric profiles: the series an exporter submits
-//! for a profile's points, and their DogStatsD encoding.
+//! to the Datadog API for a profile's points, and their DogStatsD encoding.
 //!
-//! - A metric keeps its name. A Counter becomes a Count; a Histogram becomes one Distribution
-//!   sample per input sample, plus `{name}.sum` and `{name}.count` Counts.
-//! - A Counter in `{nanoUSD}` is summed exactly and submitted in USD, divided by 10^9 once.
+//! - A metric keeps its name. A Counter becomes a Rate over [`DATADOG_RATE_INTERVAL_SECS`] (10 s):
+//!   its total over the submission divided by 10, submitted with `interval: 10`. A Histogram
+//!   becomes one Distribution sample per input sample, plus `{name}.sum` and `{name}.count` Rates.
+//! - Over DogStatsD a Counter is a `c` of its total, which the Agent stores as the same Rate (see
+//!   [`DATADOG_RATE_INTERVAL_SECS`]), and a Histogram sample is a `d`. Whichever transport carries
+//!   it, a metric is stored with one type and one interval.
+//! - A Counter is summed exactly, then divided once: by 10 for its Rate, and, in `{nanoUSD}`, by
+//!   10^9 as well, to be submitted in USD.
 //! - Every series carries `trajectory.profile:{id}/{version}`.
 //! - A tag key is the attribute name, except `service.name` and `host.name`, which become `service`
 //!   and `host`. Tag values are normalized as Datadog would, so that what is sent is what is
@@ -22,61 +27,88 @@ use crate::point::{Attributes, ErrorCode, Instrument, MetricError, MetricPoint, 
 pub(crate) const NANO_USD: &str = "{nanoUSD}";
 pub(crate) const NANO_USD_PER_USD: f64 = 1_000_000_000.0;
 
+/// The interval, in seconds, of every Rate series this binding submits to the
+/// Datadog API.
+///
+/// It is the Datadog Agent's DogStatsD flush interval. The Agent stores every
+/// DogStatsD count (`c`) as a RATE whose value is the count over its 10 s
+/// bucket divided by 10, with an interval of 10, and offers no way to keep it a
+/// COUNT. Datadog keeps one type and one interval per metric, whichever writer
+/// set it last, and reads every point of the metric with them (`as_count()`
+/// on a RATE multiplies each value by the interval). A Counter submitted to
+/// the API as anything else would make its metric's type flip between writers
+/// and its totals read up to 10 times too high or too low; submitted as a
+/// Rate over this interval, it registers exactly what DogStatsD through the
+/// Agent registers.
+pub const DATADOG_RATE_INTERVAL_SECS: u32 = 10;
+
 /// The type of a Datadog series.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum SeriesType {
-    Count,
+    /// A Counter: submitted to the API as a RATE (API v2 type 2) over
+    /// [`DATADOG_RATE_INTERVAL_SECS`], over DogStatsD as a `c`.
+    Rate,
+    /// A Histogram sample: a DISTRIBUTION, over DogStatsD a `d`.
     Distribution,
 }
 
 impl SeriesType {
+    /// The type's name in the Datadog API: `rate` or `distribution`.
     pub fn as_str(self) -> &'static str {
         match self {
-            SeriesType::Count => "count",
+            SeriesType::Rate => "rate",
             SeriesType::Distribution => "distribution",
+        }
+    }
+
+    /// The interval a series of this type is submitted with: 10 s for a
+    /// Rate, none for a Distribution.
+    pub fn interval(self) -> Option<u32> {
+        match self {
+            SeriesType::Rate => Some(DATADOG_RATE_INTERVAL_SECS),
+            SeriesType::Distribution => None,
         }
     }
 
     /// The DogStatsD metric type.
     fn dogstatsd_type(self) -> &'static str {
         match self {
-            SeriesType::Count => "c",
+            SeriesType::Rate => "c",
             SeriesType::Distribution => "d",
         }
     }
 }
 
-/// One series point to submit: a Count's value over the submission, or one
-/// Distribution sample. Tags are sorted `key:value` strings.
+/// One series point to submit to the Datadog API, exactly as it is to be
+/// submitted: its type, interval and value are what the Agent stores for the
+/// same points sent over DogStatsD, and a submitter must not change them.
+/// Tags are sorted `key:value` strings.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DatadogSeries {
     pub name: String,
     pub series_type: SeriesType,
+    /// A Rate's value: the Counter's total over the submission divided by
+    /// `interval`. A Distribution's: one sample.
     pub value: f64,
+    /// `Some(DATADOG_RATE_INTERVAL_SECS)` for a Rate, `None` for a
+    /// Distribution.
+    pub interval: Option<u32>,
     pub tags: Vec<String>,
 }
 
-impl DatadogSeries {
-    /// The DogStatsD line for this series point, without a trailing newline:
-    /// `name:value|c|#tag,tag` or `name:value|d|#tag,tag`.
-    pub fn to_dogstatsd(&self) -> String {
-        let mut line = String::with_capacity(
-            self.name.len() + 24 + self.tags.iter().map(|t| t.len() + 1).sum::<usize>(),
-        );
-        // Writing to a String cannot fail.
-        let _ = write!(
-            line,
-            "{}:{}|{}",
-            self.name,
-            self.value,
-            self.series_type.dogstatsd_type()
-        );
-        if !self.tags.is_empty() {
-            line.push_str("|#");
-            line.push_str(&self.tags.join(","));
-        }
-        line
+/// The DogStatsD line of one series point, without a trailing newline:
+/// `name:value|c|#tag,tag` or `name:value|d|#tag,tag`. A Counter's value is
+/// its total, not its Rate: the Agent divides it by its flush interval.
+fn dogstatsd_line(name: &str, series_type: SeriesType, value: f64, tags: &[String]) -> String {
+    let mut line =
+        String::with_capacity(name.len() + 24 + tags.iter().map(|t| t.len() + 1).sum::<usize>());
+    // Writing to a String cannot fail.
+    let _ = write!(line, "{name}:{value}|{}", series_type.dogstatsd_type());
+    if !tags.is_empty() {
+        line.push_str("|#");
+        line.push_str(&tags.join(","));
     }
+    line
 }
 
 /// The Datadog tag key of an attribute.
@@ -180,14 +212,16 @@ fn tags_of(
         .collect())
 }
 
-/// The series to submit for the points of one profile and one submission.
+/// The series to submit to the Datadog API for the points of one profile and
+/// one submission.
 ///
 /// Every point must be a metric of `profile`; a point of another profile is
-/// `metric_profile_mismatch`. Counts are summed per name and tag set; each
-/// Histogram sample is one Distribution point, and its `.sum` and `.count`
-/// Counts are summed in the order the samples were recorded. A `historical`
-/// submission, for a past time Datadog does not accept Distributions for,
-/// sends only the `.sum` and `.count` Counts.
+/// `metric_profile_mismatch`. Counters are summed per name and tag set and
+/// submitted as Rates over [`DATADOG_RATE_INTERVAL_SECS`]; each Histogram
+/// sample is one Distribution point, and its `.sum` and `.count` Rates are
+/// summed in the order the samples were recorded. A `historical` submission,
+/// for a past time Datadog does not accept Distributions for, sends only the
+/// `.sum` and `.count` Rates.
 ///
 /// The series are returned sorted by name, then tags, then value.
 pub fn datadog_series(
@@ -202,17 +236,25 @@ pub fn datadog_series(
 }
 
 /// Series of one submission, built from the points of any number of profiles
-/// and resources. Counts are summed by their final name and tag set, so
-/// carriers whose tags normalize to the same series give one Count, added
+/// and resources. Counters are summed by their final name and tag set, so
+/// carriers whose tags normalize to the same series give one Rate, added
 /// exactly before it is scaled.
 #[derive(Debug, Default)]
 pub(crate) struct SeriesBuilder {
     counts: BTreeMap<(String, Vec<String>), (Sum, bool)>,
-    series: Vec<DatadogSeries>,
+    samples: Vec<Sample>,
     distributions: Vec<Distribution>,
     distribution_index: BTreeMap<(String, Vec<String>), usize>,
     /// Keep each distribution's samples instead of one series per sample.
     pub(crate) keep_samples: bool,
+}
+
+/// One Distribution sample, submitted as its own series point.
+#[derive(Debug)]
+struct Sample {
+    name: String,
+    tags: Vec<String>,
+    value: f64,
 }
 
 /// One Distribution series: its samples' sum and count in recording order,
@@ -224,6 +266,55 @@ pub(crate) struct Distribution {
     sum: f64,
     count: u64,
     pub(crate) samples: Vec<f64>,
+}
+
+/// One series point of a submission, before it is encoded for a transport.
+enum Value {
+    /// A Counter's exact total over the submission, and whether it is in
+    /// `{nanoUSD}`.
+    Counter {
+        total: Sum,
+        nano_usd: bool,
+    },
+    Sample(f64),
+}
+
+impl Value {
+    fn series_type(&self) -> SeriesType {
+        match self {
+            Value::Counter { .. } => SeriesType::Rate,
+            Value::Sample(_) => SeriesType::Distribution,
+        }
+    }
+
+    /// The value DogStatsD sends: a Counter's total (in USD for
+    /// `{nanoUSD}`), or the sample.
+    fn total(&self) -> f64 {
+        match *self {
+            // One division of the exact sum, converted to a double once.
+            Value::Counter {
+                total,
+                nano_usd: true,
+            } => total.value() / NANO_USD_PER_USD,
+            Value::Counter { total, .. } => total.value(),
+            Value::Sample(value) => value,
+        }
+    }
+
+    /// The value the API takes: a Counter's total divided by the Rate
+    /// interval (and by 10^9 for `{nanoUSD}`) in one division of the exact
+    /// sum, or the sample.
+    fn api_value(&self) -> f64 {
+        let interval = f64::from(DATADOG_RATE_INTERVAL_SECS);
+        match *self {
+            Value::Counter {
+                total,
+                nano_usd: true,
+            } => total.value() / (NANO_USD_PER_USD * interval),
+            Value::Counter { total, .. } => total.value() / interval,
+            Value::Sample(value) => value,
+        }
+    }
 }
 
 impl SeriesBuilder {
@@ -269,17 +360,23 @@ impl SeriesBuilder {
         if self.keep_samples {
             held.samples.push(value);
         } else if !historical {
-            self.series.push(DatadogSeries {
+            self.samples.push(Sample {
                 name: held.name.clone(),
-                series_type: SeriesType::Distribution,
-                value,
                 tags: held.tags.clone(),
+                value,
             });
         }
     }
 
-    /// The Counts and the kept Distributions, unsorted.
+    /// The Rates and the kept Distributions, the Rates sorted.
     pub(crate) fn finish_parts(mut self) -> (Vec<DatadogSeries>, Vec<Distribution>) {
+        let distributions = self.close();
+        (self.api_series(), distributions)
+    }
+
+    /// Add the `.sum` and `.count` Counters of the Distributions, and take
+    /// the Distributions.
+    fn close(&mut self) -> Vec<Distribution> {
         let distributions = std::mem::take(&mut self.distributions);
         for held in &distributions {
             self.count(
@@ -295,7 +392,7 @@ impl SeriesBuilder {
                 false,
             );
         }
-        (self.sorted(), distributions)
+        distributions
     }
 
     pub(crate) fn add(
@@ -328,15 +425,14 @@ impl SeriesBuilder {
                 }
                 Instrument::Histogram => {
                     if !historical {
-                        self.series.push(DatadogSeries {
+                        self.samples.push(Sample {
                             name: point.name.clone(),
-                            series_type: SeriesType::Distribution,
-                            value: point.value,
                             tags: tags.clone(),
+                            value: point.value,
                         });
                     }
-                    // The sum adds doubles in recording order, like any Count
-                    // of a fractional value.
+                    // The sum adds doubles in recording order, like any
+                    // Counter of a fractional value.
                     self.count(
                         format!("{}.sum", point.name),
                         tags.clone(),
@@ -355,40 +451,64 @@ impl SeriesBuilder {
         Ok(())
     }
 
-    fn count(&mut self, name: String, tags: Vec<String>, increment: Sum, scaled: bool) {
+    fn count(&mut self, name: String, tags: Vec<String>, increment: Sum, nano_usd: bool) {
         let entry = self
             .counts
             .entry((name, tags))
-            .or_insert((Sum::Integer(0), scaled));
+            .or_insert((Sum::Integer(0), nano_usd));
         entry.0 = entry.0.add(increment);
     }
 
-    pub(crate) fn finish(self) -> Vec<DatadogSeries> {
-        self.finish_parts().0
+    /// The series to submit to the API.
+    pub(crate) fn finish(mut self) -> Vec<DatadogSeries> {
+        self.close();
+        self.api_series()
     }
 
-    fn sorted(mut self) -> Vec<DatadogSeries> {
-        for ((name, tags), (total, scaled)) in std::mem::take(&mut self.counts) {
-            let value = if scaled {
-                // One division of the exact sum, converted to a double once.
-                total.value() / NANO_USD_PER_USD
-            } else {
-                total.value()
-            };
-            self.series.push(DatadogSeries {
-                name,
-                series_type: SeriesType::Count,
-                value,
-                tags,
-            });
+    /// The DogStatsD lines of the submission, in the order of
+    /// [`SeriesBuilder::finish`].
+    pub(crate) fn finish_dogstatsd(mut self) -> Vec<String> {
+        self.close();
+        self.points()
+            .into_iter()
+            .map(|(name, tags, value)| {
+                dogstatsd_line(&name, value.series_type(), value.total(), &tags)
+            })
+            .collect()
+    }
+
+    fn api_series(self) -> Vec<DatadogSeries> {
+        self.points()
+            .into_iter()
+            .map(|(name, tags, value)| {
+                let series_type = value.series_type();
+                DatadogSeries {
+                    name,
+                    series_type,
+                    value: value.api_value(),
+                    interval: series_type.interval(),
+                    tags,
+                }
+            })
+            .collect()
+    }
+
+    /// Every point, sorted by name, then tags, then value.
+    fn points(mut self) -> Vec<(String, Vec<String>, Value)> {
+        let mut points: Vec<(String, Vec<String>, Value)> =
+            Vec::with_capacity(self.counts.len() + self.samples.len());
+        for ((name, tags), (total, nano_usd)) in std::mem::take(&mut self.counts) {
+            points.push((name, tags, Value::Counter { total, nano_usd }));
         }
-        self.series.sort_by(|a, b| {
-            a.name
-                .cmp(&b.name)
-                .then_with(|| a.tags.cmp(&b.tags))
-                .then_with(|| a.value.total_cmp(&b.value))
+        for Sample { name, tags, value } in self.samples {
+            points.push((name, tags, Value::Sample(value)));
+        }
+        points.sort_by(|a, b| {
+            a.0.cmp(&b.0)
+                .then_with(|| a.1.cmp(&b.1))
+                .then_with(|| a.2.total().total_cmp(&b.2.total()))
         });
-        self.series
+        points
     }
 }
 
@@ -408,33 +528,45 @@ mod tests {
 
     #[test]
     fn dogstatsd_lines() {
-        let series = DatadogSeries {
-            name: "trajectory.gen_ai.client.inference.usage.cost".into(),
-            series_type: SeriesType::Count,
-            value: 0.3,
-            tags: vec!["a:b".into(), "c:d".into()],
-        };
         assert_eq!(
-            series.to_dogstatsd(),
+            dogstatsd_line(
+                "trajectory.gen_ai.client.inference.usage.cost",
+                SeriesType::Rate,
+                0.3,
+                &["a:b".into(), "c:d".into()],
+            ),
             "trajectory.gen_ai.client.inference.usage.cost:0.3|c|#a:b,c:d"
         );
-        let series = DatadogSeries {
-            name: "gen_ai.client.inference.duration".into(),
-            series_type: SeriesType::Distribution,
-            value: 12.0,
-            tags: vec![],
-        };
+        let name = "gen_ai.client.inference.duration";
         assert_eq!(
-            series.to_dogstatsd(),
+            dogstatsd_line(name, SeriesType::Distribution, 12.0, &[]),
             "gen_ai.client.inference.duration:12|d"
         );
-        let tiny = DatadogSeries {
-            value: 1e-10,
-            ..series
-        };
         assert_eq!(
-            tiny.to_dogstatsd(),
+            dogstatsd_line(name, SeriesType::Distribution, 1e-10, &[]),
             "gen_ai.client.inference.duration:0.0000000001|d"
         );
+    }
+
+    #[test]
+    fn types_and_intervals() {
+        assert_eq!(SeriesType::Rate.as_str(), "rate");
+        assert_eq!(SeriesType::Rate.interval(), Some(10));
+        assert_eq!(SeriesType::Distribution.as_str(), "distribution");
+        assert_eq!(SeriesType::Distribution.interval(), None);
+    }
+
+    #[test]
+    fn a_nano_usd_total_is_divided_once() {
+        // 21 nano-USD: 2.1e-9 USD over DogStatsD, 2.1e-10 USD/s over the API,
+        // each one division of the exact sum. Dividing the USD total by 10
+        // again would round twice.
+        let value = Value::Counter {
+            total: Sum::Integer(21),
+            nano_usd: true,
+        };
+        assert_eq!(value.total(), 21.0 / 1e9);
+        assert_eq!(value.api_value(), 21.0 / 1e10);
+        assert_ne!(value.api_value(), (21.0 / 1e9) / 10.0);
     }
 }

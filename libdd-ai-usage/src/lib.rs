@@ -86,7 +86,9 @@ mod robustness_tests;
 mod usage;
 
 pub use batch::{Document, DocumentError, MetricBatch, Observation};
-pub use datadog::{DatadogSeries, SeriesType, datadog_series, datadog_tag_value};
+pub use datadog::{
+    DATADOG_RATE_INTERVAL_SECS, DatadogSeries, SeriesType, datadog_series, datadog_tag_value,
+};
 pub use deployment::{
     Carrier, DEPLOYMENT_ATTRIBUTES, deployment_attribute_carrier, is_deployment_value,
     with_deployment_attributes, with_deployment_attributes_json,

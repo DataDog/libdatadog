@@ -182,3 +182,49 @@ This library change does not enable PHP EVP emission or change flag evaluation
 results. PHP capture/admission/lifecycle integration and its end-to-end release
 validation are separate work. Native matched-build IPC/HTTP tests are not a
 substitute for PHP upgrade tests or Windows CI.
+
+## Dependent flags
+
+Rules may mix ordinary attribute conditions with `flagEvaluation` references. A reference
+compares the prerequisite's selected **variant key**, using `ONE_OF` or `NOT_ONE_OF` with a
+string array, including an empty array. References contain only a nonempty `key` and cannot
+also specify an `attribute`. Conditions run in authored order and short-circuit. A mismatch
+rejects the rule; a reached missing, disabled, malformed, or unassigned prerequisite fails
+the root with `DependencyEvaluationFailed`, preserving its cause.
+
+Each root evaluation uses one configuration, context, timestamp, and experimentation opt-out
+policy. Completed prerequisites are memoized only within that invocation. Cycles fail;
+`evaluatorParams.maxDependencyDepth` limits dependency edges (default 10, accepted range
+0–255). The limit is resolved only when a dependency condition executes. Invalid values,
+including explicit `null`, use the default of 10 and emit a debug diagnostic once per root
+evaluation that reaches a dependency. Missing or malformed parameter blocks also use 10.
+Cached results retain the deepest dependency visited, including rejected rules, so reuse
+from a deeper path cannot bypass the limit.
+
+`Configuration::eval_flag_with_trace` additionally returns unique prerequisite evaluation
+records, including prerequisites rejected by the depth limit and excluding the requested root.
+SDKs can log these evaluations even if a later condition rejects their rule. Only records
+marked `exposure_eligible` belong to the root's successful rule/split path; a failed root has
+no eligible prerequisite exposures. SDKs must
+also apply each assignment's `do_log`, consent, and ordinary exposure deduplication policy.
+SDKs must stage eligible exposures until the complete OpenFeature evaluation succeeds, including
+application hooks, and admit them to deduplication only at that point. Evaluation records remain
+reportable when a hook fails. The trace does not emit telemetry itself. SDKs should advertise dependent-flag support only
+after integrating and testing both evaluation and exposure reporting.
+
+The public trace result and prerequisite record types are non-exhaustive. Consumers that need
+to represent a failure before evaluation should use `EvaluationResult::from_error(error)`.
+Both public evaluation APIs emit the root's trace-level diagnostic exactly once, including
+early failures; returning a trace does not publish evaluation or exposure telemetry.
+
+Dependency evaluation stores selected-path edges in an arena and shares error suffixes
+through `EvaluationErrorSource` (backed by `Arc<EvaluationError>`), so retained state grows with the reached graph. Error
+cloning shares the suffix; comparison, debug formatting, display, and destruction walk
+it iteratively. Dependency errors serialize as `DEPENDENCY_EVALUATION_FAILED` with a
+flat `prerequisites` array (outermost first) and terminal `cause`. This replaces the
+nested dependency wire form; nondependency error wire forms stay unchanged. Both JSON
+and bincode round-trip maximum-depth errors on a 64 KiB thread stack.
+
+The `dependent-flags` benchmark includes 127- and 255-edge success and terminal-failure
+chains. It reports latency plus allocation requests and total bytes requested per
+evaluation, excluding configuration compilation and benchmark bookkeeping.
