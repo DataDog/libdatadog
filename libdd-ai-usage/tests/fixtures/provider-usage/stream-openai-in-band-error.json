@@ -1,0 +1,18 @@
+{
+  "description": "An OpenAI-compatible server can send {\"error\": ...} mid-stream and end the stream normally.",
+  "format": "openai_chat",
+  "operation_name": "chat",
+  "body": "data: {\"id\": \"c1\", \"model\": \"gpt-5-mini\", \"choices\": [{\"index\": 0, \"delta\": {\"content\": \"Hi\"}}]}\n\ndata: {\"error\": {\"type\": \"rate_limit_error\", \"message\": \"slow down\"}}\n\ndata: [DONE]\n\n",
+  "expected": {
+    "usage": null,
+    "response_model": "gpt-5-mini",
+    "service_tier": null,
+    "outcome": "failed",
+    "error_name": "rate_limit_error",
+    "error": {
+      "code": null,
+      "message": "slow down",
+      "name": "rate_limit_error"
+    }
+  }
+}

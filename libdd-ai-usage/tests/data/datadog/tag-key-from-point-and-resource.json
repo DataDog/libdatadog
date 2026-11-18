@@ -26,8 +26,9 @@
   "expected_series": [
     {
       "name": "gen_ai.client.inference.usage.input_tokens",
-      "type": "count",
-      "value": 12,
+      "type": "rate",
+      "interval": 10,
+      "value": 1.2,
       "tags": [
         "gen_ai.operation.name:chat",
         "gen_ai.provider.name:exampleai",

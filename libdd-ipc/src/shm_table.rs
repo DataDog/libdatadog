@@ -54,14 +54,13 @@
 //!
 //! ## Double-buffering
 //! `ShmHeader::active_idx` tells which bucket PHP workers write to.
-//! The sidecar swaps it, waits for `in_flight` to reach 0, then reads + clears.
+//! The sidecar swaps it, exclusively claims an idle bucket, then reads + clears.
 //!
 //! A forced drain (a flush on request, such as on SIGTERM, or retiring a table) also takes the
-//! active bucket, without swapping it, so workers keep writing while it is cleared. It is a
-//! best-effort salvage, not a consistent snapshot. A writer that matched a slot before the drain
-//! cleared it can still record into it afterwards, and the value then goes to whichever key
-//! claims the slot next, if any. A key written while the drain resets the string pool can have
-//! its strings overwritten by later keys. Only the few values caught in the race are affected.
+//! active bucket, without swapping it. Its `in_flight` word is -1 while a drain owns it: writers
+//! cannot enter until the slots and string pool have both been reset. A busy bucket is deferred
+//! if its writers do not finish within the flush budget; it is never cleared underneath them.
+//! Writers also have a bounded wait, allowing callers to fall back to IPC during a forced drain.
 //!
 //! ## Table growth
 //! When the active bucket is nearly full the sidecar:
@@ -79,7 +78,7 @@ use std::hint;
 use std::io;
 use std::marker::PhantomData;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicI64, AtomicU8, AtomicU32, AtomicU64, Ordering::*, fence};
+use std::sync::atomic::{AtomicI64, AtomicU8, AtomicU32, AtomicU64, Ordering::*};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -87,7 +86,7 @@ use crate::platform::{FileBackedHandle, MappedMem, NamedShmHandle};
 pub(crate) use crate::rate_limiter::ShmSafe;
 
 /// Version of everything here that is not a schema's: the header and the bucket regions.
-pub(crate) const SHM_VERSION: u32 = 5;
+pub(crate) const SHM_VERSION: u32 = 6;
 
 pub(crate) const SLOT_EMPTY: u64 = 0;
 pub(crate) const SLOT_INIT: u64 = u64::MAX;
@@ -103,8 +102,10 @@ pub(crate) const SLOT_INIT: u64 = u64::MAX;
 /// holds and silently drops inputs with new keys until the next bucket swap.
 pub const RELOAD_FILL_RATIO: f64 = 0.80;
 
-/// Max iterations when waiting for `in_flight` to reach zero (~100 µs).
+/// Max attempts to exclusively claim a bucket for flushing. A stalled worker must not block
+/// the sidecar indefinitely; exhausting the budget defers the bucket instead of clearing it.
 const MAX_FLUSH_WAIT_ITERS: u32 = 100_000;
+const BUCKET_DRAINING: i64 = -1;
 /// Spin iterations before yielding to the OS scheduler.
 const YIELD_AFTER_SPINS: u32 = 8;
 /// Max iterations `add` spends waiting on slots that are marked as being written. One
@@ -201,6 +202,7 @@ pub(crate) struct ShmEntry<S: Schema> {
 #[repr(C)]
 pub(crate) struct ShmBucketHeader<S: Schema> {
     pub(crate) start_nanos: AtomicU64,
+    /// Nonnegative writer count, or [`BUCKET_DRAINING`] while a flusher owns the bucket.
     pub(crate) in_flight: AtomicI64,
     /// Room taken under a limit on new keys, see [`ShmBucketHeader::take_room`].
     pub(crate) room: AtomicU64,
@@ -257,8 +259,7 @@ impl<S: Schema> ShmBucketHeader<S> {
     }
 
     /// Replace `(taken, pending)` with what `update` makes of it, or return the value it
-    /// refused. Updates saturate, since a drain resets the word even under a writer that missed
-    /// its deadline.
+    /// refused. Updates saturate because the shared word can be changed by an untrusted peer.
     ///
     /// A loop of its own, as `fetch_update` is deprecated in favor of `try_update`, which the
     /// MSRV does not have yet.
@@ -451,6 +452,24 @@ pub(crate) struct Bucket<'a, S: Schema> {
     pub(crate) pool: &'a Pool,
 }
 
+/// A writer keeps the bucket alive through both key publication and value recording, including
+/// unwinding. A drain claims the same atomic word exclusively before reusing any string bytes.
+struct BucketWriter<'a>(&'a AtomicI64);
+
+impl Drop for BucketWriter<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Release);
+    }
+}
+
+struct BucketDrain<'a>(&'a AtomicI64);
+
+impl Drop for BucketDrain<'_> {
+    fn drop(&mut self) {
+        self.0.store(0, Release);
+    }
+}
+
 /// A bucket's string pool.
 ///
 /// Comparisons and copies use bulk byte accesses over ranges checked by [`pool_slice`].
@@ -459,8 +478,8 @@ pub(crate) struct Bucket<'a, S: Schema> {
 /// Reading through a `&[u8]` while another process may write the same bytes is technically
 /// undefined behaviour. We accept it because the protocol keeps published strings stable: a
 /// writer copies a string in before publishing its key, and nothing overwrites it until the
-/// bucket is drained. The exceptions are a forced flush racing an `add`, a stalled writer, or
-/// a corrupt peer.
+/// bucket is exclusively claimed for draining. A stalled writer defers that drain; only a
+/// corrupt peer can ignore the protocol and overwrite published strings.
 ///
 /// There is no cheap sound alternative: Rust has no atomic memcpy, `memcmp` races the same way
 /// under C's memory model, and per-byte atomic loads are too slow for `add`. A race can only
@@ -715,9 +734,10 @@ impl<S: Schema> ShmTable<S> {
         }
     }
 
-    /// Submit an input to shared memory. Returns false if no current mapping is available.
+    /// Submit an input to shared memory. Returns false if no current writable mapping is
+    /// available, including a forced drain that outlasts the writer's wait budget.
     pub fn add(&self, input: &S::Input<'_>) -> bool {
-        self.with_current(|mem| mem.add(input)).is_some()
+        self.with_current(|mem| mem.add(input)).unwrap_or(false)
     }
 
     /// Return `(used_slots, total_slots)` for the active bucket, or `(0, 0)` if unavailable.
@@ -867,33 +887,42 @@ impl<S: Schema> ShmTableMapping<S> {
     }
 
     /// Add an input to the currently-active bucket.  Thread-safe.
-    pub(crate) fn add(&self, input: &S::Input<'_>) {
+    pub(crate) fn add(&self, input: &S::Input<'_>) -> bool {
         self.with_active_bucket(|bucket| {
             let mut waits = 0;
             Self::insert(bucket, input, None, &mut waits);
-        });
+        })
+        .is_some()
     }
 
-    /// Run `f` on the currently-active bucket, counted among its writers so that a drain waits
-    /// for it to finish.
-    pub(crate) fn with_active_bucket<R>(&self, f: impl FnOnce(&Bucket<'_, S>) -> R) -> R {
+    /// Run `f` on the currently-active bucket, counted among its writers so that a drain cannot
+    /// clear it. Return `None` if a drain does not release it within the bounded writer wait.
+    pub(crate) fn with_active_bucket<R>(&self, f: impl FnOnce(&Bucket<'_, S>) -> R) -> Option<R> {
         let hdr = self.header();
-
-        // Claim in-flight on the active bucket, with double-check against swap.
-        let active = hdr.active_idx.load(Acquire);
-        let mut bucket = self.bucket(active);
-        bucket.hdr.in_flight.fetch_add(1, Acquire);
-
-        let active2 = hdr.active_idx.load(Acquire);
-        if (active ^ active2) & 1 != 0 {
-            bucket.hdr.in_flight.fetch_sub(1, Release);
-            bucket = self.bucket(active2);
-            bucket.hdr.in_flight.fetch_add(1, Acquire);
+        let mut waits = 0;
+        let mut deadline = None;
+        loop {
+            let active = hdr.active_idx.load(Acquire);
+            let bucket = self.bucket(active);
+            let writers = bucket.hdr.in_flight.load(Relaxed);
+            if let Some(next) = writers.checked_add(1).filter(|_| writers >= 0)
+                && bucket
+                    .hdr
+                    .in_flight
+                    .compare_exchange_weak(writers, next, Acquire, Relaxed)
+                    .is_ok()
+            {
+                let _writer = BucketWriter(&bucket.hdr.in_flight);
+                // Repeat the whole admission if a swap intervened, including after joining
+                // the second bucket: a second swap must not leave an uncounted writer.
+                if (active ^ hdr.active_idx.load(Acquire)) & 1 == 0 {
+                    return Some(f(&bucket));
+                }
+            }
+            if !wait_for_writer(&mut waits, &mut deadline) {
+                return None;
+            }
         }
-
-        let result = f(&bucket);
-        bucket.hdr.in_flight.fetch_sub(1, Release);
-        result
     }
 
     /// Record `input` into the slot holding its key, claiming a free slot when the key is new.
@@ -1009,8 +1038,8 @@ impl<S: Schema> ShmTableMapping<S> {
 
     /// Drain the inactive bucket, or both buckets if `force` is true.
     ///
-    /// A forced drain races with workers still writing to the active bucket; see the module docs
-    /// on double-buffering.
+    /// A forced drain also exclusively claims the active bucket. Writers wait briefly or let
+    /// their caller fall back to IPC; a busy bucket is deferred rather than cleared unsafely.
     ///
     /// `drain_entry` takes one occupied slot's value and turns it into a group, or `None` to
     /// leave it out; see [`ShmTableMapping::drain_bucket`].
@@ -1069,12 +1098,19 @@ impl<S: Schema> ShmTableMapping<S> {
     ) -> Option<DrainedBucket<T>> {
         let bucket = self.bucket(bucket_idx);
 
-        // Wait for in-flight writers (bounded to tolerate dead workers).
-        // The intermediate loads only need Relaxed; a single fence(Acquire) after
-        // the loop synchronizes with the Release in each writer's in_flight.fetch_sub,
-        // and covers all subsequent SHM reads in this function and callees.
+        // Claim the bucket only after its last writer leaves. The claim also excludes writers
+        // that arrive during a forced drain, including between clearing slots and resetting the
+        // pool. On timeout leave everything intact: a descheduled writer can still resume.
         let mut spins = 0u32;
-        while bucket.hdr.in_flight.load(Relaxed) != 0 && spins < MAX_FLUSH_WAIT_ITERS {
+        while bucket
+            .hdr
+            .in_flight
+            .compare_exchange(0, BUCKET_DRAINING, Acquire, Relaxed)
+            .is_err()
+        {
+            if spins >= MAX_FLUSH_WAIT_ITERS {
+                return None;
+            }
             spins += 1;
             if spins.is_multiple_of(YIELD_AFTER_SPINS) {
                 thread::yield_now();
@@ -1082,7 +1118,7 @@ impl<S: Schema> ShmTableMapping<S> {
                 hint::spin_loop();
             }
         }
-        fence(Acquire);
+        let _drain = BucketDrain(&bucket.hdr.in_flight);
 
         let bucket_start_ts = bucket.hdr.start_nanos.load(Relaxed);
         // One allowance for the whole bucket, not per string; see `pool_string`.
@@ -1240,6 +1276,7 @@ mod tests {
                 let mut waits = 0;
                 ShmTableMapping::insert(bucket, &input, limit, &mut waits)
             })
+            .unwrap()
         };
         assert!(matches!(insert(3, Some(1)), Insert::Done));
         assert!(matches!(insert(5, Some(1)), Insert::OverLimit));

@@ -1,0 +1,18 @@
+{
+  "description": "response.incomplete is a terminal event: the provider ended the response and billed it.",
+  "format": "openai_responses",
+  "operation_name": "chat",
+  "body": "event: response.created\ndata: {\"type\": \"response.created\", \"response\": {\"model\": \"gpt-5\", \"status\": \"in_progress\"}}\n\nevent: response.output_text.delta\ndata: {\"type\": \"response.output_text.delta\", \"delta\": \"text\"}\n\nevent: response.incomplete\ndata: {\"type\": \"response.incomplete\", \"response\": {\"model\": \"gpt-5\", \"usage\": {\"input_tokens\": 100, \"output_tokens\": 4096}}}\n\n",
+  "expected": {
+    "usage": {
+      "input_tokens": 100,
+      "input_basis": "includes_cache",
+      "output_tokens": 4096,
+      "output_basis": "includes_reasoning"
+    },
+    "response_model": "gpt-5",
+    "service_tier": null,
+    "outcome": "completed",
+    "error_name": null
+  }
+}

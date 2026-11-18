@@ -7,6 +7,9 @@ use core::time::Duration;
 
 use thiserror::Error;
 
+#[cfg(not(target_arch = "wasm32"))]
+pub type HttpClient = GenericHttpClient<crate::connector::Connector>;
+
 // --- Portable types (available on all platforms including wasm) ---
 
 #[derive(Debug, Clone, Copy)]

@@ -3,16 +3,17 @@
 
 use core::borrow::Borrow;
 
-use libdd_trace_model::ValueArrayMut;
+use libdd_trace_model::{
+    AttributeValue, AttributesMut, SpanMut, TraceChunkMut, TraceText, ValueArrayMut, ValueMapMut,
+    ValueTypes,
+};
 use libdd_trace_protobuf::pb::{
     self, attribute_any_value::AttributeAnyValueType,
     attribute_array_value::AttributeArrayValueType,
 };
 use libdd_trace_utils::span::{
-    SpanText, TraceData,
-    v1::{self, AttributeValue},
+    SpanText, TraceData, v1,
     v04::{self, AttributeAnyValue, AttributeArrayValue},
-    vec_map::VecMap,
 };
 
 use crate::{
@@ -25,7 +26,8 @@ use crate::{
         quantize_redis_string, remove_all_redis_args,
     },
     replacer::{
-        replace_chunk_tags_v1, replace_span_tags, replace_span_tags_v1, replace_span_tags_v04,
+        apply_resource, is_hidden_tag, replace_chunk_tags, replace_span_tags,
+        replace_span_tags_trait, replace_span_tags_v04, with_decimal,
     },
     sql::obfuscate_sql_resource,
 };
@@ -184,14 +186,18 @@ pub fn obfuscate_span_event(event: &mut pb::SpanEvent, config: &ObfuscationConfi
             if !should_obfuscate_cc_key(k, config) {
                 continue;
             }
-            let str_value = match v.r#type() {
+            let is_card = match v.r#type() {
                 pb::attribute_any_value::AttributeAnyValueType::StringValue => {
-                    v.string_value.clone()
+                    is_card_number(&v.string_value, config.credit_cards.luhn)
                 }
                 pb::attribute_any_value::AttributeAnyValueType::BoolValue => continue, /* Booleans can't be credit cards */
-                pb::attribute_any_value::AttributeAnyValueType::IntValue => v.int_value.to_string(),
+                pb::attribute_any_value::AttributeAnyValueType::IntValue => {
+                    with_decimal(v.int_value, |s| is_card_number(s, config.credit_cards.luhn))
+                }
                 pb::attribute_any_value::AttributeAnyValueType::DoubleValue => {
-                    v.double_value.to_string()
+                    with_decimal(v.double_value, |s| {
+                        is_card_number(s, config.credit_cards.luhn)
+                    })
                 }
                 pb::attribute_any_value::AttributeAnyValueType::ArrayValue => {
                     if let Some(array_value) = v.array_value.as_mut() {
@@ -200,7 +206,7 @@ pub fn obfuscate_span_event(event: &mut pb::SpanEvent, config: &ObfuscationConfi
                     continue;
                 }
             };
-            if is_card_number(&str_value, config.credit_cards.luhn) {
+            if is_card {
                 v.string_value = "?".to_string();
                 v.r#type = AttributeAnyValueType::StringValue.into();
             }
@@ -210,19 +216,23 @@ pub fn obfuscate_span_event(event: &mut pb::SpanEvent, config: &ObfuscationConfi
 
 fn obfuscate_attribute_array(v: &mut pb::AttributeArray, config: &ObfuscationConfig) {
     for elt in &mut v.values {
-        let string_value = match elt.r#type() {
+        let is_card = match elt.r#type() {
             pb::attribute_array_value::AttributeArrayValueType::StringValue => {
-                elt.string_value.clone()
+                is_card_number(&elt.string_value, config.credit_cards.luhn)
             }
             pb::attribute_array_value::AttributeArrayValueType::BoolValue => continue, /* Booleans can't be credit cards */
             pb::attribute_array_value::AttributeArrayValueType::IntValue => {
-                elt.int_value.to_string()
+                with_decimal(elt.int_value, |s| {
+                    is_card_number(s, config.credit_cards.luhn)
+                })
             }
             pb::attribute_array_value::AttributeArrayValueType::DoubleValue => {
-                elt.double_value.to_string()
+                with_decimal(elt.double_value, |s| {
+                    is_card_number(s, config.credit_cards.luhn)
+                })
             }
         };
-        if is_card_number(&string_value, config.credit_cards.luhn) {
+        if is_card {
             elt.string_value = "?".to_string();
             elt.r#type = AttributeArrayValueType::StringValue.into();
         }
@@ -381,70 +391,57 @@ fn obfuscate_v04_attribute_value<T: TraceData>(
     let is_card = match value {
         AttributeArrayValue::String(s) => is_card_number(as_str(s), config.credit_cards.luhn),
         AttributeArrayValue::Boolean(_) => false,
-        AttributeArrayValue::Integer(i) => is_card_number(i.to_string(), config.credit_cards.luhn),
-        AttributeArrayValue::Double(d) => is_card_number(d.to_string(), config.credit_cards.luhn),
+        AttributeArrayValue::Integer(i) => {
+            with_decimal(*i, |s| is_card_number(s, config.credit_cards.luhn))
+        }
+        AttributeArrayValue::Double(d) => {
+            with_decimal(*d, |s| is_card_number(s, config.credit_cards.luhn))
+        }
     };
     if is_card {
         *value = AttributeArrayValue::String(T::Text::from_static_str("?"));
     }
 }
 
-/// Obfuscates the `attributes` common to every span of a [`v1::TraceChunk`].
+/// Obfuscates the `attributes` common to every span of a trace chunk.
 ///
 /// Chunk-level attributes are merged into each emitted span at encode time (see
 /// `collect_attrs_v1` in the agentless encoder), so a card number or a tag matched by a
 /// replacement rule stored there would otherwise reach the intake unredacted even though the
-/// equivalent span-level tag is scrubbed by [`obfuscate_v1_span`]. Only the generic credit-card
+/// equivalent span-level tag is scrubbed by [`obfuscate_span`]. Only the generic credit-card
 /// and tag-replace handling applies here: the per-span-type obfuscators (URL, SQL, redis, ...)
 /// only make sense on a span's own tags.
+///
+/// Like the Datadog Agent, only the attributes are scanned: the chunk fields (e.g. the origin)
+/// are left untouched.
+pub fn obfuscate_chunk_attributes<C: TraceChunkMut>(chunk: &mut C, config: &ObfuscationConfig) {
+    obfuscate_attributes_credit_cards(chunk, config);
+    replace_chunk_tags(chunk, &config.tag_replace_rules);
+}
+
+/// Obfuscates the `attributes` common to every span of a [`v1::TraceChunk`], see
+/// [`obfuscate_chunk_attributes`].
 pub fn obfuscate_v1_chunk_attributes<T: TraceData>(
     chunk: &mut v1::TraceChunk<T>,
     config: &ObfuscationConfig,
 ) {
-    if config.credit_cards.enabled {
-        // `origin` is a dedicated field (emitted as `_dd.origin`), not part of `attributes`, so
-        // it needs its own check alongside the generic attribute loop below.
-        if is_card_number(chunk.origin.borrow(), config.credit_cards.luhn) {
-            chunk.origin = T::Text::from_static_str("?");
-        }
-        chunk
-            .attributes
-            .iter_mut()
-            .filter(|(key, _)| should_obfuscate_cc_key(as_str(key), config))
-            .for_each(|(key, value)| {
-                obfuscate_v1_attribute_credit_card(value, config, as_str(key));
-            });
-    }
-    replace_chunk_tags_v1(chunk, &config.tag_replace_rules);
+    obfuscate_chunk_attributes(chunk, config);
 }
 
-/// Obfuscates the fields of a [`v1::Span`].
+/// Obfuscates a span through the trace model traits.
 ///
-/// Mirrors [`obfuscate_v04_span`], but targets the v1 span representation, whose tags live in a
-/// single typed `attributes` map instead of split `meta`/`metrics` maps.
-pub fn obfuscate_v1_span<T: TraceData>(span: &mut v1::Span<T>, config: &ObfuscationConfig) {
-    for event in &mut span.span_events {
-        obfuscate_v1_span_event(event, config);
+/// Tags live in a single typed attribute map, unlike the split `meta`/`metrics` maps of
+/// [`obfuscate_v04_span`]. Like the Datadog Agent, the credit-card scan only covers the
+/// attributes, not the dedicated fields (e.g. `component`).
+pub fn obfuscate_span<S: SpanMut>(span: &mut S, config: &ObfuscationConfig) {
+    for event in span.span_events_mut() {
+        obfuscate_attributes_credit_cards(event, config);
     }
+    obfuscate_attributes_credit_cards(span, config);
 
-    if config.credit_cards.enabled {
-        // `component` is a dedicated field (a plain meta tag in v0.4, thus already scanned
-        // there), not part of `attributes`, so it needs its own check alongside the generic
-        // attribute loop below.
-        if is_card_number(span.component.borrow(), config.credit_cards.luhn) {
-            span.component = T::Text::from_static_str("?");
-        }
-        span.attributes
-            .iter_mut()
-            .filter(|(key, _)| should_obfuscate_cc_key(as_str(key), config))
-            .for_each(|(key, value)| {
-                obfuscate_v1_attribute_credit_card(value, config, as_str(key));
-            });
-    }
-
-    match as_str(&span.r#type) {
-        "web" | "http" if !span.attributes.is_empty() => {
-            apply_v1_string_attr(&mut span.attributes, TAG_HTTPURL, |u| {
+    match span.typ() {
+        "web" | "http" => {
+            apply_string_attr(span, TAG_HTTPURL, |u| {
                 obfuscate_url(
                     u,
                     config.http.remove_query_string,
@@ -453,112 +450,104 @@ pub fn obfuscate_v1_span<T: TraceData>(span: &mut v1::Span<T>, config: &Obfuscat
             });
         }
         "memcached" if config.memcached.enabled => {
-            apply_v1_string_attr(&mut span.attributes, TAG_MEMCACHED_COMMAND, |c| {
+            apply_string_attr(span, TAG_MEMCACHED_COMMAND, |c| {
                 obfuscate_memcached(c, config.memcached.keep_command)
             });
         }
         "redis" => {
-            apply(&mut span.resource, quantize_redis);
-            if config.redis.enabled && !span.attributes.is_empty() {
+            apply_resource(span, quantize_redis);
+            if config.redis.enabled {
                 if config.redis.remove_all_args {
-                    apply_v1_string_attr(
-                        &mut span.attributes,
-                        TAG_REDIS_RAW_COMMAND,
-                        obfuscate_redis_remove_all_args,
-                    );
+                    apply_string_attr(span, TAG_REDIS_RAW_COMMAND, obfuscate_redis_remove_all_args);
                 } else {
-                    apply_v1_string_attr(
-                        &mut span.attributes,
-                        TAG_REDIS_RAW_COMMAND,
-                        obfuscate_redis,
-                    );
+                    apply_string_attr(span, TAG_REDIS_RAW_COMMAND, obfuscate_redis);
                 }
             }
         }
         "valkey" => {
-            apply(&mut span.resource, quantize_redis);
-            if config.valkey.enabled && !span.attributes.is_empty() {
+            apply_resource(span, quantize_redis);
+            if config.valkey.enabled {
                 if config.valkey.remove_all_args {
-                    apply_v1_string_attr(
-                        &mut span.attributes,
+                    apply_string_attr(
+                        span,
                         TAG_VALKEY_RAW_COMMAND,
                         obfuscate_redis_remove_all_args,
                     );
                 } else {
-                    apply_v1_string_attr(
-                        &mut span.attributes,
-                        TAG_VALKEY_RAW_COMMAND,
-                        obfuscate_redis,
-                    );
+                    apply_string_attr(span, TAG_VALKEY_RAW_COMMAND, obfuscate_redis);
                 }
             }
         }
-        "sql" | "cassandra" if !span.resource.borrow().is_empty() => {
+        "sql" | "cassandra" if !span.resource().is_empty() => {
             let dbms: DbmsKind = span
-                .attributes
-                .get(TAG_DBMS)
-                .and_then(|v| match v {
-                    AttributeValue::String(s) => Some(as_str(s)),
-                    _ => None,
-                })
+                .attribute_str(TAG_DBMS)
                 .and_then(|dbms| dbms.try_into().ok())
                 .unwrap_or_default();
             // On failure the resource is discarded for the Agent's marker rather than forwarded
             // as sent; see `obfuscate_sql_resource`.
-            let query = obfuscate_sql_resource(as_str(&span.resource), &config.sql, dbms);
-            span.resource = T::Text::from_owned(query.clone());
-            span.attributes.insert(
-                T::Text::from_static_str(TAG_SQLQUERY),
-                AttributeValue::String(T::Text::from_owned(query)),
+            let query = obfuscate_sql_resource(span.resource(), &config.sql, dbms);
+            // The resource and the `sql.query` attribute share one allocation: `TraceText`
+            // clones share the buffer for reference-counted text types (`BytesString`),
+            // while `String` copies, exactly like the `query.clone()` this replaces.
+            let obfuscated = S::Text::from(query);
+            span.set_resource(obfuscated.clone());
+            span.set_attribute(
+                S::Text::from_static(TAG_SQLQUERY),
+                AttributeValue::String(obfuscated),
             );
         }
         "elasticsearch" if config.elasticsearch.config().enabled => {
-            apply_v1_string_attr(&mut span.attributes, TAG_ELASTIC_BODY, |q| {
+            apply_string_attr(span, TAG_ELASTIC_BODY, |q| {
                 config.elasticsearch.obfuscate_opt(q)
             });
         }
         "opensearch" if config.opensearch.config().enabled => {
-            apply_v1_string_attr(&mut span.attributes, TAG_OPEN_SEARCH_BODY, |q| {
+            apply_string_attr(span, TAG_OPEN_SEARCH_BODY, |q| {
                 config.opensearch.obfuscate_opt(q)
             });
         }
         "mongodb" if config.mongodb.config().enabled => {
-            apply_v1_string_attr(&mut span.attributes, TAG_MONGO_DBQUERY, |q| {
-                config.mongodb.obfuscate_opt(q)
-            });
+            apply_string_attr(span, TAG_MONGO_DBQUERY, |q| config.mongodb.obfuscate_opt(q));
         }
         _ => {}
     }
 
-    replace_span_tags_v1(span, &config.tag_replace_rules);
+    replace_span_tags_trait(span, &config.tag_replace_rules);
 }
 
-/// Runs an obfuscator over a `String`-valued v1 attribute, writing back through
-/// [`SpanText::from_owned`] only on a hit. Non-`String` values and missing keys are left
-/// untouched.
-fn apply_v1_string_attr<T: TraceData>(
-    attrs: &mut VecMap<T::Text, AttributeValue<T>>,
+/// Obfuscates the fields of a [`v1::Span`], see [`obfuscate_span`].
+pub fn obfuscate_v1_span<T: TraceData>(span: &mut v1::Span<T>, config: &ObfuscationConfig) {
+    obfuscate_span(span, config);
+}
+
+/// Runs an obfuscator over a `String`-valued attribute, writing it back only on a hit. Other
+/// values and missing keys are left untouched.
+fn apply_string_attr<A: AttributesMut>(
+    attrs: &mut A,
     key: &str,
     f: impl FnOnce(&str) -> Option<String>,
 ) {
-    if let Some(AttributeValue::String(value)) = attrs.get_mut(key) {
-        apply(value, f);
+    if let Some(AttributeValue::String(value)) = attrs.attribute_mut(key)
+        && let Some(new) = f(value.as_str())
+    {
+        *value = A::Text::from(new);
     }
 }
 
-/// Obfuscates credit-card numbers inside the attributes of a [`v1::SpanEvent`].
-fn obfuscate_v1_span_event<T: TraceData>(event: &mut v1::SpanEvent<T>, config: &ObfuscationConfig) {
+/// Obfuscates credit-card numbers in the attributes of a span, span event or chunk.
+fn obfuscate_attributes_credit_cards<A: AttributesMut>(attrs: &mut A, config: &ObfuscationConfig) {
     if !config.credit_cards.enabled {
         return;
     }
-    event
-        .attributes
-        .iter_mut()
-        .filter(|(key, _)| should_obfuscate_cc_key(as_str(key), config))
-        .for_each(|(key, value)| obfuscate_v1_attribute_credit_card(value, config, as_str(key)));
+    attrs.retain_attributes(|key, value| {
+        if should_obfuscate_cc_key(key, config) {
+            obfuscate_attribute_credit_card(value, config, key);
+        }
+        true
+    });
 }
 
-/// Obfuscates a single [`v1::AttributeValue`] in place if it looks like a credit-card number.
+/// Obfuscates a single [`AttributeValue`] in place if it looks like a credit-card number.
 ///
 /// `String`, `Int`, and `Float` values are checked (stringifying the latter two); on a hit the
 /// value becomes `String("?")`, mirroring [`obfuscate_v04_attribute_value`]. `Array` elements and
@@ -570,37 +559,42 @@ fn obfuscate_v1_span_event<T: TraceData>(event: &mut v1::SpanEvent<T>, config: &
 /// a `payment` `KeyValueList` attribute. `should_obfuscate_cc_key`'s exemption list is keyed by
 /// that final flattened name, not the immediate child key, so nested entries must check against
 /// the accumulated path rather than their own key alone.
-fn obfuscate_v1_attribute_credit_card<T: TraceData>(
-    value: &mut AttributeValue<T>,
+fn obfuscate_attribute_credit_card<V: ValueTypes>(
+    value: &mut AttributeValue<V>,
     config: &ObfuscationConfig,
     path: &str,
 ) {
     match value {
         AttributeValue::String(s) => {
-            if is_card_number(as_str(s), config.credit_cards.luhn) {
-                *s = T::Text::from_static_str("?");
+            if is_card_number(s.as_str(), config.credit_cards.luhn) {
+                *s = V::Text::from_static("?");
             }
         }
         AttributeValue::Int(i) => {
-            if is_card_number(i.to_string(), config.credit_cards.luhn) {
-                *value = AttributeValue::String(T::Text::from_static_str("?"));
+            if with_decimal(*i, |s| is_card_number(s, config.credit_cards.luhn)) {
+                *value = AttributeValue::String(V::Text::from_static("?"));
             }
         }
         AttributeValue::Float(f) => {
-            if is_card_number(f.to_string(), config.credit_cards.luhn) {
-                *value = AttributeValue::String(T::Text::from_static_str("?"));
+            if with_decimal(*f, |s| is_card_number(s, config.credit_cards.luhn)) {
+                *value = AttributeValue::String(V::Text::from_static("?"));
             }
         }
         AttributeValue::Array(values) => {
-            for v in values.iter_mut() {
-                obfuscate_v1_attribute_credit_card(v, config, path);
+            for v in ValueArrayMut::iter_mut(values) {
+                obfuscate_attribute_credit_card(v, config, path);
             }
         }
         AttributeValue::KeyValueList(map) => {
-            for (k, v) in map.iter_mut() {
-                let child_path = format!("{path}.{}", as_str(k));
+            for (k, v) in ValueMapMut::iter_mut(map) {
+                // Values that cannot hold a card number are skipped before the child path is
+                // built, since building it allocates.
+                if matches!(v, AttributeValue::Bool(_) | AttributeValue::Bytes(_)) {
+                    continue;
+                }
+                let child_path = format!("{path}.{k}");
                 if should_obfuscate_cc_key(&child_path, config) {
-                    obfuscate_v1_attribute_credit_card(v, config, &child_path);
+                    obfuscate_attribute_credit_card(v, config, &child_path);
                 }
             }
         }
@@ -649,7 +643,7 @@ fn should_obfuscate_cc_key(key: &str, config: &ObfuscationConfig) -> bool {
 		{return false;}
 		_=> {}
 	}
-    if key.starts_with('_') {
+    if is_hidden_tag(key) {
         return false;
     }
     if config.credit_cards.keep_values.contains(key) {
@@ -1221,13 +1215,13 @@ mod v04_tests {
 
 #[cfg(test)]
 mod v1_tests {
-    use super::obfuscate_v1_span;
+    use super::{obfuscate_v1_chunk_attributes, obfuscate_v1_span};
     use crate::obfuscation_config::{
         CreditCardConfig, HttpConfig, MemcachedConfig, ObfuscationConfig, RedisConfig,
     };
     use crate::replacer;
     use libdd_tinybytes::BytesString;
-    use libdd_trace_utils::span::v1::{AttributeValue, SpanBytes, SpanEventBytes};
+    use libdd_trace_utils::span::v1::{AttributeValue, SpanBytes, SpanEventBytes, TraceChunkBytes};
 
     fn bs(s: &str) -> BytesString {
         BytesString::from_string(s.to_string())
@@ -1315,12 +1309,18 @@ mod v1_tests {
         let mut span = test_span();
         span.r#type = bs("sql");
         span.resource = bs("SELECT * FROM users WHERE id = 42");
+        // A raw query sent by the tracer is replaced, not duplicated.
+        span.attributes.insert(
+            bs("sql.query"),
+            AttributeValue::String(bs("SELECT * FROM users WHERE id = 42")),
+        );
         obfuscate_v1_span(&mut span, &ObfuscationConfig::default());
         assert_eq!(span.resource.as_str(), "SELECT * FROM users WHERE id = ?");
         assert!(matches!(
             span.attributes.get("sql.query"),
             Some(AttributeValue::String(s)) if s.as_str() == "SELECT * FROM users WHERE id = ?"
         ));
+        assert_eq!(span.attributes.len(), 1);
     }
 
     #[test]
@@ -1428,6 +1428,37 @@ mod v1_tests {
         assert!(matches!(
             attrs.get("cc_array"),
             Some(AttributeValue::Array(v)) if matches!(&v[0], AttributeValue::String(s) if s.as_str() == "?")
+        ));
+    }
+
+    #[test]
+    fn credit_card_scan_skips_dedicated_fields() {
+        let obf_config = ObfuscationConfig {
+            credit_cards: CreditCardConfig {
+                enabled: true,
+                luhn: false,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        // Like the Datadog Agent, only attributes are scanned.
+        let mut span = test_span();
+        span.component = bs("4111111111111111");
+        obfuscate_v1_span(&mut span, &obf_config);
+        assert_eq!(span.component.as_str(), "4111111111111111");
+
+        let mut chunk = TraceChunkBytes {
+            origin: bs("4111111111111111"),
+            ..Default::default()
+        };
+        chunk
+            .attributes
+            .insert(bs("cc"), AttributeValue::String(bs("4111111111111111")));
+        obfuscate_v1_chunk_attributes(&mut chunk, &obf_config);
+        assert_eq!(chunk.origin.as_str(), "4111111111111111");
+        assert!(matches!(
+            chunk.attributes.get("cc"),
+            Some(AttributeValue::String(s)) if s.as_str() == "?"
         ));
     }
 }
