@@ -3204,15 +3204,29 @@ mod tests {
 
         let server = MockServer::start();
         let mock_intake = server.mock(|when, then| {
-            when.method(POST)
+            // Normalized by the exporter
+            fn check_body(body: &[u8]) -> bool {
+                String::from_utf8_lossy(body).contains(r#""name":"bad_name""#)
+            }
+            let when = when
+                .method(POST)
                 .path("/v1/input")
                 .header("Content-Type", "application/json")
                 .header("dd-api-key", "test-api-key")
                 .header("X-Datadog-Trace-Count", "1")
                 .header("datadog-meta-lang", "nodejs")
-                .header("datadog-meta-tracer-version", "1.0")
-                // Normalized by the exporter
-                .body_includes(r#""name":"bad_name""#);
+                .header("datadog-meta-tracer-version", "1.0");
+            #[cfg(feature = "compression")]
+            let when = when.header("content-encoding", "zstd").is_true(|req| {
+                #[cfg(not(target_arch = "wasm32"))]
+                let body = zstd::decode_all(req.body_ref());
+                #[cfg(target_arch = "wasm32")]
+                let body = zrip::decompress(req.body_ref());
+                body.is_ok_and(|body| check_body(&body))
+            });
+            #[cfg(not(feature = "compression"))]
+            let when = when.is_true(|req| check_body(req.body_ref()));
+            let _ = when;
             then.status(200).body("");
         });
 
