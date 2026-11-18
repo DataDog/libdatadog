@@ -17,9 +17,9 @@ repositories {
 // Classpath for the Endive build-time compiler CLI (wasm → JVM classes).
 val endiveCompilerCli by configurations.creating
 
-// The AOT input is the Java-specific artifact from scripts/build.mjs (wasm-opt -O1: every
-// function stays small enough for one JVM method, so any interpreter fallback fails the
-// build). -Pwasm=/path/to.wasm overrides it.
+// The AOT input is the Java-specific artifact from scripts/build.mjs (wasm-opt -O1 keeps every
+// wasm function below the JVM's 64 KiB single-method code limit, so the Endive AOT compiler
+// maps each one to its own JVM method). -Pwasm=/path/to.wasm overrides it.
 val aotWasm = providers.gradleProperty("wasm")
     .map { rootDir.resolve(it) }
     .orElse(rootDir.resolve("../../artifacts/remote-config-java.wasm"))
@@ -119,11 +119,4 @@ val fatJar = tasks.register<Jar>("fatJar") {
 
 tasks.build {
     dependsOn(fatJar)
-}
-
-tasks.test {
-    useJUnitPlatform()
-    testLogging {
-        events("failed")
-    }
 }

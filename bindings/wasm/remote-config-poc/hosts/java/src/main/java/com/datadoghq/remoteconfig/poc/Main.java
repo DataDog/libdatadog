@@ -6,364 +6,193 @@ package com.datadoghq.remoteconfig.poc;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Base64;
-import java.util.LinkedHashMap;
-import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.ScheduledFuture;
-import java.util.concurrent.ScheduledThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
 import org.json.JSONArray;
 import org.json.JSONObject;
-import run.endive.runtime.CompiledModule;
-import run.endive.runtime.ImportValues;
-import run.endive.runtime.Instance;
-import run.endive.wasi.WasiOptions;
-import run.endive.wasi.WasiPreview1;
 
 /**
- * Java host for the shared remote-config WASM reactor.
- *
- * <p>Mirrors {@code hosts/dotnet/Program.cs}: loads the wasm32-wasip1 reactor with Endive, wires
- * WASI preview1, runs {@code _initialize}, then drives the JSON event bridge over the rc_ ABI.
- * Guest calls never overlap: HTTP completions are only dispatched from the poll loop head.
+ * CLI demo host for the shared remote-config WASM reactor, kept for the cross-host conformance
+ * suite. The embeddable pieces live in the host library: {@link RemoteConfigHost} loads the
+ * reactor, {@link RemoteConfigClient} drives the poll loop over an {@link HttpTransport}, and
+ * {@link JavaNetHttpTransport} provides the default java.net.http transport.
  */
 public final class Main {
 
-    private static final int MAX_BODY = 16 * 1024 * 1024;
-    private static final Object CANCEL = new Object();
+  private Main() {}
 
-    private Main() {}
+  /** A guest call taking one input buffer. */
+  @FunctionalInterface
+  private interface GuestCall {
+    int apply(int buffer);
+  }
 
-    /** A host reply with the body still as raw bytes; the guest buffer is attached at loop head. */
-    private static final class ReplyPayload {
-        final Integer status;
-        final JSONArray headers;
-        final byte[] body;
-        final String error;
-
-        ReplyPayload(Integer status, JSONArray headers, byte[] body, String error) {
-            this.status = status;
-            this.headers = headers;
-            this.body = body;
-            this.error = error;
-        }
-
-        static final ReplyPayload EMPTY = new ReplyPayload(null, null, null, null);
+  public static void main(String[] args) throws Exception {
+    if (args.length < 3) {
+      throw new IllegalArgumentException(
+          "Usage: Main <wasm-path> <url> <scenario.json> [--cancel-stdin]");
     }
-
-    /** One pending host operation: either an in-flight HTTP request or a timer. */
-    private static final class Pending {
-        final int id;
-        final CompletableFuture<ReplyPayload> completion;
-        final Runnable canceller;
-
-        Pending(int id, CompletableFuture<ReplyPayload> completion, Runnable canceller) {
-            this.id = id;
-            this.completion = completion;
-            this.canceller = canceller;
-        }
-    }
-
-    /** A guest call taking one input buffer, mirroring the {@code Input} helper of the .NET host. */
-    @FunctionalInterface
-    private interface GuestCall {
-        int apply(int buffer);
-    }
-
-    public static void main(String[] args) throws Exception {
-        // The module is compiled ahead of time into the RemoteConfigMachine classes; the wasm
-        // path is still accepted as the first argument to keep the host CLI uniform with the
-        // Node and .NET hosts, but the guest executed here is the one AOT-compiled at build time.
-        CompiledModule compiled = new RemoteConfig();
-        WasiOptions wasiOptions = WasiOptions.builder().inheritSystem().build();
-        try (WasiPreview1 wasi = WasiPreview1.builder().withOptions(wasiOptions).build()) {
-            ImportValues imports =
-                    ImportValues.builder().addFunction(wasi.toHostFunctions()).build();
-            Instance instance = Instance.builder(compiled.wasmModule())
-                    .withStart(false)
-                    .withImportValues(imports)
-                    .withMachineFactory(compiled.machineFactory())
-                    .build();
-            runInitialize(instance);
-            RcAbi abi = new RcAbi(instance);
-            HttpClient http = HttpClient.newHttpClient();
-            JSONObject scenario = new JSONObject(Files.readString(Path.of(args[2]), StandardCharsets.UTF_8));
-            JSONObject options = scenario.getJSONObject("options");
-            options.put("url", args[1]);
-            options.put("language", "java");
-            int client = input(abi, options, buffer -> abi.create(buffer));
+    // The wasm path is still accepted as the first argument to keep the host CLI uniform with
+    // the Node and .NET hosts, but the guest executed here is the one AOT-compiled at build
+    // time and loaded by RemoteConfigHost.
+    try (RemoteConfigHost host = RemoteConfigHost.load()) {
+      RcAbi abi = host.abi();
+      HttpTransport transport = new JavaNetHttpTransport();
+      JSONObject scenario =
+          new JSONObject(Files.readString(Path.of(args[2]), StandardCharsets.UTF_8));
+      JSONObject options = scenario.getJSONObject("options");
+      options.put("url", args[1]);
+      options.put("language", "java");
+      RemoteConfigClient client = RemoteConfigClient.create(abi, options);
+      try {
+        if (args.length > 3 && args[3].equals("--cancel-stdin")) {
+          LinkedBlockingQueue<Object> wakeups = new LinkedBlockingQueue<>();
+          CompletableFuture<JSONObject> pending =
+              CompletableFuture.supplyAsync(() -> client.poll(transport, wakeups));
+          BufferedReader stdin =
+              new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8));
+          if (!"cancel".equals(stdin.readLine())) {
+            // Drain the abandoned poll first: the close() in the finally below must
+            // not touch the store while the poll thread is still inside the guest.
+            wakeups.add(RemoteConfigClient.CANCEL_TOKEN);
             try {
-                if (args.length > 3 && args[3].equals("--cancel-stdin")) {
-                    LinkedBlockingQueue<Object> wakeups = new LinkedBlockingQueue<>();
-                    CompletableFuture<JSONObject> pending =
-                            CompletableFuture.supplyAsync(() -> poll(abi, client, http, wakeups));
-                    BufferedReader stdin = new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8));
-                    if (!"cancel".equals(stdin.readLine())) {
-                        throw new IllegalStateException("Expected cancel command");
-                    }
-                    wakeups.add(CANCEL);
-                    System.out.println(pending.join());
-                    abi.check(abi.poll(client));
-                    abi.check(abi.cancel(client));
-                    resolveOutcome(abi, abi.json(abi.result(client)));
-                    System.out.println("{\"restarted\":true}");
-                } else {
-                    for (Object entry : scenario.getJSONArray("actions")) {
-                        JSONObject action = (JSONObject) entry;
-                        String kind = action.getString("kind");
-                        JSONObject outcome;
-                        if (kind.equals("ack")) {
-                            input(abi, action.getJSONObject("value"), buffer -> abi.ack(client, buffer));
-                            outcome = new JSONObject().put("acknowledged", true);
-                        } else if (kind.equals("cancel") || kind.equals("timeout")) {
-                            outcome = cancelOrTimeout(abi, client, action, kind);
-                        } else if (kind.equals("fixture")) {
-                            outcome = fixture(abi, client, action);
-                        } else if (kind.equals("poll")) {
-                            outcome = poll(abi, client, http, new LinkedBlockingQueue<>());
-                        } else {
-                            throw new IllegalStateException("Unknown scenario action: " + kind);
-                        }
-                        System.out.println(outcome);
-                    }
-                }
-            } finally {
-                abi.check(abi.close(client));
+              pending.join();
+            } catch (CompletionException error) {
+              // The cancelled poll failed on its own; the driver error below is
+              // the one to report.
             }
-        }
-        System.exit(0);
-    }
-
-    /** Reactors may export {@code _initialize}; data segments are already applied at instantiation. */
-    private static void runInitialize(Instance instance) {
-        try {
-            instance.export("_initialize").apply();
-        } catch (run.endive.wasm.InvalidException absent) {
-            // The shared reactor applies its data segments on instantiation; a missing export is fine.
-        }
-    }
-
-    /** Drives the {@code cancel} and {@code timeout} scenario actions without a real network. */
-    private static JSONObject cancelOrTimeout(RcAbi abi, int client, JSONObject action, String kind) {
-        abi.check(abi.poll(client));
-        String wanted = kind.equals("timeout") ? "sleep" : "http";
-        JSONObject operation = find(abi.jsonArray(abi.check(abi.events(client))), wanted);
-        if (operation == null) throw new IllegalStateException("Expected pending operation");
-        int operationId = operation.getInt("id");
-        if (kind.equals("cancel")) {
-            abi.check(abi.cancel(client));
+            throw new IllegalStateException("Expected cancel command");
+          }
+          wakeups.add(RemoteConfigClient.CANCEL_TOKEN);
+          System.out.println(pending.join());
+          // After a cancelled poll the client can poll again.
+          abi.check(abi.poll(client.handle()));
+          abi.check(abi.cancel(client.handle()));
+          RemoteConfigClient.resolveOutcome(abi, abi.json(abi.result(client.handle())));
+          System.out.println("{\"restarted\":true}");
         } else {
-            input(abi, new JSONObject(), buffer -> abi.complete(client, operationId, buffer));
+          for (Object entry : scenario.getJSONArray("actions")) {
+            JSONObject action = (JSONObject) entry;
+            String kind = action.getString("kind");
+            JSONObject outcome;
+            if (kind.equals("ack")) {
+              client.ack(action.getJSONObject("value"));
+              outcome = new JSONObject().put("acknowledged", true);
+            } else if (kind.equals("cancel") || kind.equals("timeout")) {
+              outcome = cancelOrTimeout(abi, client, action, kind);
+            } else if (kind.equals("fixture")) {
+              outcome = fixture(abi, client, action);
+            } else if (kind.equals("poll")) {
+              outcome = client.poll(transport);
+            } else {
+              throw new IllegalStateException("Unknown scenario action: " + kind);
+            }
+            System.out.println(outcome);
+          }
         }
-        JSONObject outcome = resolveOutcome(abi, abi.json(abi.result(client)));
-        int reply = abi.write(new JSONObject()
+      } finally {
+        client.close();
+      }
+    }
+    System.exit(0);
+  }
+
+  /** Drives the {@code cancel} and {@code timeout} scenario actions without a real network. */
+  private static JSONObject cancelOrTimeout(
+      RcAbi abi, RemoteConfigClient client, JSONObject action, String kind) {
+    int handle = client.handle();
+    abi.check(abi.poll(handle));
+    String wanted = kind.equals("timeout") ? "sleep" : "http";
+    JSONObject operation = find(abi.jsonArray(abi.check(abi.events(handle))), wanted);
+    if (operation == null) throw new IllegalStateException("Expected pending operation");
+    int operationId = operation.getInt("id");
+    if (kind.equals("cancel")) {
+      abi.check(abi.cancel(handle));
+    } else {
+      input(abi, handle, new JSONObject(), buffer -> abi.complete(handle, operationId, buffer));
+    }
+    JSONObject outcome = RemoteConfigClient.resolveOutcome(abi, abi.json(abi.result(handle)));
+    int reply =
+        abi.write(
+            new JSONObject()
                 .put("status", 200)
                 .put("body", abi.writeBytes(Base64.getDecoder().decode("e30="))));
-        try {
-            if (abi.complete(client, operationId, reply) != -1) {
-                throw new IllegalStateException("Late completion accepted");
-            }
-        } finally {
-            abi.check(abi.free(reply));
-        }
-        if (find(abi.jsonArray(abi.check(abi.events(client))), "cancel") == null) {
-            throw new IllegalStateException("No host cancellation");
-        }
-        return outcome;
+    try {
+      if (abi.complete(handle, operationId, reply) != -1) {
+        throw new IllegalStateException("Late completion accepted");
+      }
+    } finally {
+      abi.check(abi.free(reply));
     }
-
-    /** Serves the agentless fixture requests directly through the ABI, never through HTTP. */
-    private static JSONObject fixture(RcAbi abi, int client, JSONObject action) {
-        abi.check(abi.poll(client));
-        JSONArray requests = new JSONArray();
-        JSONObject outcome = null;
-        for (int step = 0; step < 32 && outcome == null; step++) {
-            JSONArray events = abi.jsonArray(abi.check(abi.events(client)));
-            boolean hasHttp = find(events, "http") != null;
-            for (Object entry : events) {
-                JSONObject operation = (JSONObject) entry;
-                String kind = operation.getString("kind");
-                if (kind.equals("sleep") && !hasHttp) {
-                    int id = operation.getInt("id");
-                    input(abi, new JSONObject(), buffer -> abi.complete(client, id, buffer));
-                }
-                if (!kind.equals("http")) continue;
-                JSONObject recorded = new JSONObject(operation, JSONObject.getNames(operation));
-                recorded.put("body", Base64.getEncoder().encodeToString(abi.read(operation.getInt("body"))));
-                requests.put(recorded);
-                int id = operation.getInt("id");
-                String path = URI.create(operation.getString("url")).getPath();
-                String body = path.equals("/api/v0.1/org") ? "" : action.getString("body");
-                input(abi, new JSONObject()
-                        .put("status", 200)
-                        .put("body", abi.writeBytes(Base64.getDecoder().decode(body))),
-                        buffer -> abi.complete(client, id, buffer));
-            }
-            int result = abi.check(abi.result(client));
-            if (result > 0) {
-                outcome = new JSONObject()
-                        .put("outcome", resolveOutcome(abi, abi.json(result)))
-                        .put("requests", requests);
-            }
-        }
-        if (outcome == null) throw new IllegalStateException("Fixture did not complete");
-        return outcome;
+    if (find(abi.jsonArray(abi.check(abi.events(handle))), "cancel") == null) {
+      throw new IllegalStateException("No host cancellation");
     }
+    return outcome;
+  }
 
-    /** Resolves raw content buffer ids in an outcome into base64 for display; buffers return to the guest. */
-    static JSONObject resolveOutcome(RcAbi abi, JSONObject outcome) {
-        JSONArray changes = outcome.optJSONArray("changes");
-        if (changes == null) return outcome;
-        for (Object entry : changes) {
-            JSONObject change = (JSONObject) entry;
-            if (!change.has("contents")) continue;
-            Object contents = change.remove("contents");
-            change.put("contentsBase64", contents == JSONObject.NULL
-                    ? JSONObject.NULL
-                    : Base64.getEncoder().encodeToString(abi.read((int) contents)));
-        }
-        return outcome;
-    }
-
-    /**
-     * The poll loop: drains host events, dispatches HTTP and timers, and completes one operation
-     * at a time from the loop head so guest calls never overlap. Mirrors the .NET {@code Poll}.
-     */
-    static JSONObject poll(RcAbi abi, int client, HttpClient http, LinkedBlockingQueue<Object> wakeups) {
-        ScheduledThreadPoolExecutor scheduler = new ScheduledThreadPoolExecutor(1, runnable -> {
-            Thread thread = new Thread(runnable, "remote-config-timers");
-            thread.setDaemon(true);
-            return thread;
-        });
-        Map<Integer, Pending> pending = new LinkedHashMap<>();
-        try {
-            abi.check(abi.poll(client));
-            while (true) {
-                for (Object entry : abi.jsonArray(abi.check(abi.events(client)))) {
-                    JSONObject operation = (JSONObject) entry;
-                    int id = operation.getInt("id");
-                    String kind = operation.getString("kind");
-                    if (kind.equals("cancel")) {
-                        Pending resource = pending.remove(id);
-                        if (resource != null) resource.canceller.run();
-                    } else {
-                        Pending resource = dispatch(abi, operation, http, scheduler, wakeups);
-                        pending.put(id, resource);
-                    }
-                }
-                int result = abi.check(abi.result(client));
-                if (result != 0) return resolveOutcome(abi, abi.json(result));
-                if (pending.isEmpty()) throw new IllegalStateException("Pending guest has no host work");
-                Object wake;
-                try {
-                    wake = wakeups.take();
-                } catch (InterruptedException interrupted) {
-                    Thread.currentThread().interrupt();
-                    throw new IllegalStateException("Poll dispatcher interrupted", interrupted);
-                }
-                if (wake == CANCEL) {
-                    abi.check(abi.cancel(client));
-                    return resolveOutcome(abi, abi.json(abi.result(client)));
-                }
-                Pending completed = pending.remove((Integer) wake);
-                if (completed == null) continue; // Stale wake for an operation the guest cancelled.
-                ReplyPayload payload = completed.completion.join();
-                // Bodies attach to guest buffers at the loop head only; guest calls never run on
-                // HTTP or timer completion threads.
-                JSONObject reply;
-                if (payload.error != null) {
-                    reply = new JSONObject().put("error", payload.error);
-                } else if (payload.status == null) {
-                    reply = new JSONObject();
-                } else {
-                    reply = new JSONObject()
-                            .put("status", payload.status)
-                            .put("headers", payload.headers)
-                            .put("body", abi.writeBytes(payload.body));
-                }
-                int operationId = completed.id;
-                input(abi, reply, buffer -> abi.complete(client, operationId, buffer));
-            }
-        } catch (RuntimeException error) {
-            // An adapter failure must not leave a guest future retaining client state.
-            abi.cancel(client);
-            int result = abi.result(client);
-            if (result > 0) resolveOutcome(abi, abi.json(result));
-            throw error;
-        } finally {
-            scheduler.shutdownNow();
-            for (Pending resource : pending.values()) resource.canceller.run();
-        }
-    }
-
-    /** Starts the host work described by one event and returns its handle. */
-    private static Pending dispatch(RcAbi abi, JSONObject operation, HttpClient http,
-            ScheduledThreadPoolExecutor scheduler, LinkedBlockingQueue<Object> wakeups) {
-        int id = operation.getInt("id");
+  /** Serves the agentless fixture requests directly through the ABI, never through HTTP. */
+  private static JSONObject fixture(RcAbi abi, RemoteConfigClient client, JSONObject action) {
+    int handle = client.handle();
+    abi.check(abi.poll(handle));
+    JSONArray requests = new JSONArray();
+    JSONObject outcome = null;
+    for (int step = 0; step < 32 && outcome == null; step++) {
+      JSONArray events = abi.jsonArray(abi.check(abi.events(handle)));
+      boolean hasHttp = find(events, "http") != null;
+      for (Object entry : events) {
+        JSONObject operation = (JSONObject) entry;
         String kind = operation.getString("kind");
-        CompletableFuture<ReplyPayload> completion = new CompletableFuture<>();
-        if (kind.equals("sleep")) {
-            long milliseconds = (long) operation.getDouble("milliseconds");
-            ScheduledFuture<?> timer = scheduler.schedule(
-                    () -> completion.complete(ReplyPayload.EMPTY), milliseconds, TimeUnit.MILLISECONDS);
-            return new Pending(id, completion, () -> timer.cancel(false));
+        if (kind.equals("sleep") && !hasHttp) {
+          int id = operation.getInt("id");
+          input(abi, handle, new JSONObject(), buffer -> abi.complete(handle, id, buffer));
         }
-        if (!kind.equals("http")) throw new IllegalStateException("Unknown host operation: " + kind);
-
-        HttpRequest.Builder request = HttpRequest.newBuilder(URI.create(operation.getString("url")));
-        byte[] body = abi.read(operation.getInt("body"));
-        request.method(operation.getString("method"), HttpRequest.BodyPublishers.ofByteArray(body));
-        for (Object entry : operation.getJSONArray("headers")) {
-            JSONArray header = (JSONArray) entry;
-            request.header(header.getString(0), header.getString(1));
-        }
-        CompletableFuture<HttpResponse<byte[]>> sent =
-                http.sendAsync(request.build(), HttpResponse.BodyHandlers.ofByteArray());
-        sent.whenComplete((response, error) -> wakeups.add(id));
-        return new Pending(id, sent.handle(Main::payload), () -> sent.cancel(true));
+        if (!kind.equals("http")) continue;
+        JSONObject recorded = new JSONObject(operation, JSONObject.getNames(operation));
+        recorded.put(
+            "body", Base64.getEncoder().encodeToString(abi.read(operation.getInt("body"))));
+        requests.put(recorded);
+        int id = operation.getInt("id");
+        String path = URI.create(operation.getString("url")).getPath();
+        String body = path.equals("/api/v0.1/org") ? "" : action.getString("body");
+        input(
+            abi,
+            handle,
+            new JSONObject()
+                .put("status", 200)
+                .put("body", abi.writeBytes(Base64.getDecoder().decode(body))),
+            buffer -> abi.complete(handle, id, buffer));
+      }
+      int result = abi.check(abi.result(handle));
+      if (result > 0) {
+        outcome =
+            new JSONObject()
+                .put("outcome", RemoteConfigClient.resolveOutcome(abi, abi.json(result)))
+                .put("requests", requests);
+      }
     }
+    if (outcome == null) throw new IllegalStateException("Fixture did not complete");
+    return outcome;
+  }
 
-    /** Captures an HTTP response or failure as a payload; no guest calls run on completion threads. */
-    private static ReplyPayload payload(HttpResponse<byte[]> response, Throwable error) {
-        if (error != null) {
-            Throwable cause = error.getCause() != null ? error.getCause() : error;
-            return new ReplyPayload(null, null, null, cause.getMessage());
-        }
-        byte[] body = response.body();
-        if (body.length > MAX_BODY) {
-            return new ReplyPayload(null, null, null, "Response exceeds 16 MiB");
-        }
-        JSONArray headers = new JSONArray();
-        for (Map.Entry<String, java.util.List<String>> entry : response.headers().map().entrySet()) {
-            for (String value : entry.getValue()) {
-                headers.put(new JSONArray().put(entry.getKey()).put(value));
-            }
-        }
-        return new ReplyPayload(response.statusCode(), headers, body, null);
+  private static JSONObject find(JSONArray events, String kind) {
+    for (Object entry : events) {
+      JSONObject operation = (JSONObject) entry;
+      if (operation.getString("kind").equals(kind)) return operation;
     }
+    return null;
+  }
 
-    private static JSONObject find(JSONArray events, String kind) {
-        for (Object entry : events) {
-            JSONObject operation = (JSONObject) entry;
-            if (operation.getString("kind").equals(kind)) return operation;
-        }
-        return null;
+  private static int input(RcAbi abi, int handle, Object json, GuestCall operation) {
+    int buffer = abi.write(json);
+    try {
+      return abi.check(operation.apply(buffer));
+    } finally {
+      abi.check(abi.free(buffer));
     }
-
-    private static int input(RcAbi abi, Object json, GuestCall operation) {
-        int buffer = abi.write(json);
-        try {
-            return abi.check(operation.apply(buffer));
-        } finally {
-            abi.check(abi.free(buffer));
-        }
-    }
+  }
 }

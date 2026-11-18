@@ -15,9 +15,10 @@ import run.endive.runtime.Memory;
 /**
  * Bindings for the shared remote-config WASM ABI, mirroring hosts/node/bindings.mjs and
  * hosts/dotnet/Bindings.g.cs. All guest calls return an i32 handle: -1 is the error sentinel,
- * ids are allocated from 1, and 0 from rc_result means no outcome yet.
+ * ids are allocated from 1, and 0 from rc_result means no outcome yet. The class and its
+ * members are public so host libraries outside this package can drive the reactor.
  */
-final class RcAbi {
+public final class RcAbi {
     private final Memory memory;
     private final ExportFunction rcVersion;
     private final ExportFunction rcAlloc;
@@ -34,7 +35,7 @@ final class RcAbi {
     private final ExportFunction rcCancel;
     private final ExportFunction rcClose;
 
-    RcAbi(Instance instance) {
+    public RcAbi(Instance instance) {
         memory = instance.memory();
         if (memory == null) throw new IllegalStateException("Missing memory export");
         rcVersion = function(instance, "rc_version");
@@ -64,7 +65,7 @@ final class RcAbi {
     }
 
     /** Throws a descriptive exception when the guest reports -1. */
-    int check(int result) {
+    public int check(int result) {
         if (result >= 0) return result;
         int error = error();
         if (error <= 0) throw new IllegalStateException("Guest error buffer unavailable");
@@ -72,23 +73,24 @@ final class RcAbi {
     }
 
     // Unchecked guest calls, mirroring the raw delegate fields of the .NET bindings.
-    int version() { return call(rcVersion); }
+    public int version() { return call(rcVersion); }
     int alloc(int length) { return call(rcAlloc, length); }
     int bufferPtr(int buffer) { return call(rcBufferPtr, buffer); }
     int bufferLen(int buffer) { return call(rcBufferLen, buffer); }
     int free(int buffer) { return call(rcFree, buffer); }
     int error() { return call(rcError); }
-    int create(int options) { return call(rcCreate, options); }
-    int poll(int client) { return call(rcPoll, client); }
-    int events(int client) { return call(rcEvents, client); }
-    int complete(int client, int operation, int reply) { return call(rcComplete, client, operation, reply); }
-    int result(int client) { return call(rcResult, client); }
-    int ack(int client, int acknowledgement) { return call(rcAck, client, acknowledgement); }
-    int cancel(int client) { return call(rcCancel, client); }
-    int close(int client) { return call(rcClose, client); }
+    public int create(int options) { return call(rcCreate, options); }
+    public int poll(int client) { return call(rcPoll, client); }
+    public int events(int client) { return call(rcEvents, client); }
+    public int complete(int client, int operation, int reply) { return call(rcComplete, client, operation, reply); }
+    public int result(int client) { return call(rcResult, client); }
+    public int ack(int client, int acknowledgement) { return call(rcAck, client, acknowledgement); }
+    public int cancel(int client) { return call(rcCancel, client); }
+    public int close(int client) { return call(rcClose, client); }
 
-    /** Allocates a guest buffer and writes the UTF-8 JSON encoding of value into it. */
-    int write(Object value) {
+    /** Allocates a guest buffer and writes value.toString() into it, without JSON encoding; pass
+     * an org.json value (JSONObject, JSONArray) so the text is its JSON encoding. */
+    public int write(Object value) {
         byte[] bytes = value.toString().getBytes(StandardCharsets.UTF_8);
         int buffer = check(alloc(bytes.length));
         try {
@@ -103,7 +105,7 @@ final class RcAbi {
     }
 
     /** Allocates a guest buffer and writes raw bytes into it, without JSON encoding. */
-    int writeBytes(byte[] bytes) {
+    public int writeBytes(byte[] bytes) {
         int buffer = check(alloc(bytes.length));
         try {
             memory.write(call(rcBufferPtr, buffer), bytes);
@@ -115,7 +117,7 @@ final class RcAbi {
     }
 
     /** Copies a guest buffer out and frees it; ownership returns to the guest. */
-    byte[] read(int buffer) {
+    public byte[] read(int buffer) {
         try {
             int length = check(call(rcBufferLen, buffer));
             return memory.readBytes(call(rcBufferPtr, buffer), length);
@@ -124,11 +126,11 @@ final class RcAbi {
         }
     }
 
-    JSONObject json(int buffer) {
+    public JSONObject json(int buffer) {
         return new JSONObject(new String(read(check(buffer)), StandardCharsets.UTF_8));
     }
 
-    JSONArray jsonArray(int buffer) {
+    public JSONArray jsonArray(int buffer) {
         return new JSONArray(new String(read(check(buffer)), StandardCharsets.UTF_8));
     }
 }
