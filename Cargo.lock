@@ -2786,7 +2786,7 @@ dependencies = [
  "bytes",
  "flate2",
  "httpmock",
- "libdd-common",
+ "libdd-host-identity",
  "libdd-http-client",
  "rustls",
  "serde",
@@ -2865,16 +2865,9 @@ dependencies = [
  "const_format",
  "hex",
  "http 1.1.0",
- "indexmap 2.12.1",
- "libc",
- "libdd-env",
- "libdd-regex",
- "maplit",
  "proptest",
  "serde",
  "static_assertions",
- "tempfile",
- "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2982,6 +2975,7 @@ dependencies = [
  "libdd-data-pipeline-core",
  "libdd-ddsketch",
  "libdd-dogstatsd-client",
+ "libdd-host-identity",
  "libdd-log",
  "libdd-networking",
  "libdd-regex",
@@ -3021,6 +3015,7 @@ dependencies = [
  "http 1.1.0",
  "libdd-capabilities",
  "libdd-common",
+ "libdd-host-identity",
  "libdd-regex",
  "libdd-tinybytes",
  "libdd-trace-obfuscation",
@@ -3167,6 +3162,19 @@ version = "1.1.0"
 dependencies = [
  "libc",
  "tempfile",
+]
+
+[[package]]
+name = "libdd-host-identity"
+version = "1.0.0"
+dependencies = [
+ "indexmap 2.12.1",
+ "libc",
+ "libdd-env",
+ "libdd-regex",
+ "maplit",
+ "tempfile",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3354,6 +3362,7 @@ dependencies = [
  "hyper-rustls",
  "hyper-util",
  "libdd-common",
+ "libdd-host-identity",
  "libdd-process-utils",
  "pin-project",
  "rand 0.8.8",
@@ -3422,6 +3431,7 @@ dependencies = [
  "indexmap 2.12.1",
  "libdd-alloc",
  "libdd-common",
+ "libdd-host-identity",
  "libdd-networking",
  "libdd-process-utils",
  "libdd-profiling-protobuf",
@@ -3555,6 +3565,7 @@ dependencies = [
  "libdd-capabilities",
  "libdd-capabilities-impl",
  "libdd-common",
+ "libdd-host-identity",
  "libdd-networking",
  "libdd-regex",
  "libdd-remote-config",
@@ -3637,6 +3648,7 @@ dependencies = [
  "libdd-common",
  "libdd-ddsketch",
  "libdd-env",
+ "libdd-host-identity",
  "libdd-networking",
  "libdd-shared-runtime",
  "reqwless",
@@ -3802,6 +3814,7 @@ dependencies = [
  "libdd-capabilities",
  "libdd-capabilities-impl",
  "libdd-common",
+ "libdd-host-identity",
  "libdd-networking",
  "libdd-regex",
  "libdd-tinybytes",

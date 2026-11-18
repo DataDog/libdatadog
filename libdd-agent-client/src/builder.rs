@@ -261,7 +261,7 @@ impl AgentClientBuilder {
         // with non-Rust code (e.g. the host runtime) mutating the env concurrently.
         // Long-term this value should be passed in explicitly via the builder API.
         headers.extend(
-            libdd_common::entity_id::get_entity_headers()
+            libdd_host_identity::entity_id::get_entity_headers()
                 .map(|(k, v)| (k.to_owned(), v.to_owned())),
         );
         headers.extend(extra_headers);

@@ -412,7 +412,7 @@ fn attach_metadata<T>(
         AsciiMetadataKey::from_static("user-agent"),
         AsciiMetadataValue::from_static(TRACE_EXPORTER_USER_AGENT),
     );
-    for (key, value) in libdd_common::entity_id::get_entity_headers() {
+    for (key, value) in libdd_host_identity::entity_id::get_entity_headers() {
         if let (Ok(key), Ok(value)) = (
             key.parse::<AsciiMetadataKey>(),
             value.parse::<AsciiMetadataValue>(),

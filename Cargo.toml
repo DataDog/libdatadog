@@ -45,6 +45,7 @@ members = [
   "libdd-common",
   "libdd-common-ffi",
   "libdd-env",
+  "libdd-host-identity",
   "libdd-process-utils",
   "libdd-telemetry",
   "libdd-telemetry-ffi",
