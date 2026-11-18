@@ -162,25 +162,25 @@ int verify_mutable_identity(void) {
         ddog_mutable_metadata_free(metadata);
         return 1;
     }
-    ddog_TraceExporterConfig *config = NULL;
-    ddog_trace_exporter_config_new(&config);
-    ddog_TraceExporterError *err = ddog_trace_exporter_config_set_mutable_metadata(config, metadata);
+    ddog_TraceExporterBuilder_ForkSafeRuntime *builder = NULL;
+    ddog_trace_exporter_builder_new(&builder);
+    ddog_TraceExporterError *err = ddog_trace_exporter_builder_set_mutable_metadata(builder, metadata);
     ddog_mutable_metadata_free(metadata);
     if (err != NULL) {
         handle_error(err);
-        ddog_trace_exporter_config_free(config);
+        ddog_trace_exporter_builder_free(builder);
         return 1;
     }
     // Metadata ownership must not depend on Agent polling or connection timeouts.
-    err = ddog_trace_exporter_config_set_output_to_log(config, 0);
+    err = ddog_trace_exporter_builder_set_output_to_log(builder, 0);
     if (err != NULL) {
         handle_error(err);
-        ddog_trace_exporter_config_free(config);
+        ddog_trace_exporter_builder_free(builder);
         return 1;
     }
     ddog_TraceExporter *exporter = NULL;
-    err = ddog_trace_exporter_new(&exporter, config);
-    ddog_trace_exporter_config_free(config);
+    err = ddog_trace_exporter_builder_build(builder, &exporter);
+    // builder is consumed by ddog_trace_exporter_builder_build, including on error.
     if (err != NULL) {
         handle_error(err);
         return 1;
@@ -210,7 +210,7 @@ int main(int argc, char** argv)
     // Guard to check that the library is built with catch_panic by default.
     //
     // Returns directly rather than `goto error`: nothing has been allocated yet, and the
-    // cleanup at `error:` frees `trace_exporter` and `config`, which are declared below.
+    // cleanup at `error:` frees `trace_exporter` and `builder`, which are declared below.
     // Jumping from here would skip their initializers and free indeterminate pointers
     // (gcc -Wjump-misses-init).
     if (test_error_on_panic() != 0) {
@@ -231,37 +231,46 @@ int main(int argc, char** argv)
     ddog_CharSlice runtime_id = DDOG_CHARSLICE_C("12345678-1234-1234-1234-123456789abc");
 
     ddog_TraceExporterError *ret = NULL;
-    ddog_TraceExporterConfig *config = NULL;
+    ddog_TraceExporterBuilder_ForkSafeRuntime *builder = NULL;
 
-    ddog_trace_exporter_config_new(&config);
-    ddog_trace_exporter_config_set_url(config, url);
-    ddog_trace_exporter_config_set_tracer_version(config, tracer_version);
-    ddog_trace_exporter_config_set_language(config, language);
-    ddog_trace_exporter_config_set_lang_version(config, language_version);
-    ddog_trace_exporter_config_set_lang_interpreter(config, language_interpreter);
-    ddog_trace_exporter_config_set_hostname(config, hostname);
-    ddog_trace_exporter_config_set_env(config, env);
-    ddog_trace_exporter_config_set_version(config, version);
-    ddog_trace_exporter_config_set_service(config, service);
-    ddog_trace_exporter_config_set_connection_timeout(config, 1000);
-    ddog_trace_exporter_config_set_runtime_id(config, runtime_id);
+    ddog_trace_exporter_builder_new(&builder);
+    ddog_trace_exporter_builder_set_url(builder, url);
+    ddog_trace_exporter_builder_set_tracer_version(builder, tracer_version);
+    ddog_trace_exporter_builder_set_language(builder, language);
+    ddog_trace_exporter_builder_set_language_version(builder, language_version);
+    ddog_trace_exporter_builder_set_language_interpreter(builder, language_interpreter);
+    ddog_trace_exporter_builder_set_hostname(builder, hostname);
+    ddog_trace_exporter_builder_set_env(builder, env);
+    ddog_trace_exporter_builder_set_app_version(builder, version);
+    ddog_trace_exporter_builder_set_service(builder, service);
+    ddog_trace_exporter_builder_set_connection_timeout(builder, 1000);
+    ddog_trace_exporter_builder_set_runtime_id(builder, runtime_id);
 
-    ddog_TelemetryClientConfig telemetry_config = {
-        .interval = 60000,
+    ddog_ExporterTelemetryConfig telemetry_config = {
+        .heartbeat = 60000,
         .debug_enabled = true,
-        .session_id = DDOG_CHARSLICE_C("12345678-1234-1234-1234-123456789abc"),
-        .root_session_id = DDOG_CHARSLICE_C("87654321-1234-1234-1234-123456789abc"),
-        .parent_session_id = DDOG_CHARSLICE_C(""),
     };
 
-    ret = ddog_trace_exporter_config_enable_telemetry(config, &telemetry_config);
+    ret = ddog_trace_exporter_builder_enable_telemetry(builder, &telemetry_config);
     if (ret) {
         error = ret->code;
         handle_error(ret);
         goto error;
     }
 
-    ret = ddog_trace_exporter_new(&trace_exporter, config);
+    ret = ddog_trace_exporter_builder_set_telemetry_instrumentation_sessions(
+        builder,
+        DDOG_CHARSLICE_C("12345678-1234-1234-1234-123456789abc"),
+        DDOG_CHARSLICE_C("87654321-1234-1234-1234-123456789abc"),
+        DDOG_CHARSLICE_C(""));
+    if (ret) {
+        error = ret->code;
+        handle_error(ret);
+        goto error;
+    }
+
+    ret = ddog_trace_exporter_builder_build(builder, &trace_exporter);
+    builder = NULL; // Consumed by ddog_trace_exporter_builder_build, including on error.
     if (ret) {
         error = ret->code;
         handle_error(ret);
@@ -313,8 +322,6 @@ int main(int argc, char** argv)
 
     ddog_trace_exporter_free(trace_exporter);
     trace_exporter = NULL;
-    ddog_trace_exporter_config_free(config);
-    config = NULL;
 
     // Disable file logging if it was enabled
     if (log_path != NULL) {
@@ -334,6 +341,6 @@ int main(int argc, char** argv)
 
 error:
     if (trace_exporter) { ddog_trace_exporter_free(trace_exporter); }
-    if (config) { ddog_trace_exporter_config_free(config); }
+    if (builder) { ddog_trace_exporter_builder_free(builder); }
     return error;
 }

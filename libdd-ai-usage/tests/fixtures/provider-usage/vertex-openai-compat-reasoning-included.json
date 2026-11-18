@@ -1,0 +1,28 @@
+{
+  "description": "An OpenAI-compatible response whose completion_tokens already includes reasoning: prompt + completion == total, so the completion includes reasoning (billed output 1445).",
+  "format": "openai_chat",
+  "operation_name": "chat",
+  "payload": {
+    "model": "google/gemini-2.5-flash",
+    "choices": [],
+    "usage": {
+      "prompt_tokens": 14,
+      "completion_tokens": 1445,
+      "total_tokens": 1459,
+      "completion_tokens_details": {
+        "reasoning_tokens": 233
+      }
+    }
+  },
+  "expected": {
+    "usage": {
+      "input_tokens": 14,
+      "input_basis": "includes_cache",
+      "output_tokens": 1445,
+      "output_basis": "includes_reasoning",
+      "reasoning_output_tokens": 233
+    },
+    "response_model": "google/gemini-2.5-flash",
+    "service_tier": null
+  }
+}

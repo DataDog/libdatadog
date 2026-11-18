@@ -1,0 +1,14 @@
+{
+  "description": "A response without usage reports none, never zero.",
+  "format": "openai_chat",
+  "operation_name": "chat",
+  "payload": {
+    "model": "gpt-5",
+    "choices": []
+  },
+  "expected": {
+    "usage": null,
+    "response_model": "gpt-5",
+    "service_tier": null
+  }
+}

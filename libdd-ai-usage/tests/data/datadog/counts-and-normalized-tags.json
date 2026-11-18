@@ -1,7 +1,7 @@
 {
   "binding": "0.1.0",
   "case": "counts-and-normalized-tags",
-  "description": "Two token increments with the same tags are one Count of their sum. Tag values are normalized: upper case becomes lower case, and a space, an at sign, and a letter outside ASCII each become one underscore. The resource attributes host.name and service.name use the tag keys host and service.",
+  "description": "Two token increments with the same tags are one Rate of their sum, divided by 10. Tag values are normalized: upper case becomes lower case, and a space, an at sign, and a letter outside ASCII each become one underscore. The resource attributes host.name and service.name use the tag keys host and service.",
   "profile": "gen_ai.client.provider_attempt@0.1.0",
   "historical": false,
   "points": [
@@ -43,8 +43,9 @@
   "expected_series": [
     {
       "name": "gen_ai.client.inference.usage.input_tokens",
-      "type": "count",
-      "value": 42,
+      "type": "rate",
+      "interval": 10,
+      "value": 4.2,
       "tags": [
         "gen_ai.operation.name:chat",
         "gen_ai.provider.name:exampleai",

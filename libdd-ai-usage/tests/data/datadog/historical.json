@@ -1,7 +1,7 @@
 {
   "binding": "0.1.0",
   "case": "historical",
-  "description": "The same samples submitted for a past time: only the sum and count pair, which lands on the same two series as a live submission.",
+  "description": "The same samples submitted for a past time: only the sum and count pair of Rates, which lands on the same two series as a live submission.",
   "profile": "gen_ai.client.provider_attempt@0.1.0",
   "historical": true,
   "points": [
@@ -43,8 +43,9 @@
   "expected_series": [
     {
       "name": "gen_ai.client.inference.duration.count",
-      "type": "count",
-      "value": 1,
+      "type": "rate",
+      "interval": 10,
+      "value": 0.1,
       "tags": [
         "error.type:timeout",
         "gen_ai.operation.name:chat",
@@ -55,8 +56,9 @@
     },
     {
       "name": "gen_ai.client.inference.duration.count",
-      "type": "count",
-      "value": 2,
+      "type": "rate",
+      "interval": 10,
+      "value": 0.2,
       "tags": [
         "gen_ai.operation.name:chat",
         "gen_ai.provider.name:exampleai",
@@ -66,8 +68,9 @@
     },
     {
       "name": "gen_ai.client.inference.duration.sum",
-      "type": "count",
-      "value": 2,
+      "type": "rate",
+      "interval": 10,
+      "value": 0.2,
       "tags": [
         "error.type:timeout",
         "gen_ai.operation.name:chat",
@@ -78,8 +81,9 @@
     },
     {
       "name": "gen_ai.client.inference.duration.sum",
-      "type": "count",
-      "value": 0.75,
+      "type": "rate",
+      "interval": 10,
+      "value": 0.075,
       "tags": [
         "gen_ai.operation.name:chat",
         "gen_ai.provider.name:exampleai",

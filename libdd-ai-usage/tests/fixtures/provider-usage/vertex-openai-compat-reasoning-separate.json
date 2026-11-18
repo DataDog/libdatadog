@@ -1,0 +1,28 @@
+{
+  "description": "Vertex AI's OpenAI-compatible API leaves reasoning out of completion_tokens and counts it in total_tokens: prompt + completion + reasoning == total, so the completion excludes reasoning (billed output 1212 + 233 = 1445).",
+  "format": "openai_chat",
+  "operation_name": "chat",
+  "payload": {
+    "model": "google/gemini-2.5-flash",
+    "choices": [],
+    "usage": {
+      "prompt_tokens": 14,
+      "completion_tokens": 1212,
+      "total_tokens": 1459,
+      "completion_tokens_details": {
+        "reasoning_tokens": 233
+      }
+    }
+  },
+  "expected": {
+    "usage": {
+      "input_tokens": 14,
+      "input_basis": "includes_cache",
+      "output_tokens": 1212,
+      "output_basis": "excludes_reasoning",
+      "reasoning_output_tokens": 233
+    },
+    "response_model": "google/gemini-2.5-flash",
+    "service_tier": null
+  }
+}

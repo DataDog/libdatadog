@@ -8,13 +8,15 @@
 //! It writes the raw agent response to shared memory at a fixed per-endpoint location, to be
 //! consumed be tracers.
 
+use super::agent_version::agent_supports_v1_traces;
 use crate::shm_path::keyed_shm_path;
 use arc_swap::ArcSwap;
 use futures::FutureExt;
 use futures::future::Shared;
 use http::uri::PathAndQuery;
 use libdd_capabilities_impl::NativeCapabilities;
-use libdd_common::{Endpoint, MutexExt};
+use libdd_common::Endpoint;
+use libdd_common::MutexExt;
 use libdd_data_pipeline::agent_info::schema::AgentInfoStruct;
 use libdd_data_pipeline::agent_info::{FetchInfoStatus, fetch_info_with_state};
 use libdd_ipc::one_way_shared_memory::{OneWayShmReader, OneWayShmWriter, open_named_shm};
@@ -25,6 +27,8 @@ use std::ffi::CString;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use tokio::select;
+use tokio::sync::Notify;
 use tokio::time::sleep;
 use tracing::{error, warn};
 use zwohash::HashMap;
@@ -55,6 +59,18 @@ impl AgentInfos {
     }
 }
 
+/// The trace route the agent advertises in `/info` once it supports the V1 trace protocol.
+const V1_TRACES_ENDPOINT: &str = "/v1.0/traces";
+
+/// Whether the agent's `/info` advertises `/v1.0/traces`. Mirrors the endpoint check of
+/// `TraceExporter::refresh_v1_active`; the sidecar additionally falls back to v0.4 for agents older
+/// than 7.79 (see [`agent_supports_v1_traces`]).
+fn agent_info_advertises_v1(info: &AgentInfoStruct) -> bool {
+    info.endpoints
+        .as_ref()
+        .is_some_and(|e| e.iter().any(|p| p == V1_TRACES_ENDPOINT))
+}
+
 pub struct AgentInfoGuard {
     fetcher: Arc<AgentInfoFetcher>,
 }
@@ -68,6 +84,28 @@ impl AgentInfoGuard {
     /// info has been fetched.
     pub fn lacks_debugger_v2_endpoint(&self) -> bool {
         self.fetcher.lacks_debugger_v2.load(Ordering::Relaxed)
+    }
+
+    /// Whether to send V1 traces: the last fetched info advertises `/v1.0/traces`, from an agent
+    /// 7.79+ (`agent_supports_v1_traces`), and no 404 from it came since. False until the first
+    /// info has been fetched.
+    pub fn v1_active(&self) -> bool {
+        self.fetcher.v1_active.load(Ordering::Relaxed)
+    }
+
+    /// Turns V1 off after a 404 from `/v1.0/traces` until the info changes, and re-fetches it now:
+    /// the agent doesn't change its state on a 404. Returns whether V1 was still on.
+    pub fn reject_v1(&self) -> bool {
+        let was_on = self.fetcher.v1_active.swap(false, Ordering::Relaxed);
+        if was_on {
+            self.refresh();
+        }
+        was_on
+    }
+
+    /// Re-fetches the info now rather than at the next poll.
+    pub(crate) fn refresh(&self) {
+        self.fetcher.refresh.notify_one();
     }
 }
 
@@ -89,6 +127,10 @@ pub struct AgentInfoFetcher {
     /// are simply directly replacing this with a resolved future.
     infos: ArcSwap<Shared<ManualFuture<AgentInfoStruct>>>,
     lacks_debugger_v2: AtomicBool,
+    /// Set from each new info's endpoints and version, cleared by [`AgentInfoGuard::reject_v1`].
+    v1_active: AtomicBool,
+    /// Wakes the fetch loop before its next poll.
+    refresh: Notify,
 }
 
 impl AgentInfoFetcher {
@@ -108,7 +150,7 @@ impl AgentInfoFetcher {
             ))
     }
 
-    /// Sets the debugger v2 flag from `info` before handing the info to `publish`, then to
+    /// Sets the debugger v2 and V1 flags from `info` before handing the info to `publish`, then to
     /// awaiters. The SHM publish is a Release, so work a tracer triggers after observing the
     /// new info (e.g. IPC to the sidecar) sees the flag; Relaxed is enough.
     async fn update(
@@ -121,6 +163,16 @@ impl AgentInfoFetcher {
         let json = serde_json::to_vec(&info).unwrap();
         self.lacks_debugger_v2.store(
             !agent_info_supports_debugger_v2_endpoint(&info),
+            Ordering::Relaxed,
+        );
+        // An unparseable version (e.g. a serverless agent's scheme) keeps trusting the endpoints.
+        let v1_version = info
+            .version
+            .as_deref()
+            .and_then(agent_supports_v1_traces)
+            .unwrap_or(true);
+        self.v1_active.store(
+            agent_info_advertises_v1(&info) && v1_version,
             Ordering::Relaxed,
         );
         publish(&json);
@@ -140,6 +192,8 @@ impl AgentInfoFetcher {
             last_update_ms: AtomicU64::new(0),
             infos: ArcSwap::from_pointee(future.shared()),
             lacks_debugger_v2: AtomicBool::new(false),
+            v1_active: AtomicBool::new(false),
+            refresh: Notify::new(),
         });
         let this = fetcher.clone();
         #[allow(clippy::unwrap_used)]
@@ -206,7 +260,10 @@ impl AgentInfoFetcher {
                         );
                     }
                 }
-                sleep(Duration::from_secs(60)).await;
+                select! {
+                    _ = sleep(Duration::from_secs(60)) => {}
+                    _ = this.refresh.notified() => {}
+                }
             }
         });
 
@@ -343,6 +400,98 @@ mod tests {
 
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
+    async fn v1_active_follows_each_new_info_and_a_404() {
+        let (future, completer) = ManualFuture::new();
+        let fetcher = Arc::new(AgentInfoFetcher {
+            rc: AtomicU32::new(1),
+            created_at: Instant::now(),
+            last_update_ms: AtomicU64::new(0),
+            infos: ArcSwap::from_pointee(future.shared()),
+            lacks_debugger_v2: AtomicBool::new(false),
+            v1_active: AtomicBool::new(false),
+            refresh: Notify::new(),
+        });
+        let guard = AgentInfoGuard {
+            fetcher: fetcher.clone(),
+        };
+        let info = |list: &[&str]| AgentInfoStruct {
+            endpoints: Some(list.iter().map(|e| e.to_string()).collect()),
+            ..Default::default()
+        };
+        let mut completer = Some(completer);
+        assert!(!guard.v1_active());
+
+        fetcher
+            .update(
+                info(&["/v0.4/traces", "/v1.0/traces"]),
+                &mut completer,
+                |_| {},
+            )
+            .await;
+        assert!(guard.v1_active());
+        // A 404 turns V1 off; only the first one re-fetches.
+        assert!(guard.reject_v1());
+        assert!(!guard.v1_active());
+        assert!(!guard.reject_v1());
+
+        // A new info turns it back on only if it still advertises V1.
+        fetcher
+            .update(
+                info(&["/v0.4/traces", "/v1.0/traces"]),
+                &mut completer,
+                |_| {},
+            )
+            .await;
+        assert!(guard.v1_active());
+        fetcher
+            .update(info(&["/v0.4/traces"]), &mut completer, |_| {})
+            .await;
+        assert!(!guard.v1_active());
+        fetcher
+            .update(AgentInfoStruct::default(), &mut completer, |_| {})
+            .await;
+        assert!(!guard.v1_active());
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn v1_is_off_for_agents_before_7_79() {
+        let (future, completer) = ManualFuture::new();
+        let fetcher = Arc::new(AgentInfoFetcher {
+            rc: AtomicU32::new(1),
+            created_at: Instant::now(),
+            last_update_ms: AtomicU64::new(0),
+            infos: ArcSwap::from_pointee(future.shared()),
+            lacks_debugger_v2: AtomicBool::new(false),
+            v1_active: AtomicBool::new(false),
+            refresh: Notify::new(),
+        });
+        let guard = AgentInfoGuard {
+            fetcher: fetcher.clone(),
+        };
+        let mut completer = Some(completer);
+
+        for (version, v1) in [
+            (Some("7.78.9"), false),
+            (Some("7.79.0-rc.5"), false),
+            (Some("7.79.0-rc.6"), true),
+            (Some("7.80.1"), true),
+            // Unparseable or missing: trust the endpoints.
+            (Some("v7.77.0"), true),
+            (None, true),
+        ] {
+            let info = AgentInfoStruct {
+                version: version.map(str::to_string),
+                endpoints: Some(vec!["/v1.0/traces".to_string()]),
+                ..Default::default()
+            };
+            fetcher.update(info, &mut completer, |_| {}).await;
+            assert_eq!(guard.v1_active(), v1, "{version:?}");
+        }
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
     async fn the_debugger_flag_is_set_before_the_info_is_published() {
         let endpoint = Endpoint::from_slice("http://derived-state.invalid:8126");
         let writer = OneWayShmWriter::<NamedShmHandle>::new(info_path(&endpoint)).unwrap();
@@ -354,6 +503,8 @@ mod tests {
             last_update_ms: AtomicU64::new(0),
             infos: ArcSwap::from_pointee(future.shared()),
             lacks_debugger_v2: AtomicBool::new(false),
+            v1_active: AtomicBool::new(false),
+            refresh: Notify::new(),
         };
         let endpoints = |list: &[&str]| list.iter().map(|e| e.to_string()).collect::<Vec<_>>();
         let awaited = || {
@@ -366,10 +517,15 @@ mod tests {
 
         // The first info completes the future, a later one replaces it. As soon as either can be
         // read from SHM, the flag matches it; the future only gets it afterwards.
-        for (list, lacks_v2) in [
-            (&["/debugger/v1/diagnostics"][..], true),
+        for (list, lacks_v2, v1) in [
+            (
+                &["/debugger/v1/diagnostics", "/v1.0/traces"][..],
+                true,
+                true,
+            ),
             (
                 &["/debugger/v1/diagnostics", "/debugger/v2/input"][..],
+                false,
                 false,
             ),
         ] {
@@ -383,6 +539,7 @@ mod tests {
                     assert!(writer.write(info));
                     observed = reader.read().0;
                     assert_eq!(fetcher.lacks_debugger_v2.load(Ordering::Relaxed), lacks_v2);
+                    assert_eq!(fetcher.v1_active.load(Ordering::Relaxed), v1);
                     assert_ne!(awaited(), Some(endpoints(list)));
                 })
                 .await;

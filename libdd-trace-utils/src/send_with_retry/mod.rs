@@ -15,6 +15,7 @@ use futures::future::{Either, select};
 use http::HeaderMap;
 use libdd_capabilities::{HttpClientCapability, HttpError, SleepCapability};
 use libdd_common::Endpoint;
+use libdd_networking::endpoint::EndpointExt;
 use std::time::Duration;
 use tracing::{debug, error};
 

@@ -14,8 +14,10 @@ pub use ffe_submission::*;
 #[cfg(target_os = "linux")]
 pub mod signal_flush;
 pub mod span;
+pub mod span_v04;
 
-use crate::span::TracesBytes;
+use crate::span::populate_payload_metadata;
+use crate::span_v04::TracesBytes;
 use datadog_sidecar::agent_remote_config::{AgentRemoteConfigWriter, new_reader, reader_from_shm};
 use datadog_sidecar::config;
 use datadog_sidecar::config::LogMethod;
@@ -33,9 +35,11 @@ use datadog_sidecar::service::{
     FlagKey, InstanceId, RuntimeMetadata, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
     SidecarFlushOptions, TargetingRuleKey, VariantKey,
     blocking::{self, SidecarTransport},
-    prune_context_json,
+    canonical_features_json, prune_context_json,
 };
-use datadog_sidecar::shm_remote_config::{RemoteConfigReader, path_for_remote_config};
+use datadog_sidecar::shm_remote_config::{
+    RemoteConfigInvariants, RemoteConfigReader, path_for_remote_config,
+};
 use libc::c_char;
 use libdd_common::Endpoint;
 use libdd_common::tag::Tag;
@@ -54,6 +58,7 @@ use libdd_telemetry::{
 };
 use libdd_telemetry_ffi::try_c;
 use libdd_trace_utils::msgpack_encoder;
+use libdd_trace_utils::span::v1::TracerPayloadBytes;
 use libdd_trace_utils::trace_utils::TracerGenericTags;
 use std::ffi::{CStr, CString, c_void};
 use std::fs::File;
@@ -271,7 +276,8 @@ pub unsafe extern "C" fn ddog_remote_config_reader_for_endpoint<'a>(
             tracer_version: tracer_version.to_utf8_lossy().into(),
             endpoint: endpoint.clone(),
             agentless: None,
-        },
+        }
+        .into(),
         &Arc::new(Target::new(
             service_name.to_utf8_lossy().to_string(),
             env_name.to_utf8_lossy().to_string(),
@@ -293,7 +299,7 @@ pub unsafe extern "C" fn ddog_remote_config_reader_for_path(
 
 #[unsafe(no_mangle)]
 extern "C" fn ddog_remote_config_path(
-    id: *const ConfigInvariants,
+    id: *const RemoteConfigInvariants,
     target: *const Arc<Target>,
 ) -> *mut c_char {
     let id = unsafe { &*id };
@@ -665,6 +671,7 @@ pub unsafe extern "C" fn ddog_sidecar_set_connection_config(
     root_service: ffi::CharSlice,
     root_session_id: ffi::CharSlice,
     parent_session_id: ffi::CharSlice,
+    force_v04_traces: bool,
 ) -> MaybeError {
     unsafe {
         let otlp_metrics_endpoint: Option<Endpoint> = otlp_metrics_endpoint.as_ref().cloned();
@@ -729,6 +736,7 @@ pub unsafe extern "C" fn ddog_sidecar_set_connection_config(
                 Some(parent_session_id.to_utf8_lossy().into())
             },
             retry_interval: Duration::from_millis(retry_interval_milliseconds as u64),
+            force_v04_traces,
         };
         #[cfg(unix)]
         let _ = win_remote_config_notification;
@@ -1047,6 +1055,11 @@ pub struct FfeExposure<'a> {
     pub variant: CharSlice<'a>,
     pub serial_id: i32,
     pub has_serial_id: bool,
+    /// UTF-8 JSON object of the split features routed to exposures, mapping a
+    /// key to a string, number or boolean. Empty, invalid or non-object input
+    /// means no features and never rejects the exposure. Input larger than one
+    /// IPC packet is ignored. Not part of deduplication.
+    pub features_json: CharSlice<'a>,
 }
 
 #[repr(C)]
@@ -1080,6 +1093,12 @@ pub struct FfeFlagEvaluation<'a> {
     pub runtime_default_used: bool,
     /// Consent captured from the configuration used for this evaluation.
     pub observe_full_evaluation_data: bool,
+    /// UTF-8 JSON object of the split features routed to evaluation counts,
+    /// mapping a key to a string, number or boolean. Rows with different
+    /// features are counted separately. Kept regardless of consent. Empty,
+    /// invalid or non-object input means no features and never rejects the
+    /// evaluation. Input larger than one IPC packet is ignored.
+    pub features_json: CharSlice<'a>,
 }
 
 /// Send structured Feature Flags exposure events to the sidecar. The sidecar owns
@@ -1087,9 +1106,18 @@ pub struct FfeFlagEvaluation<'a> {
 /// function is caller-driven; shared libdatadog evaluator calls do not log unless
 /// an SDK explicitly sends this action.
 ///
+/// Submission is non-blocking and best-effort. Success means the batch was
+/// converted and handed to the transport, not that the sidecar accepted it.
+/// The batch is sent as one IPC request, through shared memory when it exceeds
+/// the socket buffer. It is dropped without an error when the whole encoded
+/// request exceeds `max_message_size()` (4 MiB by default), when the sender
+/// sheds load, or when the socket is full or the connection is closed.
+///
 /// # Safety
-/// `context` and every element in `exposures` must contain valid UTF-8
-/// `CharSlice` values. Empty `exposures` is a no-op.
+/// All slices must reference valid memory under the CharSlice contract. The
+/// context and the required exposure fields must be UTF-8. Invalid
+/// `features_json` is allowed and only omits the features. Empty `exposures`
+/// is a no-op.
 #[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_send_ffe_exposure_batch(
@@ -1148,12 +1176,20 @@ fn ddog_sidecar_send_ffe_exposure_batch_impl(
 /// Send structured Feature Flags evaluation events to the sidecar. The sidecar owns
 /// route selection, JSON serialization, and EVP delivery. This function is
 /// caller-driven; callers must aggregate and bound event cardinality before passing
-/// a batch.
+/// a batch. Submission is non-blocking and best-effort, with the same size
+/// limit and silent drops as `ddog_sidecar_send_ffe_exposure_batch`.
+///
+/// When all batch `context` fields (service, env and version) are empty, the sidecar
+/// fills them from the application set on this transport with
+/// `ddog_sidecar_set_application`. If no application is set or any of its identity
+/// fields exceeds 256 characters, the batch context stays empty. Explicit batch
+/// context is preserved.
 ///
 /// # Safety
 /// All slices must reference valid memory under the CharSlice contract. Context
 /// metadata and flag keys must be UTF-8. Malformed optional variant, allocation,
-/// rule, targeting, and context text is omitted; malformed error text becomes GENERAL.
+/// rule, targeting, context and `features_json` text is omitted; malformed error
+/// text becomes GENERAL.
 /// A null/zero targeting slice means missing; a non-null empty slice means empty.
 /// Empty `flag_evaluations` is a no-op. Use headers and library from the same build.
 #[unsafe(no_mangle)]
@@ -1281,7 +1317,17 @@ fn ffe_exposure_from_ffi(exposure: &FfeExposure<'_>) -> Result<SidecarFfeExposur
         allocation_key: char_slice_to_string(exposure.allocation_key)?,
         variant: char_slice_to_string(exposure.variant)?,
         serial_id: exposure.has_serial_id.then_some(exposure.serial_id),
+        features_json: ffi_features(exposure.features_json).unwrap_or_default(),
     })
+}
+
+// Malformed input must not grow the IPC request past the packet limit, which
+// drops the whole batch; only the bounded canonical object crosses IPC.
+fn ffi_features(features_json: CharSlice) -> Option<String> {
+    if features_json.is_empty() || features_json.len() > libdd_ipc::max_message_size() {
+        return None;
+    }
+    canonical_features_json(features_json.try_to_utf8().ok()?)
 }
 
 fn ffe_flag_evaluation_from_ffi(
@@ -1348,6 +1394,7 @@ fn ffe_flag_evaluation_from_ffi(
             EvalError::from_message(event.error_message.try_to_utf8().unwrap_or("GENERAL"))
         },
         runtime_default_used: event.runtime_default_used,
+        features: ffi_features(event.features_json),
         observe_full_evaluation_data: event.observe_full_evaluation_data,
         is_degraded: false,
         field_omissions,
@@ -1721,6 +1768,13 @@ pub struct SenderParameters {
     pub url: CharSlice<'static>,
 }
 
+/// Payload-level tracer metadata for the V1 send path not already carried by the sender's
+/// `tracer_headers_tags` (lang, tracer_version, container_id live there and are routed from there).
+#[repr(C)]
+pub struct TracerMetadataV1 {
+    pub runtime_id: CharSlice<'static>,
+}
+
 #[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_send_traces_to_sidecar(
@@ -1805,6 +1859,147 @@ pub unsafe extern "C" fn ddog_send_traces_to_sidecar(
         //     size,
         //     parameters.url
         // );
+    }
+}
+
+/// V1 counterpart of `ddog_send_traces_to_sidecar`: sends the [`crate::span`] builder's native V1
+/// payload to the agent's `/v1.0/traces`. Consumes `builder`. Payload metadata comes at send time
+/// from `parameters.tracer_headers_tags` and `metadata`; lang_interpreter/lang_vendor go as
+/// headers.
+#[unsafe(no_mangle)]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_send_traces_to_sidecar_v1(
+    builder: Box<TracerPayloadBytes>,
+    parameters: &mut SenderParameters,
+    metadata: &TracerMetadataV1,
+) {
+    let mut payload = *builder;
+    // The one dedup of the send path: the builder's maps may hold overwritten keys.
+    payload.dedup();
+    let size: usize = payload.chunks.iter().map(|c| c.spans.len()).sum();
+
+    // Check connection to the sidecar
+    if parameters.transport.is_closed() {
+        tracing::info!(
+            "Skipping flushing traces of size {} as connection to sidecar failed",
+            size
+        );
+        return;
+    }
+
+    let tags = &parameters.tracer_headers_tags;
+    populate_payload_metadata(
+        &mut payload,
+        &tags.container_id.to_utf8_lossy(),
+        &tags.lang.to_utf8_lossy(),
+        &tags.lang_version.to_utf8_lossy(),
+        &tags.tracer_version.to_utf8_lossy(),
+        &metadata.runtime_id.to_utf8_lossy(),
+    );
+
+    let lang_interpreter = parameters
+        .tracer_headers_tags
+        .lang_interpreter
+        .to_utf8_lossy()
+        .into_owned();
+    let lang_vendor = parameters
+        .tracer_headers_tags
+        .lang_vendor
+        .to_utf8_lossy()
+        .into_owned();
+
+    // Create and map shared memory
+    let shm = check!(
+        ShmHandle::new(parameters.limit),
+        "Failed to create shared memory"
+    );
+
+    let mut mapped_shm = check!(shm.clone().map(), "Failed to map shared memory");
+
+    // Write traces to the shared memory as a native V1 payload
+    let mut shm_slice = mapped_shm.as_slice_mut();
+    let shm_slice_len = shm_slice.len();
+    let written = match msgpack_encoder::v1::write_to_slice_from_v1(&mut shm_slice, &payload) {
+        Ok(()) => shm_slice_len - shm_slice.len(),
+        Err(_) => {
+            tracing::error!("Failed serializing the traces");
+            return;
+        }
+    };
+
+    // Send traces to the sidecar via the shared memory handler
+    let mut size_hint = written;
+    if parameters.n_requests > 0 {
+        size_hint = size_hint.max((parameters.buffer_size / parameters.n_requests + 1) as usize);
+    }
+
+    let send_error = blocking::send_trace_v1_shm(
+        &mut parameters.transport,
+        shm,
+        size_hint,
+        TracerGenericTags {
+            client_computed_top_level: parameters.tracer_headers_tags.client_computed_top_level,
+            client_computed_stats: parameters.tracer_headers_tags.client_computed_stats,
+            ..Default::default()
+        },
+        lang_interpreter,
+        lang_vendor,
+    );
+
+    // Retry sending traces via bytes if there was an error. `lang_interpreter`/`lang_vendor` were
+    // moved into the shm send above, so re-derive them here (only on this rare path).
+    if send_error.is_err() {
+        match blocking::send_trace_v1_bytes(
+            &mut parameters.transport,
+            msgpack_encoder::v1::to_vec_with_capacity_from_v1(&payload, written as u32),
+            TracerGenericTags {
+                client_computed_top_level: parameters.tracer_headers_tags.client_computed_top_level,
+                client_computed_stats: parameters.tracer_headers_tags.client_computed_stats,
+                ..Default::default()
+            },
+            parameters
+                .tracer_headers_tags
+                .lang_interpreter
+                .to_utf8_lossy()
+                .into_owned(),
+            parameters
+                .tracer_headers_tags
+                .lang_vendor
+                .to_utf8_lossy()
+                .into_owned(),
+        ) {
+            Ok(_) => {}
+            Err(_) => tracing::debug!(
+                "Failed sending traces via shm to sidecar: {}",
+                unsafe { send_error.err().unwrap_unchecked() }.to_string()
+            ),
+        };
+    }
+
+    tracing::event!(target: "info", tracing::Level::INFO, "Flushing v1 trace of size {} to send-queue for {}", size, parameters.url);
+}
+
+/// Downgrades a native V1 builder to the in-memory v0.4 collection for the in-process `coms.c`
+/// sender (DD_TRACE_SIDECAR_TRACE_SENDER=0). Consumes `builder`. Returns the collection (not one
+/// whole-payload CharSlice) so `auto_flush` can frame each trace individually; a single CharSlice
+/// would drop extra traces of a multi-trace payload. Empty collection on error; free with
+/// [`crate::span_v04::ddog_free_traces`]. Pass `native_span_events` when the agent info
+/// advertises `span_events`; otherwise span events go to the legacy `events` meta JSON.
+#[unsafe(no_mangle)]
+pub extern "C" fn ddog_downgrade_v1_builder_to_v04_traces(
+    builder: Box<TracerPayloadBytes>,
+    native_span_events: bool,
+) -> Box<TracesBytes> {
+    let mut payload = *builder;
+    payload.dedup();
+    let opts = msgpack_encoder::v04::V1DowngradeOptions { native_span_events };
+    let v04_bytes = msgpack_encoder::v04::to_vec_from_v1_with(&payload, opts);
+    match libdd_trace_utils::tracer_payload::decode_to_trace_chunks(
+        libdd_tinybytes::Bytes::from(v04_bytes),
+        libdd_trace_utils::tracer_payload::TraceEncoding::V04,
+    ) {
+        Ok((libdd_trace_utils::tracer_payload::TraceChunks::V04(traces), _)) => Box::new(traces),
+        _ => Box::default(),
     }
 }
 
@@ -1955,7 +2150,84 @@ mod tests {
             error_message: CharSlice::empty(),
             runtime_default_used: false,
             observe_full_evaluation_data: true,
+            features_json: CharSlice::empty(),
         }
+    }
+
+    #[test]
+    fn downgrade_v1_builder_to_v04_traces_preserves_all_traces() {
+        use crate::span::{
+            ddog_new_chunk, ddog_new_span, ddog_set_span_name, ddog_set_span_service,
+            ddog_span_set_id, ddog_v1_new_builder,
+        };
+        use crate::span_v04::{ddog_free_traces, ddog_serialize_trace_into_charslice};
+
+        // Two chunks (traces) with a shared service; the whole-payload CharSlice form drops the
+        // second under the coms framing, the TracesBytes form must keep both.
+        let mut builder = ddog_v1_new_builder();
+        for (id, name) in [(1, "op-one"), (2, "op-two")] {
+            // Safety: `chunk` and `span` were just returned and nothing was pushed since.
+            let chunk = unsafe { &mut *ddog_new_chunk(&mut builder, 0, id) };
+            let span = unsafe { &mut *ddog_new_span(chunk) };
+            ddog_set_span_service(span, CharSlice::from("svc-shared"));
+            ddog_set_span_name(span, CharSlice::from(name));
+            ddog_span_set_id(span, id);
+        }
+
+        let mut traces = ddog_downgrade_v1_builder_to_v04_traces(builder, true);
+        assert_eq!(traces.len(), 2, "both traces must survive the downgrade");
+        assert_eq!(traces[0].len(), 1);
+        assert_eq!(traces[1].len(), 1);
+        assert_eq!(traces[0][0].service.as_str(), "svc-shared");
+        assert_eq!(traces[0][0].name.as_str(), "op-one");
+        assert_eq!(traces[1][0].name.as_str(), "op-two");
+
+        // Each trace serializes to a valid, non-empty msgpack array-of-1 for the background sender.
+        for i in 0..traces.len() {
+            let slice = ddog_serialize_trace_into_charslice(&mut traces[i]);
+            assert!(!slice.is_empty());
+            // Safety: `slice` is the owned allocation just returned above.
+            unsafe { crate::span::ddog_free_charslice(slice) };
+        }
+
+        ddog_free_traces(traces);
+    }
+
+    #[test]
+    fn downgrade_v1_builder_to_v04_traces_gates_native_span_events() {
+        use crate::span::{
+            ddog_event_set_name, ddog_new_chunk, ddog_new_event, ddog_new_span, ddog_v1_new_builder,
+        };
+        use crate::span_v04::ddog_free_traces;
+
+        let builder_with_event = || {
+            let mut builder = ddog_v1_new_builder();
+            // Safety: each pointer was just returned and nothing was pushed since.
+            let chunk = unsafe { &mut *ddog_new_chunk(&mut builder, 0, 1) };
+            let span = unsafe { &mut *ddog_new_span(chunk) };
+            let event = unsafe { &mut *ddog_new_event(span) };
+            ddog_event_set_name(event, CharSlice::from("exception"));
+            builder
+        };
+
+        let traces = ddog_downgrade_v1_builder_to_v04_traces(builder_with_event(), true);
+        let span = &traces[0][0];
+        assert_eq!(span.span_events.len(), 1);
+        assert_eq!(span.span_events[0].name.as_str(), "exception");
+        assert!(!span.meta.contains_key("events"));
+        ddog_free_traces(traces);
+
+        let traces = ddog_downgrade_v1_builder_to_v04_traces(builder_with_event(), false);
+        let span = &traces[0][0];
+        assert!(span.span_events.is_empty());
+        assert!(
+            span.meta
+                .get("events")
+                .unwrap()
+                .as_str()
+                .contains("\"exception\"")
+        );
+        ddog_free_traces(traces);
     }
 
     #[test]
@@ -2002,6 +2274,74 @@ mod tests {
             variant: CharSlice::from("blue"),
             serial_id,
             has_serial_id,
+            features_json: CharSlice::empty(),
+        }
+    }
+
+    #[test]
+    fn ffe_exposure_carries_features_and_tolerates_malformed_input() {
+        let mut exposure = ffi_exposure(0, false);
+        exposure.features_json = CharSlice::from(r#"{"holdout.key":"h1"}"#);
+        let converted = ffe_exposure_from_ffi(&exposure).unwrap();
+        assert_eq!(converted.features_json, r#"{"holdout.key":"h1"}"#);
+
+        exposure.features_json = CharSlice::from(r#"{"b":1,"a":"x","n":null}"#);
+        let converted = ffe_exposure_from_ffi(&exposure).unwrap();
+        assert_eq!(converted.features_json, r#"{"a":"x","b":1.0}"#);
+
+        let invalid = [0xffu8];
+        // Valid features padded past the packet limit, so only the size guard drops them.
+        let oversized = format!(
+            r#"{{"a":"x"{}}}"#,
+            " ".repeat(libdd_ipc::max_message_size())
+        );
+        for features in [
+            // SAFETY: the borrowed bytes outlive the conversion.
+            unsafe { CharSlice::from_raw_parts(invalid.as_ptr().cast(), 1) },
+            CharSlice::from("not json"),
+            CharSlice::from(oversized.as_str()),
+        ] {
+            exposure.features_json = features;
+            let converted = ffe_exposure_from_ffi(&exposure).unwrap();
+            assert_eq!(converted.features_json, "");
+            assert_eq!(converted.flag_key, "flag-a");
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "parses a packet-sized input")]
+    fn ffe_exposure_keeps_features_exactly_one_packet_long() {
+        let at_limit = format!(
+            r#"{{"a":"x"{}}}"#,
+            " ".repeat(libdd_ipc::max_message_size() - 9)
+        );
+        assert_eq!(at_limit.len(), libdd_ipc::max_message_size());
+        let mut exposure = ffi_exposure(0, false);
+        exposure.features_json = CharSlice::from(at_limit.as_str());
+        let converted = ffe_exposure_from_ffi(&exposure).unwrap();
+        assert_eq!(converted.features_json, r#"{"a":"x"}"#);
+    }
+
+    #[test]
+    fn ffe_flag_evaluation_canonicalizes_features_regardless_of_consent() {
+        for consent in [false, true] {
+            let mut event = ffi_flag_evaluation("");
+            event.observe_full_evaluation_data = consent;
+            event.features_json = CharSlice::from(r#"{"b":1,"a":"x","n":null}"#);
+            let converted = ffe_flag_evaluation_from_ffi(&event, "svc").unwrap();
+            assert_eq!(converted.features.as_deref(), Some(r#"{"a":"x","b":1.0}"#));
+        }
+        // Valid features padded past the packet limit, so only the size guard drops them.
+        let oversized = format!(
+            r#"{{"a":"x"{}}}"#,
+            " ".repeat(libdd_ipc::max_message_size())
+        );
+        for raw in ["", "not json", "{}", "[1]", oversized.as_str()] {
+            let mut event = ffi_flag_evaluation("");
+            event.features_json = CharSlice::from(raw);
+            let converted = ffe_flag_evaluation_from_ffi(&event, "svc").unwrap();
+            assert_eq!(converted.features, None, "{raw}");
+            assert_eq!(converted.evaluation_count, 7);
         }
     }
 

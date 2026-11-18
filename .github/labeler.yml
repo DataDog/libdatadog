@@ -11,6 +11,7 @@ common:
       'libdd-common/**/*',
       'libdd-common-ffi/**/*',
       'libdd-regex/**/*',
+      'libdd-env/**/*',
     ]
 
 ci-build:

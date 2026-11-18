@@ -9,6 +9,8 @@
 include!("_includes.rs");
 pub mod deserializers;
 mod serde;
+#[cfg(feature = "trace-model")]
+mod trace_model;
 
 #[cfg(test)]
 mod pb_test;

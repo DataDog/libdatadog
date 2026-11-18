@@ -5,9 +5,20 @@ use crate::span_concentrator::aggregation::{OwnedAggregationKey, TRACER_BLOCKED_
 
 use super::*;
 use libdd_trace_utils::span::v04::VecMap;
-use libdd_trace_utils::span::{trace_utils::compute_top_level_span, v04::SpanSlice};
+use libdd_trace_utils::span::{
+    RootSpanChunk, SpanWithTraceId, trace_utils::compute_top_level_span, v04::SpanSlice,
+};
 use rand::{Rng, thread_rng};
 use std::borrow::Cow;
+
+/// Adds `span` to the concentrator as its own single-span chunk.
+fn add_span_as_chunk<S: SpanWithTraceId>(concentrator: &mut SpanConcentrator, span: &S) {
+    let chunk = RootSpanChunk::new(std::slice::from_ref(span));
+    concentrator.add_span(&ChunkSpanView {
+        span,
+        chunk: &chunk,
+    });
+}
 
 const BUCKET_SIZE: u64 = Duration::from_secs(2).as_nanos() as u64;
 
@@ -121,7 +132,7 @@ fn test_concentrator_oldest_timestamp_cold() {
     ];
     compute_top_level_span(spans.as_mut_slice());
     for span in &spans {
-        concentrator.add_span(span);
+        add_span_as_chunk(&mut concentrator, span);
     }
 
     let mut flushtime = now;
@@ -187,7 +198,7 @@ fn test_concentrator_oldest_timestamp_hot() {
         * concentrator.bucket_size;
 
     for span in &spans {
-        concentrator.add_span(span);
+        add_span_as_chunk(&mut concentrator, span);
     }
 
     for _ in 0..(concentrator.buffer_len - 1) {
@@ -276,7 +287,7 @@ fn test_concentrator_stats_totals() {
     let mut total_top_level_hits = 0;
 
     for span in &spans {
-        concentrator.add_span(span);
+        add_span_as_chunk(&mut concentrator, span);
     }
 
     let mut flushtime = now;
@@ -527,7 +538,7 @@ fn test_concentrator_stats_counts() {
     compute_top_level_span(spans.as_mut_slice());
 
     for span in &spans {
-        concentrator.add_span(span);
+        add_span_as_chunk(&mut concentrator, span);
     }
 
     let mut flushtime = now;
@@ -618,7 +629,7 @@ fn test_span_should_be_included_in_stats() {
         None,
     );
     for span in &spans {
-        concentrator.add_span(span);
+        add_span_as_chunk(&mut concentrator, span);
     }
 
     let expected = vec![
@@ -702,7 +713,7 @@ fn test_ignore_partial_spans() {
         None,
     );
     for span in &spans {
-        concentrator.add_span(span);
+        add_span_as_chunk(&mut concentrator, span);
     }
 
     let stats = concentrator
@@ -731,7 +742,7 @@ fn test_force_flush() {
         None,
     );
     for span in &spans {
-        concentrator.add_span(span);
+        add_span_as_chunk(&mut concentrator, span);
     }
 
     // flushtime is 1h before now to make sure the bucket is not old enough to be flushed
@@ -826,10 +837,10 @@ fn test_peer_tags_aggregation() {
         None,
     );
     for span in &spans {
-        concentrator_without_peer_tags.add_span(span);
+        add_span_as_chunk(&mut concentrator_without_peer_tags, span);
     }
     for span in &spans {
-        concentrator_with_peer_tags.add_span(span);
+        add_span_as_chunk(&mut concentrator_with_peer_tags, span);
     }
 
     let flushtime = now
@@ -1015,7 +1026,7 @@ fn test_peer_tags_quantization_aggregation() {
         None,
     );
     for span in &spans {
-        concentrator_with_peer_tags.add_span(span);
+        add_span_as_chunk(&mut concentrator_with_peer_tags, span);
     }
 
     let flushtime = now
@@ -1146,7 +1157,7 @@ fn test_base_service_peer_tag() {
     );
 
     for span in &spans {
-        concentrator.add_span(span);
+        add_span_as_chunk(&mut concentrator, span);
     }
 
     let flushtime =
@@ -1415,7 +1426,7 @@ fn test_base_service_peer_tag_kind_selection() {
     );
 
     for span in &spans {
-        concentrator.add_span(span);
+        add_span_as_chunk(&mut concentrator, span);
     }
 
     let flushtime =
@@ -1632,7 +1643,7 @@ fn test_base_service_peer_tag_empty_key_list() {
     );
 
     for span in &spans {
-        concentrator.add_span(span);
+        add_span_as_chunk(&mut concentrator, span);
     }
 
     let flushtime =
@@ -1807,6 +1818,61 @@ fn test_compute_stats_for_span_kind() {
     for (span, is_eligible) in test_cases {
         assert!(is_span_eligible(&span, &get_span_kinds()) == is_eligible)
     }
+}
+
+/// Verify the OTLP exact-scalar sidecar tracks per-cell (ok/error) duration/min/max in nanos
+/// independently and that ok_duration + error_duration matches the combined group duration
+/// (which the agent /v0.6/stats path uses).
+/// v0.4 spans carry the origin as a tag, which only the root is guaranteed to have: a child span
+/// of a synthetics trace must be counted as synthetics too, from its trace's root.
+#[test]
+fn test_v04_trace_synthetics_from_root() {
+    let now = SystemTime::now();
+    let mut concentrator = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        vec![],
+        vec![],
+        None,
+        vec![],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
+    );
+    let mut trace = vec![
+        get_test_span_with_meta(
+            now,
+            1,
+            0,
+            100,
+            5,
+            "A",
+            "resource",
+            0,
+            &[("_dd.origin", "synthetics-browser")],
+            &[],
+        ),
+        // A different service, so the child is top-level as well.
+        get_test_span(now, 2, 1, 50, 5, "B", "resource", 0),
+    ];
+    compute_top_level_span(trace.as_mut_slice());
+    let chunk = RootSpanChunk::new(&trace);
+    for span in &trace {
+        concentrator.add_span(&ChunkSpanView {
+            span,
+            chunk: &chunk,
+        });
+    }
+
+    let flushtime =
+        now + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
+    let stats = concentrator.flush(flushtime, false).all_buckets();
+    let mut synthetics: Vec<_> = stats
+        .iter()
+        .flat_map(|bucket| &bucket.stats)
+        .map(|group| (group.service.as_str(), group.synthetics))
+        .collect();
+    synthetics.sort_unstable();
+    assert_eq!(synthetics, [("A", true), ("B", true)]);
 }
 
 #[test]
@@ -1994,7 +2060,7 @@ fn test_pb_span() {
 
     // Add spans to concentrator
     for span in &pb_spans {
-        concentrator.add_span(span);
+        add_span_as_chunk(&mut concentrator, span);
     }
 
     // Flush and get stats
@@ -2099,9 +2165,6 @@ fn test_pb_span() {
     assert_counts_equal(expected_stats, bucket.stats.clone());
 }
 
-/// Verify the OTLP exact-scalar sidecar tracks per-cell (ok/error) duration/min/max in nanos
-/// independently and that ok_duration + error_duration matches the combined group duration
-/// (which the agent /v0.6/stats path uses).
 #[test]
 fn test_flush_with_otlp_exact_per_cell_scalars() {
     let now = SystemTime::now();
@@ -2125,7 +2188,7 @@ fn test_flush_with_otlp_exact_per_cell_scalars() {
     ];
     compute_top_level_span(spans.as_mut_slice());
     for s in &spans {
-        concentrator.add_span(s);
+        add_span_as_chunk(&mut concentrator, s);
     }
 
     let flushed = concentrator.flush_with_otlp_exact(now, true);
@@ -2195,7 +2258,7 @@ fn test_whole_key_cardinality_limit_collapse() {
             &[],
             &[("_dd.measured", 1.0)],
         );
-        concentrator.add_span(&span);
+        add_span_as_chunk(&mut concentrator, &span);
     }
 
     let buckets = concentrator.flush(SystemTime::now(), true).all_buckets();
@@ -2262,7 +2325,7 @@ fn test_per_key_cardinality_limit_collapse_http_endpoint() {
             &meta,
             &[("_dd.measured", 1.0)],
         );
-        concentrator.add_span(&span);
+        add_span_as_chunk(&mut concentrator, &span);
     }
     // Insert a distinct `resource` root span, this one won't get collapsed
     {
@@ -2279,7 +2342,7 @@ fn test_per_key_cardinality_limit_collapse_http_endpoint() {
             &meta,
             &[("_dd.measured", 1.0)],
         );
-        concentrator.add_span(&span);
+        add_span_as_chunk(&mut concentrator, &span);
     }
 
     let buckets = concentrator.flush(SystemTime::now(), true).all_buckets();
@@ -2357,7 +2420,7 @@ fn test_per_key_cardinality_limit_collapse_before_whole_key() {
             &meta,
             &[("_dd.measured", 1.0)],
         );
-        concentrator.add_span(&span);
+        add_span_as_chunk(&mut concentrator, &span);
     }
 
     let buckets = concentrator.flush(SystemTime::now(), true).all_buckets();
@@ -2426,7 +2489,7 @@ fn test_overflow_bucket_counts() {
             &[],
             &[("_dd.measured", 1.0)],
         );
-        concentrator.add_span(&span);
+        add_span_as_chunk(&mut concentrator, &span);
     }
 
     let buckets = concentrator.flush(SystemTime::now(), true).all_buckets();
@@ -2478,7 +2541,7 @@ fn test_no_collapse_within_limit() {
             &[],
             &[("_dd.measured", 1.0)],
         );
-        concentrator.add_span(&span);
+        add_span_as_chunk(&mut concentrator, &span);
     }
 
     let buckets = concentrator.flush(SystemTime::now(), true).all_buckets();
@@ -2533,8 +2596,8 @@ fn test_overflow_bucket_key_sentinel_values() {
         &[("_dd.measured", 1.0)],
     );
 
-    concentrator.add_span(&first);
-    concentrator.add_span(&second);
+    add_span_as_chunk(&mut concentrator, &first);
+    add_span_as_chunk(&mut concentrator, &second);
 
     let buckets = concentrator.flush(SystemTime::now(), true).all_buckets();
     assert!(!buckets.is_empty());
@@ -2650,8 +2713,8 @@ fn test_additional_metric_tags_aggregation() {
         None,
     );
     for span in &spans {
-        concentrator_without_additional_metric_tags.add_span(span);
-        concentrator_with_additional_metric_tags.add_span(span);
+        add_span_as_chunk(&mut concentrator_without_additional_metric_tags, span);
+        add_span_as_chunk(&mut concentrator_with_additional_metric_tags, span);
     }
 
     let flushtime = now
@@ -2753,7 +2816,7 @@ fn test_additional_metric_tag_value_length_cap_substitutes_blocked_value() {
         #[cfg(feature = "stats-obfuscation")]
         None,
     );
-    concentrator.add_span(&spans[0]);
+    add_span_as_chunk(&mut concentrator, &spans[0]);
 
     let flushtime =
         now + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
@@ -2791,7 +2854,7 @@ fn test_additional_metric_tag_value_at_length_cap_passes_through() {
         #[cfg(feature = "stats-obfuscation")]
         None,
     );
-    concentrator.add_span(&spans[0]);
+    add_span_as_chunk(&mut concentrator, &spans[0]);
 
     let flushtime =
         now + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
@@ -2830,7 +2893,7 @@ fn test_additional_metric_tag_value_multibyte_at_length_cap_passes_through() {
         #[cfg(feature = "stats-obfuscation")]
         None,
     );
-    concentrator.add_span(&spans[0]);
+    add_span_as_chunk(&mut concentrator, &spans[0]);
 
     let flushtime =
         now + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
@@ -2868,7 +2931,7 @@ fn test_additional_metric_tag_value_multibyte_over_length_cap_substitutes_blocke
         #[cfg(feature = "stats-obfuscation")]
         None,
     );
-    concentrator.add_span(&spans[0]);
+    add_span_as_chunk(&mut concentrator, &spans[0]);
 
     let flushtime =
         now + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
@@ -2959,7 +3022,7 @@ fn test_additional_metric_tags_max_entries_masks_overflow_entries() {
     );
     concentrator.cardinality_limits.additional_tags_limit = 1;
     for span in &spans {
-        concentrator.add_span(span);
+        add_span_as_chunk(&mut concentrator, span);
     }
 
     let flushtime =
@@ -3033,7 +3096,7 @@ fn test_additional_metric_tags_max_entries_existing_keys_merge_after_limit() {
     );
     concentrator.cardinality_limits.additional_tags_limit = 1;
     for span in &spans {
-        concentrator.add_span(span);
+        add_span_as_chunk(&mut concentrator, span);
     }
 
     let flushtime =
@@ -3096,7 +3159,7 @@ fn test_additional_metric_tags_max_entries_resets_on_flush() {
 
     // First bucket: cap of 1 means only us-east-1 is admitted unmasked.
     for span in &spans {
-        concentrator.add_span(span);
+        add_span_as_chunk(&mut concentrator, span);
     }
     let flush1_time =
         now + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
@@ -3118,7 +3181,7 @@ fn test_additional_metric_tags_max_entries_resets_on_flush() {
         &[("_dd.measured", 1.0)],
     )];
     compute_top_level_span(spans2.as_mut_slice());
-    concentrator.add_span(&spans2[0]);
+    add_span_as_chunk(&mut concentrator, &spans2[0]);
 
     let flush2_time =
         later + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
@@ -3183,7 +3246,7 @@ fn test_additional_metric_tags_new_key_collapses_into_overflow_before_masking() 
     );
     concentrator.cardinality_limits.additional_tags_limit = 5;
     for span in &spans {
-        concentrator.add_span(span);
+        add_span_as_chunk(&mut concentrator, span);
     }
 
     let flushtime =
@@ -3253,7 +3316,7 @@ fn test_additional_metric_tags_masked_entry_collapses_into_overflow() {
     );
     concentrator.cardinality_limits.additional_tags_limit = 1;
     for span in &spans {
-        concentrator.add_span(span);
+        add_span_as_chunk(&mut concentrator, span);
     }
 
     let flushtime =
@@ -3331,7 +3394,7 @@ fn test_additional_metric_tags_multiple_masked_entries_merge() {
     );
     concentrator.cardinality_limits.additional_tags_limit = 1;
     for span in &spans {
-        concentrator.add_span(span);
+        add_span_as_chunk(&mut concentrator, span);
     }
 
     let flushtime =
@@ -3396,7 +3459,7 @@ fn test_concentrator_truncate_fields_helper(big_resource: bool, obfuscation: boo
     let mut spans = vec![span];
     compute_top_level_span(spans.as_mut_slice());
     for span in &spans {
-        concentrator.add_span(span);
+        add_span_as_chunk(&mut concentrator, span);
     }
 
     let stats = concentrator.flush(SystemTime::now(), true).all_buckets();

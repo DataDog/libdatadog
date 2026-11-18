@@ -8,7 +8,8 @@ use tracing::debug;
 use crate::span::span_pool::PooledChunks;
 
 use super::{SpanText, TraceData, v04::Span};
-use std::collections::{HashMap, HashSet};
+use rustc_hash::FxHashSet;
+use std::collections::HashMap;
 
 /// Span metric the mini agent must set for the backend to recognize top level span
 const TOP_LEVEL_KEY: &str = "_top_level";
@@ -26,6 +27,22 @@ const PARTIAL_VERSION_KEY: &str = "_dd.partial_version";
 /// - OTLP export: a resource attribute set to `"true"` by the OTLP encoder. Span-level occurrences
 ///   are stripped from OTLP span attributes so they can never contradict the resource value.
 pub const SDK_OTLP_EXPORT_KEY: &str = "_dd.sdk.otlp_export";
+
+/// Dedicated span/trace keys written by the V1 → v0.4 downgrade encoder.
+pub(crate) const ENV_KEY: &str = "env";
+pub(crate) const VERSION_KEY: &str = "version";
+pub(crate) const COMPONENT_KEY: &str = "component";
+pub(crate) const SPAN_KIND_KEY: &str = "span.kind";
+/// High 64 bits of the trace id, as lower-case hex.
+pub(crate) const TRACE_ID_HIGH_KEY: &str = "_dd.p.tid";
+pub(crate) const ORIGIN_KEY: &str = "_dd.origin";
+pub(crate) const DECISION_MAKER_KEY: &str = "_dd.p.dm";
+pub(crate) const HOSTNAME_KEY: &str = "_dd.hostname";
+pub(crate) const PROCESS_TAGS_KEY: &str = "_dd.tags.process";
+pub(crate) const GIT_COMMIT_SHA_KEY: &str = "_dd.git.commit.sha";
+pub(crate) const GIT_REPOSITORY_URL_KEY: &str = "_dd.git.repository_url";
+/// Legacy JSON-encoded span events, for agents without native v0.4 `span_events`.
+pub(crate) const SPAN_EVENTS_KEY: &str = "events";
 
 fn set_top_level_span<T>(span: &mut Span<T>)
 where
@@ -70,10 +87,12 @@ where
     }
 }
 
-pub fn get_root_span_index<T>(trace: &[Span<T>]) -> anyhow::Result<usize>
-where
-    T: TraceData,
-{
+/// Returns the index of the root span in `trace`.
+///
+/// The last span without a parent wins, since some clients put the root span last. Failing that,
+/// a span whose parent isn't part of the trace is the root, and the last span is used as a final
+/// fallback.
+pub fn get_root_span_index<S: libdd_trace_model::Span>(trace: &[S]) -> anyhow::Result<usize> {
     if trace.is_empty() {
         anyhow::bail!("Cannot find root span index in an empty trace.");
     }
@@ -81,22 +100,27 @@ where
     // Do a first pass to find if we have an obvious root span (starting from the end) since some
     // clients put the root span last.
     for (i, span) in trace.iter().enumerate().rev() {
-        if span.parent_id == 0 {
+        if span.parent_id() == 0 {
             return Ok(i);
         }
     }
 
-    let span_ids: HashSet<_> = trace.iter().map(|span| span.span_id).collect();
+    // Most traces are small: for them, a linear search for the parent is cheaper than allocating
+    // a set of the span ids.
+    const MAX_LINEAR_SEARCH_LEN: usize = 32;
+    let span_ids: Option<FxHashSet<_>> = (trace.len() > MAX_LINEAR_SEARCH_LEN)
+        .then(|| trace.iter().map(|span| span.span_id()).collect());
+    let has_span = |id| match &span_ids {
+        Some(span_ids) => span_ids.contains(&id),
+        None => trace.iter().any(|span| span.span_id() == id),
+    };
 
     let mut root_span_id = None;
     for (i, span) in trace.iter().enumerate() {
         // If a span's parent is not in the trace, it is a root
-        if !span_ids.contains(&span.parent_id) {
+        if !has_span(span.parent_id()) {
             if root_span_id.is_some() {
-                debug!(
-                    trace_id = &trace[0].trace_id,
-                    "trace has multiple root spans"
-                );
+                debug!("trace has multiple root spans");
             }
             root_span_id = Some(i);
         }
@@ -104,10 +128,7 @@ where
     Ok(match root_span_id {
         Some(i) => i,
         None => {
-            debug!(
-                trace_id = &trace[0].trace_id,
-                "Could not find the root span for trace"
-            );
+            debug!("Could not find the root span for trace");
             trace.len() - 1
         }
     })
@@ -143,7 +164,7 @@ pub struct DroppedP0Stats {
 }
 
 // Keys used for sampling
-const SAMPLING_PRIORITY_KEY: &str = "_sampling_priority_v1";
+pub(crate) const SAMPLING_PRIORITY_KEY: &str = "_sampling_priority_v1";
 const SAMPLING_SINGLE_SPAN_MECHANISM: &str = "_dd.span_sampling.mechanism";
 const SAMPLING_ANALYTICS_RATE_KEY: &str = "_dd1.sr.eausr";
 
@@ -265,6 +286,21 @@ mod tests {
                 .insert("functionname".into(), "dummy_function_name".into());
         }
         span
+    }
+
+    #[test]
+    fn root_span_is_the_one_whose_parent_is_missing() {
+        // Both sides of the linear-search threshold.
+        for len in [3, 100] {
+            // A chain 1 <- 2 <- ... whose first span's parent isn't in the trace.
+            let mut trace: Vec<_> = (1..=len)
+                .map(|id| create_test_span(1, id, id - 1, 0, false))
+                .collect();
+            trace[0].parent_id = 1000;
+            // Neither first nor last, so no fallback can pick it by chance.
+            trace.swap(0, 1);
+            assert_eq!(get_root_span_index(&trace).unwrap(), 1, "len {len}");
+        }
     }
 
     #[test]

@@ -6,7 +6,7 @@ use cargo_metadata::MetadataCommand;
 use http_body_util::BodyExt;
 use hyper::body::Incoming;
 use hyper::{Request, Response, Uri};
-use libdd_common::http_common;
+use libdd_networking::http_common;
 use std::collections::HashMap;
 use std::fmt::Write;
 use std::path::Path;
@@ -14,7 +14,7 @@ use std::str::FromStr;
 use std::time::Duration;
 
 const TEST_AGENT_IMAGE_NAME: &str = "ghcr.io/datadog/dd-apm-test-agent/ddapm-test-agent";
-const TEST_AGENT_IMAGE_TAG: &str = "v1.61.1";
+const TEST_AGENT_IMAGE_TAG: &str = "v1.62.0";
 const TEST_AGENT_READY_MSG: &str =
     "INFO:ddapm_test_agent.agent:Trace request stall seconds setting set to 0.0.";
 

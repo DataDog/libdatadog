@@ -1,0 +1,20 @@
+{
+  "description": "An Anthropic stream: usage merged from message_start and message_delta, the tier from message_start, ended by message_stop.",
+  "format": "anthropic",
+  "operation_name": "chat",
+  "body": "event: message_start\ndata: {\"type\": \"message_start\", \"message\": {\"id\": \"msg_1\", \"model\": \"claude-sonnet-4-5\", \"usage\": {\"input_tokens\": 10, \"output_tokens\": 1, \"cache_read_input_tokens\": 5, \"cache_creation_input_tokens\": 0, \"service_tier\": \"priority\"}}}\n\nevent: content_block_delta\ndata: {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"generated text naming \\\"usage\\\" and \\\"message_stop\\\" is not an event\"}}\n\nevent: message_delta\ndata: {\"type\": \"message_delta\", \"delta\": {\"stop_reason\": \"end_turn\"}, \"usage\": {\"output_tokens\": 42}}\n\nevent: message_stop\ndata: {\"type\": \"message_stop\"}\n\n",
+  "expected": {
+    "usage": {
+      "input_tokens": 10,
+      "input_basis": "excludes_cache",
+      "output_tokens": 42,
+      "output_basis": "includes_reasoning",
+      "cache_read_input_tokens": 5,
+      "cache_write_input_tokens": 0
+    },
+    "response_model": "claude-sonnet-4-5",
+    "service_tier": "priority",
+    "outcome": "completed",
+    "error_name": null
+  }
+}

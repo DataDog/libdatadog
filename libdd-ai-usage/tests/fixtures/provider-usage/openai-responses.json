@@ -1,0 +1,37 @@
+{
+  "description": "Responses: input_tokens_details and output_tokens_details.",
+  "format": "openai_responses",
+  "operation_name": "chat",
+  "payload": {
+    "id": "resp_1",
+    "object": "response",
+    "model": "gpt-5",
+    "service_tier": "flex",
+    "output": [],
+    "usage": {
+      "input_tokens": 5000,
+      "output_tokens": 700,
+      "total_tokens": 5700,
+      "input_tokens_details": {
+        "cached_tokens": 4096,
+        "cache_write_tokens": 512
+      },
+      "output_tokens_details": {
+        "reasoning_tokens": 600
+      }
+    }
+  },
+  "expected": {
+    "usage": {
+      "input_tokens": 5000,
+      "input_basis": "includes_cache",
+      "output_tokens": 700,
+      "output_basis": "includes_reasoning",
+      "cache_read_input_tokens": 4096,
+      "cache_write_input_tokens": 512,
+      "reasoning_output_tokens": 600
+    },
+    "response_model": "gpt-5",
+    "service_tier": "flex"
+  }
+}

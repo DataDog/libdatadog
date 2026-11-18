@@ -108,6 +108,7 @@ impl SeqpacketConn {
     pub fn connect_abstract(name: &[u8]) -> io::Result<Self> {
         let fd = create_seqpacket_socket()?;
         let addr = UnixAddr::new_abstract(name).map_err(io::Error::from)?;
+        super::set_nonblocking(fd.as_raw_fd(), true)?;
         connect(fd.as_raw_fd(), &addr).map_err(io::Error::from)?;
         Self::from_owned(fd)
     }
@@ -180,5 +181,72 @@ mod tests {
                 .expect("expected the queued message, not ECONNRESET");
             assert_eq!(got, expected);
         }
+    }
+
+    /// A message larger than the buffer is rejected rather than decoded from its head, and the
+    /// handles sent with it are closed.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_truncated_message_is_rejected() {
+        let (client, server) = SeqpacketConn::socketpair().expect("socketpair");
+        let mut pipe = [0; 2];
+        // SAFETY: `pipe` has room for both fds.
+        assert_eq!(unsafe { libc::pipe(pipe.as_mut_ptr()) }, 0);
+        client.try_send_raw(vec![7; 100], &[pipe[0]]).expect("send");
+        // SAFETY: closes our copy of the read end, which nothing else uses.
+        unsafe { libc::close(pipe[0]) };
+        // SAFETY: the write end is a fresh fd owned by nothing else.
+        let pipe_write = unsafe { OwnedFd::from_raw_fd(pipe[1]) };
+
+        let err = server.try_recv_raw(&mut [0; 10]).expect_err("truncated");
+        assert_eq!(err.raw_os_error(), Some(libc::EMSGSIZE));
+        // The received copy of the read end is gone too, so writing hits a closed pipe.
+        // SAFETY: valid fd and a live one-byte buffer. Rust ignores SIGPIPE, so this fails.
+        let written = unsafe { libc::write(pipe_write.as_raw_fd(), b"x".as_ptr().cast(), 1) };
+        assert_eq!(written, -1);
+        assert_eq!(io::Error::last_os_error().raw_os_error(), Some(libc::EPIPE));
+
+        client.try_send_raw(vec![8; 10], &[]).expect("send");
+        let mut buf = [0; 10];
+        assert_eq!(server.try_recv_raw(&mut buf).expect("recv").0, 10);
+        assert_eq!(buf, [8; 10]);
+    }
+}
+
+#[cfg(test)]
+mod crucible_connect {
+    use super::*;
+    #[test]
+    #[cfg_attr(miri, ignore = "requires native IPC and threads")]
+    fn crucible_c04_full_abstract_queue_does_not_block_connect() {
+        let name = format!("crucible-c04-{}", std::process::id()).into_bytes();
+        let listener = SeqpacketListener::bind_abstract(&name).unwrap();
+        let addr = UnixAddr::new_abstract(&name).unwrap();
+        let mut queued = Vec::new();
+        loop {
+            let fd = create_seqpacket_socket().unwrap();
+            super::super::set_nonblocking(fd.as_raw_fd(), true).unwrap();
+            match connect(fd.as_raw_fd(), &addr) {
+                Ok(()) => queued.push(fd),
+                Err(nix::errno::Errno::EAGAIN) => break,
+                Err(error) => panic!("{error}"),
+            }
+            assert!(queued.len() < 4096);
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let result = SeqpacketConn::connect_abstract(&name);
+            tx.send(result.err().map(|e| e.kind())).unwrap();
+        });
+        let result = rx.recv_timeout(std::time::Duration::from_millis(200));
+        // Release a blocked original implementation before asserting.
+        let accepted = listener.try_accept().unwrap();
+        worker.join().unwrap();
+        drop(accepted);
+        assert!(
+            matches!(result, Ok(Some(io::ErrorKind::WouldBlock))),
+            "{result:?}"
+        );
+        drop(queued);
     }
 }
