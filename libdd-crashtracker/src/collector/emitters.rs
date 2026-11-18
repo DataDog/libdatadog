@@ -454,17 +454,16 @@ fn emit_otel_thread_contexts(
     deadline: Instant,
 ) -> Result<(), EmitterError> {
     use crate::otel_tls_reader::{
-        ProcMemReader, TlsResolution, discover_tls_symbol, dtv_pointer_offset,
-        probe_dtv_for_resolution,
+        ProcMemReader, TlsResolution, dtv_pointer_offset, probe_dtv_for_resolution,
     };
     use crate::ptrace_collector::{
         attach_thread, detach_thread, enumerate_threads, read_thread_pointer,
     };
 
-    // Discover TLS symbol from /proc/<ppid>/maps + ELF files on disk.
-    // This replaces dl_iterate_phdr which can deadlock if the loader lock
-    // is held by a background thread at crash time.
-    let Some(symbol_info) = discover_tls_symbol(ppid as u32) else {
+    // Read the pre-cached TLS metadata (populated at init time via dl_iterate_phdr,
+    // which is safe outside signal context). If the cache is empty, the symbol wasn't
+    // found or init wasn't called — nothing to collect.
+    let Some(symbol_info) = crate::otel_tls_reader::cached_tls_info() else {
         return Ok(());
     };
 
@@ -505,7 +504,7 @@ fn emit_otel_thread_contexts(
             // On first thread, probe DTV to discover resolution strategy.
             let res = match resolution.as_ref() {
                 Some(r) => r,
-                None => match probe_dtv_for_resolution(mem, tp, dtv_off, &symbol_info) {
+                None => match probe_dtv_for_resolution(mem, tp, dtv_off, symbol_info) {
                     Some(r) => resolution.insert(r),
                     None => return Ok(false),
                 },

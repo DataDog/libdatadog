@@ -7,12 +7,10 @@
 //! collector to locate `otel_thread_ctx_v1` without calling `dl_iterate_phdr`
 //! (which can deadlock when the loader lock is held at crash time).
 
+use crate::crash_info::{OtelAttribute, OtelThreadContext};
 use alloc::fmt;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
-use std::path::{Path, PathBuf};
-
-use crate::crash_info::{OtelAttribute, OtelThreadContext};
 
 /// Size of the fixed record header (trace_id + span_id + valid + trace_flags + attrs_data_size).
 pub(crate) const RECORD_HEADER_SIZE: usize = 28;
@@ -242,11 +240,11 @@ fn bytes_to_hex(bytes: &[u8]) -> String {
     s
 }
 
-// ── ELF-based TLS symbol discovery ──────────────────────────────────────────
+// ── TLS symbol info ─────────────────────────────────────────────────────────
 
 const SYMBOL_NAME: &[u8] = b"otel_thread_ctx_v1";
 
-/// TLS symbol info discovered from ELF files on disk.
+/// TLS symbol info: everything the collector needs to resolve the OTel TLS variable.
 pub(crate) struct TlsSymbolInfo {
     /// The symbol's `st_value` -- byte offset within the module's TLS block.
     pub symbol_offset: usize,
@@ -255,6 +253,241 @@ pub(crate) struct TlsSymbolInfo {
     /// PT_TLS `p_align` from the ELF program headers.
     pub tls_align: usize,
 }
+
+// ── Pre-cached TLS metadata (populated at init, read at crash time) ─────────
+
+use core::sync::atomic::{AtomicPtr, Ordering::SeqCst};
+
+/// Global cache for TLS symbol metadata, populated by [`cache_otel_tls_info`] at
+/// crashtracker init time (outside signal context, so `dl_iterate_phdr` is safe).
+/// The collector reads this at crash time, avoiding ELF parsing and `/proc/maps`
+/// scanning on the hot path.
+static CACHED_TLS_INFO: AtomicPtr<TlsSymbolInfo> = AtomicPtr::new(core::ptr::null_mut());
+
+/// Resolve and cache the `otel_thread_ctx_v1` TLS symbol metadata via `dl_iterate_phdr`.
+///
+/// **Must be called outside signal/crash context** (e.g. during `crashtracker::init`).
+/// `dl_iterate_phdr` takes the loader lock, which is safe here but would deadlock
+/// if called from a post-fork collector while another thread holds the lock.
+///
+/// The cached metadata (modid, offset, memsz, align) is process-wide and stable for
+/// the lifetime of the loaded library.
+pub(crate) fn cache_otel_tls_info() {
+    let info = resolve_tls_symbol_via_dl_iterate_phdr();
+    let new_ptr = match info {
+        Some(i) => Box::into_raw(Box::new(i)),
+        None => core::ptr::null_mut(),
+    };
+    let old = CACHED_TLS_INFO.swap(new_ptr, SeqCst);
+    if !old.is_null() {
+        // SAFETY: old came from Box::into_raw above.
+        unsafe {
+            drop(Box::from_raw(old));
+        }
+    }
+}
+
+/// Read the cached TLS symbol info. Returns `None` if [`cache_otel_tls_info`] was
+/// never called or the symbol wasn't found.
+///
+/// The returned reference borrows the global and is valid until the next
+/// `cache_otel_tls_info` call (which only happens at init, not concurrently with
+/// crash handling).
+pub(crate) fn cached_tls_info() -> Option<&'static TlsSymbolInfo> {
+    let ptr = CACHED_TLS_INFO.load(SeqCst);
+    if ptr.is_null() {
+        None
+    } else {
+        // SAFETY: the pointer came from Box::into_raw and is not freed until the next
+        // cache_otel_tls_info call. The signal handler's one-time guard ensures no
+        // concurrent init during crash handling.
+        Some(unsafe { &*ptr })
+    }
+}
+
+/// Discover `otel_thread_ctx_v1` TLS metadata via `dl_iterate_phdr`.
+///
+/// Only safe to call outside signal context (the loader lock is not async-signal-safe).
+fn resolve_tls_symbol_via_dl_iterate_phdr() -> Option<TlsSymbolInfo> {
+    struct State {
+        result: Option<TlsSymbolInfo>,
+    }
+
+    unsafe extern "C" fn callback(
+        info: *mut libc::dl_phdr_info,
+        _size: libc::size_t,
+        data: *mut core::ffi::c_void,
+    ) -> core::ffi::c_int {
+        // SAFETY: `data` points to the `State` local in the enclosing function.
+        let state = unsafe { &mut *(data as *mut State) };
+        // SAFETY: `info` is a valid `dl_phdr_info` provided by `dl_iterate_phdr`.
+        let info = unsafe { &*info };
+
+        // SAFETY: program headers are valid under the loader lock.
+        let phdrs =
+            unsafe { core::slice::from_raw_parts(info.dlpi_phdr, info.dlpi_phnum as usize) };
+
+        // SAFETY: phdrs and info.dlpi_addr are valid under the loader lock.
+        if let Some(offset) = unsafe { find_tls_symbol_in_phdrs(phdrs, info.dlpi_addr) } {
+            let (tls_memsz, tls_align) = phdrs
+                .iter()
+                .find(|p| p.p_type == libc::PT_TLS)
+                .map(|p| (p.p_memsz as usize, p.p_align as usize))
+                .unwrap_or((0, 1));
+
+            state.result = Some(TlsSymbolInfo {
+                symbol_offset: offset,
+                tls_memsz,
+                tls_align,
+            });
+            return 1; // stop iteration
+        }
+
+        0 // continue
+    }
+
+    let mut state = State { result: None };
+
+    // SAFETY: `callback` has the correct signature. `state` is live for the duration.
+    unsafe {
+        libc::dl_iterate_phdr(
+            Some(callback),
+            &mut state as *mut State as *mut core::ffi::c_void,
+        );
+    }
+
+    state.result
+}
+
+/// Search the in-memory dynamic symbol table of a loaded ELF object for
+/// `otel_thread_ctx_v1`. Returns the symbol's `st_value` (TLS offset) if found.
+///
+/// # Safety
+///
+/// `phdrs` must point to valid program headers of a currently-loaded ELF object.
+/// Called from within a `dl_iterate_phdr` callback where the loader lock is held.
+unsafe fn find_tls_symbol_in_phdrs(phdrs: &[libc::Elf64_Phdr], base_addr: u64) -> Option<usize> {
+    // ELF constants.
+    const DT_NULL: i64 = 0;
+    const DT_STRTAB: i64 = 5;
+    const DT_SYMTAB: i64 = 6;
+    const DT_GNU_HASH: i64 = 0x6fff_fef5_u64 as i64;
+    const STT_TLS: u8 = 6;
+    const SHN_UNDEF: u16 = 0;
+
+    #[cfg(target_env = "musl")]
+    let resolve = |d_val: u64| -> usize { (base_addr + d_val) as usize };
+    #[cfg(not(target_env = "musl"))]
+    let resolve = |d_val: u64| -> usize { d_val as usize };
+
+    // Skip objects without a TLS segment — they can't define our symbol,
+    // and some (like vDSO) have unrelocated d_val entries that would crash us.
+    if !phdrs.iter().any(|p| p.p_type == libc::PT_TLS) {
+        return None;
+    }
+
+    // Find PT_DYNAMIC.
+    let dyn_phdr = phdrs.iter().find(|p| p.p_type == libc::PT_DYNAMIC)?;
+    let dyn_addr = base_addr + dyn_phdr.p_vaddr;
+
+    // Walk dynamic entries.
+    let mut symtab: *const libc::Elf64_Sym = core::ptr::null();
+    let mut strtab: *const u8 = core::ptr::null();
+    let mut gnu_hash_ptr: *const u32 = core::ptr::null();
+
+    // libc doesn't expose Elf64_Dyn; define the layout we need.
+    #[repr(C)]
+    struct Elf64Dyn {
+        d_tag: i64,
+        d_val: u64,
+    }
+
+    let mut dyn_ptr = dyn_addr as *const Elf64Dyn;
+    // SAFETY: dynamic section is DT_NULL-terminated, within mapped pages.
+    unsafe {
+        loop {
+            let entry = &*dyn_ptr;
+            if entry.d_tag == DT_NULL {
+                break;
+            }
+            match entry.d_tag {
+                DT_SYMTAB => symtab = resolve(entry.d_val) as *const libc::Elf64_Sym,
+                DT_STRTAB => strtab = resolve(entry.d_val) as *const u8,
+                DT_GNU_HASH => gnu_hash_ptr = resolve(entry.d_val) as *const u32,
+                _ => {}
+            }
+            dyn_ptr = dyn_ptr.add(1);
+        }
+    }
+
+    if symtab.is_null() || strtab.is_null() || gnu_hash_ptr.is_null() {
+        return None;
+    }
+
+    // GNU hash lookup for SYMBOL_NAME.
+    // SAFETY: all pointers are within mapped pages under the loader lock.
+    unsafe {
+        let nbuckets = *gnu_hash_ptr;
+        let symoffset = *gnu_hash_ptr.add(1);
+        let bloom_size = *gnu_hash_ptr.add(2);
+
+        if nbuckets == 0 {
+            return None;
+        }
+
+        let h = gnu_hash_symbol_name();
+        let buckets = gnu_hash_ptr.add(4 + bloom_size as usize * 2);
+        let bucket_idx = h % nbuckets;
+        let mut sym_idx = *buckets.add(bucket_idx as usize);
+        if sym_idx == 0 {
+            return None;
+        }
+
+        let chains = buckets.add(nbuckets as usize);
+        loop {
+            if sym_idx < symoffset {
+                return None;
+            }
+            let chain_val = *chains.add((sym_idx - symoffset) as usize);
+            if (chain_val ^ h) & !1 == 0 {
+                let sym = &*symtab.add(sym_idx as usize);
+                if sym.st_info & 0xf == STT_TLS
+                    && sym.st_shndx != SHN_UNDEF
+                    && streq(strtab.add(sym.st_name as usize), SYMBOL_NAME)
+                {
+                    return Some(sym.st_value as usize);
+                }
+            }
+            if chain_val & 1 != 0 {
+                break;
+            }
+            sym_idx += 1;
+        }
+    }
+
+    None
+}
+
+/// GNU hash of `SYMBOL_NAME` (compile-time constant).
+const fn gnu_hash_symbol_name() -> u32 {
+    let mut h: u32 = 5381;
+    let mut i = 0;
+    while i < SYMBOL_NAME.len() {
+        h = h.wrapping_mul(33).wrapping_add(SYMBOL_NAME[i] as u32);
+        i += 1;
+    }
+    h
+}
+
+/// Compare a NUL-terminated C string at `ptr` with `name`.
+///
+/// # Safety
+/// `ptr` must point to a valid NUL-terminated string.
+unsafe fn streq(ptr: *const u8, name: &[u8]) -> bool {
+    unsafe { name.iter().enumerate().all(|(j, &b)| *ptr.add(j) == b) && *ptr.add(name.len()) == 0 }
+}
+
+// ── DTV probing ─────────────────────────────────────────────────────────────
 
 /// Result of DTV probing: how to resolve TLS addresses for all threads.
 pub(crate) enum TlsResolution {
@@ -284,98 +517,6 @@ pub(crate) fn dtv_pointer_offset() -> Option<isize> {
 
     #[allow(unreachable_code)]
     None
-}
-
-/// Scan `/proc/<pid>/maps` and the corresponding ELF files to find the
-/// `otel_thread_ctx_v1` TLS symbol.
-pub(crate) fn discover_tls_symbol(pid: u32) -> Option<TlsSymbolInfo> {
-    let maps_data = std::fs::read_to_string(format!("/proc/{pid}/maps")).ok()?;
-
-    // Collect unique library paths from maps (deduplicate since libraries have multiple mappings).
-    let mut seen = std::collections::HashSet::new();
-    let mut candidates: Vec<(PathBuf, u64)> = Vec::new();
-
-    for line in maps_data.lines() {
-        // Format: "addr-addr perms offset dev inode   pathname"
-        // Use split_whitespace to handle variable-width columns.
-        let mut fields = line.split_whitespace();
-        let Some(addr_range) = fields.next() else {
-            continue;
-        };
-        // Skip perms, offset, dev, inode.
-        if fields.nth(3).is_none() {
-            continue;
-        }
-        let Some(path_str) = fields.next() else {
-            continue;
-        };
-        if path_str.starts_with('[') {
-            continue;
-        }
-        let path = Path::new(path_str);
-        if !path.is_absolute() {
-            continue;
-        }
-        if !seen.insert(path_str.to_string()) {
-            continue;
-        }
-        // Parse the mapping start address.
-        let mapping_start = addr_range
-            .split('-')
-            .next()
-            .and_then(|s| u64::from_str_radix(s, 16).ok())
-            .unwrap_or(0);
-
-        candidates.push((path.to_path_buf(), mapping_start));
-    }
-
-    for (path, _mapping_start) in candidates {
-        if let Some(info) = find_tls_symbol_in_elf(&path) {
-            return Some(info);
-        }
-    }
-
-    None
-}
-
-/// Parse an ELF file on disk and search its dynamic symbol table for
-/// `otel_thread_ctx_v1` (a `STT_TLS` symbol). Returns the symbol info including
-/// PT_TLS metadata needed for static TLS fallback on old glibc.
-fn find_tls_symbol_in_elf(path: &Path) -> Option<TlsSymbolInfo> {
-    let data = std::fs::read(path).ok()?;
-    let elf = goblin::elf::Elf::parse(&data).ok()?;
-
-    let mut symbol_offset = None;
-    for sym in elf.dynsyms.iter() {
-        if sym.st_type() != goblin::elf::sym::STT_TLS {
-            continue;
-        }
-        if sym.st_shndx == goblin::elf::section_header::SHN_UNDEF as usize {
-            continue;
-        }
-        if let Some(name) = elf.dynstrtab.get_at(sym.st_name)
-            && name.as_bytes() == SYMBOL_NAME
-        {
-            symbol_offset = Some(sym.st_value as usize);
-            break;
-        }
-    }
-    let symbol_offset = symbol_offset?;
-
-    // Read PT_TLS memsz and align for computing static TLS addresses when the DTV
-    // entry is TLS_DTV_UNALLOCATED (glibc 2.17 and older).
-    let (tls_memsz, tls_align) = elf
-        .program_headers
-        .iter()
-        .find(|ph| ph.p_type == goblin::elf::program_header::PT_TLS)
-        .map(|ph| (ph.p_memsz as usize, ph.p_align as usize))
-        .unwrap_or((0, 1));
-
-    Some(TlsSymbolInfo {
-        symbol_offset,
-        tls_memsz,
-        tls_align,
-    })
 }
 
 /// Read a `u64` from a remote process's memory via `/proc/<pid>/mem`.
