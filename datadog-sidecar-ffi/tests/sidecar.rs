@@ -43,7 +43,8 @@ fn generated_header_exposes_native_evp_transport_abi() {
     // Copy the headers the `-ffi` build scripts already generated into the
     // target directory; they only re-run on cbindgen.toml changes, so check
     // freshness against the crate's sources. `sidecar.h`'s build script does
-    // not generate a header, so it always takes the regenerate path.
+    // not generate a header, so it is never cached and regenerates here every
+    // time.
     let cached_include = std::env::var_os("CARGO_TARGET_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| workspace.join("target"))
@@ -58,7 +59,6 @@ fn generated_header_exposes_native_evp_transport_abi() {
         // those definitions in the shared header just as the release builder
         // does.
         ("libdd-crashtracker-ffi", "crashtracker.h"),
-        ("datadog-sidecar-ffi", "sidecar.h"),
     ];
     for (crate_name, header_name) in header_sources {
         let cached = cached_include.join(header_name);
@@ -72,6 +72,11 @@ fn generated_header_exposes_native_evp_transport_abi() {
             );
         }
     }
+    build_common::generate_header(
+        workspace.join("datadog-sidecar-ffi"),
+        "sidecar.h",
+        generated.path().to_path_buf(),
+    );
 
     let common_header = include_dir.join("common.h");
     let telemetry_header = include_dir.join("telemetry.h");
