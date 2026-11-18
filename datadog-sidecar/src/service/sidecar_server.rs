@@ -20,6 +20,7 @@ use libdd_ipc::SeqpacketConn;
 use libdd_ipc::platform::{FileBackedHandle, ShmHandle};
 use libdd_telemetry::metrics::MetricContext;
 use libdd_telemetry::worker::{LifecycleAction, TelemetryActions, TelemetryWorkerStats};
+use libdd_trace_normalization::normalizer_v1;
 use libdd_trace_utils::msgpack_encoder;
 use libdd_trace_utils::msgpack_encoder::v04::V1DowngradeOptions;
 use libdd_trace_utils::send_with_retry::{RetryBackoffType, RetryStrategy};
@@ -119,6 +120,8 @@ pub struct SidecarServer {
     remote_configs: RemoteConfigs,
     cdn_configs: super::ffe_config::CdnConfigs,
     cdn_enabled: bool,
+    /// Only subprocess sidecars may retain client liveness writers across connections.
+    allow_liveness_watch: bool,
     /// Diagnostics bookkeeper
     debugger_diagnostics_bookkeeper: Arc<DebuggerDiagnosticsBookkeeper>,
     /// Per-env&version SHM span concentrators (global across all sessions).
@@ -144,6 +147,17 @@ struct ConnectionStats {
     connections: AtomicU32,
     applications: AtomicU32,
     remote_config_clients: AtomicU32,
+}
+
+#[cfg(target_os = "linux")]
+fn retain_liveness_writer(
+    writer: libdd_ipc::platform::PlatformHandle<std::io::PipeWriter>,
+) -> std::io::Result<tokio::task::JoinHandle<()>> {
+    // The empty pipe is always writable. Wait only for EPOLLERR when its last reader closes.
+    let writer = tokio::io::unix::AsyncFd::with_interest(writer, tokio::io::Interest::ERROR)?;
+    Ok(tokio::spawn(async move {
+        let _ = writer.ready(tokio::io::Interest::ERROR).await;
+    }))
 }
 
 /// The application slot of a connection, keeping the server-wide counters up to date.
@@ -557,6 +571,11 @@ impl Drop for ConnectionSidecarHandler {
 }
 
 impl SidecarServer {
+    pub(crate) fn with_liveness_watch(mut self, enabled: bool) -> Self {
+        self.allow_liveness_watch = enabled;
+        self
+    }
+
     pub(crate) fn with_cdn_fetching(mut self, enabled: bool) -> Self {
         self.cdn_enabled = enabled;
         self
@@ -692,6 +711,15 @@ impl SidecarServer {
                 let lang_version = tracer_payload.language_version.clone();
                 let tracer_version = tracer_payload.tracer_version.clone();
                 let container_id = tracer_payload.container_id.clone();
+
+                // Agentless payloads skip the agent, so normalize them as it would have.
+                if supports_v1 && v1_target.api_key.is_some() {
+                    tracer_payload.chunks.retain_mut(|chunk| {
+                        normalizer_v1::normalize_chunk(chunk, lang.borrow())
+                            .inspect_err(|e| warn!("Dropping agentless V1 trace chunk: {e}"))
+                            .is_ok()
+                    });
+                }
 
                 // The V1 endpoint expects the tracer to mark top-level spans (`_dd.top_level`).
                 if supports_v1
@@ -1512,6 +1540,24 @@ impl SidecarInterface for ConnectionSidecarHandler {
         drop(completion);
     }
 
+    async fn register_liveness(
+        &mut self,
+        writer: libdd_ipc::platform::PlatformHandle<std::io::PipeWriter>,
+    ) {
+        if !self.server.allow_liveness_watch {
+            return;
+        }
+        #[cfg(target_os = "linux")]
+        {
+            // The task outlives this connection and releases its writer on client exit.
+            if let Err(error) = retain_liveness_writer(writer) {
+                warn!("Could not register process liveness pipe: {error}");
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        drop(writer);
+    }
+
     async fn set_test_session_token(&mut self, token: String) {
         let token = if token.is_empty() {
             None
@@ -1609,6 +1655,129 @@ mod tests {
     use libdd_ipc::PeerCredentials;
     use libdd_telemetry::config::Config;
     use tokio::time::{Duration as TokioDuration, sleep};
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    #[cfg_attr(miri, ignore = "requires native pipe readiness")]
+    async fn liveness_writer_waits_for_client_exit_and_reports_sidecar_exit() {
+        use libdd_ipc::platform::PlatformHandle;
+        use std::os::fd::AsRawFd;
+
+        let (reader, writer) = std::io::pipe().unwrap();
+        let task = retain_liveness_writer(PlatformHandle::from(writer)).unwrap();
+        tokio::task::yield_now().await;
+        assert!(!task.is_finished());
+        drop(reader);
+        tokio::time::timeout(Duration::from_secs(2), task)
+            .await
+            .unwrap()
+            .unwrap();
+
+        let (reader, writer) = std::io::pipe().unwrap();
+        let task = retain_liveness_writer(PlatformHandle::from(writer)).unwrap();
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+        let mut fd = libc::pollfd {
+            fd: reader.as_raw_fd(),
+            events: 0,
+            revents: 0,
+        };
+        // SAFETY: fd points to one initialized pollfd for the duration of the call.
+        assert_eq!(unsafe { libc::poll(&mut fd, 1, 0) }, 1);
+        assert_ne!(fd.revents & libc::POLLHUP, 0);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    #[cfg_attr(miri, ignore = "requires native IPC sockets")]
+    async fn disabled_liveness_watch_releases_repeated_registrations() {
+        use super::super::blocking::SidecarTransport;
+        use libdd_ipc::platform::PlatformHandle;
+        use std::os::fd::AsRawFd;
+
+        let (reader, writer) = std::io::pipe().unwrap();
+        let (client, server) = SeqpacketConn::socketpair().unwrap();
+        let server = tokio::spawn(SidecarServer::default().accept_connection(server));
+        tokio::task::spawn_blocking(move || {
+            let mut transport = SidecarTransport::from(client);
+            // Repeated SCM_RIGHTS transfers of the same pipe each create a new server fd.
+            for _ in 0..16 {
+                transport
+                    .inner
+                    .channel
+                    .send_request_blocking(
+                        &super::super::sidecar_interface::SidecarInterfaceRequest::RegisterLiveness {
+                            writer: PlatformHandle::from(writer.try_clone().unwrap()),
+                        },
+                    )
+                    .unwrap();
+            }
+            drop(writer);
+            // The reply confirms every registration was processed. Keep the connection and
+            // reader open to verify that neither disconnect nor client exit is needed for cleanup.
+            transport.inner.channel.call_ping().unwrap();
+            let mut fd = libc::pollfd {
+                fd: reader.as_raw_fd(),
+                events: 0,
+                revents: 0,
+            };
+            // SAFETY: fd points to one initialized pollfd for the duration of the call.
+            assert_eq!(unsafe { libc::poll(&mut fd, 1, 0) }, 1);
+            assert_ne!(fd.revents & libc::POLLHUP, 0);
+        })
+        .await
+        .unwrap();
+        tokio::time::timeout(Duration::from_secs(2), server)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    #[cfg_attr(miri, ignore = "requires native IPC sockets")]
+    async fn liveness_pipe_outlives_the_registering_connection() {
+        use super::super::blocking::SidecarTransport;
+        use libdd_ipc::platform::PlatformHandle;
+        use std::os::fd::AsRawFd;
+
+        let (reader, writer) = std::io::pipe().unwrap();
+        let (client, server) = SeqpacketConn::socketpair().unwrap();
+        let server = tokio::spawn(
+            SidecarServer::default()
+                .with_liveness_watch(true)
+                .accept_connection(server),
+        );
+        tokio::task::spawn_blocking(move || {
+            let mut transport = SidecarTransport::from(client);
+            transport
+                .inner
+                .channel
+                .send_request_blocking(
+                    &super::super::sidecar_interface::SidecarInterfaceRequest::RegisterLiveness {
+                        writer: PlatformHandle::from(writer),
+                    },
+                )
+                .unwrap();
+            transport.inner.channel.call_ping().unwrap();
+        })
+        .await
+        .unwrap();
+        tokio::time::timeout(Duration::from_secs(2), server)
+            .await
+            .unwrap()
+            .unwrap();
+        let mut fd = libc::pollfd {
+            fd: reader.as_raw_fd(),
+            events: 0,
+            revents: 0,
+        };
+        // The registration was transferred by SCM_RIGHTS and its connection is gone,
+        // but the independent sidecar task still owns the writer.
+        // SAFETY: fd points to one initialized pollfd for the duration of the call.
+        assert_eq!(unsafe { libc::poll(&mut fd, 1, 0) }, 0);
+        drop(reader);
+    }
 
     /// Build a handler backed by a throwaway socketpair connection. These tests call the handler
     /// methods directly and never read the connection, but the handler requires one.
@@ -3026,10 +3195,11 @@ mod tests {
     }
 
     fn sample_v1_trace_payload_bytes() -> Vec<u8> {
-        sample_v1_trace_payload_bytes_with_events(Default::default())
+        sample_v1_trace_payload_bytes_with("svc", Default::default())
     }
 
-    fn sample_v1_trace_payload_bytes_with_events(
+    fn sample_v1_trace_payload_bytes_with(
+        service: &str,
         span_events: libdd_trace_utils::span::v1::ThinVec<
             libdd_trace_utils::span::v1::SpanEventBytes,
         >,
@@ -3045,7 +3215,7 @@ mod tests {
         }
 
         let span = V1Span {
-            service: bs("svc"),
+            service: bs(service),
             name: bs("GET /users"),
             resource: bs("/users"),
             span_id: 42,
@@ -3177,6 +3347,71 @@ mod tests {
 
         v1_mock.assert_async().await;
         assert_eq!(v04_mock.calls_async().await, 0);
+    }
+
+    /// Agentless V1 payloads skip the agent, so the sidecar normalizes them; agent-bound payloads
+    /// are left for the agent to normalize.
+    #[tokio::test(flavor = "current_thread")]
+    #[cfg_attr(miri, ignore)]
+    async fn send_trace_v1_bytes_normalizes_only_agentless_payloads() {
+        for agentless in [true, false] {
+            let http_server = MockServer::start_async().await;
+            let path = if agentless {
+                "/api/v0.2/traces"
+            } else {
+                "/v1.0/traces"
+            };
+            let normalized = http_server
+                .mock_async(|when, then| {
+                    when.method(POST)
+                        .path(path)
+                        .body_includes("unnamed-rust-service");
+                    then.status(200);
+                })
+                .await;
+            let unnormalized = http_server
+                .mock_async(|when, then| {
+                    when.method(POST)
+                        .path(path)
+                        .body_excludes("unnamed-rust-service");
+                    then.status(200);
+                })
+                .await;
+
+            let mut handler = test_handler(SidecarServer::default());
+            let agent_info = prime_agent_info(
+                &http_server,
+                &handler.server,
+                &["/v0.4/traces", "/v1.0/traces"],
+            )
+            .await;
+            configure_session(&handler, InstanceId::new("session", "runtime"), |session| {
+                let endpoint = Endpoint {
+                    url: http_server.url("/").parse().unwrap(),
+                    api_key: agentless.then(|| "api-key".into()),
+                    ..Endpoint::default()
+                };
+                session.tracer_config.set_endpoint(endpoint).unwrap();
+                session.set_agent_info(agent_info);
+            });
+
+            handler
+                .send_trace_v1_bytes(
+                    sample_v1_trace_payload_bytes_with("", Default::default()),
+                    TracerGenericTags {
+                        client_computed_top_level: true,
+                        ..Default::default()
+                    },
+                    "cpython".to_owned(),
+                    "cpython-vendor".to_owned(),
+                )
+                .await;
+            sleep(TokioDuration::from_millis(50)).await;
+            handler.server.trace_flusher.join().await.unwrap();
+
+            assert_eq!(normalized.calls_async().await, usize::from(agentless));
+            assert_eq!(unnormalized.calls_async().await, usize::from(!agentless));
+        }
     }
 
     /// When the agent does not advertise `/v1.0/traces`, `send_trace_v1_bytes` downgrades to v0.4
@@ -3422,7 +3657,8 @@ mod tests {
 
             send_v1_and_flush(
                 &mut handler,
-                sample_v1_trace_payload_bytes_with_events(
+                sample_v1_trace_payload_bytes_with(
+                    "svc",
                     libdd_trace_utils::span::v1::ThinVec::from_iter([sample_span_event()]),
                 ),
             )

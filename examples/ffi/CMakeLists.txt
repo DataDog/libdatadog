@@ -114,3 +114,7 @@ set_vcruntime_link_type(http_client ${VCRUNTIME_LINK_TYPE})
 if(MSVC)
   target_compile_definitions(ffe PRIVATE _CRT_SECURE_NO_WARNINGS)
 endif()
+
+add_executable(ffe_dependencies ffe_dependencies.c)
+target_link_libraries(ffe_dependencies PRIVATE Datadog::Profiling)
+set_vcruntime_link_type(ffe_dependencies ${VCRUNTIME_LINK_TYPE})

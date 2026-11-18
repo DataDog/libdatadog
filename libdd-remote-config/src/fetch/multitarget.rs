@@ -604,6 +604,8 @@ where
 
             let inner_fetcher = fetcher.clone();
             let inner_this = this.clone();
+            let finish_target = fetcher.target.clone();
+            let finish_this = this.clone();
             let fetcher_fut = fetcher
                 .run(
                     this.storage.clone(),
@@ -643,6 +645,8 @@ where
                             }
                         }
                     }),
+                    // The target's files are released only once their listing is cleared.
+                    Box::new(move || finish_this.storage.storage.expired(&finish_target)),
                 )
                 .shared();
 
@@ -674,7 +678,8 @@ where
                 }
             }
 
-            this.storage.storage.expired(&fetcher.target);
+            // Let the cancelled run end: dropping it instead would never release its files.
+            fetcher_fut.await;
 
             let is_dead = {
                 // scope lock before await
@@ -788,7 +793,8 @@ mod tests {
     use libdd_capabilities_impl::NativeCapabilities;
     use manual_future::ManualFutureCompleter;
     use std::hash::Hasher;
-    use std::sync::atomic::AtomicU8;
+    use std::sync::Weak;
+    use std::sync::atomic::{AtomicBool, AtomicU8};
 
     #[derive(Clone)]
     struct MultiFileStorage {
@@ -799,6 +805,11 @@ mod tests {
         awaiting_fetches: Arc<AtomicU8>,
         awaited_fetched_done: Arc<Mutex<Option<ManualFutureCompleter<()>>>>,
         expected_expirations: Arc<Mutex<HashMap<Arc<Target>, ManualFutureCompleter<()>>>>,
+        /// The files each target's current listing names.
+        #[allow(clippy::type_complexity)]
+        listed: Arc<Mutex<HashMap<Arc<Target>, Vec<Weak<RcPathStore>>>>>,
+        /// Set if a target's files were released before its listing was cleared.
+        released_while_listed: Arc<AtomicBool>,
     }
 
     impl MultiFileStorage {
@@ -830,6 +841,10 @@ mod tests {
             target: &Arc<Target>,
             files: &[Arc<RcPathStore>],
         ) -> bool {
+            self.listed
+                .lock()
+                .unwrap()
+                .insert(target.clone(), files.iter().map(Arc::downgrade).collect());
             match self.recent_fetches.lock().unwrap().entry(target.clone()) {
                 Entry::Occupied(_) => panic!("Double fetch without recent_fetches clear"),
                 Entry::Vacant(e) => {
@@ -856,6 +871,11 @@ mod tests {
         }
 
         fn expired(&self, target: &Arc<Target>) {
+            if let Some(listed) = self.listed.lock().unwrap().remove(target)
+                && listed.iter().any(|f| f.strong_count() == 0)
+            {
+                self.released_while_listed.store(true, Ordering::SeqCst);
+            }
             tokio::spawn(
                 self.expected_expirations
                     .lock()
@@ -957,6 +977,8 @@ mod tests {
             awaiting_fetches: Default::default(),
             awaited_fetched_done: Default::default(),
             expected_expirations: Default::default(),
+            listed: Default::default(),
+            released_while_listed: Default::default(),
         };
         let state = Arc::new(NotifyState::default());
 
@@ -1134,5 +1156,302 @@ mod tests {
         storage.expect_expiration(&OTHER_TARGET);
 
         on_dead.await
+    }
+
+    /// A removed target's listing names its files until expired() clears it; the files must
+    /// outlive that, and be released afterwards.
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn removed_target_releases_files_after_clearing_its_listing() {
+        let server = RemoteConfigServer::spawn();
+        let (on_dead, on_dead_completer) = ManualFuture::new();
+        let storage = MultiFileStorage {
+            rc: RcFileStorage::default(),
+            on_dead_completer: Arc::new(Mutex::new(Some(on_dead_completer))),
+            recent_fetches: Default::default(),
+            awaiting_fetches: Default::default(),
+            awaited_fetched_done: Default::default(),
+            expected_expirations: Default::default(),
+            listed: Default::default(),
+            released_while_listed: Default::default(),
+        };
+        let state = Arc::new(NotifyState::default());
+        server.files.lock().unwrap().insert(
+            PATH_FIRST.clone(),
+            (vec![DUMMY_TARGET.clone()], 1, "v1".to_string()),
+        );
+
+        let fut = storage.await_fetches(1);
+        let fetcher = MultiTargetFetcher::<Notifier, MultiFileStorage, NativeCapabilities>::new(
+            storage.clone(),
+            server.dummy_options().invariants,
+            NativeCapabilities::new_periodic(),
+        );
+        fetcher.remote_config_interval.store(1000, Ordering::SeqCst);
+        fetcher.add_runtime(
+            RT_ID_1.to_string(),
+            RT_ID_1.to_string(),
+            Notifier { id: 1, state },
+            &DUMMY_TARGET,
+            ProductCapabilities {
+                products: server.dummy_options().products,
+                capabilities: server.dummy_options().capabilities,
+            },
+        );
+        fut.await;
+        // Only the fetcher may keep the delivered files alive.
+        storage.recent_fetches.lock().unwrap().clear();
+        assert_eq!(storage.rc.0.files.lock().unwrap().len(), 1);
+
+        let expired = storage.expect_expiration(&DUMMY_TARGET);
+        fetcher.delete_runtime(RT_ID_1, RT_ID_1, &DUMMY_TARGET);
+        fetcher.shutdown();
+        expired.await;
+        on_dead.await;
+
+        assert!(
+            !storage.released_while_listed.load(Ordering::SeqCst),
+            "the files were released while the target's listing still named them"
+        );
+        assert!(
+            storage.rc.0.files.lock().unwrap().is_empty(),
+            "the removed target's files were never released"
+        );
+    }
+    /// A target removed through RemoveAt (deadline elapsed, or fetcher slots short) must release
+    /// its files even though its run future is dropped rather than polled to completion.
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread")]
+    #[cfg_attr(miri, ignore)]
+    async fn fd_leak_remove_at_elapsed() {
+        let (before, after, dead) = fd_scenario(FdRemoval::RemoveAtElapsed, 10_000_000).await;
+        assert_eq!(before, 1);
+        assert!(dead, "target was not removed");
+        assert_eq!(after, 0, "fds of the removed target's files are still open");
+    }
+
+    /// delete_runtime() followed by shutdown() races the run future's final release against its
+    /// cancellation; repeat enough times to hit the unlucky interleaving.
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread")]
+    #[cfg_attr(miri, ignore)]
+    async fn fd_leak_delete_then_shutdown_repeated() {
+        const RUNS: usize = 30;
+        let mut leaked = 0;
+        for _ in 0..RUNS {
+            let (before, after, dead) = fd_scenario(FdRemoval::DeleteThenShutdown, 1000).await;
+            assert_eq!(before, 1);
+            assert!(dead, "target was not removed");
+            leaked += after;
+        }
+        assert_eq!(leaked, 0, "fds leaked ({leaked} in total over {RUNS} runs)");
+    }
+
+    #[cfg(unix)]
+    enum FdRemoval {
+        /// The target's RemoveAt deadline passes while its run is idle.
+        RemoveAtElapsed,
+        /// delete_runtime() then shutdown().
+        DeleteThenShutdown,
+    }
+
+    /// Returns (open fds after the first fetch, open fds after the removal settled, whether
+    /// dead() was called).
+    #[cfg(unix)]
+    async fn fd_scenario(removal: FdRemoval, interval_ns: u64) -> (usize, usize, bool) {
+        let server = RemoteConfigServer::spawn();
+        server.files.lock().unwrap().insert(
+            PATH_FIRST.clone(),
+            (vec![DUMMY_TARGET.clone()], 1, "v1".to_string()),
+        );
+        let storage = FdStorage::new();
+        let fetcher = MultiTargetFetcher::<Notifier, FdStorage, NativeCapabilities>::new(
+            storage.clone(),
+            server.dummy_options().invariants,
+            NativeCapabilities::new_periodic(),
+        );
+        fetcher
+            .remote_config_interval
+            .store(interval_ns, Ordering::SeqCst);
+        fetcher.add_runtime(
+            RT_ID_1.to_string(),
+            RT_ID_1.to_string(),
+            Notifier {
+                id: 1,
+                state: Arc::new(NotifyState::default()),
+            },
+            &DUMMY_TARGET,
+            ProductCapabilities {
+                products: server.dummy_options().products,
+                capabilities: server.dummy_options().capabilities,
+            },
+        );
+        tokio::time::timeout(Duration::from_secs(10), storage.fetched.notified())
+            .await
+            .expect("no fetch");
+        let before = storage.open_fds();
+
+        match removal {
+            FdRemoval::RemoveAtElapsed => {
+                fetcher.delete_runtime(RT_ID_1, RT_ID_1, &DUMMY_TARGET);
+                // Stand-in for the hour-long RemoveAt deadline passing: the task loop checks
+                // `instant < now` after its next sleep; no cancel() precedes it.
+                let services = fetcher.services.lock().unwrap();
+                *services[&*DUMMY_TARGET].status.lock().unwrap() =
+                    KnownTargetStatus::RemoveAt(Instant::now());
+            }
+            FdRemoval::DeleteThenShutdown => {
+                fetcher.delete_runtime(RT_ID_1, RT_ID_1, &DUMMY_TARGET);
+                fetcher.shutdown();
+            }
+        }
+
+        let dead = tokio::time::timeout(Duration::from_secs(2), storage.dead.notified())
+            .await
+            .is_ok();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let after = storage.open_fds();
+        (before, after, dead)
+    }
+
+    /// A stored file holding a real open fd on a file in the storage's directory.
+    #[cfg(unix)]
+    struct FdFile {
+        file: Mutex<std::fs::File>,
+        version: AtomicU64,
+        refcounted: crate::fetch::FileRefcountData,
+    }
+
+    #[cfg(unix)]
+    impl RefcountedFile for FdFile {
+        fn refcount(&self) -> &crate::fetch::FileRefcountData {
+            &self.refcounted
+        }
+    }
+
+    /// Storage opening a real file per stored version, in a unique directory removed on drop.
+    #[cfg(unix)]
+    #[derive(Clone)]
+    struct FdStorage {
+        dir: Arc<tempfile::TempDir>,
+        counter: Arc<AtomicU32>,
+        fetched: Arc<tokio::sync::Notify>,
+        dead: Arc<tokio::sync::Notify>,
+    }
+
+    #[cfg(unix)]
+    impl FdStorage {
+        fn new() -> Self {
+            FdStorage {
+                dir: Arc::new(tempfile::tempdir().unwrap()),
+                counter: Default::default(),
+                fetched: Default::default(),
+                dead: Default::default(),
+            }
+        }
+
+        fn open_new(&self) -> std::fs::File {
+            let n = self.counter.fetch_add(1, Ordering::SeqCst);
+            std::fs::File::create(self.dir.path().join(n.to_string())).unwrap()
+        }
+
+        /// Counts this process' open fds on files within the storage's directory.
+        fn open_fds(&self) -> usize {
+            let dir = std::fs::canonicalize(self.dir.path()).unwrap();
+            open_fd_paths()
+                .into_iter()
+                .filter(|p| p.starts_with(&dir))
+                .count()
+        }
+    }
+
+    #[cfg(unix)]
+    impl FileStorage for FdStorage {
+        type StoredFile = FdFile;
+
+        fn store(
+            &self,
+            version: u64,
+            path: Arc<RemoteConfigPath>,
+            _contents: Vec<u8>,
+        ) -> anyhow::Result<Arc<Self::StoredFile>> {
+            Ok(Arc::new(FdFile {
+                file: Mutex::new(self.open_new()),
+                version: AtomicU64::new(version),
+                refcounted: crate::fetch::FileRefcountData::new(version, path),
+            }))
+        }
+
+        fn update(
+            &self,
+            file: &Arc<Self::StoredFile>,
+            version: u64,
+            _contents: Vec<u8>,
+        ) -> anyhow::Result<()> {
+            // Like ConfigFileStorage: the previous handle is closed when replaced.
+            *file.file.lock().unwrap() = self.open_new();
+            file.version.store(version, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    #[cfg(unix)]
+    impl MultiTargetHandlers<Notifier, FdStorage, NativeCapabilities> for FdStorage {
+        fn fetched(
+            &self,
+            _fetcher: &Arc<MultiTargetFetcher<Notifier, FdStorage, NativeCapabilities>>,
+            _runtime_id: &Arc<String>,
+            _target: &Arc<Target>,
+            _files: &[Arc<FdFile>],
+        ) -> bool {
+            self.fetched.notify_one();
+            false
+        }
+
+        fn expired(&self, _target: &Arc<Target>) {}
+
+        fn dead(&self) {
+            self.dead.notify_one();
+        }
+    }
+
+    /// Paths of the files this process has open, resolved from their fds.
+    #[cfg(target_os = "linux")]
+    fn open_fd_paths() -> Vec<std::path::PathBuf> {
+        std::fs::read_dir("/proc/self/fd")
+            .unwrap()
+            .filter_map(|entry| std::fs::read_link(entry.ok()?.path()).ok())
+            .collect()
+    }
+
+    /// Paths of the files this process has open, resolved from their fds.
+    #[cfg(all(unix, not(target_os = "linux")))]
+    fn open_fd_paths() -> Vec<std::path::PathBuf> {
+        use std::os::unix::ffi::OsStringExt;
+        let fds: Vec<libc::c_int> = std::fs::read_dir("/dev/fd")
+            .unwrap()
+            .filter_map(|entry| entry.ok()?.file_name().to_str()?.parse().ok())
+            .collect();
+        fds.into_iter()
+            .filter_map(|fd| {
+                #[cfg(target_vendor = "apple")]
+                {
+                    let mut buf = [0u8; libc::PATH_MAX as usize];
+                    // SAFETY: F_GETPATH writes a NUL terminated path of at most PATH_MAX bytes
+                    // into the buffer, which is that large.
+                    if unsafe { libc::fcntl(fd, libc::F_GETPATH, buf.as_mut_ptr()) } == -1 {
+                        return None;
+                    }
+                    let len = buf.iter().position(|b| *b == 0)?;
+                    Some(std::path::PathBuf::from(std::ffi::OsString::from_vec(
+                        buf[..len].to_vec(),
+                    )))
+                }
+                #[cfg(not(target_vendor = "apple"))]
+                {
+                    std::fs::read_link(format!("/dev/fd/{fd}")).ok()
+                }
+            })
+            .collect()
     }
 }
