@@ -333,9 +333,10 @@ void ddog_ai_usage_batch_drop(struct ddog_ai_usage_Batch *batch);
 
 /**
  * Read a whole provider response body (`body[..body_len]`: a JSON
- * document, or a buffered stream of server-sent events) in the usage
- * `format` (`auto`, `openai_chat`, `openai_responses`, `anthropic`,
- * `gemini` or `gemini_openai_compat`; empty is `auto`), and write
+ * document, or a buffered stream of server-sent events or AWS event stream
+ * messages) in the usage `format` (`auto`, `openai_chat`,
+ * `openai_responses`, `anthropic`, `gemini`, `gemini_openai_compat` or
+ * `bedrock_converse`; empty is `auto`), and write
  * `{"usage": {...} | null, "response_model", "service_tier", "outcome",
  * "error_name", "error_type", "error_code", "error_message", "issues"}` to
  * `out`. `issues` says why something reported was not kept:
@@ -414,6 +415,10 @@ enum ddog_ai_usage_Status ddog_ai_usage_stream_new_with(const uint8_t *format,
 
 /**
  * Read the next `chunk[..chunk_len]` of the stream, which may end anywhere.
+ * A stream whose first byte is NUL is read as an AWS event stream
+ * (`application/vnd.amazon.eventstream`: Bedrock ConverseStream and
+ * InvokeModelWithResponseStream), any other as server-sent events, so a
+ * gateway feeds the bytes it passes through either way.
  *
  * # Safety
  *

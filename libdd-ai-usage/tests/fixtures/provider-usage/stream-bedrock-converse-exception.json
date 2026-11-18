@@ -1,0 +1,18 @@
+{
+  "description": "A ConverseStream response that fails mid-stream with an exception message, which names the failure.",
+  "format": "auto",
+  "operation_name": "chat",
+  "body_base64": "AAAAhwAAAFLjgYMzCzpldmVudC10eXBlBwAMbWVzc2FnZVN0YXJ0DTpjb250ZW50LXR5cGUHABBhcHBsaWNhdGlvbi9qc29uDTptZXNzYWdlLXR5cGUHAAVldmVudHsicCI6ImFiY2RlZmdoaWoiLCJyb2xlIjoiYXNzaXN0YW50In10WSZKAAAA7QAAAFdAaRhQCzpldmVudC10eXBlBwARY29udGVudEJsb2NrRGVsdGENOmNvbnRlbnQtdHlwZQcAEGFwcGxpY2F0aW9uL2pzb24NOm1lc3NhZ2UtdHlwZQcABWV2ZW50eyJjb250ZW50QmxvY2tJbmRleCI6MCwiZGVsdGEiOnsidGV4dCI6ImdlbmVyYXRlZCB0ZXh0IG5hbWluZyBcInVzYWdlXCIsIFwibWV0YWRhdGFcIiBhbmQgXCJtZXNzYWdlU3RvcFwiIGlzIG5vdCBhbiBldmVudCJ9LCJwIjoiYWJjIn15l85xAAAAsAAAAGFPUIazDzpleGNlcHRpb24tdHlwZQcAE3Rocm90dGxpbmdFeGNlcHRpb24NOmNvbnRlbnQtdHlwZQcAEGFwcGxpY2F0aW9uL2pzb24NOm1lc3NhZ2UtdHlwZQcACWV4Y2VwdGlvbnsibWVzc2FnZSI6IlRvbyBtYW55IHRva2VucywgcGxlYXNlIHdhaXQgYmVmb3JlIHRyeWluZyBhZ2Fpbi4iffcK5X8=",
+  "expected": {
+    "usage": null,
+    "response_model": null,
+    "service_tier": null,
+    "error": {
+      "name": "throttlingException",
+      "code": null,
+      "message": "Too many tokens, please wait before trying again."
+    },
+    "outcome": "failed",
+    "error_name": "throttlingException"
+  }
+}

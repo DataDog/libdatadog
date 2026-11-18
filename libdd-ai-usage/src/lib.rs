@@ -63,6 +63,7 @@ mod datadog;
 mod deployment;
 mod dogstatsd;
 mod error_type;
+mod event_stream;
 mod gateway;
 mod intake;
 mod json;
