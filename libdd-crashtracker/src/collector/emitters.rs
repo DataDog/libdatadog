@@ -440,11 +440,6 @@ unsafe fn emit_frame_with_dladdr(w: &mut impl Write, ip: usize) -> Result<(), Em
 }
 
 /// Emit OTel thread context records from the crashing process's TLS.
-///
-/// Discovers the `otel_thread_ctx_v1` TLS symbol via `/proc/<ppid>/maps` + ELF
-/// parsing (avoiding the loader-lock-deadlocking `dl_iterate_phdr`), then
-/// ptrace-attaches to each thread, reads its thread pointer, resolves the TLS
-/// slot, and emits the hex-encoded record over the pipe.
 #[cfg(all(target_os = "linux", feature = "otel-thread-ctx"))]
 fn emit_otel_thread_contexts(
     w: &mut impl Write,
@@ -460,9 +455,8 @@ fn emit_otel_thread_contexts(
         attach_thread, detach_thread, enumerate_threads, read_thread_pointer,
     };
 
-    // Read the pre-cached TLS metadata (populated at init time via dl_iterate_phdr,
-    // which is safe outside signal context). If the cache is empty, the symbol wasn't
-    // found or init wasn't called — nothing to collect.
+    // If the cache is empty, the symbol wasn't found or init wasn't called theres nothing to
+    // collect.
     let Some(symbol_info) = crate::otel_tls_reader::cached_tls_info() else {
         return Ok(());
     };

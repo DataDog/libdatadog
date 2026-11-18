@@ -838,7 +838,6 @@ fn decode_hex_otel_record(
     crate::otel_tls_reader::decode_record(tid, &bytes)
 }
 
-/// Enrich OTel thread context records with thread names from `/proc/<pid>/task/<tid>/comm`.
 #[cfg(all(target_os = "linux", feature = "otel-thread-ctx"))]
 fn enrich_otel_thread_names(builder: &mut CrashInfoBuilder) {
     let pid = match builder.proc_info.as_ref() {

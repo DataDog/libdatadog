@@ -64,14 +64,8 @@ fn main() {
         // executables. However, when definition and reference are in the same PIE
         // executable, both lld and GNU ld relax TLSDESC accesses to TP-relative,
         // eliminating the symbol name from .dynsym (the TLS allocation survives but
-        // the name doesn't). This only affects this test binary — in production the
+        // the name doesn't). This only affects this test binary. In production the
         // publisher is always in a separate .so where names are preserved.
-        //
-        // Fix: assemble a weak definition of the symbol that the linker merges with
-        // the strong one from libdd-otel-thread-ctx's global_asm!. The weak definition
-        // isn't subject to relaxation-based name elimination, so the name survives for
-        // --export-dynamic to promote into .dynsym. --export-dynamic is universally
-        // supported (GNU ld >= 2.17, lld), unlike --export-dynamic-symbol (>= 2.35).
         let otel_asm_src = out_dir.join("otel_tls_anchor.s");
         let otel_asm_obj = out_dir.join("otel_tls_anchor.o");
         std::fs::write(

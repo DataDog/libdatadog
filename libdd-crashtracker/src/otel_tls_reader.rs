@@ -1,11 +1,8 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Read an OTel `ThreadContextRecord` from a remote process via `/proc/<pid>/mem`.
-//!
-//! Also contains ELF-based TLS symbol discovery and DTV probing used by the
-//! collector to locate `otel_thread_ctx_v1` without calling `dl_iterate_phdr`
-//! (which can deadlock when the loader lock is held at crash time).
+//! Read an OTel `ThreadContextRecord` from a remote process via `/proc/<pid>/mem`
+//! and ELF-based TLS symbol discovery and DTV probing
 
 use crate::crash_info::{OtelAttribute, OtelThreadContext};
 use alloc::fmt;
@@ -254,24 +251,17 @@ pub(crate) struct TlsSymbolInfo {
     pub tls_align: usize,
 }
 
-// ── Pre-cached TLS metadata (populated at init, read at crash time) ─────────
+// ── Pre-cached TLS metadata ─────────
 
 use core::sync::atomic::{AtomicPtr, Ordering::SeqCst};
 
 /// Global cache for TLS symbol metadata, populated by [`cache_otel_tls_info`] at
-/// crashtracker init time (outside signal context, so `dl_iterate_phdr` is safe).
-/// The collector reads this at crash time, avoiding ELF parsing and `/proc/maps`
-/// scanning on the hot path.
+/// init time. The collector reads this at crash time.
 static CACHED_TLS_INFO: AtomicPtr<TlsSymbolInfo> = AtomicPtr::new(core::ptr::null_mut());
 
 /// Resolve and cache the `otel_thread_ctx_v1` TLS symbol metadata via `dl_iterate_phdr`.
 ///
-/// **Must be called outside signal/crash context** (e.g. during `crashtracker::init`).
-/// `dl_iterate_phdr` takes the loader lock, which is safe here but would deadlock
-/// if called from a post-fork collector while another thread holds the lock.
-///
-/// The cached metadata (modid, offset, memsz, align) is process-wide and stable for
-/// the lifetime of the loaded library.
+/// Must be called outside signal/crash context (e.g. during `crashtracker::init`).
 pub(crate) fn cache_otel_tls_info() {
     let info = resolve_tls_symbol_via_dl_iterate_phdr();
     let new_ptr = match info {
@@ -360,7 +350,7 @@ fn resolve_tls_symbol_via_dl_iterate_phdr() -> Option<TlsSymbolInfo> {
 }
 
 /// Search the in-memory dynamic symbol table of a loaded ELF object for
-/// `otel_thread_ctx_v1`. Returns the symbol's `st_value` (TLS offset) if found.
+/// `otel_thread_ctx_v1`. Returns the symbol's `st_value` if found.
 ///
 /// # Safety
 ///
@@ -380,8 +370,8 @@ unsafe fn find_tls_symbol_in_phdrs(phdrs: &[libc::Elf64_Phdr], base_addr: u64) -
     #[cfg(not(target_env = "musl"))]
     let resolve = |d_val: u64| -> usize { d_val as usize };
 
-    // Skip objects without a TLS segment — they can't define our symbol,
-    // and some (like vDSO) have unrelocated d_val entries that would crash us.
+    // Skip objects without a TLS segment (like vDSO) have unrelocated d_val entries that would
+    // crash us.
     if !phdrs.iter().any(|p| p.p_type == libc::PT_TLS) {
         return None;
     }
@@ -395,7 +385,7 @@ unsafe fn find_tls_symbol_in_phdrs(phdrs: &[libc::Elf64_Phdr], base_addr: u64) -
     let mut strtab: *const u8 = core::ptr::null();
     let mut gnu_hash_ptr: *const u32 = core::ptr::null();
 
-    // libc doesn't expose Elf64_Dyn; define the layout we need.
+    // libc doesn't expose Elf64_Dyn
     #[repr(C)]
     struct Elf64Dyn {
         d_tag: i64,
@@ -500,8 +490,12 @@ pub(crate) enum TlsResolution {
 
 /// Signed byte offset from the thread pointer (TP) to the DTV pointer.
 ///
-/// These are well-known, ABI-stable offsets for each (architecture, libc) combination.
-/// See GDB's `get_tls_dtv_addr` for reference values.
+/// These are well-known, ABI-stable offsets for each combination.
+/// GDB references:
+/// - x86_64: <https://sourceware.org/git/?p=binutils-gdb.git;a=blob;f=gdb/amd64-linux-tdep.c>
+///   (`amd64_linux_get_tls_dtv_addr`)
+/// - aarch64: <https://sourceware.org/git/?p=binutils-gdb.git;a=blob;f=gdb/aarch64-linux-tdep.c>
+///   (`aarch64_linux_get_tls_dtv_addr`)
 pub(crate) fn dtv_pointer_offset() -> Option<isize> {
     #[cfg(all(target_arch = "x86_64", target_env = "gnu"))]
     return Some(8);
@@ -531,8 +525,8 @@ fn remote_read_u64(mem: &mut ProcMemReader, addr: u64) -> Option<u64> {
 /// Instead of walking glibc's internal `link_map` chain (whose `l_tls_modid` offset varies
 /// across glibc versions), this probes DTV entries 1..N:
 ///
-/// - **Populated entry**: check if `dtv[i] + symbol_offset` -> valid record pointer.
-/// - **`TLS_DTV_UNALLOCATED` (-1)**: compute the static TLS block address from TP and the PT_TLS
+/// - Populated entry: check if `dtv[i] + symbol_offset` -> valid record pointer.
+/// - `TLS_DTV_UNALLOCATED` (-1): compute the static TLS block address from TP and the PT_TLS
 ///   segment size, then validate. This is the path glibc 2.17 (CentOS 7) takes.
 pub(crate) fn probe_dtv_for_resolution(
     mem: &mut ProcMemReader,
@@ -596,11 +590,8 @@ pub(crate) fn probe_dtv_for_resolution(
 
 /// Compute the base address of a static TLS block from the thread pointer.
 ///
-/// On glibc 2.17 and older, the DTV entry for static TLS modules is `TLS_DTV_UNALLOCATED`
-/// (-1), but the block is always allocated inline with the TCB.
-///
-/// - **x86_64 (variant II)**: TLS grows downward: `TP - align_up(memsz, align)`
-/// - **aarch64 (variant I)**: TLS grows upward: `align_up(TP + 16, align)`
+/// - x86_64 (variant II): TLS grows downward: `TP - align_up(memsz, align)`
+/// - aarch64 (variant I): TLS grows upward: `align_up(TP + 16, align)`
 fn compute_static_tls_base(tp: u64, tls_memsz: usize, tls_align: usize) -> Option<u64> {
     if tls_memsz == 0 {
         return None;
@@ -620,7 +611,6 @@ fn compute_static_tls_base(tp: u64, tls_memsz: usize, tls_align: usize) -> Optio
     None
 }
 
-/// Read a thread's name from `/proc/<pid>/task/<tid>/comm`.
 pub(crate) fn read_thread_name(pid: u32, tid: i32) -> Option<String> {
     std::fs::read_to_string(format!("/proc/{pid}/task/{tid}/comm"))
         .ok()

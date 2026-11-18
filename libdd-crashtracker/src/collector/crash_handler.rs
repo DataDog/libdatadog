@@ -348,10 +348,8 @@ fn handle_posix_signal_impl(
     // For socket-based receivers (PHP sidecar), verify the peer PID matches the
     // expected receiver PID that was registered during trusted initialization
     #[cfg(target_os = "linux")]
-    {
-        if config.collect_all_threads() {
-            grant_ptracer_permission(&receiver);
-        }
+    if config.collect_all_threads() {
+        grant_ptracer_permission(&receiver);
     }
 
     collect_and_finish(
@@ -384,7 +382,6 @@ fn collect_and_finish(
         std::time::Instant::now() + timeout_manager.remaining(),
     )?;
     collector.finish(timeout_manager);
-
     receiver.finish(timeout_manager);
     Ok(())
 }
@@ -513,10 +510,8 @@ pub fn report_unhandled_exception(
     let receiver = Receiver::from_crashtracker_config(&config)?;
 
     #[cfg(target_os = "linux")]
-    {
-        if config.collect_all_threads() {
-            grant_ptracer_permission(&receiver);
-        }
+    if config.collect_all_threads() {
+        grant_ptracer_permission(&receiver);
     }
 
     let timeout_manager = TimeoutManager::new(config.timeout());
