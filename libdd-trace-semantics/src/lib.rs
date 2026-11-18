@@ -9,13 +9,13 @@
 //! runtime and work without an Agent.
 //!
 //! ```
-//! use libdd_trace_semantics::{entries, lookup_str, Concept};
+//! use libdd_trace_semantics::{lookup_str, Concept};
 //! # use libdd_trace_model::Attributes;
 //! # fn method(span: &impl Attributes) -> Option<std::borrow::Cow<'_, str>> {
 //! // The first non-empty value among `http.request.method` and `http.method`.
 //! lookup_str(span, Concept::HttpMethod)
 //! # }
-//! assert_eq!(entries(Concept::HttpMethod)[0].name, "http.request.method");
+//! assert_eq!(Concept::HttpMethod.entries()[0].name, "http.request.method");
 //! ```
 //!
 //! The library only says where a concept is stored. It never renames attributes. Keys chosen by
@@ -82,12 +82,6 @@ pub struct Entry {
     pub value_type: ValueType,
     /// Conditions that must all hold for this entry to be read
     pub when: &'static [Condition],
-}
-
-/// The attributes that can hold `concept`, in precedence order.
-#[must_use]
-pub const fn entries(concept: Concept) -> &'static [Entry] {
-    concept.entries()
 }
 
 /// The concept with this canonical name, e.g. `http.method`. Attribute names that are not a

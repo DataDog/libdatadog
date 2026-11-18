@@ -115,13 +115,11 @@ fn non_empty_str<'a, A: Attributes + ?Sized>(attrs: &'a A, key: &str) -> Option<
 /// Conditions read the exact attribute, as a string. An empty string counts as absent.
 fn condition_holds<A: Attributes + ?Sized>(attrs: &A, condition: &Condition) -> bool {
     let value = non_empty_str(attrs, condition.attribute);
-    if condition
+    let present_ok = condition
         .present
-        .is_some_and(|present| present != value.is_some())
-    {
-        return false;
-    }
-    condition.eq.is_none_or(|eq| value == Some(eq))
+        .is_none_or(|present| present == value.is_some());
+    let eq_ok = condition.eq.is_none_or(|eq| value == Some(eq));
+    present_ok && eq_ok
 }
 
 #[cfg(test)]

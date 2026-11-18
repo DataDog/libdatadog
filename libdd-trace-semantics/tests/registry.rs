@@ -5,7 +5,7 @@
 
 use libdd_trace_model::{PROMOTED_CHUNK_TAGS, PROMOTED_SPAN_TAGS};
 use libdd_trace_semantics::{
-    Concept, Provider, ValueType, concept, concepts, content_hash, entries, version,
+    Concept, Provider, ValueType, concept, concepts, content_hash, version,
 };
 use serde_json::Value;
 
@@ -38,7 +38,7 @@ fn every_concept_is_generated_with_its_entries_in_order() {
         assert!(concepts().contains(&c), "{name}");
 
         let fallbacks = mapping["fallbacks"].as_array().expect("fallbacks");
-        let entries = entries(c);
+        let entries = c.entries();
         assert_eq!(entries.len(), fallbacks.len(), "{name}");
         for (entry, fallback) in entries.iter().zip(fallbacks) {
             assert_eq!(entry.name, fallback["name"], "{name}");
@@ -87,7 +87,8 @@ fn concept_by_name() {
 
 #[test]
 fn http_method_prefers_otel_name() {
-    let names: Vec<_> = entries(Concept::HttpMethod)
+    let names: Vec<_> = Concept::HttpMethod
+        .entries()
         .iter()
         .map(|e| e.name)
         .collect();
@@ -110,17 +111,17 @@ fn promoted_tags_have_no_other_names() {
                  trait-model getter. Decide how to handle it before merging this registry update."
             )
         });
-        let names: Vec<_> = entries(promoted).iter().map(|e| e.name).collect();
+        let names: Vec<_> = promoted.entries().iter().map(|e| e.name).collect();
         assert_eq!(names, [tag], "{action} Its entries are {names:?}.");
         assert!(
-            entries(promoted).iter().all(|e| e.when.is_empty()),
+            promoted.entries().iter().all(|e| e.when.is_empty()),
             "promoted tag `{tag}` gained registry conditions; callers read it with its \
              trait-model getter, which ignores them. Decide how to handle it before merging this \
              registry update."
         );
 
         for &other in concepts() {
-            for entry in entries(other) {
+            for entry in other.entries() {
                 assert!(
                     other == promoted || entry.name != tag,
                     "{action} Concept `{}` has an entry named `{tag}`.",
