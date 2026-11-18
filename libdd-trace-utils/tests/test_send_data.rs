@@ -442,26 +442,36 @@ mod tracing_integration_tests {
 
     /// Builds a TracerPayload that exercises the multi-key attribute paths the v0.4 to V1 encoder
     /// can't cover on its own (HashMap iteration order makes byte-by-byte cross-validation flaky
-    /// for n > 1), plus the primitive `AttributeValue` variants the test-agent currently
-    /// supports.
-    ///
-    /// APMSP-3479 - TODO: `AttributeValue::Array` and `AttributeValue::KeyValueList` are
-    /// deliberately omitted: `ddapm-test-agent` v1.62.0 decodes arrays only in span event
-    /// attributes (covered by `compare_v04_and_v1_encoders_snapshot_test`) and rejects them on
-    /// span, chunk and span link attributes, and it rejects key-value lists everywhere. Once
-    /// test-agent V1 support catches up, add them here too.
+    /// for n > 1), plus `AttributeValue::Bytes`, `AttributeValue::Array` and
+    /// `AttributeValue::KeyValueList`, which the v0.4 to V1 encoder never emits.
     fn make_v1_payload(name_prefix: &str) -> libdd_trace_utils::span::v1::TracerPayloadBytes {
         use libdd_trace_utils::span::v1::{
             AttributeValue, AttributeValueBytes, SpanBytes as V1SpanBytes, SpanEventBytes,
             SpanKind, SpanLinkBytes, TraceChunkBytes, TracerPayloadBytes,
         };
 
-        // Multi-key attribute map on the root span — primitive variants only.
+        // Multi-key attribute map on the root span, including bytes, a list of strings and a
+        // nested key-value list.
         let mut root_attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
         root_attrs.insert(bs_v1("http.method"), AttributeValue::String(bs_v1("GET")));
         root_attrs.insert(bs_v1("http.status_code"), AttributeValue::Int(200));
         root_attrs.insert(bs_v1("http.success"), AttributeValue::Bool(true));
         root_attrs.insert(bs_v1("http.duration_ms"), AttributeValue::Float(12.5));
+        root_attrs.insert(
+            bs_v1("http.request.id"),
+            AttributeValue::Bytes(Bytes::copy_from_slice(b"req-123")),
+        );
+        root_attrs.insert(
+            bs_v1("http.request.header.accept"),
+            AttributeValue::Array(vec![
+                AttributeValue::String(bs_v1("text/html")),
+                AttributeValue::String(bs_v1("application/json")),
+            ]),
+        );
+        let mut nested: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        nested.insert(bs_v1("id"), AttributeValue::Int(42));
+        nested.insert(bs_v1("name"), AttributeValue::String(bs_v1("alice")));
+        root_attrs.insert(bs_v1("user"), AttributeValue::KeyValueList(nested));
 
         let span_link = SpanLinkBytes {
             trace_id: tid_bytes(0x0123_4567_89ab_cdef, 0xfedc_ba98_7654_3210),
@@ -691,33 +701,66 @@ mod tracing_integration_tests {
         test_agent.assert_snapshot(snapshot_name).await;
     }
 
-    /// Builds a V1 payload exercising the attribute surface that the current test-agent
-    /// (v1.62.0) is able to decode: `AttributeValue::String/Bool/Int/Float`, span links with
-    /// non-empty attributes, span events with non-empty attributes, plus chunk-level attributes.
-    ///
-    /// APMSP-3479 - TODO: `AttributeValue::Bytes`, `AttributeValue::Array` and
-    /// `AttributeValue::KeyValueList` are deliberately omitted. `ddapm-test-agent` v1.62.0
-    /// rejects Bytes and key-value lists everywhere (`400 "... values are not supported yet."`),
-    /// and decodes arrays only in span event attributes, which
-    /// `compare_v04_and_v1_encoders_snapshot_test` already covers. Add them here once test-agent
-    /// V1 support catches up.
+    /// Builds a V1 payload exercising every `AttributeValue` variant
+    /// (`String/Bool/Int/Float/Bytes/Array/KeyValueList`) on span, span link, span event and
+    /// chunk attributes.
     fn make_v1_full_payload(name_prefix: &str) -> libdd_trace_utils::span::v1::TracerPayloadBytes {
         use libdd_trace_utils::span::v1::{
             AttributeValue, AttributeValueBytes, SpanBytes as V1SpanBytes, SpanEventBytes,
             SpanKind, SpanLinkBytes, TraceChunkBytes, TracerPayloadBytes,
         };
 
-        // Root span attributes — primitives supported by the test-agent today.
+        // A list mixing scalar variants with a nested list and key-value list, so the recursive
+        // encoding paths are covered.
+        let make_list = || {
+            let mut inner_kv: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+            inner_kv.insert(bs_v1("k"), AttributeValue::String(bs_v1("v")));
+            AttributeValue::Array(vec![
+                AttributeValue::String(bs_v1("a")),
+                AttributeValue::Int(-1),
+                AttributeValue::Float(0.5),
+                AttributeValue::Bool(false),
+                AttributeValue::Array(vec![AttributeValue::Int(1), AttributeValue::Int(2)]),
+                AttributeValue::KeyValueList(inner_kv),
+            ])
+        };
+        let make_kv = || {
+            let mut inner: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+            inner.insert(bs_v1("region"), AttributeValue::String(bs_v1("eu")));
+            let mut kv: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+            kv.insert(bs_v1("id"), AttributeValue::Int(7));
+            kv.insert(bs_v1("enabled"), AttributeValue::Bool(true));
+            kv.insert(
+                bs_v1("tags"),
+                AttributeValue::Array(vec![
+                    AttributeValue::String(bs_v1("x")),
+                    AttributeValue::String(bs_v1("y")),
+                ]),
+            );
+            inner.dedup();
+            kv.insert(bs_v1("location"), AttributeValue::KeyValueList(inner));
+            // Without dedup the encoder dedups through a hash map, which scrambles the key
+            // order, and span events expose key-value lists as JSON strings.
+            kv.dedup();
+            AttributeValue::KeyValueList(kv)
+        };
+        // The test-agent decodes bytes as msgpack, else ASCII, so keep the value ASCII.
+        let make_bytes = || AttributeValue::Bytes(Bytes::copy_from_slice(b"raw-bytes"));
+
         let mut root_attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
         root_attrs.insert(bs_v1("http.method"), AttributeValue::String(bs_v1("POST")));
         root_attrs.insert(bs_v1("http.status_code"), AttributeValue::Int(201));
         root_attrs.insert(bs_v1("http.success"), AttributeValue::Bool(true));
         root_attrs.insert(bs_v1("http.duration_ms"), AttributeValue::Float(42.75));
+        root_attrs.insert(bs_v1("span.bytes"), make_bytes());
+        root_attrs.insert(bs_v1("span.list"), make_list());
+        root_attrs.insert(bs_v1("span.kv"), make_kv());
 
-        // Span link with non-empty attributes (String-only — primitives are enough to exercise
-        // the encoder/decoder paths for link attribute maps).
         let mut link_attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
         link_attrs.insert(bs_v1("link.reason"), AttributeValue::String(bs_v1("retry")));
+        link_attrs.insert(bs_v1("link.bytes"), make_bytes());
+        link_attrs.insert(bs_v1("link.list"), make_list());
+        link_attrs.insert(bs_v1("link.kv"), make_kv());
         let span_link = SpanLinkBytes {
             trace_id: tid_bytes(0x0123_4567_89ab_cdef, 0xfedc_ba98_7654_3210),
             span_id: 0xa0a0_a0a0_a0a0_a0a0,
@@ -726,7 +769,6 @@ mod tracing_integration_tests {
             attributes: link_attrs,
         };
 
-        // Span event with attributes (String + Int + Bool to exercise typed values).
         let mut event_attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
         event_attrs.insert(
             bs_v1("exception.type"),
@@ -734,6 +776,9 @@ mod tracing_integration_tests {
         );
         event_attrs.insert(bs_v1("exception.code"), AttributeValue::Int(500));
         event_attrs.insert(bs_v1("exception.handled"), AttributeValue::Bool(false));
+        event_attrs.insert(bs_v1("exception.bytes"), make_bytes());
+        event_attrs.insert(bs_v1("exception.list"), make_list());
+        event_attrs.insert(bs_v1("exception.kv"), make_kv());
         let span_event = SpanEventBytes {
             time_unix_nano: 1_727_211_691_770_715_042,
             name: bs_v1("exception"),
@@ -765,6 +810,9 @@ mod tracing_integration_tests {
             bs_v1("_dd.p.tid"),
             AttributeValue::String(bs_v1("0123456789abcdef")),
         );
+        chunk_attrs.insert(bs_v1("chunk.bytes"), make_bytes());
+        chunk_attrs.insert(bs_v1("chunk.list"), make_list());
+        chunk_attrs.insert(bs_v1("chunk.kv"), make_kv());
 
         let chunk = TraceChunkBytes {
             trace_id: tid_bytes(0, 0xfeedface),
@@ -790,14 +838,9 @@ mod tracing_integration_tests {
         }
     }
 
-    /// Big V1 integration test: encodes a payload covering every primitive attribute variant
-    /// the test-agent supports today (String/Bool/Int/Float) plus non-empty span_link and
-    /// span_event attribute maps, then POSTs to `/v1.0/traces` and asserts the snapshot.
-    ///
-    /// APMSP-3479 - TODO: extend this with `AttributeValue::Bytes`, `AttributeValue::Array`
-    /// (beyond span event attributes) and `AttributeValue::KeyValueList` once `ddapm-test-agent`
-    /// V1 support catches up. See [`make_v1_full_payload`] for the payload builder and the
-    /// omitted variants.
+    /// Big V1 integration test: encodes a payload covering every attribute variant on span,
+    /// span link, span event and chunk attributes (see [`make_v1_full_payload`]), then POSTs to
+    /// `/v1.0/traces` and asserts the snapshot.
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn compare_v1_full_payload_snapshot_test() {

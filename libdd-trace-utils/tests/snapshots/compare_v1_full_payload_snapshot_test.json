@@ -11,17 +11,43 @@
       "_dd.origin": "synthetics",
       "_dd.p.dm": "-4",
       "_dd.p.tid": "0123456789abcdef",
+      "chunk.bytes": "raw-bytes",
+      "chunk.kv.location.region": "eu",
+      "chunk.kv.tags.0": "x",
+      "chunk.kv.tags.1": "y",
+      "chunk.list.0": "a",
+      "chunk.list.5.k": "v",
       "component": "http",
       "env": "test-env",
       "http.method": "POST",
+      "span.bytes": "raw-bytes",
       "span.kind": "server",
+      "span.kv.location.region": "eu",
+      "span.kv.tags.0": "x",
+      "span.kv.tags.1": "y",
+      "span.list.0": "a",
+      "span.list.5.k": "v",
       "version": "1.2.3"
     },
     "metrics": {
       "_sampling_priority_v1": 1,
+      "chunk.kv.enabled": 1,
+      "chunk.kv.id": 7,
+      "chunk.list.1": -1,
+      "chunk.list.2": 0.5,
+      "chunk.list.3": 0,
+      "chunk.list.4.0": 1,
+      "chunk.list.4.1": 2,
       "http.duration_ms": 42.75,
       "http.status_code": 201,
-      "http.success": 1
+      "http.success": 1,
+      "span.kv.enabled": 1,
+      "span.kv.id": 7,
+      "span.list.1": -1,
+      "span.list.2": 0.5,
+      "span.list.3": 0,
+      "span.list.4.0": 1,
+      "span.list.4.1": 2
     },
     "span_links": [
       {
@@ -29,6 +55,19 @@
         "trace_id_high": 81985529216486895,
         "span_id": 11574427654092267680,
         "attributes": {
+          "link.bytes": "raw-bytes",
+          "link.kv.enabled": "true",
+          "link.kv.id": "7",
+          "link.kv.location.region": "eu",
+          "link.kv.tags.0": "x",
+          "link.kv.tags.1": "y",
+          "link.list.0": "a",
+          "link.list.1": "-1",
+          "link.list.2": "0.5",
+          "link.list.3": "false",
+          "link.list.4.0": "1",
+          "link.list.4.1": "2",
+          "link.list.5.k": "v",
           "link.reason": "retry"
         },
         "tracestate": "dd=t.tid:abc",
@@ -40,6 +79,10 @@
         "time_unix_nano": 1727211691770715042,
         "name": "exception",
         "attributes": {
+          "exception.bytes": {
+            "type": 0,
+            "string_value": "raw-bytes"
+          },
           "exception.code": {
             "type": 2,
             "int_value": 500
@@ -47,6 +90,41 @@
           "exception.handled": {
             "type": 1,
             "bool_value": false
+          },
+          "exception.kv": {
+            "type": 0,
+            "string_value": "{\"id\": 7, \"enabled\": true, \"tags\": [\"x\", \"y\"], \"location\": {\"region\": \"eu\"}}"
+          },
+          "exception.list": {
+            "type": 4,
+            "array_value": {
+              "values": [
+                {
+                  "type": 0,
+                  "string_value": "a"
+                },
+                {
+                  "type": 2,
+                  "int_value": -1
+                },
+                {
+                  "type": 3,
+                  "double_value": 0.5
+                },
+                {
+                  "type": 1,
+                  "bool_value": false
+                },
+                {
+                  "type": 0,
+                  "string_value": "[1, 2]"
+                },
+                {
+                  "type": 0,
+                  "string_value": "{\"k\": \"v\"}"
+                }
+              ]
+            }
           },
           "exception.type": {
             "type": 0,
