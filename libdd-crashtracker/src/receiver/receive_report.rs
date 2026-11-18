@@ -561,9 +561,7 @@ pub(crate) async fn receive_report_from_stream(
     // variables out-of-process (via /proc/maps ELF scanning + ptrace + /proc/pid/mem),
     // avoiding the loader-lock deadlock that can happen with dl_iterate_phdr in a fork.
     #[cfg(all(target_os = "linux", feature = "otel-thread-ctx"))]
-    if config.collect_otel_thread_contexts()
-        && !access.is_restricted()
-        && let Some(proc_info) = builder.proc_info.as_ref()
+    if config.collect_otel_thread_contexts() && let Some(proc_info) = builder.proc_info.as_ref()
     {
         let parent_pid = proc_info.pid;
         let crashing_tid = proc_info.tid;
