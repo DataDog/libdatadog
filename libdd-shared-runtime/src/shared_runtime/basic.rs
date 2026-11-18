@@ -58,15 +58,18 @@ impl BasicRuntime {
         &self,
         workers_guard: &mut std::sync::MutexGuard<Vec<WorkerEntry>>,
         pausable_worker: PausableWorker<BoxedWorker>,
+        disposition: Arc<std::sync::atomic::AtomicU8>,
     ) -> WorkerHandle {
         let worker_id = self.next_worker_id.fetch_add(1, Ordering::Relaxed);
         workers_guard.push(WorkerEntry {
             id: worker_id,
+            disposition: disposition.clone(),
             restart_on_fork: false,
             worker: pausable_worker,
         });
         WorkerHandle {
             worker_id,
+            disposition,
             workers: self.workers.clone(),
         }
     }
@@ -91,22 +94,20 @@ impl SharedRuntime for BasicRuntime {
 
         let boxed_worker: BoxedWorker = Box::new(worker);
         debug!(?boxed_worker, "Spawning worker on BasicRuntime");
-        let mut pausable_worker = PausableWorker::new(boxed_worker);
+        let disposition = Arc::new(std::sync::atomic::AtomicU8::new(super::ACTIVE));
+        let mut pausable_worker = PausableWorker::new(boxed_worker, disposition.clone());
 
         // Hold the workers lock across start+push so a concurrent shutdown_async cannot
         // drain the registry between starting the task and recording it — which would
         // otherwise leave a live worker behind that shutdown_async never paused.
         let mut workers_guard = self.workers.lock_or_panic();
         pausable_worker.start(tokio_spawn_fn(self.runtime.handle()))?;
-        Ok(self.push_worker(&mut workers_guard, pausable_worker))
+        Ok(self.push_worker(&mut workers_guard, pausable_worker, disposition))
     }
 
     async fn shutdown_async(&self) {
         debug!("Shutting down all workers on BasicRuntime");
-        let workers = {
-            let mut workers_lock = self.workers.lock_or_panic();
-            std::mem::take(&mut *workers_lock)
-        };
+        let (workers, retirements) = super::take_for_shutdown(&self.workers);
 
         let futures: FuturesUnordered<_> = workers
             .into_iter()
@@ -120,6 +121,7 @@ impl SharedRuntime for BasicRuntime {
             .collect();
 
         futures.collect::<()>().await;
+        super::finish_retirements(retirements).await;
     }
 }
 
@@ -285,6 +287,77 @@ mod tests {
 
         // The outer runtime must still be usable after shutdown_async.
         rt.block_on(async { sleep(Duration::from_millis(10)).await });
+    }
+
+    // shutdown_async finishes an abandoned discard and never runs Worker::shutdown.
+    #[test]
+    fn test_shutdown_async_finishes_abandoned_discard() {
+        #[derive(Debug)]
+        struct GatedDrop {
+            release: std::sync::Mutex<Receiver<()>>,
+            events: Sender<&'static str>,
+        }
+        impl Drop for GatedDrop {
+            fn drop(&mut self) {
+                let _ = self
+                    .release
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(Duration::from_secs(5));
+                let _ = self.events.send("dropped");
+            }
+        }
+        #[async_trait]
+        impl Worker for GatedDrop {
+            async fn run(&mut self) {
+                let _ = self.events.send("run");
+                std::future::pending::<()>().await;
+            }
+            async fn trigger(&mut self) {}
+            async fn shutdown(&mut self) {
+                let _ = self.events.send("shutdown");
+            }
+        }
+
+        let rt = new_outer_runtime();
+        let shared_runtime = BasicRuntime::from_handle(rt.clone());
+        let (release, release_rx) = channel();
+        let (events, events_rx) = channel();
+        let worker = GatedDrop {
+            release: std::sync::Mutex::new(release_rx),
+            events,
+        };
+        let handle = shared_runtime.spawn_worker(worker, false).unwrap();
+        assert_eq!(events_rx.recv_timeout(Duration::from_secs(1)), Ok("run"));
+
+        // Request cancellation, then abandon the wait. The gated destructor keeps the task
+        // from completing, so the entry stays registered as discarding.
+        let mut discard = Box::pin(handle.discard());
+        let mut context = std::task::Context::from_waker(futures::task::noop_waker_ref());
+        assert!(std::future::Future::poll(discard.as_mut(), &mut context).is_pending());
+        drop(discard);
+        assert_eq!(shared_runtime.workers.lock_or_panic().len(), 1);
+
+        release.send(()).unwrap();
+        rt.block_on(shared_runtime.shutdown_async());
+        // shutdown_async does not touch the registry after awaiting the retirement, so the
+        // retired entry stays registered until the next shutdown or discard unregisters it.
+        {
+            let workers = shared_runtime.workers.lock_or_panic();
+            assert_eq!(workers.len(), 1);
+            assert!(workers[0].worker.is_retired());
+        }
+        rt.block_on(shared_runtime.shutdown_async());
+        assert_eq!(shared_runtime.workers.lock_or_panic().len(), 0);
+        assert_eq!(
+            events_rx.recv_timeout(Duration::from_secs(1)),
+            Ok("dropped")
+        );
+        // The worker owned the only sender: no shutdown event can follow.
+        assert_eq!(
+            events_rx.recv_timeout(Duration::from_secs(1)),
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected)
+        );
     }
 
     #[test]

@@ -32,6 +32,18 @@
 //! 3. parent: [`ForkSafeRuntime::after_fork_parent`] — resumes workers
 //! 4. child: [`ForkSafeRuntime::after_fork_child`] — restarts workers on a fresh runtime
 
+//! ## Discarding stale workers
+//!
+//! Use [`WorkerHandle::discard`] when buffered data must be thrown away rather than flushed.
+//! Unlike graceful [`WorkerHandle::stop`], discard cancels in-flight async work, aborts queued
+//! flushes, and skips [`Worker::shutdown`]. The worker remains tracked until destruction completes;
+//! abandoning the wait does not let it escape fork or shutdown coordination. Another handle can
+//! retry discard to await the same retirement. A discarded worker is never restarted.
+//!
+//! Cancellation is cooperative. Synchronous work and destructors must return promptly; callers
+//! on native targets can use [`BlockingRuntime::block_on_with_timeout`] to bound their wait.
+//! Requests already sent to the network cannot be recalled.
+
 pub mod shared_runtime;
 mod weak_waker;
 pub mod worker;
