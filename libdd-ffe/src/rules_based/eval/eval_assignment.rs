@@ -1146,4 +1146,88 @@ mod tests {
         ));
         assert_eq!(assignment.reason, AssignmentReason::Static);
     }
+
+    #[test]
+    fn targeting_key_rule_matches_and_keeps_bucketing() {
+        let config = UniversalFlagConfig::from_json(
+            br#"
+            {
+              "createdAt": "2026-11-18T00:00:00Z",
+              "environment": {"name": "test"},
+              "flags": {
+                "targeted": {
+                  "key": "targeted",
+                  "enabled": true,
+                  "variationType": "STRING",
+                  "variations": {
+                    "a": {"key": "a", "value": "a"},
+                    "b": {"key": "b", "value": "b"},
+                    "fallback": {"key": "fallback", "value": "fallback"}
+                  },
+                  "allocations": [{
+                    "key": "by-targeting-key",
+                    "rules": [{"conditions": [{
+                      "attribute": "targetingKey",
+                      "operator": "NOT_ONE_OF",
+                      "value": ["blocked"]
+                    }]}],
+                    "splits": [
+                      {"variationKey": "a", "shards": [{
+                        "salt": "split", "totalShards": 10000, "ranges": [{"start": 0, "end": 5000}]
+                      }]},
+                      {"variationKey": "b", "shards": [{
+                        "salt": "split", "totalShards": 10000, "ranges": [{"start": 5000, "end": 10000}]
+                      }]}
+                    ]
+                  }, {
+                    "key": "fallback",
+                    "splits": [{"variationKey": "fallback", "shards": []}]
+                  }]
+                },
+                "untargeted": {
+                  "key": "untargeted",
+                  "enabled": true,
+                  "variationType": "STRING",
+                  "variations": {
+                    "a": {"key": "a", "value": "a"},
+                    "b": {"key": "b", "value": "b"}
+                  },
+                  "allocations": [{
+                    "key": "split",
+                    "splits": [
+                      {"variationKey": "a", "shards": [{
+                        "salt": "split", "totalShards": 10000, "ranges": [{"start": 0, "end": 5000}]
+                      }]},
+                      {"variationKey": "b", "shards": [{
+                        "salt": "split", "totalShards": 10000, "ranges": [{"start": 5000, "end": 10000}]
+                      }]}
+                    ]
+                  }]
+                }
+              }
+            }
+            "#
+            .to_vec(),
+        )
+        .unwrap();
+        let config = Configuration::from_server_response(config);
+        let now = chrono::Utc::now();
+        let eval = |flag: &str, key: Option<&str>| {
+            let context = EvaluationContext::new(key.map(Into::into), Arc::new(HashMap::new()));
+            config.eval_flag(flag, &context, ExpectedFlagType::String, now)
+        };
+
+        for key in ["user-1", "user-2", "user-3", "user-4"] {
+            let targeted = eval("targeted", Some(key)).unwrap();
+            let untargeted = eval("untargeted", Some(key)).unwrap();
+            assert_eq!(targeted.reason, AssignmentReason::TargetingMatch);
+            assert_eq!(targeted.variation_key, untargeted.variation_key);
+        }
+
+        let blocked = eval("targeted", Some("blocked")).unwrap();
+        assert_eq!(blocked.variation_key.as_str(), "fallback");
+
+        let missing = eval("targeted", None).unwrap();
+        assert_eq!(missing.variation_key.as_str(), "fallback");
+    }
 }
