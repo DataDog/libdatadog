@@ -46,20 +46,17 @@ impl Collector {
         // tells us its pid. The child therefore blocks on this pipe until we have
         // granted it.
         #[cfg(target_os = "linux")]
-        let ptrace_gate = if config.collect_all_threads() {
+        let needs_ptrace = config.collect_all_threads()
+            || (cfg!(feature = "otel-thread-ctx") && config.collect_otel_thread_contexts());
+
+        #[cfg(target_os = "linux")]
+        let ptrace_gate = if needs_ptrace {
             make_ptrace_gate()
         } else {
             None
         };
         #[cfg(not(target_os = "linux"))]
         let ptrace_gate = None;
-
-        // When OTel thread-context collection is also enabled, the receiver needs
-        // ptrace access too (to read TLS). PR_SET_PTRACER only allows one specific
-        // PID, and the receiver runs concurrently with the collector. Use
-        // PR_SET_PTRACER_ANY so both can ptrace us.
-        #[cfg(target_os = "linux")]
-        let ptracer_any = config.collect_otel_thread_contexts();
 
         let fork_result = alt_fork();
         match fork_result {
@@ -84,11 +81,7 @@ impl Collector {
                     // SAFETY: both calls are async-signal-safe. Closing the write end is what
                     // releases the child, so it must come after the grant.
                     unsafe {
-                        if ptracer_any {
-                            libc::prctl(libc::PR_SET_PTRACER, libc::PR_SET_PTRACER_ANY);
-                        } else {
-                            libc::prctl(libc::PR_SET_PTRACER, pid as libc::c_ulong);
-                        }
+                        libc::prctl(libc::PR_SET_PTRACER, pid as libc::c_ulong);
                         libc::close(read_fd);
                         libc::close(write_fd);
                     }

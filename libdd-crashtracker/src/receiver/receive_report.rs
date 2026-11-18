@@ -101,6 +101,7 @@ pub(crate) enum StdinState {
     RuntimeStackFrame(Vec<StackFrame>),
     RuntimeStackString(Vec<String>),
     Message,
+    OtelThreadCtx(i32),
 }
 
 /// A state machine that processes data from the crash-tracker collector line by
@@ -263,6 +264,23 @@ fn process_line(
             StdinState::Message
         }
 
+        StdinState::OtelThreadCtx(tid) if line.starts_with(DD_CRASHTRACK_END_OTEL_THREAD_CTX) => {
+            // No hex data arrived for this tid; just close the block.
+            let _ = tid;
+            StdinState::Waiting
+        }
+        StdinState::OtelThreadCtx(tid) => {
+            #[cfg(all(target_os = "linux", feature = "otel-thread-ctx"))]
+            if let Some(ctx) = decode_hex_otel_record(tid, line) {
+                let mut contexts = builder.otel_thread_contexts.take().unwrap_or_default();
+                contexts.push(ctx);
+                builder.with_otel_thread_contexts(contexts)?;
+            }
+            #[cfg(not(all(target_os = "linux", feature = "otel-thread-ctx")))]
+            let _ = tid;
+            StdinState::OtelThreadCtx(tid)
+        }
+
         StdinState::SpanIds if line.starts_with(DD_CRASHTRACK_END_SPAN_IDS) => StdinState::Waiting,
         StdinState::SpanIds => {
             let span_ids: Vec<Span> = serde_json::from_str(line)?;
@@ -336,6 +354,13 @@ fn process_line(
         }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_WHOLE_STACKTRACE) => {
             StdinState::WholeStackTrace
+        }
+        StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_OTEL_THREAD_CTX) => {
+            let tid = line
+                .split_once(' ')
+                .and_then(|(_, tid_str)| tid_str.parse::<i32>().ok())
+                .unwrap_or(0);
+            StdinState::OtelThreadCtx(tid)
         }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_DONE) => {
             builder.with_incomplete(false)?;
@@ -520,6 +545,9 @@ pub(crate) async fn receive_report_from_stream(
 
     enrich_thread_name(&mut builder)?;
 
+    #[cfg(all(target_os = "linux", feature = "otel-thread-ctx"))]
+    enrich_otel_thread_names(&mut builder);
+
     builder.with_os_info_this_machine()?;
 
     // Without a config, we don't even know the endpoint to transmit to.  Not much to do to recover.
@@ -554,29 +582,6 @@ pub(crate) async fn receive_report_from_stream(
         ) {
             let _ =
                 builder.with_log_message(format!("Failed to collect thread contexts: {e}"), true);
-        }
-    }
-
-    // Collect OTel thread contexts directly from the crashing process. This reads TLS
-    // variables out-of-process (via /proc/maps ELF scanning + ptrace + /proc/pid/mem),
-    // avoiding the loader-lock deadlock that can happen with dl_iterate_phdr in a fork.
-    #[cfg(all(target_os = "linux", feature = "otel-thread-ctx"))]
-    if config.collect_otel_thread_contexts()
-        && let Some(proc_info) = builder.proc_info.as_ref()
-    {
-        let parent_pid = proc_info.pid;
-        let crashing_tid = proc_info.tid;
-        let remaining_budget = deadline
-            .map(|d| d.saturating_duration_since(Instant::now()))
-            .unwrap_or(Duration::ZERO);
-        let contexts = crate::otel_remote_reader::collect_remote_otel_contexts(
-            parent_pid,
-            crashing_tid,
-            config.max_threads(),
-            remaining_budget,
-        );
-        if !contexts.is_empty() {
-            let _ = builder.with_otel_thread_contexts(contexts);
         }
     }
 
@@ -808,6 +813,45 @@ fn enrich_thread_name(builder: &mut CrashInfoBuilder) -> anyhow::Result<()> {
 #[cfg(not(target_os = "linux"))]
 fn enrich_thread_name(_builder: &mut CrashInfoBuilder) -> anyhow::Result<()> {
     Ok(())
+}
+
+/// Decode a hex-encoded OTel thread-context record emitted by the collector.
+///
+/// The collector writes each record as a single line of hex digits (2 hex chars per byte).
+/// This decodes it and delegates to `otel_tls_reader::decode_record`.
+#[cfg(all(target_os = "linux", feature = "otel-thread-ctx"))]
+fn decode_hex_otel_record(
+    tid: i32,
+    hex_line: &str,
+) -> Option<crate::crash_info::OtelThreadContext> {
+    let hex_line = hex_line.trim();
+    if hex_line.len() < 2 || !hex_line.len().is_multiple_of(2) {
+        return None;
+    }
+    let bytes: Vec<u8> = (0..hex_line.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&hex_line[i..i + 2], 16))
+        .collect::<Result<Vec<_>, _>>()
+        .ok()?;
+    // Thread name enrichment happens later in receive_report_from_stream
+    // after we know the crashing process's PID from proc_info.
+    crate::otel_tls_reader::decode_record(tid, &bytes)
+}
+
+/// Enrich OTel thread context records with thread names from `/proc/<pid>/task/<tid>/comm`.
+#[cfg(all(target_os = "linux", feature = "otel-thread-ctx"))]
+fn enrich_otel_thread_names(builder: &mut CrashInfoBuilder) {
+    let pid = match builder.proc_info.as_ref() {
+        Some(p) => p.pid,
+        None => return,
+    };
+    if let Some(ref mut contexts) = builder.otel_thread_contexts {
+        for ctx in contexts.iter_mut() {
+            if ctx.thread_name.is_none() {
+                ctx.thread_name = crate::otel_tls_reader::read_thread_name(pid, ctx.tid);
+            }
+        }
+    }
 }
 
 #[cfg(test)]

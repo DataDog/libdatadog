@@ -349,8 +349,7 @@ fn handle_posix_signal_impl(
     // expected receiver PID that was registered during trusted initialization
     #[cfg(target_os = "linux")]
     {
-        let needs_ptrace = config.collect_all_threads() || config.collect_otel_thread_contexts();
-        if needs_ptrace {
+        if config.collect_all_threads() {
             grant_ptracer_permission(&receiver);
         }
     }
@@ -515,8 +514,7 @@ pub fn report_unhandled_exception(
 
     #[cfg(target_os = "linux")]
     {
-        let needs_ptrace = config.collect_all_threads() || config.collect_otel_thread_contexts();
-        if needs_ptrace {
+        if config.collect_all_threads() {
             grant_ptracer_permission(&receiver);
         }
     }
