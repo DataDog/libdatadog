@@ -76,7 +76,41 @@ pub enum AssignmentValue {
     Json {
         value: Arc<serde_json::Value>,
         raw: Arc<serde_json::value::RawValue>,
+        /// Language objects converted from `value`. Clones share it with the variation in the
+        /// configuration.
+        cache: JsonValueCache,
     },
+}
+
+/// Language-binding objects converted from a JSON variation value on first use.
+///
+/// Every clone of an [`AssignmentValue::Json`] shares one cache with the variation it came from,
+/// so each repeat evaluation of that variation returns the same converted object. The cache lives
+/// as long as the configuration, or the last assignment cloned from it. A new configuration starts
+/// with empty caches.
+#[derive(Clone)]
+pub struct JsonValueCache {
+    /// The `dict`, `list` or scalar built by the `pyo3` binding. Callers must treat it as
+    /// read-only: a change is visible to every later evaluation of the variation.
+    #[cfg(feature = "pyo3")]
+    python: Arc<pyo3::sync::PyOnceLock<pyo3::Py<pyo3::PyAny>>>,
+}
+
+// Derivable only without the `pyo3` feature.
+#[allow(clippy::derivable_impls)]
+impl Default for JsonValueCache {
+    fn default() -> Self {
+        JsonValueCache {
+            #[cfg(feature = "pyo3")]
+            python: Arc::new(pyo3::sync::PyOnceLock::new()),
+        }
+    }
+}
+
+impl std::fmt::Debug for JsonValueCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("JsonValueCache").finish_non_exhaustive()
+    }
 }
 
 impl AssignmentValue {
@@ -100,6 +134,7 @@ impl AssignmentValue {
             VariationType::Json => AssignmentValue::Json {
                 value: serde_json::from_str(value.get()).ok()?,
                 raw: value,
+                cache: JsonValueCache::default(),
             },
         };
 
@@ -265,7 +300,7 @@ impl AssignmentValue {
     /// - The JSON value if the assignment value is of type Json, otherwise `None`.
     pub fn as_json(&self) -> Option<&serde_json::Value> {
         match self {
-            Self::Json { value, raw: _ } => Some(value),
+            Self::Json { value, .. } => Some(value),
             _ => None,
         }
     }
@@ -275,7 +310,7 @@ impl AssignmentValue {
     /// - The JSON value if the assignment value is of type Json, otherwise `None`.
     pub fn to_json(self) -> Option<Arc<serde_json::Value>> {
         match self {
-            Self::Json { value, raw: _ } => Some(value),
+            Self::Json { value, .. } => Some(value),
             _ => None,
         }
     }
@@ -315,7 +350,7 @@ impl AssignmentValue {
                 Value::Number(Number::from_f64(*n).expect("value should not be infinite/NaN"))
             }
             AssignmentValue::Boolean(b) => Value::Bool(*b),
-            AssignmentValue::Json { value, raw: _ } => value.as_ref().clone(),
+            AssignmentValue::Json { value, .. } => value.as_ref().clone(),
         }
     }
 }
@@ -327,16 +362,9 @@ impl PartialEq<AssignmentValue> for AssignmentValue {
             (Self::Integer(l0), Self::Integer(r0)) => l0 == r0,
             (Self::Float(l0), Self::Float(r0)) => l0 == r0,
             (Self::Boolean(l0), Self::Boolean(r0)) => l0 == r0,
-            (
-                Self::Json {
-                    value: l_value,
-                    raw: _,
-                },
-                Self::Json {
-                    value: r_value,
-                    raw: _,
-                },
-            ) => l_value == r_value,
+            (Self::Json { value: l_value, .. }, Self::Json { value: r_value, .. }) => {
+                l_value == r_value
+            }
             _ => false,
         }
     }
@@ -382,7 +410,15 @@ mod pyo3_impl {
                 AssignmentValue::Integer(v) => v.into_pyobject(py)?.into_any(),
                 AssignmentValue::Float(v) => v.into_pyobject(py)?.into_any(),
                 AssignmentValue::Boolean(v) => v.into_pyobject(py)?.to_owned().into_any(),
-                AssignmentValue::Json { value, raw: _ } => json_to_pyobject(value, py)?,
+                // Convert once per variation and share the object, rather than building a new
+                // tree on every evaluation. `PyOnceLock` detaches from the interpreter while it
+                // waits for another thread's conversion, so it cannot deadlock with the GIL, and it
+                // is thread-safe on free-threaded builds.
+                AssignmentValue::Json { value, cache, .. } => cache
+                    .python
+                    .get_or_try_init(py, || json_to_pyobject(value, py).map(Bound::unbind))?
+                    .bind(py)
+                    .clone(),
             };
             Ok(obj)
         }
@@ -426,5 +462,74 @@ mod pyo3_impl {
             }
         };
         Ok(v)
+    }
+}
+
+#[cfg(all(test, feature = "pyo3"))]
+mod pyo3_tests {
+    use pyo3::{IntoPyObject, Python, types::PyAnyMethods};
+
+    use crate::rules_based::{
+        Configuration, EvaluationContext, UniversalFlagConfig, ufc::AssignmentValue,
+    };
+
+    const CONFIG: &str = r#"{
+        "createdAt": "2024-04-17T19:40:53.716Z",
+        "format": "SERVER",
+        "environment": {"name": "test"},
+        "flags": {
+            "json-flag": {
+                "key": "json-flag",
+                "enabled": true,
+                "variationType": "JSON",
+                "variations": {"a": {"key": "a", "value": {"list": [1, 2.5, "x", null, true]}}},
+                "allocations": [{"key": "all", "splits": [{"variationKey": "a", "shards": []}], "doLog": false}]
+            }
+        }
+    }"#;
+
+    fn json_value(config: &Configuration) -> AssignmentValue {
+        let subject = EvaluationContext::new(Some("subject".into()), Default::default());
+        config
+            .eval_flag(
+                "json-flag",
+                &subject,
+                crate::ExpectedFlagType::Object,
+                crate::rules_based::now(),
+            )
+            .expect("json-flag should evaluate")
+            .value
+    }
+
+    fn load() -> Configuration {
+        Configuration::from_server_response(
+            UniversalFlagConfig::from_json(CONFIG.as_bytes().to_vec()).expect("valid config"),
+        )
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn repeat_evaluations_share_one_python_object() {
+        Python::initialize();
+        Python::attach(|py| {
+            let config = load();
+            let first = (&json_value(&config)).into_pyobject(py).unwrap();
+            let second = (&json_value(&config)).into_pyobject(py).unwrap();
+            assert!(first.is(&second), "repeat evaluation built a new object");
+            let expected = py
+                .import("json")
+                .unwrap()
+                .call_method1("loads", (r#"{"list": [1, 2.5, "x", null, true]}"#,))
+                .unwrap();
+            assert!(first.eq(&expected).unwrap());
+
+            // A new configuration starts with an empty cache.
+            let reloaded = (&json_value(&load())).into_pyobject(py).unwrap();
+            assert!(
+                !first.is(&reloaded),
+                "a new configuration reused the old object"
+            );
+            assert!(reloaded.eq(&expected).unwrap());
+        });
     }
 }

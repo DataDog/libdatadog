@@ -609,7 +609,7 @@ pub unsafe extern "C" fn ddog_ffe_assignment_get_value(
             AssignmentValue::Integer(v) => VariantValue::Integer(*v),
             AssignmentValue::Float(v) => VariantValue::Float(*v),
             AssignmentValue::Boolean(v) => VariantValue::Boolean(*v),
-            AssignmentValue::Json { value: _, raw } => {
+            AssignmentValue::Json { raw, .. } => {
                 // SAFETY: caller is required to not use return value after freeing
                 // `assignment`.
                 VariantValue::Object(unsafe { BorrowedStr::borrow_from_str(raw.get()) })

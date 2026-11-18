@@ -20,7 +20,8 @@ pub use eval::{
 pub use str::Str;
 pub use timestamp::{Timestamp, now};
 pub use ufc::{
-    Assignment, AssignmentReason, AssignmentValue, Feature, FeatureValue, UniversalFlagConfig,
+    Assignment, AssignmentReason, AssignmentValue, Feature, FeatureValue, JsonValueCache,
+    UniversalFlagConfig,
 };
 
 pub use crate::{ExpectedFlagType, FlagType};
