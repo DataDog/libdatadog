@@ -55,19 +55,40 @@ pub enum ValueType {
     Float64,
 }
 
-/// A predicate on another attribute that must hold before an [`Entry`] is read.
+/// A check on another attribute that must pass before an [`Entry`] is read.
 ///
 /// Conditions read the string value of the attribute by its exact name, and treat an empty string
 /// as absent, like the Agent.
+///
+/// For example, OpenTelemetry spans report the gRPC status code in `rpc.response.status_code`,
+/// which other RPC systems also use. The registry declares that entry of
+/// [`Concept::RpcGrpcStatusCode`] as
+///
+/// ```json
+/// { "name": "rpc.response.status_code", "when": [{ "attribute": "rpc.system.name", "eq": "grpc" }] }
+/// ```
+///
+/// which becomes the condition `rpc.system.name` [`Predicate::Equals`] `"grpc"`: the entry is only
+/// read on gRPC spans.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Condition {
     /// The attribute the condition reads
     pub attribute: &'static str,
-    /// If set, the attribute must be present (`true`) or absent (`false`)
-    pub present: Option<bool>,
-    /// If set, the attribute must equal this value
-    pub eq: Option<&'static str>,
+    /// What the attribute must satisfy
+    pub predicate: Predicate,
+}
+
+/// What a [`Condition`] requires of its attribute.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Predicate {
+    /// The attribute is set to a non-empty string
+    Present,
+    /// The attribute is missing or empty
+    Absent,
+    /// The attribute equals this value
+    Equals(&'static str),
 }
 
 /// An attribute that can hold a [`Concept`].

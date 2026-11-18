@@ -24,7 +24,7 @@ use alloc::string::ToString;
 
 use libdd_trace_model::{Attributes, f64_to_exact_i64};
 
-use crate::{Concept, Condition, Entry, ValueType};
+use crate::{Concept, Condition, Entry, Predicate, ValueType};
 
 /// The first value of `concept` as a string, `None` if no entry holds a value.
 ///
@@ -115,11 +115,11 @@ fn non_empty_str<'a, A: Attributes + ?Sized>(attrs: &'a A, key: &str) -> Option<
 /// Conditions read the exact attribute, as a string. An empty string counts as absent.
 fn condition_holds<A: Attributes + ?Sized>(attrs: &A, condition: &Condition) -> bool {
     let value = non_empty_str(attrs, condition.attribute);
-    let present_ok = condition
-        .present
-        .is_none_or(|present| present == value.is_some());
-    let eq_ok = condition.eq.is_none_or(|eq| value == Some(eq));
-    present_ok && eq_ok
+    match condition.predicate {
+        Predicate::Present => value.is_some(),
+        Predicate::Absent => value.is_none(),
+        Predicate::Equals(eq) => value == Some(eq),
+    }
 }
 
 #[cfg(test)]
@@ -155,36 +155,30 @@ mod tests {
         }
     }
 
-    const fn cond(
-        attribute: &'static str,
-        present: Option<bool>,
-        eq: Option<&'static str>,
-    ) -> Condition {
+    const fn cond(attribute: &'static str, predicate: Predicate) -> Condition {
         Condition {
             attribute,
-            present,
-            eq,
+            predicate,
         }
     }
 
     #[test]
     fn conditions() {
-        // The embedded registry has no `present: true` condition, so test them on made-up entries.
+        // The embedded registry has no `Present` condition, so test them on made-up entries.
         static ENTRIES: [Entry; 3] = [
-            entry("a", &[cond("x", Some(true), None)]),
+            entry("a", &[cond("x", Predicate::Present)]),
             entry(
                 "b",
-                &[cond("x", Some(false), None), cond("y", None, Some("on"))],
+                &[
+                    cond("x", Predicate::Absent),
+                    cond("y", Predicate::Equals("on")),
+                ],
             ),
-            entry("d", &[]),
-        ];
-        static PRESENT_AND_EQ: [Entry; 2] = [
-            entry("c", &[cond("x", Some(true), Some("on"))]),
             entry("d", &[]),
         ];
         let attrs = |pairs: &[(&'static str, &'static str)]| {
             Attrs(
-                [("a", "A"), ("b", "B"), ("c", "C"), ("d", "D")]
+                [("a", "A"), ("b", "B"), ("d", "D")]
                     .into_iter()
                     .chain(pairs.iter().copied())
                     .collect(),
@@ -204,14 +198,5 @@ mod tests {
                 "{pairs:?}"
             );
         }
-
-        assert_eq!(
-            str_in(&attrs(&[("x", "on")]), &PRESENT_AND_EQ).as_deref(),
-            Some("C")
-        );
-        assert_eq!(
-            str_in(&attrs(&[("x", "off")]), &PRESENT_AND_EQ).as_deref(),
-            Some("D")
-        );
     }
 }

@@ -11,7 +11,7 @@ authors.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-include = ["Cargo.toml", "README.md", "build.rs", "codegen.rs", "mappings.json", "src/**"]
+include = ["Cargo.toml", "README.md", "build.rs", "codegen/**", "mappings.json", "src/**"]
 
 [lib]
 bench = false
@@ -31,6 +31,6 @@ serde = { workspace = true, features = ["derive", "std"] }
 serde_json = { workspace = true, features = ["std"] }
 
 [package.metadata.cargo-machete]
-# Used by codegen.rs, which build.rs and tests/codegen.rs include with #[path]; cargo-machete
-# doesn't scan it.
+# Used by codegen/, a module of build.rs that tests/codegen.rs includes with #[path];
+# cargo-machete doesn't scan it.
 ignored = ["serde"]

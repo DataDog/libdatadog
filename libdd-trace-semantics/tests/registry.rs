@@ -5,7 +5,7 @@
 
 use libdd_trace_model::{PROMOTED_CHUNK_TAGS, PROMOTED_SPAN_TAGS};
 use libdd_trace_semantics::{
-    Concept, Provider, ValueType, concept, concepts, content_hash, version,
+    Concept, Predicate, Provider, ValueType, concept, concepts, content_hash, version,
 };
 use serde_json::Value;
 
@@ -65,8 +65,17 @@ fn every_concept_is_generated_with_its_entries_in_order() {
             assert_eq!(entry.when.len(), when.len(), "{name}");
             for (condition, raw) in entry.when.iter().zip(when) {
                 assert_eq!(condition.attribute, raw["attribute"], "{name}");
-                assert_eq!(condition.present, raw["present"].as_bool(), "{name}");
-                assert_eq!(condition.eq, raw["eq"].as_str(), "{name}");
+                // `eq` implies presence, so `eq` with `present: true` is `Equals` too.
+                let (present, eq) = (raw["present"].as_bool(), raw["eq"].as_str());
+                match condition.predicate {
+                    Predicate::Equals(value) => {
+                        assert_eq!(Some(value), eq, "{name}");
+                        assert_ne!(present, Some(false), "{name}");
+                    }
+                    Predicate::Present => assert_eq!((present, eq), (Some(true), None), "{name}"),
+                    Predicate::Absent => assert_eq!((present, eq), (Some(false), None), "{name}"),
+                    _ => panic!("{name}: unknown predicate {:?}", condition.predicate),
+                }
             }
         }
     }

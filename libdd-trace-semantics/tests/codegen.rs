@@ -3,11 +3,11 @@
 
 //! The validation `build.rs` applies to `mappings.json`.
 
-#[path = "../codegen.rs"]
+#[path = "../codegen/mod.rs"]
 #[allow(dead_code)]
 mod codegen;
 
-use codegen::{Error, parse, variant_name};
+use codegen::{Error, Predicate, parse, variant_name};
 
 fn registry(concepts: &str) -> String {
     format!(r#"{{"version":"v1","metadata":{{"content_hash":"h"}},"concepts":{{{concepts}}}}}"#)
@@ -44,6 +44,34 @@ fn missing_type_is_a_string() {
     assert_eq!(
         registry.concepts[0].entries[0].value_type,
         codegen::ValueType::String
+    );
+}
+
+#[test]
+fn conditions_become_predicates() {
+    let json = registry(
+        r#""a":{"canonical":"a","fallbacks":[{"name":"a","provider":"otel","when":[
+            {"attribute":"p","present":true},
+            {"attribute":"q","present":false},
+            {"attribute":"r","eq":"x"},
+            {"attribute":"s","eq":"y","present":true}
+        ]}]}"#,
+    );
+    let registry = parse(&json).expect("valid");
+    let predicates: Vec<_> = registry.concepts[0].entries[0]
+        .when
+        .iter()
+        .map(|c| (c.attribute.as_str(), &c.predicate))
+        .collect();
+    assert_eq!(
+        predicates,
+        [
+            ("p", &Predicate::Present),
+            ("q", &Predicate::Absent),
+            ("r", &Predicate::Equals("x".to_owned())),
+            // `eq` implies presence.
+            ("s", &Predicate::Equals("y".to_owned())),
+        ]
     );
 }
 

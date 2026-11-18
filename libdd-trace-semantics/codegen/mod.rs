@@ -1,7 +1,8 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Validates `mappings.json` and turns it into Rust source.
+//! Build-time code generation: checks `mappings.json` and generates the registry's Rust code (the
+//! `Concept` enum and its lookup tables), which `src/lib.rs` includes.
 //!
 //! Shared by `build.rs` and the `codegen` integration test, so the validation rules are tested
 //! without going through a build. It only depends on `serde` and `serde_json`. It is not under a
@@ -156,8 +157,14 @@ pub struct Entry {
 #[derive(Debug)]
 pub struct Condition {
     pub attribute: String,
-    pub present: Option<bool>,
-    pub eq: Option<String>,
+    pub predicate: Predicate,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum Predicate {
+    Present,
+    Absent,
+    Equals(String),
 }
 
 /// Parses and validates `mappings.json`.
@@ -176,34 +183,21 @@ pub fn parse(json: &str) -> Result<Registry, Error> {
 
     // Variant name -> concept name, to report collisions.
     let mut variants = HashMap::new();
-    let mut concepts = Vec::with_capacity(raw.concepts.0.len());
-    for (name, concept) in raw.concepts.0 {
-        if concept.canonical != name {
-            return Err(invalid(format!(
-                "concept `{name}` has canonical name `{}`",
-                concept.canonical
-            )));
-        }
-        if concept.fallbacks.is_empty() {
-            return Err(invalid(format!("concept `{name}` has no fallbacks")));
-        }
-        let variant = variant_name(&name)?;
-        if let Some(other) = variants.insert(variant.clone(), name.clone()) {
-            return Err(invalid(format!(
-                "concepts `{other}` and `{name}` both map to the Rust name `{variant}`"
-            )));
-        }
-        let entries = concept
-            .fallbacks
-            .into_iter()
-            .map(|entry| validate_entry(&name, entry))
-            .collect::<Result<_, _>>()?;
-        concepts.push(Concept {
-            name,
-            variant,
-            entries,
-        });
-    }
+    let concepts = raw
+        .concepts
+        .0
+        .into_iter()
+        .map(|(name, concept)| {
+            let concept = concept.validate(name)?;
+            if let Some(other) = variants.insert(concept.variant.clone(), concept.name.clone()) {
+                return Err(invalid(format!(
+                    "concepts `{other}` and `{}` both map to the Rust name `{}`",
+                    concept.name, concept.variant
+                )));
+            }
+            Ok(concept)
+        })
+        .collect::<Result<_, _>>()?;
 
     Ok(Registry {
         version: raw.version,
@@ -212,64 +206,86 @@ pub fn parse(json: &str) -> Result<Registry, Error> {
     })
 }
 
-fn validate_entry(concept: &str, entry: RawEntry) -> Result<Entry, Error> {
-    if entry.name.is_empty() {
-        return Err(invalid(format!(
-            "concept `{concept}` has a fallback with no name"
-        )));
-    }
-    if entry.version.as_deref().is_some_and(str::is_empty) {
-        return Err(invalid(format!(
-            "fallback `{}` of `{concept}` has an empty version",
-            entry.name
-        )));
-    }
-    let when = entry
-        .when
-        .into_iter()
-        .map(|c| {
-            if c.attribute.is_empty() {
-                return Err(invalid(format!(
-                    "fallback `{}` of `{concept}` has a condition with no attribute",
-                    entry.name
-                )));
-            }
-            // A condition without predicates always matches, which is never what was meant.
-            if c.present.is_none() && c.eq.is_none() {
-                return Err(invalid(format!(
-                    "fallback `{}` of `{concept}` has a condition on `{}` with neither `eq` nor \
-                     `present`",
-                    entry.name, c.attribute
-                )));
-            }
-            // Conditions treat an empty value as absent, so these can never match.
-            if c.eq.as_deref() == Some("") {
-                return Err(invalid(format!(
-                    "fallback `{}` of `{concept}` has a condition on `{}` with an empty `eq`",
-                    entry.name, c.attribute
-                )));
-            }
-            if c.eq.is_some() && c.present == Some(false) {
-                return Err(invalid(format!(
-                    "fallback `{}` of `{concept}` has a condition on `{}` with both `eq` and \
-                     `present: false`",
-                    entry.name, c.attribute
-                )));
-            }
-            Ok(Condition {
-                attribute: c.attribute,
-                present: c.present,
-                eq: c.eq,
-            })
+impl RawConcept {
+    fn validate(self, name: String) -> Result<Concept, Error> {
+        if self.canonical != name {
+            return Err(invalid(format!(
+                "concept `{name}` has canonical name `{}`",
+                self.canonical
+            )));
+        }
+        if self.fallbacks.is_empty() {
+            return Err(invalid(format!("concept `{name}` has no fallbacks")));
+        }
+        let variant = variant_name(&name)?;
+        let entries = self
+            .fallbacks
+            .into_iter()
+            .map(|entry| entry.validate(&name))
+            .collect::<Result<_, _>>()?;
+        Ok(Concept {
+            name,
+            variant,
+            entries,
         })
-        .collect::<Result<_, _>>()?;
-    Ok(Entry {
-        name: entry.name,
-        provider: entry.provider,
-        version: entry.version,
-        value_type: entry.value_type.unwrap_or(ValueType::String),
-        when,
-    })
+    }
+}
+
+impl RawEntry {
+    fn validate(self, concept: &str) -> Result<Entry, Error> {
+        if self.name.is_empty() {
+            return Err(invalid(format!(
+                "concept `{concept}` has a fallback with no name"
+            )));
+        }
+        if self.version.as_deref().is_some_and(str::is_empty) {
+            return Err(invalid(format!(
+                "fallback `{}` of `{concept}` has an empty version",
+                self.name
+            )));
+        }
+        let when = self
+            .when
+            .into_iter()
+            .map(|c| c.validate(concept, &self.name))
+            .collect::<Result<_, _>>()?;
+        Ok(Entry {
+            name: self.name,
+            provider: self.provider,
+            version: self.version,
+            value_type: self.value_type.unwrap_or(ValueType::String),
+            when,
+        })
+    }
+}
+
+impl RawCondition {
+    fn validate(self, concept: &str, entry: &str) -> Result<Condition, Error> {
+        let on = |what: &str| {
+            invalid(format!(
+                "fallback `{entry}` of `{concept}` has a condition on `{}` with {what}",
+                self.attribute
+            ))
+        };
+        if self.attribute.is_empty() {
+            return Err(invalid(format!(
+                "fallback `{entry}` of `{concept}` has a condition with no attribute"
+            )));
+        }
+        // `eq` implies presence, and conditions treat an empty value as absent.
+        let predicate = match (self.present, self.eq) {
+            (None, None) => return Err(on("neither `eq` nor `present`")),
+            (Some(false), Some(_)) => return Err(on("both `eq` and `present: false`")),
+            (_, Some(eq)) if eq.is_empty() => return Err(on("an empty `eq`")),
+            (_, Some(eq)) => Predicate::Equals(eq),
+            (Some(true), None) => Predicate::Present,
+            (Some(false), None) => Predicate::Absent,
+        };
+        Ok(Condition {
+            attribute: self.attribute,
+            predicate,
+        })
+    }
 }
 
 /// The Rust variant name of a concept: the `PascalCase` of its `.`, `_` and `-` separated parts,
@@ -300,12 +316,14 @@ pub fn variant_name(concept: &str) -> Result<String, Error> {
     Ok(variant)
 }
 
-/// Writes the Rust source included by `src/lib.rs`.
-pub fn generate(registry: &Registry) -> String {
-    let mut out = String::new();
-    // Writing to a `String` cannot fail.
-    let _ = write_registry(&mut out, registry);
-    out
+impl Registry {
+    /// Writes the Rust source included by `src/lib.rs`.
+    pub fn generate(&self) -> String {
+        let mut out = String::new();
+        // Writing to a `String` cannot fail.
+        let _ = write_registry(&mut out, self);
+        out
+    }
 }
 
 fn write_registry(out: &mut String, registry: &Registry) -> fmt::Result {
@@ -439,16 +457,15 @@ fn write_entry(out: &mut String, e: &Entry) -> fmt::Result {
     } else {
         writeln!(out, "                    when: &[")?;
         for c in &e.when {
-            let present = match c.present {
-                Some(true) => "Some(true)",
-                Some(false) => "Some(false)",
-                None => "None",
+            let predicate = match &c.predicate {
+                Predicate::Present => "Predicate::Present".to_owned(),
+                Predicate::Absent => "Predicate::Absent".to_owned(),
+                Predicate::Equals(eq) => format!("Predicate::Equals({eq:?})"),
             };
             writeln!(
                 out,
-                "                        Condition {{ attribute: {:?}, present: {present}, eq: {} }},",
-                c.attribute,
-                option_str(c.eq.as_deref())
+                "                        Condition {{ attribute: {:?}, predicate: {predicate} }},",
+                c.attribute
             )?;
         }
         writeln!(out, "                    ],")?;
