@@ -41,10 +41,13 @@ fn generated_header_exposes_native_evp_transport_abi() {
     fs::create_dir_all(&include_dir).unwrap();
 
     // Copy the headers the `-ffi` build scripts already generated into the
-    // target directory; they only re-run on cbindgen.toml changes, so check
-    // freshness against the crate's sources. `sidecar.h`'s build script does
-    // not generate a header, so it is never cached and regenerates here every
-    // time.
+    // target directory. Those build scripts only rerun when their
+    // cbindgen.toml changes, and cbindgen parses the wrapper crates'
+    // dependencies (`parse_deps = true`), so a change in e.g. `libdd-common`
+    // leaves the cached header stale without touching the `-ffi` crate —
+    // check freshness against every source file in the workspace, not just
+    // the wrapper. `sidecar.h`'s build script does not generate a header, so
+    // it is never cached and regenerates here every time.
     let cached_include = std::env::var_os("CARGO_TARGET_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| workspace.join("target"))
@@ -60,9 +63,10 @@ fn generated_header_exposes_native_evp_transport_abi() {
         // does.
         ("libdd-crashtracker-ffi", "crashtracker.h"),
     ];
+    let workspace_newest = newest_mtime(&workspace);
     for (crate_name, header_name) in header_sources {
         let cached = cached_include.join(header_name);
-        if cached.is_file() && cached_header_is_fresh(&cached, &workspace.join(crate_name)) {
+        if cached.is_file() && cached_header_is_fresh(&cached, workspace_newest) {
             fs::copy(&cached, include_dir.join(header_name)).unwrap();
         } else {
             build_common::generate_header(
@@ -125,18 +129,25 @@ fn generated_header_exposes_native_evp_transport_abi() {
     compiler.try_compile("sidecar_evp_transport_abi").unwrap();
 }
 
-/// Whether the cached header postdates every file of the crate that generated
-/// it.
-fn cached_header_is_fresh(cached: &Path, crate_dir: &Path) -> bool {
+/// Whether the cached header postdates every source file that could have
+/// fed it.
+fn cached_header_is_fresh(cached: &Path, workspace_newest: SystemTime) -> bool {
     match fs::metadata(cached).and_then(|m| m.modified()) {
-        Ok(header_time) => header_time >= newest_mtime(crate_dir),
+        Ok(header_time) => header_time >= workspace_newest,
         Err(_) => false,
     }
 }
 
+/// Newest mtime across the workspace's source files. `target/` (build
+/// artifacts) and dot-entries (`.git/` churns on every git operation; no
+/// source lives in dot-dirs) are excluded.
 fn newest_mtime(dir: &Path) -> SystemTime {
     fn visit(dir: &Path, best: &mut SystemTime) {
         for entry in fs::read_dir(dir).into_iter().flatten().flatten() {
+            let name = entry.file_name();
+            if name == "target" || name.to_string_lossy().starts_with('.') {
+                continue;
+            }
             if let Ok(time) = entry.metadata().and_then(|m| m.modified()) {
                 *best = (*best).max(time);
             }
