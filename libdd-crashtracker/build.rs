@@ -183,6 +183,7 @@ fn main() {
         return;
     }
 
+    println!("cargo:rerun-if-changed=src/crash_info/emit_sicodes.c");
     cc::Build::new()
         .file("src/crash_info/emit_sicodes.c")
         .compile("emit_sicodes");
