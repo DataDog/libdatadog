@@ -5,7 +5,7 @@
 //!
 //! Follows the agent's v1 normalizer (`normalizeV1` and `normalizeTraceChunkV1` in
 //! `pkg/trace/agent/normalizer.go`). The field rules are shared with the protobuf
-//! [`normalizer`](crate::normalizer) through [`normalize_utils`]. Where the two differ, it is
+//! [`normalizer`] through [`normalize_utils`]. Where the two differ, it is
 //! because the agent's v1 normalizer differs from its v0.4 one:
 //! - spans are not rejected for a zero trace id, and there is no foreign span check: the trace id
 //!   belongs to the chunk;

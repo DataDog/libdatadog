@@ -16,7 +16,6 @@ bench = false
 anyhow.workspace = true
 libdd-trace-model = { version = "1.0.0", path = "../libdd-trace-model" }
 libdd-trace-protobuf = { version = "5.1.1", path = "../libdd-trace-protobuf" }
-libdd-trace-model = { version = "1.0.0", path = "../libdd-trace-model" }
 arbitrary = { workspace = true, features = ["derive"], optional = true }
 thiserror.workspace = true
 
