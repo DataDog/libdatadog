@@ -64,7 +64,8 @@ fn outputs(api: &dyn Api) -> BTreeMap<String, String> {
     json_files(&data, &mut files);
     files.sort();
     for path in &files {
-        let text = fs::read_to_string(path).unwrap();
+        // A Windows checkout may give the cases CRLF line endings.
+        let text = fs::read_to_string(path).unwrap().replace("\r\n", "\n");
         // A case holding a number no double holds (`1e400`) is sent whole.
         let document = match serde_json::from_str::<Value>(&text) {
             Ok(Value::Object(case)) => {
@@ -82,7 +83,13 @@ fn outputs(api: &dyn Api) -> BTreeMap<String, String> {
             Ok(_) => continue,
             Err(_) => text,
         };
-        let name = path.strip_prefix(&data).unwrap().display().to_string();
+        // The same name on every platform.
+        let name = path
+            .strip_prefix(&data)
+            .unwrap()
+            .display()
+            .to_string()
+            .replace('\\', "/");
         out.insert(format!("project/{name}"), api.project(&document));
         out.insert(format!("batch/{name}"), api.batch(&format!("[{document}]")));
     }
