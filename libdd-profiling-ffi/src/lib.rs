@@ -55,6 +55,10 @@ pub use libdd_ffe_ffi;
 #[allow(unused_imports)]
 pub use libdd_shared_runtime_ffi::*;
 
+// re-export ai-usage ffi (its library is named `dd_ai_usage_ffi`)
+#[cfg(feature = "ai-usage-ffi")]
+pub use dd_ai_usage_ffi::*;
+
 // re-export tracer metadata functions
 #[cfg(feature = "ddcommon-ffi")]
 pub use libdd_common_ffi::*;

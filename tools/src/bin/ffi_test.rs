@@ -116,6 +116,7 @@ const FFI_FEATURES: &[&str] = &[
     "log",
     "ddsketch",
     "ffe",
+    "ai-usage",
 ];
 
 fn skip_examples() -> &'static HashMap<&'static str, &'static str> {

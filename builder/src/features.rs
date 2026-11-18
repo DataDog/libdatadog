@@ -23,6 +23,8 @@ pub struct Selection {
     pub ffe: bool,
     pub shared_runtime: bool,
     pub otel_thread_ctx: bool,
+    /// LLM usage and cost metrics. Opt-in, not a `builder` default.
+    pub ai_usage: bool,
     /// Return panics at the FFI boundary as errors instead of aborting the process. A
     /// `builder` default; projects opting out of those defaults must ask for it explicitly.
     pub catch_panic: bool,
@@ -47,6 +49,7 @@ impl Selection {
             ffe: cfg!(feature = "ffe"),
             shared_runtime: cfg!(feature = "shared-runtime"),
             otel_thread_ctx: cfg!(feature = "otel-thread-ctx"),
+            ai_usage: cfg!(feature = "ai-usage"),
             catch_panic: cfg!(feature = "catch_panic"),
         }
     }
@@ -112,6 +115,9 @@ pub fn profiling_features(selection: &Selection) -> Vec<String> {
     if selection.otel_thread_ctx {
         features.push("otel-thread-ctx-ffi");
     }
+    if selection.ai_usage {
+        features.push("ai-usage-ffi");
+    }
 
     features.into_iter().map(str::to_string).collect()
 }
@@ -139,6 +145,7 @@ mod tests {
         |s| s.ffe = true,
         |s| s.shared_runtime = true,
         |s| s.otel_thread_ctx = true,
+        |s| s.ai_usage = true,
     ];
 
     fn selection_from_bits(bits: u32) -> Selection {
@@ -197,6 +204,7 @@ mod tests {
             ffe: true,
             shared_runtime: true,
             otel_thread_ctx: true,
+            ai_usage: true,
             catch_panic: true,
         };
 
@@ -222,8 +230,33 @@ mod tests {
                 "libdd-ffe-ffi",
                 "shared-runtime",
                 "otel-thread-ctx-ffi",
+                "ai-usage-ffi",
             ]
         );
+    }
+
+    #[test]
+    fn ai_usage_is_opt_in() {
+        let builder = manifest(&workspace_root().join("builder/Cargo.toml"));
+        assert!(declares_feature(&builder, "ai-usage"));
+        assert!(
+            !feature(&builder, "default").contains(&"ai-usage"),
+            "ai-usage must stay out of builder's default release (artifact size)"
+        );
+        let selection = Selection {
+            ai_usage: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            profiling_features(&selection),
+            vec!["cbindgen", "ddcommon-ffi", "ai-usage-ffi"]
+        );
+        let aggregator = manifest(&workspace_root().join("libdd-profiling-ffi/Cargo.toml"));
+        assert_eq!(
+            feature(&aggregator, "ai-usage-ffi"),
+            vec!["dep:libdd-ai-usage-ffi"]
+        );
+        assert!(feature(&aggregator, "cbindgen").contains(&"libdd-ai-usage-ffi?/cbindgen"));
     }
 
     /// Nothing is inherited under `--no-default-features`, so still-needed defaults must be

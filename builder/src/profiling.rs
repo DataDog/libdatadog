@@ -66,6 +66,8 @@ impl Profiling {
         headers.push("shared-runtime.h");
         #[cfg(feature = "otel-thread-ctx")]
         headers.push("otel-thread-ctx.h");
+        #[cfg(feature = "ai-usage")]
+        headers.push("ai-usage.h");
 
         let mut origin_path: PathBuf = [&self.source_include, "dummy.h"].iter().collect();
         let mut target_path: PathBuf = [&self.target_include, "dummy.h"].iter().collect();

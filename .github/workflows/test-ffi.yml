@@ -127,7 +127,8 @@ jobs:
           if [[ "${{ matrix.platform }}" == "windows-latest" ]]; then
               git config --global core.longpaths true
           fi
-          cargo run --bin release --profile ${{ matrix.profile }} -- --profile ${{ matrix.profile }} --out $LIBDD_OUTPUT_FOLDER
+          # ai-usage is opt-in (not a builder default); add it so its example is built and run.
+          cargo run --bin release --features ai-usage --profile ${{ matrix.profile }} -- --profile ${{ matrix.profile }} --out $LIBDD_OUTPUT_FOLDER
       - name: 'Publish libdatadog'
         uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # 4.6.1
         if: success() || failure()

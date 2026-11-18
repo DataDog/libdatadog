@@ -114,3 +114,11 @@ endif()
 add_executable(ffe_dependencies ffe_dependencies.c)
 target_link_libraries(ffe_dependencies PRIVATE Datadog::Profiling)
 set_vcruntime_link_type(ffe_dependencies ${VCRUNTIME_LINK_TYPE})
+
+# ai-usage is an opt-in builder feature: build its example only when the
+# artifact has it.
+if(EXISTS "${Datadog_INCLUDE_DIR}/datadog/ai-usage.h")
+  add_executable(ai_usage ai_usage.c)
+  target_link_libraries(ai_usage PRIVATE Datadog::Profiling)
+  set_vcruntime_link_type(ai_usage ${VCRUNTIME_LINK_TYPE})
+endif()
