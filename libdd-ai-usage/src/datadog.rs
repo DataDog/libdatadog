@@ -20,6 +20,8 @@
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
+use serde::ser::{Serialize, SerializeStruct, Serializer};
+
 use crate::PROFILE_ATTRIBUTE;
 use crate::Profile;
 use crate::point::{Attributes, ErrorCode, Instrument, MetricError, MetricPoint, Sum, reject};
@@ -94,6 +96,25 @@ pub struct DatadogSeries {
     /// Distribution.
     pub interval: Option<u32>,
     pub tags: Vec<String>,
+}
+
+impl Serialize for DatadogSeries {
+    /// `{"interval", "name", "tags", "type", "value"}`, as the series is
+    /// submitted: `type` is [`SeriesType::as_str`], and a Distribution has
+    /// no `interval`.
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let fields = 4 + usize::from(self.interval.is_some());
+        let mut out = serializer.serialize_struct("DatadogSeries", fields)?;
+        match self.interval {
+            Some(interval) => out.serialize_field("interval", &interval)?,
+            None => out.skip_field("interval")?,
+        }
+        out.serialize_field("name", &self.name)?;
+        out.serialize_field("tags", &self.tags)?;
+        out.serialize_field("type", self.series_type.as_str())?;
+        out.serialize_field("value", &self.value)?;
+        out.end()
+    }
 }
 
 /// The DogStatsD line of one series point, without a trailing newline:
@@ -515,6 +536,30 @@ impl SeriesBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn series_serialize_as_submitted() {
+        let rate = DatadogSeries {
+            name: "m".to_string(),
+            series_type: SeriesType::Rate,
+            value: 1.5,
+            interval: Some(DATADOG_RATE_INTERVAL_SECS),
+            tags: vec!["a:b".to_string()],
+        };
+        assert_eq!(
+            serde_json::to_string(&rate).unwrap(),
+            r#"{"interval":10,"name":"m","tags":["a:b"],"type":"rate","value":1.5}"#
+        );
+        let distribution = DatadogSeries {
+            series_type: SeriesType::Distribution,
+            interval: None,
+            ..rate
+        };
+        assert_eq!(
+            serde_json::to_string(&distribution).unwrap(),
+            r#"{"name":"m","tags":["a:b"],"type":"distribution","value":1.5}"#
+        );
+    }
 
     #[test]
     fn tag_values_are_normalized_one_character_per_code_point() {

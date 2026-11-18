@@ -15,6 +15,16 @@ pub const DOGSTATSD_UDP_MAX_PAYLOAD: usize = 1432;
 /// DogStatsD clients use.
 pub const DOGSTATSD_UDS_MAX_PAYLOAD: usize = 8192;
 
+/// Constant tags written as one comma-separated list (`env:prod,team:x`),
+/// as a client's configuration states them: each tag trimmed, empty ones
+/// dropped.
+pub fn split_constant_tags(tags: &str) -> Vec<&str> {
+    tags.split(',')
+        .map(str::trim)
+        .filter(|tag| !tag.is_empty())
+        .collect()
+}
+
 /// `line` with `constant_tags` (`key:value` strings, such as a client's
 /// `env` or `version`) appended to its tags.
 pub fn with_constant_tags<S: AsRef<str>>(line: &str, constant_tags: &[S]) -> String {
@@ -210,5 +220,20 @@ impl MetricBatch {
             constant_tags,
             max_payload,
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn constant_tags_are_split_and_trimmed() {
+        assert_eq!(
+            split_constant_tags(" env:prod, ,team:x,"),
+            ["env:prod", "team:x"]
+        );
+        assert!(split_constant_tags("").is_empty());
+        assert!(split_constant_tags(" , ").is_empty());
     }
 }

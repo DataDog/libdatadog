@@ -77,6 +77,7 @@ mod provider;
 // that check the crate against it.
 #[cfg(test)]
 mod registry;
+mod request;
 #[cfg(test)]
 extern crate self as libdd_ai_usage;
 #[cfg(test)]
@@ -95,7 +96,7 @@ pub use deployment::{
 };
 pub use dogstatsd::{
     DOGSTATSD_MAX_LINE_BYTES, DOGSTATSD_UDP_MAX_PAYLOAD, DOGSTATSD_UDS_MAX_PAYLOAD, pack_dogstatsd,
-    pack_dogstatsd_counted, pack_dogstatsd_joined, with_constant_tags,
+    pack_dogstatsd_counted, pack_dogstatsd_joined, split_constant_tags, with_constant_tags,
 };
 pub use error_type::{
     ERROR_TYPE_API, ERROR_TYPE_API_CONNECTION, ERROR_TYPE_AUTHENTICATION, ERROR_TYPE_BAD_REQUEST,
@@ -125,11 +126,13 @@ pub use project::{
 };
 pub use provider::{
     MAX_ERROR_MESSAGE_BYTES, MAX_KEPT_STRING_BYTES, MAX_STREAM_LINE_BYTES, PROVIDER_ID_HEADERS,
-    ProviderError, ProviderResponse, ProviderUsage, RESPONSE_MODEL_DROPPED, SERVICE_TIER_DROPPED,
-    StreamOutcome, UsageFormat, UsageStream, bedrock_arn_account, gen_ai_provider_name,
-    is_person_identifier, is_service_tier, parse_provider_body, parse_provider_response,
-    parse_provider_usage, provider_id_attributes, vertex_project_id,
+    ProviderError, ProviderReport, ProviderResponse, ProviderUsage, RESPONSE_MODEL_DROPPED,
+    SERVICE_TIER_DROPPED, StreamOutcome, UsageFormat, UsageStream, bedrock_arn_account,
+    gen_ai_provider_name, is_person_identifier, is_service_tier, parse_provider_body,
+    parse_provider_response, parse_provider_usage, provider_id_attributes, provider_id_headers,
+    provider_ids, provider_ids_from_json, vertex_project_id,
 };
+pub use request::{DatadogProjection, RequestDocument, metric_list_from_json};
 /// The attribute that carries the profile identifier: on the OTLP scope, or
 /// on each point when the SDK cannot set scope attributes.
 pub const PROFILE_ATTRIBUTE: &str = "trajectory.profile";
@@ -206,6 +209,33 @@ impl Profile {
     pub fn from_id(id: &str) -> Option<Profile> {
         Profile::ALL.into_iter().find(|p| p.id() == id)
     }
+
+    /// [`Profile::from_id`], an unknown identifier being `profile_invalid`.
+    pub(crate) fn from_id_result(id: &str) -> Result<Profile, MetricError> {
+        Profile::from_id(id).ok_or_else(|| {
+            MetricError::new(
+                ErrorCode::ProfileInvalid,
+                format!("unsupported profile: {id}"),
+            )
+        })
+    }
+}
+
+/// The metrics of the profile `profile_id` (`{id}@{version}`), as
+/// [`Profile::metric_names`] lists them, or of every profile this crate
+/// implements, in [`Profile::ALL`] order, when `profile_id` is empty: the
+/// names a request document's `metrics` list can keep. An unknown profile is
+/// `profile_invalid`.
+pub fn known_metrics(profile_id: &str) -> Result<Vec<&'static str>, MetricError> {
+    let profiles = if profile_id.is_empty() {
+        Profile::ALL.to_vec()
+    } else {
+        vec![Profile::from_id_result(profile_id)?]
+    };
+    Ok(profiles
+        .iter()
+        .flat_map(|profile| profile.metric_names().iter().copied())
+        .collect())
 }
 
 /// Project `input`, an observation object, under `profile`.
@@ -249,12 +279,7 @@ pub fn project_fixture_result(fixture: &Json) -> Result<Projection, MetricError>
         .get("profile")
         .and_then(Json::as_str)
         .ok_or_else(|| missing("the fixture has no profile"))?;
-    let profile = Profile::from_id(id).ok_or_else(|| {
-        MetricError::new(
-            ErrorCode::ProfileInvalid,
-            format!("unsupported profile: {id}"),
-        )
-    })?;
+    let profile = Profile::from_id_result(id)?;
     // An absent input is a missing one, which the projector reports.
     let input = fixture.get(profile.input_key()).unwrap_or(&Json::Null);
     let projection = project_result(profile, input)?;

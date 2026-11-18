@@ -179,8 +179,28 @@ here too, so that one response gives one observation wherever it was read:
   and project a call was billed to; `is_person_identifier` and
   `is_deployment_value` keep `user.id` to people and identifiers.
 
+## Bindings
+
+What a binding to another language does beyond moving bytes is here too, so
+the C interface and native modules give the same answers:
+
+- `RequestDocument` decodes the JSON request documents bindings send
+  (`{"profile", "observation", "deployment_attributes", "metrics"}`), and
+  `MetricBatch::add_request_json` adds a request of them, with a default
+  metric list for documents that state none. `DatadogProjection` projects one
+  document to its Datadog API series.
+- `DatadogSeries`, `DatadogProjection`, `IntakeTake` and `ProviderReport`
+  (a provider response with its `error.type`) implement `Serialize` in the
+  JSON shapes the C interface writes. `MetricBatch::take_intake_now` takes a
+  batch at the system clock.
+- `provider_ids` (and `provider_ids_from_json`) find a response's account and
+  project from its headers, matched in lower case, a Bedrock model ARN, or a
+  Vertex AI URL; `provider_id_headers` lists the headers to fetch.
+- `known_metrics`, `UsageFormat::parse` (an empty name is `auto`) and
+  `split_constant_tags` read the other values bindings pass.
+
 `libdd-ai-usage-ffi` exposes all of it to other languages through a C
-interface.
+interface, as thin wrappers.
 
 ## Conformance
 
