@@ -3740,6 +3740,8 @@ name = "libdd-trace-semantics"
 version = "0.1.0"
 dependencies = [
  "libdd-trace-model",
+ "proc-macro2",
+ "quote",
  "serde",
  "serde_json",
 ]

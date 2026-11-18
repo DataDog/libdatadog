@@ -23,14 +23,18 @@ workspace = true
 libdd-trace-model = { version = "1.0.0", path = "../libdd-trace-model" }
 
 [build-dependencies]
+proc-macro2.workspace = true
+quote.workspace = true
 serde = { workspace = true, features = ["derive", "std"] }
 serde_json = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
+proc-macro2.workspace = true
+quote.workspace = true
 serde = { workspace = true, features = ["derive", "std"] }
 serde_json = { workspace = true, features = ["std"] }
 
 [package.metadata.cargo-machete]
 # Used by codegen/, a module of build.rs that tests/codegen.rs includes with #[path];
 # cargo-machete doesn't scan it.
-ignored = ["serde"]
+ignored = ["proc-macro2", "quote", "serde"]
