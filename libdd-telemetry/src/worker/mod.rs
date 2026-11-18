@@ -414,7 +414,9 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
                     _ = self.metric_ring.notified() => (),
                 }
             }
-            // Let the shared runtime poll for a fork pause even if every batch has a successor.
+            // `Notify::notified()` resolves immediately without consuming tokio coop budget when a
+            // permit is already stored. Yield here so the outer `PausableWorker` select can poll
+            // for pause or flush commands and other tasks on the shared runtime can run.
             tokio::task::yield_now().await;
         };
 

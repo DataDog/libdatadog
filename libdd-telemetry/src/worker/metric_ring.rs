@@ -3,11 +3,16 @@
 
 //! A bounded multi-producer / single-consumer ring buffer for metric points.
 //!
-//! Application threads publish directly to the ring to avoid a mailbox allocation and a worker
-//! wakeup per point. The worker drains batches between telemetry requests. If the ring fills
-//! while the worker waits for HTTP, a producer wakes the worker and drops the incoming point.
-//! Waiting for space here can stall application code while it holds a runtime lock such as the
-//! Python GIL.
+//! Metric points are the highest-frequency telemetry action. Sending each point through the
+//! worker's `tokio::sync::mpsc` mailbox would heap-box a [`super::TelemetryActions`] message and
+//! wake the worker per point. Even a dedicated `tokio::sync::mpsc` channel allocates linked chunks
+//! dynamically and wakes the receiver on every empty-to-non-empty transition instead of batching
+//! wakeups. Pre-allocating a fixed ring lets application threads publish directly with amortized
+//! batch wakeups while the worker drains batches between telemetry requests.
+//!
+//! If the ring fills while the worker waits for HTTP, a producer wakes the worker and drops the
+//! incoming point. Waiting for space here can stall application code while it holds a runtime lock
+//! such as the Python GIL.
 //!
 //! # Protocol (Disruptor-style, one writer per slot)
 //!
@@ -148,15 +153,17 @@ impl MetricRing {
     #[must_use = "a `false` result means that the point was dropped"]
     pub fn try_push(&self, value: f64, key: ContextKey, tags: Vec<Tag>) -> bool {
         let seq = loop {
-            // The consumer observed publication of every slot before `read`. Acquiring its
-            // progress first keeps the subsequent write cursor from falling behind this sample.
+            // Pair with `drain`'s release store on `read_pos` so the consumer's slot reads,
+            // `std::mem::take` on `tags`, and clearing of `ready` for every sequence before `read`
+            // happen-before this producer reuses the slot.
             let read = self.read_pos.load(Ordering::Acquire);
             let seq = self.write_pos.load(Ordering::Relaxed);
             // Stop at u64::MAX so a delayed CAS can never match a reused sequence number.
             if seq >= read.saturating_add(RING_SIZE as u64) {
-                // An atomic RMW reads the latest cursor in its modification order. If the
-                // consumer freed space since our first load, retry before dropping the point.
-                if self.read_pos.fetch_add(0, Ordering::Acquire) != read {
+                // Re-read `read_pos` in case the consumer freed space while we loaded `write_pos`.
+                // `Relaxed` is enough here. If we retry, the next iteration acquires `read_pos`.
+                // If we drop, we do not touch any slot.
+                if self.read_pos.load(Ordering::Relaxed) != read {
                     continue;
                 }
                 self.notify.notify_one();
@@ -194,18 +201,19 @@ impl MetricRing {
     ///
     /// If another drain is in progress, this call returns without consuming points.
     pub fn drain(&self, mut f: impl FnMut(f64, ContextKey, Vec<Tag>)) {
-        if self
-            .draining
-            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-            .is_err()
-        {
+        if self.draining.swap(true, Ordering::Acquire) {
             return;
         }
         let _guard = DrainGuard(&self.draining);
 
         let mut seq = self.read_pos.load(Ordering::Relaxed);
+        // `end` only caps how many slots this batch drains so continuous refills cannot starve the
+        // caller. `Relaxed` is enough because `slot.ready` (not `write_pos`) orders slot payload
+        // accesses, and `read_pos` prevents producers from reusing `seq`'s slot before we advance
+        // it. Inspecting `slot.ready` is always race-free because it is atomic, and we stop before
+        // touching `value` or `tags` if `ready` is `0`.
         let end = self.write_pos.load(Ordering::Relaxed);
-        while seq != end {
+        while seq < end {
             let slot = &self.slots[(seq & RING_MASK) as usize];
             let encoded = slot.ready.load(Ordering::Acquire);
             if encoded == 0 {
@@ -218,9 +226,11 @@ impl MetricRing {
             let tags = unsafe { std::mem::take(&mut *slot.tags.get()) };
             let key = decode_key(encoded);
 
-            // Free the slot, then advance the cursor so producers can reserve it again. The order
-            // matters: a producer may write the slot as soon as it sees the new `read_pos`.
-            slot.ready.store(0, Ordering::Release);
+            // Clear `ready` before advancing `read_pos`. The release store on `read_pos` pairs
+            // with `try_push`'s acquire load so the consumer's slot reads, `std::mem::take` on
+            // `tags`, and `ready = 0` all happen-before a producer reuses this slot. `seq < end <=
+            // u64::MAX`, so `seq += 1` cannot overflow.
+            slot.ready.store(0, Ordering::Relaxed);
             seq += 1;
             self.read_pos.store(seq, Ordering::Release);
 
