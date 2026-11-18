@@ -3109,6 +3109,7 @@ dependencies = [
  "libdd-networking",
  "libdd-regex",
  "libdd-remote-config",
+ "libdd-trace-normalization",
  "libdd-trace-protobuf",
  "log",
  "lru",

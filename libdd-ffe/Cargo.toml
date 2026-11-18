@@ -30,6 +30,7 @@ strum_macros = { workspace = true, optional = true }
 libdd-regex = { version = "0.1.0", path = "../libdd-regex", default-features = false, features = ["require-regex-full"] }
 libdd-common = { path = "../libdd-common", version = "9.0.0", default-features = false, features = ["std"] }
 libdd-networking = { path = "../libdd-networking", version = "1.0.0", default-features = false }
+libdd-trace-normalization = { version = "4.3.0", path = "../libdd-trace-normalization", optional = true }
 libdd-capabilities = { path = "../libdd-capabilities", version = "4.0.1", optional = true }
 http = { workspace = true, features = ["std"], optional = true }
 tokio = { workspace = true, features = ["time"], optional = true }
@@ -64,7 +65,7 @@ libdd-capabilities-impl = { path = "../libdd-capabilities-impl", default-feature
 [features]
 default = ["remote-config"]
 # CDN transport is provider-neutral and honors HTTP(S)_PROXY/NO_PROXY.
-cdn = ["dep:base64", "dep:flate2", "dep:futures-util", "dep:http", "dep:http-body-util", "dep:httpdate", "dep:hyper", "dep:percent-encoding", "dep:tokio", "dep:tokio-util", "dep:url", "dep:fastrand", "libdd-networking/hyper-proxy", "tokio/macros", "tokio/rt"]
+cdn = ["dep:base64", "dep:libdd-trace-normalization", "dep:flate2", "dep:futures-util", "dep:http", "dep:http-body-util", "dep:httpdate", "dep:hyper", "dep:percent-encoding", "dep:tokio", "dep:tokio-util", "dep:url", "dep:fastrand", "libdd-networking/hyper-proxy", "tokio/macros", "tokio/rt"]
 # Select one TLS provider for CDN HTTPS requests.
 https = ["libdd-networking/https"]
 fips = ["libdd-networking/fips"]
