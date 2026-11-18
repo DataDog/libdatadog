@@ -52,10 +52,15 @@ fn compile_shared_lib(src: &Path, dst: &Path, cpp: bool, flags: &[&str]) {
     for flag in flags {
         build.flag(flag);
     }
+    // Keep cc's profile-derived -O/-g flags out: each fixture passes its own,
+    // and the compiler records the full command line in the debug info, so
+    // otherwise the bytes would differ between `cargo test` and `cargo bench`.
     build
         .warnings(true)
         .warnings_into_errors(true)
-        .emit_rerun_if_env_changed(true);
+        .emit_rerun_if_env_changed(true)
+        .opt_level(0)
+        .debug(false);
 
     println!("cargo:rerun-if-changed={}", src.display());
     let compiler = build.try_get_compiler().expect("no C/C++ compiler found");
