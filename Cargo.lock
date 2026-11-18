@@ -2813,8 +2813,9 @@ dependencies = [
 name = "libdd-ai-usage-ffi"
 version = "0.1.0"
 dependencies = [
- "cbindgen",
+ "build_common",
  "libdd-ai-usage",
+ "libdd-common-ffi",
  "serde_json",
 ]
 
@@ -3466,6 +3467,7 @@ dependencies = [
  "function_name",
  "hyper",
  "libc",
+ "libdd-ai-usage-ffi",
  "libdd-common",
  "libdd-common-ffi",
  "libdd-crashtracker-ffi",

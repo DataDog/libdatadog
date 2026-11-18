@@ -36,11 +36,15 @@ default = ["ddcommon-ffi", "catch_panic"]
 # examples/ffi/trace_exporter.c verifies containment is on in the artifact our own
 # release process produces.
 catch_panic = [
+  "libdd-ai-usage-ffi?/catch_panic",
   "libdd-data-pipeline-ffi?/catch_panic",
   "libdd-library-config-ffi?/catch_panic",
   "libdd-shared-runtime-ffi?/catch_panic",
 ]
-cbindgen = ["build_common/cbindgen", "libdd-common-ffi/cbindgen", "libdd-shared-runtime-ffi?/cbindgen", "libdd-otel-thread-ctx-ffi?/cbindgen"]
+cbindgen = ["build_common/cbindgen", "libdd-common-ffi/cbindgen", "libdd-shared-runtime-ffi?/cbindgen", "libdd-otel-thread-ctx-ffi?/cbindgen", "libdd-ai-usage-ffi?/cbindgen"]
+# LLM usage and cost metrics (libdd-ai-usage). Opt-in: not part of builder's
+# default release, to keep the tracer artifact small.
+ai-usage-ffi = ["dep:libdd-ai-usage-ffi"]
 ddtelemetry-ffi = ["dep:libdd-telemetry-ffi"]
 datadog-log-ffi = ["dep:libdd-log-ffi"]
 symbolizer = ["symbolizer-ffi"]
@@ -70,6 +74,7 @@ regex-lite = ["libdd-regex/regex-lite"]
 build_common = { path = "../build-common", features = ["winresource"] }
 
 [dependencies]
+libdd-ai-usage-ffi = { path = "../libdd-ai-usage-ffi", default-features = false, optional = true }
 allocator-api2 = { workspace = true, features = ["alloc"] }
 anyhow.workspace = true
 libdd-data-pipeline-ffi = { path = "../libdd-data-pipeline-ffi", default-features = false, optional = true }

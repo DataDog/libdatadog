@@ -23,6 +23,7 @@ FEATURES=(
     "log"
     "ddsketch"
     "ffe"
+    "ai-usage"
 )
 
 FEATURE_LIST=$(IFS=,; echo "${FEATURES[*]}")

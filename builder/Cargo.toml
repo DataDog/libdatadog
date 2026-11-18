@@ -42,6 +42,9 @@ ddsketch = []
 ffe = []
 shared-runtime = []
 otel-thread-ctx = []
+# LLM usage and cost metrics. Opt-in: not in `default`, so tracer artifacts
+# do not grow.
+ai-usage = []
 catch_panic = []
 regex-lite = ["libdd-regex/regex-lite"]
 
